@@ -54,7 +54,13 @@ const config = {
 		],
 	},
 	pageExtensions: ['mdx', 'ts', 'tsx'],
-	transpilePackages: ['@coursebuilder/ui', 'next-mdx-remote', 'shiki'],
+	transpilePackages: [
+		'@coursebuilder/ui',
+		'@coursebuilder/commerce-next',
+		'@coursebuilder/survey',
+		'next-mdx-remote',
+		'shiki',
+	],
 	async redirects() {
 		return [
 			{
