@@ -14,3 +14,5 @@ try {
 	console.log('[debug] popover instances:', fs.readdirSync(store).filter(d => d.startsWith('@radix-ui+react-popover')).join(' | '))
 	console.log('[debug] types-react instances:', fs.readdirSync(store).filter(d => d.startsWith('@types+react@')).join(' | '))
 } catch (e) { console.log('[debug] store listing failed:', e.message) }
+show('ROOT hoisted @types/react', path.join(__dirname, '../../node_modules/@types/react'))
+show('ROOT hoisted @types/react-dom', path.join(__dirname, '../../node_modules/@types/react-dom'))
