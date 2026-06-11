@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const baseURL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:3000'
+
 export default defineConfig({
 	testDir: './e2e',
 	fullyParallel: true,
@@ -8,7 +10,7 @@ export default defineConfig({
 	workers: process.env['CI'] ? 1 : 3,
 	reporter: 'html',
 	use: {
-		baseURL: 'https://joel-x42.coursebuilder.dev',
+		baseURL,
 		trace: 'on-first-retry',
 	},
 	projects: [
@@ -27,7 +29,7 @@ export default defineConfig({
 	],
 	webServer: {
 		command: 'pnpm start',
-		url: 'https://joel-x42.coursebuilder.dev',
+		url: baseURL,
 		reuseExistingServer: !process.env['CI'],
 	},
 })

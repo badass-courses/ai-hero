@@ -3,7 +3,6 @@
  * for Docker builds.
  */
 import createMDX from '@next/mdx'
-import { withSentryConfig } from '@sentry/nextjs'
 import { withAxiom } from 'next-axiom'
 
 import { beforeFilesMarkdownRewrites } from './markdown-route-config.mjs'
@@ -23,7 +22,7 @@ const config = {
 		serverComponentsHmrCache: true,
 		optimizePackageImports: ['lucide-react', '@coursebuilder/ui', 'shiki'],
 	},
-	serverExternalPackages: ['@sentry/nextjs', 'liquidjs'],
+	serverExternalPackages: ['liquidjs'],
 	allowedDevOrigins: ['localhost:3000', '*.ngrok.app', '*.coursebuilder.dev'],
 	images: {
 		remotePatterns: [
