@@ -27,6 +27,12 @@ export interface WelcomeArchiveEmailProps {
 	cohortCount: number
 }
 
+/**
+ * Welcome email sent to a new archive product purchaser.
+ *
+ * @param props - See {@link WelcomeArchiveEmailProps}
+ * @returns React email JSX
+ */
 export default function WelcomeArchiveEmail({
 	productName,
 	userFirstName,

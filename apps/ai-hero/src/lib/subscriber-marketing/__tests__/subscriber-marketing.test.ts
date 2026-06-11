@@ -53,6 +53,12 @@ import {
 	type KitShadowFieldProvider,
 } from '../shadow-field-sync'
 import { classifyContactEvent } from '../signal-classifier'
+import {
+	buildTeamKitProjectionContacts,
+	previewTeamKitProjection,
+	type TeamKitProjectionProvider,
+	type TeamPurchaseRow,
+} from '../team-kit-projection'
 import { buildValuePathAskUrl } from '../value-path-answer-links'
 import { parseValuePathAnswerPageResource } from '../value-path-answer-page'
 import { recordValuePathAnswerProgression } from '../value-path-click-progression'
@@ -4052,4 +4058,144 @@ describe('subscriber marketing Gate A spine', () => {
 		expect(sync.kit.writeAttempted).toBe(false)
 		expect(sync.reviewReasons).toContain('kit-subscriber-not-found')
 	})
+
+	it('builds team Kit projections for owners, members, and seat counts', () => {
+		const ownerPurchases: TeamPurchaseRow[] = [
+			teamPurchaseRow({
+				purchaseId: 'purchase_owner',
+				email: 'owner@example.com',
+				teamId: 'bulk_123',
+				couponMaxUses: 10,
+				couponUsedCount: 4,
+				purchaseCreatedAt: '2026-05-20T10:00:00.000Z',
+			}),
+		]
+		const memberPurchases: TeamPurchaseRow[] = [
+			teamPurchaseRow({
+				purchaseId: 'purchase_member',
+				email: 'member@example.com',
+				teamId: 'bulk_123',
+				couponMaxUses: 10,
+				couponUsedCount: 4,
+				purchaseCreatedAt: '2026-05-21T10:00:00.000Z',
+			}),
+			teamPurchaseRow({
+				purchaseId: 'purchase_owner_member',
+				email: 'owner@example.com',
+				teamId: 'bulk_123',
+				couponMaxUses: 10,
+				couponUsedCount: 4,
+				purchaseCreatedAt: '2026-05-22T10:00:00.000Z',
+			}),
+		]
+		const skipped: any[] = []
+
+		const contacts = buildTeamKitProjectionContacts({
+			ownerPurchases,
+			memberPurchases,
+			skipped,
+		})
+
+		const owner = contacts.find(
+			(contact) => contact.email === 'owner@example.com',
+		)
+		const member = contacts.find(
+			(contact) => contact.email === 'member@example.com',
+		)
+		expect(owner?.role).toBe('owner_member')
+		expect(owner?.fields.aih_team_role).toBe('owner_member')
+		expect(owner?.fields.aih_team_seat_count).toBe('10')
+		expect(owner?.fields.aih_team_used_seat_count).toBe('4')
+		expect(member?.role).toBe('member')
+		expect(member?.fields.aih_team_ids).toBe('bulk_123')
+		expect(skipped).toHaveLength(0)
+	})
+
+	it('dry-runs and writes team Kit projections with owner and member tags', async () => {
+		const ownerPurchases = [
+			teamPurchaseRow({
+				purchaseId: 'purchase_owner',
+				email: 'owner@example.com',
+				teamId: 'bulk_owner',
+				couponMaxUses: 10,
+				couponUsedCount: 3,
+			}),
+		]
+		const memberPurchases = [
+			teamPurchaseRow({
+				purchaseId: 'purchase_member',
+				email: 'member@example.com',
+				teamId: 'bulk_owner',
+				couponMaxUses: 10,
+				couponUsedCount: 3,
+			}),
+		]
+		const updatedFields: Record<string, string>[] = []
+		const tagged: string[] = []
+		const provider: TeamKitProjectionProvider = {
+			async getSubscriberByEmail(email) {
+				return { id: `kit_${email}`, fields: {} }
+			},
+			async updateSubscriberFields({ fields }) {
+				updatedFields.push(fields)
+				return { id: 'updated' }
+			},
+			async subscribeToList({ listId }) {
+				tagged.push(String(listId))
+				return { ok: true }
+			},
+		}
+
+		const dryRun = await previewTeamKitProjection({
+			ownerPurchases,
+			memberPurchases,
+			provider,
+			allowWrite: false,
+		})
+
+		expect(dryRun.status).toBe('dry-run')
+		expect(dryRun.counts.ownerPurchases).toBe(1)
+		expect(dryRun.counts.memberPurchases).toBe(1)
+		expect(dryRun.counts.fieldWritesPerformed).toBe(0)
+		expect(updatedFields).toHaveLength(0)
+		expect(tagged).toHaveLength(0)
+
+		const written = await previewTeamKitProjection({
+			ownerPurchases,
+			memberPurchases,
+			provider,
+			allowWrite: true,
+			ownerTagId: 'tag_owner',
+			memberTagId: 'tag_member',
+		})
+
+		expect(written.status).toBe('written')
+		expect(written.counts.fieldWritesPerformed).toBe(2)
+		expect(written.counts.tagWritesPerformed).toBe(2)
+		expect(updatedFields).toHaveLength(2)
+		expect(tagged.sort()).toEqual(['tag_member', 'tag_owner'])
+	})
 })
+
+/**
+ * Builds a default TeamPurchaseRow fixture for tests, merging any provided overrides.
+ *
+ * @param overrides - Partial fields to merge into the default fixture
+ * @returns A complete TeamPurchaseRow with sensible defaults
+ */
+function teamPurchaseRow(overrides: Partial<TeamPurchaseRow>): TeamPurchaseRow {
+	return {
+		purchaseId: 'purchase_1',
+		userId: 'user_1',
+		email: 'person@example.com',
+		name: 'Person Example',
+		teamId: 'bulk_1',
+		productId: 'product_1',
+		productName: 'AI Hero Product',
+		productSlug: 'ai-hero-product',
+		purchaseCreatedAt: '2026-05-20T10:00:00.000Z',
+		couponMaxUses: 5,
+		couponUsedCount: 2,
+		...overrides,
+	}
+}

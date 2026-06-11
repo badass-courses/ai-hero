@@ -36,6 +36,7 @@ import { syncSeenContentKitFieldsForContactSnapshot } from '@/lib/subscriber-mar
 import { previewShadowFieldCandidates } from '@/lib/subscriber-marketing/shadow-field-candidates'
 import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-planner'
 import { syncShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-sync'
+import { previewTeamKitProjection } from '@/lib/subscriber-marketing/team-kit-projection'
 import {
 	CONTACT_STATE_SCHEMA_VERSION,
 	type ContactState,
@@ -551,6 +552,29 @@ if (command === 'lookup') {
 		provider: emailListProvider,
 		allowWrite,
 		acceptedReviewReasons,
+	})
+	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'team-kit-projection') {
+	const dryRun = args.includes('--dry-run')
+	const allowWrite = args.includes('--allow-write')
+	if (dryRun === allowWrite) printUsageAndExit()
+	const limit = readIntegerFlag(args, '--limit')
+	const skipKitLookup = args.includes('--skip-kit-lookup')
+	if (allowWrite && skipKitLookup) printUsageAndExit()
+	const { db } = await import('@/db')
+	const provider = skipKitLookup
+		? undefined
+		: (await import('@/coursebuilder/email-list-provider')).emailListProvider
+	const result = await previewTeamKitProjection({
+		database: db,
+		provider,
+		allowWrite,
+		limit,
+		offset: readOffsetFlag(args, '--offset'),
+		kitLookupDelayMs: readIntegerFlag(args, '--kit-lookup-delay-ms'),
+		kitLookupMaxAttempts: readIntegerFlag(args, '--kit-lookup-max-attempts'),
+		ownerTagId: readFlag(args, '--owner-tag-id'),
+		memberTagId: readFlag(args, '--member-tag-id'),
 	})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'seen-content-preview') {
@@ -2060,6 +2084,21 @@ function readIntegerFlag(args: string[], flag: string) {
 	return parsed
 }
 
+/**
+ * Reads a CLI flag as a non-negative integer offset.
+ *
+ * @param args - Raw CLI argument array
+ * @param flag - Flag name to look up (e.g. `'--offset'`)
+ * @returns Parsed offset, or undefined when the flag is absent
+ */
+function readOffsetFlag(args: string[], flag: string) {
+	const value = readFlag(args, flag)
+	if (!value) return undefined
+	const parsed = Number(value)
+	if (!Number.isInteger(parsed) || parsed < 0) printUsageAndExit()
+	return parsed
+}
+
 function isProvider(provider: string): provider is Provider {
 	return providers.includes(provider as Provider)
 }
@@ -2118,6 +2157,8 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator link-ai-hero-user-identities --allow-write [--limit 25]
   pnpm --filter ai-hero subscriber-marketing:operator shadow-field-candidates --status review-only --no-review-reasons [--limit 50] [--scan-limit 250]
   pnpm --filter ai-hero subscriber-marketing:operator shadow-field-sync --contact-id contact_123 --dry-run
-  pnpm --filter ai-hero subscriber-marketing:operator shadow-field-sync --contact-id contact_123 --allow-write [--accept-review-reason reason-slug]`)
+  pnpm --filter ai-hero subscriber-marketing:operator shadow-field-sync --contact-id contact_123 --allow-write [--accept-review-reason reason-slug]
+  pnpm --filter ai-hero subscriber-marketing:operator team-kit-projection --dry-run [--limit 25] [--offset 0] [--skip-kit-lookup] [--kit-lookup-delay-ms 250] [--kit-lookup-max-attempts 3]
+  pnpm --filter ai-hero subscriber-marketing:operator team-kit-projection --allow-write --owner-tag-id 123 --member-tag-id 456 [--limit 25] [--offset 0] [--kit-lookup-delay-ms 250] [--kit-lookup-max-attempts 3]`)
 	process.exit(1)
 }
