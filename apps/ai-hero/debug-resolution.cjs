@@ -16,3 +16,5 @@ try {
 } catch (e) { console.log('[debug] store listing failed:', e.message) }
 show('ROOT hoisted @types/react', path.join(__dirname, '../../node_modules/@types/react'))
 show('ROOT hoisted @types/react-dom', path.join(__dirname, '../../node_modules/@types/react-dom'))
+show('HOIST @types/react', path.join(__dirname, '../../node_modules/.pnpm/node_modules/@types/react'))
+show('HOIST @types/react-dom', path.join(__dirname, '../../node_modules/.pnpm/node_modules/@types/react-dom'))
