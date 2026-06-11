@@ -69,7 +69,7 @@ export default async function VerifyLoginPage({
 			if (typeof checkoutUrl !== 'string' || !checkoutUrl) {
 				return redirect('/subscribe/error')
 			}
-			return redirect(checkoutUrl)
+			return redirect(safeCheckoutUrl(checkoutUrl))
 		}
 	}
 
@@ -81,11 +81,22 @@ export default async function VerifyLoginPage({
 				if (typeof checkoutUrl !== 'string' || !checkoutUrl) {
 					return redirect('/subscribe/error')
 				}
-				return redirect(checkoutUrl)
+				return redirect(safeCheckoutUrl(checkoutUrl))
 			} else {
 				return redirect(`/subscribe/already-subscribed`)
 			}
 		}
+	}
+
+	/** Validates that checkoutUrl is a Stripe checkout URL to prevent open redirect. */
+	function safeCheckoutUrl(url: string): string {
+		try {
+			const parsed = new URL(url)
+			if (parsed.hostname === 'checkout.stripe.com') return url
+		} catch {
+			// not a valid absolute URL
+		}
+		return '/subscribe/error'
 	}
 
 	const checkoutSearchParams = new URLSearchParams(

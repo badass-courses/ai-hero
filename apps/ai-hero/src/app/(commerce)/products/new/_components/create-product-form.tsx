@@ -57,15 +57,15 @@ export function CreateProductForm({
 				accessDurationDays: values.accessDurationDays,
 			}),
 		})
-		form.reset({
-			name: '',
-			quantityAvailable: -1,
-			price: 0,
-			type: 'self-paced',
-			availableAfterDays: DEFAULT_ARCHIVE_AVAILABLE_AFTER_DAYS,
-			accessDurationDays: DEFAULT_ARCHIVE_ACCESS_DURATION_DAYS,
-		})
 		if (resource) {
+			form.reset({
+				name: '',
+				quantityAvailable: -1,
+				price: 0,
+				type: 'self-paced',
+				availableAfterDays: DEFAULT_ARCHIVE_AVAILABLE_AFTER_DAYS,
+				accessDurationDays: DEFAULT_ARCHIVE_ACCESS_DURATION_DAYS,
+			})
 			await onCreate(resource)
 		}
 	}

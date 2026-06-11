@@ -12,12 +12,14 @@ import {
 	Text,
 } from '@react-email/components'
 
+/** A workshop included in a new archive content notification email. */
 export interface NewArchiveWorkshop {
 	title: string
 	slug: string
 	cohortTitle: string
 }
 
+/** Props for the new-archive-content notification email template. */
 export interface NewArchiveContentEmailProps {
 	productName: string
 	userFirstName?: string
@@ -27,6 +29,12 @@ export interface NewArchiveContentEmailProps {
 	expiresAt: string
 }
 
+/**
+ * Email notifying a subscriber that new cohort content is available in their archive product.
+ *
+ * @param props - See {@link NewArchiveContentEmailProps}
+ * @returns React email JSX
+ */
 export default function NewArchiveContentEmail({
 	productName,
 	userFirstName,
