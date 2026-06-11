@@ -9,6 +9,7 @@ allowBuilds:
   core-js: true
   esbuild: true
   msw: true
+  nodemailer: true
   protobufjs: true
   sharp: true
   typesense-instantsearch-adapter: true
