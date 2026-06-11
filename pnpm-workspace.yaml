@@ -1,0 +1,24 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+allowBuilds:
+  '@sentry/cli': true
+  '@swc/core': true
+  better-sqlite3: true
+  core-js: true
+  esbuild: true
+  msw: true
+  protobufjs: true
+  sharp: true
+  typesense-instantsearch-adapter: true
+  unrs-resolver: true
+  workerd: true
+
+overrides:
+  '@internationalized/date': '3.12.2'
+
+packageExtensions:
+  '@coursebuilder/ui@*':
+    dependencies:
+      '@internationalized/date': '3.12.2'

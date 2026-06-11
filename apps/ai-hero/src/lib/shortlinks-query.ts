@@ -1,0 +1,674 @@
+'use server'
+
+import { revalidateTag } from 'next/cache'
+import { randomUUID } from 'node:crypto'
+import type { AppAbility } from '@/ability'
+import { db } from '@/db'
+import { shortlink, shortlinkAttribution, shortlinkClick } from '@/db/schema'
+import { getServerAuthSession } from '@/server/auth'
+import { log } from '@/server/logger'
+import { redis } from '@/server/redis-client'
+import { and, count, desc, eq, like, or, sql } from 'drizzle-orm'
+import { customAlphabet } from 'nanoid'
+
+import { guid } from '@coursebuilder/utils/guid'
+
+import { getLegacyShortlinkMetadata } from './shortlinks-legacy-metadata'
+import {
+	CreateShortlinkSchema,
+	UpdateShortlinkSchema,
+	type CreateShortlinkInput,
+	type RecentClickStats,
+	type Shortlink,
+	type ShortlinkAnalytics,
+	type ShortlinkAttributionData,
+	type ShortlinkClickEvent,
+	type ShortlinkMetadata,
+	type ShortlinkWithAttributions,
+	type UpdateShortlinkInput,
+} from './shortlinks-types'
+
+const nanoid = customAlphabet(
+	'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+	6,
+)
+
+const REDIS_KEY_PREFIX = 'shortlink:'
+
+function isValidShortlinkUrl(url: unknown): boolean {
+	if (typeof url !== 'string' || url.trim().length === 0) return false
+	try {
+		const parsed = new URL(url)
+		return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+	} catch {
+		return false
+	}
+}
+
+function isCacheableShortlink(link: Shortlink | null | undefined): boolean {
+	return Boolean(link && isValidShortlinkUrl(link.url))
+}
+
+type ShortlinkAuthContext = {
+	ability?: AppAbility
+	userId?: string | null
+}
+
+async function resolveShortlinkAuth(auth?: ShortlinkAuthContext) {
+	const sessionAuth = auth?.ability ? null : await getServerAuthSession()
+	const ability = auth?.ability ?? sessionAuth?.ability
+
+	if (!ability) {
+		throw new Error('Missing ability context')
+	}
+
+	return {
+		ability,
+		userId: auth?.userId ?? sessionAuth?.session?.user?.id ?? null,
+	}
+}
+
+/**
+ * Get all shortlinks with optional search filter
+ */
+export async function getShortlinks(
+	search?: string,
+	auth?: ShortlinkAuthContext,
+): Promise<Shortlink[]> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('manage', 'all')) {
+		throw new Error('Unauthorized')
+	}
+
+	const links = await db.query.shortlink.findMany({
+		where: search
+			? or(
+					like(shortlink.slug, `%${search}%`),
+					like(shortlink.url, `%${search}%`),
+					like(shortlink.description, `%${search}%`),
+				)
+			: undefined,
+		orderBy: desc(shortlink.createdAt),
+	})
+
+	return links
+}
+
+/**
+ * Get all shortlinks with attribution counts
+ */
+export async function getShortlinksWithAttributions(
+	search?: string,
+	auth?: ShortlinkAuthContext,
+): Promise<ShortlinkWithAttributions[]> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('manage', 'all')) {
+		throw new Error('Unauthorized')
+	}
+
+	// Get shortlinks with attribution counts using LEFT JOIN and GROUP BY
+	// (correlated subqueries with drizzle sql template don't correlate properly)
+	const links = await db
+		.select({
+			id: shortlink.id,
+			slug: shortlink.slug,
+			url: shortlink.url,
+			description: shortlink.description,
+			metadata: shortlink.metadata,
+			clicks: shortlink.clicks,
+			createdAt: shortlink.createdAt,
+			updatedAt: shortlink.updatedAt,
+			createdById: shortlink.createdById,
+			signups:
+				sql<number>`COALESCE(SUM(CASE WHEN ${shortlinkAttribution.type} = 'signup' THEN 1 ELSE 0 END), 0)`
+					.mapWith(Number)
+					.as('signups'),
+			purchases:
+				sql<number>`COALESCE(SUM(CASE WHEN ${shortlinkAttribution.type} = 'purchase' THEN 1 ELSE 0 END), 0)`
+					.mapWith(Number)
+					.as('purchases'),
+		})
+		.from(shortlink)
+		.leftJoin(
+			shortlinkAttribution,
+			eq(shortlink.id, shortlinkAttribution.shortlinkId),
+		)
+		.where(
+			search
+				? or(
+						like(shortlink.slug, `%${search}%`),
+						like(shortlink.url, `%${search}%`),
+						like(shortlink.description, `%${search}%`),
+					)
+				: undefined,
+		)
+		.groupBy(
+			shortlink.id,
+			shortlink.slug,
+			shortlink.url,
+			shortlink.description,
+			shortlink.metadata,
+			shortlink.clicks,
+			shortlink.createdAt,
+			shortlink.updatedAt,
+			shortlink.createdById,
+		)
+		.orderBy(desc(shortlink.createdAt))
+
+	return links
+}
+
+/**
+ * Get a single shortlink by ID
+ */
+export async function getShortlinkById(
+	id: string,
+	auth?: ShortlinkAuthContext,
+): Promise<Shortlink | null> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('manage', 'all')) {
+		throw new Error('Unauthorized')
+	}
+
+	const link = await db.query.shortlink.findFirst({
+		where: eq(shortlink.id, id),
+	})
+
+	return link ?? null
+}
+
+/**
+ * Get a shortlink by slug (for redirect - no auth required)
+ * Uses Redis cache first, falls back to DB
+ */
+export async function getShortlinkBySlug(
+	slug: string,
+): Promise<Shortlink | null> {
+	const cacheKey = `${REDIS_KEY_PREFIX}${slug}`
+
+	// Try Redis cache first. Older cache entries can outlive deleted DB rows or
+	// miss the URL field, so never trust cached data until the redirect target is
+	// known-good.
+	const cachedLink = await redis.get<Shortlink>(cacheKey)
+	if (cachedLink) {
+		if (isCacheableShortlink(cachedLink)) {
+			await log.info('shortlink.cache.hit', { slug })
+			return cachedLink
+		}
+
+		await redis.del(cacheKey)
+		await log.warn('shortlink.cache.invalid', {
+			slug,
+			hasUrl: typeof cachedLink.url === 'string',
+		})
+	}
+
+	// Fallback to database
+	const link = await db.query.shortlink.findFirst({
+		where: eq(shortlink.slug, slug),
+	})
+
+	if (link) {
+		if (!isCacheableShortlink(link)) {
+			await log.error('shortlink.database.invalid', {
+				slug,
+				shortlinkId: link.id,
+				hasUrl: typeof link.url === 'string',
+			})
+			return null
+		}
+
+		// Cache full object for future lookups
+		await redis.set(cacheKey, link)
+		await log.info('shortlink.cache.miss', { slug, cached: true })
+	}
+
+	return link ?? null
+}
+
+/**
+ * Check if a slug is available
+ */
+export async function isSlugAvailable(slug: string): Promise<boolean> {
+	const existing = await db.query.shortlink.findFirst({
+		where: eq(shortlink.slug, slug),
+	})
+	return !existing
+}
+
+/**
+ * Generate a unique slug
+ */
+export async function generateUniqueSlug(): Promise<string> {
+	let slug = nanoid()
+	let attempts = 0
+	const maxAttempts = 10
+
+	while (!(await isSlugAvailable(slug)) && attempts < maxAttempts) {
+		slug = nanoid()
+		attempts++
+	}
+
+	if (attempts >= maxAttempts) {
+		throw new Error('Failed to generate unique slug')
+	}
+
+	return slug
+}
+
+/**
+ * Create a new shortlink
+ */
+export async function createShortlink(
+	input: CreateShortlinkInput,
+	auth?: ShortlinkAuthContext,
+): Promise<Shortlink> {
+	const { ability, userId } = await resolveShortlinkAuth(auth)
+	if (!ability.can('create', 'Content')) {
+		throw new Error('Unauthorized')
+	}
+
+	const parsed = CreateShortlinkSchema.parse(input)
+
+	// Generate slug if not provided
+	const slug = parsed.slug || (await generateUniqueSlug())
+
+	// Check slug availability
+	// Note: Database unique constraint provides final protection against race conditions
+	if (parsed.slug && !(await isSlugAvailable(slug))) {
+		throw new Error('Slug already exists')
+	}
+
+	let insertedId: string | undefined
+	try {
+		const results = await db
+			.insert(shortlink)
+			.values({
+				slug,
+				url: parsed.url,
+				description: parsed.description,
+				metadata: parsed.metadata ?? null,
+				createdById: userId,
+			})
+			.$returningId()
+
+		insertedId = results[0]?.id
+	} catch (error) {
+		// Handle unique constraint violation (race condition protection)
+		if (
+			error instanceof Error &&
+			(error.message.includes('Duplicate entry') ||
+				error.message.includes('UNIQUE constraint') ||
+				error.message.includes('already exists'))
+		) {
+			throw new Error('Slug already exists')
+		}
+		throw error
+	}
+
+	if (!insertedId) {
+		throw new Error('Failed to insert shortlink')
+	}
+
+	await log.info('shortlink.created', { slug, url: parsed.url })
+
+	const link = await getShortlinkById(insertedId, auth)
+	if (!link) {
+		throw new Error('Failed to create shortlink')
+	}
+
+	// Cache full object in Redis
+	await redis.set(`${REDIS_KEY_PREFIX}${slug}`, link)
+
+	revalidateTag('shortlinks', 'max')
+
+	return link
+}
+
+/**
+ * Update an existing shortlink
+ */
+export async function updateShortlink(
+	input: UpdateShortlinkInput,
+	auth?: ShortlinkAuthContext,
+): Promise<Shortlink> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('update', 'Content')) {
+		throw new Error('Unauthorized')
+	}
+
+	const parsed = UpdateShortlinkSchema.parse(input)
+
+	const existing = await db.query.shortlink.findFirst({
+		where: eq(shortlink.id, parsed.id),
+	})
+
+	if (!existing) {
+		throw new Error('Shortlink not found')
+	}
+
+	// Check slug availability if changing
+	// Note: Database unique constraint provides final protection against race conditions
+	if (parsed.slug && parsed.slug !== existing.slug) {
+		if (!(await isSlugAvailable(parsed.slug))) {
+			throw new Error('Slug already exists')
+		}
+	}
+
+	try {
+		await db
+			.update(shortlink)
+			.set({
+				slug: parsed.slug ?? existing.slug,
+				url: parsed.url ?? existing.url,
+				description: parsed.description ?? existing.description,
+				metadata:
+					parsed.metadata === undefined ? existing.metadata : parsed.metadata,
+				updatedAt: new Date(),
+			})
+			.where(eq(shortlink.id, parsed.id))
+	} catch (error) {
+		// Handle unique constraint violation (race condition protection)
+		if (
+			error instanceof Error &&
+			(error.message.includes('Duplicate entry') ||
+				error.message.includes('UNIQUE constraint') ||
+				error.message.includes('already exists'))
+		) {
+			throw new Error('Slug already exists')
+		}
+		throw error
+	}
+
+	const newSlug = parsed.slug ?? existing.slug
+
+	// Remove old cache if slug changed
+	if (parsed.slug && parsed.slug !== existing.slug) {
+		await redis.del(`${REDIS_KEY_PREFIX}${existing.slug}`)
+	}
+
+	await log.info('shortlink.updated', {
+		id: parsed.id,
+		slug: newSlug,
+		url: parsed.url ?? existing.url,
+	})
+
+	revalidateTag('shortlinks', 'max')
+
+	const updated = await getShortlinkById(parsed.id, auth)
+	if (!updated) {
+		throw new Error('Failed to update shortlink')
+	}
+
+	// Cache full updated object in Redis
+	await redis.set(`${REDIS_KEY_PREFIX}${newSlug}`, updated)
+
+	return updated
+}
+
+/**
+ * Delete a shortlink
+ */
+export async function deleteShortlink(
+	id: string,
+	auth?: ShortlinkAuthContext,
+): Promise<void> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('delete', 'Content')) {
+		throw new Error('Unauthorized')
+	}
+
+	const existing = await db.query.shortlink.findFirst({
+		where: eq(shortlink.id, id),
+	})
+
+	if (!existing) {
+		throw new Error('Shortlink not found')
+	}
+
+	// Delete clicks first (manual cascade since PlanetScale doesn't support FKs)
+	await db.delete(shortlinkClick).where(eq(shortlinkClick.shortlinkId, id))
+
+	// Delete attributions
+	await db
+		.delete(shortlinkAttribution)
+		.where(eq(shortlinkAttribution.shortlinkId, id))
+
+	// Delete from database
+	await db.delete(shortlink).where(eq(shortlink.id, id))
+
+	// Remove from Redis
+	await redis.del(`${REDIS_KEY_PREFIX}${existing.slug}`)
+
+	await log.info('shortlink.deleted', { id, slug: existing.slug })
+
+	revalidateTag('shortlinks', 'max')
+}
+
+/**
+ * Record a click event for a shortlink
+ * This is called asynchronously from the redirect handler
+ */
+export async function recordClick(
+	slug: string,
+	metadata: {
+		referrer?: string | null
+		userAgent?: string | null
+		country?: string | null
+		device?: string | null
+	},
+): Promise<void> {
+	try {
+		const link = await db.query.shortlink.findFirst({
+			where: eq(shortlink.slug, slug),
+		})
+
+		if (!link) {
+			await log.warn('shortlink.click.notfound', { slug })
+			return
+		}
+
+		// Increment click counter
+		await db
+			.update(shortlink)
+			.set({
+				clicks: sql`${shortlink.clicks} + 1`,
+			})
+			.where(eq(shortlink.id, link.id))
+
+		// ADR-009: snapshot shortlink metadata onto each click event so
+		// historical click meaning is immutable when shortlinks are edited later.
+		await db.insert(shortlinkClick).values({
+			id: `click_${randomUUID()}`,
+			shortlinkId: link.id,
+			referrer: metadata.referrer ?? undefined,
+			userAgent: metadata.userAgent ?? undefined,
+			country: metadata.country ?? undefined,
+			device: metadata.device ?? undefined,
+			metadata: link.metadata ?? getLegacyShortlinkMetadata(link.slug),
+		})
+
+		await log.info('shortlink.click.recorded', {
+			slug,
+			referrer: metadata.referrer,
+		})
+	} catch (error) {
+		await log.error('shortlink.click.error', { slug, error: String(error) })
+	}
+}
+
+/**
+ * Get analytics for a shortlink
+ */
+export async function getShortlinkAnalytics(
+	id: string,
+	auth?: ShortlinkAuthContext,
+): Promise<ShortlinkAnalytics> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('manage', 'all')) {
+		throw new Error('Unauthorized')
+	}
+
+	const link = await db.query.shortlink.findFirst({
+		where: eq(shortlink.id, id),
+	})
+
+	if (!link) {
+		throw new Error('Shortlink not found')
+	}
+
+	// Get clicks by day (last 30 days)
+	const clicksByDayQuery = await db
+		.select({
+			date: sql<string>`DATE(${shortlinkClick.timestamp})`.as('date'),
+			clicks: count().as('clicks'),
+		})
+		.from(shortlinkClick)
+		.where(
+			and(
+				eq(shortlinkClick.shortlinkId, id),
+				sql`${shortlinkClick.timestamp} >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+			),
+		)
+		.groupBy(sql`DATE(${shortlinkClick.timestamp})`)
+		.orderBy(sql`DATE(${shortlinkClick.timestamp})`)
+
+	// Get top referrers
+	const topReferrersQuery = await db
+		.select({
+			referrer: sql<string>`COALESCE(${shortlinkClick.referrer}, 'Direct')`.as(
+				'referrer',
+			),
+			clicks: count().as('clicks'),
+		})
+		.from(shortlinkClick)
+		.where(eq(shortlinkClick.shortlinkId, id))
+		.groupBy(shortlinkClick.referrer)
+		.orderBy(desc(count()))
+		.limit(10)
+
+	// Get device breakdown
+	const deviceBreakdownQuery = await db
+		.select({
+			device: sql<string>`COALESCE(${shortlinkClick.device}, 'Unknown')`.as(
+				'device',
+			),
+			clicks: count().as('clicks'),
+		})
+		.from(shortlinkClick)
+		.where(eq(shortlinkClick.shortlinkId, id))
+		.groupBy(shortlinkClick.device)
+		.orderBy(desc(count()))
+
+	// Get recent clicks
+	const recentClicksQuery = await db.query.shortlinkClick.findMany({
+		where: eq(shortlinkClick.shortlinkId, id),
+		orderBy: desc(shortlinkClick.timestamp),
+		limit: 50,
+	})
+
+	return {
+		metadata: (link.metadata as ShortlinkMetadata | null) ?? null,
+		totalClicks: link.clicks,
+		clicksByDay: clicksByDayQuery,
+		topReferrers: topReferrersQuery,
+		deviceBreakdown: deviceBreakdownQuery,
+		recentClicks: recentClicksQuery,
+	}
+}
+
+/**
+ * Get click counts for the last 60 minutes and 24 hours
+ */
+export async function getRecentClickStats(
+	auth?: ShortlinkAuthContext,
+): Promise<RecentClickStats> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('manage', 'all')) {
+		throw new Error('Unauthorized')
+	}
+
+	const [last60MinutesResult, last24HoursResult] = await Promise.all([
+		db
+			.select({ count: count() })
+			.from(shortlinkClick)
+			.where(
+				sql`${shortlinkClick.timestamp} >= DATE_SUB(NOW(), INTERVAL 60 MINUTE)`,
+			),
+		db
+			.select({ count: count() })
+			.from(shortlinkClick)
+			.where(
+				sql`${shortlinkClick.timestamp} >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`,
+			),
+	])
+
+	return {
+		last60Minutes: last60MinutesResult[0]?.count ?? 0,
+		last24Hours: last24HoursResult[0]?.count ?? 0,
+	}
+}
+
+/**
+ * Create a shortlink attribution record
+ * This tracks when a user signs up or makes a purchase after clicking a shortlink
+ */
+export async function createShortlinkAttribution(
+	data: ShortlinkAttributionData,
+): Promise<void> {
+	try {
+		// Look up shortlink by slug
+		const link = await db.query.shortlink.findFirst({
+			where: eq(shortlink.slug, data.shortlinkSlug),
+		})
+
+		if (!link) {
+			await log.warn('shortlink.attribution.notfound', {
+				slug: data.shortlinkSlug,
+			})
+			return
+		}
+
+		// Only dedupe signups - purchases should be recorded every time
+		// (user may buy multiple products via the same shortlink)
+		if (data.type === 'signup') {
+			const existing = await db.query.shortlinkAttribution.findFirst({
+				where: and(
+					eq(shortlinkAttribution.shortlinkId, link.id),
+					eq(shortlinkAttribution.email, data.email),
+					eq(shortlinkAttribution.type, data.type),
+				),
+			})
+
+			if (existing) {
+				await log.info('shortlink.attribution.duplicate', {
+					slug: data.shortlinkSlug,
+					userId: data.userId,
+					type: data.type,
+				})
+				return
+			}
+		}
+
+		// Insert attribution record
+		await db.insert(shortlinkAttribution).values({
+			id: guid(),
+			shortlinkId: link.id,
+			userId: data.userId,
+			email: data.email,
+			type: data.type,
+			metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+		})
+
+		await log.info('shortlink.attribution.recorded', {
+			slug: data.shortlinkSlug,
+			userId: data.userId,
+			type: data.type,
+		})
+	} catch (error) {
+		await log.error('shortlink.attribution.error', {
+			slug: data.shortlinkSlug,
+			error: String(error),
+		})
+	}
+}

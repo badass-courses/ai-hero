@@ -1,0 +1,69 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"tasks": {
+		"build": {
+			"dependsOn": ["^build"],
+			"inputs": ["$TURBO_DEFAULT$", ".env*", ".env.*local"],
+			"outputs": [".next/**", "!.next/cache/**"],
+			"env": [
+				"STRIPE_SECRET_TOKEN",
+				"STRIPE_WEBHOOK_SECRET",
+				"COURSEBUILDER_URL",
+				"DATABASE_URL",
+				"NEXTAUTH_URL",
+				"NEXTAUTH_SECRET",
+				"OPENAI_API_KEY",
+				"ANTHROPIC_API_KEY",
+				"INNGEST_EVENT_KEY",
+				"INNGEST_SIGNING_KEY",
+				"INNGEST_APP_NAME",
+				"MUX_SECRET_KEY",
+				"MUX_ACCESS_TOKEN_ID",
+				"UPSTASH_REDIS_REST_URL",
+				"UPSTASH_REDIS_REST_TOKEN",
+				"UPLOADTHING_URL",
+				"UPLOADTHING_SECRET",
+				"UPLOADTHING_APP_ID",
+				"POSTMARK_KEY",
+				"POSTMARK_API_KEY",
+				"POSTMARK_WEBHOOK_SECRET",
+				"CONVERTKIT_API_SECRET",
+				"CONVERTKIT_API_KEY",
+				"CONVERTKIT_SIGNUP_FORM",
+				"GITHUB_CLIENT_ID",
+				"GITHUB_CLIENT_SECRET",
+				"RESEND_API_KEY",
+				"DISCORD_CLIENT_SECRET",
+				"DISCORD_BOT_TOKEN",
+				"DISCORD_GUILD_ID",
+				"DISCORD_MEMBER_ROLE_ID",
+				"DISCORD_CLIENT_ID",
+				"CLOUDINARY_API_KEY",
+				"CLOUDINARY_API_SECRET",
+				"AWS_REGION",
+				"AWS_ACCESS_KEY_ID",
+				"AWS_SECRET_ACCESS_KEY",
+				"AWS_BUCKET_NAME"
+			]
+		},
+		"dev": {
+			"dependsOn": ["^build"],
+			"cache": false,
+			"persistent": true
+		},
+		"typecheck": {
+			"outputs": [".tsbuildinfo", "tsconfig.tsbuildinfo"]
+		},
+		"lint": {},
+		"clean": {
+			"cache": false
+		},
+		"test": {
+			"outputs": ["coverage/**"],
+			"inputs": ["$TURBO_DEFAULT$", "src/**/", "test/**/"]
+		},
+		"test:e2e": {
+			"outputs": ["blob-report/**", "playwright-report/**", "test-results/**"]
+		}
+	}
+}

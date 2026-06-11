@@ -1,0 +1,10 @@
+{
+	"crons": [
+		{
+			"path": "/api/cron",
+			"schedule": "*/5 * * * *"
+		}
+	],
+	"ignoreCommand": "bash ../../scripts/vercel-ignore.sh",
+	"installCommand": "npx -y pnpm@11.1.2 install"
+}

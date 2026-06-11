@@ -1,0 +1,30 @@
+{
+	"name": "ai-hero-workspace",
+	"private": true,
+	"scripts": {
+		"dev": "turbo dev",
+		"build": "turbo build",
+		"typecheck": "turbo typecheck",
+		"lint": "turbo lint",
+		"clean": "turbo clean && find . -name 'node_modules' -not -path '*/node_modules/node_modules' -exec rm -rf {} + 2>/dev/null; true"
+	},
+	"devDependencies": {
+		"turbo": "^2.5.4"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "pnpm@11.1.2",
+	"pnpm": {
+		"packageExtensions": {
+			"@coursebuilder/ui@*": {
+				"dependencies": {
+					"@internationalized/date": "3.12.2"
+				}
+			}
+		},
+		"overrides": {
+			"@internationalized/date": "3.12.2"
+		}
+	}
+}

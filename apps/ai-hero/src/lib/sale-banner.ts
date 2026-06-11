@@ -1,0 +1,104 @@
+import { courseBuilderAdapter, db } from '@/db'
+import { contentResource, contentResourceProduct, products } from '@/db/schema'
+import { log } from '@/server/logger'
+import { formatDiscount } from '@/utils/discount-formatter'
+import { and, eq, sql } from 'drizzle-orm'
+
+import { getCouponForCode } from '@coursebuilder/core/lib/pricing/props-for-commerce'
+import type { Coupon } from '@coursebuilder/core/schemas'
+import { getResourcePath } from '@coursebuilder/utils/resource-paths'
+
+export type SaleBannerData = {
+	discountType: 'percentage' | 'fixed'
+	discountValue: number
+	discountFormatted: string
+	percentOff?: number // for backward compatibility with existing code
+	productName: string
+	productType: string | null
+	productPath: string
+	expires: string | null
+}
+
+/**
+ * Fetches sale banner data for a given coupon
+ * @param coupon - The coupon object containing discount and product restrictions
+ * @returns Promise<SaleBannerData | null> - Sale banner data or null if not available
+ */
+export async function getSaleBannerData(
+	coupon: Coupon | null,
+): Promise<SaleBannerData | null> {
+	if (!coupon?.restrictedToProductId) {
+		return null
+	}
+
+	try {
+		const rows = await db
+			.select({
+				product: products,
+				resource: contentResource,
+			})
+			.from(products)
+			.innerJoin(
+				contentResourceProduct,
+				eq(contentResourceProduct.productId, products.id),
+			)
+			.innerJoin(
+				contentResource,
+				eq(contentResource.id, contentResourceProduct.resourceId),
+			)
+			.where(
+				and(
+					eq(products.id, coupon.restrictedToProductId),
+					eq(sql`JSON_EXTRACT (${products.fields}, "$.visibility")`, 'public'),
+					eq(sql`JSON_EXTRACT (${products.fields}, "$.state")`, 'published'),
+				),
+			)
+			.limit(1)
+
+		const result = rows[0]
+		if (!result?.resource?.fields?.slug) {
+			return null
+		}
+
+		// Determine discount type and format
+		const hasFixedDiscount = coupon.amountDiscount && coupon.amountDiscount > 0
+		const discountType = hasFixedDiscount ? 'fixed' : 'percentage'
+
+		let discountValue: number
+		let percentOff: number | undefined
+
+		if (hasFixedDiscount && coupon.amountDiscount) {
+			// Fixed amount discount (in cents, convert to dollars)
+			discountValue = coupon.amountDiscount / 100
+		} else {
+			// Percentage discount
+			percentOff = parseFloat(
+				(Number(coupon.percentageDiscount) * 100).toFixed(1),
+			)
+			discountValue = percentOff
+		}
+
+		const discountFormatted = formatDiscount(coupon)
+
+		return {
+			discountType,
+			discountValue,
+			discountFormatted,
+			percentOff, // for backward compatibility
+			expires: coupon.expires ? new Date(coupon.expires).toISOString() : null,
+			productName: result.product.name,
+			productType: result.product.type,
+			productPath: getResourcePath(
+				result.resource.type,
+				result.resource.fields.slug,
+				'view',
+			),
+		}
+	} catch (error) {
+		void log.error('sale.banner.fetch.error', {
+			restrictedToProductId: coupon.restrictedToProductId,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return null
+	}
+}

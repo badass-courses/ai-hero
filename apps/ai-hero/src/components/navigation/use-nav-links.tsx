@@ -1,0 +1,264 @@
+import * as React from 'react'
+import { api } from '@/trpc/react'
+
+import type { NavLinkItem } from './nav-link-item'
+
+export type CourseItem = {
+	href: string
+	image: {
+		src: string
+		alt: string
+		width: number
+		height: number
+	}
+	title: string
+	description: string
+}
+
+export type CohortItem = {
+	href: string
+	image: {
+		src: string
+		alt: string
+		width: number
+		height: number
+	}
+	title: string
+	subtitle: string
+}
+
+export type FeaturedTutorial = {
+	href: string
+	badge?: string
+	title: string
+	description: string
+	image: {
+		src: string
+		alt: string
+		width: number
+		height: number
+	}
+}
+
+export type TutorialItem = {
+	href: string
+	title: string
+	description: string
+	image?: {
+		src: string
+		alt: string
+		width: number
+		height: number
+	}
+}
+
+export type NavigationMenuData = {
+	learn: {
+		courses: CourseItem[]
+		freeTutorials: {
+			featured: FeaturedTutorial
+			items: TutorialItem[]
+		}
+	}
+	live: {
+		events: EventItem[]
+		pastEvents: EventItem[]
+		cohorts: CohortItem[]
+		pastCohorts: CohortItem[]
+	}
+	browseAll: {
+		href: string
+		label: React.ReactNode | string
+	}
+}
+
+export type EventItem = {
+	href: string
+	date: string
+	image: {
+		src: string
+		alt: string
+		width: number
+		height: number
+	}
+	title: string
+	description: string
+}
+
+/**
+ * Hook that provides navigation menu data for the main navigation
+ */
+export function useNavLinks(): NavigationMenuData {
+	const courses: CourseItem[] = [
+		{
+			href: '/workshops/ai-sdk-v6-crash-course',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1769629206/v6imageforproduct.png',
+				alt: 'AI SDK v6 Crash Course',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'AI SDK v6 Crash Course',
+			description:
+				"Master AI SDK v6 with AI Hero's comprehensive crash course.",
+		},
+	]
+
+	const events: EventItem[] = []
+
+	const pastEvents: EventItem[] = [
+		{
+			href: '/events/turn-ai-agents-into-autonomous-software-engineers-with-ralph',
+			date: 'February 11, 2026',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1768901937/events/event-w2789/vsanotsxrpkxykezruby.jpg',
+				alt: 'Turn AI Agents into Autonomous Software Engineers with Ralph',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'Turn AI Agents into Autonomous Software Engineers with Ralph',
+			description:
+				'Learn to build backlog agents, design effective PRDs, and implement feedback loops.',
+		},
+	]
+
+	const cohorts: CohortItem[] = [
+		{
+			href: '/cohorts/ai-coding-for-real-engineers-m0k0w',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1778482299/cohorts/cohort-m0k0w/fh5sosv36pw0ogibmc0p.jpg',
+				alt: 'AI Coding for Real Engineers',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'AI Coding for Real Engineers',
+			subtitle: 'June 1 – June 12, 2026',
+		},
+	]
+
+	const pastCohorts: CohortItem[] = [
+		{
+			href: '/cohorts/claude-code-for-real-engineers-2026-04',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1773381499/claude-code-for-real-engineers-cohort_2x.jpg',
+				alt: 'Claude Code for Real Engineers',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'Claude Code for Real Engineers',
+			subtitle: 'April, 2026',
+		},
+		{
+			href: '/cohorts/build-your-own-ai-personal-assistant-in-typescript',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1762890580/cohorts/cohort-ytorn/dmkvhhpfp5kg9ew5rtef.jpg',
+				alt: 'Build Your Own AI Personal Assistant in TypeScript',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'Build Your Own AI Personal Assistant in TypeScript',
+			subtitle: 'December, 2025',
+		},
+		{
+			href: '/cohorts/build-deepsearch-in-typescript',
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1748619829/cohorts/cohort-5uyf5/kttfkqzngqj6uvbpgjhl.jpg',
+				alt: 'Build DeepSearch in TypeScript',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+			title: 'Build DeepSearch in TypeScript',
+			subtitle: 'July, 2025',
+		},
+	]
+
+	const freeTutorials = {
+		featured: {
+			href: '/llm-fundamentals',
+			badge: undefined,
+			title: 'LLM Fundamentals',
+			description:
+				"A free tutorial teaching you the fundamentals of LLM's so you can use them better.",
+			image: {
+				src: 'https://res.cloudinary.com/total-typescript/image/upload/v1759305215/llm-fundamentals-thumbnail_2x.jpg',
+				alt: 'LLM Fundamentals',
+				width: 960 / 6,
+				height: 540 / 6,
+			},
+		},
+		items: [
+			{
+				href: '/ai-coding-dictionary',
+				title: 'AI Coding Dictionary',
+				description:
+					'The vocabulary of AI coding, translated into plain English.',
+				image: {
+					src: 'https://res.cloudinary.com/total-typescript/image/upload/v1778594002/dictionary.jpg',
+					alt: 'AI Coding Dictionary',
+					width: 960 / 6,
+					height: 540 / 6,
+				},
+			},
+			{
+				href: '/ai-engineer-roadmap',
+				title: 'The AI Engineer Roadmap',
+				description:
+					"Want to build AI-powered apps, but don't know where to start? You need a roadmap.",
+				image: {
+					src: 'https://res.cloudinary.com/total-typescript/image/upload/v1743163055/posts/post_m8cq7/xmqatojwrl7isjkmayxf.png',
+					alt: 'The AI Engineer Roadmap',
+					width: 960 / 6,
+					height: 540 / 6,
+				},
+			},
+			{
+				href: '/vercel-ai-sdk-tutorial',
+				title: 'Vercel AI SDK Tutorial',
+				description:
+					'Learn streaming, structured outputs, tool calls and agents.',
+				image: {
+					src: 'https://image.mux.com/REovA4vqWq5df5zWXn52Pszwl1nseCMUF02epwdfkB1s/thumbnail.png?time=6',
+					alt: 'Vercel AI SDK Tutorial',
+					width: 960 / 6,
+					height: 540 / 6,
+				},
+			},
+			{
+				href: '/model-context-protocol-tutorial',
+				title: 'Model Context Protocol Tutorial',
+				description:
+					'Learn the essentials of the Model Context Protocol in AI.',
+				image: {
+					src: 'https://res.cloudinary.com/total-typescript/image/upload/v1741881129/posts/post_dy34a/xdfinlb07yuyfmleoejz.png',
+					alt: 'Model Context Protocol Tutorial',
+					width: 960 / 6,
+					height: 540 / 6,
+				},
+			},
+		],
+	}
+
+	const browseAll = {
+		href: '/posts',
+		label: (
+			<span>
+				Browse{' '}
+				<span className="inline-block sm:hidden lg:inline-block">all</span>
+			</span>
+		),
+	}
+
+	return {
+		learn: {
+			courses,
+			freeTutorials,
+		},
+		live: {
+			events,
+			pastEvents,
+			cohorts,
+			pastCohorts,
+		},
+		browseAll,
+	}
+}

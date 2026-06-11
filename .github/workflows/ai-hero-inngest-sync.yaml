@@ -1,0 +1,40 @@
+name: AI Hero Inngest Sync
+
+on:
+  deployment_status:
+
+concurrency:
+  group: ai-hero-inngest-sync-production
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync production Inngest functions
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment == 'Production' &&
+      contains(github.event.deployment_status.target_url, 'aihero')
+
+    steps:
+      - name: Sync Inngest registry
+        run: |
+          set -euo pipefail
+
+          echo "Vercel deployment is ready: ${{ github.event.deployment_status.target_url }}"
+          echo "Syncing AI Hero Inngest functions..."
+
+          for attempt in 1 2 3 4 5; do
+            response=$(curl -fsS -X PUT "https://www.aihero.dev/api/inngest" \
+              -H "Content-Type: application/json") && break
+
+            echo "Sync attempt ${attempt} failed, retrying..."
+            sleep $((attempt * 10))
+          done
+
+          echo "$response"
+
+          if ! echo "$response" | grep -Eq 'Successfully registered|No changes|modified'; then
+            echo "Unexpected Inngest sync response" >&2
+            exit 1
+          fi
