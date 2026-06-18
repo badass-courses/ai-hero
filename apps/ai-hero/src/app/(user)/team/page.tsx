@@ -14,6 +14,13 @@ import {
 } from '@coursebuilder/core/schemas'
 import type { PricingData } from '@coursebuilder/core/types'
 
+type TeamPurchase = Purchase & {
+	bulkCouponId?: string | null
+	product?: {
+		id?: string | null
+	} | null
+}
+
 export type TeamPageData = {
 	bulkPurchases: {
 		bulkCoupon?: any | null
@@ -41,7 +48,7 @@ async function teamPageDataLoader(): Promise<TeamPageData> {
 		}
 	}
 
-	const purchases = await getPurchasesForUser(user.id)
+	const purchases = (await getPurchasesForUser(user.id)) as TeamPurchase[]
 
 	const bulkPurchasesData = purchases.filter(
 		(purchase) => purchase.bulkCouponId,
