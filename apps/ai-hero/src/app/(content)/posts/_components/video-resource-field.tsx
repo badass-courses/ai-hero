@@ -30,12 +30,18 @@ export const VideoResourceField: React.FC<{
 	videoResource?: VideoResource | null
 	initialVideoResourceId?: string | null
 	label?: string
+	onVideoUpdate?: (
+		resourceId: string,
+		videoResourceId: string,
+		additionalFields: any,
+	) => Promise<void>
 }> = ({
 	form,
 	post,
 	videoResource,
 	initialVideoResourceId,
 	label = 'Video',
+	onVideoUpdate,
 }) => {
 	const { toast } = useToast()
 	const [currentVideoResource, setCurrentVideoResource] =
@@ -83,21 +89,26 @@ export const VideoResourceField: React.FC<{
 		// Update the form state
 		form.setValue('fields.videoResourceId' as any, videoResourceId)
 
-		// If we have thumbnail time, save it to the post
+		// If we have thumbnail time, save it to the owning resource immediately.
 		if (additionalFields?.thumbnailTime) {
 			form.setValue(
 				'fields.thumbnailTime' as any,
 				additionalFields.thumbnailTime,
 			)
 
-			// Save changes to the post immediately
+			if (onVideoUpdate) {
+				await onVideoUpdate(resourceId, videoResourceId, additionalFields)
+				return
+			}
+
+			// Posts keep their own specialized update path.
 			await updatePost(
 				{
 					id: resourceId,
 					fields: {
 						...form.watch('fields'),
 						thumbnailTime: additionalFields.thumbnailTime,
-						videoResourceId, // This is added dynamically to the fields
+						videoResourceId,
 					} as any,
 				},
 				'save',
