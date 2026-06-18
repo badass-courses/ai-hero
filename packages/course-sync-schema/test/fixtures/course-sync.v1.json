@@ -1,0 +1,100 @@
+{
+	"schema": "aihero.course-sync.v1",
+	"producer": {
+		"name": "course-video-manager",
+		"version": "0.0.0-test",
+		"revision": "fixture",
+		"exportedAt": "2026-06-18T12:00:00.000Z"
+	},
+	"course": {
+		"sourceId": "course_123",
+		"title": "AI Coding for Real Engineers",
+		"sourcePath": "courses/ai-coding-for-real-engineers",
+		"version": {
+			"sourceId": "course_version_123",
+			"kind": "published",
+			"name": "Published Version",
+			"publishedAt": "2026-06-18T12:00:00.000Z"
+		},
+		"courseBuilder": {
+			"cohortId": "cohort-m0k0w",
+			"cohortSlug": "ai-coding-for-real-engineers-m0k0w"
+		}
+	},
+	"sections": [
+		{
+			"sourceId": "section_1",
+			"stableKey": "before-start",
+			"clientKey": "workshop:before-start",
+			"title": "Before You Start",
+			"path": "01-before-start",
+			"order": 1,
+			"lessons": [
+				{
+					"sourceId": "lesson_1",
+					"stableKey": "database-migrations",
+					"clientKey": "lesson:database-migrations",
+					"title": "Database Migrations",
+					"path": "01-before-start/01-database-migrations",
+					"order": 1,
+					"fsStatus": "real",
+					"authoringStatus": "done",
+					"body": {
+						"format": "mdx",
+						"kind": "article",
+						"sourcePath": "01-before-start/01-database-migrations/article.mdx",
+						"markdownSourceCount": 1,
+						"transcriptSourceCount": 0
+					},
+					"videos": [
+						{
+							"sourceId": "video_1",
+							"stableKey": "database-migrations-explainer",
+							"title": "Database Migrations Explainer",
+							"path": "01-before-start/01-database-migrations/database-migrations-explainer.mp4",
+							"kind": "explainer",
+							"target": "lesson",
+							"position": 1,
+							"media": {
+								"sourcePath": "01-before-start/01-database-migrations/database-migrations-explainer.mp4",
+								"fileName": "database-migrations-explainer.mp4",
+								"mimeType": "video/mp4",
+								"bytes": 123456
+							},
+							"chapters": [
+								{
+									"title": "Why migrations matter",
+									"startTimeSeconds": 0
+								}
+							]
+						}
+					]
+				},
+				{
+					"sourceId": "lesson_ghost",
+					"stableKey": "future-lesson",
+					"clientKey": "lesson:future-lesson",
+					"title": "Future Lesson",
+					"path": "01-before-start/99-future-lesson",
+					"order": 99,
+					"fsStatus": "ghost",
+					"videos": []
+				}
+			]
+		}
+	],
+	"assets": [
+		{
+			"kind": "markdown",
+			"sourcePath": "01-before-start/01-database-migrations/article.mdx"
+		}
+	],
+	"changes": [
+		{
+			"kind": "new-lesson",
+			"path": "01-before-start/01-database-migrations",
+			"message": "Fixture lesson added"
+		}
+	],
+	"warnings": []
+}
