@@ -2,6 +2,7 @@ import { headers } from 'next/headers'
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter, db } from '@/db'
+import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
 import { getServerAuthSession } from '@/server/auth'
 import { inArray } from 'drizzle-orm'
 
@@ -26,7 +27,9 @@ export default async function OrganizationList() {
 	}
 
 	const organizationMemberships =
-		await courseBuilderAdapter.getMembershipsForUser(session.user.id)
+		(await courseBuilderAdapter.getMembershipsForUser(
+			session.user.id,
+		)) as OrganizationMembershipLike[]
 
 	const organizationMembershipRoles =
 		await db.query.organizationMembershipRoles.findMany({
