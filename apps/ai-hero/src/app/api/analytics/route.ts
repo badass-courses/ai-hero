@@ -5,8 +5,24 @@ import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
-const VALID_RANGES = new Set<AnalyticsRange>(['24h', '7d', '30d', '90d', 'all'])
-const RANGE_OPTIONS: AnalyticsRange[] = ['24h', '7d', '30d', '90d', 'all']
+type ApiAnalyticsRange = AnalyticsRange | '180d'
+
+const VALID_RANGES = new Set<ApiAnalyticsRange>([
+	'24h',
+	'7d',
+	'30d',
+	'90d',
+	'180d',
+	'all',
+])
+const RANGE_OPTIONS: ApiAnalyticsRange[] = [
+	'24h',
+	'7d',
+	'30d',
+	'90d',
+	'180d',
+	'all',
+]
 const catalog = analytics.getCatalog()
 const catalogByName = Object.fromEntries(
 	catalog.map((entry) => [entry.name, entry]),
@@ -69,9 +85,9 @@ const corsHeaders = {
 	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
-function parseRange(raw?: string | null): AnalyticsRange {
-	if (raw && VALID_RANGES.has(raw as AnalyticsRange)) {
-		return raw as AnalyticsRange
+function parseRange(raw?: string | null): ApiAnalyticsRange {
+	if (raw && VALID_RANGES.has(raw as ApiAnalyticsRange)) {
+		return raw as ApiAnalyticsRange
 	}
 
 	return '30d'
@@ -85,7 +101,7 @@ function getMeta(
 		limit: number
 		offset: number
 		surface: SurfaceName
-		range: AnalyticsRange
+		range: ApiAnalyticsRange
 	},
 ) {
 	const rowCount = Array.isArray(data) ? data.length : 1
@@ -113,7 +129,7 @@ function getMeta(
 
 function buildContextualNextActions(
 	surface: SurfaceName,
-	range: AnalyticsRange,
+	range: ApiAnalyticsRange,
 	options: { limit?: number; offset?: number; rowCount?: number } = {},
 ) {
 	const entry = catalogByName[surface]
@@ -231,6 +247,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 				description:
 					'AI Hero analytics — revenue, attribution, traffic, YouTube, and content correlation',
 				notes: [
+					'The traffic surface includes GA4 device category, operating system, and screen resolution breakdowns with session percentages.',
+					'Use range=180d for roughly the last six months of traffic data.',
 					'YouTube surfaces are useful for correlation/content analysis but lag by about 48 hours.',
 				],
 				surfaces: catalog,
@@ -315,6 +333,30 @@ export const GET = withSkill(async (request: NextRequest) => {
 
 	const surface = rawSurface as SurfaceName
 	const range = parseRange(searchParams.get('range'))
+
+	if (range === '180d' && catalogByName[surface].provider !== 'ga4') {
+		return NextResponse.json(
+			{
+				ok: false,
+				endpoint: '/api/analytics',
+				surface,
+				error: {
+					message: 'range=180d is only supported for GA4 traffic surfaces',
+					code: 'INVALID_RANGE_FOR_SURFACE',
+				},
+				fix: 'Use a traffic surface, or use range=90d/all for non-traffic analytics.',
+				next_actions: [
+					{
+						command: 'GET /api/analytics?surface=traffic&range=180d',
+						description:
+							'Fetch the six-month GA4 traffic overview with device, OS, and screen resolution breakdowns',
+					},
+				],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+
 	const requestedLimit = Number(searchParams.get('limit') ?? 20)
 	const limit = Math.min(
 		Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20,
@@ -348,7 +390,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 	})
 
 	const result = await analytics.query(surface, {
-		range,
+		range: range as AnalyticsRange,
 		limit,
 		offset,
 		productId,
@@ -391,7 +433,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 			ok: true,
 			endpoint: '/api/analytics',
 			surface,
-			range: result.range,
+			range,
 			offset,
 			description: catalogByName[surface].description,
 			data: result.data,
