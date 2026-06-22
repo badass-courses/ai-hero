@@ -117,18 +117,21 @@ export async function getTrafficOverview(range: GA4TrafficRange = '30d') {
 			sessions: item.sessions,
 			users: item.users,
 			sessionPercent: item.sessionPercent,
+			trafficSessionPercent: toPercent(item.sessions, sessions),
 		})),
 		operatingSystems: operatingSystems.map((item) => ({
 			operatingSystem: item.value,
 			sessions: item.sessions,
 			users: item.users,
 			sessionPercent: item.sessionPercent,
+			trafficSessionPercent: toPercent(item.sessions, sessions),
 		})),
 		screenResolutions: screenResolutions.map((item) => ({
 			screenResolution: item.value,
 			sessions: item.sessions,
 			users: item.users,
 			sessionPercent: item.sessionPercent,
+			trafficSessionPercent: toPercent(item.sessions, sessions),
 		})),
 	}
 }
