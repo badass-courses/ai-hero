@@ -44,9 +44,9 @@ export async function PromoBar() {
 	return (
 		<aside
 			aria-label="Announcement"
-			className="bg-muted/40 border-border w-full border-b print:hidden"
+			className="relative mx-auto w-full max-w-[1200px] px-2 print:hidden sm:px-2"
 		>
-			<div className="mx-auto flex max-w-[1200px] items-center justify-center gap-2.5 px-4 py-2.5 text-center text-sm">
+			<div className="bg-muted/40 border-border flex items-center justify-center gap-2.5 border-x border-b px-4 py-2.5 text-center text-sm">
 				{promo.label && (
 					<span className="bg-primary text-primary-foreground inline-flex shrink-0 items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider">
 						{promo.label}
