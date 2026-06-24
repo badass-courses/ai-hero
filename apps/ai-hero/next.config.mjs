@@ -86,6 +86,11 @@ const config = {
 				permanent: true,
 			},
 			{
+				source: '/skills-v1-0-release',
+				destination: '/skills/skills-changelog-v1-announcement',
+				permanent: true,
+			},
+			{
 				source: '/articles/triage',
 				destination: '/burn-through-your-backlog-with-my-triage-skill',
 				permanent: true,

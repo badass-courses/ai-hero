@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { ResourceFormProps } from '@/components/resource-form/with-resource-form'
+import { updateSkillChangelog } from '@/lib/skill-changelog-mutations'
 import {
 	SkillChangelogSchema,
 	type SkillChangelog,
@@ -38,6 +39,33 @@ export function SkillChangelogFormFields({
 				post={resource as any}
 				videoResource={videoResource ?? null}
 				initialVideoResourceId={videoResourceId ?? null}
+				onVideoUpdate={async (_resourceId, _videoResourceId, additionalFields) => {
+					const fields = form.getValues('fields')
+					await updateSkillChangelog(
+						{
+							id: resource.id,
+							fields: {
+								title: fields.title || resource.fields.title || '',
+								slug: fields.slug || resource.fields.slug || '',
+								body: fields.body ?? '',
+								description: fields.description ?? '',
+								state: fields.state || resource.fields.state || 'draft',
+								visibility:
+									fields.visibility || resource.fields.visibility || 'unlisted',
+								github: fields.github ?? '',
+								thumbnailTime:
+									additionalFields.thumbnailTime ?? fields.thumbnailTime ?? null,
+								...(fields.coverImage?.url
+									? { coverImage: fields.coverImage }
+									: {}),
+								newsletterSubject: fields.newsletterSubject ?? null,
+								newsletterPreviewText: fields.newsletterPreviewText ?? null,
+								newsletterCopy: fields.newsletterCopy ?? null,
+							},
+						},
+						'save',
+					)
+				}}
 			/>
 			<FormField
 				control={form.control}

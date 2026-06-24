@@ -64,7 +64,7 @@ export const skillChangelogFormConfig: ResourceFormConfig<
 		}
 	},
 	getResourcePath: (slug?: string) => `/skills/${slug || ''}`,
-	updateResource: async (resource) => {
+	updateResource: async (resource, action = 'save') => {
 		if (!resource.id || !resource.fields) {
 			throw new Error('Invalid skill changelog data')
 		}
@@ -87,9 +87,9 @@ export const skillChangelogFormConfig: ResourceFormConfig<
 				newsletterCopy: resource.fields.newsletterCopy ?? null,
 			},
 		}
-		return updateSkillChangelog(update)
+		return updateSkillChangelog(update, action)
 	},
-	autoUpdateResource: async (resource) => {
+	autoUpdateResource: async (resource, action = 'save') => {
 		if (!resource.id || !resource.fields) {
 			throw new Error('Invalid skill changelog data')
 		}
@@ -112,7 +112,9 @@ export const skillChangelogFormConfig: ResourceFormConfig<
 				newsletterCopy: resource.fields.newsletterCopy ?? null,
 			},
 		}
-		return autoUpdateSkillChangelog(update)
+		return action === 'save'
+			? autoUpdateSkillChangelog(update)
+			: updateSkillChangelog(update, action, false)
 	},
 	bodyPanelConfig: {
 		showListResources: false,

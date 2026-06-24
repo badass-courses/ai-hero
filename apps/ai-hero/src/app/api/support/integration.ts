@@ -509,12 +509,14 @@ export const integration: SupportIntegration = {
 	 */
 	async getContentAccess(userId: string): Promise<ContentAccess> {
 		// Get user's active entitlements via adapter (handles deleted/expired filtering)
-		const userEntitlements = await courseBuilderAdapter.getEntitlementsForUser({
+		const userEntitlements = (await courseBuilderAdapter.getEntitlementsForUser({
 			userId,
-		})
+		})) as any[]
 
 		// Get user's purchases via adapter (includes product data)
-		const userPurchases = await courseBuilderAdapter.getPurchasesForUser(userId)
+		const userPurchases = (await courseBuilderAdapter.getPurchasesForUser(
+			userId,
+		)) as any[]
 		const activePurchases = userPurchases.filter(
 			(p) => p.status === 'Valid' || p.status === 'Restricted',
 		)
@@ -547,7 +549,8 @@ export const integration: SupportIntegration = {
 			// Use adapter to get product's linked content resources for non-archive products
 			const productResources = isArchiveProductType(product.type)
 				? []
-				: ((await courseBuilderAdapter.getProductResources(product.id)) ?? [])
+				: (((await courseBuilderAdapter.getProductResources(product.id)) ??
+						[]) as any[])
 
 			const modules = isArchiveProductType(product.type)
 				? archiveSummary.modules.map((module) => ({
@@ -621,7 +624,8 @@ export const integration: SupportIntegration = {
 	 */
 	async getRecentActivity(userId: string): Promise<UserActivity> {
 		const progress =
-			(await courseBuilderAdapter.getLessonProgressForUser(userId)) ?? []
+			(((await courseBuilderAdapter.getLessonProgressForUser(userId)) ??
+				[]) as any[])
 
 		// Compute counts from the progress array
 		const totalCount = progress.length
@@ -713,7 +717,9 @@ export const integration: SupportIntegration = {
 		// Get organization members via adapter's getMembershipsForUser won't work here
 		// (we need all members of an org, not memberships for a single user).
 		// Use getOrganizationMembers which returns OrganizationMember[] with user data.
-		const members = await courseBuilderAdapter.getOrganizationMembers(orgId)
+		const members = (await courseBuilderAdapter.getOrganizationMembers(
+			orgId,
+		)) as any[]
 
 		// Determine total seats from org fields or purchase quantity
 		const orgFields = org.fields as Record<string, any> | null

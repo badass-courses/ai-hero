@@ -135,13 +135,19 @@ export interface ResourceFormConfig<
 	 * Function to update resource data
 	 * @throws {Error} When resource data is invalid or update fails
 	 */
-	updateResource: (resource: Partial<T>) => Promise<T>
+	updateResource: (
+		resource: Partial<T>,
+		action?: 'save' | 'publish' | 'archive' | 'unpublish',
+	) => Promise<T>
 
 	/**
 	 * Optional function for automatic resource updates
 	 * Used for auto-saving or background updates
 	 */
-	autoUpdateResource?: (resource: Partial<T>) => Promise<T>
+	autoUpdateResource?: (
+		resource: Partial<T>,
+		action?: 'save' | 'publish' | 'archive' | 'unpublish',
+	) => Promise<T>
 
 	/** Optional callback after successful save */
 	onSave?: (resource: ContentResource, hasNewSlug: boolean) => Promise<void>

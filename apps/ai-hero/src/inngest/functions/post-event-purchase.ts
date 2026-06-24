@@ -7,6 +7,13 @@ import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/inngest/co
 import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
 import type { Product } from '@coursebuilder/core/schemas'
 
+type ProductResourceReference = {
+	resource?: {
+		id?: string
+		type?: string | null
+	} | null
+}
+
 /**
  * Post-event purchase workflow that adds purchasers to Google Calendar events.
  *
@@ -62,9 +69,12 @@ export const postEventPurchase = inngest.createFunction(
 		const isTeamPurchase = Boolean(purchase.bulkCouponId)
 
 		// Find the event or event-series associated with this product
-		const eventResourceId = product.resources?.find((resource) =>
-			['event', 'event-series'].includes(resource.resource?.type),
-		)?.resource.id
+		const productWithResources = product as Product & {
+			resources?: ProductResourceReference[]
+		}
+		const eventResourceId = productWithResources.resources?.find((resource) =>
+			['event', 'event-series'].includes(resource.resource?.type ?? ''),
+		)?.resource?.id
 
 		const eventResource = await step.run(`get event resource`, async () => {
 			await log.debug('purchase.post-event.resource.lookup.started', {

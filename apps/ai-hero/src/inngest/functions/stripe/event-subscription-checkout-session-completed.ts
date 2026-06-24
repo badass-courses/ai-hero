@@ -1,5 +1,5 @@
-import { organizationMemberships } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
+import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
 import { ensurePersonalOrganization } from '@/lib/personal-organization-service'
 
 import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-subscription-created'
@@ -167,7 +167,9 @@ export const stripeSubscriptionCheckoutSessionComplete = inngest.createFunction(
 					throw new Error('organization is null')
 				}
 
-				const userMemberships = await db.getMembershipsForUser(user.id)
+				const userMemberships = (await db.getMembershipsForUser(
+					user.id,
+				)) as OrganizationMembershipLike[]
 
 				const organizationMembership = userMemberships.find(
 					(membership) => membership.organizationId === organization.id,

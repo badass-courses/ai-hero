@@ -64,11 +64,10 @@ const checkForAnyAvailableUpgrades = async ({
 	type AvailableUpgrade = Awaited<
 		ReturnType<typeof courseBuilderAdapter.availableUpgradesForProduct>
 	>[0]
+	const typedPotentialUpgrades = potentialUpgrades as AvailableUpgrade[]
 	// filter out potential upgrades that have already been purchased
-	const availableUpgrades = potentialUpgrades.filter<AvailableUpgrade>(
-		(
-			availableUpgrade: AvailableUpgrade,
-		): availableUpgrade is AvailableUpgrade => {
+	const availableUpgrades = typedPotentialUpgrades.filter(
+		(availableUpgrade): availableUpgrade is AvailableUpgrade => {
 			return !productIdsAlreadyPurchased.includes(
 				availableUpgrade.upgradableTo.id,
 			)

@@ -95,11 +95,11 @@ async function getUser() {
 		return null
 	}
 
-	return await courseBuilderAdapter
-		.findOrCreateUser(subscriber.email_address, subscriber.first_name)
-		.then(({ user }) => {
-			return user
-		})
+	const result = await courseBuilderAdapter.findOrCreateUser(
+		subscriber.email_address,
+		subscriber.first_name,
+	)
+	return result.user
 }
 
 export async function addProgress({ resourceId }: { resourceId: string }) {

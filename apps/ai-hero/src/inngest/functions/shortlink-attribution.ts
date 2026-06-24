@@ -118,8 +118,8 @@ export const shortlinkAttribution = inngest.createFunction(
 			}
 		})
 
-		await step.run('emit-ga4-purchase', async () => {
-			await sendGA4Event({
+		const ga4Result = await step.run('emit-ga4-purchase', async () => {
+			const ga4 = await sendGA4Event({
 				client_id: extractGA4ClientId(
 					resolvePurchaseGA4ClientId(purchase.fields),
 				),
@@ -143,9 +143,20 @@ export const shortlinkAttribution = inngest.createFunction(
 					},
 				],
 			})
-			return { ga4_sent: true }
+
+			await log.info('analytics.purchase.ga4_receipt', {
+				purchaseId: purchase.id,
+				productId: product?.id,
+				status: ga4.status,
+				eventNames: ga4.eventNames,
+				eventCount: ga4.eventCount,
+				httpStatus: ga4.httpStatus,
+				reason: ga4.reason,
+			})
+
+			return ga4
 		})
 
-		return result
+		return { ...result, ga4: ga4Result }
 	},
 )

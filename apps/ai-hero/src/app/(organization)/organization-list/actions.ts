@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { courseBuilderAdapter } from '@/db'
+import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { z } from 'zod'
@@ -48,7 +49,9 @@ export async function switchOrganization(organizationId: string) {
 
 		// 3. Verify user has access to the specified organization
 		const userMemberships =
-			await courseBuilderAdapter.getMembershipsForUser(userId)
+			(await courseBuilderAdapter.getMembershipsForUser(
+				userId,
+			)) as OrganizationMembershipLike[]
 		const hasAccess = userMemberships.some(
 			(membership) => membership.organizationId === validatedOrgId,
 		)

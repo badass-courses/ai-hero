@@ -4,6 +4,7 @@ import { contentResource, contentResourceResource } from '@/db/schema'
 import { SKILL_CHANGELOG_PUBLISHED_EVENT } from '@/inngest/events/skill-changelog'
 import { inngest } from '@/inngest/inngest.server'
 import {
+	getSkillChangelogForEdit,
 	SKILL_CHANGELOG_RESOURCE_TYPE,
 	SKILL_CHANGELOG_SLUG_PREFIX,
 } from '@/lib/skill-changelog-query'
@@ -237,6 +238,29 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 		const slug = baseSlug.startsWith(SKILL_CHANGELOG_SLUG_PREFIX)
 			? baseSlug
 			: `${SKILL_CHANGELOG_SLUG_PREFIX}${baseSlug}`
+
+		const existingResource = await getSkillChangelogForEdit(slug)
+
+		if (existingResource) {
+			await log.warn('api.skills.changelog.post.duplicate_slug', {
+				requestId,
+				operation,
+				route: '/api/skills/changelog',
+				method: 'POST',
+				userId: user.id,
+				resourceId: existingResource.id,
+				slug,
+				state: existingResource.fields.state,
+				visibility: existingResource.fields.visibility,
+			})
+			return jsonError({
+				message: `A skill changelog with slug "${slug}" already exists.`,
+				code: 'SKILL_CHANGELOG_SLUG_EXISTS',
+				fix: 'Fetch and update the existing skill changelog, or choose a unique slug before creating a new one.',
+				status: 409,
+				nextActions: createNextActions(slug, existingResource.id),
+			})
+		}
 
 		const fields = {
 			title: input.title.trim(),

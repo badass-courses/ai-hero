@@ -95,11 +95,15 @@ export async function getSkillChangelogEntry(
 	const entry = await db.query.contentResource.findFirst({
 		where: and(
 			or(
-				eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`, slugOrId),
+				eq(
+					sql`JSON_UNQUOTE(JSON_EXTRACT (${contentResource.fields}, "$.slug"))`,
+					slugOrId,
+				),
 				eq(contentResource.id, slugOrId),
 			),
 			publicSkillChangelogWhere,
 		),
+		orderBy: desc(contentResource.createdAt),
 		with: {
 			resources: {
 				with: { resource: true },
@@ -160,11 +164,24 @@ export async function getSkillChangelogForEdit(
 	const entry = await db.query.contentResource.findFirst({
 		where: and(
 			or(
-				eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`, slugOrId),
+				eq(
+					sql`JSON_UNQUOTE(JSON_EXTRACT (${contentResource.fields}, "$.slug"))`,
+					slugOrId,
+				),
 				eq(contentResource.id, slugOrId),
 			),
 			skillChangelogResourceWhere,
 		),
+		orderBy: [
+			sql`CASE
+				WHEN ${contentResource.id} = ${slugOrId} THEN 0
+				WHEN JSON_UNQUOTE(JSON_EXTRACT (${contentResource.fields}, "$.state")) = 'published' THEN 1
+				WHEN JSON_UNQUOTE(JSON_EXTRACT (${contentResource.fields}, "$.state")) = 'draft' THEN 2
+				WHEN JSON_UNQUOTE(JSON_EXTRACT (${contentResource.fields}, "$.state")) = 'archived' THEN 3
+				ELSE 4
+			END`,
+			desc(contentResource.createdAt),
+		],
 		with: {
 			resources: {
 				with: { resource: true },

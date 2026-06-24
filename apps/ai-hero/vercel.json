@@ -5,5 +5,5 @@
 			"schedule": "*/5 * * * *"
 		}
 	],
-"installCommand": "npx -y pnpm@11.1.2 install"
+"installCommand": "npx -y pnpm@11.1.2 install --frozen-lockfile"
 }

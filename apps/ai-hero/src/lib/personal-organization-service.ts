@@ -1,3 +1,4 @@
+import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
 import { log } from '@/server/logger'
 
 import type { CourseBuilderAdapter } from '@coursebuilder/core/adapters'
@@ -40,7 +41,9 @@ export async function getPersonalOrganization(
 		throw new Error('User email is required to find personal organization')
 	}
 
-	const memberships = await adapter.getMembershipsForUser(user.id)
+	const memberships = (await adapter.getMembershipsForUser(
+		user.id,
+	)) as OrganizationMembershipLike[]
 	const expectedOrgName = getPersonalOrgName(user.email)
 
 	const personalMembership = memberships.find(
