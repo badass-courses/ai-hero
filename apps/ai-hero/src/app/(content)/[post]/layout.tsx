@@ -1,4 +1,5 @@
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getCachedListForPost } from '@/lib/lists-query'
 import { getModuleProgressForUser } from '@/lib/progress'
@@ -36,16 +37,26 @@ export default async function Layout(props: {
 		),
 	)
 
+	// Context-dependent sidebar: posts that belong to a list/series keep the
+	// in-series ListResourceNavigation; standalone posts (and list landing
+	// pages) get the global docs-style hub sidebar. See
+	// plans/navigation-redesign.md (Phase 3).
+	const isPartOfSeries = Boolean(list)
+
 	return (
 		<ListProvider initialList={list} currentPostHasVideo={currentPostHasVideo}>
 			<ProgressProvider initialProgress={initialProgress}>
 				<ActiveHeadingProvider>
 					<LayoutClient withContainer>
-						<div className="flex flex-1">
-							<ListResourceNavigation />
-							<MobileListResourceNavigation />
-							<div className="w-full min-w-0">{props.children}</div>
-						</div>
+						{isPartOfSeries ? (
+							<div className="flex flex-1">
+								<ListResourceNavigation />
+								<MobileListResourceNavigation />
+								<div className="w-full min-w-0">{props.children}</div>
+							</div>
+						) : (
+							<HubLayout>{props.children}</HubLayout>
+						)}
 					</LayoutClient>
 				</ActiveHeadingProvider>
 			</ProgressProvider>
