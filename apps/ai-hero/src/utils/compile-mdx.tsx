@@ -112,8 +112,18 @@ async function MdxEmbeddedVideo({
 	poster?: string
 }) {
 	if (!resourceId) return null
-	const videoResource = await getCachedVideoResourceForMdx(resourceId)
-	const muxPlaybackId = videoResource?.muxPlaybackId ?? undefined
+	let muxPlaybackId: string | undefined
+	try {
+		const videoResource = await getCachedVideoResourceForMdx(resourceId)
+		muxPlaybackId = videoResource?.muxPlaybackId ?? undefined
+	} catch (error) {
+		// Isolate the failure to this embed instead of failing the whole render.
+		await log.error('mdx.video.resolve.error', {
+			resourceId,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return null
+	}
 	if (!muxPlaybackId) return null
 	return (
 		<DynamicMDXVideo

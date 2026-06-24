@@ -53,18 +53,21 @@ export async function LessonPage({
 
 	const abilityLoader = getAbilityForResource(params.lesson, params.module)
 
+	const ability = await abilityLoader
+
+	if (!ability.canViewLesson) {
+		redirect(`/workshops/${params.module}`)
+	}
+
+	// Compile the lesson body only after the viewer is confirmed allowed to open
+	// the lesson. Compilation can resolve embedded video playback IDs server-side
+	// (see compile-mdx.tsx), so it must never run for an unauthorized viewer.
 	const mdxContentPromise = compileMDX(
 		lesson?.fields?.body || '',
 		{},
 		{},
 		{ lessonId: lesson.id },
 	)
-
-	const ability = await abilityLoader
-
-	if (!ability.canViewLesson) {
-		redirect(`/workshops/${params.module}`)
-	}
 
 	return (
 		<main className="w-full">
