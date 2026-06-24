@@ -18,6 +18,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from '../ui/tooltip'
+import { MobileMenuPanel } from './mobile-menu-panel'
 import { MobileNavigation } from './mobile-navigation'
 import { NavLinkItem } from './nav-link-item'
 import { getNavMode } from './nav-mode'
@@ -175,14 +176,15 @@ const Navigation = () => {
 	const showSearch = mode === 'full' || mode === 'hub'
 
 	return (
-		<header
-			className={cn(
-				'bg-background/90 h-(--nav-height) relative z-50 flex w-full items-stretch justify-between border-b px-0 backdrop-blur-md print:hidden',
-				{
-					'sticky top-0': !params.lesson,
-				},
-			)}
-		>
+		<>
+			<header
+				className={cn(
+					'bg-background/90 h-(--nav-height) relative z-50 flex w-full items-stretch justify-between border-b px-0 backdrop-blur-md print:hidden',
+					{
+						'sticky top-0': !params.lesson,
+					},
+				)}
+			>
 			<div className="flex w-full items-stretch justify-between">
 				<div className="flex items-stretch">
 					<span
@@ -250,7 +252,9 @@ const Navigation = () => {
 					subscriber={subscriber}
 				/>
 			</div>
-		</header>
+			</header>
+			<MobileMenuPanel isOpen={isMobileMenuOpen} />
+		</>
 	)
 }
 

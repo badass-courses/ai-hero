@@ -114,6 +114,7 @@ Locked: **the promo bar is not dismissible.** This removes any cookie read, so t
 7. **Phase 7 — Promo system.** One active promo, manual override wins, else latest post/video; server-rendered, NOT dismissible; scrolls away. See the promo bar section above.
 8. **Phase 8 — In-content cross-promo.** MDX callout components (rich + slim) with optional auto-insertion; CTA mapped to intent.
 9. **Phase 9 — Mobile nav.** Universal bar; hamburger right; push-down (not overlay) scrollable menu; breadcrumbs on nested pages; promo strip above nav scrolls away.
+   - **As built:** mobile bar = Matt-avatar brand (shared) + search→`/posts` + newsletter + hamburger (right). `MobileMenuPanel` renders as a sibling below the sticky header (normal flow → pushes content down, not an overlay `Sheet`), scrollable (`max-h` + `overflow-y-auto`). Content mirrors the desktop IA: prominent Courses + account, primary links (Start Here emphasized, Principles, Skills, Tools), Resources, collapsible Topics, account actions + theme. Closes on navigation via the pathname effect. What's New omitted on mobile (needs server data; revisit). Visual push-down/scroll on a narrow viewport still wants an eyeball.
 10. **Phase 10 — QA & launch checks.** Per-route mode correctness, active states, breadcrumbs, promo fallback/override, mobile push-down, responsive/visual/a11y.
 
 ## Open decisions (pre-launch)
