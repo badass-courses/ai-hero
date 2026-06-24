@@ -97,6 +97,7 @@ Locked: **the promo bar is not dismissible.** This removes any cookie read, so t
 - **Placement:** render in root `src/app/layout.tsx`, above `children`, so DOM order is PromoBar → page (`LayoutClient → Navigation`). Nav stays `sticky top-0`; promo scrolls away (not sticky). Default full-width above nav; content-width is a later visual option.
 - **Rendering:** server-fetch only; no client `useQuery`/pop-in. Reuse existing cached queries so the bar stays static-friendly. Mobile: same bar above nav, shorter copy, scrolls away.
 - Overrides the source plan's "dismissible if a dismissal pattern exists" — dismissibility intentionally dropped.
+- **As built (Phase 7):** `PromoBar` (server) in root `layout.tsx` above `{children}`, full-width, not sticky. `promo-config.ts` holds the `FEATURED_PROMO` manual override (currently `null`); fallback resolves the latest published/public post via `getCachedAllPosts`. Verified rendering above the nav. Not yet wired: sale/coupon promo via `getSaleBannerData` (follow-up), and mobile shorter-copy tuning (Phase 9).
 
 ## Phase plan (implementation order)
 
