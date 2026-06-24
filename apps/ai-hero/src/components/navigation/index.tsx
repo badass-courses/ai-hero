@@ -23,7 +23,6 @@ import { NavLinkItem } from './nav-link-item'
 import { getNavMode } from './nav-mode'
 import { NavPill } from './nav-pill'
 import {
-	COURSES_NAV_ITEM,
 	PRIMARY_LEARNING_ENTRY,
 	PRIMARY_NAV_ITEMS,
 	SEARCH_HREF,
@@ -212,7 +211,7 @@ const Navigation = () => {
 							</span>
 						</Link>
 					</span>
-					{mode === 'full' && (
+					{mode !== 'minimal' && (
 						<nav
 							className="hidden items-stretch lg:flex"
 							aria-label="Primary navigation"
@@ -230,21 +229,6 @@ const Navigation = () => {
 										className="font-normal"
 									/>
 								))}
-							</ul>
-						</nav>
-					)}
-					{mode === 'hub' && (
-						<nav
-							className="hidden items-stretch lg:flex"
-							aria-label="Primary navigation"
-						>
-							<ul className="flex items-stretch">
-								<NavLinkItem
-									href={COURSES_NAV_ITEM.href}
-									label={COURSES_NAV_ITEM.label}
-									textLabel={COURSES_NAV_ITEM.label}
-									className="font-normal"
-								/>
 							</ul>
 						</nav>
 					)}

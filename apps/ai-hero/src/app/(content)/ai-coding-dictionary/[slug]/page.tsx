@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
 import {
@@ -50,6 +51,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
 
 	return (
 		<LayoutClient withContainer>
+			<HubLayout>
 			<ContentReadTracker
 				contentId={`ai-coding-dictionary:${entry.slug}`}
 				contentType="dictionary-entry"
@@ -131,6 +133,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
 					/>
 				</div>
 			</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }

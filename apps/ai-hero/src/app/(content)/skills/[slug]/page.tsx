@@ -9,6 +9,7 @@ import {
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
@@ -57,6 +58,7 @@ ${entry.fields?.body ?? ''}`
 
 	return (
 		<LayoutClient withContainer>
+			<HubLayout>
 			<main className="bg-card w-full dark:bg-transparent">
 				<ArticleStructuredData
 					resource={entry}
@@ -146,6 +148,7 @@ ${entry.fields?.body ?? ''}`
 					</article>
 				</div>
 			</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }

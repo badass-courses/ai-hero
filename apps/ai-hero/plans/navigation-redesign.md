@@ -9,7 +9,7 @@ Source materials live in `~/Downloads/Navigation redesign project/` (`navigation
 Two navigation modes, selected by route type:
 
 - **Full top nav** — homepage and course/sales pages. Carries identity + all primary destinations. No sidebar.
-- **Hub top nav + docs sidebar** — free learning/resource pages. Slim top bar (brand + Courses + search/newsletter/login); the sidebar carries Principles, Skills, Tools, topics, and resources.
+- **Hub top nav + docs sidebar** — free learning/resource pages. The top nav keeps the SAME primary items as full mode (Start Here, Principles, Skills, Tools, Courses); the only difference is the docs sidebar, which adds depth (topics, What's New, resources). The wireframe's "..." on hub pages meant "same items as the homepage", not a collapsed nav.
 
 One universal mobile top bar replaces both desktop modes.
 
@@ -44,7 +44,7 @@ Cache Components is **off** (`next.config.mjs` `experimental` has no `cacheCompo
 
 ## Route classification → nav mode
 
-The deliverable mapping. `FULL` = full top nav, no sidebar. `HUB` = slim top nav + docs sidebar. `MOBILE` = universal bar (applies everywhere on small screens). Editor/admin/auth/utility routes keep the current minimal nav (treat as `FULL` without emphasis, or exclude from redesign).
+The deliverable mapping. `FULL` = full top nav, no sidebar. `HUB` = same full top nav + docs sidebar. `MOBILE` = universal bar (applies everywhere on small screens). Editor/admin/auth/utility routes keep the current minimal nav (treat as `FULL` without emphasis, or exclude from redesign).
 
 | Route (URL pattern) | Page file | Mode | Notes |
 |---|---|---|---|
@@ -102,11 +102,15 @@ Locked: **the promo bar is not dismissible.** This removes any cookie read, so t
 
 1. **Phase 1 — Discovery (this doc).** ✅ Route classification + inventory + locked decisions.
 2. **Phase 2 — Nav shell.** `getNavMode` helper; refactor top nav into `full`/`hub` variants; left brand = Matt avatar (Start Here emphasized, Principles/Skills/Tools/Courses, search→`/posts`, newsletter, login). Full-width presentation.
-3. **Phase 3 — Sidebar.** Install shadcn `sidebar`; central data model (Explore / Tentpoles / What's New / Topic tree); active highlighting; breadcrumbs above nested content; collapsed icon-rail option for catalog pages.
+3. **Phase 3 — Sidebar.** shadcn `sidebar` (from `@coursebuilder/ui`); central data model (Explore / Resources / What's New / Topic tree); active highlighting; breadcrumbs above nested content; collapsed icon-rail option for catalog pages.
+   - **As built:** `HubSidebar` (client, desktop-only) + `HubLayout` (server, fetches What's New). Wired into `/learn`, `/principles`, `/tools`, `/skills`, `/skills/[slug]`, `/ai-coding-dictionary/[slug]`, and standalone articles + list landings via the `[post]` layout.
+   - **Context-dependent articles:** posts in a list/series keep `ListResourceNavigation`; standalone posts get the hub sidebar (branch on `Boolean(list)`).
+   - **Excluded by decision:** `/posts` keeps its own full-width list + knowledge-graph layout (no docs sidebar). The dictionary index keeps its bespoke A–Z `DictionarySidebar`; only dictionary entries get the hub sidebar.
+   - **Breadcrumbs:** reusable `Breadcrumbs` component built. The skills/dictionary entry pages already have back-links; broader breadcrumb trails wait on the topic taxonomy (open decision).
 4. **Phase 4 — Learning Hub page** (`/learn` or final name). Curated starts, browse-by-goal, tentpoles, what's new, featured Skills/Tools, contextual course CTA.
 5. **Phase 5 — Tentpole pages.** Principles/Process, Skills landing treatment, Tools landing, Courses/Workshops page (no sidebar on sales pages).
 6. **Phase 6 — Search entry.** Wire search icon → `/posts` in both modes. Command-K deferred.
-7. **Phase 7 — Promo system.** One active promo, manual override wins, else latest post/video; dismissible; scrolls away.
+7. **Phase 7 — Promo system.** One active promo, manual override wins, else latest post/video; server-rendered, NOT dismissible; scrolls away. See the promo bar section above.
 8. **Phase 8 — In-content cross-promo.** MDX callout components (rich + slim) with optional auto-insertion; CTA mapped to intent.
 9. **Phase 9 — Mobile nav.** Universal bar; hamburger right; push-down (not overlay) scrollable menu; breadcrumbs on nested pages; promo strip above nav scrolls away.
 10. **Phase 10 — QA & launch checks.** Per-route mode correctness, active states, breadcrumbs, promo fallback/override, mobile push-down, responsive/visual/a11y.

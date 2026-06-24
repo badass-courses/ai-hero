@@ -6,8 +6,11 @@
  * label, "Courses" vs "Workshops", the final hub URL) are one-line changes.
  *
  * Mode usage (see `nav-mode.ts`):
- * - full: PRIMARY_LEARNING_ENTRY (emphasized) + PRIMARY_NAV_ITEMS.
- * - hub:  COURSES_NAV_ITEM only — the sidebar (Phase 3) carries the rest.
+ * - full + hub: PRIMARY_LEARNING_ENTRY (emphasized) + PRIMARY_NAV_ITEMS. The
+ *   top nav is identical in both modes; hub pages additionally get the docs
+ *   sidebar. (The wireframe's "..." on hub pages meant "same items as the
+ *   homepage", not a collapsed nav.)
+ * - minimal: no center nav.
  */
 
 export type PrimaryNavItem = {

@@ -3,6 +3,7 @@ import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { Resource } from '@/components/landing/resource'
 import { SectionHeading } from '@/components/landing/section-heading'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getList } from '@/lib/lists-query'
 import {
@@ -81,6 +82,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 
 	return (
 		<LayoutClient withContainer>
+			<HubLayout>
 			<main className="bg-background text-foreground">
 				<SkillsHero newsletterState={newsletterState} />
 
@@ -125,6 +127,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 				<SkillsGitHubSection />
 				<CompanyLogoGrid className="border-t pt-6" />
 			</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }
