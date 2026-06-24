@@ -245,10 +245,12 @@ export const GET = withSkill(async (request: NextRequest) => {
 				ok: true,
 				endpoint: '/api/analytics',
 				description:
-					'AI Hero analytics — revenue, attribution, traffic, YouTube, and content correlation',
+					'AI Hero analytics, revenue, attribution, traffic, YouTube, and content correlation',
 				notes: [
 					'The traffic surface includes GA4 device category, operating system, and screen resolution breakdowns with session percentages.',
-					'Use range=180d for roughly the last six months of traffic data.',
+					'Use range=180d only for GA4 traffic surfaces. Non-GA4 surfaces intentionally reject it.',
+					'Attribution coverage includes quality lanes when the database provider exposes them. Coverage does not mean clean first-touch attribution.',
+					'GA4 conversion writes return safe receipts in Inngest logs, but GA4 is not the revenue source of truth.',
 					'YouTube surfaces are useful for correlation/content analysis but lag by about 48 hours.',
 				],
 				surfaces: catalog,

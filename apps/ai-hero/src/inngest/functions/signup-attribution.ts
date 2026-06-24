@@ -17,23 +17,28 @@ export const signupAttribution = inngest.createFunction(
 		}
 
 		const ga4Result = await step.run('emit-ga4-signup', async () => {
-			await sendGA4Event({
+			const ga4 = await sendGA4Event({
 				client_id: crypto.randomUUID(),
 				user_id: user.id,
 				events: [
 					{
 						name: 'sign_up',
-						params: { method: 'email' },
+						params: { method: 'email', client_id_source: 'generated' },
 					},
 				],
 			})
 
-			await log.info('analytics.signup.ga4_sent', {
+			await log.info('analytics.signup.ga4_receipt', {
 				userId: user.id,
-				email: user.email,
+				status: ga4.status,
+				eventNames: ga4.eventNames,
+				eventCount: ga4.eventCount,
+				httpStatus: ga4.httpStatus,
+				reason: ga4.reason,
+				clientIdSource: 'generated',
 			})
 
-			return { sent: true }
+			return { ...ga4, clientIdSource: 'generated' }
 		})
 
 		return { recorded: true, userId: user.id, ga4: ga4Result }
