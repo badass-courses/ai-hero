@@ -86,11 +86,6 @@ const config = {
 				permanent: true,
 			},
 			{
-				source: '/ai-skills-for-real-engineers',
-				destination: '/skills',
-				permanent: true,
-			},
-			{
 				source: '/articles/triage',
 				destination: '/burn-through-your-backlog-with-my-triage-skill',
 				permanent: true,
