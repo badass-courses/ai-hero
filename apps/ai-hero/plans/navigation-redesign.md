@@ -117,6 +117,44 @@ Locked: **the promo bar is not dismissible.** This removes any cookie read, so t
    - **As built:** mobile bar = Matt-avatar brand (shared) + search→`/posts` + newsletter + hamburger (right). `MobileMenuPanel` renders as a sibling below the sticky header (normal flow → pushes content down, not an overlay `Sheet`), scrollable (`max-h` + `overflow-y-auto`). Content mirrors the desktop IA: prominent Courses + account, primary links (Start Here emphasized, Principles, Skills, Tools), Resources, collapsible Topics, account actions + theme. Closes on navigation via the pathname effect. What's New omitted on mobile (needs server data; revisit). Visual push-down/scroll on a narrow viewport still wants an eyeball.
 10. **Phase 10 — QA & launch checks.** Per-route mode correctness, active states, breadcrumbs, promo fallback/override, mobile push-down, responsive/visual/a11y.
 
+## Data architecture (where structure & content live)
+
+The remaining phases (4 hub page, 5 tentpole pages, plus the real sidebar topic
+tree) are content-bearing.
+
+**Decision (v1): static in-repo for everything EXCEPT the Topic tree, which uses
+CMS `topic` tags.** Ship landing copy, curation, and tentpole/featured lists as
+in-repo config/MDX for speed and code review; migrate the editable ones to the
+CMS post-launch. The one exception is the sidebar Topic tree: taxonomy + post
+membership are genuine content, so they live in the tag system from the start.
+
+All CMS reads (tags now; pages/lists later) go through cached server queries and
+are passed into client components as props (same pattern as What's New) —
+server-rendered, no layout shift.
+
+Coursebuilder primitives available: **tags** (`type: 'topic'`, fields
+`label`/`slug`/`popularity_order`/`contexts`; `/admin/tags`), **pages** (MDX
+`body`; `getPage(slugOrId)`; `/admin/pages`), **lists** (curated resource
+collections; `getList(id)`, the `SKILLS_LIST_ID` pattern).
+
+| Element | Source | Mechanism | Notes |
+|---|---|---|---|
+| Primary nav + Explore links (routes) | **Static** | `primary-nav.ts`, `hub-sidebar-data.ts` | App IA; needs code for the routes anyway. Done. |
+| Sidebar **Topic tree** (taxonomy + members) | **CMS: tags** | `topic` tags + `contentResourceTag`; NEW "posts by topic" query; topic landing route | Editable in `/admin/tags`. Requires tagging posts (content op). Replaces the current static placeholder. |
+| Sidebar **Resources**/tentpoles | **Static (v1)** → CMS list later | `hub-sidebar-data.ts` now; `getList(RESOURCES_LIST_ID)` later | Small curated set. |
+| **What's New** | **Dynamic query** | `getCachedAllPosts` latest | Done. |
+| Hub page (`/learn`) editorial sections | **Static (v1)** → CMS page later | in-repo MDX/config + queries for featured Skills/Tools/posts | Migrate copy to `getPage('learn')` post-launch. |
+| **Principles** page | **Static (v1)** → CMS page later | in-repo MDX | Migrate to `getPage('principles')` (like `/faq`) later. |
+| **Tools** landing | **Static (v1)** → CMS later | in-repo curated list + copy | No `tools` content type; hardcode the project cards for v1. |
+| **Courses** page | **Query existing resources** + static intro | query cohorts/workshops; in-repo intro copy | Offerings are already content resources. Events inclusion = open decision. |
+| Featured Skills/Tools on hub | **Static (v1)** → CMS list later | in-repo config | Reuse the `SKILLS` featured-list pattern when migrating. |
+| Promo override (`FEATURED_PROMO`) | **Static v1**, CMS later | config now; a `promo` resource/flag later | Marketing-editable is a v2 upgrade. |
+
+Cross-cutting build items (the Topic-tree CMS exception):
+- A **"posts by topic/tag" query** (only `getPostTags(postId)` exists today) + a topic landing route (e.g. `/topics/[slug]`), so the topic tree links somewhere real.
+- `HubLayout` (server) also fetches `getTags()` (cached) and passes the topic tree into `HubSidebar` (same prop pattern as What's New); `hub-sidebar-data.ts` keeps Explore + Resources static.
+- **Content op** (Amy/team, not code): define the `topic` tags in `/admin/tags` and tag the existing posts. Everything else for v1 is in-repo.
+
 ## Open decisions (pre-launch)
 
 - Final public name for the hub/map page (`Learning Hub` is internal-only).
