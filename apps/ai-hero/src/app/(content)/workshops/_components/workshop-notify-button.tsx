@@ -42,20 +42,23 @@ export const WorkshopNotifyButton = ({
 
 	const handleClick = () => {
 		const buy = document.getElementById('buy')
-		buy?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-		// On desktop the form sits beside the body, so focus its first field. On
-		// mobile we just scroll down to it (avoid popping the keyboard early).
+		// On desktop the interest form sits in the sticky sidebar and is already
+		// in view, so don't scroll at all — just focus its first field. On mobile
+		// the form is below the body, so scroll down to it instead (and don't
+		// focus, to avoid popping the keyboard early).
 		if (window.matchMedia('(min-width: 768px)').matches) {
 			buy
 				?.querySelector<HTMLInputElement>('input')
 				?.focus({ preventScroll: true })
+		} else {
+			buy?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 		}
 	}
 
 	return (
 		<Button
 			size="lg"
-			className={cn('h-12 rounded-none px-8', className)}
+			className={cn('h-12 cursor-pointer rounded-none px-8', className)}
 			onClick={handleClick}
 		>
 			{children}

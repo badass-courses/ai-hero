@@ -158,7 +158,7 @@ function SkillsCtaTagMe({
 				type="button"
 				onClick={handleClick}
 				disabled={isPending}
-				className="bg-primary text-primary-foreground hover:bg-primary/90 flex h-12 items-center justify-center px-6 text-sm font-semibold transition disabled:opacity-60"
+				className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring flex h-12 cursor-pointer items-center justify-center px-6 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
 			>
 				{isPending ? <Spinner className="h-4 w-4" /> : 'Send me skill updates'}
 			</button>

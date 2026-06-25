@@ -13,7 +13,10 @@ import { GRADIENT_IMAGE } from '@/components/resource-hover-frame'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { addWorkshopInterest } from './workshop-interest-actions'
+import {
+	addWorkshopInterest,
+	tagWorkshopInterestByEmail,
+} from './workshop-interest-actions'
 import { workshopInterestFieldKey } from './workshop-interest-config'
 
 /**
@@ -49,6 +52,14 @@ export const WorkshopInterestCta = ({
 				location: 'workshop_interest',
 				workshop: workshopSlug,
 			})
+			// The form sets the per-workshop field but can't apply a tag, so tag
+			// the new subscriber for parity with the one-click path. Fire-and-forget
+			// (best-effort) so the redirect isn't blocked on the Kit round-trips.
+			if (sub.email_address) {
+				void tagWorkshopInterestByEmail(sub.email_address, workshopSlug).catch(
+					() => {},
+				)
+			}
 			router.push(redirectUrlBuilder(sub, '/confirm'))
 		}
 	}

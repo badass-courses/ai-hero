@@ -7,15 +7,45 @@ import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
-import { workshopInterestFieldKey } from './workshop-interest-config'
+import {
+	workshopInterestFieldKey,
+	workshopInterestTagName,
+} from './workshop-interest-config'
 
 /**
- * Tag an already-subscribed visitor as interested in a specific (pre-launch)
- * workshop by setting the per-workshop custom field to today's date.
+ * Apply the per-workshop Kit tag (interest_<slug>) to a subscriber by email.
+ * The tag drives Kit automations/segmentation; the custom field keeps the date
+ * value. Best-effort: failures are logged but never thrown, so tagging can't
+ * break the field write / signup the visitor just completed.
+ */
+async function applyWorkshopInterestTag({
+	email,
+	workshopSlug,
+}: {
+	email: string
+	workshopSlug: string
+}) {
+	const tagName = workshopInterestTagName(workshopSlug)
+	try {
+		// The provider resolves the tag name to an id (creating the tag on first
+		// use) and applies it. tagSubscriber is optional on the interface, but the
+		// ConvertKit provider always defines it.
+		await emailListProvider.tagSubscriber?.({ tag: tagName, email })
+	} catch (error) {
+		await log.error('workshop.interest.tag.failed', {
+			workshopSlug,
+			tagName,
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
+}
+
+/**
+ * One-click interest for visitors already on the list: set the per-workshop
+ * custom field (today's date) and apply the interest_<slug> tag.
  *
  * New visitors go through the regular ConvertKit subscribe form (which carries
- * the same field); this action is the one-click path for people who are already
- * on the list, mirroring the skills "tag me" flow.
+ * the same field); they get tagged via `tagWorkshopInterestByEmail` on success.
  */
 export async function addWorkshopInterest(workshopSlug: string) {
 	const subscriber = await getSubscriberFromCookie()
@@ -33,15 +63,25 @@ export async function addWorkshopInterest(workshopSlug: string) {
 	const today = new Date().toISOString().slice(0, 10)
 
 	try {
-		const updated = await emailListProvider.subscribeToList({
-			listId: env.CONVERTKIT_SIGNUP_FORM,
-			listType: 'form',
-			user: {
+		// The field write and the tag apply are independent; run them concurrently
+		// so the user's one-click isn't stuck behind two serial CK pipelines.
+		// applyWorkshopInterestTag is best-effort (never throws), so Promise.all
+		// can't reject on a tag failure.
+		const [updated] = await Promise.all([
+			emailListProvider.subscribeToList({
+				listId: env.CONVERTKIT_SIGNUP_FORM,
+				listType: 'form',
+				user: {
+					email: subscriber.email_address,
+					name: subscriber.first_name ?? undefined,
+				} as any,
+				fields: { [fieldKey]: today },
+			}),
+			applyWorkshopInterestTag({
 				email: subscriber.email_address,
-				name: subscriber.first_name ?? undefined,
-			} as any,
-			fields: { [fieldKey]: today },
-		})
+				workshopSlug,
+			}),
+		])
 
 		if (updated) {
 			await setSubscriberCookie(SubscriberSchema.parse(updated))
@@ -66,4 +106,20 @@ export async function addWorkshopInterest(workshopSlug: string) {
 		})
 		return { success: false, reason: 'request-failed' as const }
 	}
+}
+
+/**
+ * Apply the interest_<slug> tag to a subscriber by email. Used by the
+ * new-subscriber form path: the ConvertKit subscribe form sets the per-workshop
+ * custom field but can't apply a tag, so both signup paths tag consistently.
+ */
+export async function tagWorkshopInterestByEmail(
+	email: string,
+	workshopSlug: string,
+) {
+	if (!email) {
+		return { success: false, reason: 'no-email' as const }
+	}
+	await applyWorkshopInterestTag({ email, workshopSlug })
+	return { success: true as const }
 }
