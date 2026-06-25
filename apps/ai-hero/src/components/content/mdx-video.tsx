@@ -12,27 +12,39 @@ import Spinner from '../spinner'
 
 export default function MDXVideo({
 	resourceId,
+	muxPlaybackId,
 	thumbnailTime = 0,
 	poster,
 	className,
 	props,
 }: {
 	resourceId: string
+	/**
+	 * Playback ID resolved server-side (free MDX embeds). When provided, the
+	 * gated `videoResources.get` query is skipped — see the `Video` mapping in
+	 * `compile-mdx.tsx`. Callers that only pass `resourceId` (e.g. the admin page
+	 * builder) keep falling back to the query.
+	 */
+	muxPlaybackId?: string
 	thumbnailTime?: number
 	poster?: string
 	className?: string
 	props?: MuxPlayerProps
 }) {
-	const { data, status } = api.videoResources.get.useQuery({
-		videoResourceId: resourceId,
-	})
+	const { data, status } = api.videoResources.get.useQuery(
+		{ videoResourceId: resourceId },
+		{ enabled: !muxPlaybackId },
+	)
 	const muxMetadata = useMuxMetadata({
 		videoId: resourceId,
 		videoTitle: resourceId,
 		contentType: 'mdx-embed',
 	})
 
-	if (status === 'pending')
+	const playbackId = muxPlaybackId ?? data?.muxPlaybackId
+
+	// Only show the loading state while the fallback query is actually running.
+	if (!muxPlaybackId && status === 'pending')
 		return (
 			<div
 				className={cn(
@@ -53,7 +65,7 @@ export default function MDXVideo({
 			</div>
 		)
 
-	if (!data?.muxPlaybackId) return null
+	if (!playbackId) return null
 
 	return (
 		<div
@@ -70,7 +82,7 @@ export default function MDXVideo({
 				maxResolution="2160p"
 				minResolution="540p"
 				accentColor="#DD9637"
-				playbackId={data.muxPlaybackId}
+				playbackId={playbackId}
 				thumbnailTime={thumbnailTime}
 				poster={poster}
 				playsInline

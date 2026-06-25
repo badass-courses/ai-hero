@@ -10,6 +10,7 @@ import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
+import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
@@ -87,6 +88,52 @@ const DynamicOfficeHoursSchedule = dynamic(() =>
 		(mod) => mod.OfficeHoursSchedule,
 	),
 )
+
+const getCachedVideoResourceForMdx = cache((id: string) =>
+	courseBuilderAdapter.getVideoResource(id),
+)
+
+/**
+ * Server-resolves the Mux playback ID for a video embedded in MDX body content
+ * and passes it to the client player as a prop. Free marketing videos in
+ * content bodies then render for everyone, without the client calling the gated
+ * `videoResources.get` query. Only resource IDs actually authored into a body
+ * (which the viewer is already authorized to see) are resolved — never
+ * arbitrary IDs — so paid videos are not exposed. Videos use public Mux
+ * playback, so the playback ID is the gate; that is why the query stays locked.
+ */
+async function MdxEmbeddedVideo({
+	resourceId,
+	thumbnailTime,
+	poster,
+}: {
+	resourceId: string
+	thumbnailTime?: number
+	poster?: string
+}) {
+	if (!resourceId) return null
+	let muxPlaybackId: string | undefined
+	try {
+		const videoResource = await getCachedVideoResourceForMdx(resourceId)
+		muxPlaybackId = videoResource?.muxPlaybackId ?? undefined
+	} catch (error) {
+		// Isolate the failure to this embed instead of failing the whole render.
+		await log.error('mdx.video.resolve.error', {
+			resourceId,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return null
+	}
+	if (!muxPlaybackId) return null
+	return (
+		<DynamicMDXVideo
+			resourceId={resourceId}
+			muxPlaybackId={muxPlaybackId}
+			thumbnailTime={thumbnailTime}
+			poster={poster}
+		/>
+	)
+}
 
 type CompileMDXContext = {
 	lessonId?: string
@@ -176,7 +223,7 @@ async function compileMDXInternal(
 							thumbnailTime?: number
 							poster?: string
 						}) => (
-							<DynamicMDXVideo
+							<MdxEmbeddedVideo
 								resourceId={resourceId}
 								thumbnailTime={thumbnailTime}
 								poster={poster}
