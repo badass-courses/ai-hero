@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { cn } from '@coursebuilder/utils/cn'
 
-const GRADIENT_IMAGE =
+export const GRADIENT_IMAGE =
 	'linear-gradient(90deg, oklch(0.92 0.05 30), oklch(0.74 0.18 50), oklch(0.82 0.12 350), oklch(0.50 0.20 260), oklch(0.85 0.10 5), oklch(0.92 0.07 145), oklch(0.74 0.18 50), oklch(0.88 0.18 95), oklch(0.62 0.22 25), oklch(0.74 0.18 45), oklch(0.82 0.12 350), oklch(0.92 0.05 30))'
 
 /**

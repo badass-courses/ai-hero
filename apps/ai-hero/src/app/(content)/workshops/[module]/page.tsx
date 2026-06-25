@@ -18,8 +18,10 @@ import config from '@/config'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { getFirstResourceSlug } from '@/lib/content-navigation'
 import {
 	getCachedMinimalWorkshop,
+	getCachedWorkshopNavigation,
 	getCachedWorkshopProduct,
 } from '@/lib/workshops-query'
 import { getProviders } from '@/server/auth'
@@ -28,7 +30,7 @@ import { generateGridPattern } from '@/utils/generate-grid-pattern'
 import { getAbilityForResource } from '@/utils/get-current-ability-rules'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { and, eq } from 'drizzle-orm'
-import { Construction, Share2 } from 'lucide-react'
+import { Share2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Course } from 'schema-dts'
 
@@ -48,6 +50,9 @@ import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
 import WorkshopImage from '../_components/workshop-image'
 import { WorkshopPricingClient } from '../_components/workshop-pricing'
 import { WorkshopPricing } from '../_components/workshop-pricing-server'
+import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
+import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
+import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
 import { WorkshopSidebar } from '../_components/workshop-sidebar'
 import { Certificate } from '../../_components/module-certificate-container'
 
@@ -110,6 +115,12 @@ export default async function ModulePage(props: Props) {
 	if (!workshop) {
 		notFound()
 	}
+
+	// Pre-launch: a not-yet-published workshop we expose as an interest-capture
+	// landing page (Matt drives traffic here to get people on the list).
+	const isPreLaunch = workshop.fields?.state !== 'published'
+	const navigation = await getCachedWorkshopNavigation(params.module)
+	const hasContent = Boolean(getFirstResourceSlug(navigation))
 
 	const providers = getProviders()
 	const discordProvider = providers?.discord
@@ -193,24 +204,35 @@ export default async function ModulePage(props: Props) {
 		true,
 	)
 	const product = await getCachedWorkshopProduct(params.module)
+	const hasSelfPacedProduct = product?.type === 'self-paced'
+	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
 	const { content: body } = await compileMDX(workshop.fields.body || '', {
 		EnrollNow: (props) => (
 			<WorkshopPricing moduleSlug={params.module} searchParams={searchParams}>
-				{(workshopProps) =>
-					!workshopProps.hasPurchasedCurrentProduct && (
-						<InlineBuyButton
-							resource={workshop}
-							pricingDataLoader={workshopProps.pricingDataLoader}
-							pricingProps={workshopProps as any}
-							centered={false}
-							resourceType="workshop"
-							pricingOptions={{
-								withTitle: false,
-								withImage: false,
-							}}
-						/>
-					)
-				}
+				{(workshopProps) => {
+					if (workshopProps.hasPurchasedCurrentProduct) return null
+					// allowPurchase forces the buy state; a pre-launch workshop instead
+					// points at the sidebar interest-capture form.
+					if (workshopProps.allowPurchase) {
+						return (
+							<InlineBuyButton
+								resource={workshop}
+								pricingDataLoader={workshopProps.pricingDataLoader}
+								pricingProps={workshopProps as any}
+								centered={false}
+								resourceType="workshop"
+								pricingOptions={{
+									withTitle: false,
+									withImage: false,
+								}}
+							/>
+						)
+					}
+					if (isPreLaunch) {
+						return <WorkshopNotifyButton workshopSlug={params.module} />
+					}
+					return null
+				}}
 			</WorkshopPricing>
 		),
 	})
@@ -218,13 +240,14 @@ export default async function ModulePage(props: Props) {
 	return (
 		<LayoutClient withContainer>
 			<main className="flex min-h-screen w-full flex-col">
-				{workshop.fields?.state !== 'published' && (
-					<div className="bg-stripes relative flex w-full items-center justify-center gap-2 border-b p-3 text-center">
-						<Construction className="h-4 w-4" />{' '}
-						<p className="text-sm font-medium capitalize">
-							{workshop.fields?.state} {workshop.type}
-						</p>
-					</div>
+				{isPreLaunch && (
+					<React.Suspense fallback={null}>
+						<WorkshopDraftBanner
+							abilityLoader={abilityLoader}
+							state={workshop.fields?.state}
+							type={workshop.type}
+						/>
+					</React.Suspense>
 				)}
 				<WorkshopMetadata
 					title={workshop.fields?.title || ''}
@@ -293,15 +316,13 @@ export default async function ModulePage(props: Props) {
 				</header>
 
 				<>
-					<Links>
-						<ContentTitle />
-					</Links>
+					<Links>{!isPreLaunch && hasContent && <ContentTitle />}</Links>
 					<div className="mx-auto flex w-full grow grid-cols-6 flex-col md:grid">
 						<div className="col-span-4 border-b pt-10 md:border-b-0">
-							<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 sm:px-8 lg:px-10">
+							<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
 								{workshop.fields?.body ? body : <p>No description found.</p>}
 							</article>
-							{product?.type === 'self-paced' && (
+							{hasSelfPacedProduct && hasContent && (
 								<div className="">
 									<hr className="border-border mb-6 mt-8 w-full" />
 									<h3 className="mb-3 mt-5 px-5 text-xl font-bold sm:px-8 sm:text-2xl lg:px-10">
@@ -318,7 +339,7 @@ export default async function ModulePage(props: Props) {
 							)}
 						</div>
 						<div className="bg-background relative z-20 col-span-2 flex h-full flex-col md:border-l">
-							{product?.type === 'self-paced' ? (
+							{shouldShowPricingSidebar ? (
 								<React.Suspense
 									fallback={
 										<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16 md:-mt-14">
@@ -334,15 +355,23 @@ export default async function ModulePage(props: Props) {
 										searchParams={searchParams}
 									>
 										{(pricingProps) => {
+											// allowPurchase always forces the buy state; otherwise a
+											// pre-launch workshop shows the interest-capture form.
+											const showInterestCapture =
+												isPreLaunch &&
+												!pricingProps.allowPurchase &&
+												!pricingProps.hasPurchasedCurrentProduct
 											return pricingProps.product ? (
 												<>
 													<WorkshopSidebar
 														pricingProps={pricingProps}
 														workshop={workshop}
+														interestCapture={showInterestCapture}
 														className={cn('', {
 															'md:-mt-14':
-																pricingProps.allowPurchase &&
-																!pricingProps.hasPurchasedCurrentProduct,
+																(pricingProps.allowPurchase &&
+																	!pricingProps.hasPurchasedCurrentProduct) ||
+																showInterestCapture,
 														})}
 													>
 														{pricingProps.allowPurchase &&
@@ -354,6 +383,11 @@ export default async function ModulePage(props: Props) {
 																	{...pricingProps}
 																/>
 															</>
+														) : showInterestCapture ? (
+															<WorkshopInterestCta
+																workshopSlug={params.module}
+																workshopTitle={workshop.fields?.title}
+															/>
 														) : (
 															<>
 																<WorkshopResourceList
@@ -372,6 +406,17 @@ export default async function ModulePage(props: Props) {
 														)}
 													</WorkshopSidebar>
 												</>
+											) : showInterestCapture ? (
+												<WorkshopSidebar
+													workshop={workshop}
+													pricingProps={pricingProps}
+													interestCapture={showInterestCapture}
+												>
+													<WorkshopInterestCta
+														workshopSlug={params.module}
+														workshopTitle={workshop.fields?.title}
+													/>
+												</WorkshopSidebar>
 											) : (
 												<WorkshopResourceList
 													isCollapsible={false}
@@ -397,7 +442,9 @@ export default async function ModulePage(props: Props) {
 							)}
 						</div>
 					</div>
-					{workshop?.fields?.body && <Links className="border-b-0" />}
+					{!isPreLaunch && workshop?.fields?.body && (
+						<Links className="border-b-0" />
+					)}
 				</>
 			</main>
 		</LayoutClient>

@@ -237,6 +237,7 @@ const Navigation = () => {
 													return (
 														<NavigationMenuLink key={item.href} asChild>
 															<Link
+																prefetch={true}
 																href={item.href}
 																className={cn(
 																	navLinkReset,
@@ -388,6 +389,7 @@ const Navigation = () => {
 											const renderRow = (item: LiveItem) => (
 												<NavigationMenuLink key={item.href} asChild>
 													<Link
+														prefetch={true}
 														href={item.href}
 														className={cn(
 															navLinkReset,
@@ -469,6 +471,7 @@ const Navigation = () => {
 									active={pathname === navData.browseAll.href}
 								>
 									<Link
+										prefetch={true}
 										href={navData.browseAll.href}
 										onClick={() => {
 											track('navigation_menu_item_click', {

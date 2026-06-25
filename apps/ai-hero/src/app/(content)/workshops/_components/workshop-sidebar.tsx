@@ -24,12 +24,14 @@ export const WorkshopSidebar = ({
 	workshop,
 	className,
 	pricingProps,
+	interestCapture = false,
 }: {
 	children: React.ReactNode
 	sticky?: boolean
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
+	interestCapture?: boolean
 }) => {
 	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
 	const [windowHeight, setWindowHeight] = React.useState(0)
@@ -63,7 +65,7 @@ export const WorkshopSidebar = ({
 				>
 					<ScrollArea className="h-full lg:max-h-[calc(100vh-var(--nav-height))] [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{children}
-						{!Boolean(windowHeight - 63 > height) && (
+						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
 							<div className="from-background bg-linear-to-t pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full to-transparent lg:block" />
 						)}
 					</ScrollArea>
@@ -75,6 +77,7 @@ export const WorkshopSidebar = ({
 				})}
 				workshop={workshop}
 				pricingProps={pricingProps}
+				interestCapture={interestCapture}
 			/>
 		</>
 	)
@@ -84,14 +87,18 @@ export const WorkshopSidebarMobile = ({
 	workshop,
 	className,
 	pricingProps,
+	interestCapture = false,
 }: {
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
+	interestCapture?: boolean
 }) => {
 	const { fields } = workshop ?? {}
 
-	const handleScrollToBuy = (e: React.MouseEvent<HTMLAnchorElement>) => {
+	const handleScrollToBuy = (
+		e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>,
+	) => {
 		e.preventDefault()
 		const buySection = document.getElementById('buy')
 		buySection?.scrollIntoView({
@@ -112,19 +119,29 @@ export const WorkshopSidebarMobile = ({
 				<Contributor className="gap-1 text-sm [&_img]:w-5" />
 				{/* <p className="text-sm opacity-75">{config.author}</p> */}
 			</div>
-			{workshop && pricingProps && (
-				<InlineBuyButton
-					className="**:data-divider:mx-1 **:data-label:text-sm h-10 gap-2 px-5"
-					resource={workshop}
-					pricingDataLoader={pricingProps.pricingDataLoader}
-					pricingProps={pricingProps as any}
-					centered={false}
-					resourceType="workshop"
-					pricingOptions={{
-						withTitle: false,
-						withImage: false,
-					}}
-				/>
+			{interestCapture ? (
+				<Button
+					className="h-10 gap-2 px-5"
+					onClick={handleScrollToBuy}
+				>
+					Get notified
+				</Button>
+			) : (
+				workshop &&
+				pricingProps && (
+					<InlineBuyButton
+						className="**:data-divider:mx-1 **:data-label:text-sm h-10 gap-2 px-5"
+						resource={workshop}
+						pricingDataLoader={pricingProps.pricingDataLoader}
+						pricingProps={pricingProps as any}
+						centered={false}
+						resourceType="workshop"
+						pricingOptions={{
+							withTitle: false,
+							withImage: false,
+						}}
+					/>
+				)
 			)}
 		</div>
 	)

@@ -102,11 +102,7 @@ export default function RootLayout({
 								enableSystem={true}
 								disableTransitionOnChange
 							>
-								<HolyLoader
-									color="hsl(var(--primary))"
-									height="0.15rem"
-									speed={250}
-								/>
+								<HolyLoader height="0.15rem" speed={250} />
 								<NextSSRPlugin
 									/**
 									 * The `extractRouterConfig` will extract **only** the route configs from the

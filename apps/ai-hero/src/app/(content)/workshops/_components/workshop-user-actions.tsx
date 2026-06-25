@@ -79,6 +79,12 @@ export function StartLearningWorkshopButton({
 		return null
 	}
 
+	// No resolvable lesson means the link would point at `/null` — hide it until
+	// the workshop actually has content.
+	if (!isWorkshopInProgress && !firstLessonSlug) {
+		return null
+	}
+
 	return (
 		<>
 			<Button

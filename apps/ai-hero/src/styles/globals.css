@@ -404,6 +404,10 @@
 		@apply bg-background text-foreground font-sans font-normal;
 	}
 
+	#holy-progress [role='bar'] {
+		background: var(--primary) !important;
+	}
+
 	html {
 		scrollbar-gutter: stable;
 	}
