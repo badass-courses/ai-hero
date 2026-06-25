@@ -68,7 +68,7 @@
 		"@coursebuilder/adapter-drizzle": "^2.0.0",
 		"@coursebuilder/analytics": "^1.1.1",
 		"@coursebuilder/commerce-next": "^0.2.2",
-		"@coursebuilder/core": "^2.0.0",
+		"@coursebuilder/core": "2.0.1",
 		"@coursebuilder/email-templates": "^1.0.8",
 		"@coursebuilder/mdx-mermaid": "^0.1.3",
 		"@coursebuilder/next": "^0.0.33",

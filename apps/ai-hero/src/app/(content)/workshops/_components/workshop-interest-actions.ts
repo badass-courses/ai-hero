@@ -4,7 +4,6 @@ import { revalidatePath } from 'next/cache'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
-import { ensureKitTagId } from '@/lib/kit-tags'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
@@ -21,27 +20,17 @@ import {
  */
 async function applyWorkshopInterestTag({
 	email,
-	name,
 	workshopSlug,
 }: {
 	email: string
-	name?: string
 	workshopSlug: string
 }) {
 	const tagName = workshopInterestTagName(workshopSlug)
 	try {
-		const tagId = await ensureKitTagId(tagName)
-		if (tagId != null) {
-			await emailListProvider.subscribeToList({
-				listId: String(tagId),
-				listType: 'tag',
-				user: { email, name } as any,
-				// No fields to write on a tag subscribe. The provider runs an extra
-				// PUT /subscribers when `fields` is truthy, so pass undefined to skip
-				// it (the type requires the key; the runtime check is `if (fields)`).
-				fields: undefined as unknown as Record<string, string>,
-			})
-		}
+		// The provider resolves the tag name to an id (creating the tag on first
+		// use) and applies it. tagSubscriber is optional on the interface, but the
+		// ConvertKit provider always defines it.
+		await emailListProvider.tagSubscriber?.({ tag: tagName, email })
 	} catch (error) {
 		await log.error('workshop.interest.tag.failed', {
 			workshopSlug,
@@ -90,7 +79,6 @@ export async function addWorkshopInterest(workshopSlug: string) {
 			}),
 			applyWorkshopInterestTag({
 				email: subscriber.email_address,
-				name: subscriber.first_name ?? undefined,
 				workshopSlug,
 			}),
 		])
