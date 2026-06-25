@@ -17,6 +17,11 @@ import { log } from '@/server/logger'
 
 const CK_V3 = 'https://api.convertkit.com/v3'
 
+// Bound each Kit call so a stalled endpoint can't hang the request path. On
+// timeout fetch rejects with a TimeoutError, caught like any other failure
+// (ensureKitTagId logs and returns null — tagging is best-effort).
+const KIT_TIMEOUT_MS = 8_000
+
 // Resolved name -> id. Process-local cache. ConvertKit v3 GET /tags returns the
 // full list (not paginated). Concurrent first-misses share one list request via
 // `warmPromise`; a cross-instance create race is resolved by re-listing on
@@ -25,8 +30,11 @@ const tagIdByName = new Map<string, number>()
 let warmPromise: Promise<void> | null = null
 
 async function fetchTagList(): Promise<void> {
+	// List tags is an account-level GET, which Kit v3 authenticates with api_key
+	// (api_secret 401s here); subscriber mutations below use api_secret.
 	const res = await fetch(
-		`${CK_V3}/tags?api_secret=${encodeURIComponent(env.CONVERTKIT_API_SECRET)}`,
+		`${CK_V3}/tags?api_key=${encodeURIComponent(env.CONVERTKIT_API_KEY)}`,
+		{ signal: AbortSignal.timeout(KIT_TIMEOUT_MS) },
 	)
 	const body = await res.text()
 	if (!res.ok) {
@@ -63,6 +71,7 @@ async function createTag(name: string): Promise<number | null> {
 			api_secret: env.CONVERTKIT_API_SECRET,
 			tag: { name },
 		}),
+		signal: AbortSignal.timeout(KIT_TIMEOUT_MS),
 	})
 	const body = await res.text()
 	if (!res.ok) {
