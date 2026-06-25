@@ -13,7 +13,10 @@ import { GRADIENT_IMAGE } from '@/components/resource-hover-frame'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { addWorkshopInterest } from './workshop-interest-actions'
+import {
+	addWorkshopInterest,
+	tagWorkshopInterestByEmail,
+} from './workshop-interest-actions'
 import { workshopInterestFieldKey } from './workshop-interest-config'
 
 /**
@@ -43,12 +46,17 @@ export const WorkshopInterestCta = ({
 	// They already expressed interest in this specific workshop on a prior visit.
 	const alreadyInterested = Boolean(subscriber?.fields?.[fieldKey])
 
-	const handleFormSuccess = (sub?: Subscriber) => {
+	const handleFormSuccess = async (sub?: Subscriber) => {
 		if (sub) {
 			track('subscribed', {
 				location: 'workshop_interest',
 				workshop: workshopSlug,
 			})
+			// The form sets the per-workshop field but can't apply a tag, so tag
+			// the new subscriber here for parity with the one-click path.
+			if (sub.email_address) {
+				await tagWorkshopInterestByEmail(sub.email_address, workshopSlug)
+			}
 			router.push(redirectUrlBuilder(sub, '/confirm'))
 		}
 	}
