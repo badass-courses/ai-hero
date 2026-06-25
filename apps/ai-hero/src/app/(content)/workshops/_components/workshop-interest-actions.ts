@@ -8,7 +8,10 @@ import { ensureKitTagId } from '@/lib/kit-tags'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
-import { workshopInterestFieldKey } from './workshop-interest-config'
+import {
+	workshopInterestFieldKey,
+	workshopInterestTagName,
+} from './workshop-interest-config'
 
 /**
  * Apply the per-workshop Kit tag (interest_<slug>) to a subscriber by email.
@@ -20,27 +23,29 @@ async function applyWorkshopInterestTag({
 	email,
 	name,
 	workshopSlug,
-	fieldKey,
 }: {
 	email: string
 	name?: string
 	workshopSlug: string
-	fieldKey: string
 }) {
+	const tagName = workshopInterestTagName(workshopSlug)
 	try {
-		const tagId = await ensureKitTagId(fieldKey)
+		const tagId = await ensureKitTagId(tagName)
 		if (tagId != null) {
 			await emailListProvider.subscribeToList({
 				listId: String(tagId),
 				listType: 'tag',
 				user: { email, name } as any,
-				fields: {},
+				// No fields to write on a tag subscribe. The provider runs an extra
+				// PUT /subscribers when `fields` is truthy, so pass undefined to skip
+				// it (the type requires the key; the runtime check is `if (fields)`).
+				fields: undefined as unknown as Record<string, string>,
 			})
 		}
 	} catch (error) {
 		await log.error('workshop.interest.tag.failed', {
 			workshopSlug,
-			tagName: fieldKey,
+			tagName,
 			error: error instanceof Error ? error.message : String(error),
 		})
 	}
@@ -69,26 +74,30 @@ export async function addWorkshopInterest(workshopSlug: string) {
 	const today = new Date().toISOString().slice(0, 10)
 
 	try {
-		const updated = await emailListProvider.subscribeToList({
-			listId: env.CONVERTKIT_SIGNUP_FORM,
-			listType: 'form',
-			user: {
+		// The field write and the tag apply are independent; run them concurrently
+		// so the user's one-click isn't stuck behind two serial CK pipelines.
+		// applyWorkshopInterestTag is best-effort (never throws), so Promise.all
+		// can't reject on a tag failure.
+		const [updated] = await Promise.all([
+			emailListProvider.subscribeToList({
+				listId: env.CONVERTKIT_SIGNUP_FORM,
+				listType: 'form',
+				user: {
+					email: subscriber.email_address,
+					name: subscriber.first_name ?? undefined,
+				} as any,
+				fields: { [fieldKey]: today },
+			}),
+			applyWorkshopInterestTag({
 				email: subscriber.email_address,
 				name: subscriber.first_name ?? undefined,
-			} as any,
-			fields: { [fieldKey]: today },
-		})
+				workshopSlug,
+			}),
+		])
 
 		if (updated) {
 			await setSubscriberCookie(SubscriberSchema.parse(updated))
 		}
-
-		await applyWorkshopInterestTag({
-			email: subscriber.email_address,
-			name: subscriber.first_name ?? undefined,
-			workshopSlug,
-			fieldKey,
-		})
 
 		await log.info('workshop.interest.success', {
 			workshopSlug,
@@ -123,7 +132,6 @@ export async function tagWorkshopInterestByEmail(
 	if (!email) {
 		return { success: false, reason: 'no-email' as const }
 	}
-	const fieldKey = workshopInterestFieldKey(workshopSlug)
-	await applyWorkshopInterestTag({ email, workshopSlug, fieldKey })
+	await applyWorkshopInterestTag({ email, workshopSlug })
 	return { success: true as const }
 }

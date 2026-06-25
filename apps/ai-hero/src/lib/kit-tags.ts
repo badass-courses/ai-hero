@@ -4,27 +4,37 @@ import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
 
 /**
- * ConvertKit (Kit) tag helpers. The core email provider can apply a tag to a
- * subscriber via `subscribeToList({ listType: 'tag', listId })`, but it needs a
- * tag *id* — and it does not expose tag creation. These helpers resolve a tag
- * id by name, creating the tag if it does not exist yet, so callers can use a
- * descriptive name (e.g. `interest_<slug>`) without anyone hand-creating a tag
- * per workshop in the Kit dashboard.
+ * ConvertKit (Kit) tag id resolution by name, creating the tag if it doesn't
+ * exist. The core email provider can *apply* a tag via
+ * `subscribeToList({ listType: 'tag', listId })`, but it needs a tag id and does
+ * not expose tag creation (its `createConvertkitTag` is internal and its
+ * `tagSubscriber` is a no-op stub). This app helper fills only that gap.
+ *
+ * TODO(altitude): the right home for this is `@coursebuilder/core`'s convertkit
+ * provider (fix `tagSubscriber` to resolve-or-create + apply). That's a
+ * separate package release, so this lives in-app for now.
  */
 
 const CK_V3 = 'https://api.convertkit.com/v3'
 
-// Resolved name -> id, warmed once per server instance to avoid re-listing.
+// Resolved name -> id. Process-local cache. ConvertKit v3 GET /tags returns the
+// full list (not paginated). Concurrent first-misses share one list request via
+// `warmPromise`; a cross-instance create race is resolved by re-listing on
+// create conflict, so both instances converge on the same existing tag id.
 const tagIdByName = new Map<string, number>()
+let warmPromise: Promise<void> | null = null
 
-async function warmTagCache(): Promise<void> {
+async function fetchTagList(): Promise<void> {
 	const res = await fetch(
-		`${CK_V3}/tags?api_secret=${env.CONVERTKIT_API_SECRET}`,
+		`${CK_V3}/tags?api_secret=${encodeURIComponent(env.CONVERTKIT_API_SECRET)}`,
 	)
+	const body = await res.text()
 	if (!res.ok) {
-		throw new Error(`Kit list tags failed: ${res.status} ${res.statusText}`)
+		throw new Error(
+			`Kit list tags failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`,
+		)
 	}
-	const data = (await res.json()) as {
+	const data = JSON.parse(body) as {
 		tags?: Array<{ id: number; name: string }>
 	}
 	for (const tag of data.tags ?? []) {
@@ -32,6 +42,19 @@ async function warmTagCache(): Promise<void> {
 	}
 }
 
+/** Memoized list fetch so concurrent first-misses don't all hit the API. */
+function warmTagCache(force = false): Promise<void> {
+	if (force) warmPromise = null
+	if (!warmPromise) {
+		warmPromise = fetchTagList().catch((error) => {
+			warmPromise = null // let the next call retry rather than caching the failure
+			throw error
+		})
+	}
+	return warmPromise
+}
+
+/** Returns the new tag id, or null on conflict/failure (caller re-lists). */
 async function createTag(name: string): Promise<number | null> {
 	const res = await fetch(`${CK_V3}/tags`, {
 		method: 'POST',
@@ -41,10 +64,18 @@ async function createTag(name: string): Promise<number | null> {
 			tag: { name },
 		}),
 	})
+	const body = await res.text()
 	if (!res.ok) {
-		throw new Error(`Kit create tag failed: ${res.status} ${res.statusText}`)
+		// Most likely a concurrent create from another request/instance; the
+		// caller re-lists to find the now-existing tag.
+		await log.warn('kit.tag.create.conflict', {
+			tagName: name,
+			status: res.status,
+			body: body.slice(0, 200),
+		})
+		return null
 	}
-	const data = (await res.json()) as { id?: number; tag?: { id?: number } }
+	const data = JSON.parse(body) as { id?: number; tag?: { id?: number } }
 	return data.id ?? data.tag?.id ?? null
 }
 
@@ -62,8 +93,15 @@ export async function ensureKitTagId(name: string): Promise<number | null> {
 		if (existing != null) return existing
 
 		const created = await createTag(name)
-		if (created != null) tagIdByName.set(name, created)
-		return created
+		if (created != null) {
+			tagIdByName.set(name, created)
+			return created
+		}
+
+		// Create returned no id (e.g. it already existed via a concurrent create).
+		// Re-list once and look it up.
+		await warmTagCache(true)
+		return tagIdByName.get(name) ?? null
 	} catch (error) {
 		await log.error('kit.tag.ensure.failed', {
 			tagName: name,

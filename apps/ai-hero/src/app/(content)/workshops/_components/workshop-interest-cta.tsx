@@ -46,16 +46,19 @@ export const WorkshopInterestCta = ({
 	// They already expressed interest in this specific workshop on a prior visit.
 	const alreadyInterested = Boolean(subscriber?.fields?.[fieldKey])
 
-	const handleFormSuccess = async (sub?: Subscriber) => {
+	const handleFormSuccess = (sub?: Subscriber) => {
 		if (sub) {
 			track('subscribed', {
 				location: 'workshop_interest',
 				workshop: workshopSlug,
 			})
 			// The form sets the per-workshop field but can't apply a tag, so tag
-			// the new subscriber here for parity with the one-click path.
+			// the new subscriber for parity with the one-click path. Fire-and-forget
+			// (best-effort) so the redirect isn't blocked on the Kit round-trips.
 			if (sub.email_address) {
-				await tagWorkshopInterestByEmail(sub.email_address, workshopSlug)
+				void tagWorkshopInterestByEmail(sub.email_address, workshopSlug).catch(
+					() => {},
+				)
 			}
 			router.push(redirectUrlBuilder(sub, '/confirm'))
 		}
