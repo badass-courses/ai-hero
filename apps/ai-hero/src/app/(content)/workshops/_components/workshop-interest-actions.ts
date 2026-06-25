@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
+import { ensureKitTagId } from '@/lib/kit-tags'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
@@ -45,6 +46,32 @@ export async function addWorkshopInterest(workshopSlug: string) {
 
 		if (updated) {
 			await setSubscriberCookie(SubscriberSchema.parse(updated))
+		}
+
+		// Apply a per-workshop Kit tag (interest_<slug>, same name as the field)
+		// in addition to the custom field: the tag drives Kit
+		// automations/segmentation, the field keeps the date value. Best-effort —
+		// a tagging failure must not fail the field write the user just made.
+		try {
+			const tagId = await ensureKitTagId(fieldKey)
+			if (tagId != null) {
+				await emailListProvider.subscribeToList({
+					listId: String(tagId),
+					listType: 'tag',
+					user: {
+						email: subscriber.email_address,
+						name: subscriber.first_name ?? undefined,
+					} as any,
+					fields: {},
+				})
+			}
+		} catch (error) {
+			await log.error('workshop.interest.tag.failed', {
+				workshopSlug,
+				subscriberId: subscriber.id,
+				tagName: fieldKey,
+				error: error instanceof Error ? error.message : String(error),
+			})
 		}
 
 		await log.info('workshop.interest.success', {
