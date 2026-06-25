@@ -58,7 +58,7 @@ export const WorkshopNotifyButton = ({
 	return (
 		<Button
 			size="lg"
-			className={cn('h-12 rounded-none px-8', className)}
+			className={cn('h-12 cursor-pointer rounded-none px-8', className)}
 			onClick={handleClick}
 		>
 			{children}
