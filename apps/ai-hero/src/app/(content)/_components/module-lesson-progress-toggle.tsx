@@ -1,7 +1,6 @@
 'use client'
 
 import * as React from 'react'
-import { useParams } from 'next/navigation'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import type { Lesson } from '@/lib/lessons'
 import { setProgressForResource } from '@/lib/progress'
@@ -10,15 +9,15 @@ import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
-import { revalidateModuleLesson } from '../actions'
-
 export function ModuleLessonProgressToggle({
 	lesson,
-	moduleType = 'tutorial',
-	lessonType,
 	abilityLoader,
 }: {
 	lesson: Lesson
+	// Still accepted from callers, but no longer used here: completion writes to
+	// durable client state and the DB, and intentionally does NOT revalidate the
+	// route (revalidatePath would purge the prefetch Router Cache and slow the
+	// next navigation).
 	moduleType?: string
 	lessonType?: 'lesson' | 'exercise' | 'solution'
 	abilityLoader: Promise<
@@ -29,7 +28,6 @@ export function ModuleLessonProgressToggle({
 		}
 	>
 }) {
-	const params = useParams()
 	const ability = React.use(abilityLoader)
 	const canView = ability?.canViewLesson
 
@@ -83,14 +81,7 @@ export function ModuleLessonProgressToggle({
 								// returns null, so only revert when we were completing).
 								if (checked && result == null) {
 									removeLessonProgress(lesson.id)
-									return
 								}
-								await revalidateModuleLesson(
-									params.module as string,
-									params.lesson as string,
-									moduleType,
-									lessonType,
-								)
 							} catch {
 								if (checked) {
 									removeLessonProgress(lesson.id)
