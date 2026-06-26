@@ -58,26 +58,47 @@ export function ModuleLessonProgressToggle({
 					aria-label={`Mark lesson as ${isCompleted ? 'incomplete' : 'completed'}`}
 					id="lesson-progress-toggle"
 					checked={isCompleted}
-					onCheckedChange={async (checked) => {
+					onCheckedChange={(checked) => {
+						// Urgent: update durable progress now so the sidebar flips
+						// instantly. (Inside startTransition it would be deferred as
+						// non-urgent and lag behind the awaited write.)
 						if (checked) {
-							startTransition(() => {
-								addLessonProgress(lesson.id)
-							})
+							addLessonProgress(lesson.id)
 						} else {
-							startTransition(() => {
-								removeLessonProgress(lesson.id)
-							})
+							removeLessonProgress(lesson.id)
 						}
-						await setProgressForResource({
-							resourceId: lesson.id,
-							isCompleted: checked,
+						// Persist in the background; isPending keeps the toggle
+						// disabled until the write settles. Revert the durable
+						// dispatch if the write fails so the UI can't show a
+						// completion (or 100% / certificate unlock) the server
+						// never recorded.
+						startTransition(async () => {
+							try {
+								const result = await setProgressForResource({
+									resourceId: lesson.id,
+									isCompleted: checked,
+								})
+								// A successful completion returns the saved record; null
+								// here means the write failed (an un-complete legitimately
+								// returns null, so only revert when we were completing).
+								if (checked && result == null) {
+									removeLessonProgress(lesson.id)
+									return
+								}
+								await revalidateModuleLesson(
+									params.module as string,
+									params.lesson as string,
+									moduleType,
+									lessonType,
+								)
+							} catch {
+								if (checked) {
+									removeLessonProgress(lesson.id)
+								} else {
+									addLessonProgress(lesson.id)
+								}
+							}
 						})
-						await revalidateModuleLesson(
-							params.module as string,
-							params.lesson as string,
-							moduleType,
-							lessonType,
-						)
 					}}
 				/>
 				<div className="w-[9ch]">{isCompleted ? 'Completed' : 'Complete'}</div>

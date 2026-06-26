@@ -387,7 +387,7 @@ function LessonResource({
 	if (!showActiveCard) {
 		const rowClasses = cn(
 			'relative flex w-full min-w-0 items-center py-2.5 transition-colors duration-150 ease-out',
-			indented ? 'pl-10 pr-12' : 'pl-4 pr-4',
+			indented ? 'pr-12' : 'pl-4 pr-4',
 			isActiveLesson &&
 				"bg-card dark:bg-foreground/[0.07] before:absolute before:bottom-0 before:left-0 before:top-0 before:w-[2px] before:bg-foreground before:content-[''] dark:before:bg-primary",
 			canViewLesson &&
@@ -457,8 +457,10 @@ function LessonResource({
 		)
 	}
 
-	const subRowBase =
-		'relative flex w-full min-w-0 items-center py-2 pl-16 pr-10 text-[13px] tracking-[-0.005em] transition-colors'
+	const subRowBase = cn(
+		'relative flex w-full min-w-0 items-center py-2 pr-10 text-[13px] tracking-[-0.005em] transition-colors',
+		indented ? 'pl-16' : 'pl-10',
+	)
 	const subRowActive = 'bg-foreground/[0.03] dark:bg-foreground/[0.04]'
 	const subRowInactive =
 		'hover:bg-foreground/[0.02] dark:hover:bg-foreground/[0.03]'
@@ -478,7 +480,10 @@ function LessonResource({
 					<Link
 						href={lessonHref}
 						prefetch
-						className="relative flex w-full min-w-0 items-center py-2.5 pl-10 pr-12 transition-colors"
+						className={cn(
+							'relative flex w-full min-w-0 items-center py-2.5 pr-12 transition-colors',
+							indented ? 'pl-10' : 'pl-4',
+						)}
 					>
 						<span
 							className={cn(

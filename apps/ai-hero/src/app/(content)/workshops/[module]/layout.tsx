@@ -16,7 +16,17 @@ const ModuleLayout = async (props: {
 	const moduleProgressLoader = getModuleProgressForUser(params.module)
 	return (
 		<WorkshopNavigationProvider workshopNavDataLoader={workshopNavDataLoader}>
-			<ModuleProgressProvider moduleProgressLoader={moduleProgressLoader}>
+			{/*
+			 * key by module: the [module] layout is a shared segment that React
+			 * does NOT remount when only the param changes, so the provider's
+			 * durable useReducer state would otherwise carry one module's progress
+			 * into another. Keying remounts it per module (fresh server progress)
+			 * while staying durable across lesson-to-lesson navigation within a module.
+			 */}
+			<ModuleProgressProvider
+				key={params.module}
+				moduleProgressLoader={moduleProgressLoader}
+			>
 				{children}
 			</ModuleProgressProvider>
 		</WorkshopNavigationProvider>
