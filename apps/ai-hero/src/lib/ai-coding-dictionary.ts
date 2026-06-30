@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache'
+import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
 import { Octokit } from '@octokit/rest'
 
 const DICTIONARY_OWNER = 'mattpocock'
@@ -32,11 +33,6 @@ export type DictionaryData = {
 	entries: DictionaryEntry[]
 	sourceUrl: string
 	updatedAt: string
-}
-
-type GithubFile = {
-	content?: string
-	encoding?: string
 }
 
 type DictionaryFrontmatter = {
@@ -77,50 +73,13 @@ export function getAiCodingDictionaryOgImageUrl(title?: string) {
 }
 
 async function getGithubMarkdownFile(path: string) {
-	try {
-		const response = await octokit.rest.repos.getContent({
-			owner: DICTIONARY_OWNER,
-			repo: DICTIONARY_REPO,
-			path,
-			ref: DICTIONARY_REF,
-		})
-
-		if (Array.isArray(response.data) || response.data.type !== 'file') {
-			throw new Error(`Expected GitHub file at ${path}`)
-		}
-
-		const file = response.data as GithubFile
-		if (!file.content || file.encoding !== 'base64') {
-			throw new Error(`Expected base64 GitHub file content for ${path}`)
-		}
-
-		return Buffer.from(file.content, 'base64').toString('utf8')
-	} catch (error) {
-		const status =
-			typeof error === 'object' && error && 'status' in error
-				? Number(error.status)
-				: undefined
-
-		if (status !== 403) {
-			throw error
-		}
-
-		const response = await fetch(
-			`https://raw.githubusercontent.com/${DICTIONARY_OWNER}/${DICTIONARY_REPO}/${DICTIONARY_REF}/${path
-				.split('/')
-				.map(encodeURIComponent)
-				.join('/')}`,
-			{ next: { revalidate: DICTIONARY_REVALIDATE_SECONDS } },
-		)
-
-		if (!response.ok) {
-			throw new Error(
-				`Failed to fetch dictionary ${path} fallback: ${response.status}`,
-			)
-		}
-
-		return response.text()
-	}
+	return fetchGithubMarkdownFile({
+		owner: DICTIONARY_OWNER,
+		repo: DICTIONARY_REPO,
+		path,
+		ref: DICTIONARY_REF,
+		revalidate: DICTIONARY_REVALIDATE_SECONDS,
+	})
 }
 
 async function getReadmeMarkdown() {

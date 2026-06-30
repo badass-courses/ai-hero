@@ -12,6 +12,7 @@ import { inngest } from '@/inngest/inngest.server'
  */
 
 const SKILLS_SOURCE_REF = 'refs/heads/main'
+const SKILLS_SOURCE_REPOS = ['mattpocock/skills']
 
 function timingSafeEqual(a: string, b: string) {
 	const aBuffer = Buffer.from(a)
@@ -83,6 +84,13 @@ export async function POST(request: NextRequest) {
 
 	if (event !== 'push') {
 		return NextResponse.json({ ok: true, ignored: true, event })
+	}
+
+	if (!SKILLS_SOURCE_REPOS.includes(payload.repository?.full_name ?? '')) {
+		return NextResponse.json(
+			{ error: 'Unexpected repository' },
+			{ status: 400 },
+		)
 	}
 
 	if (payload.ref !== SKILLS_SOURCE_REF) {

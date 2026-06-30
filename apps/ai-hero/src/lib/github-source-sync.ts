@@ -2,8 +2,9 @@ import crypto from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
+import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
+import { upsertPostToTypeSense } from '@/lib/typesense-query'
 import { log } from '@/server/logger'
-import { Octokit } from '@octokit/rest'
 import { sql } from 'drizzle-orm'
 
 /**
@@ -18,11 +19,6 @@ import { sql } from 'drizzle-orm'
  * sync that fetches identical content is a no-op.
  */
 
-const octokit = new Octokit({
-	auth: process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined,
-	userAgent: 'ai-hero-github-source-sync/1.0.0',
-})
-
 export type GithubSourceRef = {
 	owner: string
 	repo: string
@@ -35,13 +31,24 @@ export type GithubSourceRef = {
  * Accepts a GitHub blob URL, a raw.githubusercontent URL, or an
  * `owner/repo/path/to/file.md` shorthand (defaulting to the `main` ref).
  */
+function safeDecode(segment: string): string {
+	try {
+		return decodeURIComponent(segment)
+	} catch {
+		return segment
+	}
+}
+
 export function parseGithubSource(source: string): GithubSourceRef | null {
 	const trimmed = source.trim()
 	if (!trimmed) return null
 
 	try {
 		const url = new URL(trimmed)
-		const segments = url.pathname.split('/').filter(Boolean)
+		// pathname segments are percent-encoded; decode so the resulting path
+		// matches the plain paths GitHub sends in push webhooks (and that the API
+		// expects).
+		const segments = url.pathname.split('/').filter(Boolean).map(safeDecode)
 
 		if (url.hostname === 'github.com') {
 			// /{owner}/{repo}/blob/{ref}/{...path}
@@ -73,61 +80,6 @@ export function parseGithubSource(source: string): GithubSourceRef | null {
 	}
 }
 
-type GithubFile = {
-	content?: string
-	encoding?: string
-}
-
-async function fetchGithubMarkdown(refInfo: GithubSourceRef): Promise<string> {
-	const { owner, repo, path, ref } = refInfo
-
-	try {
-		const response = await octokit.rest.repos.getContent({
-			owner,
-			repo,
-			path,
-			ref,
-		})
-
-		if (Array.isArray(response.data) || response.data.type !== 'file') {
-			throw new Error(`Expected GitHub file at ${owner}/${repo}/${path}`)
-		}
-
-		const file = response.data as GithubFile
-		if (!file.content || file.encoding !== 'base64') {
-			throw new Error(
-				`Expected base64 GitHub file content for ${owner}/${repo}/${path}`,
-			)
-		}
-
-		return Buffer.from(file.content, 'base64').toString('utf8')
-	} catch (error) {
-		const status =
-			typeof error === 'object' && error && 'status' in error
-				? Number((error as { status?: unknown }).status)
-				: undefined
-
-		// Fall back to the raw host only on rate-limit, mirroring the dictionary
-		// reader; other errors (404, auth) should surface.
-		if (status !== 403) throw error
-
-		const response = await fetch(
-			`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path
-				.split('/')
-				.map(encodeURIComponent)
-				.join('/')}`,
-		)
-
-		if (!response.ok) {
-			throw new Error(
-				`Failed to fetch ${owner}/${repo}/${path} fallback: ${response.status}`,
-			)
-		}
-
-		return response.text()
-	}
-}
-
 type ParsedMarkdown = {
 	body: string
 	description: string | null
@@ -135,26 +87,27 @@ type ParsedMarkdown = {
 
 /**
  * Strip a leading YAML frontmatter block so the page renders the content (not
- * the `---` header), and pull `description` out of it when present.
+ * the `---` header), and pull a top-level `description` out of it when present.
+ *
+ * Only treats the leading block as frontmatter when it opens at the very start
+ * and closes with a `---` on its own line, so a body thematic break or a
+ * `----` rule isn't mistaken for the closing fence. Only top-level (unindented)
+ * keys are read, so a nested `description:` can't become the post description.
  */
 export function splitFrontmatter(markdown: string): ParsedMarkdown {
-	if (!markdown.startsWith('---\n') && !markdown.startsWith('---\r\n')) {
+	const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/)
+	if (!match) {
 		return { body: markdown, description: null }
 	}
 
-	const endIndex = markdown.indexOf('\n---', 4)
-	if (endIndex < 0) {
-		return { body: markdown, description: null }
-	}
-
-	const yaml = markdown.slice(4, endIndex)
-	const body = markdown.slice(endIndex + 4).replace(/^\r?\n/, '')
+	const yaml = match[1] ?? ''
+	const body = markdown.slice(match[0].length)
 
 	let description: string | null = null
 	for (const line of yaml.split('\n')) {
-		const match = line.trim().match(/^description:\s*(.+)$/)
-		if (match?.[1]) {
-			description = match[1].trim().replace(/^['"]|['"]$/g, '')
+		const fieldMatch = line.match(/^description:[ \t]*(.+?)[ \t\r]*$/)
+		if (fieldMatch?.[1]) {
+			description = fieldMatch[1].replace(/^['"]|['"]$/g, '')
 			break
 		}
 	}
@@ -218,7 +171,7 @@ export async function syncPostFromGithubSource(
 	}
 
 	try {
-		const markdown = await fetchGithubMarkdown(refInfo)
+		const markdown = await fetchGithubMarkdownFile(refInfo)
 		const hash = contentHash(markdown)
 
 		if (getStringField(fields, 'githubSourceSha') === hash) {
@@ -227,8 +180,10 @@ export async function syncPostFromGithubSource(
 
 		const { body, description } = splitFrontmatter(markdown)
 
+		// Only write the fields this sync owns. The adapter merges these onto a
+		// fresh read of the row, so a concurrent CMS edit to title/slug/cover is
+		// preserved rather than clobbered by a stale snapshot.
 		const nextFields: Record<string, unknown> = {
-			...fields,
 			body,
 			githubSourceSha: hash,
 		}
@@ -237,10 +192,24 @@ export async function syncPostFromGithubSource(
 			nextFields.description = description
 		}
 
-		await courseBuilderAdapter.updateContentResourceFields({
+		const updated = await courseBuilderAdapter.updateContentResourceFields({
 			id: resource.id,
 			fields: nextFields,
 		})
+
+		// Keep search in sync with the new body, matching every other body-write
+		// path. A typesense failure must not fail the sync.
+		try {
+			if (updated) {
+				await upsertPostToTypeSense(updated, 'save')
+			}
+		} catch (error) {
+			await log.error('github-source.sync.typesense-failed', {
+				id: resource.id,
+				slug,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
 
 		revalidateTag('posts', 'max')
 
@@ -269,7 +238,11 @@ export async function syncPostFromGithubSource(
 
 async function getGithubSourcedResources(): Promise<SyncableResource[]> {
 	const resources = await db.query.contentResource.findMany({
-		where: sql`JSON_EXTRACT(${contentResource.fields}, "$.githubSource") IS NOT NULL`,
+		// Scoped to posts (the feature owns post bodies only). `<> ''` also
+		// excludes a missing key (JSON_UNQUOTE(NULL) is NULL, and NULL <> '' is
+		// not true), so posts saved with an empty githubSource — which the form
+		// persists by default — don't get scanned every run.
+		where: sql`${contentResource.type} = 'post' AND JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, "$.githubSource")) <> ''`,
 	})
 
 	return resources.map((resource) => ({

@@ -906,6 +906,12 @@ export async function writePostUpdateToDatabase(input: {
 		readingTime(currentPost.fields.body ?? '').time / 1000,
 	)
 
+	// A github-sourced post owns its body via the sync job — ignore body edits
+	// from the REST update path too, mirroring the CMS updatePost guard.
+	const bodyOverride = currentPost.fields.githubSource
+		? { body: currentPost.fields.body }
+		: {}
+
 	const videoResourceId =
 		postUpdate.videoResourceId ??
 		currentPost.resources?.find(
@@ -938,6 +944,7 @@ export async function writePostUpdateToDatabase(input: {
 				duration,
 				timeToRead,
 				slug: postSlug,
+				...bodyOverride,
 			},
 		})
 		void log.info('post.update.db.success', {
