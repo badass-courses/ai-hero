@@ -326,6 +326,42 @@ export async function createShortlink(
 }
 
 /**
+ * Get or create a shortlink for a page URL.
+ *
+ * Used by the in-app share dialog so an admin can mint a shortlink for the
+ * current page in one click. When no custom slug is requested, the most recent
+ * existing shortlink for the same URL is reused so repeated clicks don't create
+ * duplicates. When a custom slug is requested, a new shortlink is always created
+ * (and will error if the slug is taken).
+ */
+export async function getOrCreateShortlinkForPage(
+	input: { url: string; slug?: string },
+	auth?: ShortlinkAuthContext,
+): Promise<Shortlink> {
+	const { ability } = await resolveShortlinkAuth(auth)
+	if (!ability.can('create', 'Content')) {
+		throw new Error('Unauthorized')
+	}
+
+	const requestedSlug = input.slug?.trim()
+
+	if (requestedSlug) {
+		return createShortlink({ url: input.url, slug: requestedSlug }, auth)
+	}
+
+	const existing = await db.query.shortlink.findFirst({
+		where: eq(shortlink.url, input.url),
+		orderBy: desc(shortlink.createdAt),
+	})
+
+	if (existing) {
+		return existing
+	}
+
+	return createShortlink({ url: input.url }, auth)
+}
+
+/**
  * Update an existing shortlink
  */
 export async function updateShortlink(
