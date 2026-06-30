@@ -103,7 +103,12 @@ ${entry.fields?.body ?? ''}`
 									<Contributor className="flex [&_img]:w-8" />
 									<div className="flex flex-wrap items-center gap-2">
 										{entry.fields?.github && (
-											<Button asChild size="default" variant="outline">
+											<Button
+												asChild
+												size="default"
+												variant="ghost"
+												className="rounded-full border"
+											>
 												<Link href={entry.fields.github} target="_blank">
 													<Github className="text-muted-foreground size-4" />
 													Source Code
@@ -111,7 +116,11 @@ ${entry.fields?.body ?? ''}`
 											</Button>
 										)}
 										{entry.fields?.body && (
-											<CopyPageButton markdown={markdownToCopy} />
+											<CopyPageButton
+												variant="ghost"
+												className="rounded-full border"
+												markdown={markdownToCopy}
+											/>
 										)}
 										<PostShareDialogButton
 											title={String(entry.fields?.title ?? '')}
