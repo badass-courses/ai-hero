@@ -15,7 +15,7 @@ import slugify from '@sindresorhus/slugify'
 import { and, asc, desc, eq, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { ListSchema, type ListUpdate } from './lists'
+import { ListSchema, type List, type ListUpdate } from './lists'
 import { PostSchema } from './posts'
 import { updatePost } from './posts-query'
 import { deletePostInTypeSense, upsertPostToTypeSense } from './typesense-query'
@@ -81,7 +81,25 @@ export async function getAllLists() {
 		orderBy: desc(contentResource.createdAt),
 	})
 
-	return z.array(ListSchema).parse(lists)
+	// Parse per-row so one malformed list is skipped and logged rather than
+	// throwing and failing the whole query — list-all consumers (e.g. the
+	// read-only CLI hitting /api/resources?type=list) otherwise get a 500
+	// because a single bad record breaks the entire response.
+	const parsed: List[] = []
+	for (const list of lists) {
+		const result = ListSchema.safeParse(list)
+		if (result.success) {
+			parsed.push(result.data)
+		} else {
+			void log.error('list.parse.error', {
+				listId: list.id,
+				error: result.error.message,
+				source: 'getAllLists',
+			})
+		}
+	}
+
+	return parsed
 }
 
 export async function getList(listIdOrSlug: string) {
