@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { usePathname } from 'next/navigation'
+import { AdminShortlinkCreator } from '@/components/admin-shortlink-creator'
 import config from '@/config'
 import { env } from '@/env.mjs'
 import { track } from '@/utils/analytics'
@@ -163,6 +164,7 @@ export const Share = ({
 						{copied ? 'Copied' : 'Copy'}
 					</Button>
 				</div>
+				<AdminShortlinkCreator url={url} />
 			</div>
 		)
 	}

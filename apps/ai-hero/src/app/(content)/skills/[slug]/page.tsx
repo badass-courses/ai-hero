@@ -32,6 +32,7 @@ import { VideoPlayerOverlayProvider } from '@coursebuilder/ui/hooks/use-video-pl
 import { cn } from '@coursebuilder/utils/cn'
 
 import { CopyPageButton } from '../../_components/copy-page-button'
+import { PostShareDialogButton } from '../../[post]/_components/post-header-dialog-buttons'
 import { PostPlayer } from '../../posts/_components/post-player'
 import { PostNewsletterCta } from '../../posts/_components/post-video-subscribe-form'
 
@@ -112,6 +113,9 @@ ${entry.fields?.body ?? ''}`
 										{entry.fields?.body && (
 											<CopyPageButton markdown={markdownToCopy} />
 										)}
+										<PostShareDialogButton
+											title={String(entry.fields?.title ?? '')}
+										/>
 									</div>
 								</div>
 								<Suspense fallback={null}>
