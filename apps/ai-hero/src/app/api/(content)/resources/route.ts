@@ -2,6 +2,7 @@ import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
+import { getAllLists } from '@/lib/lists-query'
 import {
 	sortByStartTime,
 	validateChapters,
@@ -46,11 +47,37 @@ const getResourceHandler = async (request: NextRequest) => {
 			type,
 		})
 
+		// List-all: GET /api/resources?type=list returns every list (no slugOrId).
+		// Gated like the single-lesson reader — a valid token with read access is
+		// required, which an admin token satisfies; guests get 401. Only `list` is
+		// supported here to avoid exposing ungated enumeration of other types.
 		if (!slugOrId) {
-			return NextResponse.json(
-				{ error: 'Missing slugOrId parameter' },
-				{ status: 400, headers: corsHeaders },
-			)
+			if (type !== 'list') {
+				return NextResponse.json(
+					{
+						error:
+							'Missing slugOrId parameter. List-all is only supported for ?type=list.',
+					},
+					{ status: 400, headers: corsHeaders },
+				)
+			}
+
+			if (ability.cannot('read', 'Content')) {
+				return NextResponse.json(
+					{ error: 'Unauthorized' },
+					{ status: 401, headers: corsHeaders },
+				)
+			}
+
+			const lists = await getAllLists()
+
+			await log.info('api.resources.get.list-all.success', {
+				userId: user?.id,
+				type,
+				resultCount: lists.length,
+			})
+
+			return NextResponse.json(lists, { headers: corsHeaders })
 		}
 
 		const conditions = [
