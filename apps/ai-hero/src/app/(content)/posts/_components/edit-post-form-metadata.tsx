@@ -206,8 +206,9 @@ export const PostMetadataFormFields: React.FC<{
 						<FormLabel className="text-lg font-bold">GitHub source</FormLabel>
 						<FormDescription>
 							Sync this post body from a markdown file in a GitHub repo. Paste a
-							GitHub file URL (or owner/repo/path) such as a skill SKILL.md. The
-							body updates automatically when the source file changes.
+							GitHub file URL, a raw.githubusercontent URL, or owner/repo/path
+							such as a skill SKILL.md. The body updates automatically when the
+							source file changes.
 						</FormDescription>
 						<Input {...field} value={field.value ?? ''} />
 						{field.value ? (

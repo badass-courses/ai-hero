@@ -31,6 +31,17 @@ export type GithubSourceRef = {
  * Accepts a GitHub blob URL, a raw.githubusercontent URL, or an
  * `owner/repo/path/to/file.md` shorthand (defaulting to the `main` ref).
  */
+// Repos a post may source its body from. The CMS-controlled `githubSource` is
+// validated against this before any authenticated fetch, so an editor can't
+// mirror arbitrary repos the GITHUB_TOKEN can read into a post. Because every
+// source resolves to the same repo, matching webhook changes by path alone is
+// unambiguous.
+const ALLOWED_SOURCE_REPOS = ['mattpocock/skills']
+
+function isAllowedRepo(ref: GithubSourceRef): boolean {
+	return ALLOWED_SOURCE_REPOS.includes(`${ref.owner}/${ref.repo}`.toLowerCase())
+}
+
 function safeDecode(segment: string): string {
 	try {
 		return decodeURIComponent(segment)
@@ -170,6 +181,20 @@ export async function syncPostFromGithubSource(
 		}
 	}
 
+	if (!isAllowedRepo(refInfo)) {
+		await log.warn('github-source.sync.repo-not-allowed', {
+			id: resource.id,
+			source,
+			repo: `${refInfo.owner}/${refInfo.repo}`,
+		})
+		return {
+			id: resource.id,
+			slug,
+			status: 'error',
+			reason: 'source repo not allowed',
+		}
+	}
+
 	try {
 		const markdown = await fetchGithubMarkdownFile(refInfo)
 		const hash = contentHash(markdown)
@@ -187,10 +212,10 @@ export async function syncPostFromGithubSource(
 			body,
 			githubSourceSha: hash,
 		}
-		// Frontmatter description wins when present; title stays CMS-owned.
-		if (description) {
-			nextFields.description = description
-		}
+		// Description follows the source (title stays CMS-owned): use the
+		// frontmatter value, and clear a previously-synced one when the source
+		// drops it, so the description never goes stale against the file.
+		nextFields.description = description ?? null
 
 		const updated = await courseBuilderAdapter.updateContentResourceFields({
 			id: resource.id,
