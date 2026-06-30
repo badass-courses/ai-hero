@@ -4,8 +4,6 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { courseBuilderAdapter } from '@/db'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
-import { guid } from '@coursebuilder/utils/guid'
-import slugify from '@sindresorhus/slugify'
 
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
@@ -17,7 +15,6 @@ export async function updateResource(input: {
 	type: string
 	fields: Record<string, any>
 	createdById: string
-	autoSlug?: boolean
 }) {
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
@@ -67,21 +64,9 @@ export async function updateResource(input: {
 		return newResource
 	}
 
-	let resourceSlug = input.fields.slug
-
-	if (
-		input.autoSlug !== false &&
-		input.fields.title !== currentResource?.fields?.title
-	) {
-		const splitSlug = currentResource?.fields?.slug.split('~') || ['', guid()]
-		resourceSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-		await log.info('resource.update.slug.changed', {
-			resourceId: input.id,
-			oldSlug: currentResource.fields?.slug,
-			newSlug: resourceSlug,
-			userId: user.id,
-		})
-	}
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	const resourceSlug = input.fields.slug ?? currentResource?.fields?.slug
 
 	const updatedResource =
 		await courseBuilderAdapter.updateContentResourceFields({

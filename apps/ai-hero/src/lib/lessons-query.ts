@@ -472,18 +472,18 @@ export async function updateLesson(input: LessonUpdate, revalidate = true) {
 	let lessonSlug = currentLesson.fields.slug
 
 	// Handle both PostUpdate and Lesson formats
-	let titleFromInput: string | undefined
 	let fieldsToUpdate: Record<string, any> = {}
 
 	// Safely extract fields regardless of input type
 	if (input.fields) {
 		fieldsToUpdate = input.fields
-		titleFromInput = input.fields.title
 	}
 
-	if (titleFromInput && titleFromInput !== currentLesson.fields.title) {
-		const splitSlug = currentLesson?.fields.slug.split('~') || ['', guid()]
-		lessonSlug = `${slugify(titleFromInput)}~${splitSlug[1] || guid()}`
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	const slugFromInput = input.fields?.slug
+	if (slugFromInput && slugFromInput !== currentLesson.fields.slug) {
+		lessonSlug = slugFromInput
 	}
 
 	const updatedLesson = {
@@ -872,16 +872,17 @@ export async function writeLessonUpdateToDatabase(input: {
 		throw new Error('Title is required')
 	}
 
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
 	let lessonSlug = currentLesson.fields.slug
 
 	if (
-		lessonUpdate.fields?.title &&
-		lessonUpdate.fields.title !== currentLesson.fields.title
+		lessonUpdate.fields?.slug &&
+		lessonUpdate.fields.slug !== currentLesson.fields.slug
 	) {
-		const splitSlug = currentLesson?.fields.slug.split('~') || ['', guid()]
-		lessonSlug = `${slugify(lessonUpdate.fields.title)}~${splitSlug[1] || guid()}`
+		lessonSlug = lessonUpdate.fields.slug
 		await log.info('lesson.update', {
-			stage: 'slug.updated',
+			stage: 'slug.manual',
 			lessonId: currentLesson.id,
 			slug: lessonSlug,
 			previousSlug: currentLesson.fields.slug,

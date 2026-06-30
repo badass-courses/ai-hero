@@ -67,7 +67,6 @@ export const cohortFormConfig: ResourceFormConfig<Cohort, typeof CohortSchema> =
 				type: 'cohort',
 				fields: resource.fields,
 				createdById: resource.createdById || '',
-				autoSlug: false,
 			})
 
 			if (!result) throw new Error('Failed to update cohort')
