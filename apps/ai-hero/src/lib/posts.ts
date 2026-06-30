@@ -94,6 +94,8 @@ export const PostSchema = ContentResourceSchema.merge(
 			state: PostStateSchema.default('draft'),
 			visibility: PostVisibilitySchema.default('public'),
 			github: z.string().nullish(),
+			githubSource: z.string().nullish(),
+			githubSourceSha: z.string().nullish(),
 			gitpod: z.string().nullish(),
 			thumbnailTime: z.number().nullish(),
 			featured: FeaturedSchema.optional(),
@@ -127,6 +129,7 @@ export const PostUpdateSchema = z.object({
 		state: PostStateSchema.optional(),
 		visibility: PostVisibilitySchema.optional(),
 		github: z.string().nullish(),
+		githubSource: z.string().nullish(),
 		thumbnailTime: z.number().nullish(),
 		coverImage: z
 			.object({
@@ -159,6 +162,7 @@ export const UpdatePostRequestSchema = z.object({
 		state: PostStateSchema.default('draft'),
 		visibility: PostVisibilitySchema.default('unlisted'),
 		github: z.string().nullish(),
+		githubSource: z.string().nullish(),
 		thumbnailTime: z.number().nullish(),
 	}),
 })

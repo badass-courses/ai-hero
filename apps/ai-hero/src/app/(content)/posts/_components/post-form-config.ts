@@ -19,6 +19,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 					visibility: 'public',
 					description: '',
 					github: '',
+					githubSource: '',
 					gitpod: '',
 					state: 'draft',
 					thumbnailTime: 0,
@@ -50,6 +51,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: post.fields?.state || 'draft',
 				description: post.fields?.description ?? '',
 				github: post.fields?.github ?? '',
+				githubSource: post.fields?.githubSource ?? '',
 				gitpod: post.fields?.gitpod ?? '',
 				thumbnailTime: post.fields?.thumbnailTime ?? 0,
 				postType: post.fields?.postType || 'article',
@@ -74,6 +76,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: resource.fields.state || 'draft',
 				visibility: resource.fields.visibility || 'public',
 				github: resource.fields.github || '',
+				githubSource: resource.fields.githubSource || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
 				...(resource.fields.coverImage?.url
@@ -99,6 +102,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: resource.fields.state || 'draft',
 				visibility: resource.fields.visibility || 'public',
 				github: resource.fields.github || '',
+				githubSource: resource.fields.githubSource || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
 				...(resource.fields.coverImage?.url

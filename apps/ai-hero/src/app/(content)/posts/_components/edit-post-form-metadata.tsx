@@ -200,6 +200,29 @@ export const PostMetadataFormFields: React.FC<{
 			/>
 			<FormField
 				control={form.control}
+				name="fields.githubSource"
+				render={({ field }) => (
+					<FormItem className="px-5">
+						<FormLabel className="text-lg font-bold">GitHub source</FormLabel>
+						<FormDescription>
+							Sync this post body from a markdown file in a GitHub repo. Paste a
+							GitHub file URL (or owner/repo/path) such as a skill SKILL.md. The
+							body updates automatically when the source file changes.
+						</FormDescription>
+						<Input {...field} value={field.value ?? ''} />
+						{field.value ? (
+							<p className="text-muted-foreground text-sm">
+								The body is managed by this source and is read-only here — edit
+								it in the GitHub repo. Changes saved here are overwritten on the
+								next sync.
+							</p>
+						) : null}
+						<FormMessage />
+					</FormItem>
+				)}
+			/>
+			<FormField
+				control={form.control}
 				name="fields.gitpod"
 				render={({ field }) => (
 					<FormItem className="px-5">

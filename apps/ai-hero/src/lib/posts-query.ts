@@ -350,6 +350,13 @@ export async function updatePost(
 		})
 	}
 
+	// A github-sourced post owns its body via the sync job. Ignore body edits
+	// coming from the CMS so they can't be silently overwritten on the next
+	// sync — the body is effectively read-only here.
+	const bodyOverride = currentPost.fields.githubSource
+		? { body: currentPost.fields.body }
+		: {}
+
 	try {
 		await upsertPostToTypeSense(
 			{
@@ -359,6 +366,7 @@ export async function updatePost(
 					...input.fields,
 					description: input.fields.description || '',
 					slug: postSlug,
+					...bodyOverride,
 				},
 			},
 			action,
@@ -385,6 +393,7 @@ export async function updatePost(
 				...currentPost.fields,
 				...input.fields,
 				slug: postSlug,
+				...bodyOverride,
 			},
 		})
 
