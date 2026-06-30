@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { env } from '@/env.mjs'
-import { isAllowedSourceRepo } from '@/lib/github-source-allowlist'
 import { GITHUB_SOURCE_SYNC_REQUESTED_EVENT } from '@/inngest/events/github-source'
 import { inngest } from '@/inngest/inngest.server'
 
@@ -10,7 +9,8 @@ import { inngest } from '@/inngest/inngest.server'
  * it collects the changed file paths and dispatches a sync event, so a post
  * whose `githubSource` points at a changed file updates within seconds. The
  * hourly cron in `sync-github-sourced-posts` is the backstop if a delivery is
- * missed. Only pushes from allowlisted repos are accepted.
+ * missed. The shared webhook secret is the gate — only a correctly-signed push
+ * to the default branch is processed.
  */
 
 const SOURCE_REF = 'refs/heads/main'
@@ -85,13 +85,6 @@ export async function POST(request: NextRequest) {
 
 	if (event !== 'push') {
 		return NextResponse.json({ ok: true, ignored: true, event })
-	}
-
-	if (!isAllowedSourceRepo(payload.repository?.full_name ?? '')) {
-		return NextResponse.json(
-			{ error: 'Unexpected repository' },
-			{ status: 400 },
-		)
 	}
 
 	if (payload.ref !== SOURCE_REF) {

@@ -2,7 +2,6 @@ import crypto from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
-import { isAllowedSourceRepo } from '@/lib/github-source-allowlist'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
 import { upsertPostToTypeSense } from '@/lib/typesense-query'
 import { log } from '@/server/logger'
@@ -32,10 +31,6 @@ export type GithubSourceRef = {
  * Accepts a GitHub blob URL, a raw.githubusercontent URL, or an
  * `owner/repo/path/to/file.md` shorthand (defaulting to the `main` ref).
  */
-function isAllowedRepo(ref: GithubSourceRef): boolean {
-	return isAllowedSourceRepo(`${ref.owner}/${ref.repo}`)
-}
-
 function safeDecode(segment: string): string {
 	try {
 		return decodeURIComponent(segment)
@@ -172,20 +167,6 @@ export async function syncPostFromGithubSource(
 			slug,
 			status: 'error',
 			reason: 'unparseable githubSource',
-		}
-	}
-
-	if (!isAllowedRepo(refInfo)) {
-		await log.warn('github-source.sync.repo-not-allowed', {
-			id: resource.id,
-			source,
-			repo: `${refInfo.owner}/${refInfo.repo}`,
-		})
-		return {
-			id: resource.id,
-			slug,
-			status: 'error',
-			reason: 'source repo not allowed',
 		}
 	}
 
