@@ -76,7 +76,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: resource.fields.state || 'draft',
 				visibility: resource.fields.visibility || 'public',
 				github: resource.fields.github || '',
-				githubSource: resource.fields.githubSource || '',
+				githubSource: resource.fields.githubSource?.trim() || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
 				...(resource.fields.coverImage?.url
@@ -102,7 +102,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: resource.fields.state || 'draft',
 				visibility: resource.fields.visibility || 'public',
 				github: resource.fields.github || '',
-				githubSource: resource.fields.githubSource || '',
+				githubSource: resource.fields.githubSource?.trim() || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
 				...(resource.fields.coverImage?.url

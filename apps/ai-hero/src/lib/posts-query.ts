@@ -356,8 +356,11 @@ export async function updatePost(
 	// next state (input wins, falling back to current) so toggling the source
 	// on or off in the same save is honored: enabling locks the body
 	// immediately, clearing it restores normal editing.
-	const nextGithubSource =
-		input.fields.githubSource ?? currentPost.fields.githubSource ?? ''
+	const nextGithubSource = (
+		input.fields.githubSource ??
+		currentPost.fields.githubSource ??
+		''
+	).trim()
 	const bodyOverride = nextGithubSource
 		? { body: currentPost.fields.body }
 		: {}
@@ -914,8 +917,11 @@ export async function writePostUpdateToDatabase(input: {
 	// A github-sourced post owns its body via the sync job — ignore body edits
 	// from the REST update path too, mirroring the CMS updatePost guard. Derive
 	// from the post's next state so toggling the source on or off is honored.
-	const nextGithubSource =
-		postUpdate.fields.githubSource ?? currentPost.fields.githubSource ?? ''
+	const nextGithubSource = (
+		postUpdate.fields.githubSource ??
+		currentPost.fields.githubSource ??
+		''
+	).trim()
 	const bodyOverride = nextGithubSource
 		? { body: currentPost.fields.body }
 		: {}
