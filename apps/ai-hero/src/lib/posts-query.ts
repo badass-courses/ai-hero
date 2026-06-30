@@ -331,7 +331,7 @@ export async function updatePost(
 	// URLs stable when an author tweaks a title.
 	let postSlug = currentPost.fields.slug
 
-	if (input.fields.slug !== currentPost.fields.slug) {
+	if (input.fields.slug && input.fields.slug !== currentPost.fields.slug) {
 		postSlug = input.fields.slug
 		await log.info('post.update.slug.manual', {
 			postId: input.id,
