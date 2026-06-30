@@ -259,6 +259,15 @@ export function withResourceForm<
 
 		const ResourceFormComponent = EditResourcesForm
 
+		// Lock the body editor when the resource's body is synced from a GitHub
+		// source (github-sourced posts). Read all form values so it reacts as soon
+		// as a source is set; the field only exists on the post schema, so other
+		// resource types are unaffected.
+		const bodyReadOnly = Boolean(
+			(form.watch() as { fields?: { githubSource?: unknown } })?.fields
+				?.githubSource,
+		)
+
 		// Revert back to original processing of custom tools without resource injection
 		const tools = [
 			...defaultTools,
@@ -313,6 +322,7 @@ export function withResourceForm<
 					autoUpdateResource={config.autoUpdateResource}
 					onSave={config.onSave}
 					bodyFieldName={bodyFieldName}
+					bodyReadOnly={bodyReadOnly}
 					bodyPanelSlot={
 						<>
 							{config.bodyPanelConfig?.showListResources ? (
