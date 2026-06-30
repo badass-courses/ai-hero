@@ -6,8 +6,6 @@ import { PageSchema } from '@/lib/pages'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
-import { guid } from '@coursebuilder/utils/guid'
-import slugify from '@sindresorhus/slugify'
 import { and, desc, eq } from 'drizzle-orm'
 import { revalidateTag } from 'next/cache'
 import { z } from 'zod'
@@ -161,11 +159,9 @@ const updatePageHandler = async (request: NextRequest) => {
 		}
 
 		const incoming = parsed.data.fields
-		let nextSlug = incoming.slug ?? currentPage.fields.slug
-		if (incoming.title && incoming.title !== currentPage.fields.title) {
-			const [, suffix = guid()] = currentPage.fields.slug.split('~')
-			nextSlug = `${slugify(incoming.title)}~${suffix}`
-		}
+		// Slugs are intentionally NOT regenerated when the title changes — only
+		// an explicit edit to the slug field changes the slug.
+		const nextSlug = incoming.slug ?? currentPage.fields.slug
 
 		await log.info('api.pages.put.started', {
 			userId: user.id,

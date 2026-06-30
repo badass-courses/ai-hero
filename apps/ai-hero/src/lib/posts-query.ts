@@ -37,7 +37,7 @@ import { getMuxAsset } from '@coursebuilder/core/lib/mux'
 import { ListSchema, type List } from './lists'
 import { DatabaseError, PostCreationError } from './post-errors'
 import { PostOrListSchema } from './post-or-list'
-import { generateContentHash, updatePostSlug } from './post-utils'
+import { generateContentHash } from './post-utils'
 import { TagSchema, type Tag } from './tags'
 import { deletePostInTypeSense, upsertPostToTypeSense } from './typesense-query'
 
@@ -326,21 +326,12 @@ export async function updatePost(
 		throw new Error('Unauthorized')
 	}
 
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug. This keeps published
+	// URLs stable when an author tweaks a title.
 	let postSlug = currentPost.fields.slug
 
-	if (
-		input.fields.title !== currentPost.fields.title &&
-		input.fields.slug.includes('~')
-	) {
-		const splitSlug = currentPost?.fields.slug.split('~') || ['', guid()]
-		postSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-		await log.info('post.update.slug.changed', {
-			postId: input.id,
-			oldSlug: currentPost.fields.slug,
-			newSlug: postSlug,
-			userId: user.id,
-		})
-	} else if (input.fields.slug !== currentPost.fields.slug) {
+	if (input.fields.slug !== currentPost.fields.slug) {
 		postSlug = input.fields.slug
 		await log.info('post.update.slug.manual', {
 			postId: input.id,
@@ -865,18 +856,9 @@ export async function writePostUpdateToDatabase(input: {
 		throw new Error('Title is required')
 	}
 
-	let postSlug = updatePostSlug(currentPost, postUpdate.fields.title)
-
-	const postGuid = currentPost?.fields.slug.split('~')[1] || guid()
-
-	if (postUpdate.fields.title !== currentPost.fields.title) {
-		postSlug = `${slugify(postUpdate.fields.title ?? '')}~${postGuid}`
-		void log.info('post.update.slug.changed', {
-			postId: currentPost.id,
-			oldSlug: currentPost.fields.slug,
-			newSlug: postSlug,
-		})
-	}
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	let postSlug = currentPost.fields.slug
 
 	if (
 		postUpdate.fields.slug &&

@@ -18,8 +18,6 @@ import {
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
-import { guid } from '@coursebuilder/utils/guid'
-import slugify from '@sindresorhus/slugify'
 import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
 import z from 'zod'
 
@@ -431,19 +429,9 @@ export async function updateWorkshop(input: Partial<Workshop>) {
 
 	let workshopSlug = currentWorkshop.fields.slug
 
-	if (
-		input.fields?.title !== currentWorkshop.fields.title &&
-		input.fields?.slug?.includes('~')
-	) {
-		const splitSlug = currentWorkshop?.fields.slug.split('~') || ['', guid()]
-		workshopSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-		await log.info('workshop.update.slug.changed', {
-			workshopId: input.id,
-			oldSlug: currentWorkshop.fields.slug,
-			newSlug: workshopSlug,
-			userId: user.id,
-		})
-	} else if (input.fields?.slug !== currentWorkshop.fields.slug) {
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	if (input.fields?.slug !== currentWorkshop.fields.slug) {
 		if (!input.fields?.slug) {
 			throw new Error('Slug is required')
 		}

@@ -90,12 +90,9 @@ export async function updatePage(input: Page) {
 		return createPage(input)
 	}
 
-	let pageSlug = input.fields.slug
-
-	if (input.fields.title !== currentPage?.fields.title) {
-		const splitSlug = currentPage?.fields.slug.split('~') || ['', guid()]
-		pageSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-	}
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	const pageSlug = input.fields.slug ?? currentPage.fields.slug
 
 	return courseBuilderAdapter.updateContentResourceFields({
 		id: currentPage.id,
