@@ -32,10 +32,20 @@ export function AdminShortlinkCreator({ url }: { url: string }) {
 	}
 
 	const copy = async (value: string) => {
-		await navigator.clipboard.writeText(value)
-		setCopied(true)
-		toast({ title: 'Copied short link' })
-		window.setTimeout(() => setCopied(false), 1500)
+		// Handle clipboard failures here so a copy error is never mistaken for a
+		// shortlink-creation failure by the caller's catch block.
+		try {
+			await navigator.clipboard.writeText(value)
+			setCopied(true)
+			toast({ title: 'Copied short link' })
+			window.setTimeout(() => setCopied(false), 1500)
+		} catch {
+			toast({
+				title: 'Could not copy short link',
+				description: 'The link was created — copy it manually.',
+				variant: 'destructive',
+			})
+		}
 	}
 
 	const createShortlink = async () => {
