@@ -331,7 +331,16 @@ export async function updatePost(
 	// URLs stable when an author tweaks a title.
 	let postSlug = currentPost.fields.slug
 
-	if (input.fields.slug && input.fields.slug !== currentPost.fields.slug) {
+	if (
+		input.fields.slug !== undefined &&
+		input.fields.slug !== currentPost.fields.slug
+	) {
+		// An omitted slug (undefined) is a title-only edit and preserves the
+		// current slug; an explicitly cleared slug is rejected rather than
+		// silently ignored, since persisting an empty slug breaks the page URL.
+		if (!input.fields.slug) {
+			throw new Error('Slug is required')
+		}
 		postSlug = input.fields.slug
 		await log.info('post.update.slug.manual', {
 			postId: input.id,
