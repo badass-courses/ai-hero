@@ -552,16 +552,24 @@ export async function getAllLessons(): Promise<Lesson[]> {
 		orderBy: desc(contentResource.createdAt),
 	})
 
-	const lessonsParsed = z.array(LessonSchema).safeParse(lessons)
-	if (!lessonsParsed.success) {
-		await log.error('lesson.parse.error', {
-			error: formatZodError(lessonsParsed.error),
-			source: 'getAllLessons',
-		})
-		return []
+	// Parse per-row so one malformed lesson is skipped and logged rather than
+	// blanking the entire list — list-all consumers (e.g. the read-only CLI)
+	// otherwise can't tell "no lessons" from "one bad row dropped everything".
+	const parsed: Lesson[] = []
+	for (const lesson of lessons) {
+		const result = LessonSchema.safeParse(lesson)
+		if (result.success) {
+			parsed.push(result.data)
+		} else {
+			await log.error('lesson.parse.error', {
+				error: formatZodError(result.error),
+				source: 'getAllLessons',
+				lessonId: lesson.id,
+			})
+		}
 	}
 
-	return lessonsParsed.data
+	return parsed
 }
 
 export async function writeNewLessonToDatabase(
