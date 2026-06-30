@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { env } from '@/env.mjs'
+import { isAllowedSourceRepo } from '@/lib/github-source-allowlist'
 import { GITHUB_SOURCE_SYNC_REQUESTED_EVENT } from '@/inngest/events/github-source'
 import { inngest } from '@/inngest/inngest.server'
 
@@ -8,11 +9,11 @@ import { inngest } from '@/inngest/inngest.server'
  * GitHub push webhook for github-sourced posts. On a push to the default branch
  * it collects the changed file paths and dispatches a sync event, so a post
  * whose `githubSource` points at a changed file updates within seconds. The
- * hourly cron in `github-source-sync` is the backstop if a delivery is missed.
+ * hourly cron in `sync-github-sourced-posts` is the backstop if a delivery is
+ * missed. Only pushes from allowlisted repos are accepted.
  */
 
-const SKILLS_SOURCE_REF = 'refs/heads/main'
-const SKILLS_SOURCE_REPOS = ['mattpocock/skills']
+const SOURCE_REF = 'refs/heads/main'
 
 function timingSafeEqual(a: string, b: string) {
 	const aBuffer = Buffer.from(a)
@@ -58,11 +59,11 @@ type GitHubPushPayload = {
 }
 
 export async function POST(request: NextRequest) {
-	const secret = env.GITHUB_SKILLS_WEBHOOK_SECRET
+	const secret = env.GITHUB_SOURCE_WEBHOOK_SECRET
 
 	if (!secret) {
 		return NextResponse.json(
-			{ error: 'Skills source webhook secret is not configured' },
+			{ error: 'GitHub source webhook secret is not configured' },
 			{ status: 500 },
 		)
 	}
@@ -86,14 +87,14 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json({ ok: true, ignored: true, event })
 	}
 
-	if (!SKILLS_SOURCE_REPOS.includes(payload.repository?.full_name ?? '')) {
+	if (!isAllowedSourceRepo(payload.repository?.full_name ?? '')) {
 		return NextResponse.json(
 			{ error: 'Unexpected repository' },
 			{ status: 400 },
 		)
 	}
 
-	if (payload.ref !== SKILLS_SOURCE_REF) {
+	if (payload.ref !== SOURCE_REF) {
 		return NextResponse.json({ ok: true, ignored: true, ref: payload.ref })
 	}
 

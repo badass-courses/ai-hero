@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
+import { isAllowedSourceRepo } from '@/lib/github-source-allowlist'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
 import { upsertPostToTypeSense } from '@/lib/typesense-query'
 import { log } from '@/server/logger'
@@ -31,15 +32,8 @@ export type GithubSourceRef = {
  * Accepts a GitHub blob URL, a raw.githubusercontent URL, or an
  * `owner/repo/path/to/file.md` shorthand (defaulting to the `main` ref).
  */
-// Repos a post may source its body from. The CMS-controlled `githubSource` is
-// validated against this before any authenticated fetch, so an editor can't
-// mirror arbitrary repos the GITHUB_TOKEN can read into a post. Because every
-// source resolves to the same repo, matching webhook changes by path alone is
-// unambiguous.
-const ALLOWED_SOURCE_REPOS = ['mattpocock/skills']
-
 function isAllowedRepo(ref: GithubSourceRef): boolean {
-	return ALLOWED_SOURCE_REPOS.includes(`${ref.owner}/${ref.repo}`.toLowerCase())
+	return isAllowedSourceRepo(`${ref.owner}/${ref.repo}`)
 }
 
 function safeDecode(segment: string): string {

@@ -5,13 +5,13 @@ import { inngest } from '../inngest.server'
 
 /**
  * Keeps github-sourced post bodies in sync with their source files. Runs hourly
- * as a backstop and on demand via the skills-source webhook (which dispatches
+ * as a backstop and on demand via the github-source webhook (which dispatches
  * the event with the paths that changed in a push).
  */
-export const githubSourceSync = inngest.createFunction(
+export const syncGithubSourcedPosts = inngest.createFunction(
 	{
-		id: 'github-source-sync',
-		name: 'GitHub Source Sync',
+		id: 'sync-github-sourced-posts',
+		name: 'Sync GitHub-Sourced Posts',
 		concurrency: { limit: 1 },
 	},
 	[
