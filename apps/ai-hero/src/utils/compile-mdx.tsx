@@ -202,6 +202,10 @@ async function compilePlainMarkdownFallback(
 	})
 }
 
+function errText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error)
+}
+
 async function compileMDXInternal(
 	source: string,
 	components: MDXRemoteProps['components'] = {},
@@ -219,275 +223,268 @@ async function compileMDXInternal(
 		]) ?? [],
 	)
 
-	let firstCompileError: unknown
+	const outcome = await measureIfSlow({
+		event: 'perf.mdx.compile.slow',
+		spanName: 'mdx.compile',
+		thresholdMs: 150,
+		data: {
+			sourceLength: source.length,
+			hasLessonId: Boolean(context?.lessonId),
+		},
+		operation: async () =>
+			_compileMDX({
+				source: sanitizeMdxSource(source),
+				components: {
+					input: (props: React.InputHTMLAttributes<HTMLInputElement>) => {
+						if (props.type === 'checkbox' && context?.lessonId) {
+							const currentIndex = checkboxIndex++
+							return (
+								<DynamicMDXCheckbox
+									{...props}
+									lessonId={context.lessonId}
+									index={currentIndex}
+								/>
+							)
+						}
+						return <input {...props} />
+					},
+					Code: (props) => <DynamicCode {...props} />,
+					Scrollycoding: (props) => <Scrollycoding {...props} />,
+					AISummary,
+					Mermaid: (props) => (
+						<Mermaid
+							{...props}
+							className="flex w-full max-w-4xl items-center justify-center rounded-lg border bg-white py-10 dark:bg-transparent"
+							config={{
+								theme: 'base',
+								themeVariables: {
+									fontSize: '16px',
+								},
+							}}
+						/>
+					),
+					Video: ({
+						resourceId,
+						thumbnailTime,
+						poster,
+					}: {
+						resourceId: string
+						thumbnailTime?: number
+						poster?: string
+					}) => (
+						<MdxEmbeddedVideo
+							resourceId={resourceId}
+							thumbnailTime={thumbnailTime}
+							poster={poster}
+						/>
+					),
+					ThemeImage: ({
+						urls,
+						...props
+					}: { urls: { dark: string; light: string } } & CldImageProps) => (
+						<ThemeImage urls={urls} {...props} />
+					),
+					CheckList: ({ children }) => <CheckList>{children}</CheckList>,
+					h1: ({ children }) => <Heading level={1}>{children}</Heading>,
+					h2: ({ children }) => <Heading level={2}>{children}</Heading>,
+					h3: ({ children }) => <Heading level={3}>{children}</Heading>,
+					Link: TrackLink,
+					AIOnly: ({ children }) => (
+						<span className="opacity-50" data-ai-only="">
+							{children}
+						</span>
+					),
+					SkillsNewsletterCta: ({
+						heading,
+						subtitle,
+					}: {
+						heading?: string
+						subtitle?: string
+					}) => <SkillsNewsletterCta heading={heading} subtitle={subtitle} />,
+					SkillsCta: ({
+						heading,
+						subtitle,
+						cta,
+					}: {
+						heading?: string
+						subtitle?: string
+						cta?: string
+					}) => <SkillsCta heading={heading} subtitle={subtitle} cta={cta} />,
+					Button: ({ children, ...props }) => (
+						<Button {...props}>{children}</Button>
+					),
+					hr: () => <hr className="bg-stripes my-1 h-2 w-full border-none" />,
+					Testimonial: ({
+						children,
+						authorName,
+						authorAvatar,
+					}: {
+						children: React.ReactNode
+						authorName: string
+						authorAvatar: string
+					}) => (
+						<Testimonial authorName={authorName} authorAvatar={authorAvatar}>
+							{children}
+						</Testimonial>
+					),
+					Recommendation: ({ children, exerciseId }) => (
+						<Recommendation exerciseId={exerciseId}>
+							{children}
+						</Recommendation>
+					),
+					TableWrapper: ({ children }) => (
+						<TableWrapper>{children}</TableWrapper>
+					),
+					Spoiler: ({ children }) => <Spoiler>{children}</Spoiler>,
+					ProjectVideo: ({ resourceId, exerciseId, recommendation }) => (
+						<DynamicProjectVideo
+							resourceId={resourceId}
+							exerciseId={exerciseId}
+							recommendation={recommendation}
+						/>
+					),
+					a: ({ children, href, title, ...props }) => {
+						const dictionaryEntry =
+							typeof href === 'string'
+								? dictionaryEntryByHref.get(href)
+								: null
 
-	try {
-		const result = await measureIfSlow({
-			event: 'perf.mdx.compile.slow',
-			spanName: 'mdx.compile',
-			thresholdMs: 150,
-			data: {
-				sourceLength: source.length,
-				hasLessonId: Boolean(context?.lessonId),
-			},
-			operation: async () =>
-				_compileMDX({
-					source: sanitizeMdxSource(source),
-					components: {
-						input: (props: React.InputHTMLAttributes<HTMLInputElement>) => {
-							if (props.type === 'checkbox' && context?.lessonId) {
-								const currentIndex = checkboxIndex++
+						if (typeof href === 'string' && dictionaryEntry) {
+							return (
+								<DictionaryHoverLink
+									href={href}
+									dictionaryTitle={dictionaryEntry.title}
+									dictionaryDescription={dictionaryEntry.description}
+									{...props}
+								>
+									{children}
+								</DictionaryHoverLink>
+							)
+						}
+
+						return (
+							<a href={href} title={title} {...props}>
+								{children}
+							</a>
+						)
+					},
+					img: (props) => {
+						const cloudMatch =
+							typeof props.src === 'string'
+								? props.src.match(
+										/^https?:\/\/res\.cloudinary\.com\/([^/]+)\//,
+									)
+								: null
+						const isConfiguredCloud =
+							cloudMatch?.[1] === env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+
+						if (isConfiguredCloud) {
+							if (props.width && props.height) {
 								return (
-									<DynamicMDXCheckbox
+									<CldImage
+										width={props.width}
+										height={props.height}
+										className={cn('', props.className)}
 										{...props}
-										lessonId={context.lessonId}
-										index={currentIndex}
 									/>
 								)
 							}
-							return <input {...props} />
-						},
-						Code: (props) => <DynamicCode {...props} />,
-						Scrollycoding: (props) => <Scrollycoding {...props} />,
-						AISummary,
-						Mermaid: (props) => (
-							<Mermaid
-								{...props}
-								className="flex w-full max-w-4xl items-center justify-center rounded-lg border bg-white py-10 dark:bg-transparent"
-								config={{
-									theme: 'base',
-									themeVariables: {
-										fontSize: '16px',
-									},
-								}}
-							/>
-						),
-						Video: ({
-							resourceId,
-							thumbnailTime,
-							poster,
-						}: {
-							resourceId: string
-							thumbnailTime?: number
-							poster?: string
-						}) => (
-							<MdxEmbeddedVideo
-								resourceId={resourceId}
-								thumbnailTime={thumbnailTime}
-								poster={poster}
-							/>
-						),
-						ThemeImage: ({
-							urls,
-							...props
-						}: { urls: { dark: string; light: string } } & CldImageProps) => (
-							<ThemeImage urls={urls} {...props} />
-						),
-						CheckList: ({ children }) => <CheckList>{children}</CheckList>,
-						h1: ({ children }) => <Heading level={1}>{children}</Heading>,
-						h2: ({ children }) => <Heading level={2}>{children}</Heading>,
-						h3: ({ children }) => <Heading level={3}>{children}</Heading>,
-						Link: TrackLink,
-						AIOnly: ({ children }) => (
-							<span className="opacity-50" data-ai-only="">
-								{children}
-							</span>
-						),
-						SkillsNewsletterCta: ({
-							heading,
-							subtitle,
-						}: {
-							heading?: string
-							subtitle?: string
-						}) => <SkillsNewsletterCta heading={heading} subtitle={subtitle} />,
-						SkillsCta: ({
-							heading,
-							subtitle,
-							cta,
-						}: {
-							heading?: string
-							subtitle?: string
-							cta?: string
-						}) => <SkillsCta heading={heading} subtitle={subtitle} cta={cta} />,
-						Button: ({ children, ...props }) => (
-							<Button {...props}>{children}</Button>
-						),
-						hr: () => <hr className="bg-stripes my-1 h-2 w-full border-none" />,
-						Testimonial: ({
-							children,
-							authorName,
-							authorAvatar,
-						}: {
-							children: React.ReactNode
-							authorName: string
-							authorAvatar: string
-						}) => (
-							<Testimonial authorName={authorName} authorAvatar={authorAvatar}>
-								{children}
-							</Testimonial>
-						),
-						Recommendation: ({ children, exerciseId }) => (
-							<Recommendation exerciseId={exerciseId}>
-								{children}
-							</Recommendation>
-						),
-						TableWrapper: ({ children }) => (
-							<TableWrapper>{children}</TableWrapper>
-						),
-						Spoiler: ({ children }) => <Spoiler>{children}</Spoiler>,
-						ProjectVideo: ({ resourceId, exerciseId, recommendation }) => (
-							<DynamicProjectVideo
-								resourceId={resourceId}
-								exerciseId={exerciseId}
-								recommendation={recommendation}
-							/>
-						),
-						a: ({ children, href, title, ...props }) => {
-							const dictionaryEntry =
-								typeof href === 'string'
-									? dictionaryEntryByHref.get(href)
-									: null
-
-							if (typeof href === 'string' && dictionaryEntry) {
-								return (
-									<DictionaryHoverLink
-										href={href}
-										dictionaryTitle={dictionaryEntry.title}
-										dictionaryDescription={dictionaryEntry.description}
-										{...props}
-									>
-										{children}
-									</DictionaryHoverLink>
-								)
-							}
-
 							return (
-								<a href={href} title={title} {...props}>
-									{children}
-								</a>
+								<span className="relative block w-full">
+									<CldImage
+										fill
+										sizes="(max-width: 768px) 100vw, 734px"
+										className={cn(
+											'relative! h-auto! w-full!',
+											props.className,
+										)}
+										{...props}
+										width={undefined}
+										height={undefined}
+									/>
+								</span>
 							)
-						},
-						img: (props) => {
-							const cloudMatch =
-								typeof props.src === 'string'
-									? props.src.match(
-											/^https?:\/\/res\.cloudinary\.com\/([^/]+)\//,
-										)
-									: null
-							const isConfiguredCloud =
-								cloudMatch?.[1] === env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-
-							if (isConfiguredCloud) {
-								if (props.width && props.height) {
-									return (
-										<CldImage
-											width={props.width}
-											height={props.height}
-											className={cn('', props.className)}
-											{...props}
-										/>
-									)
-								}
-								return (
-									<span className="relative block w-full">
-										<CldImage
-											fill
-											sizes="(max-width: 768px) 100vw, 734px"
-											className={cn(
-												'relative! h-auto! w-full!',
-												props.className,
-											)}
-											{...props}
-											width={undefined}
-											height={undefined}
-										/>
-									</span>
-								)
-							}
-							return <img {...props} className="" />
-						},
-						CldImage: (props) => <CldImage {...props} />,
-						CommitMap: ({ children }) => <CommitMap>{children}</CommitMap>,
-						Commit: ({ children, id }) => <Commit id={id}>{children}</Commit>,
-						CompareTable: ({ children, before, after }) => (
-							<CompareTable before={before} after={after}>
-								{children}
-							</CompareTable>
-						),
-						CompareRow: ({ before, after }) => (
-							<CompareRow before={before} after={after} />
-						),
-						Callout: ({ children, icon, className }) => (
-							<Callout icon={icon} className={className}>
-								{children}
-							</Callout>
-						),
-						Timeline: ({ children }) => <Timeline>{children}</Timeline>,
-						TimelineItem: ({ children, icon }) => (
-							<TimelineItem icon={icon}>{children}</TimelineItem>
-						),
-						OfficeHoursSchedule: ({
-							sessions,
-							cohortId,
-							variant,
-							showActions,
-							timeZone,
-							timeZoneLabel,
-							className,
-						}) => (
-							<DynamicOfficeHoursSchedule
-								sessions={sessions}
-								cohortId={cohortId}
-								variant={variant}
-								showActions={showActions}
-								timeZone={timeZone}
-								timeZoneLabel={timeZoneLabel}
-								className={className}
-							/>
-						),
-						...components,
+						}
+						return <img {...props} className="" />
 					},
-					options: {
-						blockJS: false,
-						mdxOptions: {
-							remarkPlugins: [
-								[
-									remarkMermaid,
-									{
-										debug: process.env.NODE_ENV === 'development',
-									},
-								],
-								remarkGfm,
-								...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
-								[remarkCodeHike, { components: { code: 'Code' } }],
+					CldImage: (props) => <CldImage {...props} />,
+					CommitMap: ({ children }) => <CommitMap>{children}</CommitMap>,
+					Commit: ({ children, id }) => <Commit id={id}>{children}</Commit>,
+					CompareTable: ({ children, before, after }) => (
+						<CompareTable before={before} after={after}>
+							{children}
+						</CompareTable>
+					),
+					CompareRow: ({ before, after }) => (
+						<CompareRow before={before} after={after} />
+					),
+					Callout: ({ children, icon, className }) => (
+						<Callout icon={icon} className={className}>
+							{children}
+						</Callout>
+					),
+					Timeline: ({ children }) => <Timeline>{children}</Timeline>,
+					TimelineItem: ({ children, icon }) => (
+						<TimelineItem icon={icon}>{children}</TimelineItem>
+					),
+					OfficeHoursSchedule: ({
+						sessions,
+						cohortId,
+						variant,
+						showActions,
+						timeZone,
+						timeZoneLabel,
+						className,
+					}) => (
+						<DynamicOfficeHoursSchedule
+							sessions={sessions}
+							cohortId={cohortId}
+							variant={variant}
+							showActions={showActions}
+							timeZone={timeZone}
+							timeZoneLabel={timeZoneLabel}
+							className={className}
+						/>
+					),
+					...components,
+				},
+				options: {
+					blockJS: false,
+					mdxOptions: {
+						remarkPlugins: [
+							[
+								remarkMermaid,
+								{
+									debug: process.env.NODE_ENV === 'development',
+								},
 							],
-							rehypePlugins: [
-								[
-									rehypeExternalLinks,
-									{ target: '_blank', rel: ['noopener', 'noreferrer'] },
-								],
+							remarkGfm,
+							...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
+							[remarkCodeHike, { components: { code: 'Code' } }],
+						],
+						rehypePlugins: [
+							[
+								rehypeExternalLinks,
+								{ target: '_blank', rel: ['noopener', 'noreferrer'] },
 							],
-							recmaPlugins: [[recmaCodeHike, { components: { code: 'Code' } }]],
-						},
-						...options,
+						],
+						recmaPlugins: [[recmaCodeHike, { components: { code: 'Code' } }]],
 					},
-				}).catch((error: unknown) => {
-						// Re-throw Next.js control-flow errors (redirect/notFound/
-						// dynamic-server-usage) so the framework still handles them —
-						// only genuine MDX compile failures should fall back below.
-						unstable_rethrow(error)
-						// Capture the (expected) MDX failure instead of letting it
-						// surface as an error through measureIfSlow — we fall back below.
-						firstCompileError = error
-						return null
-					}),
-		})
+					...options,
+				},
+			})
+				.then((value) => ({ ok: true as const, value }))
+				.catch((error: unknown) => {
+					// Let Next.js handle its own control-flow errors (redirect/
+					// notFound/dynamic-server-usage); only genuine MDX compile
+					// failures fall back to plain markdown below.
+					unstable_rethrow(error)
+					return { ok: false as const, error }
+				}),
+	})
 
-		if (result) {
-			return result
-		}
-	} catch (error) {
-		firstCompileError = error
+	if (outcome.ok) {
+		return outcome.value
 	}
 
 	// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
@@ -499,10 +496,7 @@ async function compileMDXInternal(
 	await log.warn('mdx.compile.retry-escaped', {
 		lessonId: context?.lessonId,
 		sourceLength: source.length,
-		error:
-			firstCompileError instanceof Error
-				? firstCompileError.message
-				: String(firstCompileError),
+		error: errText(outcome.error),
 	})
 
 	try {
@@ -511,18 +505,9 @@ async function compileMDXInternal(
 		await log.error('mdx.compile.error', {
 			lessonId: context?.lessonId,
 			sourceLength: source.length,
-			error:
-				firstCompileError instanceof Error
-					? firstCompileError.message
-					: String(firstCompileError),
-			fallbackError:
-				fallbackError instanceof Error
-					? fallbackError.message
-					: String(fallbackError),
-			stack:
-				firstCompileError instanceof Error
-					? firstCompileError.stack
-					: undefined,
+			error: errText(outcome.error),
+			fallbackError: errText(fallbackError),
+			stack: outcome.error instanceof Error ? outcome.error.stack : undefined,
 		})
 
 		return { content: <MDXCompileErrorFallback /> }
