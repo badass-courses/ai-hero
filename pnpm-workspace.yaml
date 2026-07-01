@@ -27,3 +27,11 @@ packageExtensions:
   '@coursebuilder/ui@*':
     dependencies:
       '@internationalized/date': '3.12.2'
+  # @uiw/react-markdown-editor imports @codemirror/state and @codemirror/view
+  # without declaring them (relies on hoisting), which breaks on a clean install
+  # once @codemirror/state is pinned via overrides. Declare them so pnpm always
+  # links them into the package.
+  '@uiw/react-markdown-editor@*':
+    dependencies:
+      '@codemirror/state': '^6.0.0'
+      '@codemirror/view': '^6.0.0'
