@@ -23,6 +23,66 @@ export type GithubMarkdownFileRef = {
 	revalidate?: number
 }
 
+function safeDecode(segment: string): string {
+	try {
+		return decodeURIComponent(segment)
+	} catch {
+		return segment
+	}
+}
+
+/**
+ * Parse a source string into a concrete repo file reference. Accepts a GitHub
+ * blob URL, a raw.githubusercontent URL, or an `owner/repo/path/to/file.md`
+ * shorthand (defaulting to the `main` ref).
+ *
+ * Note: the ref is taken as a single path segment, so branch/tag names that
+ * contain `/` (e.g. `feature/x`) can't be disambiguated from a URL alone and
+ * are unsupported — use a single-segment branch like `main`.
+ */
+export function parseGithubSource(
+	source: string,
+): GithubMarkdownFileRef | null {
+	const trimmed = source.trim()
+	if (!trimmed) return null
+
+	try {
+		const url = new URL(trimmed)
+		// pathname segments are percent-encoded; decode so the resulting path
+		// matches the plain paths GitHub sends in push webhooks (and that the API
+		// expects).
+		const segments = url.pathname.split('/').filter(Boolean).map(safeDecode)
+
+		if (url.hostname === 'github.com') {
+			// /{owner}/{repo}/blob/{ref}/{...path}
+			const [owner, repo, kind, ref, ...rest] = segments
+			if (owner && repo && kind === 'blob' && ref && rest.length) {
+				return { owner, repo, ref, path: rest.join('/') }
+			}
+			return null
+		}
+
+		if (url.hostname === 'raw.githubusercontent.com') {
+			// /{owner}/{repo}/{ref}/{...path}
+			const [owner, repo, ref, ...rest] = segments
+			if (owner && repo && ref && rest.length) {
+				return { owner, repo, ref, path: rest.join('/') }
+			}
+			return null
+		}
+
+		return null
+	} catch {
+		// Not a URL — fall back to `owner/repo/path` shorthand.
+		const segments = trimmed.split('/').filter(Boolean)
+		const [owner, repo, ...rest] = segments
+		if (owner && repo && rest.length) {
+			return { owner, repo, ref: 'main', path: rest.join('/') }
+		}
+		return null
+	}
+}
+
 async function fetchFromRawHost(ref: GithubMarkdownFileRef): Promise<string> {
 	const { owner, repo, path, ref: gitRef, revalidate } = ref
 

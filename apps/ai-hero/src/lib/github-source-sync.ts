@@ -2,7 +2,10 @@ import crypto from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
-import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
+import {
+	fetchGithubMarkdownFile,
+	parseGithubSource,
+} from '@/lib/github-markdown'
 import { upsertPostToTypeSense } from '@/lib/typesense-query'
 import { log } from '@/server/logger'
 import { sql } from 'drizzle-orm'
@@ -18,71 +21,6 @@ import { sql } from 'drizzle-orm'
  * Change detection is a content hash stored in `fields.githubSourceSha`, so a
  * sync that fetches identical content is a no-op.
  */
-
-export type GithubSourceRef = {
-	owner: string
-	repo: string
-	path: string
-	ref: string
-}
-
-/**
- * Parse a `githubSource` field value into a concrete repo file reference.
- * Accepts a GitHub blob URL, a raw.githubusercontent URL, or an
- * `owner/repo/path/to/file.md` shorthand (defaulting to the `main` ref).
- *
- * Note: the ref is taken as a single path segment, so branch/tag names that
- * contain `/` (e.g. `feature/x`) can't be disambiguated from a URL alone and
- * are unsupported — use a single-segment branch like `main`.
- */
-function safeDecode(segment: string): string {
-	try {
-		return decodeURIComponent(segment)
-	} catch {
-		return segment
-	}
-}
-
-export function parseGithubSource(source: string): GithubSourceRef | null {
-	const trimmed = source.trim()
-	if (!trimmed) return null
-
-	try {
-		const url = new URL(trimmed)
-		// pathname segments are percent-encoded; decode so the resulting path
-		// matches the plain paths GitHub sends in push webhooks (and that the API
-		// expects).
-		const segments = url.pathname.split('/').filter(Boolean).map(safeDecode)
-
-		if (url.hostname === 'github.com') {
-			// /{owner}/{repo}/blob/{ref}/{...path}
-			const [owner, repo, kind, ref, ...rest] = segments
-			if (owner && repo && kind === 'blob' && ref && rest.length) {
-				return { owner, repo, ref, path: rest.join('/') }
-			}
-			return null
-		}
-
-		if (url.hostname === 'raw.githubusercontent.com') {
-			// /{owner}/{repo}/{ref}/{...path}
-			const [owner, repo, ref, ...rest] = segments
-			if (owner && repo && ref && rest.length) {
-				return { owner, repo, ref, path: rest.join('/') }
-			}
-			return null
-		}
-
-		return null
-	} catch {
-		// Not a URL — fall back to `owner/repo/path` shorthand.
-		const segments = trimmed.split('/').filter(Boolean)
-		const [owner, repo, ...rest] = segments
-		if (owner && repo && rest.length) {
-			return { owner, repo, ref: 'main', path: rest.join('/') }
-		}
-		return null
-	}
-}
 
 type ParsedMarkdown = {
 	body: string
