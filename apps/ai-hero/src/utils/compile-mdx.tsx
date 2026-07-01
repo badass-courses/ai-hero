@@ -218,8 +218,10 @@ async function compileMDXInternal(
 		]) ?? [],
 	)
 
+	let firstCompileError: unknown
+
 	try {
-		return await measureIfSlow({
+		const result = await measureIfSlow({
 			event: 'perf.mdx.compile.slow',
 			spanName: 'mdx.compile',
 			thresholdMs: 150,
@@ -468,37 +470,57 @@ async function compileMDXInternal(
 						},
 						...options,
 					},
-				}),
+				}).catch((error: unknown) => {
+						// Capture the (expected) MDX failure instead of letting it
+						// surface as an error through measureIfSlow — we fall back below.
+						firstCompileError = error
+						return null
+					}),
 		})
+
+		if (result) {
+			return result
+		}
 	} catch (error) {
-		// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
-		// github-sourced SKILL.md, but also a mistyped component) throws. Retry
-		// with those tokens escaped and rendered as plain markdown so the content
-		// still shows. This is NOT a silent swap: the offending token renders as
-		// literal text (e.g. a broken `<Video>` shows as the text `<Video>`) and
-		// we warn-log it — strictly better than the "could not be rendered" box.
-		await log.warn('mdx.compile.retry-escaped', {
+		firstCompileError = error
+	}
+
+	// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
+	// github-sourced SKILL.md, but also a mistyped component) throws. Retry
+	// with those tokens escaped and rendered as plain markdown so the content
+	// still shows. This is NOT a silent swap: the offending token renders as
+	// literal text (e.g. a broken `<Video>` shows as the text `<Video>`) and
+	// we warn-log it — strictly better than the "could not be rendered" box.
+	await log.warn('mdx.compile.retry-escaped', {
+		lessonId: context?.lessonId,
+		sourceLength: source.length,
+		error:
+			firstCompileError instanceof Error
+				? firstCompileError.message
+				: String(firstCompileError),
+	})
+
+	try {
+		return await compilePlainMarkdownFallback(source, options)
+	} catch (fallbackError) {
+		await log.error('mdx.compile.error', {
 			lessonId: context?.lessonId,
 			sourceLength: source.length,
-			error: error instanceof Error ? error.message : String(error),
+			error:
+				firstCompileError instanceof Error
+					? firstCompileError.message
+					: String(firstCompileError),
+			fallbackError:
+				fallbackError instanceof Error
+					? fallbackError.message
+					: String(fallbackError),
+			stack:
+				firstCompileError instanceof Error
+					? firstCompileError.stack
+					: undefined,
 		})
 
-		try {
-			return await compilePlainMarkdownFallback(source, options)
-		} catch (fallbackError) {
-			await log.error('mdx.compile.error', {
-				lessonId: context?.lessonId,
-				sourceLength: source.length,
-				error: error instanceof Error ? error.message : String(error),
-				fallbackError:
-					fallbackError instanceof Error
-						? fallbackError.message
-						: String(fallbackError),
-				stack: error instanceof Error ? error.stack : undefined,
-			})
-
-			return { content: <MDXCompileErrorFallback /> }
-		}
+		return { content: <MDXCompileErrorFallback /> }
 	}
 }
 
