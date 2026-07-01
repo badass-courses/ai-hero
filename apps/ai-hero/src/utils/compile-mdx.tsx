@@ -1,5 +1,6 @@
 import { cache } from 'react'
 import dynamic from 'next/dynamic'
+import { unstable_rethrow } from 'next/navigation'
 import { SkillsCta } from '@/app/(content)/skills/_components/skills-cta'
 import { SkillsNewsletterCta } from '@/app/(content)/skills/_components/skills-newsletter-cta'
 import {
@@ -471,6 +472,10 @@ async function compileMDXInternal(
 						...options,
 					},
 				}).catch((error: unknown) => {
+						// Re-throw Next.js control-flow errors (redirect/notFound/
+						// dynamic-server-usage) so the framework still handles them —
+						// only genuine MDX compile failures should fall back below.
+						unstable_rethrow(error)
 						// Capture the (expected) MDX failure instead of letting it
 						// surface as an error through measureIfSlow — we fall back below.
 						firstCompileError = error
