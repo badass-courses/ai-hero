@@ -30,6 +30,10 @@ export type GithubSourceRef = {
  * Parse a `githubSource` field value into a concrete repo file reference.
  * Accepts a GitHub blob URL, a raw.githubusercontent URL, or an
  * `owner/repo/path/to/file.md` shorthand (defaulting to the `main` ref).
+ *
+ * Note: the ref is taken as a single path segment, so branch/tag names that
+ * contain `/` (e.g. `feature/x`) can't be disambiguated from a URL alone and
+ * are unsupported — use a single-segment branch like `main`.
  */
 function safeDecode(segment: string): string {
 	try {

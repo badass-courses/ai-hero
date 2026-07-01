@@ -21,6 +21,9 @@ export async function syncGithubSourceNow(postId: string): Promise<SyncResult> {
 	if (!resource) {
 		throw new Error('Post not found')
 	}
+	if (resource.type !== 'post') {
+		throw new Error('GitHub source sync is only supported for posts')
+	}
 
 	return syncPostFromGithubSource({
 		id: resource.id,

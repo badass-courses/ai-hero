@@ -142,6 +142,13 @@ type CompileMDXContext = {
 		maxLinks?: number
 		excludedSlugs?: string[]
 	}
+	/**
+	 * When true, a failed MDX compile retries as escaped plain markdown instead
+	 * of showing the error box. Enable only for content that isn't authored as
+	 * MDX (e.g. github-sourced docs); leave off for CMS-authored MDX so real
+	 * authoring mistakes still surface.
+	 */
+	allowPlainMarkdownFallback?: boolean
 }
 
 export function sanitizeMdxSource(source: string) {
@@ -164,7 +171,7 @@ function MDXCompileErrorFallback() {
  */
 export function escapeMdxUnsafe(source: string): string {
 	return source
-		.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g)
+		.split(/(`{3,}[\s\S]*?`{3,}|~{3,}[\s\S]*?~{3,}|`[^`\n]*`)/g)
 		.map((segment, index) => {
 			// Odd indices are the captured code segments — leave them as-is.
 			if (index % 2 === 1) return segment
@@ -471,31 +478,44 @@ async function compileMDXInternal(
 				}),
 		})
 	} catch (error) {
-		// MDX is stricter than markdown — a bare `<tag>` or `{` (common in
-		// github-sourced docs like SKILL.md) throws. Fall back to a plain-markdown
-		// render with those tokens escaped so the content still shows.
-		await log.warn('mdx.compile.retry-escaped', {
-			lessonId: context?.lessonId,
-			sourceLength: source.length,
-			error: error instanceof Error ? error.message : String(error),
-		})
-
-		try {
-			return await compilePlainMarkdownFallback(source, options)
-		} catch (fallbackError) {
-			await log.error('mdx.compile.error', {
+		// Only content flagged as non-MDX (github-sourced docs) degrades to
+		// escaped plain markdown. CMS-authored MDX keeps the error box so a real
+		// authoring mistake (e.g. a malformed <Component>) stays visible.
+		if (context?.allowPlainMarkdownFallback) {
+			// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
+			// SKILL.md) throws. Retry with those tokens escaped so it still shows.
+			await log.warn('mdx.compile.retry-escaped', {
 				lessonId: context?.lessonId,
 				sourceLength: source.length,
 				error: error instanceof Error ? error.message : String(error),
-				fallbackError:
-					fallbackError instanceof Error
-						? fallbackError.message
-						: String(fallbackError),
-				stack: error instanceof Error ? error.stack : undefined,
 			})
 
-			return { content: <MDXCompileErrorFallback /> }
+			try {
+				return await compilePlainMarkdownFallback(source, options)
+			} catch (fallbackError) {
+				await log.error('mdx.compile.error', {
+					lessonId: context?.lessonId,
+					sourceLength: source.length,
+					error: error instanceof Error ? error.message : String(error),
+					fallbackError:
+						fallbackError instanceof Error
+							? fallbackError.message
+							: String(fallbackError),
+					stack: error instanceof Error ? error.stack : undefined,
+				})
+
+				return { content: <MDXCompileErrorFallback /> }
+			}
 		}
+
+		await log.error('mdx.compile.error', {
+			lessonId: context?.lessonId,
+			sourceLength: source.length,
+			error: error instanceof Error ? error.message : String(error),
+			stack: error instanceof Error ? error.stack : undefined,
+		})
+
+		return { content: <MDXCompileErrorFallback /> }
 	}
 }
 
