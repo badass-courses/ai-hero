@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { GithubSourceBodyBanner } from '@/components/github-source-body-banner'
 import ListResourcesEdit from '@/components/list-editor/list-resources-edit'
 import { env } from '@/env.mjs'
 import { useIsMobile } from '@/hooks/use-is-mobile'
@@ -327,6 +328,12 @@ export function withResourceForm<
 					bodyReadOnly={bodyReadOnly}
 					bodyPanelSlot={
 						<>
+							{bodyReadOnly && githubSource ? (
+								<GithubSourceBodyBanner
+									postId={resource.id}
+									source={githubSource.trim()}
+								/>
+							) : null}
 							{config.bodyPanelConfig?.showListResources ? (
 								<ListResourcesEdit
 									list={resource}
