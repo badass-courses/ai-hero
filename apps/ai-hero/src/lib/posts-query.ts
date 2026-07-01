@@ -298,6 +298,33 @@ export async function autoUpdatePost(
 	return await updatePost(input, action, false)
 }
 
+/**
+ * Field overrides applied on any post save to enforce github-source ownership,
+ * shared by the CMS (`updatePost`) and REST (`writePostUpdateToDatabase`) paths.
+ *
+ * - Source set: the body is repo-owned, so keep the synced body (read-only in
+ *   the CMS — edits here are ignored).
+ * - Source cleared: release the body and clear the sync hash, so re-enabling the
+ *   same source later triggers a fresh sync instead of a false "unchanged".
+ *
+ * An omitted `githubSource` key means "unchanged" (keep current); an explicit
+ * null/empty means "cleared".
+ */
+function githubSourceFieldOverrides(
+	incomingFields: { githubSource?: string | null },
+	currentPost: Post,
+): Record<string, unknown> {
+	const nextGithubSource = (
+		'githubSource' in incomingFields
+			? (incomingFields.githubSource ?? '')
+			: (currentPost.fields.githubSource ?? '')
+	).trim()
+
+	return nextGithubSource
+		? { body: currentPost.fields.body }
+		: { githubSourceSha: null }
+}
+
 export async function updatePost(
 	input: PostUpdate,
 	action: 'save' | 'publish' | 'archive' | 'unpublish' = 'save',
@@ -350,6 +377,8 @@ export async function updatePost(
 		})
 	}
 
+	const githubOverrides = githubSourceFieldOverrides(input.fields, currentPost)
+
 	try {
 		await upsertPostToTypeSense(
 			{
@@ -359,6 +388,7 @@ export async function updatePost(
 					...input.fields,
 					description: input.fields.description || '',
 					slug: postSlug,
+					...githubOverrides,
 				},
 			},
 			action,
@@ -385,6 +415,7 @@ export async function updatePost(
 				...currentPost.fields,
 				...input.fields,
 				slug: postSlug,
+				...githubOverrides,
 			},
 		})
 
@@ -888,6 +919,11 @@ export async function writePostUpdateToDatabase(input: {
 		readingTime(currentPost.fields.body ?? '').time / 1000,
 	)
 
+	const githubOverrides = githubSourceFieldOverrides(
+		postUpdate.fields,
+		currentPost,
+	)
+
 	const videoResourceId =
 		postUpdate.videoResourceId ??
 		currentPost.resources?.find(
@@ -920,6 +956,7 @@ export async function writePostUpdateToDatabase(input: {
 				duration,
 				timeToRead,
 				slug: postSlug,
+				...githubOverrides,
 			},
 		})
 		void log.info('post.update.db.success', {

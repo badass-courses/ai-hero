@@ -36,6 +36,7 @@ import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-p
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
 import { createUserOrganizations } from './functions/create-user-organization'
+import { syncGithubSourcedPosts } from './functions/sync-github-sourced-posts'
 import { googleAdsConversionUpload } from './functions/google-ads-conversion-upload'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
@@ -121,6 +122,7 @@ export const inngestConfig = {
 		valuePathEmailExecutor,
 		valuePathDripProgression,
 		googleAdsConversionUpload,
+		syncGithubSourcedPosts,
 		skillChangelogBroadcast,
 		notifyOnPostCreated,
 		generateArtwork,

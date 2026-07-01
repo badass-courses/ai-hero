@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { GithubSourceBodyBanner } from '@/components/github-source-body-banner'
 import ListResourcesEdit from '@/components/list-editor/list-resources-edit'
 import { env } from '@/env.mjs'
 import { useIsMobile } from '@/hooks/use-is-mobile'
@@ -259,6 +260,19 @@ export function withResourceForm<
 
 		const ResourceFormComponent = EditResourcesForm
 
+		// Lock the body editor when the resource's body is synced from a GitHub
+		// source (github-sourced posts). Watch just this field so the wrapper
+		// re-renders only when it changes; the field only exists on the post
+		// schema, so other resource types are unaffected. A whitespace-only value
+		// is treated as empty, matching the sync job (which trims and skips it).
+		// `as never` selects the single-field watch overload; its return type
+		// doesn't narrow to string, so route through `unknown`.
+		const githubSource = form.watch('fields.githubSource' as never) as unknown as
+			| string
+			| null
+			| undefined
+		const bodyReadOnly = Boolean(githubSource?.trim())
+
 		// Revert back to original processing of custom tools without resource injection
 		const tools = [
 			...defaultTools,
@@ -313,8 +327,15 @@ export function withResourceForm<
 					autoUpdateResource={config.autoUpdateResource}
 					onSave={config.onSave}
 					bodyFieldName={bodyFieldName}
+					bodyReadOnly={bodyReadOnly}
 					bodyPanelSlot={
 						<>
+							{bodyReadOnly && githubSource ? (
+								<GithubSourceBodyBanner
+									postId={resource.id}
+									source={githubSource.trim()}
+								/>
+							) : null}
 							{config.bodyPanelConfig?.showListResources ? (
 								<ListResourcesEdit
 									list={resource}

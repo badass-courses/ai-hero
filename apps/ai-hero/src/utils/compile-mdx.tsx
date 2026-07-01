@@ -156,6 +156,51 @@ function MDXCompileErrorFallback() {
 	)
 }
 
+/**
+ * Escape MDX-significant characters (`<`, `{`) that appear outside code spans
+ * and fences, so a markdown file that isn't MDX-safe — e.g. a SKILL.md with
+ * bare `<actor>` placeholders or `{...}` — renders as literal text instead of
+ * throwing at compile time. Code is left verbatim.
+ */
+export function escapeMdxUnsafe(source: string): string {
+	return source
+		.split(/(`{3,}[\s\S]*?`{3,}|~{3,}[\s\S]*?~{3,}|`[^`\n]*`)/g)
+		.map((segment, index) => {
+			// Odd indices are the captured code segments — leave them as-is.
+			if (index % 2 === 1) return segment
+			return segment.replace(/</g, '&lt;').replace(/\{/g, '&#123;')
+		})
+		.join('')
+}
+
+/**
+ * Degraded render path: escape MDX-hostile tokens and compile the result with a
+ * minimal markdown pipeline (no CodeHike/Mermaid/components). Used only when the
+ * full MDX compile throws, so non-MDX content (github-sourced docs) still
+ * renders readably instead of showing an error box.
+ */
+async function compilePlainMarkdownFallback(
+	source: string,
+	options: MDXRemoteProps['options'] = {},
+) {
+	return _compileMDX({
+		source: escapeMdxUnsafe(sanitizeMdxSource(source)),
+		components: {},
+		options: {
+			...options,
+			mdxOptions: {
+				remarkPlugins: [remarkGfm],
+				rehypePlugins: [
+					[
+						rehypeExternalLinks,
+						{ target: '_blank', rel: ['noopener', 'noreferrer'] },
+					],
+				],
+			},
+		},
+	})
+}
+
 async function compileMDXInternal(
 	source: string,
 	components: MDXRemoteProps['components'] = {},
@@ -426,14 +471,34 @@ async function compileMDXInternal(
 				}),
 		})
 	} catch (error) {
-		await log.error('mdx.compile.error', {
+		// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
+		// github-sourced SKILL.md, but also a mistyped component) throws. Retry
+		// with those tokens escaped and rendered as plain markdown so the content
+		// still shows. This is NOT a silent swap: the offending token renders as
+		// literal text (e.g. a broken `<Video>` shows as the text `<Video>`) and
+		// we warn-log it — strictly better than the "could not be rendered" box.
+		await log.warn('mdx.compile.retry-escaped', {
 			lessonId: context?.lessonId,
 			sourceLength: source.length,
 			error: error instanceof Error ? error.message : String(error),
-			stack: error instanceof Error ? error.stack : undefined,
 		})
 
-		return { content: <MDXCompileErrorFallback /> }
+		try {
+			return await compilePlainMarkdownFallback(source, options)
+		} catch (fallbackError) {
+			await log.error('mdx.compile.error', {
+				lessonId: context?.lessonId,
+				sourceLength: source.length,
+				error: error instanceof Error ? error.message : String(error),
+				fallbackError:
+					fallbackError instanceof Error
+						? fallbackError.message
+						: String(fallbackError),
+				stack: error instanceof Error ? error.stack : undefined,
+			})
+
+			return { content: <MDXCompileErrorFallback /> }
+		}
 	}
 }
 
