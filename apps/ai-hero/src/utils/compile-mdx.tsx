@@ -142,13 +142,6 @@ type CompileMDXContext = {
 		maxLinks?: number
 		excludedSlugs?: string[]
 	}
-	/**
-	 * When true, a failed MDX compile retries as escaped plain markdown instead
-	 * of showing the error box. Enable only for content that isn't authored as
-	 * MDX (e.g. github-sourced docs); leave off for CMS-authored MDX so real
-	 * authoring mistakes still surface.
-	 */
-	allowPlainMarkdownFallback?: boolean
 }
 
 export function sanitizeMdxSource(source: string) {
@@ -478,44 +471,34 @@ async function compileMDXInternal(
 				}),
 		})
 	} catch (error) {
-		// Only content flagged as non-MDX (github-sourced docs) degrades to
-		// escaped plain markdown. CMS-authored MDX keeps the error box so a real
-		// authoring mistake (e.g. a malformed <Component>) stays visible.
-		if (context?.allowPlainMarkdownFallback) {
-			// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
-			// SKILL.md) throws. Retry with those tokens escaped so it still shows.
-			await log.warn('mdx.compile.retry-escaped', {
-				lessonId: context?.lessonId,
-				sourceLength: source.length,
-				error: error instanceof Error ? error.message : String(error),
-			})
-
-			try {
-				return await compilePlainMarkdownFallback(source, options)
-			} catch (fallbackError) {
-				await log.error('mdx.compile.error', {
-					lessonId: context?.lessonId,
-					sourceLength: source.length,
-					error: error instanceof Error ? error.message : String(error),
-					fallbackError:
-						fallbackError instanceof Error
-							? fallbackError.message
-							: String(fallbackError),
-					stack: error instanceof Error ? error.stack : undefined,
-				})
-
-				return { content: <MDXCompileErrorFallback /> }
-			}
-		}
-
-		await log.error('mdx.compile.error', {
+		// MDX is stricter than markdown — a bare `<tag>` or `{` (common in a
+		// github-sourced SKILL.md, but also a mistyped component) throws. Retry
+		// with those tokens escaped and rendered as plain markdown so the content
+		// still shows. This is NOT a silent swap: the offending token renders as
+		// literal text (e.g. a broken `<Video>` shows as the text `<Video>`) and
+		// we warn-log it — strictly better than the "could not be rendered" box.
+		await log.warn('mdx.compile.retry-escaped', {
 			lessonId: context?.lessonId,
 			sourceLength: source.length,
 			error: error instanceof Error ? error.message : String(error),
-			stack: error instanceof Error ? error.stack : undefined,
 		})
 
-		return { content: <MDXCompileErrorFallback /> }
+		try {
+			return await compilePlainMarkdownFallback(source, options)
+		} catch (fallbackError) {
+			await log.error('mdx.compile.error', {
+				lessonId: context?.lessonId,
+				sourceLength: source.length,
+				error: error instanceof Error ? error.message : String(error),
+				fallbackError:
+					fallbackError instanceof Error
+						? fallbackError.message
+						: String(fallbackError),
+				stack: error instanceof Error ? error.stack : undefined,
+			})
+
+			return { content: <MDXCompileErrorFallback /> }
+		}
 	}
 }
 

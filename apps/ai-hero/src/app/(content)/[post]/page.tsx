@@ -236,9 +236,6 @@ async function PostBody({ post }: { post: Post | null }) {
 				entries: dictionary.entries,
 				maxLinks: 3,
 			},
-			// github-sourced bodies are plain markdown, not MDX — let a failed
-			// compile degrade to escaped markdown instead of the error box.
-			allowPlainMarkdownFallback: Boolean(post.fields?.githubSource),
 		},
 	)
 
