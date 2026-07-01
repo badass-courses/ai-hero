@@ -211,13 +211,6 @@ export const PostMetadataFormFields: React.FC<{
 							source file changes.
 						</FormDescription>
 						<Input {...field} value={field.value ?? ''} />
-						{field.value ? (
-							<p className="text-muted-foreground text-sm">
-								The body is managed by this source and is read-only here — edit
-								it in the GitHub repo. Changes saved here are overwritten on the
-								next sync.
-							</p>
-						) : null}
 						<FormMessage />
 					</FormItem>
 				)}

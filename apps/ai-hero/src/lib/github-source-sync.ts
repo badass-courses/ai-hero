@@ -129,10 +129,12 @@ export async function syncPostFromGithubSource(
 			body,
 			githubSourceSha: hash,
 		}
-		// Description follows the source (title stays CMS-owned): use the
-		// frontmatter value, and clear a previously-synced one when the source
-		// drops it, so the description never goes stale against the file.
-		nextFields.description = description ?? null
+		// Use the frontmatter description when the source provides one, but never
+		// wipe a CMS-authored description when the source has none — respect what
+		// the editor set. Title stays CMS-owned either way.
+		if (description) {
+			nextFields.description = description
+		}
 
 		const updated = await courseBuilderAdapter.updateContentResourceFields({
 			id: resource.id,

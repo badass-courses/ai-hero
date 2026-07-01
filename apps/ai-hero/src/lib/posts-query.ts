@@ -298,6 +298,33 @@ export async function autoUpdatePost(
 	return await updatePost(input, action, false)
 }
 
+/**
+ * Field overrides applied on any post save to enforce github-source ownership,
+ * shared by the CMS (`updatePost`) and REST (`writePostUpdateToDatabase`) paths.
+ *
+ * - Source set: the body is repo-owned, so keep the synced body (read-only in
+ *   the CMS — edits here are ignored).
+ * - Source cleared: release the body and clear the sync hash, so re-enabling the
+ *   same source later triggers a fresh sync instead of a false "unchanged".
+ *
+ * An omitted `githubSource` key means "unchanged" (keep current); an explicit
+ * null/empty means "cleared".
+ */
+function githubSourceFieldOverrides(
+	incomingFields: { githubSource?: string | null },
+	currentPost: Post,
+): Record<string, unknown> {
+	const nextGithubSource = (
+		'githubSource' in incomingFields
+			? (incomingFields.githubSource ?? '')
+			: (currentPost.fields.githubSource ?? '')
+	).trim()
+
+	return nextGithubSource
+		? { body: currentPost.fields.body }
+		: { githubSourceSha: null }
+}
+
 export async function updatePost(
 	input: PostUpdate,
 	action: 'save' | 'publish' | 'archive' | 'unpublish' = 'save',
@@ -350,20 +377,7 @@ export async function updatePost(
 		})
 	}
 
-	// A github-sourced post owns its body via the sync job. Ignore body edits
-	// coming from the CMS so they can't be silently overwritten on the next
-	// sync — the body is effectively read-only here. Derive from the post's
-	// next state (input wins, falling back to current) so toggling the source
-	// on or off in the same save is honored: enabling locks the body
-	// immediately, clearing it restores normal editing.
-	const nextGithubSource = (
-		input.fields.githubSource ??
-		currentPost.fields.githubSource ??
-		''
-	).trim()
-	const bodyOverride = nextGithubSource
-		? { body: currentPost.fields.body }
-		: {}
+	const githubOverrides = githubSourceFieldOverrides(input.fields, currentPost)
 
 	try {
 		await upsertPostToTypeSense(
@@ -374,7 +388,7 @@ export async function updatePost(
 					...input.fields,
 					description: input.fields.description || '',
 					slug: postSlug,
-					...bodyOverride,
+					...githubOverrides,
 				},
 			},
 			action,
@@ -401,7 +415,7 @@ export async function updatePost(
 				...currentPost.fields,
 				...input.fields,
 				slug: postSlug,
-				...bodyOverride,
+				...githubOverrides,
 			},
 		})
 
@@ -914,17 +928,10 @@ export async function writePostUpdateToDatabase(input: {
 		readingTime(currentPost.fields.body ?? '').time / 1000,
 	)
 
-	// A github-sourced post owns its body via the sync job — ignore body edits
-	// from the REST update path too, mirroring the CMS updatePost guard. Derive
-	// from the post's next state so toggling the source on or off is honored.
-	const nextGithubSource = (
-		postUpdate.fields.githubSource ??
-		currentPost.fields.githubSource ??
-		''
-	).trim()
-	const bodyOverride = nextGithubSource
-		? { body: currentPost.fields.body }
-		: {}
+	const githubOverrides = githubSourceFieldOverrides(
+		postUpdate.fields,
+		currentPost,
+	)
 
 	const videoResourceId =
 		postUpdate.videoResourceId ??
@@ -958,7 +965,7 @@ export async function writePostUpdateToDatabase(input: {
 				duration,
 				timeToRead,
 				slug: postSlug,
-				...bodyOverride,
+				...githubOverrides,
 			},
 		})
 		void log.info('post.update.db.success', {
