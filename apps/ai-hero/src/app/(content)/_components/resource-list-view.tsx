@@ -387,7 +387,7 @@ function LessonResource({
 	if (!showActiveCard) {
 		const rowClasses = cn(
 			'relative flex w-full min-w-0 items-center py-2.5 transition-colors duration-150 ease-out',
-			indented ? 'pr-12' : 'pl-4 pr-4',
+			indented ? 'pl-4 pr-12' : 'pl-4 pr-4',
 			isActiveLesson &&
 				"bg-card dark:bg-foreground/[0.07] before:absolute before:bottom-0 before:left-0 before:top-0 before:w-[2px] before:bg-foreground before:content-[''] dark:before:bg-primary",
 			canViewLesson &&
