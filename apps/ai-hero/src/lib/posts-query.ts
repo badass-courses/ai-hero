@@ -22,6 +22,7 @@ import {
 	PostSchema,
 	type PostUpdate,
 } from '@/lib/posts'
+import { syncPostFromGithubSource } from '@/lib/github-source-sync'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { guid } from '@coursebuilder/utils/guid'
@@ -379,6 +380,17 @@ export async function updatePost(
 
 	const githubOverrides = githubSourceFieldOverrides(input.fields, currentPost)
 
+	// Detect a newly-set or changed GitHub source so we can pull the body right
+	// after the save, instead of leaving the post on its old body until a manual
+	// "Sync now" / webhook / cron. Setting the source and saving should just work.
+	const nextGithubSource = (
+		'githubSource' in input.fields
+			? (input.fields.githubSource ?? '')
+			: (currentPost.fields.githubSource ?? '')
+	).trim()
+	const githubSourceChanged =
+		nextGithubSource !== (currentPost.fields.githubSource ?? '').trim()
+
 	try {
 		await upsertPostToTypeSense(
 			{
@@ -427,6 +439,26 @@ export async function updatePost(
 		})
 
 		revalidate && revalidateTag('posts', 'max')
+
+		// A newly-set/changed source pulls its body now. syncPostFromGithubSource
+		// writes the body + hash and revalidates on its own; a fetch failure must
+		// not fail the save (the source is stored, so a later sync still works).
+		if (githubSourceChanged && nextGithubSource && result) {
+			try {
+				await syncPostFromGithubSource({
+					id: result.id,
+					fields: (result.fields as Record<string, unknown> | null) ?? null,
+				})
+				return (await getPost(result.id)) ?? result
+			} catch (error) {
+				await log.error('post.update.github-sync.failed', {
+					postId: input.id,
+					error: getErrorMessage(error),
+					userId: user.id,
+				})
+			}
+		}
+
 		return result
 	} catch (error) {
 		await log.error('post.update.failed', {

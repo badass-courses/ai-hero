@@ -39,6 +39,9 @@ export function GithubSourceBodyBanner({
 				router.refresh()
 			} else {
 				toast({ title: `Nothing to sync (${result.status})` })
+				// The DB body may already be current while a cached page is stale;
+				// the action revalidated, so refresh to pick up the fresh render.
+				router.refresh()
 			}
 		} catch (error) {
 			toast({
