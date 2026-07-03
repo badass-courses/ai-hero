@@ -72,9 +72,9 @@ export function createSolutionBindings({
 				throw new Error('Invalid resource data')
 			}
 			// CREATE mode — first save of the page's placeholder resource.
-			// createSolution always writes state 'draft' / visibility 'unlisted',
-			// so a publish-on-first-save follows up with an immediate update to
-			// the action-derived state.
+			// createSolution only persists title/body/slug/description (and always
+			// writes state 'draft' / visibility 'unlisted'), so a follow-up update
+			// persists the remaining form fields and the action-derived state.
 			if (!values.id) {
 				const created = await createSolution({
 					lessonId: lesson.id,
@@ -93,14 +93,18 @@ export function createSolutionBindings({
 				// lesson↔solution join row.
 				const createdState =
 					derivedState === 'published' ? derivedState : 'draft'
-				if (createdState !== 'draft') {
-					await updateSolution({
-						id: created.id,
-						type: 'solution',
-						fields: { state: createdState },
-					} as Partial<Solution>)
-				}
-				return created
+				// The follow-up update ALWAYS runs: it carries the full form fields
+				// (visibility, optional, …) that createSolution ignores — without it
+				// the first save would silently drop everything but the basics.
+				const createdUpdate = await updateSolution({
+					id: created.id,
+					type: 'solution',
+					fields: {
+						...stripClientPublishedAt(values.fields),
+						state: createdState,
+					},
+				} as Partial<Solution>)
+				return createdUpdate ?? created
 			}
 			// UPDATE mode. Slugs never auto-regenerate on title change — only an
 			// explicit edit to the slug field changes the slug.

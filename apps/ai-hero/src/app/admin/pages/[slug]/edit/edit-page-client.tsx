@@ -4,7 +4,6 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createPageBindings } from '@/lib/cms/page-bindings'
 import { PageSchema, type Page } from '@/lib/pages'
-import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 
 import { createResourceEditor, pageManifest } from '@coursebuilder/ui/cms'
 
@@ -27,9 +26,11 @@ export function EditPageClient({ page }: EditPageClientProps) {
 				...pageManifest,
 				schema: PageSchema,
 				// Legacy defaultValues parity (edit-pages-form.tsx): coerce
-				// description/slug to '' so inputs stay controlled, and inject the
-				// derived OG image as the socialImage default — the legacy form did
-				// exactly this, so the value persists on save just like before.
+				// description/slug to '' so inputs stay controlled. socialImage is
+				// seeded from the PERSISTED url only (empty when none) — seeding
+				// the derived OG url would make every save persist it (the update
+				// binding writes any non-empty url), freezing a stale snapshot;
+				// the site derives the OG image at render time instead.
 				defaultValues: (resource) => {
 					const loaded = resource as Page
 					return {
@@ -40,7 +41,7 @@ export function EditPageClient({ page }: EditPageClientProps) {
 							slug: loaded.fields?.slug ?? '',
 							socialImage: {
 								type: 'imageUrl',
-								url: getOGImageUrlForResource(loaded),
+								url: loaded.fields?.socialImage?.url ?? '',
 							},
 						},
 					}
