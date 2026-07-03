@@ -144,9 +144,15 @@ export function createCohortBindings({
 				const row = await addPostToList({
 					postId: childId,
 					listId: resourceId,
-					metadata: opts?.metadata?.tier
-						? { tier: opts.metadata.tier as 'standard' | 'premium' | 'vip' }
-						: undefined,
+					// The kit's Add path passes no opts — default to 'standard' so a
+					// fresh join row is never tier-less (access checks read a missing
+					// tier as unrestricted, exposing paid workshops).
+					metadata: {
+						tier: (opts?.metadata?.tier ?? 'standard') as
+							| 'standard'
+							| 'premium'
+							| 'vip',
+					},
 				})
 				return { position: row?.position ?? 0 }
 			},
