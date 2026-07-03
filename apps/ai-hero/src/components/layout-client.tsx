@@ -24,9 +24,12 @@ export default function LayoutClient({
 	withFooter?: boolean
 }) {
 	return (
+		// No nav rendered -> zero --nav-height for this subtree so descendant
+		// 100dvh-var(--nav-height) calcs (editor shells) stay flush.
 		<div
 			className={cn(
 				'',
+				!withNavigation && '[--nav-height:0px]',
 				{
 					'relative mx-auto w-full max-w-[1200px] px-2 sm:px-2': withContainer,
 				},

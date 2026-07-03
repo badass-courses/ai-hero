@@ -19,6 +19,7 @@ import { Shuffle, TrashIcon, Unlink } from 'lucide-react'
 import type { UseFormReturn } from 'react-hook-form'
 
 import { VideoResource } from '@coursebuilder/core/schemas'
+import { cn } from '@coursebuilder/ui/utils/cn'
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -108,6 +109,14 @@ interface ContentVideoResourceFieldProps<T extends ContentResourceBase> {
 	 * Whether video is required
 	 */
 	required?: boolean
+
+	/**
+	 * 'default' keeps the legacy edit-form styling (negative margins, border-b
+	 * bleeds, single-row actions). 'panel' renders for the cms editor's left
+	 * panel: no bleeds, rounded player frame, actions wrapping in a 2-col grid
+	 * (prototype contract).
+	 */
+	variant?: 'default' | 'panel'
 }
 
 /**
@@ -125,7 +134,9 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 	className = '',
 	required = false,
 	onVideoUpdate,
+	variant = 'default',
 }: ContentVideoResourceFieldProps<T>) => {
+	const panel = variant === 'panel'
 	const router = useRouter()
 	const [videoResourceId, setVideoResourceId] = React.useState(
 		initialVideoResource?.id,
@@ -247,7 +258,7 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 			<div className={className}>
 				{videoResource?.id || videoResourceId ? (
 					replacingVideo ? (
-						<div className="-mt-7">
+						<div className={cn(!panel && '-mt-7')}>
 							<NewLessonVideoForm
 								parentResourceId={resource.id}
 								onVideoUploadCompleted={(videoResourceId) => {
@@ -261,7 +272,12 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 									refetch()
 								}}
 							/>
-							<div className="flex items-center gap-1 border-b px-4 py-2">
+							<div
+								className={cn(
+									'flex items-center gap-1 py-2',
+									!panel && 'border-b px-4',
+								)}
+							>
 								<Button
 									variant="secondary"
 									size={'sm'}
@@ -275,8 +291,14 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 					) : (
 						<>
 							{videoResource && videoResource.state === 'ready' ? (
-								<div className="-mt-5 border-b">
-									<div className="flex items-center justify-center">
+								<div className={cn(!panel && '-mt-5 border-b')}>
+									<div
+										className={cn(
+											'flex items-center justify-center',
+											panel &&
+												'border-border overflow-hidden rounded-md border',
+										)}
+									>
 										{thumbnailEnabled ? (
 											<SimplePostPlayer
 												className="aspect-video h-auto w-full"
@@ -298,7 +320,15 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 											/>
 										)}
 									</div>
-									<div className="flex items-center gap-1 overflow-x-auto px-4 py-2 md:overflow-x-visible">
+									<div
+										className={cn(
+											panel
+												? // Prototype contract: actions wrap in a 2-col grid of
+													// slim, quiet buttons (11px, h-7, muted until hover).
+													'grid grid-cols-2 gap-1.5 py-2 [&>button]:w-full [&_button]:h-7 [&_button]:border-border [&_button]:text-[11px] [&_button]:font-normal [&_button]:text-muted-foreground [&_button:hover]:text-foreground'
+												: 'flex items-center gap-1 overflow-x-auto px-4 py-2 md:overflow-x-visible',
+										)}
+									>
 										<Button
 											variant="outline"
 											size={'sm'}
@@ -307,8 +337,10 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 										>
 											Replace Video
 										</Button>
-										{showTranscript && transcript && TranscriptDialog}
-										{!transcript && isTranscriptProcessing && (
+										{/* In panel mode the transcript lives in its own visible
+										    block below the grid (excerpt + inline reprocess). */}
+										{!panel && showTranscript && transcript && TranscriptDialog}
+										{!panel && !transcript && isTranscriptProcessing && (
 											<Button
 												variant="outline"
 												size={'sm'}
@@ -319,7 +351,7 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 												Processing Transcript...
 											</Button>
 										)}
-										{!transcript && !isTranscriptProcessing && (
+										{!panel && !transcript && !isTranscriptProcessing && (
 											<Button
 												variant="outline"
 												size={'sm'}
@@ -336,11 +368,14 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 										)}
 										{thumbnailEnabled && (
 											<Tooltip delayDuration={0}>
-												<div className="flex items-center">
+												<div className={cn('flex items-center', panel && 'w-full')}>
 													<TooltipTrigger asChild>
 														<Button
 															type="button"
-															className="rounded-r-none border-r-0"
+															className={cn(
+																'rounded-r-none border-r-0',
+																panel && 'flex-1',
+															)}
 															disabled={thumbnailTime === 0}
 															onClick={async () => {
 																form.setValue(
@@ -398,32 +433,96 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 											</Tooltip>
 										)}
 										{showChapters && videoResource?.id && (
-											<VideoChaptersEditor
-												videoResourceId={videoResource.id}
-												initialChapters={videoResource.chapters}
-												videoDuration={videoResource.duration}
-											/>
+											<div className={cn(panel && 'w-full [&>button]:w-full')}>
+												<VideoChaptersEditor
+													videoResourceId={videoResource.id}
+													initialChapters={videoResource.chapters}
+													videoDuration={videoResource.duration}
+												/>
+											</div>
 										)}
-										<Tooltip delayDuration={0}>
-											<TooltipTrigger asChild>
-												<Button
-													variant="outline"
-													size="icon"
-													className="h-6 w-6 shrink-0"
-													type="button"
-													onClick={() => setShowDetachConfirmation(true)}
-												>
-													<Unlink className="h-3 w-3" />
-												</Button>
-											</TooltipTrigger>
-											<TooltipContent side="bottom" className="px-1 py-0">
-												<span className="text-xs">Detach video</span>
-											</TooltipContent>
-										</Tooltip>
+										{panel ? (
+											<Button
+												variant="outline"
+												size="sm"
+												className="w-full"
+												type="button"
+												onClick={() => setShowDetachConfirmation(true)}
+											>
+												<Unlink className="mr-1.5 h-3 w-3" />
+												Detach Video
+											</Button>
+										) : (
+											<Tooltip delayDuration={0}>
+												<TooltipTrigger asChild>
+													<Button
+														variant="outline"
+														size="icon"
+														className="h-6 w-6 shrink-0"
+														type="button"
+														onClick={() => setShowDetachConfirmation(true)}
+													>
+														<Unlink className="h-3 w-3" />
+													</Button>
+												</TooltipTrigger>
+												<TooltipContent side="bottom" className="px-1 py-0">
+													<span className="text-xs">Detach video</span>
+												</TooltipContent>
+											</Tooltip>
+										)}
 									</div>
+								{/* Panel transcript block — always visible so it's obvious a
+								    transcript exists (or doesn't); excerpt + inline reprocess
+								    replace the grid button + buried-modal-only access. */}
+								{panel && showTranscript ? (
+									<div className="border-border bg-muted/40 mb-2 space-y-1.5 rounded-md border p-2.5">
+										<div className="flex items-baseline gap-3">
+											<span className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+												Transcript
+											</span>
+											<div className="flex-1" />
+											<button
+												type="button"
+												disabled={isTranscriptProcessing}
+												onClick={() => {
+													setIsTranscriptProcessing(true)
+													reprocessTranscript({
+														videoResourceId: videoResource.id,
+													})
+												}}
+												className="text-primary text-[11px] hover:underline disabled:opacity-50 disabled:hover:no-underline"
+											>
+												{isTranscriptProcessing ? 'Reprocessing…' : '↻ Reprocess'}
+											</button>
+											{transcript ? (
+												<span className="[&_button]:text-primary [&_button]:h-auto [&_button]:border-0 [&_button]:bg-transparent [&_button]:p-0 [&_button]:text-[11px] [&_button]:font-normal [&_button:hover]:underline">
+													{TranscriptDialog}
+												</span>
+											) : null}
+										</div>
+										{transcript ? (
+											<p className="text-muted-foreground line-clamp-3 font-mono text-[11px] leading-relaxed">
+												{transcript}
+											</p>
+										) : (
+											<p className="text-muted-foreground text-[11px]">
+												{isTranscriptProcessing
+													? 'Processing transcript…'
+													: 'No transcript yet — Reprocess generates one from the video.'}
+											</p>
+										)}
+									</div>
+								) : null}
 								</div>
 							) : videoResource ? (
-								<div className="bg-muted/75 -mt-5 mb-[42px] flex aspect-video h-full w-full flex-col items-center justify-center gap-3 p-5 text-sm">
+								<div
+									className={cn(
+										'bg-muted/75 flex aspect-video h-full w-full flex-col items-center justify-center gap-3 p-5 text-sm',
+										panel
+											? 'border-border rounded-md border'
+											: '-mt-5 mb-[42px]',
+									)}
+								>
 									{videoResource.state === 'errored' ? (
 										<>
 											<span className="text-destructive">video is errored</span>
@@ -455,7 +554,14 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 									)}
 								</div>
 							) : (
-								<div className="bg-muted/75 -mt-5 mb-[42px] flex aspect-video h-full w-full flex-col items-center justify-center gap-3 p-5 text-sm">
+								<div
+									className={cn(
+										'bg-muted/75 flex aspect-video h-full w-full flex-col items-center justify-center gap-3 p-5 text-sm',
+										panel
+											? 'border-border rounded-md border'
+											: '-mt-5 mb-[42px]',
+									)}
+								>
 									<Spinner className="h-5 w-5" />
 									<span>video is {videoUploadStatus}</span>
 								</div>
@@ -485,7 +591,7 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 						</>
 					)
 				) : (
-					<div className="-mt-7">
+					<div className={cn(!panel && '-mt-7')}>
 						<NewLessonVideoForm
 							parentResourceId={resource.id}
 							onVideoUploadCompleted={(videoResourceId) => {
@@ -498,7 +604,8 @@ export const ContentVideoResourceField = <T extends ContentResourceBase>({
 								refetch()
 							}}
 						/>
-						{!videoResource?.id && (
+						{/* The panel's tab already says "Video" — the label row is legacy chrome. */}
+						{!videoResource?.id && !panel && (
 							<div className="flex items-baseline gap-3 border-b px-5 py-2">
 								<FormLabel className="text-base font-bold">{label}</FormLabel>
 								{!required && (

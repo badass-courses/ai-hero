@@ -1,12 +1,17 @@
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
+import LayoutClient from '@/components/layout-client'
 import { getList } from '@/lib/lists-query'
+import { getTags } from '@/lib/tags-query'
 import { getServerAuthSession } from '@/server/auth'
 import { subject } from '@casl/ability'
 
-import { EditListForm } from './_components/list-form'
+import { EditListClient } from './edit-list-client'
 
 export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -44,5 +49,22 @@ export default async function ListEditPage(props: {
 		redirect(`/${list?.fields?.slug}`)
 	}
 
-	return <EditListForm key={list.fields.slug} resource={list} />
+	// Tag vocabulary for the editor's tag combobox (immediate entity writes).
+	const tags = await getTags()
+
+	// Serialize Date instances (createdAt/updatedAt from the DB driver) to ISO
+	// strings before crossing the RSC boundary — same toIso pattern as the post
+	// edit page; the editor's changed-indicator accepts strings and Dates alike.
+	const clientList = {
+		...list,
+		createdAt: toIso(list.createdAt),
+		updatedAt: toIso(list.updatedAt),
+		deletedAt: toIso(list.deletedAt),
+	} as typeof list
+
+	return (
+		<LayoutClient withFooter={false}>
+			<EditListClient key={list.fields.slug} list={clientList} tags={tags} />
+		</LayoutClient>
+	)
 }

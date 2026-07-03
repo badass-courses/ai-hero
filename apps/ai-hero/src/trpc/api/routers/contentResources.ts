@@ -2,6 +2,11 @@ import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { getAllWorkshopsInCohort } from '@/lib/cohorts-query'
 import { getList } from '@/lib/lists-query'
+import { ListResourcesForPickerInputSchema } from '@/lib/resources'
+import {
+	getResourceParents,
+	listResourcesForPicker,
+} from '@/lib/resources-query'
 import { getWorkshop } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
 import {
@@ -46,14 +51,14 @@ export const contentResourceRouter = createTRPCRouter({
 		}),
 	getPublishedResourcesLength: publicProcedure.query(async () => {
 		const result = await db.execute(sql`
-			SELECT
-				type,
-				COUNT(*) as count
-			FROM ${contentResource}
-			WHERE type IN ('post', 'list')
-			AND JSON_EXTRACT(fields, '$.state') = 'published'
-			GROUP BY type
-		`)
+				SELECT
+					type,
+					COUNT(*) as count
+				FROM ${contentResource}
+				WHERE type IN ('post', 'list')
+				AND JSON_EXTRACT(fields, '$.state') = 'published'
+				GROUP BY type
+			`)
 
 		const total = (result.rows as any[]).reduce(
 			(sum, row) => sum + Number(row.count),
@@ -61,6 +66,27 @@ export const contentResourceRouter = createTRPCRouter({
 		)
 		return total
 	}),
+	/**
+	 * Recent-first, DB-backed rows for the editor's ResourcePicker
+	 * (ORDER BY updatedAt DESC; optional title LIKE search). Ability
+	 * gating (create Content) happens inside `listResourcesForPicker`.
+	 */
+	listForPicker: protectedProcedure
+		.input(ListResourcesForPickerInputSchema)
+		.query(async ({ input }) => {
+			return await listResourcesForPicker(input)
+		}),
+	/**
+	 * One-level reverse lookup (lists/workshops/cohorts via
+	 * ContentResourceResource + products via ContentResourceProduct) —
+	 * powers the "Part of" strip. Gated (update Content) inside
+	 * `getResourceParents`.
+	 */
+	getParents: protectedProcedure
+		.input(z.object({ resourceId: z.string() }))
+		.query(async ({ input }) => {
+			return await getResourceParents(input.resourceId)
+		}),
 	getWorkshop: protectedProcedure
 		.input(z.object({ id: z.string() }))
 		.query(async ({ input }) => {

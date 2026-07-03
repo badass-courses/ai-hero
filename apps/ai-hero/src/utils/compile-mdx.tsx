@@ -206,6 +206,51 @@ function errText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error)
 }
 
+type MdxImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
+	width?: number | string
+	height?: number | string
+}
+
+/**
+ * Shared renderer for markdown `img` and the `<Image>` MDX component:
+ * configured-cloud Cloudinary URLs go through CldImage (fixed size when
+ * width/height are known, fill otherwise); anything else is a plain <img>.
+ */
+function MdxImage(props: MdxImageProps) {
+	const cloudMatch =
+		typeof props.src === 'string'
+			? props.src.match(/^https?:\/\/res\.cloudinary\.com\/([^/]+)\//)
+			: null
+	const isConfiguredCloud =
+		cloudMatch?.[1] === env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+
+	if (isConfiguredCloud) {
+		if (props.width && props.height) {
+			return (
+				<CldImage
+					width={props.width}
+					height={props.height}
+					className={cn('', props.className)}
+					{...(props as any)}
+				/>
+			)
+		}
+		return (
+			<span className="relative block w-full">
+				<CldImage
+					fill
+					sizes="(max-width: 768px) 100vw, 734px"
+					className={cn('relative! h-auto! w-full!', props.className)}
+					{...(props as any)}
+					width={undefined}
+					height={undefined}
+				/>
+			</span>
+		)
+	}
+	return <img {...props} className="" />
+}
+
 async function compileMDXInternal(
 	source: string,
 	components: MDXRemoteProps['components'] = {},
@@ -368,45 +413,10 @@ async function compileMDXInternal(
 							</a>
 						)
 					},
-					img: (props) => {
-						const cloudMatch =
-							typeof props.src === 'string'
-								? props.src.match(
-										/^https?:\/\/res\.cloudinary\.com\/([^/]+)\//,
-									)
-								: null
-						const isConfiguredCloud =
-							cloudMatch?.[1] === env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-
-						if (isConfiguredCloud) {
-							if (props.width && props.height) {
-								return (
-									<CldImage
-										width={props.width}
-										height={props.height}
-										className={cn('', props.className)}
-										{...props}
-									/>
-								)
-							}
-							return (
-								<span className="relative block w-full">
-									<CldImage
-										fill
-										sizes="(max-width: 768px) 100vw, 734px"
-										className={cn(
-											'relative! h-auto! w-full!',
-											props.className,
-										)}
-										{...props}
-										width={undefined}
-										height={undefined}
-									/>
-								</span>
-							)
-						}
-						return <img {...props} className="" />
-					},
+					img: (props) => <MdxImage {...props} />,
+					// The editor's media picker inserts `<Image src width height alt />`
+					// — same rendering path as markdown images.
+					Image: (props: MdxImageProps) => <MdxImage {...props} />,
 					CldImage: (props) => <CldImage {...props} />,
 					CommitMap: ({ children }) => <CommitMap>{children}</CommitMap>,
 					Commit: ({ children, id }) => <Commit id={id}>{children}</Commit>,

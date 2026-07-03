@@ -1,12 +1,17 @@
-import * as React from 'react'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
-import { getEvent } from '@/lib/events-query'
+import LayoutClient from '@/components/layout-client'
+import { getEventOrEventSeries } from '@/lib/events-query'
+import type { Event } from '@/lib/events'
+import { getTags } from '@/lib/tags-query'
 import { getServerAuthSession } from '@/server/auth'
 
-import { EditEventForm } from './_components/edit-event-form'
+import { EditEventClient } from './edit-event-client'
 
 export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 export default async function EventEditPage(props: {
 	params: Promise<{ slug: string }>
@@ -14,11 +19,42 @@ export default async function EventEditPage(props: {
 	const params = await props.params
 	await headers()
 	const { ability } = await getServerAuthSession()
-	const event = await getEvent(params.slug)
+	// getEventOrEventSeries instead of the legacy getEvent so the row arrives
+	// WITH its tags (getEvent never loaded them — the editor's tag chips need
+	// the seed). The type guard preserves the legacy behavior exactly:
+	// event-series has NO edit route (getEvent returned null for series).
+	const resource = await getEventOrEventSeries(params.slug)
 
-	if (!event || !ability.can('create', 'Content')) {
+	if (
+		!resource ||
+		resource.type !== 'event' ||
+		!ability.can('create', 'Content')
+	) {
 		notFound()
 	}
+	const event = resource as Event
 
-	return <EditEventForm key={event.fields.slug} event={event} />
+	// Tag vocabulary for the editor's tag combobox (immediate entity writes).
+	const tags = await getTags()
+
+	// Serialize Date instances (createdAt/updatedAt from the DB driver) to ISO
+	// strings before crossing the RSC boundary — Next's serialization warning
+	// flags them on the `event` prop, and the editor's changed-indicator
+	// accepts strings and Dates alike.
+	const clientEvent = {
+		...event,
+		createdAt: toIso(event.createdAt),
+		updatedAt: toIso(event.updatedAt),
+		deletedAt: toIso(event.deletedAt),
+	} as typeof event
+
+	return (
+		<LayoutClient withFooter={false}>
+			<EditEventClient
+				key={event.fields.slug}
+				event={clientEvent}
+				tags={tags}
+			/>
+		</LayoutClient>
+	)
 }

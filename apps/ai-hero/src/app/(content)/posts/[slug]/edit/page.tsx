@@ -2,14 +2,19 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter } from '@/db'
-import { getAllLists } from '@/lib/lists-query'
-import { getPost } from '@/lib/posts-query'
+import { getPost, getPostLists } from '@/lib/posts-query'
+import { getTags } from '@/lib/tags-query'
 import { getServerAuthSession } from '@/server/auth'
 import { subject } from '@casl/ability'
 
-import { EditPostForm } from '../../_components/edit-post-form'
+import type { ListMembership } from '@coursebuilder/ui/cms/manifest'
+
+import { EditPostClient } from './edit-post-client'
 
 export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -68,15 +73,36 @@ export default async function ArticleEditPage(props: {
 		}
 	}
 
-	const listsLoader = getAllLists()
+	// Tag vocabulary for the editor's tag combobox (immediate entity writes),
+	// plus the lists this post belongs to (seed for the lists membership field).
+	const [tags, postLists] = await Promise.all([getTags(), getPostLists(post.id)])
+
+	const listMemberships: ListMembership[] = postLists.map((list) => ({
+		listId: list.id,
+		title: list.fields.title,
+		slug: list.fields.slug,
+		href: `/lists/${list.fields.slug}/edit`,
+	}))
+
+	// Serialize Date instances (createdAt/updatedAt from the DB driver) to ISO
+	// strings before crossing the RSC boundary — Next's serialization warning
+	// flags them on the `post` prop, and the editor's changed-indicator accepts
+	// strings and Dates alike.
+	const clientPost = {
+		...post,
+		createdAt: toIso(post.createdAt),
+		updatedAt: toIso(post.updatedAt),
+		deletedAt: toIso(post.deletedAt),
+	} as typeof post
 
 	return (
-		<LayoutClient>
-			<EditPostForm
+		<LayoutClient withFooter={false}>
+			<EditPostClient
 				key={post.fields.slug}
-				post={{ ...post }}
+				post={clientPost}
 				videoResource={videoResource}
-				listsLoader={listsLoader}
+				tags={tags}
+				listMemberships={listMemberships}
 			/>
 		</LayoutClient>
 	)

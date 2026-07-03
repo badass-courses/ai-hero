@@ -154,7 +154,10 @@ export async function getPostLists(postId: string): Promise<List[]> {
 
 	const listResources = lists
 		.filter((list) => list.resourceOf.type === 'list')
-		.map((list) => list.resourceOf)
+		// The join fetch doesn't include each list's own children, but ListSchema
+		// requires `resources` — membership consumers (the editor's Lists field)
+		// only need id/title/slug, so an empty array is the honest default.
+		.map((list) => ({ resources: [], ...list.resourceOf }))
 
 	return z.array(ListSchema).parse(listResources)
 }
@@ -380,6 +383,18 @@ export async function updatePost(
 
 	const githubOverrides = githubSourceFieldOverrides(input.fields, currentPost)
 
+	// Stamp fields.publishedAt on the transition INTO 'published' (or when a
+	// published post is missing its stamp — backfill for posts published before
+	// the field existed). Detected from state values, NOT the `action` arg:
+	// legacy form saves always sent action='save' and carried the state change
+	// as a plain field write. Never touched on other saves.
+	const publishedAtOverride =
+		input.fields.state === 'published' &&
+		(currentPost.fields.state !== 'published' ||
+			!currentPost.fields.publishedAt)
+			? { publishedAt: new Date().toISOString() }
+			: {}
+
 	// Detect a newly-set or changed GitHub source so we can pull the body right
 	// after the save, instead of leaving the post on its old body until a manual
 	// "Sync now" / webhook / cron. Setting the source and saving should just work.
@@ -401,6 +416,7 @@ export async function updatePost(
 					description: input.fields.description || '',
 					slug: postSlug,
 					...githubOverrides,
+					...publishedAtOverride,
 				},
 			},
 			action,
@@ -428,6 +444,7 @@ export async function updatePost(
 				...input.fields,
 				slug: postSlug,
 				...githubOverrides,
+				...publishedAtOverride,
 			},
 		})
 
@@ -492,8 +509,14 @@ export async function getPost(slugOrId: string) {
 	)
 		? ['public', 'private', 'unlisted']
 		: ['public', 'unlisted']
-	const states: ('draft' | 'published')[] = ability.can('update', 'Content')
-		? ['draft', 'published']
+	// Editors also see archived posts — otherwise archiving is a one-way door
+	// (the edit route itself would 404, leaving no way to restore). The public
+	// "archived 404s for everyone" rule is enforced by the view routes.
+	const states: ('draft' | 'published' | 'archived')[] = ability.can(
+		'update',
+		'Content',
+	)
+		? ['draft', 'published', 'archived']
 		: ['published']
 
 	const post = await db.query.contentResource.findFirst({

@@ -30,8 +30,22 @@ export const CohortSchema = ContentResourceSchema.merge(
 			officeHoursSessions: CohortOfficeHoursSessionsSchema,
 			state: ResourceStateSchema.default('draft'),
 			visibility: ResourceVisibilitySchema.default('unlisted'),
-			startsAt: z.string().datetime().optional(),
-			endsAt: z.string().datetime().optional(),
+			// Stamped on the transition into 'published' (updateCohort) — the CMS
+			// editor's changed-indicator compares it against `updatedAt`.
+			publishedAt: z.string().datetime().nullish(),
+			// Nullish INPUT (the CMS datetime field writes `null` on clear) but
+			// `undefined` OUTPUT, so downstream `startsAt?: string` consumers keep
+			// their types; a cleared date drops out of the JSON fields blob.
+			startsAt: z
+				.string()
+				.datetime()
+				.nullish()
+				.transform((value) => value ?? undefined),
+			endsAt: z
+				.string()
+				.datetime()
+				.nullish()
+				.transform((value) => value ?? undefined),
 			timezone: z.string().default('America/Los_Angeles'),
 			cohortTier: z.enum(['standard', 'premium', 'vip']).optional(),
 			maxSeats: z.number().int().positive().optional(),

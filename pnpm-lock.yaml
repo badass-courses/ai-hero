@@ -105,7 +105,7 @@ importers:
         version: 2.0.0(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(nodemailer@6.10.1)
       '@coursebuilder/analytics':
         specifier: ^1.1.1
-        version: 1.1.1(c8654acafd2cfe17b6e5f2deb4b49ff6)
+        version: 1.1.1(@coursebuilder/ui@course-builder+packages+ui)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(lucide-react@0.288.0(react@19.2.3))(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nuqs@2.8.9(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3))(react@19.2.3)(recharts@3.8.1(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react-is@18.3.1)(react@19.2.3)(redux@5.0.1))
       '@coursebuilder/commerce-next':
         specifier: ^0.2.2
         version: 0.2.2(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)
@@ -128,8 +128,8 @@ importers:
         specifier: ^1.0.5
         version: 1.0.5(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)
       '@coursebuilder/ui':
-        specifier: ^2.0.15
-        version: 2.0.15(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)
+        specifier: link:../../../course-builder/packages/ui
+        version: link:../../../course-builder/packages/ui
       '@coursebuilder/utils':
         specifier: ^1.0.3
         version: 1.0.3(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
@@ -1605,9 +1605,6 @@ packages:
 
   '@coursebuilder/ui@2.0.12':
     resolution: {integrity: sha512-aMzfExaA3shBl73gEKSx/VotABW5dAcjFCBd9RLvIDn+Ckf/rDm3199RJ3l8MSmG+3foZHoJfbBjlz0PKO0fSg==}
-
-  '@coursebuilder/ui@2.0.15':
-    resolution: {integrity: sha512-s48140MEsgU+b41DoHzxhi3Ne8Ivx85e7kh5CmRyU8jZTzLy00YdUBVzJcKOn6VMegY17EDhw/SpUvn20WmGuQ==}
 
   '@coursebuilder/utils@1.0.3':
     resolution: {integrity: sha512-jsMgKmoerCXIoBf/7aNyAFZJfFXks4pV8Up8omBP9G1sP5S7Sr+zduCl/aLrLqqfM7DB0BTd8+SMic1hpCa1nA==}
@@ -14724,9 +14721,9 @@ snapshots:
       - '@simplewebauthn/server'
       - nodemailer
 
-  '@coursebuilder/analytics@1.1.1(c8654acafd2cfe17b6e5f2deb4b49ff6)':
+  '@coursebuilder/analytics@1.1.1(@coursebuilder/ui@course-builder+packages+ui)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(lucide-react@0.288.0(react@19.2.3))(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nuqs@2.8.9(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3))(react@19.2.3)(recharts@3.8.1(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react-is@18.3.1)(react@19.2.3)(redux@5.0.1))':
     dependencies:
-      '@coursebuilder/ui': 2.0.15(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)
+      '@coursebuilder/ui': link:../course-builder/packages/ui
       '@google-analytics/data': 4.12.1(encoding@0.1.13)
       drizzle-orm: 0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3)
       lucide-react: 0.288.0(react@19.2.3)
@@ -15174,129 +15171,6 @@ snapshots:
       '@codemirror/state': 6.7.0
       '@codemirror/view': 6.43.2
       '@coursebuilder/core': 2.0.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
-      '@hookform/resolvers': 3.10.0(react-hook-form@7.78.0(react@19.2.3))
-      '@internationalized/date': 3.12.2
-      '@lezer/highlight': 1.2.3
-      '@mux/mux-player-react': 3.13.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-accordion': 1.2.13(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-alert-dialog': 1.1.16(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-checkbox': 1.3.4(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-collection': 1.1.9(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-compose-refs': 1.1.3(@types/react@19.2.7)(react@19.2.3)
-      '@radix-ui/react-context': 1.1.4(@types/react@19.2.7)(react@19.2.3)
-      '@radix-ui/react-context-menu': 2.3.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-dialog': 1.1.2(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-dropdown-menu': 2.1.17(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-icons': 1.3.2(react@19.2.3)
-      '@radix-ui/react-label': 2.1.9(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-navigation-menu': 1.2.15(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-popover': 1.1.16(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-progress': 1.1.9(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-radio-group': 1.4.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-scroll-area': 1.2.11(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-select': 2.3.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-separator': 1.1.9(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-slot': 1.2.5(@types/react@19.2.7)(react@19.2.3)
-      '@radix-ui/react-switch': 1.3.0(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-tabs': 1.1.14(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-toast': 1.2.16(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-tooltip': 1.2.9(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@types/md5': 2.3.6
-      '@uiw/codemirror-themes': 4.25.10(@codemirror/language@6.12.3)(@codemirror/state@6.7.0)(@codemirror/view@6.43.2)
-      '@uiw/react-codemirror': 4.25.10(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/language@6.12.3)(@codemirror/lint@6.9.7)(@codemirror/search@6.7.0)(@codemirror/state@6.7.0)(@codemirror/theme-one-dark@6.1.3)(@codemirror/view@6.43.2)(codemirror@6.0.2)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@uiw/react-markdown-editor': 6.1.4(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/language@6.12.3)(@codemirror/lint@6.9.7)(@codemirror/search@6.7.0)(@codemirror/theme-one-dark@6.1.3)(@types/react@19.2.7)(codemirror@6.0.2)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      class-variance-authority: 0.7.1
-      clsx: 2.1.1
-      cmdk: 0.2.1(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      codemirror: 6.0.2
-      date-fns: 2.30.0
-      framer-motion: 12.40.0(@emotion/is-prop-valid@0.8.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      lucide-react: 0.288.0(react@19.2.3)
-      md5: 2.3.0
-      openai-edge: 1.2.3
-      partysocket: 1.0.1
-      query-string: 9.4.0
-      react: 19.2.3
-      react-aria: 3.49.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      react-day-picker: 9.14.0(react@19.2.3)
-      react-dom: 19.2.3(react@19.2.3)
-      react-hook-form: 7.78.0(react@19.2.3)
-      react-markdown: 9.0.3(@types/react@19.2.7)(react@19.2.3)
-      react-resizable-panels: 2.1.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      react-stately: 3.47.0(react@19.2.3)
-      react-wrap-balancer: 0.2.4(react@19.2.3)
-      tailwind-merge: 3.6.0
-      y-codemirror.jh: 0.3.2-joel-fork(@codemirror/state@6.7.0)(@codemirror/view@6.43.2)(yjs@13.6.31)
-      y-partykit: 0.0.28
-      y-prosemirror: 1.3.7(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
-      y-protocols: 1.0.7(yjs@13.6.31)
-      yjs: 13.6.31
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@babel/core'
-      - '@babel/runtime'
-      - '@codemirror/autocomplete'
-      - '@codemirror/lint'
-      - '@codemirror/theme-one-dark'
-      - '@emotion/is-prop-valid'
-      - '@microsoft/api-extractor'
-      - '@minify-html/node'
-      - '@opentelemetry/api'
-      - '@opentelemetry/core'
-      - '@simplewebauthn/browser'
-      - '@simplewebauthn/server'
-      - '@sveltejs/kit'
-      - '@swc/core'
-      - '@swc/css'
-      - '@swc/helpers'
-      - '@swc/html'
-      - '@types/react'
-      - '@types/react-dom'
-      - '@vercel/node'
-      - aws-lambda
-      - babel-plugin-macros
-      - bufferutil
-      - clean-css
-      - cssnano
-      - csso
-      - debug
-      - drizzle-orm
-      - encoding
-      - eslint
-      - express
-      - fastify
-      - h3
-      - hono
-      - html-minifier-terser
-      - koa
-      - lightningcss
-      - next
-      - nodemailer
-      - postcss
-      - prosemirror-model
-      - prosemirror-state
-      - prosemirror-view
-      - rollup
-      - sass
-      - supports-color
-      - ts-node
-      - typescript
-      - uglify-js
-      - utf-8-validate
-      - webpack-cli
-
-  '@coursebuilder/ui@2.0.15(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)':
-    dependencies:
-      '@auth/core': 0.37.2(nodemailer@6.10.1)
-      '@codemirror/commands': 6.10.3
-      '@codemirror/lang-javascript': 6.2.5
-      '@codemirror/lang-markdown': 6.5.0
-      '@codemirror/language': 6.12.3
-      '@codemirror/language-data': 6.5.2
-      '@codemirror/search': 6.7.0
-      '@codemirror/state': 6.7.0
-      '@codemirror/view': 6.43.2
-      '@coursebuilder/core': 2.0.1(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
       '@hookform/resolvers': 3.10.0(react-hook-form@7.78.0(react@19.2.3))
       '@internationalized/date': 3.12.2
       '@lezer/highlight': 1.2.3
