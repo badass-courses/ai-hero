@@ -28,7 +28,10 @@ import remarkGfm from 'remark-gfm'
 
 import { remarkMermaid } from '@coursebuilder/mdx-mermaid'
 import { Button } from '@coursebuilder/ui'
+import { createMdxComponents } from '@coursebuilder/ui/cms/mdx-components'
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+import config from '@/config'
 
 const Scrollycoding = dynamic(
 	() => import('@/components/codehike/scrollycoding'),
@@ -280,6 +283,19 @@ async function compileMDXInternal(
 			_compileMDX({
 				source: sanitizeMdxSource(source),
 				components: {
+					// Kit-shared implementations for every COMMON_MDX / PAGE_MDX
+					// snippet (adds the page-builder blocks this map didn't carry:
+					// Spacer, CenteredTitle, Section, BlueSection, Instructor).
+					// Spread FIRST so the app's richer local entries below win.
+					...createMdxComponents({
+						Video: MdxEmbeddedVideo,
+						Image: CldImage,
+						instructor: {
+							name: config.author,
+							imageUrl:
+								'https://res.cloudinary.com/total-typescript/image/upload/v1741011187/aihero.dev/assets/matt-in-new-studio-square_2x_hutwgm.png',
+						},
+					}),
 					input: (props: React.InputHTMLAttributes<HTMLInputElement>) => {
 						if (props.type === 'checkbox' && context?.lessonId) {
 							const currentIndex = checkboxIndex++
