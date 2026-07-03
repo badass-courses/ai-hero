@@ -15,6 +15,7 @@ import {
 import { batchUpdateResourcePositions } from '@/lib/tutorials-query'
 
 import type {
+	ContentsItem,
 	ResourceAction,
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
@@ -55,6 +56,11 @@ export interface CreateCohortBindingsOptions {
 	 * Parity with the legacy form: redirect to the new edit URL.
 	 */
 	onSlugChange?: (slug: string) => void
+	/**
+	 * Per-row ⋯ "Edit" on the Contents tab — the client wrapper navigates to
+	 * the child workshop's edit route (legacy tree context-menu Edit parity).
+	 */
+	onEditItem?: (item: ContentsItem) => void
 }
 
 /**
@@ -79,6 +85,7 @@ function stateForAction(
 
 export function createCohortBindings({
 	onSlugChange,
+	onEditItem,
 }: CreateCohortBindingsOptions = {}): ResourceBindings<typeof CohortSchema> {
 	return {
 		update: async (values, action) => {
@@ -157,6 +164,8 @@ export function createCohortBindings({
 					})),
 				)
 			},
+			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
+			onEdit: onEditItem,
 		},
 		media: {
 			// Flat per-type Cloudinary dir (events/products/lists precedent).

@@ -4,6 +4,7 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createWorkshopBindings } from '@/lib/cms/workshop-bindings'
 import { WorkshopSchema, type Workshop } from '@/lib/workshops'
+import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { createResourceEditor, workshopManifest } from '@coursebuilder/ui/cms'
 
@@ -28,6 +29,15 @@ export function EditWorkshopClient({ workshop }: EditWorkshopClientProps) {
 			},
 			bindings: createWorkshopBindings({
 				onSlugChange: (slug) => router.push(`/workshops/${slug}/edit`),
+				// Contents tab per-row ⋯ Edit → the child's edit route (lessons
+				// resolve under this workshop, posts to /posts/{slug}/edit).
+				onEditItem: (item) =>
+					router.push(
+						getResourcePath(item.type, item.slug ?? item.id, 'edit', {
+							parentType: 'workshop',
+							parentSlug: workshop.fields.slug,
+						}),
+					),
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

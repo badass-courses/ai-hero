@@ -8,6 +8,7 @@ import type { Workshop, WorkshopSchema } from '@/lib/workshops'
 import { updateWorkshop } from '@/lib/workshops-query'
 
 import type {
+	ContentsItem,
 	ResourceAction,
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
@@ -37,6 +38,11 @@ export interface CreateWorkshopBindingsOptions {
 	 * Parity with the legacy form: redirect to the new edit URL.
 	 */
 	onSlugChange?: (slug: string) => void
+	/**
+	 * Per-row ⋯ "Edit" on the Contents tab — the client wrapper navigates to
+	 * the child's edit route (legacy tree context-menu Edit link parity).
+	 */
+	onEditItem?: (item: ContentsItem) => void
 }
 
 /**
@@ -62,6 +68,7 @@ function stateForAction(
 
 export function createWorkshopBindings({
 	onSlugChange,
+	onEditItem,
 }: CreateWorkshopBindingsOptions = {}): ResourceBindings<
 	typeof WorkshopSchema
 > {
@@ -153,6 +160,8 @@ export function createWorkshopBindings({
 			create: async (resourceId, type) => {
 				await createWorkshopChild(resourceId, type)
 			},
+			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
+			onEdit: onEditItem,
 		},
 		media: {
 			// Flat per-type Cloudinary dir (events/products/lists precedent).

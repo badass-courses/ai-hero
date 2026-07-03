@@ -4,6 +4,7 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createCohortBindings } from '@/lib/cms/cohort-bindings'
 import { CohortSchema, type Cohort } from '@/lib/cohort'
+import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { cohortManifest, createResourceEditor } from '@coursebuilder/ui/cms'
 
@@ -62,6 +63,9 @@ export function EditCohortClient({ cohort }: EditCohortClientProps) {
 			},
 			bindings: createCohortBindings({
 				onSlugChange: (slug) => router.push(`/cohorts/${slug}/edit`),
+				// Contents tab per-row ⋯ Edit → the child workshop's edit route.
+				onEditItem: (item) =>
+					router.push(getResourcePath(item.type, item.slug ?? item.id, 'edit')),
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.
