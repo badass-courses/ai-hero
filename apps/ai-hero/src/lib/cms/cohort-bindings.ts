@@ -99,7 +99,7 @@ export function createCohortBindings({
 			if (!values.id || !values.fields) {
 				throw new Error('Invalid resource data')
 			}
-			return await updateCohort(
+			const updated = await updateCohort(
 				{
 					id: values.id,
 					fields: {
@@ -110,6 +110,11 @@ export function createCohortBindings({
 				},
 				action,
 			)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Cohort save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

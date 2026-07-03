@@ -74,7 +74,7 @@ export function createPageBindings({
 			if (!values.id || !values.fields) {
 				throw new Error('Invalid resource data')
 			}
-			return await updatePage({
+			const updated = await updatePage({
 				...values,
 				fields: {
 					...stripClientPublishedAt(values.fields),
@@ -87,6 +87,11 @@ export function createPageBindings({
 						: null,
 				},
 			} as Page)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Page save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

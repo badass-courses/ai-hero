@@ -329,7 +329,12 @@ export function createPostBindings({
 				// via the tags binding below (addTagToPost / removeTagFromPost).
 				tags: values.tags || [],
 			} as PostUpdate
-			return await updatePost(postUpdate, action)
+			const updated = await updatePost(postUpdate, action)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Post save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

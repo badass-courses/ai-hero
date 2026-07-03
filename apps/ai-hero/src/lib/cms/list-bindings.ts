@@ -94,7 +94,7 @@ export function createListBindings({
 			// and `tags` ride along for the ListUpdate type but `updateList`
 			// persists fields only — contents are join rows written immediately
 			// by the contents binding below, tags by the tags binding.
-			return await updateList(
+			const updated = await updateList(
 				{
 					id: values.id,
 					fields: {
@@ -114,6 +114,11 @@ export function createListBindings({
 				},
 				action,
 			)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('List save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

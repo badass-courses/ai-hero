@@ -66,13 +66,18 @@ export function createPromptBindings({
 			// '~'). Server behavior is preserved as-is — the redirect below reads
 			// the slug the SERVER returns, so the editor lands wherever the server
 			// actually put the prompt.
-			return await updatePrompt({
+			const updated = await updatePrompt({
 				...values,
 				fields: {
 					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state || 'draft'),
 				},
 			})
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Prompt save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

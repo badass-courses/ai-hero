@@ -92,7 +92,7 @@ export function createEventBindings({
 			if (!values.id || !values.fields) {
 				throw new Error('Invalid resource data')
 			}
-			return await updateEvent(
+			const updated = await updateEvent(
 				{
 					id: values.id,
 					fields: {
@@ -103,6 +103,11 @@ export function createEventBindings({
 				},
 				action,
 			)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Event save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			// The legacy save hook, unchanged: fires the Inngest calendar-sync

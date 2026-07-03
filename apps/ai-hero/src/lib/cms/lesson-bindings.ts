@@ -93,7 +93,12 @@ export function createLessonBindings({
 				// via the tags binding below (addTagToPost / removeTagFromPost).
 				tags: values.tags || [],
 			} as LessonUpdate
-			return await updateLesson(lessonUpdate)
+			const updated = await updateLesson(lessonUpdate)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Lesson save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

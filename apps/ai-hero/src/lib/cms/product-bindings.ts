@@ -110,15 +110,25 @@ export function createProductBindings({
 			if (action === 'archive') {
 				// Dedicated verb: zeroes product/price/merchant status rows and
 				// deactivates the product in Stripe.
-				return await archiveProduct(values.id)
+				const updated = await archiveProduct(values.id)
+				// null here means nothing was persisted — don't let the kit report 'Saved'.
+				if (updated == null) {
+					throw new Error('Product save failed — nothing was persisted')
+				}
+				return updated
 			}
-			return await updateProduct({
+			const updated = await updateProduct({
 				...values,
 				fields: {
 					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state ?? 'draft'),
 				},
 			})
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Product save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

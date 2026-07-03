@@ -96,7 +96,12 @@ export function createSkillChangelogBindings({
 					newsletterCopy: values.fields.newsletterCopy ?? null,
 				},
 			}
-			return await updateSkillChangelog(update, action)
+			const updated = await updateSkillChangelog(update, action)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Changelog save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug

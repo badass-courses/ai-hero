@@ -83,7 +83,16 @@ export function createSolutionBindings({
 					slug: values.fields.slug,
 					description: values.fields.description || '',
 				})
-				const createdState = stateForAction(action, 'draft')
+				// Hand the id to the editor BEFORE the follow-up state update: if
+				// that update fails, the editor already holds the new row's id, so a
+				// retry becomes an UPDATE instead of creating a duplicate solution.
+				onCreated?.({ id: created.id })
+				const derivedState = stateForAction(action, 'draft')
+				// Clamp on create: publish-on-first-save is fine, but archiving a
+				// never-saved solution is meaningless and would persist a phantom
+				// lesson↔solution join row.
+				const createdState =
+					derivedState === 'published' ? derivedState : 'draft'
 				if (createdState !== 'draft') {
 					await updateSolution({
 						id: created.id,
@@ -91,12 +100,11 @@ export function createSolutionBindings({
 						fields: { state: createdState },
 					} as Partial<Solution>)
 				}
-				onCreated?.({ id: created.id })
 				return created
 			}
 			// UPDATE mode. Slugs never auto-regenerate on title change — only an
 			// explicit edit to the slug field changes the slug.
-			return await updateSolution({
+			const updated = await updateSolution({
 				id: values.id,
 				type: 'solution',
 				fields: {
@@ -104,6 +112,11 @@ export function createSolutionBindings({
 					state: stateForAction(action, values.fields.state || 'draft'),
 				},
 			} as Partial<Solution>)
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Solution save failed — nothing was persisted')
+			}
+			return updated
 		},
 		// Solutions have no page of their own — Preview / View on site goes to
 		// the parent lesson (legacy getResourcePath parity). The slug arg is the

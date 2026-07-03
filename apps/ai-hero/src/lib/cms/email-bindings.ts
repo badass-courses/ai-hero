@@ -86,13 +86,18 @@ export function createEmailBindings({
 			// updateEmail regenerates the slug itself on title change (splits the
 			// existing slug on '~' — correct, unlike prompts). Server behavior is
 			// preserved as-is.
-			return await updateEmail({
+			const updated = await updateEmail({
 				...values,
 				fields: {
 					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state || 'draft'),
 				},
 			})
+			// null here means nothing was persisted — don't let the kit report 'Saved'.
+			if (updated == null) {
+				throw new Error('Email save failed — nothing was persisted')
+			}
+			return updated
 		},
 		onSave: async (resource, hasNewSlug) => {
 			const slug = resource?.fields?.slug
