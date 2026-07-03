@@ -18,13 +18,7 @@
 		"noUncheckedIndexedAccess": true,
 		"baseUrl": ".",
 		"paths": {
-			"@/*": ["./src/*"],
-			// Force a single react-hook-form type identity while
-			// @coursebuilder/ui is consumed via link: (the linked package
-			// otherwise resolves its own RHF copy from course-builder's
-			// node_modules, producing "two different types" TS2322 errors).
-			"react-hook-form": ["./node_modules/react-hook-form"],
-			"@internationalized/date": ["./node_modules/@internationalized/date"]
+			"@/*": ["./src/*"]
 		},
 		"types": ["vitest/globals"],
 		"plugins": [
