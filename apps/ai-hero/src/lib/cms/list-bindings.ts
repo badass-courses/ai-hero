@@ -50,6 +50,11 @@ export interface CreateListBindingsOptions {
 	 * the child's edit route (replaces the legacy tree's inline title editing).
 	 */
 	onEditItem?: (item: ContentsItem) => void
+	/**
+	 * Public view URL for a row — renders the per-row external-link icon.
+	 * Pure client mapping (e.g. `getResourcePath(type, slug, 'view')`).
+	 */
+	getItemHref?: (item: ContentsItem) => string | undefined
 }
 
 /**
@@ -78,6 +83,7 @@ export function createListBindings({
 	availableTags,
 	onSlugChange,
 	onEditItem,
+	getItemHref,
 }: CreateListBindingsOptions): ResourceBindings<typeof ListSchema> {
 	return {
 		update: async (values, action) => {
@@ -198,6 +204,8 @@ export function createListBindings({
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
 			onEdit: onEditItem,
+			// Per-row external-link icon → the child's public view URL.
+			getItemHref,
 		},
 		media: {
 			// Same Cloudinary dir the legacy tool-panel uploader used: 'lists'

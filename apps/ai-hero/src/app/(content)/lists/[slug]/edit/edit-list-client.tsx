@@ -45,6 +45,14 @@ export function EditListClient({ list, tags }: EditListClientProps) {
 							parentSlug: list.fields.slug,
 						}),
 					),
+				// Per-row external-link icon → the child's public (view) URL.
+				getItemHref: (item) =>
+					item.slug
+						? getResourcePath(item.type, item.slug, 'view', {
+								parentType: 'list',
+								parentSlug: list.fields.slug,
+							})
+						: undefined,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

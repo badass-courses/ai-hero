@@ -66,6 +66,9 @@ export function EditCohortClient({ cohort }: EditCohortClientProps) {
 				// Contents tab per-row ⋯ Edit → the child workshop's edit route.
 				onEditItem: (item) =>
 					router.push(getResourcePath(item.type, item.slug ?? item.id, 'edit')),
+				// Per-row external-link icon → the child workshop's public URL.
+				getItemHref: (item) =>
+					item.slug ? getResourcePath(item.type, item.slug, 'view') : undefined,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

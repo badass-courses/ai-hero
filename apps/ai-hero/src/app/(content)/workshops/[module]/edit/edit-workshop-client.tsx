@@ -38,6 +38,14 @@ export function EditWorkshopClient({ workshop }: EditWorkshopClientProps) {
 							parentSlug: workshop.fields.slug,
 						}),
 					),
+				// Per-row external-link icon → the child's public (view) URL.
+				getItemHref: (item) =>
+					item.slug
+						? getResourcePath(item.type, item.slug, 'view', {
+								parentType: 'workshop',
+								parentSlug: workshop.fields.slug,
+							})
+						: undefined,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

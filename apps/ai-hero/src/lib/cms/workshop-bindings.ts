@@ -43,6 +43,11 @@ export interface CreateWorkshopBindingsOptions {
 	 * the child's edit route (legacy tree context-menu Edit link parity).
 	 */
 	onEditItem?: (item: ContentsItem) => void
+	/**
+	 * Public view URL for a row — renders the per-row external-link icon.
+	 * Pure client mapping (e.g. `getResourcePath(type, slug, 'view')`).
+	 */
+	getItemHref?: (item: ContentsItem) => string | undefined
 }
 
 /**
@@ -69,6 +74,7 @@ function stateForAction(
 export function createWorkshopBindings({
 	onSlugChange,
 	onEditItem,
+	getItemHref,
 }: CreateWorkshopBindingsOptions = {}): ResourceBindings<
 	typeof WorkshopSchema
 > {
@@ -162,6 +168,8 @@ export function createWorkshopBindings({
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
 			onEdit: onEditItem,
+			// Per-row external-link icon → the child's public view URL.
+			getItemHref,
 		},
 		media: {
 			// Flat per-type Cloudinary dir (events/products/lists precedent).

@@ -61,6 +61,11 @@ export interface CreateCohortBindingsOptions {
 	 * the child workshop's edit route (legacy tree context-menu Edit parity).
 	 */
 	onEditItem?: (item: ContentsItem) => void
+	/**
+	 * Public view URL for a row — renders the per-row external-link icon.
+	 * Pure client mapping (e.g. `getResourcePath(type, slug, 'view')`).
+	 */
+	getItemHref?: (item: ContentsItem) => string | undefined
 }
 
 /**
@@ -86,6 +91,7 @@ function stateForAction(
 export function createCohortBindings({
 	onSlugChange,
 	onEditItem,
+	getItemHref,
 }: CreateCohortBindingsOptions = {}): ResourceBindings<typeof CohortSchema> {
 	return {
 		update: async (values, action) => {
@@ -166,6 +172,8 @@ export function createCohortBindings({
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
 			onEdit: onEditItem,
+			// Per-row external-link icon → the child's public view URL.
+			getItemHref,
 		},
 		media: {
 			// Flat per-type Cloudinary dir (events/products/lists precedent).
