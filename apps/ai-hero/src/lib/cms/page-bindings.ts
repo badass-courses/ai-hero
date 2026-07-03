@@ -11,6 +11,7 @@ import type {
 	ResourceAction,
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
+import { stripClientPublishedAt } from '@coursebuilder/ui/cms/resource-state'
 
 import { listPageContents } from './page-contents'
 import {
@@ -76,7 +77,7 @@ export function createPageBindings({
 			return await updatePage({
 				...values,
 				fields: {
-					...values.fields,
+					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state || 'draft'),
 					// Persist null (not `{ url: '' }`, and not a stripped key —
 					// updatePage merges fields per-key, so omitting would keep the

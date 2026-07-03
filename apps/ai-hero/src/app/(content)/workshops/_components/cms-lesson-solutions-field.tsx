@@ -59,58 +59,67 @@ export function CmsLessonSolutionsField({
 		)
 	} else if (solutions && solutions.length > 0) {
 		content = (
-			<ul className="space-y-1.5">
-				{solutions.map((solution, index) => {
-					const duplicate = index > 0
-					return (
-						<li
-							key={solution.id}
-							className="border-border bg-muted flex items-center gap-2 rounded-md border px-2.5 py-1.5"
-						>
-							<div className="min-w-0 flex-1">
-								<Link
-									href={editHref}
-									className="text-foreground block truncate text-[13px] font-medium hover:underline"
-								>
-									{solution.fields.title || 'Untitled solution'}
-								</Link>
-								{duplicate ? (
-									<p className="text-[11px] text-[color:var(--cms-danger)]">
-										Duplicate #{index + 1} — remove it; only the first solution
-										is served.
-									</p>
-								) : null}
-							</div>
-							{!duplicate ? (
-								<Link
-									href={editHref}
-									className="text-primary shrink-0 text-[11px] font-medium hover:underline"
-								>
-									Edit
-								</Link>
-							) : null}
-							<button
-								type="button"
-								disabled={deleteSolution.isPending}
-								onClick={() => {
-									if (
-										window.confirm(
-											duplicate
-												? 'Delete this duplicate solution?'
-												: 'Are you sure you want to delete this solution?',
-										)
-									) {
-										deleteSolution.mutate({ solutionId: solution.id })
-									}
-								}}
-								className="shrink-0 text-[11px] font-medium text-[color:var(--cms-danger)] hover:underline disabled:opacity-50"
+			<div className="space-y-1.5">
+				<ul className="space-y-1.5">
+					{solutions.map((solution, index) => {
+						const duplicate = index > 0
+						return (
+							<li
+								key={solution.id}
+								className="border-border bg-muted flex items-center gap-2 rounded-md border px-2.5 py-1.5"
 							>
-								Remove
-							</button>
-						</li>
-					)
-				})}
-			</ul>
+								<div className="min-w-0 flex-1">
+									<Link
+										href={editHref}
+										className="text-foreground block truncate text-[13px] font-medium hover:underline"
+									>
+										{solution.fields.title || 'Untitled solution'}
+									</Link>
+									{duplicate ? (
+										<p className="text-[11px] text-[color:var(--cms-danger)]">
+											Duplicate #{index + 1} — remove it; only the first
+											solution is served.
+										</p>
+									) : null}
+								</div>
+								{!duplicate ? (
+									<Link
+										href={editHref}
+										className="text-primary shrink-0 text-[11px] font-medium hover:underline"
+									>
+										Edit
+									</Link>
+								) : null}
+								<button
+									type="button"
+									disabled={deleteSolution.isPending}
+									onClick={() => {
+										if (
+											window.confirm(
+												duplicate
+													? 'Delete this duplicate solution?'
+													: 'Are you sure you want to delete this solution?',
+											)
+										) {
+											deleteSolution.mutate({ solutionId: solution.id })
+										}
+									}}
+									className="shrink-0 text-[11px] font-medium text-[color:var(--cms-danger)] hover:underline disabled:opacity-50"
+								>
+									Remove
+								</button>
+							</li>
+						)
+					})}
+				</ul>
+				{deleteSolution.isError ? (
+					<p className="text-[11px] text-[color:var(--cms-danger)]">
+						{deleteSolution.error.message === 'Unauthorized'
+							? "You don't have permission to remove this solution."
+							: "Couldn't remove the solution. Please try again."}
+					</p>
+				) : null}
+			</div>
 		)
 	} else {
 		content = (

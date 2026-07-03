@@ -117,9 +117,10 @@ export const ListVideoResourcesForPickerInputSchema = z.object({
 	/** Case-insensitive substring match on the resource id (the filename). */
 	search: z.string().optional(),
 	excludeIds: z.array(z.string()).default([]),
-	// Default 20 fits picker popovers; the Media tab asks for the max (its
-	// grid is the whole library surface, like getAllImageResources).
+	// Default 20 fits picker popovers; the Media tab pages by offset
+	// ("Load more" appends the next page), so `limit` is a per-page clamp.
 	limit: z.number().int().min(1).max(200).default(20),
+	offset: z.number().int().min(0).default(0),
 })
 export type ListVideoResourcesForPickerInput = z.input<
 	typeof ListVideoResourcesForPickerInputSchema

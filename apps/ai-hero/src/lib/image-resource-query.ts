@@ -73,6 +73,47 @@ export async function createImageResource(input: {
 	})
 }
 
+/**
+ * Newest-first image page for the media library. `limit` is a PER-PAGE
+ * clamp (200 — same ceiling as the video picker query, not a total cap);
+ * `offset` (default 0) pages past it — the Media tab's "Load more" fetches
+ * the next offset page and appends. (`getAllImageResources` stays unbounded
+ * for the legacy tRPC routers.)
+ */
+export async function listImageResources({
+	limit,
+	offset = 0,
+}: {
+	limit: number
+	offset?: number
+}) {
+	const capped = Math.min(Math.max(1, Math.floor(limit)), 200)
+	const skip = Math.max(0, Math.floor(offset))
+	const query = sql`
+      SELECT
+        id as id,
+        JSON_EXTRACT (${contentResource.fields}, "$.url") AS url,
+        JSON_EXTRACT (${contentResource.fields}, "$.alt") AS alt,
+        JSON_EXTRACT (${contentResource.fields}, "$.width") AS width,
+        JSON_EXTRACT (${contentResource.fields}, "$.height") AS height,
+        JSON_EXTRACT (${contentResource.fields}, "$.bytes") AS bytes,
+        JSON_EXTRACT (${contentResource.fields}, "$.format") AS format,
+        createdAt as createdAt
+      FROM
+        ${contentResource}
+      WHERE
+        type = 'imageResource'
+      ORDER BY
+        createdAt DESC
+      LIMIT ${capped}
+      OFFSET ${skip}
+    `
+	return db.execute(query).then((result) => {
+		const parsed = z.array(ImageResourceSchema).safeParse(result.rows)
+		return parsed.success ? parsed.data : []
+	})
+}
+
 export async function getAllImageResources() {
 	const query = sql`
       SELECT    

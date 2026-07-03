@@ -141,9 +141,14 @@ export async function updateEventReminderSchedule(
 	schedule: ReminderSchedule,
 ) {
 	await assertCanUpdateContent()
-	await updateReminderEmailHours(
+	const updated = await updateReminderEmailHours(
 		eventId,
 		emailId,
 		schedule.hoursInAdvance ?? 24,
 	)
+	// null means the reminder join row is gone (stale UI) — surface it instead
+	// of letting the widget render a schedule the server never persisted.
+	if (updated === null) {
+		throw new Error('Could not update the reminder schedule')
+	}
 }

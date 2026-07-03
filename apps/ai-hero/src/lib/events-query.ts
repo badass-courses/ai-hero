@@ -450,14 +450,14 @@ export async function createAndAttachReminderEmailToEvent(
  * @param eventId - The ID of the event
  * @param emailResourceId - The ID of the email resource
  * @param hoursInAdvance - New hours before event to send reminder
- * @returns The update result
+ * @returns The update result, or null when the reminder join row is missing
  */
 export async function updateReminderEmailHours(
 	eventId: string,
 	emailResourceId: string,
 	hoursInAdvance: number,
 ) {
-	return await db
+	const result = await db
 		.update(contentResourceResource)
 		.set({
 			metadata: {
@@ -475,6 +475,33 @@ export async function updateReminderEmailHours(
 				),
 			),
 		)
+
+	// MySQL reports rowsAffected=0 both when no row matched (join row gone /
+	// bad ids) AND when the matched row's values were already identical (an
+	// unchanged-schedule no-op save). Only a missing join row is a failure —
+	// confirm with a SELECT before surfacing null.
+	if ((result.rowsAffected ?? 0) === 0) {
+		const existing = await db.query.contentResourceResource.findFirst({
+			where: and(
+				eq(contentResourceResource.resourceOfId, eventId),
+				eq(contentResourceResource.resourceId, emailResourceId),
+				eq(
+					sql`JSON_EXTRACT(${contentResourceResource.metadata}, "$.type")`,
+					'event-reminder',
+				),
+			),
+		})
+		if (!existing) {
+			await log.error('event.reminder-email.hours-update.no-rows', {
+				eventId,
+				emailResourceId,
+				hoursInAdvance,
+			})
+			return null
+		}
+	}
+
+	return result
 }
 
 /**

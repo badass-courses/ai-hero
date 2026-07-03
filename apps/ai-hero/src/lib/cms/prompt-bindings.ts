@@ -5,6 +5,7 @@ import type {
 	ResourceAction,
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
+import { stripClientPublishedAt } from '@coursebuilder/ui/cms/resource-state'
 
 import {
 	createVideoLibraryBinding,
@@ -68,7 +69,7 @@ export function createPromptBindings({
 			return await updatePrompt({
 				...values,
 				fields: {
-					...values.fields,
+					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state || 'draft'),
 				},
 			})

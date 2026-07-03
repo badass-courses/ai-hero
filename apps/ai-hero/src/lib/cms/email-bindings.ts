@@ -7,14 +7,9 @@ import type {
 	ResourceAction,
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
+import { stripClientPublishedAt } from '@coursebuilder/ui/cms/resource-state'
 
-import {
-	createVideoLibraryBinding,
-	listImageMediaAssets,
-	listVideoPickerItems,
-	uploadToCloudinary,
-	uploadVideoMedia,
-} from './post-bindings'
+import { listImageMediaAssets, uploadToCloudinary } from './post-bindings'
 
 /**
  * Editor-side schema for the email cms editor. Identical to `EmailSchema`
@@ -94,7 +89,7 @@ export function createEmailBindings({
 			return await updateEmail({
 				...values,
 				fields: {
-					...values.fields,
+					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state || 'draft'),
 				},
 			})
@@ -114,13 +109,8 @@ export function createEmailBindings({
 			upload: (file) => uploadToCloudinary(file, `emails/${resourceId}`),
 			// Same primitive DB-backed image library the post editor lists.
 			list: listImageMediaAssets,
-			// Kit-driven video upload (uploadthing → Inngest pipeline) — pairs
-			// with `listVideos` to make the Media tab a full video surface.
-			uploadVideo: uploadVideoMedia,
 		},
-		// Body editor "Video…" insert — the same library the Video tab lists.
-		listVideos: listVideoPickerItems,
-		// Media-tab video verbs: preview player + transcript + reprocess.
-		videoLibrary: createVideoLibraryBinding(),
+		// No video bindings: email bodies are broadcast-pipeline MDX, not site
+		// MDX — a `<Video>` inserter would store markup emails cannot render.
 	}
 }

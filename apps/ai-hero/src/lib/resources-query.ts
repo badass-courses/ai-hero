@@ -316,7 +316,7 @@ export async function listVideoResourcesForPicker(
 		throw new Error('Unauthorized')
 	}
 
-	const { search, excludeIds, limit } =
+	const { search, excludeIds, limit, offset } =
 		ListVideoResourcesForPickerInputSchema.parse(input)
 
 	// JSON-free conditions ONLY: even an id-only sorted query hits Vitess's
@@ -345,8 +345,10 @@ export async function listVideoResourcesForPicker(
 		.from(contentResource)
 		.where(and(...conditions))
 		.orderBy(desc(contentResource.createdAt))
-		// Over-fetch: the state filter below may drop rows.
-		.limit(limit + 50)
+		// The lifecycle-state filter is app-side, so `offset` must apply AFTER
+		// filtering — fetch the requested page's whole filtered prefix and
+		// slice below. Over-fetch: the state filter below may drop rows.
+		.limit(offset + limit + 50)
 	if (pageRows.length === 0) return []
 
 	const detailRows = await db
@@ -376,7 +378,7 @@ export async function listVideoResourcesForPicker(
 		.flatMap((page) => byId.get(page.id) ?? [])
 		// Hide unusable videos; keep processing ones (attach works mid-process).
 		.filter((row) => row.state !== 'deleted' && row.state !== 'errored')
-		.slice(0, limit)
+		.slice(offset, offset + limit)
 
 	return rows.map((row) => ({
 		id: row.id,

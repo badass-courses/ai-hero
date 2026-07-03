@@ -13,6 +13,7 @@ import type {
 	ResourceBindings,
 	ResourceParent,
 } from '@coursebuilder/ui/cms/manifest'
+import { stripClientPublishedAt } from '@coursebuilder/ui/cms/resource-state'
 
 /**
  * Server bindings for the cms solution editor (`createResourceEditor`).
@@ -71,9 +72,9 @@ export function createSolutionBindings({
 				throw new Error('Invalid resource data')
 			}
 			// CREATE mode — first save of the page's placeholder resource.
-			// Legacy parity: createSolution takes only these fields and always
-			// writes state 'draft' / visibility 'unlisted'; a publish-on-first-save
-			// lands as draft, exactly as the legacy form behaved.
+			// createSolution always writes state 'draft' / visibility 'unlisted',
+			// so a publish-on-first-save follows up with an immediate update to
+			// the action-derived state.
 			if (!values.id) {
 				const created = await createSolution({
 					lessonId: lesson.id,
@@ -82,16 +83,24 @@ export function createSolutionBindings({
 					slug: values.fields.slug,
 					description: values.fields.description || '',
 				})
+				const createdState = stateForAction(action, 'draft')
+				if (createdState !== 'draft') {
+					await updateSolution({
+						id: created.id,
+						type: 'solution',
+						fields: { state: createdState },
+					} as Partial<Solution>)
+				}
 				onCreated?.({ id: created.id })
 				return created
 			}
-			// UPDATE mode. Note updateSolution regenerates the slug from the title
-			// on title changes (solutions have no slug field in the editor).
+			// UPDATE mode. Slugs never auto-regenerate on title change — only an
+			// explicit edit to the slug field changes the slug.
 			return await updateSolution({
 				id: values.id,
 				type: 'solution',
 				fields: {
-					...values.fields,
+					...stripClientPublishedAt(values.fields),
 					state: stateForAction(action, values.fields.state || 'draft'),
 				},
 			} as Partial<Solution>)

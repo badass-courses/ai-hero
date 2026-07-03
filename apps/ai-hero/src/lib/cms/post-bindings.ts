@@ -1,7 +1,7 @@
 import { env } from '@/env.mjs'
 import {
 	createImageResource,
-	getAllImageResources,
+	listImageResources,
 } from '@/lib/image-resource-query'
 import { addPostToList, removePostFromList } from '@/lib/lists-query'
 import type { Post, PostSchema, PostUpdate } from '@/lib/posts'
@@ -191,8 +191,17 @@ export function createVideoLibraryBinding(opts?: {
  * before that was stored simply omit it (the kit measures client-side).
  * Exported for every resource type's bindings.
  */
-export async function listImageMediaAssets(): Promise<MediaAsset[]> {
-	const images = await getAllImageResources()
+export async function listImageMediaAssets(opts?: {
+	limit?: number
+	offset?: number
+}): Promise<MediaAsset[]> {
+	// The Media tab's "Load more" appends offset pages — server-side
+	// LIMIT/OFFSET (limit clamped to 200 PER PAGE in the query) instead of
+	// shipping the whole table.
+	const images = await listImageResources({
+		limit: opts?.limit ?? 60,
+		offset: opts?.offset ?? 0,
+	})
 	return images.map(
 		(image): MediaAsset => ({
 			url: image.url,
@@ -231,19 +240,22 @@ export async function listVideoPickerItems({
 	search,
 	excludeIds,
 	limit,
+	offset,
 }: {
 	types?: string[]
 	search?: string
 	excludeIds?: string[]
 	limit?: number
+	offset?: number
 }): Promise<PickerItem[]> {
 	const rows = await listVideoResourcesForPicker({
 		search,
 		excludeIds,
-		// The Media tab's "Load more" grows the requested limit page by page —
-		// clamp to the server schema's ceiling instead of letting zod throw; a
-		// short response just tells the kit the library is exhausted.
+		// The Media tab's "Load more" appends offset pages — clamp to the
+		// server schema's PER-PAGE ceiling instead of letting zod throw; a
+		// short page just tells the kit the library is exhausted.
 		limit: limit != null ? Math.min(limit, 200) : undefined,
+		offset,
 	})
 	return rows.map((row) => ({
 		id: row.id,

@@ -57,7 +57,9 @@ function toContentsItem(row: {
  * `bindings.contents.list` for the cms workshop editor — the workshop's child
  * tree (sections/lessons/posts) as `ContentsItem[]`. Loads via the REAL
  * workshop loader (`getWorkshop`, the same nested `resources` query the
- * legacy tree editor consumed) rather than a parallel query.
+ * legacy tree editor consumed) rather than a parallel query. Video and email
+ * attachments ride the same join table, so container rows are filtered to the
+ * types the tree actually manages.
  */
 export async function listWorkshopContents(
 	workshopId: string,
@@ -73,7 +75,13 @@ export async function listWorkshopContents(
 	}
 
 	return [...(workshop.resources ?? [])]
-		.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+		.filter((row: any) => {
+			const type = row.resource?.type
+			// videoResource / email join rows share the table; the legacy tree
+			// only showed content children.
+			return type && !['videoResource', 'email'].includes(type)
+		})
+		.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
 		.map((row) => toContentsItem(row))
 }
 
