@@ -6,11 +6,13 @@
 @import './video-block-newsletter-cta.css';
 /* @import './commerce.css'; */
 @import './login.css' layer(utilities);
+@import '@coursebuilder/ui/cms/theme.css';
 
 @plugin '@tailwindcss/typography';
 
 @source '../**/*.{ts,tsx,mdx}';
 @source '../../node_modules/@coursebuilder/ui/chat-assistant/**/*.{ts,tsx,mdx}';
+@source '../../node_modules/@coursebuilder/ui/cms/**/*.{ts,tsx}';
 @source '../../node_modules/@coursebuilder/ui/codemirror/**/*.{ts,tsx,mdx}';
 @source '../../node_modules/@coursebuilder/ui/hooks/**/*.{ts,tsx,mdx}';
 @source '../../node_modules/@coursebuilder/ui/primitives/**/*.{ts,tsx,mdx}';

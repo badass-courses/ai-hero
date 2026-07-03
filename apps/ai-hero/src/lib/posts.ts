@@ -93,18 +93,25 @@ export const PostSchema = ContentResourceSchema.merge(
 			slug: z.string(),
 			state: PostStateSchema.default('draft'),
 			visibility: PostVisibilitySchema.default('public'),
+			/**
+			 * Stamped server-side (see `updatePost`) on the transition INTO
+			 * 'published'. Absent on posts published before the stamp existed.
+			 */
+			publishedAt: z.string().datetime().nullish(),
 			github: z.string().nullish(),
 			githubSource: z.string().nullish(),
 			githubSourceSha: z.string().nullish(),
 			gitpod: z.string().nullish(),
 			thumbnailTime: z.number().nullish(),
 			featured: FeaturedSchema.optional(),
+			// The editor's Cover Image input holds '' when empty, and clearing
+			// the image persists `coverImage: null` — accept both (optional field).
 			coverImage: z
 				.object({
-					url: z.string().url(),
+					url: z.string().url().or(z.literal('')),
 					alt: z.string().optional(),
 				})
-				.optional(),
+				.nullish(),
 			_artwork: z
 				.object({
 					batchId: z.string().optional(),
@@ -133,10 +140,10 @@ export const PostUpdateSchema = z.object({
 		thumbnailTime: z.number().nullish(),
 		coverImage: z
 			.object({
-				url: z.string().url(),
+				url: z.string().url().or(z.literal('')),
 				alt: z.string().optional(),
 			})
-			.optional(),
+			.nullish(),
 	}),
 	tags: PostTagsSchema,
 	videoResourceId: z.string().optional().nullable(),

@@ -1,12 +1,16 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
-import { EditWorkshopForm } from '@/app/(content)/workshops/_components/edit-workshop-form'
 import LayoutClient from '@/components/layout-client'
 import { getCachedMinimalWorkshop, getWorkshop } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
 
+import { EditWorkshopClient } from './edit-workshop-client'
+
 export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 export async function generateMetadata(
 	props: {
@@ -25,6 +29,7 @@ export async function generateMetadata(
 		title: `Edit ${workshop.fields?.title}`,
 	}
 }
+
 export default async function EditWorkshopPage(props: {
 	params: Promise<{ module: string }>
 }) {
@@ -41,9 +46,22 @@ export default async function EditWorkshopPage(props: {
 		notFound()
 	}
 
+	// Serialize Date instances (createdAt/updatedAt from the DB driver) to ISO
+	// strings before crossing the RSC boundary — same toIso pattern as the post
+	// edit page; the editor's changed-indicator accepts strings and Dates alike.
+	const clientWorkshop = {
+		...workshop,
+		createdAt: toIso(workshop.createdAt),
+		updatedAt: toIso(workshop.updatedAt),
+		deletedAt: toIso(workshop.deletedAt),
+	} as typeof workshop
+
 	return (
-		<LayoutClient>
-			<EditWorkshopForm workshop={workshop} />
+		<LayoutClient withFooter={false}>
+			<EditWorkshopClient
+				key={workshop.fields.slug}
+				workshop={clientWorkshop}
+			/>
 		</LayoutClient>
 	)
 }

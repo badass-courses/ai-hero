@@ -34,12 +34,15 @@ export const LessonVideoResourceField: React.FC<{
 	videoResource?: VideoResource | null
 	initialVideoResourceId?: string | null
 	label?: string
+	/** 'panel' = cms editor left-panel styling (post VideoResourceField parity). */
+	variant?: 'default' | 'panel'
 }> = ({
 	form,
 	lesson,
 	videoResource,
 	initialVideoResourceId,
 	label = 'Video',
+	variant = 'default',
 }) => {
 	const { toast } = useToast()
 	const [currentVideoResource, setCurrentVideoResource] =
@@ -126,6 +129,7 @@ export const LessonVideoResourceField: React.FC<{
 			thumbnailEnabled={true}
 			showTranscript={true}
 			onVideoUpdate={handleVideoUpdate}
+			variant={variant}
 		/>
 	)
 }

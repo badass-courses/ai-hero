@@ -36,9 +36,9 @@ export const PageSchema = ContentResourceSchema.merge(
 			socialImage: z
 				.object({
 					type: z.string(),
-					url: z.string().url(),
+					url: z.string().url().or(z.literal('')),
 				})
-				.optional(),
+				.nullish(),
 		}),
 	}),
 )

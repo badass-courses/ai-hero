@@ -3,10 +3,16 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { getLesson, getVideoResourceForLesson } from '@/lib/lessons-query'
+import { getTags } from '@/lib/tags-query'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
-import { EditWorkshopLessonForm } from '../../../_components/edit-workshop-lesson-form'
+import { EditLessonClient } from './edit-lesson-client'
+
+export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 export async function generateMetadata(
 	props: {
@@ -27,11 +33,13 @@ export async function generateMetadata(
 }
 
 /**
- * Page component for editing a workshop lesson
- * Fetches the lesson and video resource (if authorized)
+ * Workshop lesson edit page — cms editor (`createResourceEditor`) cut-over.
+ * Same server behavior as before: fetch the lesson, guard `create Content`,
+ * resolve the primary video resource (may be null), plus the tag vocabulary
+ * the editor's tag combobox needs (server-fetched, immediate entity writes).
  */
 export default async function LessonEditPage(props: {
-	params: Promise<{ lesson: string }>
+	params: Promise<{ module: string; lesson: string }>
 }) {
 	const params = await props.params
 	const { ability } = await getServerAuthSession()
@@ -52,13 +60,26 @@ export default async function LessonEditPage(props: {
 		})
 	}
 
+	const tags = await getTags()
+
+	// Serialize Date instances (LessonSchema z.coerce.date fields) to ISO
+	// strings before crossing the RSC boundary — the toIso pattern from the
+	// post/workshop edit pages; the schema coerces them back on validation.
+	const clientLesson = {
+		...lesson,
+		createdAt: toIso(lesson.createdAt),
+		updatedAt: toIso(lesson.updatedAt),
+		deletedAt: toIso(lesson.deletedAt),
+	} as typeof lesson
+
 	return (
-		<LayoutClient>
-			<EditWorkshopLessonForm
-				key={lesson.id}
-				lesson={lesson}
+		<LayoutClient withFooter={false}>
+			<EditLessonClient
+				key={lesson.fields.slug}
+				lesson={clientLesson}
 				videoResource={videoResource}
-				moduleType="workshop"
+				tags={tags}
+				moduleSlug={params.module}
 			/>
 		</LayoutClient>
 	)

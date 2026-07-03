@@ -1,4 +1,4 @@
-import { ResourceFormConfig } from '@/components/resource-form/with-resource-form'
+import type { ResourceFormConfig } from '@/components/resource-form/resource-form-config'
 import { Post, PostSchema, PostUpdate } from '@/lib/posts'
 import { autoUpdatePost, updatePost } from '@/lib/posts-query'
 import { z } from 'zod'
@@ -79,9 +79,12 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				githubSource: resource.fields.githubSource?.trim() || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
-				...(resource.fields.coverImage?.url
-					? { coverImage: resource.fields.coverImage }
-					: {}),
+				// Persist null (not a stripped key — updatePost merges fields
+				// per-key, so omitting would keep the old image forever) so
+				// clearing the cover image actually clears it.
+				coverImage: resource.fields.coverImage?.url
+					? resource.fields.coverImage
+					: null,
 			},
 			tags: resource.tags || [],
 		}
@@ -105,9 +108,12 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				githubSource: resource.fields.githubSource?.trim() || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
-				...(resource.fields.coverImage?.url
-					? { coverImage: resource.fields.coverImage }
-					: {}),
+				// Persist null (not a stripped key — updatePost merges fields
+				// per-key, so omitting would keep the old image forever) so
+				// clearing the cover image actually clears it.
+				coverImage: resource.fields.coverImage?.url
+					? resource.fields.coverImage
+					: null,
 			},
 			tags: resource.tags || [],
 		}

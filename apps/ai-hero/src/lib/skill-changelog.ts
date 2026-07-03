@@ -15,10 +15,10 @@ export const SkillChangelogFieldsSchema = z.object({
 	thumbnailTime: z.number().nullish(),
 	coverImage: z
 		.object({
-			url: z.string().url(),
+			url: z.string().url().or(z.literal('')),
 			alt: z.string().optional(),
 		})
-		.optional(),
+		.nullish(),
 	newsletterSubject: z.string().nullish(),
 	newsletterPreviewText: z.string().nullish(),
 	newsletterCopy: z.string().nullish(),
@@ -53,10 +53,10 @@ export const SkillChangelogUpdateSchema = z.object({
 		thumbnailTime: z.number().nullish(),
 		coverImage: z
 			.object({
-				url: z.string().url(),
+				url: z.string().url().or(z.literal('')),
 				alt: z.string().optional(),
 			})
-			.optional(),
+			.nullish(),
 		newsletterSubject: z.string().nullish(),
 		newsletterPreviewText: z.string().nullish(),
 		newsletterCopy: z.string().nullish(),

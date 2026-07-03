@@ -1,13 +1,18 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
-import { EditProductForm } from '@/app/(commerce)/products/[slug]/edit/_components/edit-product-form'
+import LayoutClient from '@/components/layout-client'
 import { getProduct } from '@/lib/products-query'
 import { getServerAuthSession } from '@/server/auth'
 
+import { EditProductClient } from './edit-product-client'
+
 export const dynamic = 'force-dynamic'
 
-export default async function PromptEditPage(props: {
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
+
+export default async function ProductEditPage(props: {
 	params: Promise<{ slug: string }>
 }) {
 	const params = await props.params
@@ -19,5 +24,25 @@ export default async function PromptEditPage(props: {
 		notFound()
 	}
 
-	return <EditProductForm key={product.fields?.slug} product={product} />
+	// Serialize Date instances before crossing the RSC boundary (toIso pattern
+	// from the post edit page):
+	// - top-level `createdAt` coerces back via `z.coerce.date()`.
+	// - `price.createdAt` is a STRICT `z.date()` in priceSchema, so an ISO
+	//   string would fail the editor's zodResolver — null it instead
+	//   (`updateProduct` reads only `price.unitAmount` from the input).
+	// - `resources` join rows (nested Dates throughout) aren't used by the
+	//   editor — the Resources surface loads fresh via `listProductResources`
+	//   — so drop them at the boundary.
+	const clientProduct = {
+		...product,
+		createdAt: toIso(product.createdAt),
+		price: product.price ? { ...product.price, createdAt: null } : null,
+		resources: [],
+	} as typeof product
+
+	return (
+		<LayoutClient withFooter={false}>
+			<EditProductClient key={product.fields.slug} product={clientProduct} />
+		</LayoutClient>
+	)
 }
