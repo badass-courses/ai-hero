@@ -238,6 +238,62 @@ export type VideoDetailBreakdowns = Awaited<
 	ReturnType<typeof getVideoDetailBreakdowns>
 >
 
+// ─── Per-video summary (cms Video/Media analytics strip) ─────────────────────
+
+export interface VideoSummary {
+	totalViews: number
+	uniqueViewers: number
+	totalWatchTimeMs: number
+	/** Mux viewer experience score 0–100; null when no views in range. */
+	experienceScore: number | null
+	/** Human label for the window the numbers cover. */
+	rangeLabel: string
+	/** Deep link to the full breakdown. */
+	dashboardHref: string
+}
+
+/**
+ * Compact 30-day summary for ONE video, keyed on `video_id` = the
+ * videoResource id (the key every public player sends via `useMuxMetadata`).
+ * Mirrors `getVideoDetailBreakdowns`' `filters[]` shape; 5-min revalidate via
+ * `muxDataFetch`. Returns null when the video had no views in range —
+ * callers render nothing (no data ≠ error).
+ */
+export async function getVideoSummary(
+	videoResourceId: string,
+): Promise<VideoSummary | null> {
+	const filter = `video_id:${videoResourceId}`
+	const timeRange: TimeRange = '30:days'
+	const [views, experience, comparison] = await Promise.all([
+		muxDataFetch<MuxOverallResponse>('/metrics/views/overall', {
+			'timeframe[]': timeRange,
+			'filters[]': filter,
+		}),
+		muxDataFetch<MuxOverallResponse>(
+			'/metrics/viewer_experience_score/overall',
+			{ 'timeframe[]': timeRange, 'filters[]': filter },
+		),
+		muxDataFetch<MuxComparisonResponse>('/metrics/comparison', {
+			'timeframe[]': timeRange,
+			'filters[]': filter,
+		}),
+	])
+
+	const totalViews = views.data.total_views ?? 0
+	if (totalViews === 0) return null
+
+	const totals = comparison.data.find((d) => d.name === 'totals')
+	return {
+		totalViews,
+		uniqueViewers: totals?.unique_viewers ?? 0,
+		totalWatchTimeMs: views.data.total_watch_time ?? 0,
+		experienceScore:
+			typeof experience.data.value === 'number' ? experience.data.value : null,
+		rangeLabel: 'Last 30 days',
+		dashboardHref: '/admin/video-dashboard',
+	}
+}
+
 // ─── Aggregate fetcher ───────────────────────────────────────────────────────
 
 export interface VideoDashboardData {

@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createSkillChangelogBindings } from '@/lib/cms/skill-changelog-bindings'
 import {
 	SkillChangelogSchema,
@@ -17,12 +18,16 @@ import {
 } from '@coursebuilder/ui/cms'
 import type { EditorCtx, FieldSpec } from '@coursebuilder/ui/cms/manifest'
 
-import { VideoResourceField } from '../../../posts/_components/video-resource-field'
 import { NewsletterKitField } from './_components/newsletter-kit-field'
 
 export type EditSkillChangelogClientProps = {
 	entry: SkillChangelog
 	videoResource: VideoResource | null
+	/**
+	 * Mux Data configured? Server-computed by the page (the bindings factory
+	 * runs client-side and can't read server env) — gates `videoAnalytics`.
+	 */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -34,6 +39,7 @@ export type EditSkillChangelogClientProps = {
 export function EditSkillChangelogClient({
 	entry,
 	videoResource,
+	videoAnalyticsEnabled,
 }: EditSkillChangelogClientProps) {
 	const router = useRouter()
 
@@ -55,25 +61,21 @@ export function EditSkillChangelogClient({
 						: tab,
 				),
 				// The manifest's `video: true` adds the LEFT-panel Video tab; this
-				// slot fills it with the existing post video field (self-contained:
-				// socket updates + attach picker), post precedent.
+				// slot fills it with the shared cms wrapper (kit VideoField slots),
+				// post precedent.
 				videoSlot: (ctx: EditorCtx) => (
-					<VideoResourceField
+					<CmsVideoField
 						// Same runtime object; cast bridges the linked ui package's own
 						// react-hook-form copy vs the app's type identity.
 						form={ctx.form as unknown as UseFormReturn<any>}
-						post={entry as any}
+						resource={entry}
 						videoResource={videoResource}
-						variant="panel"
+						videoAnalyticsEnabled={videoAnalyticsEnabled}
 						// Legacy parity (skill-changelog-form-fields.tsx): thumbnail-time
 						// picks persist immediately via a full-field snapshot save through
-						// updateSkillChangelog — without this, VideoResourceField would
-						// fall back to its posts-only updatePost path.
-						onVideoUpdate={async (
-							_resourceId,
-							_videoResourceId,
-							additionalFields,
-						) => {
+						// updateSkillChangelog (SkillChangelogUpdateSchema is strict, so
+						// the snapshot is built field by field).
+						onThumbnailUpdate={async ({ thumbnailTime }) => {
 							const fields = (
 								ctx.form as unknown as UseFormReturn<SkillChangelog>
 							).getValues('fields')
@@ -92,9 +94,7 @@ export function EditSkillChangelogClient({
 											'unlisted',
 										github: fields.github ?? '',
 										thumbnailTime:
-											additionalFields.thumbnailTime ??
-											fields.thumbnailTime ??
-											null,
+											thumbnailTime ?? fields.thumbnailTime ?? null,
 										...(fields.coverImage?.url
 											? { coverImage: fields.coverImage }
 											: {}),
@@ -110,7 +110,9 @@ export function EditSkillChangelogClient({
 				),
 			},
 			bindings: createSkillChangelogBindings({
+				resourceId: entry.id,
 				onSlugChange: (slug) => router.push(`/skills/${slug}/edit`),
+				videoAnalyticsEnabled,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
+import { env } from '@/env.mjs'
 import { getLesson } from '@/lib/lessons-query'
 import {
 	getSolutionForLesson,
@@ -87,6 +88,11 @@ export default async function SolutionEditPage({
 				moduleSlug={module}
 				defaultSlug={defaultSlug}
 				videoResource={videoResource}
+				// Server-computed (client bindings can't read server env) — gates
+				// the per-video analytics strip on Mux Data being configured.
+				videoAnalyticsEnabled={Boolean(
+					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
+				)}
 			/>
 		</LayoutClient>
 	)

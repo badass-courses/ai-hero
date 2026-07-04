@@ -2,6 +2,7 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
 import { getPost, getPostLists } from '@/lib/posts-query'
 import { getTags } from '@/lib/tags-query'
 import { getServerAuthSession } from '@/server/auth'
@@ -103,6 +104,11 @@ export default async function ArticleEditPage(props: {
 				videoResource={videoResource}
 				tags={tags}
 				listMemberships={listMemberships}
+				// Server-computed (client bindings can't read server env) — gates
+				// the per-video analytics strip on Mux Data being configured.
+				videoAnalyticsEnabled={Boolean(
+					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
+				)}
 			/>
 		</LayoutClient>
 	)

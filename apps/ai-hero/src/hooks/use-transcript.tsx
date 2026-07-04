@@ -21,6 +21,12 @@ type TranscriptDialogProps = {
 	onReprocess: () => Promise<void>
 	isOpen: boolean
 	onOpenChange: (open: boolean) => void
+	/**
+	 * Render the inline "View Transcript" trigger button (legacy surfaces).
+	 * false → the dialog is opened imperatively via `openTranscriptDialog`
+	 * (the cms Video tab's kit slot owns its own affordance).
+	 */
+	showTrigger?: boolean
 }
 
 const TranscriptDialog: React.FC<TranscriptDialogProps> = ({
@@ -29,14 +35,17 @@ const TranscriptDialog: React.FC<TranscriptDialogProps> = ({
 	onReprocess,
 	isOpen,
 	onOpenChange,
+	showTrigger = true,
 }) => {
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
-			<DialogTrigger asChild>
-				<Button variant="outline" size={'sm'} type="button">
-					View Transcript
-				</Button>
-			</DialogTrigger>
+			{showTrigger ? (
+				<DialogTrigger asChild>
+					<Button variant="outline" size={'sm'} type="button">
+						View Transcript
+					</Button>
+				</DialogTrigger>
+			) : null}
 			<DialogContent className="sm:max-h-[80vh]">
 				<DialogHeader className="flex items-baseline justify-between">
 					<DialogTitle>Transcript</DialogTitle>
@@ -75,6 +84,12 @@ const TranscriptDialog: React.FC<TranscriptDialogProps> = ({
 export function useTranscript(options: {
 	videoResourceId: string | null | undefined
 	initialTranscript?: string | null
+	/**
+	 * false → the returned TranscriptDialog renders WITHOUT its inline
+	 * trigger button; open it via the returned `openTranscriptDialog`
+	 * (cms Video tab wiring). Defaults to true (legacy surfaces).
+	 */
+	withDialogTrigger?: boolean
 }) {
 	const [transcript, setTranscript] = React.useState<string | null>(
 		options.initialTranscript || null,
@@ -134,8 +149,11 @@ export function useTranscript(options: {
 			onReprocess={handleReprocess}
 			isOpen={isOpen}
 			onOpenChange={setIsOpen}
+			showTrigger={options.withDialogTrigger !== false}
 		/>
 	) : null
+
+	const openTranscriptDialog = React.useCallback(() => setIsOpen(true), [])
 
 	return {
 		transcript,
@@ -143,6 +161,8 @@ export function useTranscript(options: {
 		isProcessing,
 		setIsProcessing,
 		TranscriptDialog: TranscriptDialogComponent,
+		/** Imperative opener — pairs with `withDialogTrigger: false`. */
+		openTranscriptDialog,
 	} as const
 }
 

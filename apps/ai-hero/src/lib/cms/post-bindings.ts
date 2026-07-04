@@ -14,10 +14,13 @@ import {
 import { type OurFileRouter } from '@/uploadthing/core'
 import {
 	attachVideoResourceToPost,
-	getVideoResource,
+	getVideoResourceMediaDetail,
+	renameVideoResource,
 } from '@/lib/video-resource-query'
 import { reprocessTranscript } from '@/app/(content)/posts/[slug]/edit/actions'
 import { genUploader } from 'uploadthing/client'
+
+import { fetchVideoAnalyticsSummary } from './video-analytics-actions'
 
 import type { TagOption } from '@coursebuilder/ui/cms/fields/tag-field'
 import type {
@@ -27,6 +30,7 @@ import type {
 	PickerItem,
 	ResourceAction,
 	ResourceBindings,
+	VideoAnalyticsBinding,
 	VideoDetail,
 	VideoLibraryBinding,
 	VideoUploadResult,
@@ -60,6 +64,13 @@ export interface CreatePostBindingsOptions {
 	 * an unchanged slug stays put.
 	 */
 	onSlugChange?: (slug: string) => void
+	/**
+	 * Whether Mux Data is configured (`MUX_DATA_TOKEN_ID`/`SECRET`) — computed
+	 * by the SERVER edit page (this factory runs client-side and can't read
+	 * server env). True → `bindings.videoAnalytics` is passed; otherwise no
+	 * analytics strip renders anywhere.
+	 */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -132,23 +143,18 @@ export async function uploadVideoMedia(
 
 /**
  * The shared `videoLibrary.get` binding: one video's detail for the Media
- * tab's preview dialog — real playback (muxPlaybackId → the kit's Mux
- * player), transcript, and lifecycle state. Exported for every resource
- * type's bindings.
+ * tab's preview dialog and the Video tab's details view — real playback
+ * (muxPlaybackId → the kit's Mux player), transcript, lifecycle state,
+ * title, plus the metadata extras (muxAssetId, createdAt, resolution) and
+ * the server-built `muxHref` ("Open in Mux ↗" — built server-side because
+ * the org/environment ids are server-only env). A thin passthrough to the
+ * server action for that reason. Exported for every resource type's
+ * bindings.
  */
 export async function getVideoMediaDetail(
 	videoResourceId: string,
 ): Promise<VideoDetail | null> {
-	const video = await getVideoResource(videoResourceId)
-	if (!video) return null
-	return {
-		id: video.id,
-		state: video.state,
-		muxPlaybackId: video.muxPlaybackId,
-		title: video.title,
-		duration: video.duration,
-		transcript: video.transcript,
-	}
+	return getVideoResourceMediaDetail(videoResourceId)
 }
 
 /** The shared `videoLibrary.reprocessTranscript` binding (Inngest re-order). */
@@ -170,6 +176,11 @@ export function createVideoLibraryBinding(opts?: {
 	return {
 		get: getVideoMediaDetail,
 		reprocessTranscript: reprocessVideoTranscript,
+		// Inline rename in the preview dialog — persists `fields.title` on the
+		// videoResource (picker rows and Mux `video_title` pick it up).
+		rename: async (videoResourceId, title) => {
+			await renameVideoResource(videoResourceId, title)
+		},
 		...(primaryResourceId
 			? {
 					setPrimaryVideo: async (videoResourceId: string) => {
@@ -182,6 +193,21 @@ export function createVideoLibraryBinding(opts?: {
 				}
 			: {}),
 	}
+}
+
+/**
+ * Build the optional `bindings.videoAnalytics` — the per-video analytics
+ * strip (views · unique viewers · watch time · experience, last 30 days).
+ * The binding factories run CLIENT-side, so the "only when Mux Data is
+ * configured" rule rides in as a boolean the server edit page computes from
+ * `MUX_DATA_TOKEN_ID`/`SECRET`; disabled (or omitted) → undefined → the kit
+ * renders no strip anywhere. The action itself re-checks env + the editor
+ * ability. Exported for every video-bearing resource type's bindings.
+ */
+export function createVideoAnalyticsBinding(
+	enabled: boolean | undefined,
+): VideoAnalyticsBinding | undefined {
+	return enabled ? { summary: fetchVideoAnalyticsSummary } : undefined
 }
 
 /**
@@ -264,6 +290,7 @@ export async function listVideoPickerItems({
 		state: row.state,
 		detail: formatDuration(row.duration),
 		thumbnailUrl: row.thumbnailUrl,
+		hasTranscript: row.hasTranscript,
 		updatedAt: row.createdAt ?? undefined,
 	}))
 }
@@ -294,6 +321,7 @@ export function createPostBindings({
 	availableTags,
 	listMemberships,
 	onSlugChange,
+	videoAnalyticsEnabled,
 }: CreatePostBindingsOptions): ResourceBindings<typeof PostSchema> {
 	return {
 		update: async (values, action) => {
@@ -366,6 +394,9 @@ export function createPostBindings({
 		listVideos: listVideoPickerItems,
 		// Media-tab video verbs; "Set as primary" targets THIS post.
 		videoLibrary: createVideoLibraryBinding({ primaryResourceId: resourceId }),
+		// Per-video analytics strip (Mux Data) — only when the server page saw
+		// the data tokens configured.
+		videoAnalytics: createVideoAnalyticsBinding(videoAnalyticsEnabled),
 		lists: {
 			// Memberships come from the page's server fetch (`getPostLists`) — the
 			// post row itself carries children, not the lists it belongs to.

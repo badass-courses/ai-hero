@@ -2,8 +2,10 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createPostBindings } from '@/lib/cms/post-bindings'
 import { PostSchema, type Post } from '@/lib/posts'
+import { updatePost } from '@/lib/posts-query'
 import type { Tag } from '@/lib/tags'
 import type { UseFormReturn } from 'react-hook-form'
 
@@ -12,7 +14,6 @@ import { createResourceEditor, postManifest } from '@coursebuilder/ui/cms'
 import type { EditorCtx, ListMembership } from '@coursebuilder/ui/cms/manifest'
 
 import { postFormConfig } from '../../_components/post-form-config'
-import { VideoResourceField } from '../../_components/video-resource-field'
 
 export type EditPostClientProps = {
 	post: Post
@@ -21,6 +22,11 @@ export type EditPostClientProps = {
 	tags: Tag[]
 	/** Lists the post belongs to, server-fetched by the page (`getPostLists`). */
 	listMemberships: ListMembership[]
+	/**
+	 * Mux Data configured? Server-computed by the page (the bindings factory
+	 * runs client-side and can't read server env) — gates `videoAnalytics`.
+	 */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -36,6 +42,7 @@ export function EditPostClient({
 	videoResource,
 	tags,
 	listMemberships,
+	videoAnalyticsEnabled,
 }: EditPostClientProps) {
 	const router = useRouter()
 
@@ -48,17 +55,36 @@ export function EditPostClient({
 				// controlled — postFormConfig remains in use by other resource types.
 				defaultValues: (resource) =>
 					postFormConfig.defaultValues(resource as Post),
-				// The manifest's `video: true` adds the center Video tab; this slot
-				// fills it with the existing post video field (self-contained:
-				// socket updates + its own updatePost call).
+				// The manifest's `video: true` adds the Video tab; this slot fills it
+				// with the shared cms wrapper (kit VideoField slots: player, replace,
+				// choose-existing attach dialog, detach, transcript, thumbnail,
+				// analytics, Open-in-Mux; chapters as children).
 				videoSlot: (ctx: EditorCtx) => (
-					<VideoResourceField
+					<CmsVideoField
 						// Same runtime object; cast bridges the linked ui package's own
 						// react-hook-form copy (7.76) vs the app's (7.78) type identity.
 						form={ctx.form as unknown as UseFormReturn<any>}
-						post={post}
+						resource={post}
 						videoResource={videoResource}
-						variant="panel"
+						videoAnalyticsEnabled={videoAnalyticsEnabled}
+						// Legacy parity: a thumbnail pick persists immediately via the
+						// post's own save path (full-field snapshot from the live form).
+						onThumbnailUpdate={async ({ thumbnailTime, videoResourceId }) => {
+							const fields = (
+								ctx.form as unknown as UseFormReturn<any>
+							).getValues('fields')
+							await updatePost(
+								{
+									id: post.id,
+									fields: {
+										...fields,
+										thumbnailTime,
+										videoResourceId,
+									} as any,
+								},
+								'save',
+							)
+						}}
 					/>
 				),
 			},
@@ -70,6 +96,7 @@ export function EditPostClient({
 				})),
 				listMemberships,
 				onSlugChange: (slug) => router.push(`/posts/${slug}/edit`),
+				videoAnalyticsEnabled,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

@@ -136,10 +136,12 @@ export type ListVideoResourcesForPickerInput = z.input<
  */
 export const VideoPickerItemSchema = KitPickerItemSchema.pick({
 	id: true,
-	/** The id doubles as the display title — it's the unique upload filename. */
+	/** `fields.title` when named; falls back to the unique upload filename id. */
 	title: true,
 	/** Mux poster URL — absent until the Mux asset exists. */
 	thumbnailUrl: true,
+	/** Transcript presence (boolean only, never the text) — the ≡ glyph. */
+	hasTranscript: true,
 }).extend({
 	/** Video lifecycle state: 'processing' | 'preparing' | 'ready' | … */
 	state: z.string(),

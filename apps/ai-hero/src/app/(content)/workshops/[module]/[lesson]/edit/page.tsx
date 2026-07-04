@@ -2,6 +2,7 @@ import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
+import { env } from '@/env.mjs'
 import { getLesson, getVideoResourceForLesson } from '@/lib/lessons-query'
 import { getTags } from '@/lib/tags-query'
 import { getServerAuthSession } from '@/server/auth'
@@ -80,6 +81,11 @@ export default async function LessonEditPage(props: {
 				videoResource={videoResource}
 				tags={tags}
 				moduleSlug={params.module}
+				// Server-computed (client bindings can't read server env) — gates
+				// the per-video analytics strip on Mux Data being configured.
+				videoAnalyticsEnabled={Boolean(
+					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
+				)}
 			/>
 		</LayoutClient>
 	)
