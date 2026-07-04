@@ -6,6 +6,7 @@ import { contentResource, contentResourceResource } from "@/db/schema";
 import { NewPage, Page, PageSchema } from "@/lib/pages";
 import { getServerAuthSession } from "@/server/auth";
 import { log } from "@/server/logger";
+import { publishedAtStamp } from "@coursebuilder/ui/cms/resource-state";
 import { guid } from "@coursebuilder/utils/guid";
 import slugify from "@sindresorhus/slugify";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
@@ -94,6 +95,9 @@ export async function updatePage(input: Page) {
       ...currentPage.fields,
       ...input.fields,
       slug: pageSlug,
+      // Stamp fields.publishedAt on the transition INTO 'published' (or
+      // backfill a missing stamp) — same policy as updatePost.
+      ...publishedAtStamp(input.fields.state, currentPage.fields),
     },
   });
 

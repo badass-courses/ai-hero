@@ -50,11 +50,11 @@ export function createPromptBindings({
       if (!values.id || !values.fields) {
         throw new Error("Invalid resource data");
       }
-      // NOTE: updatePrompt regenerates the slug itself on title change (with
-      // a known latent quirk: it splits the existing slug on '-' instead of
-      // '~'). Server behavior is preserved as-is — the redirect below reads
-      // the slug the SERVER returns, so the editor lands wherever the server
-      // actually put the prompt.
+      // updatePrompt never regenerates the slug on title change — only an
+      // explicit slug edit (or the client-side "From title" button) changes
+      // it, matching the posts policy. The redirect below reads the slug the
+      // SERVER returns, so the editor lands wherever the server actually put
+      // the prompt.
       const updated = await updatePrompt({
         ...values,
         fields: {

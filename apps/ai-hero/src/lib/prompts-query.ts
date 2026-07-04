@@ -12,6 +12,8 @@ import { eq, or, sql } from 'drizzle-orm'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
+import { publishedAtStamp } from '@coursebuilder/ui/cms/resource-state'
+
 export async function getPrompts(): Promise<Prompt[]> {
 	const prompts = await db.query.contentResource.findMany({
 		where: eq(contentResource.type, 'prompt'),
@@ -70,11 +72,23 @@ export async function updatePrompt(input: Prompt) {
 		return createPrompt(input)
 	}
 
-	let promptSlug = input.fields.slug
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug (same policy as
+	// updatePost). This keeps published URLs stable when an author tweaks a
+	// title.
+	let promptSlug = currentPrompt.fields.slug
 
-	if (input.fields.title !== currentPrompt?.fields.title) {
-		const splitSlug = currentPrompt?.fields.slug.split('-') || ['', guid()]
-		promptSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
+	if (
+		input.fields.slug !== undefined &&
+		input.fields.slug !== currentPrompt.fields.slug
+	) {
+		// An omitted slug (undefined) is a title-only edit and preserves the
+		// current slug; an explicitly cleared slug is rejected rather than
+		// silently ignored, since persisting an empty slug breaks the URL.
+		if (!input.fields.slug) {
+			throw new Error('Slug is required')
+		}
+		promptSlug = input.fields.slug
 	}
 
 	return courseBuilderAdapter.updateContentResourceFields({
@@ -83,6 +97,9 @@ export async function updatePrompt(input: Prompt) {
 			...currentPrompt.fields,
 			...input.fields,
 			slug: promptSlug,
+			// Stamp fields.publishedAt on the transition INTO 'published' (or
+			// backfill a missing stamp) — same policy as updatePost.
+			...publishedAtStamp(input.fields.state, currentPrompt.fields),
 		},
 	})
 }

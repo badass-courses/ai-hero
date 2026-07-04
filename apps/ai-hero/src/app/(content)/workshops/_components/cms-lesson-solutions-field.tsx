@@ -4,7 +4,17 @@ import * as React from 'react'
 import Link from 'next/link'
 import { api } from '@/trpc/react'
 
-import { Skeleton } from '@coursebuilder/ui'
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	Skeleton,
+} from '@coursebuilder/ui'
 import { Field } from '@coursebuilder/ui/cms'
 
 /**
@@ -18,7 +28,9 @@ import { Field } from '@coursebuilder/ui/cms'
  *   solution per lesson, no slug segment of its own);
  * - "Add solution" when none exists (same route; that page's first save
  *   creates the row);
- * - remove/delete with the legacy `confirm()` guard.
+ * - remove/delete behind a styled AlertDialog confirm (same idiom as the
+ *   Detach confirm in `cms-video-field.tsx` — the legacy `confirm()` guard
+ *   was replaced).
  *
  * Dropped from legacy: the 200px markdown body preview + description render —
  * metadata-panel altitude keeps rows scannable; the body lives one click away.
@@ -41,6 +53,11 @@ export function CmsLessonSolutionsField({
 	const deleteSolution = api.solutions.delete.useMutation({
 		onSettled: () => utils.solutions.getAllForLesson.invalidate({ lessonId }),
 	})
+	// The solution pending removal — non-null opens the confirm dialog.
+	const [solutionToRemove, setSolutionToRemove] = React.useState<{
+		id: string
+		duplicate: boolean
+	} | null>(null)
 
 	const editHref = `/workshops/${moduleSlug}/${lessonSlug}/solution/edit`
 
@@ -93,17 +110,9 @@ export function CmsLessonSolutionsField({
 								<button
 									type="button"
 									disabled={deleteSolution.isPending}
-									onClick={() => {
-										if (
-											window.confirm(
-												duplicate
-													? 'Delete this duplicate solution?'
-													: 'Are you sure you want to delete this solution?',
-											)
-										) {
-											deleteSolution.mutate({ solutionId: solution.id })
-										}
-									}}
+									onClick={() =>
+										setSolutionToRemove({ id: solution.id, duplicate })
+									}
 									className="shrink-0 text-[11px] font-medium text-[color:var(--cms-danger)] hover:underline disabled:opacity-50"
 								>
 									Remove
@@ -138,6 +147,39 @@ export function CmsLessonSolutionsField({
 			hint="The worked answer for this exercise lesson — one per lesson."
 		>
 			{content}
+			{/* remove confirmation — same AlertDialog idiom as the Detach
+			    confirm in cms-video-field.tsx */}
+			<AlertDialog
+				open={solutionToRemove !== null}
+				onOpenChange={(open) => {
+					if (!open) setSolutionToRemove(null)
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Remove solution?</AlertDialogTitle>
+						<AlertDialogDescription>
+							{solutionToRemove?.duplicate
+								? 'This deletes the duplicate solution. Only the first solution is ever served.'
+								: 'This permanently deletes the solution for this lesson. This action cannot be undone.'}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							className="bg-destructive hover:bg-destructive/90 text-white"
+							onClick={() => {
+								if (solutionToRemove) {
+									deleteSolution.mutate({ solutionId: solutionToRemove.id })
+								}
+								setSolutionToRemove(null)
+							}}
+						>
+							Remove
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</Field>
 	)
 }
