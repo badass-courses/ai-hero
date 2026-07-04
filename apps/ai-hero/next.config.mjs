@@ -2,6 +2,8 @@
  * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially useful
  * for Docker builds.
  */
+import { fileURLToPath } from 'node:url'
+
 import createMDX from '@next/mdx'
 import { withAxiom } from 'next-axiom'
 
@@ -16,6 +18,13 @@ const withMDX = createMDX({
 
 /** @type {import("next").NextConfig} */
 const config = {
+	// Widen the Turbopack filesystem root so the locally linked
+	// @coursebuilder/ui (link:../../../course-builder/packages/ui — outside
+	// this repo) resolves. Turbopack won't resolve modules outside the
+	// inferred workspace root; ../../.. is the common ancestor of both repos.
+	turbopack: {
+		root: fileURLToPath(new URL('../../..', import.meta.url)),
+	},
 	experimental: {
 		mdxRs: true,
 		turbopackFileSystemCacheForDev: true,
