@@ -82,13 +82,13 @@ export function useTranscript(options: {
 	const [isProcessing, setIsProcessing] = React.useState(false)
 	const [isOpen, setIsOpen] = React.useState(false)
 
-	// Update transcript when initialTranscript changes
+	// Re-seed transcript state whenever the video (or its transcript) changes.
+	// Important: clear to null when the new video has no transcript, so a
+	// swapped-in video doesn't keep showing the previous video's transcript.
 	React.useEffect(() => {
-		if (options.initialTranscript) {
-			setTranscript(options.initialTranscript)
-			setIsProcessing(false)
-		}
-	}, [options.initialTranscript])
+		setTranscript(options.initialTranscript ?? null)
+		setIsProcessing(false)
+	}, [options.videoResourceId, options.initialTranscript])
 
 	React.useEffect(() => {
 		let isSubscribed = true
@@ -127,19 +127,18 @@ export function useTranscript(options: {
 		})
 	}
 
-	const TranscriptDialogComponent =
-		options.initialTranscript || transcript ? (
-			<TranscriptDialog
-				transcript={transcript || options.initialTranscript}
-				isProcessing={isProcessing}
-				onReprocess={handleReprocess}
-				isOpen={isOpen}
-				onOpenChange={setIsOpen}
-			/>
-		) : null
+	const TranscriptDialogComponent = transcript ? (
+		<TranscriptDialog
+			transcript={transcript}
+			isProcessing={isProcessing}
+			onReprocess={handleReprocess}
+			isOpen={isOpen}
+			onOpenChange={setIsOpen}
+		/>
+	) : null
 
 	return {
-		transcript: transcript || options.initialTranscript,
+		transcript,
 		setTranscript,
 		isProcessing,
 		setIsProcessing,
