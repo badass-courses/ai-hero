@@ -1,24 +1,19 @@
-'use client'
-
 /**
- * Skill catalog grid for the /skills landing (spec §7 step 3). Renders the
- * browsable card list that sits below the SkillCycle diagram: core skill cards
- * (title, tagline, phase badge) in cycle order, plus a distinct-tint 3-column
- * utility row.
+ * Skill catalog grid for the /skills landing. A plain, browsable grid of skill
+ * cards (title, tagline, phase badge) in cycle order, plus a distinct-tint
+ * utility row. Every card is a flat `/{slug}` link.
  *
- * Both halves consume `useSkillCycleHover()` so hovering (or focusing) a card
- * here highlights the matching cycle node above and vice-versa. Highlight is
- * ring + opacity only, never color (DESIGN.md §7). Every card is a real flat
- * `/{slug}` link; hover is decoration, not navigation.
+ * Deliberately simple (2026-07-06): the interactive SkillCycle diagram + the
+ * cycle↔catalog hover-sync were removed from /skills for now — they read as
+ * broken (shared hover across sections, duplicated skills). This is the "fine
+ * but not broken" version; the diagram/hover work is parked for a later pass
+ * (the `SkillCycle` component still lives in `src/components/skills`).
  */
 
-import * as React from 'react'
 import Link from 'next/link'
 import { type SkillEntry } from '@/lib/skills-shared'
 
 import { cn } from '@coursebuilder/utils/cn'
-
-import { useSkillCycleHover } from '@/components/skills'
 
 export function SkillsCatalog({
 	skills,
@@ -26,34 +21,19 @@ export function SkillsCatalog({
 }: {
 	/** Core skill entries in cycle order (position order). */
 	skills: SkillEntry[]
-	/** Utility skills for the distinct-tint 3-column row. */
+	/** Utility skills for the distinct-tint row. */
 	utilitySkills: SkillEntry[]
 }) {
-	const context = useSkillCycleHover()
-	const hoveredSlug = context?.hoveredSlug ?? null
-	const setHoveredSlug = context?.setHoveredSlug ?? (() => {})
-
 	if (skills.length === 0 && utilitySkills.length === 0) return null
 
 	return (
-		<div className="border-b">
-			<div className="px-6 pb-3 pt-8 sm:px-8">
-				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-					Browse every skill
-				</span>
-			</div>
-
+		<div>
 			{skills.length > 0 ? (
-				<div className="border-border bg-border grid grid-cols-1 gap-px border-y sm:grid-cols-2 lg:grid-cols-3">
+				<div className="border-border bg-border grid grid-cols-1 gap-px border-b sm:grid-cols-2 lg:grid-cols-3">
 					{skills.map((entry) => (
-						<SkillCard
-							key={entry.id}
-							entry={entry}
-							tint="card"
-							hoveredSlug={hoveredSlug}
-							setHoveredSlug={setHoveredSlug}
-						/>
+						<SkillCard key={entry.id} entry={entry} tint="background" />
 					))}
+					<GridFiller count={skills.length} columns={3} tint="background" />
 				</div>
 			) : null}
 
@@ -66,13 +46,7 @@ export function SkillsCatalog({
 					</div>
 					<div className="border-border bg-border grid grid-cols-1 gap-px border-t sm:grid-cols-3">
 						{utilitySkills.map((entry) => (
-							<SkillCard
-								key={entry.id}
-								entry={entry}
-								tint="muted"
-								hoveredSlug={hoveredSlug}
-								setHoveredSlug={setHoveredSlug}
-							/>
+							<SkillCard key={entry.id} entry={entry} tint="muted" />
 						))}
 						<GridFiller count={utilitySkills.length} columns={3} tint="muted" />
 					</div>
@@ -85,32 +59,17 @@ export function SkillsCatalog({
 function SkillCard({
 	entry,
 	tint,
-	hoveredSlug,
-	setHoveredSlug,
 }: {
 	entry: SkillEntry
-	tint: 'card' | 'muted'
-	hoveredSlug: string | null
-	setHoveredSlug: (slug: string | null) => void
+	tint: 'background' | 'muted'
 }) {
-	const isActive = hoveredSlug === entry.slug
-	// When something elsewhere is hovered, recede the non-matching cards.
-	const isDimmed = hoveredSlug !== null && !isActive
-
 	return (
 		<Link
 			// Skill URLs stay flat at the site root (settled decision).
 			href={`/${entry.slug}`}
-			data-skill-link
-			onMouseEnter={() => setHoveredSlug(entry.slug)}
-			onMouseLeave={() => setHoveredSlug(null)}
-			onFocus={() => setHoveredSlug(entry.slug)}
-			onBlur={() => setHoveredSlug(null)}
 			className={cn(
-				'focus-visible:ring-ring group relative flex flex-col gap-2 px-6 py-6 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8',
-				tint === 'muted' ? 'bg-muted' : 'bg-background',
-				isActive && 'ring-ring ring-2 ring-inset',
-				isDimmed ? 'opacity-50' : 'opacity-100',
+				'focus-visible:ring-ring group relative flex flex-col gap-2 px-6 py-6 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8',
+				tint === 'muted' ? 'bg-muted hover:bg-muted/70' : 'bg-background hover:bg-muted',
 			)}
 		>
 			{entry.phase ? (

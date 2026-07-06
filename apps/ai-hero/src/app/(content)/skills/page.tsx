@@ -4,7 +4,6 @@ import { Resource } from '@/components/landing/resource'
 import { SectionHeading } from '@/components/landing/section-heading'
 import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
-import { SkillCycle, SkillCycleHoverProvider } from '@/components/skills'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getRepoStarCount } from '@/lib/github-stars-query'
 import { getList } from '@/lib/lists-query'
@@ -120,27 +119,18 @@ export default async function SkillsPage({ searchParams }: Props) {
 					{/* 2. Sales copy */}
 					<SkillsSalesCopy />
 
-					{/* 3. Skill cycle + catalog (falls back to the skill-set rows) */}
+					{/* 3. Skill catalog (falls back to the skill-set rows).
+					    Simplified for now — the SkillCycle diagram + hover-sync are
+					    parked (see skills-catalog.tsx). */}
 					{hasSkillEntries ? (
-						<section
-							aria-labelledby="skill-cycle-heading"
-							className="border-b"
-						>
+						<section aria-labelledby="skills-heading" className="border-b">
 							<SectionHeading>
-								<span id="skill-cycle-heading">The skill cycle</span>
+								<span id="skills-heading">The skills</span>
 							</SectionHeading>
-							<SkillCycleHoverProvider>
-								<SkillCycle
-									skills={coreEntries}
-									utilitySkills={utilityEntries}
-									size="landing"
-									ctaHref="/skills"
-								/>
-								<SkillsCatalog
-									skills={coreEntries}
-									utilitySkills={utilityEntries}
-								/>
-							</SkillCycleHoverProvider>
+							<SkillsCatalog
+								skills={coreEntries}
+								utilitySkills={utilityEntries}
+							/>
 						</section>
 					) : (
 						<section
