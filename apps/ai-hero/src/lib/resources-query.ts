@@ -17,6 +17,7 @@ import {
 	inArray,
 	isNull,
 	notInArray,
+	or,
 	sql,
 } from 'drizzle-orm'
 
@@ -333,7 +334,37 @@ export async function listVideoResourcesForPicker(
 	if (search) {
 		// Escape LIKE metacharacters so user input matches literally.
 		const escaped = search.replace(/[\\%_]/g, '\\$&')
-		conditions.push(sql`${contentResource.id} LIKE ${`%${escaped}%`}`)
+		// Search matches the human title (`fields.title`) too — but the title
+		// LIKE is a JSON_EXTRACT, which must NEVER enter the sorted query below
+		// (any JSON reference puts the whole `fields` blob into the sort tuples
+		// → errno 1038). So resolve title matches to ids in a separate UNSORTED
+		// scan (no ORDER BY → no sort buffer → no Vitess risk), then fold them
+		// into the JSON-free sorted query as a plain id IN (…).
+		const titleMatches = await db
+			.select({ id: contentResource.id })
+			.from(contentResource)
+			.where(
+				and(
+					eq(contentResource.type, 'videoResource'),
+					isNull(contentResource.deletedAt),
+					sql`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.title')) LIKE ${`%${escaped}%`}`,
+				),
+			)
+			// Cap the id list fed back into the sorted query; 200 named matches
+			// for one search term is beyond any real library's collision rate.
+			.limit(200)
+		const idLike = sql`${contentResource.id} LIKE ${`%${escaped}%`}`
+		conditions.push(
+			titleMatches.length > 0
+				? or(
+						idLike,
+						inArray(
+							contentResource.id,
+							titleMatches.map((row) => row.id),
+						),
+					)!
+				: idLike,
+		)
 	}
 
 	// Two-step on purpose: ORDER BY over rows that also compute JSON_EXTRACTs
@@ -363,6 +394,16 @@ export async function listVideoResourcesForPicker(
 			duration: sql<
 				number | string | null
 			>`JSON_EXTRACT(${contentResource.fields}, '$.duration')`,
+			title: sql<
+				string | null
+			>`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.title'))`,
+			// Presence BOOLEAN only — never the transcript text (this JSON read
+			// lives in the per-page detail query ONLY; the sorted step above must
+			// stay JSON-free or Vitess sort memory blows). JSON_TYPE = 'STRING'
+			// also rules out an explicit JSON null.
+			hasTranscript: sql<
+				number | null
+			>`(JSON_TYPE(JSON_EXTRACT(${contentResource.fields}, '$.transcript')) = 'STRING')`,
 			createdAt: contentResource.createdAt,
 		})
 		.from(contentResource)
@@ -382,14 +423,21 @@ export async function listVideoResourcesForPicker(
 
 	return rows.map((row) => ({
 		id: row.id,
-		// videoResources have no title/slug — the filename-derived id is the
-		// human-readable handle (matches the legacy videos tool).
-		title: row.id,
+		// `fields.title` when someone named the video (JSON_UNQUOTE turns a JSON
+		// null into the STRING 'null'); otherwise the filename-derived id stays
+		// the human-readable handle (matches the legacy videos tool).
+		title:
+			row.title && row.title !== 'null' && row.title.trim() !== ''
+				? row.title
+				: row.id,
 		state: row.state ?? 'processing',
 		thumbnailUrl: row.muxPlaybackId
 			? `https://image.mux.com/${row.muxPlaybackId}/thumbnail.png?width=96&height=54&fit_mode=smartcrop`
 			: undefined,
 		duration: row.duration != null ? Number(row.duration) : null,
+		// Drizzle may hand the SQL boolean back as 1/0 (number or string) or
+		// NULL (missing key) — normalize to a real boolean.
+		hasTranscript: Number(row.hasTranscript ?? 0) === 1,
 		createdAt: row.createdAt,
 	}))
 }

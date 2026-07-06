@@ -3,9 +3,10 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { CmsLessonSolutionsField } from '@/app/(content)/workshops/_components/cms-lesson-solutions-field'
-import { LessonVideoResourceField } from '@/app/(content)/workshops/_components/lesson-video-resource-field'
+import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createLessonBindings } from '@/lib/cms/lesson-bindings'
 import { LessonSchema, type Lesson } from '@/lib/lessons'
+import { updateLesson } from '@/lib/lessons-query'
 import type { Tag } from '@/lib/tags'
 import type { UseFormReturn } from 'react-hook-form'
 
@@ -20,6 +21,11 @@ export type EditLessonClientProps = {
 	tags: Tag[]
 	/** URL `module` segment — lesson routes live under `/workshops/{module}/`. */
 	moduleSlug: string
+	/**
+	 * Mux Data configured? Server-computed by the page (the bindings factory
+	 * runs client-side and can't read server env) — gates `videoAnalytics`.
+	 */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -41,6 +47,7 @@ export function EditLessonClient({
 	videoResource,
 	tags,
 	moduleSlug,
+	videoAnalyticsEnabled,
 }: EditLessonClientProps) {
 	const router = useRouter()
 
@@ -66,17 +73,33 @@ export function EditLessonClient({
 						: tab,
 				),
 				videoSlot: (ctx: EditorCtx) => (
-					<LessonVideoResourceField
+					<CmsVideoField
 						// Same runtime object; cast bridges the linked ui package's own
 						// react-hook-form copy vs the app's (post editor precedent).
 						form={ctx.form as unknown as UseFormReturn<any>}
-						lesson={lesson}
+						resource={lesson}
 						videoResource={videoResource}
-						variant="panel"
+						videoAnalyticsEnabled={videoAnalyticsEnabled}
+						// Legacy parity: a thumbnail pick persists immediately via the
+						// lesson's own save path (full-field snapshot from the live form).
+						onThumbnailUpdate={async ({ thumbnailTime, videoResourceId }) => {
+							const fields = (
+								ctx.form as unknown as UseFormReturn<any>
+							).getValues('fields')
+							await updateLesson({
+								id: lesson.id,
+								fields: {
+									...fields,
+									thumbnailTime,
+									videoResourceId,
+								} as any,
+							})
+						}}
 					/>
 				),
 			},
 			bindings: createLessonBindings({
+				resourceId: lesson.id,
 				moduleSlug,
 				availableTags: tags.map((tag) => ({
 					id: tag.id,
@@ -84,6 +107,7 @@ export function EditLessonClient({
 				})),
 				onSlugChange: (slug) =>
 					router.push(`/workshops/${moduleSlug}/${slug}/edit`),
+				videoAnalyticsEnabled,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.

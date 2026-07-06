@@ -12,6 +12,7 @@ import type {
 } from '@coursebuilder/ui/cms/manifest'
 
 import {
+	createVideoAnalyticsBinding,
 	createVideoLibraryBinding,
 	listImageMediaAssets,
 	listVideoPickerItems,
@@ -38,10 +39,17 @@ import {
  */
 export interface CreateSkillChangelogBindingsOptions {
 	/**
+	 * The changelog entry's id — join target for the Media tab's "Set as
+	 * primary" (the generalized attach safe-swaps the videoResource child).
+	 */
+	resourceId?: string
+	/**
 	 * Called after a save whose slug differs from the last-saved slug.
 	 * Parity with the legacy form: redirect to the new edit URL.
 	 */
 	onSlugChange?: (slug: string) => void
+	/** Mux Data configured? (server-computed — see `CreatePostBindingsOptions`) */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -65,7 +73,9 @@ function stateForAction(
 }
 
 export function createSkillChangelogBindings({
+	resourceId,
 	onSlugChange,
+	videoAnalyticsEnabled,
 }: CreateSkillChangelogBindingsOptions = {}): ResourceBindings<
 	typeof SkillChangelogSchema
 > {
@@ -123,7 +133,11 @@ export function createSkillChangelogBindings({
 		},
 		// Body editor "Video…" insert — the same library the Video tab lists.
 		listVideos: listVideoPickerItems,
-		// Media-tab video verbs: preview player + transcript + reprocess.
-		videoLibrary: createVideoLibraryBinding(),
+		// Media-tab video verbs; "Set as primary" targets THIS changelog entry.
+		videoLibrary: createVideoLibraryBinding(
+			resourceId ? { primaryResourceId: resourceId } : undefined,
+		),
+		// Per-video analytics strip (Mux Data) — only when configured.
+		videoAnalytics: createVideoAnalyticsBinding(videoAnalyticsEnabled),
 	}
 }

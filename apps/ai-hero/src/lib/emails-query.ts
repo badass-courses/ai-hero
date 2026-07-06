@@ -11,6 +11,7 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
+import { publishedAtStamp } from '@coursebuilder/ui/cms/resource-state'
 import { guid } from '@coursebuilder/utils/guid'
 
 export async function getEmails(): Promise<Email[]> {
@@ -91,11 +92,22 @@ export async function updateEmail(input: Email) {
 		return createEmail(input)
 	}
 
-	let emailSlug = input.fields.slug
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug (same policy as
+	// updatePost). This keeps URLs stable when an author tweaks a title.
+	let emailSlug = currentEmail.fields.slug
 
-	if (input.fields.title !== currentEmail?.fields.title) {
-		const splitSlug = currentEmail?.fields.slug.split('~') || ['', guid()]
-		emailSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
+	if (
+		input.fields.slug !== undefined &&
+		input.fields.slug !== currentEmail.fields.slug
+	) {
+		// An omitted slug (undefined) is a title-only edit and preserves the
+		// current slug; an explicitly cleared slug is rejected rather than
+		// silently ignored, since persisting an empty slug breaks the URL.
+		if (!input.fields.slug) {
+			throw new Error('Slug is required')
+		}
+		emailSlug = input.fields.slug
 	}
 
 	return courseBuilderAdapter.updateContentResourceFields({
@@ -104,6 +116,9 @@ export async function updateEmail(input: Email) {
 			...currentEmail.fields,
 			...input.fields,
 			slug: emailSlug,
+			// Stamp fields.publishedAt on the transition INTO 'published' (or
+			// backfill a missing stamp) — same policy as updatePost.
+			...publishedAtStamp(input.fields.state, currentEmail.fields),
 		},
 	})
 }

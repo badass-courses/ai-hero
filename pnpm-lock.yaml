@@ -105,13 +105,13 @@ importers:
         version: 2.0.0(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(nodemailer@6.10.1)
       '@coursebuilder/analytics':
         specifier: ^1.1.1
-        version: 1.1.1(dc558430db342e083203aeb01728bf70)
+        version: 1.1.1(57aa3a565d282da02b13bcd76419d104)
       '@coursebuilder/commerce-next':
         specifier: ^0.2.2
         version: 0.2.2(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)
       '@coursebuilder/core':
-        specifier: 2.0.1
-        version: 2.0.1(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
+        specifier: 2.0.2
+        version: 2.0.2(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
       '@coursebuilder/email-templates':
         specifier: ^1.0.8
         version: 1.0.8(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(typescript@5.4.5)
@@ -128,8 +128,8 @@ importers:
         specifier: ^1.0.5
         version: 1.0.5(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)
       '@coursebuilder/ui':
-        specifier: ^2.1.0
-        version: 2.1.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
+        specifier: ^2.2.0
+        version: 2.2.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
       '@coursebuilder/utils':
         specifier: ^1.0.3
         version: 1.0.3(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
@@ -1569,8 +1569,8 @@ packages:
   '@coursebuilder/core@2.0.0':
     resolution: {integrity: sha512-+p2RoPxK4tseAukOeEhpDGHe0V5VnetoMi8tH8N81a4UyROpGrby/AkUkVj951u8L6O44RA+zm9hcSdhHqgYxw==}
 
-  '@coursebuilder/core@2.0.1':
-    resolution: {integrity: sha512-mNNHn5ruGPdWLOQpxvQGroLrp6UTHBGFZza5jyrbXfy4KrwEzSwIU7guLnVntwimTOBCebH0BnB69bm324PGSQ==}
+  '@coursebuilder/core@2.0.2':
+    resolution: {integrity: sha512-Px5Hmlu0gsNmaiUqwl2QQlUXFLdkDCrun5T329bhcvI3ZRENWx1y9f+AygfGK8AOwNeSkeD23gYuEEMSaQzUCA==}
 
   '@coursebuilder/email-templates@1.0.8':
     resolution: {integrity: sha512-pVX0qmMkSafN89jQlTc0wo/qX4S1JvtToQGnB2oRThaw2tBeIukWpumQ5w5p4JFEKrrzaOuQuqrVjEiMOQSfJA==}
@@ -1606,16 +1606,16 @@ packages:
   '@coursebuilder/ui@2.0.12':
     resolution: {integrity: sha512-aMzfExaA3shBl73gEKSx/VotABW5dAcjFCBd9RLvIDn+Ckf/rDm3199RJ3l8MSmG+3foZHoJfbBjlz0PKO0fSg==}
 
-  '@coursebuilder/ui@2.1.0':
-    resolution: {integrity: sha512-RyOg1FR8NSa9kc3DKNULXcAZPSoAu+/RsLKLajBhhSc+jAOrZPGcpWjoq48R3ftochRuJkx2w0TkPCM2XxLwCw==}
+  '@coursebuilder/ui@2.2.0':
+    resolution: {integrity: sha512-Cq6ceJz/7OIwCS5JwgTit5t15LPbqQW0fBsOs7xjDjpm0/j/zEcSvFJ6S1mvJfkwUkrt7ukFqHfWHcFc4RW6Vg==}
 
   '@coursebuilder/utils@1.0.3':
     resolution: {integrity: sha512-jsMgKmoerCXIoBf/7aNyAFZJfFXks4pV8Up8omBP9G1sP5S7Sr+zduCl/aLrLqqfM7DB0BTd8+SMic1hpCa1nA==}
     peerDependencies:
       react: '>=18.0.0'
 
-  '@coursebuilder/utils@1.0.4':
-    resolution: {integrity: sha512-EwqXFR9SO4TVXT0dGjH/oN9vKShcDZHeQEMm1deki6/3lNt2t5MJOUs3EqZe+hilo8/WHZC6uPEs7JJe7Ffstw==}
+  '@coursebuilder/utils@1.0.5':
+    resolution: {integrity: sha512-j69GEomVFp3fVTt/eKfEDmtTrCldZSiwFW17vzKdoPXtLyA4fAuwo4JoczlmsKn4Q6SiRInHV0UJHrImDVML/A==}
     peerDependencies:
       react: '>=18.0.0'
 
@@ -14729,9 +14729,9 @@ snapshots:
       - '@simplewebauthn/server'
       - nodemailer
 
-  '@coursebuilder/analytics@1.1.1(dc558430db342e083203aeb01728bf70)':
+  '@coursebuilder/analytics@1.1.1(57aa3a565d282da02b13bcd76419d104)':
     dependencies:
-      '@coursebuilder/ui': 2.1.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/ui': 2.2.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
       '@google-analytics/data': 4.12.1(encoding@0.1.13)
       drizzle-orm: 0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3)
       lucide-react: 0.288.0(react@19.2.3)
@@ -14906,7 +14906,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@coursebuilder/core@2.0.1(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)':
+  '@coursebuilder/core@2.0.2(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)':
     dependencies:
       '@ai-sdk/openai': 3.0.69(zod@3.25.76)
       '@anthropic-ai/sdk': 0.17.2(encoding@0.1.13)
@@ -15290,7 +15290,7 @@ snapshots:
       - utf-8-validate
       - webpack-cli
 
-  '@coursebuilder/ui@2.1.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/ui@2.2.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/theme-one-dark@6.1.3)(@emotion/is-prop-valid@0.8.8)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(nodemailer@6.10.1)(postcss@8.5.15)(prosemirror-model@1.25.8)(prosemirror-state@1.4.4)(prosemirror-view@1.41.9)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
       '@atlaskit/pragmatic-drag-and-drop': 1.8.1
       '@atlaskit/pragmatic-drag-and-drop-flourish': 1.2.2(@types/react@19.2.7)(react@19.2.3)
@@ -15305,8 +15305,8 @@ snapshots:
       '@codemirror/search': 6.7.0
       '@codemirror/state': 6.7.0
       '@codemirror/view': 6.43.2
-      '@coursebuilder/core': 2.0.1(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
-      '@coursebuilder/utils': 1.0.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
+      '@coursebuilder/core': 2.0.2(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
+      '@coursebuilder/utils': 1.0.5(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)
       '@hookform/resolvers': 3.10.0(react-hook-form@7.78.0(react@19.2.3))
       '@internationalized/date': 3.12.2
       '@lezer/highlight': 1.2.3
@@ -15483,12 +15483,12 @@ snapshots:
       - webpack-cli
       - ws
 
-  '@coursebuilder/utils@1.0.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)':
+  '@coursebuilder/utils@1.0.5(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1065.0
       '@aws-sdk/client-textract': 3.1065.0
       '@aws-sdk/credential-providers': 3.1065.0
-      '@coursebuilder/core': 2.0.1(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
+      '@coursebuilder/core': 2.0.2(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(drizzle-orm@0.36.0(@cloudflare/workers-types@4.20240320.1)(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/pg@8.15.6)(@types/react@19.2.7)(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@24.13.1))(react@19.2.3))(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(rollup@3.29.5)(typescript@5.4.5)(zod@3.25.76)
       '@react-email/render': 1.0.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       clsx: 2.1.1
       date-fns: 2.30.0

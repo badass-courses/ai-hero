@@ -53,6 +53,11 @@ export const env = createEnv({
 		MUX_ACCESS_TOKEN_ID: z.string(),
 		MUX_DATA_TOKEN_ID: z.string().optional(),
 		MUX_DATA_TOKEN_SECRET: z.string().optional(),
+		// Mux dashboard deep links ("Open in Mux ↗" in the cms video surfaces):
+		// both must be set for `VideoDetail.muxHref` to be built server-side;
+		// unset → the link is simply hidden (honest degradation).
+		MUX_ORGANIZATION_ID: z.string().optional(),
+		MUX_ENVIRONMENT_ID: z.string().optional(),
 		STATS_ANALYTICS_PROPERTY_ID: z.string().optional(),
 		GOOGLE_ANALYTICS_CLIENT_EMAIL: z.string().optional(),
 		GOOGLE_ANALYTICS_PRIVATE_KEY: z.string().optional(),
@@ -162,6 +167,8 @@ export const env = createEnv({
 		MUX_SECRET_KEY: process.env.MUX_SECRET_KEY,
 		MUX_DATA_TOKEN_ID: process.env.MUX_DATA_TOKEN_ID,
 		MUX_DATA_TOKEN_SECRET: process.env.MUX_DATA_TOKEN_SECRET,
+		MUX_ORGANIZATION_ID: process.env.MUX_ORGANIZATION_ID,
+		MUX_ENVIRONMENT_ID: process.env.MUX_ENVIRONMENT_ID,
 		STATS_ANALYTICS_PROPERTY_ID: process.env.STATS_ANALYTICS_PROPERTY_ID,
 		GOOGLE_ANALYTICS_CLIENT_EMAIL: process.env.GOOGLE_ANALYTICS_CLIENT_EMAIL,
 		GOOGLE_ANALYTICS_PRIVATE_KEY: process.env.GOOGLE_ANALYTICS_PRIVATE_KEY,

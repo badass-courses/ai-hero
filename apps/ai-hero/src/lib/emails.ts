@@ -34,6 +34,9 @@ export const EmailSchema = ContentResourceSchema.merge(
 			slug: z.string(),
 			state: EmailStateSchema.default('draft'),
 			visibility: ResourceVisibilitySchema.default('unlisted'),
+			// Server-owned publish stamp — see publishedAtStamp in
+			// @coursebuilder/ui/cms/resource-state.
+			publishedAt: z.string().datetime().nullish(),
 			socialImage: z
 				.object({
 					type: z.string(),

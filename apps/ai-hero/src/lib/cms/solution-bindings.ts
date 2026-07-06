@@ -1,4 +1,5 @@
 import {
+  createVideoAnalyticsBinding,
   createVideoLibraryBinding,
   listImageMediaAssets,
   listVideoPickerItems,
@@ -34,12 +35,19 @@ import { stripClientPublishedAt } from "@coursebuilder/ui/cms/resource-state";
  *   "Part of" strip is the "Back to Lesson" link.
  */
 export interface CreateSolutionBindingsOptions {
+  /**
+   * The solution's id when it exists (UPDATE mode) — join target for the
+   * Media tab's "Set as primary". Omit in CREATE mode.
+   */
+  resourceId?: string;
   /** URL `module` segment. */
   moduleSlug: string;
   /** The parent lesson (fetched server-side by the edit page). */
   lesson: { id: string; slug: string; title: string };
   /** Called after create-on-save persists the first row — refetch/remount. */
   onCreated?: (solution: { id: string }) => void;
+  /** Mux Data configured? (server-computed — see `CreatePostBindingsOptions`) */
+  videoAnalyticsEnabled?: boolean;
 }
 
 /** Same verb→state derivation as the other bindings factories. */
@@ -60,9 +68,11 @@ function stateForAction(
 }
 
 export function createSolutionBindings({
+  resourceId,
   moduleSlug,
   lesson,
   onCreated,
+  videoAnalyticsEnabled,
 }: CreateSolutionBindingsOptions): ResourceBindings<typeof SolutionSchema> {
   const lessonEditHref = `/workshops/${moduleSlug}/${lesson.slug}/edit`;
 
@@ -139,7 +149,13 @@ export function createSolutionBindings({
       uploadVideo: uploadVideoMedia,
     },
     listVideos: listVideoPickerItems,
-    videoLibrary: createVideoLibraryBinding(),
+    // Media-tab video verbs; "Set as primary" targets THIS solution (absent
+    // in CREATE mode — no join target until the first save).
+    videoLibrary: createVideoLibraryBinding(
+      resourceId ? { primaryResourceId: resourceId } : undefined,
+    ),
+    // Per-video analytics strip (Mux Data) — only when configured.
+    videoAnalytics: createVideoAnalyticsBinding(videoAnalyticsEnabled),
     // "Part of" strip = the lesson↔solution navigation (replaces the legacy
     // "Back to Lesson" button). Closure-baked: works in create mode too.
     getParents: async (): Promise<ResourceParent[]> => [

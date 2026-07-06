@@ -15,6 +15,8 @@ import slugify from '@sindresorhus/slugify'
 import { and, asc, desc, eq, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
+import { publishedAtStamp } from '@coursebuilder/ui/cms/resource-state'
+
 import { ListSchema, type List, type ListUpdate } from './lists'
 import { PostSchema } from './posts'
 import { updatePost } from './posts-query'
@@ -442,15 +444,22 @@ export async function updateList(
 		throw new Error('Unauthorized')
 	}
 
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug (same policy as
+	// updatePost). This keeps published URLs stable when an author tweaks a
+	// title.
 	let listSlug = currentList.fields.slug
 
 	if (
-		input.fields.title !== currentList.fields.title &&
-		input.fields.slug.includes('~')
+		input.fields.slug !== undefined &&
+		input.fields.slug !== currentList.fields.slug
 	) {
-		const splitSlug = currentList?.fields.slug.split('~') || ['', guid()]
-		listSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-	} else if (input.fields.slug !== currentList.fields.slug) {
+		// An omitted slug (undefined) is a title-only edit and preserves the
+		// current slug; an explicitly cleared slug is rejected rather than
+		// silently ignored, since persisting an empty slug breaks the page URL.
+		if (!input.fields.slug) {
+			throw new Error('Slug is required')
+		}
 		listSlug = input.fields.slug
 	}
 
@@ -472,6 +481,9 @@ export async function updateList(
 			...currentList.fields,
 			...input.fields,
 			slug: listSlug,
+			// Stamp fields.publishedAt on the transition INTO 'published' (or
+			// backfill a missing stamp) — same policy as updatePost.
+			...publishedAtStamp(input.fields.state, currentList.fields),
 		},
 	})
 }

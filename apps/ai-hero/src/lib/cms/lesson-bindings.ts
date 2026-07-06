@@ -10,6 +10,7 @@ import type {
 } from '@coursebuilder/ui/cms/manifest'
 
 import {
+	createVideoAnalyticsBinding,
 	createVideoLibraryBinding,
 	listImageMediaAssets,
 	listVideoPickerItems,
@@ -28,6 +29,11 @@ import {
  * new here; the legacy edit surface never showed its parent workshop).
  */
 export interface CreateLessonBindingsOptions {
+	/**
+	 * The lesson's id — join target for the Media tab's "Set as primary"
+	 * (the generalized attach safe-swaps the lesson's videoResource child).
+	 */
+	resourceId?: string
 	/** URL `module` segment — lesson paths live under `/workshops/{module}/`. */
 	moduleSlug: string
 	/** Full tag vocabulary for the add-combobox (server-fetched via `getTags`). */
@@ -37,6 +43,8 @@ export interface CreateLessonBindingsOptions {
 	 * Parity with the legacy form: redirect to the new edit URL.
 	 */
 	onSlugChange?: (slug: string) => void
+	/** Mux Data configured? (server-computed — see `CreatePostBindingsOptions`) */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -61,9 +69,11 @@ function stateForAction(
 }
 
 export function createLessonBindings({
+	resourceId,
 	moduleSlug,
 	availableTags,
 	onSlugChange,
+	videoAnalyticsEnabled,
 }: CreateLessonBindingsOptions): ResourceBindings<typeof LessonSchema> {
 	return {
 		update: async (values, action) => {
@@ -119,8 +129,12 @@ export function createLessonBindings({
 		},
 		// Body editor "Video…" insert — the same library the Video tab lists.
 		listVideos: listVideoPickerItems,
-		// Media-tab video verbs: preview player + transcript + reprocess.
-		videoLibrary: createVideoLibraryBinding(),
+		// Media-tab video verbs; "Set as primary" targets THIS lesson.
+		videoLibrary: createVideoLibraryBinding(
+			resourceId ? { primaryResourceId: resourceId } : undefined,
+		),
+		// Per-video analytics strip (Mux Data) — only when configured.
+		videoAnalytics: createVideoAnalyticsBinding(videoAnalyticsEnabled),
 		// "Part of" strip — reverse lookup over the join table: lesson ∈ workshop
 		// (or ∈ section for sectioned workshops — one level deep by design).
 		getParents: (id) => getResourceParents(id),

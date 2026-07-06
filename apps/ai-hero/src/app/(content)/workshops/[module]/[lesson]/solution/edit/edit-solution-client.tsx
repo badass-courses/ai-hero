@@ -2,9 +2,10 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
-import { LessonVideoResourceField } from '@/app/(content)/workshops/_components/lesson-video-resource-field'
+import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createSolutionBindings } from '@/lib/cms/solution-bindings'
 import { SolutionSchema, type Solution } from '@/lib/solution'
+import { updateSolution } from '@/lib/solutions-query'
 import type { UseFormReturn } from 'react-hook-form'
 
 import type { VideoResource } from '@coursebuilder/core/schemas/video-resource'
@@ -20,6 +21,11 @@ export type EditSolutionClientProps = {
 	/** Pre-seeded `{lessonSlug}-solution~{guid}` slug for CREATE mode. */
 	defaultSlug: string
 	videoResource: VideoResource | null
+	/**
+	 * Mux Data configured? Server-computed by the page (the bindings factory
+	 * runs client-side and can't read server env) — gates `videoAnalytics`.
+	 */
+	videoAnalyticsEnabled?: boolean
 }
 
 /**
@@ -70,6 +76,7 @@ export function EditSolutionClient({
 	moduleSlug,
 	defaultSlug,
 	videoResource,
+	videoAnalyticsEnabled,
 }: EditSolutionClientProps) {
 	const router = useRouter()
 
@@ -84,25 +91,45 @@ export function EditSolutionClient({
 				...solutionManifest,
 				schema: SolutionSchema,
 				// The manifest's `video: true` adds the left-panel Video tab; this
-				// slot fills it with the existing lesson/solution video field
-				// (self-contained: socket updates + its own updateSolution call).
+				// slot fills it with the shared cms wrapper. In CREATE mode
+				// (`resource.id === ''`) attach/detach affordances stay hidden —
+				// there is no join target until the first save.
 				videoSlot: (ctx: EditorCtx) => (
-					<LessonVideoResourceField
+					<CmsVideoField
 						// Same runtime object; cast bridges the linked ui package's own
 						// react-hook-form copy vs the app's (post editor precedent).
 						form={ctx.form as unknown as UseFormReturn<any>}
-						lesson={resource}
+						resource={resource}
 						videoResource={videoResource}
-						variant="panel"
+						videoAnalyticsEnabled={videoAnalyticsEnabled}
+						// Legacy parity: a thumbnail pick persists immediately via the
+						// solution's own save path (full-field snapshot from the form).
+						onThumbnailUpdate={async ({ thumbnailTime, videoResourceId }) => {
+							if (!resource.id) return
+							const fields = (
+								ctx.form as unknown as UseFormReturn<any>
+							).getValues('fields')
+							await updateSolution({
+								id: resource.id,
+								fields: {
+									...fields,
+									thumbnailTime,
+									videoResourceId,
+								} as any,
+							})
+						}}
 					/>
 				),
 			},
 			bindings: createSolutionBindings({
+				// CREATE mode has no id yet → no "Set as primary" until first save.
+				resourceId: solution?.id || undefined,
 				moduleSlug,
 				lesson,
 				// Re-run the RSC page → it finds the created row → key change
 				// remounts the editor in UPDATE mode.
 				onCreated: () => router.refresh(),
+				videoAnalyticsEnabled,
 			}),
 		})
 		// Stable per mount by design; the page's key handles data changes.

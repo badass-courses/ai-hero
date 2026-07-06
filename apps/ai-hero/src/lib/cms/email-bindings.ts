@@ -83,9 +83,9 @@ export function createEmailBindings({
 			if (!values.id || !values.fields) {
 				throw new Error('Invalid resource data')
 			}
-			// updateEmail regenerates the slug itself on title change (splits the
-			// existing slug on '~' — correct, unlike prompts). Server behavior is
-			// preserved as-is.
+			// updateEmail never regenerates the slug on title change — only an
+			// explicit slug edit (or the client-side "From title" button) changes
+			// it, matching the posts policy.
 			const updated = await updateEmail({
 				...values,
 				fields: {
