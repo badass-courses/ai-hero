@@ -21,54 +21,24 @@ import { getList } from './lists-query'
 import { SKILLS_LIST_ID } from './skills-content'
 import { TagSchema, type Tag } from './tags'
 
-/**
- * The `fields.contexts` value that scopes a topic tag to skill-phase duty.
- * Topic-tree/tag-filter consumers must EXCLUDE tags carrying this context
- * or phases leak into the topic UI.
- */
-export const SKILL_PHASE_TAG_CONTEXT = 'skill-phase'
+// Client-safe types + pure constants live in `skills-shared.ts` (this module
+// imports `db`/`server/logger` and must never reach the client bundle).
+// Imported for internal use AND re-exported so existing server call sites keep
+// their import path.
+import {
+	isSkillPhaseTag,
+	SKILL_PHASE_TAG_CONTEXT,
+	SKILL_PHASE_UTILITY_NUMBER,
+	type SkillEntry,
+	type SkillPhase,
+} from './skills-shared'
 
-/** Sentinel `fields.popularity_order` value marking the utility (non-numbered) phase. */
-export const SKILL_PHASE_UTILITY_NUMBER = 99
-
-/**
- * Phase badge metadata derived from a skill post's `skill-phase`-context tag.
- */
-export type SkillPhase = {
-	/** Phase number from the tag's `fields.popularity_order` (utility = 99). Sort key. */
-	number: number
-	/** Display name with any "Phase N:" prefix stripped, e.g. 'Idea'. */
-	name: string
-	/** The tag's full `fields.label`, e.g. 'Phase 1: Idea'. */
-	label: string
-	/** The tag's slug, e.g. 'phase-1' or 'phase-utility'. */
-	slug: string
-}
-
-/**
- * One skill in the cycle: list-ordered post identity + tagline + optional
- * phase badge. `phase: null` means "render without a badge" — a missing
- * phase tag never drops a skill from the set.
- */
-export type SkillEntry = {
-	/** The skill post's resource id. */
-	id: string
-	/** The post's flat `fields.slug` (skill URLs stay at root, e.g. /skills-grill-me). */
-	slug: string
-	/** The post's `fields.title`. */
-	title: string
-	/** GitHub-synced `fields.description` from the skill's SKILL.md frontmatter. */
-	tagline: string
-	/** Phase badge metadata, or null when the post has no skill-phase tag. */
-	phase: SkillPhase | null
-	/** Position within the skills list — this IS the cycle order. */
-	position: number
-}
-
-/** True when a tag is scoped as a skill-phase tag via `fields.contexts`. */
-export function isSkillPhaseTag(tag: Tag): boolean {
-	return Boolean(tag.fields.contexts?.includes(SKILL_PHASE_TAG_CONTEXT))
-}
+export {
+	isSkillPhaseTag,
+	SKILL_PHASE_TAG_CONTEXT,
+	SKILL_PHASE_UTILITY_NUMBER,
+} from './skills-shared'
+export type { SkillEntry, SkillPhase } from './skills-shared'
 
 function skillPhaseFromTag(tag: Tag): SkillPhase | null {
 	const { label, slug, popularity_order } = tag.fields

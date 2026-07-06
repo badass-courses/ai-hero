@@ -14,7 +14,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { type SkillEntry } from '@/lib/skills-query'
+import { type SkillEntry } from '@/lib/skills-shared'
 
 import { cn } from '@coursebuilder/utils/cn'
 
