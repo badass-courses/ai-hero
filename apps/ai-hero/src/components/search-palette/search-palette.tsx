@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { track } from '@/utils/analytics'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
@@ -44,6 +45,11 @@ import {
  * keyword mode for type-ahead latency). The promo row and keyboard hints stay
  * fixed below the scrollable results — the promo is never pushed out.
  *
+ * Every row is a real `<Link>` (status-bar URL, cmd/middle-click work);
+ * keyboard ⏎ routes through the same href. The promo row resolves dynamically
+ * from `/api/palette-promo` (site-wide override → next cohort → static
+ * fallback).
+ *
  * Desktop: 540px, centered on a dimmed backdrop. Mobile: full-screen overlay
  * with a Cancel button instead of the esc hint.
  */
@@ -69,10 +75,27 @@ function iconForType(type: string) {
 	return TYPE_ICONS[type as PaletteItemType] ?? FileText
 }
 
-/** The site-wide featured promo wins; else the palette's own default. */
-function resolvePalettePromo(): Promo | null {
-	return FEATURED_PROMO ?? PALETTE_PROMO
-}
+/**
+ * Hit types whose `view` path is self-contained. `lesson`/`solution`/`section`
+ * need parent (workshop/list) context the search API doesn't resolve — their
+ * root-level URLs 404, so they're excluded from palette results.
+ */
+const LINKABLE_HIT_TYPES = new Set([
+	'post',
+	'article',
+	'podcast',
+	'tip',
+	'comic',
+	'tutorial',
+	'list',
+	'workshop',
+	'cohort',
+	'event',
+	'event-series',
+	'skill-changelog',
+	'dictionary',
+	'dictionary-entry',
+])
 
 /** Map an /api/search hit to a palette row. Hits carry absolute URLs. */
 function hitToResult(hit: {
@@ -82,6 +105,7 @@ function hitToResult(hit: {
 	url: string
 }): PaletteResult | null {
 	if (!hit?.title || !hit?.url) return null
+	if (!LINKABLE_HIT_TYPES.has(hit.type)) return null
 	let href: string
 	try {
 		href = new URL(hit.url).pathname
@@ -110,6 +134,11 @@ export function SearchPalette({
 	const [query, setQuery] = React.useState('')
 	const [results, setResults] = React.useState<PaletteResult[]>([])
 	const [isSearching, setIsSearching] = React.useState(false)
+	// Static resolution first (no pop-in); replaced by the dynamic promo once
+	// fetched (manual override → upcoming cohort → static fallback).
+	const [promo, setPromo] = React.useState<Promo | null>(
+		FEATURED_PROMO ?? PALETTE_PROMO,
+	)
 
 	// Global shortcut: ⌘K / Ctrl+K toggles the palette.
 	React.useEffect(() => {
@@ -123,6 +152,19 @@ export function SearchPalette({
 		document.addEventListener('keydown', onKeyDown)
 		return () => document.removeEventListener('keydown', onKeyDown)
 	}, [open, onOpenChange])
+
+	// Resolve the dynamic promo when the palette opens (cached server-side).
+	React.useEffect(() => {
+		if (!open) return
+		const controller = new AbortController()
+		fetch('/api/palette-promo', { signal: controller.signal })
+			.then((res) => (res.ok ? res.json() : null))
+			.then((data) => {
+				if (data && 'promo' in data) setPromo(data.promo ?? null)
+			})
+			.catch(() => {})
+		return () => controller.abort()
+	}, [open])
 
 	// Reset per open so a reopened palette starts at the curated defaults.
 	React.useEffect(() => {
@@ -172,9 +214,11 @@ export function SearchPalette({
 	const items: PaletteResult[] = isQuerying
 		? results
 		: CURATED_DEFAULTS.map((item) => ({ ...item, id: item.href }))
-	const promo = resolvePalettePromo()
 
-	const openResult = (item: PaletteResult, via: 'result' | 'promo') => {
+	const trackAndClose = (
+		item: Pick<PaletteResult, 'title' | 'href' | 'type'>,
+		via: 'result' | 'promo',
+	) => {
 		track('search_palette_result_selected', {
 			title: item.title,
 			href: item.href,
@@ -183,7 +227,6 @@ export function SearchPalette({
 			via,
 		})
 		onOpenChange(false)
-		router.push(item.href)
 	}
 
 	return (
@@ -223,7 +266,7 @@ export function SearchPalette({
 								Cancel
 							</button>
 						</div>
-						<CommandList className="max-h-none flex-1 sm:max-h-[320px]">
+						<CommandList className="max-h-none flex-1 p-1 sm:max-h-[320px]">
 							<CommandEmpty>
 								{isQuerying && !isSearching
 									? 'No results — try different words.'
@@ -237,14 +280,31 @@ export function SearchPalette({
 										// Unique value keeps cmdk selection stable across
 										// duplicate titles; first item is auto-selected.
 										value={`${item.title} ${item.href}`}
-										onSelect={() => openResult(item, 'result')}
-										className="mx-1 my-0.5"
+										onSelect={() => {
+											// Keyboard ⏎ — same destination as the anchor.
+											trackAndClose(item, 'result')
+											router.push(item.href)
+										}}
+										// cmdk's data-[selected] tracks both hover and keyboard
+										// position; bg-muted matches the nav pill affordance and
+										// reads clearly in both themes (bg-accent was too subtle).
+										className="data-[selected=true]:bg-muted data-[selected=true]:text-foreground rounded-none p-0"
 									>
-										<Icon
-											aria-hidden
-											className="text-muted-foreground size-4 shrink-0"
-										/>
-										<span className="truncate">{item.title}</span>
+										{/* Real anchor: status-bar URL, cmd/middle-click,
+										    long-press context menu all work. */}
+										<Link
+											href={item.href}
+											prefetch={false}
+											tabIndex={-1}
+											onClick={() => trackAndClose(item, 'result')}
+											className="flex w-full items-center gap-2 px-2 py-3"
+										>
+											<Icon
+												aria-hidden
+												className="text-muted-foreground size-4 shrink-0"
+											/>
+											<span className="truncate">{item.title}</span>
+										</Link>
 									</CommandItem>
 								)
 							})}
@@ -252,12 +312,12 @@ export function SearchPalette({
 						{/* Fixed footer: the promo persists while typing — results
 						    scroll above it, they never push it out. */}
 						{promo && (
-							<button
-								type="button"
+							<Link
+								href={promo.href}
+								prefetch={false}
 								onClick={() =>
-									openResult(
+									trackAndClose(
 										{
-											id: promo.href,
 											title: promo.message,
 											href: promo.href,
 											type: 'cohort',
@@ -265,7 +325,7 @@ export function SearchPalette({
 										'promo',
 									)
 								}
-								className="group flex w-full items-center gap-2 border-t bg-emerald-500/10 px-4 py-2.5 text-left text-sm text-emerald-800 transition-colors hover:bg-emerald-500/15 dark:text-emerald-200"
+								className="group focus-visible:ring-ring flex w-full items-center gap-2 border-t bg-emerald-500/10 px-4 py-2.5 text-left text-sm text-emerald-800 transition-colors hover:bg-emerald-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset dark:text-emerald-200"
 							>
 								{promo.label && (
 									<span className="inline-flex shrink-0 items-center rounded-full bg-emerald-600 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-white">
@@ -279,7 +339,7 @@ export function SearchPalette({
 									aria-hidden
 									className="ml-auto size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5"
 								/>
-							</button>
+							</Link>
 						)}
 						<div className="text-muted-foreground hidden items-center gap-4 border-t px-4 py-2 text-xs sm:flex">
 							<span>
