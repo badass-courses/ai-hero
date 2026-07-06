@@ -9,7 +9,12 @@ Source materials live in `~/Downloads/Navigation redesign project/` (`navigation
 Two navigation modes, selected by route type:
 
 - **Full top nav** — homepage and course/sales pages. Carries identity + all primary destinations. No sidebar.
-- **Hub top nav + docs sidebar** — free learning/resource pages. The top nav keeps the SAME primary items as full mode (Start Here, Principles, Skills, Tools, Courses); the only difference is the docs sidebar, which adds depth (topics, What's New, resources). The wireframe's "..." on hub pages meant "same items as the homepage", not a collapsed nav.
+- **Hub top nav + docs sidebar** — free learning/resource pages. **REVISED 2026-07-06:**
+  the hub top nav is STRIPPED per Amy's decisions doc — only Courses (+ search,
+  newsletter, account); Start Here/Principles/Skills/Tools live in the sidebar.
+  (The earlier "same items in both modes" reading is superseded.) Sidebar-less hub
+  pages (`/posts`, dictionary index) get the sidebar in collapsed icon-rail mode so
+  they aren't navigation dead-ends.
 
 One universal mobile top bar replaces both desktop modes.
 
@@ -18,7 +23,9 @@ One universal mobile top bar replaces both desktop modes.
 - **Top nav presentation:** full-width sticky bar with bottom border (current pattern). Keep presentation swappable without touching route logic — floating/rounded is a later, isolated change.
 - **Primary learning entry label:** **Start Here** (emphasized first item). Wire as a single config constant so it stays trivial to change.
 - **Sidebar component:** use the **shadcn `sidebar`** component, not a bespoke one. **Already available** from `@coursebuilder/ui` (v2.0.12) — same import path the nav uses today. No install needed. Exports `Sidebar`, `SidebarProvider`, `SidebarContent`, `SidebarHeader`, `SidebarFooter`, `SidebarGroup`/`SidebarGroupLabel`/`SidebarGroupContent`, `SidebarMenu`/`SidebarMenuItem`/`SidebarMenuButton`, `SidebarMenuSub`/`SidebarMenuSubItem`/`SidebarMenuSubButton`, `SidebarRail`, `SidebarTrigger`, `SidebarInset`, `useSidebar`. Verify sidebar CSS vars (`--sidebar`, `--sidebar-foreground`, etc.) resolve in `src/styles/globals.css`; add them if missing.
-- **Search icon (v1):** links directly to `/posts`. No command-K.
+- **Search icon (v1):** ~~links directly to `/posts`. No command-K.~~ **SUPERSEDED
+  2026-07-06:** the ⌘K search palette shipped (final wireframe 15;
+  `src/components/search-palette/`) — search icons open it in both modes.
 - **Brand mark:** Matt's face/avatar moves to the left and becomes the primary recognition mark, likely replacing `LogoMark`. Assets exist (see inventory).
 - **Mobile hamburger:** stays on the **right**, matching current site.
 - **No skill-level quiz/gate.** Organize discovery by visitor intent/activity.
@@ -121,6 +128,15 @@ Locked: **the promo bar is not dismissible.** This removes any cookie read, so t
 
 The remaining phases (4 hub page, 5 tentpole pages, plus the real sidebar topic
 tree) are content-bearing.
+
+**REVISED 2026-07-06 — the hub sidebar is now an MDX-driven CMS `page` resource**
+(slug `hub-sidebar`): markdown owns structure/labels/order (curated via the cb
+CLI/admin), dynamic groups are registered server components (`<WhatsNew />`,
+`<SkillsNav />`, `<TopicSection tag>`); `hub-sidebar-data.ts` remains only as the
+error-boundary fallback. Skill data is 100% CMS-owned (SKILLS_LIST_ID list =
+membership/order, `skill-phase`-context tags = phases, GitHub-synced descriptions
+= taglines). Full decision record: the nav-redesign project dir's `lat.md/` graph.
+The original v1 decision below is kept for history:
 
 **Decision (v1): static in-repo for everything EXCEPT the Topic tree, which uses
 CMS `topic` tags.** Ship landing copy, curation, and tentpole/featured lists as
