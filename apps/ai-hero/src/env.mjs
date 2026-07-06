@@ -48,10 +48,16 @@ export const env = createEnv({
 		INNGEST_EVENT_KEY: z.string(),
 		INNGEST_SIGNING_KEY: z.string(),
 		AI_CODING_DICTIONARY_WEBHOOK_SECRET: z.string().optional(),
+		GITHUB_SOURCE_WEBHOOK_SECRET: z.string().optional(),
 		MUX_SECRET_KEY: z.string(),
 		MUX_ACCESS_TOKEN_ID: z.string(),
 		MUX_DATA_TOKEN_ID: z.string().optional(),
 		MUX_DATA_TOKEN_SECRET: z.string().optional(),
+		// Mux dashboard deep links ("Open in Mux ↗" in the cms video surfaces):
+		// both must be set for `VideoDetail.muxHref` to be built server-side;
+		// unset → the link is simply hidden (honest degradation).
+		MUX_ORGANIZATION_ID: z.string().optional(),
+		MUX_ENVIRONMENT_ID: z.string().optional(),
 		STATS_ANALYTICS_PROPERTY_ID: z.string().optional(),
 		GOOGLE_ANALYTICS_CLIENT_EMAIL: z.string().optional(),
 		GOOGLE_ANALYTICS_PRIVATE_KEY: z.string().optional(),
@@ -154,12 +160,15 @@ export const env = createEnv({
 		INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
 		AI_CODING_DICTIONARY_WEBHOOK_SECRET:
 			process.env.AI_CODING_DICTIONARY_WEBHOOK_SECRET,
+		GITHUB_SOURCE_WEBHOOK_SECRET: process.env.GITHUB_SOURCE_WEBHOOK_SECRET,
 		NEXT_PUBLIC_PARTYKIT_ROOM_NAME: process.env.NEXT_PUBLIC_PARTYKIT_ROOM_NAME,
 		NEXT_PUBLIC_PARTY_KIT_URL: process.env.NEXT_PUBLIC_PARTY_KIT_URL,
 		MUX_ACCESS_TOKEN_ID: process.env.MUX_ACCESS_TOKEN_ID,
 		MUX_SECRET_KEY: process.env.MUX_SECRET_KEY,
 		MUX_DATA_TOKEN_ID: process.env.MUX_DATA_TOKEN_ID,
 		MUX_DATA_TOKEN_SECRET: process.env.MUX_DATA_TOKEN_SECRET,
+		MUX_ORGANIZATION_ID: process.env.MUX_ORGANIZATION_ID,
+		MUX_ENVIRONMENT_ID: process.env.MUX_ENVIRONMENT_ID,
 		STATS_ANALYTICS_PROPERTY_ID: process.env.STATS_ANALYTICS_PROPERTY_ID,
 		GOOGLE_ANALYTICS_CLIENT_EMAIL: process.env.GOOGLE_ANALYTICS_CLIENT_EMAIL,
 		GOOGLE_ANALYTICS_PRIVATE_KEY: process.env.GOOGLE_ANALYTICS_PRIVATE_KEY,

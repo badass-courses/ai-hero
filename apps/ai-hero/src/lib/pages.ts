@@ -32,13 +32,16 @@ export const PageSchema = ContentResourceSchema.merge(
 			slug: z.string(),
 			state: PageStateSchema.default('draft'),
 			visibility: ResourceVisibilitySchema.default('public'),
+			// Server-owned publish stamp — see publishedAtStamp in
+			// @coursebuilder/ui/cms/resource-state.
+			publishedAt: z.string().datetime().nullish(),
 			resources: z.array(ContentResourceSchema).nullish(),
 			socialImage: z
 				.object({
 					type: z.string(),
-					url: z.string().url(),
+					url: z.string().url().or(z.literal('')),
 				})
-				.optional(),
+				.nullish(),
 		}),
 	}),
 )

@@ -1,14 +1,15 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
-import LayoutClient from '@/components/layout-client'
 import { getPage } from '@/lib/pages-query'
 import { getServerAuthSession } from '@/server/auth'
 
-import { EditPagesForm } from '../../_components/edit-pages-form'
-import { MDXPreviewProvider } from '../../_components/mdx-preview-provider'
+import { EditPageClient } from './edit-page-client'
 
 export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 export default async function ArticleEditPage(props: {
 	params: Promise<{ slug: string }>
@@ -22,9 +23,18 @@ export default async function ArticleEditPage(props: {
 		notFound()
 	}
 
-	return (
-		<MDXPreviewProvider initialValue={page.fields.body}>
-			<EditPagesForm key={page.fields.slug} page={page} />
-		</MDXPreviewProvider>
-	)
+	// Serialize Date instances (createdAt/updatedAt from the DB driver) to ISO
+	// strings before crossing the RSC boundary — same toIso pattern as the post
+	// edit page; the editor's changed-indicator accepts strings and Dates alike.
+	const clientPage = {
+		...page,
+		createdAt: toIso(page.createdAt),
+		updatedAt: toIso(page.updatedAt),
+		deletedAt: toIso(page.deletedAt),
+	} as typeof page
+
+	// No LayoutClient here — the admin layout (`app/admin/layout.tsx`) already
+	// wraps children in LayoutClient plus the admin sidebar; the editor fills
+	// the layout's content column.
+	return <EditPageClient key={page.fields.slug} page={clientPage} />
 }

@@ -41,6 +41,9 @@ export const EventSchema = ContentResourceSchema.merge(
 			slug: z.string(),
 			state: ResourceStateSchema.default('draft'),
 			visibility: ResourceVisibilitySchema.default('unlisted'),
+			// Stamped app-side on the transition into 'published' (updateEvent in
+			// lib/cms/event-actions.ts) — same policy as posts/cohorts.
+			publishedAt: z.string().datetime().nullish(),
 			...EventFieldsSchema.shape,
 			image: z.string().optional(),
 			socialImage: z

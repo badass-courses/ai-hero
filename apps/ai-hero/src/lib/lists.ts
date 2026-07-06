@@ -22,6 +22,9 @@ export const ListSchema = ContentResourceSchema.merge(
 			summary: z.string().optional().nullable(),
 			state: PostStateSchema.default('draft'),
 			visibility: PostVisibilitySchema.default('public'),
+			// Server-owned publish stamp — see publishedAtStamp in
+			// @coursebuilder/ui/cms/resource-state.
+			publishedAt: z.string().datetime().nullish(),
 			image: z.string().nullish(),
 			github: z.string().nullish(),
 			gitpod: z.string().nullish(),

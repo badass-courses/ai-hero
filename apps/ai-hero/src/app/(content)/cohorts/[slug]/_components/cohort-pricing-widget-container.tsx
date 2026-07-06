@@ -12,10 +12,12 @@ import type { CohortPageProps } from '@/lib/cohort'
 import { track } from '@/utils/analytics'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { formatInTimeZone } from 'date-fns-tz'
-import { toSnakeCase } from 'drizzle-orm/casing'
 import { CheckCircle, Sparkles } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+import { tagCohortWaitlistByEmail } from './cohort-interest-actions'
+import { cohortWaitlistFieldKey } from './cohort-interest-config'
 
 export const CohortPricingWidgetContainer: React.FC<
 	CohortPageProps & {
@@ -86,7 +88,7 @@ export const CohortPricingWidgetContainer: React.FC<
 	}, [product?.fields?.slug, product?.type])
 	const waitlistCkFields = {
 		// example: waitlist_mcp_workshop_ticket: "2025-04-17"
-		[`waitlist_${toSnakeCase(product?.name || '')}`]: new Date()
+		[cohortWaitlistFieldKey(product?.name || '')]: new Date()
 			.toISOString()
 			.slice(0, 10),
 	}
@@ -161,6 +163,13 @@ export const CohortPricingWidgetContainer: React.FC<
 							product_id: product.id,
 							email: email,
 						})
+
+						// The form sets the waitlist field but can't apply a tag, so tag
+						// the subscriber for parity. Fire-and-forget (best-effort) so the
+						// success state isn't blocked on the Kit round-trips.
+						if (email) {
+							void tagCohortWaitlistByEmail(email, product.name).catch(() => {})
+						}
 
 						return subscriber
 					}

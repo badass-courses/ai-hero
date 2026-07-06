@@ -2,13 +2,17 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
 import { getSkillChangelogForEdit } from '@/lib/skill-changelog-query'
 import { getServerAuthSession } from '@/server/auth'
 import { subject } from '@casl/ability'
 
-import { EditSkillChangelogForm } from './_components/edit-skill-changelog-form'
+import { EditSkillChangelogClient } from './edit-skill-changelog-client'
 
 export const dynamic = 'force-dynamic'
+
+const toIso = (value: unknown) =>
+	value instanceof Date ? value.toISOString() : value
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -63,12 +67,27 @@ export default async function SkillChangelogEditPage(props: {
 		}
 	}
 
+	// Serialize Date instances (createdAt/updatedAt from the DB driver) to ISO
+	// strings before crossing the RSC boundary — same toIso pattern as the post
+	// edit page; the editor's changed-indicator accepts strings and Dates alike.
+	const clientEntry = {
+		...entry,
+		createdAt: toIso(entry.createdAt),
+		updatedAt: toIso(entry.updatedAt),
+		deletedAt: toIso(entry.deletedAt),
+	} as typeof entry
+
 	return (
-		<LayoutClient>
-			<EditSkillChangelogForm
+		<LayoutClient withFooter={false}>
+			<EditSkillChangelogClient
 				key={entry.fields.slug}
-				resource={entry}
+				entry={clientEntry}
 				videoResource={videoResource}
+				// Server-computed (client bindings can't read server env) — gates
+				// the per-video analytics strip on Mux Data being configured.
+				videoAnalyticsEnabled={Boolean(
+					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
+				)}
 			/>
 		</LayoutClient>
 	)

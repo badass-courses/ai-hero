@@ -8,6 +8,10 @@ import {
 	AiCodingDictionarySourceChanged,
 } from '@/inngest/events/ai-coding-dictionary'
 import {
+	GITHUB_SOURCE_SYNC_REQUESTED_EVENT,
+	GithubSourceSyncRequested,
+} from '@/inngest/events/github-source'
+import {
 	EMAIL_SEND_BROADCAST,
 	EmailSendBroadcast,
 } from '@/inngest/events/email-send-broadcast'
@@ -165,6 +169,7 @@ import { inngestTelemetryMiddleware } from './inngest-telemetry-middleware'
 export type Events = {
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
+	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated
 	[RESOURCE_CHAT_REQUEST_EVENT]: ResourceChat

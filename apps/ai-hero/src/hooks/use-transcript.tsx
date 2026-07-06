@@ -21,6 +21,12 @@ type TranscriptDialogProps = {
 	onReprocess: () => Promise<void>
 	isOpen: boolean
 	onOpenChange: (open: boolean) => void
+	/**
+	 * Render the inline "View Transcript" trigger button (legacy surfaces).
+	 * false → the dialog is opened imperatively via `openTranscriptDialog`
+	 * (the cms Video tab's kit slot owns its own affordance).
+	 */
+	showTrigger?: boolean
 }
 
 const TranscriptDialog: React.FC<TranscriptDialogProps> = ({
@@ -29,14 +35,17 @@ const TranscriptDialog: React.FC<TranscriptDialogProps> = ({
 	onReprocess,
 	isOpen,
 	onOpenChange,
+	showTrigger = true,
 }) => {
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>
-			<DialogTrigger asChild>
-				<Button variant="outline" size={'sm'} type="button">
-					View Transcript
-				</Button>
-			</DialogTrigger>
+			{showTrigger ? (
+				<DialogTrigger asChild>
+					<Button variant="outline" size={'sm'} type="button">
+						View Transcript
+					</Button>
+				</DialogTrigger>
+			) : null}
 			<DialogContent className="sm:max-h-[80vh]">
 				<DialogHeader className="flex items-baseline justify-between">
 					<DialogTitle>Transcript</DialogTitle>
@@ -75,6 +84,12 @@ const TranscriptDialog: React.FC<TranscriptDialogProps> = ({
 export function useTranscript(options: {
 	videoResourceId: string | null | undefined
 	initialTranscript?: string | null
+	/**
+	 * false → the returned TranscriptDialog renders WITHOUT its inline
+	 * trigger button; open it via the returned `openTranscriptDialog`
+	 * (cms Video tab wiring). Defaults to true (legacy surfaces).
+	 */
+	withDialogTrigger?: boolean
 }) {
 	const [transcript, setTranscript] = React.useState<string | null>(
 		options.initialTranscript || null,
@@ -82,13 +97,13 @@ export function useTranscript(options: {
 	const [isProcessing, setIsProcessing] = React.useState(false)
 	const [isOpen, setIsOpen] = React.useState(false)
 
-	// Update transcript when initialTranscript changes
+	// Re-seed transcript state whenever the video (or its transcript) changes.
+	// Important: clear to null when the new video has no transcript, so a
+	// swapped-in video doesn't keep showing the previous video's transcript.
 	React.useEffect(() => {
-		if (options.initialTranscript) {
-			setTranscript(options.initialTranscript)
-			setIsProcessing(false)
-		}
-	}, [options.initialTranscript])
+		setTranscript(options.initialTranscript ?? null)
+		setIsProcessing(false)
+	}, [options.videoResourceId, options.initialTranscript])
 
 	React.useEffect(() => {
 		let isSubscribed = true
@@ -127,23 +142,31 @@ export function useTranscript(options: {
 		})
 	}
 
+	// Keep the dialog mounted while reprocessing too — handleReprocess nulls the
+	// transcript, so gating on `transcript` alone would unmount the dialog (and
+	// its progress spinner) the instant the user clicks Reprocess.
 	const TranscriptDialogComponent =
-		options.initialTranscript || transcript ? (
+		transcript || isProcessing ? (
 			<TranscriptDialog
-				transcript={transcript || options.initialTranscript}
+				transcript={transcript ?? ''}
 				isProcessing={isProcessing}
 				onReprocess={handleReprocess}
 				isOpen={isOpen}
 				onOpenChange={setIsOpen}
+				showTrigger={options.withDialogTrigger !== false}
 			/>
 		) : null
 
+	const openTranscriptDialog = React.useCallback(() => setIsOpen(true), [])
+
 	return {
-		transcript: transcript || options.initialTranscript,
+		transcript,
 		setTranscript,
 		isProcessing,
 		setIsProcessing,
 		TranscriptDialog: TranscriptDialogComponent,
+		/** Imperative opener — pairs with `withDialogTrigger: false`. */
+		openTranscriptDialog,
 	} as const
 }
 

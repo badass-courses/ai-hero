@@ -6,8 +6,6 @@ import { contentResource, contentResourceResource } from '@/db/schema'
 import { ModuleSchema, type Module } from '@/lib/module'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
-import { guid } from '@coursebuilder/utils/guid'
-import slugify from '@sindresorhus/slugify'
 import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
 import z from 'zod'
 
@@ -324,12 +322,9 @@ export async function updateTutorial(input: Module) {
 		throw new Error(`Tutorial with id ${input.id} not found.`)
 	}
 
-	let tutorialSlug = currentTutorial.fields.slug
-
-	if (input.fields.title !== currentTutorial.fields.title) {
-		const splitSlug = currentTutorial?.fields.slug.split('~') || ['', guid()]
-		tutorialSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-	}
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	const tutorialSlug = input.fields.slug ?? currentTutorial.fields.slug
 
 	revalidateTag('tutorials', 'max')
 	revalidateTag(currentTutorial.id, 'max')

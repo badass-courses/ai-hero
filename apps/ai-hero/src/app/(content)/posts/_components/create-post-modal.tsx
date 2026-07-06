@@ -97,10 +97,8 @@ export function CreatePostModal({
 
 	const handleResourceCreated = async (resource: ContentResource) => {
 		setIsProcessing(true)
-		if (onResourceCreated) {
-			await onResourceCreated(resource)
-			setIsProcessing(false)
-		}
+		await onResourceCreated?.(resource)
+		setIsProcessing(false)
 	}
 
 	return (
@@ -136,7 +134,10 @@ export function CreatePostModal({
 					</DialogHeader>
 				)}
 				<CreatePost
-					onResourceCreated={handleResourceCreated}
+					// When no custom handler is provided, let CreatePost perform its
+					// default navigation to the new resource's editor.
+					onResourceCreated={onResourceCreated ? handleResourceCreated : undefined}
+					onNavigationStart={() => setIsProcessing(true)}
 					defaultResourceType={defaultResourceType}
 					availableResourceTypes={availableResourceTypes}
 					topLevelResourceTypes={topLevelResourceTypes}

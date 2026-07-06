@@ -1,4 +1,4 @@
-import { ResourceFormConfig } from '@/components/resource-form/with-resource-form'
+import type { ResourceFormConfig } from '@/components/resource-form/resource-form-config'
 import { Post, PostSchema, PostUpdate } from '@/lib/posts'
 import { autoUpdatePost, updatePost } from '@/lib/posts-query'
 import { z } from 'zod'
@@ -19,6 +19,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 					visibility: 'public',
 					description: '',
 					github: '',
+					githubSource: '',
 					gitpod: '',
 					state: 'draft',
 					thumbnailTime: 0,
@@ -50,6 +51,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: post.fields?.state || 'draft',
 				description: post.fields?.description ?? '',
 				github: post.fields?.github ?? '',
+				githubSource: post.fields?.githubSource ?? '',
 				gitpod: post.fields?.gitpod ?? '',
 				thumbnailTime: post.fields?.thumbnailTime ?? 0,
 				postType: post.fields?.postType || 'article',
@@ -74,11 +76,15 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: resource.fields.state || 'draft',
 				visibility: resource.fields.visibility || 'public',
 				github: resource.fields.github || '',
+				githubSource: resource.fields.githubSource?.trim() || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
-				...(resource.fields.coverImage?.url
-					? { coverImage: resource.fields.coverImage }
-					: {}),
+				// Persist null (not a stripped key — updatePost merges fields
+				// per-key, so omitting would keep the old image forever) so
+				// clearing the cover image actually clears it.
+				coverImage: resource.fields.coverImage?.url
+					? resource.fields.coverImage
+					: null,
 			},
 			tags: resource.tags || [],
 		}
@@ -99,11 +105,15 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				state: resource.fields.state || 'draft',
 				visibility: resource.fields.visibility || 'public',
 				github: resource.fields.github || '',
+				githubSource: resource.fields.githubSource?.trim() || '',
 				thumbnailTime: resource.fields.thumbnailTime || 0,
 				postType: resource.fields.postType || 'article',
-				...(resource.fields.coverImage?.url
-					? { coverImage: resource.fields.coverImage }
-					: {}),
+				// Persist null (not a stripped key — updatePost merges fields
+				// per-key, so omitting would keep the old image forever) so
+				// clearing the cover image actually clears it.
+				coverImage: resource.fields.coverImage?.url
+					? resource.fields.coverImage
+					: null,
 			},
 			tags: resource.tags || [],
 		}

@@ -1,7 +1,6 @@
 'use client'
 
 import * as React from 'react'
-import { useParams } from 'next/navigation'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import type { Lesson } from '@/lib/lessons'
 import { setProgressForResource } from '@/lib/progress'
@@ -10,15 +9,15 @@ import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
-import { revalidateModuleLesson } from '../actions'
-
 export function ModuleLessonProgressToggle({
 	lesson,
-	moduleType = 'tutorial',
-	lessonType,
 	abilityLoader,
 }: {
 	lesson: Lesson
+	// Still accepted from callers, but no longer used here: completion writes to
+	// durable client state and the DB, and intentionally does NOT revalidate the
+	// route (revalidatePath would purge the prefetch Router Cache and slow the
+	// next navigation).
 	moduleType?: string
 	lessonType?: 'lesson' | 'exercise' | 'solution'
 	abilityLoader: Promise<
@@ -29,7 +28,6 @@ export function ModuleLessonProgressToggle({
 		}
 	>
 }) {
-	const params = useParams()
 	const ability = React.use(abilityLoader)
 	const canView = ability?.canViewLesson
 
@@ -58,26 +56,40 @@ export function ModuleLessonProgressToggle({
 					aria-label={`Mark lesson as ${isCompleted ? 'incomplete' : 'completed'}`}
 					id="lesson-progress-toggle"
 					checked={isCompleted}
-					onCheckedChange={async (checked) => {
+					onCheckedChange={(checked) => {
+						// Urgent: update durable progress now so the sidebar flips
+						// instantly. (Inside startTransition it would be deferred as
+						// non-urgent and lag behind the awaited write.)
 						if (checked) {
-							startTransition(() => {
-								addLessonProgress(lesson.id)
-							})
+							addLessonProgress(lesson.id)
 						} else {
-							startTransition(() => {
-								removeLessonProgress(lesson.id)
-							})
+							removeLessonProgress(lesson.id)
 						}
-						await setProgressForResource({
-							resourceId: lesson.id,
-							isCompleted: checked,
+						// Persist in the background; isPending keeps the toggle
+						// disabled until the write settles. Revert the durable
+						// dispatch if the write fails so the UI can't show a
+						// completion (or 100% / certificate unlock) the server
+						// never recorded.
+						startTransition(async () => {
+							try {
+								const result = await setProgressForResource({
+									resourceId: lesson.id,
+									isCompleted: checked,
+								})
+								// A successful completion returns the saved record; null
+								// here means the write failed (an un-complete legitimately
+								// returns null, so only revert when we were completing).
+								if (checked && result == null) {
+									removeLessonProgress(lesson.id)
+								}
+							} catch {
+								if (checked) {
+									removeLessonProgress(lesson.id)
+								} else {
+									addLessonProgress(lesson.id)
+								}
+							}
 						})
-						await revalidateModuleLesson(
-							params.module as string,
-							params.lesson as string,
-							moduleType,
-							lessonType,
-						)
 					}}
 				/>
 				<div className="w-[9ch]">{isCompleted ? 'Completed' : 'Complete'}</div>

@@ -1,16 +1,6 @@
 import crypto from 'crypto'
-import { guid } from '@coursebuilder/utils/guid'
-import slugify from '@sindresorhus/slugify'
 
 import { type Post } from './posts'
-
-export function updatePostSlug(currentPost: Post, newTitle: string): string {
-	if (newTitle !== currentPost.fields.title) {
-		const splitSlug = currentPost?.fields.slug.split('~') || ['', guid()]
-		return `${slugify(newTitle)}~${splitSlug[1] || guid()}`
-	}
-	return currentPost.fields.slug
-}
 
 export function generateContentHash(post: Post): string {
 	const content = JSON.stringify({

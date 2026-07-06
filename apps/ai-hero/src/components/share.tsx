@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { usePathname } from 'next/navigation'
+import { AdminShortlinkCreator } from '@/components/admin-shortlink-creator'
 import config from '@/config'
 import { env } from '@/env.mjs'
 import { track } from '@/utils/analytics'
@@ -105,8 +106,8 @@ export const Share = ({
 
 	if (variant === 'dialog') {
 		return (
-			<div className={cn('flex flex-col gap-6', className)}>
-				<div className="-mx-1 flex gap-5 overflow-x-auto px-1 pb-1">
+			<div className={cn('flex min-w-0 flex-col gap-6', className)}>
+				<div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-1">
 					{shareOptions.map((option) => (
 						<a
 							key={option.label}
@@ -163,6 +164,7 @@ export const Share = ({
 						{copied ? 'Copied' : 'Copy'}
 					</Button>
 				</div>
+				<AdminShortlinkCreator url={url} />
 			</div>
 		)
 	}

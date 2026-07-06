@@ -323,13 +323,10 @@ export async function updateSolution(input: Partial<Solution>) {
 
 	let solutionSlug = currentSolution.fields.slug
 
-	// Handle title changes for slug updates
-	if (
-		input.fields?.title &&
-		input.fields.title !== currentSolution.fields.title
-	) {
-		const splitSlug = currentSolution?.fields.slug.split('~') || ['', guid()]
-		solutionSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	if (input.fields?.slug && input.fields.slug !== currentSolution.fields.slug) {
+		solutionSlug = input.fields.slug
 	}
 
 	try {

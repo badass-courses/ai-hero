@@ -5,6 +5,7 @@ import {
 	createDefaultConfig,
 	getTypesenseCollectionName,
 } from '@coursebuilder/utils/typesense-adapter'
+import { env } from '@/env.mjs'
 
 // App-specific configuration
 const config = createDefaultConfig({
@@ -28,7 +29,7 @@ export const typesenseInstantsearchAdapter = new TypesenseInstantSearchAdapter(
 	config,
 )
 
-export const TYPESENSE_COLLECTION_NAME = getTypesenseCollectionName({
+export const TYPESENSE_COLLECTION_NAME = process.env.NEXT_PUBLIC_TYPESENSE_COLLECTION_NAME ||getTypesenseCollectionName({
 	envVar: 'NEXT_PUBLIC_TYPESENSE_COLLECTION_NAME',
 	defaultValue: 'content_production',
 })

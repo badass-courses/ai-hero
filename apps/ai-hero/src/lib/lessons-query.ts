@@ -472,18 +472,18 @@ export async function updateLesson(input: LessonUpdate, revalidate = true) {
 	let lessonSlug = currentLesson.fields.slug
 
 	// Handle both PostUpdate and Lesson formats
-	let titleFromInput: string | undefined
 	let fieldsToUpdate: Record<string, any> = {}
 
 	// Safely extract fields regardless of input type
 	if (input.fields) {
 		fieldsToUpdate = input.fields
-		titleFromInput = input.fields.title
 	}
 
-	if (titleFromInput && titleFromInput !== currentLesson.fields.title) {
-		const splitSlug = currentLesson?.fields.slug.split('~') || ['', guid()]
-		lessonSlug = `${slugify(titleFromInput)}~${splitSlug[1] || guid()}`
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	const slugFromInput = input.fields?.slug
+	if (slugFromInput && slugFromInput !== currentLesson.fields.slug) {
+		lessonSlug = slugFromInput
 	}
 
 	const updatedLesson = {
@@ -552,16 +552,24 @@ export async function getAllLessons(): Promise<Lesson[]> {
 		orderBy: desc(contentResource.createdAt),
 	})
 
-	const lessonsParsed = z.array(LessonSchema).safeParse(lessons)
-	if (!lessonsParsed.success) {
-		await log.error('lesson.parse.error', {
-			error: formatZodError(lessonsParsed.error),
-			source: 'getAllLessons',
-		})
-		return []
+	// Parse per-row so one malformed lesson is skipped and logged rather than
+	// blanking the entire list — list-all consumers (e.g. the read-only CLI)
+	// otherwise can't tell "no lessons" from "one bad row dropped everything".
+	const parsed: Lesson[] = []
+	for (const lesson of lessons) {
+		const result = LessonSchema.safeParse(lesson)
+		if (result.success) {
+			parsed.push(result.data)
+		} else {
+			await log.error('lesson.parse.error', {
+				error: formatZodError(result.error),
+				source: 'getAllLessons',
+				lessonId: lesson.id,
+			})
+		}
 	}
 
-	return lessonsParsed.data
+	return parsed
 }
 
 export async function writeNewLessonToDatabase(
@@ -872,16 +880,17 @@ export async function writeLessonUpdateToDatabase(input: {
 		throw new Error('Title is required')
 	}
 
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
 	let lessonSlug = currentLesson.fields.slug
 
 	if (
-		lessonUpdate.fields?.title &&
-		lessonUpdate.fields.title !== currentLesson.fields.title
+		lessonUpdate.fields?.slug &&
+		lessonUpdate.fields.slug !== currentLesson.fields.slug
 	) {
-		const splitSlug = currentLesson?.fields.slug.split('~') || ['', guid()]
-		lessonSlug = `${slugify(lessonUpdate.fields.title)}~${splitSlug[1] || guid()}`
+		lessonSlug = lessonUpdate.fields.slug
 		await log.info('lesson.update', {
-			stage: 'slug.updated',
+			stage: 'slug.manual',
 			lessonId: currentLesson.id,
 			slug: lessonSlug,
 			previousSlug: currentLesson.fields.slug,

@@ -87,8 +87,8 @@ const config = {
 			},
 			{
 				source: '/ai-skills-for-real-engineers',
-				destination: '/skills',
-				permanent: true,
+				destination: '/workshops/ai-skills-for-real-engineers',
+				permanent: false,
 			},
 			{
 				source: '/skills-v1-0-release',

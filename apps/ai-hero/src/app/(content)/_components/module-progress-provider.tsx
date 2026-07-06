@@ -41,8 +41,14 @@ function progressReducer(
 
 	let newProgress = currentProgress
 
+	const alreadyCompleted = currentProgress.completedLessons.some(
+		(completedLesson) => completedLesson.resourceId === lessonId,
+	)
+
 	switch (action.type) {
 		case 'ADD_LESSON_PROGRESS':
+			// Idempotent: durable state means a repeated add must not double-count.
+			if (alreadyCompleted) break
 			newProgress = {
 				...currentProgress,
 				completedLessons: [
@@ -57,6 +63,7 @@ function progressReducer(
 			}
 			break
 		case 'REMOVE_LESSON_PROGRESS':
+			if (!alreadyCompleted) break
 			newProgress = {
 				...currentProgress,
 				completedLessons: currentProgress.completedLessons.filter(
@@ -65,6 +72,22 @@ function progressReducer(
 				completedLessonsCount: currentProgress.completedLessonsCount - 1,
 			}
 			break
+	}
+
+	// Keep percentCompleted in sync with the count. Durable state means stale
+	// derived values stay visible (progress bar, `=== 100` certificate unlock)
+	// instead of being masked by the old optimistic revert.
+	if (newProgress !== currentProgress) {
+		const total = newProgress.totalLessonsCount || 0
+		newProgress = {
+			...newProgress,
+			// Math.ceil to match the server (adapter getModuleProgressForUser),
+			// so the client-derived bar never disagrees with the canonical value.
+			percentCompleted:
+				total > 0
+					? Math.ceil((newProgress.completedLessonsCount / total) * 100)
+					: 0,
+		}
 	}
 
 	return newProgress
@@ -79,20 +102,22 @@ export const ModuleProgressProvider = ({
 }) => {
 	const initialProgress = React.use(moduleProgressLoader)
 
-	const [optimisticProgress, updateOptimisticProgress] = React.useOptimistic(
-		initialProgress,
-		progressReducer,
-	)
+	// Durable state (not useOptimistic): the provider is mounted in the shared
+	// [module] layout, so this survives lesson-to-lesson client navigations. A
+	// toggled completion stays applied immediately everywhere instead of
+	// reverting to the layout's once-loaded base while the server write catches
+	// up — no router.refresh() needed.
+	const [progress, dispatch] = React.useReducer(progressReducer, initialProgress)
 
 	const removeLessonProgress = (lessonId: string) => {
-		updateOptimisticProgress({
+		dispatch({
 			type: 'REMOVE_LESSON_PROGRESS',
 			payload: { lessonId },
 		})
 	}
 
 	const addLessonProgress = (lessonId: string) => {
-		updateOptimisticProgress({
+		dispatch({
 			type: 'ADD_LESSON_PROGRESS',
 			payload: { lessonId },
 		})
@@ -100,11 +125,11 @@ export const ModuleProgressProvider = ({
 
 	const value = React.useMemo(
 		() => ({
-			moduleProgress: optimisticProgress,
+			moduleProgress: progress,
 			removeLessonProgress,
 			addLessonProgress,
 		}),
-		[optimisticProgress],
+		[progress],
 	)
 	return (
 		<ModuleProgressContext.Provider value={value}>

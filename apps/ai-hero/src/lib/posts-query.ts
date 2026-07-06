@@ -22,6 +22,7 @@ import {
 	PostSchema,
 	type PostUpdate,
 } from '@/lib/posts'
+import { syncPostFromGithubSource } from '@/lib/github-source-sync'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { guid } from '@coursebuilder/utils/guid'
@@ -37,7 +38,7 @@ import { getMuxAsset } from '@coursebuilder/core/lib/mux'
 import { ListSchema, type List } from './lists'
 import { DatabaseError, PostCreationError } from './post-errors'
 import { PostOrListSchema } from './post-or-list'
-import { generateContentHash, updatePostSlug } from './post-utils'
+import { generateContentHash } from './post-utils'
 import { TagSchema, type Tag } from './tags'
 import { deletePostInTypeSense, upsertPostToTypeSense } from './typesense-query'
 
@@ -153,7 +154,10 @@ export async function getPostLists(postId: string): Promise<List[]> {
 
 	const listResources = lists
 		.filter((list) => list.resourceOf.type === 'list')
-		.map((list) => list.resourceOf)
+		// The join fetch doesn't include each list's own children, but ListSchema
+		// requires `resources` — membership consumers (the editor's Lists field)
+		// only need id/title/slug, so an empty array is the honest default.
+		.map((list) => ({ resources: [], ...list.resourceOf }))
 
 	return z.array(ListSchema).parse(listResources)
 }
@@ -298,6 +302,33 @@ export async function autoUpdatePost(
 	return await updatePost(input, action, false)
 }
 
+/**
+ * Field overrides applied on any post save to enforce github-source ownership,
+ * shared by the CMS (`updatePost`) and REST (`writePostUpdateToDatabase`) paths.
+ *
+ * - Source set: the body is repo-owned, so keep the synced body (read-only in
+ *   the CMS — edits here are ignored).
+ * - Source cleared: release the body and clear the sync hash, so re-enabling the
+ *   same source later triggers a fresh sync instead of a false "unchanged".
+ *
+ * An omitted `githubSource` key means "unchanged" (keep current); an explicit
+ * null/empty means "cleared".
+ */
+function githubSourceFieldOverrides(
+	incomingFields: { githubSource?: string | null },
+	currentPost: Post,
+): Record<string, unknown> {
+	const nextGithubSource = (
+		'githubSource' in incomingFields
+			? (incomingFields.githubSource ?? '')
+			: (currentPost.fields.githubSource ?? '')
+	).trim()
+
+	return nextGithubSource
+		? { body: currentPost.fields.body }
+		: { githubSourceSha: null }
+}
+
 export async function updatePost(
 	input: PostUpdate,
 	action: 'save' | 'publish' | 'archive' | 'unpublish' = 'save',
@@ -326,21 +357,21 @@ export async function updatePost(
 		throw new Error('Unauthorized')
 	}
 
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug. This keeps published
+	// URLs stable when an author tweaks a title.
 	let postSlug = currentPost.fields.slug
 
 	if (
-		input.fields.title !== currentPost.fields.title &&
-		input.fields.slug.includes('~')
+		input.fields.slug !== undefined &&
+		input.fields.slug !== currentPost.fields.slug
 	) {
-		const splitSlug = currentPost?.fields.slug.split('~') || ['', guid()]
-		postSlug = `${slugify(input.fields.title)}~${splitSlug[1] || guid()}`
-		await log.info('post.update.slug.changed', {
-			postId: input.id,
-			oldSlug: currentPost.fields.slug,
-			newSlug: postSlug,
-			userId: user.id,
-		})
-	} else if (input.fields.slug !== currentPost.fields.slug) {
+		// An omitted slug (undefined) is a title-only edit and preserves the
+		// current slug; an explicitly cleared slug is rejected rather than
+		// silently ignored, since persisting an empty slug breaks the page URL.
+		if (!input.fields.slug) {
+			throw new Error('Slug is required')
+		}
 		postSlug = input.fields.slug
 		await log.info('post.update.slug.manual', {
 			postId: input.id,
@@ -349,6 +380,31 @@ export async function updatePost(
 			userId: user.id,
 		})
 	}
+
+	const githubOverrides = githubSourceFieldOverrides(input.fields, currentPost)
+
+	// Stamp fields.publishedAt on the transition INTO 'published' (or when a
+	// published post is missing its stamp — backfill for posts published before
+	// the field existed). Detected from state values, NOT the `action` arg:
+	// legacy form saves always sent action='save' and carried the state change
+	// as a plain field write. Never touched on other saves.
+	const publishedAtOverride =
+		input.fields.state === 'published' &&
+		(currentPost.fields.state !== 'published' ||
+			!currentPost.fields.publishedAt)
+			? { publishedAt: new Date().toISOString() }
+			: {}
+
+	// Detect a newly-set or changed GitHub source so we can pull the body right
+	// after the save, instead of leaving the post on its old body until a manual
+	// "Sync now" / webhook / cron. Setting the source and saving should just work.
+	const nextGithubSource = (
+		'githubSource' in input.fields
+			? (input.fields.githubSource ?? '')
+			: (currentPost.fields.githubSource ?? '')
+	).trim()
+	const githubSourceChanged =
+		nextGithubSource !== (currentPost.fields.githubSource ?? '').trim()
 
 	try {
 		await upsertPostToTypeSense(
@@ -359,6 +415,8 @@ export async function updatePost(
 					...input.fields,
 					description: input.fields.description || '',
 					slug: postSlug,
+					...githubOverrides,
+					...publishedAtOverride,
 				},
 			},
 			action,
@@ -385,6 +443,8 @@ export async function updatePost(
 				...currentPost.fields,
 				...input.fields,
 				slug: postSlug,
+				...githubOverrides,
+				...publishedAtOverride,
 			},
 		})
 
@@ -396,6 +456,26 @@ export async function updatePost(
 		})
 
 		revalidate && revalidateTag('posts', 'max')
+
+		// A newly-set/changed source pulls its body now. syncPostFromGithubSource
+		// writes the body + hash and revalidates on its own; a fetch failure must
+		// not fail the save (the source is stored, so a later sync still works).
+		if (githubSourceChanged && nextGithubSource && result) {
+			try {
+				await syncPostFromGithubSource({
+					id: result.id,
+					fields: (result.fields as Record<string, unknown> | null) ?? null,
+				})
+				return (await getPost(result.id)) ?? result
+			} catch (error) {
+				await log.error('post.update.github-sync.failed', {
+					postId: input.id,
+					error: getErrorMessage(error),
+					userId: user.id,
+				})
+			}
+		}
+
 		return result
 	} catch (error) {
 		await log.error('post.update.failed', {
@@ -429,8 +509,14 @@ export async function getPost(slugOrId: string) {
 	)
 		? ['public', 'private', 'unlisted']
 		: ['public', 'unlisted']
-	const states: ('draft' | 'published')[] = ability.can('update', 'Content')
-		? ['draft', 'published']
+	// Editors also see archived posts — otherwise archiving is a one-way door
+	// (the edit route itself would 404, leaving no way to restore). The public
+	// "archived 404s for everyone" rule is enforced by the view routes.
+	const states: ('draft' | 'published' | 'archived')[] = ability.can(
+		'update',
+		'Content',
+	)
+		? ['draft', 'published', 'archived']
 		: ['published']
 
 	const post = await db.query.contentResource.findFirst({
@@ -865,18 +951,9 @@ export async function writePostUpdateToDatabase(input: {
 		throw new Error('Title is required')
 	}
 
-	let postSlug = updatePostSlug(currentPost, postUpdate.fields.title)
-
-	const postGuid = currentPost?.fields.slug.split('~')[1] || guid()
-
-	if (postUpdate.fields.title !== currentPost.fields.title) {
-		postSlug = `${slugify(postUpdate.fields.title ?? '')}~${postGuid}`
-		void log.info('post.update.slug.changed', {
-			postId: currentPost.id,
-			oldSlug: currentPost.fields.slug,
-			newSlug: postSlug,
-		})
-	}
+	// Slugs are intentionally NOT regenerated when the title changes — only an
+	// explicit edit to the slug field changes the slug.
+	let postSlug = currentPost.fields.slug
 
 	if (
 		postUpdate.fields.slug &&
@@ -895,6 +972,11 @@ export async function writePostUpdateToDatabase(input: {
 	const duration = await getVideoDuration(currentPost.resources)
 	const timeToRead = Math.floor(
 		readingTime(currentPost.fields.body ?? '').time / 1000,
+	)
+
+	const githubOverrides = githubSourceFieldOverrides(
+		postUpdate.fields,
+		currentPost,
 	)
 
 	const videoResourceId =
@@ -929,6 +1011,7 @@ export async function writePostUpdateToDatabase(input: {
 				duration,
 				timeToRead,
 				slug: postSlug,
+				...githubOverrides,
 			},
 		})
 		void log.info('post.update.db.success', {
