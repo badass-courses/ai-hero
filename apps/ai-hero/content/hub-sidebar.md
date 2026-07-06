@@ -14,22 +14,21 @@
     exist yet), top N tagged posts, "All →" link to /topics/[tag]. Curated
     markdown links inside render above the tag-driven posts.
 
-  CONTENT-OPS TODO (verified against prod DB 2026-07-06 — only `ai-sdk`,
-  `evalite`, `personal-software` tags exist): create these six topic tags via
-  the cb CLI, then tag posts. Until then each section renders its curated
-  links only (no "All →" link, no auto posts):
-  - understand-the-basics  (label: Understand the Basics)
-  - build-ai-apps          (label: Build AI Apps)
-  - connect-tools-mcp      (label: Connect Tools (MCP))
-  - code-with-ai-agents    (label: Code with AI Agents)
-  - level-up-your-workflow (label: Level Up Your Workflow)
-  - test-and-evaluate      (label: Test & Evaluate)
-  Do NOT give these tags `fields.contexts: ["skill-phase"]` — that context is
-  reserved for skill cycle phases and is excluded from topic surfaces.
+  CONTENT-OPS: DONE 2026-07-06 (session 4). All six topic tags exist
+  (understand-the-basics `qogn9`, build-ai-apps `2784v`, connect-tools-mcp
+  `ueaht`, code-with-ai-agents `v2tba`, level-up-your-workflow `dezxr`,
+  test-and-evaluate `khqa0` — no `skill-phase` context) and the 22 curated
+  POSTS below are attached to their section's tag (see
+  OPERATIONS.md session 4 + dumps/topic-tagging/). The four tutorial LINKS
+  (LLM Fundamentals, AI Engineer Roadmap, Vercel AI SDK Tutorial, Model
+  Context Protocol Tutorial) are `list` resources — getPostsByTag filters
+  type='post', so they stay curated-only by design.
 
-  Once tags are populated, the curated lists below can be trimmed — tagged
-  posts will appear automatically (curated links render above them, so
-  duplicates are possible until then; dedupe by curation, not code).
+  OPEN (Vojta): with tags attached, each TopicSection now renders curated
+  links AND the same posts tag-driven (no code dedupe; tag order is
+  createdAt desc). Either trim curated post links from this page body
+  (loses pedagogical order, keeps the tutorial links) or keep curation and
+  accept duplicates until a dedupe/ordering decision.
 
   Every link below is a real production URL (curated from the live corpus,
   2026-07-06). Amy's seven-section taxonomy: lat.md/upstream.md#Topic taxonomy.
