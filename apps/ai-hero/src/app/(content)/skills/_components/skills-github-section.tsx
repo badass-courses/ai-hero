@@ -7,8 +7,19 @@ const REPO_OWNER = 'mattpocock'
 const REPO_NAME = 'skills'
 const REPO_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}`
 
-export async function SkillsGitHubSection() {
-	const stars = await getRepoStarCount(REPO_OWNER, REPO_NAME)
+export async function SkillsGitHubSection({
+	stars: starsProp,
+}: {
+	/**
+	 * GitHub star count, consolidated at the page level (spec §7). When omitted
+	 * the component fetches it itself so standalone usage still works.
+	 */
+	stars?: number | null
+} = {}) {
+	const stars =
+		starsProp !== undefined
+			? starsProp
+			: await getRepoStarCount(REPO_OWNER, REPO_NAME)
 
 	return (
 		<section aria-labelledby="skills-github-heading">

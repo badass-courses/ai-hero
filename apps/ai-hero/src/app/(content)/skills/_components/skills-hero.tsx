@@ -14,13 +14,19 @@ import { type SkillsNewsletterStatus } from './skills-newsletter'
 
 export async function SkillsHero({
 	newsletterState,
+	stars: starsProp,
 }: {
 	newsletterState: SkillsNewsletterStatus
+	/**
+	 * GitHub star count, consolidated at the page level (spec §7). When omitted
+	 * the component fetches it itself so standalone usage still works.
+	 */
+	stars?: number | null
 }) {
-	const stars = await getRepoStarCount(
-		SKILLS_HERO.repoOwner,
-		SKILLS_HERO.repoName,
-	)
+	const stars =
+		starsProp !== undefined
+			? starsProp
+			: await getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName)
 
 	return (
 		<header
