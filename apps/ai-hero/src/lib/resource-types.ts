@@ -10,6 +10,7 @@ export const PostTypeSchema = z.union([
 	z.literal('course'),
 	z.literal('playlist'),
 	z.literal('skill-changelog'),
+	z.literal('skill'),
 ])
 
 /**
@@ -27,6 +28,7 @@ export const POST_SUBTYPES: (PostType | string)[] = [
 	'course',
 	'playlist',
 	'skill-changelog',
+	'skill',
 ]
 
 /**
