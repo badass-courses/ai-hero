@@ -20,54 +20,53 @@ import type {
 import { postFormConfig } from '../../_components/post-form-config'
 
 /**
- * postTypes offered by the editor select. Posts are standalone content, not
- * modules/wrappers with child resources, so course/playlist/etc are not
- * offered even though PostTypeSchema accepts them. A legacy value outside
- * this list (e.g. 'tip') is still shown — see makeTabsWithPostType — so
- * opening + saving a post never silently rewrites its postType.
+ * The postTypes the editor offers. Deliberately NOT everything in
+ * PostTypeSchema: posts are standalone content, not modules/wrappers, so the
+ * legacy 'tip'/'course'/'playlist' values must not be offered as new choices.
  */
-const POST_TYPE_SELECT_OPTIONS = [
+const POST_TYPE_OPTIONS = [
 	'article',
 	'podcast',
 	'skill',
 	'skill-changelog',
 ] as const
 
+// 'skill-changelog' → 'Skill changelog'
 function postTypeLabel(value: string) {
-	// 'skill-changelog' → 'Skill changelog'
 	return (value[0]!.toUpperCase() + value.slice(1)).replace('-', ' ')
 }
 
 /**
- * `fields.postType` selector for the Content tab. The value shown for legacy
- * posts without a postType is 'article' — supplied by
+ * postManifest's tabs with a `fields.postType` selector inserted right after
+ * the slug field on the Content tab (call-site spread — the shared manifest
+ * in @coursebuilder/ui stays untouched).
+ *
+ * Options are the restricted allowlist, plus the post's CURRENT postType when
+ * it falls outside it (legacy 'tip'/'course'/'playlist' posts exist in prod)
+ * — without that extra option the native select would coerce the displayed
+ * value and merely opening + saving a post would silently rewrite its
+ * postType.
+ *
+ * The value shown for posts without a postType is 'article' — supplied by
  * `postFormConfig.defaultValues` (`post.fields?.postType || 'article'`), the
  * same fallback the save path applies (`createPostBindings` sends
  * `values.fields.postType || 'article'`) — so adding the selector changes no
  * defaults, it only makes the existing value visible and editable.
  */
-function makePostTypeField(currentPostType: string | undefined): FieldSpec {
-	const values: string[] = [...POST_TYPE_SELECT_OPTIONS]
-	// Keep an out-of-allowlist current value selectable so the form stays
-	// truthful and a plain save round-trips it unchanged.
+function buildTabsWithPostType(currentPostType: string | undefined) {
+	const values: string[] = [...POST_TYPE_OPTIONS]
 	if (currentPostType && !values.includes(currentPostType)) {
 		values.push(currentPostType)
 	}
-	return {
+	const postTypeField: FieldSpec = {
 		kind: 'select',
 		name: 'fields.postType',
 		label: 'Post type',
-		options: values.map((value) => ({ value, label: postTypeLabel(value) })),
+		options: values.map((value) => ({
+			value,
+			label: postTypeLabel(value),
+		})),
 	}
-}
-
-/**
- * postManifest's tabs with the postType selector inserted right after the
- * slug field on the Content tab (call-site spread — the shared manifest in
- * @coursebuilder/ui stays untouched).
- */
-function makeTabsWithPostType(currentPostType: string | undefined) {
-	const postTypeField = makePostTypeField(currentPostType)
 	return postManifest.tabs.map((tab) =>
 		tab.label === 'Content'
 			? {
@@ -115,8 +114,8 @@ export function EditPostClient({
 		return createResourceEditor({
 			manifest: {
 				...postManifest,
-				// Content tab + the fields.postType selector (see makeTabsWithPostType).
-				tabs: makeTabsWithPostType(post.fields?.postType),
+				// Content tab + the fields.postType selector (see buildTabsWithPostType).
+				tabs: buildTabsWithPostType(post.fields?.postType),
 				schema: PostSchema,
 				// Reuse the legacy normalization (''/null fallbacks) so inputs stay
 				// controlled — postFormConfig remains in use by other resource types.
