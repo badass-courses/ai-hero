@@ -1,15 +1,15 @@
 /**
- * Static structure for the docs-style hub sidebar (Phase 3).
+ * Static structure for the hub sidebar's FALLBACK rendering.
+ *
+ * The primary sidebar is MDX-driven (CMS `hub-sidebar` page, compiled in
+ * `hub-layout.tsx` with the scoped map in `sidebar/sidebar-mdx.tsx`); this
+ * file backs `HubSidebarStaticContent`, which renders when that page is
+ * missing or its MDX fails — a broken CMS edit must never kill nav. Keep
+ * every link here resolving to a real page.
  *
  * Client-safe (no server imports) so the sidebar component can render the
  * structure directly. The dynamic "What's New" items are fetched server-side
- * in `hub-layout.tsx` and passed in as props — see that file and the
- * rendering-safety notes in `plans/navigation-redesign.md`.
- *
- * Topic taxonomy is an explicit PLACEHOLDER until the content inventory is
- * finalized (open decision in the plan). Every link here resolves to a real
- * page today; topic items reuse existing tentpole/article slugs so the tree is
- * demonstrable without inventing routes.
+ * in `hub-layout.tsx` and passed in as props.
  */
 
 export type SidebarLink = {

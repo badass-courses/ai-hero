@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import {
 	AI_CODING_DICTIONARY_DESCRIPTION,
@@ -73,59 +74,63 @@ export default async function DictionaryPage() {
 				contentSlug="ai-coding-dictionary"
 			/>
 			<DictionaryStructuredData dictionary={dictionary} />
-			<main className="bg-background text-foreground">
-				<DictionaryHero
-					sections={dictionary.sections}
-					entryCount={dictionary.entries.length}
-				/>
+			{/* Dense catalog page: hub sidebar starts as the collapsed icon rail
+			    (expands in place) so the dictionary grid keeps its width. */}
+			<HubLayout sidebarDefaultCollapsed>
+				<main className="bg-background text-foreground">
+					<DictionaryHero
+						sections={dictionary.sections}
+						entryCount={dictionary.entries.length}
+					/>
 
-				{/*
-				 * DictionaryShell uses nuqs's useQueryState which reads
-				 * useSearchParams. In Next 16's strict prerender mode, any client
-				 * component that touches useSearchParams must sit under a Suspense
-				 * boundary or the build fails.
-				 *
-				 * The fallback mirrors the live shell's grid + sidebar shape so
-				 * hydration doesn't shift the layout — only the search input and
-				 * active-section highlight come alive on hydration.
-				 */}
-				<Suspense
-					fallback={
-						<DictionaryShellFallback sections={dictionary.sections}>
+					{/*
+					 * DictionaryShell uses nuqs's useQueryState which reads
+					 * useSearchParams. In Next 16's strict prerender mode, any client
+					 * component that touches useSearchParams must sit under a Suspense
+					 * boundary or the build fails.
+					 *
+					 * The fallback mirrors the live shell's grid + sidebar shape so
+					 * hydration doesn't shift the layout — only the search input and
+					 * active-section highlight come alive on hydration.
+					 */}
+					<Suspense
+						fallback={
+							<DictionaryShellFallback sections={dictionary.sections}>
+								<DictionarySections sections={dictionary.sections} />
+							</DictionaryShellFallback>
+						}
+					>
+						<DictionaryShell sections={dictionary.sections}>
 							<DictionarySections sections={dictionary.sections} />
-						</DictionaryShellFallback>
-					}
-				>
-					<DictionaryShell sections={dictionary.sections}>
-						<DictionarySections sections={dictionary.sections} />
-					</DictionaryShell>
-				</Suspense>
+						</DictionaryShell>
+					</Suspense>
 
-				<PrimaryNewsletterCta
-					id="dictionary-newsletter-cta"
-					isHiddenForSubscribers
-					className="not-prose border-t py-16 [&_button]:w-full"
-					actionLabel="Get AI Hero updates"
-					fields={{
-						interest: 'dictionary',
-						source: 'aihero_dictionary_page',
-					}}
-					trackProps={{
-						event: 'subscribed',
-						params: { location: 'dictionary' },
-					}}
-				>
-					<div className="relative z-10 flex max-w-3xl flex-col items-center justify-center px-5 pb-5 pt-10 text-center sm:pb-10">
-						<h2 className="font-sans text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
-							Want more than vocabulary?
-						</h2>
-						<p className="text-muted-foreground mt-3 max-w-2xl text-base leading-7">
-							Join AI Hero for practical skills, thinking on AI engineering, and
-							resources that keep you ahead of the curve.
-						</p>
-					</div>
-				</PrimaryNewsletterCta>
-			</main>
+					<PrimaryNewsletterCta
+						id="dictionary-newsletter-cta"
+						isHiddenForSubscribers
+						className="not-prose border-t py-16 [&_button]:w-full"
+						actionLabel="Get AI Hero updates"
+						fields={{
+							interest: 'dictionary',
+							source: 'aihero_dictionary_page',
+						}}
+						trackProps={{
+							event: 'subscribed',
+							params: { location: 'dictionary' },
+						}}
+					>
+						<div className="relative z-10 flex max-w-3xl flex-col items-center justify-center px-5 pb-5 pt-10 text-center sm:pb-10">
+							<h2 className="font-sans text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
+								Want more than vocabulary?
+							</h2>
+							<p className="text-muted-foreground mt-3 max-w-2xl text-base leading-7">
+								Join AI Hero for practical skills, thinking on AI engineering,
+								and resources that keep you ahead of the curve.
+							</p>
+						</div>
+					</PrimaryNewsletterCta>
+				</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }
