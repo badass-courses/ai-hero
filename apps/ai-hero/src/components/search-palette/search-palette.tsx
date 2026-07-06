@@ -92,6 +92,7 @@ const LINKABLE_HIT_TYPES = new Set([
 	'cohort',
 	'event',
 	'event-series',
+	'skill',
 	'skill-changelog',
 	'dictionary',
 	'dictionary-entry',
