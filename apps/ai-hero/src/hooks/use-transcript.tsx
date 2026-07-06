@@ -142,16 +142,20 @@ export function useTranscript(options: {
 		})
 	}
 
-	const TranscriptDialogComponent = transcript ? (
-		<TranscriptDialog
-			transcript={transcript}
-			isProcessing={isProcessing}
-			onReprocess={handleReprocess}
-			isOpen={isOpen}
-			onOpenChange={setIsOpen}
-			showTrigger={options.withDialogTrigger !== false}
-		/>
-	) : null
+	// Keep the dialog mounted while reprocessing too — handleReprocess nulls the
+	// transcript, so gating on `transcript` alone would unmount the dialog (and
+	// its progress spinner) the instant the user clicks Reprocess.
+	const TranscriptDialogComponent =
+		transcript || isProcessing ? (
+			<TranscriptDialog
+				transcript={transcript ?? ''}
+				isProcessing={isProcessing}
+				onReprocess={handleReprocess}
+				isOpen={isOpen}
+				onOpenChange={setIsOpen}
+				showTrigger={options.withDialogTrigger !== false}
+			/>
+		) : null
 
 	const openTranscriptDialog = React.useCallback(() => setIsOpen(true), [])
 

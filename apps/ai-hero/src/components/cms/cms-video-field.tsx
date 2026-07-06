@@ -214,9 +214,15 @@ export function CmsVideoField({
 					}
 				}
 				if (message.name === VIDEO_DETACHED_EVENT) {
-					toast({ title: 'Video asset detached' })
-					setVideoResourceId(undefined)
-					form.setValue('fields.videoResourceId', undefined)
+					// Guard against a safe-swap race: detach(A) and attach(B) are
+					// separate async broadcasts, so a late detach for the PREVIOUS
+					// video must not wipe the just-attached one.
+					const detachedId = message.body?.videoResourceId
+					if (!detachedId || detachedId === videoResourceId) {
+						toast({ title: 'Video asset detached' })
+						setVideoResourceId(undefined)
+						form.setValue('fields.videoResourceId', undefined)
+					}
 				}
 			} catch (error) {
 				// nothing to do
@@ -377,8 +383,13 @@ export function CmsVideoField({
 		<div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 [&_label]:w-full">
 			<NewLessonVideoForm
 				parentResourceId={resource.id}
-				onVideoUploadCompleted={() => {
+				// Set the id here too (fires right after upload, BEFORE the
+				// processing poll): if the poll later fails, onVideoResourceCreated
+				// never runs, so this is the only place the attach survives.
+				onVideoUploadCompleted={(nextVideoResourceId) => {
 					setReplacingVideo(false)
+					setVideoResourceId(nextVideoResourceId)
+					form.setValue('fields.videoResourceId', nextVideoResourceId)
 					refetch()
 				}}
 				onVideoResourceCreated={(nextVideoResourceId) => {
@@ -402,7 +413,14 @@ export function CmsVideoField({
 	)
 
 	const player =
-		!hasVideo || replacingVideo ? (
+		!resource.id ? (
+			// CREATE mode (e.g. a not-yet-saved solution): uploading now would
+			// attach the video to an empty parent id and lose it on the first
+			// save + refresh. Gate the uploader behind the first save.
+			<div className="text-muted-foreground flex h-full w-full items-center justify-center p-4 text-center text-[13px]">
+				Save this resource first, then add a video.
+			</div>
+		) : !hasVideo || replacingVideo ? (
 			uploader
 		) : videoResource?.state === 'ready' ? (
 			thumbnailEnabled ? (
