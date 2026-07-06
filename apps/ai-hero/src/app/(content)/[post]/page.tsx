@@ -3,11 +3,13 @@ import { type Metadata, type ResolvingMetadata } from 'next'
 import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { CourseCta } from '@/app/(content)/_components/course-cta'
 import {
 	OrganicOpportunityCta,
 	organicOpportunityCtaBySlug,
 } from '@/app/(content)/_components/organic-opportunity-cta'
 import { ContentReadTracker } from '@/components/content-read-tracker'
+import type { CalloutIntent } from '@/components/mdx/callout'
 import { Contributor } from '@/components/contributor'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
@@ -18,6 +20,7 @@ import { getAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
 import { PostStructuredData } from '@/lib/structured-data'
+import { getUpcomingCohort } from '@/lib/upcoming-cohort-query'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
@@ -31,6 +34,7 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { CopyPageButton } from '../_components/copy-page-button'
 import PostNextUpFromListPagination from '../_components/post-next-up-from-list-pagination'
+import { RelatedPosts } from './_components/related-posts'
 import ListPage from '../lists/[slug]/_page'
 import { PostPlayer } from '../posts/_components/post-player'
 import PostToC from '../posts/_components/post-toc'
@@ -69,6 +73,24 @@ export default async function PostPage(props: {
 		({ resource }: ContentResourceResource) =>
 			resource.type === 'videoResource',
 	)
+
+	// W1 §5 — only plain articles get the cross-promo layers; podcast / tip /
+	// skill-changelog / list keep their existing below-body behavior untouched.
+	const isEligibleForCrossPromo =
+		post.type === 'post' && post.fields?.postType === 'article'
+
+	// Server-rendered so it can be handed to the client
+	// `PostNextUpFromListPagination` as a slot (that component is a Client
+	// Component and cannot render an async Server Component itself). It only
+	// swaps in on the no-next-up fallback branch; non-article posts pass `null`
+	// and keep the existing `Recommendations` fallback.
+	const relatedPosts = isEligibleForCrossPromo ? (
+		<RelatedPosts
+			postId={post.id}
+			variant={post.fields?.relatedPostsVariant ?? 'section'}
+			sectionTitle={list?.fields?.title}
+		/>
+	) : null
 	const markdownToCopy = `# ${post?.fields?.title}
 
 ${post?.fields?.body}`
@@ -189,6 +211,7 @@ ${post?.fields?.body}`
 							documentIdsToSkip={list?.resources.map(
 								(resource: any) => resource.resource.id,
 							)}
+							relatedPosts={relatedPosts}
 						/>
 					</article>
 				</div>
@@ -226,6 +249,29 @@ async function PostBody({ post }: { post: Post | null }) {
 	const dictionary = await getAiCodingDictionary()
 	const slug = String(post.fields?.slug ?? '')
 	const ctaKind = organicOpportunityCtaBySlug[slug]
+
+	const isEligibleForCrossPromo =
+		post.type === 'post' && post.fields?.postType === 'article'
+
+	// W1 §2.3(b) / Q1 — the auto-inserted callout line is ALWAYS the 'course'
+	// variant pointing at the active cohort. Resolve the copy BEFORE compile (the
+	// remark plugin does no data-fetching); if there is no purchasable cohort we
+	// pass nothing and the line simply doesn't auto-insert.
+	let calloutLineAutoInsert:
+		| { variant: CalloutIntent; label: string; href: string; linkText: string }
+		| undefined
+	if (isEligibleForCrossPromo) {
+		const cohort = await getUpcomingCohort()
+		if (cohort) {
+			calloutLineAutoInsert = {
+				variant: 'course',
+				label: 'Go deeper:',
+				href: `/cohorts/${cohort.slug}`,
+				linkText: cohort.title,
+			}
+		}
+	}
+
 	const { content } = await compileMDX(
 		post.fields.body,
 		{},
@@ -236,6 +282,7 @@ async function PostBody({ post }: { post: Post | null }) {
 				entries: dictionary.entries,
 				maxLinks: 3,
 			},
+			...(calloutLineAutoInsert ? { calloutLineAutoInsert } : {}),
 		},
 	)
 
@@ -243,7 +290,17 @@ async function PostBody({ post }: { post: Post | null }) {
 		<div className="px-5 md:px-10 lg:px-10">
 			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto mt-10 max-w-4xl">
 				{content}
-				{ctaKind ? <OrganicOpportunityCta kind={ctaKind} /> : null}
+				{/* Q4 — never double up: keep OrganicOpportunityCta for the slugs it
+				    already covers (any post type, existing behavior); otherwise render
+				    the generalized CourseCta only for eligible articles. */}
+				{ctaKind ? (
+					<OrganicOpportunityCta kind={ctaKind} />
+				) : isEligibleForCrossPromo ? (
+					<CourseCta
+						postId={post.id}
+						suppress={post.fields?.suppressCourseCta}
+					/>
+				) : null}
 			</article>
 		</div>
 	)

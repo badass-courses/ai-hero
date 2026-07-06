@@ -4,6 +4,8 @@ import React, { use } from 'react'
 import { FaqItem } from '@/app/faq/_components/faq-item'
 import { AnimatedTitle } from '@/components/brand/animated-word'
 import { CldImage, ThemeImage } from '@/components/cld-image'
+import { Callout } from '@/components/mdx/callout'
+import { PromoCard } from '@/components/mdx/promo-card'
 import MDXVideo from '@/components/content/mdx-video'
 import { TrackedMuxPlayer } from '@/components/content/tracked-mux-player'
 import config from '@/config'
@@ -1017,6 +1019,12 @@ const allMdxPageBuilderComponents = {
 	ProjectVideo,
 	Recommendation,
 	SubscriberCount: SubscriberCountPreview,
+	// W1 cross-promo — mirror the live compile-mdx map so admin preview matches
+	// the post page. Both are client-safe (Callout is a plain component;
+	// PromoCard is 'use client'), so no stub is needed. Callout renders its
+	// per-intent icon internally, so the intent icons show in preview too.
+	Callout,
+	PromoCard,
 }
 
 export {
