@@ -1,14 +1,12 @@
 import * as React from 'react'
 import { unstable_cache } from 'next/cache'
 import { getPage } from '@/lib/pages-query'
-import { type Post } from '@/lib/posts'
-import { getCachedAllPosts } from '@/lib/posts-query'
 import { log } from '@/server/logger'
 
 import { SidebarProvider } from '@coursebuilder/ui'
 
-import { type SidebarLink } from './hub-sidebar-data'
-import { HubSidebarStaticContent } from './hub-sidebar'
+import { HUB_SIDEBAR_FALLBACK_MDX } from './hub-sidebar-fallback'
+import { SidebarMinimalFallback } from './hub-sidebar'
 import { SidebarErrorBoundary } from './sidebar/sidebar-client'
 import { compileHubSidebarMdx } from './sidebar/sidebar-mdx'
 import { HubSidebarShell } from './sidebar/sidebar-shell'
@@ -31,53 +29,40 @@ const getCachedHubSidebarBody = unstable_cache(
 )
 
 /**
- * Server-fetched "What's New" items for the STATIC FALLBACK sidebar (the
- * MDX-driven sidebar loads its own via `<WhatsNew />`). Fetched here (not
- * client-side) so the fallback renders with data in the initial HTML.
- */
-async function getWhatsNew(limit = 3): Promise<SidebarLink[]> {
-	try {
-		const posts: Post[] = await getCachedAllPosts()
-		return posts
-			.filter(
-				(p: Post) =>
-					p?.fields?.state === 'published' &&
-					p?.fields?.visibility === 'public' &&
-					Boolean(p?.fields?.slug) &&
-					Boolean(p?.fields?.title),
-			)
-			.slice(0, limit)
-			.map((p: Post) => ({ label: p.fields.title, href: `/${p.fields.slug}` }))
-	} catch {
-		return []
-	}
-}
-
-/**
- * Resolve the sidebar content: the compiled `hub-sidebar` MDX when the page
- * exists and compiles, otherwise the static `hub-sidebar-data.ts` fallback.
- * Compile failures are caught here; render-time failures inside the compiled
- * tree are caught by `SidebarErrorBoundary`. Either way nav survives.
+ * Resolve the sidebar content. Single source of truth is the `hub-sidebar`
+ * MDX: the live CMS page when present, otherwise the bundled default
+ * (`HUB_SIDEBAR_FALLBACK_MDX`) — both go through the same components map, so
+ * there is no separately modeled fallback IA to drift.
+ *
+ * Layered so a broken CMS edit can never kill nav: a malformed page body
+ * falls back to the bundled default; a render-time crash inside the compiled
+ * tree is caught by `SidebarErrorBoundary`; and the boundary's own fallback is
+ * the tiny static `SidebarMinimalFallback`, which has no data deps and can't
+ * itself fail.
  */
 async function renderSidebarContent(): Promise<React.ReactNode> {
-	const fallback = <HubSidebarStaticContent whatsNew={await getWhatsNew()} />
+	const body = (await getCachedHubSidebarBody()) ?? HUB_SIDEBAR_FALLBACK_MDX
 
 	let compiled: React.ReactNode | null = null
 	try {
-		const body = await getCachedHubSidebarBody()
-		if (body) {
-			compiled = await compileHubSidebarMdx(body)
-		}
+		compiled = await compileHubSidebarMdx(body)
 	} catch (error) {
 		void log.error('hub-sidebar.mdx.compile.error', {
 			error: error instanceof Error ? error.message : String(error),
 		})
+		if (body !== HUB_SIDEBAR_FALLBACK_MDX) {
+			try {
+				compiled = await compileHubSidebarMdx(HUB_SIDEBAR_FALLBACK_MDX)
+			} catch {
+				compiled = null
+			}
+		}
 	}
 
-	if (compiled === null) return fallback
-
 	return (
-		<SidebarErrorBoundary fallback={fallback}>{compiled}</SidebarErrorBoundary>
+		<SidebarErrorBoundary fallback={<SidebarMinimalFallback />}>
+			{compiled ?? <SidebarMinimalFallback />}
+		</SidebarErrorBoundary>
 	)
 }
 

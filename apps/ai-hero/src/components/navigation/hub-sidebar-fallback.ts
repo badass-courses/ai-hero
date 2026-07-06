@@ -1,32 +1,16 @@
-{/*
-  v1 seed for the CMS `hub-sidebar` page (type: page, slug: hub-sidebar,
-  state: published). Compiled by `HubLayout` with the sidebar-scoped MDX map
-  (`src/components/navigation/sidebar/sidebar-mdx.tsx`).
-
-  Component vocabulary:
-  - `<SidebarSection title="…">` — collapsible group; markdown link lists nest inside
-  - `- [Label](/href)` — sidebar link (active state + analytics come free)
-  - `<WhatsNew title="…" />` — latest 3 published public posts + "See all"
-    → /posts; group label comes from `title` (this page is the source of
-    truth for labels)
-  - `<SkillsNav title="…" />` — the skill cycle from the SKILLS_LIST_ID list
-    (renders nothing until skill posts exist, so it's safe to include now);
-    group label from `title`
-  - `<TopicSection tag="…" label="…" limit={5}>` — topic tag section: label
-    from the CMS tag (the `label` prop is the fallback while the tag doesn't
-    exist yet), top N tagged posts, "All →" link to /topics/[tag]. Curated
-    markdown links inside render above the tag-driven posts; posts already
-    curated are skipped in the tag feed (deduped by href).
-
-  The tutorial links (LLM Fundamentals, AI Engineer Roadmap, Vercel AI SDK
-  Tutorial, Model Context Protocol Tutorial) are `list` resources —
-  getPostsByTag is posts-only, so they appear here as curated links only;
-  keep them when trimming curation.
-
-  Amy's seven-section taxonomy: lat.md/upstream.md#Topic taxonomy.
-*/}
-
-<SidebarSection title="Explore">
+/**
+ * Default hub-sidebar MDX — the single-source-of-truth authoring format
+ * (same as the live CMS `hub-sidebar` page). Compiled by `HubLayout` as the
+ * fallback when that page is missing/unpublished/empty or its body fails to
+ * compile, so degraded mode renders the same sidebar structure rather than a
+ * separately hand-modeled one. This constant is the repo's canonical copy and
+ * the seed the CMS page is created from — keep it in sync with that page.
+ *
+ * Authoring notes (component vocabulary, the tutorial-links-are-lists caveat)
+ * live in `content-ops/hub-sidebar-seed.mdx` in the project working hub; only
+ * the renderable body is embedded here.
+ */
+export const HUB_SIDEBAR_FALLBACK_MDX = `<SidebarSection title="Explore">
 
 - [Map](/learn)
 - [Principles](/principles)
@@ -100,3 +84,4 @@
 - [All posts](/posts)
 
 </SidebarSection>
+`
