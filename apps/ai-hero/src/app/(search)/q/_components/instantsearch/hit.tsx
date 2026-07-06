@@ -5,6 +5,9 @@ import Link from 'next/link'
 import { CldImage } from '@/components/cld-image'
 import { AnimatedArrowCircle } from '@/components/landing/animated-arrow-circle'
 import type { TypesenseResource } from '@/lib/typesense'
+// App-side wrapper: maps hit type 'skill' (doc type = fields.postType) to the
+// flat post URL — the shared package has no 'skill' entry yet.
+import { getResourcePath } from '@/utils/resource-paths'
 import { format } from 'date-fns'
 import { motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
@@ -12,7 +15,6 @@ import { Highlight } from 'react-instantsearch'
 
 import { Badge } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
-import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 const MotionLink = motion.create(Link)
 

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withSkill } from '@/server/with-skill'
+// App-side wrapper: maps doc type 'skill' (doc type = fields.postType) to the
+// flat post URL — the shared package has no 'skill' entry yet.
+import { getResourcePath } from '@/utils/resource-paths'
 import Typesense from 'typesense'
 
-import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import type {
 	SearchParams,
 	SearchResponseHit,
