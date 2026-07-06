@@ -99,8 +99,8 @@ export const SKILLS_MINI_COURSE_CTA = {
 } as const
 
 /**
- * Free-lesson CTA target for individual skill pages (spec §5 step 7). Imported
- * by the skill-page template.
+ * Free-lesson CTA target for skill posts (spec §5 step 7). Imported by the
+ * skill-extras block appended below the post body.
  *
  * PLACEHOLDER DESTINATION (flag for Vojta): `href` defaults to the real
  * `/newsletter` free-lesson landing. Whether every skill maps to its own lesson

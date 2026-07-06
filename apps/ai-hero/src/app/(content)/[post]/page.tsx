@@ -35,7 +35,7 @@ import { cn } from '@coursebuilder/utils/cn'
 import { CopyPageButton } from '../_components/copy-page-button'
 import PostNextUpFromListPagination from '../_components/post-next-up-from-list-pagination'
 import { RelatedPosts } from './_components/related-posts'
-import { SkillPage } from './_components/skill-page'
+import { SkillExtras } from './_components/skill-extras'
 import ListPage from '../lists/[slug]/_page'
 import { PostPlayer } from '../posts/_components/post-player'
 import PostToC from '../posts/_components/post-toc'
@@ -63,14 +63,6 @@ export default async function PostPage(props: {
 
 	if (post.type === 'list') {
 		return <ListPage list={post} params={{ slug: params.post } as any} />
-	}
-
-	// W2 §5 — skill posts (postType: 'skill') render the dedicated SkillPage
-	// template instead of the article body path (and NOT the W1 article
-	// cross-promo, which is article-only). Skill URLs stay flat; this branch is
-	// dormant until the postType content op runs, but must be correct.
-	if (post.type === 'post' && post.fields?.postType === 'skill') {
-		return <SkillPage post={post} />
 	}
 
 	let list = null
@@ -189,6 +181,13 @@ ${post?.fields?.body}`
 							<PostToC markdown={post.fields.body} />
 						)}
 						<PostBody post={post} />
+						{/* W2 — skill posts render the normal post template (video,
+						    body, newsletter, next-up all intact); these are the only
+						    skill-specific additions, appended below the body. */}
+						{post.type === 'post' &&
+							post.fields?.postType === 'skill' && (
+								<SkillExtras post={post} />
+							)}
 						{/* {listSlugFromParam && (
 									<PostProgressToggle
 										className="flex w-full items-center justify-center"
