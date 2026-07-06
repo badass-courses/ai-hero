@@ -55,7 +55,7 @@ import Link from 'next/link'
 import {
 	SKILL_PHASE_UTILITY_NUMBER,
 	type SkillEntry,
-} from '@/lib/skills-query'
+} from '@/lib/skills-shared'
 import { motion, useReducedMotion } from 'framer-motion'
 
 import { cn } from '@coursebuilder/utils/cn'
