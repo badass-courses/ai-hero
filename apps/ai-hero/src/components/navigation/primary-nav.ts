@@ -37,6 +37,3 @@ export const PRIMARY_NAV_ITEMS: PrimaryNavItem[] = [
 	{ label: 'Tools', href: '/tools' },
 	COURSES_NAV_ITEM,
 ]
-
-/** Search icon target for v1 (no command-K). */
-export const SEARCH_HREF = '/posts'

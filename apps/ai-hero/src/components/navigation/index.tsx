@@ -12,6 +12,7 @@ import { useSession } from 'next-auth/react'
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
+import { SearchPalette } from '../search-palette/search-palette'
 import {
 	Tooltip,
 	TooltipContent,
@@ -24,9 +25,9 @@ import { NavLinkItem } from './nav-link-item'
 import { getNavMode } from './nav-mode'
 import { NavPill } from './nav-pill'
 import {
+	COURSES_NAV_ITEM,
 	PRIMARY_LEARNING_ENTRY,
 	PRIMARY_NAV_ITEMS,
-	SEARCH_HREF,
 } from './primary-nav'
 import { UserMenu } from './user-menu'
 
@@ -126,29 +127,38 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 	</li>
 )
 
-/** Icon-only search affordance linking to /posts, with a designed tooltip. */
-const SearchIconLink = () => (
+/**
+ * Icon-only search affordance opening the ⌘K palette, with a designed
+ * tooltip. The pill highlights while the palette is open.
+ */
+const SearchIconButton = ({
+	isSearchOpen,
+	onOpen,
+}: {
+	isSearchOpen: boolean
+	onOpen: () => void
+}) => (
 	<li className="hidden items-stretch lg:flex">
 		<TooltipProvider delayDuration={200}>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<Link
-						href={SEARCH_HREF}
-						aria-label="Browse all posts"
+					<button
+						type="button"
+						aria-label="Search"
 						onClick={() => {
-							track('nav_link_clicked', {
-								label: 'Search',
-								href: SEARCH_HREF,
-							})
+							track('search_palette_opened', { via: 'nav_icon' })
+							onOpen()
 						}}
 						className="group/nav-item focus-visible:ring-ring flex h-full items-center px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 					>
-						<NavPill className="px-2">
+						<NavPill active={isSearchOpen} className="px-2">
 							<Search aria-hidden className="size-4" />
 						</NavPill>
-					</Link>
+					</button>
 				</TooltipTrigger>
-				<TooltipContent className="rounded-none">Browse all posts</TooltipContent>
+				<TooltipContent className="rounded-none">
+					Search <kbd className="font-mono">⌘K</kbd>
+				</TooltipContent>
 			</Tooltip>
 		</TooltipProvider>
 	</li>
@@ -163,6 +173,7 @@ const Navigation = () => {
 	const { setIsFeedbackDialogOpen } = useFeedback()
 
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false)
+	const [isSearchOpen, setIsSearchOpen] = React.useState(false)
 
 	React.useEffect(() => {
 		setIsMobileMenuOpen(false)
@@ -219,25 +230,44 @@ const Navigation = () => {
 							aria-label="Primary navigation"
 						>
 							<ul className="flex items-stretch">
-								<PrimaryEntryLink
-									isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
-								/>
-								{PRIMARY_NAV_ITEMS.map((item) => (
+								{mode === 'full' ? (
+									<>
+										<PrimaryEntryLink
+											isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
+										/>
+										{PRIMARY_NAV_ITEMS.map((item) => (
+											<NavLinkItem
+												key={item.href}
+												href={item.href}
+												label={item.label}
+												textLabel={item.label}
+												className="font-normal"
+											/>
+										))}
+									</>
+								) : (
+									// Hub mode (per Amy's decisions doc): the sidebar carries
+									// Map/Principles/Skills/Tools; the top bar keeps only the
+									// persistent revenue path.
 									<NavLinkItem
-										key={item.href}
-										href={item.href}
-										label={item.label}
-										textLabel={item.label}
+										href={COURSES_NAV_ITEM.href}
+										label={COURSES_NAV_ITEM.label}
+										textLabel={COURSES_NAV_ITEM.label}
 										className="font-normal"
 									/>
-								))}
+								)}
 							</ul>
 						</nav>
 					)}
 				</div>
 				<nav className="flex items-stretch" aria-label="User navigation">
 					<ul className="hidden items-stretch lg:flex">
-						{showSearch && <SearchIconLink />}
+						{showSearch && (
+							<SearchIconButton
+								isSearchOpen={isSearchOpen}
+								onOpen={() => setIsSearchOpen(true)}
+							/>
+						)}
 						<SessionDependentNavItems
 							sessionStatus={sessionStatus}
 							subscriber={subscriber}
@@ -249,11 +279,15 @@ const Navigation = () => {
 				<MobileNavigation
 					isMobileMenuOpen={isMobileMenuOpen}
 					setIsMobileMenuOpen={setIsMobileMenuOpen}
+					onSearchOpen={() => setIsSearchOpen(true)}
 					subscriber={subscriber}
 				/>
 			</div>
 			</header>
 			<MobileMenuPanel isOpen={isMobileMenuOpen} />
+			{showSearch && (
+				<SearchPalette open={isSearchOpen} onOpenChange={setIsSearchOpen} />
+			)}
 		</>
 	)
 }

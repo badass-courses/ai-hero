@@ -8,37 +8,39 @@ import { Menu, Search, X } from 'lucide-react'
 
 import { Button } from '@coursebuilder/ui'
 
-import { SEARCH_HREF } from './primary-nav'
-
 type MobileNavigationProps = {
 	isMobileMenuOpen: boolean
 	setIsMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
+	onSearchOpen: () => void
 	subscriber?: Subscriber | null
 }
 
 /**
- * Mobile top-bar controls (right side, < lg): search → /posts, an optional
- * newsletter link, and the hamburger that toggles the push-down menu panel.
- * The panel itself is rendered as a sibling of the header (see
- * `MobileMenuPanel`) so it pushes content down instead of overlaying it.
+ * Mobile top-bar controls (right side, < lg): search (opens the full-screen
+ * search palette), an optional newsletter link, and the hamburger that toggles
+ * the push-down menu panel. The panel itself is rendered as a sibling of the
+ * header (see `MobileMenuPanel`) so it pushes content down instead of
+ * overlaying it.
  */
 export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	isMobileMenuOpen,
 	setIsMobileMenuOpen,
+	onSearchOpen,
 	subscriber,
 }) => {
 	return (
 		<div className="flex items-stretch lg:hidden">
-			<Link
-				href={SEARCH_HREF}
-				aria-label="Browse all posts"
-				onClick={() =>
-					track('nav_link_clicked', { label: 'Search', href: SEARCH_HREF })
-				}
+			<button
+				type="button"
+				aria-label="Search"
+				onClick={() => {
+					track('search_palette_opened', { via: 'mobile_nav_icon' })
+					onSearchOpen()
+				}}
 				className="hover:bg-muted focus-visible:ring-ring flex aspect-square items-center justify-center border-l transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 			>
 				<Search aria-hidden className="size-5" />
-			</Link>
+			</button>
 			{!subscriber && (
 				<Link
 					href="/newsletter"
