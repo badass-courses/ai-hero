@@ -247,7 +247,7 @@ export function SearchPalette({
 					<DialogPrimitive.Title className="sr-only">
 						Search AI Hero
 					</DialogPrimitive.Title>
-					<Command shouldFilter={false} className="rounded-none">
+					<Command shouldFilter={false} className="rounded-none bg-background">
 						<div className="flex items-center">
 							<div className="min-w-0 flex-1">
 								<CommandInput
