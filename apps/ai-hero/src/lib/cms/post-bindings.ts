@@ -97,11 +97,13 @@ export async function uploadToCloudinary(
 		cloudName: env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
 		uploadPreset: env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET,
 		folder,
-		onUploaded: (info) =>
+		onUploaded: (info, file) =>
 			info.resource_type === 'image'
 				? createImageResource({
 						asset_id: info.asset_id,
 						secure_url: info.secure_url,
+						// file.name keeps the extension; original_filename drops it.
+						name: file?.name || info.original_filename,
 						width: info.width,
 						height: info.height,
 						bytes: info.bytes,
@@ -231,7 +233,9 @@ export async function listImageMediaAssets(opts?: {
 	return images.map(
 		(image): MediaAsset => ({
 			url: image.url,
-			name: image.alt ?? undefined,
+			// Prefer the human filename, then alt; older rows have neither and
+			// the tile falls back to the URL basename.
+			name: image.name ?? image.alt ?? undefined,
 			kind: 'image',
 			// The media tab's unified grid sorts by this (created-at, newest first).
 			createdAt: image.createdAt ?? undefined,

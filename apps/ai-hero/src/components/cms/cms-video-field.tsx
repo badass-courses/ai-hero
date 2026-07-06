@@ -460,6 +460,10 @@ export function CmsVideoField({
 								videoLibrary,
 								videoAnalytics,
 								thumbnailUrl,
+								onRenamed: (id, title) =>
+									setDetail((prev) =>
+										prev && prev.id === id ? { ...prev, title } : prev,
+									),
 							}
 						: undefined
 				}

@@ -80,11 +80,16 @@ export function CreatePost({
 							parentSlug: parentResource.fields?.slug || parentResource.id,
 						},
 					)
-					setResourceUrl(editUrl)
-
-					// Then notify parent components
 					if (onResourceCreated) {
+						setResourceUrl(editUrl)
+						// Custom handling provided by the parent component
 						await onResourceCreated(resource)
+					} else {
+						// Default behavior: navigate to the new resource's editor
+						onNavigationStart?.()
+						startTransition(() => {
+							router.push(editUrl)
+						})
 					}
 				}}
 				createResource={async (input) => {

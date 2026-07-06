@@ -13,6 +13,10 @@ const ImageResourceSchema = z.object({
 	id: z.string(),
 	url: z.string(),
 	alt: z.string().optional().nullable(),
+	// Human filename (the uploaded file's name) — absent on older rows, which
+	// then fall back to the URL basename for the tile label. Matches the kit's
+	// shared media-bindings contract (fields.name → MediaAsset.name).
+	name: z.string().optional().nullable(),
 	// Cloudinary metadata — absent on rows created before it was stored.
 	width: z.coerce.number().optional().nullable(),
 	height: z.coerce.number().optional().nullable(),
@@ -25,6 +29,7 @@ const ImageResourceSchema = z.object({
 export async function createImageResource(input: {
 	asset_id: string
 	secure_url: string
+	name?: string
 	width?: number
 	height?: number
 	bytes?: number
@@ -45,6 +50,7 @@ export async function createImageResource(input: {
 			fields: {
 				state: 'ready',
 				url: input.secure_url,
+				...(input.name ? { name: input.name } : {}),
 				...(input.width ? { width: input.width } : {}),
 				...(input.height ? { height: input.height } : {}),
 				...(input.bytes ? { bytes: input.bytes } : {}),
@@ -94,6 +100,7 @@ export async function listImageResources({
         id as id,
         JSON_EXTRACT (${contentResource.fields}, "$.url") AS url,
         JSON_EXTRACT (${contentResource.fields}, "$.alt") AS alt,
+        JSON_EXTRACT (${contentResource.fields}, "$.name") AS name,
         JSON_EXTRACT (${contentResource.fields}, "$.width") AS width,
         JSON_EXTRACT (${contentResource.fields}, "$.height") AS height,
         JSON_EXTRACT (${contentResource.fields}, "$.bytes") AS bytes,
@@ -120,6 +127,7 @@ export async function getAllImageResources() {
         id as id,
         JSON_EXTRACT (${contentResource.fields}, "$.url") AS url,
         JSON_EXTRACT (${contentResource.fields}, "$.alt") AS alt,
+        JSON_EXTRACT (${contentResource.fields}, "$.name") AS name,
         JSON_EXTRACT (${contentResource.fields}, "$.width") AS width,
         JSON_EXTRACT (${contentResource.fields}, "$.height") AS height,
         JSON_EXTRACT (${contentResource.fields}, "$.bytes") AS bytes,
