@@ -1,6 +1,24 @@
 import React from 'react'
+import { GraduationCap, Wrench, BookOpen } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
+
+/**
+ * Cross-promo intent for a Callout. Selects the default icon per intent and
+ * MARKS this callout as a promo placement for the auto-insert suppression scan
+ * (W1 §2.2) — the remark plugin keys on Callout nodes carrying an `intent`
+ * attribute. A bare `<Callout>` (no intent) is an informational note and must
+ * never suppress auto-insertion.
+ */
+export type CalloutIntent = 'skill' | 'course' | 'resource'
+
+/** Per-intent default icon — shape-differentiated (not color-only), keeps the
+ * existing `text-primary` icon treatment (no new hues per DESIGN.md). */
+const intentIcon: Record<CalloutIntent, React.ReactNode> = {
+	skill: <Wrench className="size-4 shrink-0" />,
+	course: <GraduationCap className="size-4 shrink-0" />,
+	resource: <BookOpen className="size-4 shrink-0" />,
+}
 
 function CalloutIcon({ className }: { className?: string }) {
 	return (
@@ -24,11 +42,21 @@ export function Callout({
 	children,
 	className,
 	icon,
+	intent,
 }: {
 	children: React.ReactNode
 	className?: string
 	icon?: React.ReactNode
+	/** Cross-promo intent. Selects the default icon per intent and MARKS this
+	 *  callout as a promo placement for the auto-insert suppression scan (W1 §2.2). */
+	intent?: CalloutIntent
 }) {
+	// Explicit `icon` prop wins; otherwise the intent default; otherwise the
+	// generic informational glyph (bare `<Callout>` contract unchanged).
+	const resolvedIcon =
+		icon ??
+		(intent ? intentIcon[intent] : <CalloutIcon className="size-4 shrink-0" />)
+
 	return (
 		<div
 			className={cn(
@@ -37,7 +65,7 @@ export function Callout({
 			)}
 		>
 			<div className="text-primary bg-stripes flex shrink-0 items-center justify-center overflow-hidden rounded-l-xl border-r px-5 py-4">
-				{icon ?? <CalloutIcon className="size-4 shrink-0" />}
+				{resolvedIcon}
 			</div>
 			<div className="prose prose-sm sm:prose-base dark:prose-invert prose-p:my-0 py-4 pr-5">
 				{children}
