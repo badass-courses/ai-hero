@@ -16,15 +16,13 @@ import {
 	AccordionItem,
 	AccordionTrigger,
 	Button,
+	SidebarMenuSkeleton,
 } from '@coursebuilder/ui'
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
-import {
-	TENTPOLE_LINKS,
-	TOPIC_GROUPS,
-	type SidebarLink,
-} from './hub-sidebar-data'
+import type { HubNavLink } from '@/lib/hub-sidebar-ia'
+
 import {
 	COURSES_NAV_ITEM,
 	PRIMARY_LEARNING_ENTRY,
@@ -54,6 +52,30 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 	const { data: abilityRules } = api.ability.getCurrentAbilityRules.useQuery()
 	const ability = createAppAbility(abilityRules || [])
 
+	// Sidebar IA (single MDX source, resolved server-side). Lazy by design:
+	// `enabled: isOpen` means a closed menu never fetches — nothing loads until
+	// the visitor first opens it — and a long staleTime + no refetch-on-focus
+	// keeps every reopen an instant cache hit. The resolver is itself cached
+	// server-side and identical for everyone, so the request is shared too.
+	const { data: mobileNav, isLoading: isNavLoading } =
+		api.navigation.getMobileNav.useQuery(undefined, {
+			enabled: isOpen,
+			staleTime: 1000 * 60 * 30,
+			gcTime: 1000 * 60 * 60,
+			refetchOnMount: false,
+			refetchOnWindowFocus: false,
+			refetchOnReconnect: false,
+		})
+	const navSections = mobileNav?.sections ?? []
+	const openGroups = navSections
+		.filter((group) =>
+			[
+				...group.links,
+				...(group.moreHref ? [{ href: group.moreHref }] : []),
+			].some((l) => isActive(l.href)),
+		)
+		.map((group) => group.title)
+
 	const isAuthed = sessionStatus === 'authenticated'
 	const canViewTeam = ability.can('invite', 'Team')
 	const canCreateContent = ability.can('create', 'Content')
@@ -72,7 +94,7 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 			isActive(href) && 'bg-muted font-medium',
 		)
 
-	const track_ = (item: SidebarLink) =>
+	const track_ = (item: HubNavLink) =>
 		track('nav_link_clicked', {
 			label: item.label,
 			href: item.href,
@@ -132,56 +154,72 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 					))}
 				</ul>
 
-				{/* Resources */}
-				<section className="flex flex-col py-2">
-					<div className="text-muted-foreground px-5 py-1.5 font-mono text-[11px] font-medium uppercase tracking-wider">
-						Resources
-					</div>
-					{TENTPOLE_LINKS.map((item) => (
-						<Link
-							key={item.href}
-							href={item.href}
-							aria-current={isActive(item.href) ? 'page' : undefined}
-							onClick={() => track_(item)}
-							className={rowClass(item.href)}
-						>
-							{item.label}
-						</Link>
-					))}
-				</section>
-
-				{/* Topics (collapsible, mirrors desktop sidebar) */}
-				<section className="py-2">
-					<div className="text-muted-foreground px-5 py-1.5 font-mono text-[11px] font-medium uppercase tracking-wider">
-						Topics
-					</div>
-					<Accordion type="multiple" className="w-full">
-						{TOPIC_GROUPS.map((group) => (
-							<AccordionItem
-								key={group.label}
-								value={group.label}
-								className="border-none"
-							>
-								<AccordionTrigger className="px-5 py-2.5 text-base hover:no-underline">
-									{group.label}
-								</AccordionTrigger>
-								<AccordionContent className="pb-1">
-									{group.items.map((item) => (
-										<Link
-											key={item.href}
-											href={item.href}
-											aria-current={isActive(item.href) ? 'page' : undefined}
-											onClick={() => track_(item)}
-											className={cn(rowClass(item.href), 'py-2 pl-9 text-sm')}
-										>
-											{item.label}
-										</Link>
-									))}
-								</AccordionContent>
-							</AccordionItem>
+				{/* Hub sidebar IA (single MDX source via tRPC, collapsible —
+				    mirrors the desktop sidebar). */}
+				{isNavLoading && navSections.length === 0 ? (
+					<section className="flex flex-col gap-1 py-3" aria-hidden>
+						{Array.from({ length: 4 }).map((_, i) => (
+							<div key={i} className="px-5">
+								<SidebarMenuSkeleton />
+							</div>
 						))}
-					</Accordion>
-				</section>
+					</section>
+				) : (
+					navSections.length > 0 && (
+						<section className="py-2">
+							<Accordion
+								type="multiple"
+								defaultValue={openGroups}
+								className="w-full"
+							>
+								{navSections.map((group) => (
+									<AccordionItem
+										key={group.title}
+										value={group.title}
+										className="border-none"
+									>
+										<AccordionTrigger className="px-5 py-2.5 text-base hover:no-underline">
+											{group.title}
+										</AccordionTrigger>
+										<AccordionContent className="pb-1">
+											{group.links.map((item) => (
+												<Link
+													key={item.href}
+													href={item.href}
+													aria-current={isActive(item.href) ? 'page' : undefined}
+													onClick={() => track_(item)}
+													className={cn(rowClass(item.href), 'py-2 pl-9 text-sm')}
+												>
+													{item.label}
+												</Link>
+											))}
+											{group.moreHref && group.moreLabel && (
+												<Link
+													href={group.moreHref}
+													aria-current={
+														isActive(group.moreHref) ? 'page' : undefined
+													}
+													onClick={() =>
+														track_({
+															label: group.moreLabel!,
+															href: group.moreHref!,
+														})
+													}
+													className={cn(
+														rowClass(group.moreHref),
+														'text-muted-foreground py-2 pl-9 text-sm',
+													)}
+												>
+													{group.moreLabel}
+												</Link>
+											)}
+										</AccordionContent>
+									</AccordionItem>
+								))}
+							</Accordion>
+						</section>
+					)
+				)}
 
 				{/* Account */}
 				{isAuthed && (

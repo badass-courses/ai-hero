@@ -1,6 +1,5 @@
 import * as React from 'react'
-import { unstable_cache } from 'next/cache'
-import { getPage } from '@/lib/pages-query'
+import { getCachedHubSidebarBody } from '@/lib/hub-sidebar-ia'
 import { log } from '@/server/logger'
 
 import { SidebarProvider } from '@coursebuilder/ui'
@@ -10,23 +9,6 @@ import { SidebarMinimalFallback } from './hub-sidebar'
 import { SidebarErrorBoundary } from './sidebar/sidebar-client'
 import { compileHubSidebarMdx } from './sidebar/sidebar-mdx'
 import { HubSidebarShell } from './sidebar/sidebar-shell'
-
-/**
- * Cached body of the CMS `hub-sidebar` page (the MDX that defines the sidebar
- * menu — see lat.md/decisions.md "MDX-driven sidebar"). Only published pages
- * count; `null` means "no curated sidebar, use the static fallback". Joined to
- * the 'pages' revalidation tag so `updatePage` invalidates it on save.
- */
-const getCachedHubSidebarBody = unstable_cache(
-	async (): Promise<string | null> => {
-		const page = await getPage('hub-sidebar')
-		if (!page || page.fields.state !== 'published') return null
-		const body = page.fields.body?.trim()
-		return body ? body : null
-	},
-	['hub-sidebar-page-v1'],
-	{ revalidate: 3600, tags: ['pages'] },
-)
 
 /**
  * Resolve the sidebar content. Single source of truth is the `hub-sidebar`
