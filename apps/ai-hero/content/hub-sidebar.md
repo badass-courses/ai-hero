@@ -14,24 +14,12 @@
     exist yet), top N tagged posts, "All →" link to /topics/[tag]. Curated
     markdown links inside render above the tag-driven posts.
 
-  CONTENT-OPS: DONE 2026-07-06 (session 4). All six topic tags exist
-  (understand-the-basics `qogn9`, build-ai-apps `2784v`, connect-tools-mcp
-  `ueaht`, code-with-ai-agents `v2tba`, level-up-your-workflow `dezxr`,
-  test-and-evaluate `khqa0` — no `skill-phase` context) and the 22 curated
-  POSTS below are attached to their section's tag (see
-  OPERATIONS.md session 4 + dumps/topic-tagging/). The four tutorial LINKS
-  (LLM Fundamentals, AI Engineer Roadmap, Vercel AI SDK Tutorial, Model
-  Context Protocol Tutorial) are `list` resources — getPostsByTag filters
-  type='post', so they stay curated-only by design.
+  The tutorial links (LLM Fundamentals, AI Engineer Roadmap, Vercel AI SDK
+  Tutorial, Model Context Protocol Tutorial) are `list` resources —
+  getPostsByTag is posts-only, so they appear here as curated links only;
+  keep them when trimming curation.
 
-  OPEN (Vojta): with tags attached, each TopicSection now renders curated
-  links AND the same posts tag-driven (no code dedupe; tag order is
-  createdAt desc). Either trim curated post links from this page body
-  (loses pedagogical order, keeps the tutorial links) or keep curation and
-  accept duplicates until a dedupe/ordering decision.
-
-  Every link below is a real production URL (curated from the live corpus,
-  2026-07-06). Amy's seven-section taxonomy: lat.md/upstream.md#Topic taxonomy.
+  Amy's seven-section taxonomy: lat.md/upstream.md#Topic taxonomy.
 */}
 
 <SidebarSection title="Explore">
