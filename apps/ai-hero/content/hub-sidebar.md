@@ -6,13 +6,17 @@
   Component vocabulary:
   - `<SidebarSection title="…">` — collapsible group; markdown link lists nest inside
   - `- [Label](/href)` — sidebar link (active state + analytics come free)
-  - `<WhatsNew />` — latest 3 published public posts + "See all" → /posts
-  - `<SkillsNav />` — the skill cycle from the SKILLS_LIST_ID list (renders
-    nothing until skill posts exist, so it's safe to include now)
+  - `<WhatsNew title="…" />` — latest 3 published public posts + "See all"
+    → /posts; group label comes from `title` (this page is the source of
+    truth for labels)
+  - `<SkillsNav title="…" />` — the skill cycle from the SKILLS_LIST_ID list
+    (renders nothing until skill posts exist, so it's safe to include now);
+    group label from `title`
   - `<TopicSection tag="…" label="…" limit={5}>` — topic tag section: label
     from the CMS tag (the `label` prop is the fallback while the tag doesn't
     exist yet), top N tagged posts, "All →" link to /topics/[tag]. Curated
-    markdown links inside render above the tag-driven posts.
+    markdown links inside render above the tag-driven posts; posts already
+    curated are skipped in the tag feed (deduped by href).
 
   The tutorial links (LLM Fundamentals, AI Engineer Roadmap, Vercel AI SDK
   Tutorial, Model Context Protocol Tutorial) are `list` resources —
@@ -30,9 +34,9 @@
 
 </SidebarSection>
 
-<WhatsNew />
+<WhatsNew title="What's New" />
 
-<SkillsNav />
+<SkillsNav title="Skills" />
 
 <TopicSection tag="understand-the-basics" label="Understand the Basics">
 

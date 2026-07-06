@@ -47,7 +47,13 @@ function postLinks(posts: Post[]) {
 	))
 }
 
-async function WhatsNewSection({ limit = 3 }: { limit?: number }) {
+async function WhatsNewSection({
+	title = "What's New",
+	limit = 3,
+}: {
+	title?: string
+	limit?: number
+}) {
 	try {
 		const posts = await getCachedAllPosts()
 		const items = (posts ?? [])
@@ -63,7 +69,7 @@ async function WhatsNewSection({ limit = 3 }: { limit?: number }) {
 		if (items.length === 0) return null
 
 		return (
-			<SidebarSection title="What's New">
+			<SidebarSection title={title}>
 				<SidebarMenu>
 					{postLinks(items)}
 					<SidebarMenuItem>
@@ -82,8 +88,12 @@ async function WhatsNewSection({ limit = 3 }: { limit?: number }) {
 	}
 }
 
-/** `<WhatsNew />` — the most recent published, public posts + "See all". */
-export function WhatsNew(props: { limit?: number }) {
+/**
+ * `<WhatsNew title="…" />` — the most recent published, public posts +
+ * "See all". The group label comes from the MDX (default "What's New" is a
+ * fallback only — the CMS page is the source of truth for labels).
+ */
+export function WhatsNew(props: { title?: string; limit?: number }) {
 	return (
 		<React.Suspense fallback={<SectionSkeleton />}>
 			<WhatsNewSection {...props} />
