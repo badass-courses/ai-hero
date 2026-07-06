@@ -90,6 +90,7 @@ const HUB_PREFIXES = [
 	'/learn',
 	'/tools',
 	'/principles',
+	'/topics',
 ] as const
 
 /** Strip query/hash and trailing slash, lowercase. Always returns a leading slash. */
