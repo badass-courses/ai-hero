@@ -989,6 +989,16 @@ const FAQ = ({
 	)
 }
 
+// Client-side preview stand-in for the async server component registered in
+// compile-mdx.tsx (src/components/subscriber-count.tsx). The live Kit count
+// can't be fetched in a client preview, so this renders the fallback copy.
+const SubscriberCountPreview = ({
+	fallback = '70,000+',
+}: {
+	fallback?: string
+	format?: 'rounded' | 'exact'
+}) => <>{fallback}</>
+
 // These are all passed down to the Preview component so need to match with options above
 
 const allMdxPageBuilderComponents = {
@@ -1006,6 +1016,7 @@ const allMdxPageBuilderComponents = {
 	TableWrapper,
 	ProjectVideo,
 	Recommendation,
+	SubscriberCount: SubscriberCountPreview,
 }
 
 export {

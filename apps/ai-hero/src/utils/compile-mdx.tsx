@@ -11,6 +11,7 @@ import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
+import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
@@ -355,6 +356,15 @@ async function compileMDXInternal(
 							{children}
 						</span>
 					),
+					// Live Kit subscriber count (async server component); renders
+					// its fallback string when the Kit API is unavailable.
+					SubscriberCount: ({
+						fallback,
+						format,
+					}: {
+						fallback?: string
+						format?: 'rounded' | 'exact'
+					}) => <SubscriberCount fallback={fallback} format={format} />,
 					SkillsNewsletterCta: ({
 						heading,
 						subtitle,
