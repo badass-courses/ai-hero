@@ -131,6 +131,24 @@ export function SkillsNav(props: { title?: string }) {
 	)
 }
 
+/**
+ * Collect every `href` in a curated-children element tree (the sidebar MDX map
+ * puts hrefs on `a`/`SidebarLink` → `SidebarNavLink` elements). Used to dedupe
+ * the tag-driven post list against the curated links above it.
+ */
+function collectHrefs(node: React.ReactNode, into: Set<string>): Set<string> {
+	if (Array.isArray(node)) {
+		for (const child of node) collectHrefs(child, into)
+	} else if (React.isValidElement(node)) {
+		const props = node.props as { href?: unknown; children?: React.ReactNode }
+		if (typeof props.href === 'string') {
+			into.add(props.href.replace(/\/+$/, ''))
+		}
+		if (props.children) collectHrefs(props.children, into)
+	}
+	return into
+}
+
 async function TopicSectionInner({
 	tag,
 	label,
@@ -143,8 +161,16 @@ async function TopicSectionInner({
 	children?: React.ReactNode
 }) {
 	try {
+		const curatedHrefs = collectHrefs(children, new Set<string>())
 		const topicTag = await getCachedTopicTag(tag)
-		const posts = topicTag ? await getCachedPostsByTag(tag, { limit }) : []
+		// Over-fetch by the curated count so dedupe can't leave the section
+		// short of `limit`; curated links stay the pinned, ordered picks and
+		// the tag feed is the fresh tail.
+		const posts = topicTag
+			? (await getCachedPostsByTag(tag, { limit: limit + curatedHrefs.size }))
+					.filter((post) => !curatedHrefs.has(`/${post.fields.slug}`))
+					.slice(0, limit)
+			: []
 		const title = topicTag?.fields.label ?? label
 
 		// No tag AND no curated fallback links → nothing sensible to render.
@@ -185,7 +211,8 @@ async function TopicSectionInner({
  * label from the CMS tag (`label` prop is the fallback while the tag doesn't
  * exist yet), top N tagged posts, and an "All →" link to `/topics/[slug]`.
  * Curated markdown links may be nested as children; they render above the
- * tag-driven posts.
+ * tag-driven posts, and any post already curated is skipped in the tag feed
+ * (deduped by href, over-fetched so the section still fills to `limit`).
  */
 export function TopicSection(props: {
 	tag: string
