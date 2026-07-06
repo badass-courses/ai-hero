@@ -4,16 +4,59 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createPostBindings } from '@/lib/cms/post-bindings'
-import { PostSchema, type Post } from '@/lib/posts'
+import { PostSchema, PostTypeSchema, type Post } from '@/lib/posts'
 import { updatePost } from '@/lib/posts-query'
 import type { Tag } from '@/lib/tags'
 import type { UseFormReturn } from 'react-hook-form'
 
 import type { VideoResource } from '@coursebuilder/core/schemas/video-resource'
 import { createResourceEditor, postManifest } from '@coursebuilder/ui/cms'
-import type { EditorCtx, ListMembership } from '@coursebuilder/ui/cms/manifest'
+import type {
+	EditorCtx,
+	FieldSpec,
+	ListMembership,
+} from '@coursebuilder/ui/cms/manifest'
 
 import { postFormConfig } from '../../_components/post-form-config'
+
+/**
+ * `fields.postType` selector for the Content tab. Options come straight from
+ * PostTypeSchema so the list can't drift from the source of truth. The value
+ * shown for legacy posts without a postType is 'article' — supplied by
+ * `postFormConfig.defaultValues` (`post.fields?.postType || 'article'`), the
+ * same fallback the save path applies (`createPostBindings` sends
+ * `values.fields.postType || 'article'`) — so adding the selector changes no
+ * defaults, it only makes the existing value visible and editable.
+ */
+const postTypeField: FieldSpec = {
+	kind: 'select',
+	name: 'fields.postType',
+	label: 'Post type',
+	options: PostTypeSchema.options.map((literal) => {
+		const value = literal.value
+		return {
+			value,
+			// 'skill-changelog' → 'Skill changelog'
+			label: (value[0]!.toUpperCase() + value.slice(1)).replace('-', ' '),
+		}
+	}),
+}
+
+/**
+ * postManifest's tabs with the postType selector inserted right after the
+ * slug field on the Content tab (call-site spread — the shared manifest in
+ * @coursebuilder/ui stays untouched).
+ */
+const tabsWithPostType = postManifest.tabs.map((tab) =>
+	tab.label === 'Content'
+		? {
+				...tab,
+				fields: tab.fields.flatMap((field): FieldSpec[] =>
+					field.kind === 'slug' ? [field, postTypeField] : [field],
+				),
+			}
+		: tab,
+)
 
 export type EditPostClientProps = {
 	post: Post
@@ -50,6 +93,8 @@ export function EditPostClient({
 		return createResourceEditor({
 			manifest: {
 				...postManifest,
+				// Content tab + the fields.postType selector (see tabsWithPostType).
+				tabs: tabsWithPostType,
 				schema: PostSchema,
 				// Reuse the legacy normalization (''/null fallbacks) so inputs stay
 				// controlled — postFormConfig remains in use by other resource types.
