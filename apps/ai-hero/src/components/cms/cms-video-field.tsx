@@ -168,8 +168,11 @@ export function CmsVideoField({
 
 	// Thumbnail-from-player-time: the ref tracks the seek position.
 	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
-	const [thumbnailTime, setThumbnailTime] = React.useState<number>(
-		form.watch('fields.thumbnailTime') || 0,
+	// null = the player hasn't reported a position yet (vs. a real 0 = first
+	// frame, which IS a valid thumbnail time). Seeds from the saved value so an
+	// existing thumbnail can be re-saved without touching the player.
+	const [thumbnailTime, setThumbnailTime] = React.useState<number | null>(
+		form.watch('fields.thumbnailTime') ?? null,
 	)
 
 	// Lifecycle socket — this VIDEO's room (asset ready, transcript ready).
@@ -309,7 +312,14 @@ export function CmsVideoField({
 	const handleDetachVideo = async () => {
 		if (!videoResource?.id) return
 		try {
-			await detachVideoResourceFromPost(resource.id, videoResource.id)
+			// The action returns false on a write failure — mirror handleAttach and
+			// only clear the editor state when the detach actually persisted, so a
+			// failed detach doesn't look successful until the next refresh.
+			const detached = await detachVideoResourceFromPost(
+				resource.id,
+				videoResource.id,
+			)
+			if (detached === false) throw new Error('Detach failed')
 			setVideoResourceId(undefined)
 			form.setValue('fields.videoResourceId', undefined)
 		} catch (error) {
@@ -343,7 +353,7 @@ export function CmsVideoField({
 
 	const handleThumbnailPick = async () => {
 		if (!videoResource?.id) return
-		if (!thumbnailTime) {
+		if (thumbnailTime == null) {
 			toast({
 				title: 'Play or seek the video first',
 				description: 'The current player time becomes the thumbnail.',
@@ -430,7 +440,8 @@ export function CmsVideoField({
 					thumbnailTime={form.watch('fields.thumbnailTime') || 0}
 					handleVideoTimeUpdate={(e: Event) => {
 						const currentTime = (e.target as HTMLMediaElement).currentTime
-						if (currentTime) setThumbnailTime(currentTime)
+						// Record every reported position, including 0 (first frame).
+						if (typeof currentTime === 'number') setThumbnailTime(currentTime)
 					}}
 					videoResource={videoResource}
 				/>
