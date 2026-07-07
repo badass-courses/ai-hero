@@ -24,10 +24,9 @@ import { HubSidebarShell } from './sidebar/sidebar-shell'
  * itself fail.
  */
 async function renderSidebarContent(
+	body: string,
 	hideWhatsNew: boolean,
 ): Promise<React.ReactNode> {
-	const body = (await getCachedHubSidebarBody()) ?? HUB_SIDEBAR_FALLBACK_MDX
-
 	let compiled: React.ReactNode | null = null
 	try {
 		compiled = await compileHubSidebarMdx(body, { hideWhatsNew })
@@ -68,13 +67,26 @@ export async function HubLayout({
 	children,
 	sidebarDefaultCollapsed = false,
 	hideWhatsNew = false,
+	currentListSlug,
 }: {
 	children: React.ReactNode
 	sidebarDefaultCollapsed?: boolean
 	/** Suppress the "What's New" category — set on standalone post pages. */
 	hideWhatsNew?: boolean
+	/** Slug of the list the current post belongs to (drives series nav). */
+	currentListSlug?: string
 }) {
-	const sidebarContent = await renderSidebarContent(hideWhatsNew)
+	const body = (await getCachedHubSidebarBody()) ?? HUB_SIDEBAR_FALLBACK_MDX
+	const sidebarContent = await renderSidebarContent(body, hideWhatsNew)
+
+	// Hybrid series nav: if the current list has its own link in the sidebar IA
+	// (e.g. a tentpole), it expands in place (SidebarNavLink) — skip the pinned
+	// block. Otherwise the pinned "In this series" block is the fallback so the
+	// lessons are never orphaned. See decisions.md "Series posts keep the hub
+	// sidebar".
+	const listInSidebar = Boolean(
+		currentListSlug && body.includes(`](/${currentListSlug})`),
+	)
 
 	return (
 		<SidebarProvider
@@ -82,9 +94,7 @@ export async function HubLayout({
 			className="min-h-0 has-data-[variant=inset]:bg-background"
 		>
 			<HubSidebarShell defaultCollapsed={sidebarDefaultCollapsed}>
-				{/* Pinned "In this series" group — renders only when a list context
-				    is present (inside the [post] layout); no-op everywhere else. */}
-				<PinnedSeriesNav />
+				{!listInSidebar ? <PinnedSeriesNav /> : null}
 				{sidebarContent}
 			</HubSidebarShell>
 			<div className="min-w-0 flex-1">{children}</div>

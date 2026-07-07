@@ -46,7 +46,10 @@ export default async function Layout(props: {
 			<ProgressProvider initialProgress={initialProgress}>
 				<ActiveHeadingProvider>
 					<LayoutClient withContainer>
-						<HubLayout hideWhatsNew={post.type === 'post'}>
+						<HubLayout
+							hideWhatsNew={post.type === 'post'}
+							currentListSlug={list?.fields.slug}
+						>
 							{props.children}
 						</HubLayout>
 						<MobileListResourceNavigation />

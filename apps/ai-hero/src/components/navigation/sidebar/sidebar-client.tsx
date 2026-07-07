@@ -3,6 +3,8 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useList } from '@/app/(content)/[post]/_components/list-provider'
+import { useProgress } from '@/app/(content)/[post]/_components/progress-provider'
 import { track } from '@/utils/analytics'
 import { ArrowRight, ChevronRight } from 'lucide-react'
 
@@ -18,6 +20,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
+import { SeriesLessons } from './series-lessons'
 
 /** Strip query/hash + trailing slash, lowercase; '' → '/'. */
 export function normalizePath(path: string): string {
@@ -44,37 +47,58 @@ export function SidebarNavLink({
 	ariaLabel?: string
 }) {
 	const pathname = usePathname()
+	const { list } = useList()
+	const { progress } = useProgress()
 	const isActive = normalizePath(href) === normalizePath(pathname ?? '/')
 
+	// Hybrid series nav: when this link IS the current list's landing page, it
+	// expands in place to show the list's lessons (instead of a pinned block at
+	// the top). Only fires inside the [post] layout, where the list context is
+	// present. See lat.md/decisions.md "Series posts keep the hub sidebar".
+	const isCurrentList =
+		Boolean(list) && normalizePath(href) === normalizePath(`/${list!.fields.slug}`)
+
 	return (
-		<SidebarMenuButton
-			asChild
-			isActive={isActive}
-			// Links read as the secondary tier: muted, regular weight, indented
-			// under the bold group label, with comfortable vertical rhythm. Hover
-			// + active states (accent bg + foreground) come from the primitive.
-			className="text-muted-foreground h-auto py-2 pl-5 pr-2 text-sm font-normal"
-		>
-			<Link
-				href={href}
-				prefetch={false}
-				aria-current={isActive ? 'page' : undefined}
-				aria-label={ariaLabel}
-				onClick={() =>
-					track('nav_link_clicked', {
-						label:
-							ariaLabel ?? (typeof children === 'string' ? children : href),
-						href,
-						category: 'hub_sidebar',
-					})
-				}
+		<>
+			<SidebarMenuButton
+				asChild
+				isActive={isActive}
+				// Links read as the secondary tier: muted, regular weight, indented
+				// under the bold group label, with comfortable vertical rhythm. Hover
+				// + active states (accent bg + foreground) come from the primitive.
+				className="text-muted-foreground h-auto py-2 pl-5 pr-2 text-sm font-normal"
 			>
-				<span>{children}</span>
-				{/* "All →" style link: an inline arrow, not a full-width row, so it
-				    reads as a small child action indented under the group. */}
-				{muted ? <ArrowRight className="size-3.5 shrink-0 opacity-70" /> : null}
-			</Link>
-		</SidebarMenuButton>
+				<Link
+					href={href}
+					prefetch={false}
+					aria-current={isActive ? 'page' : undefined}
+					aria-label={ariaLabel}
+					onClick={() =>
+						track('nav_link_clicked', {
+							label:
+								ariaLabel ?? (typeof children === 'string' ? children : href),
+							href,
+							category: 'hub_sidebar',
+						})
+					}
+				>
+					<span>{children}</span>
+					{isCurrentList ? (
+						<ChevronRight className="text-muted-foreground ml-auto size-3.5 shrink-0 rotate-90" />
+					) : muted ? (
+						/* "All →" style link: an inline arrow, a small child action. */
+						<ArrowRight className="size-3.5 shrink-0 opacity-70" />
+					) : null}
+				</Link>
+			</SidebarMenuButton>
+			{isCurrentList ? (
+				<SeriesLessons
+					resources={list!.resources as any}
+					completedLessons={progress?.completedLessons}
+					className="pl-3"
+				/>
+			) : null}
+		</>
 	)
 }
 
@@ -109,13 +133,19 @@ export function SidebarSection({
 	children: React.ReactNode
 }) {
 	const pathname = usePathname()
+	const { list } = useList()
+	// When the reader is inside a series, the series (its own sidebar entry) is
+	// the active context — keep topic groups collapsed so the current lesson
+	// isn't also auto-expanded here (no double-appearance).
+	const seriesActive = Boolean(list)
 	const hrefs = React.useMemo(() => collectHrefs(children), [children])
 	const activeInside = React.useMemo(
 		() =>
+			!seriesActive &&
 			hrefs.some(
 				(href) => normalizePath(href) === normalizePath(pathname ?? '/'),
 			),
-		[hrefs, pathname],
+		[hrefs, pathname, seriesActive],
 	)
 	const [open, setOpen] = React.useState(defaultOpen || activeInside)
 	// Expand when navigation lands on one of this section's links.
