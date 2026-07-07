@@ -1,6 +1,7 @@
 import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
+import type { List } from '@/lib/lists'
 import { getCachedListForPost } from '@/lib/lists-query'
 import { getModuleProgressForUser } from '@/lib/progress'
 
@@ -20,9 +21,14 @@ export default async function Layout(props: {
 		return <LayoutClient withContainer>{props.children}</LayoutClient>
 	}
 
-	let list = null
+	// A lesson resolves to the list it belongs to; a list landing page is its own
+	// list. Either way the sidebar gets a list context, so the list's sidebar
+	// entry reveals its lessons (+ an "Overview" row = this landing page).
+	let list: List | null = null
 	if (post.type === 'post') {
 		list = await getCachedListForPost(params.post)
+	} else if (post.type === 'list') {
+		list = post as unknown as List
 	}
 	const initialProgress = await getModuleProgressForUser(
 		list ? list.id : params.post,

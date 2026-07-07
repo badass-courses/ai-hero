@@ -95,6 +95,7 @@ export function SidebarNavLink({
 				<SeriesLessons
 					resources={list!.resources as any}
 					completedLessons={progress?.completedLessons}
+					overviewHref={`/${list!.fields.slug}`}
 					className="pl-3"
 				/>
 			) : null}

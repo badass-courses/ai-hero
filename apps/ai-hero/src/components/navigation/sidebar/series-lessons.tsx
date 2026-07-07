@@ -50,10 +50,13 @@ export function flattenLessons(
 export function SeriesLessons({
 	resources,
 	completedLessons,
+	overviewHref,
 	className,
 }: {
 	resources: { resource?: ContentResource }[] | undefined
 	completedLessons?: ModuleProgress['completedLessons']
+	/** When set, an "Overview" row (the list landing page) leads the lessons. */
+	overviewHref?: string
 	className?: string
 }) {
 	const params = useParams()
@@ -65,9 +68,32 @@ export function SeriesLessons({
 	const completed = new Set(
 		(completedLessons ?? []).filter((l) => l.completedAt).map((l) => l.resourceId),
 	)
+	const overviewActive =
+		overviewHref !== undefined && norm(overviewHref) === currentSlug
 
 	return (
 		<SidebarMenu className={className}>
+			{overviewHref !== undefined ? (
+				<SidebarMenuItem>
+					<SidebarMenuButton
+						asChild
+						isActive={overviewActive}
+						className="text-muted-foreground h-auto items-start gap-2 py-2 pl-2 pr-2 text-sm font-normal"
+					>
+						<Link href={overviewHref} prefetch={false}>
+							<span
+								aria-hidden
+								className="text-muted-foreground/60 flex w-4 shrink-0 justify-center pt-px font-mono text-[11px]"
+							>
+								·
+							</span>
+							<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+								Overview
+							</span>
+						</Link>
+					</SidebarMenuButton>
+				</SidebarMenuItem>
+			) : null}
 			{lessons.map((lesson, index) => {
 				const slug = lesson.fields?.slug as string | undefined
 				if (!slug) return null
