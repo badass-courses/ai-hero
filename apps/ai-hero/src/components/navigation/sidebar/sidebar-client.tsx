@@ -99,7 +99,7 @@ export function SidebarNavLink({
 					resources={list!.resources as any}
 					completedLessons={progress?.completedLessons}
 					overviewHref={`/${list!.fields.slug}`}
-					className="pl-3"
+					className="pl-6"
 				/>
 			) : null}
 		</>
@@ -137,22 +137,17 @@ export function SidebarSection({
 	children: React.ReactNode
 }) {
 	const pathname = usePathname()
-	const { list } = useList()
-	// When the reader is inside a series, the series (its own sidebar entry) is
-	// the active context — keep topic groups collapsed so the current lesson
-	// isn't also auto-expanded here (no double-appearance).
-	const seriesActive = Boolean(list)
 	const hrefs = React.useMemo(() => collectHrefs(children), [children])
 	const activeInside = React.useMemo(
 		() =>
-			!seriesActive &&
 			hrefs.some(
 				(href) => normalizePath(href) === normalizePath(pathname ?? '/'),
 			),
-		[hrefs, pathname, seriesActive],
+		[hrefs, pathname],
 	)
 	const [open, setOpen] = React.useState(defaultOpen || activeInside)
-	// Expand when navigation lands on one of this section's links.
+	// Stay open around the active page: expand when navigation lands on one of
+	// this section's links (and never auto-collapse it out from under the user).
 	React.useEffect(() => {
 		if (activeInside) setOpen(true)
 	}, [activeInside])
@@ -182,7 +177,9 @@ export function SidebarSection({
 					</SidebarGroupLabel>
 				</CollapsibleTrigger>
 				<CollapsibleContent>
-					<SidebarGroupContent>{children}</SidebarGroupContent>
+					{/* Extra left gap so child links clearly nest under the group
+					    label (the label's chevron sits in the gutter to its left). */}
+					<SidebarGroupContent className="pl-6">{children}</SidebarGroupContent>
 				</CollapsibleContent>
 			</SidebarGroup>
 		</Collapsible>
