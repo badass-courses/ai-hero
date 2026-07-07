@@ -126,9 +126,15 @@ function GoalItemCard({ item }: { item: ResolvedItem }) {
 function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 	const { section, items } = goal
 	return (
-		<section id={section.id} data-goal-section className="border-b scroll-mt-24">
-			<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:gap-8 md:py-24">
-				<div className="flex flex-col gap-3">
+		<section
+			id={section.id}
+			data-goal-section
+			className="border-b scroll-mt-24 py-16 md:py-24"
+		>
+			{/* Text keeps the side padding; the resource grid bleeds full-width to
+			    the container edges (DESIGN rule 1), like the landing rows. */}
+			<div className="flex flex-col gap-6 md:gap-8">
+				<div className="flex flex-col gap-3 px-8 sm:px-16">
 					<h2 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
 						{section.question}
 					</h2>
@@ -145,7 +151,7 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 
 				{/* Footer: the signature "open" affordance for the whole topic, plus
 				    the optional skill CTA. Kept out of the grid so it stays packed. */}
-				<div className="flex flex-wrap items-center gap-x-10 gap-y-4">
+				<div className="flex flex-wrap items-center gap-x-10 gap-y-4 px-8 sm:px-16">
 					<MoreWaysLink href={section.moreHref} label={section.moreLabel} />
 					{section.skillCta ? (
 						<Link
@@ -226,9 +232,9 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
 	const [featured, ...rest] = items
 	const compact = rest.slice(0, 2)
 	return (
-		<section className="border-b">
-			<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:gap-8 md:py-24">
-				<div className="flex flex-wrap items-end justify-between gap-4">
+		<section className="border-b py-16 md:py-24">
+			<div className="flex flex-col gap-6 md:gap-8">
+				<div className="flex flex-wrap items-end justify-between gap-4 px-8 sm:px-16">
 					<div className="flex flex-col gap-2">
 						<p className={MONO_LABEL}>What&rsquo;s New</p>
 						<h2 className="text-3xl font-medium leading-tight tracking-tight sm:text-4xl">

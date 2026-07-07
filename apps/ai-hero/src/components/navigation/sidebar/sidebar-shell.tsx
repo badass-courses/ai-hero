@@ -36,7 +36,7 @@ const ICON_RAIL_LINKS: { label: string; href: string; icon: LucideIcon }[] = [
 ]
 
 const STICKY_SIDEBAR_CLASSES =
-	'bg-background top-(--nav-height) sticky hidden h-[calc(100svh-var(--nav-height))] self-start border-r md:flex'
+	'bg-background top-(--nav-height) w-[354.5px] sticky hidden h-[calc(100svh-var(--nav-height))] self-start border-r md:flex'
 
 /**
  * Client shell around the hub sidebar content. Two modes:
@@ -147,7 +147,9 @@ export function HubSidebarShell({
 					</button>
 				</div>
 			) : null}
-			<SidebarContent className="gap-0 py-2">{children}</SidebarContent>
+			<SidebarContent className="no-scrollbar scroll-fade gap-0 py-2">
+				{children}
+			</SidebarContent>
 		</Sidebar>
 	)
 }

@@ -554,3 +554,81 @@ li.task-list-item {
 	);
 	background-size: 5px 5px;
 }
+
+/* Hide the raw scrollbar while keeping the element scrollable. Used by the
+   tall hub sidebar nav, which pairs it with `scroll-fade`. */
+@utility no-scrollbar {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}
+
+/* shadcn "scroll-fade": mask the top/bottom edges of a scroll container so
+   content dissolves into the surface, signalling there is more to scroll.
+   (https://ui.shadcn.com/docs/utils/scroll-fade)
+
+   The top and bottom fade depths are separate registered custom properties so
+   each can be driven independently. The base rule fades both edges (the
+   cross-browser fallback). Where scroll-driven timelines are supported, two
+   animations grow `--scroll-fade-top` from 0 over the first `size` of scroll
+   and shrink `--scroll-fade-bottom` to 0 over the last `size`, so the
+   first/last item is never dimmed when there's nothing more to scroll to.
+   Both animate distinct properties, so they compose in one mask-image. */
+@property --scroll-fade-top {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+
+@property --scroll-fade-bottom {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+
+@utility scroll-fade {
+	--scroll-fade-size: 1.75rem;
+	--scroll-fade-top: var(--scroll-fade-size);
+	--scroll-fade-bottom: var(--scroll-fade-size);
+	mask-image: linear-gradient(
+		to bottom,
+		transparent 0,
+		#000 var(--scroll-fade-top),
+		#000 calc(100% - var(--scroll-fade-bottom)),
+		transparent 100%
+	);
+}
+
+/* Plain `.scroll-fade` rule (not `@utility`, which can't nest in `@supports`);
+   it layers onto the generated utility class where scroll timelines exist. */
+@supports (animation-timeline: scroll()) {
+	.scroll-fade {
+		animation:
+			scroll-fade-top linear both,
+			scroll-fade-bottom linear both;
+		animation-timeline: scroll(self), scroll(self);
+		animation-range:
+			0 var(--scroll-fade-size),
+			calc(100% - var(--scroll-fade-size)) 100%;
+	}
+
+	@keyframes scroll-fade-top {
+		from {
+			--scroll-fade-top: 0px;
+		}
+		to {
+			--scroll-fade-top: var(--scroll-fade-size);
+		}
+	}
+
+	@keyframes scroll-fade-bottom {
+		from {
+			--scroll-fade-bottom: var(--scroll-fade-size);
+		}
+		to {
+			--scroll-fade-bottom: 0px;
+		}
+	}
+}
