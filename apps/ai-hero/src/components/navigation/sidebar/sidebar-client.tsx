@@ -20,6 +20,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
+import { NAV_ICONS } from './nav-icons'
 import { SeriesLessons } from './series-lessons'
 
 /** Strip query/hash + trailing slash, lowercase; '' → '/'. */
@@ -50,6 +51,7 @@ export function SidebarNavLink({
 	const { list } = useList()
 	const { progress } = useProgress()
 	const isActive = normalizePath(href) === normalizePath(pathname ?? '/')
+	const Icon = NAV_ICONS[normalizePath(href)]
 
 	// Hybrid series nav: when this link IS the current list's landing page, it
 	// expands in place to show the list's lessons (instead of a pinned block at
@@ -69,7 +71,10 @@ export function SidebarNavLink({
 				// Links read as the secondary tier: muted, regular weight, indented
 				// under the bold group label, with comfortable vertical rhythm. Hover
 				// + active states (accent bg + foreground) come from the primitive.
-				className="text-muted-foreground h-auto py-2 pl-5 pr-2 text-sm font-normal"
+				// Icon'd links (Explore) anchor left at pl-2 — the icon is the indent.
+				className={`text-muted-foreground h-auto py-2 pr-2 text-sm font-normal ${
+					Icon ? 'pl-2' : 'pl-5'
+				}`}
 			>
 				<Link
 					href={href}
@@ -85,6 +90,7 @@ export function SidebarNavLink({
 						})
 					}
 				>
+					{Icon ? <Icon active={isActive} className="size-4 shrink-0" /> : null}
 					<span>{children}</span>
 					{isCurrentList ? (
 						<ChevronRight className="text-muted-foreground ml-auto size-3.5 shrink-0 rotate-90" />
