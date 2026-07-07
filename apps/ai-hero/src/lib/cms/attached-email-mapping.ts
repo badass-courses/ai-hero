@@ -16,20 +16,24 @@ export function toAttachedEmail(
 	const hoursInAdvance =
 		typeof md.hoursInAdvance === 'number' ? md.hoursInAdvance : undefined
 	const sendAt = typeof md.sendAt === 'string' ? md.sendAt : null
-	// Honor an explicitly stored policy ONLY when it's a legal value — a fired
-	// send stamps `policy: null` (cleared) and the writers persist 'at'/'relative'.
-	// An unexpected/corrupted value is ignored and re-derived rather than trusted:
-	// exact `sendAt` → 'at', else `hoursInAdvance` → 'relative', else nothing
-	// scheduled.
+	// Honor an explicitly stored policy ONLY when it's legal AND consistent with
+	// the field it implies — 'at' needs a real `sendAt`, 'relative' needs a real
+	// `hoursInAdvance` (a fired send stamps `policy: null`). A missing/corrupted or
+	// self-inconsistent value (e.g. 'at' with no `sendAt`) is re-derived rather
+	// than trusted: exact `sendAt` → 'at', else `hoursInAdvance` → 'relative', else
+	// nothing scheduled — never a "scheduled" row with no time.
 	const stored = md.policy
-	const policy: AttachedEmail['policy'] =
-		stored === 'at' || stored === 'relative' || stored === null
-			? stored
-			: sendAt
-				? 'at'
-				: hoursInAdvance !== undefined
-					? 'relative'
-					: null
+	const storedIsValid =
+		(stored === 'at' && sendAt !== null) ||
+		(stored === 'relative' && hoursInAdvance !== undefined) ||
+		stored === null
+	const policy: AttachedEmail['policy'] = storedIsValid
+		? stored
+		: sendAt
+			? 'at'
+			: hoursInAdvance !== undefined
+				? 'relative'
+				: null
 	return {
 		emailId: resource.id,
 		title: fields.title ?? resource.id,
