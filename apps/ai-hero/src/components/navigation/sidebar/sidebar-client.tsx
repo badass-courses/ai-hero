@@ -21,6 +21,7 @@ import {
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
 import { NAV_ICONS } from './nav-icons'
+import { rowIndent, SidebarDepth, useSidebarDepth } from './sidebar-indent'
 import { SeriesLessons } from './series-lessons'
 
 /** Strip query/hash + trailing slash, lowercase; '' → '/'. */
@@ -48,6 +49,7 @@ export function SidebarNavLink({
 	ariaLabel?: string
 }) {
 	const pathname = usePathname()
+	const depth = useSidebarDepth()
 	const { list } = useList()
 	const { progress } = useProgress()
 	const isActive = normalizePath(href) === normalizePath(pathname ?? '/')
@@ -68,13 +70,10 @@ export function SidebarNavLink({
 				// header — the active highlight belongs to its "Overview" child, not
 				// the parent. Otherwise, normal active state.
 				isActive={isCurrentList ? false : isActive}
-				// Links read as the secondary tier: muted, regular weight, indented
-				// under the bold group label, with comfortable vertical rhythm. Hover
-				// + active states (accent bg + foreground) come from the primitive.
-				// Icon'd links (Explore) anchor left at pl-2 — the icon is the indent.
-				className={`text-muted-foreground h-auto py-2 pr-2 text-sm font-normal ${
-					Icon ? 'pl-2' : 'pl-5'
-				}`}
+				// Links read as the secondary tier: muted, regular weight. Left
+				// indent comes from nesting depth (rowIndent), not ad-hoc pl-*.
+				className="text-muted-foreground h-auto py-2 pr-2 text-sm font-normal"
+				style={rowIndent(depth)}
 			>
 				<Link
 					href={href}
@@ -101,12 +100,13 @@ export function SidebarNavLink({
 				</Link>
 			</SidebarMenuButton>
 			{isCurrentList ? (
-				<SeriesLessons
-					resources={list!.resources as any}
-					completedLessons={progress?.completedLessons}
-					overviewHref={`/${list!.fields.slug}`}
-					className="pl-6"
-				/>
+				<SidebarDepth>
+					<SeriesLessons
+						resources={list!.resources as any}
+						completedLessons={progress?.completedLessons}
+						overviewHref={`/${list!.fields.slug}`}
+					/>
+				</SidebarDepth>
 			) : null}
 		</>
 	)
@@ -143,6 +143,7 @@ export function SidebarSection({
 	children: React.ReactNode
 }) {
 	const pathname = usePathname()
+	const depth = useSidebarDepth()
 	const hrefs = React.useMemo(() => collectHrefs(children), [children])
 	const activeInside = React.useMemo(
 		() =>
@@ -164,28 +165,30 @@ export function SidebarSection({
 			onOpenChange={setOpen}
 			className="group/collapsible"
 		>
-			<SidebarGroup className="py-0">
+			<SidebarGroup className="p-0">
 				<CollapsibleTrigger asChild>
 					<SidebarGroupLabel
 						asChild
-						// Item-like when collapsed, bold when open; the triangle sits in
-						// the left indent gutter so the label aligns with sibling items.
-						className="text-sidebar-foreground h-auto gap-1.5 px-2 py-2 text-sm font-normal data-[state=open]:font-semibold"
+						// Item-like when collapsed, bold when open. Same row indent as
+						// sibling items; the triangle is pulled into the gutter (-ms-5)
+						// so the label TEXT lines up with the items, not the chevron.
+						className="text-sidebar-foreground h-auto gap-1.5 py-2 pr-2 text-sm font-normal data-[state=open]:font-semibold"
+						style={rowIndent(depth)}
 					>
 						<button
 							type="button"
 							className="w-full cursor-pointer select-none"
 							aria-label={`Toggle ${title} section`}
 						>
-							<ChevronRight className="text-muted-foreground size-3.5 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+							<ChevronRight className="text-muted-foreground -ms-5 size-3.5 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-90" />
 							<span>{title}</span>
 						</button>
 					</SidebarGroupLabel>
 				</CollapsibleTrigger>
 				<CollapsibleContent>
-					{/* Extra left gap so child links clearly nest under the group
-					    label (the label's chevron sits in the gutter to its left). */}
-					<SidebarGroupContent className="pl-6">{children}</SidebarGroupContent>
+					<SidebarDepth>
+						<SidebarGroupContent>{children}</SidebarGroupContent>
+					</SidebarDepth>
 				</CollapsibleContent>
 			</SidebarGroup>
 		</Collapsible>

@@ -81,7 +81,7 @@ async function WhatsNewSection({
 				<SidebarGroupLabel className={CATEGORY_LABEL_CLASS}>
 					{title}
 				</SidebarGroupLabel>
-				<SidebarGroup className="py-0">
+				<SidebarGroup className="p-0">
 					<SidebarMenu>
 						{postLinks(items)}
 						<SidebarMenuItem>
@@ -121,7 +121,7 @@ async function SkillsNavSection({ title = 'Skills' }: { title?: string }) {
 
 		return (
 			<SidebarSection title={title}>
-				<SidebarGroup className="py-0">
+				<SidebarGroup className="p-0">
 					<SidebarMenu>
 						{entries.map((entry) => (
 							<SidebarMenuItem key={entry.id}>
@@ -213,7 +213,7 @@ async function TopicSectionInner({
 					// same indent as curated markdown children (which the MDX `- list`
 					// mapping nests in a SidebarGroup). Without this the "All" link is
 					// 8px shallower than its siblings — the topic-group inconsistency.
-					<SidebarGroup className="py-0">
+					<SidebarGroup className="p-0">
 						<SidebarMenu>
 							{postLinks(posts)}
 							{topicTag ? (

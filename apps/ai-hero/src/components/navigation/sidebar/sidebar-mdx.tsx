@@ -47,7 +47,7 @@ const sidebarMdxComponents = {
 		</SidebarGroupLabel>
 	),
 	ul: (props: { children?: React.ReactNode }) => (
-		<SidebarGroup className="py-0">
+		<SidebarGroup className="p-0">
 			<SidebarMenu className='gap-0'>{props.children}</SidebarMenu>
 		</SidebarGroup>
 	),

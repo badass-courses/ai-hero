@@ -17,6 +17,8 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { rowIndent, useSidebarDepth } from './sidebar-indent'
+
 /** Local path normalizer — kept here to avoid a cycle with sidebar-client. */
 function norm(path: string): string {
 	const trimmed = path.split(/[?#]/)[0]?.replace(/\/+$/, '') || ''
@@ -60,6 +62,7 @@ export function SeriesLessons({
 	className?: string
 }) {
 	const params = useParams()
+	const depth = useSidebarDepth()
 	const currentSlug =
 		typeof params.post === 'string' ? norm(`/${params.post}`) : undefined
 	const lessons = flattenLessons(resources)
@@ -78,14 +81,15 @@ export function SeriesLessons({
 					<SidebarMenuButton
 						asChild
 						isActive={overviewActive}
-						className="text-muted-foreground h-auto items-start gap-2 py-2 pl-2 pr-2 text-sm font-normal"
+						className="text-muted-foreground h-auto items-start gap-2 py-2 pr-2 text-sm font-normal"
+						style={rowIndent(depth)}
 					>
 						<Link href={overviewHref} prefetch={false}>
 							<span
 								aria-hidden
-								className="text-muted-foreground/60 flex h-5 w-4 shrink-0 items-center justify-center font-mono text-[11px]"
+								className="text-muted-foreground/60 flex h-5 w-4 shrink-0 items-center justify-center font-mono text-[11px] tabular-nums"
 							>
-								·
+								0
 							</span>
 							<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
 								Overview
@@ -104,7 +108,8 @@ export function SeriesLessons({
 						<SidebarMenuButton
 							asChild
 							isActive={isActive}
-							className="text-muted-foreground h-auto items-start gap-2 py-2 pl-2 pr-2 text-sm font-normal"
+							className="text-muted-foreground h-auto items-start gap-2 py-2 pr-2 text-sm font-normal"
+						style={rowIndent(depth)}
 						>
 							<Link
 								href={`/${slug}`}
@@ -130,7 +135,7 @@ export function SeriesLessons({
 									{isDone ? (
 										<Check className="size-3.5" strokeWidth={2.4} />
 									) : (
-										String(index + 1).padStart(2, '0')
+										index + 1
 									)}
 								</span>
 								<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
