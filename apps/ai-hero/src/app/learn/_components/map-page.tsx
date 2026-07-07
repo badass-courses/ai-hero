@@ -1,15 +1,11 @@
 import * as React from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
-import { ResourceGrid } from '@/components/landing/resource'
+import { ResourceRow } from '@/components/landing/resource-row'
 import type { MapTocItem } from '@/components/navigation/map-toc'
 import { MapToc } from '@/components/navigation/map-toc'
 import type { GoalSection } from '@/components/navigation/goal-sections-data'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import type { ResolvedItem } from '@/lib/goal-sections-query'
-import { Play } from 'lucide-react'
-
-import { cn } from '@coursebuilder/utils/cn'
 
 import { MoreWaysLink } from './more-ways-link'
 
@@ -57,69 +53,32 @@ function metaLabel(item: ResolvedItem): string {
 	return parts.join(' · ')
 }
 
-function formatDate(value?: Date | null): string | null {
-	if (!value) return null
-	const date = value instanceof Date ? value : new Date(value)
-	if (Number.isNaN(date.getTime())) return null
-	try {
-		return new Intl.DateTimeFormat('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric',
-		}).format(date)
-	} catch {
-		return null
-	}
-}
-
 const MONO_LABEL =
 	'font-mono text-[11px] font-medium uppercase tracking-wider opacity-60'
 
-function VideoBadge() {
+/**
+ * One list row for a resolved item — the landing `ResourceRow` (signature
+ * gradient-frame hover + arrow circle). Hub-sidebar pages use lists, never
+ * multi-column grids: the content column is too narrow (DESIGN / decisions.md
+ * "Hub-sidebar pages use lists, not grids").
+ */
+function ItemRow({
+	item,
+	summary,
+}: {
+	item: ResolvedItem
+	summary?: string
+}) {
 	return (
-		<span className="bg-background/90 text-foreground absolute left-3 top-3 inline-flex items-center gap-1 px-2 py-1 font-mono text-[10px] font-medium uppercase tracking-wider">
-			<Play aria-hidden className="size-3 shrink-0" />
-			Video
-		</span>
-	)
-}
-
-/** Goal-section item card. Thumbnail + type/duration + title + truncated description. */
-function GoalItemCard({ item }: { item: ResolvedItem }) {
-	return (
-		<Link
+		<ResourceRow
+			title={item.title}
+			description={summary ?? item.description ?? undefined}
 			href={item.href}
-			className="bg-background group flex h-full flex-col overflow-hidden transition hover:brightness-110"
-		>
-			<div
-				className={cn(
-					'relative aspect-video w-full overflow-hidden',
-					item.thumbnailUrl ? 'bg-muted' : 'bg-stripes',
-				)}
-			>
-				{item.thumbnailUrl ? (
-					<Image
-						src={item.thumbnailUrl}
-						alt={item.title}
-						fill
-						className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-						sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-					/>
-				) : null}
-				{item.isVideo ? <VideoBadge /> : null}
-			</div>
-			<div className="flex flex-1 flex-col gap-2 px-7 py-6">
-				{metaLabel(item) ? <p className={MONO_LABEL}>{metaLabel(item)}</p> : null}
-				<h3 className="text-lg font-semibold leading-snug tracking-tight text-balance">
-					{item.title}
-				</h3>
-				{item.description ? (
-					<p className="text-foreground/70 line-clamp-3 text-sm leading-relaxed">
-						{item.description}
-					</p>
-				) : null}
-			</div>
-		</Link>
+			image={item.thumbnailUrl ?? undefined}
+			typeLabel={metaLabel(item) || undefined}
+			badge={item.isVideo ? 'Video' : undefined}
+			fallbackPlaceholder={item.type ? capitalize(item.type) : undefined}
+		/>
 	)
 }
 
@@ -131,8 +90,8 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 			data-goal-section
 			className="border-b scroll-mt-24 py-16 md:py-24"
 		>
-			{/* Text keeps the side padding; the resource grid bleeds full-width to
-			    the container edges (DESIGN rule 1), like the landing rows. */}
+			{/* Text keeps the side padding; the row list bleeds full-width to the
+			    container edges (DESIGN rule 1), like the landing rows. */}
 			<div className="flex flex-col gap-6 md:gap-8">
 				<div className="flex flex-col gap-3 px-8 sm:px-16">
 					<h2 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
@@ -143,14 +102,14 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 					</p>
 				</div>
 
-				<ResourceGrid>
+				<div>
 					{items.map((item) => (
-						<GoalItemCard key={item.slug} item={item} />
+						<ItemRow key={item.slug} item={item} />
 					))}
-				</ResourceGrid>
+				</div>
 
 				{/* Footer: the signature "open" affordance for the whole topic, plus
-				    the optional skill CTA. Kept out of the grid so it stays packed. */}
+				    the optional skill CTA. */}
 				<div className="flex flex-wrap items-center gap-x-10 gap-y-4 px-8 sm:px-16">
 					<MoreWaysLink href={section.moreHref} label={section.moreLabel} />
 					{section.skillCta ? (
@@ -167,70 +126,8 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 	)
 }
 
-/** Featured What's New card — larger thumbnail + summary. */
-function FeaturedWhatsNewCard({ item }: { item: ResolvedItem }) {
-	const date = formatDate(item.publishedAt)
-	return (
-		<Link
-			href={item.href}
-			className="bg-background group flex h-full flex-col overflow-hidden transition hover:brightness-110"
-		>
-			<div
-				className={cn(
-					'relative aspect-video w-full overflow-hidden',
-					item.thumbnailUrl ? 'bg-muted' : 'bg-stripes',
-				)}
-			>
-				{item.thumbnailUrl ? (
-					<Image
-						src={item.thumbnailUrl}
-						alt={item.title}
-						fill
-						className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-						sizes="(min-width: 768px) 58vw, 100vw"
-					/>
-				) : null}
-				{item.isVideo ? <VideoBadge /> : null}
-			</div>
-			<div className="flex flex-1 flex-col gap-3 px-8 py-8">
-				<p className={MONO_LABEL}>
-					{[metaLabel(item), date].filter(Boolean).join(' · ')}
-				</p>
-				<h3 className="text-2xl font-semibold leading-tight tracking-tight text-balance sm:text-3xl">
-					{item.title}
-				</h3>
-				{item.summary ? (
-					<p className="text-foreground/70 max-w-[65ch] text-base leading-relaxed">
-						{item.summary}
-					</p>
-				) : null}
-			</div>
-		</Link>
-	)
-}
-
-/** Compact What's New card — meta + title, no thumbnail. */
-function CompactWhatsNewCard({ item }: { item: ResolvedItem }) {
-	const date = formatDate(item.publishedAt)
-	return (
-		<Link
-			href={item.href}
-			className="bg-background hover:bg-muted group flex flex-1 flex-col justify-center gap-2 px-7 py-6 transition-colors"
-		>
-			<p className={MONO_LABEL}>
-				{[metaLabel(item), date].filter(Boolean).join(' · ')}
-			</p>
-			<h3 className="text-lg font-semibold leading-snug tracking-tight text-balance">
-				{item.title}
-			</h3>
-		</Link>
-	)
-}
-
 function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
 	if (items.length === 0) return null
-	const [featured, ...rest] = items
-	const compact = rest.slice(0, 2)
 	return (
 		<section className="border-b py-16 md:py-24">
 			<div className="flex flex-col gap-6 md:gap-8">
@@ -249,15 +146,10 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
 					</Link>
 				</div>
 
-				<div className="border-border bg-border grid gap-px border-y md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-					{featured ? <FeaturedWhatsNewCard item={featured} /> : null}
-					{compact.length > 0 ? (
-						<div className="bg-border grid gap-px">
-							{compact.map((item) => (
-								<CompactWhatsNewCard key={item.slug} item={item} />
-							))}
-						</div>
-					) : null}
+				<div>
+					{items.map((item) => (
+						<ItemRow key={item.slug} item={item} summary={item.summary} />
+					))}
 				</div>
 			</div>
 		</section>
@@ -273,26 +165,18 @@ export function MapPage({
 }: MapPageProps) {
 	return (
 		<div>
-			{/* Hero */}
+			{/* Hero — single column (the hub content column is too narrow for a
+			    two-up split). Newsletter lives at the bookend below. */}
 			<section id="top" className="border-b">
-				<div className="grid gap-8 px-8 py-16 sm:px-16 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:items-start md:gap-16 md:py-24">
-					<div className="flex flex-col gap-6">
-						<p className={MONO_LABEL}>The Map</p>
-						<h1 className="text-4xl font-normal leading-[1.05] tracking-tight text-balance sm:text-5xl lg:text-6xl">
-							What would you like to do with AI coding?
-						</h1>
-						<p className="text-foreground/80 max-w-[55ch] text-base leading-relaxed sm:text-lg">
-							Not a catalog. A map. Pick the thing you&rsquo;re trying to do,
-							and follow the trail of articles, videos, and skills that get you
-							there.
-						</p>
-					</div>
-					<div className="w-full">
-						<PrimaryNewsletterCta
-							titleElement="h1"
-							trackProps={{ event: 'learn_hero_newsletter' }}
-						/>
-					</div>
+				<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
+					<p className={MONO_LABEL}>The Map</p>
+					<h1 className="text-4xl font-normal leading-[1.05] tracking-tight text-balance sm:text-5xl">
+						What would you like to do with AI coding?
+					</h1>
+					<p className="text-foreground/80 max-w-[60ch] text-lg leading-relaxed">
+						Not a catalog. A map. Pick the thing you&rsquo;re trying to do, and
+						follow the trail of articles, videos, and skills that get you there.
+					</p>
 				</div>
 			</section>
 
