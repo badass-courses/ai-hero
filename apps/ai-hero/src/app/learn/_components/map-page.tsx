@@ -7,9 +7,11 @@ import { MapToc } from '@/components/navigation/map-toc'
 import type { GoalSection } from '@/components/navigation/goal-sections-data'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import type { ResolvedItem } from '@/lib/goal-sections-query'
-import { ArrowUp, Play } from 'lucide-react'
+import { Play } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
+
+import { MoreWaysLink } from './more-ways-link'
 
 /**
  * MapPage — presentational composition for the `/learn` Map page (W3, spec §3).
@@ -121,21 +123,6 @@ function GoalItemCard({ item }: { item: ResolvedItem }) {
 	)
 }
 
-/** Trailing "More ways to X →" card — a plain grid cell so ResourceGrid's filler math stays correct. */
-function MoreWaysCard({ href, label }: { href: string; label: string }) {
-	return (
-		<Link
-			href={href}
-			className="bg-background hover:bg-muted group flex h-full min-h-[12rem] flex-col justify-between gap-6 px-7 py-6 transition-colors"
-		>
-			<span className={MONO_LABEL}>More</span>
-			<span className="text-foreground group-hover:text-foreground inline-flex items-center gap-2 text-lg font-semibold leading-snug tracking-tight">
-				{label}
-			</span>
-		</Link>
-	)
-}
-
 function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 	const { section, items } = goal
 	return (
@@ -154,32 +141,20 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 					{items.map((item) => (
 						<GoalItemCard key={item.slug} item={item} />
 					))}
-					<MoreWaysCard
-						key="more-ways"
-						href={section.moreHref}
-						label={section.moreLabel}
-					/>
 				</ResourceGrid>
 
-				{section.skillCta ? (
-					<div>
+				{/* Footer: the signature "open" affordance for the whole topic, plus
+				    the optional skill CTA. Kept out of the grid so it stays packed. */}
+				<div className="flex flex-wrap items-center gap-x-10 gap-y-4">
+					<MoreWaysLink href={section.moreHref} label={section.moreLabel} />
+					{section.skillCta ? (
 						<Link
 							href={section.skillCta.href}
 							className="focus-visible:ring-ring hover:bg-muted inline-flex items-center gap-2 border px-4 py-2.5 text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 						>
 							{section.skillCta.label}
 						</Link>
-					</div>
-				) : null}
-
-				<div>
-					<a
-						href="#top"
-						className="text-foreground/60 hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1.5 text-sm tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2"
-					>
-						<ArrowUp aria-hidden className="size-3.5 shrink-0" />
-						top
-					</a>
+					) : null}
 				</div>
 			</div>
 		</section>
@@ -234,7 +209,7 @@ function CompactWhatsNewCard({ item }: { item: ResolvedItem }) {
 	return (
 		<Link
 			href={item.href}
-			className="bg-background hover:bg-muted group flex flex-1 flex-col justify-center gap-2 px-8 py-6 transition-colors"
+			className="bg-background hover:bg-muted group flex flex-1 flex-col justify-center gap-2 px-7 py-6 transition-colors"
 		>
 			<p className={MONO_LABEL}>
 				{[metaLabel(item), date].filter(Boolean).join(' · ')}
@@ -294,7 +269,7 @@ export function MapPage({
 		<div>
 			{/* Hero */}
 			<section id="top" className="border-b">
-				<div className="grid gap-8 px-8 py-16 sm:px-16 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:items-center md:gap-16 md:py-24">
+				<div className="grid gap-8 px-8 py-16 sm:px-16 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:items-start md:gap-16 md:py-24">
 					<div className="flex flex-col gap-6">
 						<p className={MONO_LABEL}>The Map</p>
 						<h1 className="text-4xl font-normal leading-[1.05] tracking-tight text-balance sm:text-5xl lg:text-6xl">
