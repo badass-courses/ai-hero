@@ -62,7 +62,10 @@ export function SidebarNavLink({
 		<>
 			<SidebarMenuButton
 				asChild
-				isActive={isActive}
+				// When this link is the expanded current list, it reads as a group
+				// header — the active highlight belongs to its "Overview" child, not
+				// the parent. Otherwise, normal active state.
+				isActive={isCurrentList ? false : isActive}
 				// Links read as the secondary tier: muted, regular weight, indented
 				// under the bold group label, with comfortable vertical rhythm. Hover
 				// + active states (accent bg + foreground) come from the primitive.
