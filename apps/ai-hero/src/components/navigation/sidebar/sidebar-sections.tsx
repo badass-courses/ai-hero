@@ -68,17 +68,20 @@ async function WhatsNewSection({
 
 		if (items.length === 0) return null
 
+		// No SidebarSection wrapper: "What's New" is a non-collapsible category
+		// whose small-caps heading comes from the MDX (`## What's New`). Render
+		// just the link list, indented one group deep like the other sections.
 		return (
-			<SidebarSection title={title}>
+			<SidebarGroup className="py-0">
 				<SidebarMenu>
 					{postLinks(items)}
 					<SidebarMenuItem>
-						<SidebarNavLink href="/posts" muted>
-							See all
+						<SidebarNavLink href="/posts" muted ariaLabel="See all posts">
+							All
 						</SidebarNavLink>
 					</SidebarMenuItem>
 				</SidebarMenu>
-			</SidebarSection>
+			</SidebarGroup>
 		)
 	} catch (error) {
 		void log.error('hub-sidebar.whats-new.error', {
@@ -108,20 +111,22 @@ async function SkillsNavSection({ title = 'Skills' }: { title?: string }) {
 
 		return (
 			<SidebarSection title={title}>
-				<SidebarMenu>
-					{entries.map((entry) => (
-						<SidebarMenuItem key={entry.id}>
-							<SidebarNavLink href={`/${entry.slug}`}>
-								{entry.title}
+				<SidebarGroup className="py-0">
+					<SidebarMenu>
+						{entries.map((entry) => (
+							<SidebarMenuItem key={entry.id}>
+								<SidebarNavLink href={`/${entry.slug}`}>
+									{entry.title}
+								</SidebarNavLink>
+							</SidebarMenuItem>
+						))}
+						<SidebarMenuItem>
+							<SidebarNavLink href="/skills" muted ariaLabel="All skills">
+								All
 							</SidebarNavLink>
 						</SidebarMenuItem>
-					))}
-					<SidebarMenuItem>
-						<SidebarNavLink href="/skills" muted>
-							All skills
-						</SidebarNavLink>
-					</SidebarMenuItem>
-				</SidebarMenu>
+					</SidebarMenu>
+				</SidebarGroup>
 			</SidebarSection>
 		)
 	} catch (error) {
@@ -194,16 +199,26 @@ async function TopicSectionInner({
 			<SidebarSection title={title}>
 				{children}
 				{posts.length > 0 || topicTag ? (
-					<SidebarMenu>
-						{postLinks(posts)}
-						{topicTag ? (
-							<SidebarMenuItem>
-								<SidebarNavLink href={`/topics/${topicTag.fields.slug}`} muted>
-									All {title}
-								</SidebarNavLink>
-							</SidebarMenuItem>
-						) : null}
-					</SidebarMenu>
+					// Wrapped in a SidebarGroup so the server posts + "All" sit at the
+					// same indent as curated markdown children (which the MDX `- list`
+					// mapping nests in a SidebarGroup). Without this the "All" link is
+					// 8px shallower than its siblings — the topic-group inconsistency.
+					<SidebarGroup className="py-0">
+						<SidebarMenu>
+							{postLinks(posts)}
+							{topicTag ? (
+								<SidebarMenuItem>
+									<SidebarNavLink
+										href={`/topics/${topicTag.fields.slug}`}
+										muted
+										ariaLabel={`All ${title}`}
+									>
+										All
+									</SidebarNavLink>
+								</SidebarMenuItem>
+							) : null}
+						</SidebarMenu>
+					</SidebarGroup>
 				) : null}
 			</SidebarSection>
 		)

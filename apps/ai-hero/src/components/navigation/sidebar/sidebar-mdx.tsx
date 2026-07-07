@@ -28,25 +28,27 @@ import { SkillsNav, TopicSection, WhatsNew } from './sidebar-sections'
  * - `---`                   → separator
  */
 const sidebarMdxComponents = {
-	// Headings all render as group labels — the sidebar has no heading scale.
+	// Headings are the top tier: small-caps category labels that "group groups"
+	// (Explore, Tentpoles, What's New, Topics). Non-collapsible. The collapsible
+	// topic groups (bold, `SidebarSection`) nest under the Topics heading.
 	h1: (props: { children?: React.ReactNode }) => (
-		<SidebarGroupLabel className="px-4 pt-3">
+		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
 			{props.children}
 		</SidebarGroupLabel>
 	),
 	h2: (props: { children?: React.ReactNode }) => (
-		<SidebarGroupLabel className="px-4 pt-3">
+		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
 			{props.children}
 		</SidebarGroupLabel>
 	),
 	h3: (props: { children?: React.ReactNode }) => (
-		<SidebarGroupLabel className="px-4 pt-3">
+		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
 			{props.children}
 		</SidebarGroupLabel>
 	),
 	ul: (props: { children?: React.ReactNode }) => (
-		<SidebarGroup className="py-1">
-			<SidebarMenu>{props.children}</SidebarMenu>
+		<SidebarGroup className="py-0">
+			<SidebarMenu className='gap-0'>{props.children}</SidebarMenu>
 		</SidebarGroup>
 	),
 	li: (props: { children?: React.ReactNode }) => (

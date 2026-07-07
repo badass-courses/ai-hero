@@ -6,28 +6,34 @@
  * separately hand-modeled one. This constant is the repo's canonical copy and
  * the seed the CMS page is created from — keep it in sync with that page.
  *
+ * Structure (two tiers):
+ * - `## Heading` → small-caps, non-collapsible CATEGORY label that groups
+ *   groups (Explore, Tentpoles, What's New, Topics).
+ * - `<TopicSection>` / `<SkillsNav>` → collapsible topic groups nested under
+ *   the Topics category; collapsed by default, auto-open when a child is active.
+ *
  * Authoring notes (component vocabulary, the tutorial-links-are-lists caveat)
  * live in `content-ops/hub-sidebar-seed.mdx` in the project working hub; only
  * the renderable body is embedded here.
  */
-export const HUB_SIDEBAR_FALLBACK_MDX = `<SidebarSection title="Explore">
+export const HUB_SIDEBAR_FALLBACK_MDX = `## Explore
 
 - [Map](/learn)
 - [Principles](/principles)
 - [Skills](/skills)
 - [Tools](/tools)
 
-</SidebarSection>
-
-<SidebarSection title="Tentpoles">
+## Tentpoles
 
 - [LLM Fundamentals](/llm-fundamentals)
 - [AI Engineer Roadmap](/ai-engineer-roadmap)
 - [AI Coding Dictionary](/ai-coding-dictionary)
 
-</SidebarSection>
+## What's New
 
-<WhatsNew title="What's New" />
+<WhatsNew />
+
+## Topics
 
 <TopicSection tag="think-like-an-ai-engineer" label="Think Like an AI Engineer">
 
