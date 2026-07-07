@@ -13,9 +13,9 @@ import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import type {
-	ReminderItem,
-	ReminderSchedule,
+	AttachedEmail,
 	ResourceAction,
+	SendPolicy,
 } from '@coursebuilder/ui/cms/manifest'
 
 /**
@@ -74,15 +74,14 @@ export async function updateEvent(
 }
 
 /**
- * The event's attached reminder emails WITH their join-metadata schedule —
- * the shape `RemindersField` renders (`getEventReminderEmails` returns the
- * email resources only and drops the schedule). Mirrors `listCohortReminders`
- * with the `event-reminder` metadata type; events store `hoursInAdvance`
- * only (no exact `sendAt` in the event model).
+ * The event's attached emails WITH their join-metadata send policy + send log —
+ * the shape `EmailsField` renders. Mirrors `listCohortReminders` with the
+ * `event-reminder` metadata type; events store `hoursInAdvance` only, but an
+ * exact `sendAt` is honored if present so the field can round-trip it.
  */
 export async function listEventReminders(
 	eventId: string,
-): Promise<ReminderItem[]> {
+): Promise<AttachedEmail[]> {
 	await assertCanUpdateContent()
 
 	const refs = await db.query.contentResourceResource.findMany({
@@ -102,14 +101,37 @@ export async function listEventReminders(
 		.map((ref) => {
 			const fields = (ref.resource.fields ?? {}) as Record<string, any>
 			const metadata = (ref.metadata ?? {}) as Record<string, any>
+			const hoursInAdvance =
+				typeof metadata.hoursInAdvance === 'number'
+					? metadata.hoursInAdvance
+					: undefined
+			const sendAt =
+				typeof metadata.sendAt === 'string' ? metadata.sendAt : null
+			// A fired send stamps `policy: null` explicitly (cleared) — honor that;
+			// otherwise derive: exact `sendAt` → 'at', else `hoursInAdvance` →
+			// 'relative', else nothing scheduled.
+			const policy: AttachedEmail['policy'] =
+				'policy' in metadata
+					? metadata.policy
+					: sendAt
+						? 'at'
+						: hoursInAdvance !== undefined
+							? 'relative'
+							: null
 			return {
 				emailId: ref.resource.id,
 				title: fields.title ?? ref.resource.id,
 				href: fields.slug ? `/admin/emails/${fields.slug}/edit` : undefined,
-				hoursInAdvance:
-					typeof metadata.hoursInAdvance === 'number'
-						? metadata.hoursInAdvance
-						: undefined,
+				// Content for the in-place "Edit email" dialog prefill.
+				subject:
+					typeof fields.subject === 'string' ? fields.subject : undefined,
+				body: typeof fields.body === 'string' ? fields.body : undefined,
+				// Gate schedule fields on the resolved policy so a cleared row reads
+				// as "Not scheduled" rather than surfacing a stale time.
+				hoursInAdvance: policy === 'relative' ? hoursInAdvance : undefined,
+				sendAt: policy === 'at' ? sendAt : null,
+				policy,
+				sends: Array.isArray(metadata.sends) ? metadata.sends : [],
 			}
 		})
 }
@@ -118,7 +140,7 @@ export async function listEventReminders(
 export async function attachEventReminder(
 	eventId: string,
 	emailId: string,
-	schedule?: ReminderSchedule,
+	schedule?: SendPolicy,
 ) {
 	await assertCanUpdateContent()
 	await attachReminderEmailToEvent(eventId, emailId, schedule?.hoursInAdvance)
@@ -138,7 +160,7 @@ export async function detachEventReminder(eventId: string, emailId: string) {
 export async function updateEventReminderSchedule(
 	eventId: string,
 	emailId: string,
-	schedule: ReminderSchedule,
+	schedule: SendPolicy,
 ) {
 	await assertCanUpdateContent()
 	const updated = await updateReminderEmailHours(

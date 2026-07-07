@@ -14,9 +14,9 @@ import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import type {
+	AttachedEmail,
 	ContentsItem,
 	ContentsTier,
-	ReminderItem,
 	ResourceAction,
 } from '@coursebuilder/ui/cms/manifest'
 
@@ -111,13 +111,13 @@ export async function listCohortWorkshops(
 }
 
 /**
- * The cohort's attached reminder emails WITH their join-metadata schedule —
- * the shape `RemindersField` renders (`getCohortReminderEmails` returns the
- * email resources only and drops the schedule).
+ * The cohort's attached emails WITH their join-metadata send policy + send log —
+ * the shape `EmailsField` renders. Cohorts support an exact `sendAt` (policy
+ * `'at'`) in addition to relative `hoursInAdvance`.
  */
 export async function listCohortReminders(
 	cohortId: string,
-): Promise<ReminderItem[]> {
+): Promise<AttachedEmail[]> {
 	await assertCanUpdateContent()
 
 	const refs = await db.query.contentResourceResource.findMany({
@@ -137,15 +137,37 @@ export async function listCohortReminders(
 		.map((ref) => {
 			const fields = (ref.resource.fields ?? {}) as Record<string, any>
 			const metadata = (ref.metadata ?? {}) as Record<string, any>
+			const hoursInAdvance =
+				typeof metadata.hoursInAdvance === 'number'
+					? metadata.hoursInAdvance
+					: undefined
+			const sendAt =
+				typeof metadata.sendAt === 'string' ? metadata.sendAt : null
+			// A fired send stamps `policy: null` explicitly (cleared) — honor that;
+			// otherwise derive: exact `sendAt` → 'at', else `hoursInAdvance` →
+			// 'relative', else nothing scheduled.
+			const policy: AttachedEmail['policy'] =
+				'policy' in metadata
+					? metadata.policy
+					: sendAt
+						? 'at'
+						: hoursInAdvance !== undefined
+							? 'relative'
+							: null
 			return {
 				emailId: ref.resource.id,
 				title: fields.title ?? ref.resource.id,
 				href: fields.slug ? `/admin/emails/${fields.slug}/edit` : undefined,
-				hoursInAdvance:
-					typeof metadata.hoursInAdvance === 'number'
-						? metadata.hoursInAdvance
-						: undefined,
-				sendAt: typeof metadata.sendAt === 'string' ? metadata.sendAt : null,
+				// Content for the in-place "Edit email" dialog prefill.
+				subject:
+					typeof fields.subject === 'string' ? fields.subject : undefined,
+				body: typeof fields.body === 'string' ? fields.body : undefined,
+				// Gate schedule fields on the resolved policy so a cleared row reads
+				// as "Not scheduled" rather than surfacing a stale time.
+				hoursInAdvance: policy === 'relative' ? hoursInAdvance : undefined,
+				sendAt: policy === 'at' ? sendAt : null,
+				policy,
+				sends: Array.isArray(metadata.sends) ? metadata.sends : [],
 			}
 		})
 }
