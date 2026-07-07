@@ -89,11 +89,15 @@ export function SidebarNavLink({
 						})
 					}
 				>
-					{Icon ? <Icon active={isActive} className="size-4 shrink-0" /> : null}
-					<span>{children}</span>
+					{/* Expanded current-list link reads as a group header — same LEFT
+					    disclosure chevron (in the gutter) as a topic group. */}
 					{isCurrentList ? (
-						<ChevronRight className="text-muted-foreground ml-auto size-3.5 shrink-0 rotate-90" />
-					) : muted ? (
+						<ChevronRight className="text-muted-foreground -ms-5 size-3.5 shrink-0 rotate-90" />
+					) : Icon ? (
+						<Icon active={isActive} className="size-4 shrink-0" />
+					) : null}
+					<span>{children}</span>
+					{muted && !isCurrentList ? (
 						/* "All →" style link: an inline arrow, a small child action. */
 						<ArrowRight className="size-3.5 shrink-0 opacity-70" />
 					) : null}
