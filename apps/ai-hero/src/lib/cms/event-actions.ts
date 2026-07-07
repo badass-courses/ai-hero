@@ -8,6 +8,7 @@ import {
 	getEvent,
 	updateReminderEmailHours,
 } from '@/lib/events-query'
+import { toAttachedEmail } from '@/lib/cms/attached-email-mapping'
 import { updateResource } from '@/lib/resources-query'
 import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, sql } from 'drizzle-orm'
@@ -98,42 +99,7 @@ export async function listEventReminders(
 
 	return refs
 		.filter((ref) => ref.resource?.type === 'email' && !ref.resource.deletedAt)
-		.map((ref) => {
-			const fields = (ref.resource.fields ?? {}) as Record<string, any>
-			const metadata = (ref.metadata ?? {}) as Record<string, any>
-			const hoursInAdvance =
-				typeof metadata.hoursInAdvance === 'number'
-					? metadata.hoursInAdvance
-					: undefined
-			const sendAt =
-				typeof metadata.sendAt === 'string' ? metadata.sendAt : null
-			// A fired send stamps `policy: null` explicitly (cleared) — honor that;
-			// otherwise derive: exact `sendAt` → 'at', else `hoursInAdvance` →
-			// 'relative', else nothing scheduled.
-			const policy: AttachedEmail['policy'] =
-				'policy' in metadata
-					? metadata.policy
-					: sendAt
-						? 'at'
-						: hoursInAdvance !== undefined
-							? 'relative'
-							: null
-			return {
-				emailId: ref.resource.id,
-				title: fields.title ?? ref.resource.id,
-				href: fields.slug ? `/admin/emails/${fields.slug}/edit` : undefined,
-				// Content for the in-place "Edit email" dialog prefill.
-				subject:
-					typeof fields.subject === 'string' ? fields.subject : undefined,
-				body: typeof fields.body === 'string' ? fields.body : undefined,
-				// Gate schedule fields on the resolved policy so a cleared row reads
-				// as "Not scheduled" rather than surfacing a stale time.
-				hoursInAdvance: policy === 'relative' ? hoursInAdvance : undefined,
-				sendAt: policy === 'at' ? sendAt : null,
-				policy,
-				sends: Array.isArray(metadata.sends) ? metadata.sends : [],
-			}
-		})
+		.map((ref) => toAttachedEmail(ref.resource, ref.metadata))
 }
 
 /** Auth-gated wrapper — legacy guarded this behind a tRPC protectedProcedure. */
