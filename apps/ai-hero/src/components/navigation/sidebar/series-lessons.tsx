@@ -83,7 +83,7 @@ export function SeriesLessons({
 						<Link href={overviewHref} prefetch={false}>
 							<span
 								aria-hidden
-								className="text-muted-foreground/60 flex w-4 shrink-0 justify-center pt-px font-mono text-[11px]"
+								className="text-muted-foreground/60 flex h-5 w-4 shrink-0 items-center justify-center font-mono text-[11px]"
 							>
 								·
 							</span>
@@ -121,7 +121,7 @@ export function SeriesLessons({
 								<span
 									aria-hidden
 									className={cn(
-										'flex w-4 shrink-0 justify-center pt-px font-mono text-[11px] tabular-nums',
+										'flex h-5 w-4 shrink-0 items-center justify-center font-mono text-[11px] tabular-nums',
 										isDone
 											? 'text-foreground dark:text-primary'
 											: 'text-muted-foreground/60',

@@ -105,12 +105,12 @@ export default async function ListPage(props: {
 					)}
 					<div className="flex flex-wrap items-center gap-3 pt-2">
 						{firstResourceHref && (
-							<Button asChild size="lg" className="rounded-none">
+							<Button asChild size="lg" className="rounded-full">
 								<Link href={firstResourceHref}>Start Learning</Link>
 							</Button>
 						)}
 						{list.fields?.github && (
-							<Button asChild variant="outline" size="lg" className="rounded-none">
+							<Button asChild variant="outline" size="lg" className="rounded-full">
 								<Link href={list.fields.github} target="_blank">
 									<Github className="mr-2 size-4" /> Code
 								</Link>
@@ -118,7 +118,7 @@ export default async function ListPage(props: {
 						)}
 						<Dialog>
 							<DialogTrigger asChild>
-								<Button variant="ghost" size="lg" className="rounded-none">
+								<Button variant="ghost" size="lg" className="rounded-full">
 									<Share2 className="mr-2 size-4" /> Share
 								</Button>
 							</DialogTrigger>
