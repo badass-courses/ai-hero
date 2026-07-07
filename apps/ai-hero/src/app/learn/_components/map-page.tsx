@@ -88,12 +88,12 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 		<section
 			id={section.id}
 			data-goal-section
-			className="border-b scroll-mt-24 py-16 md:py-24"
+			className="border-b scroll-mt-24"
 		>
 			{/* Text keeps the side padding; the row list bleeds full-width to the
 			    container edges (DESIGN rule 1), like the landing rows. */}
-			<div className="flex flex-col gap-6 md:gap-8">
-				<div className="flex flex-col gap-3 px-8 sm:px-16">
+			<div className="flex flex-col">
+				<div className="flex flex-col gap-3 px-8 sm:px-16 py-16">
 					<h2 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
 						{section.question}
 					</h2>
@@ -110,12 +110,12 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 
 				{/* Footer: the signature "open" affordance for the whole topic, plus
 				    the optional skill CTA. */}
-				<div className="flex flex-wrap items-center gap-x-10 gap-y-4 px-8 sm:px-16">
+				<div className="flex flex-wrap items-center gap-x-10 gap-y-4 px-8 sm:px-16 py-8">
 					<MoreWaysLink href={section.moreHref} label={section.moreLabel} />
 					{section.skillCta ? (
 						<Link
 							href={section.skillCta.href}
-							className="focus-visible:ring-ring hover:bg-muted inline-flex items-center gap-2 border px-4 py-2.5 text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+							className="focus-visible:ring-ring hover:bg-muted flex w-full items-center gap-2 border px-4 py-2.5 text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 						>
 							{section.skillCta.label}
 						</Link>

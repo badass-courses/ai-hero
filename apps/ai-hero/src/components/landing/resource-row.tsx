@@ -72,7 +72,7 @@ export function ResourceRow({
 			<div className="relative flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:gap-8 sm:px-14 sm:py-10">
 				<div
 					className={cn(
-						'relative aspect-video w-full shrink-0 overflow-hidden sm:w-60',
+						'relative aspect-video w-full shrink-0 rounded overflow-hidden sm:w-60',
 						image ? 'bg-muted' : 'bg-stripes',
 					)}
 				>
@@ -95,17 +95,17 @@ export function ResourceRow({
 						<div className="flex flex-wrap items-center gap-3">
 							{renderedBadge && <span>{renderedBadge}</span>}
 							{typeLabel && (
-								<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+								<span className="font-mono text-[11px] font-medium uppercase tracking-wider z-10 relative">
 									{typeLabel}
 								</span>
 							)}
 						</div>
 					)}
-					<h3 className="text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">
+					<h3 className="text-2xl font-semibold leading-tight tracking-tight sm:text-2xl">
 						{title}
 					</h3>
 					{description && (
-						<div className="[&_code]:bg-muted text-balance text-sm leading-relaxed opacity-80 sm:text-base [&_a]:underline [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm">
+						<div className="[&_code]:bg-muted text-balance text-sm leading-normal opacity-80 sm:text-sm [&_a]:underline [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm">
 							<ReactMarkdown
 								components={{
 									p: ({ children }) => <>{children}</>,
