@@ -52,7 +52,13 @@ export function SidebarNavLink({
 	const depth = useSidebarDepth()
 	const { list } = useList()
 	const { progress } = useProgress()
-	const isActive = normalizePath(href) === normalizePath(pathname ?? '/')
+	// List precedence: when the current post belongs to a list, ONLY the list's
+	// own expansion (SeriesLessons) highlights it — a copy of the same post in a
+	// Topic stays un-highlighted. See decisions.md "Series posts keep the hub
+	// sidebar" (list > topic).
+	const listActive = Boolean(list)
+	const isActive =
+		!listActive && normalizePath(href) === normalizePath(pathname ?? '/')
 	const Icon = NAV_ICONS[normalizePath(href)]
 
 	// Hybrid series nav: when this link IS the current list's landing page, it
@@ -148,17 +154,23 @@ export function SidebarSection({
 }) {
 	const pathname = usePathname()
 	const depth = useSidebarDepth()
+	const { list } = useList()
+	// List precedence: if the active post belongs to a list, its list group owns
+	// the open/highlight — Topics that merely also contain it don't auto-open.
+	// (A Topic the user opens by hand still stays open; this only governs auto.)
+	const listActive = Boolean(list)
 	const hrefs = React.useMemo(() => collectHrefs(children), [children])
 	const activeInside = React.useMemo(
 		() =>
+			!listActive &&
 			hrefs.some(
 				(href) => normalizePath(href) === normalizePath(pathname ?? '/'),
 			),
-		[hrefs, pathname],
+		[hrefs, pathname, listActive],
 	)
 	const [open, setOpen] = React.useState(defaultOpen || activeInside)
-	// Stay open around the active page: expand when navigation lands on one of
-	// this section's links (and never auto-collapse it out from under the user).
+	// Expand when navigation lands on one of this section's links (never
+	// auto-collapse it out from under the user).
 	React.useEffect(() => {
 		if (activeInside) setOpen(true)
 	}, [activeInside])
