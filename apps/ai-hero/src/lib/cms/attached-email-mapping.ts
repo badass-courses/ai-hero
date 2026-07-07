@@ -13,8 +13,11 @@ export function toAttachedEmail(
 ): AttachedEmail {
 	const fields = (resource.fields ?? {}) as Record<string, any>
 	const md = (metadata ?? {}) as Record<string, any>
-	const hoursInAdvance =
-		typeof md.hoursInAdvance === 'number' ? md.hoursInAdvance : undefined
+	// `Number.isFinite` (not `typeof === 'number'`) so a corrupted NaN/Infinity in
+	// the join row can't resolve to a "scheduled" reminder the sender then skips.
+	const hoursInAdvance = Number.isFinite(md.hoursInAdvance)
+		? (md.hoursInAdvance as number)
+		: undefined
 	const sendAt = typeof md.sendAt === 'string' ? md.sendAt : null
 	// Honor an explicitly stored policy ONLY when it's legal AND consistent with
 	// the field it implies — 'at' needs a real `sendAt`, 'relative' needs a real
