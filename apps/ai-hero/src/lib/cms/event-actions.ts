@@ -8,14 +8,15 @@ import {
 	getEvent,
 	updateReminderEmailHours,
 } from '@/lib/events-query'
+import { toAttachedEmail } from '@/lib/cms/attached-email-mapping'
 import { updateResource } from '@/lib/resources-query'
 import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import type {
-	ReminderItem,
-	ReminderSchedule,
+	AttachedEmail,
 	ResourceAction,
+	SendPolicy,
 } from '@coursebuilder/ui/cms/manifest'
 
 /**
@@ -74,15 +75,14 @@ export async function updateEvent(
 }
 
 /**
- * The event's attached reminder emails WITH their join-metadata schedule —
- * the shape `RemindersField` renders (`getEventReminderEmails` returns the
- * email resources only and drops the schedule). Mirrors `listCohortReminders`
- * with the `event-reminder` metadata type; events store `hoursInAdvance`
- * only (no exact `sendAt` in the event model).
+ * The event's attached emails WITH their join-metadata send policy + send log —
+ * the shape `EmailsField` renders. Mirrors `listCohortReminders` with the
+ * `event-reminder` metadata type; events store `hoursInAdvance` only, but an
+ * exact `sendAt` is honored if present so the field can round-trip it.
  */
 export async function listEventReminders(
 	eventId: string,
-): Promise<ReminderItem[]> {
+): Promise<AttachedEmail[]> {
 	await assertCanUpdateContent()
 
 	const refs = await db.query.contentResourceResource.findMany({
@@ -99,26 +99,14 @@ export async function listEventReminders(
 
 	return refs
 		.filter((ref) => ref.resource?.type === 'email' && !ref.resource.deletedAt)
-		.map((ref) => {
-			const fields = (ref.resource.fields ?? {}) as Record<string, any>
-			const metadata = (ref.metadata ?? {}) as Record<string, any>
-			return {
-				emailId: ref.resource.id,
-				title: fields.title ?? ref.resource.id,
-				href: fields.slug ? `/admin/emails/${fields.slug}/edit` : undefined,
-				hoursInAdvance:
-					typeof metadata.hoursInAdvance === 'number'
-						? metadata.hoursInAdvance
-						: undefined,
-			}
-		})
+		.map((ref) => toAttachedEmail(ref.resource, ref.metadata))
 }
 
 /** Auth-gated wrapper — legacy guarded this behind a tRPC protectedProcedure. */
 export async function attachEventReminder(
 	eventId: string,
 	emailId: string,
-	schedule?: ReminderSchedule,
+	schedule?: SendPolicy,
 ) {
 	await assertCanUpdateContent()
 	await attachReminderEmailToEvent(eventId, emailId, schedule?.hoursInAdvance)
@@ -138,7 +126,7 @@ export async function detachEventReminder(eventId: string, emailId: string) {
 export async function updateEventReminderSchedule(
 	eventId: string,
 	emailId: string,
-	schedule: ReminderSchedule,
+	schedule: SendPolicy,
 ) {
 	await assertCanUpdateContent()
 	const updated = await updateReminderEmailHours(

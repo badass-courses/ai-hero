@@ -8,15 +8,16 @@ import {
 	updateReminderEmailScheduleForCohort,
 	type CohortReminderSchedule,
 } from '@/lib/cohort-email-reminders-query'
+import { toAttachedEmail } from '@/lib/cms/attached-email-mapping'
 import { getCohort } from '@/lib/cohorts-query'
 import { updateResource } from '@/lib/resources-query'
 import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import type {
+	AttachedEmail,
 	ContentsItem,
 	ContentsTier,
-	ReminderItem,
 	ResourceAction,
 } from '@coursebuilder/ui/cms/manifest'
 
@@ -111,13 +112,13 @@ export async function listCohortWorkshops(
 }
 
 /**
- * The cohort's attached reminder emails WITH their join-metadata schedule —
- * the shape `RemindersField` renders (`getCohortReminderEmails` returns the
- * email resources only and drops the schedule).
+ * The cohort's attached emails WITH their join-metadata send policy + send log —
+ * the shape `EmailsField` renders. Cohorts support an exact `sendAt` (policy
+ * `'at'`) in addition to relative `hoursInAdvance`.
  */
 export async function listCohortReminders(
 	cohortId: string,
-): Promise<ReminderItem[]> {
+): Promise<AttachedEmail[]> {
 	await assertCanUpdateContent()
 
 	const refs = await db.query.contentResourceResource.findMany({
@@ -134,20 +135,7 @@ export async function listCohortReminders(
 
 	return refs
 		.filter((ref) => ref.resource?.type === 'email' && !ref.resource.deletedAt)
-		.map((ref) => {
-			const fields = (ref.resource.fields ?? {}) as Record<string, any>
-			const metadata = (ref.metadata ?? {}) as Record<string, any>
-			return {
-				emailId: ref.resource.id,
-				title: fields.title ?? ref.resource.id,
-				href: fields.slug ? `/admin/emails/${fields.slug}/edit` : undefined,
-				hoursInAdvance:
-					typeof metadata.hoursInAdvance === 'number'
-						? metadata.hoursInAdvance
-						: undefined,
-				sendAt: typeof metadata.sendAt === 'string' ? metadata.sendAt : null,
-			}
-		})
+		.map((ref) => toAttachedEmail(ref.resource, ref.metadata))
 }
 
 /** Auth-gated wrapper — legacy guarded this behind a tRPC protectedProcedure. */

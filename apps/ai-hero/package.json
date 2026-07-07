@@ -74,7 +74,7 @@
 		"@coursebuilder/next": "^0.0.33",
 		"@coursebuilder/nodash": "^0.0.3",
 		"@coursebuilder/survey": "^1.0.5",
-		"@coursebuilder/ui": "^2.2.0",
+		"@coursebuilder/ui": "^2.2.1",
 		"@coursebuilder/utils": "^1.0.3",
 		"@fal-ai/client": "^1.6.0",
 		"@fontsource/inter": "^5.0.16",
