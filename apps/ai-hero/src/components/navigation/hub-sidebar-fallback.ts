@@ -8,7 +8,7 @@
  *
  * Structure (two tiers):
  * - `## Heading` → small-caps, non-collapsible CATEGORY label that groups
- *   groups (Explore, Tentpoles, What's New, Topics).
+ *   groups (Explore, Guides, What's New, Topics).
  * - `<TopicSection>` / `<SkillsNav>` → collapsible topic groups nested under
  *   the Topics category; collapsed by default, auto-open when a child is active.
  *
@@ -23,7 +23,7 @@ export const HUB_SIDEBAR_FALLBACK_MDX = `## Explore
 - [Skills](/skills)
 - [Tools](/tools)
 
-## Tentpoles
+## Guides
 
 - [LLM Fundamentals](/llm-fundamentals)
 - [AI Engineer Roadmap](/ai-engineer-roadmap)

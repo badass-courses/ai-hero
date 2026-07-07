@@ -29,7 +29,7 @@ import { SkillsNav, TopicSection, WhatsNew } from './sidebar-sections'
  */
 const sidebarMdxComponents = {
 	// Headings are the top tier: small-caps category labels that "group groups"
-	// (Explore, Tentpoles, What's New, Topics). Non-collapsible. The collapsible
+	// (Explore, Guides, What's New, Topics). Non-collapsible. The collapsible
 	// topic groups (bold, `SidebarSection`) nest under the Topics heading.
 	h1: (props: { children?: React.ReactNode }) => (
 		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
