@@ -6,9 +6,7 @@ import { getModuleProgressForUser } from '@/lib/progress'
 
 import { getCachedPostOrList } from '../../../lib/posts-query'
 import { ListProvider } from './_components/list-provider'
-import ListResourceNavigation, {
-	MobileListResourceNavigation,
-} from './_components/list-resource-navigation'
+import { MobileListResourceNavigation } from './_components/list-resource-navigation'
 import { ProgressProvider } from './_components/progress-provider'
 
 export default async function Layout(props: {
@@ -37,31 +35,21 @@ export default async function Layout(props: {
 		),
 	)
 
-	// Context-dependent sidebar: posts that belong to a list/series keep the
-	// in-series ListResourceNavigation; standalone posts (and list landing
-	// pages) get the global docs-style hub sidebar. See
-	// plans/navigation-redesign.md (Phase 3).
-	const isPartOfSeries = Boolean(list)
-
+	// Every post gets the global hub sidebar (Amy's call — keep the breadth).
+	// Series posts additionally pin an "In this series" group at the top of that
+	// sidebar (PinnedSeriesNav, from the list context) instead of replacing the
+	// whole rail with a lesson list. "What's New" is hidden on standalone
+	// articles (post.type === 'post'); list landing pages keep it. Mobile keeps
+	// its dedicated lessons sheet since the desktop sidebar is hidden there.
 	return (
 		<ListProvider initialList={list} currentPostHasVideo={currentPostHasVideo}>
 			<ProgressProvider initialProgress={initialProgress}>
 				<ActiveHeadingProvider>
 					<LayoutClient withContainer>
-						{isPartOfSeries ? (
-							<div className="flex flex-1">
-								<ListResourceNavigation />
-								<MobileListResourceNavigation />
-								<div className="w-full min-w-0">{props.children}</div>
-							</div>
-						) : (
-							// Standalone posts get the hub sidebar but hide "What's New"
-							// (the reader is already in an article); list landing pages
-							// (post.type === 'list') keep it.
-							<HubLayout hideWhatsNew={post.type === 'post'}>
-								{props.children}
-							</HubLayout>
-						)}
+						<HubLayout hideWhatsNew={post.type === 'post'}>
+							{props.children}
+						</HubLayout>
+						<MobileListResourceNavigation />
 					</LayoutClient>
 				</ActiveHeadingProvider>
 			</ProgressProvider>

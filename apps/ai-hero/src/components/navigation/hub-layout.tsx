@@ -6,6 +6,7 @@ import { SidebarProvider } from '@coursebuilder/ui'
 
 import { HUB_SIDEBAR_FALLBACK_MDX } from './hub-sidebar-fallback'
 import { SidebarMinimalFallback } from './hub-sidebar'
+import { PinnedSeriesNav } from './sidebar/pinned-series-nav'
 import { SidebarErrorBoundary } from './sidebar/sidebar-client'
 import { compileHubSidebarMdx } from './sidebar/sidebar-mdx'
 import { HubSidebarShell } from './sidebar/sidebar-shell'
@@ -81,6 +82,9 @@ export async function HubLayout({
 			className="min-h-0 has-data-[variant=inset]:bg-background"
 		>
 			<HubSidebarShell defaultCollapsed={sidebarDefaultCollapsed}>
+				{/* Pinned "In this series" group — renders only when a list context
+				    is present (inside the [post] layout); no-op everywhere else. */}
+				<PinnedSeriesNav />
 				{sidebarContent}
 			</HubSidebarShell>
 			<div className="min-w-0 flex-1">{children}</div>
