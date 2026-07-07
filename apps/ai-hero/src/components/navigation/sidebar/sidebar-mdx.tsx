@@ -79,13 +79,21 @@ const sidebarMdxComponents = {
  * Compile the hub-sidebar page body with the sidebar-scoped map. Throws on
  * malformed MDX — the caller (`HubLayout`) catches and falls back to the
  * static sidebar; a broken CMS edit must never kill nav.
+ *
+ * `hideWhatsNew` swaps `<WhatsNew />` for a no-op so the whole "What's New"
+ * category (its self-rendered heading + list) disappears on standalone post
+ * pages, where the reader is already deep in the content.
  */
 export async function compileHubSidebarMdx(
 	source: string,
+	{ hideWhatsNew = false }: { hideWhatsNew?: boolean } = {},
 ): Promise<React.ReactNode> {
+	const components = hideWhatsNew
+		? { ...sidebarMdxComponents, WhatsNew: () => null }
+		: sidebarMdxComponents
 	const { content } = await compileMDX({
 		source,
-		components: sidebarMdxComponents,
+		components,
 		options: { parseFrontmatter: true },
 	})
 	return content

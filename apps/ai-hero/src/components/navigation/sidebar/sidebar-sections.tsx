@@ -7,12 +7,17 @@ import { log } from '@/server/logger'
 
 import {
 	SidebarGroup,
+	SidebarGroupLabel,
 	SidebarMenu,
 	SidebarMenuItem,
 	SidebarMenuSkeleton,
 } from '@coursebuilder/ui'
 
 import { SidebarNavLink, SidebarSection } from './sidebar-client'
+
+/** Small-caps, non-collapsible category label — matches the MDX `## Heading`. */
+const CATEGORY_LABEL_CLASS =
+	'text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider'
 
 /**
  * Server-driven sidebar sections registered in the hub-sidebar MDX components
@@ -68,20 +73,25 @@ async function WhatsNewSection({
 
 		if (items.length === 0) return null
 
-		// No SidebarSection wrapper: "What's New" is a non-collapsible category
-		// whose small-caps heading comes from the MDX (`## What's New`). Render
-		// just the link list, indented one group deep like the other sections.
+		// Self-contained non-collapsible category: renders its OWN small-caps
+		// heading + list, so the whole group hides as a unit on post pages (the
+		// `[post]` layout passes `hideWhatsNew`, which swaps this for a no-op).
 		return (
-			<SidebarGroup className="py-0">
-				<SidebarMenu>
-					{postLinks(items)}
-					<SidebarMenuItem>
-						<SidebarNavLink href="/posts" muted ariaLabel="See all posts">
-							All
-						</SidebarNavLink>
-					</SidebarMenuItem>
-				</SidebarMenu>
-			</SidebarGroup>
+			<>
+				<SidebarGroupLabel className={CATEGORY_LABEL_CLASS}>
+					{title}
+				</SidebarGroupLabel>
+				<SidebarGroup className="py-0">
+					<SidebarMenu>
+						{postLinks(items)}
+						<SidebarMenuItem>
+							<SidebarNavLink href="/posts" muted ariaLabel="See all posts">
+								All
+							</SidebarNavLink>
+						</SidebarMenuItem>
+					</SidebarMenu>
+				</SidebarGroup>
+			</>
 		)
 	} catch (error) {
 		void log.error('hub-sidebar.whats-new.error', {

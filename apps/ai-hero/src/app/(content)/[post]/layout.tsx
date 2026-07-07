@@ -55,7 +55,12 @@ export default async function Layout(props: {
 								<div className="w-full min-w-0">{props.children}</div>
 							</div>
 						) : (
-							<HubLayout>{props.children}</HubLayout>
+							// Standalone posts get the hub sidebar but hide "What's New"
+							// (the reader is already in an article); list landing pages
+							// (post.type === 'list') keep it.
+							<HubLayout hideWhatsNew={post.type === 'post'}>
+								{props.children}
+							</HubLayout>
 						)}
 					</LayoutClient>
 				</ActiveHeadingProvider>

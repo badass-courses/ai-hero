@@ -29,9 +29,7 @@ export const HUB_SIDEBAR_FALLBACK_MDX = `## Explore
 - [AI Engineer Roadmap](/ai-engineer-roadmap)
 - [AI Coding Dictionary](/ai-coding-dictionary)
 
-## What's New
-
-<WhatsNew />
+<WhatsNew title="What's New" />
 
 ## Topics
 

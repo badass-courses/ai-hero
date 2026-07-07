@@ -22,19 +22,23 @@ import { HubSidebarShell } from './sidebar/sidebar-shell'
  * the tiny static `SidebarMinimalFallback`, which has no data deps and can't
  * itself fail.
  */
-async function renderSidebarContent(): Promise<React.ReactNode> {
+async function renderSidebarContent(
+	hideWhatsNew: boolean,
+): Promise<React.ReactNode> {
 	const body = (await getCachedHubSidebarBody()) ?? HUB_SIDEBAR_FALLBACK_MDX
 
 	let compiled: React.ReactNode | null = null
 	try {
-		compiled = await compileHubSidebarMdx(body)
+		compiled = await compileHubSidebarMdx(body, { hideWhatsNew })
 	} catch (error) {
 		void log.error('hub-sidebar.mdx.compile.error', {
 			error: error instanceof Error ? error.message : String(error),
 		})
 		if (body !== HUB_SIDEBAR_FALLBACK_MDX) {
 			try {
-				compiled = await compileHubSidebarMdx(HUB_SIDEBAR_FALLBACK_MDX)
+				compiled = await compileHubSidebarMdx(HUB_SIDEBAR_FALLBACK_MDX, {
+					hideWhatsNew,
+				})
 			} catch {
 				compiled = null
 			}
@@ -62,11 +66,14 @@ async function renderSidebarContent(): Promise<React.ReactNode> {
 export async function HubLayout({
 	children,
 	sidebarDefaultCollapsed = false,
+	hideWhatsNew = false,
 }: {
 	children: React.ReactNode
 	sidebarDefaultCollapsed?: boolean
+	/** Suppress the "What's New" category — set on standalone post pages. */
+	hideWhatsNew?: boolean
 }) {
-	const sidebarContent = await renderSidebarContent()
+	const sidebarContent = await renderSidebarContent(hideWhatsNew)
 
 	return (
 		<SidebarProvider
