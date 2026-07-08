@@ -57,12 +57,15 @@ export interface CreateListBindingsOptions {
 	 */
 	getItemHref?: (item: ContentsItem) => string | undefined
 	/**
-	 * Prompt for a section's name before creating it (sections have no edit
-	 * route, so naming has to happen up front). Resolve with the title, or
-	 * `null` to cancel the create. When omitted, sections quick-create with a
-	 * placeholder title (the previous behavior).
+	 * Prompt for a section's name (and optional description) before creating it
+	 * — sections have no edit route, so this has to happen up front. Resolve
+	 * with the entered values, or `null` to cancel the create. When omitted,
+	 * sections quick-create with a placeholder title (the previous behavior).
 	 */
-	promptSectionTitle?: () => Promise<string | null>
+	promptSectionTitle?: () => Promise<{
+		title: string
+		description?: string
+	} | null>
 }
 
 /**
@@ -218,9 +221,14 @@ export function createListBindings({
 			// a cancelled prompt (null) aborts without creating.
 			create: async (resourceId, type) => {
 				if (type === 'section' && promptSectionTitle) {
-					const title = await promptSectionTitle()
-					if (title == null) return
-					await createInList(resourceId, type, title)
+					const details = await promptSectionTitle()
+					if (details == null) return
+					await createInList(
+						resourceId,
+						type,
+						details.title,
+						details.description,
+					)
 					return
 				}
 				await createInList(resourceId, type)

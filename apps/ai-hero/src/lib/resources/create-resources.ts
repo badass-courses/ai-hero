@@ -16,6 +16,7 @@ import { upsertPostToTypeSense } from '../typesense-query'
 const NewResourceSchema = z.object({
 	type: z.string(),
 	title: z.string().min(2).max(90),
+	description: z.string().optional(),
 })
 
 type NewResource = z.infer<typeof NewResourceSchema>
@@ -38,6 +39,9 @@ export async function createResource(input: NewResource) {
 			state: 'draft',
 			visibility: 'unlisted',
 			slug: slugify(`${input.title}~${hash}`),
+			...(input.description?.trim()
+				? { description: input.description.trim() }
+				: {}),
 		},
 		createdById: user.id,
 	}

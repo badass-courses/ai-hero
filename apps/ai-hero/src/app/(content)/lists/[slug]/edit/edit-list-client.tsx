@@ -16,6 +16,8 @@ import {
 	DialogHeader,
 	DialogTitle,
 	Input,
+	Label,
+	Textarea,
 } from '@coursebuilder/ui'
 
 export type EditListClientProps = {
@@ -36,25 +38,31 @@ export function EditListClient({ list, tags }: EditListClientProps) {
 	// Imperative bridge: the kit's "+ New section" calls the async create
 	// binding, which awaits promptSectionTitle() below. We open a controlled
 	// dialog and resolve the pending promise when the user submits or cancels.
+	type SectionDetails = { title: string; description?: string }
 	const [sectionDialogOpen, setSectionDialogOpen] = React.useState(false)
 	const [sectionTitle, setSectionTitle] = React.useState('')
-	const pendingResolveRef = React.useRef<((title: string | null) => void) | null>(
-		null,
+	const [sectionDescription, setSectionDescription] = React.useState('')
+	const pendingResolveRef = React.useRef<
+		((details: SectionDetails | null) => void) | null
+	>(null)
+
+	const settleSectionPrompt = React.useCallback(
+		(details: SectionDetails | null) => {
+			const resolve = pendingResolveRef.current
+			pendingResolveRef.current = null
+			setSectionDialogOpen(false)
+			resolve?.(details)
+		},
+		[],
 	)
 
-	const settleSectionPrompt = React.useCallback((title: string | null) => {
-		const resolve = pendingResolveRef.current
-		pendingResolveRef.current = null
-		setSectionDialogOpen(false)
-		resolve?.(title)
-	}, [])
-
 	const promptSectionTitle = React.useCallback(() => {
-		return new Promise<string | null>((resolve) => {
+		return new Promise<SectionDetails | null>((resolve) => {
 			// Guard against a stray open prompt — cancel it before replacing.
 			pendingResolveRef.current?.(null)
 			pendingResolveRef.current = resolve
 			setSectionTitle('')
+			setSectionDescription('')
 			setSectionDialogOpen(true)
 		})
 	}, [])
@@ -115,21 +123,46 @@ export function EditListClient({ list, tags }: EditListClientProps) {
 			>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>Name this section</DialogTitle>
+						<DialogTitle>New section</DialogTitle>
 					</DialogHeader>
 					<form
 						onSubmit={(event) => {
 							event.preventDefault()
-							if (trimmedTitle) settleSectionPrompt(trimmedTitle)
+							if (trimmedTitle) {
+								settleSectionPrompt({
+									title: trimmedTitle,
+									description: sectionDescription.trim() || undefined,
+								})
+							}
 						}}
+						className="flex flex-col gap-4"
 					>
-						<Input
-							autoFocus
-							value={sectionTitle}
-							onChange={(event) => setSectionTitle(event.target.value)}
-							placeholder="Section title"
-						/>
-						<DialogFooter className="mt-4">
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="section-title">Title</Label>
+							<Input
+								id="section-title"
+								autoFocus
+								value={sectionTitle}
+								onChange={(event) => setSectionTitle(event.target.value)}
+								placeholder="Section title"
+							/>
+						</div>
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="section-description">
+								Description{' '}
+								<span className="text-muted-foreground font-normal">
+									(optional)
+								</span>
+							</Label>
+							<Textarea
+								id="section-description"
+								value={sectionDescription}
+								onChange={(event) => setSectionDescription(event.target.value)}
+								placeholder="What this section covers"
+								rows={3}
+							/>
+						</div>
+						<DialogFooter>
 							<Button
 								type="button"
 								variant="outline"
