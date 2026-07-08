@@ -93,6 +93,9 @@ export async function createInList(
 		throw new Error('Unauthorized')
 	}
 
+	// Explicit per supported type — an unknown/typo'd type rejects rather than
+	// silently persisting the wrong resource (the tree's create button only
+	// supplies the list manifest's childTypes, but guard anyway).
 	let childId: string
 	if (type === 'section') {
 		const section = await createResource({
@@ -100,7 +103,7 @@ export async function createInList(
 			title: 'Untitled section',
 		})
 		childId = section.id
-	} else {
+	} else if (type === 'post') {
 		const post = await createPost({
 			title: 'Untitled post',
 			postType: 'article',
@@ -110,6 +113,8 @@ export async function createInList(
 			throw new Error('Failed to create post')
 		}
 		childId = post.id
+	} else {
+		throw new Error(`Cannot create a "${type}" in a list`)
 	}
 
 	await addPostToList({
