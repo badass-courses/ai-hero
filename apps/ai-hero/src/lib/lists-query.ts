@@ -15,8 +15,10 @@ import slugify from '@sindresorhus/slugify'
 import { and, asc, desc, eq, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
+import type { ContentResourceResource } from '@coursebuilder/core/schemas'
 import { publishedAtStamp } from '@coursebuilder/ui/cms/resource-state'
 
+import { filterSectionedResources } from './list-sections'
 import { ListSchema, type List, type ListUpdate } from './lists'
 import { PostSchema } from './posts'
 import { updatePost } from './posts-query'
@@ -230,87 +232,60 @@ function reviveDates(obj: any): any {
 }
 
 export async function getListForPost(postIdOrSlug: string) {
-	// optimized query that skips body fields
+	// Find the (oldest) list the post belongs to — either as a DIRECT child, or
+	// nested under a `section` that itself sits in the list. The section path is
+	// what keeps a post's list nav alive after it's moved into a section: we
+	// resolve the list by "where the section lives", not by any stored parent
+	// hint on the post.
 	const result = await db.execute(sql`
-		WITH oldest_list AS (
-			SELECT relation.resourceOfId
-			FROM ${contentResourceResource} AS relation
-			JOIN ${contentResource} AS list
-				ON list.id = relation.resourceOfId
-				AND list.type = 'list'
-			WHERE relation.resourceId = (
-				SELECT id FROM ${contentResource}
-				WHERE id = ${postIdOrSlug}
-				OR JSON_EXTRACT(fields, '$.slug') = ${postIdOrSlug}
-				LIMIT 1
-			)
-			ORDER BY list.createdAt ASC
+		WITH target AS (
+			SELECT id FROM ${contentResource}
+			WHERE id = ${postIdOrSlug}
+			OR JSON_EXTRACT(fields, '$.slug') = ${postIdOrSlug}
 			LIMIT 1
 		)
-		SELECT
-			list.id AS list_id,
-			list.type AS list_type,
-			list.fields AS list_fields,
-			list.createdAt AS list_createdAt,
-			list.updatedAt AS list_updatedAt,
-			list.deletedAt AS list_deletedAt,
-			list.createdById AS list_createdById,
-			list.organizationId AS list_organizationId,
-			list.createdByOrganizationMembershipId AS list_createdByOrganizationMembershipId,
-			resources.id AS resource_id,
-			resources.type AS resource_type,
-			JSON_REMOVE(resources.fields, '$.body') AS resource_fields,
-			relation.position AS resource_position
-		FROM oldest_list
-		JOIN ${contentResource} AS list
-			ON list.id = oldest_list.resourceOfId
-		LEFT JOIN ${contentResourceResource} AS relation
-			ON list.id = relation.resourceOfId
-		LEFT JOIN ${contentResource} AS resources
-			ON resources.id = relation.resourceId
-		WHERE JSON_EXTRACT(resources.fields, '$.state') = 'published'
+		SELECT list.id AS list_id
+		FROM ${contentResource} AS list
+		WHERE list.type = 'list'
 			AND (
-				JSON_EXTRACT(resources.fields, '$.visibility') IS NULL
-				OR JSON_EXTRACT(resources.fields, '$.visibility') = 'public'
+				EXISTS (
+					SELECT 1 FROM ${contentResourceResource} AS direct
+					WHERE direct.resourceOfId = list.id
+						AND direct.resourceId = (SELECT id FROM target)
+				)
+				OR EXISTS (
+					SELECT 1
+					FROM ${contentResourceResource} AS sectionInList
+					JOIN ${contentResourceResource} AS postInSection
+						ON postInSection.resourceOfId = sectionInList.resourceId
+					WHERE sectionInList.resourceOfId = list.id
+						AND postInSection.resourceId = (SELECT id FROM target)
+				)
 			)
-		ORDER BY relation.position ASC
+		ORDER BY list.createdAt ASC
+		LIMIT 1
 	`)
 
-	if (result.rows.length === 0) {
+	const listId = (result.rows[0] as any)?.list_id as string | undefined
+	if (!listId) {
 		void log.debug('list.query.not-found', {
 			postIdOrSlug,
 		})
 		return null
 	}
 
-	const firstRow = result.rows[0] as any
-	const list = {
-		id: firstRow.list_id,
-		type: firstRow.list_type,
-		fields: firstRow.list_fields,
-		createdAt: firstRow.list_createdAt,
-		updatedAt: firstRow.list_updatedAt,
-		deletedAt: firstRow.list_deletedAt,
-		createdById: firstRow.list_createdById,
-		organizationId: firstRow.list_organizationId,
-		createdByOrganizationMembershipId:
-			firstRow.list_createdByOrganizationMembershipId,
-		resources: result.rows
-			.filter((row: any) => row.resource_id)
-			.map((row: any) => ({
-				resource: {
-					id: row.resource_id,
-					type: row.resource_type,
-					fields: row.resource_fields,
-				},
-				position: row.resource_position,
-				resourceId: row.resource_id,
-				resourceOfId: firstRow.list_id,
-			}))
-			.sort((a: any, b: any) => a.position - b.position),
-	}
+	// Load the list section-aware and trim to what should render publicly, so
+	// the shared `ResourceListView` shows sections (and the current post under
+	// its section) with unlisted/unpublished siblings hidden.
+	const deep = await getListWithSections(listId)
+	if (!deep) return null
 
-	return ListSchema.parse(list)
+	return {
+		...deep,
+		resources: filterSectionedResources(
+			deep.resources as ContentResourceResource[],
+		),
+	}
 }
 
 export async function getMinimalListForNavigation(listIdOrSlug: string) {
