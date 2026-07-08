@@ -89,11 +89,11 @@ export default async function SkillsPage({ searchParams }: Props) {
 							group.kind === 'section' ? (
 								<div key={group.id}>
 									<div className="px-8 pt-10 pb-4">
-										<h3 className="text-foreground/70 font-mono text-xs font-semibold uppercase tracking-wider">
+										<h3 className="text-foreground text-3xl sm:text-4xl font-semibold">
 											{group.title}
 										</h3>
 										{group.description ? (
-											<p className="text-foreground/60 mt-2 max-w-2xl text-balance text-sm leading-relaxed">
+											<p className="text-foreground/60 mt-2 max-w-2xl text-balance lg:text-lg sm:text-base text-sm leading-relaxed">
 												{group.description}
 											</p>
 										) : null}
