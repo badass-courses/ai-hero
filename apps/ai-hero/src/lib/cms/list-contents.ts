@@ -78,11 +78,14 @@ export async function listListContents(
 
 /**
  * `bindings.contents.create` for the cms list editor — the "+ New {type}"
- * quick-create. `post` composes the SAME server actions the legacy "Create
- * New" modal ran (`createPost` → `addPostToList`); `section` uses the generic
- * `createResource` (draft, `section~guid` slug), the same writer the workshop
- * editor uses for sections. Both attach at tier 'standard'; placeholder titles
- * are guid-slugged so repeated untitled rows never collide.
+ * quick-create. Deliberately open to any resource type: `post` composes the
+ * SAME server actions the legacy "Create New" modal ran (`createPost` →
+ * `addPostToList`) so posts get their bespoke writer; every other type
+ * (section, lesson, …) goes through the generic `createResource` (draft,
+ * `{type}~guid` slug). The requested type is always what gets created — an
+ * unknown type never silently falls back to a post. Both attach at tier
+ * 'standard'; placeholder titles are guid-slugged so untitled rows never
+ * collide.
  */
 export async function createInList(
 	listId: string,
@@ -93,17 +96,8 @@ export async function createInList(
 		throw new Error('Unauthorized')
 	}
 
-	// Explicit per supported type — an unknown/typo'd type rejects rather than
-	// silently persisting the wrong resource (the tree's create button only
-	// supplies the list manifest's childTypes, but guard anyway).
 	let childId: string
-	if (type === 'section') {
-		const section = await createResource({
-			type: 'section',
-			title: 'Untitled section',
-		})
-		childId = section.id
-	} else if (type === 'post') {
+	if (type === 'post') {
 		const post = await createPost({
 			title: 'Untitled post',
 			postType: 'article',
@@ -114,7 +108,12 @@ export async function createInList(
 		}
 		childId = post.id
 	} else {
-		throw new Error(`Cannot create a "${type}" in a list`)
+		// Any non-post type — created as itself, not coerced to a post.
+		const resource = await createResource({
+			type,
+			title: `Untitled ${type}`,
+		})
+		childId = resource.id
 	}
 
 	await addPostToList({
