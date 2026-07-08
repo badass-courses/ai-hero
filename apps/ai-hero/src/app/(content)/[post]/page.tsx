@@ -9,6 +9,7 @@ import {
 } from '@/app/(content)/_components/organic-opportunity-cta'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
+import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
@@ -242,7 +243,7 @@ async function PostBody({ post }: { post: Post | null }) {
 	return (
 		<div className="px-5 md:px-10 lg:px-10">
 			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto mt-10 max-w-4xl">
-				{content}
+				<MdxErrorBoundary>{content}</MdxErrorBoundary>
 				{ctaKind ? <OrganicOpportunityCta kind={ctaKind} /> : null}
 			</article>
 		</div>

@@ -9,6 +9,7 @@ import {
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
@@ -187,7 +188,7 @@ async function SkillChangelogBody({
 	return (
 		<div className="px-5 md:px-10 lg:px-14">
 			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl mt-10 max-w-none">
-				{content}
+				<MdxErrorBoundary>{content}</MdxErrorBoundary>
 				{ctaKind ? <OrganicOpportunityCta kind={ctaKind} /> : null}
 			</article>
 		</div>
