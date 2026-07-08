@@ -170,18 +170,6 @@ function isPublicPublished(fields?: Record<string, unknown> | null) {
 	return fields?.state === 'published' && fields?.visibility === 'public'
 }
 
-// True only when a resource carries an explicit non-public state — used for
-// sections, which may have no publish state at all (missing state is treated
-// as visible, unlike the strict `isPublicPublished` gate for skills).
-function isExplicitlyHidden(fields?: Record<string, unknown> | null) {
-	const state = fields?.state
-	const visibility = fields?.visibility
-	return (
-		(state != null && state !== 'published') ||
-		(visibility != null && visibility !== 'public')
-	)
-}
-
 function slugOf(item: ListItem): string | undefined {
 	const slug = item.resource?.fields?.slug
 	return typeof slug === 'string' && slug ? slug : undefined
@@ -195,11 +183,9 @@ function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
 	const groups: SkillGroup[] = []
 	for (const item of resources ?? []) {
 		if (item.resource?.type === 'section') {
-			// Sections don't necessarily carry publish state, so we don't require
-			// one — an untouched section still renders. We only hide a section
-			// that's been *explicitly* unpublished/unlisted; otherwise its
-			// published/public children drive whether it shows at all.
-			if (isExplicitlyHidden(item.resource.fields)) continue
+			// Sections are purely structural — their own state/visibility is
+			// ignored (they're created draft+unlisted with no publish UI). Their
+			// published/public children drive whether the section shows at all.
 			const slugs =
 				item.resource.resources
 					?.filter((child) => isPublicPublished(child.resource?.fields))

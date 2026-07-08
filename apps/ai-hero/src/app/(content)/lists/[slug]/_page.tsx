@@ -7,8 +7,12 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Contributor } from '@/components/contributor'
 import { Share } from '@/components/share'
+import {
+	filterSectionedResources,
+	firstDisplayableSlug,
+} from '@/lib/list-sections'
 import type { List } from '@/lib/lists'
-import { getAllLists, getList } from '@/lib/lists-query'
+import { getAllLists, getList, getListWithSections } from '@/lib/lists-query'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { generateGridPattern } from '@/utils/generate-grid-pattern'
@@ -79,8 +83,16 @@ export default async function ListPage(props: {
 		body = content
 	}
 
-	const firstResource = list.resources?.[0]?.resource
-	const firstResourceHref = `/${firstResource?.fields?.slug}`
+	// The landing's `list` comes from the one-level `getPostOrList`; pull the
+	// deep, section-aware tree so sections render with their children (falling
+	// back to the shallow rows if the deep fetch fails). Filtering drops
+	// unlisted/unpublished items and empty sections.
+	const deepList = await getListWithSections(list.fields.slug ?? list.id)
+	const displayResources = filterSectionedResources(
+		deepList?.resources ?? list.resources,
+	)
+	const firstSlug = firstDisplayableSlug(displayResources)
+	const firstResourceHref = firstSlug ? `/${firstSlug}` : '#'
 
 	const squareGridPattern = generateGridPattern(
 		list.fields.title,
@@ -99,7 +111,7 @@ export default async function ListPage(props: {
 				/>
 				<div className="divide-border col-span-4 flex flex-wrap items-center divide-y md:divide-y-0">
 					<div className="bg-stripes h-14 sm:w-8 lg:w-10" />
-					{firstResource?.fields?.slug && (
+					{firstSlug && (
 						<Button
 							size="lg"
 							className="before:bg-primary-foreground relative h-14 w-full rounded-none text-base font-medium before:absolute before:-left-1 before:h-2 before:w-2 before:rotate-45 before:content-[''] sm:max-w-[180px]"
@@ -177,7 +189,7 @@ export default async function ListPage(props: {
 						</div>
 					</div>
 					<div className="col-span-2">
-						{firstResource && list.fields?.image && (
+						{firstSlug && list.fields?.image && (
 							<Link
 								className="group relative flex items-center justify-center"
 								href={firstResourceHref}
@@ -213,7 +225,12 @@ export default async function ListPage(props: {
 					<article className="prose sm:prose-lg lg:prose-lg prose-p:max-w-4xl dark:prose-invert prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl col-span-4 max-w-none px-5 py-10 sm:px-8 lg:px-10">
 						{body || 'No body found.'}
 					</article>
-					<ListResources list={list} />
+					<ListResources
+						resources={displayResources}
+						title={list.fields.title}
+						titleHref={`/${list.fields.slug}`}
+						moduleId={list.id}
+					/>
 				</div>
 			</div>
 			<Links />
