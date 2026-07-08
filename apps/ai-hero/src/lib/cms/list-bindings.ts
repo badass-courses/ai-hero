@@ -56,6 +56,13 @@ export interface CreateListBindingsOptions {
 	 * Pure client mapping (e.g. `getResourcePath(type, slug, 'view')`).
 	 */
 	getItemHref?: (item: ContentsItem) => string | undefined
+	/**
+	 * Prompt for a section's name before creating it (sections have no edit
+	 * route, so naming has to happen up front). Resolve with the title, or
+	 * `null` to cancel the create. When omitted, sections quick-create with a
+	 * placeholder title (the previous behavior).
+	 */
+	promptSectionTitle?: () => Promise<string | null>
 }
 
 /**
@@ -85,6 +92,7 @@ export function createListBindings({
 	onSlugChange,
 	onEditItem,
 	getItemHref,
+	promptSectionTitle,
 }: CreateListBindingsOptions): ResourceBindings<typeof ListSchema> {
 	return {
 		update: async (values, action) => {
@@ -205,8 +213,16 @@ export function createListBindings({
 			},
 			// "+ New {type}" quick-create — posts via createPost, sections via
 			// createResource, then addPostToList. Honors the type the tree's
-			// create button passes (childTypes: post + section).
+			// create button passes (childTypes: post + section). Sections route
+			// through the name modal first (when wired) so they're born titled;
+			// a cancelled prompt (null) aborts without creating.
 			create: async (resourceId, type) => {
+				if (type === 'section' && promptSectionTitle) {
+					const title = await promptSectionTitle()
+					if (title == null) return
+					await createInList(resourceId, type, title)
+					return
+				}
 				await createInList(resourceId, type)
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.

@@ -8,6 +8,15 @@ import type { Tag } from '@/lib/tags'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { createResourceEditor, listManifest } from '@coursebuilder/ui/cms'
+import {
+	Button,
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	Input,
+} from '@coursebuilder/ui'
 
 export type EditListClientProps = {
 	list: List
@@ -23,6 +32,32 @@ export type EditListClientProps = {
  */
 export function EditListClient({ list, tags }: EditListClientProps) {
 	const router = useRouter()
+
+	// Imperative bridge: the kit's "+ New section" calls the async create
+	// binding, which awaits promptSectionTitle() below. We open a controlled
+	// dialog and resolve the pending promise when the user submits or cancels.
+	const [sectionDialogOpen, setSectionDialogOpen] = React.useState(false)
+	const [sectionTitle, setSectionTitle] = React.useState('')
+	const pendingResolveRef = React.useRef<((title: string | null) => void) | null>(
+		null,
+	)
+
+	const settleSectionPrompt = React.useCallback((title: string | null) => {
+		const resolve = pendingResolveRef.current
+		pendingResolveRef.current = null
+		setSectionDialogOpen(false)
+		resolve?.(title)
+	}, [])
+
+	const promptSectionTitle = React.useCallback(() => {
+		return new Promise<string | null>((resolve) => {
+			// Guard against a stray open prompt — cancel it before replacing.
+			pendingResolveRef.current?.(null)
+			pendingResolveRef.current = resolve
+			setSectionTitle('')
+			setSectionDialogOpen(true)
+		})
+	}, [])
 
 	const ListEditor = React.useMemo(() => {
 		return createResourceEditor({
@@ -53,18 +88,62 @@ export function EditListClient({ list, tags }: EditListClientProps) {
 								parentSlug: list.fields.slug,
 							})
 						: undefined,
+				// Name a section before it's created (sections have no edit route).
+				promptSectionTitle,
 			}),
 		})
 		// Stable per mount by design; the page's key={slug} handles data changes.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [])
 
+	const trimmedTitle = sectionTitle.trim()
+
 	return (
-		<ListEditor
-			resource={list}
-			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
-			// app nav it renders under.
-			className="h-[calc(100dvh-var(--nav-height))]"
-		/>
+		<>
+			<ListEditor
+				resource={list}
+				// The shell defaults to h-dvh ("the shell IS the page"); subtract the
+				// app nav it renders under.
+				className="h-[calc(100dvh-var(--nav-height))]"
+			/>
+			<Dialog
+				open={sectionDialogOpen}
+				onOpenChange={(open) => {
+					// Closing via overlay/escape resolves the pending prompt as cancel.
+					if (!open) settleSectionPrompt(null)
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Name this section</DialogTitle>
+					</DialogHeader>
+					<form
+						onSubmit={(event) => {
+							event.preventDefault()
+							if (trimmedTitle) settleSectionPrompt(trimmedTitle)
+						}}
+					>
+						<Input
+							autoFocus
+							value={sectionTitle}
+							onChange={(event) => setSectionTitle(event.target.value)}
+							placeholder="Section title"
+						/>
+						<DialogFooter className="mt-4">
+							<Button
+								type="button"
+								variant="outline"
+								onClick={() => settleSectionPrompt(null)}
+							>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!trimmedTitle}>
+								Create section
+							</Button>
+						</DialogFooter>
+					</form>
+				</DialogContent>
+			</Dialog>
+		</>
 	)
 }

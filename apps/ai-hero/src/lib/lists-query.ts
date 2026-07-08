@@ -269,6 +269,10 @@ export async function getListForPost(postIdOrSlug: string) {
 		LEFT JOIN ${contentResource} AS resources
 			ON resources.id = relation.resourceId
 		WHERE JSON_EXTRACT(resources.fields, '$.state') = 'published'
+			AND (
+				JSON_EXTRACT(resources.fields, '$.visibility') IS NULL
+				OR JSON_EXTRACT(resources.fields, '$.visibility') = 'public'
+			)
 		ORDER BY relation.position ASC
 	`)
 
