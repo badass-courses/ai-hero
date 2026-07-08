@@ -119,9 +119,53 @@ export async function getList(listIdOrSlug: string) {
 		with: {
 			resources: {
 				with: {
-					// Nest one level deeper so `section` resources carry their
-					// child resources (e.g. skills grouped under a section on the
-					// /skills list). Flat list items simply have no children here.
+					resource: true,
+				},
+				orderBy: asc(contentResourceResource.position),
+			},
+			tags: {
+				with: {
+					tag: true,
+				},
+				orderBy: asc(contentResourceTagTable.position),
+			},
+		},
+	})
+
+	const listParsed = ListSchema.safeParse(list)
+	if (!listParsed.success) {
+		void log.error('list.parse.error', {
+			listIdOrSlug,
+			error: listParsed.error.message,
+		})
+		return null
+	}
+
+	return listParsed.data
+}
+
+/**
+ * Like {@link getList}, but joins one level deeper so a `section` resource
+ * carries its child resources. Kept separate from `getList` on purpose: the
+ * shared loader stays one-level so the cms list editor keeps rendering section
+ * rows childless (see `cms/list-contents.ts`), while surfaces that group items
+ * under sections — currently /skills — opt into the deeper payload here.
+ */
+export async function getListWithSections(listIdOrSlug: string) {
+	const list = await db.query.contentResource.findFirst({
+		where: and(
+			or(
+				eq(
+					sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
+					listIdOrSlug,
+				),
+				eq(contentResource.id, listIdOrSlug),
+			),
+			eq(contentResource.type, 'list'),
+		),
+		with: {
+			resources: {
+				with: {
 					resource: {
 						with: {
 							resources: {
@@ -149,6 +193,7 @@ export async function getList(listIdOrSlug: string) {
 		void log.error('list.parse.error', {
 			listIdOrSlug,
 			error: listParsed.error.message,
+			source: 'getListWithSections',
 		})
 		return null
 	}

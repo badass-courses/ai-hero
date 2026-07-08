@@ -4,7 +4,7 @@ import { Resource } from '@/components/landing/resource'
 import { SectionHeading } from '@/components/landing/section-heading'
 import LayoutClient from '@/components/layout-client'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
-import { getList } from '@/lib/lists-query'
+import { getListWithSections } from '@/lib/lists-query'
 import {
 	getSkillChangelogCount,
 	getSkillChangelogEntries,
@@ -59,7 +59,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
 		getSkillChangelogCount(),
 		getSubscriberFromCookie(),
-		getList(SKILLS_LIST_ID),
+		getListWithSections(SKILLS_LIST_ID),
 	])
 	const skillGroups = toSkillGroups(skillsList?.resources)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
@@ -170,6 +170,9 @@ function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
 	const groups: SkillGroup[] = []
 	for (const item of resources ?? []) {
 		if (item.resource?.type === 'section') {
+			// Skip a section that isn't itself published/public — an unpublished
+			// section stays hidden even if it happens to hold published skills.
+			if (!isPublicPublished(item.resource.fields)) continue
 			const slugs =
 				item.resource.resources
 					?.filter((child) => isPublicPublished(child.resource?.fields))
