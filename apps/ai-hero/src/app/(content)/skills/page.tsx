@@ -61,11 +61,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 		getSubscriberFromCookie(),
 		getList(SKILLS_LIST_ID),
 	])
-	const skillPostSlugs =
-		skillsList?.resources
-			?.filter(isPublicPublishedListResource)
-			.map((item) => item.resource?.fields?.slug)
-			.filter((slug): slug is string => Boolean(slug)) ?? []
+	const skillGroups = toSkillGroups(skillsList?.resources)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
 	const newsletterState: SkillsNewsletterStatus =
@@ -89,9 +85,24 @@ export default async function SkillsPage({ searchParams }: Props) {
 						<span id="skill-set-heading">The skill set</span>
 					</SectionHeading>
 					<div>
-						{skillPostSlugs.map((slug) => (
-							<Resource key={slug} slugOrId={slug} variant="row" />
-						))}
+						{skillGroups.map((group) =>
+							group.kind === 'section' ? (
+								<div key={group.id}>
+									<h3 className="text-foreground/70 px-8 pt-10 pb-4 font-mono text-xs font-semibold uppercase tracking-wider">
+										{group.title}
+									</h3>
+									{group.slugs.map((slug) => (
+										<Resource key={slug} slugOrId={slug} variant="row" />
+									))}
+								</div>
+							) : (
+								<Resource
+									key={group.slug}
+									slugOrId={group.slug}
+									variant="row"
+								/>
+							),
+						)}
 					</div>
 				</section>
 
@@ -129,13 +140,56 @@ export default async function SkillsPage({ searchParams }: Props) {
 	)
 }
 
-function isPublicPublishedListResource(item: {
-	resource?: { fields?: Record<string, unknown> | null } | null
-}) {
-	return (
-		item.resource?.fields?.state === 'published' &&
-		item.resource?.fields?.visibility === 'public'
-	)
+type ListItem = {
+	resource?: {
+		id?: string
+		type?: string
+		fields?: Record<string, unknown> | null
+		resources?: ListItem[] | null
+	} | null
+}
+
+type SkillGroup =
+	| { kind: 'skill'; slug: string }
+	| { kind: 'section'; id: string; title: string; slugs: string[] }
+
+function isPublicPublished(fields?: Record<string, unknown> | null) {
+	return fields?.state === 'published' && fields?.visibility === 'public'
+}
+
+function slugOf(item: ListItem): string | undefined {
+	const slug = item.resource?.fields?.slug
+	return typeof slug === 'string' && slug ? slug : undefined
+}
+
+// Walk the /skills list into ordered render groups. A `section` resource
+// becomes a titled sub-group of its published/public child skills; anything
+// else renders as a loose skill row. Empty sections are dropped so an
+// unpopulated (or fully-unpublished) section leaves no orphan heading.
+function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
+	const groups: SkillGroup[] = []
+	for (const item of resources ?? []) {
+		if (item.resource?.type === 'section') {
+			const slugs =
+				item.resource.resources
+					?.filter((child) => isPublicPublished(child.resource?.fields))
+					.map(slugOf)
+					.filter((slug): slug is string => Boolean(slug)) ?? []
+			if (slugs.length === 0) continue
+			const title = item.resource.fields?.title
+			groups.push({
+				kind: 'section',
+				id: item.resource.id ?? slugs[0]!,
+				title: typeof title === 'string' ? title : 'Skills',
+				slugs,
+			})
+			continue
+		}
+		if (!isPublicPublished(item.resource?.fields)) continue
+		const slug = slugOf(item)
+		if (slug) groups.push({ kind: 'skill', slug })
+	}
+	return groups
 }
 
 function toChangelogItem(entry: SkillChangelogEntry): ChangelogItem {

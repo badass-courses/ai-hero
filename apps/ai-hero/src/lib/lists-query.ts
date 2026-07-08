@@ -119,7 +119,19 @@ export async function getList(listIdOrSlug: string) {
 		with: {
 			resources: {
 				with: {
-					resource: true,
+					// Nest one level deeper so `section` resources carry their
+					// child resources (e.g. skills grouped under a section on the
+					// /skills list). Flat list items simply have no children here.
+					resource: {
+						with: {
+							resources: {
+								with: {
+									resource: true,
+								},
+								orderBy: asc(contentResourceResource.position),
+							},
+						},
+					},
 				},
 				orderBy: asc(contentResourceResource.position),
 			},
