@@ -88,9 +88,16 @@ export default async function SkillsPage({ searchParams }: Props) {
 						{skillGroups.map((group) =>
 							group.kind === 'section' ? (
 								<div key={group.id}>
-									<h3 className="text-foreground/70 px-8 pt-10 pb-4 font-mono text-xs font-semibold uppercase tracking-wider">
-										{group.title}
-									</h3>
+									<div className="px-8 pt-10 pb-4">
+										<h3 className="text-foreground/70 font-mono text-xs font-semibold uppercase tracking-wider">
+											{group.title}
+										</h3>
+										{group.description ? (
+											<p className="text-foreground/60 mt-2 max-w-2xl text-balance text-sm leading-relaxed">
+												{group.description}
+											</p>
+										) : null}
+									</div>
 									{group.slugs.map((slug) => (
 										<Resource key={slug} slugOrId={slug} variant="row" />
 									))}
@@ -151,10 +158,28 @@ type ListItem = {
 
 type SkillGroup =
 	| { kind: 'skill'; slug: string }
-	| { kind: 'section'; id: string; title: string; slugs: string[] }
+	| {
+			kind: 'section'
+			id: string
+			title: string
+			description?: string
+			slugs: string[]
+	  }
 
 function isPublicPublished(fields?: Record<string, unknown> | null) {
 	return fields?.state === 'published' && fields?.visibility === 'public'
+}
+
+// True only when a resource carries an explicit non-public state — used for
+// sections, which may have no publish state at all (missing state is treated
+// as visible, unlike the strict `isPublicPublished` gate for skills).
+function isExplicitlyHidden(fields?: Record<string, unknown> | null) {
+	const state = fields?.state
+	const visibility = fields?.visibility
+	return (
+		(state != null && state !== 'published') ||
+		(visibility != null && visibility !== 'public')
+	)
 }
 
 function slugOf(item: ListItem): string | undefined {
@@ -170,9 +195,11 @@ function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
 	const groups: SkillGroup[] = []
 	for (const item of resources ?? []) {
 		if (item.resource?.type === 'section') {
-			// Skip a section that isn't itself published/public — an unpublished
-			// section stays hidden even if it happens to hold published skills.
-			if (!isPublicPublished(item.resource.fields)) continue
+			// Sections don't necessarily carry publish state, so we don't require
+			// one — an untouched section still renders. We only hide a section
+			// that's been *explicitly* unpublished/unlisted; otherwise its
+			// published/public children drive whether it shows at all.
+			if (isExplicitlyHidden(item.resource.fields)) continue
 			const slugs =
 				item.resource.resources
 					?.filter((child) => isPublicPublished(child.resource?.fields))
@@ -180,10 +207,15 @@ function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
 					.filter((slug): slug is string => Boolean(slug)) ?? []
 			if (slugs.length === 0) continue
 			const title = item.resource.fields?.title
+			const description = item.resource.fields?.description
 			groups.push({
 				kind: 'section',
 				id: item.resource.id ?? slugs[0]!,
 				title: typeof title === 'string' ? title : 'Skills',
+				description:
+					typeof description === 'string' && description
+						? description
+						: undefined,
 				slugs,
 			})
 			continue
