@@ -3,6 +3,7 @@ import {
 	addPostToList,
 	removePostFromList,
 	updateList,
+	updateListItemFields,
 } from '@/lib/lists-query'
 import { addTagToPost, removeTagFromPost } from '@/lib/posts-query'
 import {
@@ -210,6 +211,15 @@ export function createListBindings({
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
 			onEdit: onEditItem,
+			// Inline section edit — sections have no edit route, so persist their
+			// title/description in place. updateListItemFields routes a section
+			// (non-post/list) through updateContentResourceFields.
+			editSection: async (_resourceId, sectionId, fields) => {
+				await updateListItemFields(sectionId, {
+					title: fields.title,
+					description: fields.description,
+				})
+			},
 			// Per-row external-link icon → the child's public view URL.
 			getItemHref,
 		},
