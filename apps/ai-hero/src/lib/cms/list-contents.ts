@@ -2,6 +2,8 @@
 
 import { addPostToList, getList } from '@/lib/lists-query'
 import { createPost } from '@/lib/posts-query'
+import { createResource } from '@/lib/resources/create-resources'
+import { ResourceTypeSchema } from '@/lib/resource-types'
 import { getServerAuthSession } from '@/server/auth'
 
 import type { ContentsItem, ContentsTier } from '@coursebuilder/ui/cms/manifest'
@@ -39,6 +41,7 @@ function toContentsItem(row: {
 		slug: fields.slug ?? undefined,
 		state: fields.state ?? undefined,
 		visibility: fields.visibility ?? undefined,
+		description: fields.description ?? undefined,
 		detail: fields.postType ?? undefined,
 		position: row.position ?? 0,
 		tier: tierOf(row.metadata),
@@ -76,30 +79,50 @@ export async function listListContents(
 }
 
 /**
- * `bindings.contents.create` for the cms list editor — the "+ New post"
- * quick-create. Composes the SAME server actions the legacy "Create New"
- * modal flow ran (`createPost` → `addPostToList`), just with an app-chosen
- * placeholder title instead of the modal's title input; the tier lands as
- * 'standard', matching the legacy `handleResourceAdd`. `createPost` slugs the
- * title with a fresh guid, so repeated untitled posts never collide.
+ * `bindings.contents.create` for the cms list editor — the "+ New {type}"
+ * quick-create. Open to any KNOWN resource type: `post` composes the SAME
+ * server actions the legacy "Create New" modal ran (`createPost` →
+ * `addPostToList`) so posts get their bespoke writer; every other valid type
+ * (section, lesson, …) goes through the generic `createResource` (draft,
+ * `{type}~guid` slug), created as ITSELF — never silently coerced to a post.
+ * The type is validated against `ResourceTypeSchema` so a typo/junk value on
+ * this exported server action rejects instead of persisting a bad resource.
+ * Both attach at tier 'standard'; placeholder titles are guid-slugged so
+ * untitled rows never collide.
  */
-export async function createPostInList(listId: string): Promise<void> {
+export async function createInList(
+	listId: string,
+	type: string = 'post',
+): Promise<void> {
 	const { session, ability } = await getServerAuthSession()
 	if (!session?.user || !ability.can('create', 'Content')) {
 		throw new Error('Unauthorized')
 	}
 
-	const post = await createPost({
-		title: 'Untitled post',
-		postType: 'article',
-		createdById: session.user.id,
-	})
-	if (!post) {
-		throw new Error('Failed to create post')
+	let childId: string
+	if (type === 'post') {
+		const post = await createPost({
+			title: 'Untitled post',
+			postType: 'article',
+			createdById: session.user.id,
+		})
+		if (!post) {
+			throw new Error('Failed to create post')
+		}
+		childId = post.id
+	} else if (ResourceTypeSchema.safeParse(type).success) {
+		// Any known non-post type (section, lesson, …) — created as itself.
+		const resource = await createResource({
+			type,
+			title: `Untitled ${type}`,
+		})
+		childId = resource.id
+	} else {
+		throw new Error(`Cannot create an unknown resource type "${type}" in a list`)
 	}
 
 	await addPostToList({
-		postId: post.id,
+		postId: childId,
 		listId,
 		metadata: { tier: 'standard' },
 	})

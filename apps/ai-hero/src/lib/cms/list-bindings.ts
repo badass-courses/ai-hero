@@ -3,6 +3,7 @@ import {
 	addPostToList,
 	removePostFromList,
 	updateList,
+	updateListItemFields,
 } from '@/lib/lists-query'
 import { addTagToPost, removeTagFromPost } from '@/lib/posts-query'
 import {
@@ -18,7 +19,7 @@ import type {
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
 
-import { createPostInList, listListContents } from './list-contents'
+import { createInList, listListContents } from './list-contents'
 import {
 	createVideoLibraryBinding,
 	listImageMediaAssets,
@@ -202,13 +203,23 @@ export function createListBindings({
 					})),
 				)
 			},
-			// "+ New post" quick-create — createPost → addPostToList, the same
-			// actions the legacy "Create New" modal composed.
-			create: async (resourceId, _type) => {
-				await createPostInList(resourceId)
+			// "+ New {type}" quick-create — posts via createPost, sections via
+			// createResource, then addPostToList. Honors the type the tree's
+			// create button passes (childTypes: post + section).
+			create: async (resourceId, type) => {
+				await createInList(resourceId, type)
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
 			onEdit: onEditItem,
+			// Inline section edit — sections have no edit route, so persist their
+			// title/description in place. updateListItemFields routes a section
+			// (non-post/list) through updateContentResourceFields.
+			editSection: async (_resourceId, sectionId, fields) => {
+				await updateListItemFields(sectionId, {
+					title: fields.title,
+					description: fields.description,
+				})
+			},
 			// Per-row external-link icon → the child's public view URL.
 			getItemHref,
 		},
