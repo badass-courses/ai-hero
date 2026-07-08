@@ -67,7 +67,10 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 			refetchOnReconnect: false,
 		})
 	const navSections = mobileNav?.sections ?? []
+	// Only collapsible groups (topic tags / Skills / Meta) auto-open; flat
+	// categories (Explore, Guides, What's New) are always visible.
 	const openGroups = navSections
+		.filter((group) => group.variant === 'group')
 		.filter((group) =>
 			[
 				...group.links,
@@ -75,6 +78,12 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 			].some((l) => isActive(l.href)),
 		)
 		.map((group) => group.title)
+
+	// Push-down menu (not an overlay): if opened while scrolled down, the panel
+	// inserts above the fold and the reader wouldn't see it — pull them to it.
+	React.useEffect(() => {
+		if (isOpen) window.scrollTo({ top: 0, behavior: 'smooth' })
+	}, [isOpen])
 
 	const isAuthed = sessionStatus === 'authenticated'
 	const canViewTeam = ability.can('invite', 'Team')
@@ -93,6 +102,10 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 			'focus-visible:ring-ring flex items-center px-5 py-2.5 text-base transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
 			isActive(href) && 'bg-muted font-medium',
 		)
+
+	// Small-caps category label — mirrors the desktop sidebar's `## Heading`.
+	const categoryLabelClass =
+		'text-muted-foreground px-5 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider'
 
 	const track_ = (item: HubNavLink) =>
 		track('nav_link_clicked', {
@@ -126,36 +139,11 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 					)}
 				</div>
 
-				{/* Primary links */}
-				<ul className="flex flex-col py-2">
-					<li>
-						<Link
-							href={PRIMARY_LEARNING_ENTRY.href}
-							aria-current={
-								isActive(PRIMARY_LEARNING_ENTRY.href) ? 'page' : undefined
-							}
-							onClick={() => track_(PRIMARY_LEARNING_ENTRY)}
-							className={cn(rowClass(PRIMARY_LEARNING_ENTRY.href), 'font-semibold')}
-						>
-							{PRIMARY_LEARNING_ENTRY.label}
-						</Link>
-					</li>
-					{primaryLinks.map((item) => (
-						<li key={item.href}>
-							<Link
-								href={item.href}
-								aria-current={isActive(item.href) ? 'page' : undefined}
-								onClick={() => track_(item)}
-								className={rowClass(item.href)}
-							>
-								{item.label}
-							</Link>
-						</li>
-					))}
-				</ul>
-
-				{/* Hub sidebar IA (single MDX source via tRPC, collapsible —
-				    mirrors the desktop sidebar). */}
+				{/* Hub sidebar IA — the SAME MDX source as the desktop sidebar,
+				    resolved server-side. Two tiers mirror the desktop / Amy's mobile
+				    wireframe: flat categories (Explore, Guides, What's New) show their
+				    links inline; a bare category label (Topics) heads the collapsible
+				    topic groups that follow it. */}
 				{isNavLoading && navSections.length === 0 ? (
 					<section className="flex flex-col gap-1 py-3" aria-hidden>
 						{Array.from({ length: 4 }).map((_, i) => (
@@ -164,25 +152,84 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 							</div>
 						))}
 					</section>
-				) : (
-					navSections.length > 0 && (
-						<section className="py-2">
-							<Accordion
-								type="multiple"
-								defaultValue={openGroups}
-								className="w-full"
-							>
-								{navSections.map((group) => (
-									<AccordionItem
-										key={group.title}
-										value={group.title}
-										className="border-none"
+				) : navSections.length > 0 ? (
+					<section className="pb-2">
+						{navSections.map((section, index) => {
+							if (section.variant === 'category') {
+								return (
+									<div
+										key={section.title}
+										className={cn(
+											categoryLabelClass,
+											index > 0 && 'border-border mt-1 border-t',
+										)}
 									>
+										{section.title}
+									</div>
+								)
+							}
+
+							if (section.variant === 'flat') {
+								return (
+									<div
+										key={section.title}
+										className={cn(index > 0 && 'border-border border-t')}
+									>
+										<div className={categoryLabelClass}>{section.title}</div>
+										<ul className="flex flex-col">
+											{section.links.map((item) => (
+												<li key={item.href}>
+													<Link
+														href={item.href}
+														aria-current={isActive(item.href) ? 'page' : undefined}
+														onClick={() => track_(item)}
+														className={cn(rowClass(item.href), 'text-sm')}
+													>
+														{item.label}
+													</Link>
+												</li>
+											))}
+											{section.moreHref && section.moreLabel && (
+												<li>
+													<Link
+														href={section.moreHref}
+														onClick={() =>
+															track_({
+																label: section.moreLabel!,
+																href: section.moreHref!,
+															})
+														}
+														className={cn(
+															rowClass(section.moreHref),
+															'text-muted-foreground text-sm',
+														)}
+													>
+														{section.moreLabel}
+													</Link>
+												</li>
+											)}
+										</ul>
+									</div>
+								)
+							}
+
+							// Collapsible group (topic tag / Skills / Meta).
+							return (
+								<Accordion
+									key={section.title}
+									type="single"
+									collapsible
+									defaultValue={
+										openGroups.includes(section.title) ? section.title : undefined
+									}
+									className="w-full"
+								>
+									<AccordionItem value={section.title} className="border-none">
 										<AccordionTrigger className="px-5 py-2.5 text-base hover:no-underline">
-											{group.title}
+											{section.title}
 										</AccordionTrigger>
 										<AccordionContent className="pb-1">
-											{group.links.map((item) => (
+											{section.links.map((item) => (
 												<Link
 													key={item.href}
 													href={item.href}
@@ -193,32 +240,61 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 													{item.label}
 												</Link>
 											))}
-											{group.moreHref && group.moreLabel && (
+											{section.moreHref && section.moreLabel && (
 												<Link
-													href={group.moreHref}
+													href={section.moreHref}
 													aria-current={
-														isActive(group.moreHref) ? 'page' : undefined
+														isActive(section.moreHref) ? 'page' : undefined
 													}
 													onClick={() =>
 														track_({
-															label: group.moreLabel!,
-															href: group.moreHref!,
+															label: section.moreLabel!,
+															href: section.moreHref!,
 														})
 													}
 													className={cn(
-														rowClass(group.moreHref),
+														rowClass(section.moreHref),
 														'text-muted-foreground py-2 pl-9 text-sm',
 													)}
 												>
-													{group.moreLabel}
+													{section.moreLabel}
 												</Link>
 											)}
 										</AccordionContent>
 									</AccordionItem>
-								))}
-							</Accordion>
-						</section>
-					)
+								</Accordion>
+							)
+						})}
+					</section>
+				) : (
+					// IA resolved but empty (degraded CMS edit) — keep navigation alive
+					// with the static primary destinations.
+					<ul className="flex flex-col py-2">
+						<li>
+							<Link
+								href={PRIMARY_LEARNING_ENTRY.href}
+								aria-current={
+									isActive(PRIMARY_LEARNING_ENTRY.href) ? 'page' : undefined
+								}
+								onClick={() => track_(PRIMARY_LEARNING_ENTRY)}
+								className={cn(rowClass(PRIMARY_LEARNING_ENTRY.href), 'font-semibold')}
+							>
+								{PRIMARY_LEARNING_ENTRY.label}
+							</Link>
+						</li>
+						{primaryLinks.map((item) => (
+							<li key={item.href}>
+								<Link
+									href={item.href}
+									aria-current={isActive(item.href) ? 'page' : undefined}
+									onClick={() => track_(item)}
+									className={rowClass(item.href)}
+								>
+									{item.label}
+								</Link>
+							</li>
+						))}
+					</ul>
 				)}
 
 				{/* Account */}
