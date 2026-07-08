@@ -2,6 +2,7 @@
 
 import { addPostToList, getList } from '@/lib/lists-query'
 import { createPost } from '@/lib/posts-query'
+import { createResource } from '@/lib/resources/create-resources'
 import { getServerAuthSession } from '@/server/auth'
 
 import type { ContentsItem, ContentsTier } from '@coursebuilder/ui/cms/manifest'
@@ -76,30 +77,43 @@ export async function listListContents(
 }
 
 /**
- * `bindings.contents.create` for the cms list editor — the "+ New post"
- * quick-create. Composes the SAME server actions the legacy "Create New"
- * modal flow ran (`createPost` → `addPostToList`), just with an app-chosen
- * placeholder title instead of the modal's title input; the tier lands as
- * 'standard', matching the legacy `handleResourceAdd`. `createPost` slugs the
- * title with a fresh guid, so repeated untitled posts never collide.
+ * `bindings.contents.create` for the cms list editor — the "+ New {type}"
+ * quick-create. `post` composes the SAME server actions the legacy "Create
+ * New" modal ran (`createPost` → `addPostToList`); `section` uses the generic
+ * `createResource` (draft, `section~guid` slug), the same writer the workshop
+ * editor uses for sections. Both attach at tier 'standard'; placeholder titles
+ * are guid-slugged so repeated untitled rows never collide.
  */
-export async function createPostInList(listId: string): Promise<void> {
+export async function createInList(
+	listId: string,
+	type: string = 'post',
+): Promise<void> {
 	const { session, ability } = await getServerAuthSession()
 	if (!session?.user || !ability.can('create', 'Content')) {
 		throw new Error('Unauthorized')
 	}
 
-	const post = await createPost({
-		title: 'Untitled post',
-		postType: 'article',
-		createdById: session.user.id,
-	})
-	if (!post) {
-		throw new Error('Failed to create post')
+	let childId: string
+	if (type === 'section') {
+		const section = await createResource({
+			type: 'section',
+			title: 'Untitled section',
+		})
+		childId = section.id
+	} else {
+		const post = await createPost({
+			title: 'Untitled post',
+			postType: 'article',
+			createdById: session.user.id,
+		})
+		if (!post) {
+			throw new Error('Failed to create post')
+		}
+		childId = post.id
 	}
 
 	await addPostToList({
-		postId: post.id,
+		postId: childId,
 		listId,
 		metadata: { tier: 'standard' },
 	})
