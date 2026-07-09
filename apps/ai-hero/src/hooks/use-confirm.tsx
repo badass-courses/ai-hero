@@ -66,6 +66,10 @@ export function useConfirm(): [
 	}
 
 	const handleClose = () => {
+		// Resolve to false on any close (including Esc / click-outside via
+		// onOpenChange) so an awaiting caller can never hang. Already-resolved
+		// promises ignore this, so confirm/cancel keep their true/false result.
+		promise?.resolve(false)
 		setPromise(null)
 	}
 
