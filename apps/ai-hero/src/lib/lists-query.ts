@@ -614,7 +614,13 @@ export async function updateListItemFields(
 						: {}),
 				},
 			})
-			await upsertPostToTypeSense(result as any, 'save')
+			// Sections are structural, not searchable content: skip the TypeSense
+			// upsert (and its revalidatePostsGraph side-effect). Indexing one both
+			// pollutes search and adds latency to the section edit-save that
+			// otherwise makes the editor feel frozen.
+			if (item.type !== 'section') {
+				await upsertPostToTypeSense(result as any, 'save')
+			}
 		}
 	}
 

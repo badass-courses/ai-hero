@@ -93,6 +93,7 @@ export async function createInList(
 	listId: string,
 	type: string = 'post',
 	title?: string,
+	description?: string,
 ): Promise<void> {
 	const { session, ability } = await getServerAuthSession()
 	if (!session?.user || !ability.can('create', 'Content')) {
@@ -114,11 +115,12 @@ export async function createInList(
 		childId = post.id
 	} else if (ResourceTypeSchema.safeParse(type).success) {
 		// Any known non-post type (section, lesson, …) — created as itself. A
-		// caller-supplied title (e.g. the section-name modal) wins; otherwise a
-		// guid-slugged placeholder so untitled rows never collide.
+		// caller-supplied title/description (e.g. the section-name modal) wins;
+		// otherwise a guid-slugged placeholder so untitled rows never collide.
 		const resource = await createResource({
 			type,
 			title: trimmedTitle || `Untitled ${type}`,
+			description: description?.trim() || undefined,
 		})
 		childId = resource.id
 	} else {
