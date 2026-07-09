@@ -15,6 +15,9 @@ export const dynamic = 'force-dynamic'
 const toIso = (value: unknown) =>
 	value instanceof Date ? value.toISOString() : value
 
+const firstParam = (value: string | string[] | undefined) =>
+	Array.isArray(value) ? value[0] : value
+
 export async function generateMetadata(
 	props: {
 		params: Promise<{ lesson: string }>
@@ -41,8 +44,10 @@ export async function generateMetadata(
  */
 export default async function LessonEditPage(props: {
 	params: Promise<{ module: string; lesson: string }>
+	searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
 	const params = await props.params
+	const searchParams = await props.searchParams
 	const { ability } = await getServerAuthSession()
 	const lesson = await getLesson(params.lesson)
 
@@ -86,6 +91,10 @@ export default async function LessonEditPage(props: {
 				videoAnalyticsEnabled={Boolean(
 					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
 				)}
+				// Seed the editor's tab/panel from the URL server-side so SSR
+				// renders the same tab the client will (no hydration mismatch).
+				initialTab={firstParam(searchParams.tab)}
+				initialPanel={firstParam(searchParams.panel)}
 			/>
 		</LayoutClient>
 	)

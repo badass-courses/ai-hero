@@ -9,6 +9,9 @@ import { createResourceEditor, pageManifest } from '@coursebuilder/ui/cms'
 
 export type EditPageClientProps = {
 	page: Page
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -17,7 +20,11 @@ export type EditPageClientProps = {
  * `withResourceForm`-inside-render flaw — via useMemo; the page keys this
  * component by slug so a slug change remounts with fresh data.
  */
-export function EditPageClient({ page }: EditPageClientProps) {
+export function EditPageClient({
+	page,
+	initialTab,
+	initialPanel,
+}: EditPageClientProps) {
 	const router = useRouter()
 
 	const PageEditor = React.useMemo(() => {
@@ -59,6 +66,9 @@ export function EditPageClient({ page }: EditPageClientProps) {
 	return (
 		<PageEditor
 			resource={page}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

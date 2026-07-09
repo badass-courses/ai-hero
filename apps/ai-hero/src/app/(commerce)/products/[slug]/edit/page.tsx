@@ -12,10 +12,17 @@ export const dynamic = 'force-dynamic'
 const toIso = (value: unknown) =>
 	value instanceof Date ? value.toISOString() : value
 
-export default async function ProductEditPage(props: {
+type Props = {
 	params: Promise<{ slug: string }>
-}) {
+	searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}
+
+const firstParam = (value: string | string[] | undefined) =>
+	Array.isArray(value) ? value[0] : value
+
+export default async function ProductEditPage(props: Props) {
 	const params = await props.params
+	const searchParams = await props.searchParams
 	await headers()
 	const { ability } = await getServerAuthSession()
 	const product = await getProduct(params.slug)
@@ -42,7 +49,14 @@ export default async function ProductEditPage(props: {
 
 	return (
 		<LayoutClient withFooter={false}>
-			<EditProductClient key={product.fields.slug} product={clientProduct} />
+			<EditProductClient
+				key={product.fields.slug}
+				product={clientProduct}
+				// Seed the editor's tab/panel from the URL server-side so SSR
+				// renders the same tab the client will (no hydration mismatch).
+				initialTab={firstParam(searchParams.tab)}
+				initialPanel={firstParam(searchParams.panel)}
+			/>
 		</LayoutClient>
 	)
 }

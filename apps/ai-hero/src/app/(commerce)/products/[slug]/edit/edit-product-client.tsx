@@ -18,6 +18,9 @@ import type { EditorCtx, FieldTab } from '@coursebuilder/ui/cms/manifest'
 
 export type EditProductClientProps = {
 	product: Product
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -89,7 +92,11 @@ const tabsWithEffects: FieldTab[] = productManifest.tabs.map((tab) => ({
  * because the router (slug-change redirect) is per-request; the page keys
  * this component by slug, so a slug change remounts with fresh data.
  */
-export function EditProductClient({ product }: EditProductClientProps) {
+export function EditProductClient({
+	product,
+	initialTab,
+	initialPanel,
+}: EditProductClientProps) {
 	const router = useRouter()
 
 	const ProductEditor = React.useMemo(() => {
@@ -110,6 +117,9 @@ export function EditProductClient({ product }: EditProductClientProps) {
 	return (
 		<ProductEditor
 			resource={product}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"
