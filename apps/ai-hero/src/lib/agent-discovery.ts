@@ -202,6 +202,54 @@ const API_DISCOVERY_RESOURCE_FAMILIES = [
 	},
 ] as const satisfies readonly ApiDiscoveryResourceFamily[]
 
+interface ApiDiscoveryAuthedEndpoint {
+	method: string
+	path: string
+	description: string
+}
+
+interface ApiDiscoveryAuthedCapability {
+	name: string
+	auth: string
+	description: string
+	endpoints: readonly ApiDiscoveryAuthedEndpoint[]
+}
+
+/**
+ * Capabilities available to an AUTHENTICATED agent (device token in
+ * `Authorization: Bearer`). Advertised so an agent can discover what it can do;
+ * every endpoint is gated server-side (401 without a token, 403 without the
+ * ability) and this only lists paths/shapes, never private data.
+ */
+const AGENT_API_CAPABILITIES = [
+	{
+		name: 'calendar-attendees',
+		auth: 'device token (Authorization: Bearer) with `update` on Content',
+		description:
+			"Manage the Google Calendar guest list for an event — addressed by slug OR id. Add emails the guest a calendar invite; remove emails a cancellation. 409 if the event isn't synced to Google Calendar yet.",
+		endpoints: [
+			{
+				method: 'GET',
+				path: '/api/calendar/attendees?slugOrId=',
+				description:
+					'List the current attendees of an event ({ email, displayName?, responseStatus? }[]). Read-only.',
+			},
+			{
+				method: 'POST',
+				path: '/api/calendar/attendees',
+				description:
+					'Add a person to the guest list ({ slugOrId, email }); Google emails them a calendar invite. 409 if already an attendee.',
+			},
+			{
+				method: 'DELETE',
+				path: '/api/calendar/attendees',
+				description:
+					'Remove a person from the guest list ({ slugOrId, email }); Google emails them a cancellation. Idempotent — returns { removed: false } if they were not on the list.',
+			},
+		],
+	},
+] as const satisfies readonly ApiDiscoveryAuthedCapability[]
+
 const DISCOVERY_NEXT_ACTIONS = [
 	'Read /sitemap.md for a markdown-oriented discovery index.',
 	'Read /llms.txt for a short operator-oriented summary.',
@@ -292,6 +340,13 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 		resources: API_DISCOVERY_RESOURCE_FAMILIES.map((resourceFamily) => ({
 			...resourceFamily,
 		})),
+		authenticated: {
+			note: 'Capabilities for an authenticated agent (device token). Every endpoint is gated server-side — 401 without a token, 403 without the required Content ability.',
+			capabilities: AGENT_API_CAPABILITIES.map((capability) => ({
+				...capability,
+				endpoints: capability.endpoints.map((endpoint) => ({ ...endpoint })),
+			})),
+		},
 		nextActions: [...DISCOVERY_NEXT_ACTIONS],
 	}
 }

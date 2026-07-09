@@ -1,4 +1,11 @@
-import { courseBuilderAdapter } from '@/db'
+import { courseBuilderAdapter, db } from '@/db'
+import {
+	permissions,
+	rolePermissions,
+	roles,
+	userRoles,
+	users,
+} from '@/db/schema'
 import { env } from '@/env.mjs'
 import { EventSchema, type Event } from '@/lib/events'
 import { getEventOrEventSeries } from '@/lib/events-query'
@@ -9,6 +16,7 @@ import {
 	updateGoogleCalendarEvent,
 } from '@/lib/google-calendar'
 import { log } from '@/server/logger'
+import { and, eq, isNull } from 'drizzle-orm'
 import { calendar_v3 } from 'googleapis'
 import { NonRetriableError } from 'inngest'
 import { marked } from 'marked'
@@ -23,6 +31,68 @@ import { inngest } from '../inngest.server'
 
 export const EVENT_HOST_EMAIL = env.GOOG_CALENDAR_IMPERSONATE_USER || ''
 const EVENT_HOST_DISPLAY_NAME = 'AI Hero'
+
+/**
+ * Loads all users who hold the `create_content` permission (i.e. instructors /
+ * content creators) as Google Calendar attendees, so they're auto-added
+ * (pre-accepted) to every event we create. The host is excluded here since it's
+ * added separately as the organizer.
+ *
+ * This keys off the `create_content` permission specifically, NOT `manage_all` —
+ * so plain admins are not auto-added. A user is only picked up once they hold a
+ * (global) role that grants `create_content`, e.g. the seeded `contributor`
+ * role. Admins who should also be invited need such a role in addition to their
+ * admin role; adding it is purely additive and doesn't remove any capabilities.
+ */
+async function getInstructorAttendees(): Promise<
+	calendar_v3.Schema$EventAttendee[]
+> {
+	const instructors = await db
+		.select({ email: users.email, name: users.name })
+		.from(users)
+		.innerJoin(userRoles, eq(users.id, userRoles.userId))
+		.innerJoin(roles, eq(userRoles.roleId, roles.id))
+		.innerJoin(rolePermissions, eq(roles.id, rolePermissions.roleId))
+		.innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+		.where(
+			and(
+				eq(permissions.name, 'create_content'),
+				// Scope to global roles (organizationId IS NULL), not org-scoped
+				// roles that happen to grant create_content.
+				isNull(roles.organizationId),
+				// Exclude revoked (deactivated / soft-deleted) assignments and
+				// inactive roles/permissions so former contributors aren't
+				// auto-added to new events.
+				eq(userRoles.active, true),
+				isNull(userRoles.deletedAt),
+				eq(roles.active, true),
+				isNull(roles.deletedAt),
+				eq(rolePermissions.active, true),
+				isNull(rolePermissions.deletedAt),
+				eq(permissions.active, true),
+				isNull(permissions.deletedAt),
+			),
+		)
+
+	// Dedupe by email (a user may hold create_content via multiple roles) and
+	// exclude the host, which is already added separately as the organizer.
+	const seen = new Set<string>([EVENT_HOST_EMAIL.toLowerCase()])
+
+	return instructors.reduce<calendar_v3.Schema$EventAttendee[]>(
+		(attendees, instructor) => {
+			const email = instructor.email?.toLowerCase()
+			if (!instructor.email || !email || seen.has(email)) return attendees
+			seen.add(email)
+			attendees.push({
+				email: instructor.email,
+				displayName: instructor.name ?? undefined,
+				responseStatus: 'accepted',
+			})
+			return attendees
+		},
+		[],
+	)
+}
 
 /**
  * Determines if an event is an office hours event based on title or tags
@@ -283,6 +353,11 @@ export const calendarSync = inngest.createFunction(
 				)
 			}
 
+			const instructorAttendees = await step.run(
+				'load-instructor-attendees',
+				getInstructorAttendees,
+			)
+
 			const payloadForCreation: calendar_v3.Schema$Event = {
 				...partialGoogleEventPayload,
 				organizer: {
@@ -295,6 +370,7 @@ export const calendarSync = inngest.createFunction(
 						displayName: EVENT_HOST_DISPLAY_NAME,
 						responseStatus: 'accepted',
 					},
+					...instructorAttendees,
 				],
 			}
 
