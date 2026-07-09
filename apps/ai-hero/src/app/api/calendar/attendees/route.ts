@@ -134,10 +134,10 @@ export async function POST(request: NextRequest) {
 
 		const result = await addAttendeeFor({ slugOrId, email, ability })
 
+		// Don't log the raw attendee email (PII); slugOrId correlates the op.
 		await log.info('api.calendar.attendees.post.success', {
 			userId: user.id,
 			slugOrId,
-			email: result.email,
 		})
 
 		return NextResponse.json(result, { status: 201, headers: corsHeaders })
@@ -187,10 +187,10 @@ export async function DELETE(request: NextRequest) {
 
 		const result = await removeAttendeeFor({ slugOrId, email, ability })
 
+		// Don't log the raw attendee email (PII).
 		await log.info('api.calendar.attendees.delete.success', {
 			userId: user.id,
 			slugOrId,
-			email: result.email,
 			removed: result.removed,
 		})
 

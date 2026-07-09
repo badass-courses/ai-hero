@@ -89,6 +89,12 @@ export async function resolveCalendarEventIdFromSlugOrId(
 	if (!resource) {
 		throw new CalendarError('Resource not found', 404)
 	}
+	// Only events carry a Google calendar entry. Reject a non-event resource
+	// outright rather than falling through to the 409 "not synced yet", which
+	// would wrongly imply a sync is pending for something that never syncs.
+	if (resource.type !== 'event') {
+		throw new CalendarError('Resource is not a calendar event', 404)
+	}
 
 	const fields = (resource.fields ?? {}) as Record<string, unknown>
 	const calendarId =
@@ -170,9 +176,10 @@ export async function addAttendeeFor({
 	await addUserToGoogleCalendarEvent(calendarEventId, cleanEmail, {
 		sendUpdates: 'all',
 	})
+	// Don't log the raw attendee email (PII) — calendarEventId is enough to
+	// correlate the operation.
 	void log.info('calendar.attendees.service.added', {
 		calendarEventId,
-		email: cleanEmail,
 	})
 	return { email: cleanEmail, added: true }
 }
@@ -209,9 +216,9 @@ export async function removeAttendeeFor({
 		match?.email ?? cleanEmail,
 		{ sendUpdates: 'all' },
 	)
+	// Don't log the raw attendee email (PII).
 	void log.info('calendar.attendees.service.removed', {
 		calendarEventId,
-		email: cleanEmail,
 		wasPresent: Boolean(match),
 	})
 	return { email: cleanEmail, removed: Boolean(match) }
