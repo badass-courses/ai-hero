@@ -12,6 +12,9 @@ export type EditEventClientProps = {
 	event: Event
 	/** Full tag vocabulary, server-fetched by the page (`getTags`). */
 	tags: Tag[]
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -55,7 +58,12 @@ function eventDefaultValues(resource: unknown) {
  * per-request; the page keys this component by slug, so a slug change
  * remounts with fresh data.
  */
-export function EditEventClient({ event, tags }: EditEventClientProps) {
+export function EditEventClient({
+	event,
+	tags,
+	initialTab,
+	initialPanel,
+}: EditEventClientProps) {
 	const router = useRouter()
 
 	const EventEditor = React.useMemo(() => {
@@ -80,6 +88,9 @@ export function EditEventClient({ event, tags }: EditEventClientProps) {
 	return (
 		<EventEditor
 			resource={event}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

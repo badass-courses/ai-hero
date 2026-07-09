@@ -9,6 +9,9 @@ import { createResourceEditor, promptManifest } from '@coursebuilder/ui/cms'
 
 export type EditPromptClientProps = {
 	prompt: Prompt
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -17,7 +20,11 @@ export type EditPromptClientProps = {
  * `withResourceForm`-inside-render flaw — via useMemo; the page keys this
  * component by slug so a slug change remounts with fresh data.
  */
-export function EditPromptClient({ prompt }: EditPromptClientProps) {
+export function EditPromptClient({
+	prompt,
+	initialTab,
+	initialPanel,
+}: EditPromptClientProps) {
 	const router = useRouter()
 
 	const PromptEditor = React.useMemo(() => {
@@ -52,6 +59,9 @@ export function EditPromptClient({ prompt }: EditPromptClientProps) {
 	return (
 		<PromptEditor
 			resource={prompt}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

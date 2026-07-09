@@ -24,6 +24,9 @@ export type EditListClientProps = {
 	list: List
 	/** Full tag vocabulary, server-fetched by the page (`getTags`). */
 	tags: Tag[]
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -32,7 +35,12 @@ export type EditListClientProps = {
  * `withResourceForm`-inside-render flaw — via useMemo; the page keys this
  * component by slug so a slug change remounts with fresh data.
  */
-export function EditListClient({ list, tags }: EditListClientProps) {
+export function EditListClient({
+	list,
+	tags,
+	initialTab,
+	initialPanel,
+}: EditListClientProps) {
 	const router = useRouter()
 
 	// Imperative bridge: the kit's "+ New section" calls the async create
@@ -96,6 +104,13 @@ export function EditListClient({ list, tags }: EditListClientProps) {
 								parentSlug: list.fields.slug,
 							})
 						: undefined,
+				// Per-row ⋯ "Edit" as a real anchor — same target as onEditItem,
+				// so cmd/ctrl/middle-click opens the editor in a new tab.
+				getEditHref: (item) =>
+					getResourcePath(item.type, item.slug ?? item.id, 'edit', {
+						parentType: 'list',
+						parentSlug: list.fields.slug,
+					}),
 				// Name a section before it's created (sections have no edit route).
 				promptSectionTitle,
 			}),
@@ -110,6 +125,9 @@ export function EditListClient({ list, tags }: EditListClientProps) {
 		<>
 			<ListEditor
 				resource={list}
+				// Server-seeded from searchParams so SSR matches the client tab.
+				initialTab={initialTab}
+				initialPanel={initialPanel}
 				// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 				// app nav it renders under.
 				className="h-[calc(100dvh-var(--nav-height))]"

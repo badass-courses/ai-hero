@@ -10,6 +10,9 @@ import { createResourceEditor, workshopManifest } from '@coursebuilder/ui/cms'
 
 export type EditWorkshopClientProps = {
 	workshop: Workshop
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -18,7 +21,11 @@ export type EditWorkshopClientProps = {
  * `withResourceForm`-inside-render flaw — via useMemo; the page keys this
  * component by slug so a slug change remounts with fresh data.
  */
-export function EditWorkshopClient({ workshop }: EditWorkshopClientProps) {
+export function EditWorkshopClient({
+	workshop,
+	initialTab,
+	initialPanel,
+}: EditWorkshopClientProps) {
 	const router = useRouter()
 
 	const WorkshopEditor = React.useMemo(() => {
@@ -55,6 +62,9 @@ export function EditWorkshopClient({ workshop }: EditWorkshopClientProps) {
 	return (
 		<WorkshopEditor
 			resource={workshop}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

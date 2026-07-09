@@ -12,6 +12,9 @@ export const dynamic = 'force-dynamic'
 const toIso = (value: unknown) =>
 	value instanceof Date ? value.toISOString() : value
 
+const firstParam = (value: string | string[] | undefined) =>
+	Array.isArray(value) ? value[0] : value
+
 export async function generateMetadata(
 	props: {
 		params: Promise<{ module: string }>
@@ -32,8 +35,10 @@ export async function generateMetadata(
 
 export default async function EditWorkshopPage(props: {
 	params: Promise<{ module: string }>
+	searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
 	const params = await props.params
+	const searchParams = await props.searchParams
 	const { ability } = await getServerAuthSession()
 
 	if (!ability.can('update', 'Content')) {
@@ -61,6 +66,10 @@ export default async function EditWorkshopPage(props: {
 			<EditWorkshopClient
 				key={workshop.fields.slug}
 				workshop={clientWorkshop}
+				// Seed the editor's tab/panel from the URL server-side so SSR
+				// renders the same tab the client will (no hydration mismatch).
+				initialTab={firstParam(searchParams.tab)}
+				initialPanel={firstParam(searchParams.panel)}
 			/>
 		</LayoutClient>
 	)

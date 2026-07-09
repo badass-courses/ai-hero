@@ -57,6 +57,12 @@ export interface CreateListBindingsOptions {
 	 */
 	getItemHref?: (item: ContentsItem) => string | undefined
 	/**
+	 * Edit URL for a non-section row — makes the ⋯ "Edit" a real anchor so
+	 * cmd/ctrl/middle-click opens the editor in a new tab (the shell's
+	 * unsaved-changes guard still catches a plain click).
+	 */
+	getEditHref?: (item: ContentsItem) => string | undefined
+	/**
 	 * Prompt for a section's name (and optional description) before creating it
 	 * — sections have no edit route, so this has to happen up front. Resolve
 	 * with the entered values, or `null` to cancel the create. When omitted,
@@ -95,6 +101,7 @@ export function createListBindings({
 	onSlugChange,
 	onEditItem,
 	getItemHref,
+	getEditHref,
 	promptSectionTitle,
 }: CreateListBindingsOptions): ResourceBindings<typeof ListSchema> {
 	return {
@@ -246,6 +253,12 @@ export function createListBindings({
 			},
 			// Per-row external-link icon → the child's public view URL.
 			getItemHref,
+			// Per-row ⋯ "Edit" as a real anchor (cmd+click → new tab).
+			getEditHref,
+			// Defer reorders / "Move to" / tier / section-field edits until the
+			// editor's Save (parity with the field form) instead of writing each
+			// drag to the DB immediately. Add / create / remove stay immediate.
+			deferWrites: true,
 		},
 		media: {
 			// Same Cloudinary dir the legacy tool-panel uploader used: 'lists'
