@@ -480,9 +480,7 @@ async function compileMDXInternal(
 							{children}
 						</Callout>
 					),
-					PromoCard: (props: PromoCardProps) => (
-						<PromoCard {...props} />
-					),
+					PromoCard: (props: PromoCardProps) => <PromoCard {...props} />,
 					Timeline: ({ children }) => <Timeline>{children}</Timeline>,
 					TimelineItem: ({ children, icon }) => (
 						<TimelineItem icon={icon}>{children}</TimelineItem>
