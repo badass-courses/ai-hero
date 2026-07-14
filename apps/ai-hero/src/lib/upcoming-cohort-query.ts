@@ -67,3 +67,38 @@ export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null>
 		startsAt: readString(winner.fields, 'startsAt'),
 	}
 }
+
+/**
+ * The most recent published+public cohort regardless of enrollment window —
+ * the waitlist target between cohorts. The /cohorts index page is effectively
+ * unused (Vojta, 2026-07-14), so waitlist CTAs link straight to the latest
+ * cohort's own page instead. Newest `startsAt` first (createdAt fallback).
+ */
+export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
+	const cohorts = await db.query.contentResource.findMany({
+		where: and(
+			eq(contentResource.type, 'cohort'),
+			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`, 'published'),
+			eq(
+				sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+				'public',
+			),
+		),
+	})
+	if (cohorts.length === 0) return null
+
+	const sorted = [...cohorts].sort((a, b) => {
+		const aStart =
+			readString(a.fields, 'startsAt') ?? a.createdAt?.toISOString() ?? ''
+		const bStart =
+			readString(b.fields, 'startsAt') ?? b.createdAt?.toISOString() ?? ''
+		return bStart.localeCompare(aStart)
+	})
+
+	const winner = sorted[0]!
+	return {
+		title: readString(winner.fields, 'title') ?? 'The next cohort',
+		slug: readString(winner.fields, 'slug') ?? winner.id,
+		startsAt: readString(winner.fields, 'startsAt'),
+	}
+}

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { getUpcomingCohort } from '@/lib/upcoming-cohort-query'
+import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { cn } from '@coursebuilder/utils/cn'
 import { ArrowRight } from 'lucide-react'
@@ -20,7 +20,8 @@ export type CourseCtaProps = {
  * - Active cohort → cohort title + "next cohort starts {date}" + "Learn more →"
  *   linking to `/cohorts/{slug}`.
  * - No purchasable cohort (between cohorts) → waitlist state, same shell, CTA
- *   links to the `/cohorts` index.
+ *   links to the LATEST cohort's own page (the /cohorts index is unused —
+ *   Vojta, 2026-07-14).
  *
  * Generalizes `OrganicOpportunityCta`'s slug-gated hardcoded map; shares its
  * shell treatment (`border-primary/30 bg-primary/5`) as the high-weight baseline,
@@ -33,10 +34,13 @@ export async function CourseCta({
 	if (suppress === true) return null
 
 	const cohort = await getUpcomingCohort()
+	const latest = cohort ? null : await getLatestCohort()
+	const target = cohort ?? latest
+	if (!target) return null
 
 	const eyebrow = 'Ready to go deeper?'
 
-	const title = cohort?.title ?? 'Cohort-based AI engineering course'
+	const title = target.title
 
 	const startsLabel = cohort?.startsAt
 		? formatCohortDateRange(cohort.startsAt, null).dateString
@@ -48,7 +52,7 @@ export async function CourseCta({
 			: 'Join the next cohort and build these habits alongside other engineers.'
 		: 'Enrollment is closed between cohorts. Join the waitlist to hear when the next one opens.'
 
-	const href = cohort ? `/cohorts/${cohort.slug}` : '/cohorts'
+	const href = `/cohorts/${target.slug}`
 
 	const label = cohort ? 'Learn more' : 'Join the waitlist'
 

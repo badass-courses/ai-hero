@@ -22,7 +22,10 @@ import { getAllLists, getCachedListForPost } from "@/lib/lists-query";
 import { type Post } from "@/lib/posts";
 import { getAllPosts, getCachedPostOrList } from "@/lib/posts-query";
 import { PostStructuredData } from "@/lib/structured-data";
-import { getUpcomingCohort } from "@/lib/upcoming-cohort-query";
+import {
+  getLatestCohort,
+  getUpcomingCohort,
+} from "@/lib/upcoming-cohort-query";
 import { getServerAuthSession } from "@/server/auth";
 import { compileMDX } from "@/utils/compile-mdx";
 import { getOGImageUrlForResource } from "@/utils/get-og-image-url-for-resource";
@@ -264,9 +267,10 @@ async function PostBody({ post }: { post: Post | null }) {
     post.type === "post" && post.fields?.postType === "article";
 
   // W1 §2.3(b) / Q1 — the auto-inserted callout line is ALWAYS the 'course'
-  // variant pointing at the active cohort. Resolve the copy BEFORE compile (the
-  // remark plugin does no data-fetching); if there is no purchasable cohort we
-  // pass nothing and the line simply doesn't auto-insert.
+  // variant. Resolve the copy BEFORE compile (the remark plugin does no
+  // data-fetching). Purchasable cohort → its title/page; between cohorts →
+  // waitlist copy linking DIRECTLY to the latest cohort's page (the /cohorts
+  // index is unused — Vojta, 2026-07-14). No cohort content at all → no line.
   let calloutLineAutoInsert:
     | { variant: CalloutIntent; label: string; href: string; linkText: string }
     | undefined;
@@ -279,6 +283,16 @@ async function PostBody({ post }: { post: Post | null }) {
         href: `/cohorts/${cohort.slug}`,
         linkText: cohort.title,
       };
+    } else {
+      const latest = await getLatestCohort();
+      if (latest) {
+        calloutLineAutoInsert = {
+          variant: "course",
+          label: "Go deeper:",
+          href: `/cohorts/${latest.slug}`,
+          linkText: `join the waitlist for ${latest.title}`,
+        };
+      }
     }
   }
 
