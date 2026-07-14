@@ -85,16 +85,17 @@ export const SKILLS_SALES_COPY = {
 /**
  * Free skills mini-course CTA on the /skills landing (spec §7 step 5).
  *
- * PLACEHOLDER DESTINATION (flag for Vojta): `href` defaults to the real
- * `/cohorts` route so nothing 404s, but the true "free mini-course" target is
- * an unresolved content decision (spec §11 Q6). Point it at the real resource
- * when it exists — no code change beyond this constant is needed.
+ * PLACEHOLDER DESTINATION (flag for Vojta): the component is currently
+ * UNRENDERED (the mini-course doesn't exist yet — removed from /skills
+ * 2026-07-14). The true target is an unresolved content decision (spec §11
+ * Q6). `href` points at the latest cohort page meanwhile — the /cohorts
+ * index is unused sitewide (never link it; waitlist === latest cohort page).
  */
 export const SKILLS_MINI_COURSE_CTA = {
 	heading: 'Get the free skills mini-course',
 	subheading:
 		'A short, email-based walkthrough of the core skills on a real codebase, so you see the whole cycle before you commit to anything.',
-	href: '/cohorts',
+	href: '/cohorts/ai-coding-for-real-engineers-m0k0w',
 	ctaLabel: 'Start the free course',
 } as const
 
