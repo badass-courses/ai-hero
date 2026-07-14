@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { track } from '@/utils/analytics'
 import { Check, ChevronRight } from 'lucide-react'
 
@@ -92,10 +92,11 @@ export function SeriesLessons({
 	overviewHref?: string
 	className?: string
 }) {
-	const params = useParams()
+	const pathname = usePathname()
 	const depth = useSidebarDepth()
-	const currentSlug =
-		typeof params.post === 'string' ? norm(`/${params.post}`) : undefined
+	// Pathname, not useParams().post — that param only exists on [post] routes,
+	// which left the Overview row inactive on non-post homes like /skills.
+	const currentSlug = pathname ? norm(pathname) : undefined
 	const groups = toSeriesGroups(resources)
 	if (groups.length === 0) return null
 
