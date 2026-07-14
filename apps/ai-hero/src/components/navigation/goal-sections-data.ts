@@ -46,64 +46,60 @@ export type GoalSection = {
 	skillCta?: GoalSkillCta
 }
 
+/**
+ * Three sections = Matt's three audience buckets (his wireframe feedback,
+ * 2026-07-14): new to coding AND AI coding · experienced coder new to AI
+ * coding · experienced at both. Questions are his exact phrasings; supersedes
+ * the earlier four Jun23-taxonomy goal sections.
+ */
 export const GOAL_SECTIONS: GoalSection[] = [
 	{
-		id: 'set-up-your-agent',
-		question: 'How do I set up my coding agent?',
+		id: 'get-started',
+		question: 'How do I get started?',
 		strapline:
-			'Get your agent reading the right files, following the right rules, and staying inside guardrails — before you ever ask it to write a line of code.',
+			"Never written code? Start here — what an LLM actually is, what it can do for you, and why there's never been a better time to build your own software.",
 		items: [
+			{ slugOrId: 'what-is-an-llm' },
+			{ slugOrId: 'what-are-llms-used-for' },
+			{ slugOrId: 'what-is-an-agent' },
+			{ slugOrId: 'personal-software-is-insane-in-the-age-of-ai-u2hx2' },
+		],
+		moreHref: '/topics/learn-how-llms-think',
+		moreLabel: 'More fundamentals →',
+	},
+	{
+		id: 'write-code-like-me',
+		question: 'How can I get AI to write code like me?',
+		strapline:
+			'You can already code — now get the agent coding to your standard. Set up the rules, the context, and the workflow so its output reads like yours.',
+		items: [
+			{ slugOrId: 'the-ai-engineer-mindset' },
 			{ slugOrId: 'a-complete-guide-to-agents-md' },
-			{ slugOrId: 'plan-mode-introduction' },
 			{ slugOrId: 'how-to-make-codebases-ai-agents-love' },
-			{ slugOrId: 'connect-claude-code-to-github' },
+			{ slugOrId: 'plan-mode-introduction' },
 		],
 		moreHref: '/topics/set-up-your-agent',
 		moreLabel: 'More ways to set up your agent →',
+		skillCta: {
+			label: 'Install my whole setup with /setup-matt-pocock-skills →',
+			href: '/skills-setup-matt-pocock-skills',
+		},
 	},
 	{
-		id: 'ship-solid-code',
-		question: 'How do I ship code I can trust?',
+		id: 'get-the-most-out',
+		question: 'How can I get the most out of AI coding?',
 		strapline:
-			"Stop AI from quietly rotting your codebase. Put tests first, keep the slop under control, and ship changes you'd actually put your name on.",
+			'Already fluent with a coding agent? Sharpen the loop — grill your plans, fire tracer bullets, keep the context lean, and keep the architecture clean.',
 		items: [
-			{ slugOrId: 'skill-test-driven-development-claude-code' },
+			{ slugOrId: '5-agent-skills-i-use-every-day' },
+			{ slugOrId: 'real-world-feature-build-with-claude-code' },
 			{ slugOrId: 'tracer-bullets' },
-			{ slugOrId: 'skills-improve-codebase-architecture' },
+			{ slugOrId: 'how-to-kill-the-bloat-in-claude-codes-system-prompt' },
+			{ slugOrId: 'getting-started-with-ralph' },
 		],
-		moreHref: '/topics/ship-solid-code',
-		moreLabel: 'More ways to ship solid code →',
-		skillCta: { label: 'Try my /tdd skill →', href: '/skills-tdd' },
-	},
-	{
-		id: 'learn-how-llms-think',
-		question: 'How do LLMs actually think?',
-		strapline:
-			"Once you understand tokens, context windows, and how a model really reads your prompt, you stop guessing and start getting the results you want.",
-		items: [
-			{ slugOrId: 'what-is-an-llm' },
-			{ slugOrId: 'what-are-tokens' },
-			{ slugOrId: 'what-is-the-context-window' },
-			{ slugOrId: 'messages-system-prompts-and-reasoning-tokens' },
-			{ slugOrId: 'how-to-choose-an-llm' },
-		],
-		moreHref: '/topics/learn-how-llms-think',
-		moreLabel: 'More ways to learn how LLMs think →',
-	},
-	{
-		id: 'build-the-right-thing',
-		question: 'How do I build the right thing?',
-		strapline:
-			'Turn a vague idea into a sharp PRD, slice it into agent-ready issues, and prototype the risky parts first — so you build what actually matters.',
-		items: [
-			{ slugOrId: 'skills-to-prd' },
-			{ slugOrId: 'skills-to-issues' },
-			{ slugOrId: 'burn-through-your-backlog-with-my-triage-skill' },
-			{ slugOrId: 'skills-prototype' },
-		],
-		moreHref: '/topics/build-the-right-thing',
-		moreLabel: 'More ways to build the right thing →',
-		skillCta: { label: 'Try my /to-prd skill →', href: '/skills-to-prd' },
+		moreHref: '/topics/get-better-results',
+		moreLabel: 'More ways to get better results →',
+		skillCta: { label: 'Try my /grill-me skill →', href: '/skills-grill-me' },
 	},
 ]
 
@@ -113,9 +109,9 @@ export const TOC_ITEMS = GOAL_SECTIONS.map((g) => ({
 	label: g.question,
 }))
 
-/** Editorial empty-state prompts for the Ask AIHero bot (spec §4.1). Exactly 3. */
+/** Editorial empty-state prompts for the Ask AIHero bot (spec §4.1). Exactly 3 — aligned with the audience buckets. */
 export const CURATED_SUGGESTIONS: string[] = [
-	'How do I set up my coding agent?',
+	'How do I get started with AI coding?',
+	'How can I get AI to write code like me?',
 	'How do I get Claude Code to write tests first?',
-	"What's the context window, and why does it matter?",
 ]

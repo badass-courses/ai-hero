@@ -32,7 +32,6 @@ export const COURSES_NAV_ITEM: PrimaryNavItem = {
 
 /** Global destinations after the primary entry, in display order. */
 export const PRIMARY_NAV_ITEMS: PrimaryNavItem[] = [
-	{ label: 'Principles', href: '/principles' },
 	{ label: 'Skills', href: '/skills' },
 	{ label: 'Tools', href: '/tools' },
 	COURSES_NAV_ITEM,

@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { track } from '@/utils/analytics'
 import {
 	BookA,
-	Compass,
+
 	Map as MapIcon,
 	Newspaper,
 	PanelLeftClose,
@@ -30,7 +30,6 @@ const ICON_RAIL_LINKS: { label: string; href: string; icon: LucideIcon }[] = [
 	{ label: 'Map', href: '/learn', icon: MapIcon },
 	{ label: 'Posts', href: '/posts', icon: Newspaper },
 	{ label: 'AI Coding Dictionary', href: '/ai-coding-dictionary', icon: BookA },
-	{ label: 'Principles', href: '/principles', icon: Compass },
 	{ label: 'Skills', href: '/skills', icon: Sparkles },
 	{ label: 'Tools', href: '/tools', icon: Wrench },
 ]
