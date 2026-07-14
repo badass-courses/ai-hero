@@ -9,6 +9,7 @@ import { listHomeHref } from '@/lib/list-home'
 import { track } from '@/utils/analytics'
 import { ArrowRight, ChevronRight } from 'lucide-react'
 
+import type { ModuleProgress } from '@coursebuilder/core/schemas'
 import {
 	SidebarGroup,
 	SidebarGroupContent,
@@ -133,13 +134,17 @@ function IconFor(iconHref?: string) {
 /**
  * Client bridge for data-driven series content inside a `SidebarSection`:
  * rebuilds resource-shaped rows (section sub-headings + lessons) from
- * serializable groups and renders `SeriesLessons` with the reader's progress.
- * Used by the Skills entry (`SkillsEntry` in sidebar-sections) so the Explore
- * Skills accordion is the SAME component as the topic groups.
+ * serializable groups and renders `SeriesLessons`. Used by the Skills entry
+ * (`SkillsEntry` in sidebar-sections) so the Explore Skills accordion is the
+ * SAME component as the topic groups. Progress arrives as a PROP
+ * (server-fetched for the skills list) — NOT from `useProgress`, whose
+ * provider exists only in the [post] layout, which is why ✓ marks used to
+ * vanish on /skills and other hub pages.
  */
 export function ListSectionLessons({
 	groups,
 	overviewHref,
+	completedLessons,
 }: {
 	groups: {
 		id: string
@@ -147,8 +152,8 @@ export function ListSectionLessons({
 		items: { id: string; slug: string; title: string }[]
 	}[]
 	overviewHref?: string
+	completedLessons?: ModuleProgress['completedLessons']
 }) {
-	const { progress } = useProgress()
 	const resources = React.useMemo(
 		() =>
 			groups.flatMap((group) => {
@@ -177,7 +182,7 @@ export function ListSectionLessons({
 	return (
 		<SeriesLessons
 			resources={resources}
-			completedLessons={progress?.completedLessons}
+			completedLessons={completedLessons}
 			overviewHref={overviewHref}
 		/>
 	)

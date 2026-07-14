@@ -4,6 +4,7 @@ import { filterSectionedResources } from '@/lib/list-sections'
 import { getListWithSections } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
+import { getModuleProgressForUser } from '@/lib/progress'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
@@ -241,6 +242,9 @@ async function SkillsEntrySection({
 		if (itemHrefs.length === 0) {
 			return <SidebarNavLink href={href}>{label}</SidebarNavLink>
 		}
+		// Per-user, per-request (NOT in the shared cache): the ✓ marks must show
+		// on every hub page, not just inside the [post] layout's ProgressProvider.
+		const progress = await getModuleProgressForUser(SKILLS_LIST_ID)
 		return (
 			<SidebarSection
 				title={label}
@@ -248,7 +252,11 @@ async function SkillsEntrySection({
 				ownListSlug={listSlug}
 				extraHrefs={[href, ...itemHrefs]}
 			>
-				<ListSectionLessons groups={groups} overviewHref={href} />
+				<ListSectionLessons
+					groups={groups}
+					overviewHref={href}
+					completedLessons={progress?.completedLessons}
+				/>
 			</SidebarSection>
 		)
 	} catch (error) {
