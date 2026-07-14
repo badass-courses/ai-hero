@@ -25,23 +25,40 @@ function norm(path: string): string {
 	return trimmed === '' ? '/' : trimmed.toLowerCase()
 }
 
-/** Flatten a list's resources to a lesson array (sections → their children). */
-export function flattenLessons(
+type SeriesRow =
+	| { kind: 'section'; id: string; title: string }
+	| { kind: 'lesson'; lesson: ContentResource; n: number }
+
+/**
+ * Walk a list's resources into render rows: a `section` contributes a
+ * sub-heading row followed by its children; loose lessons pass through.
+ * Lesson numbering is continuous across the whole series.
+ */
+export function toSeriesRows(
 	resources: { resource?: ContentResource }[] | undefined,
-): ContentResource[] {
-	const out: ContentResource[] = []
+): SeriesRow[] {
+	const rows: SeriesRow[] = []
+	let n = 0
 	for (const entry of resources ?? []) {
 		const res = entry?.resource
 		if (!res) continue
 		if (res.type === 'section') {
-			for (const child of (res as any).resources ?? []) {
-				if (child?.resource) out.push(child.resource)
+			const children = ((res as any).resources ?? []).filter(
+				(child: any) => child?.resource,
+			)
+			if (children.length === 0) continue
+			const title = (res as any).fields?.title
+			if (typeof title === 'string' && title) {
+				rows.push({ kind: 'section', id: res.id, title })
+			}
+			for (const child of children) {
+				rows.push({ kind: 'lesson', lesson: child.resource, n: ++n })
 			}
 		} else {
-			out.push(res)
+			rows.push({ kind: 'lesson', lesson: res, n: ++n })
 		}
 	}
-	return out
+	return rows
 }
 
 /**
@@ -65,8 +82,8 @@ export function SeriesLessons({
 	const depth = useSidebarDepth()
 	const currentSlug =
 		typeof params.post === 'string' ? norm(`/${params.post}`) : undefined
-	const lessons = flattenLessons(resources)
-	if (lessons.length === 0) return null
+	const rows = toSeriesRows(resources)
+	if (!rows.some((row) => row.kind === 'lesson')) return null
 
 	const completed = new Set(
 		(completedLessons ?? []).filter((l) => l.completedAt).map((l) => l.resourceId),
@@ -98,7 +115,22 @@ export function SeriesLessons({
 					</SidebarMenuButton>
 				</SidebarMenuItem>
 			) : null}
-			{lessons.map((lesson, index) => {
+			{rows.map((row) => {
+				if (row.kind === 'section') {
+					// Section sub-heading: small-caps label row, same indent as the
+					// lessons it introduces (mirrors the desktop list rendering).
+					return (
+						<SidebarMenuItem key={row.id}>
+							<div
+								className="text-muted-foreground select-none pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider"
+								style={rowIndent(depth)}
+							>
+								{row.title}
+							</div>
+						</SidebarMenuItem>
+					)
+				}
+				const { lesson, n } = row
 				const slug = lesson.fields?.slug as string | undefined
 				if (!slug) return null
 				const isActive = norm(`/${slug}`) === currentSlug
@@ -135,7 +167,7 @@ export function SeriesLessons({
 									{isDone ? (
 										<Check className="size-3.5" strokeWidth={2.4} />
 									) : (
-										index + 1
+										n
 									)}
 								</span>
 								<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">

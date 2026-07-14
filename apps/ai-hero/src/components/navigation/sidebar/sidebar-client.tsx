@@ -13,7 +13,6 @@ import {
 	SidebarGroup,
 	SidebarGroupContent,
 	SidebarGroupLabel,
-	SidebarMenuAction,
 	SidebarMenuButton,
 } from '@coursebuilder/ui'
 
@@ -125,102 +124,62 @@ export function SidebarNavLink({
 	)
 }
 
-/**
- * A nav link that is ALSO a disclosure: the row navigates (icon + label →
- * `href`), a right-side chevron action toggles an indented child list
- * (Overview row + numbered items via `SeriesLessons`). Unlike the
- * `SidebarNavLink` current-list expansion, this works on EVERY hub page — no
- * list context needed; the items are server-loaded and passed in. Auto-opens
- * when the current page is the home or one of the items (and never
- * auto-collapses under the user). Used for Explore → Skills
- * (see lat.md/decisions.md "Series posts keep the hub sidebar").
- */
-export function ExpandableNavLink({
-	href,
-	label,
-	items,
-}: {
-	href: string
-	label: React.ReactNode
-	items: { id: string; slug: string; title: string }[]
-}) {
-	const pathname = usePathname()
-	const depth = useSidebarDepth()
-	const { progress } = useProgress()
-	const current = normalizePath(pathname ?? '/')
-	const activeInside =
-		normalizePath(href) === current ||
-		items.some((item) => normalizePath(`/${item.slug}`) === current)
-	const [open, setOpen] = React.useState(activeInside)
-	// Reveal on navigation into the group; manual toggling stays respected.
-	React.useEffect(() => {
-		if (activeInside) setOpen(true)
-	}, [activeInside])
+/** Icon lookup for section header rows (`NAV_ICONS` keyed by href). */
+function IconFor(iconHref?: string) {
+	const Icon = iconHref ? NAV_ICONS[normalizePath(iconHref)] : undefined
+	return Icon ? <Icon active={false} className="size-4 shrink-0" /> : null
+}
 
-	const Icon = NAV_ICONS[normalizePath(href)]
-	// When open, the row reads as a group header — the active highlight belongs
-	// to the Overview child (SeriesLessons), not the parent.
-	const isActive = !open && normalizePath(href) === current
+/**
+ * Client bridge for data-driven series content inside a `SidebarSection`:
+ * rebuilds resource-shaped rows (section sub-headings + lessons) from
+ * serializable groups and renders `SeriesLessons` with the reader's progress.
+ * Used by the Skills entry (`SkillsEntry` in sidebar-sections) so the Explore
+ * Skills accordion is the SAME component as the topic groups.
+ */
+export function ListSectionLessons({
+	groups,
+	overviewHref,
+}: {
+	groups: {
+		id: string
+		title: string | null
+		items: { id: string; slug: string; title: string }[]
+	}[]
+	overviewHref?: string
+}) {
+	const { progress } = useProgress()
 	const resources = React.useMemo(
 		() =>
-			items.map((item) => ({
-				resource: {
-					id: item.id,
-					type: 'post',
-					fields: { slug: item.slug, title: item.title },
-				} as any,
-			})),
-		[items],
+			groups.flatMap((group) => {
+				const rows = group.items.map((item) => ({
+					resource: {
+						id: item.id,
+						type: 'post',
+						fields: { slug: item.slug, title: item.title },
+					} as any,
+				}))
+				if (group.title === null) return rows
+				return [
+					{
+						resource: {
+							id: group.id,
+							type: 'section',
+							fields: { title: group.title },
+							resources: rows,
+						} as any,
+					},
+				]
+			}),
+		[groups],
 	)
 
 	return (
-		<Collapsible
-			open={open}
-			onOpenChange={setOpen}
-			className="group/collapsible"
-		>
-			<SidebarMenuButton
-				asChild
-				isActive={isActive}
-				className="text-muted-foreground h-auto py-2 pr-7 text-sm font-normal"
-				style={rowIndent(depth)}
-			>
-				<Link
-					href={href}
-					prefetch={false}
-					aria-current={isActive ? 'page' : undefined}
-					onClick={() =>
-						track('nav_link_clicked', {
-							label: typeof label === 'string' ? label : href,
-							href,
-							category: 'hub_sidebar',
-						})
-					}
-				>
-					{Icon ? <Icon active={isActive} className="size-4 shrink-0" /> : null}
-					<span>{label}</span>
-				</Link>
-			</SidebarMenuButton>
-			<CollapsibleTrigger asChild>
-				<SidebarMenuAction
-					aria-label={`Toggle ${typeof label === 'string' ? label : 'section'} list`}
-					className="text-muted-foreground hover:text-foreground top-1/2 -translate-y-1/2 cursor-pointer"
-					// Keep the chevron clear of the row's navigation click target.
-					showOnHover={false}
-				>
-					<ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-90" />
-				</SidebarMenuAction>
-			</CollapsibleTrigger>
-			<CollapsibleContent>
-				<SidebarDepth>
-					<SeriesLessons
-						resources={resources}
-						completedLessons={progress?.completedLessons}
-						overviewHref={href}
-					/>
-				</SidebarDepth>
-			</CollapsibleContent>
-		</Collapsible>
+		<SeriesLessons
+			resources={resources}
+			completedLessons={progress?.completedLessons}
+			overviewHref={overviewHref}
+		/>
 	)
 }
 
@@ -248,10 +207,24 @@ function collectHrefs(node: React.ReactNode, into: string[] = []): string[] {
 export function SidebarSection({
 	title,
 	defaultOpen = false,
+	iconHref,
+	ownListSlug,
+	extraHrefs,
 	children,
 }: {
-	title: string
+	title: React.ReactNode
 	defaultOpen?: boolean
+	/** Optional `NAV_ICONS` key (an href) — renders that icon before the title. */
+	iconHref?: string
+	/**
+	 * When this section IS a list's sidebar home (e.g. Skills = the
+	 * `skills-catalog` list), the list's slug — exempts it from the
+	 * list-precedence auto-open suppression so it opens on its own posts.
+	 */
+	ownListSlug?: string
+	/** Hrefs counted for auto-open beyond the children element tree (used when
+	 *  children render from data, invisible to `collectHrefs`). */
+	extraHrefs?: string[]
 	children: React.ReactNode
 }) {
 	const pathname = usePathname()
@@ -260,8 +233,16 @@ export function SidebarSection({
 	// List precedence: if the active post belongs to a list, its list group owns
 	// the open/highlight — Topics that merely also contain it don't auto-open.
 	// (A Topic the user opens by hand still stays open; this only governs auto.)
-	const listActive = Boolean(list)
-	const hrefs = React.useMemo(() => collectHrefs(children), [children])
+	// A section that IS the current list's home is exempt.
+	const ownListActive = Boolean(
+		list && ownListSlug !== undefined && list.fields.slug === ownListSlug,
+	)
+	const listActive = Boolean(list) && !ownListActive
+	const childHrefs = React.useMemo(() => collectHrefs(children), [children])
+	const hrefs = React.useMemo(
+		() => [...childHrefs, ...(extraHrefs ?? [])],
+		[childHrefs, extraHrefs],
+	)
 	const activeInside = React.useMemo(
 		() =>
 			!listActive &&
@@ -295,9 +276,10 @@ export function SidebarSection({
 					>
 						<button
 							type="button"
-							className="flex w-full cursor-pointer select-none items-center"
-							aria-label={`Toggle ${title} section`}
+							className="flex w-full cursor-pointer select-none items-center gap-2"
+							aria-label={`Toggle ${typeof title === 'string' ? title : 'this'} section`}
 						>
+							{IconFor(iconHref)}
 							<span>{title}</span>
 							<ChevronRight className="text-muted-foreground ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-90" />
 						</button>

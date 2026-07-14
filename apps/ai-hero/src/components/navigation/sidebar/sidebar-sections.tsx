@@ -17,7 +17,11 @@ import {
 	SidebarMenuSkeleton,
 } from '@coursebuilder/ui'
 
-import { ExpandableNavLink, SidebarNavLink, SidebarSection } from './sidebar-client'
+import {
+	ListSectionLessons,
+	SidebarNavLink,
+	SidebarSection,
+} from './sidebar-client'
 
 /** Small-caps, non-collapsible category label — matches the MDX `## Heading`. */
 const CATEGORY_LABEL_CLASS =
@@ -160,36 +164,65 @@ export function SkillsNav(props: { title?: string }) {
 	)
 }
 
+type SidebarSkillGroup = {
+	id: string
+	/** Section title, or null for a run of loose (unsectioned) skills. */
+	title: string | null
+	items: { id: string; slug: string; title: string }[]
+}
+
 /**
- * The skills list's displayable leaf rows for the sidebar Skills entry —
- * sections flattened, unlisted/unpublished dropped (same visibility rules as
- * the /skills page via `filterSectionedResources`). Serializable, cached under
- * the shared list/post tags. Deliberately NOT `getSkillEntries()`: that gates
- * on `postType: 'skill'`, which isn't applied in prod yet.
+ * The skills list's displayable rows for the sidebar Skills entry — sections
+ * PRESERVED as titled groups (they render as sub-headings in the accordion),
+ * unlisted/unpublished dropped (same visibility rules as the /skills page via
+ * `filterSectionedResources`). Serializable, cached under the shared
+ * list/post tags. Deliberately NOT `getSkillEntries()`: that gates on
+ * `postType: 'skill'`, which isn't applied in prod yet. Also returns the
+ * list's slug so the section can claim list-precedence auto-open.
  */
-const getCachedSkillsSidebarItems = unstable_cache(
-	async (): Promise<{ id: string; slug: string; title: string }[]> => {
+const getCachedSkillsSidebarGroups = unstable_cache(
+	async (): Promise<{ listSlug?: string; groups: SidebarSkillGroup[] }> => {
 		const list = await getListWithSections(SKILLS_LIST_ID)
 		const rows = filterSectionedResources(list?.resources)
-		const items: { id: string; slug: string; title: string }[] = []
+		const toItem = (resource: any) => {
+			const slug = resource?.fields?.slug
+			const title = resource?.fields?.title
+			return typeof slug === 'string' && typeof title === 'string'
+				? { id: resource.id as string, slug, title }
+				: null
+		}
+		const groups: SidebarSkillGroup[] = []
+		let looseRun: SidebarSkillGroup | null = null
 		for (const row of rows) {
 			const resource: any = row?.resource
 			if (!resource) continue
-			const leaves =
-				resource.type === 'section'
-					? (resource.resources ?? []).map((child: any) => child?.resource)
-					: [resource]
-			for (const leaf of leaves) {
-				const slug = leaf?.fields?.slug
-				const title = leaf?.fields?.title
-				if (typeof slug === 'string' && typeof title === 'string') {
-					items.push({ id: leaf.id as string, slug, title })
-				}
+			if (resource.type === 'section') {
+				const items = (resource.resources ?? [])
+					.map((child: any) => toItem(child?.resource))
+					.filter(Boolean) as SidebarSkillGroup['items']
+				if (items.length === 0) continue
+				looseRun = null
+				groups.push({
+					id: resource.id as string,
+					title:
+						typeof resource.fields?.title === 'string'
+							? resource.fields.title
+							: null,
+					items,
+				})
+				continue
 			}
+			const item = toItem(resource)
+			if (!item) continue
+			if (!looseRun) {
+				looseRun = { id: `loose-${groups.length}`, title: null, items: [] }
+				groups.push(looseRun)
+			}
+			looseRun.items.push(item)
 		}
-		return items
+		return { listSlug: list?.fields?.slug, groups }
 	},
-	['sidebar-skills-items-v1'],
+	['sidebar-skills-groups-v1'],
 	{ revalidate: 3600, tags: ['lists', 'posts'] },
 )
 
@@ -201,11 +234,23 @@ async function SkillsEntrySection({
 	label: React.ReactNode
 }) {
 	try {
-		const items = await getCachedSkillsSidebarItems()
-		if (items.length === 0) {
+		const { listSlug, groups } = await getCachedSkillsSidebarGroups()
+		const itemHrefs = groups.flatMap((group) =>
+			group.items.map((item) => `/${item.slug}`),
+		)
+		if (itemHrefs.length === 0) {
 			return <SidebarNavLink href={href}>{label}</SidebarNavLink>
 		}
-		return <ExpandableNavLink href={href} label={label} items={items} />
+		return (
+			<SidebarSection
+				title={label}
+				iconHref={href}
+				ownListSlug={listSlug}
+				extraHrefs={[href, ...itemHrefs]}
+			>
+				<ListSectionLessons groups={groups} overviewHref={href} />
+			</SidebarSection>
+		)
 	} catch (error) {
 		void log.error('hub-sidebar.skills-entry.error', {
 			error: error instanceof Error ? error.message : String(error),
@@ -215,12 +260,13 @@ async function SkillsEntrySection({
 }
 
 /**
- * The Explore "Skills" entry: a nav link that also discloses the skill list
- * (right-side chevron, Overview + numbered skills) on ANY hub page. Rendered
- * by the MDX map whenever the sidebar body links `/skills` — the body keeps
- * its plain `[Skills](/skills)` line (which also keeps `HubLayout`'s
- * pinned-block gate satisfied). Falls back to the plain link while loading or
- * on error.
+ * The Explore "Skills" entry: the SAME `SidebarSection` accordion as the
+ * topic groups (icon + right-side chevron), disclosing the skill list —
+ * section sub-headings, Overview row, numbered skills — on ANY hub page.
+ * Rendered by the MDX map whenever the sidebar body links `/skills` — the
+ * body keeps its plain `[Skills](/skills)` line (which also keeps
+ * `HubLayout`'s pinned-block gate satisfied). Falls back to the plain link
+ * while loading or on error.
  */
 export function SkillsEntry(props: { href: string; label: React.ReactNode }) {
 	return (
