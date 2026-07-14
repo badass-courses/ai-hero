@@ -61,6 +61,22 @@ export const FLAGSHIP_TEAM = {
 } as const
 
 /**
+ * Copy for the stat band welded under the flagship row. Values render live
+ * (alumni count from cohort-stats.ts, enrollment state from the page fetch).
+ */
+export const FLAGSHIP_STATS = {
+	trainedLabel: 'Engineers trained',
+	trainedSub: 'Across every cohort so far',
+	enrollmentLabel: 'Enrollment',
+	openValue: 'Open now',
+	openSub: 'Dates and price on the cohort page',
+	waitlistValue: 'Waitlist open',
+	waitlistSub: 'The list gets the dates first',
+} as const
+
+export const COURSES_TESTIMONIALS_EYEBROW = 'From past cohorts'
+
+/**
  * Real cohort-student quotes from the [aih] Testimonial threads (condensed
  * faithfully; first names only). Swap or extend here as Matt collects more.
  */
