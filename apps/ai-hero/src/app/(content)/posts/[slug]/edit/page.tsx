@@ -38,10 +38,12 @@ export async function generateMetadata(
 	}
 }
 
-export default async function ArticleEditPage(props: {
-	params: Promise<{ slug: string }>
-}) {
+const firstParam = (value: string | string[] | undefined) =>
+	Array.isArray(value) ? value[0] : value
+
+export default async function ArticleEditPage(props: Props) {
 	const params = await props.params
+	const searchParams = await props.searchParams
 
 	const { ability } = await getServerAuthSession()
 	const post = await getPost(params.slug)
@@ -109,6 +111,10 @@ export default async function ArticleEditPage(props: {
 				videoAnalyticsEnabled={Boolean(
 					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
 				)}
+				// Seed the editor's tab/panel from the URL server-side so SSR
+				// renders the same tab the client will (no hydration mismatch).
+				initialTab={firstParam(searchParams.tab)}
+				initialPanel={firstParam(searchParams.panel)}
 			/>
 		</LayoutClient>
 	)

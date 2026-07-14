@@ -3,6 +3,7 @@ import {
 	addPostToList,
 	removePostFromList,
 	updateList,
+	updateListItemFields,
 } from '@/lib/lists-query'
 import { addTagToPost, removeTagFromPost } from '@/lib/posts-query'
 import {
@@ -18,7 +19,7 @@ import type {
 	ResourceBindings,
 } from '@coursebuilder/ui/cms/manifest'
 
-import { createPostInList, listListContents } from './list-contents'
+import { createInList, listListContents } from './list-contents'
 import {
 	createVideoLibraryBinding,
 	listImageMediaAssets,
@@ -55,6 +56,22 @@ export interface CreateListBindingsOptions {
 	 * Pure client mapping (e.g. `getResourcePath(type, slug, 'view')`).
 	 */
 	getItemHref?: (item: ContentsItem) => string | undefined
+	/**
+	 * Edit URL for a non-section row — makes the ⋯ "Edit" a real anchor so
+	 * cmd/ctrl/middle-click opens the editor in a new tab (the shell's
+	 * unsaved-changes guard still catches a plain click).
+	 */
+	getEditHref?: (item: ContentsItem) => string | undefined
+	/**
+	 * Prompt for a section's name (and optional description) before creating it
+	 * — sections have no edit route, so this has to happen up front. Resolve
+	 * with the entered values, or `null` to cancel the create. When omitted,
+	 * sections quick-create with a placeholder title (the previous behavior).
+	 */
+	promptSectionTitle?: () => Promise<{
+		title: string
+		description?: string
+	} | null>
 }
 
 /**
@@ -84,6 +101,8 @@ export function createListBindings({
 	onSlugChange,
 	onEditItem,
 	getItemHref,
+	getEditHref,
+	promptSectionTitle,
 }: CreateListBindingsOptions): ResourceBindings<typeof ListSchema> {
 	return {
 		update: async (values, action) => {
@@ -202,15 +221,44 @@ export function createListBindings({
 					})),
 				)
 			},
-			// "+ New post" quick-create — createPost → addPostToList, the same
-			// actions the legacy "Create New" modal composed.
-			create: async (resourceId, _type) => {
-				await createPostInList(resourceId)
+			// "+ New {type}" quick-create — posts via createPost, sections via
+			// createResource, then addPostToList. Honors the type the tree's
+			// create button passes (childTypes: post + section). Sections route
+			// through the name modal first (when wired) so they're born titled;
+			// a cancelled prompt (null) aborts without creating.
+			create: async (resourceId, type) => {
+				if (type === 'section' && promptSectionTitle) {
+					const details = await promptSectionTitle()
+					if (details == null) return
+					await createInList(
+						resourceId,
+						type,
+						details.title,
+						details.description,
+					)
+					return
+				}
+				await createInList(resourceId, type)
 			},
 			// Per-row ⋯ "Edit" — the client wrapper routes to the child's editor.
 			onEdit: onEditItem,
+			// Inline section edit — sections have no edit route, so persist their
+			// title/description in place. updateListItemFields routes a section
+			// (non-post/list) through updateContentResourceFields.
+			editSection: async (_resourceId, sectionId, fields) => {
+				await updateListItemFields(sectionId, {
+					title: fields.title,
+					description: fields.description,
+				})
+			},
 			// Per-row external-link icon → the child's public view URL.
 			getItemHref,
+			// Per-row ⋯ "Edit" as a real anchor (cmd+click → new tab).
+			getEditHref,
+			// Defer reorders / "Move to" / tier / section-field edits until the
+			// editor's Save (parity with the field form) instead of writing each
+			// drag to the DB immediately. Add / create / remove stay immediate.
+			deferWrites: true,
 		},
 		media: {
 			// Same Cloudinary dir the legacy tool-panel uploader used: 'lists'

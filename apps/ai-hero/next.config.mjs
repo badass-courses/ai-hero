@@ -105,6 +105,24 @@ const config = {
 				destination: '/grill-with-docs',
 				permanent: true,
 			},
+			// Skills 1.1 renames (to-prd → to-spec, review → code-review,
+			// to-issues → to-tickets). Slugs changed in the CMS; forward the old
+			// URLs so existing links/bookmarks don't 404.
+			{
+				source: '/skills-to-prd',
+				destination: '/skills-to-spec',
+				permanent: true,
+			},
+			{
+				source: '/skills-review',
+				destination: '/skills-code-review',
+				permanent: true,
+			},
+			{
+				source: '/skills-to-issues',
+				destination: '/skills-to-tickets',
+				permanent: true,
+			},
 		]
 	},
 	async rewrites() {

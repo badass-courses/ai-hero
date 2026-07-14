@@ -6,7 +6,7 @@ import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getRepoStarCount } from '@/lib/github-stars-query'
-import { getList } from '@/lib/lists-query'
+import { getListWithSections } from '@/lib/lists-query'
 import {
 	getSkillChangelogCount,
 	getSkillChangelogEntries,
@@ -66,7 +66,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 			getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
 			getSkillChangelogCount(),
 			getSubscriberFromCookie(),
-			getList(SKILLS_LIST_ID),
+			getListWithSections(SKILLS_LIST_ID),
 			getSkillEntries(),
 			getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
 		])
@@ -81,15 +81,11 @@ export default async function SkillsPage({ searchParams }: Props) {
 	)
 	// Non-regression gate: the new SkillCycle + catalog section only lights up
 	// once skill posts carry `postType: 'skill'` (getSkillEntries() non-empty).
-	// Until then, fall back to the current skill-set rendering so /skills is
-	// never blank in prod.
+	// Until then, fall back to the section-aware skill-set rendering (main's
+	// current prod behavior) so /skills is never blank in prod.
 	const hasSkillEntries = skillEntries.length > 0
 
-	const skillPostSlugs =
-		skillsList?.resources
-			?.filter(isPublicPublishedListResource)
-			.map((item) => item.resource?.fields?.slug)
-			.filter((slug): slug is string => Boolean(slug)) ?? []
+	const skillGroups = toSkillGroups(skillsList?.resources)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
 	// On page 1 the newest entry is promoted to the teaser; the full list below
@@ -119,9 +115,10 @@ export default async function SkillsPage({ searchParams }: Props) {
 					{/* 2. Sales copy */}
 					<SkillsSalesCopy />
 
-					{/* 3. Skill catalog (falls back to the skill-set rows).
-					    Simplified for now — the SkillCycle diagram + hover-sync are
-					    parked (see skills-catalog.tsx). */}
+					{/* 3. Skill catalog (falls back to the section-aware skill-set
+					    rows — a `section` in the CMS list renders as a titled
+					    sub-group). Simplified for now — the SkillCycle diagram +
+					    hover-sync are parked (see skills-catalog.tsx). */}
 					{hasSkillEntries ? (
 						<section aria-labelledby="skills-heading" className="border-b">
 							<SectionHeading>
@@ -141,9 +138,31 @@ export default async function SkillsPage({ searchParams }: Props) {
 								<span id="skill-set-heading">The skill set</span>
 							</SectionHeading>
 							<div>
-								{skillPostSlugs.map((slug) => (
-									<Resource key={slug} slugOrId={slug} variant="row" />
-								))}
+								{skillGroups.map((group) =>
+									group.kind === 'section' ? (
+										<div key={group.id}>
+											<div className="px-8 pt-10 pb-4">
+												<h3 className="text-foreground text-3xl sm:text-4xl font-semibold">
+													{group.title}
+												</h3>
+												{group.description ? (
+													<p className="text-foreground/60 mt-2 max-w-2xl text-balance lg:text-lg sm:text-base text-sm leading-relaxed">
+														{group.description}
+													</p>
+												) : null}
+											</div>
+											{group.slugs.map((slug) => (
+												<Resource key={slug} slugOrId={slug} variant="row" />
+											))}
+										</div>
+									) : (
+										<Resource
+											key={group.slug}
+											slugOrId={group.slug}
+											variant="row"
+										/>
+									),
+								)}
 							</div>
 						</section>
 					)}
@@ -211,13 +230,70 @@ export default async function SkillsPage({ searchParams }: Props) {
 	)
 }
 
-function isPublicPublishedListResource(item: {
-	resource?: { fields?: Record<string, unknown> | null } | null
-}) {
-	return (
-		item.resource?.fields?.state === 'published' &&
-		item.resource?.fields?.visibility === 'public'
-	)
+type ListItem = {
+	resource?: {
+		id?: string
+		type?: string
+		fields?: Record<string, unknown> | null
+		resources?: ListItem[] | null
+	} | null
+}
+
+type SkillGroup =
+	| { kind: 'skill'; slug: string }
+	| {
+			kind: 'section'
+			id: string
+			title: string
+			description?: string
+			slugs: string[]
+	  }
+
+function isPublicPublished(fields?: Record<string, unknown> | null) {
+	return fields?.state === 'published' && fields?.visibility === 'public'
+}
+
+function slugOf(item: ListItem): string | undefined {
+	const slug = item.resource?.fields?.slug
+	return typeof slug === 'string' && slug ? slug : undefined
+}
+
+// Walk the /skills list into ordered render groups. A `section` resource
+// becomes a titled sub-group of its published/public child skills; anything
+// else renders as a loose skill row. Empty sections are dropped so an
+// unpopulated (or fully-unpublished) section leaves no orphan heading.
+function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
+	const groups: SkillGroup[] = []
+	for (const item of resources ?? []) {
+		if (item.resource?.type === 'section') {
+			// Sections are purely structural — their own state/visibility is
+			// ignored (they're created draft+unlisted with no publish UI). Their
+			// published/public children drive whether the section shows at all.
+			const slugs =
+				item.resource.resources
+					?.filter((child) => isPublicPublished(child.resource?.fields))
+					.map(slugOf)
+					.filter((slug): slug is string => Boolean(slug)) ?? []
+			if (slugs.length === 0) continue
+			const title = item.resource.fields?.title
+			const description = item.resource.fields?.description
+			groups.push({
+				kind: 'section',
+				id: item.resource.id ?? slugs[0]!,
+				title: typeof title === 'string' ? title : 'Skills',
+				description:
+					typeof description === 'string' && description
+						? description
+						: undefined,
+				slugs,
+			})
+			continue
+		}
+		if (!isPublicPublished(item.resource?.fields)) continue
+		const slug = slugOf(item)
+		if (slug) groups.push({ kind: 'skill', slug })
+	}
+	return groups
 }
 
 function toChangelogItem(entry: SkillChangelogEntry): ChangelogItem {

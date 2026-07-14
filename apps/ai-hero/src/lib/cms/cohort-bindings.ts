@@ -200,16 +200,16 @@ export function createCohortBindings({
 		listVideos: listVideoPickerItems,
 		// Media-tab video verbs: preview player + transcript + reprocess.
 		videoLibrary: createVideoLibraryBinding(),
-		reminders: {
+		emails: {
 			list: (resourceId) => listCohortReminders(resourceId),
-			attach: async (resourceId, emailId, schedule) => {
-				await attachCohortReminder(resourceId, emailId, schedule ?? undefined)
+			attach: async (resourceId, emailId, policy) => {
+				await attachCohortReminder(resourceId, emailId, policy ?? undefined)
 			},
 			detach: async (resourceId, emailId) => {
 				await detachCohortReminder(resourceId, emailId)
 			},
-			updateSchedule: async (resourceId, emailId, schedule) => {
-				await updateCohortReminderSchedule(resourceId, emailId, schedule)
+			updateSchedule: async (resourceId, emailId, policy) => {
+				await updateCohortReminderSchedule(resourceId, emailId, policy)
 			},
 		},
 	}

@@ -46,10 +46,11 @@ import {
  *   legacy event form never showed its attach state at all.
  * - `tags` → the same generic `contentResourceTag` writes the post editor
  *   uses (`addTagToPost`/`removeTagFromPost` take any resource id).
- * - `reminders` → auth-gated wrappers over the real event-reminder join-row
+ * - `emails` → auth-gated wrappers over the real event-reminder join-row
  *   model (`events-query.ts`, metadata type 'event-reminder'). The legacy
  *   tRPC surface (`api.events.*`) also had send-now/preview/create-in-place;
- *   those stay out of the kit widget for now (cohort precedent).
+ *   those optional EmailsBinding verbs stay unwired for now (attach-only field,
+ *   Edit links out via `href` — honest degradation).
  * - `media` → same Cloudinary pipeline as posts; same flat 'events' folder
  *   the legacy tool-panel ImageResourceUploader used (uploadDirectory="events").
  */
@@ -153,16 +154,16 @@ export function createEventBindings({
 				await removeTagFromPost(resourceId, tag.id)
 			},
 		},
-		reminders: {
+		emails: {
 			list: (resourceId) => listEventReminders(resourceId),
-			attach: async (resourceId, emailId, schedule) => {
-				await attachEventReminder(resourceId, emailId, schedule ?? undefined)
+			attach: async (resourceId, emailId, policy) => {
+				await attachEventReminder(resourceId, emailId, policy ?? undefined)
 			},
 			detach: async (resourceId, emailId) => {
 				await detachEventReminder(resourceId, emailId)
 			},
-			updateSchedule: async (resourceId, emailId, schedule) => {
-				await updateEventReminderSchedule(resourceId, emailId, schedule)
+			updateSchedule: async (resourceId, emailId, policy) => {
+				await updateEventReminderSchedule(resourceId, emailId, policy)
 			},
 		},
 		media: {

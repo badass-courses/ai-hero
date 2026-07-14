@@ -18,6 +18,9 @@ export const dynamic = 'force-dynamic'
 const toIso = (value: unknown) =>
 	value instanceof Date ? value.toISOString() : value
 
+const firstParam = (value: string | string[] | undefined) =>
+	Array.isArray(value) ? value[0] : value
+
 /**
  * Solution edit page — cms editor (`createResourceEditor`) cut-over.
  * Same server behavior as before: allows creating (solution null → first
@@ -26,10 +29,13 @@ const toIso = (value: unknown) =>
  */
 export default async function SolutionEditPage({
 	params,
+	searchParams,
 }: {
 	params: Promise<{ module: string; lesson: string }>
+	searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
 	const { module, lesson } = await params
+	const resolvedSearchParams = await searchParams
 	const { ability } = await getServerAuthSession()
 
 	if (!ability.can('create', 'Content')) {
@@ -93,6 +99,10 @@ export default async function SolutionEditPage({
 				videoAnalyticsEnabled={Boolean(
 					env.MUX_DATA_TOKEN_ID && env.MUX_DATA_TOKEN_SECRET,
 				)}
+				// Seed the editor's tab/panel from the URL server-side so SSR
+				// renders the same tab the client will (no hydration mismatch).
+				initialTab={firstParam(resolvedSearchParams.tab)}
+				initialPanel={firstParam(resolvedSearchParams.panel)}
 			/>
 		</LayoutClient>
 	)

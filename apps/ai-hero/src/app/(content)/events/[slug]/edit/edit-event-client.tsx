@@ -7,11 +7,17 @@ import { EventSchema, type Event } from '@/lib/events'
 import type { Tag } from '@/lib/tags'
 
 import { createResourceEditor, eventManifest } from '@coursebuilder/ui/cms'
+import type { FieldSpec } from '@coursebuilder/ui/cms/manifest'
+
+import { EventCalendarAttendeesField } from '../_components/event-calendar-attendees-field'
 
 export type EditEventClientProps = {
 	event: Event
 	/** Full tag vocabulary, server-fetched by the page (`getTags`). */
 	tags: Tag[]
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -55,15 +61,88 @@ function eventDefaultValues(resource: unknown) {
  * per-request; the page keys this component by slug, so a slug change
  * remounts with fresh data.
  */
-export function EditEventClient({ event, tags }: EditEventClientProps) {
+export function EditEventClient({
+	event,
+	tags,
+	initialTab,
+	initialPanel,
+}: EditEventClientProps) {
 	const router = useRouter()
 
 	const EventEditor = React.useMemo(() => {
+		// Schedule/location/description fields moved off Content into a dedicated
+		// Calendar tab (they all feed the Google Calendar sync), alongside the live
+		// attendee guest-list panel. The shared eventManifest keeps them on Content;
+		// this app-side override regroups them without touching the kit.
+		const calendarFields: FieldSpec[] = [
+			{
+				kind: 'datetime',
+				name: 'fields.startsAt',
+				label: 'Starts',
+				half: true,
+				timezoneField: 'fields.timezone',
+			},
+			{
+				kind: 'datetime',
+				name: 'fields.endsAt',
+				label: 'Ends',
+				half: true,
+				timezoneField: 'fields.timezone',
+			},
+			{
+				kind: 'input',
+				name: 'fields.location',
+				label: 'Location',
+				hint: 'Zoom link or physical address — appears in calendar invites.',
+			},
+			{
+				kind: 'textarea',
+				name: 'fields.details',
+				label: 'Calendar details',
+				hint: 'Event description synced to Google Calendar. Markdown supported.',
+			},
+			{
+				kind: 'textarea',
+				name: 'fields.attendeeInstructions',
+				label: 'Attendee instructions',
+				hint: 'Shown on the event page to registered attendees. Markdown supported.',
+			},
+			{
+				kind: 'custom',
+				render: () => <EventCalendarAttendeesField slugOrId={event.id} />,
+			},
+		]
+
 		return createResourceEditor({
 			manifest: {
 				...eventManifest,
 				schema: EventSchema,
 				defaultValues: eventDefaultValues,
+				tabs: [
+					// Authoring basics only — the schedule/location fields move to Calendar.
+					{
+						label: 'Content',
+						fields: [
+							{ kind: 'input', name: 'fields.title', label: 'Title' },
+							{ kind: 'slug', name: 'fields.slug' },
+							{ kind: 'tags' },
+						],
+					},
+					{ label: 'Calendar', fields: calendarFields },
+					{ label: 'Emails', fields: [{ kind: 'emails' }] },
+					{
+						label: 'SEO',
+						fields: [
+							{
+								kind: 'textarea',
+								name: 'fields.description',
+								label: 'SEO Description',
+								counter: 160,
+							},
+							{ kind: 'image', name: 'fields.image', label: 'Cover Image' },
+						],
+					},
+				],
 			},
 			bindings: createEventBindings({
 				availableTags: tags.map((tag) => ({
@@ -80,6 +159,9 @@ export function EditEventClient({ event, tags }: EditEventClientProps) {
 	return (
 		<EventEditor
 			resource={event}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

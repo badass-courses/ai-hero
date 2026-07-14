@@ -154,6 +154,15 @@ export async function createGoogleCalendarEvent(
 export async function updateGoogleCalendarEvent(
 	calendarEventId: string,
 	eventDetails: Partial<calendar_v3.Schema$Event>,
+	options?: {
+		/**
+		 * Who Google emails about this change. Defaults to 'none' (the sync path
+		 * patches events on every edit and must NOT spam attendees). The manual
+		 * attendee add/remove passes 'all' so the affected guest gets an
+		 * invite/cancellation.
+		 */
+		sendUpdates?: 'all' | 'externalOnly' | 'none'
+	},
 ): Promise<calendar_v3.Schema$Event | null> {
 	if (!calendarEventId) {
 		throw new Error('Missing calendarEventId for update.')
@@ -166,12 +175,13 @@ export async function updateGoogleCalendarEvent(
 			eventId: calendarEventId,
 			summary: eventDetails.summary ?? undefined,
 			start: getEventStart(eventDetails),
+			sendUpdates: options?.sendUpdates ?? 'none',
 		})
 		const response = await calendar.events.patch({
 			calendarId: 'primary',
 			eventId: calendarEventId,
 			requestBody: eventDetails,
-			sendNotifications: false,
+			sendUpdates: options?.sendUpdates ?? 'none',
 		})
 
 		if (!response.data) {
@@ -272,6 +282,14 @@ export async function getGoogleCalendarEvent(
 export async function addUserToGoogleCalendarEvent(
 	calendarEventId: string,
 	userEmail: string,
+	options?: {
+		/**
+		 * Whether Google emails the added guest a calendar invite. Defaults to
+		 * 'none' to preserve the existing silent behavior for callers like the
+		 * post-purchase workflow; the manual attendee management path passes 'all'.
+		 */
+		sendUpdates?: 'all' | 'externalOnly' | 'none'
+	},
 ) {
 	const authClient = getAuthClient()
 	const calendar = google.calendar({ version: 'v3', auth: authClient })
@@ -291,11 +309,22 @@ export async function addUserToGoogleCalendarEvent(
 		event.attendees = []
 	}
 
-	event.attendees.push({
-		email: userEmail,
-	})
+	// Idempotent add: only append if the email isn't already on the guest list
+	// (case-insensitive). The service-level duplicate check isn't atomic with this
+	// write, so guarding here keeps concurrent adds of the same email from
+	// producing duplicate attendee rows.
+	const alreadyAttending = event.attendees.some(
+		(attendee) => attendee.email?.toLowerCase() === userEmail.toLowerCase(),
+	)
+	if (!alreadyAttending) {
+		event.attendees.push({
+			email: userEmail,
+		})
+	}
 
-	return updateGoogleCalendarEvent(calendarEventId, event)
+	return updateGoogleCalendarEvent(calendarEventId, event, {
+		sendUpdates: options?.sendUpdates ?? 'none',
+	})
 }
 
 /**
@@ -390,6 +419,14 @@ export async function getGoogleCalendarEventAttendees(
 export async function removeUserFromGoogleCalendarEvent(
 	calendarEventId: string,
 	userEmail: string,
+	options?: {
+		/**
+		 * Whether Google emails the removed guest a cancellation. Defaults to
+		 * 'none' to preserve the existing silent behavior for callers like the
+		 * refund/sync path; the manual attendee management path passes 'all'.
+		 */
+		sendUpdates?: 'all' | 'externalOnly' | 'none'
+	},
 ) {
 	const authClient = getAuthClient()
 	const calendar = google.calendar({ version: 'v3', auth: authClient })
@@ -429,8 +466,12 @@ export async function removeUserFromGoogleCalendarEvent(
 		})
 	}
 
-	return updateGoogleCalendarEvent(calendarEventId, {
-		...event,
-		attendees: event.attendees,
-	})
+	return updateGoogleCalendarEvent(
+		calendarEventId,
+		{
+			...event,
+			attendees: event.attendees,
+		},
+		{ sendUpdates: options?.sendUpdates ?? 'none' },
+	)
 }

@@ -26,6 +26,9 @@ export type EditLessonClientProps = {
 	 * runs client-side and can't read server env) — gates `videoAnalytics`.
 	 */
 	videoAnalyticsEnabled?: boolean
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -48,6 +51,8 @@ export function EditLessonClient({
 	tags,
 	moduleSlug,
 	videoAnalyticsEnabled,
+	initialTab,
+	initialPanel,
 }: EditLessonClientProps) {
 	const router = useRouter()
 
@@ -117,6 +122,9 @@ export function EditLessonClient({
 	return (
 		<LessonEditor
 			resource={lesson}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

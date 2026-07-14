@@ -10,6 +10,9 @@ import { cohortManifest, createResourceEditor } from '@coursebuilder/ui/cms'
 
 export type EditCohortClientProps = {
 	cohort: Cohort
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -51,7 +54,11 @@ function cohortDefaultValues(resource: unknown) {
  * (slug-change redirect) is per-request; the page keys this component by
  * slug, so a slug change remounts with fresh data.
  */
-export function EditCohortClient({ cohort }: EditCohortClientProps) {
+export function EditCohortClient({
+	cohort,
+	initialTab,
+	initialPanel,
+}: EditCohortClientProps) {
 	const router = useRouter()
 
 	const CohortEditor = React.useMemo(() => {
@@ -78,6 +85,9 @@ export function EditCohortClient({ cohort }: EditCohortClientProps) {
 	return (
 		<CohortEditor
 			resource={cohort}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// The shell defaults to h-dvh ("the shell IS the page"); subtract the
 			// app nav it renders under.
 			className="h-[calc(100dvh-var(--nav-height))]"

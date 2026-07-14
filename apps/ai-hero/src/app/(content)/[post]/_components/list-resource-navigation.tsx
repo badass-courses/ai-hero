@@ -14,6 +14,8 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { findSectionIdForResourceSlug } from '@/lib/content-navigation'
+
 import { ResourceListView } from '../../_components/resource-list-view'
 import { useList } from './list-provider'
 import { useProgress } from './progress-provider'
@@ -48,6 +50,7 @@ export default function ListResourceNavigation({
 	if (!list) return null
 
 	const currentSlug = typeof params.post === 'string' ? params.post : undefined
+	const currentSectionId = findSectionIdForResourceSlug(list, currentSlug)
 
 	return (
 		<ResourceListView
@@ -56,6 +59,7 @@ export default function ListResourceNavigation({
 			moduleId={list.id}
 			resources={list.resources}
 			currentSlug={currentSlug}
+			defaultOpenSectionId={currentSectionId}
 			completedLessons={progress?.completedLessons}
 			buildLessonHref={(slug) => `/${slug}`}
 			withHeader={withHeader}

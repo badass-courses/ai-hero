@@ -11,6 +11,7 @@ import {
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import type { CalloutIntent } from '@/components/mdx/callout'
 import { Contributor } from '@/components/contributor'
+import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
@@ -297,7 +298,7 @@ async function PostBody({ post }: { post: Post | null }) {
 	return (
 		<div className="px-5 md:px-10 lg:px-10">
 			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto mt-10 max-w-4xl">
-				{content}
+				<MdxErrorBoundary>{content}</MdxErrorBoundary>
 				{/* Q4 — never double up: keep OrganicOpportunityCta for the slugs it
 				    already covers (any post type, existing behavior); otherwise render
 				    the generalized CourseCta only for eligible articles. */}

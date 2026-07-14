@@ -5,8 +5,12 @@ import { type Metadata, type ResolvingMetadata } from 'next'
 import Link from 'next/link'
 import { Contributor } from '@/components/contributor'
 import { Share } from '@/components/share'
+import {
+	filterSectionedResources,
+	firstDisplayableSlug,
+} from '@/lib/list-sections'
 import type { List } from '@/lib/lists'
-import { getAllLists, getList } from '@/lib/lists-query'
+import { getAllLists, getList, getListWithSections } from '@/lib/lists-query'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
@@ -80,12 +84,55 @@ export default async function ListPage(props: {
 		body = content
 	}
 
-	const lessons = (list.resources ?? [])
-		.map((entry: any) => entry?.resource)
-		.filter((r: any) => r?.fields?.slug)
-	const firstResourceHref = lessons[0]
-		? `/${lessons[0].fields.slug}`
-		: undefined
+	// The landing's `list` comes from the one-level `getPostOrList`; pull the
+	// deep, section-aware tree so sections render as sub-groups with their
+	// children (falling back to the shallow rows if the deep fetch fails).
+	// Filtering drops unlisted/unpublished items and empty sections.
+	const deepList = await getListWithSections(list.fields.slug ?? list.id)
+	const displayResources = filterSectionedResources(
+		deepList?.resources ?? list.resources,
+	)
+	const firstSlug = firstDisplayableSlug(displayResources)
+	const firstResourceHref = firstSlug ? `/${firstSlug}` : undefined
+
+	// Flatten the sectioned tree into render rows: section headings interleaved
+	// with lessons, numbering continuous across the whole series.
+	let lessonNumber = 0
+	const rows: Array<
+		| { kind: 'section'; key: string; title: string }
+		| { kind: 'lesson'; key: string; slug: string; title: string; n: number }
+	> = []
+	for (const entry of displayResources) {
+		const resource = entry?.resource
+		if (!resource) continue
+		if (resource.type === 'section') {
+			rows.push({
+				kind: 'section',
+				key: resource.id,
+				title: String(resource.fields?.title ?? ''),
+			})
+			for (const child of resource.resources ?? []) {
+				const r = child?.resource
+				if (!r?.fields?.slug) continue
+				rows.push({
+					kind: 'lesson',
+					key: r.id,
+					slug: String(r.fields.slug),
+					title: String(r.fields.title ?? ''),
+					n: ++lessonNumber,
+				})
+			}
+			continue
+		}
+		if (!resource.fields?.slug) continue
+		rows.push({
+			kind: 'lesson',
+			key: resource.id,
+			slug: String(resource.fields.slug),
+			title: String(resource.fields.title ?? ''),
+			n: ++lessonNumber,
+		})
+	}
 
 	return (
 		<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
@@ -152,29 +199,39 @@ export default async function ListPage(props: {
 				</section>
 			)}
 
-			{/* Lessons (moved below the body — the sidebar carries the live nav). */}
-			{lessons.length > 0 && (
+			{/* Lessons (moved below the body — the sidebar carries the live nav).
+			    Sections render as small-caps sub-headings within one continuous
+			    numbered list. */}
+			{rows.length > 0 && (
 				<section>
 					<div className="flex flex-col gap-6 py-16 md:py-20">
 						<p className="px-8 font-mono text-[11px] font-medium uppercase tracking-wider opacity-60 sm:px-16">
 							In this series
 						</p>
 						<ol className="bg-border flex flex-col gap-px border-y">
-							{lessons.map((lesson: any, index: number) => (
-								<li key={lesson.id} className="bg-background">
-									<Link
-										href={`/${lesson.fields.slug}`}
-										className="focus-visible:ring-ring group flex items-center gap-4 px-8 py-5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 sm:px-16"
-									>
-										<span className="text-muted-foreground/60 w-6 shrink-0 font-mono text-xs tabular-nums">
-											{String(index + 1).padStart(2, '0')}
-										</span>
-										<span className="text-lg font-medium leading-snug tracking-tight text-balance group-hover:underline">
-											{lesson.fields.title}
-										</span>
-									</Link>
-								</li>
-							))}
+							{rows.map((row) =>
+								row.kind === 'section' ? (
+									<li key={row.key} className="bg-background">
+										<p className="text-muted-foreground px-8 pb-2 pt-6 font-mono text-[11px] font-medium uppercase tracking-wider sm:px-16">
+											{row.title}
+										</p>
+									</li>
+								) : (
+									<li key={row.key} className="bg-background">
+										<Link
+											href={`/${row.slug}`}
+											className="focus-visible:ring-ring group flex items-center gap-4 px-8 py-5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 sm:px-16"
+										>
+											<span className="text-muted-foreground/60 w-6 shrink-0 font-mono text-xs tabular-nums">
+												{String(row.n).padStart(2, '0')}
+											</span>
+											<span className="text-lg font-medium leading-snug tracking-tight text-balance group-hover:underline">
+												{row.title}
+											</span>
+										</Link>
+									</li>
+								),
+							)}
 						</ol>
 					</div>
 				</section>

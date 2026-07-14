@@ -10,6 +10,9 @@ import { createResourceEditor, emailManifest } from '@coursebuilder/ui/cms'
 
 export type EditEmailClientProps = {
 	email: Email
+	/** Initial tab/panel URL slugs, read from `searchParams` on the server. */
+	initialTab?: string
+	initialPanel?: string
 }
 
 /**
@@ -21,7 +24,11 @@ export type EditEmailClientProps = {
  * Uses `EmailEditorSchema` (EmailSchema + empty-subject→null preprocess) so
  * clearing the new Subject field can't fail `min(2)` and block saves.
  */
-export function EditEmailClient({ email }: EditEmailClientProps) {
+export function EditEmailClient({
+	email,
+	initialTab,
+	initialPanel,
+}: EditEmailClientProps) {
 	const router = useRouter()
 
 	const EmailEditor = React.useMemo(() => {
@@ -62,6 +69,9 @@ export function EditEmailClient({ email }: EditEmailClientProps) {
 	return (
 		<EmailEditor
 			resource={email}
+			// Server-seeded from searchParams so SSR matches the client tab.
+			initialTab={initialTab}
+			initialPanel={initialPanel}
 			// Renders inside the admin layout (LayoutClient nav + sidebar grid);
 			// subtract the nav like the other cms routes do.
 			className="h-[calc(100dvh-var(--nav-height))]"

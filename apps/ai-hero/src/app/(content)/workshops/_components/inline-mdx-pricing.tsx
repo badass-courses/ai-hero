@@ -199,7 +199,9 @@ export const withEventPricing = (
 
 		const product = pricingProps.products[0]
 
-		if (!product) return null
+		if (!product || product.status !== 1) return null
+
+		if (product.fields?.state !== 'published') return null
 
 		const defaultPricingOptions = {
 			withTitle: true,

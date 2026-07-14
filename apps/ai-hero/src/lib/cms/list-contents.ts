@@ -1,7 +1,9 @@
 'use server'
 
-import { addPostToList, getList } from '@/lib/lists-query'
+import { addPostToList, getListWithSections } from '@/lib/lists-query'
 import { createPost } from '@/lib/posts-query'
+import { createResource } from '@/lib/resources/create-resources'
+import { ResourceTypeSchema } from '@/lib/resource-types'
 import { getServerAuthSession } from '@/server/auth'
 
 import type { ContentsItem, ContentsTier } from '@coursebuilder/ui/cms/manifest'
@@ -17,13 +19,12 @@ function tierOf(metadata: unknown): ContentsTier | undefined {
 
 /**
  * Map one `contentResourceResource` join row (+ its joined resource) onto the
- * kit's `ContentsItem` (mirrors `workshop-contents.ts`). NOTE: `getList` loads
- * ONE level (`resources: { with: { resource: true } }`), so a section's own
- * children aren't in the payload and section rows render childless — exactly
- * what the legacy tree did with the same loader (`resourceItem.resource
- * .resources ?? []` was always undefined → []). No data is lost: nested rows
- * stay in the DB untouched because reorder writes are keyed by
- * `(childId, previousParentId)` and only cover loaded rows.
+ * kit's `ContentsItem` (mirrors `workshop-contents.ts`). Loads via
+ * `getListWithSections`, which joins one level deeper so a `section` row
+ * carries its own children — otherwise a skill moved into a section vanishes
+ * from the editor tree (its list-level row is gone, and childless sections
+ * hide it). Reorder writes stay keyed by `(childId, parentId, previousParentId)`
+ * so the now-visible nested rows are fully reorderable.
  */
 function toContentsItem(row: {
 	position: number
@@ -39,6 +40,7 @@ function toContentsItem(row: {
 		slug: fields.slug ?? undefined,
 		state: fields.state ?? undefined,
 		visibility: fields.visibility ?? undefined,
+		description: fields.description ?? undefined,
 		detail: fields.postType ?? undefined,
 		position: row.position ?? 0,
 		tier: tierOf(row.metadata),
@@ -65,7 +67,7 @@ export async function listListContents(
 		throw new Error('Unauthorized')
 	}
 
-	const list = await getList(listId)
+	const list = await getListWithSections(listId)
 	if (!list) {
 		throw new Error(`List ${listId} not found`)
 	}
@@ -76,30 +78,57 @@ export async function listListContents(
 }
 
 /**
- * `bindings.contents.create` for the cms list editor — the "+ New post"
- * quick-create. Composes the SAME server actions the legacy "Create New"
- * modal flow ran (`createPost` → `addPostToList`), just with an app-chosen
- * placeholder title instead of the modal's title input; the tier lands as
- * 'standard', matching the legacy `handleResourceAdd`. `createPost` slugs the
- * title with a fresh guid, so repeated untitled posts never collide.
+ * `bindings.contents.create` for the cms list editor — the "+ New {type}"
+ * quick-create. Open to any KNOWN resource type: `post` composes the SAME
+ * server actions the legacy "Create New" modal ran (`createPost` →
+ * `addPostToList`) so posts get their bespoke writer; every other valid type
+ * (section, lesson, …) goes through the generic `createResource` (draft,
+ * `{type}~guid` slug), created as ITSELF — never silently coerced to a post.
+ * The type is validated against `ResourceTypeSchema` so a typo/junk value on
+ * this exported server action rejects instead of persisting a bad resource.
+ * Both attach at tier 'standard'; placeholder titles are guid-slugged so
+ * untitled rows never collide.
  */
-export async function createPostInList(listId: string): Promise<void> {
+export async function createInList(
+	listId: string,
+	type: string = 'post',
+	title?: string,
+	description?: string,
+): Promise<void> {
 	const { session, ability } = await getServerAuthSession()
 	if (!session?.user || !ability.can('create', 'Content')) {
 		throw new Error('Unauthorized')
 	}
 
-	const post = await createPost({
-		title: 'Untitled post',
-		postType: 'article',
-		createdById: session.user.id,
-	})
-	if (!post) {
-		throw new Error('Failed to create post')
+	const trimmedTitle = title?.trim()
+
+	let childId: string
+	if (type === 'post') {
+		const post = await createPost({
+			title: trimmedTitle || 'Untitled post',
+			postType: 'article',
+			createdById: session.user.id,
+		})
+		if (!post) {
+			throw new Error('Failed to create post')
+		}
+		childId = post.id
+	} else if (ResourceTypeSchema.safeParse(type).success) {
+		// Any known non-post type (section, lesson, …) — created as itself. A
+		// caller-supplied title/description (e.g. the section-name modal) wins;
+		// otherwise a guid-slugged placeholder so untitled rows never collide.
+		const resource = await createResource({
+			type,
+			title: trimmedTitle || `Untitled ${type}`,
+			description: description?.trim() || undefined,
+		})
+		childId = resource.id
+	} else {
+		throw new Error(`Cannot create an unknown resource type "${type}" in a list`)
 	}
 
 	await addPostToList({
-		postId: post.id,
+		postId: childId,
 		listId,
 		metadata: { tier: 'standard' },
 	})
