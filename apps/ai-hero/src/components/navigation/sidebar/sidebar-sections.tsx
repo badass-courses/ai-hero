@@ -177,9 +177,10 @@ type SidebarSkillGroup = {
  * PRESERVED as titled groups (they render as sub-headings in the accordion),
  * unlisted/unpublished dropped (same visibility rules as the /skills page via
  * `filterSectionedResources`). Serializable, cached under the shared
- * list/post tags. Deliberately NOT `getSkillEntries()`: that gates on
- * `postType: 'skill'`, which isn't applied in prod yet. Also returns the
- * list's slug so the section can claim list-precedence auto-open.
+ * list/post tags. Deliberately NOT `getSkillEntries()`: the sidebar mirrors
+ * the LIST (membership by list, postType-independent), so it can't go blank
+ * if postType churns (as it did in the 2026-07-06 incident). Also returns
+ * the list's slug so the section can claim list-precedence auto-open.
  */
 const getCachedSkillsSidebarGroups = unstable_cache(
 	async (): Promise<{ listSlug?: string; groups: SidebarSkillGroup[] }> => {
