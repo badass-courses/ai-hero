@@ -290,3 +290,50 @@ export async function getBroadcastsWithClicks(
 export function isKitConfigured(): boolean {
 	return !!getApiKey()
 }
+
+// ─── Subscriber count ────────────────────────────────────────────────────────
+
+interface KitSubscribersCountRaw {
+	// Kit v4 returns the total alongside pagination when
+	// `include_total_count=true` is set; be liberal about where it lands.
+	total_count?: number
+	pagination?: KitPaginationRaw & { total_count?: number }
+}
+
+/**
+ * Total count of active subscribers on the Kit (ConvertKit) account.
+ *
+ * Uses `GET /v4/subscribers?status=active&per_page=1&include_total_count=true`
+ * and reads the `total_count` the v4 API includes when that flag is set
+ * (there is no dedicated account-total endpoint in v4; growth/email stats
+ * endpoints only report deltas over a date range).
+ *
+ * Cached 30 min via `kitFetch`'s `next.revalidate`. Returns `null` when the
+ * Kit API key is not configured, on any API error, or when the returned
+ * number is implausibly small (< 1000 — a mis-filtered response should fall
+ * back to static copy rather than render a tiny number). Never throws.
+ */
+export async function getTotalSubscribers(): Promise<number | null> {
+	if (!isKitConfigured()) return null
+
+	try {
+		const data = await kitFetch<KitSubscribersCountRaw>('/subscribers', {
+			status: 'active',
+			per_page: '1',
+			include_total_count: 'true',
+		})
+
+		const total = data.total_count ?? data.pagination?.total_count
+		if (
+			typeof total !== 'number' ||
+			!Number.isFinite(total) ||
+			total < 1000
+		) {
+			return null
+		}
+
+		return Math.floor(total)
+	} catch {
+		return null
+	}
+}

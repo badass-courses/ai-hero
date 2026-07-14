@@ -11,6 +11,9 @@ import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
+import { PromoCard } from '@/components/mdx/promo-card'
+import type { PromoCardProps } from '@/components/mdx/promo-card'
+import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
@@ -355,6 +358,15 @@ async function compileMDXInternal(
 							{children}
 						</span>
 					),
+					// Live Kit subscriber count (async server component); renders
+					// its fallback string when the Kit API is unavailable.
+					SubscriberCount: ({
+						fallback,
+						format,
+					}: {
+						fallback?: string
+						format?: 'rounded' | 'exact'
+					}) => <SubscriberCount fallback={fallback} format={format} />,
 					SkillsNewsletterCta: ({
 						heading,
 						subtitle,
@@ -444,11 +456,12 @@ async function compileMDXInternal(
 					CompareRow: ({ before, after }) => (
 						<CompareRow before={before} after={after} />
 					),
-					Callout: ({ children, icon, className }) => (
-						<Callout icon={icon} className={className}>
+					Callout: ({ children, icon, className, intent }) => (
+						<Callout icon={icon} className={className} intent={intent}>
 							{children}
 						</Callout>
 					),
+					PromoCard: (props: PromoCardProps) => <PromoCard {...props} />,
 					Timeline: ({ children }) => <Timeline>{children}</Timeline>,
 					TimelineItem: ({ children, icon }) => (
 						<TimelineItem icon={icon}>{children}</TimelineItem>
