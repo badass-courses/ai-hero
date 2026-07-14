@@ -6,32 +6,47 @@ import { usePathname } from 'next/navigation'
 import { track } from '@/utils/analytics'
 import {
 	BookA,
-
-	Map as MapIcon,
 	Newspaper,
 	PanelLeftClose,
 	PanelLeftOpen,
-	Sparkles,
-	Wrench,
 	type LucideIcon,
 } from 'lucide-react'
 
 import { Sidebar, SidebarContent } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { NAV_ICONS, type NavIconProps } from './nav-icons'
 import { normalizePath } from './sidebar-client'
+
+/** Adapt a lucide glyph to the `NavIconProps` shape (drops `active`). */
+function lucideIcon(Icon: LucideIcon) {
+	return function LucideNavIcon({ className }: NavIconProps) {
+		return <Icon className={className} />
+	}
+}
 
 /**
  * Icon-rail shortcuts shown while the sidebar is collapsed. Static by design:
  * the rail is chrome, not curation — the MDX-driven content only shows in the
- * expanded state. Every href is a real, existing route.
+ * expanded state. Every href is a real, existing route. Destinations that
+ * have a custom `NAV_ICONS` glyph use THAT glyph, so the rail matches the
+ * expanded sidebar's Explore rows icon-for-icon; lucide fills in only where
+ * no custom icon exists (Posts, Dictionary).
  */
-const ICON_RAIL_LINKS: { label: string; href: string; icon: LucideIcon }[] = [
-	{ label: 'Map', href: '/learn', icon: MapIcon },
-	{ label: 'Posts', href: '/posts', icon: Newspaper },
-	{ label: 'AI Coding Dictionary', href: '/ai-coding-dictionary', icon: BookA },
-	{ label: 'Skills', href: '/skills', icon: Sparkles },
-	{ label: 'Tools', href: '/tools', icon: Wrench },
+const ICON_RAIL_LINKS: {
+	label: string
+	href: string
+	icon: React.ComponentType<NavIconProps>
+}[] = [
+	{ label: 'Map', href: '/learn', icon: NAV_ICONS['/learn']! },
+	{ label: 'Posts', href: '/posts', icon: lucideIcon(Newspaper) },
+	{
+		label: 'AI Coding Dictionary',
+		href: '/ai-coding-dictionary',
+		icon: lucideIcon(BookA),
+	},
+	{ label: 'Skills', href: '/skills', icon: NAV_ICONS['/skills']! },
+	{ label: 'Tools', href: '/tools', icon: NAV_ICONS['/tools']! },
 ]
 
 const STICKY_SIDEBAR_CLASSES =
@@ -117,7 +132,7 @@ export function HubSidebarShell({
 										: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
 								)}
 							>
-								<item.icon className="size-4" />
+								<item.icon active={isActive} className="size-4" />
 								<span className="sr-only">{item.label}</span>
 							</Link>
 						)
