@@ -32,7 +32,6 @@ import {
 	isSkillPhaseTag,
 	SKILL_PHASE_TAG_CONTEXT,
 	SKILL_PHASE_UTILITY_NUMBER,
-	type SkillCatalogGroup,
 	type SkillEntry,
 	type SkillPhase,
 } from './skills-shared'
@@ -42,11 +41,20 @@ export {
 	SKILL_PHASE_TAG_CONTEXT,
 	SKILL_PHASE_UTILITY_NUMBER,
 } from './skills-shared'
-export type {
-	SkillCatalogGroup,
-	SkillEntry,
-	SkillPhase,
-} from './skills-shared'
+export type { SkillEntry, SkillPhase } from './skills-shared'
+
+/**
+ * Internal grouping used by the sectioned list walk: a `section` resource's
+ * members (titled) or a run of loose members (title null). Only the flattened
+ * `SkillEntry[]` is exported — /skills renders the list's sections directly
+ * via `getListWithSections`, so nothing consumes the grouped shape publicly.
+ */
+type SkillCatalogGroup = {
+	id: string
+	title: string | null
+	description?: string
+	skills: SkillEntry[]
+}
 
 function skillPhaseFromTag(tag: Tag): SkillPhase | null {
 	const { label, slug, popularity_order } = tag.fields
@@ -182,22 +190,11 @@ async function loadSkillCatalogGroups(): Promise<SkillCatalogGroup[]> {
 }
 
 /**
- * Cached catalog groups — CMS list sections with their member skills, for the
- * /skills catalog. Revalidates via the shared 'posts'/'tags'/'lists' tags
- * (skill posts, phase tags, and list membership/sections are each edited
- * through those surfaces).
- */
-export const getSkillCatalogGroups = unstable_cache(
-	loadSkillCatalogGroups,
-	['skill-catalog-groups-v1'],
-	{ revalidate: 3600, tags: ['posts', 'tags', 'lists'] },
-)
-
-/**
- * Cached FLAT skill entries in cycle order — the grouped walk flattened, so
- * consumers that don't care about sections (hub sidebar skills group,
- * SkillExtras) keep a simple ordered list even now that skills sit inside
- * `section` resources in the list.
+ * Cached FLAT skill entries in cycle order — the sectioned walk flattened, so
+ * consumers (hub sidebar skills group, SkillExtras) get a simple ordered list
+ * even now that skills sit inside `section` resources in the list.
+ * Revalidates via the shared 'posts'/'tags'/'lists' tags (skill posts, phase
+ * tags, and list membership/sections are each edited through those surfaces).
  */
 export const getSkillEntries = unstable_cache(
 	async (): Promise<SkillEntry[]> =>

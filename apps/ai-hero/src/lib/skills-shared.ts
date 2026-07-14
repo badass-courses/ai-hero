@@ -55,23 +55,6 @@ export type SkillEntry = {
 	position: number
 }
 
-/**
- * One catalog group on /skills: a CMS list `section` (title + optional
- * description) with its member skills, or an untitled run of loose skills
- * (`title: null`) for list members that sit outside any section. Group order
- * and member order both come from list positions.
- */
-export type SkillCatalogGroup = {
-	/** The section resource id, or a synthetic id for a loose run. */
-	id: string
-	/** The section's `fields.title`; null for loose (unsectioned) skills. */
-	title: string | null
-	/** The section's `fields.description`, when set. */
-	description?: string
-	/** Member skills in list order. */
-	skills: SkillEntry[]
-}
-
 /** True when a tag is scoped as a skill-phase tag via `fields.contexts`. */
 export function isSkillPhaseTag(tag: Tag): boolean {
 	return Boolean(tag.fields.contexts?.includes(SKILL_PHASE_TAG_CONTEXT))
