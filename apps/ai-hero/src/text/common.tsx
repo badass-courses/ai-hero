@@ -62,7 +62,7 @@ export default {
 	// Kit count. Server call sites should override `title` with
 	// <SubscriberCount /> (src/components/subscriber-count.tsx) instead, e.g.
 	// title={<>Join over <SubscriberCount /> Developers Becoming AI Heroes</>}.
-	'primary-newsletter-tittle': 'Join over 70,000 Developers Becoming AI Heroes',
+	'primary-newsletter-tittle': 'Join over 90,000 Developers Becoming AI Heroes',
 	'primary-newsletter-byline': (
 		<>
 			Engineering fundamentals are your biggest advantage. Learn how to leverage

@@ -1,117 +1,118 @@
-import { Suspense } from 'react'
-import { type Metadata, type ResolvingMetadata } from 'next'
-import { unstable_cache } from 'next/cache'
-import Link from 'next/link'
-import { notFound } from 'next/navigation'
-import { CourseCta } from '@/app/(content)/_components/course-cta'
+import { Suspense } from "react";
+import { type Metadata, type ResolvingMetadata } from "next";
+import { unstable_cache } from "next/cache";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { CourseCta } from "@/app/(content)/_components/course-cta";
 import {
-	OrganicOpportunityCta,
-	organicOpportunityCtaBySlug,
-} from '@/app/(content)/_components/organic-opportunity-cta'
-import { ContentReadTracker } from '@/components/content-read-tracker'
-import type { CalloutIntent } from '@/components/mdx/callout'
-import { Contributor } from '@/components/contributor'
-import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
-import { PlayerContainerSkeleton } from '@/components/player-skeleton'
-import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
-import { Share } from '@/components/share'
-import { courseBuilderAdapter } from '@/db'
-import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
-import { getAllLists, getCachedListForPost } from '@/lib/lists-query'
-import { type Post } from '@/lib/posts'
-import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
-import { PostStructuredData } from '@/lib/structured-data'
-import { getUpcomingCohort } from '@/lib/upcoming-cohort-query'
-import { getServerAuthSession } from '@/server/auth'
-import { compileMDX } from '@/utils/compile-mdx'
-import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
-import { ArrowLeft, Github } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+  OrganicOpportunityCta,
+  organicOpportunityCtaBySlug,
+} from "@/app/(content)/_components/organic-opportunity-cta";
+import { ContentReadTracker } from "@/components/content-read-tracker";
+import type { CalloutIntent } from "@/components/mdx/callout";
+import { Contributor } from "@/components/contributor";
+import { MdxErrorBoundary } from "@/components/mdx/mdx-error-boundary";
+import { PlayerContainerSkeleton } from "@/components/player-skeleton";
+import { PrimaryNewsletterCta } from "@/components/primary-newsletter-cta";
+import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
+import { Share } from "@/components/share";
+import { courseBuilderAdapter } from "@/db";
+import { getAiCodingDictionary } from "@/lib/ai-coding-dictionary";
+import { getAllLists, getCachedListForPost } from "@/lib/lists-query";
+import { type Post } from "@/lib/posts";
+import { getAllPosts, getCachedPostOrList } from "@/lib/posts-query";
+import { PostStructuredData } from "@/lib/structured-data";
+import { getUpcomingCohort } from "@/lib/upcoming-cohort-query";
+import { getServerAuthSession } from "@/server/auth";
+import { compileMDX } from "@/utils/compile-mdx";
+import { getOGImageUrlForResource } from "@/utils/get-og-image-url-for-resource";
+import { ArrowLeft, Github } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
-import { ContentResourceResource } from '@coursebuilder/core/schemas'
-import { Button } from '@coursebuilder/ui'
-import { VideoPlayerOverlayProvider } from '@coursebuilder/ui/hooks/use-video-player-overlay'
-import { cn } from '@coursebuilder/utils/cn'
+import { ContentResourceResource } from "@coursebuilder/core/schemas";
+import { Button } from "@coursebuilder/ui";
+import { VideoPlayerOverlayProvider } from "@coursebuilder/ui/hooks/use-video-player-overlay";
+import { cn } from "@coursebuilder/utils/cn";
 
-import { CopyPageButton } from '../_components/copy-page-button'
-import PostNextUpFromListPagination from '../_components/post-next-up-from-list-pagination'
-import { RelatedPosts } from './_components/related-posts'
-import { SkillExtras } from './_components/skill-extras'
-import ListPage from '../lists/[slug]/_page'
-import { PostPlayer } from '../posts/_components/post-player'
-import PostToC from '../posts/_components/post-toc'
-import { PostNewsletterCta } from '../posts/_components/post-video-subscribe-form'
+import { CopyPageButton } from "../_components/copy-page-button";
+import PostNextUpFromListPagination from "../_components/post-next-up-from-list-pagination";
+import { RelatedPosts } from "./_components/related-posts";
+import { SkillExtras } from "./_components/skill-extras";
+import ListPage from "../lists/[slug]/_page";
+import { PostPlayer } from "../posts/_components/post-player";
+import PostToC from "../posts/_components/post-toc";
+import { PostNewsletterCta } from "../posts/_components/post-video-subscribe-form";
 import {
-	PostShareDialogButton,
-	PostSubscribeDialogButton,
-} from './_components/post-header-dialog-buttons'
-import { PostNextLessonButton } from './_components/post-next-lesson-button'
+  PostShareDialogButton,
+  PostSubscribeDialogButton,
+} from "./_components/post-header-dialog-buttons";
+import { PostNextLessonButton } from "./_components/post-next-lesson-button";
 
 type Props = {
-	params: Promise<{ post: string }>
-}
+  params: Promise<{ post: string }>;
+};
 
 export default async function PostPage(props: {
-	params: Promise<{ post: string }>
+  params: Promise<{ post: string }>;
 }) {
-	const params = await props.params
+  const params = await props.params;
 
-	const post = await getCachedPostOrList(params.post)
+  const post = await getCachedPostOrList(params.post);
 
-	if (!post) {
-		notFound()
-	}
+  if (!post) {
+    notFound();
+  }
 
-	if (post.type === 'list') {
-		return <ListPage list={post} params={{ slug: params.post } as any} />
-	}
+  if (post.type === "list") {
+    return <ListPage list={post} params={{ slug: params.post } as any} />;
+  }
 
-	let list = null
-	if (post && post.type === 'post') {
-		list = await getCachedListForPost(params.post)
-	}
+  let list = null;
+  if (post && post.type === "post") {
+    list = await getCachedListForPost(params.post);
+  }
 
-	const hasVideo = post?.resources?.find(
-		({ resource }: ContentResourceResource) =>
-			resource.type === 'videoResource',
-	)
+  const hasVideo = post?.resources?.find(
+    ({ resource }: ContentResourceResource) =>
+      resource.type === "videoResource",
+  );
 
-	// W1 §5 — only plain articles get the cross-promo layers; podcast / tip /
-	// skill-changelog / list keep their existing below-body behavior untouched.
-	const isEligibleForCrossPromo =
-		post.type === 'post' && post.fields?.postType === 'article'
+  // W1 §5 — only plain articles get the cross-promo layers; podcast / tip /
+  // skill-changelog / list keep their existing below-body behavior untouched.
+  const isEligibleForCrossPromo =
+    post.type === "post" && post.fields?.postType === "article";
 
-	// Server-rendered so it can be handed to the client
-	// `PostNextUpFromListPagination` as a slot (that component is a Client
-	// Component and cannot render an async Server Component itself). It only
-	// swaps in on the no-next-up fallback branch; non-article posts pass `null`
-	// and keep the existing `Recommendations` fallback.
-	const relatedPosts = isEligibleForCrossPromo ? (
-		<RelatedPosts
-			postId={post.id}
-			variant={post.fields?.relatedPostsVariant ?? 'section'}
-			sectionTitle={list?.fields?.title}
-		/>
-	) : null
-	const markdownToCopy = `# ${post?.fields?.title}
+  // Server-rendered so it can be handed to the client
+  // `PostNextUpFromListPagination` as a slot (that component is a Client
+  // Component and cannot render an async Server Component itself). It only
+  // swaps in on the no-next-up fallback branch; non-article posts pass `null`
+  // and keep the existing `Recommendations` fallback.
+  const relatedPosts = isEligibleForCrossPromo ? (
+    <RelatedPosts
+      postId={post.id}
+      variant={post.fields?.relatedPostsVariant ?? "section"}
+      sectionTitle={list?.fields?.title}
+    />
+  ) : null;
+  const markdownToCopy = `# ${post?.fields?.title}
 
-${post?.fields?.body}`
+${post?.fields?.body}`;
 
-	return (
-		<main className="bg-card w-full dark:bg-transparent">
-			<ContentReadTracker
-				contentId={post.id}
-				contentType="post"
-				contentSlug={String(post.fields?.slug ?? params.post)}
-			/>
-			<PostStructuredData post={post} />
-			{hasVideo && <PlayerContainer post={post} />}
-			<div
-				className={cn('relative w-full', {
-					'': !hasVideo,
-				})}
-			>
-				{/* {list ? (
+  return (
+    <main className="bg-card w-full dark:bg-transparent">
+      <ContentReadTracker
+        contentId={post.id}
+        contentType="post"
+        contentSlug={String(post.fields?.slug ?? params.post)}
+      />
+      <PostStructuredData post={post} />
+      {hasVideo && <PlayerContainer post={post} />}
+      <div
+        className={cn("relative w-full", {
+          "": !hasVideo,
+        })}
+      >
+        {/* {list ? (
 					<div className="pt-6 sm:pt-10" />
 				) : (
 					<div
@@ -132,100 +133,100 @@ ${post?.fields?.body}`
 						</Link>
 					</div>
 				)} */}
-				<div className="relative z-10">
-					<article className="relative flex h-full flex-col">
-						<div className="bg-card mx-auto flex w-full flex-col gap-3 px-8 pb-5 pt-6">
-							<PostTitle post={post} />
-							<div className="relative mb-3 flex w-full items-center justify-between gap-3">
-								<div className="flex w-full flex-wrap items-center justify-between gap-5">
-									<div className="flex flex-wrap items-center gap-3">
-										<Contributor className="text-foreground flex text-sm font-medium [&_img]:w-8" />
-										<PostSubscribeDialogButton postSlug={post.fields?.slug} />
-									</div>
-									<div
-										className={cn('flex flex-wrap items-center gap-2', {
-											'grid w-full grid-cols-2 sm:flex sm:w-auto':
-												post.fields?.github,
-										})}
-									>
-										{post.fields?.github && (
-											<Button
-												asChild
-												size="default"
-												variant="ghost"
-												className="rounded-full border"
-											>
-												<Link href={post.fields?.github} target="_blank">
-													<Github className="text-muted-foreground size-4" />
-													Source Code
-												</Link>
-											</Button>
-										)}
-										{post.fields?.body && (
-											<CopyPageButton
-												variant="ghost"
-												className="rounded-full border"
-												markdown={markdownToCopy}
-											/>
-										)}
-										<PostShareDialogButton title={post.fields?.title} />
+        <div className="relative z-10">
+          <article className="relative flex h-full flex-col">
+            <div className="bg-card mx-auto flex w-full flex-col gap-3 px-8 pb-5 pt-6">
+              <PostTitle post={post} />
+              <div className="relative mb-3 flex w-full items-center justify-between gap-3">
+                <div className="flex w-full flex-wrap items-center justify-between gap-5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Contributor className="text-foreground flex text-sm font-medium [&_img]:w-8" />
+                    <PostSubscribeDialogButton postSlug={post.fields?.slug} />
+                  </div>
+                  <div
+                    className={cn("flex flex-wrap items-center gap-2", {
+                      "grid w-full grid-cols-2 sm:flex sm:w-auto":
+                        post.fields?.github,
+                    })}
+                  >
+                    {post.fields?.github && (
+                      <Button
+                        asChild
+                        size="default"
+                        variant="ghost"
+                        className="rounded-full border"
+                      >
+                        <Link href={post.fields?.github} target="_blank">
+                          <Github className="text-muted-foreground size-4" />
+                          Source Code
+                        </Link>
+                      </Button>
+                    )}
+                    {post.fields?.body && (
+                      <CopyPageButton
+                        variant="ghost"
+                        className="rounded-full border"
+                        markdown={markdownToCopy}
+                      />
+                    )}
+                    <PostShareDialogButton title={post.fields?.title} />
 
-										<PostNextLessonButton postId={post.id} />
-									</div>
-								</div>
-								<Suspense fallback={null}>
-									<PostActionBar post={post} />
-								</Suspense>
-							</div>
-						</div>
-						{post?.type === 'post' && post?.fields?.body && (
-							<PostToC markdown={post.fields.body} />
-						)}
-						<PostBody post={post} />
-						{/* W2 — skill posts render the normal post template (video,
+                    <PostNextLessonButton postId={post.id} />
+                  </div>
+                </div>
+                <Suspense fallback={null}>
+                  <PostActionBar post={post} />
+                </Suspense>
+              </div>
+            </div>
+            {post?.type === "post" && post?.fields?.body && (
+              <PostToC markdown={post.fields.body} />
+            )}
+            <PostBody post={post} />
+            {/* W2 — skill posts render the normal post template (video,
 						    body, newsletter, next-up all intact); these are the only
 						    skill-specific additions, appended below the body. */}
-						{post.type === 'post' &&
-							post.fields?.postType === 'skill' && (
-								<SkillExtras post={post} />
-							)}
-						{/* {listSlugFromParam && (
+            {post.type === "post" && post.fields?.postType === "skill" && (
+              <SkillExtras post={post} />
+            )}
+            {/* {listSlugFromParam && (
 									<PostProgressToggle
 										className="flex w-full items-center justify-center"
 										postId={post.id}
 									/>
 								)} */}
-						{!hasVideo && (
-							<PrimaryNewsletterCta
-								isHiddenForSubscribers
-								className="mt-20 border-t pt-14 sm:pb-5 sm:pt-20"
-								trackProps={{
-									event: 'subscribed',
-									params: {
-										post: post.fields.slug,
-										location: 'post',
-									},
-								}}
-							/>
-						)}
-						<div className="mx-auto mt-16 flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5">
-							<strong className="text-lg font-semibold">Share</strong>
-							<Share
-								className="inline-flex rounded-none border-y-0"
-								title={post?.fields.title}
-							/>
-						</div>
-						<PostNextUpFromListPagination
-							postId={post.id}
-							documentIdsToSkip={list?.resources.map(
-								(resource: any) => resource.resource.id,
-							)}
-							relatedPosts={relatedPosts}
-						/>
-					</article>
-				</div>
-			</div>
-			{/* {ckSubscriber && product && allowPurchase && pricingDataLoader ? (
+            {!hasVideo && (
+              <PrimaryNewsletterCta
+                title={<PrimaryNewsletterTitle />}
+                isHiddenForSubscribers
+                className="mt-20 border-t pt-14 sm:pb-5 sm:pt-20"
+                trackProps={{
+                  event: "subscribed",
+                  params: {
+                    post: post.fields.slug,
+                    location: "post",
+                  },
+                }}
+              />
+            )}
+            <div className="mx-auto mt-16 flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5">
+              <strong className="text-lg font-semibold">Share</strong>
+              <Share
+                className="inline-flex rounded-none border-y-0"
+                title={post?.fields.title}
+              />
+            </div>
+            <PostNextUpFromListPagination
+              postId={post.id}
+              documentIdsToSkip={list?.resources.map(
+                (resource: any) => resource.resource.id,
+              )}
+              relatedPosts={relatedPosts}
+            />
+          </article>
+        </div>
+      </div>
+      {/* {ckSubscriber && product && allowPurchase && pricingDataLoader ? (
 						<section id="buy">
 							<h2 className="text-2xl mb-10 text-balance px-5 text-center font-bold">
 								Get Really Good At Node.js
@@ -242,96 +243,96 @@ ${post?.fields?.body}`
 							</div>
 						</section>
 					) : hasVideo ? null : ( */}
-		</main>
-	)
+    </main>
+  );
 }
 
 async function PostBody({ post }: { post: Post | null }) {
-	if (!post) {
-		return null
-	}
+  if (!post) {
+    return null;
+  }
 
-	if (!post.fields.body) {
-		return null
-	}
+  if (!post.fields.body) {
+    return null;
+  }
 
-	const dictionary = await getAiCodingDictionary()
-	const slug = String(post.fields?.slug ?? '')
-	const ctaKind = organicOpportunityCtaBySlug[slug]
+  const dictionary = await getAiCodingDictionary();
+  const slug = String(post.fields?.slug ?? "");
+  const ctaKind = organicOpportunityCtaBySlug[slug];
 
-	const isEligibleForCrossPromo =
-		post.type === 'post' && post.fields?.postType === 'article'
+  const isEligibleForCrossPromo =
+    post.type === "post" && post.fields?.postType === "article";
 
-	// W1 §2.3(b) / Q1 — the auto-inserted callout line is ALWAYS the 'course'
-	// variant pointing at the active cohort. Resolve the copy BEFORE compile (the
-	// remark plugin does no data-fetching); if there is no purchasable cohort we
-	// pass nothing and the line simply doesn't auto-insert.
-	let calloutLineAutoInsert:
-		| { variant: CalloutIntent; label: string; href: string; linkText: string }
-		| undefined
-	if (isEligibleForCrossPromo) {
-		const cohort = await getUpcomingCohort()
-		if (cohort) {
-			calloutLineAutoInsert = {
-				variant: 'course',
-				label: 'Go deeper:',
-				href: `/cohorts/${cohort.slug}`,
-				linkText: cohort.title,
-			}
-		}
-	}
+  // W1 §2.3(b) / Q1 — the auto-inserted callout line is ALWAYS the 'course'
+  // variant pointing at the active cohort. Resolve the copy BEFORE compile (the
+  // remark plugin does no data-fetching); if there is no purchasable cohort we
+  // pass nothing and the line simply doesn't auto-insert.
+  let calloutLineAutoInsert:
+    | { variant: CalloutIntent; label: string; href: string; linkText: string }
+    | undefined;
+  if (isEligibleForCrossPromo) {
+    const cohort = await getUpcomingCohort();
+    if (cohort) {
+      calloutLineAutoInsert = {
+        variant: "course",
+        label: "Go deeper:",
+        href: `/cohorts/${cohort.slug}`,
+        linkText: cohort.title,
+      };
+    }
+  }
 
-	const { content } = await compileMDX(
-		post.fields.body,
-		{},
-		{},
-		{
-			lessonId: post.id,
-			dictionaryAutoLink: {
-				entries: dictionary.entries,
-				maxLinks: 3,
-			},
-			...(calloutLineAutoInsert ? { calloutLineAutoInsert } : {}),
-		},
-	)
+  const { content } = await compileMDX(
+    post.fields.body,
+    {},
+    {},
+    {
+      lessonId: post.id,
+      dictionaryAutoLink: {
+        entries: dictionary.entries,
+        maxLinks: 3,
+      },
+      ...(calloutLineAutoInsert ? { calloutLineAutoInsert } : {}),
+    },
+  );
 
-	return (
-		<div className="px-5 md:px-10 lg:px-10">
-			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto mt-10 max-w-4xl">
-				<MdxErrorBoundary>{content}</MdxErrorBoundary>
-				{/* Q4 — never double up: keep OrganicOpportunityCta for the slugs it
+  return (
+    <div className="px-5 md:px-10 lg:px-10">
+      <article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto mt-10 max-w-4xl">
+        <MdxErrorBoundary>{content}</MdxErrorBoundary>
+        {/* Q4 — never double up: keep OrganicOpportunityCta for the slugs it
 				    already covers (any post type, existing behavior); otherwise render
 				    the generalized CourseCta only for eligible articles. */}
-				{ctaKind ? (
-					<OrganicOpportunityCta kind={ctaKind} />
-				) : isEligibleForCrossPromo ? (
-					<CourseCta
-						postId={post.id}
-						suppress={post.fields?.suppressCourseCta}
-					/>
-				) : null}
-			</article>
-		</div>
-	)
+        {ctaKind ? (
+          <OrganicOpportunityCta kind={ctaKind} />
+        ) : isEligibleForCrossPromo ? (
+          <CourseCta
+            postId={post.id}
+            suppress={post.fields?.suppressCourseCta}
+          />
+        ) : null}
+      </article>
+    </div>
+  );
 }
 
 async function PostTitle({ post }: { post: Post | null }) {
-	return (
-		<h1 className="text-3xl font-bold leading-tight tracking-tight sm:text-4xl lg:text-4xl dark:text-white">
-			<ReactMarkdown
-				components={{
-					p: ({ children }) => children,
-					code: ({ children }) => (
-						<code className="bg-muted/80 rounded px-1 text-[85%]">
-							{children}
-						</code>
-					),
-				}}
-			>
-				{post?.fields?.title}
-			</ReactMarkdown>
-		</h1>
-	)
+  return (
+    <h1 className="text-3xl font-bold leading-tight tracking-tight sm:text-4xl lg:text-4xl dark:text-white">
+      <ReactMarkdown
+        components={{
+          p: ({ children }) => children,
+          code: ({ children }) => (
+            <code className="bg-muted/80 rounded px-1 text-[85%]">
+              {children}
+            </code>
+          ),
+        }}
+      >
+        {post?.fields?.title}
+      </ReactMarkdown>
+    </h1>
+  );
 }
 
 /**
@@ -342,42 +343,42 @@ async function PostTitle({ post }: { post: Post | null }) {
  * rethrow path and fails the build.
  */
 const _getCachedVideoResource = (id: string) =>
-	unstable_cache(
-		async () => courseBuilderAdapter.getVideoResource(id),
-		['post-video-resource-v1', id],
-		{ revalidate: 3600, tags: [`video-resource:${id}`] },
-	)()
+  unstable_cache(
+    async () => courseBuilderAdapter.getVideoResource(id),
+    ["post-video-resource-v1", id],
+    { revalidate: 3600, tags: [`video-resource:${id}`] },
+  )();
 
 async function PlayerContainer({ post }: { post: Post | null }) {
-	if (!post) {
-		notFound()
-	}
+  if (!post) {
+    notFound();
+  }
 
-	const resource = post.resources?.[0]?.resource.id
+  const resource = post.resources?.[0]?.resource.id;
 
-	const videoResource = resource
-		? await _getCachedVideoResource(resource)
-		: null
+  const videoResource = resource
+    ? await _getCachedVideoResource(resource)
+    : null;
 
-	return videoResource ? (
-		<VideoPlayerOverlayProvider>
-			<Suspense
-				fallback={
-					<PlayerContainerSkeleton className="aspect-video h-full max-h-[75vh] w-full bg-black" />
-				}
-			>
-				<section
-					aria-label="video"
-					className="flex flex-col items-center justify-center border-b bg-black"
-				>
-					<PostPlayer
-						title={post.fields?.title}
-						thumbnailTime={post.fields?.thumbnailTime || 0}
-						postId={post.id}
-						className="flex aspect-video h-full max-h-[75vh] w-full items-center justify-center overflow-hidden"
-						videoResource={videoResource}
-					/>
-					{/* <PostNewsletterCta
+  return videoResource ? (
+    <VideoPlayerOverlayProvider>
+      <Suspense
+        fallback={
+          <PlayerContainerSkeleton className="aspect-video h-full max-h-[75vh] w-full bg-black" />
+        }
+      >
+        <section
+          aria-label="video"
+          className="flex flex-col items-center justify-center border-b bg-black"
+        >
+          <PostPlayer
+            title={post.fields?.title}
+            thumbnailTime={post.fields?.thumbnailTime || 0}
+            postId={post.id}
+            className="flex aspect-video h-full max-h-[75vh] w-full items-center justify-center overflow-hidden"
+            videoResource={videoResource}
+          />
+          {/* <PostNewsletterCta
 						trackProps={{
 							event: 'subscribed',
 							params: {
@@ -386,65 +387,65 @@ async function PlayerContainer({ post }: { post: Post | null }) {
 							},
 						}}
 					/> */}
-				</section>
-			</Suspense>
-		</VideoPlayerOverlayProvider>
-	) : null
+        </section>
+      </Suspense>
+    </VideoPlayerOverlayProvider>
+  ) : null;
 }
 
 export async function generateStaticParams() {
-	const posts = await getAllPosts()
-	const lists = await getAllLists()
+  const posts = await getAllPosts();
+  const lists = await getAllLists();
 
-	const resources = [...posts, ...lists]
+  const resources = [...posts, ...lists];
 
-	return resources
-		.filter((resource) => Boolean(resource.fields?.slug))
-		.map((resource) => ({
-			post: resource.fields?.slug,
-		}))
+  return resources
+    .filter((resource) => Boolean(resource.fields?.slug))
+    .map((resource) => ({
+      post: resource.fields?.slug,
+    }));
 }
 
 export async function generateMetadata(
-	props: Props,
-	parent: ResolvingMetadata,
+  props: Props,
+  parent: ResolvingMetadata,
 ): Promise<Metadata> {
-	const params = await props.params
+  const params = await props.params;
 
-	const resource = await getCachedPostOrList(params.post)
+  const resource = await getCachedPostOrList(params.post);
 
-	if (!resource) {
-		return parent as Metadata
-	}
+  if (!resource) {
+    return parent as Metadata;
+  }
 
-	return {
-		title: resource.fields.title,
-		description: resource.fields.description,
-		alternates: {
-			canonical: `/${resource.fields.slug}`,
-		},
-		openGraph: {
-			images: [
-				getOGImageUrlForResource({
-					fields: { slug: resource.fields.slug },
-					id: resource.id,
-					updatedAt: resource.updatedAt,
-				}),
-			],
-		},
-	}
+  return {
+    title: resource.fields.title,
+    description: resource.fields.description,
+    alternates: {
+      canonical: `/${resource.fields.slug}`,
+    },
+    openGraph: {
+      images: [
+        getOGImageUrlForResource({
+          fields: { slug: resource.fields.slug },
+          id: resource.id,
+          updatedAt: resource.updatedAt,
+        }),
+      ],
+    },
+  };
 }
 
 async function PostActionBar({ post }: { post: Post | null }) {
-	const { session, ability } = await getServerAuthSession()
+  const { session, ability } = await getServerAuthSession();
 
-	return (
-		<>
-			{post && ability.can('update', 'Content') ? (
-				<Button asChild size="sm" className="absolute right-0 top-0 z-50">
-					<Link href={`/posts/${post.fields?.slug || post.id}/edit`}>Edit</Link>
-				</Button>
-			) : null}
-		</>
-	)
+  return (
+    <>
+      {post && ability.can("update", "Content") ? (
+        <Button asChild size="sm" className="absolute right-0 top-0 z-50">
+          <Link href={`/posts/${post.fields?.slug || post.id}/edit`}>Edit</Link>
+        </Button>
+      ) : null}
+    </>
+  );
 }

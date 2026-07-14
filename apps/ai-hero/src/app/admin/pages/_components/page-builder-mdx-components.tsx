@@ -995,7 +995,7 @@ const FAQ = ({
 // compile-mdx.tsx (src/components/subscriber-count.tsx). The live Kit count
 // can't be fetched in a client preview, so this renders the fallback copy.
 const SubscriberCountPreview = ({
-	fallback = '70,000+',
+	fallback = '90,000+',
 }: {
 	fallback?: string
 	format?: 'rounded' | 'exact'

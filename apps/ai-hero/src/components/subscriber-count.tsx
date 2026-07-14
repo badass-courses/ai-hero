@@ -36,15 +36,30 @@ export function formatSubscriberCount(
  *
  *   Join over <SubscriberCount /> Developers Becoming AI Heroes
  *
- * Renders `fallback` ("70,000+" by default) when the live count is
- * unavailable, per the upstream requirement that the number is dynamically
- * generated, never hardcoded.
+ * Renders `fallback` ("90,000+" by default — list size per Matt, 2026-07-14)
+ * when the live count is unavailable, per the upstream requirement that the
+ * number is dynamically generated, never hardcoded.
  */
 export async function SubscriberCount({
-	fallback = '70,000+',
+	fallback = '90,000+',
 	format = 'rounded',
 }: SubscriberCountProps) {
 	const total = await getTotalSubscribers()
 	if (total === null) return <>{fallback}</>
 	return <>{formatSubscriberCount(total, format)}</>
+}
+
+/**
+ * The primary newsletter CTA title with the LIVE subscriber count. Server
+ * component — pass it from server call sites as
+ * `<PrimaryNewsletterCta title={<PrimaryNewsletterTitle />} />` (the CTA is
+ * a client component and can't fetch the count itself; its string default is
+ * the static fallback for client-only call sites).
+ */
+export function PrimaryNewsletterTitle() {
+	return (
+		<>
+			Join over <SubscriberCount /> Developers Becoming AI Heroes
+		</>
+	)
 }
