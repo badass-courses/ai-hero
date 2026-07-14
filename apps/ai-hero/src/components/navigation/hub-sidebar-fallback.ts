@@ -118,8 +118,6 @@ export const HUB_SIDEBAR_FALLBACK_MDX = `## Explore
 
 </TopicSection>
 
-<SkillsNav title="Use & Build Skills" />
-
 <TopicSection tag="meta-announcements" label="Meta">
 
 - [My Claude Code Cohort - A Teaser](/my-claude-code-cohort-a-teaser)
