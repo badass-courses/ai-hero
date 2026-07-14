@@ -109,12 +109,16 @@ export default async function SkillsPage({ searchParams }: Props) {
 							{skillGroups.map((group) =>
 								group.kind === 'section' ? (
 									<div key={group.id}>
-										<div className="px-8 pt-10 pb-4">
-											<h3 className="text-foreground text-3xl sm:text-4xl font-semibold">
+										{/* Group header sits BELOW the section h2 in the scale:
+										    mono micro-label (the list-label pattern — "In this
+										    series", "Install"), so the Resource row titles carry
+										    the visual weight. */}
+										<div className="flex flex-col gap-2 px-8 pb-4 pt-12">
+											<h3 className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 												{group.title}
 											</h3>
 											{group.description ? (
-												<p className="text-foreground/60 mt-2 max-w-2xl text-balance lg:text-lg sm:text-base text-sm leading-relaxed">
+												<p className="text-foreground/70 max-w-2xl text-balance text-sm leading-relaxed sm:text-base">
 													{group.description}
 												</p>
 											) : null}
