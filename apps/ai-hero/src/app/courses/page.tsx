@@ -1,20 +1,32 @@
 import type { Metadata } from 'next'
-import { ComingSoon } from '@/components/coming-soon'
 import LayoutClient from '@/components/layout-client'
+import {
+	getLatestCohort,
+	getUpcomingCohort,
+} from '@/lib/upcoming-cohort-query'
+
+import { CoursesPage } from './_components/courses-page'
+
+// Cohort enrollment windows are time-based (no tag to invalidate on), so the
+// flagship row must resolve per-request — same call as /skills and /posts.
+export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-	title: 'Courses | AI Hero',
-	description: 'Cohorts, workshops, and courses from AI Hero.',
+	title: 'Learn with Matt | AI Hero',
+	description:
+		'Courses from Matt Pocock: a beginner AI coding crash course, the flagship AI Coding for Real Engineers cohort, and advanced training for teams. A path designed to grow with you.',
+	alternates: { canonical: '/courses' },
 }
 
-export default function CoursesPage() {
+export default async function CoursesRoute() {
+	// Purchasable cohort wins; between cohorts the latest published cohort is
+	// the waitlist target (never the /cohorts index — standing rule).
+	const upcoming = await getUpcomingCohort()
+	const flagship = upcoming ?? (await getLatestCohort())
+
 	return (
 		<LayoutClient withContainer>
-			<ComingSoon
-				label="Courses"
-				title="Courses & Cohorts"
-				description="A single home for every AI Hero cohort and course is on the way. For now, see the upcoming cohorts and self-paced workshops."
-			/>
+			<CoursesPage flagship={flagship} isPurchasable={Boolean(upcoming)} />
 		</LayoutClient>
 	)
 }
