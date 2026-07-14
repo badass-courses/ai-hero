@@ -2,13 +2,9 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { AnimatedArrowCircle } from '@/components/landing/animated-arrow-circle'
-import { motion } from 'framer-motion'
-import { BookOpenIcon, GraduationCapIcon, TerminalIcon } from 'lucide-react'
+import { ArrowRight, BookOpenIcon, GraduationCapIcon, TerminalIcon } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
-
-const MotionLink = motion.create(Link)
 
 export type PromoCardVariant = 'skill' | 'course' | 'resource'
 
@@ -28,35 +24,50 @@ export type PromoCardProps = {
 
 type VariantConfig = {
 	defaultEyebrow: string
-	/** whole-card surface — distinct per variant to defeat "box blindness" */
+	/** whole-card surface — tinted border + bg + hover, light and dark */
 	surface: string
-	/** icon rail surface + icon color */
-	rail: string
+	/** eyebrow text color */
+	eyebrowColor: string
+	/** icon chip surface + icon color */
+	chip: string
+	/** solid CTA button */
+	button: string
 	icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
 }
 
 /**
- * Each variant gets a distinct surface + icon rail treatment (not just a
- * different glyph) so the three cards never read as identical boxes. All
- * treatments are token-driven per DESIGN.md; no raw hex, no side-stripe borders.
+ * Styled to match the in-article CTA family (`SkillsCta` /
+ * `SkillsNewsletterCta`): rounded-xl tinted card, whole-card link, mono
+ * eyebrow, solid rounded-lg button. In-article CTAs are the documented
+ * exception to DESIGN.md rule 12 (square UI). Each variant keeps a distinct
+ * hue + icon so the three cards never read as identical boxes.
  */
 const VARIANTS: Record<PromoCardVariant, VariantConfig> = {
 	skill: {
 		defaultEyebrow: 'Related Skill',
-		surface: 'bg-card',
-		rail: 'bg-stripes text-primary',
+		surface:
+			'border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 dark:border-primary/30 dark:bg-primary/5 dark:hover:bg-primary/10',
+		eyebrowColor: 'text-blue-500 dark:text-primary',
+		chip: 'bg-blue-500/10 text-blue-500 dark:bg-primary/10 dark:text-primary',
+		button:
+			'bg-blue-500 text-white group-hover:bg-blue-500/90 dark:bg-primary dark:text-primary-foreground dark:group-hover:bg-primary/90',
 		icon: TerminalIcon,
 	},
 	course: {
 		defaultEyebrow: 'Course',
-		surface: 'bg-primary/5',
-		rail: 'bg-primary/10 text-primary',
+		surface: 'border-primary/30 bg-primary/5 hover:bg-primary/10',
+		eyebrowColor: 'text-primary',
+		chip: 'bg-primary/10 text-primary',
+		button:
+			'bg-primary text-primary-foreground group-hover:bg-primary/90',
 		icon: GraduationCapIcon,
 	},
 	resource: {
 		defaultEyebrow: 'Free Resource',
-		surface: 'bg-muted',
-		rail: 'bg-background text-foreground',
+		surface: 'border-border bg-muted/40 hover:bg-muted/70',
+		eyebrowColor: 'text-foreground/60',
+		chip: 'bg-muted text-foreground',
+		button: 'bg-foreground text-background group-hover:bg-foreground/90',
 		icon: BookOpenIcon,
 	},
 }
@@ -77,46 +88,57 @@ export function PromoCard({
 	const meta = variant === 'skill' ? duration : enrollmentDate
 
 	return (
-		<MotionLink
+		<Link
 			href={href}
-			initial="initial"
-			whileHover="hover"
-			animate="initial"
 			aria-label={`${resolvedEyebrow}: ${title}`}
 			className={cn(
-				'not-prose group focus-visible:ring-ring focus-visible:ring-offset-background relative my-8 flex items-stretch gap-0 border no-underline transition-colors hover:brightness-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+				'not-prose group focus-visible:ring-ring focus-visible:ring-offset-background my-10 flex flex-col items-start gap-5 rounded-xl border p-6 no-underline transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:flex-row sm:items-center sm:gap-8 sm:p-8',
 				config.surface,
 			)}
 		>
 			<div
 				aria-hidden
 				className={cn(
-					'flex shrink-0 items-center justify-center overflow-hidden border-r px-5 py-4',
-					config.rail,
+					'flex size-12 shrink-0 items-center justify-center rounded-lg',
+					config.chip,
 				)}
 			>
-				<Icon className="size-5 shrink-0" aria-hidden />
+				<Icon className="size-6 shrink-0" aria-hidden />
 			</div>
-			<div className="flex flex-1 flex-col gap-2 p-5 sm:p-6">
-				<span className="text-primary font-mono text-[11px] font-medium uppercase tracking-wider opacity-80">
+			<div className="flex flex-1 flex-col gap-2">
+				<span
+					className={cn(
+						'font-mono text-[11px] font-medium uppercase tracking-wider',
+						config.eyebrowColor,
+					)}
+				>
 					{resolvedEyebrow}
+					{meta ? (
+						<span className="text-foreground/60 normal-case tracking-wide">
+							{' '}
+							· {meta}
+						</span>
+					) : null}
 				</span>
 				<h3 className="text-foreground text-balance font-sans text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
 					{title}
 				</h3>
-				{meta ? (
-					<span className="text-foreground/60 font-mono text-[11px] font-medium tracking-wide">
-						{meta}
-					</span>
-				) : null}
 				<p className="text-foreground/80 text-balance text-base leading-relaxed">
 					{description}
 				</p>
-				<span className="text-foreground mt-2 inline-flex items-center gap-3 text-sm font-medium">
-					{ctaLabel}
-					<AnimatedArrowCircle />
-				</span>
 			</div>
-		</MotionLink>
+			<span
+				className={cn(
+					'inline-flex shrink-0 items-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold transition',
+					config.button,
+				)}
+			>
+				{ctaLabel}
+				<ArrowRight
+					className="size-4 transition-transform group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+					aria-hidden="true"
+				/>
+			</span>
+		</Link>
 	)
 }
