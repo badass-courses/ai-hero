@@ -1,28 +1,25 @@
 import * as React from 'react'
-import { Resource } from '@/components/landing/resource'
 import { formatStartsAt } from '@/components/landing/format'
+import { Resource } from '@/components/landing/resource'
 import { ResourceRow } from '@/components/landing/resource-row'
-import {
-	COURSES_NEWSLETTER,
-	COURSE_TIERS,
-	FLAGSHIP_WAITLIST,
-} from '@/lib/courses-content'
+import { COURSES_NEWSLETTER, FLAGSHIP_WAITLIST } from '@/lib/courses-content'
 import { getCachedCohort } from '@/lib/cohorts-query'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import { getResourcePath } from '@/utils/resource-paths'
 
 /**
- * The Tier 2 (flagship cohort) row on /courses. Three states:
+ * The flagship cohort row on /courses. Three states:
  *
  * - PURCHASABLE (enrollment open): defer entirely to `<Resource>` — live
  *   image, "Cohort · Starts {date}" label, live price + discount badge,
  *   href to the cohort page. No `badge` prop: a string badge would suppress
  *   the live DiscountBadge in resource.tsx.
- * - WAITLIST (between cohorts): a hand-fed `ResourceRow` — waitlist copy, a
+ * - WAITLIST (between cohorts): a hand-fed `ResourceRow` — queue-not-dead-end
+ *   copy (the #1 documented buying friction is "no date, no purchase"), a
  *   "Waitlist open" pill, NO price line, no stale "Starts {past date}"
  *   (dates only render when `startsAt` is in the future). Href goes to the
  *   cohort's own page — never the /cohorts index (standing rule).
- * - No cohort content at all: renders like a coming-soon row.
+ * - No cohort content at all: renders a notify row pointing at the capture.
  */
 export async function FlagshipRow({
 	flagship,
@@ -61,17 +58,15 @@ export async function FlagshipRow({
 		)
 	}
 
-	// Degenerate: no published cohort content exists — fall back to a
-	// coming-soon row so the roadmap never renders a hole.
-	const flagshipTier = COURSE_TIERS.find((tier) => tier.status === 'flagship')!
+	// Degenerate: no published cohort content exists — never render a hole.
 	return (
 		<ResourceRow
-			title={flagshipTier.title}
+			title="AI Coding for Real Engineers"
 			description="The flagship cohort. Join the list below to hear when the next one is scheduled."
 			href={`#${COURSES_NEWSLETTER.anchorId}`}
-			typeLabel={flagshipTier.audienceLabel}
+			typeLabel="Cohort"
 			badge="Coming soon"
-			fallbackPlaceholder="Coming soon"
+			fallbackPlaceholder="Cohort"
 		/>
 	)
 }
