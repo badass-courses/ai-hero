@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useList } from '@/app/(content)/[post]/_components/list-provider'
 import { useProgress } from '@/app/(content)/[post]/_components/progress-provider'
+import { listHomeHref } from '@/lib/list-home'
 import { track } from '@/utils/analytics'
 import { ArrowRight, ChevronRight } from 'lucide-react'
 
@@ -61,12 +62,14 @@ export function SidebarNavLink({
 		!listActive && normalizePath(href) === normalizePath(pathname ?? '/')
 	const Icon = NAV_ICONS[normalizePath(href)]
 
-	// Hybrid series nav: when this link IS the current list's landing page, it
-	// expands in place to show the list's lessons (instead of a pinned block at
-	// the top). Only fires inside the [post] layout, where the list context is
+	// Hybrid series nav: when this link IS the current list's home page (its
+	// landing, or the override — e.g. /skills for the skills list), it expands
+	// in place to show the list's lessons (instead of a pinned block at the
+	// top). Only fires inside the [post] layout, where the list context is
 	// present. See lat.md/decisions.md "Series posts keep the hub sidebar".
 	const isCurrentList =
-		Boolean(list) && normalizePath(href) === normalizePath(`/${list!.fields.slug}`)
+		Boolean(list) &&
+		normalizePath(href) === normalizePath(listHomeHref(list!.fields.slug))
 
 	return (
 		<>
@@ -114,7 +117,7 @@ export function SidebarNavLink({
 					<SeriesLessons
 						resources={list!.resources as any}
 						completedLessons={progress?.completedLessons}
-						overviewHref={`/${list!.fields.slug}`}
+						overviewHref={listHomeHref(list!.fields.slug)}
 					/>
 				</SidebarDepth>
 			) : null}

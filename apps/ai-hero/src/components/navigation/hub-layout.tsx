@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { getCachedHubSidebarBody } from '@/lib/hub-sidebar-ia'
+import { listHomeHref } from '@/lib/list-home'
 import { log } from '@/server/logger'
 
 import { SidebarProvider } from '@coursebuilder/ui'
@@ -80,12 +81,14 @@ export async function HubLayout({
 	const sidebarContent = await renderSidebarContent(body, hideWhatsNew)
 
 	// Hybrid series nav: if the current list has its own link in the sidebar IA
-	// (e.g. a tentpole), it expands in place (SidebarNavLink) — skip the pinned
-	// block. Otherwise the pinned "In this series" block is the fallback so the
-	// lessons are never orphaned. See decisions.md "Series posts keep the hub
-	// sidebar".
+	// (e.g. a tentpole, or its home-override — /skills for the skills list), it
+	// expands in place (SidebarNavLink) — skip the pinned block. Otherwise the
+	// pinned "In this series" block is the fallback so the lessons are never
+	// orphaned. See decisions.md "Series posts keep the hub sidebar".
 	const listInSidebar = Boolean(
-		currentListSlug && body.includes(`](/${currentListSlug})`),
+		currentListSlug &&
+			(body.includes(`](/${currentListSlug})`) ||
+				body.includes(`](${listHomeHref(currentListSlug)})`)),
 	)
 
 	return (

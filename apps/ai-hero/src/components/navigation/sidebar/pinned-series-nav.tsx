@@ -4,6 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { useList } from '@/app/(content)/[post]/_components/list-provider'
 import { useProgress } from '@/app/(content)/[post]/_components/progress-provider'
+import { listHomeHref } from '@/lib/list-home'
 
 import {
 	SidebarGroup,
@@ -41,7 +42,7 @@ export function PinnedSeriesNav() {
 			</SidebarGroup>
 			<SidebarGroup className="py-0">
 				<Link
-					href={`/${list.fields.slug}`}
+					href={listHomeHref(list.fields.slug)}
 					className="focus-visible:ring-ring text-sidebar-foreground hover:bg-muted block px-2 py-1.5 text-sm font-semibold leading-snug tracking-tight text-balance transition-colors focus-visible:outline-none focus-visible:ring-2"
 				>
 					{list.fields.title}
