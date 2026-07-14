@@ -63,5 +63,7 @@ export const CURATED_DEFAULTS: PaletteItem[] = [
 export const PALETTE_PROMO: Promo | null = {
 	label: 'Cohort',
 	message: 'AI Coding for Real Engineers — join the next live cohort',
-	href: '/courses',
+	// Straight to the latest cohort's own page — /courses and /cohorts index
+	// pages aren't built (decisions.md "Never link the /cohorts index").
+	href: '/cohorts/ai-coding-for-real-engineers-m0k0w',
 }
