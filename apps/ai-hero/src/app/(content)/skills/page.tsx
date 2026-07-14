@@ -17,7 +17,7 @@ import {
 	SKILLS_LIST_ID,
 	SKILLS_PAGE_SIZE,
 } from '@/lib/skills-content'
-import { getSkillEntries } from '@/lib/skills-query'
+import { getSkillCatalogGroups } from '@/lib/skills-query'
 import { RssIcon } from 'lucide-react'
 
 import { ChangelogList, type ChangelogItem } from './_components/changelog-list'
@@ -61,29 +61,23 @@ export default async function SkillsPage({ searchParams }: Props) {
 	const { page: pageParam, preview } = await searchParams
 	const currentPage = Math.max(Number(pageParam ?? '1') || 1, 1)
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, subscriber, skillsList, skillEntries, stars] =
+	const [entries, totalEntries, subscriber, skillsList, catalogGroups, stars] =
 		await Promise.all([
 			getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
 			getSkillChangelogCount(),
 			getSubscriberFromCookie(),
 			getListWithSections(SKILLS_LIST_ID),
-			getSkillEntries(),
+			getSkillCatalogGroups(),
 			getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
 		])
 
-	// Split core vs utility for the cycle + catalog. `phase === null` (no phase
-	// tag) falls through as core, rendered without a badge.
-	const utilityEntries = skillEntries.filter(
-		(entry) => entry.phase?.slug === 'phase-utility',
-	)
-	const coreEntries = skillEntries.filter(
-		(entry) => entry.phase?.slug !== 'phase-utility',
-	)
-	// Non-regression gate: the new SkillCycle + catalog section only lights up
-	// once skill posts carry `postType: 'skill'` (getSkillEntries() non-empty).
+	// Non-regression gate: the new catalog section only lights up once skill
+	// posts carry `postType: 'skill'` (getSkillCatalogGroups() non-empty).
 	// Until then, fall back to the section-aware skill-set rendering (main's
 	// current prod behavior) so /skills is never blank in prod.
-	const hasSkillEntries = skillEntries.length > 0
+	const hasSkillEntries = catalogGroups.some(
+		(group) => group.skills.length > 0,
+	)
 
 	const skillGroups = toSkillGroups(skillsList?.resources)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
@@ -115,19 +109,16 @@ export default async function SkillsPage({ searchParams }: Props) {
 					{/* 2. Sales copy */}
 					<SkillsSalesCopy />
 
-					{/* 3. Skill catalog (falls back to the section-aware skill-set
-					    rows — a `section` in the CMS list renders as a titled
-					    sub-group). Simplified for now — the SkillCycle diagram +
-					    hover-sync are parked (see skills-catalog.tsx). */}
+					{/* 3. Skill catalog, grouped by the CMS list's sections (falls
+					    back to the section-aware skill-set rows). Simplified for
+					    now — the SkillCycle diagram + hover-sync are parked (see
+					    skills-catalog.tsx). */}
 					{hasSkillEntries ? (
 						<section aria-labelledby="skills-heading" className="border-b">
 							<SectionHeading>
 								<span id="skills-heading">The skills</span>
 							</SectionHeading>
-							<SkillsCatalog
-								skills={coreEntries}
-								utilitySkills={utilityEntries}
-							/>
+							<SkillsCatalog groups={catalogGroups} />
 						</section>
 					) : (
 						<section
