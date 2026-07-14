@@ -1,6 +1,10 @@
 import * as React from 'react'
+import { unstable_cache } from 'next/cache'
+import { filterSectionedResources } from '@/lib/list-sections'
+import { getListWithSections } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
+import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
 import { log } from '@/server/logger'
@@ -13,7 +17,7 @@ import {
 	SidebarMenuSkeleton,
 } from '@coursebuilder/ui'
 
-import { SidebarNavLink, SidebarSection } from './sidebar-client'
+import { ExpandableNavLink, SidebarNavLink, SidebarSection } from './sidebar-client'
 
 /** Small-caps, non-collapsible category label — matches the MDX `## Heading`. */
 const CATEGORY_LABEL_CLASS =
@@ -152,6 +156,78 @@ export function SkillsNav(props: { title?: string }) {
 	return (
 		<React.Suspense fallback={<SectionSkeleton />}>
 			<SkillsNavSection {...props} />
+		</React.Suspense>
+	)
+}
+
+/**
+ * The skills list's displayable leaf rows for the sidebar Skills entry —
+ * sections flattened, unlisted/unpublished dropped (same visibility rules as
+ * the /skills page via `filterSectionedResources`). Serializable, cached under
+ * the shared list/post tags. Deliberately NOT `getSkillEntries()`: that gates
+ * on `postType: 'skill'`, which isn't applied in prod yet.
+ */
+const getCachedSkillsSidebarItems = unstable_cache(
+	async (): Promise<{ id: string; slug: string; title: string }[]> => {
+		const list = await getListWithSections(SKILLS_LIST_ID)
+		const rows = filterSectionedResources(list?.resources)
+		const items: { id: string; slug: string; title: string }[] = []
+		for (const row of rows) {
+			const resource: any = row?.resource
+			if (!resource) continue
+			const leaves =
+				resource.type === 'section'
+					? (resource.resources ?? []).map((child: any) => child?.resource)
+					: [resource]
+			for (const leaf of leaves) {
+				const slug = leaf?.fields?.slug
+				const title = leaf?.fields?.title
+				if (typeof slug === 'string' && typeof title === 'string') {
+					items.push({ id: leaf.id as string, slug, title })
+				}
+			}
+		}
+		return items
+	},
+	['sidebar-skills-items-v1'],
+	{ revalidate: 3600, tags: ['lists', 'posts'] },
+)
+
+async function SkillsEntrySection({
+	href,
+	label,
+}: {
+	href: string
+	label: React.ReactNode
+}) {
+	try {
+		const items = await getCachedSkillsSidebarItems()
+		if (items.length === 0) {
+			return <SidebarNavLink href={href}>{label}</SidebarNavLink>
+		}
+		return <ExpandableNavLink href={href} label={label} items={items} />
+	} catch (error) {
+		void log.error('hub-sidebar.skills-entry.error', {
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return <SidebarNavLink href={href}>{label}</SidebarNavLink>
+	}
+}
+
+/**
+ * The Explore "Skills" entry: a nav link that also discloses the skill list
+ * (right-side chevron, Overview + numbered skills) on ANY hub page. Rendered
+ * by the MDX map whenever the sidebar body links `/skills` — the body keeps
+ * its plain `[Skills](/skills)` line (which also keeps `HubLayout`'s
+ * pinned-block gate satisfied). Falls back to the plain link while loading or
+ * on error.
+ */
+export function SkillsEntry(props: { href: string; label: React.ReactNode }) {
+	return (
+		<React.Suspense
+			fallback={<SidebarNavLink href={props.href}>{props.label}</SidebarNavLink>}
+		>
+			<SkillsEntrySection {...props} />
 		</React.Suspense>
 	)
 }

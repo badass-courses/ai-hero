@@ -10,7 +10,12 @@ import {
 } from '@coursebuilder/ui'
 
 import { SidebarNavLink, SidebarSection } from './sidebar-client'
-import { SkillsNav, TopicSection, WhatsNew } from './sidebar-sections'
+import {
+	SkillsEntry,
+	SkillsNav,
+	TopicSection,
+	WhatsNew,
+} from './sidebar-sections'
 
 /**
  * Sidebar-scoped MDX pipeline for the CMS `hub-sidebar` page. Deliberately a
@@ -54,9 +59,16 @@ const sidebarMdxComponents = {
 	li: (props: { children?: React.ReactNode }) => (
 		<SidebarMenuItem>{props.children}</SidebarMenuItem>
 	),
-	a: (props: { href?: string; children?: React.ReactNode }) => (
-		<SidebarNavLink href={props.href ?? '#'}>{props.children}</SidebarNavLink>
-	),
+	a: (props: { href?: string; children?: React.ReactNode }) =>
+		// The `/skills` link is a disclosure entry: label navigates, a right-side
+		// chevron expands the skill list in place on ANY hub page. Intercepted
+		// here so the CMS body keeps its plain `[Skills](/skills)` line (which
+		// HubLayout's pinned-series gate also reads).
+		props.href === '/skills' ? (
+			<SkillsEntry href={props.href} label={props.children} />
+		) : (
+			<SidebarNavLink href={props.href ?? '#'}>{props.children}</SidebarNavLink>
+		),
 	// Stray prose renders as quiet fine print rather than breaking layout.
 	p: (props: { children?: React.ReactNode }) => (
 		<p className="text-muted-foreground px-4 py-1 text-xs leading-relaxed">
