@@ -15,6 +15,28 @@ type FetchLike = typeof fetch
 type ReadOptions = {
 	token?: string
 	fetch?: FetchLike
+	redis?: {
+		get<T = unknown>(key: string): Promise<T | null> | T | null
+	}
+}
+
+export const LEARNER_FLOW_REPORT_REDIS_KEY = 'aih:learner-flow:current-report'
+
+type PublishedReport = {
+	schemaVersion: 'aih.learner-flow.published.v1'
+	publishedAt: string
+	report: Record<string, unknown>
+}
+
+function isPublishedReport(value: unknown): value is PublishedReport {
+	if (!value || typeof value !== 'object') return false
+	const candidate = value as Partial<PublishedReport>
+	return (
+		candidate.schemaVersion === 'aih.learner-flow.published.v1' &&
+		typeof candidate.publishedAt === 'string' &&
+		typeof candidate.report === 'object' &&
+		candidate.report !== null
+	)
 }
 
 async function readPrivateJson(path: string, token: string, fetcher: FetchLike) {
@@ -47,6 +69,18 @@ function isCurrentReport(value: unknown): value is CurrentReport {
  * The app does not re-derive live windows or duplicate delta math.
  */
 export async function getLearnerFlowReport(options: ReadOptions = {}) {
+	// The daily flow agent publishes the exact report into Redis; the GitHub
+	// contents read is the fallback for when the publish step hasn't run.
+	if (options.redis) {
+		try {
+			const published = await options.redis.get<unknown>(
+				LEARNER_FLOW_REPORT_REDIS_KEY,
+			)
+			if (isPublishedReport(published)) return published.report
+		} catch {
+			// fall through to the GitHub path
+		}
+	}
 	const token = options.token ?? process.env.AIH_SUPPORT_REPORT_READ_TOKEN?.trim()
 	if (!token) return { state: 'unavailable' as const, reason: 'support_report_token_missing' as const }
 	const fetcher = options.fetch ?? fetch

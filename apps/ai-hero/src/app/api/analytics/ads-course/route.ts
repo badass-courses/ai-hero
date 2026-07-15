@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdsCourseMetrics, type AdsMetricsRange } from '@/lib/ads-course-metrics'
 import { getLearnerFlowReport } from '@/lib/learner-flow-report'
+import { redis } from '@/server/redis-client'
 import { getLearnerFlowAggregateSummary } from '@/lib/subscriber-marketing/learner-flow-summary'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
@@ -80,7 +81,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 	try {
 		const [metrics, flowReport, learnerFlow] = await Promise.all([
 			getAdsCourseMetrics({ productId, range }),
-			getLearnerFlowReport(),
+			getLearnerFlowReport({ redis }),
 			getLearnerFlowAggregateSummary(),
 		])
 		const data = { ...metrics, flowReport, learnerFlow }

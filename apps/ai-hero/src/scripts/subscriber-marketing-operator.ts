@@ -102,6 +102,10 @@ import {
 	previewSkillsWorkflowValuePathQa,
 	type ValuePathTeamShareLinkMap,
 } from '@/lib/subscriber-marketing/value-path-qa-preview'
+import {
+	getLearnerFlowReport,
+	LEARNER_FLOW_REPORT_REDIS_KEY,
+} from '@/lib/learner-flow-report'
 import { redis } from '@/server/redis-client'
 import { and, desc, eq, gte, inArray } from 'drizzle-orm'
 
@@ -336,6 +340,42 @@ if (command === 'lookup') {
 	} else {
 		console.log(formatLearnerFlowUnstick(result))
 	}
+} else if (command === 'learner-flow-report-publish') {
+	const reportPath = readFlag(args, '--report')
+	if (!reportPath) {
+		printUsageAndExit()
+	}
+	const report = JSON.parse(await readFile(reportPath!, 'utf8')) as Record<
+		string,
+		unknown
+	>
+	if (!report || typeof report !== 'object' || Array.isArray(report)) {
+		throw new Error('learner-flow report must be a JSON object')
+	}
+	const published = {
+		schemaVersion: 'aih.learner-flow.published.v1' as const,
+		publishedAt: new Date().toISOString(),
+		report,
+	}
+	await redis.set(LEARNER_FLOW_REPORT_REDIS_KEY, published)
+	const readback = await getLearnerFlowReport({ redis })
+	const readbackMatches =
+		JSON.stringify(readback) === JSON.stringify(report)
+	if (!readbackMatches) {
+		throw new Error('learner-flow report publish readback mismatch')
+	}
+	console.log(
+		JSON.stringify(
+			{
+				mode: 'learner-flow-report-publish',
+				key: LEARNER_FLOW_REPORT_REDIS_KEY,
+				publishedAt: published.publishedAt,
+				readbackMatches,
+			},
+			null,
+			2,
+		),
+	)
 } else if (command === 'value-path-intent-replan') {
 	const contactIds = (readFlag(args, '--contact-ids') ?? '')
 		.split(',')
