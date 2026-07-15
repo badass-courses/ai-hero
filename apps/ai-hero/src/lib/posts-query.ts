@@ -11,6 +11,7 @@ import {
 	contentResourceTag as contentResourceTagTable,
 	contentResourceVersion as contentResourceVersionTable,
 	contributionTypes,
+	tag as tagTable,
 } from '@/db/schema'
 import { RESOURCE_CREATED_EVENT } from '@/inngest/events/resource-management'
 import { inngest } from '@/inngest/inngest.server'
@@ -142,6 +143,114 @@ export async function getPostTags(postId: string): Promise<Tag[]> {
 	})
 
 	return z.array(TagSchema).parse(tags.map((tag) => tag.tag))
+}
+
+/**
+ * Published, public posts carrying the tag with `fields.slug === tagSlug`,
+ * newest first. Shared primitive for the sidebar topic tree, `/topics/[slug]`,
+ * W2 per-skill related posts, and W1's tag-based related-posts fallback
+ * (see specs/w1-article-cross-promo.md §3).
+ *
+ * NOTE: this query is tag-agnostic — it happily resolves `skill-phase`-context
+ * tags too (W2 needs that). Topic-facing consumers (the `/topics/[slug]` page,
+ * topic tree) must exclude phase tags themselves; see `getTopicTag` in
+ * `src/lib/topics-query.ts`.
+ */
+export async function getPostsByTag(
+	tagSlug: string,
+	options?: { excludePostIds?: string[]; limit?: number },
+): Promise<Post[]> {
+	try {
+		const tagRow = await db.query.tag.findFirst({
+			where: eq(sql`JSON_EXTRACT (${tagTable.fields}, "$.slug")`, tagSlug),
+		})
+
+		if (!tagRow) return []
+
+		const taggedRows = await db.query.contentResourceTag.findMany({
+			where: eq(contentResourceTagTable.tagId, tagRow.id),
+			columns: { contentResourceId: true },
+		})
+
+		const postIds = taggedRows.map((row) => row.contentResourceId)
+		if (postIds.length === 0) return []
+
+		const posts = await db.query.contentResource.findMany({
+			where: and(
+				inArray(contentResource.id, postIds),
+				eq(contentResource.type, 'post'),
+				eq(
+					sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`,
+					'published',
+				),
+				eq(
+					sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+					'public',
+				),
+			),
+			orderBy: desc(contentResource.createdAt),
+			with: {
+				tags: {
+					with: {
+						tag: true,
+					},
+					orderBy: asc(contentResourceTagTable.position),
+				},
+			},
+		})
+
+		const postsParsed = z.array(PostSchema).safeParse(posts)
+		if (!postsParsed.success) {
+			await log.error('post.parse.error', {
+				scope: 'by-tag',
+				tagSlug,
+				error: postsParsed.error.message,
+			})
+			return []
+		}
+
+		const excludeIds = new Set(options?.excludePostIds ?? [])
+		const filtered = postsParsed.data.filter((post) => !excludeIds.has(post.id))
+
+		return typeof options?.limit === 'number'
+			? filtered.slice(0, options.limit)
+			: filtered
+	} catch (error) {
+		await log.error('post.query.error', {
+			scope: 'by-tag',
+			tagSlug,
+			error: getErrorMessage(error),
+			stack: getErrorStack(error),
+		})
+		return []
+	}
+}
+
+const _getCachedPostsByTag = unstable_cache(
+	async (tagSlug: string) => getPostsByTag(tagSlug),
+	['posts-by-tag-v1'],
+	{ revalidate: 3600, tags: ['posts', 'tags'] },
+)
+
+/**
+ * Cached `getPostsByTag`. Cached per tag slug (the full list), with
+ * exclude/limit applied after the cache read so every consumer shares one
+ * cache entry per tag. Dates are revived after the cache boundary, matching
+ * `getCachedAllPosts`.
+ */
+export async function getCachedPostsByTag(
+	tagSlug: string,
+	options?: { excludePostIds?: string[]; limit?: number },
+): Promise<Post[]> {
+	const result = await _getCachedPostsByTag(tagSlug)
+	const posts: Post[] = reviveDates(result)
+
+	const excludeIds = new Set(options?.excludePostIds ?? [])
+	const filtered = posts.filter((post) => !excludeIds.has(post.id))
+
+	return typeof options?.limit === 'number'
+		? filtered.slice(0, options.limit)
+		: filtered
 }
 
 export async function getPostLists(postId: string): Promise<List[]> {
@@ -603,6 +712,9 @@ export async function addTagToPost(postId: string, tagId: string) {
 		contentResourceId: postId,
 		tagId,
 	})
+
+	revalidateTag('posts', 'max')
+	revalidateTag('tags', 'max')
 }
 
 export async function updatePostTags(postId: string, tags: Tag[]) {
@@ -618,6 +730,9 @@ export async function updatePostTags(postId: string, tags: Tag[]) {
 			})),
 		)
 	})
+
+	revalidateTag('posts', 'max')
+	revalidateTag('tags', 'max')
 }
 
 export async function removeTagFromPost(postId: string, tagId: string) {
@@ -629,6 +744,9 @@ export async function removeTagFromPost(postId: string, tagId: string) {
 				eq(contentResourceTagTable.tagId, tagId),
 			),
 		)
+
+	revalidateTag('posts', 'max')
+	revalidateTag('tags', 'max')
 }
 
 export async function writeNewPostToDatabase(

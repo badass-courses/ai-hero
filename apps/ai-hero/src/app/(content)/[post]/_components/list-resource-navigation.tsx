@@ -15,6 +15,7 @@ import {
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { findSectionIdForResourceSlug } from '@/lib/content-navigation'
+import { listHomeHref } from '@/lib/list-home'
 
 import { ResourceListView } from '../../_components/resource-list-view'
 import { useList } from './list-provider'
@@ -55,7 +56,7 @@ export default function ListResourceNavigation({
 	return (
 		<ResourceListView
 			title={list.fields.title}
-			titleHref={`/${list.fields.slug}`}
+			titleHref={listHomeHref(list.fields.slug)}
 			moduleId={list.id}
 			resources={list.resources}
 			currentSlug={currentSlug}

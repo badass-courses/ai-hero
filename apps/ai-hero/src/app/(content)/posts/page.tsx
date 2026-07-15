@@ -2,6 +2,7 @@ import * as React from 'react'
 import type { Metadata } from 'next'
 import Search from '@/app/(search)/q/_components/search'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import config from '@/config'
 import { env } from '@/env.mjs'
 import { getAllLists } from '@/lib/lists-query'
@@ -28,14 +29,18 @@ export default async function PostsIndexPage() {
 	const graph = await getCachedPostsGraph()
 	return (
 		<LayoutClient withContainer>
-			<main className="flex min-h-[calc(100vh-var(--nav-height))] flex-col lg:flex-row">
-				<div className="mx-auto flex w-full flex-col">
-					<Search graph={graph} />
-				</div>
-				<React.Suspense fallback={null}>
-					<PostListActions />
-				</React.Suspense>
-			</main>
+			{/* Dense catalog page: hub sidebar starts as the collapsed icon rail
+			    (expands in place) so the listing keeps its width. */}
+			<HubLayout sidebarDefaultCollapsed>
+				<main className="flex min-h-[calc(100vh-var(--nav-height))] flex-col lg:flex-row">
+					<div className="mx-auto flex w-full flex-col">
+						<Search graph={graph} />
+					</div>
+					<React.Suspense fallback={null}>
+						<PostListActions />
+					</React.Suspense>
+				</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }

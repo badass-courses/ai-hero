@@ -11,12 +11,14 @@ import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
-import { PromoCard } from '@/components/mdx/promo-card'
-import type { PromoCardProps } from '@/components/mdx/promo-card'
 import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import type { CalloutIntent } from '@/components/mdx/callout'
+import { PromoCard } from '@/components/mdx/promo-card'
+import type { PromoCardProps } from '@/components/mdx/promo-card'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
+import { createCalloutLineAutoInsertRemarkPlugin } from '@/lib/callout-line-autoinsert'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
@@ -149,6 +151,20 @@ type CompileMDXContext = {
 		maxLinks?: number
 		excludedSlugs?: string[]
 	}
+	/**
+	 * Resolved cross-promo callout line to auto-insert before the 2nd h2 (W1
+	 * §2.4). The caller (`PostBody`) decides the variant/copy BEFORE compile and
+	 * passes it as a static payload; the remark plugin does zero data fetching.
+	 * Its presence also forces the bypass of `compileDefaultMDX`'s `cache()`
+	 * (keyed only on source+lessonId), because this line depends on external
+	 * state (the active cohort) that is not part of that cache key.
+	 */
+	calloutLineAutoInsert?: {
+		variant: CalloutIntent
+		label: string
+		href: string
+		linkText: string
+	}
 }
 
 export function sanitizeMdxSource(source: string) {
@@ -266,6 +282,9 @@ async function compileMDXInternal(
 	let checkboxIndex = 0
 	const dictionaryAutoLinkPlugin = context?.dictionaryAutoLink
 		? createDictionaryAutoLinkRemarkPlugin(context.dictionaryAutoLink)
+		: null
+	const calloutLineAutoInsertPlugin = context?.calloutLineAutoInsert
+		? createCalloutLineAutoInsertRemarkPlugin(context.calloutLineAutoInsert)
 		: null
 	const dictionaryEntryByHref = new Map(
 		context?.dictionaryAutoLink?.entries.map((entry) => [
@@ -499,6 +518,9 @@ async function compileMDXInternal(
 							],
 							remarkGfm,
 							...(dictionaryAutoLinkPlugin ? [dictionaryAutoLinkPlugin] : []),
+							...(calloutLineAutoInsertPlugin
+								? [calloutLineAutoInsertPlugin]
+								: []),
 							[remarkCodeHike, { components: { code: 'Code' } }],
 						],
 						rehypePlugins: [
@@ -575,7 +597,15 @@ export async function compileMDX(
 	const hasCustomComponents = Object.keys(resolvedComponents).length > 0
 	const hasCustomOptions = Object.keys(resolvedOptions).length > 0
 
-	if (!hasCustomComponents && !hasCustomOptions) {
+	// `calloutLineAutoInsert` depends on external state (the active cohort) that
+	// is NOT part of `compileDefaultMDX`'s cache key (source + lessonId), so its
+	// presence must force the non-cached path or two posts could leak each
+	// other's auto-inserted line (W1 §2.4). NOTE (observation, not fixed here per
+	// spec §7.6): `dictionaryAutoLink` is likewise absent from this bypass, so a
+	// post that passes only `dictionaryAutoLink` (no callout line) still routes
+	// through the cached default path, which drops the dictionary plugin. That is
+	// pre-existing behavior and out of this workstream's territory.
+	if (!hasCustomComponents && !hasCustomOptions && !context?.calloutLineAutoInsert) {
 		return compileDefaultMDX(source, context?.lessonId)
 	}
 

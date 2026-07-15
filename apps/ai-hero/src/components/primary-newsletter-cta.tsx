@@ -20,7 +20,13 @@ import { CldImage } from './cld-image'
 
 type PrimaryNewsletterCtaProps = {
 	onSuccess?: () => void
-	title?: string
+	/**
+	 * Accepts a ReactNode so SERVER call sites can pass the live-count title
+	 * (`title={<PrimaryNewsletterTitle />}` from subscriber-count.tsx). The
+	 * string default below is a static fallback only — this is a client
+	 * component and can't fetch the Kit count itself.
+	 */
+	title?: React.ReactNode
 	byline?: string
 	actionLabel?: string
 	/**

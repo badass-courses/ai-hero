@@ -1,9 +1,7 @@
 'use client'
 
 import React from 'react'
-import { useSearchParams } from 'next/navigation'
 import type { List } from '@/lib/lists'
-import { api } from '@/trpc/react'
 
 interface ListContextType {
 	list: List | null
@@ -18,13 +16,13 @@ const ListContext = React.createContext<ListContextType>({
 })
 
 /**
- * ListProvider manages the current content list state, handling both direct navigation
- * and list-based navigation via URL parameters.
+ * ListProvider exposes the current post's list (the module/tutorial it belongs
+ * to, resolved server-side by DB membership) to descendant client components
+ * (`useList`).
  *
- * The provider handles two scenarios:
- * 1. Direct post navigation: Uses the initialList passed from the server
- * 2. List-based navigation: When ?list= parameter is present and different from initialList,
- *    it fetches the new list data
+ * The former `?list=` query-param override (fetching a different list client
+ * side) was removed 2026-07-06 — nothing links with `?list=` anymore, so the
+ * list is simply whatever the server passed as `initialList`.
  *
  * @param initialList - The list data fetched server-side during initial page load
  * @param children - React child components that will have access to list context
@@ -38,27 +36,10 @@ export function ListProvider({
 	currentPostHasVideo?: boolean
 	children: React.ReactNode
 }) {
-	const searchParams = useSearchParams()
-	const listSlug = searchParams.get('list')
-
-	const mismatch =
-		searchParams.has('list') && listSlug !== initialList?.fields.slug
-
-	const { data: listFromParam, isFetched: isListFetched } =
-		api.contentResources.getList.useQuery(
-			{ slugOrId: listSlug as string },
-			{
-				placeholderData: initialList as List,
-				initialData: initialList as List,
-				enabled: mismatch,
-			},
-		)
-
-	const list = mismatch ? listFromParam : initialList
-	const isLoading = !isListFetched && mismatch
-
 	return (
-		<ListContext.Provider value={{ list, isLoading, currentPostHasVideo }}>
+		<ListContext.Provider
+			value={{ list: initialList, isLoading: false, currentPostHasVideo }}
+		>
 			{children}
 		</ListContext.Provider>
 	)

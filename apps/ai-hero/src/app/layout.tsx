@@ -14,6 +14,7 @@ import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { getProduct } from '@/lib/products-query'
 import { SiteStructuredData } from '@/lib/structured-data'
+import { PromoBar } from '@/components/navigation/promo-bar'
 import { TRPCReactProvider } from '@/trpc/react'
 import { ourFileRouter } from '@/uploadthing/core'
 import { GoogleAnalytics } from '@next/third-parties/google'
@@ -123,6 +124,7 @@ export default function RootLayout({
 									}}
 									getProduct={getProduct}
 								>
+									<PromoBar />
 									{children}
 								</CouponProvider>
 							</ThemeProvider>

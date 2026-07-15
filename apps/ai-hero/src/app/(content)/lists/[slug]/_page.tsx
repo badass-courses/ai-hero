@@ -1,9 +1,7 @@
 // Used for root route /[post]
 
 import * as React from 'react'
-import { Suspense } from 'react'
 import { type Metadata, type ResolvingMetadata } from 'next'
-import Image from 'next/image'
 import Link from 'next/link'
 import { Contributor } from '@/components/contributor'
 import { Share } from '@/components/share'
@@ -15,9 +13,7 @@ import type { List } from '@/lib/lists'
 import { getAllLists, getList, getListWithSections } from '@/lib/lists-query'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
-import { generateGridPattern } from '@/utils/generate-grid-pattern'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
-import { PlayIcon } from '@heroicons/react/24/solid'
 import { Github, Share2 } from 'lucide-react'
 
 import {
@@ -28,8 +24,6 @@ import {
 	DialogTrigger,
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
-
-import ListResources from '../_components/list-resources'
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -71,6 +65,13 @@ export async function generateMetadata(
 	}
 }
 
+/**
+ * List landing page — deliberately simple and single-column: it's the
+ * "Overview" of a series. The lesson-by-lesson navigation lives in the hub
+ * sidebar (the list's own entry expands with an Overview row + lessons), so the
+ * page is just a header, the body, and a plain lesson list below it. See
+ * lat.md/decisions.md "List landing pages are simple overviews".
+ */
 export default async function ListPage(props: {
 	list: List
 	params: Promise<{ slug: string }>
@@ -84,70 +85,88 @@ export default async function ListPage(props: {
 	}
 
 	// The landing's `list` comes from the one-level `getPostOrList`; pull the
-	// deep, section-aware tree so sections render with their children (falling
-	// back to the shallow rows if the deep fetch fails). Filtering drops
-	// unlisted/unpublished items and empty sections.
+	// deep, section-aware tree so sections render as sub-groups with their
+	// children (falling back to the shallow rows if the deep fetch fails).
+	// Filtering drops unlisted/unpublished items and empty sections.
 	const deepList = await getListWithSections(list.fields.slug ?? list.id)
 	const displayResources = filterSectionedResources(
 		deepList?.resources ?? list.resources,
 	)
 	const firstSlug = firstDisplayableSlug(displayResources)
-	const firstResourceHref = firstSlug ? `/${firstSlug}` : '#'
+	const firstResourceHref = firstSlug ? `/${firstSlug}` : undefined
 
-	const squareGridPattern = generateGridPattern(
-		list.fields.title,
-		1000,
-		800,
-		0.8,
-		true,
-	)
+	// Flatten the sectioned tree into render rows: section headings interleaved
+	// with lessons, numbering continuous across the whole series.
+	let lessonNumber = 0
+	const rows: Array<
+		| { kind: 'section'; key: string; title: string }
+		| { kind: 'lesson'; key: string; slug: string; title: string; n: number }
+	> = []
+	for (const entry of displayResources) {
+		const resource = entry?.resource
+		if (!resource) continue
+		if (resource.type === 'section') {
+			rows.push({
+				kind: 'section',
+				key: resource.id,
+				title: String(resource.fields?.title ?? ''),
+			})
+			for (const child of resource.resources ?? []) {
+				const r = child?.resource
+				if (!r?.fields?.slug) continue
+				rows.push({
+					kind: 'lesson',
+					key: r.id,
+					slug: String(r.fields.slug),
+					title: String(r.fields.title ?? ''),
+					n: ++lessonNumber,
+				})
+			}
+			continue
+		}
+		if (!resource.fields?.slug) continue
+		rows.push({
+			kind: 'lesson',
+			key: resource.id,
+			slug: String(resource.fields.slug),
+			title: String(resource.fields.title ?? ''),
+			n: ++lessonNumber,
+		})
+	}
 
-	const Links = ({ children }: { children?: React.ReactNode }) => {
-		return (
-			<div className="relative w-full grid-cols-6 items-center border-y md:grid">
-				<div
-					aria-hidden="true"
-					className="via-foreground/10 to-muted bg-linear-to-r absolute -bottom-px right-0 h-px w-2/3 from-transparent"
-				/>
-				<div className="divide-border col-span-4 flex flex-wrap items-center divide-y md:divide-y-0">
-					<div className="bg-stripes h-14 sm:w-8 lg:w-10" />
-					{firstSlug && (
-						<Button
-							size="lg"
-							className="before:bg-primary-foreground relative h-14 w-full rounded-none text-base font-medium before:absolute before:-left-1 before:h-2 before:w-2 before:rotate-45 before:content-[''] sm:max-w-[180px]"
-							asChild
-						>
-							<Link href={firstResourceHref}>
-								Start Learning
-								{/* <ChevronRight className="ml-2 w-4" /> */}
-							</Link>
-						</Button>
+	return (
+		<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
+			{/* Header */}
+			<section className="border-b">
+				<div className="flex flex-col gap-5 px-8 py-16 sm:px-16 md:py-20">
+					<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+						Series
+					</p>
+					<h1 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
+						{list.fields.title}
+					</h1>
+					{list.fields.description && (
+						<p className="text-foreground/80 max-w-[65ch] text-lg leading-relaxed">
+							{list.fields.description}
+						</p>
 					)}
-					<div
-						className={cn('w-full items-center sm:flex sm:w-auto', {
-							'grid grid-cols-2': list?.fields?.github,
-						})}
-					>
-						{list?.fields?.github && (
-							<Button
-								className="h-14 w-full rounded-none border-r px-5 md:w-auto"
-								variant="ghost"
-								size="lg"
-								asChild
-							>
+					<div className="flex flex-wrap items-center gap-3 pt-2">
+						{firstResourceHref && (
+							<Button asChild size="lg" className="rounded-full">
+								<Link href={firstResourceHref}>Start Learning</Link>
+							</Button>
+						)}
+						{list.fields?.github && (
+							<Button asChild variant="outline" size="lg" className="rounded-full">
 								<Link href={list.fields.github} target="_blank">
-									<Github className="mr-2 w-3" /> Code
+									<Github className="mr-2 size-4" /> Code
 								</Link>
 							</Button>
 						)}
 						<Dialog>
 							<DialogTrigger asChild>
-								<Button
-									className="h-14 w-full rounded-none px-5 md:w-auto md:border-r"
-									variant="ghost"
-									size="lg"
-								>
-									<Share2 className="mr-2 w-3" /> Share
+								<Button variant="ghost" size="lg" className="rounded-full">
+									<Share2 className="mr-2 size-4" /> Share
 								</Button>
 							</DialogTrigger>
 							<DialogContent
@@ -164,76 +183,59 @@ export default async function ListPage(props: {
 								/>
 							</DialogContent>
 						</Dialog>
-					</div>
-				</div>
-				{children}
-			</div>
-		)
-	}
-
-	return (
-		<main className="flex min-h-screen w-full flex-col">
-			<header className="relative flex items-center justify-center md:px-8 lg:px-10">
-				<div className="relative z-10 mx-auto flex h-full w-full flex-col-reverse items-center justify-between gap-5 pb-10 md:grid md:grid-cols-5 md:gap-10 md:pt-10 lg:gap-5">
-					<div className="col-span-3 flex shrink-0 flex-col items-center gap-3 px-5 md:items-start md:px-0">
-						<h1 className="w-full text-center text-2xl font-semibold sm:text-3xl md:text-left lg:text-4xl xl:text-5xl dark:text-white">
-							{list.fields.title}
-						</h1>
-						{list.fields.description && (
-							<div className="prose prose-p:text-balance dark:prose-invert md:prose-p:text-left prose-p:text-center prose-p:font-normal sm:prose-lg lg:prose-lg">
-								<p>{list.fields.description}</p>
-							</div>
-						)}
-						<div className="flex items-center gap-2">
+						<div className="ml-auto">
 							<Contributor />
 						</div>
 					</div>
-					<div className="col-span-2">
-						{firstSlug && list.fields?.image && (
-							<Link
-								className="group relative flex items-center justify-center"
-								href={firstResourceHref}
-							>
-								<Image
-									priority
-									alt={list.fields.title}
-									src={list.fields.image}
-									width={480}
-									height={270}
-									className="brightness-100 transition duration-300 ease-in-out group-hover:brightness-100 sm:rounded dark:brightness-90"
-									sizes="(max-width: 768px) 100vw, 480px"
-								/>
-								<div className="bg-background/80 absolute bottom-5 right-5 flex items-center justify-center rounded-full p-2 backdrop-blur-md transition ease-out group-hover:scale-110">
-									<PlayIcon className="relative h-5 w-5 translate-x-px" />
-									<span className="sr-only">Start Learning</span>
-								</div>
-							</Link>
-						)}
-					</div>
-					<Suspense fallback={null}>
-						<ListActionBar className="absolute right-0 top-5" list={list} />
-					</Suspense>
 				</div>
-			</header>
-			<Links>
-				<div className="col-span-2 hidden h-14 items-center border-l pl-5 text-base font-medium md:flex">
-					Content
-				</div>
-			</Links>
-			<div className="">
-				<div className="mx-auto flex w-full grid-cols-6 flex-col md:grid md:min-h-[calc(100vh-var(--nav-height)-373px)]">
-					<article className="prose sm:prose-lg lg:prose-lg prose-p:max-w-4xl dark:prose-invert prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl col-span-4 max-w-none px-5 py-10 sm:px-8 lg:px-10">
-						{body || 'No body found.'}
+			</section>
+
+			{/* Body */}
+			{body && (
+				<section className="border-b">
+					<article className="prose sm:prose-lg dark:prose-invert prose-headings:tracking-tight max-w-none px-8 py-12 sm:px-16 md:py-16 [&>*]:max-w-[70ch]">
+						{body}
 					</article>
-					<ListResources
-						resources={displayResources}
-						title={list.fields.title}
-						titleHref={`/${list.fields.slug}`}
-						moduleId={list.id}
-					/>
-				</div>
-			</div>
-			<Links />
+				</section>
+			)}
+
+			{/* Lessons (moved below the body — the sidebar carries the live nav).
+			    Sections render as small-caps sub-headings within one continuous
+			    numbered list. */}
+			{rows.length > 0 && (
+				<section>
+					<div className="flex flex-col gap-6 py-16 md:py-20">
+						<p className="px-8 font-mono text-[11px] font-medium uppercase tracking-wider opacity-60 sm:px-16">
+							In this series
+						</p>
+						<ol className="bg-border flex flex-col gap-px border-y">
+							{rows.map((row) =>
+								row.kind === 'section' ? (
+									<li key={row.key} className="bg-background">
+										<p className="text-muted-foreground px-8 pb-2 pt-6 font-mono text-[11px] font-medium uppercase tracking-wider sm:px-16">
+											{row.title}
+										</p>
+									</li>
+								) : (
+									<li key={row.key} className="bg-background">
+										<Link
+											href={`/${row.slug}`}
+											className="focus-visible:ring-ring group flex items-center gap-4 px-8 py-5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 sm:px-16"
+										>
+											<span className="text-muted-foreground/60 w-6 shrink-0 font-mono text-xs tabular-nums">
+												{String(row.n).padStart(2, '0')}
+											</span>
+											<span className="text-lg font-medium leading-snug tracking-tight text-balance group-hover:underline">
+												{row.title}
+											</span>
+										</Link>
+									</li>
+								),
+							)}
+						</ol>
+					</div>
+				</section>
+			)}
 		</main>
 	)
 }
@@ -245,7 +247,7 @@ export async function ListActionBar({
 	list: List | null
 	className?: string
 }) {
-	const { session, ability } = await getServerAuthSession()
+	const { ability } = await getServerAuthSession()
 
 	return (
 		<>

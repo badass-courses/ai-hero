@@ -1,13 +1,9 @@
 'use client'
 
 import React from 'react'
-import { useSearchParams } from 'next/navigation'
-import { api } from '@/trpc/react'
 
 import type { ModuleProgress } from '@coursebuilder/core/schemas'
 import { moduleProgressSchema } from '@coursebuilder/core/schemas'
-
-import { useList } from './list-provider'
 
 type ProgressContextType = {
 	progress: ModuleProgress | null
@@ -69,10 +65,9 @@ function progressReducer(
  * ProgressProvider manages the completion state of lessons within a module/list.
  * It handles both optimistic updates and server-synced progress state.
  *
- * The provider handles two scenarios:
- * 1. Direct post progress: Uses initialProgress from server
- * 2. List-based progress: When viewing a post within a different list (mismatchedList),
- *    it fetches the progress for that specific list
+ * Progress is seeded from the server-passed `initialProgress`. The former
+ * `?list=` client-side override (fetching a different list's progress) was
+ * removed 2026-07-06 — nothing links with `?list=`.
  *
  * Progress state includes:
  * - Completed lessons
@@ -89,28 +84,12 @@ export function ProgressProvider({
 	initialProgress: ModuleProgress | null
 	children: React.ReactNode
 }) {
-	const { list } = useList()
-	// TODO: IF there's not list, just check the current post completion status
-
-	const searchParams = useSearchParams()
-	const listSlug = searchParams.get('list')
-
-	const mismatchedList = listSlug && list && list.fields.slug !== listSlug
-
-	const { data: progress } = api.progress.getModuleProgressForUser.useQuery(
-		{
-			moduleId: listSlug,
-		},
-		{
-			initialData: initialProgress,
-			placeholderData: initialProgress,
-			enabled: Boolean(mismatchedList),
-		},
-	)
-
+	// Progress is the server-passed `initialProgress` for the current post's
+	// list. The former `?list=` override (fetching a different list's progress
+	// client side) was removed 2026-07-06 — nothing links with `?list=`.
 	const [optimisticProgress, dispatch] = React.useReducer(
 		progressReducer,
-		mismatchedList ? progress : initialProgress,
+		initialProgress,
 	)
 	const updateOptimisticProgress = React.useCallback(
 		(action: {

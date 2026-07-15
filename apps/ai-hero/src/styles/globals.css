@@ -177,7 +177,7 @@
 	--secondary: oklch(0.9312 0 0);
 	--secondary-foreground: oklch(0 0 0);
 	--muted: oklch(0.95 0 0);
-	--muted-foreground: oklch(0.6 0 0);
+	--muted-foreground: oklch(0.3 0 0);
 	--accent: oklch(0.9389 0 0);
 	--accent-foreground: oklch(0.1579 0 0);
 	--destructive: oklch(0.5918 0.177 29.23);
@@ -220,6 +220,17 @@
 	--ch-24: #8c959f;
 	--ch-25: #afb8c133;
 	--ch-26: #ffffffe6;
+
+	/* Sidebar tokens (shadcn). Reference existing tokens so dark mode tracks
+	   automatically via lazy var() resolution. See plans/navigation-redesign.md. */
+	--sidebar: var(--background);
+	--sidebar-foreground: var(--foreground);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: var(--muted);
+	--sidebar-accent-foreground: var(--accent-foreground);
+	--sidebar-border: var(--border);
+	--sidebar-ring: var(--ring);
 }
 
 .dark {
@@ -237,7 +248,7 @@
 	--secondary-foreground: oklch(1 0 0);
 
 	--muted: oklch(0.2156 0 0);
-	--muted-foreground: oklch(0.7652 0 0);
+	--muted-foreground: oklch(0.85 0 0);
 
 	--accent: oklch(0.2156 0 0);
 	--accent-foreground: oklch(0.9242 0.0022 71.43);
@@ -314,6 +325,16 @@
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
+
+	/* Sidebar (shadcn) */
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
 
 	/* Border radius */
 	--radius-sm: calc(var(--radius) - 4px);
@@ -532,4 +553,82 @@ li.task-list-item {
 		color-mix(in oklch, var(--background) 5%, transparent) 100%
 	);
 	background-size: 5px 5px;
+}
+
+/* Hide the raw scrollbar while keeping the element scrollable. Used by the
+   tall hub sidebar nav, which pairs it with `scroll-fade`. */
+@utility no-scrollbar {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}
+
+/* shadcn "scroll-fade": mask the top/bottom edges of a scroll container so
+   content dissolves into the surface, signalling there is more to scroll.
+   (https://ui.shadcn.com/docs/utils/scroll-fade)
+
+   The top and bottom fade depths are separate registered custom properties so
+   each can be driven independently. The base rule fades both edges (the
+   cross-browser fallback). Where scroll-driven timelines are supported, two
+   animations grow `--scroll-fade-top` from 0 over the first `size` of scroll
+   and shrink `--scroll-fade-bottom` to 0 over the last `size`, so the
+   first/last item is never dimmed when there's nothing more to scroll to.
+   Both animate distinct properties, so they compose in one mask-image. */
+@property --scroll-fade-top {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+
+@property --scroll-fade-bottom {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+
+@utility scroll-fade {
+	--scroll-fade-size: 1.75rem;
+	--scroll-fade-top: var(--scroll-fade-size);
+	--scroll-fade-bottom: var(--scroll-fade-size);
+	mask-image: linear-gradient(
+		to bottom,
+		transparent 0,
+		#000 var(--scroll-fade-top),
+		#000 calc(100% - var(--scroll-fade-bottom)),
+		transparent 100%
+	);
+}
+
+/* Plain `.scroll-fade` rule (not `@utility`, which can't nest in `@supports`);
+   it layers onto the generated utility class where scroll timelines exist. */
+@supports (animation-timeline: scroll()) {
+	.scroll-fade {
+		animation:
+			scroll-fade-top linear both,
+			scroll-fade-bottom linear both;
+		animation-timeline: scroll(self), scroll(self);
+		animation-range:
+			0 var(--scroll-fade-size),
+			calc(100% - var(--scroll-fade-size)) 100%;
+	}
+
+	@keyframes scroll-fade-top {
+		from {
+			--scroll-fade-top: 0px;
+		}
+		to {
+			--scroll-fade-top: var(--scroll-fade-size);
+		}
+	}
+
+	@keyframes scroll-fade-bottom {
+		from {
+			--scroll-fade-bottom: var(--scroll-fade-size);
+		}
+		to {
+			--scroll-fade-bottom: 0px;
+		}
+	}
 }
