@@ -1,4 +1,4 @@
-import { Check, ShieldCheckIcon } from 'lucide-react'
+import { Check } from 'lucide-react'
 
 import * as SkillsNewsletter from './skills-newsletter'
 import { type SkillsNewsletterStatus } from './skills-newsletter'
@@ -89,10 +89,6 @@ export function SkillsCourseFrontDoor({
 								/>
 							)}
 							{status !== 'subscribed' ? <SkillsNewsletter.Privacy /> : null}
-							<p className="text-foreground/60 inline-flex items-center gap-2 text-xs">
-								<ShieldCheckIcon className="size-3.5" aria-hidden />
-								Free. Seven lessons. Unsubscribe any time.
-							</p>
 						</div>
 					</SkillsNewsletter.Root>
 				</div>
