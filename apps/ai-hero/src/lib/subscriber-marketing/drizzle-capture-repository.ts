@@ -234,7 +234,10 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return input
 	}
 
-	async findPendingValuePathEmailSideEffectIntents(args: { limit: number }) {
+	async findPendingValuePathEmailSideEffectIntents(args: {
+		limit: number
+		intentIds?: string[]
+	}) {
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -245,11 +248,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				),
 			)
 		const now = new Date().toISOString()
+		const requestedIntentIds = args.intentIds
+			? new Set(args.intentIds)
+			: undefined
 		const due = rows
 			.map(toSideEffectIntentRecord)
 			.filter(
 				(intent: SideEffectIntent) =>
-					intent.status === 'pending' || isDueRetryableIntent(intent, now),
+					(intent.status === 'pending' || isDueRetryableIntent(intent, now)) &&
+					(!requestedIntentIds || requestedIntentIds.has(intent.id)),
 			)
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}

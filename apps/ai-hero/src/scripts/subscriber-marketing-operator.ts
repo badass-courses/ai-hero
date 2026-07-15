@@ -49,6 +49,10 @@ import {
 	type SignupGapPreview,
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { replanBlockedValuePathEmailIntents } from '@/lib/subscriber-marketing/value-path-intent-replan'
+import {
+	isTier1SignupGapReplay,
+	partitionLearnerFlowUnstickItems,
+} from '@/lib/subscriber-marketing/learner-flow-unstick'
 import { previewTeamKitProjection } from '@/lib/subscriber-marketing/team-kit-projection'
 import {
 	CONTACT_STATE_SCHEMA_VERSION,
@@ -319,6 +323,18 @@ if (command === 'lookup') {
 		console.log(JSON.stringify(result, null, 2))
 	} else {
 		console.log(formatLearnerFlowStuckList(result))
+	}
+} else if (command === 'learner-flow-unstick') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	const result = await buildLearnerFlowUnstick({
+		allowWrite,
+		formId: Number(readFlag(args, '--signup-gap-form-id') ?? '9376133'),
+	})
+	if (args.includes('--json')) {
+		console.log(JSON.stringify(result, null, 2))
+	} else {
+		console.log(formatLearnerFlowUnstick(result))
 	}
 } else if (command === 'value-path-intent-replan') {
 	const contactIds = (readFlag(args, '--contact-ids') ?? '')
@@ -862,6 +878,214 @@ function formatLearnerFlowStuckList(
 			`- ${learner.maskedEmail} | ${learner.contactId} | ${learner.stage} | ${learner.stuckAgeHours ?? 'unknown'}h | ${learner.cause}\n  ${learner.unstickCommand}`,
 		)
 	}
+	return lines.join('\n')
+}
+
+async function buildLearnerFlowUnstick(args: {
+	allowWrite: boolean
+	formId: number
+}) {
+	if (!Number.isInteger(args.formId) || args.formId <= 0) {
+		throw new Error('--signup-gap-form-id must be a positive integer')
+	}
+	const generatedAt = new Date().toISOString()
+	const stuckList = await buildLearnerFlowStuckList()
+	const partition = partitionLearnerFlowUnstickItems(
+		stuckList.stuck.flatMap((learner) =>
+			learner.cause
+				? [{
+					contactId: learner.contactId,
+					intentId: learner.intentId,
+					stage: learner.stage,
+					stuckAgeHours: learner.stuckAgeHours,
+					cause: learner.cause,
+					unstickCommand: learner.unstickCommand,
+				}]
+				: [],
+		),
+	)
+	const blockedItems = partition.tier1.filter(
+		(item) => item.action === 'replan-blocked-intent' && item.intentId,
+	)
+	const blockedContactIds = blockedItems.map((item) => item.contactId)
+	const blockedIntentIds = blockedItems.flatMap((item) =>
+		item.intentId ? [item.intentId] : [],
+	)
+	const retryIntentIds = partition.tier1
+		.filter((item) => item.action === 'retry-transient-failure')
+		.flatMap((item) => (item.intentId ? [item.intentId] : []))
+	const dripItems = partition.tier1.filter(
+		(item) => item.action === 'nudge-drip-progression' && item.intentId,
+	)
+	const dripContactIds = dripItems.map((item) => item.contactId)
+	const dripIntentIds = new Set(
+		dripItems.flatMap((item) => (item.intentId ? [item.intentId] : [])),
+	)
+	const signupGapPreview = await buildSignupGapOperatorPreview({
+		formId: args.formId,
+		from: new Date(Date.parse(generatedAt) - 47 * 60 * 60 * 1000).toISOString(),
+		to: generatedAt,
+	})
+	const signupGapEligible =
+		signupGapPreview.counts.replayable > 0 &&
+		isTier1SignupGapReplay({
+			candidateCount: signupGapPreview.counts.replayable,
+			candidateCreatedAt: signupGapPreview.candidates
+				.filter((candidate) => !candidate.excludedSynthetic)
+				.map((candidate) => candidate.createdAt),
+			now: generatedAt,
+		})
+	const requiresGateD = retryIntentIds.length > 0 || dripContactIds.length > 0
+	const allowlist =
+		args.allowWrite && requiresGateD ? await requireActiveGateDAllowlist() : undefined
+	const repository = await createCaptureRepository()
+	const replan = blockedIntentIds.length
+		? await replanBlockedValuePathEmailIntents({
+			repository,
+			contactIds: blockedContactIds,
+			intentIds: blockedIntentIds,
+			allowWrite: args.allowWrite,
+			now: generatedAt,
+		})
+		: undefined
+	const retryLimit = allowlist?.maxSendsPerRun ?? 25
+	const retryableIntentIds = retryIntentIds.slice(0, retryLimit)
+	const retryResults =
+		args.allowWrite && allowlist && retryableIntentIds.length > 0
+			? await executePendingValuePathEmailIntents({
+				repository,
+				emailListProvider: (await import('@/coursebuilder/email-list-provider'))
+					.emailListProvider,
+				now: generatedAt,
+				config: {
+					mode: allowlist.mode,
+					limit: retryableIntentIds.length,
+					intentIds: retryableIntentIds,
+					baseUrl:
+						process.env.NEXT_PUBLIC_URL ??
+						process.env.NEXT_PUBLIC_SITE_URL ??
+						'https://www.aihero.dev',
+					pathTokenSecret: process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
+					answerPages: await getValuePathAnswerPages(),
+					allowlistedContactIds: allowlist.contactIds,
+					allowlistedKitSubscriberIds: allowlist.kitSubscriberIds,
+					allowlistedEmails: allowlist.emails,
+					enabledValuePathSlugs: allowlist.pathSlugs,
+					verifiedEmailResourceIds: allowlist.emailResourceIds,
+					verifiedKitSequenceIds: allowlist.kitSequenceIds,
+					allowedActions: allowlist.allowedActions,
+								retryPolicy: allowlist.retryPolicy,
+				},
+			})
+			: []
+	const completedIntents = (
+		await Promise.all(
+			dripContactIds.map((contactId) =>
+				repository.findValuePathEmailSideEffectIntentsByContact(contactId),
+			),
+		)
+	).flatMap((intents) =>
+		intents.filter(
+			(intent) =>
+				intent.status === 'completed' && dripIntentIds.has(intent.id),
+		),
+	)
+	const drip =
+		args.allowWrite && allowlist && completedIntents.length > 0
+			? await progressValuePathDrips({
+				repository,
+				allowlist,
+				completedIntents,
+				allowWrite: true,
+				now: generatedAt,
+			})
+			: undefined
+	const signupGapReplay =
+		args.allowWrite && signupGapEligible
+			? await replaySignupGap({
+					preview: signupGapPreview,
+					source: 'learner-flow-unstick',
+					hasExistingIdentity: async (candidate) =>
+						Boolean(
+							(await repository.findContactByEmail(candidate.email)) ??
+								(await repository.findProviderIdentity(
+									'kit',
+									candidate.kitSubscriberId,
+								)),
+						),
+					emit: async (event) =>
+					(await import('@/inngest/inngest.server')).inngest.send(event),
+				})
+			: undefined
+	const tier2Ask = [
+		...partition.tier2.map((item) => ({
+			contactId: item.contactId,
+			stage: item.stage,
+			stuckAgeHours: item.stuckAgeHours,
+			cause: item.cause,
+			proposedCommand: item.unstickCommand,
+		})),
+		...(signupGapPreview.counts.replayable > 0 && !signupGapEligible
+			? [{
+				contactId: 'signup-gap-batch',
+				stage: 'signup-recovery',
+				stuckAgeHours: undefined,
+				cause: 'signup-gap-exceeds-tier-1-bound',
+				proposedCommand: `tier-2: ask Joel (replay ${signupGapPreview.counts.replayable} fresh signup gaps; tier-1 maximum is 25)`,
+			}]
+			: []),
+	]
+	return {
+		mode: 'learner-flow-unstick',
+		allowWrite: args.allowWrite,
+		generatedAt,
+		writes: {
+			database: Boolean(args.allowWrite && (replan?.counts.replanned || retryResults.length || drip)),
+			provider: Boolean(args.allowWrite && (retryResults.length || signupGapReplay)),
+		},
+		counts: stuckList.counts,
+		causeCounts: stuckList.causeCounts,
+		tiers: {
+			tier1: {
+				stuckItems: partition.tier1.length,
+				replan: replan?.counts ?? { contacts: 0, blockedIntentsFound: 0, replanned: 0, wouldReplan: 0 },
+				retry: {
+					eligible: retryIntentIds.length,
+					executed: retryResults.length,
+					completed: retryResults.filter((result) => result.status === 'completed').length,
+					deferred: retryIntentIds.length - retryableIntentIds.length,
+				},
+				drip: drip?.counts ?? { contactCount: dripContactIds.length, planned: 0 },
+				signupGap: {
+					formId: args.formId,
+					window: signupGapPreview.window,
+					replayable: signupGapPreview.counts.replayable,
+					eligible: signupGapEligible,
+					emitted: signupGapReplay?.counts.emitted ?? 0,
+				},
+			},
+				tier2: { ask: tier2Ask },
+			tier3: { actionCount: 0 },
+		},
+	}
+}
+
+function formatLearnerFlowUnstick(
+	result: Awaited<ReturnType<typeof buildLearnerFlowUnstick>>,
+) {
+	const lines = [
+		`Learner flow unstick (${result.allowWrite ? 'allow-write' : 'dry-run'})`,
+		`Generated: ${result.generatedAt}`,
+		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
+		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
+		`Tier 2 ask Joel: ${result.tiers.tier2.ask.length}`,
+	]
+	for (const item of result.tiers.tier2.ask) {
+		lines.push(
+			`- ${item.contactId} | ${item.stage} | ${item.stuckAgeHours ?? 'unknown'}h | ${item.cause}\n  ${item.proposedCommand ?? 'ask Joel'}`,
+		)
+	}
+	lines.push('Tier 3 never: 0 actions (not representable)')
 	return lines.join('\n')
 }
 
@@ -2427,6 +2651,8 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --dry-run
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick [--json] [--signup-gap-form-id 9376133]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick --allow-write [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-email-executor --allow-write --mode allowlisted-test --allowlisted-email joel+test@example.com --limit 1 [--provider-pacing-ms 1500]
   pnpm --filter ai-hero subscriber-marketing:operator shadow-field-preview --contact-id contact_123
   pnpm --filter ai-hero subscriber-marketing:operator content-read-event-preview [--limit 100] [--sample-limit 10] [--allow-write] [--force-large-write]

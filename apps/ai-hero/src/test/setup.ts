@@ -1,4 +1,9 @@
+import React from 'react'
 import { vi } from 'vitest'
+
+// A transitive Course Builder UI dependency still uses the classic JSX runtime.
+// Expose React for Node-side test collection without changing application runtime.
+;(globalThis as typeof globalThis & { React?: typeof React }).React = React
 
 // Mock environment variables
 vi.mock('@/env.mjs', () => ({

@@ -16,22 +16,27 @@ export const COURSE_VALUE_PATH_SLUGS = [
 type CourseValuePathSlug = (typeof COURSE_VALUE_PATH_SLUGS)[number]
 
 export type LearnerFlowState = 'moving' | 'terminal' | 'stuck'
+export const LEARNER_FLOW_STUCK_CAUSES = [
+	'blocked-intent',
+	'failed-send',
+	'retryable-failed-overdue',
+	'drip-starved',
+	'bounced',
+	'complained',
+	'unsubscribed',
+	'human-review-parked',
+	'classifier-gap',
+] as const
+
 export type LearnerFlowStuckCause =
-	| 'blocked-intent'
-	| 'failed-send'
-	| 'retryable-failed-overdue'
-	| 'drip-starved'
-	| 'bounced'
-	| 'complained'
-	| 'unsubscribed'
-	| 'human-review-parked'
-	| 'classifier-gap'
+	(typeof LEARNER_FLOW_STUCK_CAUSES)[number]
 
 export type LearnerFlowClassification = {
 	state: LearnerFlowState
 	stage: string
 	stuckAgeHours?: number
 	cause?: LearnerFlowStuckCause
+	intentId?: string
 	unstickCommand?: string
 }
 
@@ -110,6 +115,7 @@ export function classifyLearnerFlowContact(
 			stage: emailResourceId(blocked) ?? stage,
 			cause: 'blocked-intent',
 			contactId: input.contactId,
+			intentId: blocked.id,
 			lastActivityAt,
 			now: input.now,
 		})
@@ -122,6 +128,7 @@ export function classifyLearnerFlowContact(
 				stage: emailResourceId(failed) ?? stage,
 				cause: 'retryable-failed-overdue',
 				contactId: input.contactId,
+				intentId: failed.id,
 				lastActivityAt,
 				now: input.now,
 			})
@@ -163,6 +170,7 @@ export function classifyLearnerFlowContact(
 				stage: emailResourceId(completed) ?? stage,
 				cause: 'drip-starved',
 				contactId: input.contactId,
+				intentId: completed.id,
 				lastActivityAt,
 				now: input.now,
 			})
@@ -197,6 +205,7 @@ function stuck(args: {
 	stage: string
 	cause: LearnerFlowStuckCause
 	contactId: string
+	intentId?: string
 	lastActivityAt?: string
 	now: string
 }): LearnerFlowClassification {
@@ -207,6 +216,7 @@ function stuck(args: {
 			? hoursSince(args.lastActivityAt, args.now)
 			: undefined,
 		cause: args.cause,
+		intentId: args.intentId,
 		unstickCommand: unstickCommand(args.cause, args.contactId),
 	}
 }

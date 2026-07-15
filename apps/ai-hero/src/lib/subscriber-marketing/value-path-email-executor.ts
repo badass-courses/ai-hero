@@ -19,6 +19,7 @@ import {
 export type ValuePathEmailExecutorRepository = {
 	findPendingValuePathEmailSideEffectIntents(args: {
 		limit: number
+		intentIds?: string[]
 	}): Promise<SideEffectIntent[]> | SideEffectIntent[]
 	findContactById(
 		id: string,
@@ -56,6 +57,7 @@ export type ValuePathEmailExecutorConfig = {
 	allowedActions?: readonly string[]
 	retryPolicy?: Partial<GateDRetryPolicy>
 	providerPacingMs?: number
+	intentIds?: string[]
 }
 
 export type ValuePathEmailExecutionResult =
@@ -82,6 +84,7 @@ export async function executePendingValuePathEmailIntents(args: {
 	const intents =
 		await args.repository.findPendingValuePathEmailSideEffectIntents({
 			limit: args.config?.limit ?? 25,
+			intentIds: args.config?.intentIds,
 		})
 	const configBlockers = valuePathEmailExecutorConfigBlockers({
 		intents,

@@ -40,18 +40,25 @@ export type IntentReplanResult = {
 export async function replanBlockedValuePathEmailIntents(args: {
 	repository: IntentReplanRepository
 	contactIds: string[]
+	intentIds?: string[]
 	allowWrite: boolean
 	now?: string
 }): Promise<IntentReplanResult> {
 	const now = args.now ?? new Date().toISOString()
 	const results: IntentReplanResult['results'] = []
+	const requestedIntentIds = args.intentIds
+		? new Set(args.intentIds)
+		: undefined
 	for (const contactId of args.contactIds) {
 		const intents =
 			await args.repository.findValuePathEmailSideEffectIntentsByContact(
 				contactId,
 			)
 		for (const intent of intents) {
-			if (intent.status !== 'blocked') continue
+			if (
+				intent.status !== 'blocked' ||
+				(requestedIntentIds && !requestedIntentIds.has(intent.id))
+			) continue
 			if (args.allowWrite) {
 				await args.repository.updateSideEffectIntent(intent.id, {
 					status: 'pending',
