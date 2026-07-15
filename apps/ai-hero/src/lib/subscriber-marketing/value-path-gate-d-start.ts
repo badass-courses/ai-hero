@@ -162,6 +162,9 @@ async function startValuePathGateDContact(args: {
 				rollingEnrollment && email
 					? [...args.allowlist.emails, email]
 					: args.allowlist.emails,
+			enabledValuePathSlugs: args.allowlist.pathSlugs,
+			verifiedEmailResourceIds: args.allowlist.emailResourceIds,
+			verifiedKitSequenceIds: args.allowlist.kitSequenceIds,
 		}),
 		acceptedReviewReasons,
 	)

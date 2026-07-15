@@ -4952,6 +4952,25 @@ describe('Skills Newsletter Path Entry', () => {
 		})
 	})
 
+	it('plans email-0 under scoped-live mode, the mode rolling activations write', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: normalizeGateDRuntimeAllowlist({
+				...rollingAllowlist,
+				mode: 'scoped-live',
+			}),
+			input,
+			allowWrite: false,
+		})
+
+		expect(result.status).toBe('planned')
+		expect(result.entry.results[0]).toMatchObject({
+			status: 'planned',
+			reviewReasons: [],
+		})
+	})
+
 	it('creates Contact, ContactState, subscription evidence, and one email-0 intent idempotently in memory', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const first = await enterSkillsNewsletterSubscriber({
