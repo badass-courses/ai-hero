@@ -18,6 +18,10 @@ import type {
 	SideEffectIntent,
 	StateTransition,
 } from './types'
+import {
+	selectCompletedValuePathIntentFrontier,
+	sortValuePathIntentsByCreatedAt,
+} from './value-path-intent-scan'
 
 export type MarketingRepository = IdentityRepository & {
 	findContactEventBySemanticKey(key: string): ContactEventRecord | undefined
@@ -41,6 +45,9 @@ export type MarketingRepository = IdentityRepository & {
 		limit: number
 		maxCompletedAt?: string
 	}): SideEffectIntent[]
+	findValuePathEmailSideEffectIntentsByContact(
+		contactId: string,
+	): SideEffectIntent[]
 	updateSideEffectIntent(
 		id: string,
 		patch: Pick<
@@ -157,36 +164,38 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	}
 	findPendingValuePathEmailSideEffectIntents(args: { limit: number }) {
 		const now = new Date().toISOString()
-		return Array.from(this.sideEffectIntents.values())
-			.filter(
-				(intent) =>
-					intent.provider === 'kit' &&
-					intent.type === 'send-value-path-email' &&
-					(intent.status === 'pending' || isDueRetryableIntent(intent, now)),
-			)
-			.slice(0, args.limit)
+		const due = Array.from(this.sideEffectIntents.values()).filter(
+			(intent) =>
+				intent.provider === 'kit' &&
+				intent.type === 'send-value-path-email' &&
+				(intent.status === 'pending' || isDueRetryableIntent(intent, now)),
+		)
+		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 	findCompletedValuePathEmailSideEffectIntents(args: {
 		limit: number
 		maxCompletedAt?: string
 	}) {
-		return Array.from(this.sideEffectIntents.values())
-			.filter((intent) => {
-				if (
-					intent.provider !== 'kit' ||
-					intent.type !== 'send-value-path-email' ||
-					intent.status !== 'completed'
-				) {
-					return false
-				}
-				const completedAt =
-					typeof intent.metadata.completedAt === 'string'
-						? intent.metadata.completedAt
-						: undefined
-				if (!completedAt) return false
-				return !args.maxCompletedAt || completedAt <= args.maxCompletedAt
-			})
-			.slice(0, args.limit)
+		const completed = Array.from(this.sideEffectIntents.values()).filter(
+			(intent) =>
+				intent.provider === 'kit' &&
+				intent.type === 'send-value-path-email' &&
+				intent.status === 'completed',
+		)
+		return selectCompletedValuePathIntentFrontier({
+			intents: completed,
+			limit: args.limit,
+			maxCompletedAt: args.maxCompletedAt,
+		})
+	}
+	findValuePathEmailSideEffectIntentsByContact(contactId: string) {
+		const intents = Array.from(this.sideEffectIntents.values()).filter(
+			(intent) =>
+				intent.contactId === contactId &&
+				intent.provider === 'kit' &&
+				intent.type === 'send-value-path-email',
+		)
+		return sortValuePathIntentsByCreatedAt(intents)
 	}
 	updateSideEffectIntent(
 		id: string,

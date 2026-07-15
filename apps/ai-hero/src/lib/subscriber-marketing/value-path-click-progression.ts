@@ -1,6 +1,7 @@
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import type { ValuePathTokenPayload } from './path-token'
 import { CONTACT_EVENT_SCHEMA_VERSION } from './types'
+import { MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT } from './value-path-answer-click-verification'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import { gateDActionReviewReasons } from './value-path-gate-d-allowlist'
 import {
@@ -101,6 +102,23 @@ export async function recordValuePathAnswerProgression(args: {
 			sideEffectIntentId: existingIntent?.id,
 			idempotentNoop: true,
 			reviewReasons: existingIntent?.reviewReasons ?? [],
+		}
+	}
+
+	if (args.repository.findContactEventsByType) {
+		const priorClicks = await args.repository.findContactEventsByType(
+			contact.id,
+			'value-path.answer-selected',
+		)
+		if (priorClicks.length >= MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT) {
+			// Email security scanners click every /ask link; a contact past the
+			// organic ceiling must not keep advancing progression by clicks.
+			return {
+				status: 'skipped',
+				reason: 'answer-click-volume-implausible',
+				idempotentNoop: false,
+				reviewReasons: ['answer-click-volume-implausible'],
+			}
 		}
 	}
 

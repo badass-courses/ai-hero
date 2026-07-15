@@ -77,6 +77,10 @@ import {
 import { startValuePathGateDActivation } from '@/lib/subscriber-marketing/value-path-gate-d-start'
 import { previewValuePathForContactSnapshot } from '@/lib/subscriber-marketing/value-path-planner'
 import {
+	evaluateValuePathMovement,
+	resolveGateDRunState,
+} from '@/lib/subscriber-marketing/value-path-run-state'
+import {
 	previewSkillsWorkflowValuePathQa,
 	type ValuePathTeamShareLinkMap,
 } from '@/lib/subscriber-marketing/value-path-qa-preview'
@@ -1044,14 +1048,31 @@ async function buildValuePathGateDStatus() {
 		'kit-sequence-missing',
 		'value-path-step-missing',
 	])
-	const runState = describeGateDRunState({
-		allowlistDecision,
-		pending: intents.filter((intent) => intent.status === 'pending').length,
-		computedDrip,
-		retrying,
-		hardBlockers,
+	const movement = evaluateValuePathMovement({
+		intents: intents.map((intent) => ({
+			createdAt: intent.createdAt,
+			metadata: intent.metadata ?? undefined,
+		})),
+		events: events.map((event) => ({
+			eventType: event.eventType,
+			occurredAt: event.occurredAt,
+		})),
 		participants: contactIds.length,
 		completedPathCount,
+		now: checkedAt,
+	})
+	const runState = resolveGateDRunState({
+		authorizationPassed: allowlistDecision.passed,
+		authorizationReviewReasons: allowlistDecision.reviewReasons,
+		hardBlockerCount: Object.keys(hardBlockers).length,
+		retryableDue: retrying.retryableDue,
+		retryableWaiting: retrying.retryableWaiting,
+		nextRetryAt: retrying.nextRetryAt,
+		pending: intents.filter((intent) => intent.status === 'pending').length,
+		dueSends: computedDrip?.counts.planned ?? 0,
+		participants: contactIds.length,
+		completedPathCount,
+		movement,
 	})
 	return {
 		checkedAt,
@@ -1109,6 +1130,7 @@ async function buildValuePathGateDStatus() {
 			participantsTotal: contactIds.length,
 			currentStepDistribution,
 			completedPathCount,
+			movement,
 			nextSendsDue: computedDrip?.counts.planned ?? 0,
 			drip: computedDrip,
 			retrying,
@@ -1357,51 +1379,6 @@ function summarizeRetryingValuePathIntents(
 		nextRetryAt: retryTimes[0],
 		hardFailed: hardFailed.length,
 		hardFailedReasons: countReviewReasons(hardFailed),
-	}
-}
-
-function describeGateDRunState(args: {
-	allowlistDecision: Awaited<ReturnType<typeof readActiveGateDRuntimeAllowlist>>
-	pending: number
-	computedDrip: Awaited<ReturnType<typeof buildComputedGateDDripStatus>> | null
-	retrying: ReturnType<typeof summarizeRetryingValuePathIntents>
-	hardBlockers: Record<string, number>
-	participants: number
-	completedPathCount: number
-}) {
-	if (!args.allowlistDecision.passed) {
-		return {
-			state: 'blocked',
-			plainLanguage: `Authorization is blocked: ${args.allowlistDecision.reviewReasons.join(', ')}`,
-		}
-	}
-	if (Object.keys(args.hardBlockers).length > 0) {
-		return {
-			state: 'blocked',
-			plainLanguage: 'Hard blockers need operator action.',
-		}
-	}
-	if (args.retrying.retryableDue > 0) {
-		return { state: 'running', plainLanguage: 'Retryable sends are due now.' }
-	}
-	if (args.pending > 0 || (args.computedDrip?.counts.planned ?? 0) > 0) {
-		return { state: 'running', plainLanguage: 'Authorized sends are due now.' }
-	}
-	if (args.retrying.retryableWaiting > 0) {
-		return {
-			state: 'retry_waiting',
-			plainLanguage: `Waiting for Kit retry until ${args.retrying.nextRetryAt}.`,
-		}
-	}
-	if (args.participants > 0 && args.completedPathCount === args.participants) {
-		return {
-			state: 'completed',
-			plainLanguage: 'All participants reached a terminal path email.',
-		}
-	}
-	return {
-		state: 'waiting',
-		plainLanguage: 'Authorization is active and no work is due right now.',
 	}
 }
 

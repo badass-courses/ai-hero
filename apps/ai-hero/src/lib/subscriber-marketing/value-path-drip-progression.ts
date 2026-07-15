@@ -5,6 +5,10 @@ import {
 	type SideEffectIntent,
 } from './types'
 import {
+	verifyAnswerClickForStep,
+	type AnswerClickVerification,
+} from './value-path-answer-click-verification'
+import {
 	evaluateGateDRuntimeAllowlist,
 	gateDActionReviewReasons,
 	resolveGateDPreAuthorizedReviewReasons,
@@ -75,6 +79,9 @@ export type ValuePathDripProgressionRepository = Pick<
 	) =>
 		| Promise<CaptureMarketingRepositoryContactEvent[]>
 		| CaptureMarketingRepositoryContactEvent[]
+	findValuePathEmailSideEffectIntentsByContact?: (
+		contactId: string,
+	) => Promise<SideEffectIntent[]> | SideEffectIntent[]
 }
 
 type CaptureMarketingRepositoryContactEvent =
@@ -183,20 +190,38 @@ async function progressCompletedIntent(args: {
 			reviewReasons: [due.reason],
 		}
 	}
+	const clickAdvisories: string[] = []
 	const answerClick = await findAnswerClickForCompletedEmail({
 		repository: args.repository,
 		contactId: args.intent.contactId,
 		fromEmailResourceId,
 		completedAt: stringField(args.intent.metadata.completedAt),
 	})
-	if (answerClick) {
-		return {
+	if (answerClick.verdict === 'verified') {
+		const clickOwned = await findDeliverableIntentSinceClick({
+			repository: args.repository,
 			contactId: args.intent.contactId,
-			fromEmailResourceId,
-			status: 'idempotent-noop',
-			reviewReasons: ['answer-click-already-selected'],
-			contactEventId: answerClick.id,
+			clickOccurredAt: answerClick.event.occurredAt,
+			excludeIntentId: args.intent.id,
+		})
+		if (!clickOwned.supported || clickOwned.intent) {
+			// The click path owns delivery only when it actually produced a
+			// deliverable intent; otherwise the drip must not park the contact
+			// (2026-07 regression: 16 clicked-but-undelivered contacts noop'd
+			// forever).
+			return {
+				contactId: args.intent.contactId,
+				fromEmailResourceId,
+				status: 'idempotent-noop',
+				reviewReasons: ['answer-click-already-selected'],
+				contactEventId: answerClick.event.id,
+				sideEffectIntentId: clickOwned.intent?.id,
+			}
 		}
+		clickAdvisories.push('answer-click-undelivered-drip-fallback')
+	} else if (answerClick.verdict !== 'none') {
+		// Scanner/bot-like click volume: do not treat the clicks as answers.
+		clickAdvisories.push(`answer-click-unverified:${answerClick.verdict}`)
 	}
 
 	const nextEmailResourceId = step.nextEmailResourceId
@@ -271,7 +296,10 @@ async function progressCompletedIntent(args: {
 		...runtimeDecision.reviewReasons,
 		...sendDecision.reviewReasons,
 	])
-	const advisoryReasons = sendDecision.advisoryReasons
+	const advisoryReasons = unique([
+		...clickAdvisories,
+		...(sendDecision.advisoryReasons ?? []),
+	])
 	const gates: Gate[] = [
 		{
 			slug: 'gate-d-value-path-email',
@@ -408,22 +436,48 @@ async function findAnswerClickForCompletedEmail(args: {
 	contactId: string
 	fromEmailResourceId?: string
 	completedAt?: string
-}) {
+}): Promise<AnswerClickVerification<CaptureMarketingRepositoryContactEvent>> {
 	if (!args.repository.findContactEventsByType || !args.fromEmailResourceId) {
-		return undefined
+		return { verdict: 'none' }
 	}
 	const emailStepId = emailStepIdFromResourceId(args.fromEmailResourceId)
-	if (!emailStepId) return undefined
-	const completedAt = args.completedAt ? new Date(args.completedAt) : undefined
+	if (!emailStepId) return { verdict: 'none' }
 	const events = await args.repository.findContactEventsByType(
 		args.contactId,
 		'value-path.answer-selected',
 	)
-	return events.find((event) => {
-		if (completedAt && new Date(event.occurredAt) < completedAt) return false
-		const summary = stringField(event.payloadSummary?.summary)
-		return summary?.includes(` for ${emailStepId}`)
+	return verifyAnswerClickForStep({
+		events,
+		emailStepId,
+		completedAt: args.completedAt,
 	})
+}
+
+async function findDeliverableIntentSinceClick(args: {
+	repository: ValuePathDripProgressionRepository
+	contactId: string
+	clickOccurredAt: string
+	excludeIntentId: string
+}): Promise<{ supported: boolean; intent?: SideEffectIntent }> {
+	if (!args.repository.findValuePathEmailSideEffectIntentsByContact) {
+		return { supported: false }
+	}
+	const intents =
+		await args.repository.findValuePathEmailSideEffectIntentsByContact(
+			args.contactId,
+		)
+	const intent = intents.find(
+		(candidate) =>
+			candidate.id !== args.excludeIntentId &&
+			candidate.createdAt >= args.clickOccurredAt &&
+			isDeliverableIntentStatus(candidate),
+	)
+	return { supported: true, intent }
+}
+
+function isDeliverableIntentStatus(intent: SideEffectIntent) {
+	if (intent.status === 'pending' || intent.status === 'completed') return true
+	return intent.status === 'failed' && intent.metadata.retryable === true
 }
 
 function emailStepIdFromResourceId(emailResourceId: string) {

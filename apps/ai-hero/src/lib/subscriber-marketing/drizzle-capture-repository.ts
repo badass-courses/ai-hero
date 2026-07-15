@@ -21,6 +21,10 @@ import type {
 	SideEffectIntent,
 	StateTransition,
 } from './types'
+import {
+	selectCompletedValuePathIntentFrontier,
+	sortValuePathIntentsByCreatedAt,
+} from './value-path-intent-scan'
 
 type AiHeroWriteDatabase = any
 
@@ -220,13 +224,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				),
 			)
 		const now = new Date().toISOString()
-		return rows
+		const due = rows
 			.map(toSideEffectIntentRecord)
 			.filter(
 				(intent: SideEffectIntent) =>
 					intent.status === 'pending' || isDueRetryableIntent(intent, now),
 			)
-			.slice(0, args.limit)
+		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
 	async findCompletedValuePathEmailSideEffectIntents(args: {
@@ -244,15 +248,28 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				),
 			)
 		const records: SideEffectIntent[] = rows.map(toSideEffectIntentRecord)
-		const eligible = records.filter((intent: SideEffectIntent) => {
-			const completedAt =
-				typeof intent.metadata.completedAt === 'string'
-					? intent.metadata.completedAt
-					: undefined
-			if (!completedAt) return false
-			return !args.maxCompletedAt || completedAt <= args.maxCompletedAt
+		// Reduce to each contact/path frontier before applying the limit so a
+		// saturated completed-intent history can never starve the drip scan
+		// (2026-07 cohort stall regression: no ORDER BY + slice(0, 200)).
+		return selectCompletedValuePathIntentFrontier({
+			intents: records,
+			limit: args.limit,
+			maxCompletedAt: args.maxCompletedAt,
 		})
-		return eligible.slice(0, args.limit)
+	}
+
+	async findValuePathEmailSideEffectIntentsByContact(contactId: string) {
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.contactId, contactId),
+					eq(sideEffectIntent.provider, 'kit'),
+					eq(sideEffectIntent.type, 'send-value-path-email'),
+				),
+			)
+		return sortValuePathIntentsByCreatedAt(rows.map(toSideEffectIntentRecord))
 	}
 
 	async updateSideEffectIntent(

@@ -33,6 +33,10 @@ export type CaptureMarketingRepository = {
 	findContactEventBySemanticKey(
 		key: string,
 	): MaybePromise<ContactEventRecord | undefined>
+	findContactEventsByType?(
+		contactId: string,
+		eventType: string,
+	): MaybePromise<ContactEventRecord[]>
 	createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string
@@ -59,6 +63,9 @@ export type CaptureMarketingRepository = {
 		limit: number
 		maxCompletedAt?: string
 	}): MaybePromise<SideEffectIntent[]>
+	findValuePathEmailSideEffectIntentsByContact?(
+		contactId: string,
+	): MaybePromise<SideEffectIntent[]>
 	updateSideEffectIntent?(
 		id: string,
 		patch: Pick<
