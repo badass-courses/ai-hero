@@ -21,6 +21,10 @@ import {
 } from '@/lib/subscriber-marketing/contact-event-normalizer-preview'
 import { renderContactEventReviewHtml } from '@/lib/subscriber-marketing/contact-event-review-page'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import {
+	classifyLearnerFlowContact,
+	type LearnerFlowStuckCause,
+} from '@/lib/subscriber-marketing/learner-flow-classifier'
 import { DrizzleOperatorLookupRepository } from '@/lib/subscriber-marketing/drizzle-operator-lookup-repository'
 import { DrizzlePurchasePreviewRepository } from '@/lib/subscriber-marketing/drizzle-purchase-preview-repository'
 import { previewMatchedPurchaserValuePaths } from '@/lib/subscriber-marketing/matched-purchaser-value-path-preview'
@@ -309,6 +313,13 @@ if (command === 'lookup') {
 		emit: (event) => inngest.send(event),
 	})
 	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'learner-flow-stuck-list') {
+	const result = await buildLearnerFlowStuckList()
+	if (args.includes('--json')) {
+		console.log(JSON.stringify(result, null, 2))
+	} else {
+		console.log(formatLearnerFlowStuckList(result))
+	}
 } else if (command === 'value-path-intent-replan') {
 	const contactIds = (readFlag(args, '--contact-ids') ?? '')
 		.split(',')
@@ -777,6 +788,89 @@ if (command === 'lookup') {
 	console.log(JSON.stringify(result, null, 2))
 } else {
 	printUsageAndExit()
+}
+
+async function buildLearnerFlowStuckList() {
+	const generatedAt = new Date().toISOString()
+	const records =
+		await (await createCaptureRepository()).findSkillsWorkflowLearnerFlowRecords()
+	const learners = records.map((record) => {
+		const classification = classifyLearnerFlowContact({
+			contactId: record.contactId,
+			contact: record.contact,
+			contactState: record.contactState,
+			intents: record.intents,
+			entryEvents: record.entryEvents,
+			now: generatedAt,
+		})
+		return {
+			contactId: record.contactId,
+			maskedEmail: maskLearnerFlowEmail(record.contact?.email),
+			...classification,
+		}
+	})
+	const stateCounts = {
+		moving: learners.filter((learner) => learner.state === 'moving').length,
+		terminal: learners.filter((learner) => learner.state === 'terminal').length,
+		stuck: learners.filter((learner) => learner.state === 'stuck').length,
+	}
+	const causeCounts = learners.reduce<Record<LearnerFlowStuckCause, number>>(
+		(counts, learner) => {
+			if (learner.cause) counts[learner.cause] = (counts[learner.cause] ?? 0) + 1
+			return counts
+		},
+		{} as Record<LearnerFlowStuckCause, number>,
+	)
+	const accounted = stateCounts.moving + stateCounts.terminal + stateCounts.stuck
+	return {
+		mode: 'read-only' as const,
+		writes: {
+			database: false,
+			provider: false,
+		},
+		generatedAt,
+		counts: {
+			total: learners.length,
+			...stateCounts,
+			accounted,
+		},
+		causeCounts,
+		assertion: {
+			passed: accounted === learners.length,
+			expression: 'moving + terminal + stuck = total contacts on course paths',
+		},
+		stuck: learners.filter((learner) => learner.state === 'stuck'),
+	}
+}
+
+function formatLearnerFlowStuckList(
+	result: Awaited<ReturnType<typeof buildLearnerFlowStuckList>>,
+) {
+	const lines = [
+		'Learner flow stuck list (read-only)',
+		`Generated: ${result.generatedAt}`,
+		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
+		`Accountability: ${result.assertion.passed ? 'PASS' : 'FAIL'} (${result.counts.accounted} = ${result.counts.total}; ${result.assertion.expression})`,
+	]
+	if (result.stuck.length === 0) {
+		lines.push('Stuck learners: none')
+		return lines.join('\n')
+	}
+	lines.push('Stuck learners:')
+	for (const learner of result.stuck) {
+		lines.push(
+			`- ${learner.maskedEmail} | ${learner.contactId} | ${learner.stage} | ${learner.stuckAgeHours ?? 'unknown'}h | ${learner.cause}\n  ${learner.unstickCommand}`,
+		)
+	}
+	return lines.join('\n')
+}
+
+function maskLearnerFlowEmail(value?: string | null) {
+	const normalized = normalizeEmail(value)
+	if (!normalized) return '<missing-email>'
+	const [local, domain] = normalized.split('@')
+	if (!local || !domain) return '<invalid-email>'
+	return `${local.slice(0, 1)}***@${domain}`
 }
 
 function parseLookupInput(args: string[]): OperatorLookupInput {
@@ -2332,6 +2426,7 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-status
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --dry-run
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-email-executor --allow-write --mode allowlisted-test --allowlisted-email joel+test@example.com --limit 1 [--provider-pacing-ms 1500]
   pnpm --filter ai-hero subscriber-marketing:operator shadow-field-preview --contact-id contact_123
   pnpm --filter ai-hero subscriber-marketing:operator content-read-event-preview [--limit 100] [--sample-limit 10] [--allow-write] [--force-large-write]

@@ -1,0 +1,173 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+	classifyLearnerFlowContact,
+	isCourseValuePathIntent,
+} from './learner-flow-classifier'
+import type { SideEffectIntent } from './types'
+
+const now = '2026-07-15T12:00:00.000Z'
+
+function intent(
+	overrides: Partial<SideEffectIntent> & {
+		metadata?: Record<string, unknown>
+	} = {},
+): SideEffectIntent {
+	const { metadata, ...fields } = overrides
+	return {
+		id: 'intent-1',
+		nextActionId: 'action-1',
+		contactId: 'contact-1',
+		provider: 'kit',
+		type: 'send-value-path-email',
+		status: 'pending',
+		idempotencyKey: 'key-1',
+		gates: [],
+		reviewReasons: [],
+		createdAt: '2026-07-15T11:00:00.000Z',
+		...fields,
+		metadata: {
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			...metadata,
+		},
+	}
+}
+
+function classify(
+	args: Omit<Parameters<typeof classifyLearnerFlowContact>[0], 'now'>,
+) {
+	return classifyLearnerFlowContact({ ...args, now })
+}
+
+describe('learner-flow classifier', () => {
+	it('keeps fresh pending work moving', () => {
+		expect(
+			classify({ contactId: 'contact-1', intents: [intent()] }),
+		).toMatchObject({ state: 'moving', stage: 'ai-hero-skills-workflow.email-0' })
+	})
+
+	it('includes legacy path intents that only carry the email resource id', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			intents: [
+				intent({
+					metadata: {
+						valuePathSlug: undefined,
+						emailResourceId: 'ai-hero-skills-workflow.email-0',
+					},
+				}),
+			],
+		})
+		expect(result).toMatchObject({ state: 'moving' })
+	})
+
+	it('does not mistake a similarly named path for the approved course path', () => {
+		expect(
+			isCourseValuePathIntent(
+				intent({
+					metadata: {
+						valuePathSlug: undefined,
+						emailResourceId: 'ai-hero-skills-workflow-old.email-0',
+					},
+				}),
+			),
+		).toBe(false)
+	})
+
+	it('marks completed final emails terminal', () => {
+		expect(
+			classify({
+				contactId: 'contact-1',
+				intents: [
+					intent({
+						status: 'completed',
+						metadata: {
+							valuePathSlug: 'ai-hero-skills-workflow',
+							emailResourceId: 'ai-hero-skills-workflow.email-6',
+							completedAt: '2026-07-15T11:00:00.000Z',
+						},
+					}),
+				],
+			}),
+		).toMatchObject({ state: 'terminal' })
+	})
+
+	it.each([
+		['blocked-intent', intent({ status: 'blocked' })],
+		[
+			'failed-send',
+			intent({ status: 'failed', metadata: { retryable: false } }),
+		],
+		[
+			'retryable-failed-overdue',
+			intent({
+				status: 'failed',
+				metadata: {
+					retryable: true,
+					nextRetryAt: '2026-07-15T11:00:00.000Z',
+				},
+			}),
+		],
+		['bounced', intent({ status: 'blocked', reviewReasons: ['bounced'] })],
+		[
+			'complained',
+			intent({ status: 'blocked', reviewReasons: ['complained'] }),
+		],
+		[
+			'unsubscribed',
+			intent({ status: 'blocked', reviewReasons: ['unsubscribed'] }),
+		],
+	] as const)('reports %s as a visible stuck cause', (cause, fixture) => {
+		const result = classify({ contactId: 'contact-1', intents: [fixture] })
+		expect(result).toMatchObject({ state: 'stuck', cause })
+		expect(result.unstickCommand).toBeTruthy()
+	})
+
+	it('parks human review for a person instead of trying an automated cure', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			contactState: { humanReview: true, lifecycle: 'human-review' },
+			intents: [intent()],
+		})
+		expect(result).toMatchObject({
+			state: 'stuck',
+			cause: 'human-review-parked',
+			unstickCommand: 'tier-2: ask Joel (human-review-parked; contact contact-1)',
+		})
+	})
+
+	it('catches a missing next email after the cadence window as drip-starved', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			intents: [
+				intent({
+					status: 'completed',
+					metadata: {
+						valuePathSlug: 'ai-hero-skills-workflow',
+						emailResourceId: 'ai-hero-skills-workflow.email-0',
+						completedAt: '2026-07-12T11:00:00.000Z',
+					},
+				}),
+			],
+		})
+		expect(result).toMatchObject({
+			state: 'stuck',
+			cause: 'drip-starved',
+			stuckAgeHours: 73,
+		})
+	})
+
+	it('never silently drops an unclassifiable stale course intent', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			intents: [
+				intent({
+					status: 'pending',
+					createdAt: '2026-07-12T11:00:00.000Z',
+				}),
+			],
+		})
+		expect(result).toMatchObject({ state: 'stuck', cause: 'classifier-gap' })
+	})
+})

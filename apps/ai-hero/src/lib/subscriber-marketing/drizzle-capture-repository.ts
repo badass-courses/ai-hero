@@ -7,11 +7,15 @@ import {
 	sideEffectIntent,
 	stateTransition,
 } from '@/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/utils/guid'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import {
+	COURSE_VALUE_PATH_SLUGS,
+	isCourseValuePathIntent,
+} from './learner-flow-classifier'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -27,6 +31,14 @@ import {
 } from './value-path-intent-scan'
 
 type AiHeroWriteDatabase = any
+
+export type LearnerFlowRecord = {
+	contactId: string
+	contact?: ContactRecord
+	contactState?: ContactState
+	intents: SideEffectIntent[]
+	entryEvents: ContactEventRecord[]
+}
 
 export class DrizzleCaptureMarketingRepository implements CaptureMarketingRepository {
 	constructor(private readonly database: AiHeroWriteDatabase) {}
@@ -279,6 +291,89 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				),
 			)
 		return sortValuePathIntentsByCreatedAt(rows.map(toSideEffectIntentRecord))
+	}
+
+	/** Read-only course-path scan for the daily learner-flow operator. */
+	async findSkillsWorkflowLearnerFlowRecords(): Promise<
+		LearnerFlowRecord[]
+	> {
+		const [intentRows, entryEventRows]: [any[], any[]] = await Promise.all([
+			this.database
+				.select()
+				.from(sideEffectIntent)
+				.where(
+					and(
+						eq(sideEffectIntent.provider, 'kit'),
+						eq(sideEffectIntent.type, 'send-value-path-email'),
+					),
+				),
+			this.database
+				.select()
+				.from(contactEvent)
+				.where(
+					and(
+						eq(contactEvent.eventType, 'value-path.entered'),
+						inArray(
+							contactEvent.providerReference,
+							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
+						),
+					),
+				),
+		])
+		const intents: SideEffectIntent[] = intentRows
+			.map(toSideEffectIntentRecord)
+			.filter(isCourseValuePathIntent)
+		const entryEvents: ContactEventRecord[] = entryEventRows.map(
+			toContactEventRecord,
+		)
+		const contactIds: string[] = Array.from(
+			new Set([
+				...intents.map((intent) => intent.contactId),
+				...entryEvents.map((event) => event.contactId),
+			]),
+		)
+		if (contactIds.length === 0) return []
+
+		const [contacts, states]: [any[], any[]] = await Promise.all([
+			this.database
+				.select()
+				.from(contact)
+				.where(inArray(contact.id, contactIds)),
+			this.database
+				.select()
+				.from(contactState)
+				.where(inArray(contactState.contactId, contactIds)),
+		])
+		const contactsById = new Map<string, ContactRecord>(
+			contacts.map((record) => [record.id, toContactRecord(record)]),
+		)
+		const statesByContactId = new Map<string, ContactState>(
+			states.map((record) => [
+				record.contactId,
+				toContactStateRecord(record),
+			]),
+		)
+		const intentsByContactId = new Map<string, SideEffectIntent[]>()
+		for (const intent of intents) {
+			const current = intentsByContactId.get(intent.contactId) ?? []
+			current.push(intent)
+			intentsByContactId.set(intent.contactId, current)
+		}
+		const entryEventsByContactId = new Map<string, ContactEventRecord[]>()
+		for (const event of entryEvents) {
+			const current = entryEventsByContactId.get(event.contactId) ?? []
+			current.push(event)
+			entryEventsByContactId.set(event.contactId, current)
+		}
+		return contactIds.map((contactId) => ({
+			contactId,
+			contact: contactsById.get(contactId),
+			contactState: statesByContactId.get(contactId),
+			intents: sortValuePathIntentsByCreatedAt(
+				intentsByContactId.get(contactId) ?? [],
+			),
+			entryEvents: entryEventsByContactId.get(contactId) ?? [],
+		}))
 	}
 
 	async updateSideEffectIntent(

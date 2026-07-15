@@ -63,9 +63,10 @@ export async function getAdsCourseFunnelMetrics(options: {
 	const start = startForRange(range, now)
 	const end = endForRange(range, now)
 	const signupWhere = eq(contactEvent.eventType, 'skills-newsletter.subscribed')
+	const emailResourceId = sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId'))`
 	const emailIntentWhere = and(
 		eq(sideEffectIntent.type, 'send-value-path-email'),
-		sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.valuePathSlug')) = 'ai-hero-skills-workflow'`,
+		sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.valuePathSlug')) IN ('ai-hero-skills-workflow', 'ai-hero-skills-team-workflow')`,
 	)
 	const countRows = async (where: any, source: { table: any; column: any }) => {
 		const [totalRow] = await db.select({ value: count() }).from(source.table).where(where)
@@ -81,22 +82,38 @@ export async function getAdsCourseFunnelMetrics(options: {
 		{ table: contact, column: contact.createdAt },
 	)
 	const emailZero = await countRows(
-		and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`),
+		and(emailIntentWhere, sql`${emailResourceId} LIKE '%email-0'`),
 		{ table: sideEffectIntent, column: sideEffectIntent.createdAt },
 	)
 	const sent = await countRows(
-		and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`, eq(sideEffectIntent.status, 'completed')),
+		and(emailIntentWhere, sql`${emailResourceId} LIKE '%email-0'`, eq(sideEffectIntent.status, 'completed')),
 		{ table: sideEffectIntent, column: sideEffectIntent.createdAt },
 	)
 	const allSent = await countRows(and(emailIntentWhere, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
 	const midPath = await countRows(
-		and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-0'`, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-13'`),
+		and(emailIntentWhere, sql`${emailResourceId} NOT LIKE '%email-0'`, sql`${emailResourceId} NOT LIKE '%email-6'`),
 		{ table: sideEffectIntent, column: sideEffectIntent.createdAt },
 	)
 	const terminal = await countRows(
-		and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-13'`, eq(sideEffectIntent.status, 'completed')),
+		and(emailIntentWhere, sql`${emailResourceId} LIKE '%email-6'`, eq(sideEffectIntent.status, 'completed')),
 		{ table: sideEffectIntent, column: sideEffectIntent.createdAt },
 	)
+	const isMidPathEmail = (value: string) => /(?:^|\.)(?:team-)?email-[1-5]$/.test(value)
+	const countByEmail = async (where: any) => {
+		const rows = await db
+			.select({ emailResourceId, value: count() })
+			.from(sideEffectIntent)
+			.where(where)
+			.groupBy(emailResourceId)
+		return Object.fromEntries(rows.flatMap((row) => {
+			const id = String(row.emailResourceId ?? '')
+			return isMidPathEmail(id) ? [[id, Number(row.value ?? 0)]] : []
+		}))
+	}
+	const rangeEmailWhere = end
+		? and(emailIntentWhere, gte(sideEffectIntent.createdAt, start), sql`${sideEffectIntent.createdAt} < ${end}`)
+		: and(emailIntentWhere, gte(sideEffectIntent.createdAt, start))
+	const midPathByEmail = { today: await countByEmail(rangeEmailWhere), total: await countByEmail(emailIntentWhere) }
 	const signupContacts = await db
 		.select({ attribution: contact.optInAttribution, createdAt: contact.createdAt })
 		.from(contact)
@@ -120,6 +137,7 @@ export async function getAdsCourseFunnelMetrics(options: {
 			contactToEmailZero: { range: contacts.range - emailZero.range, total: contacts.total - emailZero.total },
 			emailZeroToSent: { range: emailZero.range - sent.range, total: emailZero.total - sent.total },
 		},
+		midPathByEmail,
 		attribution: {
 			range: { captured: attributedCount(rangeContacts), total: rangeContacts.length, rate: rangeContacts.length ? attributedCount(rangeContacts) / rangeContacts.length : 0 },
 			total: { captured: attributedCount(signupContacts), total: signupContacts.length, rate: signupContacts.length ? attributedCount(signupContacts) / signupContacts.length : 0 },
