@@ -839,7 +839,13 @@ async function buildValuePathGateDActivation(args: {
 		name: `Skills Workflow pilot ${args.activationId}`,
 		status: 'active',
 		killSwitch: false,
-		mode: 'allowlisted-test',
+		// Rolling enrollment admits contacts that are not on the candidate list,
+		// so the send gate must run scoped-live; allowlisted-test blocks any
+		// contact outside the carried cohort.
+		mode:
+			args.authorizationMode === 'rolling-public-enrollment'
+				? 'scoped-live'
+				: 'allowlisted-test',
 		authorizationMode: args.authorizationMode,
 		pathSlugs: SKILLS_WORKFLOW_PATH_SLUGS,
 		contactIds: candidates.map((candidate) => candidate.contactId!),
