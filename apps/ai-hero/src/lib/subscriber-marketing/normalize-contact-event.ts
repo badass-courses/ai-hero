@@ -65,6 +65,7 @@ export function normalizeContactEvent(
 				input.userId || input.externalId ? 'strong' : email ? 'medium' : 'weak',
 		},
 		payloadSummary: summarize(input.message, input.privacyLevel),
+		optInAttribution: input.optInAttribution,
 		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 	}
 }

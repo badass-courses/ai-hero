@@ -86,6 +86,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return record
 	}
 
+	async updateContactOptInAttribution(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>) {
+		const current = await this.findContactById(contactId)
+		if (!current) throw new Error(`Missing contact ${contactId}`)
+		if (!current.optInAttribution) {
+			await this.database.update(contact).set({ optInAttribution: attribution, updatedAt: new Date() }).where(eq(contact.id, contactId))
+		}
+		return { ...current, optInAttribution: current.optInAttribution ?? attribution }
+	}
+
 	async createProviderIdentity(input: Omit<ProviderIdentityRecord, 'id'>) {
 		const record: ProviderIdentityRecord = {
 			id: this.newId('provider_identity'),
@@ -310,6 +319,7 @@ function toContactRecord(row: any): ContactRecord {
 		name: row.name,
 		lifecycle: row.lifecycle,
 		isProvisional: Boolean(row.isProvisional),
+		optInAttribution: row.optInAttribution ?? null,
 		createdAt: toIso(row.createdAt),
 		updatedAt: toIso(row.updatedAt),
 	}
@@ -385,6 +395,7 @@ function toContactStateRecord(row: any): ContactState {
 		rationale: row.rationale,
 		reviewSignals: row.reviewSignals,
 		humanReview: Boolean(row.humanReview),
+		optInAttribution: row.optInAttribution ?? null,
 		lastEventId: row.lastEventId,
 		schemaVersion: row.schemaVersion,
 		updatedAt: toIso(row.updatedAt),

@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
 import {
@@ -10,6 +11,7 @@ import {
 import { inngest } from '@/inngest/inngest.server'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
+import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 
 import {
 	SKILLS_FORM_ID,
@@ -71,6 +73,10 @@ async function sendSkillsNewsletterPathEntry(
 	if (!subscriber.email_address) {
 		throw new Error('Skills newsletter subscriber is missing an email address')
 	}
+	const cookieStore = await cookies()
+	const optInAttribution = parseOptInAttributionCookie(
+		cookieStore.get('ft_attr')?.value,
+	)
 	const event: SkillsNewsletterSubscribed = {
 		name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 		data: {
@@ -80,6 +86,7 @@ async function sendSkillsNewsletterPathEntry(
 			formId: SKILLS_FORM_ID,
 			source,
 			subscribedAt: new Date().toISOString(),
+			optInAttribution,
 		},
 	}
 	await inngest.send(event)

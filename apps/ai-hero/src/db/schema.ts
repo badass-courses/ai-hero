@@ -259,6 +259,7 @@ export const contact = mysqlTable(
 		name: varchar('name', { length: 255 }),
 		lifecycle: varchar('lifecycle', { length: 50 }).notNull().default('new'),
 		isProvisional: boolean('isProvisional').notNull().default(true),
+		optInAttribution: json('optInAttribution').$type<Record<string, unknown>>(),
 		createdAt: timestamp('createdAt').defaultNow().notNull(),
 		updatedAt: timestamp('updatedAt').defaultNow().notNull(),
 	},
@@ -377,6 +378,7 @@ export const contactState = mysqlTable(
 		rationale: json('rationale').$type<string[]>().notNull(),
 		reviewSignals: json('reviewSignals').$type<string[]>().notNull(),
 		humanReview: boolean('humanReview').notNull().default(false),
+		optInAttribution: json('optInAttribution').$type<Record<string, unknown>>(),
 		lastEventId: varchar('lastEventId', { length: 255 }).notNull(),
 		schemaVersion: int('schemaVersion').notNull(),
 		updatedAt: timestamp('updatedAt').defaultNow().notNull(),
@@ -513,6 +515,30 @@ export const googleAdsConversionUpload = mysqlTable(
 		conversionActionIdx: index(
 			'GoogleAdsConversionUpload_conversionAction_idx',
 		).on(table.conversionActionResourceName),
+	}),
+)
+
+export const googleAdsSignupConversionUpload = mysqlTable(
+	'GoogleAdsSignupConversionUpload',
+	{
+		id: varchar('id', { length: 255 }).notNull().primaryKey().$defaultFn(() => guid()),
+		contactId: varchar('contactId', { length: 255 }).notNull(),
+		conversionActionResourceName: varchar('conversionActionResourceName', { length: 255 }).notNull(),
+		clickIdType: varchar('clickIdType', { length: 20 }).notNull(),
+		clickIdHash: varchar('clickIdHash', { length: 64 }).notNull(),
+		conversionDateTime: varchar('conversionDateTime', { length: 40 }).notNull(),
+		status: varchar('status', { length: 40 }).notNull(),
+		attemptCount: int('attemptCount').notNull().default(0),
+		idempotencyKey: varchar('idempotencyKey', { length: 500 }).notNull(),
+		requestSummary: json('requestSummary').$type<Record<string, unknown>>().notNull(),
+		responseSummary: json('responseSummary').$type<Record<string, unknown>>(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		idempotencyKeyUq: uniqueIndex('GoogleAdsSignupConversionUpload_idempotencyKey_uq').on(table.idempotencyKey),
+		contactIdIdx: index('GoogleAdsSignupConversionUpload_contactId_idx').on(table.contactId),
+		statusIdx: index('GoogleAdsSignupConversionUpload_status_idx').on(table.status),
 	}),
 )
 

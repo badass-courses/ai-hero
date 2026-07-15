@@ -7,6 +7,7 @@ import {
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
+import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -40,6 +41,10 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				if (!subscriber.email_address) {
 					throw new Error('Skills subscriber response is missing an email')
 				}
+				const cookieStore = await cookies()
+				const optInAttribution = parseOptInAttributionCookie(
+					cookieStore.get('ft_attr')?.value,
+				)
 				const event: SkillsNewsletterSubscribed = {
 					name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 					data: {
@@ -49,6 +54,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						formId: 9376133,
 						source: body.fields?.source ?? 'aihero_skills_page',
 						subscribedAt: new Date().toISOString(),
+						optInAttribution,
 					},
 				}
 				await inngest.send(event)

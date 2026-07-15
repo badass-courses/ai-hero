@@ -53,6 +53,8 @@ export function reduceContactState(args: {
 		humanReview: Boolean(
 			previous?.humanReview || args.classification.humanReview,
 		),
+		optInAttribution:
+			previous?.optInAttribution ?? args.event.optInAttribution ?? null,
 		lastEventId: args.event.id,
 		schemaVersion: CONTACT_STATE_SCHEMA_VERSION,
 		updatedAt: args.now,

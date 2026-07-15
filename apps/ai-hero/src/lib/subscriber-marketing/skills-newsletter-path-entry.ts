@@ -1,6 +1,7 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import type { OptInAttribution } from './opt-in-attribution'
 import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 import {
 	startValuePathGateDActivation,
@@ -19,6 +20,7 @@ export type SkillsNewsletterPathEntryInput = {
 	formId: number
 	source: string
 	subscribedAt: string
+	optInAttribution?: OptInAttribution
 }
 
 export type SkillsNewsletterPathEntryResult = {
@@ -26,6 +28,12 @@ export type SkillsNewsletterPathEntryResult = {
 	contactId: string
 	captureEventId: string
 	entry: ValuePathGateDStartResult
+}
+
+function attributionWithSubscriptionTime(input: SkillsNewsletterPathEntryInput) {
+	return input.optInAttribution
+		? { ...input.optInAttribution, subscribedAt: input.subscribedAt }
+		: undefined
 }
 
 export async function enterSkillsNewsletterSubscriber(args: {
@@ -50,6 +58,7 @@ export async function enterSkillsNewsletterSubscriber(args: {
 			externalId: args.input.kitSubscriberId,
 			message: `Skills newsletter subscription from ${args.input.source}`,
 			privacyLevel: 'internal',
+			optInAttribution: attributionWithSubscriptionTime(args.input),
 		}),
 	})
 
@@ -103,6 +112,7 @@ async function blockedResult(
 			externalId: args.input.kitSubscriberId,
 			message: `Skills newsletter subscription from ${args.input.source}`,
 			privacyLevel: 'internal',
+			optInAttribution: attributionWithSubscriptionTime(args.input),
 		}),
 	})
 	return {

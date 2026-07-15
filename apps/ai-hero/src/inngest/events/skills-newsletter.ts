@@ -1,3 +1,5 @@
+import type { OptInAttribution } from '@/lib/subscriber-marketing/opt-in-attribution'
+
 export const SKILLS_NEWSLETTER_SUBSCRIBED_EVENT =
 	'skills-newsletter/subscribed' as const
 
@@ -10,5 +12,6 @@ export type SkillsNewsletterSubscribed = {
 		formId: number
 		source: string
 		subscribedAt: string
+		optInAttribution?: OptInAttribution
 	}
 }

@@ -97,6 +97,14 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		this.contacts.set(contact.id, contact)
 		return contact
 	}
+
+	updateContactOptInAttribution(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>) {
+		const current = this.contacts.get(contactId)
+		if (!current) throw new Error(`Missing contact ${contactId}`)
+		const updated = { ...current, optInAttribution: current.optInAttribution ?? attribution }
+		this.contacts.set(contactId, updated)
+		return updated
+	}
 	createProviderIdentity(input: Omit<ProviderIdentityRecord, 'id'>) {
 		const identity = { id: this.id('provider_identity'), ...input }
 		this.providerIdentities.set(identity.id, identity)

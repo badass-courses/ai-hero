@@ -5,6 +5,7 @@ import {
 	restrictedFixture,
 	supportFixture,
 } from '../__fixtures__/quick-question-fixtures'
+import { captureNormalizedContactEvent } from '../capture-contact-event'
 import { captureFrontQuickQuestionCsv } from '../capture-front-quick-question-csv'
 import { captureFrontQuickQuestion } from '../capture-quick-question'
 import {
@@ -4765,6 +4766,14 @@ describe('Skills Newsletter Path Entry', () => {
 		formId: 9376133,
 		source: 'skills:test',
 		subscribedAt: '2026-07-14T12:00:00.000Z',
+		optInAttribution: {
+			gclid: 'TEST_email_course_signup',
+			utmSource: 'google',
+			utmMedium: 'cpc',
+			utmCampaign: 'email-course-warmup',
+			landingPath: '/skills',
+			capturedAt: '2026-07-14T11:59:00.000Z',
+		},
 	}
 
 	it('plans email-0 for a new public signup without a frozen contact allowlist', async () => {
@@ -4809,9 +4818,19 @@ describe('Skills Newsletter Path Entry', () => {
 		expect(first.entry.counts.created).toBe(1)
 		expect(second.status).toBe('idempotent-noop')
 		expect(second.entry.counts.idempotentNoop).toBe(1)
-		expect(
-			await repository.findCurrentContactState(first.contactId),
-		).toBeDefined()
+		const state = await repository.findCurrentContactState(first.contactId)
+		expect(state?.optInAttribution).toMatchObject({
+			gclid: 'TEST_email_course_signup',
+			utmCampaign: 'email-course-warmup',
+		})
+		expect(repository.contacts.get(first.contactId)?.optInAttribution).toMatchObject({
+			gclid: 'TEST_email_course_signup',
+		})
+		const shadow = previewShadowFields({
+			contactId: first.contactId,
+			state: state!,
+		})
+		expect(shadow.fields.aih_ft_gclid).toBe('TEST_email_course_signup')
 		expect(
 			await repository.findSideEffectIntentByIdempotencyKey(
 				`contact:${first.contactId}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
@@ -4825,6 +4844,14 @@ describe('Skills Newsletter Path Entry', () => {
 				kitSequenceId: '2757199',
 			},
 		})
+	})
+
+	it('adds first attribution to an existing Kit Contact and ContactState', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		await captureNormalizedContactEvent({ repository, event: normalizeContactEvent({ provider: 'kit', providerEventId: 'older-event', eventType: 'kit.imported', occurredAt: '2026-07-13T12:00:00.000Z', email: input.email, externalId: input.kitSubscriberId, message: 'existing subscriber' }) })
+		const result = await enterSkillsNewsletterSubscriber({ repository, allowlist: rollingAllowlist, input, allowWrite: false })
+		expect(repository.contacts.get(result.contactId)?.optInAttribution).toMatchObject({ gclid: 'TEST_email_course_signup', subscribedAt: input.subscribedAt })
+		expect((await repository.findCurrentContactState(result.contactId))?.optInAttribution).toMatchObject({ gclid: 'TEST_email_course_signup', subscribedAt: input.subscribedAt })
 	})
 
 	it('captures the signup but blocks path entry unless rolling authorization is active', async () => {

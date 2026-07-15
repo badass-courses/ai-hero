@@ -50,6 +50,8 @@ export type PayloadSummary = {
 	restrictedPayloadStored: false
 }
 
+import type { OptInAttribution } from './opt-in-attribution'
+
 export type FixtureContactEventInput = {
 	provider: Provider
 	providerEventId: string
@@ -61,6 +63,7 @@ export type FixtureContactEventInput = {
 	externalId?: string
 	message: string
 	privacyLevel?: PrivacyLevel
+	optInAttribution?: OptInAttribution
 }
 
 export type NormalizedContactEvent = {
@@ -73,6 +76,7 @@ export type NormalizedContactEvent = {
 	privacyLevel: PrivacyLevel
 	identityEvidence: ContactIdentityEvidence
 	payloadSummary: PayloadSummary
+	optInAttribution?: OptInAttribution
 	schemaVersion: typeof CONTACT_EVENT_SCHEMA_VERSION
 }
 
@@ -115,6 +119,7 @@ export type ContactRecord = {
 	name?: string | null
 	lifecycle: ContactLifecycle
 	isProvisional: boolean
+	optInAttribution?: OptInAttribution | null
 	createdAt: string
 	updatedAt: string
 }
@@ -157,6 +162,7 @@ export type ContactState = {
 	rationale: string[]
 	reviewSignals: ReviewSignalSlug[]
 	humanReview: boolean
+	optInAttribution?: OptInAttribution | null
 	lastEventId: string
 	schemaVersion: typeof CONTACT_STATE_SCHEMA_VERSION
 	updatedAt: string
