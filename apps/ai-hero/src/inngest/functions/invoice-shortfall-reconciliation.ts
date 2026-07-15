@@ -1,4 +1,5 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
+import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shortfall'
 import { inngest } from '@/inngest/inngest.server'
 import {
 	evaluateInvoiceShortfall,
@@ -169,11 +170,22 @@ export const invoiceShortfallReconciliation = inngest.createFunction(
 			limit: 1,
 		},
 	},
-	{ cron: '*/15 * * * *' },
-	async ({ step }) => {
+	[
+		{ event: INVOICE_SHORTFALL_RECONCILE_EVENT },
+		{ cron: '0 8 * * *' },
+	],
+	async ({ event, step }) => {
+		const customerId =
+			event.name === INVOICE_SHORTFALL_RECONCILE_EVENT
+				? event.data.customerId
+				: undefined
 		const openInvoices = await step.run('load-open-invoices', async () =>
 			stripe.invoices
-				.list({ status: 'open', limit: 100 })
+				.list({
+					status: 'open',
+					limit: 100,
+					...(customerId ? { customer: customerId } : {}),
+				})
 				.autoPagingToArray({ limit: MAX_OPEN_INVOICES }),
 		)
 

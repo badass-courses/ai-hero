@@ -38,6 +38,10 @@ import {
 	ImageResourceCreated,
 } from '@/inngest/events/image-resource-created'
 import {
+	INVOICE_SHORTFALL_RECONCILE_EVENT,
+	InvoiceShortfallReconcile,
+} from '@/inngest/events/invoice-shortfall'
+import {
 	LESSON_COMPLETED_EVENT,
 	LessonCompleted,
 } from '@/inngest/events/lesson-completed'
@@ -172,6 +176,7 @@ export type Events = {
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated
+	[INVOICE_SHORTFALL_RECONCILE_EVENT]: InvoiceShortfallReconcile
 	[RESOURCE_CHAT_REQUEST_EVENT]: ResourceChat
 	[EMAIL_SEND_BROADCAST]: EmailSendBroadcast
 	[OCR_WEBHOOK_EVENT]: OcrWebhook
