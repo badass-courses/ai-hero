@@ -731,6 +731,7 @@ async function offlineConversionPreview(args: {
 	if (args.productId === 'email-course') {
 		const rows = await db.select({ contactId: contact.id, attribution: contactState.optInAttribution, updatedAt: contactState.updatedAt })
 			.from(contactState).innerJoin(contact, eq(contact.id, contactState.contactId))
+			.orderBy(desc(contactState.updatedAt))
 			.limit(args.limit)
 		const candidates = rows.flatMap((row) => {
 			const attribution = row.attribution as any
@@ -765,8 +766,9 @@ async function offlineConversionPreview(args: {
 				}
 				try {
 					const response = await googleAdsRestUploadClient.upload({ ...conversion, purchaseId: conversion.contactId }, config)
-					await db.update(googleAdsSignupConversionUpload).set({ status: 'uploaded', responseSummary: response, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
-					uploaded += 1
+					await db.update(googleAdsSignupConversionUpload).set({ status: response.status, responseSummary: response, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
+					if (response.status === 'uploaded') uploaded += 1
+					else if (response.status === 'failed') failed += 1
 				} catch (error) {
 					await db.update(googleAdsSignupConversionUpload).set({ status: 'failed', responseSummary: { error: error instanceof Error ? error.message : String(error) }, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
 					failed += 1
@@ -997,7 +999,8 @@ async function funnelStatus() {
 	const signups = await countRows(signupWhere, { table: contactEvent, column: contactEvent.occurredAt })
 	const contacts = await countRows(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`, { table: contact, column: contact.createdAt })
 	const emailZero = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
-	const sent = await countRows(and(emailIntentWhere, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
+	const sent = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
+	const allSent = await countRows(and(emailIntentWhere, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
 	const midPath = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-0'`, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-13'`), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
 	const terminal = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-13'`, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
 	const signupContacts = await db.select({ attribution: contact.optInAttribution, createdAt: contact.createdAt }).from(contact).where(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`)
@@ -1005,7 +1008,7 @@ async function funnelStatus() {
 	const conversion = await db.select({ status: googleAdsSignupConversionUpload.status, createdAt: googleAdsSignupConversionUpload.createdAt }).from(googleAdsSignupConversionUpload)
 	const conversionCounts = (rows: typeof conversion) => Object.fromEntries(['processing','uploaded','failed'].map((status) => [status, rows.filter((row) => row.status === status).length]))
 	const todayContacts = signupContacts.filter((row) => row.createdAt >= today)
-	const stages = { signups, events: signups, contacts, emailZeroPlanned: emailZero, sent, midPath, terminal }
+	const stages = { signups, events: signups, contacts, emailZeroPlanned: emailZero, emailZeroSent: sent, allEmailsSent: allSent, midPath, terminal }
 	const dropOff = { eventToContact: signups.total - contacts.total, contactToEmailZero: contacts.total - emailZero.total, emailZeroToSent: emailZero.total - sent.total }
 	return { generatedAt: new Date().toISOString(), readOnly: true, stages, dropOff, attribution: { today: { captured: attributed(todayContacts), total: todayContacts.length, rate: todayContacts.length ? attributed(todayContacts) / todayContacts.length : 0 }, total: { captured: attributed(signupContacts), total: signupContacts.length, rate: signupContacts.length ? attributed(signupContacts) / signupContacts.length : 0 } }, conversion: { total: conversionCounts(conversion), today: conversionCounts(conversion.filter((row) => row.createdAt >= today)) } }
 }

@@ -1,3 +1,4 @@
+import { log } from '@/server/logger'
 import type { OperatorContactSnapshot } from './operator-lookup'
 import {
 	previewShadowFieldsForContactSnapshot,
@@ -94,6 +95,10 @@ export async function syncShadowFieldsForContactSnapshot(args: {
 
 	const beforeFields = pickShadowFields(subscriber.fields ?? {})
 	if (!args.allowWrite) {
+		await log.info('subscriber_funnel.shadow_field_sync_result', {
+			funnel: 'skills-newsletter', contactId: preview.contactId,
+			status: 'dry-run', subscriberFound: true, writePerformed: false,
+		})
 		return {
 			mode: 'shadow-field-sync',
 			syncMode: 'dry-run',
@@ -153,6 +158,11 @@ export async function syncShadowFieldsForContactSnapshot(args: {
 		fields: preview.fields,
 	})
 	const afterFields = pickShadowFields(updated?.fields ?? preview.fields)
+	await log.info('subscriber_funnel.shadow_field_sync_result', {
+		funnel: 'skills-newsletter', contactId: preview.contactId,
+		status: 'written', subscriberFound: true, writePerformed: true,
+		updatedFieldCount: SHADOW_FIELD_KEYS.length,
+	})
 
 	return {
 		mode: 'shadow-field-sync',
@@ -207,7 +217,7 @@ function reviewWriteBlocker(args: {
 	}
 }
 
-function blockedResult(args: {
+async function blockedResult(args: {
 	preview: ShadowFieldPreviewResult
 	reason: string
 	rationale: string
@@ -215,7 +225,12 @@ function blockedResult(args: {
 	subscriberFound?: boolean
 	subscriberId?: string
 	beforeFields?: Partial<ShadowFieldPayload>
-}): ShadowFieldSyncResult {
+}): Promise<ShadowFieldSyncResult> {
+	await log.warn('subscriber_funnel.shadow_field_sync_result', {
+		funnel: 'skills-newsletter', contactId: args.preview.contactId,
+		status: 'blocked', subscriberFound: args.subscriberFound ?? false,
+		writePerformed: false, reviewReasons: [...args.preview.reviewReasons, args.reason],
+	})
 	return {
 		mode: 'shadow-field-sync',
 		syncMode: 'dry-run',
