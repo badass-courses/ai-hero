@@ -73,22 +73,31 @@ export function SkillsCourseFrontDoor({
 							<h2 className="text-balance text-2xl font-semibold leading-tight sm:text-3xl">
 								Get lesson one in your inbox
 							</h2>
-							{status === 'subscribed' ? (
-								<p className="bg-primary/10 text-primary border-primary/20 border p-4 text-sm font-medium">
-									You’re enrolled. Check your inbox for the first lesson.
-								</p>
-							) : status === 'tag-me' ? (
-								<SkillsNewsletter.TagMeButton
-									label="Start the free course"
-									className="bg-primary"
-								/>
-							) : (
-								<SkillsNewsletter.Form
-									label="Start the free course"
-									className="[&_button]:bg-primary flex flex-col gap-3 [&_button]:rounded-lg [&_input]:rounded-lg"
-								/>
-							)}
-							{status !== 'subscribed' ? <SkillsNewsletter.Privacy /> : null}
+							<SkillsNewsletter.StatusView
+								subscribed={
+									<p className="bg-primary/10 text-primary border-primary/20 border p-4 text-sm font-medium">
+										You’re enrolled. Check your inbox for the first lesson.
+									</p>
+								}
+								tagMe={
+									<>
+										<SkillsNewsletter.TagMeButton
+											label="Start the free course"
+											className="bg-primary"
+										/>
+										<SkillsNewsletter.Privacy />
+									</>
+								}
+								form={
+									<>
+										<SkillsNewsletter.Form
+											label="Start the free course"
+											className="[&_button]:bg-primary flex flex-col gap-3 [&_button]:rounded-lg [&_input]:rounded-lg"
+										/>
+										<SkillsNewsletter.Privacy />
+									</>
+								}
+							/>
 						</div>
 					</SkillsNewsletter.Root>
 				</div>
