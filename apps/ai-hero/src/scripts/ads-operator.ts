@@ -20,6 +20,7 @@ import {
 	processGoogleAdsConversionUploads,
 	readGoogleAdsConversionUploadConfig,
 } from '@/lib/google-ads-conversion-upload'
+import { getAdsCourseFunnelMetrics, getAdsCourseMetrics } from '@/lib/ads-course-metrics'
 import { buildSignupConversionPreview, prepareSignupConversionBatch } from '@/lib/google-ads-signup-conversion-upload'
 import { log } from '@/server/logger'
 import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
@@ -987,30 +988,23 @@ function maskEmail(value: string | null | undefined) {
 	return `${local?.slice(0, 2) ?? ''}***@${domain}`
 }
 
-async function funnelStatus() {
-	const today = new Date(); today.setUTCHours(0, 0, 0, 0)
-	const signupWhere = eq(contactEvent.eventType, 'skills-newsletter.subscribed')
-	const emailIntentWhere = and(eq(sideEffectIntent.type, 'send-value-path-email'), sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.valuePathSlug')) = 'ai-hero-skills-workflow'`)
-	const countRows = async (where: any, createdAt: any) => {
-		const [totalRow] = await db.select({ value: count() }).from(createdAt.table).where(where)
-		const [todayRow] = await db.select({ value: count() }).from(createdAt.table).where(and(where, gte(createdAt.column, today)))
-		return { today: Number(todayRow?.value ?? 0), total: Number(totalRow?.value ?? 0) }
+async function funnelStatus(range: Range) {
+	const metricsRange = range === '7d' || range === '30d' ? range : 'today'
+	const metrics = await getAdsCourseFunnelMetrics({ range: metricsRange })
+	const legacyStages = Object.fromEntries(
+		Object.entries(metrics.stages).map(([key, value]) => [key, { today: value.range, total: value.total }]),
+	)
+	return {
+		...metrics,
+		stages: legacyStages,
+		dropOff: {
+			eventToContact: metrics.dropOff.eventToContact.total,
+			contactToEmailZero: metrics.dropOff.contactToEmailZero.total,
+			emailZeroToSent: metrics.dropOff.emailZeroToSent.total,
+		},
+		attribution: { today: metrics.attribution.range, total: metrics.attribution.total },
+		conversion: { today: metrics.conversion.range, total: metrics.conversion.total },
 	}
-	const signups = await countRows(signupWhere, { table: contactEvent, column: contactEvent.occurredAt })
-	const contacts = await countRows(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`, { table: contact, column: contact.createdAt })
-	const emailZero = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
-	const sent = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
-	const allSent = await countRows(and(emailIntentWhere, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
-	const midPath = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-0'`, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-13'`), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
-	const terminal = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-13'`, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
-	const signupContacts = await db.select({ attribution: contact.optInAttribution, createdAt: contact.createdAt }).from(contact).where(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`)
-	const attributed = (rows: typeof signupContacts) => rows.filter((row) => { const a = parseJsonRecord(row.attribution); return Boolean(a.utmSource || a.utmMedium || a.utmCampaign || a.gclid || a.gbraid || a.wbraid) }).length
-	const conversion = await db.select({ status: googleAdsSignupConversionUpload.status, createdAt: googleAdsSignupConversionUpload.createdAt }).from(googleAdsSignupConversionUpload)
-	const conversionCounts = (rows: typeof conversion) => Object.fromEntries(['processing','uploaded','failed'].map((status) => [status, rows.filter((row) => row.status === status).length]))
-	const todayContacts = signupContacts.filter((row) => row.createdAt >= today)
-	const stages = { signups, events: signups, contacts, emailZeroPlanned: emailZero, emailZeroSent: sent, allEmailsSent: allSent, midPath, terminal }
-	const dropOff = { eventToContact: signups.total - contacts.total, contactToEmailZero: contacts.total - emailZero.total, emailZeroToSent: emailZero.total - sent.total }
-	return { generatedAt: new Date().toISOString(), readOnly: true, stages, dropOff, attribution: { today: { captured: attributed(todayContacts), total: todayContacts.length, rate: todayContacts.length ? attributed(todayContacts) / todayContacts.length : 0 }, total: { captured: attributed(signupContacts), total: signupContacts.length, rate: signupContacts.length ? attributed(signupContacts) / signupContacts.length : 0 } }, conversion: { total: conversionCounts(conversion), today: conversionCounts(conversion.filter((row) => row.createdAt >= today)) } }
 }
 
 async function funnelTrace(contactId?: string, email?: string) {
@@ -1084,7 +1078,9 @@ try {
 		command === 'status'
 			? await status(range)
 			: command === 'funnel-status'
-				? await funnelStatus()
+				? await funnelStatus(range)
+				: command === 'ads-course-metrics'
+					? await getAdsCourseMetrics({ productId: productId ?? 'email-course', range: range === '7d' || range === '30d' ? range : 'today' })
 				: command === 'funnel-trace'
 					? await funnelTrace(contactId, email)
 			: command === 'synthetic-receipt'
