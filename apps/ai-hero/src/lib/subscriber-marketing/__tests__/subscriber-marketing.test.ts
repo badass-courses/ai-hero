@@ -57,6 +57,11 @@ import {
 import { classifyContactEvent } from '../signal-classifier'
 import { enterSkillsNewsletterSubscriber } from '../skills-newsletter-path-entry'
 import {
+	buildSignupGapPreview,
+	replaySignupGap,
+	signupGapPreviewForOutput,
+} from '../signup-gap-recovery'
+import {
 	buildTeamKitProjectionContacts,
 	previewTeamKitProjection,
 	type TeamKitProjectionProvider,
@@ -115,6 +120,154 @@ class InMemoryRedis {
 		return 'OK'
 	}
 }
+
+describe('subscriber marketing signup gap recovery', () => {
+	it('previews only missing identities in a half-open window and flags synthetic addresses', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T05:00:00.000Z',
+			to: '2026-07-15T15:00:00.000Z',
+			now: '2026-07-15T16:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(['known@example.com']),
+				kitSubscriberIds: new Set(['kit-provider-known']),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-real',
+					email: 'Real.Person@Example.com',
+					firstName: 'Real',
+					createdAt: '2026-07-15T05:00:00.000Z',
+				},
+				{
+					kitSubscriberId: 'kit-synthetic',
+					email: 'joel+aih-warmup-synth-1@example.com',
+					createdAt: '2026-07-15T06:00:00.000Z',
+				},
+				{
+					kitSubscriberId: 'kit-contact-known',
+					email: 'known@example.com',
+					createdAt: '2026-07-15T07:00:00.000Z',
+				},
+				{
+					kitSubscriberId: 'kit-provider-known',
+					email: 'provider@example.com',
+					createdAt: '2026-07-15T08:00:00.000Z',
+				},
+				{
+					kitSubscriberId: 'kit-at-end',
+					email: 'end@example.com',
+					createdAt: '2026-07-15T15:00:00.000Z',
+				},
+			],
+		})
+
+		expect(preview.counts).toEqual({
+			kitFormSubscribersFetched: 5,
+			inWindow: 4,
+			withExistingContact: 1,
+			withExistingProviderIdentity: 1,
+			withExistingIdentity: 2,
+			gapCandidates: 2,
+			excludedSynthetic: 1,
+			replayable: 1,
+		})
+		expect(preview.candidates).toEqual([
+			expect.objectContaining({
+				kitSubscriberId: 'kit-real',
+				maskedEmail: 're***@example.com',
+				excludedSynthetic: false,
+			}),
+			expect.objectContaining({
+				kitSubscriberId: 'kit-synthetic',
+				maskedEmail: 'jo***@example.com',
+				excludedSynthetic: true,
+				exclusionReason: 'synthetic-address',
+			}),
+		])
+		const output = JSON.stringify(signupGapPreviewForOutput(preview))
+		expect(output).not.toContain('Real.Person@Example.com')
+		expect(output).not.toContain('kit-real')
+		expect(output).toContain('re***@example.com')
+	})
+
+	it('rechecks identity, excludes synthetic addresses, and emits the canonical event', async () => {
+		const preview = buildSignupGapPreview({
+			formId: 12345,
+			from: '2026-07-15T05:00:00.000Z',
+			to: '2026-07-15T15:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-replay',
+					email: 'replay@example.com',
+					firstName: 'Replay',
+					createdAt: '2026-07-15T06:00:00.000Z',
+				},
+				{
+					kitSubscriberId: 'kit-now-known',
+					email: 'known-later@example.com',
+					createdAt: '2026-07-15T07:00:00.000Z',
+				},
+				{
+					kitSubscriberId: 'kit-synthetic',
+					email: 'joel+aih-synth-2@example.com',
+					createdAt: '2026-07-15T08:00:00.000Z',
+				},
+			],
+		})
+		const emitted: unknown[] = []
+		const receipt = await replaySignupGap({
+			preview,
+			source: 'operator-recovery',
+			hasExistingIdentity: async (candidate) =>
+				candidate.kitSubscriberId === 'kit-now-known',
+			emit: async (event) => {
+				emitted.push(event)
+			},
+		})
+
+		expect(emitted).toEqual([
+			{
+				name: 'skills-newsletter/subscribed',
+				data: {
+					kitSubscriberId: 'kit-replay',
+					email: 'replay@example.com',
+					name: 'Replay',
+					formId: 12345,
+					source: 'operator-recovery',
+					subscribedAt: '2026-07-15T06:00:00.000Z',
+				},
+			},
+		])
+		expect(receipt.counts).toEqual({
+			previewed: 3,
+			excludedSynthetic: 1,
+			skippedExisting: 1,
+			emitted: 1,
+		})
+		expect(receipt.note).toContain('real email-0 send')
+		expect(JSON.stringify(receipt)).not.toContain('replay@example.com')
+	})
+
+	it('rejects invalid windows before recovery', () => {
+		expect(() =>
+			buildSignupGapPreview({
+				formId: 1,
+				from: '2026-07-15T15:00:00.000Z',
+				to: '2026-07-15T05:00:00.000Z',
+				identityMatches: {
+					contactEmails: new Set(),
+					kitSubscriberIds: new Set(),
+				},
+				subscribers: [],
+			}),
+		).toThrow('--from and --to')
+	})
+})
 
 describe('subscriber marketing Gate D allowlist', () => {
 	it('previews recent Skills QQ candidates with redacted identity and blockers', () => {

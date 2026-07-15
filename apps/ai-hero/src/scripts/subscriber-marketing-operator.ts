@@ -36,6 +36,14 @@ import { syncSeenContentKitFieldsForContactSnapshot } from '@/lib/subscriber-mar
 import { previewShadowFieldCandidates } from '@/lib/subscriber-marketing/shadow-field-candidates'
 import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-planner'
 import { syncShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-sync'
+import {
+	buildSignupGapPreview,
+	normalizeSignupGapEmail,
+	replaySignupGap,
+	signupGapPreviewForOutput,
+	type SignupGapKitSubscriber,
+	type SignupGapPreview,
+} from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { previewTeamKitProjection } from '@/lib/subscriber-marketing/team-kit-projection'
 import {
 	CONTACT_STATE_SCHEMA_VERSION,
@@ -262,6 +270,42 @@ if (command === 'lookup') {
 		repository,
 		contactId,
 		eventId,
+	})
+	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'signup-gap-preview') {
+	const preview = await buildSignupGapOperatorPreview({
+		formId: requireFormId(args),
+		from: requireFlag(args, '--from'),
+		to: requireFlag(args, '--to'),
+	})
+	console.log(JSON.stringify(signupGapPreviewForOutput(preview), null, 2))
+} else if (command === 'signup-gap-replay') {
+	if (!args.includes('--allow-write') || args.includes('--dry-run')) {
+		printUsageAndExit()
+	}
+	const preview = await buildSignupGapOperatorPreview({
+		formId: requireFormId(args),
+		from: requireFlag(args, '--from'),
+		to: requireFlag(args, '--to'),
+	})
+	console.error(
+		'WARNING: each emitted replay enters the live drip and leads to a real email-0 send.',
+	)
+	const repository = await createCaptureRepository()
+	const { inngest } = await import('@/inngest/inngest.server')
+	const result = await replaySignupGap({
+		preview,
+		source: readFlag(args, '--source') ?? 'signup-gap-replay',
+		hasExistingIdentity: async (candidate) => {
+			if (await repository.findContactByEmail(candidate.email)) return true
+			return Boolean(
+				await repository.findProviderIdentity(
+					'kit',
+					candidate.kitSubscriberId,
+				),
+			)
+		},
+		emit: (event) => inngest.send(event),
 	})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'capture-front') {
@@ -1485,6 +1529,83 @@ function redactAllowlistForOutput(allowlist: GateDRuntimeAllowlist) {
 	}
 }
 
+async function buildSignupGapOperatorPreview(args: {
+	formId: number
+	from: string
+	to: string
+}): Promise<SignupGapPreview> {
+	const records = await fetchKitFormSubscriberRecords({
+		formId: String(args.formId),
+		addedAfter: args.from,
+	})
+	const subscribers: SignupGapKitSubscriber[] = records.map((subscriber) => {
+		if (!subscriber.createdAt) {
+			throw new Error(
+				`Kit subscriber ${subscriber.kitSubscriberId} is missing created_at`,
+			)
+		}
+		return {
+			kitSubscriberId: subscriber.kitSubscriberId,
+			email: subscriber.email,
+			firstName: subscriber.firstName,
+			createdAt: subscriber.createdAt,
+			fields: subscriber.fields,
+		}
+	})
+	return buildSignupGapPreview({
+		subscribers,
+		identityMatches: await fetchSignupGapIdentityMatches(subscribers),
+		formId: args.formId,
+		from: args.from,
+		to: args.to,
+	})
+}
+
+async function fetchSignupGapIdentityMatches(
+	subscribers: SignupGapKitSubscriber[],
+) {
+	const emails = Array.from(
+		new Set(
+			subscribers
+				.map((subscriber) => normalizeSignupGapEmail(subscriber.email))
+				.filter((email): email is string => Boolean(email)),
+		),
+	)
+	const kitSubscriberIds = Array.from(
+		new Set(subscribers.map((subscriber) => subscriber.kitSubscriberId)),
+	)
+	const contactEmails = new Set<string>()
+	const matchedKitSubscriberIds = new Set<string>()
+
+	for (const emailChunk of chunk(emails, 500)) {
+		const rows = await db
+			.select({ email: contact.email })
+			.from(contact)
+			.where(inArray(contact.email, emailChunk))
+		for (const row of rows) {
+			const email = normalizeSignupGapEmail(row.email)
+			if (email) contactEmails.add(email)
+		}
+	}
+	for (const idChunk of chunk(kitSubscriberIds, 500)) {
+		const rows = await db
+			.select({ externalId: providerIdentity.externalId })
+			.from(providerIdentity)
+			.where(
+				and(
+					eq(providerIdentity.provider, 'kit'),
+					inArray(providerIdentity.externalId, idChunk),
+				),
+			)
+		for (const row of rows) matchedKitSubscriberIds.add(row.externalId)
+	}
+
+	return {
+		contactEmails,
+		kitSubscriberIds: matchedKitSubscriberIds,
+	}
+}
+
 async function fetchContactMatchesForSkillsSubscribers(
 	subscribers: SkillsFormSubscriberEvidence[],
 ) {
@@ -1600,9 +1721,35 @@ async function fetchRecentQuickQuestionReplies(args: { recentDays: number }) {
 	}) satisfies QuickQuestionReplyEvidence[]
 }
 
+type KitFormSubscriberRecord = {
+	kitSubscriberId: string
+	email: string
+	firstName?: string
+	createdAt?: string
+	addedAt: string
+	fields?: Record<string, unknown>
+}
+
 async function fetchKitFormSubscribers(args: {
 	formId: string
 	recentDays: number
+}) {
+	const addedAfter = new Date(
+		Date.now() - args.recentDays * 24 * 60 * 60 * 1000,
+	).toISOString()
+	return (await fetchKitFormSubscriberRecords({ ...args, addedAfter })).map(
+		({ kitSubscriberId, email, addedAt, fields }) => ({
+			kitSubscriberId,
+			email,
+			subscribedAt: addedAt,
+			fields,
+		}),
+	) satisfies SkillsFormSubscriberEvidence[]
+}
+
+async function fetchKitFormSubscriberRecords(args: {
+	formId: string
+	addedAfter: string
 }) {
 	const apiKey =
 		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
@@ -1611,35 +1758,33 @@ async function fetchKitFormSubscribers(args: {
 			'Kit form subscriber preview requires CONVERTKIT_V4_API_KEY or CONVERTKIT_API_KEY',
 		)
 	}
-	const subscribers: SkillsFormSubscriberEvidence[] = []
-	const addedAfter = new Date(
-		Date.now() - args.recentDays * 24 * 60 * 60 * 1000,
-	)
-		.toISOString()
-		.slice(0, 10)
+	const subscribers: KitFormSubscriberRecord[] = []
 	let cursor: string | undefined
-	for (let page = 0; page < 25; page++) {
+	for (let page = 0; page < 100; page++) {
 		const url = new URL(
 			`https://api.convertkit.com/v4/forms/${args.formId}/subscribers`,
 		)
 		url.searchParams.set('status', 'active')
 		url.searchParams.set('per_page', '1000')
-		url.searchParams.set('added_after', addedAfter)
+		url.searchParams.set(
+			'added_after',
+			new Date(args.addedAfter).toISOString().slice(0, 10),
+		)
 		if (cursor) url.searchParams.set('after', cursor)
 		const response = await fetch(url, {
 			headers: { 'X-Kit-Api-Key': apiKey },
 		})
-		const data = await response.json()
+		const data = (await response.json()) as Record<string, any>
 		if (!response.ok) {
 			throw new Error(
 				`Kit form subscriber query failed: ${response.status} ${JSON.stringify(data)}`,
 			)
 		}
-		subscribers.push(...parseKitFormSubscriberPayload(data))
-		cursor = data?.pagination?.end_cursor
-		if (!cursor || data?.pagination?.has_next_page === false) break
+		subscribers.push(...parseKitFormSubscriberRecords(data))
+		cursor = stringField(data.pagination?.end_cursor)
+		if (!cursor || data.pagination?.has_next_page === false) return subscribers
 	}
-	return subscribers
+	throw new Error('Kit form subscriber query exceeded the 100-page safety cap')
 }
 
 function parseKitFormSubscribersExport(
@@ -1651,6 +1796,19 @@ function parseKitFormSubscribersExport(
 function parseKitFormSubscriberPayload(
 	payload: unknown,
 ): SkillsFormSubscriberEvidence[] {
+	return parseKitFormSubscriberRecords(payload).map(
+		({ kitSubscriberId, email, addedAt, fields }) => ({
+			kitSubscriberId,
+			email,
+			subscribedAt: addedAt,
+			fields,
+		}),
+	)
+}
+
+function parseKitFormSubscriberRecords(
+	payload: unknown,
+): KitFormSubscriberRecord[] {
 	const record = payload as Record<string, unknown>
 	const subscribers = Array.isArray(record.subscribers)
 		? record.subscribers
@@ -1667,19 +1825,29 @@ function parseKitFormSubscriberPayload(
 			subscriber.fields && typeof subscriber.fields === 'object'
 				? (subscriber.fields as Record<string, unknown>)
 				: undefined
-		const subscribedAt =
+		const createdAt = stringField(subscriber.created_at)
+		const addedAt =
 			stringField(subscriber.added_at) ??
 			stringField(subscriber.subscribed_at) ??
-			stringField(subscriber.created_at) ??
 			stringField(
 				(subscriber.subscription as Record<string, unknown>)?.created_at,
-			)
-		if (!subscribedAt) {
+			) ??
+			createdAt
+		if (!addedAt) {
 			throw new Error(
 				'Kit form subscriber payload is missing a usable subscribed-at timestamp. Provide an explicit export with added_at, subscribed_at, or created_at.',
 			)
 		}
-		return [{ kitSubscriberId: id, email, subscribedAt, fields }]
+		return [
+			{
+				kitSubscriberId: id,
+				email,
+				firstName: stringField(subscriber.first_name),
+				createdAt,
+				addedAt,
+				fields,
+			},
+		]
 	})
 }
 
@@ -2066,6 +2234,12 @@ function readAllFlags(args: string[], flag: string) {
 	return values
 }
 
+function requireFormId(args: string[]) {
+	const formId = readIntegerFlag(args, '--form-id')
+	if (!formId) printUsageAndExit()
+	return formId
+}
+
 function readIntegerFlag(args: string[], flag: string) {
 	const value = readFlag(args, flag)
 	if (!value) return undefined
@@ -2116,6 +2290,8 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator lookup --user-id user_123
   pnpm --filter ai-hero subscriber-marketing:operator lookup --provider kit --external-id sub_123
   pnpm --filter ai-hero subscriber-marketing:operator replay-preview --contact-id contact_123 [--event-id event_123]
+  pnpm --filter ai-hero subscriber-marketing:operator signup-gap-preview --form-id 9376133 --from 2026-07-14T22:00:00-07:00 --to 2026-07-15T08:00:00-07:00
+  pnpm --filter ai-hero subscriber-marketing:operator signup-gap-replay --form-id 9376133 --from 2026-07-14T22:00:00-07:00 --to 2026-07-15T08:00:00-07:00 --allow-write [--source signup-gap-replay]
   pnpm --filter ai-hero subscriber-marketing:operator seen-content-preview --contact-id contact_123 [--limit 100]
   pnpm --filter ai-hero subscriber-marketing:operator seen-content-kit-sync --contact-id contact_123 --dry-run [--limit 100]
   pnpm --filter ai-hero subscriber-marketing:operator seen-content-kit-sync --contact-id contact_123 --allow-write [--limit 100]
