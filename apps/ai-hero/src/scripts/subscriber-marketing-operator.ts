@@ -64,6 +64,7 @@ import {
 	readActiveGateDRuntimeAllowlist,
 	resolveGateDPreAuthorizedReviewReasons,
 	writeGateDRuntimeAllowlist,
+	type GateDAuthorizationMode,
 	type GateDRuntimeAllowlist,
 } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
 import {
@@ -416,10 +417,21 @@ if (command === 'lookup') {
 	const dryRun = args.includes('--dry-run')
 	const allowWrite = args.includes('--allow-write')
 	if (dryRun === allowWrite) printUsageAndExit()
+	const authorizationMode =
+		readFlag(args, '--authorization-mode') ?? 'finish-approved-path'
+	if (
+		authorizationMode !== 'finish-approved-path' &&
+		authorizationMode !== 'rolling-public-enrollment'
+	) {
+		throw new Error(
+			'--authorization-mode must be finish-approved-path or rolling-public-enrollment',
+		)
+	}
 	const result = await buildValuePathGateDActivation({
 		candidatePreviewPath: requireFlag(args, '--candidate-preview'),
 		activationId: requireFlag(args, '--activation-id'),
 		approvedBy: readFlag(args, '--approved-by'),
+		authorizationMode,
 		allowWrite,
 	})
 	console.log(JSON.stringify(result, null, 2))
@@ -768,6 +780,7 @@ async function buildValuePathGateDActivation(args: {
 	candidatePreviewPath: string
 	activationId: string
 	approvedBy?: string
+	authorizationMode: GateDAuthorizationMode
 	allowWrite: boolean
 }) {
 	const preview = JSON.parse(
@@ -783,7 +796,7 @@ async function buildValuePathGateDActivation(args: {
 		status: 'active',
 		killSwitch: false,
 		mode: 'allowlisted-test',
-		authorizationMode: 'finish-approved-path',
+		authorizationMode: args.authorizationMode,
 		pathSlugs: SKILLS_WORKFLOW_PATH_SLUGS,
 		contactIds: candidates.map((candidate) => candidate.contactId!),
 		kitSubscriberIds: candidates
@@ -2117,7 +2130,7 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-preview --contact-id contact_123
   pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-preview [--kit-form-id 9376133] [--recent-days 14] [--target-count 20] [--kit-export-json /path/to/export.json] [--include-emails true] [--require-quick-question-reply true]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-activate --candidate-preview /path/to/preview.json --activation-id skills-workflow:2026-05-14-a --dry-run
-  pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-activate --candidate-preview /path/to/preview.json --activation-id skills-workflow:2026-05-14-a --allow-write [--approved-by operator]
+  pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-activate --candidate-preview /path/to/preview.json --activation-id skills-workflow:2026-05-14-a --allow-write [--approved-by operator] [--authorization-mode finish-approved-path|rolling-public-enrollment]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-status
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --dry-run
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]

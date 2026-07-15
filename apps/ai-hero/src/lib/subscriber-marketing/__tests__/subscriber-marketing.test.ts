@@ -54,6 +54,7 @@ import {
 	type KitShadowFieldProvider,
 } from '../shadow-field-sync'
 import { classifyContactEvent } from '../signal-classifier'
+import { enterSkillsNewsletterSubscriber } from '../skills-newsletter-path-entry'
 import {
 	buildTeamKitProjectionContacts,
 	previewTeamKitProjection,
@@ -4737,6 +4738,111 @@ describe('subscriber marketing Gate A spine', () => {
 		expect(written.counts.tagWritesPerformed).toBe(2)
 		expect(updatedFields).toHaveLength(2)
 		expect(tagged.sort()).toEqual(['tag_member', 'tag_owner'])
+	})
+})
+
+describe('Skills Newsletter Path Entry', () => {
+	const rollingAllowlist = normalizeGateDRuntimeAllowlist({
+		activationId: 'skills-workflow:rolling-public',
+		status: 'active',
+		killSwitch: false,
+		mode: 'allowlisted-test',
+		authorizationMode: 'rolling-public-enrollment',
+		pathSlugs: ['ai-hero-skills-workflow'],
+		contactIds: [],
+		kitSubscriberIds: [],
+		emails: [],
+		emailHashes: [],
+		emailResourceIds: ['ai-hero-skills-workflow.email-0'],
+		kitSequenceIds: ['2757199'],
+		candidates: [],
+		createdAt: '2026-07-14T12:00:00.000Z',
+	})
+	const input = {
+		kitSubscriberId: '9376133001',
+		email: 'synthetic-signup@example.com',
+		name: 'Synthetic Signup',
+		formId: 9376133,
+		source: 'skills:test',
+		subscribedAt: '2026-07-14T12:00:00.000Z',
+	}
+
+	it('plans email-0 for a new public signup without a frozen contact allowlist', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: false,
+		})
+
+		expect(result.status).toBe('planned')
+		expect(result.entry.counts).toMatchObject({
+			candidates: 1,
+			planned: 1,
+			wouldCreate: 1,
+			created: 0,
+		})
+		expect(result.entry.results[0]).toMatchObject({
+			kitSubscriberId: '9376133001',
+			status: 'planned',
+			reviewReasons: [],
+		})
+	})
+
+	it('creates Contact, ContactState, subscription evidence, and one email-0 intent idempotently in memory', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const first = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: true,
+		})
+		const second = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: true,
+		})
+
+		expect(first.status).toBe('planned')
+		expect(first.entry.counts.created).toBe(1)
+		expect(second.status).toBe('idempotent-noop')
+		expect(second.entry.counts.idempotentNoop).toBe(1)
+		expect(
+			await repository.findCurrentContactState(first.contactId),
+		).toBeDefined()
+		expect(
+			await repository.findSideEffectIntentByIdempotencyKey(
+				`contact:${first.contactId}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
+			),
+		).toMatchObject({
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			metadata: {
+				activationId: 'skills-workflow:rolling-public',
+				kitSequenceId: '2757199',
+			},
+		})
+	})
+
+	it('captures the signup but blocks path entry unless rolling authorization is active', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: {
+				...rollingAllowlist,
+				authorizationMode: 'finish-approved-path',
+			},
+			input,
+			allowWrite: false,
+		})
+
+		expect(result.status).toBe('blocked')
+		expect(result.entry.results[0]?.reviewReasons).toEqual([
+			'rolling-public-enrollment-not-active',
+		])
 	})
 })
 

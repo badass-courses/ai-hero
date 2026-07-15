@@ -1,7 +1,13 @@
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
 import { POST as courseBuilderPOST } from '@/coursebuilder/course-builder-config'
+import {
+	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+	type SkillsNewsletterSubscribed,
+} from '@/inngest/events/skills-newsletter'
+import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
+import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
@@ -26,8 +32,35 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	// Get the original response from coursebuilder
 	const response = await courseBuilderPOST(clonedRequest)
 
-	// Only track attribution on successful subscriptions (status 200)
+	// Only track successful subscriptions (status 200).
 	if (response.status === 200 && email) {
+		if (Number(body.listId) === 9376133) {
+			try {
+				const subscriber = SubscriberSchema.parse(await response.clone().json())
+				if (!subscriber.email_address) {
+					throw new Error('Skills subscriber response is missing an email')
+				}
+				const event: SkillsNewsletterSubscribed = {
+					name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+					data: {
+						kitSubscriberId: String(subscriber.id),
+						email: subscriber.email_address,
+						name: subscriber.first_name ?? undefined,
+						formId: 9376133,
+						source: body.fields?.source ?? 'aihero_skills_page',
+						subscribedAt: new Date().toISOString(),
+					},
+				}
+				await inngest.send(event)
+			} catch (error) {
+				await log.error('skills.newsletter.path-entry.enqueue.failed', {
+					formId: 9376133,
+					error: error instanceof Error ? error.message : String(error),
+				})
+				throw error
+			}
+		}
+
 		try {
 			// Read the sl_ref cookie to get the shortlink slug
 			const cookieStore = await cookies()

@@ -137,6 +137,8 @@ async function startValuePathGateDContact(args: {
 		allowlist: args.allowlist,
 		explicitReviewReasons: args.acceptedReviewReasons,
 	})
+	const rollingEnrollment =
+		args.allowlist.authorizationMode === 'rolling-public-enrollment'
 	const sendDecision = applyAcceptedValuePathSendGateReviewReasons(
 		evaluateValuePathEmailSendGate({
 			mode: args.allowlist.mode as ValuePathSendGateMode,
@@ -149,9 +151,17 @@ async function startValuePathGateDContact(args: {
 			humanReview: shouldBlockValuePathForContactState(state),
 			lifecycle: state?.lifecycle,
 			reviewSignals: state?.reviewSignals,
-			allowlistedContactIds: args.allowlist.contactIds,
-			allowlistedKitSubscriberIds: args.allowlist.kitSubscriberIds,
-			allowlistedEmails: args.allowlist.emails,
+			allowlistedContactIds: rollingEnrollment
+				? [...args.allowlist.contactIds, args.contactId]
+				: args.allowlist.contactIds,
+			allowlistedKitSubscriberIds:
+				rollingEnrollment && args.kitSubscriberId
+					? [...args.allowlist.kitSubscriberIds, args.kitSubscriberId]
+					: args.allowlist.kitSubscriberIds,
+			allowlistedEmails:
+				rollingEnrollment && email
+					? [...args.allowlist.emails, email]
+					: args.allowlist.emails,
 		}),
 		acceptedReviewReasons,
 	)

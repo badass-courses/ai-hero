@@ -58,6 +58,7 @@ import { sendLiveEventWelcomeEmail } from './functions/send-live-event-welcome-e
 import { shortlinkAttribution } from './functions/shortlink-attribution'
 import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
+import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
@@ -126,6 +127,7 @@ export const inngestConfig = {
 		invoiceShortfallReconciliation,
 		syncGithubSourcedPosts,
 		skillChangelogBroadcast,
+		skillsNewsletterPathEntry,
 		notifyOnPostCreated,
 		generateArtwork,
 		pickVariant,

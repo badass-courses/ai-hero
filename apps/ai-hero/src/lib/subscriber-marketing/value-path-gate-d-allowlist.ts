@@ -15,6 +15,7 @@ export type GateDRuntimeAllowlistStatus =
 export type GateDAuthorizationMode =
 	| 'manual-review-per-send'
 	| 'finish-approved-path'
+	| 'rolling-public-enrollment'
 
 export type GateDAllowedAction =
 	| 'send-path-emails'
@@ -212,7 +213,9 @@ export function evaluateGateDRuntimeAllowlistStatus(
 			'Gate D Runtime Allowlist is active.',
 			allowlist.authorizationMode === 'finish-approved-path'
 				? 'Path cohort authorization is pre-approved to finish.'
-				: 'Path cohort authorization requires per-send review acceptance.',
+				: allowlist.authorizationMode === 'rolling-public-enrollment'
+					? 'Explicit public signups may enter continuously; path and email assets remain allowlisted.'
+					: 'Path cohort authorization requires per-send review acceptance.',
 		],
 		allowlist,
 	}
@@ -232,17 +235,21 @@ export function evaluateGateDRuntimeAllowlist(args: {
 
 	const normalizedEmail = normalizeEmail(args.email)
 	const emailHash = normalizedEmail ? hashEmail(normalizedEmail) : undefined
+	const rollingEnrollment =
+		args.allowlist.authorizationMode === 'rolling-public-enrollment'
 	const reviewReasons = [
-		...(args.allowlist.contactIds.includes(args.contactId)
+		...(rollingEnrollment || args.allowlist.contactIds.includes(args.contactId)
 			? []
 			: ['contact-not-allowlisted']),
-		...(args.kitSubscriberId &&
-		args.allowlist.kitSubscriberIds.includes(args.kitSubscriberId)
+		...(rollingEnrollment ||
+		(args.kitSubscriberId &&
+			args.allowlist.kitSubscriberIds.includes(args.kitSubscriberId))
 			? []
 			: ['kit-subscriber-not-allowlisted']),
-		...(normalizedEmail &&
-		(args.allowlist.emails.includes(normalizedEmail) ||
-			(emailHash && args.allowlist.emailHashes.includes(emailHash)))
+		...(rollingEnrollment ||
+		(normalizedEmail &&
+			(args.allowlist.emails.includes(normalizedEmail) ||
+				(emailHash && args.allowlist.emailHashes.includes(emailHash))))
 			? []
 			: ['email-not-allowlisted']),
 		...(args.allowlist.pathSlugs.includes(args.valuePathSlug)
