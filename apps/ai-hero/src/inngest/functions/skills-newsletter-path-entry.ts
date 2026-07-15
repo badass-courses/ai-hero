@@ -9,7 +9,11 @@ import { redis } from '@/server/redis-client'
 
 export const skillsNewsletterPathEntry = inngest.createFunction(
 	{
-		id: 'skills-newsletter-path-entry',
+		// v2: the original function id registered correctly on 2026-07-15 but
+		// Inngest never routed a single skills-newsletter/subscribed event to it
+		// (zero runs while sibling functions from the same syncs ran). Re-keying
+		// forces a fresh function record and trigger binding.
+		id: 'skills-newsletter-path-entry-v2',
 		retries: 3,
 	},
 	{ event: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT },
