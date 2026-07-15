@@ -44,6 +44,7 @@ import {
 	type SignupGapKitSubscriber,
 	type SignupGapPreview,
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
+import { replanBlockedValuePathEmailIntents } from '@/lib/subscriber-marketing/value-path-intent-replan'
 import { previewTeamKitProjection } from '@/lib/subscriber-marketing/team-kit-projection'
 import {
 	CONTACT_STATE_SCHEMA_VERSION,
@@ -306,6 +307,21 @@ if (command === 'lookup') {
 			)
 		},
 		emit: (event) => inngest.send(event),
+	})
+	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'value-path-intent-replan') {
+	const contactIds = (readFlag(args, '--contact-ids') ?? '')
+		.split(',')
+		.map((id) => id.trim())
+		.filter(Boolean)
+	if (contactIds.length === 0) {
+		printUsageAndExit()
+	}
+	const repository = await createCaptureRepository()
+	const result = await replanBlockedValuePathEmailIntents({
+		repository,
+		contactIds,
+		allowWrite: args.includes('--allow-write'),
 	})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'capture-front') {

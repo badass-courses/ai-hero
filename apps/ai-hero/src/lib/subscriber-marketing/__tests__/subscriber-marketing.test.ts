@@ -72,6 +72,7 @@ import {
 	verifyAnswerClickForStep,
 } from '../value-path-answer-click-verification'
 import { buildValuePathAskUrl } from '../value-path-answer-links'
+import { replanBlockedValuePathEmailIntents } from '../value-path-intent-replan'
 import { parseValuePathAnswerPageResource } from '../value-path-answer-page'
 import { recordValuePathAnswerProgression } from '../value-path-click-progression'
 import {
@@ -4949,6 +4950,51 @@ describe('Skills Newsletter Path Entry', () => {
 			kitSubscriberId: '9376133001',
 			status: 'planned',
 			reviewReasons: [],
+		})
+	})
+
+	it('replans blocked email intents back to pending for executor re-evaluation', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		repository.createSideEffectIntent({
+			id: 'intent-blocked-1',
+			nextActionId: 'na-1',
+			contactId: 'contact-1',
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'blocked',
+			idempotencyKey: 'contact:contact-1:value-path:p:email:e0',
+			gates: [],
+			reviewReasons: ['contact-not-allowlisted'],
+			metadata: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+			createdAt: '2026-07-15T15:00:00.000Z',
+		})
+
+		const dryRun = await replanBlockedValuePathEmailIntents({
+			repository,
+			contactIds: ['contact-1'],
+			allowWrite: false,
+		})
+		expect(dryRun.counts).toMatchObject({
+			blockedIntentsFound: 1,
+			wouldReplan: 1,
+			replanned: 0,
+		})
+
+		const written = await replanBlockedValuePathEmailIntents({
+			repository,
+			contactIds: ['contact-1'],
+			allowWrite: true,
+			now: '2026-07-15T16:00:00.000Z',
+		})
+		expect(written.counts.replanned).toBe(1)
+		const intents =
+			repository.findValuePathEmailSideEffectIntentsByContact('contact-1')
+		expect(intents[0]).toMatchObject({
+			status: 'pending',
+			reviewReasons: [],
+		})
+		expect(intents[0]?.metadata).toMatchObject({
+			replannedFromReviewReasons: ['contact-not-allowlisted'],
 		})
 	})
 
