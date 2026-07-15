@@ -79,8 +79,12 @@ export const getSubscriberFromCookie = cache(async () => {
 			const subscriber =
 				await emailListProvider.getSubscriber(subscriberIdCookie)
 			if (subscriber) {
-				// Populate the full ck_subscriber cookie for future requests
-				await setSubscriberCookie(subscriber)
+				try {
+					// Populate the full ck_subscriber cookie for future requests.
+					// Cookie writes are only legal in actions/route handlers — during
+					// an RSC render this throws, and the subscriber must still resolve.
+					await setSubscriberCookie(subscriber)
+				} catch {}
 				return SubscriberSchema.parse(subscriber)
 			}
 		} catch (e) {
