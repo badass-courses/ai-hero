@@ -1,22 +1,13 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { getRepoStarCount } from '@/lib/github-stars-query'
-import {
-	FEATURED_SKILL_LINKS,
-	SKILLS_HERO,
-	SKILLS_REPO_URL,
-} from '@/lib/skills-content'
+import { SKILLS_HERO, SKILLS_REPO_URL } from '@/lib/skills-content'
 import { ArrowUpRight, Github, Star } from 'lucide-react'
 
 import { InstallCommand } from './install-command'
-import * as SkillsNewsletter from './skills-newsletter'
-import { type SkillsNewsletterStatus } from './skills-newsletter'
+import { SkillsCourseCta } from './skills-course-cta'
 
-export async function SkillsHero({
-	newsletterState,
-}: {
-	newsletterState: SkillsNewsletterStatus
-}) {
+export async function SkillsHero() {
 	const stars = await getRepoStarCount(
 		SKILLS_HERO.repoOwner,
 		SKILLS_HERO.repoName,
@@ -46,45 +37,7 @@ export async function SkillsHero({
 				</div>
 			</div>
 			<div className="border-border bg-stripes relative flex w-full flex-col items-center justify-center overflow-hidden md:border-l">
-				{newsletterState === 'subscribed' ? (
-					<ul className="flex flex-col gap-2 font-mono text-base">
-						{FEATURED_SKILL_LINKS.map(({ name, slug }) => (
-							<li key={slug}>
-								<Link
-									href={`/${slug}`}
-									className="hover:text-primary group inline-flex items-center transition-colors"
-								>
-									<span className="text-primary mr-0.5 opacity-75 transition-opacity group-hover:opacity-100 dark:opacity-100">
-										/
-									</span>
-									<span className="font-medium underline decoration-transparent decoration-1 underline-offset-4 transition group-hover:decoration-current">
-										{name}
-									</span>
-								</Link>
-							</li>
-						))}
-					</ul>
-				) : (
-					<SkillsNewsletter.Root
-						status={newsletterState}
-						location="skills_hero"
-					>
-						<div className="flex w-full max-w-sm flex-col gap-4 px-8 py-10">
-							<SkillsNewsletter.Heading className="w-full text-balance text-center text-base font-medium sm:text-center sm:text-lg">
-								Get skill updates in your inbox.
-							</SkillsNewsletter.Heading>
-							{newsletterState === 'tag-me' ? (
-								<SkillsNewsletter.TagMeButton className="bg-primary h-11 px-4 text-sm" />
-							) : (
-								<SkillsNewsletter.Form
-									label="Subscribe"
-									className="[&_button]:bg-primary flex flex-col gap-2 [&_button]:h-11 [&_button]:px-4 [&_button]:text-sm [&_input]:h-10 [&_input]:px-3 [&_input]:text-sm"
-								/>
-							)}
-							<SkillsNewsletter.Privacy className="mt-1 text-[10px]" />
-						</div>
-					</SkillsNewsletter.Root>
-				)}
+				<SkillsCourseCta compact />
 			</div>
 		</header>
 	)

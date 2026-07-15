@@ -2,6 +2,13 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { db } from '@/db'
 import {
+	contact,
+	contactEvent,
+	contactState,
+	providerIdentity,
+	sideEffectIntent,
+	stateTransition,
+	googleAdsSignupConversionUpload,
 	merchantSession,
 	products,
 	purchases,
@@ -9,9 +16,12 @@ import {
 	shortlinkAttribution,
 } from '@/db/schema'
 import {
+	googleAdsRestUploadClient,
 	processGoogleAdsConversionUploads,
 	readGoogleAdsConversionUploadConfig,
 } from '@/lib/google-ads-conversion-upload'
+import { buildSignupConversionPreview, prepareSignupConversionBatch } from '@/lib/google-ads-signup-conversion-upload'
+import { log } from '@/server/logger'
 import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 
 const rangeOptions = ['24h', '7d', '30d', '90d', 'all'] as const
@@ -51,6 +61,8 @@ function parseArgs(argv: readonly string[]) {
 		? (rawRange as Range)
 		: '30d'
 	const purchaseId = readFlag(argv, '--purchase-id')
+	const contactId = readFlag(argv, '--contact-id')
+	const email = readFlag(argv, '--email')
 	const productId = readFlag(argv, '--product-id')
 	const receipt = readFlag(argv, '--receipt')
 	const rawLimit = Number(readFlag(argv, '--limit') ?? '500')
@@ -64,6 +76,8 @@ function parseArgs(argv: readonly string[]) {
 		command,
 		range,
 		purchaseId,
+		contactId,
+		email,
 		productId,
 		receipt,
 		limit,
@@ -714,6 +728,60 @@ async function offlineConversionPreview(args: {
 	dryRun: boolean
 }) {
 	const since = sinceForRange(args.range)
+	if (args.productId === 'email-course') {
+		const rows = await db.select({ contactId: contact.id, attribution: contactState.optInAttribution, updatedAt: contactState.updatedAt })
+			.from(contactState).innerJoin(contact, eq(contact.id, contactState.contactId))
+			.limit(args.limit)
+		const candidates = rows.flatMap((row) => {
+			const attribution = row.attribution as any
+			const occurredAt = attribution?.subscribedAt
+			return attribution && occurredAt ? [{ contactId: row.contactId, occurredAt, attribution }] : []
+		})
+		const ranged = since ? candidates.filter((row) => new Date(row.occurredAt) >= since) : candidates
+		const preview = buildSignupConversionPreview(ranged)
+		const actionResource = process.env.GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME
+		const batch = prepareSignupConversionBatch({ candidates: ranged, conversionActionResourceName: actionResource })
+		const writeAttempted = args.allowWrite && !args.dryRun
+		await log.info('subscriber_funnel.conversion_eligibility', {
+			funnel: 'skills-newsletter', range: args.range,
+			scanned: batch.counts.scanned, eligible: batch.counts.eligible,
+			excluded: batch.counts.excluded, writeAttempted,
+		})
+		if (writeAttempted && !actionResource) throw new Error('GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME is required for signup uploads')
+		let uploaded = 0; let idempotentNoop = 0; let failed = 0
+		if (writeAttempted) {
+			const config = readGoogleAdsConversionUploadConfig({ enabled: true, conversionActionResourceName: actionResource })
+			for (const conversion of batch.prepared) {
+				const existing = await db.select({ status: googleAdsSignupConversionUpload.status }).from(googleAdsSignupConversionUpload).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey)).limit(1)
+				if (existing[0]?.status === 'uploaded' || existing[0]?.status === 'processing') { idempotentNoop += 1; continue }
+				if (existing[0]?.status === 'failed' && process.env.AIH_GOOGLE_ADS_SIGNUP_RETRY_FAILED !== 'true') { idempotentNoop += 1; continue }
+				if (existing[0]?.status === 'failed') {
+					const reservation = await db.update(googleAdsSignupConversionUpload).set({ status: 'processing', attemptCount: sql`${googleAdsSignupConversionUpload.attemptCount} + 1`, updatedAt: new Date() }).where(and(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey), eq(googleAdsSignupConversionUpload.status, 'failed')))
+					if (Number((reservation as any).rowsAffected ?? (reservation as any)[0]?.affectedRows ?? 0) === 0) { idempotentNoop += 1; continue }
+				} else {
+					try {
+						await db.insert(googleAdsSignupConversionUpload).values({ contactId: conversion.contactId, conversionActionResourceName: conversion.conversionActionResourceName, clickIdType: conversion.clickIdType, clickIdHash: conversion.clickIdHash, conversionDateTime: conversion.conversionDateTime, status: 'processing', attemptCount: 1, idempotencyKey: conversion.idempotencyKey, requestSummary: conversion.requestSummary })
+					} catch { idempotentNoop += 1; continue }
+				}
+				try {
+					const response = await googleAdsRestUploadClient.upload({ ...conversion, purchaseId: conversion.contactId }, config)
+					await db.update(googleAdsSignupConversionUpload).set({ status: 'uploaded', responseSummary: response, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
+					uploaded += 1
+				} catch (error) {
+					await db.update(googleAdsSignupConversionUpload).set({ status: 'failed', responseSummary: { error: error instanceof Error ? error.message : String(error) }, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
+					failed += 1
+				}
+			}
+		}
+		const payload = {
+			ready: true, verdict: writeAttempted ? (failed ? 'upload_failed' : 'upload_processed') : 'preview', writeStatus: writeAttempted ? 'write_attempted' : 'no_write', range: args.range,
+			productId: 'email-course', preview: preview.counts, previewRows: preview.rows, ...batch.counts, uploaded, idempotentNoop, failed,
+			privacy: 'aggregate-only-no-click-ids-no-emails-no-contact-ids',
+			notes: ['Signup candidates come from durable ContactState optInAttribution.', 'TEST_ click IDs are excluded from upload eligibility.', 'Writes require --allow-write, a live signup action resource, Google credentials, and the signup idempotency ledger.'],
+		}
+		const receiptPath = writeReceipt(args.receipt, payload)
+		return { ...payload, receiptPath }
+	}
 	const uploadResult = await processGoogleAdsConversionUploads({
 		database: db,
 		config: readGoogleAdsConversionUploadConfig({
@@ -911,6 +979,52 @@ async function invoiceAttributionAudit(args: {
 	return { ...payload, receiptPath }
 }
 
+function maskEmail(value: string | null | undefined) {
+	if (!value?.includes('@')) return null
+	const [local, domain] = value.split('@')
+	return `${local?.slice(0, 2) ?? ''}***@${domain}`
+}
+
+async function funnelStatus() {
+	const today = new Date(); today.setUTCHours(0, 0, 0, 0)
+	const signupWhere = eq(contactEvent.eventType, 'skills-newsletter.subscribed')
+	const emailIntentWhere = and(eq(sideEffectIntent.type, 'send-value-path-email'), sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.valuePathSlug')) = 'ai-hero-skills-workflow'`)
+	const countRows = async (where: any, createdAt: any) => {
+		const [totalRow] = await db.select({ value: count() }).from(createdAt.table).where(where)
+		const [todayRow] = await db.select({ value: count() }).from(createdAt.table).where(and(where, gte(createdAt.column, today)))
+		return { today: Number(todayRow?.value ?? 0), total: Number(totalRow?.value ?? 0) }
+	}
+	const signups = await countRows(signupWhere, { table: contactEvent, column: contactEvent.occurredAt })
+	const contacts = await countRows(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`, { table: contact, column: contact.createdAt })
+	const emailZero = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-0'`), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
+	const sent = await countRows(and(emailIntentWhere, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
+	const midPath = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-0'`, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) NOT LIKE '%email-13'`), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
+	const terminal = await countRows(and(emailIntentWhere, sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId')) LIKE '%email-13'`, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
+	const signupContacts = await db.select({ attribution: contact.optInAttribution, createdAt: contact.createdAt }).from(contact).where(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`)
+	const attributed = (rows: typeof signupContacts) => rows.filter((row) => { const a = parseJsonRecord(row.attribution); return Boolean(a.utmSource || a.utmMedium || a.utmCampaign || a.gclid || a.gbraid || a.wbraid) }).length
+	const conversion = await db.select({ status: googleAdsSignupConversionUpload.status, createdAt: googleAdsSignupConversionUpload.createdAt }).from(googleAdsSignupConversionUpload)
+	const conversionCounts = (rows: typeof conversion) => Object.fromEntries(['processing','uploaded','failed'].map((status) => [status, rows.filter((row) => row.status === status).length]))
+	const todayContacts = signupContacts.filter((row) => row.createdAt >= today)
+	const stages = { signups, events: signups, contacts, emailZeroPlanned: emailZero, sent, midPath, terminal }
+	const dropOff = { eventToContact: signups.total - contacts.total, contactToEmailZero: contacts.total - emailZero.total, emailZeroToSent: emailZero.total - sent.total }
+	return { generatedAt: new Date().toISOString(), readOnly: true, stages, dropOff, attribution: { today: { captured: attributed(todayContacts), total: todayContacts.length, rate: todayContacts.length ? attributed(todayContacts) / todayContacts.length : 0 }, total: { captured: attributed(signupContacts), total: signupContacts.length, rate: signupContacts.length ? attributed(signupContacts) / signupContacts.length : 0 } }, conversion: { total: conversionCounts(conversion), today: conversionCounts(conversion.filter((row) => row.createdAt >= today)) } }
+}
+
+async function funnelTrace(contactId?: string, email?: string) {
+	if (!contactId && !email) throw new Error('funnel-trace requires --contact-id or --email')
+	const rows = await db.select().from(contact).where(contactId ? eq(contact.id, contactId) : eq(contact.email, email!.trim().toLowerCase())).limit(2)
+	if (rows.length !== 1) throw new Error(rows.length ? 'lookup matched more than one contact; use --contact-id' : 'contact not found')
+	const found = rows[0]!
+	const [events, transitions, intents, conversions, identities] = await Promise.all([
+		db.select().from(contactEvent).where(eq(contactEvent.contactId, found.id)).orderBy(contactEvent.occurredAt),
+		db.select().from(stateTransition).where(eq(stateTransition.contactId, found.id)).orderBy(stateTransition.createdAt),
+		db.select().from(sideEffectIntent).where(eq(sideEffectIntent.contactId, found.id)).orderBy(sideEffectIntent.createdAt),
+		db.select().from(googleAdsSignupConversionUpload).where(eq(googleAdsSignupConversionUpload.contactId, found.id)).orderBy(googleAdsSignupConversionUpload.createdAt),
+		db.select().from(providerIdentity).where(eq(providerIdentity.contactId, found.id)).orderBy(providerIdentity.createdAt),
+	])
+	return { generatedAt: new Date().toISOString(), readOnly: true, contact: { id: found.id, email: maskEmail(found.email), lifecycle: found.lifecycle, createdAt: found.createdAt, attributionCaptured: Boolean(found.optInAttribution) }, identities: identities.map((row) => ({ provider: row.provider, createdAt: row.createdAt })), events: events.map((row) => ({ at: row.occurredAt, id: row.id, type: row.eventType, provider: row.provider })), transitions: transitions.map((row) => ({ at: row.createdAt, eventId: row.eventId, toStateId: row.toStateId })), intents: intents.map((row) => ({ at: row.createdAt, id: row.id, type: row.type, status: row.status, emailResourceId: parseJsonRecord(row.metadata).emailResourceId ?? null, completedAt: parseJsonRecord(row.metadata).completedAt ?? null, failedAt: parseJsonRecord(row.metadata).failedAt ?? null, reviewReasons: row.reviewReasons })), conversions: conversions.map((row) => ({ at: row.createdAt, status: row.status, clickIdType: row.clickIdType, attemptCount: row.attemptCount, updatedAt: row.updatedAt })) }
+}
+
 function nextActions() {
 	return [
 		{
@@ -952,6 +1066,8 @@ const {
 	command,
 	range,
 	purchaseId,
+	contactId,
+	email,
 	productId,
 	receipt,
 	limit,
@@ -964,6 +1080,10 @@ try {
 	const result =
 		command === 'status'
 			? await status(range)
+			: command === 'funnel-status'
+				? await funnelStatus()
+				: command === 'funnel-trace'
+					? await funnelTrace(contactId, email)
 			: command === 'synthetic-receipt'
 				? await syntheticReceipt({ purchaseId, limit })
 				: command === 'checkout-receipt'

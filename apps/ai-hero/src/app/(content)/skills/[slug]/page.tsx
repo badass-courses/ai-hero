@@ -11,7 +11,6 @@ import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
-import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
 import { courseBuilderAdapter } from '@/db'
 import {
@@ -35,7 +34,7 @@ import { cn } from '@coursebuilder/utils/cn'
 import { CopyPageButton } from '../../_components/copy-page-button'
 import { PostShareDialogButton } from '../../[post]/_components/post-header-dialog-buttons'
 import { PostPlayer } from '../../posts/_components/post-player'
-import { PostNewsletterCta } from '../../posts/_components/post-video-subscribe-form'
+import { SkillsCourseCta } from '../_components/skills-course-cta'
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -137,19 +136,11 @@ ${entry.fields?.body ?? ''}`
 							body={entry.fields?.body}
 							slug={String(entry.fields?.slug ?? slug)}
 						/>
-						{!hasVideo && (
-							<PrimaryNewsletterCta
-								isHiddenForSubscribers
-								className="pt-20"
-								trackProps={{
-									event: 'subscribed',
-									params: {
-										post: String(entry.fields?.slug ?? entry.id),
-										location: 'skills-changelog',
-									},
-								}}
-							/>
-						)}
+						{!hasVideo ? (
+							<div className="mx-auto w-full max-w-4xl px-5 pt-20 md:px-10 lg:px-14">
+								<SkillsCourseCta />
+							</div>
+						) : null}
 						<div className="mx-auto mt-16 flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5">
 							<strong className="text-lg font-semibold">Share</strong>
 							<Share
@@ -223,17 +214,9 @@ async function PlayerContainer({
 						className="aspect-video h-full max-h-[75vh] w-full overflow-hidden"
 						videoResource={videoResource}
 					/>
-					<PostNewsletterCta
-						title="Get AI Skills updates in your inbox"
-						byline="New skills changelogs and practical agent workflows, straight to your inbox"
-						trackProps={{
-							event: 'subscribed',
-							params: {
-								location: 'skills-changelog-below-video',
-								post: String(entry.fields?.slug ?? entry.id),
-							},
-						}}
-					/>
+					<div className="bg-background w-full px-5 py-8 md:px-10 lg:px-14">
+						<SkillsCourseCta className="mx-auto max-w-4xl" />
+					</div>
 				</section>
 			</Suspense>
 		</VideoPlayerOverlayProvider>

@@ -3,7 +3,6 @@ import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { Resource } from '@/components/landing/resource'
 import { SectionHeading } from '@/components/landing/section-heading'
 import LayoutClient from '@/components/layout-client'
-import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getListWithSections } from '@/lib/lists-query'
 import {
 	getSkillChangelogCount,
@@ -23,7 +22,6 @@ import { ChangelogPagination } from './_components/changelog-pagination'
 import { GuideGrid } from './_components/guide-grid'
 import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
-import { type SkillsNewsletterStatus } from './_components/skills-newsletter'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,37 +46,25 @@ export const metadata: Metadata = {
 }
 
 type Props = {
-	searchParams: Promise<{ page?: string; preview?: string }>
+	searchParams: Promise<{ page?: string }>
 }
 
 export default async function SkillsPage({ searchParams }: Props) {
-	const { page: pageParam, preview } = await searchParams
+	const { page: pageParam } = await searchParams
 	const currentPage = Math.max(Number(pageParam ?? '1') || 1, 1)
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, subscriber, skillsList] = await Promise.all([
+	const [entries, totalEntries, skillsList] = await Promise.all([
 		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
 		getSkillChangelogCount(),
-		getSubscriberFromCookie(),
 		getListWithSections(SKILLS_LIST_ID),
 	])
 	const skillGroups = toSkillGroups(skillsList?.resources)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
-	const newsletterState: SkillsNewsletterStatus =
-		preview === 'form'
-			? 'show-form'
-			: preview === 'tag-me'
-				? 'tag-me'
-				: !subscriber
-					? 'show-form'
-					: subscriber.fields?.interest === 'skills'
-						? 'subscribed'
-						: 'tag-me'
-
 	return (
 		<LayoutClient withContainer>
 			<main className="bg-background text-foreground">
-				<SkillsHero newsletterState={newsletterState} />
+				<SkillsHero />
 
 				<section aria-labelledby="skill-set-heading" className="border-b">
 					<SectionHeading>

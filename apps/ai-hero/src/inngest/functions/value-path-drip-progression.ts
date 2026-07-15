@@ -1,5 +1,6 @@
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
+import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { progressValuePathDrips } from '@/lib/subscriber-marketing/value-path-drip-progression'
@@ -23,6 +24,9 @@ export const valuePathDripProgression = inngest.createFunction(
 			readActiveGateDRuntimeAllowlist({ redis }),
 		)
 		if (!allowlistDecision.passed || !allowlistDecision.allowlist) {
+			await log.warn('subscriber_funnel.drip_blocked', {
+				funnel: 'skills-newsletter', reviewReasons: allowlistDecision.reviewReasons,
+			})
 			return {
 				status: 'blocked',
 				reviewReasons: allowlistDecision.reviewReasons,
@@ -65,7 +69,7 @@ export const valuePathDripProgression = inngest.createFunction(
 						),
 				),
 		)
-		return await step.run('progress-value-path-drips', () =>
+		const result = await step.run('progress-value-path-drips', () =>
 			progressValuePathDrips({
 				repository,
 				allowlist: allowlistDecision.allowlist!,
@@ -74,5 +78,11 @@ export const valuePathDripProgression = inngest.createFunction(
 				acceptedReviewReasons: config.acceptedReviewReasons,
 			}),
 		)
+		await log.info('subscriber_funnel.drip_run_completed', {
+			funnel: 'skills-newsletter', ...result.counts,
+			noop: result.counts.idempotentNoop + result.counts.notDue,
+			parked: result.counts.blocked,
+		})
+		return result
 	},
 )

@@ -1,6 +1,7 @@
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
+import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
@@ -28,6 +29,9 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			readActiveGateDRuntimeAllowlist({ redis }),
 		)
 		if (!allowlistDecision.passed || !allowlistDecision.allowlist) {
+			await log.warn('subscriber_funnel.email_executor_blocked', {
+				funnel: 'skills-newsletter', reviewReasons: allowlistDecision.reviewReasons,
+			})
 			return {
 				status: 'blocked',
 				reviewReasons: allowlistDecision.reviewReasons,
@@ -64,12 +68,20 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			}),
 		}))
 
-		return await step.run('execute-pending-value-path-email-intents', () =>
+		const results = await step.run('execute-pending-value-path-email-intents', () =>
 			executePendingValuePathEmailIntents({
 				repository: new DrizzleCaptureMarketingRepository(db),
 				emailListProvider,
 				config,
 			}),
 		)
+		for (const result of results) {
+			const level = result.status === 'failed' || result.status === 'retryable-failed' ? 'error' : result.status === 'blocked' ? 'warn' : 'info'
+			await log[level]('subscriber_funnel.email_intent_result', {
+				funnel: 'skills-newsletter', intentId: result.intentId,
+				status: result.status, reviewReasons: 'reviewReasons' in result ? result.reviewReasons : [],
+			})
+		}
+		return results
 	},
 )
