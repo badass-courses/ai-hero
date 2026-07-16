@@ -51,6 +51,11 @@ import {
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { replanBlockedValuePathEmailIntents } from '@/lib/subscriber-marketing/value-path-intent-replan'
 import {
+	cleanupLearnerFlowStuckFixture,
+	createLearnerFlowStuckFixture,
+	learnerFlowFixtureId,
+} from '@/lib/subscriber-marketing/learner-flow-fixture'
+import {
 	checkLearnerFlowSignupGap,
 	isTier1SignupGapReplay,
 	partitionLearnerFlowUnstickItems,
@@ -322,6 +327,23 @@ if (command === 'lookup') {
 		},
 		emit: (event) => inngest.send(event),
 	})
+	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'learner-flow-fixture-stuck') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	const repository = await createCaptureRepository()
+	const result = args.includes('--cleanup')
+		? await cleanupLearnerFlowStuckFixture({
+				repository,
+				contactId: requireFlag(args, '--contact-id'),
+				allowWrite,
+			})
+		: await createLearnerFlowStuckFixture({
+				repository,
+				fixtureId:
+					readFlag(args, '--fixture-id') ?? learnerFlowFixtureId(),
+				allowWrite,
+			})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
 	const result = await buildLearnerFlowStuckList()
@@ -627,6 +649,7 @@ if (command === 'lookup') {
 			process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 		),
 	})
+	const requestedIntentIds = readAllFlags(args, '--intent-id')
 	const result = await executePendingValuePathEmailIntents({
 		repository: await createCaptureRepository(),
 		emailListProvider,
@@ -671,6 +694,8 @@ if (command === 'lookup') {
 			retryPolicy: runtimeAllowlist?.retryPolicy,
 			providerPacingMs: readIntegerFlag(args, '--provider-pacing-ms') ?? 1500,
 			acceptedReviewReasons,
+			intentIds:
+				requestedIntentIds.length > 0 ? requestedIntentIds : undefined,
 		},
 	})
 	console.log(JSON.stringify(result, null, 2))
@@ -2727,10 +2752,12 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-gate-d-status
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --dry-run
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck [--fixture-id <id>] [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck --cleanup --contact-id <synthetic-contact-id> [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick --allow-write [--json] [--signup-gap-form-id 9376133]
-  pnpm --filter ai-hero subscriber-marketing:operator value-path-email-executor --allow-write --mode allowlisted-test --allowlisted-email joel+test@example.com --limit 1 [--provider-pacing-ms 1500]
+  pnpm --filter ai-hero subscriber-marketing:operator value-path-email-executor --allow-write --mode allowlisted-test --allowlisted-email joel+test@example.com --limit 1 [--intent-id <id>] [--provider-pacing-ms 1500]
   pnpm --filter ai-hero subscriber-marketing:operator shadow-field-preview --contact-id contact_123
   pnpm --filter ai-hero subscriber-marketing:operator content-read-event-preview [--limit 100] [--sample-limit 10] [--allow-write] [--force-large-write]
   pnpm --filter ai-hero subscriber-marketing:operator content-read-event-review-page [--limit 100] [--sample-limit 10]

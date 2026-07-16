@@ -1,4 +1,5 @@
 import { isDueRetryableValuePathEmailIntent } from './value-path-email-executor'
+import { isCleanedLearnerFlowFixtureIntent } from './learner-flow-fixture'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -188,6 +189,7 @@ export function classifyLearnerFlowContact(
 }
 
 export function isCourseValuePathIntent(intent: SideEffectIntent) {
+	if (isCleanedLearnerFlowFixtureIntent(intent)) return false
 	if (intent.provider !== 'kit' || intent.type !== 'send-value-path-email') {
 		return false
 	}
