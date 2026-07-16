@@ -9,12 +9,15 @@ export const DROPBOX_REQUIRED_SCOPES = [
 	'sharing.read',
 ] as const
 
+export type DropboxSharedSource =
+	| { kind: 'folder'; sharedFolderId: string; allowedRoot: string }
+	| { kind: 'shared-link'; sharedLink: string }
+
 export type DropboxSyncConfig = {
 	appKey: string
 	appSecret: string
 	redirectUri: string
-	sharedFolderId: string
-	allowedRoot: string
+	source: DropboxSharedSource
 }
 
 type Environment = Record<string, string | undefined>
@@ -59,22 +62,27 @@ export function getDropboxSyncConfig(
 	const appSecret = environment.DROPBOX_APP_SECRET
 	const sharedFolderId = environment.DROPBOX_SYNC_SHARED_FOLDER_ID
 	const allowedRoot = environment.DROPBOX_SYNC_ALLOWED_ROOT
+	const sharedLink = environment.DROPBOX_SYNC_SHARED_LINK
 	const redirectUri =
 		environment.DROPBOX_OAUTH_REDIRECT_URI ?? DEFAULT_DROPBOX_OAUTH_REDIRECT_URI
+	const source = sharedLink
+		? ({ kind: 'shared-link', sharedLink } as const)
+		: sharedFolderId && allowedRoot
+			? ({ kind: 'folder', sharedFolderId, allowedRoot } as const)
+			: null
 
 	const missingConfig = [
 		!appKey ? 'DROPBOX_APP_KEY' : null,
 		!appSecret ? 'DROPBOX_APP_SECRET' : null,
-		!sharedFolderId ? 'DROPBOX_SYNC_SHARED_FOLDER_ID' : null,
-		!allowedRoot ? 'DROPBOX_SYNC_ALLOWED_ROOT' : null,
+		!source ? 'DROPBOX_SYNC_SHARED_LINK or DROPBOX_SYNC_SHARED_FOLDER_ID plus DROPBOX_SYNC_ALLOWED_ROOT' : null,
 	].filter(Boolean) as string[]
 
-	if (missingConfig.length > 0 || !appKey || !appSecret || !sharedFolderId || !allowedRoot) {
+	if (missingConfig.length > 0 || !appKey || !appSecret || !source) {
 		return { config: null, missingConfig }
 	}
 
 	return {
-		config: { appKey, appSecret, redirectUri, sharedFolderId, allowedRoot },
+		config: { appKey, appSecret, redirectUri, source },
 		missingConfig: [],
 	}
 }
@@ -237,7 +245,7 @@ export async function verifyDropboxConnection({
 		requiredScopesPresent: false,
 		accountIdFingerprint: null,
 		sharedFolderBoundary: {
-			configured: Boolean(config?.sharedFolderId && config.allowedRoot),
+			configured: Boolean(config?.source),
 			verified: false,
 		},
 	}
@@ -256,20 +264,38 @@ export async function verifyDropboxConnection({
 			body: {},
 			fetchImpl,
 		})
-		const sharedFolder = await dropboxJson({
-			path: '/sharing/get_folder_metadata',
-			accessToken,
-			body: { shared_folder_id: config.sharedFolderId },
-			fetchImpl,
-		})
-		const allowedRoot = await dropboxJson({
-			path: '/files/get_metadata',
-			accessToken,
-			body: { path: config.allowedRoot },
-			fetchImpl,
-		})
-		if (!isWithinSharedFolder(allowedRoot.path_lower, sharedFolder.path_lower)) {
-			return initial
+		if (config.source.kind === 'shared-link') {
+			const sharedRoot = await dropboxJson({
+				path: '/sharing/get_shared_link_metadata',
+				accessToken,
+				body: { url: config.source.sharedLink },
+				fetchImpl,
+			})
+			const courseJson = await dropboxJson({
+				path: '/sharing/get_shared_link_metadata',
+				accessToken,
+				body: { url: config.source.sharedLink, path: '/course.json' },
+				fetchImpl,
+			})
+			if (sharedRoot['.tag'] !== 'folder' || courseJson['.tag'] !== 'file') {
+				return initial
+			}
+		} else {
+			const sharedFolder = await dropboxJson({
+				path: '/sharing/get_folder_metadata',
+				accessToken,
+				body: { shared_folder_id: config.source.sharedFolderId },
+				fetchImpl,
+			})
+			const allowedRoot = await dropboxJson({
+				path: '/files/get_metadata',
+				accessToken,
+				body: { path: config.source.allowedRoot },
+				fetchImpl,
+			})
+			if (!isWithinSharedFolder(allowedRoot.path_lower, sharedFolder.path_lower)) {
+				return initial
+			}
 		}
 
 		return {

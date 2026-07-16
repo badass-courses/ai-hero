@@ -24,7 +24,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('Dropbox course sync OAuth', () => {
-	it('requires a shared folder and allowed root before starting OAuth', () => {
+	it('requires an approved Dropbox source boundary before starting OAuth', () => {
 		const result = getDropboxSyncConfig({
 			DROPBOX_APP_KEY: 'app-key',
 			DROPBOX_APP_SECRET: 'app-secret',
@@ -32,8 +32,7 @@ describe('Dropbox course sync OAuth', () => {
 
 		expect(result.config).toBeNull()
 		expect(result.missingConfig).toEqual([
-			'DROPBOX_SYNC_SHARED_FOLDER_ID',
-			'DROPBOX_SYNC_ALLOWED_ROOT',
+			'DROPBOX_SYNC_SHARED_LINK or DROPBOX_SYNC_SHARED_FOLDER_ID plus DROPBOX_SYNC_ALLOWED_ROOT',
 		])
 	})
 
@@ -110,6 +109,38 @@ describe('Dropbox course sync OAuth', () => {
 
 		expect(result.ok).toBe(false)
 		expect(result.sharedFolderBoundary.verified).toBe(false)
+	})
+
+	it('accepts a shared link and proves it contains the root course manifest', async () => {
+		const { config } = getDropboxSyncConfig({
+			DROPBOX_APP_KEY: 'app-key',
+			DROPBOX_APP_SECRET: 'app-secret',
+			DROPBOX_SYNC_SHARED_LINK: 'https://www.dropbox.com/scl/fo/example?rlkey=example',
+		})
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ access_token: 'short-lived-token' }))
+			.mockResolvedValueOnce(jsonResponse({ account_id: 'dbid:account-id' }))
+			.mockResolvedValueOnce(jsonResponse({ '.tag': 'folder' }))
+			.mockResolvedValueOnce(jsonResponse({ '.tag': 'file' }))
+
+		const result = await verifyDropboxConnection({
+			config,
+			refreshToken: 'stored-refresh-token',
+			fetchImpl,
+		})
+
+		expect(result).toMatchObject({
+			ok: true,
+			sharedFolderBoundary: { configured: true, verified: true },
+		})
+		expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({
+			url: 'https://www.dropbox.com/scl/fo/example?rlkey=example',
+		})
+		expect(JSON.parse(fetchImpl.mock.calls[3][1].body)).toEqual({
+			url: 'https://www.dropbox.com/scl/fo/example?rlkey=example',
+			path: '/course.json',
+		})
 	})
 
 	it('stores the callback-issued refresh token as encrypted Vercel configuration', async () => {

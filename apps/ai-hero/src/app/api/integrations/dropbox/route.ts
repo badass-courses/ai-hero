@@ -113,7 +113,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		}
 		if (!config) {
 			await log.error('dropbox-course-sync.callback.misconfigured', { requestId, missingConfig })
-			return page('Dropbox connection is not configured', '<p>Configure the Dropbox app, shared-folder ID, and approved root before retrying.</p>', true)
+			return page('Dropbox connection is not configured', '<p>Configure the Dropbox app and one approved shared source, either a shared link or a shared-folder ID plus approved root, before retrying.</p>', true)
 		}
 
 		try {
