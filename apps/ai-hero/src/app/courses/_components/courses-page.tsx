@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
+import { ResourceRow } from '@/components/landing/resource-row'
 import { MoreWaysLink } from '@/app/learn/_components/more-ways-link'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import {
@@ -39,11 +40,14 @@ export function CoursesPage({
 	flagship,
 	isPurchasable,
 	alumniLabel,
+	comingNext,
 }: {
 	flagship: UpcomingCohortSummary | null
 	isPurchasable: boolean
 	/** e.g. "8,500+" — null hides the stat. */
 	alumniLabel: string | null
+	/** Crash-course pre-launch row; null (workshop missing) hides the section. */
+	comingNext: { image?: string } | null
 }) {
 	return (
 		<main className="bg-background text-foreground">
@@ -184,20 +188,32 @@ export function CoursesPage({
 				<CompanyLogoGrid className="pt-6" />
 			</section>
 
-			{/* 5. Bookend — coming-next strip welded onto the waitlist capture:
-			    the strip's promise ("the list hears first") IS the form below it */}
+			{/* 5. Coming next — the crash course's pre-launch page is a public
+			    interest-capture with its own waitlist form, so this is a real
+			    click-through row, not an announcement. Row supplies the bottom
+			    hairline (its own border-y), so the section carries no border-b. */}
+			{comingNext ? (
+				<section aria-label={COURSES_COMING_NEXT.title}>
+					<div className="px-8 pb-8 pt-12 sm:px-16">
+						<p className={MONO_LABEL}>{COURSES_COMING_NEXT.eyebrow}</p>
+					</div>
+					<ResourceRow
+						title={COURSES_COMING_NEXT.title}
+						description={COURSES_COMING_NEXT.description}
+						href={`/workshops/${COURSES_COMING_NEXT.slug}`}
+						image={comingNext.image}
+						typeLabel={COURSES_COMING_NEXT.typeLabel}
+						badge={COURSES_COMING_NEXT.badge}
+						fallbackPlaceholder="Course"
+					/>
+				</section>
+			) : null}
+
+			{/* 6. Newsletter bookend — the general capture */}
 			<section
 				id={COURSES_NEWSLETTER.anchorId}
 				className="scroll-mt-24"
 			>
-				<div className="bg-muted border-b">
-					<div className="flex flex-col gap-2 px-8 py-8 sm:px-16">
-						<p className={MONO_LABEL}>{COURSES_COMING_NEXT.eyebrow}</p>
-						<p className="text-foreground/80 max-w-[65ch] text-base leading-relaxed sm:text-lg">
-							{COURSES_COMING_NEXT.body}
-						</p>
-					</div>
-				</div>
 				<div className="px-8 py-16 sm:px-16 md:py-24">
 					<PrimaryNewsletterCta
 						title={COURSES_NEWSLETTER.title}

@@ -4,10 +4,12 @@ import {
 	formatAlumniCount,
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
+import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import {
 	getLatestCohort,
 	getUpcomingCohort,
 } from '@/lib/upcoming-cohort-query'
+import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 
 import { CoursesPage } from './_components/courses-page'
 
@@ -25,9 +27,10 @@ export const metadata: Metadata = {
 export default async function CoursesRoute() {
 	// Purchasable cohort wins; between cohorts the latest published cohort is
 	// the waitlist target (never the /cohorts index — standing rule).
-	const [upcoming, alumniCount] = await Promise.all([
+	const [upcoming, alumniCount, comingNextWorkshop] = await Promise.all([
 		getUpcomingCohort(),
 		getCachedCohortAlumniCount(),
+		getCachedMinimalWorkshop(COURSES_COMING_NEXT.slug),
 	])
 	const flagship = upcoming ?? (await getLatestCohort())
 
@@ -37,6 +40,11 @@ export default async function CoursesRoute() {
 				flagship={flagship}
 				isPurchasable={Boolean(upcoming)}
 				alumniLabel={formatAlumniCount(alumniCount)}
+				comingNext={
+					comingNextWorkshop
+						? { image: comingNextWorkshop.fields?.coverImage?.url }
+						: null
+				}
 			/>
 		</LayoutClient>
 	)

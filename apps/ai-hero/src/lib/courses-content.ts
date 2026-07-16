@@ -93,9 +93,20 @@ export const COURSES_TESTIMONIALS = [
 	},
 ] as const
 
+/**
+ * The crash course pre-launch row. The workshop (`ai-coding-crash-course`) is
+ * draft + unlisted on purpose: its page is a public interest-capture landing
+ * with its own "Join Waitlist" Kit form, so the row clicks straight through
+ * to that list. Image is fetched live from the workshop resource in page.tsx.
+ */
 export const COURSES_COMING_NEXT = {
 	eyebrow: 'Coming next',
-	body: 'A self-paced AI Coding Crash Course is in production right now. The list below hears the moment it ships.',
+	title: 'AI Coding Crash Course',
+	slug: 'ai-coding-crash-course',
+	typeLabel: 'Self-paced course · In production',
+	badge: 'Waitlist open',
+	description:
+		'Matt is recording a self-paced AI coding course you can start any day, no cohort dates required. Join the waitlist and you hear the moment it ships.',
 } as const
 
 export const COURSES_NEWSLETTER = {
