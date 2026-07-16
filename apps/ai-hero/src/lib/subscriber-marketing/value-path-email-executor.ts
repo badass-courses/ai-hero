@@ -354,6 +354,11 @@ export function buildValuePathEmailPersonalization(args: {
 		aih_value_path_slug: args.valuePathSlug!,
 		aih_value_path_answer_links_json: JSON.stringify(answerLinks),
 	}
+	// Lifecycle property (Joel: properties with a date over tags) — campaign
+	// audiences exclude course starters by this field being present.
+	if (emailId === 'email-0') {
+		fields.aih_course_started_at = new Date().toISOString()
+	}
 	for (const [index, link] of answerLinks.entries()) {
 		const ordinal = String(index + 1)
 		fields[`aih_value_path_answer_${ordinal}_url`] = link.href
