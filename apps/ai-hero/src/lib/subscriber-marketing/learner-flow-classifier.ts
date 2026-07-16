@@ -96,19 +96,6 @@ export function classifyLearnerFlowContact(
 		}
 	}
 
-	if (
-		input.contactState?.humanReview ||
-		input.contactState?.lifecycle === 'human-review'
-	) {
-		return stuck({
-			stage,
-			cause: 'human-review-parked',
-			contactId: input.contactId,
-			lastActivityAt,
-			now: input.now,
-		})
-	}
-
 	const blocked = pathIntents.find((intent) => intent.status === 'blocked')
 	if (blocked) {
 		return stuck({
@@ -177,11 +164,18 @@ export function classifyLearnerFlowContact(
 		}
 	}
 
-	if (
-		lastActivityAt &&
-		hoursSince(lastActivityAt, input.now) <= LEARNER_FLOW_MOVEMENT_TOLERANCE_HOURS
-	) {
+	if (hasRecentCourseProgress(pathIntents, input.now)) {
 		return { state: 'moving', stage }
+	}
+
+	if (hasBlockingHumanReview(input)) {
+		return stuck({
+			stage,
+			cause: 'human-review-parked',
+			contactId: input.contactId,
+			lastActivityAt,
+			now: input.now,
+		})
 	}
 
 	return stuck({
@@ -352,6 +346,26 @@ function isScheduledRetry(intent: SideEffectIntent, now: string) {
 		typeof nextRetryAt === 'string' &&
 		validDate(nextRetryAt) &&
 		new Date(nextRetryAt) > new Date(now)
+	)
+}
+
+function hasRecentCourseProgress(intents: SideEffectIntent[], now: string) {
+	return intents.some(
+		(intent) =>
+			(intent.status === 'pending' || intent.status === 'completed') &&
+			!exceedsMovementTolerance(intent, now),
+	)
+}
+
+function hasBlockingHumanReview(input: LearnerFlowContactInput) {
+	return Boolean(
+		input.contactState?.humanReview ||
+			input.contactState?.lifecycle === 'human-review' ||
+			input.intents.some(
+				(intent) =>
+					intent.type === 'human-review' &&
+					(intent.status === 'blocked' || intent.status === 'pending'),
+			),
 	)
 }
 

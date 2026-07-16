@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import { LEARNER_FLOW_STUCK_CAUSES } from "./learner-flow-classifier";
 import {
   actionEnvelopeCoversEveryLearnerFlowCause,
+  checkLearnerFlowSignupGap,
   isTier1SignupGapReplay,
   learnerFlowActionTier,
   learnerFlowUnstickAction,
   partitionLearnerFlowUnstickItems,
 } from "./learner-flow-unstick";
+import { SignupGapSourceUnavailableError } from "./signup-gap-recovery";
 
 describe("learner flow unstick action envelope", () => {
   it("maps every classifier cause to exactly one executable tier", () => {
@@ -49,6 +51,26 @@ describe("learner flow unstick action envelope", () => {
     expect(partition.tier1[0]).toMatchObject({ intentId: "blocked-intent-1" });
     expect(partition.tier2.map((item) => item.contactId)).toEqual(["ask"]);
     expect(partition.tier3).toEqual([]);
+  });
+
+  it("keeps DB cause partitioning available when the Kit gap source stays down", async () => {
+    const partition = partitionLearnerFlowUnstickItems([
+      { contactId: "blocked", stage: "email-1", cause: "blocked-intent" },
+    ]);
+    const gapCheck = await checkLearnerFlowSignupGap(async () => {
+      throw new SignupGapSourceUnavailableError({
+        attempts: 3,
+        statusCode: 500,
+      });
+    });
+
+    expect(partition.tier1).toHaveLength(1);
+    expect(gapCheck).toMatchObject({
+      status: "source-unavailable",
+      source: "kit",
+      attempts: 3,
+      statusCode: 500,
+    });
   });
 
   it("permits signup-gap replay only for fresh batches of 25 or fewer", () => {

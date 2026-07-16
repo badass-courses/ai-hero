@@ -124,11 +124,40 @@ describe('learner-flow classifier', () => {
 		expect(result.unstickCommand).toBeTruthy()
 	})
 
-	it('parks human review for a person instead of trying an automated cure', () => {
+	it('keeps a progressing contact moving despite the human-review companion', () => {
 		const result = classify({
 			contactId: 'contact-1',
 			contactState: { humanReview: true, lifecycle: 'human-review' },
-			intents: [intent()],
+			intents: [
+				intent({
+					id: 'email-0',
+					status: 'completed',
+					metadata: { completedAt: '2026-07-15T10:00:00.000Z' },
+				}),
+				intent({
+					id: 'email-1',
+					createdAt: '2026-07-15T11:00:00.000Z',
+					metadata: { emailResourceId: 'ai-hero-skills-workflow.email-1' },
+				}),
+				intent({
+					id: 'review-companion',
+					provider: 'dry-run',
+					type: 'human-review',
+					status: 'blocked',
+				}),
+			],
+		})
+		expect(result).toMatchObject({
+			state: 'moving',
+			stage: 'ai-hero-skills-workflow.email-1',
+		})
+	})
+
+	it('parks human review only after course progression stalls', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			contactState: { humanReview: true, lifecycle: 'human-review' },
+			intents: [intent({ createdAt: '2026-07-12T11:00:00.000Z' })],
 		})
 		expect(result).toMatchObject({
 			state: 'stuck',

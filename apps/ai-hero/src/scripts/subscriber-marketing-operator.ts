@@ -42,6 +42,7 @@ import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketin
 import { syncShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-sync'
 import {
 	buildSignupGapPreview,
+	fetchKitSignupGapPageWithRetry,
 	normalizeSignupGapEmail,
 	replaySignupGap,
 	signupGapPreviewForOutput,
@@ -50,6 +51,7 @@ import {
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { replanBlockedValuePathEmailIntents } from '@/lib/subscriber-marketing/value-path-intent-replan'
 import {
+	checkLearnerFlowSignupGap,
 	isTier1SignupGapReplay,
 	partitionLearnerFlowUnstickItems,
 } from '@/lib/subscriber-marketing/learner-flow-unstick'
@@ -961,20 +963,33 @@ async function buildLearnerFlowUnstick(args: {
 	const dripIntentIds = new Set(
 		dripItems.flatMap((item) => (item.intentId ? [item.intentId] : [])),
 	)
-	const signupGapPreview = await buildSignupGapOperatorPreview({
-		formId: args.formId,
+	const signupGapWindow = {
 		from: new Date(Date.parse(generatedAt) - 47 * 60 * 60 * 1000).toISOString(),
 		to: generatedAt,
-	})
-	const signupGapEligible =
-		signupGapPreview.counts.replayable > 0 &&
-		isTier1SignupGapReplay({
-			candidateCount: signupGapPreview.counts.replayable,
-			candidateCreatedAt: signupGapPreview.candidates
-				.filter((candidate) => !candidate.excludedSynthetic)
-				.map((candidate) => candidate.createdAt),
-			now: generatedAt,
-		})
+	}
+	const signupGapCheck = await checkLearnerFlowSignupGap(() =>
+		buildSignupGapOperatorPreview({
+			formId: args.formId,
+			...signupGapWindow,
+		}),
+	)
+	const signupGapPreview =
+		signupGapCheck.status === 'available' ? signupGapCheck.preview : undefined
+	const signupGapUnavailable =
+		signupGapCheck.status === 'source-unavailable'
+			? signupGapCheck
+			: undefined
+	const signupGapEligible = Boolean(
+		signupGapPreview &&
+			signupGapPreview.counts.replayable > 0 &&
+			isTier1SignupGapReplay({
+				candidateCount: signupGapPreview.counts.replayable,
+				candidateCreatedAt: signupGapPreview.candidates
+					.filter((candidate) => !candidate.excludedSynthetic)
+					.map((candidate) => candidate.createdAt),
+				now: generatedAt,
+			}),
+	)
 	const requiresGateD = retryIntentIds.length > 0 || dripContactIds.length > 0
 	const allowlist =
 		args.allowWrite && requiresGateD ? await requireActiveGateDAllowlist() : undefined
@@ -1041,7 +1056,7 @@ async function buildLearnerFlowUnstick(args: {
 			})
 			: undefined
 	const signupGapReplay =
-		args.allowWrite && signupGapEligible
+		args.allowWrite && signupGapEligible && signupGapPreview
 			? await replaySignupGap({
 					preview: signupGapPreview,
 					source: 'learner-flow-unstick',
@@ -1065,7 +1080,9 @@ async function buildLearnerFlowUnstick(args: {
 			cause: item.cause,
 			proposedCommand: item.unstickCommand,
 		})),
-		...(signupGapPreview.counts.replayable > 0 && !signupGapEligible
+		...(signupGapPreview &&
+		signupGapPreview.counts.replayable > 0 &&
+		!signupGapEligible
 			? [{
 				contactId: 'signup-gap-batch',
 				stage: 'signup-recovery',
@@ -1096,13 +1113,30 @@ async function buildLearnerFlowUnstick(args: {
 					deferred: retryIntentIds.length - retryableIntentIds.length,
 				},
 				drip: drip?.counts ?? { contactCount: dripContactIds.length, planned: 0 },
-				signupGap: {
-					formId: args.formId,
-					window: signupGapPreview.window,
-					replayable: signupGapPreview.counts.replayable,
-					eligible: signupGapEligible,
-					emitted: signupGapReplay?.counts.emitted ?? 0,
-				},
+				signupGap:
+					signupGapPreview
+						? {
+							status: 'available' as const,
+							formId: args.formId,
+							window: signupGapPreview.window,
+							replayable: signupGapPreview.counts.replayable,
+							eligible: signupGapEligible,
+							emitted: signupGapReplay?.counts.emitted ?? 0,
+						}
+						: {
+							status: 'source-unavailable' as const,
+							formId: args.formId,
+							window: signupGapWindow,
+							replayable: 0,
+							eligible: false,
+							emitted: 0,
+							source: signupGapUnavailable?.source ?? 'kit',
+							attempts: signupGapUnavailable?.attempts ?? 0,
+							statusCode: signupGapUnavailable?.statusCode,
+							message:
+								signupGapUnavailable?.message ??
+								'Kit signup-gap source unavailable',
+						},
 			},
 				tier2: { ask: tier2Ask },
 			tier3: { actionCount: 0 },
@@ -1117,7 +1151,7 @@ function formatLearnerFlowUnstick(
 		`Learner flow unstick (${result.allowWrite ? 'allow-write' : 'dry-run'})`,
 		`Generated: ${result.generatedAt}`,
 		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
-		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
+		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
 		`Tier 2 ask Joel: ${result.tiers.tier2.ask.length}`,
 	]
 	for (const item of result.tiers.tier2.ask) {
@@ -2151,8 +2185,11 @@ async function fetchKitFormSubscriberRecords(args: {
 			new Date(args.addedAfter).toISOString().slice(0, 10),
 		)
 		if (cursor) url.searchParams.set('after', cursor)
-		const response = await fetch(url, {
-			headers: { 'X-Kit-Api-Key': apiKey },
+		const response = await fetchKitSignupGapPageWithRetry({
+			request: () =>
+				fetch(url, {
+					headers: { 'X-Kit-Api-Key': apiKey },
+				}),
 		})
 		const data = (await response.json()) as Record<string, any>
 		if (!response.ok) {

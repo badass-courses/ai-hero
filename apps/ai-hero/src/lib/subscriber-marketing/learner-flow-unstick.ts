@@ -2,6 +2,10 @@ import {
   LEARNER_FLOW_STUCK_CAUSES,
   type LearnerFlowStuckCause,
 } from "./learner-flow-classifier";
+import {
+  SignupGapSourceUnavailableError,
+  type SignupGapPreview,
+} from "./signup-gap-recovery";
 
 export type LearnerFlowActionTier = "tier-1-auto" | "tier-2-ask";
 
@@ -29,6 +33,33 @@ export type LearnerFlowTierPartition = {
   tier2: Array<LearnerFlowStuckItem & { action: "ask-joel" }>;
   tier3: never[];
 };
+
+export type LearnerFlowSignupGapCheck =
+  | { status: "available"; preview: SignupGapPreview }
+  | {
+      status: "source-unavailable";
+      source: "kit";
+      attempts: number;
+      statusCode?: number;
+      message: string;
+    };
+
+export async function checkLearnerFlowSignupGap(
+  loadPreview: () => Promise<SignupGapPreview>,
+): Promise<LearnerFlowSignupGapCheck> {
+  try {
+    return { status: "available", preview: await loadPreview() };
+  } catch (error) {
+    if (!(error instanceof SignupGapSourceUnavailableError)) throw error;
+    return {
+      status: "source-unavailable",
+      source: error.source,
+      attempts: error.attempts,
+      statusCode: error.statusCode,
+      message: error.message,
+    };
+  }
+}
 
 /**
  * The action envelope is deliberately total: every classifier cause has one

@@ -69,6 +69,58 @@ export type SignupGapReplayReceipt = {
 	note: string
 }
 
+export const SIGNUP_GAP_KIT_FETCH_ATTEMPTS = 3
+export const SIGNUP_GAP_KIT_FETCH_BACKOFF_MS = 250
+
+export class SignupGapSourceUnavailableError extends Error {
+	readonly source = 'kit' as const
+	readonly attempts: number
+	readonly statusCode?: number
+
+	constructor(args: { attempts: number; statusCode?: number }) {
+		super(
+			`Kit signup-gap source unavailable after ${args.attempts} attempts${args.statusCode ? ` (HTTP ${args.statusCode})` : ''}`,
+		)
+		this.name = 'SignupGapSourceUnavailableError'
+		this.attempts = args.attempts
+		this.statusCode = args.statusCode
+	}
+}
+
+export async function fetchKitSignupGapPageWithRetry(args: {
+	request: (attempt: number) => Promise<Response>
+	maxAttempts?: number
+	backoffMs?: number
+	sleep?: (milliseconds: number) => Promise<void>
+}) {
+	const maxAttempts = args.maxAttempts ?? SIGNUP_GAP_KIT_FETCH_ATTEMPTS
+	const backoffMs = args.backoffMs ?? SIGNUP_GAP_KIT_FETCH_BACKOFF_MS
+	const sleep = args.sleep ?? wait
+	if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+		throw new Error('Kit signup-gap fetch attempts must be a positive integer')
+	}
+
+	let lastStatusCode: number | undefined
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			const response = await args.request(attempt)
+			if (response.status < 500 || response.status > 599) return response
+			lastStatusCode = response.status
+		} catch {
+			lastStatusCode = undefined
+		}
+
+		if (attempt < maxAttempts) {
+			await sleep(backoffMs * 2 ** (attempt - 1))
+		}
+	}
+
+	throw new SignupGapSourceUnavailableError({
+		attempts: maxAttempts,
+		statusCode: lastStatusCode,
+	})
+}
+
 const SYNTHETIC_LOCAL_PREFIXES = [
 	'joel+aih-warmup-synth-',
 	'joel+aih-synth-',
@@ -236,6 +288,10 @@ export function normalizeSignupGapEmail(email?: string | null) {
 	const at = normalized.lastIndexOf('@')
 	if (at < 1 || at === normalized.length - 1) return undefined
 	return normalized
+}
+
+function wait(milliseconds: number) {
+	return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function parseSignupGapWindow(from: string, to: string) {
