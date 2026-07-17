@@ -74,6 +74,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					emailZeroPlanned: result.entry.counts.planned,
 					blocked: result.entry.counts.blocked,
 					idempotentNoop: result.entry.counts.idempotentNoop,
+					...(event.data.signupGapLiveness ?? {}),
 				})
 			}
 			return result

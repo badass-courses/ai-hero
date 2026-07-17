@@ -44,6 +44,10 @@ export type SignupGapPreview = {
 		excludedSynthetic: number
 		replayable: number
 	}
+	workSeen: number
+	workDone: number
+	oldestUnservedAgeHours: number | null
+	oldestUnservedAt: string | null
 	candidates: SignupGapPreviewCandidate[]
 }
 
@@ -58,8 +62,13 @@ export type SignupGapPreviewOutput = Omit<SignupGapPreview, 'candidates'> & {
 
 export type SignupGapReplayReceipt = {
 	mode: 'signup-gap-replay'
+	generatedAt: string
 	formId: number
 	window: SignupGapPreview['window']
+	workSeen: number
+	workDone: number
+	oldestUnservedAgeHours: number | null
+	oldestUnservedAt: string | null
 	counts: {
 		previewed: number
 		excludedSynthetic: number
@@ -185,9 +194,13 @@ export function buildSignupGapPreview(args: {
 	const excludedSynthetic = candidates.filter(
 		(candidate) => candidate.excludedSynthetic,
 	).length
+	const generatedAt = new Date(
+		args.now ?? new Date().toISOString(),
+	).toISOString()
+	const liveness = signupGapLiveness(candidates, generatedAt)
 	return {
 		mode: 'signup-gap-preview',
-		generatedAt: new Date(args.now ?? new Date().toISOString()).toISOString(),
+		generatedAt,
 		formId: args.formId,
 		window: { from: window.from, to: window.to },
 		counts: {
@@ -200,6 +213,7 @@ export function buildSignupGapPreview(args: {
 			excludedSynthetic,
 			replayable: candidates.length - excludedSynthetic,
 		},
+		...liveness,
 		candidates,
 	}
 }
@@ -229,6 +243,7 @@ export async function replaySignupGap(args: {
 	let excludedSynthetic = 0
 	let skippedExisting = 0
 	let emitted = 0
+	const candidatesToEmit: SignupGapPreviewCandidate[] = []
 
 	for (const candidate of args.preview.candidates) {
 		if (candidate.excludedSynthetic) {
@@ -239,6 +254,15 @@ export async function replaySignupGap(args: {
 			skippedExisting += 1
 			continue
 		}
+		candidatesToEmit.push(candidate)
+	}
+
+	const workSeen = args.preview.workSeen
+	for (const [index, candidate] of candidatesToEmit.entries()) {
+		const remaining = signupGapLiveness(
+			candidatesToEmit.slice(index + 1),
+			args.preview.generatedAt,
+		)
 		await args.emit({
 			name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 			data: {
@@ -248,6 +272,12 @@ export async function replaySignupGap(args: {
 				formId: args.preview.formId,
 				source: args.source ?? 'signup-gap-replay',
 				subscribedAt: candidate.createdAt,
+				signupGapLiveness: {
+					workSeen,
+					workDone: skippedExisting + emitted + 1,
+					oldestUnservedAgeHours: remaining.oldestUnservedAgeHours,
+					oldestUnservedAt: remaining.oldestUnservedAt,
+				},
 			},
 		})
 		emitted += 1
@@ -255,8 +285,13 @@ export async function replaySignupGap(args: {
 
 	return {
 		mode: 'signup-gap-replay',
+		generatedAt: args.preview.generatedAt,
 		formId: args.preview.formId,
 		window: args.preview.window,
+		workSeen,
+		workDone: skippedExisting + emitted,
+		oldestUnservedAgeHours: null,
+		oldestUnservedAt: null,
 		counts: {
 			previewed: args.preview.counts.gapCandidates,
 			excludedSynthetic,
@@ -265,6 +300,29 @@ export async function replaySignupGap(args: {
 		},
 		note:
 			'Each emitted replay enters the live drip and leads to a real email-0 send.',
+	}
+}
+
+function signupGapLiveness(
+	candidates: readonly SignupGapPreviewCandidate[],
+	generatedAt: string,
+) {
+	const replayable = candidates.filter((candidate) => !candidate.excludedSynthetic)
+	const oldestUnservedAt = replayable
+		.map((candidate) => candidate.createdAt)
+		.sort()[0] ?? null
+	return {
+		workSeen: replayable.length,
+		workDone: 0,
+		oldestUnservedAgeHours:
+			oldestUnservedAt === null
+				? null
+				: Math.max(
+						0,
+						(Date.parse(generatedAt) - Date.parse(oldestUnservedAt)) /
+							(60 * 60 * 1000),
+					),
+		oldestUnservedAt,
 	}
 }
 

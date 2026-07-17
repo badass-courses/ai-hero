@@ -12,6 +12,12 @@ export type SkillsNewsletterSubscribed = {
 		formId: number
 		source: string
 		subscribedAt: string
+		signupGapLiveness?: {
+			workSeen: number
+			workDone: number
+			oldestUnservedAgeHours: number | null
+			oldestUnservedAt: string | null
+		}
 		optInAttribution?: OptInAttribution
 	}
 }
