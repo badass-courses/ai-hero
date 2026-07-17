@@ -4,7 +4,7 @@ type: "step"
 kind: "grilling"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "claude (flagg, herdr pane w19:p1, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: ["./inventory-content-api-surface.svx"]
 created_at: "2026-07-17"

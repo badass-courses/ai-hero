@@ -22,6 +22,12 @@ Build (execution authorized in the brief):
 4. Structured auth log on every token verify: token kind, publicId prefix, scopes, outcome (accepted / denied+reason). No raw token material in logs.
 5. The CI coverage-matrix test table implementing the approved matrix (route × method × token kind × expected status).
 
+Facts from [Inventory the Content API Surface and Draft the Coverage Matrix](./inventory-content-api-surface.svx) (2026-07-17):
+
+- `can('read', 'Content')` alone is NOT sufficient for privileged read: posts/lessons services key draft/private visibility on `ability.can('update', 'Content')` (`posts.service.ts:44-51`, `lessons.service.ts:49-56`) and posts list-all is owner-filtered. The scope registry must emit an explicit privileged-read signal the services branch on — never grant `update` to a read token.
+- Search hard-codes `state:=published` and has no visibility filter (`search/route.ts:120-160`); privileged read branches the Typesense filter.
+- Close the three pre-existing anonymous holes while wiring the seam (per approved matrix): anonymous single-resource `/api/resources` branch, anonymous `/api/uploads/signed-url`, search missing `visibility` filter for anonymous callers.
+
 Constraint from charter: if seam unification balloons, constrain to "PATs verify + device path untouched" and charter full unification as its own step.
 
 Resolved when the matrix suite passes in CI and a locally minted token demonstrably reads an unpublished post in dev while a write 403s.

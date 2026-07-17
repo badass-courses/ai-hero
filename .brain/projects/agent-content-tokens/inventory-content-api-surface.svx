@@ -3,11 +3,12 @@ title: "Inventory the Content API Surface and Draft the Coverage Matrix"
 type: "step"
 kind: "research"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi (flagg, herdr pane w19:p2, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: []
 created_at: "2026-07-17"
+closed_at: "2026-07-17"
 ---
 
 # Inventory the Content API Surface and Draft the Coverage Matrix
@@ -24,3 +25,55 @@ Also establish the facts later steps depend on:
 - How the current `getAbility` CASL rules express "read including unpublished" — what rule set a scope-derived privileged-read ability needs.
 
 Resolved when the matrix draft asset exists with a recommendation per row and the four fact-finds are answered in the Result.
+
+## Result (2026-07-17)
+
+The draft is [Agent Token Content API Coverage Matrix Draft](./coverage-matrix-draft.svx): 50 exported route-method rows across all 18 `route.ts` files under `apps/ai-hero/src/app/api/(content)/`. A whole `apps/ai-hero/src/app/api` scan found no additional direct `ability.can('read', 'Content')` / `ability.cannot('read', 'Content')` gate outside that route group; the direct route checks are products GET and resources list-all GET (`apps/ai-hero/src/app/api/(content)/products/route.ts:41`, `apps/ai-hero/src/app/api/(content)/resources/route.ts:65`).
+
+### `PersonalAccessToken` schema, migration, and query surface
+
+- **Schema export: yes.** AI Hero destructures and exports `personalAccessToken` plus `personalAccessTokenRelations` from `getCourseBuilderSchema(mysqlTable)` (`apps/ai-hero/src/db/schema.ts:15-18`, `apps/ai-hero/src/db/schema.ts:98-107`). The installed `@coursebuilder/adapter-drizzle@2.0.0` schema defines the `PersonalAccessToken` table, lifecycle fields, indexes, and user relation (`node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/lib/mysql/schemas/auth/personal-access-token.ts:15-72`, `node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/lib/mysql/schemas/auth/personal-access-token.ts:76-107`).
+- **Migration: absent in this repo/package.** None of the five checked-in SQL files under `apps/ai-hero/src/db/migrations/` creates or alters `PersonalAccessToken`; the installed adapter package contains the schema factory but no PAT migration. AI Hero exposes generic `db:push`, `db:generate`, `db:migrate`, and `db:introspect` scripts (`apps/ai-hero/package.json:14-19`), but no checked-in migration establishes this table.
+- **Production table: unverified by design.** The only in-repo database binding is the general `DATABASE_URL` (`apps/ai-hero/src/env.mjs:22-29`, `apps/ai-hero/src/db/index.ts:12-16`); there is no distinct read-only production connection or read-only inspection command. I did not use production credentials. A later launch step must prove the table exists with an approved read-only schema query or apply a reviewed migration before minting tokens.
+- **Queries: direct Drizzle only.** Registering the schema gives `db.query.personalAccessToken` and direct insert/update access; the dormant token lib already documents those calls (`apps/ai-hero/src/lib/personal-access-tokens.ts:60-79`, `apps/ai-hero/src/lib/personal-access-tokens.ts:122-133`). The installed `DrizzleAdapter` does **not** expose PAT-specific create/find/list/revoke methods: PAT occurs in its MySQL schema assembly (`node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/lib/mysql/index.ts:436-440`), not in the adapter entry surface (`node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/index.ts:17-28`).
+
+### `PERSONAL_ACCESS_TOKEN_SECRET`
+
+`PERSONAL_ACCESS_TOKEN_SECRET` (and any equivalent PAT hash secret) is absent from the server schema and `runtimeEnv` in `apps/ai-hero/src/env.mjs` (`apps/ai-hero/src/env.mjs:9-153`, `apps/ai-hero/src/env.mjs:155-263`), Turbo build passthrough (`turbo.json:7-68`), and `apps/ai-hero/.env.example` (whole file). The token library expects it as the HMAC-SHA-256 key/pepper and rejects an empty value (`apps/ai-hero/src/lib/personal-access-tokens.ts:60-75`, `apps/ai-hero/src/lib/personal-access-tokens.ts:166-187`). **Provisioning needed:** add a required server-only `PERSONAL_ACCESS_TOKEN_SECRET` to `env.mjs` server/runtime mappings, Turbo build env, `.env.example` placeholder, and every deployed environment before PAT verification is enabled; use one stable high-entropy secret and never expose it to `NEXT_PUBLIC_*`.
+
+### CASL rule shape for privileged read
+
+The scope-derived privileged-read ability should add exactly the unconditional rule:
+
+```ts
+can('read', 'Content')
+```
+
+That is the same subject/action shape used for the reviewer role (`apps/ai-hero/src/ability/index.ts:142-143`), but it must be built from token scopes alone. Current role rules are broader or conditional:
+
+```ts
+// admin
+can('manage', 'all')
+
+// contributor
+can('create', 'Content')
+can('manage', 'Content', { createdById: { $eq: options.user.id } })
+can('save', 'Content', { createdById: { $eq: options.user.id } })
+can('publish', 'Content', { createdById: { $eq: options.user.id } })
+can('archive', 'Content', { createdById: { $eq: options.user.id } })
+can('unpublish', 'Content', { createdById: { $eq: options.user.id } })
+```
+
+Those rules are at `apps/ai-hero/src/ability/index.ts:125-143`. `manage` implies read for the admin and for a contributor's own matching content; a `content:read` token must receive neither `manage`, `update`, `create`, nor owner-role inheritance.
+
+**Important mismatch:** CASL does not currently encode draft/private visibility. Posts and lessons choose `['draft', 'published']` plus private visibility only when `ability.can('update', 'Content')`; otherwise they query only published public/unlisted rows (`apps/ai-hero/src/lib/posts/posts.service.ts:44-67`, `apps/ai-hero/src/lib/lessons/lessons.service.ts:49-72`). Therefore `can('read', 'Content')` is the correct rule, but it is not sufficient by itself to fulfill privileged read. Those query filters must key off an explicit privileged-read signal/rule rather than granting the token `update`. Search separately hard-codes `state:=published` and omits a visibility filter (`apps/ai-hero/src/app/api/(content)/search/route.ts:120-132`).
+
+### Reads that cross beyond content
+
+- **Exclude `/api/[videoResourceId]` GET as-is.** It returns playable `muxPlaybackId`, internal `muxAssetId`, transcript, and chapters (`apps/ai-hero/src/app/api/(content)/[videoResourceId]/route.ts:39-62`; adapter projection at `node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/lib/mysql/index.ts:3063-3083`). Recommendation: a later sanitized transcript/content projection may be included, but not this payload.
+- **Include-with-note `/api/resources` GET.** The generic single-resource branch is currently ungated and can return raw/nested `videoResource` fields (`apps/ai-hero/src/app/api/(content)/resources/route.ts:37-127`). Recommendation: gate every branch and reject or sanitize capability-bearing video fields while preserving draft/private CMS content.
+- **Exclude all uploads and signed URLs.** `/api/uploads/signed-url` GET is currently anonymous and returns an S3 signed URL (`apps/ai-hero/src/app/api/(content)/uploads/signed-url/route.ts:5-18`); multipart part-url returns a presigned S3 write URL (`apps/ai-hero/src/app/api/(content)/uploads/multipart/part-url/route.ts:16-45`); multipart create/complete and `/uploads/new` mutate storage or start processing. Recommendation: 403 for `content:read`, separate media-write scope if needed.
+- **Include-with-note `/api/search` GET.** Keep the explicit result allowlist and continue excluding `embedding,description`; privileged results may include draft/private metadata only after adding auth-sensitive state **and visibility** filters (`apps/ai-hero/src/app/api/(content)/search/route.ts:120-160`).
+- **Exclude `/api/memory` GET/POST.** Support memory is a separate domain and can carry customer context; GET is currently anonymous and POST checks only for a user (`apps/ai-hero/src/app/api/(content)/memory/route.ts:38-168`, `apps/ai-hero/src/app/api/(content)/memory/route.ts:196-240`).
+- **Include-with-note `/api/surveys` GET; exclude `/api/surveys/analytics` GET.** Survey definitions/questions are CMS content. Analytics returns recent answers plus `userId`, `userEmail`, and `emailListSubscriberId`, so it requires a separate analytics/surveys scope (`apps/ai-hero/src/lib/surveys-api.ts:407-461`).
+- **Include-with-note `/api/products` GET; exclude enrollment analytics.** Product structure carries price/commerce metadata but is needed to understand nested course content; do not add purchasers or customers. `/api/products/[productId]/enrollment` is commerce analytics and stays out (`apps/ai-hero/src/app/api/(content)/products/[productId]/enrollment/route.ts:37-110`).

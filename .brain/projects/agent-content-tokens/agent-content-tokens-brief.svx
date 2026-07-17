@@ -46,6 +46,8 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
 
 ## Decision ledger
 
+- [Inventory the Content API Surface and Draft the Coverage Matrix](./inventory-content-api-surface.svx) — 50 route-method rows inventoried; privileged content reads include posts, lessons, safe resources/search, product structure, and survey definitions, while Mux playback, uploads/signed URLs, memory, survey-response PII, and commerce analytics stay out.
+
 ## Latent
 
 - Upstream the mint/verify/ability pattern to course-builder so every product gets agent tokens (PAT table already lives in the shared coursebuilder schema).
@@ -53,6 +55,8 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
 - Future scopes: `content:write`, `analytics:read` enforcement on the analytics routes, `analytics:chat`.
 - OAuth client-credentials flow for agents if token sharing across Matt's fleet gets awkward.
 - Token-management UI if the audience ever grows past admins.
+- Sanitized transcript/content projection for video resources so agents can read transcript text without playable Mux identifiers (matrix excludes `/api/[videoResourceId]` GET as-is).
+- Dedicated media/storage scope if agents ever need signed URLs; memory-specific scope for the support-memory routes.
 
 ## Out of scope
 
