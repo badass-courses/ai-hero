@@ -1,0 +1,30 @@
+---
+title: "Live Verification and Matt Handoff"
+type: "step"
+kind: "task"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./agent-content-tokens-brief.svx"
+blockers:
+  [
+    "./wire-pat-auth-seam.svx",
+    "./ship-token-mint-endpoints.svx",
+    "./document-auth-in-openapi.svx",
+  ]
+created_at: "2026-07-17"
+---
+
+# Live Verification and Matt Handoff
+
+## Step
+
+Assert the finish line in production, behaviorally — live remainders block:
+
+1. Admin mints a token over the prod API.
+2. That token reads an unpublished post.
+3. A write attempt with it returns 403.
+4. Axiom shows both as structured auth events.
+5. Reply in Matt's Slack thread (https://eggheadio.slack.com/archives/C0211NSK3TP/p1784281556387689) with the how-to; Matt confirms his agent works.
+
+Resolved when all five held, receipts (curl transcripts redacted of token material, Axiom query + result, Slack permalink) are linked in the Result, and the brief flips to done.

@@ -1,0 +1,23 @@
+---
+title: "Teach OpenAPI and Agent Discovery the Bearer Scheme"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-content-tokens-brief.svx"
+blockers: ["./wire-pat-auth-seam.svx", "./ship-token-mint-endpoints.svx"]
+created_at: "2026-07-17"
+---
+
+# Teach OpenAPI and Agent Discovery the Bearer Scheme
+
+## Step
+
+Build (execution authorized in the brief):
+
+- `openapi.json` grows a proper `securitySchemes` bearer entry with per-operation scope requirements for the content routes and the token-management endpoints.
+- `agent-discovery.ts` / `/api` discovery document and `llms.txt` explain agent-token auth: how to present the token, what `content:read` grants, where an admin mints one.
+- Copy is agent-first: an agent reading only the discovery surface can auth without human folklore.
+
+Resolved when discovery output + openapi.json describe the full auth story and a fresh agent session can, from those documents alone, form a correct authenticated request in dev.

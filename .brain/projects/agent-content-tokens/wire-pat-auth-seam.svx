@@ -1,0 +1,27 @@
+---
+title: "Wire PAT Verification into the Auth Seam with Scope-Derived Ability"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-content-tokens-brief.svx"
+blockers: ["./approve-coverage-matrix.svx"]
+created_at: "2026-07-17"
+---
+
+# Wire PAT Verification into the Auth Seam with Scope-Derived Ability
+
+## Step
+
+Build (execution authorized in the brief):
+
+1. Extend `getUserAbilityForRequest` into the auth seam: recognize `aih_pat_*` bearers, verify via `verifyPersonalAccessToken`, return `(user, ability, authMethod)`. Device-token path behavior unchanged.
+2. Typed scope registry: `scope → CASL rules`. `content:read` maps to privileged read of Content (drafts/unpublished included), nothing else — ability derives from scopes, never owner roles.
+3. Stamp `lastUsedAt` on successful verify.
+4. Structured auth log on every token verify: token kind, publicId prefix, scopes, outcome (accepted / denied+reason). No raw token material in logs.
+5. The CI coverage-matrix test table implementing the approved matrix (route × method × token kind × expected status).
+
+Constraint from charter: if seam unification balloons, constrain to "PATs verify + device path untouched" and charter full unification as its own step.
+
+Resolved when the matrix suite passes in CI and a locally minted token demonstrably reads an unpublished post in dev while a write 403s.

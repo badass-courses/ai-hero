@@ -1,0 +1,24 @@
+---
+title: "Ship Admin-Gated Mint, List, and Revoke Endpoints"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-content-tokens-brief.svx"
+blockers: ["./inventory-content-api-surface.svx"]
+created_at: "2026-07-17"
+---
+
+# Ship Admin-Gated Mint, List, and Revoke Endpoints
+
+## Step
+
+Build (execution authorized in the brief):
+
+- `POST /api/personal-access-tokens` — admin ability required; body: name, scopes (validated against the scope registry), optional `expiresAt` (default none). Returns the raw token exactly once. Mint-for-self; record attributed to the minting user.
+- `GET /api/personal-access-tokens` — list caller's tokens: name, prefix, scopes, created/lastUsed/expires/revoked. Never raw tokens.
+- `DELETE /api/personal-access-tokens/:id` — revoke (sets `revokedAt`); idempotent.
+- Structured logs on mint and revoke; secret provisioned per the inventory step's env finding.
+
+Resolved when an admin device-token bearer can mint, list, and revoke over the API in dev, with tests, and non-admins get 403.

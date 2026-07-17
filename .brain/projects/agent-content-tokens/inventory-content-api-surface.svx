@@ -1,0 +1,26 @@
+---
+title: "Inventory the Content API Surface and Draft the Coverage Matrix"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "open"
+assignee: "pi (flagg, herdr pane w19:p2, 2026-07-17)"
+parent: "./agent-content-tokens-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Inventory the Content API Surface and Draft the Coverage Matrix
+
+## Step
+
+Produce the draft coverage matrix as an asset (`./coverage-matrix-draft.svx`): every route in `apps/ai-hero/src/app/api/(content)/` (and any other route gating on `read Content`), × HTTP method, with columns: current ability gate, current behavior for anonymous / device-token / admin callers, and **proposed** behavior for a `content:read` agent token (expected status + payload posture, e.g. drafts included).
+
+Also establish the facts later steps depend on:
+
+- Does the `PersonalAccessToken` table exist in the prod DB (migration status), and what adapter/query surface exists in the coursebuilder schema?
+- Is there a `PERSONAL_ACCESS_TOKEN_SECRET` (or equivalent) in `env.mjs` / deployment env, or does one need provisioning?
+- Which GETs leak more than content reads: videoResource routes handing out playable Mux assets, uploads touching signed URLs, search exposing index fields, memory/surveys routes — flag each with a recommendation (include / exclude / include-with-note).
+- How the current `getAbility` CASL rules express "read including unpublished" — what rule set a scope-derived privileged-read ability needs.
+
+Resolved when the matrix draft asset exists with a recommendation per row and the four fact-finds are answered in the Result.

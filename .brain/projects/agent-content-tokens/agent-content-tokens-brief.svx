@@ -1,0 +1,60 @@
+---
+title: "Agent Tokens for the AI Hero Content CMS"
+type: "brief"
+status: "active"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Agent Tokens for the AI Hero Content CMS
+
+Matt asked (Slack #cc-matt-p, 2026-07-16) for a flow where he can mint a read-only auth token for the AI Hero CMS for his agents — "read only but privileged (private/unpublished)? — Yep, exactly." Joel's framing: extend the recent OpenAPI/agent-discovery work into a real agent auth system, not a one-off hack.
+
+## Finish line
+
+All of the following hold in production, asserted live (no "verification remaining" prose):
+
+1. An admin mints an agent token over the API (no UI — agentic only).
+2. A request bearing that token reads at least one **unpublished** post through the content API.
+3. A write attempt with the same token returns 403.
+4. Both events appear in Axiom as structured auth log lines (token kind, publicId prefix, scope, outcome).
+5. Matt has the how-to in the Slack thread and confirms his agent works against it.
+
+Maintained by: the coverage matrix test suite in CI (route × method × token kind × expected status) — a behavior change that breaks the contract fails the build; `lastUsedAt` + Axiom give the audit trail.
+
+## Vocabulary
+
+- **agent token** — an `aih_pat_*` personal access token minted by an admin for non-human callers; the existing dormant lib `apps/ai-hero/src/lib/personal-access-tokens.ts`.
+- **scope-derived ability** — the CASL ability built from the token's scopes alone, never from the owning user's roles; the token row is the full statement of its blast radius.
+- **privileged read** — read access that includes drafts, unpublished, and private content; what `content:read` grants.
+- **coverage matrix** — the route × method × token-kind × expected-status table, checked in and run in CI; it is the contract for this scope and every future scope.
+- **auth seam** — `getUserAbilityForRequest` as the single place any bearer credential becomes `(user, ability, authMethod)`; today device-token-only.
+
+## Notes
+
+- Owning repo/app: `badass-courses/ai-hero`, `apps/ai-hero`. Ultracite standards apply (`bun x ultracite fix` before commit).
+- **Execution authorized** (Joel, 2026-07-17): task steps build and ship the system; customer-visible surface = API only.
+- Standing calls (Joel, 2026-07-17, at charter):
+  - API-only, no UI — "it's agentic only so it doesn't need ui."
+  - Ability derives from scope, not owner roles; non-destructive full content/CMS read.
+  - Optional `expiresAt` at mint, default none; revocation is the kill switch; stamp `lastUsedAt` on verify.
+  - Four systemic improvements ride along: (1) one auth seam, (2) typed scope registry → CASL rules, (3) structured auth observability, (4) OpenAPI `securitySchemes` + agent-discovery documents auth.
+  - Minting gated on admin ability, mint-for-self, token attributed to the minting user.
+- Joel's standing rules that bind here: observability is a launch gate; live remainders must block; Matt heads-up on surface changes (Matt is the requester — delivery is the reply in his thread).
+- No prototype step chartered: the design settled at charter; the first touchable artifact is the coverage matrix draft, which the approval grilling reacts to.
+- Slack context: https://eggheadio.slack.com/archives/C0211NSK3TP/p1784281556387689
+
+## Decision ledger
+
+## Latent
+
+- Upstream the mint/verify/ability pattern to course-builder so every product gets agent tokens (PAT table already lives in the shared coursebuilder schema).
+- Migrate admin device tokens (90-day TTL, raw-token-in-db) onto the PAT system.
+- Future scopes: `content:write`, `analytics:read` enforcement on the analytics routes, `analytics:chat`.
+- OAuth client-credentials flow for agents if token sharing across Matt's fleet gets awkward.
+- Token-management UI if the audience ever grows past admins.
+
+## Out of scope
+
+- Any UI for minting/managing tokens — Joel, 2026-07-17: agentic only.
+- Upstreaming to course-builder now — proven-on-AI-Hero first (see Latent).
