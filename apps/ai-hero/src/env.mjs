@@ -33,6 +33,10 @@ export const env = createEnv({
 			process.env.NODE_ENV === 'production'
 				? z.string()
 				: z.string().optional(),
+		PERSONAL_ACCESS_TOKEN_SECRET:
+			process.env.NODE_ENV === 'production'
+				? z.string().min(1)
+				: z.string().min(1).optional(),
 		NEXTAUTH_URL: z.preprocess(
 			// This makes Vercel deployments not fail if you don't set NEXTAUTH_URL
 			// Since NextAuth.js automatically uses the VERCEL_URL if present.
@@ -160,6 +164,7 @@ export const env = createEnv({
 		DATABASE_URL: process.env.DATABASE_URL,
 		NODE_ENV: process.env.NODE_ENV,
 		NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
+		PERSONAL_ACCESS_TOKEN_SECRET: process.env.PERSONAL_ACCESS_TOKEN_SECRET,
 		NEXTAUTH_URL: process.env.NEXTAUTH_URL,
 		REPLICATE_API_KEY: process.env.REPLICATE_API_KEY,
 		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,

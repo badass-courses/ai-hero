@@ -11,6 +11,7 @@ blockers:
     "./wire-pat-auth-seam.svx",
     "./ship-token-mint-endpoints.svx",
     "./document-auth-in-openapi.svx",
+    "./provision-prod-pat-prerequisites.svx",
   ]
 created_at: "2026-07-17"
 ---

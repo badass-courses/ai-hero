@@ -1,0 +1,24 @@
+---
+title: "Provision the Production PAT Prerequisites"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./agent-content-tokens-brief.svx"
+blockers: []
+created_at: "2026-07-17"
+---
+
+# Provision the Production PAT Prerequisites
+
+## Step
+
+Two prerequisites, both agent-executable (Joel, 2026-07-17: the pscale service token can create and approve deploy requests into the aihero DB; the Vercel CLI can write env vars):
+
+1. **`PERSONAL_ACCESS_TOKEN_SECRET` in Vercel**: generate a high-entropy secret (32+ random bytes, hex) and add it to the ai-hero Vercel project for production, preview, and development. Never print, log, or persist the raw value anywhere — pipe it straight in.
+2. **`PersonalAccessToken` table in the aihero PlanetScale DB**: check whether the table already exists (adapter-drizzle 2.0.0 defines it; a routine `db:push` since that upgrade would have created it). If absent: pscale branch → `db:push` against the branch → deploy request → approve → deploy. Additive-only change; if the schema diff shows anything beyond creating `PersonalAccessToken`, stop and report instead of deploying.
+
+Sequencing constraint: this must complete **before** the mint-endpoints change (which makes the env var required in `env.mjs`) deploys, or production builds fail on the missing var.
+
+Resolved when `vercel env ls` shows the var in all three environments and the table's existence in the production branch is confirmed (SHOW TABLES receipt), with receipts in the Result.
