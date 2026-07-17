@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+	buildTypesenseContentFilter,
+	isSearchContentType,
+	searchContentTypes,
+} from '@/lib/typesense-content-filter'
+import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { withSkill } from '@/server/with-skill'
 // App-side wrapper: maps doc type 'skill' (doc type = fields.postType) to the
 // flat post URL — the shared package has no 'skill' entry yet.
@@ -87,6 +93,19 @@ const searchHandler = async (request: NextRequest) => {
 		)
 	}
 
+	if (type && !isSearchContentType(type)) {
+		return NextResponse.json(
+			{
+				ok: false,
+				command: `search "${q}"`,
+				error: { message: 'Invalid type parameter', code: 'INVALID_TYPE' },
+				fix: `Use one of: ${searchContentTypes.join(', ')}.`,
+				next_actions: [],
+			},
+			{ status: 400, headers: corsHeaders },
+		)
+	}
+
 	const host = process.env.NEXT_PUBLIC_TYPESENSE_HOST
 	const apiKey = process.env.TYPESENSE_WRITE_API_KEY
 	const collectionName =
@@ -111,16 +130,14 @@ const searchHandler = async (request: NextRequest) => {
 	}
 
 	try {
+		const { ability } = await getUserAbilityForRequest(request)
 		const client = new Typesense.Client({
 			nodes: [{ host, port: 443, protocol: 'https' }],
 			apiKey,
 			connectionTimeoutSeconds: 5,
 		})
 
-		const filterParts = ['state:=published']
-		if (type) {
-			filterParts.push(`type:=${type}`)
-		}
+		const filterBy = buildTypesenseContentFilter({ ability, type })
 
 		const searchParameters: SearchParams = {
 			q,
@@ -128,7 +145,7 @@ const searchHandler = async (request: NextRequest) => {
 				? 'embedding,title,summary,description'
 				: 'title,summary,description',
 			exclude_fields: 'embedding,description',
-			filter_by: filterParts.join(' && '),
+			...(filterBy && { filter_by: filterBy }),
 			per_page: perPage,
 			...(semantic && {
 				vector_query: 'embedding:([], alpha: 0.5)',
@@ -191,17 +208,7 @@ const searchHandler = async (request: NextRequest) => {
 					},
 					type: {
 						description: 'Content type filter',
-						enum: [
-							'lesson',
-							'workshop',
-							'article',
-							'cohort',
-							'post',
-							'tutorial',
-							'event',
-							'dictionary',
-							'dictionary-entry',
-						],
+						enum: [...searchContentTypes],
 					},
 					n: { default: 5, description: 'Results per page (max 20)' },
 					bool: {

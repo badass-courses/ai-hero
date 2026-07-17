@@ -32,6 +32,12 @@ const getPostsHandler = async (request: NextRequest) => {
 			slugOrId,
 			hasAbility: !!ability,
 		})
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
 
 		const result = await getPosts({ userId: user?.id, ability, slug: slugOrId })
 
@@ -72,12 +78,16 @@ const createPostHandler = async (request: NextRequest) => {
 	try {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
-			await log.warn('api.posts.post.unauthorized', {
-				headers: Object.fromEntries(request.headers),
-			})
+			await log.warn('api.posts.post.unauthorized')
 			return NextResponse.json(
 				{ error: 'Unauthorized' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('create', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -129,12 +139,17 @@ const updatePostHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			await log.warn('api.posts.put.unauthorized', {
-				headers: Object.fromEntries(request.headers),
 				postId: id,
 			})
 			return NextResponse.json(
 				{ error: 'Unauthorized' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('update', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -206,6 +221,18 @@ const deletePostHandler = async (request: NextRequest) => {
 
 	try {
 		const { ability, user } = await getUserAbilityForRequest(request)
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('delete', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 
 		await log.info('api.posts.delete.started', {
 			userId: user?.id,

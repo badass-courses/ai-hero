@@ -36,6 +36,20 @@ const getVideoResourceHandler = async (
 			return NextResponse.json({}, { headers: corsHeaders })
 		}
 
+		if (ability.cannot('create', 'Content')) {
+			await log.warn('api.video.get.unauthorized', {
+				userId: user?.id,
+				videoResourceId: params.videoResourceId,
+			})
+			return NextResponse.json(
+				{ error: user ? 'Forbidden' : 'Unauthorized' },
+				{
+					status: user ? 403 : 401,
+					headers: corsHeaders,
+				},
+			)
+		}
+
 		const videoResource = await getVideoResource(params.videoResourceId)
 
 		if (!videoResource) {
@@ -52,30 +66,14 @@ const getVideoResourceHandler = async (
 			)
 		}
 
-		if (ability.can('create', 'Content')) {
-			await log.info('api.video.get.success', {
-				userId: user?.id,
-				videoResourceId: params.videoResourceId,
-				muxAssetId: videoResource.muxAssetId,
-			})
-			return NextResponse.json(videoResource, {
-				headers: corsHeaders,
-			})
-		}
-
-		await log.warn('api.video.get.unauthorized', {
+		await log.info('api.video.get.success', {
 			userId: user?.id,
 			videoResourceId: params.videoResourceId,
-			headers: Object.fromEntries(request.headers),
+			muxAssetId: videoResource.muxAssetId,
 		})
-
-		return NextResponse.json(
-			{ error: 'Unauthorized' },
-			{
-				status: 401,
-				headers: corsHeaders,
-			},
-		)
+		return NextResponse.json(videoResource, {
+			headers: corsHeaders,
+		})
 	} catch (error) {
 		await log.error('api.video.get.failed', {
 			error: error instanceof Error ? error.message : 'Unknown error',

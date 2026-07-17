@@ -39,9 +39,9 @@ const getSurveysHandler = async (request: NextRequest) => {
 				{ status: 401, headers: corsHeaders },
 			)
 		}
-		if (!ability.can('manage', 'all')) {
+		if (!ability.can('read', 'Content')) {
 			return NextResponse.json(
-				{ error: 'Forbidden: Admin access required' },
+				{ error: 'Forbidden: Content read access required' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -90,6 +90,12 @@ const createSurveyHandler = async (request: NextRequest) => {
 				{ status: 401, headers: corsHeaders },
 			)
 		}
+		if (ability.cannot('create', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 
 		const body = await request.json()
 		const survey = await createSurveyForApi({
@@ -130,6 +136,12 @@ const updateSurveyHandler = async (request: NextRequest) => {
 			return NextResponse.json(
 				{ error: 'Unauthorized' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('update', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -175,6 +187,12 @@ const deleteSurveyHandler = async (request: NextRequest) => {
 			return NextResponse.json(
 				{ error: 'Unauthorized' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('delete', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 

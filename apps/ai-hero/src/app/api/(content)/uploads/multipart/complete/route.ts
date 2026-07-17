@@ -26,12 +26,12 @@ export const OPTIONS = async () => {
 }
 
 export const POST = withSkill(async (request: NextRequest) => {
-	const { ability } = await getUserAbilityForRequest(request)
+	const { ability, user } = await getUserAbilityForRequest(request)
 
 	if (ability.cannot('create', 'Content')) {
 		return NextResponse.json(
-			{ error: 'Unauthorized' },
-			{ status: 401, headers: corsHeaders },
+			{ error: user ? 'Forbidden' : 'Unauthorized' },
+			{ status: user ? 403 : 401, headers: corsHeaders },
 		)
 	}
 

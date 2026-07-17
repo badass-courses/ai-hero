@@ -36,10 +36,17 @@ const getEnrollment = async (
 
 	const { ability, user } = await getUserAbilityForRequest(request)
 
-	if (!user || ability.cannot('update', 'Content')) {
+	if (!user) {
 		return NextResponse.json(
 			{ error: 'Unauthorized' },
 			{ status: 401, headers: corsHeaders },
+		)
+	}
+
+	if (ability.cannot('update', 'Content')) {
+		return NextResponse.json(
+			{ error: 'Forbidden' },
+			{ status: 403, headers: corsHeaders },
 		)
 	}
 

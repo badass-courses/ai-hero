@@ -33,6 +33,12 @@ const getLessonSolutionHandler = async (
 			lessonId,
 			hasAbility: !!ability,
 		})
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
 
 		const result = await getSolutionForLesson(lessonId, ability)
 
@@ -75,8 +81,8 @@ const updateLessonSolutionHandler = async (
 ) => {
 	const { lessonId } = await params
 	try {
-		const body = await request.json()
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 		await log.info('api.lessons.solution.put.started', {
 			userId: user?.id,
 			lessonId,
@@ -90,6 +96,11 @@ const updateLessonSolutionHandler = async (
 			})
 			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 		}
+		if (authMethod === 'personal-access-token') {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+		}
+
+		const body = await request.json()
 		const result = await updateSolutionForLesson(
 			lessonId,
 			ability,
@@ -136,8 +147,8 @@ const createLessonSolutionHandler = async (
 ) => {
 	const { lessonId } = await params
 	try {
-		const body = await request.json()
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user?.id) {
 			await log.warn('api.lessons.solution.post.unauthorized', {
@@ -146,6 +157,11 @@ const createLessonSolutionHandler = async (
 			})
 			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 		}
+		if (authMethod === 'personal-access-token') {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+		}
+
+		const body = await request.json()
 		const solution = await createSolutionForLesson(
 			lessonId,
 			ability,
@@ -186,7 +202,8 @@ const deleteLessonSolutionHandler = async (
 ) => {
 	const { lessonId } = await params
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user?.id) {
 			await log.warn('api.lessons.solution.post.unauthorized', {
@@ -195,6 +212,10 @@ const deleteLessonSolutionHandler = async (
 			})
 			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 		}
+		if (authMethod === 'personal-access-token') {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+		}
+
 		const solution = await deleteSolutionForLesson(lessonId, ability, user?.id)
 
 		return NextResponse.json(solution, { headers: corsHeaders })

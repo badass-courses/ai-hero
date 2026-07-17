@@ -30,6 +30,12 @@ const getSurveyAnalyticsHandler = async (request: NextRequest) => {
 				{ status: 401, headers: corsHeaders },
 			)
 		}
+		if (ability.cannot('manage', 'all')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 
 		if (!slugOrId) {
 			return NextResponse.json(

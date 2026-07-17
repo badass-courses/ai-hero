@@ -71,6 +71,7 @@ interface OrganizationBilling {
 type Actions =
 	| 'create'
 	| 'read'
+	| 'read_privileged'
 	| 'update'
 	| 'delete'
 	| 'manage'

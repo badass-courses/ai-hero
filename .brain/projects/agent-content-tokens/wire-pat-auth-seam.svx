@@ -3,11 +3,12 @@ title: "Wire PAT Verification into the Auth Seam with Scope-Derived Ability"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
 assignee: "pi (flagg, herdr pane w19:p4, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: ["./approve-coverage-matrix.svx"]
 created_at: "2026-07-17"
+closed_at: "2026-07-17"
 ---
 
 # Wire PAT Verification into the Auth Seam with Scope-Derived Ability
@@ -31,3 +32,20 @@ Facts from [Inventory the Content API Surface and Draft the Coverage Matrix](./i
 Constraint from charter: if seam unification balloons, constrain to "PATs verify + device path untouched" and charter full unification as its own step.
 
 Resolved when the matrix suite passes in CI and a locally minted token demonstrably reads an unpublished post in dev while a write 403s.
+
+## Result (2026-07-17)
+
+Shipped the PAT auth seam and scope-derived ability:
+
+- `apps/ai-hero/src/server/ability-for-request.ts` parses `aih_pat_*` Bearers, looks up by `publicId`, verifies `content:read`, returns the explicit auth method, stamps `lastUsedAt`, and emits safe accepted/denied logs.
+- `apps/ai-hero/src/server/pat-scopes.ts` maps PAT scopes to CASL rules. `content:read` grants `read` plus `read_privileged` on `Content`; attribution-user roles never enter the PAT ability.
+- Posts, lessons, solutions, survey definitions, products, generic resources, and search now honor privileged draft/private reads without granting writes. Products and generic resources strip nested Mux capability identifiers.
+- Every excluded write/capability route rejects a valid content PAT with 403 before parsing bodies, validating IDs, issuing signed URLs, or loading protected records. Anonymous resource/signed-URL holes are closed; anonymous search is constrained to published public documents.
+
+Coverage and validation:
+
+- `apps/ai-hero/src/app/api/(content)/__tests__/agent-token-route-behavior.test.ts` matches all **50 approved route-method rows** and executes **150 handler-level auth cases** (anonymous / content PAT / admin device token); 185 tests in that suite pass including focused payload/filter checks.
+- Focused PAT, route, service, and existing posts suites: **230 tests passed across 8 files**.
+- TypeScript reached only unrelated concurrent Google Ads work errors in `src/lib/google-ads-conversion-upload.ts` and `src/lib/google-ads-signup-conversion-upload.ts`; no agent-token files appeared in the compiler failures.
+
+Cuts: none.

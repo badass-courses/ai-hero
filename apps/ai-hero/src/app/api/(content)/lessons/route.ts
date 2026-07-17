@@ -29,6 +29,12 @@ const getLessonsHandler = async (request: NextRequest) => {
 			slugOrId,
 			hasAbility: !!ability,
 		})
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
 
 		const result = await getLessons({
 			userId: user?.id,
@@ -82,12 +88,17 @@ const updateLessonHandler = async (request: NextRequest) => {
 		})
 		if (!user) {
 			await log.warn('api.lessons.put.unauthorized', {
-				headers: Object.fromEntries(request.headers),
 				lessonId: id,
 			})
 			return NextResponse.json(
 				{ error: 'Unauthorized' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('update', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 

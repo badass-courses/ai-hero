@@ -4,6 +4,7 @@ import {
 	getProductsWithFullStructure,
 	getProductWithFullStructure,
 } from '@/lib/products-query'
+import { sanitizeResourcePayload } from '@/lib/resource-api-sanitizer'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -69,7 +70,9 @@ const getProductsHandler = async (request: NextRequest) => {
 				productId: product.id,
 			})
 
-			return NextResponse.json(product, { headers: corsHeaders })
+			return NextResponse.json(sanitizeResourcePayload(product), {
+				headers: corsHeaders,
+			})
 		}
 
 		const products = await getProductsWithFullStructure()
@@ -79,7 +82,9 @@ const getProductsHandler = async (request: NextRequest) => {
 			resultCount: products.length,
 		})
 
-		return NextResponse.json(products, { headers: corsHeaders })
+		return NextResponse.json(sanitizeResourcePayload(products), {
+			headers: corsHeaders,
+		})
 	} catch (error) {
 		await log.error('api.products.get.failed', {
 			error: error instanceof Error ? error.message : 'Unknown error',
@@ -123,13 +128,13 @@ const ProductUpdateApiSchema = z
 		(input) =>
 			Boolean(
 				input.name ||
-					input.price !== undefined ||
-					input.quantityAvailable !== undefined ||
-					input.type ||
-					input.state ||
-					input.visibility ||
-					input.slug ||
-					input.fields,
+				input.price !== undefined ||
+				input.quantityAvailable !== undefined ||
+				input.type ||
+				input.state ||
+				input.visibility ||
+				input.slug ||
+				input.fields,
 			),
 		{ message: 'Provide at least one product field to update' },
 	)
@@ -174,7 +179,8 @@ const createProductHandler = async (request: NextRequest) => {
 			slug,
 		})
 
-		const createdProduct = await courseBuilderAdapter.createProduct(productInput)
+		const createdProduct =
+			await courseBuilderAdapter.createProduct(productInput)
 
 		if (!createdProduct) {
 			return NextResponse.json(
