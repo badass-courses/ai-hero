@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi (flagg, herdr pane w19:p6, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: ["./wire-pat-auth-seam.svx", "./ship-token-mint-endpoints.svx"]
 created_at: "2026-07-17"
