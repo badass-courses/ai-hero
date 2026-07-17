@@ -19,8 +19,10 @@ import type {
 	StateTransition,
 } from './types'
 import {
+	scanCompletedValuePathIntentFrontier,
 	selectCompletedValuePathIntentFrontier,
 	sortValuePathIntentsByCreatedAt,
+	type CompletedValuePathIntentScanArgs,
 } from './value-path-intent-scan'
 
 export type MarketingRepository = IdentityRepository & {
@@ -180,21 +182,33 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		)
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
-	findCompletedValuePathEmailSideEffectIntents(args: {
-		limit: number
-		maxCompletedAt?: string
-	}) {
-		const completed = Array.from(this.sideEffectIntents.values()).filter(
+	findCompletedValuePathEmailSideEffectIntentScan(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return scanCompletedValuePathIntentFrontier({
+			...args,
+			intents: this.findValuePathEmailSideEffectIntentsForScan(),
+		})
+	}
+	findCompletedValuePathEmailSideEffectIntents(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return selectCompletedValuePathIntentFrontier({
+			...args,
+			intents: this.findValuePathEmailSideEffectIntentsForScan(),
+		})
+	}
+	findValuePathEmailSideEffectIntentsForScan() {
+		return Array.from(this.sideEffectIntents.values()).filter(
 			(intent) =>
 				intent.provider === 'kit' &&
-				intent.type === 'send-value-path-email' &&
-				intent.status === 'completed',
+				intent.type === 'send-value-path-email',
 		)
-		return selectCompletedValuePathIntentFrontier({
-			intents: completed,
-			limit: args.limit,
-			maxCompletedAt: args.maxCompletedAt,
-		})
+	}
+	findCompletedValuePathEmailSideEffectIntentsForRepair() {
+		return this.findValuePathEmailSideEffectIntentsForScan().filter(
+			(intent) => intent.status === 'completed',
+		)
 	}
 	findValuePathEmailSideEffectIntentsByContact(contactId: string) {
 		const intents = Array.from(this.sideEffectIntents.values()).filter(

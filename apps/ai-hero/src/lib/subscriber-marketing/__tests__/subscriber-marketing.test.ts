@@ -97,7 +97,10 @@ import {
 } from '../value-path-gate-d-allowlist'
 import { previewValuePathGateDCandidates } from '../value-path-gate-d-candidates'
 import { startValuePathGateDActivation } from '../value-path-gate-d-start'
-import { selectCompletedValuePathIntentFrontier } from '../value-path-intent-scan'
+import {
+	scanCompletedValuePathIntentFrontier,
+	selectCompletedValuePathIntentFrontier,
+} from '../value-path-intent-scan'
 import { previewValuePath, SELLABLE_OFFERS } from '../value-path-planner'
 import { previewSkillsWorkflowValuePathQa } from '../value-path-qa-preview'
 import {
@@ -1325,7 +1328,7 @@ describe('subscriber marketing value path completed-intent scan', () => {
 		expect(result.map((intent) => intent.id)).toEqual(['b_email_0', 'a_email_1'])
 	})
 
-	it('still honors maxCompletedAt for the minimum drip age', () => {
+	it('honors maxCompletedAt without rewinding to an older completed step', () => {
 		const result = selectCompletedValuePathIntentFrontier({
 			intents: [
 				completedIntent({
@@ -1344,7 +1347,86 @@ describe('subscriber marketing value path completed-intent scan', () => {
 			limit: 200,
 			maxCompletedAt: '2026-05-15T00:00:00.000Z',
 		})
-		expect(result.map((intent) => intent.id)).toEqual(['old_enough'])
+		expect(result).toEqual([])
+	})
+
+	it('applies rolling learner scope before the frontier limit', () => {
+		const intents = [
+			completedIntent({
+				id: 'static-oldest',
+				contactId: 'static-contact',
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				completedAt: '2026-05-01T00:00:00.000Z',
+			}),
+			completedIntent({
+				id: 'rolling-starved',
+				contactId: 'rolling-contact',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-05-02T00:00:00.000Z',
+			}),
+		]
+		const scan = scanCompletedValuePathIntentFrontier({
+			intents,
+			limit: 1,
+			contactIds: ['rolling-contact'],
+			now: '2026-05-03T00:00:00.000Z',
+		})
+		expect(scan.intents.map((intent) => intent.id)).toEqual([
+			'rolling-starved',
+		])
+		expect(scan.diagnostics).toMatchObject({
+			scanned: 2,
+			eligible: 1,
+			frontierSize: 1,
+			returned: 1,
+			excludedByScope: 1,
+			oldestFrontierAgeHours: 24,
+		})
+	})
+
+	it('does not let terminal and already-progressed frontiers consume the rolling limit', () => {
+		const terminal = Array.from({ length: 205 }, (_, index) =>
+			completedIntent({
+				id: `terminal-${index}`,
+				contactId: `terminal-contact-${index}`,
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				completedAt: `2026-05-01T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+			}),
+		)
+		const alreadyProgressed = completedIntent({
+			id: 'already-progressed-email-0',
+			contactId: 'already-progressed',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			completedAt: '2026-05-01T04:00:00.000Z',
+		})
+		const pendingNext = {
+			...completedIntent({
+				id: 'already-progressed-email-1',
+				contactId: 'already-progressed',
+				emailResourceId: 'ai-hero-skills-workflow.email-1',
+				completedAt: '2026-05-01T04:01:00.000Z',
+			}),
+			status: 'pending' as const,
+		}
+		const starved = completedIntent({
+			id: 'rolling-starved-after-terminal-history',
+			contactId: 'rolling-starved',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			completedAt: '2026-05-02T00:00:00.000Z',
+		})
+		const scan = scanCompletedValuePathIntentFrontier({
+			intents: [...terminal, alreadyProgressed, pendingNext, starved],
+			limit: 1,
+		})
+		expect(scan.intents.map((intent) => intent.id)).toEqual([
+			'rolling-starved-after-terminal-history',
+		])
+		expect(scan.diagnostics).toMatchObject({
+			excludedTerminal: 205,
+			excludedExistingNextIntent: 1,
+			actionableFrontierSize: 1,
+			truncated: 0,
+		})
 	})
 
 	it('reaches a starved contact frontier even when history exceeds the scan limit', async () => {

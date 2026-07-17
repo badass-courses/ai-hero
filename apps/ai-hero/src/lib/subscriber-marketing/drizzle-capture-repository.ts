@@ -26,8 +26,9 @@ import type {
 	StateTransition,
 } from './types'
 import {
-	selectCompletedValuePathIntentFrontier,
+	scanCompletedValuePathIntentFrontier,
 	sortValuePathIntentsByCreatedAt,
+	type CompletedValuePathIntentScanArgs,
 } from './value-path-intent-scan'
 
 type AiHeroWriteDatabase = any
@@ -261,10 +262,24 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
-	async findCompletedValuePathEmailSideEffectIntents(args: {
-		limit: number
-		maxCompletedAt?: string
-	}) {
+	async findCompletedValuePathEmailSideEffectIntentScan(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		const records = await this.findValuePathEmailSideEffectIntentsForScan()
+		// Reduce to each contact/path frontier after applying the authorization
+		// and asset scope, then apply the limit. Scope-after-limit starved rolling
+		// enrollments on 2026-07-17 when the original activation cohort crowded
+		// out the live public cohort.
+		return scanCompletedValuePathIntentFrontier({ ...args, intents: records })
+	}
+
+	async findCompletedValuePathEmailSideEffectIntents(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return (await this.findCompletedValuePathEmailSideEffectIntentScan(args)).intents
+	}
+
+	async findValuePathEmailSideEffectIntentsForScan() {
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -272,18 +287,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				and(
 					eq(sideEffectIntent.provider, 'kit'),
 					eq(sideEffectIntent.type, 'send-value-path-email'),
-					eq(sideEffectIntent.status, 'completed'),
 				),
 			)
-		const records: SideEffectIntent[] = rows.map(toSideEffectIntentRecord)
-		// Reduce to each contact/path frontier before applying the limit so a
-		// saturated completed-intent history can never starve the drip scan
-		// (2026-07 cohort stall regression: no ORDER BY + slice(0, 200)).
-		return selectCompletedValuePathIntentFrontier({
-			intents: records,
-			limit: args.limit,
-			maxCompletedAt: args.maxCompletedAt,
-		})
+		return rows.map(toSideEffectIntentRecord)
+	}
+
+	async findCompletedValuePathEmailSideEffectIntentsForRepair() {
+		return (await this.findValuePathEmailSideEffectIntentsForScan()).filter(
+			(intent: SideEffectIntent) => intent.status === 'completed',
+		)
 	}
 
 	async findValuePathEmailSideEffectIntentsByContact(contactId: string) {

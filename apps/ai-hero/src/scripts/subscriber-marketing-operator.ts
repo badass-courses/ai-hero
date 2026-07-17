@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { db } from '@/db'
 import {
 	contact,
@@ -69,6 +70,7 @@ import {
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
 import { importValuePathContentResources } from '@/lib/subscriber-marketing/value-path-content-import'
 import { previewValuePathContentImport } from '@/lib/subscriber-marketing/value-path-content-import-preview'
+import { backfillMissingValuePathCompletedAt } from '@/lib/subscriber-marketing/value-path-completed-at-backfill'
 import { progressValuePathDrips } from '@/lib/subscriber-marketing/value-path-drip-progression'
 import {
 	executePendingValuePathEmailIntents,
@@ -345,6 +347,23 @@ if (command === 'lookup') {
 				allowWrite,
 			})
 	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'value-path-completed-at-backfill') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	const result = await backfillMissingValuePathCompletedAt({
+		repository: await createCaptureRepository(),
+		allowWrite,
+	})
+	const receiptPath =
+		readFlag(args, '--receipt') ?? defaultCompletedAtBackfillReceiptPath(result)
+	const absoluteReceiptPath = resolve(operatorWorkspaceRoot(), receiptPath)
+	await mkdir(dirname(absoluteReceiptPath), { recursive: true })
+	await writeFile(
+		absoluteReceiptPath,
+		`${JSON.stringify({ ...result, receiptPath }, null, 2)}\n`,
+		'utf8',
+	)
+	console.log(JSON.stringify({ ...result, receiptPath }, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
 	const result = await buildLearnerFlowStuckList()
 	if (args.includes('--json')) {
@@ -1016,8 +1035,10 @@ async function buildLearnerFlowUnstick(args: {
 			}),
 	)
 	const requiresGateD = retryIntentIds.length > 0 || dripContactIds.length > 0
-	const allowlist =
-		args.allowWrite && requiresGateD ? await requireActiveGateDAllowlist() : undefined
+	// Reading the active authorization is safe and required for an honest
+	// dry-run. The old allow-write guard made every drip recovery preview report
+	// planned: 0 without actually invoking the planner.
+	const allowlist = requiresGateD ? await requireActiveGateDAllowlist() : undefined
 	const repository = await createCaptureRepository()
 	const replan = blockedIntentIds.length
 		? await replanBlockedValuePathEmailIntents({
@@ -1071,12 +1092,12 @@ async function buildLearnerFlowUnstick(args: {
 		),
 	)
 	const drip =
-		args.allowWrite && allowlist && completedIntents.length > 0
+		allowlist && completedIntents.length > 0
 			? await progressValuePathDrips({
 				repository,
 				allowlist,
 				completedIntents,
-				allowWrite: true,
+				allowWrite: args.allowWrite,
 				now: generatedAt,
 			})
 			: undefined
@@ -1122,7 +1143,12 @@ async function buildLearnerFlowUnstick(args: {
 		allowWrite: args.allowWrite,
 		generatedAt,
 		writes: {
-			database: Boolean(args.allowWrite && (replan?.counts.replanned || retryResults.length || drip)),
+			database: Boolean(
+				args.allowWrite &&
+					(replan?.counts.replanned ||
+						retryResults.length ||
+						(drip?.counts.planned ?? 0) > 0),
+			),
 			provider: Boolean(args.allowWrite && (retryResults.length || signupGapReplay)),
 		},
 		counts: stuckList.counts,
@@ -1137,7 +1163,13 @@ async function buildLearnerFlowUnstick(args: {
 					completed: retryResults.filter((result) => result.status === 'completed').length,
 					deferred: retryIntentIds.length - retryableIntentIds.length,
 				},
-				drip: drip?.counts ?? { contactCount: dripContactIds.length, planned: 0 },
+				drip: {
+					contactCount: dripContactIds.length,
+					uniqueContactCount: new Set(dripContactIds).size,
+					duplicateContactCount:
+						dripContactIds.length - new Set(dripContactIds).size,
+					...(drip?.counts ?? { planned: 0 }),
+				},
 				signupGap:
 					signupGapPreview
 						? {
@@ -1754,25 +1786,24 @@ async function buildValuePathDripProgress(args: {
 	const maxCompletedAt = new Date(
 		Date.now() - args.minAgeHours * 60 * 60 * 1000,
 	).toISOString()
-	const completedIntents = (
-		await repository.findCompletedValuePathEmailSideEffectIntents({
+	const now = new Date().toISOString()
+	const completedScan =
+		await repository.findCompletedValuePathEmailSideEffectIntentScan({
 			limit: args.limit,
 			maxCompletedAt,
+			now,
+			contactIds:
+				allowlist.authorizationMode === 'rolling-public-enrollment'
+					? undefined
+					: allowlist.contactIds,
+			valuePathSlugs: allowlist.pathSlugs,
+			emailResourceIds: allowlist.emailResourceIds,
+			kitSequenceIds: allowlist.kitSequenceIds,
 		})
-	).filter(
-		(intent) =>
-			allowlist.contactIds.includes(intent.contactId) &&
-			allowlist.emailResourceIds.includes(
-				String(intent.metadata.emailResourceId ?? ''),
-			) &&
-			allowlist.kitSequenceIds.includes(
-				String(intent.metadata.kitSequenceId ?? ''),
-			),
-	)
-	return progressValuePathDrips({
+	const result = await progressValuePathDrips({
 		repository,
 		allowlist,
-		completedIntents,
+		completedIntents: completedScan.intents,
 		allowWrite: args.allowWrite,
 		acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 			allowlist,
@@ -1781,7 +1812,9 @@ async function buildValuePathDripProgress(args: {
 				process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 			),
 		}),
+		now,
 	})
+	return { ...result, scan: completedScan.diagnostics }
 }
 
 async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
@@ -1792,25 +1825,24 @@ async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
 	const maxCompletedAt = new Date(
 		Date.now() - minAgeHours * 60 * 60 * 1000,
 	).toISOString()
-	const completedIntents = (
-		await repository.findCompletedValuePathEmailSideEffectIntents({
+	const now = new Date().toISOString()
+	const completedScan =
+		await repository.findCompletedValuePathEmailSideEffectIntentScan({
 			limit: 200,
 			maxCompletedAt,
+			now,
+			contactIds:
+				allowlist.authorizationMode === 'rolling-public-enrollment'
+					? undefined
+					: allowlist.contactIds,
+			valuePathSlugs: allowlist.pathSlugs,
+			emailResourceIds: allowlist.emailResourceIds,
+			kitSequenceIds: allowlist.kitSequenceIds,
 		})
-	).filter(
-		(intent) =>
-			allowlist.contactIds.includes(intent.contactId) &&
-			allowlist.emailResourceIds.includes(
-				String(intent.metadata.emailResourceId ?? ''),
-			) &&
-			allowlist.kitSequenceIds.includes(
-				String(intent.metadata.kitSequenceId ?? ''),
-			),
-	)
 	const result = await progressValuePathDrips({
 		repository,
 		allowlist,
-		completedIntents,
+		completedIntents: completedScan.intents,
 		allowWrite: false,
 		acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 			allowlist,
@@ -1818,10 +1850,12 @@ async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
 				process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 			),
 		}),
+		now,
 	})
 	const blocked = result.results.filter((item) => item.status === 'blocked')
 	return {
 		counts: result.counts,
+		scan: completedScan.diagnostics,
 		blockedReasons: countReviewReasons(blocked),
 		planned: result.results
 			.filter((item) => item.status === 'planned')
@@ -2725,6 +2759,20 @@ function normalizeEmail(value?: string | null) {
 	return normalized && normalized.includes('@') ? normalized : undefined
 }
 
+function operatorWorkspaceRoot() {
+	return process.cwd().endsWith('/apps/ai-hero')
+		? resolve(process.cwd(), '../..')
+		: process.cwd()
+}
+
+function defaultCompletedAtBackfillReceiptPath(result: {
+	mode: 'dry-run' | 'allow-write'
+	generatedAt: string
+}) {
+	const timestamp = result.generatedAt.replace(/[:.]/g, '-').toLowerCase()
+	return `.brain/data/learner-flow/receipts/${timestamp}-completed-at-backfill-${result.mode}.json`
+}
+
 function printUsageAndExit(): never {
 	console.error(`Usage:
   pnpm --filter ai-hero subscriber-marketing:operator lookup --email person@example.com
@@ -2754,6 +2802,8 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck [--fixture-id <id>] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck --cleanup --contact-id <synthetic-contact-id> [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill [--dry-run] [--receipt .brain/data/learner-flow/receipts/receipt.json]
+  pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill --allow-write [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick --allow-write [--json] [--signup-gap-form-id 9376133]
