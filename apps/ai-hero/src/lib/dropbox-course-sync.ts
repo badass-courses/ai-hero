@@ -335,7 +335,14 @@ export async function readDropboxCourseManifestSummary({
 	const version = asRecord(course?.version)
 
 	if (document?.schema !== 'aihero.course-sync.v1') {
-		throw new Error('Dropbox course manifest schema is not aihero.course-sync.v1.')
+		const observedSchema =
+			typeof document?.schema === 'string' ? document.schema : 'missing'
+		const topLevelKeys = Object.keys(document ?? {}).sort().join(',')
+		const producerKeys = Object.keys(producer ?? {}).sort().join(',')
+		const courseKeys = Object.keys(course ?? {}).sort().join(',')
+		throw new Error(
+			`Dropbox course manifest schema is not aihero.course-sync.v1 (observed=${observedSchema}; topLevelKeys=${topLevelKeys}; producerKeys=${producerKeys}; courseKeys=${courseKeys}).`,
+		)
 	}
 	if (producer?.name !== 'course-video-manager') {
 		throw new Error('Dropbox course manifest producer is not course-video-manager.')
