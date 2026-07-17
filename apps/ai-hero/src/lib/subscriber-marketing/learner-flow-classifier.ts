@@ -10,6 +10,7 @@ import type {
 	ContactState,
 	SideEffectIntent,
 } from './types'
+import { isLocalDayDripDue } from './value-path-drip-due'
 
 export const LEARNER_FLOW_MOVEMENT_TOLERANCE_HOURS = 48
 
@@ -40,6 +41,7 @@ export type LearnerFlowClassification = {
 	state: LearnerFlowState
 	stage: string
 	stuckAgeHours?: number
+	lastActivityAt?: string
 	cause?: LearnerFlowStuckCause
 	intentId?: string
 	unstickCommand?: string
@@ -54,6 +56,7 @@ export type LearnerFlowContactInput = {
 		ContactEventRecord,
 		'eventType' | 'occurredAt' | 'providerReference'
 	>[]
+	dripScheduleEvidence?: { timezone?: string }
 	now: string
 }
 
@@ -163,7 +166,15 @@ export function classifyLearnerFlowContact(
 		const nextIntent = pathIntents.find(
 			(intent) => emailResourceId(intent) === nextStep,
 		)
-		if (!nextIntent && exceedsMovementTolerance(completed, input.now)) {
+		const dripDue = isLocalDayDripDue({
+			completedAt: valuePathIntentCompletedAt(completed),
+			now: input.now,
+			scheduleEvidence: input.dripScheduleEvidence,
+			cadenceHours: numberField(
+				completed.metadata.learnerFlowCanaryCadenceHours,
+			),
+		})
+		if (!nextIntent && dripDue.due) {
 			return stuck({
 				stage: emailResourceId(completed) ?? stage,
 				cause: 'drip-starved',
@@ -221,6 +232,7 @@ function stuck(args: {
 		stuckAgeHours: args.lastActivityAt
 			? hoursSince(args.lastActivityAt, args.now)
 			: undefined,
+		lastActivityAt: args.lastActivityAt,
 		cause: args.cause,
 		intentId: args.intentId,
 		unstickCommand: unstickCommand(args.cause, args.contactId),
@@ -394,6 +406,10 @@ function exceedsMovementTolerance(intent: SideEffectIntent, now: string) {
 function hoursSince(then: string, now: string) {
 	const milliseconds = new Date(now).getTime() - new Date(then).getTime()
 	return Math.max(0, Math.round((milliseconds / (60 * 60 * 1000)) * 10) / 10)
+}
+
+function numberField(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function validDate(value: string) {

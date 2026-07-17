@@ -323,9 +323,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	/** Read-only course-path scan for the daily learner-flow operator. */
-	async findSkillsWorkflowLearnerFlowRecords(): Promise<
-		LearnerFlowRecord[]
-	> {
+	async findSkillsWorkflowLearnerFlowRecords(options?: {
+		includeCanary?: boolean
+	}): Promise<LearnerFlowRecord[]> {
 		const [intentRows, entryEventRows]: [any[], any[]] = await Promise.all([
 			this.database
 				.select()
@@ -334,9 +334,11 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					and(
 						eq(sideEffectIntent.provider, 'kit'),
 						eq(sideEffectIntent.type, 'send-value-path-email'),
-						excludeLearnerFlowCanary({
-							contactId: sideEffectIntent.contactId,
-						}),
+						options?.includeCanary
+							? undefined
+							: excludeLearnerFlowCanary({
+									contactId: sideEffectIntent.contactId,
+								}),
 					),
 				),
 			this.database
@@ -349,9 +351,11 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 							contactEvent.providerReference,
 							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
 						),
-						excludeLearnerFlowCanary({
-							contactId: contactEvent.contactId,
-						}),
+						options?.includeCanary
+							? undefined
+							: excludeLearnerFlowCanary({
+									contactId: contactEvent.contactId,
+								}),
 					),
 				),
 		])

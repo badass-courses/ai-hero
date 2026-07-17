@@ -15,9 +15,9 @@ export type LearnerFlowCohortRecord = {
 }
 
 export type LearnerFlowCohortRepository = {
-	findSkillsWorkflowLearnerFlowRecords():
-		| Promise<LearnerFlowCohortRecord[]>
-		| LearnerFlowCohortRecord[]
+	findSkillsWorkflowLearnerFlowRecords(options?: {
+		includeCanary?: boolean
+	}): Promise<LearnerFlowCohortRecord[]> | LearnerFlowCohortRecord[]
 }
 
 /**
@@ -31,8 +31,11 @@ export type LearnerFlowCohortRepository = {
 export async function queryLearnerFlowCohort(args: {
 	repository: LearnerFlowCohortRepository
 	allowlist: Pick<GateDRuntimeAllowlist, 'authorizationMode' | 'contactIds'>
+	includeCanary?: boolean
 }) {
-	const liveRecords = await args.repository.findSkillsWorkflowLearnerFlowRecords()
+	const liveRecords = await args.repository.findSkillsWorkflowLearnerFlowRecords({
+		includeCanary: args.includeCanary,
+	})
 	const approved = new Set(args.allowlist.contactIds)
 	const records =
 		args.allowlist.authorizationMode === 'rolling-public-enrollment'

@@ -62,7 +62,7 @@ import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-en
 import { computeVideoSplitPoints } from './functions/split_video'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
-import { valuePathDripProgression } from './functions/value-path-drip-progression'
+import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
 import { valuePathEmailExecutor } from './functions/value-path-email-executor'
 import {
 	videoResourceAttached,
@@ -122,7 +122,7 @@ export const inngestConfig = {
 		contentReadRetention,
 		typesensePopularitySync,
 		valuePathEmailExecutor,
-		valuePathDripProgression,
+		learnerFlowReconciler,
 		googleAdsConversionUpload,
 		invoiceShortfallReconciliation,
 		syncGithubSourcedPosts,

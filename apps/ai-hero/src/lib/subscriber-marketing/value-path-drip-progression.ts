@@ -10,6 +10,9 @@ import {
 	isValuePathIntentCompleted,
 	valuePathIntentCompletedAt,
 } from './value-path-completion'
+import { isLocalDayDripDue } from './value-path-drip-due'
+
+export { isLocalDayDripDue } from './value-path-drip-due'
 import {
 	verifyAnswerClickForStep,
 	type AnswerClickVerification,
@@ -190,6 +193,7 @@ async function progressCompletedIntent(args: {
 		scheduleEvidence: args.allowlist.candidates.find(
 			(candidate) => candidate.contactId === args.intent.contactId,
 		)?.scheduleEvidence,
+		cadenceHours: numberField(metadata.learnerFlowCanaryCadenceHours),
 	})
 	if (!due.due) {
 		return {
@@ -514,71 +518,12 @@ function emailStepIdFromResourceId(emailResourceId: string) {
 	return parts[parts.length - 1]
 }
 
-export function isLocalDayDripDue(args: {
-	completedAt?: string
-	now: string
-	scheduleEvidence?: { timezone?: string }
-}) {
-	const completedAt = args.completedAt ? new Date(args.completedAt) : undefined
-	const now = new Date(args.now)
-	if (!completedAt || Number.isNaN(completedAt.getTime())) {
-		return { due: false, reason: 'completed-at-missing' }
-	}
-	const minimumDueAt = new Date(completedAt.getTime() + 18 * 60 * 60 * 1000)
-	if (now < minimumDueAt)
-		return { due: false, reason: 'drip-min-age-not-reached' }
-
-	const timezone = args.scheduleEvidence?.timezone
-	if (!timezone) {
-		const fallbackDueAt = new Date(completedAt.getTime() + 24 * 60 * 60 * 1000)
-		return now >= fallbackDueAt
-			? { due: true, reason: 'fallback-24h-due' }
-			: { due: false, reason: 'fallback-24h-not-reached' }
-	}
-	const localNow = localParts(now, timezone)
-	const localCompleted = localParts(completedAt, timezone)
-	if (!localNow || !localCompleted) {
-		const fallbackDueAt = new Date(completedAt.getTime() + 24 * 60 * 60 * 1000)
-		return now >= fallbackDueAt
-			? { due: true, reason: 'fallback-24h-due' }
-			: { due: false, reason: 'fallback-24h-not-reached' }
-	}
-	const afterCompletedLocalDay =
-		localDateKey(localNow) > localDateKey(localCompleted)
-	return afterCompletedLocalDay && localNow.hour >= 9
-		? { due: true, reason: 'local-day-9am-due' }
-		: { due: false, reason: 'local-day-9am-not-reached' }
-}
-
-function localParts(date: Date, timezone: string) {
-	try {
-		const parts = new Intl.DateTimeFormat('en-US', {
-			timeZone: timezone,
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit',
-			hour: '2-digit',
-			hourCycle: 'h23',
-		}).formatToParts(date)
-		const part = (type: string) =>
-			parts.find((item) => item.type === type)?.value
-		return {
-			year: Number(part('year')),
-			month: Number(part('month')),
-			day: Number(part('day')),
-			hour: Number(part('hour')),
-		}
-	} catch {
-		return undefined
-	}
-}
-
-function localDateKey(parts: { year: number; month: number; day: number }) {
-	return parts.year * 10000 + parts.month * 100 + parts.day
-}
-
 function stringField(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function numberField(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function unique(values: string[]) {
