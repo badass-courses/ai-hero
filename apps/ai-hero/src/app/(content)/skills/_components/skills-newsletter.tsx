@@ -90,7 +90,7 @@ export function Root({
 		(subscriber: Subscriber | undefined) => {
 			if (subscriber) {
 				track('subscribed', { location })
-				router.push(redirectUrlBuilder(subscriber, '/confirm'))
+				router.push(redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }))
 			}
 		},
 		[location, router],
