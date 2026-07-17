@@ -50,7 +50,7 @@ const getResourceHandler = async (request: NextRequest) => {
 
 		if (ability.cannot('read', 'Content')) {
 			return NextResponse.json(
-				{ error: user ? 'Forbidden' : 'Unauthorized' },
+				{ error: user ? 'Forbidden' : 'Unauthorized', docs: '/api' },
 				{ status: user ? 403 : 401, headers: corsHeaders },
 			)
 		}
@@ -165,7 +165,7 @@ const updateResourceHandler = async (request: NextRequest) => {
 				resourceId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -176,7 +176,7 @@ const updateResourceHandler = async (request: NextRequest) => {
 				resourceId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -305,7 +305,7 @@ const createResourceHandler = async (request: NextRequest) => {
 		if (!user) {
 			await log.warn('api.resources.post.unauthorized')
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -315,7 +315,7 @@ const createResourceHandler = async (request: NextRequest) => {
 				userId: user.id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}

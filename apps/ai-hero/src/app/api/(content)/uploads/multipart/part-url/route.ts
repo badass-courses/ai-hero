@@ -18,7 +18,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 
 	if (ability.cannot('create', 'Content')) {
 		return NextResponse.json(
-			{ error: user ? 'Forbidden' : 'Unauthorized' },
+			{ error: user ? 'Forbidden' : 'Unauthorized', docs: '/api' },
 			{ status: user ? 403 : 401, headers: corsHeaders },
 		)
 	}

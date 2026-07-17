@@ -301,6 +301,11 @@ const personalAccessTokenAuth = {
 	ability: buildPersonalAccessTokenAbility(['content:read']),
 	authMethod: 'personal-access-token' as const,
 }
+const reservedScopePersonalAccessTokenAuth = {
+	user,
+	ability: buildPersonalAccessTokenAbility(['analytics:read']),
+	authMethod: 'personal-access-token' as const,
+}
 const adminAuth = {
 	user,
 	ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
@@ -835,6 +840,7 @@ describe('agent token route behavior', () => {
 		)
 
 		expect(response.status).toBe(403)
+		expect(await response.json()).toMatchObject({ docs: '/api' })
 		expect(mocks.getVideoResource).not.toHaveBeenCalled()
 	})
 
@@ -849,6 +855,20 @@ describe('agent token route behavior', () => {
 		)
 
 		expect(response.status).toBe(403)
+		expect(await response.json()).toMatchObject({ docs: '/api' })
+	})
+
+	it('documents the legacy 401 returned to a valid PAT without content read ability', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			reservedScopePersonalAccessTokenAuth,
+		)
+
+		const response = await getProducts(
+			new NextRequest('http://localhost:3000/api/products'),
+		)
+
+		expect(response.status).toBe(401)
+		expect(await response.json()).toMatchObject({ docs: '/api' })
 	})
 
 	describe('approved 50-row behavioral matrix', () => {

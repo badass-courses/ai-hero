@@ -31,7 +31,7 @@ const getLessonsHandler = async (request: NextRequest) => {
 		})
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -58,7 +58,13 @@ const getLessonsHandler = async (request: NextRequest) => {
 				slugOrId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -91,13 +97,13 @@ const updateLessonHandler = async (request: NextRequest) => {
 				lessonId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
 		if (ability.cannot('update', 'Content')) {
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -143,7 +149,13 @@ const updateLessonHandler = async (request: NextRequest) => {
 				lessonId: id,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}

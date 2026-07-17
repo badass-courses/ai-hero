@@ -54,6 +54,7 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
 - [Provision the Production PAT Prerequisites](./provision-prod-pat-prerequisites.svx) — `PERSONAL_ACCESS_TOKEN_SECRET` now exists in Vercel production, preview, and development; production `ai-hero.main` already contained `AI_PersonalAccessToken`, so no deploy request was needed.
 - [Approve the Coverage Matrix Edges](./approve-coverage-matrix.svx) — all edges locked as drafted; the three anonymous holes close inside the seam step (with Matt heads-up); handoff becomes a paste-able agent prompt against a self-sufficient discovery surface.
 - [Wire PAT Verification into the Auth Seam with Scope-Derived Ability](./wire-pat-auth-seam.svx) — `content:read` PATs now verify at the request seam, receive scope-only privileged-read CASL rules, expose safe draft/private reads, deny every matrix write/capability edge with 403, close the three anonymous holes, and pass the 50-row/150-case behavioral matrix.
+- [Teach OpenAPI and Agent Discovery the Bearer Scheme](./document-auth-in-openapi.svx) — `/api`, `/api/openapi.json`, and `/llms.txt` now self-teach bearer presentation, admin mint/list/revoke, the scope table, privileged-read edges and exclusions, token lifecycle, and 401/403 recovery; auth error bodies point back to discovery without changing status behavior.
 
 ## Latent
 

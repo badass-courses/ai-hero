@@ -35,7 +35,7 @@ const getLessonSolutionHandler = async (
 		})
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -58,7 +58,13 @@ const getLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -94,10 +100,16 @@ const updateLessonSolutionHandler = async (
 				userId: user?.id,
 				lessonId,
 			})
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401 },
+			)
 		}
 		if (authMethod === 'personal-access-token') {
-			return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403 },
+			)
 		}
 
 		const body = await request.json()
@@ -124,7 +136,13 @@ const updateLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -155,10 +173,16 @@ const createLessonSolutionHandler = async (
 				userId: user?.id,
 				lessonId,
 			})
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401 },
+			)
 		}
 		if (authMethod === 'personal-access-token') {
-			return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403 },
+			)
 		}
 
 		const body = await request.json()
@@ -179,7 +203,13 @@ const createLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -210,10 +240,16 @@ const deleteLessonSolutionHandler = async (
 				userId: user?.id,
 				lessonId,
 			})
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401 },
+			)
 		}
 		if (authMethod === 'personal-access-token') {
-			return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403 },
+			)
 		}
 
 		const solution = await deleteSolutionForLesson(lessonId, ability, user?.id)
@@ -228,7 +264,13 @@ const deleteLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}

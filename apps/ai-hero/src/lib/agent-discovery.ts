@@ -18,6 +18,7 @@ const DISCOVERY_FORMATS = {
 
 const DISCOVERY_SURFACES = {
 	api: '/api',
+	openapi: '/api/openapi.json',
 	sitemap: '/sitemap.xml',
 	sitemapMarkdown: '/sitemap.md',
 	llms: '/llms.txt',
@@ -119,7 +120,12 @@ const PUBLIC_JSON_API_HINTS = [
 	{
 		path: DISCOVERY_SURFACES.api,
 		description:
-			'public discovery document for formats, route families, and next actions',
+			'public discovery document for formats, route families, agent tokens, and next actions',
+	},
+	{
+		path: DISCOVERY_SURFACES.openapi,
+		description:
+			'OpenAPI 3.1 contract with bearer auth, scope requirements, and token-management schemas',
 	},
 	{
 		path: '/api/search?q=<query>',
@@ -250,11 +256,56 @@ const AGENT_API_CAPABILITIES = [
 	},
 ] as const satisfies readonly ApiDiscoveryAuthedCapability[]
 
+const AGENT_TOKEN_SCOPES = [
+	{
+		name: 'content:read',
+		status: 'active',
+		grants:
+			'Privileged read of approved CMS content, including draft, unpublished, private, and unlisted content.',
+	},
+	{
+		name: 'analytics:read',
+		status: 'reserved',
+		grants:
+			'Accepted when minting, but currently grants no endpoint access. Do not assume analytics access.',
+	},
+	{
+		name: 'analytics:chat',
+		status: 'reserved',
+		grants:
+			'Accepted when minting, but currently grants no endpoint access. Do not assume analytics chat access.',
+	},
+] as const
+
+const AGENT_TOKEN_EXCLUSIONS = [
+	{
+		capability: 'CMS writes',
+		why: 'content:read is read-only; create, update, delete, and processing operations mutate state.',
+	},
+	{
+		capability: 'Raw video and Mux payloads',
+		why: 'They expose playable identifiers and media internals. Use the sanitized content projections instead.',
+	},
+	{
+		capability: 'Uploads and signed URLs',
+		why: 'They grant storage or processing capabilities, even when the route uses HTTP GET.',
+	},
+	{
+		capability: 'Support memory',
+		why: 'It is a separate data domain and may contain customer context.',
+	},
+	{
+		capability: 'Survey and enrollment analytics',
+		why: 'They contain responses, commerce aggregates, or personally identifying fields rather than CMS content.',
+	},
+] as const
+
 const DISCOVERY_NEXT_ACTIONS = [
+	'Read /api/openapi.json for the complete bearer-auth and per-operation scope contract.',
 	'Read /sitemap.md for a markdown-oriented discovery index.',
 	'Read /llms.txt for a short operator-oriented summary.',
 	'Use explicit .md twins for low-token public content retrieval.',
-	'Use /api/search or /api/resources for structured public JSON reads.',
+	'Use /api/search or /api/resources for structured JSON reads.',
 ] as const
 
 export interface PublicDiscoveryResource {
@@ -317,6 +368,83 @@ function formatMarkdownRouteHints(
 		.join('\n')
 }
 
+function buildAgentTokenDiscovery(baseUrl: string) {
+	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
+	const tokenCollectionUrl = `${normalizedBaseUrl}/api/personal-access-tokens`
+
+	return {
+		whatTheyAre:
+			'Agent tokens are scoped aih_pat_* bearer credentials minted by an admin for non-human callers. Their ability comes only from scopes, never from the owner roles.',
+		docs: `${normalizedBaseUrl}/api`,
+		openapi: `${normalizedBaseUrl}/api/openapi.json`,
+		presentation: {
+			header: 'Authorization: Bearer AGENT_TOKEN',
+			note: 'Send the token in the Authorization header. Never put it in a URL or query string.',
+		},
+		tokenKinds: [
+			{
+				kind: 'scoped agent token',
+				shape: 'aih_pat_*',
+				use: 'Approved scope-derived reads. A content:read token cannot mint, list, or revoke tokens and cannot write content.',
+			},
+			{
+				kind: 'admin device token',
+				shape: 'opaque bearer token',
+				use: 'Administrative abilities, including minting, listing, and revoking the caller’s agent tokens.',
+			},
+		],
+		management: {
+			requires:
+				'An admin device token with manage all ability. Operations are mint-for-self and owned-token-only.',
+			mint: {
+				method: 'POST',
+				path: '/api/personal-access-tokens',
+				note: 'The 201 response returns the complete token exactly once. Store it immediately.',
+			},
+			list: {
+				method: 'GET',
+				path: '/api/personal-access-tokens',
+				note: 'Returns safe metadata only; raw tokens and token hashes are never listed.',
+			},
+			revoke: {
+				method: 'DELETE',
+				path: '/api/personal-access-tokens/{id}',
+				note: 'Idempotent immediate kill switch for an owned token.',
+			},
+			curl: {
+				mint: `curl -X POST '${tokenCollectionUrl}' -H 'Authorization: Bearer ADMIN_DEVICE_TOKEN' -H 'Content-Type: application/json' --data '{"name":"content-reader","scopes":["content:read"]}'`,
+				mintWithExpiry: `curl -X POST '${tokenCollectionUrl}' -H 'Authorization: Bearer ADMIN_DEVICE_TOKEN' -H 'Content-Type: application/json' --data '{"name":"temporary-content-reader","scopes":["content:read"],"expiresAt":"2099-01-01T00:00:00Z"}'`,
+				list: `curl '${tokenCollectionUrl}' -H 'Authorization: Bearer ADMIN_DEVICE_TOKEN'`,
+				revoke: `curl -X DELETE '${tokenCollectionUrl}/TOKEN_ID' -H 'Authorization: Bearer ADMIN_DEVICE_TOKEN'`,
+				read: `curl '${normalizedBaseUrl}/api/posts' -H 'Authorization: Bearer AGENT_TOKEN'`,
+			},
+		},
+		scopes: AGENT_TOKEN_SCOPES.map((scope) => ({ ...scope })),
+		privilegedRead: {
+			scope: 'content:read',
+			includes:
+				'Approved posts, lessons, lesson solutions, sanitized resources, product structure, search results, and survey definitions, including draft, unpublished, private, and unlisted content.',
+			excludes: AGENT_TOKEN_EXCLUSIONS.map((exclusion) => ({ ...exclusion })),
+		},
+		lifecycle: {
+			expiresAt:
+				'Optional at mint and must be a future RFC 3339 timestamp. Omit it for no automatic expiry.',
+			revocation:
+				'Revoke by token id for an immediate kill switch. Revoked and expired tokens authenticate as invalid.',
+			lastUsedAt:
+				'Successful verification updates lastUsedAt so admins can audit whether a token is active.',
+		},
+		errors: {
+			'401':
+				'The bearer credential is missing, malformed, invalid, expired, or revoked. Some legacy content-read handlers also use 401 when a valid token lacks Content read ability; if the token is known-valid, inspect its scopes before retrying.',
+			'403':
+				'The credential is valid but its scopes or abilities exclude this operation. content:read never grants writes, Mux payloads, signed URLs, memory, or analytics. Do not retry without a different authorized credential.',
+			docsField:
+				'Auth-related error bodies point back to /api when their existing envelope permits it.',
+		},
+	}
+}
+
 function formatPublicDiscoveryResources(resources: PublicDiscoveryResource[]) {
 	return resources.length
 		? resources
@@ -341,12 +469,13 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 			...resourceFamily,
 		})),
 		authenticated: {
-			note: 'Capabilities for an authenticated agent (device token). Every endpoint is gated server-side — 401 without a token, 403 without the required Content ability.',
+			note: 'Bearer credentials may be scoped aih_pat_* agent tokens or admin device tokens. A 403 means the credential is valid but excluded from the operation. A 401 usually means invalid, expired, or revoked; legacy content reads may also return 401 when a valid token lacks Content read ability.',
 			capabilities: AGENT_API_CAPABILITIES.map((capability) => ({
 				...capability,
 				endpoints: capability.endpoints.map((endpoint) => ({ ...endpoint })),
 			})),
 		},
+		agentTokens: buildAgentTokenDiscovery(normalizedBaseUrl),
 		nextActions: [...DISCOVERY_NEXT_ACTIONS],
 	}
 }
@@ -377,6 +506,24 @@ ${markdownRoutes}
 
 Public JSON APIs:
 ${formatSurfaceHints(normalizedBaseUrl, PUBLIC_JSON_API_HINTS, '->')}
+
+Agent tokens:
+- Full guide: ${normalizedBaseUrl}/api
+- OpenAPI contract: ${normalizedBaseUrl}/api/openapi.json
+- Present any bearer as: Authorization: Bearer TOKEN
+- Scoped agent tokens start with aih_pat_. Admin device tokens are separate opaque bearer credentials.
+- Admin device tokens can POST/GET ${normalizedBaseUrl}/api/personal-access-tokens and DELETE ${normalizedBaseUrl}/api/personal-access-tokens/TOKEN_ID.
+- Mint returns the complete agent token once. Optional expiresAt defaults to no automatic expiry; revocation is the kill switch.
+- Active scope: content:read. It includes approved draft, unpublished, private, and unlisted CMS reads.
+- Reserved scopes analytics:read and analytics:chat currently grant no endpoint access.
+- content:read excludes every write, raw Mux/video payloads, uploads and signed URLs, support memory, survey analytics, and enrollment analytics.
+- 401 usually means the credential is missing, invalid, expired, or revoked; legacy content reads may also use 401 when a valid token lacks Content read ability. 403 means the credential is valid but excluded from that operation. Read the docs field and ${normalizedBaseUrl}/api before retrying.
+
+Mint example (placeholder credential):
+curl -X POST '${normalizedBaseUrl}/api/personal-access-tokens' -H 'Authorization: Bearer ADMIN_DEVICE_TOKEN' -H 'Content-Type: application/json' --data '{"name":"content-reader","scopes":["content:read"]}'
+
+Read example (placeholder credential):
+curl '${normalizedBaseUrl}/api/posts' -H 'Authorization: Bearer AGENT_TOKEN'
 
 Formats:
 - HTML by default

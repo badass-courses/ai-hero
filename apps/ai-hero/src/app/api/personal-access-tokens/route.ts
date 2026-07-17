@@ -62,7 +62,7 @@ const mintPersonalAccessTokenHandler = async (request: NextRequest) => {
 				outcome: 'unauthorized',
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -74,7 +74,7 @@ const mintPersonalAccessTokenHandler = async (request: NextRequest) => {
 				userId: user.id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden: Admin access required' },
+				{ error: 'Forbidden: Admin access required', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -143,7 +143,7 @@ const listPersonalAccessTokensHandler = async (request: NextRequest) => {
 				outcome: 'unauthorized',
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -155,7 +155,7 @@ const listPersonalAccessTokensHandler = async (request: NextRequest) => {
 				userId: user.id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden: Admin access required' },
+				{ error: 'Forbidden: Admin access required', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}

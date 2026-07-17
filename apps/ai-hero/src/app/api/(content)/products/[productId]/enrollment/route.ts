@@ -38,14 +38,14 @@ const getEnrollment = async (
 
 	if (!user) {
 		return NextResponse.json(
-			{ error: 'Unauthorized' },
+			{ error: 'Unauthorized', docs: '/api' },
 			{ status: 401, headers: corsHeaders },
 		)
 	}
 
 	if (ability.cannot('update', 'Content')) {
 		return NextResponse.json(
-			{ error: 'Forbidden' },
+			{ error: 'Forbidden', docs: '/api' },
 			{ status: 403, headers: corsHeaders },
 		)
 	}

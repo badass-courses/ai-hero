@@ -95,6 +95,7 @@ function jsonError({
 			command: COMMAND,
 			error: { message, code },
 			fix,
+			docs: '/api',
 			next_actions: nextActions,
 		},
 		{ status, headers: corsHeaders },

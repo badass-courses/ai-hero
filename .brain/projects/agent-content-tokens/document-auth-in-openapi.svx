@@ -3,7 +3,8 @@ title: "Teach OpenAPI and Agent Discovery the Bearer Scheme"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi (flagg, herdr pane w19:p6, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: ["./wire-pat-auth-seam.svx", "./ship-token-mint-endpoints.svx"]
@@ -23,3 +24,16 @@ Build (execution authorized in the brief):
 Sharpened at matrix approval (Joel, 2026-07-17): the discovery surface must be **self-sufficient** — an agent pointed at one URL with an admin PAT self-onboards: what scopes exist, how to mint a scoped token (admins), how to present it, what `content:read` sees, what returns 403 and why. Add agent instructions wherever an agent might land: discovery doc, llms.txt, openapi operation descriptions, and 401/403 error bodies that point back at the discovery URL.
 
 Resolved when discovery output + openapi.json describe the full auth story and a fresh agent session can, from those documents alone, mint nothing it shouldn't, form a correct authenticated request in dev, and explain its own 403s.
+
+## Result (2026-07-17)
+
+An agent can now self-onboard from one public URL:
+
+- `/api` explains both bearer kinds, admin-only mint/list/revoke, the full scope table, `content:read` privileged-read semantics, exclusions with reasons, expiry/revocation, placeholder curl commands, and the exact 401/403 caveat for legacy content reads.
+- `/api/openapi.json` serves an OpenAPI 3.1 contract with the HTTP bearer scheme, all 50 approved content route-method rows and their security/scope policy, plus complete mint/list/revoke request and response schemas. The mint response documents that the raw `aih_pat_*` token is returned once.
+- `/llms.txt` carries the same auth story in terse form.
+- PAT routes and content-route auth errors point back to `/api` through each route's existing envelope. No auth abilities or status behavior changed.
+
+Implementation: `apps/ai-hero/src/lib/agent-discovery.ts`, `apps/ai-hero/src/lib/agent-openapi.ts`, `apps/ai-hero/src/app/api/openapi.json/route.ts`, PAT/content route error bodies, and focused route/discovery tests.
+
+Validation: 198 focused Vitest assertions passed across the discovery/OpenAPI, PAT management, and 50-row coverage-matrix suites; `bun x tsc --noEmit` passed.

@@ -42,7 +42,7 @@ const getVideoResourceHandler = async (
 				videoResourceId: params.videoResourceId,
 			})
 			return NextResponse.json(
-				{ error: user ? 'Forbidden' : 'Unauthorized' },
+				{ error: user ? 'Forbidden' : 'Unauthorized', docs: '/api' },
 				{
 					status: user ? 403 : 401,
 					headers: corsHeaders,

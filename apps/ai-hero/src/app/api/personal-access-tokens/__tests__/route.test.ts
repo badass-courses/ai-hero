@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { buildAgentOpenApiDocument } from '@/lib/agent-openapi'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -105,6 +106,17 @@ describe('personal access token API', () => {
 		expect(response.status).toBe(201)
 		expect(body.token).toMatch(/^aih_pat_[a-f0-9]+_[a-f0-9]+$/)
 		expect(body).not.toHaveProperty('tokenHash')
+
+		const mintResponseSchema = buildAgentOpenApiDocument(
+			'http://localhost:3000',
+		).components.schemas.MintPersonalAccessTokenResponse
+		expect(mintResponseSchema.additionalProperties).toBe(false)
+		expect(Object.keys(body).sort()).toEqual(
+			[...mintResponseSchema.required].sort(),
+		)
+		expect(
+			Object.keys(body).every((key) => key in mintResponseSchema.properties),
+		).toBe(true)
 		expect(mocks.insertValues).toHaveBeenCalledOnce()
 		const persisted = mocks.insertValues.mock.calls[0]?.[0]
 		expect(persisted).toMatchObject({
@@ -133,8 +145,10 @@ describe('personal access token API', () => {
 		const response = await POST(
 			postRequest({ name: 'Content reader', scopes: ['content:read'] }),
 		)
+		const body = await response.json()
 
 		expect(response.status).toBe(403)
+		expect(body.docs).toBe('/api')
 		expect(mocks.log.warn).toHaveBeenCalledWith(
 			'api.personal-access-tokens.access-denied',
 			expect.objectContaining({ action: 'mint', outcome: 'forbidden' }),
@@ -151,9 +165,26 @@ describe('personal access token API', () => {
 		const response = await POST(
 			postRequest({ name: 'Content reader', scopes: ['content:read'] }),
 		)
+		const body = await response.json()
 
 		expect(response.status).toBe(401)
+		expect(body.docs).toBe('/api')
 		expect(mocks.insertValues).not.toHaveBeenCalled()
+	})
+
+	it('points list and revoke authorization errors back to discovery', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(auth(false))
+
+		const listResponse = await GET(new NextRequest(baseUrl))
+		const revokeResponse = await DELETE(
+			new NextRequest(`${baseUrl}/pat_1`, { method: 'DELETE' }),
+			{ params: Promise.resolve({ id: 'pat_1' }) },
+		)
+
+		expect(listResponse.status).toBe(403)
+		expect(await listResponse.json()).toMatchObject({ docs: '/api' })
+		expect(revokeResponse.status).toBe(403)
+		expect(await revokeResponse.json()).toMatchObject({ docs: '/api' })
 	})
 
 	it('never leaks token hashes when listing the caller tokens', async () => {

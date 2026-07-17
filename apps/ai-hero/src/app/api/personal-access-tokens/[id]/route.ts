@@ -32,7 +32,7 @@ const revokePersonalAccessTokenHandler = async (
 				tokenId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -45,7 +45,7 @@ const revokePersonalAccessTokenHandler = async (
 				userId: user.id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden: Admin access required' },
+				{ error: 'Forbidden: Admin access required', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}

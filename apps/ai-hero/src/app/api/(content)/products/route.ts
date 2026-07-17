@@ -45,7 +45,7 @@ const getProductsHandler = async (request: NextRequest) => {
 				slugOrId,
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -146,7 +146,7 @@ const createProductHandler = async (request: NextRequest) => {
 		if (!user) {
 			await log.warn('api.products.post.unauthorized')
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -154,7 +154,7 @@ const createProductHandler = async (request: NextRequest) => {
 		if (!ability.can('create', 'Content')) {
 			await log.warn('api.products.post.forbidden', { userId: user.id })
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -233,7 +233,7 @@ const updateProductHandler = async (request: NextRequest) => {
 		if (!user) {
 			await log.warn('api.products.put.unauthorized')
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -241,7 +241,7 @@ const updateProductHandler = async (request: NextRequest) => {
 		if (!ability.can('update', 'Content')) {
 			await log.warn('api.products.put.forbidden', { userId: user.id })
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
