@@ -1,0 +1,63 @@
+---
+title: "Draft: course-video-manager issue — agent tokens for the AI Hero content CMS"
+type: "asset"
+parent: "./live-verify-and-matt-handoff.svx"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Draft issue for `mattpocock/course-video-manager`
+
+**Title**: Agent tokens: read-only privileged access to the AI Hero content CMS (live now)
+
+**Body** (verbatim below the line):
+
+---
+
+Your ask in #cc-matt-p is live: admins can mint scoped **agent tokens** (`aih_pat_*`) that give your agents read-only-but-privileged access to the AI Hero content CMS — drafts, unlisted, and private content included, writes always 403.
+
+## Fastest path (paste this to your agent)
+
+> Read https://www.aihero.dev/api and https://www.aihero.dev/api/openapi.json. Using my AI Hero admin token as `Authorization: Bearer`, mint me an agent token: `POST /api/personal-access-tokens` with `{"name":"cvm-agents","scopes":["content:read"]}`. The raw `aih_pat_*` token is returned exactly once — store it as `AI_HERO_AGENT_TOKEN`. Use it as the Bearer for all AI Hero content reads from now on. Verify it works by fetching a draft post via `GET /api/posts?slugOrId=<id>`. Writes will 403 by design; any surprising 401/403 has a `docs` field pointing back at `/api`.
+
+The discovery surface is self-sufficient — `/api` (agent guide), `/api/openapi.json` (OpenAPI 3.1 with `securitySchemes` and per-operation scopes), `/llms.txt` (terse). No source-code archaeology needed, which also means `document-ai-hero-api`'s read-the-local-clone workflow can retire in favor of the live contract.
+
+## What `content:read` sees
+
+- Posts, lessons, solutions, resources, search, product structure, survey definitions — including `draft` state and `private`/`unlisted` visibility.
+- Deliberately excluded (each 403s): all writes, Mux playback payloads, uploads/signed URLs, support memory, survey answers (PII), enrollment analytics. If your agents need transcript text or a write scope, say so — both are on the roadmap list already.
+
+## Token lifecycle
+
+- Mint/list/revoke at `/api/personal-access-tokens` (admin only, mint-for-self). Optional `expiresAt`; revocation is instant (`DELETE /:id`). `lastUsedAt` is stamped on every use and every verify emits a structured log, so dead or misbehaving tokens are auditable.
+
+## Optional: drop-in skill
+
+If you want it as a skill, this is ready to paste as `.claude/skills/ai-hero-content-api/SKILL.md`:
+
+```markdown
+---
+name: ai-hero-content-api
+description: Read the AI Hero content CMS (drafts and private included) with a scoped agent token. Use when reading, searching, or auditing AI Hero posts, lessons, courses, products, or survey definitions.
+---
+
+# AI Hero content API (agent token)
+
+- Base: https://www.aihero.dev — self-onboard from `/api` (guide) and `/api/openapi.json` (OpenAPI 3.1).
+- Auth: `Authorization: Bearer $AI_HERO_AGENT_TOKEN` (an `aih_pat_*` token scoped `content:read`).
+- Grants privileged READ of posts, lessons, solutions, resources, search, product structure, survey definitions — drafts/private included. Every write 403s; Mux playback, signed URLs, support memory, survey answers, and enrollment analytics are excluded by design.
+- Minting is admin-only: `POST /api/personal-access-tokens` `{"name":"...","scopes":["content:read"]}` — raw token returned once. `GET` lists safe metadata; `DELETE /:id` revokes.
+- On unexpected 401/403, follow the `docs` field in the error body back to `/api`.
+```
+
+## Heads-up: three anonymous holes closed in the same ship
+
+While wiring the token seam we closed three pre-existing anonymous paths — flag anything of yours that leaned on them:
+
+1. `GET /api/resources?slugOrId=…` no longer serves resources anonymously (it returned raw drafts + Mux IDs to anyone).
+2. `GET /api/uploads/signed-url` now requires content-create ability (it issued S3 signed URLs anonymously).
+3. Anonymous `/api/search` now filters to published **public** docs (private/unlisted content no longer leaks into results), and the `type` param is allowlisted.
+
+Verified live today: mint 201 → draft read 200 → anonymous control 401 → write 403 → revoke 200 → read-after-revoke 401, with structured `auth.personal-access-token.verify` events in Axiom for each.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)

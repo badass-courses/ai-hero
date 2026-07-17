@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "claude (flagg, herdr pane w19:p1, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers:
   [
@@ -30,3 +30,16 @@ Assert the finish line in production, behaviorally — live remainders block:
 6. Reply in Matt's Slack thread (https://eggheadio.slack.com/archives/C0211NSK3TP/p1784281556387689) with a **paste-able agent prompt** + the issue link — one URL + his admin PAT and the agent self-onboards from the discovery surface (Joel, 2026-07-17: no hand-holding breakdown). Matt confirms his agent works. Then ✅ react on the thread root (`jc-slack react '<permalink>' --emoji white_check_mark`).
 
 Resolved when all six held, receipts (curl transcripts redacted of token material, Axiom query + result, issue URL, Slack permalink) are linked in the Result, and the brief flips to done.
+
+## Receipts so far (2026-07-17, assertions 1-4 GREEN)
+
+Verified against production `https://www.aihero.dev` (deploy `ai-hero-jjg7dcvou`, main @ `a3bd5a8`), script `live-verify.mjs` (receipts-only output, no token material):
+
+1. **Mint over API**: 201, `tokenPrefix=aih_pat_059c71ab…`, scopes `["content:read"]`, raw token shape valid, minted with a 1-day-old admin device token.
+2. **Privileged read**: GET `/api/posts?slugOrId=post_3a7fw` → 200, `state=draft`. Anonymous control on the same id → 401.
+3. **Write denied**: PUT `/api/posts` with the PAT → 403 with `docs: /api` in the body.
+4. **Axiom**: 3 structured `auth.personal-access-token.verify` events in the `vercel` dataset at 17:41Z matching the run (info/accepted GET, info PUT, warn read-after-revoke) with requestId, path, method, tokenKind.
+5. Lifecycle bonus: DELETE revoke → 200; read-after-revoke → 401.
+6. Discovery: `/api` teaches agent tokens; `openapi.json` serves OpenAPI 3.1 with `securitySchemes`.
+
+Remaining: issue on course-video-manager ([draft](./matt-issue-draft.svx) pending Joel's go), Slack reply with agent prompt, Matt confirmation, ✅ react.
