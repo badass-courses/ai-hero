@@ -82,6 +82,24 @@ export const valuePathEmailExecutor = inngest.createFunction(
 				status: result.status, reviewReasons: 'reviewReasons' in result ? result.reviewReasons : [],
 			})
 		}
+		const counts = {
+			processed: results.length,
+			completed: results.filter((result) => result.status === 'completed').length,
+			blocked: results.filter((result) => result.status === 'blocked').length,
+			failed: results.filter((result) => result.status === 'failed').length,
+			retryableFailed: results.filter(
+				(result) => result.status === 'retryable-failed',
+			).length,
+			skipped: results.filter((result) => result.status === 'skipped').length,
+			emailZeroCompleted: results.filter(
+				(result) =>
+					result.status === 'completed' && result.kitSequenceId === '2757199',
+			).length,
+		}
+		await log[counts.failed > 0 || counts.retryableFailed > 0 ? 'warn' : 'info'](
+			'subscriber_funnel.email_executor_run_completed',
+			{ funnel: 'skills-newsletter', ...counts },
+		)
 		return results
 	},
 )

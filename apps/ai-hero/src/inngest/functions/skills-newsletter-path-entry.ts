@@ -56,6 +56,26 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 				blocked: result.entry.counts.blocked,
 				reviewReasons: result.entry.results.flatMap((item) => item.reviewReasons),
 			})
+			await log.info('subscriber_funnel.signup_entry_completed', {
+				funnel: 'skills-newsletter',
+				signupsCaptured: 1,
+				contactsPersisted: 1,
+				emailZeroPlanned: result.entry.counts.planned,
+				blocked: result.entry.counts.blocked,
+				idempotentNoop: result.entry.counts.idempotentNoop,
+			})
+			if (
+				event.data.source === 'signup-gap-replay' ||
+				event.data.source === 'learner-flow-unstick'
+			) {
+				await log.info('subscriber_funnel.signup_gap_replay_received', {
+					funnel: 'skills-newsletter',
+					replayEventsReceived: 1,
+					emailZeroPlanned: result.entry.counts.planned,
+					blocked: result.entry.counts.blocked,
+					idempotentNoop: result.entry.counts.idempotentNoop,
+				})
+			}
 			return result
 		})
 	},

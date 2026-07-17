@@ -1,4 +1,5 @@
 import { db } from "@/db";
+import { log } from "@/server/logger";
 
 import {
   DrizzleCaptureMarketingRepository,
@@ -91,5 +92,18 @@ export async function getLearnerFlowAggregateSummary() {
   const repository = new DrizzleCaptureMarketingRepository(db);
   const generatedAt = new Date().toISOString();
   const records = await repository.findSkillsWorkflowLearnerFlowRecords();
-  return summarizeLearnerFlowRecords({ records, now: generatedAt }).summary;
+  const summary = summarizeLearnerFlowRecords({
+    records,
+    now: generatedAt,
+  }).summary;
+  await log[summary.assertion.passed ? "info" : "warn"](
+    "subscriber_funnel.learner_flow_classified",
+    {
+      funnel: "skills-newsletter",
+      ...summary.counts,
+      causeCounts: summary.causeCounts,
+      assertionPassed: summary.assertion.passed,
+    },
+  );
+  return summary;
 }
