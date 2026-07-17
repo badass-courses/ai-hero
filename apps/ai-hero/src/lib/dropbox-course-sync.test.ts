@@ -152,39 +152,30 @@ describe('Dropbox course sync OAuth', () => {
 			DROPBOX_SYNC_SHARED_LINK: sharedLink,
 		})
 		const document = {
-			schema: 'aihero.course-sync.v1',
-			producer: {
-				name: 'course-video-manager',
-				revision: 'cvm-revision-42',
-				exportedAt: '2026-07-16T23:00:00.000Z',
-			},
-			course: {
-				sourceId: 'course-source-1',
-				title: 'PRIVATE_COURSE_TITLE_SENTINEL',
-				version: { sourceId: 'course-version-7' },
-			},
+			$schema: './course.schema.json',
+			schemaVersion: 2,
+			courseId: 'course-source-1',
+			courseName: 'PRIVATE_COURSE_TITLE_SENTINEL',
 			sections: [
 				{
+					id: 'section-1',
+					title: 'PRIVATE_SECTION_TITLE_SENTINEL',
 					lessons: [
 						{
+							type: 'explainer',
+							id: 'lesson-1',
 							title: 'PRIVATE_LESSON_TITLE_SENTINEL',
-							body: { value: 'PRIVATE_LESSON_BODY_SENTINEL' },
-							videos: [
-								{
-									media: {
-										sourcePath: 'PRIVATE_ASSET_PATH_SENTINEL/video.mp4',
-										sha256: 'a'.repeat(64),
-									},
-									transcript: { value: 'PRIVATE_TRANSCRIPT_SENTINEL' },
-								},
-							],
+							explainer: {
+								id: 'video-1',
+								relativePath: 'PRIVATE_ASSET_PATH_SENTINEL/video.mp4',
+								body: 'PRIVATE_LESSON_BODY_SENTINEL',
+								description: 'PRIVATE_DESCRIPTION_SENTINEL',
+								hash: 'export-fingerprint',
+								chapters: [],
+							},
 						},
 					],
 				},
-			],
-			assets: [
-				{ sourcePath: 'lesson/video.mp4', sha256: 'a'.repeat(64) },
-				{ sourcePath: 'lesson/transcript.md' },
 			],
 		}
 		const fetchImpl = vi
@@ -212,24 +203,25 @@ describe('Dropbox course sync OAuth', () => {
 		})
 
 		expect(summary).toEqual({
-			schema: 'aihero.course-sync.v1',
-			producer: {
-				name: 'course-video-manager',
-				revision: 'cvm-revision-42',
-				exportedAt: '2026-07-16T23:00:00.000Z',
+			contract: {
+				name: 'course-video-manager.course-json',
+				schemaVersion: 2,
 			},
+			producer: { name: 'course-video-manager' },
 			course: {
 				sourceId: 'course-source-1',
-				versionSourceId: 'course-version-7',
+				sourceVersionId: null,
 			},
 			structure: {
 				sectionCount: 1,
 				lessonCount: 1,
 				videoCount: 1,
-				declaredAssetCount: 2,
-				declaredAssetsMissingSha256: 1,
-				videoMediaCount: 1,
-				videoMediaMissingSha256: 0,
+				videoExportHashCount: 1,
+			},
+			bindingReadiness: {
+				sourceVersionPinned: false,
+				videoDropboxRevisionsPinned: false,
+				videoByteSha256Complete: false,
 			},
 			manifest: {
 				sourcePath: '/course.json',
@@ -266,12 +258,10 @@ describe('Dropbox course sync OAuth', () => {
 		const tokenResponse = jsonResponse({ access_token: 'short-lived-token' })
 		const malformedResponse = new Response(
 			JSON.stringify({
-				schema: 'aihero.course-sync.v1',
-				producer: {
-					name: 'course-video-manager',
-					exportedAt: '2026-07-16T23:00:00.000Z',
-				},
-				course: { sourceId: 'course-1', version: { sourceId: 'version-1' } },
+				$schema: './course.schema.json',
+				schemaVersion: 2,
+				courseId: 'course-1',
+				courseName: 'Course',
 				sections: {},
 			}),
 			{
@@ -299,13 +289,18 @@ describe('Dropbox course sync OAuth', () => {
 			.mockResolvedValueOnce(
 				new Response(
 					JSON.stringify({
-						schema: 'aihero.course-sync.v1',
-						producer: {
-							name: 'course-video-manager',
-							exportedAt: '2026-07-16T23:00:00.000Z',
-						},
-						course: { sourceId: 'course-1', version: { sourceId: 'version-1' } },
-						sections: [{ lessons: [{ videos: ['invalid'] }] }],
+						$schema: './course.schema.json',
+						schemaVersion: 2,
+						courseId: 'course-1',
+						courseName: 'Course',
+						sections: [
+							{
+								id: 'section-1',
+								lessons: [
+									{ type: 'explainer', id: 'lesson-1', explainer: 'invalid' },
+								],
+							},
+						],
 					}),
 					{
 						headers: {

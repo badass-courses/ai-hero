@@ -58,24 +58,25 @@ const sharedLinkConfig = {
 }
 
 const summary = {
-	schema: 'aihero.course-sync.v1' as const,
-	producer: {
-		name: 'course-video-manager' as const,
-		revision: 'producer-revision',
-		exportedAt: '2026-07-16T23:00:00.000Z',
+	contract: {
+		name: 'course-video-manager.course-json' as const,
+		schemaVersion: 2 as const,
 	},
+	producer: { name: 'course-video-manager' as const },
 	course: {
 		sourceId: 'course-source-id',
-		versionSourceId: 'course-version-id',
+		sourceVersionId: null,
 	},
 	structure: {
 		sectionCount: 1,
 		lessonCount: 2,
 		videoCount: 3,
-		declaredAssetCount: 4,
-		declaredAssetsMissingSha256: 0,
-		videoMediaCount: 3,
-		videoMediaMissingSha256: 0,
+		videoExportHashCount: 3,
+	},
+	bindingReadiness: {
+		sourceVersionPinned: false as const,
+		videoDropboxRevisionsPinned: false as const,
+		videoByteSha256Complete: false as const,
 	},
 	manifest: {
 		sourcePath: '/course.json' as const,
