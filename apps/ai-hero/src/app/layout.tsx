@@ -87,7 +87,9 @@ export default function RootLayout({
 					className={`bg-page-background relative overflow-x-hidden ${geist.variable} ${geistMono.variable} antialised font-sans`}
 				>
 					<SiteStructuredData />
-					<FirstTouchCapture />
+					<React.Suspense fallback={null}>
+						<FirstTouchCapture />
+					</React.Suspense>
 					<Toaster
 						className="[&_button]:opacity-100 [&_svg]:opacity-100"
 						viewportClassName="left-auto bottom-0 sm:bottom-5"

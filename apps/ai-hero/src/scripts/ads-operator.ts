@@ -20,6 +20,7 @@ import {
 } from '@/lib/google-ads-conversion-upload'
 import { getAdsCourseFunnelMetrics, getAdsCourseMetrics } from '@/lib/ads-course-metrics'
 import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
+import { getPurchaseConversionStatus } from '@/lib/purchase-conversion-status'
 import { getLocalSignupConversionStatus } from '@/lib/signup-conversion-status'
 import { log } from '@/server/logger'
 import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
@@ -810,9 +811,9 @@ async function offlineConversionPreview(args: {
 			note: 'Uploads are idempotent through AI_GoogleAdsConversionUpload. Raw click IDs are not stored in the ledger.',
 		},
 		notes: [
-			'Raw Google click IDs and emails are intentionally omitted from output.',
-			'Eligible rows require a real gclid, gbraid, or wbraid and exclude TEST_ click IDs.',
-			'Exactly one Google click ID is uploaded per purchase, prioritizing gclid, then gbraid, then wbraid.',
+			'Raw Google click IDs, emails, contact IDs, and Kit subscriber IDs are intentionally omitted from output.',
+			'Checkout attribution wins. Missing checkout click IDs may fall back through buyer email, then existing Kit provider identity, to a recorded real-gclid signup within 90 days.',
+			'Exactly one Google click conversion is uploaded per purchase and action across both attribution sources.',
 		],
 	}
 	const receiptPath = writeReceipt(args.receipt, payload)
@@ -986,6 +987,18 @@ function maskEmail(value: string | null | undefined) {
 	return `${local?.slice(0, 2) ?? ''}***@${domain}`
 }
 
+async function purchaseConversionStatus(args: {
+	range: Range
+	productId?: string
+	limit: number
+}) {
+	return getPurchaseConversionStatus({
+		since: sinceForRange(args.range),
+		productId: args.productId,
+		limit: args.limit,
+	})
+}
+
 async function signupConversionStatus(args: {
 	productId?: string
 	startAt?: string
@@ -1078,6 +1091,12 @@ function nextActions() {
 		},
 		{
 			command:
+				'bin/aih-ads purchase-conversion-status [--product-id <id>] [--range 24h|7d|30d|90d|all]',
+			description:
+				'Read fallback rescue eligibility and uploaded purchase conversions split by attribution source',
+		},
+		{
+			command:
 				'bin/aih-ads offline-conversion-preview --product-id product-pqkk5 --range 30d --receipt <path>',
 			description:
 				'Preview real Google Ads offline conversion eligibility with aggregate output only',
@@ -1107,6 +1126,8 @@ try {
 			? await status(range)
 			: command === 'funnel-status'
 				? await funnelStatus(range)
+				: command === 'purchase-conversion-status'
+					? await purchaseConversionStatus({ range, productId, limit })
 				: command === 'signup-conversion-status'
 					? await signupConversionStatus({ productId, startAt, endAt, limit })
 				: command === 'ads-course-metrics'

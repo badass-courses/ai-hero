@@ -36,9 +36,11 @@ export async function setSubscriberCookie(subscriber: {
  * Used when users click email links with ?ck_subscriber_id=X
  */
 export async function setSubscriberIdFromUrl(subscriberId: string) {
+	const normalizedSubscriberId = subscriberId.trim().slice(0, 255)
+	if (!normalizedSubscriberId) return
 	const cookieStore = await cookies()
 
-	cookieStore.set('ck_subscriber_id', subscriberId, {
+	cookieStore.set('ck_subscriber_id', normalizedSubscriberId, {
 		secure: process.env.NODE_ENV === 'production',
 		path: '/',
 		httpOnly: true,

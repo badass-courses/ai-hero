@@ -53,16 +53,17 @@ export const googleAdsConversionUpload = inngest.createFunction(
 			})
 			return { purchases, signups: null }
 		}
-		const since = trigger.kind === 'purchase-event'
-			? undefined
-			: sinceForGoogleAdsUploadRange(
-					(process.env.AIH_GOOGLE_ADS_CONVERSION_UPLOAD_RANGE ?? '90d') as
-						| '24h'
-						| '7d'
-						| '30d'
-						| '90d'
-						| 'all',
-				)
+		const since =
+			trigger.kind === 'purchase-event'
+				? undefined
+				: sinceForGoogleAdsUploadRange(
+						(process.env.AIH_GOOGLE_ADS_CONVERSION_UPLOAD_RANGE ?? '90d') as
+							| '24h'
+							| '7d'
+							| '30d'
+							| '90d'
+							| 'all',
+					)
 
 		const purchases = await step.run(
 			'process-google-ads-purchase-conversion-uploads',
@@ -79,13 +80,33 @@ export const googleAdsConversionUpload = inngest.createFunction(
 					dryRun: !config.enabled,
 				}),
 		)
+		const purchaseTrigger =
+			trigger.kind === 'purchase-event'
+				? 'purchase-event'
+				: 'fifteen-minute-cron'
 		logger.info('google_ads_conversion_upload.stage_complete', {
-			stage: 'purchases',
-			trigger:
-				trigger.kind === 'purchase-event'
-					? 'purchase-event'
-					: 'fifteen-minute-cron',
-			...purchases,
+			stage: 'purchase-candidates',
+			trigger: purchaseTrigger,
+			candidates: purchases.candidates,
+			eligible: purchases.eligible,
+		})
+		logger.info('google_ads_conversion_upload.stage_complete', {
+			stage: 'purchase-fallback',
+			trigger: purchaseTrigger,
+			fallbackCandidates: purchases.fallbackCandidates,
+			fallbackResolved: purchases.fallbackResolved,
+			byFallbackResolution: purchases.byFallbackResolution,
+			byReason: purchases.byReason,
+		})
+		logger.info('google_ads_conversion_upload.stage_complete', {
+			stage: 'purchase-results',
+			trigger: purchaseTrigger,
+			uploaded: purchases.uploaded,
+			validated: purchases.validated,
+			skipped: purchases.skipped,
+			failed: purchases.failed,
+			byAttributionSource: purchases.byAttributionSource,
+			byResultStatus: purchases.byResultStatus,
 		})
 
 		if (trigger.kind === 'purchase-event') {

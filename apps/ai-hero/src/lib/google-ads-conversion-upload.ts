@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto'
 import { db } from '@/db'
-import { googleAdsConversionUpload, purchases } from '@/db/schema'
-import { and, desc, eq, gte, inArray, notInArray } from 'drizzle-orm'
+import {
+	contact,
+	contactState,
+	googleAdsConversionUpload,
+	providerIdentity,
+	purchases,
+	users,
+} from '@/db/schema'
+import type { OptInAttribution } from './subscriber-marketing/opt-in-attribution'
+import { and, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
 
 const GOOGLE_CLICK_ID_KEYS = ['gclid', 'gbraid', 'wbraid'] as const
 const DEFAULT_CONVERSION_ACTION_RESOURCE_NAME =
@@ -15,17 +23,35 @@ type UploadStatus = 'dry-run' | 'uploaded' | 'validated' | 'failed' | 'skipped'
 type AttributionSnapshot = {
 	utm?: Record<string, string | undefined>
 	clickIds?: Record<string, string | undefined>
+	kitSubscriberId?: string
 	synthetic?: boolean
 }
 
-type PurchaseRow = {
+export type PurchaseRow = {
 	id: string
 	createdAt: Date | string
 	productId: string | null
 	totalAmount: string | number | null
 	status: string | null
 	fields: unknown
+	buyerEmail?: string | null
 }
+
+export type PurchaseAttributionSource = 'checkout' | 'signup-gclid-fallback'
+
+export type SignupGclidFallback = {
+	clickIdValue: string
+	capturedAt: string
+	resolution: 'buyer-email' | 'kit-provider-identity'
+}
+
+export type GoogleAdsPurchaseFallbackResult =
+	| { ok: true; fallback: SignupGclidFallback }
+	| { ok: false; reason: string }
+
+export type GoogleAdsPurchaseFallbackResolver = (
+	purchase: PurchaseRow,
+) => Promise<GoogleAdsPurchaseFallbackResult>
 
 export type PreparedGoogleAdsConversion = {
 	purchaseId: string
@@ -33,6 +59,7 @@ export type PreparedGoogleAdsConversion = {
 	clickIdType: GoogleClickIdKey
 	clickIdValue: string
 	clickIdHash: string
+	attributionSource: PurchaseAttributionSource
 	conversionDateTime: string
 	conversionValue: number
 	currencyCode: 'USD'
@@ -61,11 +88,42 @@ export type GoogleAdsUploadClientResult = {
 	lastError?: Record<string, unknown>
 }
 
+export type GoogleAdsUploadConversion = Omit<
+	PreparedGoogleAdsConversion,
+	'attributionSource'
+> & {
+	attributionSource?: PurchaseAttributionSource
+}
+
 export type GoogleAdsUploadClient = {
 	upload: (
-		conversion: PreparedGoogleAdsConversion,
+		conversion: GoogleAdsUploadConversion,
 		config: GoogleAdsConversionUploadConfig,
 	) => Promise<GoogleAdsUploadClientResult>
+}
+
+type PurchaseLedgerResult =
+	| { status: 'reserved'; attemptCount: number }
+	| { status: 'idempotent-noop' }
+
+export type GoogleAdsPurchaseConversionLedger = {
+	reserve: (args: {
+		conversion: PreparedGoogleAdsConversion
+		config: GoogleAdsConversionUploadConfig
+		now: Date
+	}) => Promise<PurchaseLedgerResult>
+	recordResult: (args: {
+		conversion: PreparedGoogleAdsConversion
+		attemptCount: number
+		result: GoogleAdsUploadClientResult
+		now: Date
+	}) => Promise<void>
+	recordThrownError: (args: {
+		conversion: PreparedGoogleAdsConversion
+		attemptCount: number
+		error: unknown
+		now: Date
+	}) => Promise<void>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -122,9 +180,24 @@ export function formatGoogleAdsConversionDateTime(value: Date | string) {
 		.replace(/\.\d{3}Z$/, '+00:00')
 }
 
+export function isClickWithinGoogleUploadWindow(args: {
+	clickAt: Date | string
+	conversionAt: Date | string
+	windowDays?: number
+}) {
+	const clickAt = new Date(args.clickAt)
+	const conversionAt = new Date(args.conversionAt)
+	if (Number.isNaN(clickAt.getTime()) || Number.isNaN(conversionAt.getTime())) {
+		return false
+	}
+	const ageMs = conversionAt.getTime() - clickAt.getTime()
+	return ageMs >= 0 && ageMs <= (args.windowDays ?? 90) * 24 * 60 * 60 * 1000
+}
+
 export function prepareGoogleAdsConversion(args: {
 	purchase: PurchaseRow
 	conversionActionResourceName: string
+	fallback?: SignupGclidFallback
 }):
 	| { ok: true; conversion: PreparedGoogleAdsConversion }
 	| { ok: false; reason: string } {
@@ -134,10 +207,34 @@ export function prepareGoogleAdsConversion(args: {
 	if (!validPaid) return { ok: false, reason: 'invalid-or-non-paid' }
 
 	const attribution = parseAttribution(args.purchase.fields)
-	if (!attribution) return { ok: false, reason: 'missing-attribution' }
-
-	const clickId = selectGoogleClickId(attribution)
-	if (!clickId) return { ok: false, reason: 'missing-google-click-id' }
+	if (
+		attribution?.synthetic ||
+		isSyntheticClickId(attribution?.clickIds as Record<string, unknown> | undefined)
+	) {
+		return { ok: false, reason: 'synthetic-google-click-id' }
+	}
+	const checkoutClickId = selectGoogleClickId(attribution)
+	const fallbackValue = args.fallback?.clickIdValue.trim()
+	if (!checkoutClickId && !fallbackValue) {
+		return { ok: false, reason: 'missing-google-click-id' }
+	}
+	if (
+		!checkoutClickId &&
+		(fallbackValue?.startsWith('TEST_') ||
+			!isClickWithinGoogleUploadWindow({
+				clickAt: args.fallback!.capturedAt,
+				conversionAt: args.purchase.createdAt,
+			}))
+	) {
+		return { ok: false, reason: 'signup-gclid-outside-90-day-window' }
+	}
+	const clickId = checkoutClickId ?? {
+		type: 'gclid' as const,
+		value: fallbackValue!,
+	}
+	const attributionSource: PurchaseAttributionSource = checkoutClickId
+		? 'checkout'
+		: 'signup-gclid-fallback'
 
 	const conversionDateTime = formatGoogleAdsConversionDateTime(
 		args.purchase.createdAt,
@@ -153,15 +250,17 @@ export function prepareGoogleAdsConversion(args: {
 		conversionActionResourceName: args.conversionActionResourceName,
 		clickIdType: clickId.type,
 		clickIdHash: sha256(clickId.value),
+		attributionSource,
+		...(args.fallback ? { fallbackResolution: args.fallback.resolution } : {}),
 		conversionDateTime,
 		conversionValue: revenue,
 		currencyCode: 'USD',
 		orderId: args.purchase.id,
 		utm: {
-			source: attribution.utm?.source,
-			medium: attribution.utm?.medium,
-			campaign: attribution.utm?.campaign,
-			content: attribution.utm?.content,
+			source: attribution?.utm?.source,
+			medium: attribution?.utm?.medium,
+			campaign: attribution?.utm?.campaign,
+			content: attribution?.utm?.content,
 		},
 	}
 
@@ -173,6 +272,7 @@ export function prepareGoogleAdsConversion(args: {
 			clickIdType: clickId.type,
 			clickIdValue: clickId.value,
 			clickIdHash: sha256(clickId.value),
+			attributionSource,
 			conversionDateTime,
 			conversionValue: revenue,
 			currencyCode: 'USD',
@@ -355,19 +455,29 @@ export const googleAdsRestUploadClient: GoogleAdsUploadClient = {
 
 async function fetchCandidatePurchases(args: {
 	database: typeof db
+	conversionActionResourceName: string
 	purchaseId?: string
 	productId?: string
 	since?: Date | null
 	limit: number
 	excludeTerminalLedger: boolean
 }) {
-	const conditions = []
+	const conditions = [
+		inArray(purchases.status, ['Valid', 'Restricted']),
+		sql`${purchases.totalAmount} > 0`,
+	]
 	if (args.excludeTerminalLedger) {
 		const terminalLedgerRows = args.database
 			.select({ purchaseId: googleAdsConversionUpload.purchaseId })
 			.from(googleAdsConversionUpload)
 			.where(
-				inArray(googleAdsConversionUpload.status, ['uploaded', 'validated']),
+				and(
+					inArray(googleAdsConversionUpload.status, ['uploaded']),
+					eq(
+						googleAdsConversionUpload.conversionActionResourceName,
+						args.conversionActionResourceName,
+					),
+				),
 			)
 		conditions.push(notInArray(purchases.id, terminalLedgerRows))
 	}
@@ -383,82 +493,271 @@ async function fetchCandidatePurchases(args: {
 			totalAmount: purchases.totalAmount,
 			status: purchases.status,
 			fields: purchases.fields,
+			buyerEmail: users.email,
 		})
 		.from(purchases)
+		.leftJoin(users, eq(purchases.userId, users.id))
 		.where(conditions.length > 0 ? and(...conditions) : undefined)
 		.orderBy(desc(purchases.createdAt))
 		.limit(args.limit)
 }
 
-async function findLedger(database: typeof db, idempotencyKey: string) {
-	const rows = await database
-		.select()
-		.from(googleAdsConversionUpload)
-		.where(eq(googleAdsConversionUpload.idempotencyKey, idempotencyKey))
-		.limit(1)
-	return rows[0]
-}
-
-function canRetryLedger(args: {
-	status: string
-	attemptCount: number
-	lastAttemptAt: Date | null
-	config: GoogleAdsConversionUploadConfig
-	now: Date
-}) {
-	if (['uploaded', 'validated'].includes(args.status)) return false
-	if (args.attemptCount >= args.config.maxAttempts) return false
-	if (!args.lastAttemptAt) return true
-	return (
-		args.now.getTime() - args.lastAttemptAt.getTime() >=
-		args.config.retryDelayMs
-	)
-}
-
-async function reserveLedger(args: {
-	database: typeof db
-	conversion: PreparedGoogleAdsConversion
-	now: Date
-}) {
-	const values = {
-		purchaseId: args.conversion.purchaseId,
-		conversionActionResourceName: args.conversion.conversionActionResourceName,
-		clickIdType: args.conversion.clickIdType,
-		clickIdHash: args.conversion.clickIdHash,
-		conversionDateTime: args.conversion.conversionDateTime,
-		conversionValue: args.conversion.conversionValue.toFixed(2),
-		currencyCode: args.conversion.currencyCode,
-		orderId: args.conversion.orderId,
-		status: 'pending',
-		attemptCount: 0,
-		idempotencyKey: args.conversion.idempotencyKey,
-		requestSummary: args.conversion.requestSummary,
-		createdAt: args.now,
-		updatedAt: args.now,
-	}
+function normalizeKitSubscriberId(value: unknown) {
+	if (typeof value !== 'string') return undefined
+	const trimmed = value.trim()
+	if (!trimmed) return undefined
 	try {
-		await args.database.insert(googleAdsConversionUpload).values(values)
-	} catch (error) {
-		const existing = await findLedger(
-			args.database,
-			args.conversion.idempotencyKey,
-		)
-		if (existing) return existing
-		throw error
+		const parsed = JSON.parse(trimmed) as unknown
+		if (typeof parsed === 'string' || typeof parsed === 'number') {
+			return String(parsed).trim() || undefined
+		}
+	} catch {
+		// URL-param cookies are plain strings; full subscriber cookies are JSON.
 	}
-	const created = await findLedger(
-		args.database,
-		args.conversion.idempotencyKey,
+	return trimmed
+}
+
+function kitSubscriberIdFromPurchase(purchase: PurchaseRow) {
+	return normalizeKitSubscriberId(
+		parseAttribution(purchase.fields)?.kitSubscriberId,
 	)
-	if (!created)
-		throw new Error('Google Ads conversion ledger reservation failed')
-	return created
+}
+
+export function createGoogleAdsPurchaseFallbackResolver(
+	database: typeof db = db,
+): GoogleAdsPurchaseFallbackResolver {
+	return async (purchase) => {
+		const normalizedEmail = purchase.buyerEmail?.trim().toLowerCase()
+		const emailMatches = normalizedEmail
+			? await database
+					.select({ contactId: contact.id })
+					.from(contact)
+					.where(eq(contact.email, normalizedEmail))
+					.limit(2)
+			: []
+
+		let contactId =
+			emailMatches.length === 1 ? emailMatches[0]!.contactId : undefined
+		let resolution: SignupGclidFallback['resolution'] | undefined = contactId
+			? 'buyer-email'
+			: undefined
+		const kitSubscriberId = kitSubscriberIdFromPurchase(purchase)
+		if (!contactId && kitSubscriberId) {
+			const identities = await database
+				.select({ contactId: providerIdentity.contactId })
+				.from(providerIdentity)
+				.where(
+					and(
+						eq(providerIdentity.provider, 'kit'),
+						eq(providerIdentity.externalId, kitSubscriberId),
+					),
+				)
+				.limit(1)
+			contactId = identities[0]?.contactId
+			if (contactId) resolution = 'kit-provider-identity'
+		}
+		if (!contactId) {
+			return {
+				ok: false,
+				reason:
+					emailMatches.length > 1
+						? 'fallback-ambiguous-buyer-email'
+						: 'fallback-contact-not-found',
+			}
+		}
+
+		const states = await database
+			.select({ attribution: contactState.optInAttribution })
+			.from(contactState)
+			.where(eq(contactState.contactId, contactId))
+			.limit(1)
+		const attribution = states[0]?.attribution as OptInAttribution | null
+		const gclid = attribution?.gclid?.trim()
+		if (!attribution?.subscribedAt || !gclid || gclid.startsWith('TEST_')) {
+			return { ok: false, reason: 'fallback-real-gclid-signup-not-found' }
+		}
+		if (
+			!isClickWithinGoogleUploadWindow({
+				clickAt: attribution.capturedAt,
+				conversionAt: purchase.createdAt,
+			})
+		) {
+			return {
+				ok: false,
+				reason: 'signup-gclid-outside-90-day-window',
+			}
+		}
+		return {
+			ok: true,
+			fallback: {
+				clickIdValue: gclid,
+				capturedAt: attribution.capturedAt,
+				resolution: resolution!,
+			},
+		}
+	}
+}
+
+function affectedRows(result: unknown) {
+	if (!result || typeof result !== 'object') return 0
+	const record = result as Record<string, unknown>
+	if (typeof record.rowsAffected === 'number') return record.rowsAffected
+	if (Array.isArray(result)) {
+		const first = result[0]
+		if (first && typeof first === 'object') {
+			const count = (first as Record<string, unknown>).affectedRows
+			if (typeof count === 'number') return count
+		}
+	}
+	return 0
+}
+
+export function createGoogleAdsPurchaseConversionLedger(
+	database: typeof db = db,
+): GoogleAdsPurchaseConversionLedger {
+	return {
+		async reserve({ conversion, config, now }) {
+			const existing = await database
+				.select({
+					status: googleAdsConversionUpload.status,
+					attemptCount: googleAdsConversionUpload.attemptCount,
+					lastAttemptAt: googleAdsConversionUpload.lastAttemptAt,
+				})
+				.from(googleAdsConversionUpload)
+				.where(
+					eq(
+						googleAdsConversionUpload.idempotencyKey,
+						conversion.idempotencyKey,
+					),
+				)
+				.limit(1)
+			const row = existing[0]
+			if (row) {
+				const uploadValidated =
+					row.status === 'validated' && !config.validateOnly
+				const retryable =
+					['failed', 'pending', 'processing'].includes(row.status) &&
+					row.attemptCount < config.maxAttempts &&
+					(!row.lastAttemptAt ||
+						now.getTime() - row.lastAttemptAt.getTime() >= config.retryDelayMs)
+				if (!uploadValidated && !retryable) {
+					return { status: 'idempotent-noop' }
+				}
+				const reservation = await database
+					.update(googleAdsConversionUpload)
+					.set({
+						status: 'processing',
+						attemptCount: sql`${googleAdsConversionUpload.attemptCount} + 1`,
+						attributionSource: conversion.attributionSource,
+						requestSummary: conversion.requestSummary,
+						lastAttemptAt: now,
+						updatedAt: now,
+					})
+					.where(
+						and(
+							eq(
+								googleAdsConversionUpload.idempotencyKey,
+								conversion.idempotencyKey,
+							),
+							eq(googleAdsConversionUpload.status, row.status),
+							eq(googleAdsConversionUpload.attemptCount, row.attemptCount),
+						),
+					)
+				return affectedRows(reservation) > 0
+					? { status: 'reserved', attemptCount: row.attemptCount + 1 }
+					: { status: 'idempotent-noop' }
+			}
+
+			try {
+				await database.insert(googleAdsConversionUpload).values({
+					purchaseId: conversion.purchaseId,
+					conversionActionResourceName: conversion.conversionActionResourceName,
+					clickIdType: conversion.clickIdType,
+					clickIdHash: conversion.clickIdHash,
+					attributionSource: conversion.attributionSource,
+					conversionDateTime: conversion.conversionDateTime,
+					conversionValue: conversion.conversionValue.toFixed(2),
+					currencyCode: conversion.currencyCode,
+					orderId: conversion.orderId,
+					status: 'processing',
+					attemptCount: 1,
+					idempotencyKey: conversion.idempotencyKey,
+					requestSummary: conversion.requestSummary,
+					lastAttemptAt: now,
+					createdAt: now,
+					updatedAt: now,
+				})
+				return { status: 'reserved', attemptCount: 1 }
+			} catch (error) {
+				const concurrent = await database
+					.select({ status: googleAdsConversionUpload.status })
+					.from(googleAdsConversionUpload)
+					.where(
+						eq(
+							googleAdsConversionUpload.idempotencyKey,
+							conversion.idempotencyKey,
+						),
+					)
+					.limit(1)
+				if (concurrent[0]) return { status: 'idempotent-noop' }
+				throw error
+			}
+		},
+		async recordResult({ conversion, attemptCount, result, now }) {
+			await database
+				.update(googleAdsConversionUpload)
+				.set({
+					status: result.status,
+					responseSummary: result.responseSummary,
+					lastError: result.lastError,
+					uploadedAt: result.status === 'uploaded' ? now : null,
+					updatedAt: now,
+				})
+				.where(
+					and(
+						eq(
+							googleAdsConversionUpload.idempotencyKey,
+							conversion.idempotencyKey,
+						),
+						eq(googleAdsConversionUpload.status, 'processing'),
+						eq(googleAdsConversionUpload.attemptCount, attemptCount),
+					),
+				)
+		},
+		async recordThrownError({ conversion, attemptCount, error, now }) {
+			await database
+				.update(googleAdsConversionUpload)
+				.set({
+					status: 'failed',
+					responseSummary: null,
+					lastError: {
+						kind: 'upload-client-threw',
+						message: error instanceof Error ? error.message : String(error),
+					},
+					uploadedAt: null,
+					updatedAt: now,
+				})
+				.where(
+					and(
+						eq(
+							googleAdsConversionUpload.idempotencyKey,
+							conversion.idempotencyKey,
+						),
+						eq(googleAdsConversionUpload.status, 'processing'),
+						eq(googleAdsConversionUpload.attemptCount, attemptCount),
+					),
+				)
+		},
+	}
 }
 
 export async function processGoogleAdsConversionUploads(args: {
 	database?: typeof db
 	config?: GoogleAdsConversionUploadConfig
 	uploadClient?: GoogleAdsUploadClient
+	ledger?: GoogleAdsPurchaseConversionLedger
+	fallbackResolver?: GoogleAdsPurchaseFallbackResolver
+	candidates?: PurchaseRow[]
 	purchaseId?: string
 	productId?: string
 	since?: Date | null
@@ -471,19 +770,29 @@ export async function processGoogleAdsConversionUploads(args: {
 	const uploadClient = args.uploadClient ?? googleAdsRestUploadClient
 	const now = args.now ?? new Date()
 	const dryRun = args.dryRun ?? true
-	const rows = await fetchCandidatePurchases({
-		database,
-		purchaseId: args.purchaseId,
-		productId: args.productId,
-		since: args.since,
-		limit: args.limit ?? 100,
-		excludeTerminalLedger: !dryRun,
-	})
+	const rows =
+		args.candidates ??
+		(await fetchCandidatePurchases({
+			database,
+			conversionActionResourceName: config.conversionActionResourceName,
+			purchaseId: args.purchaseId,
+			productId: args.productId,
+			since: args.since,
+			limit: args.limit ?? 100,
+			excludeTerminalLedger: !dryRun,
+		}))
+	const fallbackResolver =
+		args.fallbackResolver ?? createGoogleAdsPurchaseFallbackResolver(database)
+	const ledger =
+		args.ledger ?? createGoogleAdsPurchaseConversionLedger(database)
 	const missingConfig = missingGoogleAdsConfig(config)
 	const summary = {
 		mode: dryRun ? 'dry-run' : config.enabled ? 'upload' : 'disabled',
 		checked: rows.length,
+		candidates: rows.length,
 		eligible: 0,
+		fallbackCandidates: 0,
+		fallbackResolved: 0,
 		uploaded: 0,
 		validated: 0,
 		dryRunEligible: 0,
@@ -492,6 +801,11 @@ export async function processGoogleAdsConversionUploads(args: {
 		missingConfig,
 		byReason: {} as Record<string, number>,
 		byClickIdType: {} as Record<GoogleClickIdKey, number>,
+		byAttributionSource: {} as Record<PurchaseAttributionSource, number>,
+		byFallbackResolution: {} as Record<
+			SignupGclidFallback['resolution'],
+			number
+		>,
 		byResultStatus: {} as Record<UploadStatus, number>,
 		privacy: 'aggregate-only-no-click-ids-no-emails-no-purchase-ids',
 	}
@@ -504,12 +818,33 @@ export async function processGoogleAdsConversionUploads(args: {
 	const countClickIdType = (type: GoogleClickIdKey) => {
 		summary.byClickIdType[type] = (summary.byClickIdType[type] ?? 0) + 1
 	}
+	const countAttributionSource = (source: PurchaseAttributionSource) => {
+		summary.byAttributionSource[source] =
+			(summary.byAttributionSource[source] ?? 0) + 1
+	}
 
 	for (const row of rows) {
-		const prepared = prepareGoogleAdsConversion({
+		let prepared = prepareGoogleAdsConversion({
 			purchase: row,
 			conversionActionResourceName: config.conversionActionResourceName,
 		})
+		if (!prepared.ok && prepared.reason === 'missing-google-click-id') {
+			summary.fallbackCandidates += 1
+			const resolved = await fallbackResolver(row)
+			if (!resolved.ok) {
+				countReason(resolved.reason)
+				summary.skipped += 1
+				continue
+			}
+			summary.fallbackResolved += 1
+			summary.byFallbackResolution[resolved.fallback.resolution] =
+				(summary.byFallbackResolution[resolved.fallback.resolution] ?? 0) + 1
+			prepared = prepareGoogleAdsConversion({
+				purchase: row,
+				conversionActionResourceName: config.conversionActionResourceName,
+				fallback: resolved.fallback,
+			})
+		}
 		if (!prepared.ok) {
 			countReason(prepared.reason)
 			summary.skipped += 1
@@ -518,6 +853,7 @@ export async function processGoogleAdsConversionUploads(args: {
 		summary.eligible += 1
 		const conversion = prepared.conversion
 		countClickIdType(conversion.clickIdType)
+		countAttributionSource(conversion.attributionSource)
 
 		if (dryRun) {
 			summary.dryRunEligible += 1
@@ -537,67 +873,36 @@ export async function processGoogleAdsConversionUploads(args: {
 			continue
 		}
 
-		const ledger = await reserveLedger({ database, conversion, now })
-		if (
-			!canRetryLedger({
-				status: ledger.status,
-				attemptCount: ledger.attemptCount,
-				lastAttemptAt: ledger.lastAttemptAt,
-				config,
-				now,
-			})
-		) {
+		const reservation = await ledger.reserve({ conversion, config, now })
+		if (reservation.status === 'idempotent-noop') {
 			summary.skipped += 1
-			countReason(`ledger-${ledger.status}`)
+			countReason('ledger-idempotent-noop')
 			countResult('skipped')
 			continue
 		}
-
-		await database
-			.update(googleAdsConversionUpload)
-			.set({
-				status: 'pending',
-				attemptCount: ledger.attemptCount + 1,
-				lastAttemptAt: now,
-				updatedAt: now,
-			})
-			.where(eq(googleAdsConversionUpload.id, ledger.id))
 
 		let upload: GoogleAdsUploadClientResult
 		try {
 			upload = await uploadClient.upload(conversion, config)
 		} catch (error) {
-			const lastError = {
-				kind: 'upload-client-threw',
-				message: error instanceof Error ? error.message : String(error),
-			}
-			await database
-				.update(googleAdsConversionUpload)
-				.set({
-					status: 'failed',
-					responseSummary: null,
-					lastError,
-					uploadedAt: null,
-					updatedAt: now,
-				})
-				.where(eq(googleAdsConversionUpload.id, ledger.id))
+			await ledger.recordThrownError({
+				conversion,
+				attemptCount: reservation.attemptCount,
+				error,
+				now,
+			})
 			summary.failed += 1
 			countResult('failed')
 			continue
 		}
 
 		const status: UploadStatus = upload.status
-		await database
-			.update(googleAdsConversionUpload)
-			.set({
-				status,
-				responseSummary: upload.responseSummary,
-				lastError: upload.lastError,
-				uploadedAt:
-					status === 'uploaded' || status === 'validated' ? now : null,
-				updatedAt: now,
-			})
-			.where(eq(googleAdsConversionUpload.id, ledger.id))
+		await ledger.recordResult({
+			conversion,
+			attemptCount: reservation.attemptCount,
+			result: upload,
+			now,
+		})
 
 		if (status === 'uploaded') summary.uploaded += 1
 		else if (status === 'validated') summary.validated += 1

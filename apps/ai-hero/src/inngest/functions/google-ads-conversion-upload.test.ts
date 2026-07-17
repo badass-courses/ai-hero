@@ -10,10 +10,17 @@ describe('Google Ads conversion upload schedule', () => {
 	it('runs signup uploads only on the shared fifteen-minute cron', () => {
 		expect(source).toContain("{ cron: '*/15 * * * *' }")
 		expect(source).toContain("if (trigger.kind === 'purchase-event') {")
-		expect(source).toContain(
-			"'process-google-ads-signup-conversion-uploads'",
-		)
+		expect(source).toContain("'process-google-ads-signup-conversion-uploads'")
 		expect(source).toContain('processGoogleAdsSignupConversionUploads({')
+	})
+
+	it('logs aggregate purchase candidate, fallback, and result stages', () => {
+		expect(source).toContain("stage: 'purchase-candidates'")
+		expect(source).toContain("stage: 'purchase-fallback'")
+		expect(source).toContain("stage: 'purchase-results'")
+		expect(source).toContain(
+			'byAttributionSource: purchases.byAttributionSource',
+		)
 	})
 
 	it('keeps the production write gate and loudly skips a missing signup action', () => {

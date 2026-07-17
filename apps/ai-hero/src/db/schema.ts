@@ -484,6 +484,9 @@ export const googleAdsConversionUpload = mysqlTable(
 		}).notNull(),
 		clickIdType: varchar('clickIdType', { length: 20 }).notNull(),
 		clickIdHash: varchar('clickIdHash', { length: 64 }).notNull(),
+		attributionSource: varchar('attributionSource', { length: 40 })
+			.notNull()
+			.default('checkout'),
 		conversionDateTime: varchar('conversionDateTime', { length: 40 }).notNull(),
 		conversionValue: decimal('conversionValue', {
 			precision: 12,
