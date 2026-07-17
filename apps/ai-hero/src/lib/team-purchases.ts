@@ -55,6 +55,18 @@ export function getManagedOrganizationIds(
 	)
 }
 
+export function canViewPurchaseInvoice(
+	viewerUserId: string | null | undefined,
+	purchase: Pick<Purchase, 'id' | 'userId'>,
+	managedTeamPurchases: Pick<Purchase, 'id'>[],
+): boolean {
+	if (!viewerUserId) return false
+	return (
+		purchase.userId === viewerUserId ||
+		managedTeamPurchases.some((managedPurchase) => managedPurchase.id === purchase.id)
+	)
+}
+
 export async function getTeamPurchasesForMember(
 	userId: string | null | undefined,
 	dataSource: TeamPurchaseDataSource = drizzleTeamPurchaseDataSource,

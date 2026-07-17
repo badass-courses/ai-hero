@@ -4,6 +4,7 @@ import { getAbility } from '@/ability'
 
 import {
 	BILLING_ADMIN_ROLE,
+	canViewPurchaseInvoice,
 	getTeamPurchasesForMember,
 	type TeamPurchaseDataSource,
 } from './team-purchases'
@@ -159,6 +160,21 @@ describe('team purchase authorization', () => {
 		await expect(getTeamPurchasesForMember('former-admin', source)).resolves.toEqual(
 			[],
 		)
+	})
+})
+
+describe('team invoice authorization', () => {
+	it('allows the purchaser or an org manager and rejects unrelated users', () => {
+		const target = purchase('purchase-a', 'org-a', { userId: 'owner-a' })
+
+		expect(canViewPurchaseInvoice('owner-a', target, [])).toBe(true)
+		expect(
+			canViewPurchaseInvoice('manager-a', target, [
+				purchase('purchase-a', 'org-a'),
+			]),
+		).toBe(true)
+		expect(canViewPurchaseInvoice('unrelated', target, [])).toBe(false)
+		expect(canViewPurchaseInvoice(null, target, [target])).toBe(false)
 	})
 })
 
