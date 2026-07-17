@@ -42,4 +42,6 @@ Verified against production `https://www.aihero.dev` (deploy `ai-hero-jjg7dcvou`
 5. Lifecycle bonus: DELETE revoke → 200; read-after-revoke → 401.
 6. Discovery: `/api` teaches agent tokens; `openapi.json` serves OpenAPI 3.1 with `securitySchemes`.
 
-Remaining: issue on course-video-manager ([draft](./matt-issue-draft.svx) pending Joel's go), Slack reply with agent prompt, Matt confirmation, ✅ react.
+Issue opened (Joel's go, 2026-07-17): https://github.com/mattpocock/course-video-manager/issues/1372 (drafted in [matt-issue-draft.svx](./matt-issue-draft.svx)).
+
+Remaining: Joel pastes the Slack reply, Matt confirmation, ✅ react.
