@@ -284,6 +284,7 @@ function toSideEffectIntentRecord(row: any): SideEffectIntent {
 		provider: 'dry-run',
 		type: row.type,
 		status: row.status as SideEffectIntentStatus,
+		completedAt: row.completedAt ? toIso(row.completedAt) : null,
 		idempotencyKey: row.idempotencyKey,
 		gates: row.gates as Gate[],
 		reviewReasons: row.reviewReasons,

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { executePendingValuePathEmailIntents } from './value-path-email-executor'
+import type { SideEffectIntent } from './types'
+import {
+	executePendingValuePathEmailIntents,
+	executeValuePathEmailIntent,
+} from './value-path-email-executor'
 
 describe('value path email executor', () => {
 	it('passes an explicit intent scope to the repository', async () => {
@@ -117,4 +121,100 @@ describe('value path email executor', () => {
 		expect(subscribeToList).not.toHaveBeenCalled()
 		expect(updateSideEffectIntent).not.toHaveBeenCalled()
 	})
+
+	it('refuses to resend when the canonical completion fact beats a stale pending status', async () => {
+		const subscribeToList = vi.fn()
+		const result = await executeValuePathEmailIntent({
+			repository: {
+				findPendingValuePathEmailSideEffectIntents: vi.fn(),
+				findContactById: vi.fn(),
+				findCurrentContactState: vi.fn(),
+				updateSideEffectIntent: vi.fn(),
+			},
+			emailListProvider: { subscribeToList },
+			intent: valuePathIntent({
+				status: 'pending',
+				completedAt: '2026-07-17T12:00:00.000Z',
+			}),
+		})
+		expect(result).toEqual({
+			status: 'skipped',
+			intentId: 'intent-1',
+			reviewReasons: ['intent-already-completed'],
+		})
+		expect(subscribeToList).not.toHaveBeenCalled()
+	})
+
+	it('writes canonical and rollback stamps in the same completion update', async () => {
+		const updateSideEffectIntent = vi.fn()
+		const completedAt = '2026-07-17T12:00:00.000Z'
+		const result = await executeValuePathEmailIntent({
+			repository: {
+				findPendingValuePathEmailSideEffectIntents: vi.fn(),
+				findContactById: vi.fn().mockResolvedValue({
+					id: 'contact-1',
+					email: 'learner@example.com',
+					name: 'Learner',
+				}),
+				findCurrentContactState: vi.fn().mockResolvedValue({
+					id: 'state-1',
+					contactId: 'contact-1',
+					lifecycle: 'nurture-ready',
+					reviewSignals: [],
+					humanReview: false,
+				}),
+				updateSideEffectIntent,
+			},
+			emailListProvider: {
+				subscribeToList: vi.fn().mockResolvedValue({ subscriptionId: 'kit-1' }),
+			},
+			intent: valuePathIntent(),
+			now: completedAt,
+			config: {
+				mode: 'scoped-live',
+				allowWrite: true,
+				allowlistedContactIds: ['contact-1'],
+				allowlistedKitSubscriberIds: ['kit-1'],
+				allowlistedEmails: ['learner@example.com'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+				verifiedKitSequenceIds: ['2757205'],
+				allowedActions: ['send-path-emails'],
+			},
+		})
+		expect(result.status).toBe('completed')
+		expect(updateSideEffectIntent).toHaveBeenCalledWith(
+			'intent-1',
+			expect.objectContaining({
+				status: 'completed',
+				completedAt,
+				metadata: expect.objectContaining({ completedAt }),
+			}),
+		)
+	})
 })
+
+function valuePathIntent(
+	overrides: Partial<SideEffectIntent> = {},
+): SideEffectIntent {
+	return {
+		id: 'intent-1',
+		nextActionId: 'next-action-1',
+		contactId: 'contact-1',
+		provider: 'kit',
+		type: 'send-value-path-email',
+		status: 'pending',
+		idempotencyKey: 'intent-key-1',
+		gates: [],
+		reviewReasons: [],
+		metadata: {
+			mode: 'scoped-live',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-6',
+			kitSequenceId: '2757205',
+			kitSubscriberId: 'kit-1',
+		},
+		createdAt: '2026-07-17T11:00:00.000Z',
+		...overrides,
+	}
+}

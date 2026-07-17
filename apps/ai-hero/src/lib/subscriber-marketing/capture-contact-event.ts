@@ -72,7 +72,7 @@ export type CaptureMarketingRepository = {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	): MaybePromise<SideEffectIntent>
 	newId(kind: string): string
 }

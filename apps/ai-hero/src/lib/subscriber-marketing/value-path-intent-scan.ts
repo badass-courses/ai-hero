@@ -1,4 +1,8 @@
 import type { SideEffectIntent } from './types'
+import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from './value-path-completion'
 
 /**
  * Deterministic scan helpers for value-path email side-effect intents.
@@ -53,8 +57,8 @@ export function scanCompletedValuePathIntentFrontier(
 	let excludedMissingCompletedAt = 0
 	let excludedByScope = 0
 	const eligible = args.intents.filter((intent) => {
-		if (intent.status !== 'completed') return false
-		const completedAt = completedAtField(intent)
+		if (!isValuePathIntentCompleted(intent)) return false
+		const completedAt = valuePathIntentCompletedAt(intent)
 		if (!completedAt) {
 			excludedMissingCompletedAt += 1
 			return false
@@ -91,7 +95,9 @@ export function scanCompletedValuePathIntentFrontier(
 		return true
 	})
 	const intents = actionableFrontier.slice(0, args.limit)
-	const oldestFrontierCompletedAt = completedAtField(actionableFrontier[0])
+	const oldestFrontierCompletedAt = valuePathIntentCompletedAt(
+		actionableFrontier[0],
+	)
 	return {
 		intents,
 		diagnostics: {
@@ -126,7 +132,7 @@ export function sortValuePathIntentsByCreatedAt(intents: SideEffectIntent[]) {
 }
 
 export function hasValidCompletedAt(intent: SideEffectIntent) {
-	return Boolean(completedAtField(intent))
+	return isValuePathIntentCompleted(intent)
 }
 
 function matchesScanScope(
@@ -182,25 +188,17 @@ function valuePathSlug(intent: SideEffectIntent) {
 
 function compareByCompletion(a: SideEffectIntent, b: SideEffectIntent) {
 	return (
-		compareStrings(completedAtField(a) ?? '', completedAtField(b) ?? '') ||
+		compareStrings(
+			valuePathIntentCompletedAt(a) ?? '',
+			valuePathIntentCompletedAt(b) ?? '',
+		) ||
 		compareStrings(a.createdAt, b.createdAt) ||
 		compareStrings(a.id, b.id)
 	)
 }
 
-function completedAtField(intent?: SideEffectIntent) {
-	const value = intent?.metadata.completedAt
-	return typeof value === 'string' && value.length > 0 && validDate(value)
-		? value
-		: undefined
-}
-
 function stringField(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
-}
-
-function validDate(value: string) {
-	return !Number.isNaN(new Date(value).getTime())
 }
 
 function hoursBetween(from: string, to: string) {

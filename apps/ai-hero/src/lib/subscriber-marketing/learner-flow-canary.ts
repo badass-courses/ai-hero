@@ -8,6 +8,10 @@ import {
 	type LearnerFlowFixtureRepository,
 } from './learner-flow-fixture'
 import type { ContactRecord, SideEffectIntent } from './types'
+import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from './value-path-completion'
 import type { ValuePathDripProgressionResult } from './value-path-drip-progression'
 
 export const LEARNER_FLOW_CANARY_CADENCE_HOURS = 1
@@ -63,15 +67,19 @@ const learnerFlowCanaryMachine = setup({
 		multipleContacts: ({ context }) => context.observation.contactCount !== 1,
 		multipleActive: ({ context }) => context.observation.activeIntentCount !== 1,
 		terminal: ({ context }) =>
-			context.observation.currentIntent?.status === 'completed' &&
-			isTerminalCanaryIntent(context.observation.currentIntent),
+			isValuePathIntentCompleted(context.observation.currentIntent) &&
+			isTerminalCanaryIntent(context.observation.currentIntent!),
 		failedOrBlocked: ({ context }) =>
-			context.observation.currentIntent?.status === 'failed' ||
-			context.observation.currentIntent?.status === 'blocked',
+			!isValuePathIntentCompleted(context.observation.currentIntent) &&
+			(context.observation.currentIntent?.status === 'failed' ||
+				context.observation.currentIntent?.status === 'blocked'),
 		overdue: ({ context }) =>
 			(context.observation.ageHours ?? 0) >= LEARNER_FLOW_CANARY_STALL_AFTER_HOURS,
-		pending: ({ context }) => context.observation.currentIntent?.status === 'pending',
-		completed: ({ context }) => context.observation.currentIntent?.status === 'completed',
+		pending: ({ context }) =>
+			!isValuePathIntentCompleted(context.observation.currentIntent) &&
+			context.observation.currentIntent?.status === 'pending',
+		completed: ({ context }) =>
+			isValuePathIntentCompleted(context.observation.currentIntent),
 	},
 }).createMachine({
 	context: ({ input }) => input,
@@ -202,16 +210,18 @@ export async function tickLearnerFlowCanary(args: {
 
 	if (
 		(lifecycle === 'ready-to-advance' || lifecycle === 'stalled') &&
-		observation.currentIntent?.status === 'completed'
+		isValuePathIntentCompleted(observation.currentIntent)
 	) {
+		const currentIntent = observation.currentIntent!
 		const virtualCompletedAt = new Date(
 			Date.parse(now) - LEARNER_FLOW_CANARY_VIRTUAL_DUE_AGE_HOURS * 60 * 60 * 1000,
 		).toISOString()
 		const progression = await args.advance({
 			intent: {
-				...observation.currentIntent,
+				...currentIntent,
+				completedAt: virtualCompletedAt,
 				metadata: {
-					...observation.currentIntent.metadata,
+					...currentIntent.metadata,
 					completedAt: virtualCompletedAt,
 					learnerFlowCanaryVirtualClock: true,
 				},
@@ -319,7 +329,8 @@ async function observeCanary(
 		contactId: contact.id,
 		currentIntent,
 		activeIntentCount:
-			active.filter((intent) => intent.status !== 'completed').length || (currentIntent ? 1 : 0),
+			active.filter((intent) => !isValuePathIntentCompleted(intent)).length ||
+			(currentIntent ? 1 : 0),
 		ageHours: currentIntent ? hoursBetween(activityAt(currentIntent), now) : undefined,
 		stage: emailResourceId(currentIntent),
 	}
@@ -345,7 +356,9 @@ function isTerminalCanaryIntent(intent: SideEffectIntent) {
 }
 
 function activityAt(intent: SideEffectIntent) {
-	for (const key of ['completedAt', 'failedAt', 'blockedAt'] as const) {
+	const completedAt = valuePathIntentCompletedAt(intent)
+	if (completedAt) return completedAt
+	for (const key of ['failedAt', 'blockedAt'] as const) {
 		const value = intent.metadata[key]
 		if (typeof value === 'string' && validDate(value)) return value
 	}
@@ -407,7 +420,7 @@ function actionForLifecycle(lifecycle: CanaryLifecycleState, intent?: SideEffect
 	if (lifecycle === 'terminal') return 'self-reset'
 	if (
 		(lifecycle === 'ready-to-advance' || lifecycle === 'stalled') &&
-		intent?.status === 'completed'
+		isValuePathIntentCompleted(intent)
 	) {
 		return 'advance'
 	}

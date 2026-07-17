@@ -244,6 +244,11 @@ describe('subscriber marketing signup gap recovery', () => {
 					formId: 12345,
 					source: 'operator-recovery',
 					subscribedAt: '2026-07-15T06:00:00.000Z',
+					signupGapLiveness: expect.objectContaining({
+						workSeen: 2,
+						workDone: 2,
+						oldestUnservedAt: null,
+					}),
 				},
 			},
 		])
@@ -252,6 +257,13 @@ describe('subscriber marketing signup gap recovery', () => {
 			excludedSynthetic: 1,
 			skippedExisting: 1,
 			emitted: 1,
+		})
+		expect(receipt).toMatchObject({
+			generatedAt: preview.generatedAt,
+			workSeen: 2,
+			workDone: 2,
+			oldestUnservedAgeHours: null,
+			oldestUnservedAt: null,
 		})
 		expect(receipt.note).toContain('real email-0 send')
 		expect(JSON.stringify(receipt)).not.toContain('replay@example.com')
@@ -1429,14 +1441,19 @@ describe('subscriber marketing value path completed-intent scan', () => {
 			emailResourceId: 'ai-hero-skills-workflow.email-0',
 			completedAt: '2026-05-01T04:00:00.000Z',
 		})
+		const pendingNextFixture = completedIntent({
+			id: 'already-progressed-email-1',
+			contactId: 'already-progressed',
+			emailResourceId: 'ai-hero-skills-workflow.email-1',
+			completedAt: '2026-05-01T04:01:00.000Z',
+		})
 		const pendingNext = {
-			...completedIntent({
-				id: 'already-progressed-email-1',
-				contactId: 'already-progressed',
-				emailResourceId: 'ai-hero-skills-workflow.email-1',
-				completedAt: '2026-05-01T04:01:00.000Z',
-			}),
+			...pendingNextFixture,
 			status: 'pending' as const,
+			metadata: {
+				...pendingNextFixture.metadata,
+				completedAt: undefined,
+			},
 		}
 		const starved = completedIntent({
 			id: 'rolling-starved-after-terminal-history',

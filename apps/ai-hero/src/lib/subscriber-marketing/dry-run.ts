@@ -19,6 +19,10 @@ import type {
 	StateTransition,
 } from './types'
 import {
+	canonicalCompletionForWrite,
+	isValuePathIntentCompleted,
+} from './value-path-completion'
+import {
 	scanCompletedValuePathIntentFrontier,
 	selectCompletedValuePathIntentFrontier,
 	sortValuePathIntentsByCreatedAt,
@@ -55,7 +59,7 @@ export type MarketingRepository = IdentityRepository & {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	): SideEffectIntent
 }
 
@@ -169,8 +173,12 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		)
 	}
 	createSideEffectIntent(input: SideEffectIntent) {
-		this.sideEffectIntents.set(input.id, input)
-		return input
+		const record = {
+			...input,
+			completedAt: canonicalCompletionForWrite(input),
+		}
+		this.sideEffectIntents.set(record.id, record)
+		return record
 	}
 	findPendingValuePathEmailSideEffectIntents(args: { limit: number }) {
 		const now = new Date().toISOString()
@@ -178,6 +186,7 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 			(intent) =>
 				intent.provider === 'kit' &&
 				intent.type === 'send-value-path-email' &&
+				!isValuePathIntentCompleted(intent) &&
 				(intent.status === 'pending' || isDueRetryableIntent(intent, now)),
 		)
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
@@ -207,7 +216,8 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	}
 	findCompletedValuePathEmailSideEffectIntentsForRepair() {
 		return this.findValuePathEmailSideEffectIntentsForScan().filter(
-			(intent) => intent.status === 'completed',
+			(intent) =>
+				intent.status === 'completed' || isValuePathIntentCompleted(intent),
 		)
 	}
 	findValuePathEmailSideEffectIntentsByContact(contactId: string) {
@@ -224,11 +234,15 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	) {
 		const existing = this.sideEffectIntents.get(id)
 		if (!existing) throw new Error(`Missing side effect intent ${id}`)
-		const updated = { ...existing, ...patch }
+		const updated = {
+			...existing,
+			...patch,
+			completedAt: canonicalCompletionForWrite(patch),
+		}
 		this.sideEffectIntents.set(id, updated)
 		return updated
 	}

@@ -35,6 +35,7 @@ import {
 	type LearnerFlowCanaryResidue,
 } from '@/lib/subscriber-marketing/learner-flow-canary'
 import { learnerFlowCanaryEmailSql } from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
+import { queryLearnerFlowCohort } from '@/lib/subscriber-marketing/learner-flow-cohort'
 import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
@@ -84,6 +85,7 @@ import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-a
 import { importValuePathContentResources } from '@/lib/subscriber-marketing/value-path-content-import'
 import { previewValuePathContentImport } from '@/lib/subscriber-marketing/value-path-content-import-preview'
 import { backfillMissingValuePathCompletedAt } from '@/lib/subscriber-marketing/value-path-completed-at-backfill'
+import { isValuePathIntentCompleted } from '@/lib/subscriber-marketing/value-path-completion'
 import { progressValuePathDrips } from '@/lib/subscriber-marketing/value-path-drip-progression'
 import {
 	executePendingValuePathEmailIntents,
@@ -1137,7 +1139,7 @@ async function buildLearnerFlowUnstick(args: {
 	).flatMap((intents) =>
 		intents.filter(
 			(intent) =>
-				intent.status === 'completed' && dripIntentIds.has(intent.id),
+				isValuePathIntentCompleted(intent) && dripIntentIds.has(intent.id),
 		),
 	)
 	const drip =
@@ -1551,23 +1553,11 @@ async function buildValuePathGateDStatus() {
 		? normalizeGateDRuntimeAllowlist(allowlistDecision.allowlist)
 		: undefined
 	const activationContactIds = allowlist?.contactIds ?? []
-	const reportingCohortSource =
-		allowlist?.authorizationMode === 'rolling-public-enrollment'
-			? 'live-rolling-learner-flow'
-			: 'activation-snapshot'
-	const liveLearnerFlowRecords =
-		reportingCohortSource === 'live-rolling-learner-flow'
-			? await (
-					await createCaptureRepository()
-				).findSkillsWorkflowLearnerFlowRecords()
-			: []
-	const contactIds = Array.from(
-		new Set(
-			reportingCohortSource === 'live-rolling-learner-flow'
-				? liveLearnerFlowRecords.map((record) => record.contactId)
-				: activationContactIds,
-		),
-	)
+	const repository = await createCaptureRepository()
+	const cohort = allowlist
+		? await queryLearnerFlowCohort({ repository, allowlist })
+		: undefined
+	const contactIds = cohort?.contactIds ?? []
 	const [intents, events] = contactIds.length
 		? await Promise.all([
 				db
@@ -1602,8 +1592,16 @@ async function buildValuePathGateDStatus() {
 			(intent) => intent.status === 'blocked',
 		)
 		const lastIntent = contactIntents[contactIntents.length - 1]
+		const completedPath = contactIntents.some(
+			(intent) =>
+				isValuePathIntentCompleted(intent) &&
+				isTerminalValuePathEmailResourceId(
+					String(intent.metadata?.emailResourceId ?? ''),
+				),
+		)
 		return {
 			contactId,
+			completedPath,
 			lastEmailResourceId: lastIntent?.metadata?.emailResourceId,
 			lastKitSequenceId: lastIntent?.metadata?.kitSequenceId,
 			lastStatus: lastIntent?.status,
@@ -1619,24 +1617,28 @@ async function buildValuePathGateDStatus() {
 	})
 	const grouped: Record<string, number> = {}
 	for (const intent of intents) {
-		const key = `${intent.status}:${intent.metadata?.emailResourceId}:${intent.metadata?.kitSequenceId}`
+		const completionStatus = isValuePathIntentCompleted(intent)
+			? 'completed'
+			: intent.status
+		const key = `${completionStatus}:${intent.metadata?.emailResourceId}:${intent.metadata?.kitSequenceId}`
 		grouped[key] = (grouped[key] ?? 0) + 1
 	}
 	const eventTypes: Record<string, number> = {}
 	for (const event of events) {
 		eventTypes[event.eventType] = (eventTypes[event.eventType] ?? 0) + 1
 	}
-	const computedDrip = allowlist
-		? await buildComputedGateDDripStatus(allowlist)
+	const computedDrip = allowlist && cohort
+		? await buildComputedGateDDripStatus(allowlist, cohort)
 		: null
-	const retrying = summarizeRetryingValuePathIntents(intents, checkedAt)
+	const retrying = summarizeRetryingValuePathIntents(
+		intents.filter((intent) => !isValuePathIntentCompleted(intent)),
+		checkedAt,
+	)
 	const currentStepDistribution = countByValues(
 		byContact.map((contact) => String(contact.lastEmailResourceId ?? 'none')),
 	)
-	const completedPathCount = byContact.filter((contact) =>
-		isTerminalValuePathEmailResourceId(
-			String(contact.lastEmailResourceId ?? ''),
-		),
+	const completedPathCount = byContact.filter(
+		(contact) => contact.completedPath,
 	).length
 	const persistedBlockedReasons = countReviewReasons(
 		intents.filter((intent) => intent.status === 'blocked'),
@@ -1657,6 +1659,7 @@ async function buildValuePathGateDStatus() {
 	const movement = evaluateValuePathMovement({
 		intents: intents.map((intent) => ({
 			createdAt: intent.createdAt,
+			completedAt: intent.completedAt,
 			metadata: intent.metadata ?? undefined,
 		})),
 		events: events.map((event) => ({
@@ -1674,7 +1677,10 @@ async function buildValuePathGateDStatus() {
 		retryableDue: retrying.retryableDue,
 		retryableWaiting: retrying.retryableWaiting,
 		nextRetryAt: retrying.nextRetryAt,
-		pending: intents.filter((intent) => intent.status === 'pending').length,
+		pending: intents.filter(
+			(intent) =>
+				intent.status === 'pending' && !isValuePathIntentCompleted(intent),
+		).length,
 		dueSends: computedDrip?.counts.planned ?? 0,
 		participants: contactIds.length,
 		completedPathCount,
@@ -1683,8 +1689,9 @@ async function buildValuePathGateDStatus() {
 	return {
 		checkedAt,
 		reportingCohort: {
-			source: reportingCohortSource,
+			source: cohort?.source ?? 'unavailable',
 			contacts: contactIds.length,
+			liveRecordsScanned: cohort?.liveRecordsScanned ?? 0,
 			activationSnapshotContacts: activationContactIds.length,
 		},
 		allowlist: {
@@ -1732,9 +1739,11 @@ async function buildValuePathGateDStatus() {
 		totals: {
 			contacts: contactIds.length,
 			intents: intents.length,
-			pending: intents.filter((intent) => intent.status === 'pending').length,
-			completed: intents.filter((intent) => intent.status === 'completed')
-				.length,
+			pending: intents.filter(
+				(intent) =>
+					intent.status === 'pending' && !isValuePathIntentCompleted(intent),
+			).length,
+			completed: intents.filter(isValuePathIntentCompleted).length,
 			blocked: intents.filter((intent) => intent.status === 'blocked').length,
 			stale: intents.filter((intent) => intent.status === 'stale').length,
 		},
@@ -1873,15 +1882,13 @@ async function buildValuePathDripProgress(args: {
 		Date.now() - args.minAgeHours * 60 * 60 * 1000,
 	).toISOString()
 	const now = new Date().toISOString()
+	const cohort = await queryLearnerFlowCohort({ repository, allowlist })
 	const completedScan =
 		await repository.findCompletedValuePathEmailSideEffectIntentScan({
 			limit: args.limit,
 			maxCompletedAt,
 			now,
-			contactIds:
-				allowlist.authorizationMode === 'rolling-public-enrollment'
-					? undefined
-					: allowlist.contactIds,
+			contactIds: cohort.contactIds,
 			valuePathSlugs: allowlist.pathSlugs,
 			emailResourceIds: allowlist.emailResourceIds,
 			kitSequenceIds: allowlist.kitSequenceIds,
@@ -1900,10 +1907,21 @@ async function buildValuePathDripProgress(args: {
 		}),
 		now,
 	})
-	return { ...result, scan: completedScan.diagnostics }
+	return {
+		...result,
+		cohort: {
+			source: cohort.source,
+			contacts: cohort.contactIds.length,
+			liveRecordsScanned: cohort.liveRecordsScanned,
+		},
+		scan: completedScan.diagnostics,
+	}
 }
 
-async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
+async function buildComputedGateDDripStatus(
+	allowlist: GateDRuntimeAllowlist,
+	cohort: Awaited<ReturnType<typeof queryLearnerFlowCohort>>,
+) {
 	const repository = await createCaptureRepository()
 	const minAgeHours = Number(
 		process.env.AIH_VALUE_PATH_DRIP_MIN_AGE_HOURS || 18,
@@ -1917,10 +1935,7 @@ async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
 			limit: 200,
 			maxCompletedAt,
 			now,
-			contactIds:
-				allowlist.authorizationMode === 'rolling-public-enrollment'
-					? undefined
-					: allowlist.contactIds,
+			contactIds: cohort.contactIds,
 			valuePathSlugs: allowlist.pathSlugs,
 			emailResourceIds: allowlist.emailResourceIds,
 			kitSequenceIds: allowlist.kitSequenceIds,
@@ -1941,6 +1956,11 @@ async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
 	const blocked = result.results.filter((item) => item.status === 'blocked')
 	return {
 		counts: result.counts,
+		cohort: {
+			source: cohort.source,
+			contacts: cohort.contactIds.length,
+			liveRecordsScanned: cohort.liveRecordsScanned,
+		},
 		scan: completedScan.diagnostics,
 		blockedReasons: countReviewReasons(blocked),
 		planned: result.results
@@ -2194,6 +2214,7 @@ async function fetchContactMatchesForSkillsSubscribers(
 		const intents = await db
 			.select({
 				contactId: sideEffectIntent.contactId,
+				completedAt: sideEffectIntent.completedAt,
 				metadata: sideEffectIntent.metadata,
 			})
 			.from(sideEffectIntent)
@@ -2201,12 +2222,14 @@ async function fetchContactMatchesForSkillsSubscribers(
 				and(
 					inArray(sideEffectIntent.contactId, idChunk),
 					eq(sideEffectIntent.type, 'send-value-path-email'),
-					eq(sideEffectIntent.status, 'completed'),
 				),
 			)
 		for (const intent of intents) {
 			const emailResourceId = String(intent.metadata?.emailResourceId ?? '')
-			if (/(?:^|\.)(?:email-6|team-email-6)$/.test(emailResourceId)) {
+			if (
+				isValuePathIntentCompleted(intent) &&
+				/(?:^|\.)(?:email-6|team-email-6)$/.test(emailResourceId)
+			) {
 				completedContactIds.add(intent.contactId)
 			}
 		}

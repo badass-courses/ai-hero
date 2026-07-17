@@ -453,6 +453,7 @@ export const sideEffectIntent = mysqlTable(
 		provider: varchar('provider', { length: 50 }).notNull(),
 		type: varchar('type', { length: 100 }).notNull(),
 		status: varchar('status', { length: 50 }).notNull(),
+		completedAt: timestamp('completedAt', { fsp: 3 }),
 		idempotencyKey: varchar('idempotencyKey', { length: 500 }).notNull(),
 		gates: json('gates').$type<Record<string, unknown>[]>().notNull(),
 		reviewReasons: json('reviewReasons').$type<string[]>().notNull(),

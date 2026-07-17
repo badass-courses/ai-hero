@@ -14,6 +14,10 @@ import { guid } from '@coursebuilder/utils/guid'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
+	canonicalCompletionForWrite,
+	isValuePathIntentCompleted,
+} from './value-path-completion'
+import {
 	COURSE_VALUE_PATH_SLUGS,
 	isCourseValuePathIntent,
 } from './learner-flow-classifier'
@@ -229,11 +233,14 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async createSideEffectIntent(input: SideEffectIntent) {
+		const completedAt = canonicalCompletionForWrite(input)
+		const record = { ...input, completedAt }
 		await this.database.insert(sideEffectIntent).values({
-			...input,
+			...record,
+			completedAt: completedAt ? new Date(completedAt) : null,
 			createdAt: new Date(input.createdAt),
 		})
-		return input
+		return record
 	}
 
 	async findPendingValuePathEmailSideEffectIntents(args: {
@@ -257,6 +264,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			.map(toSideEffectIntentRecord)
 			.filter(
 				(intent: SideEffectIntent) =>
+					!isValuePathIntentCompleted(intent) &&
 					(intent.status === 'pending' || isDueRetryableIntent(intent, now)) &&
 					(!requestedIntentIds || requestedIntentIds.has(intent.id)),
 			)
@@ -295,7 +303,8 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 
 	async findCompletedValuePathEmailSideEffectIntentsForRepair() {
 		return (await this.findValuePathEmailSideEffectIntentsForScan()).filter(
-			(intent: SideEffectIntent) => intent.status === 'completed',
+			(intent: SideEffectIntent) =>
+				intent.status === 'completed' || isValuePathIntentCompleted(intent),
 		)
 	}
 
@@ -407,11 +416,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	) {
+		const completedAt = canonicalCompletionForWrite(patch)
 		await this.database
 			.update(sideEffectIntent)
-			.set(patch)
+			.set({
+				...patch,
+				completedAt: completedAt ? new Date(completedAt) : null,
+			})
 			.where(eq(sideEffectIntent.id, id))
 		const rows = await this.database
 			.select()
@@ -495,6 +508,7 @@ function toSideEffectIntentRecord(row: any): SideEffectIntent {
 		provider: row.provider,
 		type: row.type,
 		status: row.status,
+		completedAt: row.completedAt ? toIso(row.completedAt) : null,
 		idempotencyKey: row.idempotencyKey,
 		gates: row.gates,
 		reviewReasons: row.reviewReasons,

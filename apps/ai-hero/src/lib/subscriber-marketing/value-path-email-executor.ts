@@ -1,6 +1,7 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
+import { isValuePathIntentCompleted } from './value-path-completion'
 import { buildValuePathAnswerLinks } from './value-path-answer-links'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import {
@@ -32,7 +33,7 @@ export type ValuePathEmailExecutorRepository = {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	): Promise<SideEffectIntent> | SideEffectIntent
 }
 
@@ -127,6 +128,13 @@ export async function executeValuePathEmailIntent(args: {
 			status: 'skipped',
 			intentId: intent.id,
 			reviewReasons: ['intent-not-value-path-kit-send'],
+		}
+	}
+	if (isValuePathIntentCompleted(intent)) {
+		return {
+			status: 'skipped',
+			intentId: intent.id,
+			reviewReasons: ['intent-already-completed'],
 		}
 	}
 	if (!isExecutableValuePathEmailIntent(intent, args.now)) {
@@ -248,14 +256,16 @@ export async function executeValuePathEmailIntent(args: {
 			} as Parameters<EmailListConfig['subscribeToList']>[0]['user'],
 			fields: personalization.fields,
 		})
+		const completedAt = args.now ?? new Date().toISOString()
 		await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'completed',
+			completedAt,
 			gates: decision.gates,
 			reviewReasons: [],
 			metadata: {
 				...intent.metadata,
 				providerResult: summarizeProviderResult(providerResult),
-				completedAt: args.now ?? new Date().toISOString(),
+				completedAt,
 			},
 		})
 		return {

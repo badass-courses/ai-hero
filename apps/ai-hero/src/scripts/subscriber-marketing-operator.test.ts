@@ -18,11 +18,9 @@ describe('subscriber marketing operator reliability contracts', () => {
 			'buildValuePathGateDStatus',
 			'buildValuePathContactStateInit',
 		)
-		expect(gateStatus).toContain("'live-rolling-learner-flow'")
-		expect(gateStatus).toContain('findSkillsWorkflowLearnerFlowRecords()')
-		expect(gateStatus).toContain(
-			'liveLearnerFlowRecords.map((record) => record.contactId)',
-		)
+		expect(gateStatus).toContain('queryLearnerFlowCohort({ repository, allowlist })')
+		expect(gateStatus).toContain('const contactIds = cohort?.contactIds ?? []')
+		expect(gateStatus).toContain('source: cohort?.source')
 		expect(gateStatus).toContain('participants: contactIds.length')
 		expect(gateStatus).toContain('byContact')
 	})

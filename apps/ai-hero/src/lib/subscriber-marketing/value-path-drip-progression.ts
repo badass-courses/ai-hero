@@ -7,6 +7,10 @@ import {
 	type SideEffectIntent,
 } from './types'
 import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from './value-path-completion'
+import {
 	verifyAnswerClickForStep,
 	type AnswerClickVerification,
 } from './value-path-answer-click-verification'
@@ -179,8 +183,9 @@ async function progressCompletedIntent(args: {
 			reviewReasons: [],
 		}
 	}
+	const completedAt = valuePathIntentCompletedAt(args.intent)
 	const due = isLocalDayDripDue({
-		completedAt: stringField(args.intent.metadata.completedAt),
+		completedAt,
 		now: args.now,
 		scheduleEvidence: args.allowlist.candidates.find(
 			(candidate) => candidate.contactId === args.intent.contactId,
@@ -199,7 +204,7 @@ async function progressCompletedIntent(args: {
 		repository: args.repository,
 		contactId: args.intent.contactId,
 		fromEmailResourceId,
-		completedAt: stringField(args.intent.metadata.completedAt),
+		completedAt,
 	})
 	const logger = args.logger ?? log
 	await logger.info('value-path.ask.answer_click_verification', {
@@ -500,7 +505,7 @@ async function findDeliverableIntentSinceClick(args: {
 }
 
 function isDeliverableIntentStatus(intent: SideEffectIntent) {
-	if (intent.status === 'pending' || intent.status === 'completed') return true
+	if (intent.status === 'pending' || isValuePathIntentCompleted(intent)) return true
 	return intent.status === 'failed' && intent.metadata.retryable === true
 }
 

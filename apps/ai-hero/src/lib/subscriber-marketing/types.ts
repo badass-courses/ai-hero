@@ -222,6 +222,7 @@ export type SideEffectIntent = {
 		| 'preview-shadow-field-sync'
 		| 'send-value-path-email'
 	status: SideEffectIntentStatus
+	completedAt?: string | null
 	idempotencyKey: string
 	gates: Gate[]
 	reviewReasons: string[]
