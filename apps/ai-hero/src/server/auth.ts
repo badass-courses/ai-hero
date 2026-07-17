@@ -448,7 +448,14 @@ export const authOptions: NextAuthConfig = {
 
 			const organizationRoles =
 				dbUser?.organizationMemberships.flatMap((membership) =>
-					membership.organizationMembershipRoles.map((role) => role.role),
+					membership.organizationMembershipRoles.flatMap((membershipRole) =>
+						membershipRole.active &&
+						!membershipRole.deletedAt &&
+						membershipRole.role.active &&
+						!membershipRole.role.deletedAt
+							? [membershipRole.role]
+							: [],
+					),
 				) || []
 
 			const currentMembership = organizationId

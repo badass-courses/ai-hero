@@ -31,6 +31,7 @@
 		"subscriber-marketing:dry-run": "tsx src/scripts/subscriber-marketing-dry-run.ts",
 		"subscriber-marketing:operator": "tsx -r dotenv/config src/scripts/subscriber-marketing-operator.ts",
 		"ads:operator": "tsx -r dotenv/config src/scripts/ads-operator.ts",
+		"billing-admins:backfill": "tsx -r dotenv/config src/scripts/billing-admins-backfill.ts",
 		"cohort-004:shell-sync": "bun src/scripts/cohort-004-shell-sync.ts",
 		"cohort-004:video-upload-sync": "tsx -r dotenv/config src/scripts/cohort-004-video-upload-sync.ts",
 		"cohort-004:body-content-sync": "tsx -r dotenv/config src/scripts/cohort-004-body-content-sync.ts",

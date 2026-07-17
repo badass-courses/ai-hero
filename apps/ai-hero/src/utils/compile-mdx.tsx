@@ -20,6 +20,7 @@ import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
+import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { CldImageProps } from 'next-cloudinary'
 import {
@@ -151,9 +152,7 @@ type CompileMDXContext = {
 	}
 }
 
-export function sanitizeMdxSource(source: string) {
-	return source.replace(/<!--[\s\S]*?-->/g, '')
-}
+export { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 
 function MDXCompileErrorFallback() {
 	return (

@@ -1,4 +1,5 @@
 import { Lesson } from '@/lib/lessons'
+import { BILLING_ADMIN_ROLE } from '@/lib/team-roles'
 import type { Workshop } from '@/lib/workshops'
 import {
 	AbilityBuilder,
@@ -150,6 +151,11 @@ export function getAbilityRules(options: GetAbilityOptions = {}) {
 				// Base permissions for all roles
 				can('read', 'Organization', { organizationId: { $eq: organizationId } })
 
+				if (name === 'owner' || name === BILLING_ADMIN_ROLE) {
+					can('read', 'Team')
+					can('invite', 'Team')
+				}
+
 				if (name === 'owner') {
 					can('manage', 'Organization', {
 						organizationId: { $eq: organizationId },
@@ -161,6 +167,12 @@ export function getAbilityRules(options: GetAbilityOptions = {}) {
 						organizationId: { $eq: organizationId },
 					})
 					can('transfer', 'Organization', {
+						organizationId: { $eq: organizationId },
+					})
+				}
+
+				if (name === BILLING_ADMIN_ROLE) {
+					can('read', 'OrganizationBilling', {
 						organizationId: { $eq: organizationId },
 					})
 				}
