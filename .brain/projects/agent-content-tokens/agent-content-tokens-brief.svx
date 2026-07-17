@@ -64,6 +64,7 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
 - Token-management UI if the audience ever grows past admins.
 - Sanitized transcript/content projection for video resources so agents can read transcript text without playable Mux identifiers (matrix excludes `/api/[videoResourceId]` GET as-is).
 - Dedicated media/storage scope if agents ever need signed URLs; memory-specific scope for the support-memory routes.
+- Observer bus source for `auth.personal-access-token.verify` Axiom events (denial-spike alerting on Matt's agents) — seam listed in `dark-wizard:.brain/resources/matt-course-video-manager.svx` (rig follows via dispatch-rules, live for #cc-matt-p Slack; Axiom/GitHub/Dropbox sources not built yet).
 
 ## Out of scope
 
