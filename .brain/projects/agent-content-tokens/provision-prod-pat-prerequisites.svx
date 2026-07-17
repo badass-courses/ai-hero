@@ -3,7 +3,8 @@ title: "Provision the Production PAT Prerequisites"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "pi (flagg, herdr pane w19:p5, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: []
@@ -22,3 +23,12 @@ Two prerequisites, both agent-executable (Joel, 2026-07-17: the pscale service t
 Sequencing constraint: this must complete **before** the mint-endpoints change (which makes the env var required in `env.mjs`) deploys, or production builds fail on the missing var.
 
 Resolved when `vercel env ls` shows the var in all three environments and the table's existence in the production branch is confirmed (SHOW TABLES receipt), with receipts in the Result.
+
+## Result (2026-07-17)
+
+Both production prerequisites are present:
+
+- **Vercel:** `vercel whoami` returned `joelhooks`; `apps/ai-hero/.vercel/project.json` identifies project `ai-hero` (`prj_FuDZW9K0FaNNf4KlogkiW19vdLkQ`). `PERSONAL_ACCESS_TOKEN_SECRET` was absent, so a fresh `openssl rand -hex 32` value was piped directly into `vercel env add` for each target. Final names-only `vercel env ls --format json` output contains exactly one `PERSONAL_ACCESS_TOKEN_SECRET` entry for each of `production`, `preview`, and `development`, all with `gitBranch: null`. No raw value was printed or written to a file.
+- **PlanetScale target:** the leased service token authenticated to the single organization `skill-recordings`; database discovery returned `ai-hero`; `pscale branch show ai-hero main` returned `production: true` and `ready: true`.
+- **Production schema:** the app prefix is `AI_` (`apps/ai-hero/src/db/mysql-table.ts`). The existing linked production `DATABASE_URL` targets database `ai-hero`; `SHOW TABLES LIKE '%PersonalAccessToken%'` returned `AI_PersonalAccessToken`. A full prefix check found 64 `AI_` tables. The service token could enumerate the database and production branch but could not create the ephemeral SQL password required by `pscale sql`, so the read-only receipt used the already-configured production database credential instead.
+- **Deploy request:** not created; the table already existed, so there was no schema diff to deploy. Deploy request number/state: N/A (existing table path).

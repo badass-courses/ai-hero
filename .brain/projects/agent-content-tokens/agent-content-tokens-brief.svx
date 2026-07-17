@@ -51,6 +51,7 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
 
 - [Inventory the Content API Surface and Draft the Coverage Matrix](./inventory-content-api-surface.svx) — 50 route-method rows inventoried; privileged content reads include posts, lessons, safe resources/search, product structure, and survey definitions, while Mux playback, uploads/signed URLs, memory, survey-response PII, and commerce analytics stay out.
 - [Ship Admin-Gated Mint, List, and Revoke Endpoints](./ship-token-mint-endpoints.svx) — admin-only mint-for-self, safe own-token listing, idempotent owned-token revocation, required server secret wiring, structured denial/lifecycle logs, and focused route tests shipped; deployed env secret plus `db:push`/table confirmation remain operator gates before live verification.
+- [Provision the Production PAT Prerequisites](./provision-prod-pat-prerequisites.svx) — `PERSONAL_ACCESS_TOKEN_SECRET` now exists in Vercel production, preview, and development; production `ai-hero.main` already contained `AI_PersonalAccessToken`, so no deploy request was needed.
 - [Approve the Coverage Matrix Edges](./approve-coverage-matrix.svx) — all edges locked as drafted; the three anonymous holes close inside the seam step (with Matt heads-up); handoff becomes a paste-able agent prompt against a self-sufficient discovery surface.
 
 ## Latent
