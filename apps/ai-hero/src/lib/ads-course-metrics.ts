@@ -6,6 +6,7 @@ import {
 	sideEffectIntent,
 } from '@/db/schema'
 import { funnelMetricsWindow, type FunnelMetricsRange } from '@/lib/ads-metrics-window'
+import { excludeLearnerFlowCanary } from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
 import { readGoogleAdsConversionUploadConfig } from '@/lib/google-ads-conversion-upload'
 import { and, count, countDistinct, eq, gte, sql } from 'drizzle-orm'
 
@@ -47,11 +48,15 @@ export async function getAdsCourseFunnelMetrics(options: {
 	const range = options.range ?? 'today'
 	const window = funnelMetricsWindow(range, now)
 	const { start, end } = window
-	const signupWhere = eq(contactEvent.eventType, 'skills-newsletter.subscribed')
+	const signupWhere = and(
+		eq(contactEvent.eventType, 'skills-newsletter.subscribed'),
+		excludeLearnerFlowCanary({ contactId: contactEvent.contactId }),
+	)
 	const emailResourceId = sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId'))`
 	const emailIntentWhere = and(
 		eq(sideEffectIntent.type, 'send-value-path-email'),
 		sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.valuePathSlug')) IN ('ai-hero-skills-workflow', 'ai-hero-skills-team-workflow')`,
+		excludeLearnerFlowCanary({ contactId: sideEffectIntent.contactId }),
 	)
 	const countRows = async (where: any, source: { table: any; column: any }) => {
 		const [totalRow] = await db.select({ value: count() }).from(source.table).where(where)
@@ -74,7 +79,10 @@ export async function getAdsCourseFunnelMetrics(options: {
 		identity: contactEvent.contactId,
 	})
 	const contacts = await countRows(
-		sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`,
+		and(
+			sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`,
+			excludeLearnerFlowCanary({ email: contact.email }),
+		),
 		{ table: contact, column: contact.createdAt },
 	)
 	const emailZero = await countRows(
@@ -111,10 +119,20 @@ export async function getAdsCourseFunnelMetrics(options: {
 	const signupContacts = await db
 		.select({ attribution: contact.optInAttribution, createdAt: contact.createdAt })
 		.from(contact)
-		.where(sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`)
+		.where(
+			and(
+				sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`,
+				excludeLearnerFlowCanary({ email: contact.email }),
+			),
+		)
 	const conversions = await db
 		.select({ status: googleAdsSignupConversionUpload.status, createdAt: googleAdsSignupConversionUpload.createdAt })
 		.from(googleAdsSignupConversionUpload)
+		.where(
+			excludeLearnerFlowCanary({
+				contactId: googleAdsSignupConversionUpload.contactId,
+			}),
+		)
 	const countConversionStatuses = (rows: typeof conversions) =>
 		Object.fromEntries(['processing', 'uploaded', 'failed'].map((status) => [status, rows.filter((row) => row.status === status).length]))
 	const rangeContacts = signupContacts.filter((row) => inWindow(row.createdAt, start, end))

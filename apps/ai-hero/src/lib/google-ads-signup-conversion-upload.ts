@@ -14,6 +14,7 @@ import {
 	type GoogleAdsUploadClient,
 	type GoogleAdsUploadClientResult,
 } from './google-ads-conversion-upload'
+import { excludeLearnerFlowCanary } from './subscriber-marketing/learner-flow-canary-exclusion'
 import type { OptInAttribution } from './subscriber-marketing/opt-in-attribution'
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
@@ -338,6 +339,9 @@ export async function fetchGoogleAdsSignupConversionCandidates(args: {
 				sql`COALESCE(LEFT(${gclid}, 5), '') <> 'TEST_'`,
 				sql`COALESCE(LEFT(${gbraid}, 5), '') <> 'TEST_'`,
 				sql`COALESCE(LEFT(${wbraid}, 5), '') <> 'TEST_'`,
+				// Same synthetic-exclusion family as the TEST_ click-id guards:
+				// canary traffic proves the pipeline but is never a business conversion.
+				excludeLearnerFlowCanary({ email: contact.email }),
 				args.since
 					? sql`${subscribedAt} >= ${args.since.toISOString()}`
 					: undefined,

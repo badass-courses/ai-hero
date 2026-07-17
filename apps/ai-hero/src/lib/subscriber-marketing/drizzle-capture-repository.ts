@@ -12,6 +12,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { guid } from '@coursebuilder/utils/guid'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
 	COURSE_VALUE_PATH_SLUGS,
 	isCourseValuePathIntent,
@@ -324,6 +325,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					and(
 						eq(sideEffectIntent.provider, 'kit'),
 						eq(sideEffectIntent.type, 'send-value-path-email'),
+						excludeLearnerFlowCanary({
+							contactId: sideEffectIntent.contactId,
+						}),
 					),
 				),
 			this.database

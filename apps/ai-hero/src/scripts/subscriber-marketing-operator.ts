@@ -4,11 +4,15 @@ import { db } from '@/db'
 import {
 	contact,
 	contactEvent,
+	contactLink,
 	contactState,
 	contentResource,
 	contentResourceResource,
+	googleAdsSignupConversionUpload,
+	nextAction,
 	providerIdentity,
 	sideEffectIntent,
+	stateTransition,
 } from '@/db/schema'
 import { captureFrontQuickQuestionCsv } from '@/lib/subscriber-marketing/capture-front-quick-question-csv'
 import { captureFrontQuickQuestion } from '@/lib/subscriber-marketing/capture-quick-question'
@@ -22,6 +26,15 @@ import {
 } from '@/lib/subscriber-marketing/contact-event-normalizer-preview'
 import { renderContactEventReviewHtml } from '@/lib/subscriber-marketing/contact-event-review-page'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import {
+	cleanupLearnerFlowCanary,
+	inspectLearnerFlowCanary,
+	seedLearnerFlowCanary,
+	tickLearnerFlowCanary,
+	type LearnerFlowCanaryRepository,
+	type LearnerFlowCanaryResidue,
+} from '@/lib/subscriber-marketing/learner-flow-canary'
+import { learnerFlowCanaryEmailSql } from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
 import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
@@ -116,7 +129,7 @@ import {
 	LEARNER_FLOW_REPORT_REDIS_KEY,
 } from '@/lib/learner-flow-report'
 import { redis } from '@/server/redis-client'
-import { and, desc, eq, gte, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray } from 'drizzle-orm'
 
 const providers = ['fixture', 'front', 'kit', 'ai-hero'] as const
 const [command, ...args] = process.argv.slice(2)
@@ -346,6 +359,41 @@ if (command === 'lookup') {
 					readFlag(args, '--fixture-id') ?? learnerFlowFixtureId(),
 				allowWrite,
 			})
+	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'learner-flow-canary') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	if (args.includes('--stalled') && !args.includes('--seed')) printUsageAndExit()
+	const repository = await createLearnerFlowCanaryRepository()
+	const now = readFlag(args, '--now')
+	const result = args.includes('--cleanup')
+		? await cleanupLearnerFlowCanary({ repository, allowWrite })
+		: args.includes('--status')
+			? await inspectLearnerFlowCanary({ repository, now })
+			: args.includes('--seed')
+				? await seedLearnerFlowCanary({
+						repository,
+						allowWrite,
+						stalled: args.includes('--stalled'),
+						now,
+					})
+				: await tickLearnerFlowCanary({
+						repository,
+						allowWrite,
+						now,
+						advance: async ({ intent, now: progressionNow }) => {
+							const allowlist = await requireActiveGateDAllowlist()
+							return progressValuePathDrips({
+								repository,
+								allowlist,
+								completedIntents: [intent],
+								allowWrite: true,
+								acceptedReviewReasons:
+									resolveGateDPreAuthorizedReviewReasons({ allowlist }),
+								now: progressionNow,
+							})
+						},
+					})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'value-path-completed-at-backfill') {
 	const allowWrite = args.includes('--allow-write')
@@ -2663,6 +2711,112 @@ async function createCaptureRepository() {
 	return new DrizzleCaptureMarketingRepository(db)
 }
 
+async function createLearnerFlowCanaryRepository(): Promise<
+	DrizzleCaptureMarketingRepository & LearnerFlowCanaryRepository
+> {
+	const repository = await createCaptureRepository()
+	return Object.assign(repository, {
+		findLearnerFlowCanaryContacts: async () => {
+			const rows = await db
+				.select({ id: contact.id })
+				.from(contact)
+				.where(learnerFlowCanaryEmailSql(contact.email))
+				.orderBy(desc(contact.createdAt))
+			const contacts = await Promise.all(
+				rows.map((row) => repository.findContactById(row.id)),
+			)
+			return contacts.filter(
+				(record): record is NonNullable<typeof record> => Boolean(record),
+			)
+		},
+		deleteLearnerFlowFixtureContact: async (contactId: string) => {
+			await db.transaction(async (transaction) => {
+				await transaction
+					.delete(googleAdsSignupConversionUpload)
+					.where(eq(googleAdsSignupConversionUpload.contactId, contactId))
+				await transaction
+					.delete(sideEffectIntent)
+					.where(eq(sideEffectIntent.contactId, contactId))
+				await transaction
+					.delete(nextAction)
+					.where(eq(nextAction.contactId, contactId))
+				await transaction
+					.delete(stateTransition)
+					.where(eq(stateTransition.contactId, contactId))
+				await transaction
+					.delete(contactEvent)
+					.where(eq(contactEvent.contactId, contactId))
+				await transaction
+					.delete(contactLink)
+					.where(eq(contactLink.contactId, contactId))
+				await transaction
+					.delete(providerIdentity)
+					.where(eq(providerIdentity.contactId, contactId))
+				await transaction
+					.delete(contactState)
+					.where(eq(contactState.contactId, contactId))
+				await transaction.delete(contact).where(eq(contact.id, contactId))
+			})
+		},
+		readLearnerFlowFixtureResidue: readLearnerFlowFixtureResidue,
+	})
+}
+
+async function readLearnerFlowFixtureResidue(
+	contactId: string,
+): Promise<LearnerFlowCanaryResidue> {
+	const [
+		contacts,
+		contactStates,
+		providerIdentities,
+		contactEvents,
+		stateTransitions,
+		nextActions,
+		sideEffectIntents,
+		contactLinks,
+		conversionUploads,
+	] = await Promise.all([
+		countRows(contact, eq(contact.id, contactId)),
+		countRows(contactState, eq(contactState.contactId, contactId)),
+		countRows(providerIdentity, eq(providerIdentity.contactId, contactId)),
+		countRows(contactEvent, eq(contactEvent.contactId, contactId)),
+		countRows(stateTransition, eq(stateTransition.contactId, contactId)),
+		countRows(nextAction, eq(nextAction.contactId, contactId)),
+		countRows(sideEffectIntent, eq(sideEffectIntent.contactId, contactId)),
+		countRows(contactLink, eq(contactLink.contactId, contactId)),
+		countRows(
+			googleAdsSignupConversionUpload,
+			eq(googleAdsSignupConversionUpload.contactId, contactId),
+		),
+	])
+	return {
+		contacts,
+		contactStates,
+		providerIdentities,
+		contactEvents,
+		stateTransitions,
+		nextActions,
+		sideEffectIntents,
+		contactLinks,
+		conversionUploads,
+		total:
+			contacts +
+			contactStates +
+			providerIdentities +
+			contactEvents +
+			stateTransitions +
+			nextActions +
+			sideEffectIntents +
+			contactLinks +
+			conversionUploads,
+	}
+}
+
+async function countRows(table: any, where: any) {
+	const rows = await db.select({ value: count() }).from(table).where(where)
+	return Number(rows[0]?.value ?? 0)
+}
+
 async function createPurchasePreviewRepository() {
 	const { db } = await import('@/db')
 	return new DrizzlePurchasePreviewRepository(db)
@@ -2802,6 +2956,9 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck [--fixture-id <id>] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck --cleanup --contact-id <synthetic-contact-id> [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary [--status|--tick] [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --seed [--stalled] [--now <iso>] [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --cleanup [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill [--dry-run] [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill --allow-write [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]

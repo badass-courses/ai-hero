@@ -1,10 +1,18 @@
 import { guid } from '@coursebuilder/utils/guid'
 
+import { LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX } from './learner-flow-canary-exclusion'
 import type {
 	ContactRecord,
 	ContactState,
 	SideEffectIntent,
 } from './types'
+
+export {
+	isLearnerFlowCanaryEmail,
+	LEARNER_FLOW_CANARY_EMAIL_DOMAIN,
+	LEARNER_FLOW_CANARY_EMAIL_PREFIX,
+	LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX,
+} from './learner-flow-canary-exclusion'
 
 export const LEARNER_FLOW_FIXTURE_EMAIL_PREFIX = 'joel+aih-synth-'
 export const LEARNER_FLOW_FIXTURE_EMAIL_DOMAIN = 'badass.dev'
@@ -50,6 +58,10 @@ export function isLearnerFlowFixtureEmail(value?: string | null) {
 		value &&
 			/^joel\+aih-synth-[a-z0-9-]+@badass\.dev$/i.test(value.trim()),
 	)
+}
+
+export function isLearnerFlowCanaryIntent(intent: SideEffectIntent) {
+	return intent.metadata.learnerFlowCanary === true
 }
 
 export function isCleanedLearnerFlowFixtureIntent(intent: SideEffectIntent) {
@@ -170,6 +182,79 @@ export async function createLearnerFlowStuckFixture(args: {
 		intentId: intent.id,
 		intentStatus: intent.status,
 		emailPattern: `${LEARNER_FLOW_FIXTURE_EMAIL_PREFIX}*@${LEARNER_FLOW_FIXTURE_EMAIL_DOMAIN}`,
+	}
+}
+
+export async function createLearnerFlowCanaryFixture(args: {
+	repository: LearnerFlowFixtureRepository
+	allowWrite: boolean
+	fixtureId: string
+	stalled?: boolean
+	now?: string
+}) {
+	if (!args.fixtureId.startsWith(LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX)) {
+		throw new Error('Canary fixture id is outside the canary namespace')
+	}
+	const created = await createLearnerFlowStuckFixture({
+		repository: args.repository,
+		fixtureId: args.fixtureId,
+		allowWrite: args.allowWrite,
+		now: args.now,
+	})
+	if (!args.allowWrite || !created.intentId) {
+		return {
+			...created,
+			mode: 'learner-flow-canary' as const,
+			operation: 'seed' as const,
+			stalled: Boolean(args.stalled),
+		}
+	}
+
+	const intents =
+		await args.repository.findValuePathEmailSideEffectIntentsByContact(
+			created.contactId!,
+		)
+	const intent = intents.find((candidate) => candidate.id === created.intentId)
+	if (!intent) throw new Error(`Missing canary intent ${created.intentId}`)
+	if (intent.metadata.learnerFlowCanary !== true) {
+		const now = args.now ?? new Date().toISOString()
+		const updated = await args.repository.updateSideEffectIntent(intent.id, {
+			status: args.stalled ? 'blocked' : 'pending',
+			gates: [
+				{
+					slug: 'gate-d-value-path-email',
+					passed: !args.stalled,
+					reason: args.stalled
+						? 'Synthetic canary stall fixture.'
+						: 'Synthetic canary is eligible for the real executor.',
+				},
+			],
+			reviewReasons: args.stalled
+				? ['learner-flow-canary-synthetic-stall']
+				: [],
+			metadata: {
+				...intent.metadata,
+				learnerFlowCanary: true,
+				learnerFlowCanaryCadenceHours: 1,
+				learnerFlowCanarySeededAt: now,
+				...(args.stalled ? { blockedAt: now } : { providerResult: null }),
+			},
+		})
+		return {
+			...created,
+			mode: 'learner-flow-canary' as const,
+			operation: 'seed' as const,
+			intentStatus: updated.status,
+			stalled: Boolean(args.stalled),
+		}
+	}
+
+	return {
+		...created,
+		mode: 'learner-flow-canary' as const,
+		operation: 'seed' as const,
+		intentStatus: intent.status,
+		stalled: intent.status === 'blocked',
 	}
 }
 
