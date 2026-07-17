@@ -1,0 +1,35 @@
+---
+title: "Worker Task: Wire PAT Verification into the Auth Seam with Scope-Derived Ability"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: wire PAT verification into the auth seam
+
+You are a build worker for the effort **Agent Tokens for the AI Hero Content CMS**.
+
+Read these first, in full:
+
+1. The brief: `.brain/projects/agent-content-tokens/agent-content-tokens-brief.svx` — Vocabulary binds; execution authorized.
+2. Your claimed step: `.brain/projects/agent-content-tokens/wire-pat-auth-seam.svx` — carries the design facts.
+3. **The approved contract**: `.brain/projects/agent-content-tokens/coverage-matrix-draft.svx` — every row is spec, including the flag/note columns. Do not relitigate rows.
+4. Already landed on main (commit fd89203): the PAT mint/list/revoke routes, env wiring (`env.PERSONAL_ACCESS_TOKEN_SECRET` is optional outside production — guard for undefined), and the dormant lib `src/lib/personal-access-tokens.ts`.
+
+## Deliverables
+
+1. **Auth seam** (`src/server/ability-for-request.ts`): recognize `aih_pat_*` bearers by prefix; parse → look up by `publicId` → `verifyPersonalAccessToken` with the required scope's registry entry... structure it so the seam returns `{ user, ability, authMethod: 'device-token' | 'personal-access-token' | 'anonymous' }` (keep backward compatibility for existing callers that destructure only `{ user, ability }`). Device-token path behavior unchanged. Stamp `lastUsedAt` (fire-and-forget update) on successful PAT verify.
+2. **Scope registry** (new module, e.g. `src/server/pat-scopes.ts`): typed map `PersonalAccessTokenScope → CASL rule builder`. `content:read` grants `can('read', 'Content')` plus an explicit privileged-read signal — model it as an additional CASL rule (e.g. `can('read_privileged', 'Content')`) rather than a boolean side-channel, so it lives in the ability. NEVER grant manage/create/update/delete from any read scope. Ability built from scopes alone — the token's user is attribution only.
+3. **Privileged read through services**: posts/lessons/solutions services currently branch drafts/private on `ability.can('update', 'Content')` (`posts.service.ts:44-51`, `lessons.service.ts:49-56`) and posts list-all is owner-filtered (`posts-query.ts:96-126`). Extend those branches to also honor the privileged-read signal, per matrix rows. Same for surveys definitions GET (matrix loosens admin-only → content read, definitions only).
+4. **Search** (`(content)/search/route.ts` + `typesense-query.ts`): branch the Typesense filter — privileged tokens see draft/private/published; response stays the existing field allowlist.
+5. **Close the three pre-existing anonymous holes** (approved decision): gate every `/api/resources` branch on read ability and sanitize capability-bearing video fields from generic resource payloads; authenticate `/api/uploads/signed-url` (matrix: 403 for content:read too — it needs create ability like its siblings); add visibility filtering for anonymous/non-privileged search.
+6. **Coverage matrix CI test table**: one colocated test suite that walks route × method × token-kind (anonymous / content:read PAT / admin device token) × expected status per the matrix. Follow the existing posts `__tests__` mocking patterns. Every matrix row with a behavioral expectation gets a row here; excluded routes assert 403 (or unchanged-public where the matrix says so).
+7. **Structured auth logs** on every token verify: token kind, publicId prefix (8 chars max), scopes, outcome (`accepted` / `denied:<reason>`). No raw token material, ever.
+8. Format touched files to match surrounding code: tabs, single quotes, no semicolons (`bun x prettier --use-tabs --single-quote --no-semi --write <files>`). Do NOT run ultracite. Run the app's vitest on your test files plus the existing PAT and posts suites.
+9. Brain updates: `## Result (2026-07-17)` in your step file (what shipped, file paths, matrix-suite counts), flip status closed + closed_at, one ledger line on the brief.
+
+## Rules
+
+- You own: `src/server/ability-for-request.ts`, new `src/server/pat-scopes.ts`, `src/ability` (additive rule only), the `(content)` routes/services/queries named by the matrix, and your tests + `.brain` edits. Do NOT touch `src/app/api/personal-access-tokens/**`, `env.mjs`, `turbo.json`, or anything under `src/lib/google-ads*`/`src/inngest` (other sessions own those).
+- If the seam refactor balloons, constrain to "PATs verify + device path untouched" and note the cut in your Result.
+- Do not commit. Work autonomously. Print a DONE summary: files touched, test results (counts), matrix rows covered, cuts made.

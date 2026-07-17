@@ -1,0 +1,29 @@
+---
+title: "Worker Task: Provision the Production PAT Prerequisites"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: provision the production PAT prerequisites
+
+You are an ops worker for the effort **Agent Tokens for the AI Hero Content CMS**.
+
+Read these first, in full:
+
+1. The brief: `.brain/projects/agent-content-tokens/agent-content-tokens-brief.svx`
+2. Your claimed step: `.brain/projects/agent-content-tokens/provision-prod-pat-prerequisites.svx`
+
+Joel authorized (2026-07-17): the PlanetScale service token can create and approve deploy requests into the aihero DB; the Vercel CLI can write env vars.
+
+## Deliverables
+
+1. **`PERSONAL_ACCESS_TOKEN_SECRET` in Vercel** for the ai-hero project, environments production + preview + development. Generate with `openssl rand -hex 32` and pipe directly into `vercel env add` — the raw value must never be printed, echoed, logged, or written to any file (no command substitution into a variable you later echo; use a pipe). If it already exists in an environment, leave that environment untouched and note it. Confirm with `vercel env ls` (names only).
+2. **`PersonalAccessToken` table in the aihero PlanetScale DB**: first check existence (`pscale shell ... "SHOW TABLES LIKE '%PersonalAccessToken%'"` — note the app's table prefix; check what `SHOW TABLES` actually returns). If present: capture the receipt, done. If absent: create a pscale branch, run the app's `db:push` against that branch's connection, open a deploy request, verify the diff contains ONLY the new table (if anything else appears in the diff — any ALTER of existing tables — STOP and report instead of deploying), approve and deploy, then re-check on the production branch.
+3. Brain updates: `## Result (2026-07-17)` in your step file with receipts (vercel env ls names, SHOW TABLES output, deploy request number/state), flip status closed + closed_at, one ledger line on the brief.
+
+## Rules
+
+- Discover credentials/config from the environment (`vercel whoami`, existing project link in `apps/ai-hero/.vercel`, `pscale org list` / service token env). If any credential is missing or ambiguous (wrong org, multiple databases, unlinked project), STOP and report exactly what's missing — do not guess targets for prod-touching commands.
+- Touch no repo source files. Only your two `.brain` files change.
+- Do not commit. Work autonomously. Print a DONE summary: what was provisioned, what already existed, receipts.

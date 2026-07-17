@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "pi (flagg, herdr pane w19:p4, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: ["./approve-coverage-matrix.svx"]
 created_at: "2026-07-17"
