@@ -30,7 +30,7 @@ describe('ads-course analytics API', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.getServerAuthSession.mockResolvedValue({ session: null, ability: { can: vi.fn(() => false) } })
-		mocks.getAdsCourseMetrics.mockResolvedValue({ ads: { totals: { costUsd: 12, signups: 3, costPerSignupUsd: 4 } }, funnel: { stages: { signups: { range: 3, total: 10 } } } })
+		mocks.getAdsCourseMetrics.mockResolvedValue({ ads: { totals: { costUsd: 12, allSourceSignups: 3, blendedCostPerAllSourceSignupUsd: 4 } }, funnel: { stages: { signups: { range: 3, total: 10 } } } })
 		mocks.getLearnerFlowReport.mockResolvedValue({ state: 'first_snapshot', snapshotDate: '2026-07-15' })
 		mocks.getLearnerFlowAggregateSummary.mockResolvedValue({
 			generatedAt: '2026-07-15T12:00:00.000Z',
@@ -54,7 +54,7 @@ describe('ads-course analytics API', () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue(auth(role))
 		const response = await GET(request('?productId=email-course&range=today'))
 		expect(response.status).toBe(200)
-		expect(await response.json()).toMatchObject({ ok: true, surface: 'ads-course', productId: 'email-course', range: 'today', data: { ads: { totals: { signups: 3, costPerSignupUsd: 4 } }, flowReport: { state: 'first_snapshot', snapshotDate: '2026-07-15' }, learnerFlow: { counts: { total: 216, moving: 88, terminal: 31, stuck: 97 }, causeCounts: { 'human-review-parked': 97 } } } })
+		expect(await response.json()).toMatchObject({ ok: true, surface: 'ads-course', productId: 'email-course', range: 'today', data: { ads: { totals: { allSourceSignups: 3, blendedCostPerAllSourceSignupUsd: 4 } }, flowReport: { state: 'first_snapshot', snapshotDate: '2026-07-15' }, learnerFlow: { counts: { total: 216, moving: 88, terminal: 31, stuck: 97 }, causeCounts: { 'human-review-parked': 97 } } } })
 		expect(mocks.getAdsCourseMetrics).toHaveBeenCalledWith({ productId: 'email-course', range: 'today' })
 		expect(mocks.getLearnerFlowReport).toHaveBeenCalledOnce()
 		expect(mocks.getLearnerFlowAggregateSummary).toHaveBeenCalledOnce()

@@ -5,29 +5,14 @@ import {
 	googleAdsSignupConversionUpload,
 	sideEffectIntent,
 } from '@/db/schema'
+import { funnelMetricsWindow, type FunnelMetricsRange } from '@/lib/ads-metrics-window'
 import { readGoogleAdsConversionUploadConfig } from '@/lib/google-ads-conversion-upload'
-import { and, count, eq, gte, sql } from 'drizzle-orm'
+import { and, count, countDistinct, eq, gte, sql } from 'drizzle-orm'
 
 export type AdsMetricsRange = 'today' | 'yesterday' | '7d' | '30d'
 
 const CAMPAIGN_IDS: Record<string, readonly string[]> = {
 	'email-course': ['24027782592'],
-}
-
-function startForRange(range: AdsMetricsRange, now: Date) {
-	const start = new Date(now)
-	start.setUTCHours(0, 0, 0, 0)
-	if (range === 'yesterday') start.setUTCDate(start.getUTCDate() - 1)
-	if (range === '7d') start.setUTCDate(start.getUTCDate() - 6)
-	if (range === '30d') start.setUTCDate(start.getUTCDate() - 29)
-	return start
-}
-
-function endForRange(range: AdsMetricsRange, now: Date) {
-	if (range !== 'yesterday') return null
-	const end = new Date(now)
-	end.setUTCHours(0, 0, 0, 0)
-	return end
 }
 
 function googleDateClause(range: AdsMetricsRange) {
@@ -50,18 +35,18 @@ function hasAttribution(value: unknown) {
 	)
 }
 
-function inWindow(value: Date, start: Date, end: Date | null) {
-	return value >= start && (!end || value < end)
+function inWindow(value: Date, start: Date, end: Date) {
+	return value >= start && value < end
 }
 
 export async function getAdsCourseFunnelMetrics(options: {
-	range?: AdsMetricsRange
+	range?: FunnelMetricsRange
 	now?: Date
 } = {}) {
 	const now = options.now ?? new Date()
 	const range = options.range ?? 'today'
-	const start = startForRange(range, now)
-	const end = endForRange(range, now)
+	const window = funnelMetricsWindow(range, now)
+	const { start, end } = window
 	const signupWhere = eq(contactEvent.eventType, 'skills-newsletter.subscribed')
 	const emailResourceId = sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.emailResourceId'))`
 	const emailIntentWhere = and(
@@ -70,13 +55,24 @@ export async function getAdsCourseFunnelMetrics(options: {
 	)
 	const countRows = async (where: any, source: { table: any; column: any }) => {
 		const [totalRow] = await db.select({ value: count() }).from(source.table).where(where)
-		const rangeWhere = end
-			? and(where, gte(source.column, start), sql`${source.column} < ${end}`)
-			: and(where, gte(source.column, start))
+		const rangeWhere = and(where, gte(source.column, start), sql`${source.column} < ${end}`)
 		const [rangeRow] = await db.select({ value: count() }).from(source.table).where(rangeWhere)
 		return { range: Number(rangeRow?.value ?? 0), total: Number(totalRow?.value ?? 0) }
 	}
+	const countDistinctRows = async (where: any, source: { table: any; column: any; identity: any }) => {
+		const [totalRow] = await db.select({ value: countDistinct(source.identity) }).from(source.table).where(where)
+		const [rangeRow] = await db
+			.select({ value: countDistinct(source.identity) })
+			.from(source.table)
+			.where(and(where, gte(source.column, start), sql`${source.column} < ${end}`))
+		return { range: Number(rangeRow?.value ?? 0), total: Number(totalRow?.value ?? 0) }
+	}
 	const signups = await countRows(signupWhere, { table: contactEvent, column: contactEvent.occurredAt })
+	const uniqueLearners = await countDistinctRows(signupWhere, {
+		table: contactEvent,
+		column: contactEvent.occurredAt,
+		identity: contactEvent.contactId,
+	})
 	const contacts = await countRows(
 		sql`${contact.id} IN (SELECT DISTINCT contactId FROM AI_ContactEvent WHERE eventType = 'skills-newsletter.subscribed')`,
 		{ table: contact, column: contact.createdAt },
@@ -110,9 +106,7 @@ export async function getAdsCourseFunnelMetrics(options: {
 			return isMidPathEmail(id) ? [[id, Number(row.value ?? 0)]] : []
 		}))
 	}
-	const rangeEmailWhere = end
-		? and(emailIntentWhere, gte(sideEffectIntent.createdAt, start), sql`${sideEffectIntent.createdAt} < ${end}`)
-		: and(emailIntentWhere, gte(sideEffectIntent.createdAt, start))
+	const rangeEmailWhere = and(emailIntentWhere, gte(sideEffectIntent.createdAt, start), sql`${sideEffectIntent.createdAt} < ${end}`)
 	const midPathByEmail = { today: await countByEmail(rangeEmailWhere), total: await countByEmail(emailIntentWhere) }
 	const signupContacts = await db
 		.select({ attribution: contact.optInAttribution, createdAt: contact.createdAt })
@@ -126,13 +120,33 @@ export async function getAdsCourseFunnelMetrics(options: {
 	const rangeContacts = signupContacts.filter((row) => inWindow(row.createdAt, start, end))
 	const rangeConversions = conversions.filter((row) => inWindow(row.createdAt, start, end))
 	const attributedCount = (rows: typeof signupContacts) => rows.filter((row) => hasAttribution(row.attribution)).length
-	const stages = { signups, events: signups, contacts, emailZeroPlanned: emailZero, emailZeroSent: sent, allEmailsSent: allSent, midPath, terminal }
+	const stages = { signups, events: signups, uniqueLearners, contacts, emailZeroPlanned: emailZero, emailZeroSent: sent, allEmailsSent: allSent, midPath, terminal }
 	return {
 		generatedAt: now.toISOString(),
 		readOnly: true,
 		range,
+		window: {
+			kind: window.kind,
+			label: window.label,
+			timeZone: window.timeZone,
+			startAt: start.toISOString(),
+			endAt: end.toISOString(),
+		},
+		stageSemantics: {
+			signups: 'subscription event records',
+			events: 'alias of signups subscription event records',
+			uniqueLearners: 'distinct ContactEvent.contactId values with a subscription event',
+			contacts: 'contact records associated with any subscription event, filtered by contact creation time',
+			emailZeroPlanned: 'side-effect intent records',
+			emailZeroSent: 'completed side-effect intent records',
+			allEmailsSent: 'completed side-effect intent records',
+			midPath: 'side-effect intent records',
+			terminal: 'completed side-effect intent records',
+		},
 		stages,
 		dropOff: {
+			eventToUniqueLearner: { range: signups.range - uniqueLearners.range, total: signups.total - uniqueLearners.total },
+			uniqueLearnerToContact: { range: uniqueLearners.range - contacts.range, total: uniqueLearners.total - contacts.total },
 			eventToContact: { range: signups.range - contacts.range, total: signups.total - contacts.total },
 			contactToEmailZero: { range: contacts.range - emailZero.range, total: contacts.total - emailZero.total },
 			emailZeroToSent: { range: emailZero.range - sent.range, total: emailZero.total - sent.total },
@@ -165,7 +179,7 @@ async function accessToken(config: ReturnType<typeof readGoogleAdsConversionUplo
 export async function getAdsCourseCampaignMetrics(options: {
 	productId?: string
 	range?: AdsMetricsRange
-	signups: number
+	allSourceSignups: number
 }) {
 	const productId = options.productId ?? 'email-course'
 	const range = options.range ?? 'today'
@@ -212,13 +226,23 @@ export async function getAdsCourseCampaignMetrics(options: {
 		productId,
 		range,
 		campaignIds,
-		totals: { ...totals, signups: options.signups, costPerSignupUsd: options.signups ? totals.costUsd / options.signups : null },
+		totals: {
+			...totals,
+			allSourceSignups: options.allSourceSignups,
+			blendedCostPerAllSourceSignupUsd: options.allSourceSignups
+				? totals.costUsd / options.allSourceSignups
+				: null,
+		},
 		adGroups,
 	}
 }
 
 export async function getAdsCourseMetrics(options: { productId?: string; range?: AdsMetricsRange } = {}) {
 	const funnel = await getAdsCourseFunnelMetrics({ range: options.range })
-	const ads = await getAdsCourseCampaignMetrics({ productId: options.productId, range: options.range, signups: funnel.stages.signups.range })
+	const ads = await getAdsCourseCampaignMetrics({
+		productId: options.productId,
+		range: options.range,
+		allSourceSignups: funnel.stages.uniqueLearners.range,
+	})
 	return { generatedAt: new Date().toISOString(), readOnly: true, productId: options.productId ?? 'email-course', range: options.range ?? 'today', ads, funnel }
 }
