@@ -27,7 +27,7 @@ type PurchaseRow = {
 	fields: unknown
 }
 
-type PreparedGoogleAdsConversion = {
+export type PreparedGoogleAdsConversion = {
 	purchaseId: string
 	conversionActionResourceName: string
 	clickIdType: GoogleClickIdKey
@@ -41,7 +41,7 @@ type PreparedGoogleAdsConversion = {
 	requestSummary: Record<string, unknown>
 }
 
-type UploadConfig = {
+export type GoogleAdsConversionUploadConfig = {
 	enabled: boolean
 	validateOnly: boolean
 	customerId: string
@@ -55,17 +55,17 @@ type UploadConfig = {
 	maxAttempts: number
 }
 
-type UploadClientResult = {
+export type GoogleAdsUploadClientResult = {
 	status: 'uploaded' | 'validated' | 'failed'
 	responseSummary: Record<string, unknown>
 	lastError?: Record<string, unknown>
 }
 
-type UploadClient = {
+export type GoogleAdsUploadClient = {
 	upload: (
 		conversion: PreparedGoogleAdsConversion,
-		config: UploadConfig,
-	) => Promise<UploadClientResult>
+		config: GoogleAdsConversionUploadConfig,
+	) => Promise<GoogleAdsUploadClientResult>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -184,8 +184,8 @@ export function prepareGoogleAdsConversion(args: {
 }
 
 export function readGoogleAdsConversionUploadConfig(
-	overrides: Partial<UploadConfig> = {},
-): UploadConfig {
+	overrides: Partial<GoogleAdsConversionUploadConfig> = {},
+): GoogleAdsConversionUploadConfig {
 	return {
 		enabled:
 			overrides.enabled ??
@@ -217,7 +217,9 @@ export function readGoogleAdsConversionUploadConfig(
 	}
 }
 
-function missingGoogleAdsConfig(config: UploadConfig) {
+export function missingGoogleAdsConfig(
+	config: GoogleAdsConversionUploadConfig,
+) {
 	return [
 		['developerToken', config.developerToken],
 		['clientId', config.clientId],
@@ -231,7 +233,7 @@ let googleAdsAccessTokenCache:
 	| { key: string; token: string; expiresAt: number }
 	| undefined
 
-async function googleAdsAccessToken(config: UploadConfig) {
+async function googleAdsAccessToken(config: GoogleAdsConversionUploadConfig) {
 	if (!config.clientId || !config.clientSecret || !config.refreshToken) {
 		throw new Error('Google Ads OAuth config is missing')
 	}
@@ -284,7 +286,7 @@ function sanitizeGoogleAdsResponse(value: unknown): Record<string, unknown> {
 	}
 }
 
-export const googleAdsRestUploadClient: UploadClient = {
+export const googleAdsRestUploadClient: GoogleAdsUploadClient = {
 	upload: async (conversion, config) => {
 		if (!config.developerToken?.trim()) {
 			throw new Error('Google Ads developer token is missing')
@@ -401,7 +403,7 @@ function canRetryLedger(args: {
 	status: string
 	attemptCount: number
 	lastAttemptAt: Date | null
-	config: UploadConfig
+	config: GoogleAdsConversionUploadConfig
 	now: Date
 }) {
 	if (['uploaded', 'validated'].includes(args.status)) return false
@@ -455,8 +457,8 @@ async function reserveLedger(args: {
 
 export async function processGoogleAdsConversionUploads(args: {
 	database?: typeof db
-	config?: UploadConfig
-	uploadClient?: UploadClient
+	config?: GoogleAdsConversionUploadConfig
+	uploadClient?: GoogleAdsUploadClient
 	purchaseId?: string
 	productId?: string
 	since?: Date | null
@@ -561,7 +563,7 @@ export async function processGoogleAdsConversionUploads(args: {
 			})
 			.where(eq(googleAdsConversionUpload.id, ledger.id))
 
-		let upload: UploadClientResult
+		let upload: GoogleAdsUploadClientResult
 		try {
 			upload = await uploadClient.upload(conversion, config)
 		} catch (error) {

@@ -4,7 +4,6 @@ import { db } from '@/db'
 import {
 	contact,
 	contactEvent,
-	contactState,
 	providerIdentity,
 	sideEffectIntent,
 	stateTransition,
@@ -16,12 +15,12 @@ import {
 	shortlinkAttribution,
 } from '@/db/schema'
 import {
-	googleAdsRestUploadClient,
 	processGoogleAdsConversionUploads,
 	readGoogleAdsConversionUploadConfig,
 } from '@/lib/google-ads-conversion-upload'
 import { getAdsCourseFunnelMetrics, getAdsCourseMetrics } from '@/lib/ads-course-metrics'
-import { buildSignupConversionPreview, prepareSignupConversionBatch } from '@/lib/google-ads-signup-conversion-upload'
+import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
+import { getLocalSignupConversionStatus } from '@/lib/signup-conversion-status'
 import { log } from '@/server/logger'
 import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 
@@ -66,6 +65,8 @@ function parseArgs(argv: readonly string[]) {
 	const email = readFlag(argv, '--email')
 	const productId = readFlag(argv, '--product-id')
 	const receipt = readFlag(argv, '--receipt')
+	const startAt = readFlag(argv, '--start-at')
+	const endAt = readFlag(argv, '--end-at')
 	const rawLimit = Number(readFlag(argv, '--limit') ?? '500')
 	const limit = Number.isFinite(rawLimit)
 		? Math.min(Math.max(Math.trunc(rawLimit), 1), 5000)
@@ -81,6 +82,8 @@ function parseArgs(argv: readonly string[]) {
 		email,
 		productId,
 		receipt,
+		startAt,
+		endAt,
 		limit,
 		allowWrite,
 		dryRun,
@@ -730,57 +733,52 @@ async function offlineConversionPreview(args: {
 }) {
 	const since = sinceForRange(args.range)
 	if (args.productId === 'email-course') {
-		const rows = await db.select({ contactId: contact.id, attribution: contactState.optInAttribution, updatedAt: contactState.updatedAt })
-			.from(contactState).innerJoin(contact, eq(contact.id, contactState.contactId))
-			.orderBy(desc(contactState.updatedAt))
-			.limit(args.limit)
-		const candidates = rows.flatMap((row) => {
-			const attribution = row.attribution as any
-			const occurredAt = attribution?.subscribedAt
-			return attribution && occurredAt ? [{ contactId: row.contactId, occurredAt, attribution }] : []
-		})
-		const ranged = since ? candidates.filter((row) => new Date(row.occurredAt) >= since) : candidates
-		const preview = buildSignupConversionPreview(ranged)
-		const actionResource = process.env.GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME
-		const batch = prepareSignupConversionBatch({ candidates: ranged, conversionActionResourceName: actionResource })
+		const actionResource =
+			process.env.GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME
 		const writeAttempted = args.allowWrite && !args.dryRun
-		await log.info('subscriber_funnel.conversion_eligibility', {
-			funnel: 'skills-newsletter', range: args.range,
-			scanned: batch.counts.scanned, eligible: batch.counts.eligible,
-			excluded: batch.counts.excluded, writeAttempted,
-		})
-		if (writeAttempted && !actionResource) throw new Error('GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME is required for signup uploads')
-		let uploaded = 0; let idempotentNoop = 0; let failed = 0
-		if (writeAttempted) {
-			const config = readGoogleAdsConversionUploadConfig({ enabled: true, conversionActionResourceName: actionResource })
-			for (const conversion of batch.prepared) {
-				const existing = await db.select({ status: googleAdsSignupConversionUpload.status }).from(googleAdsSignupConversionUpload).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey)).limit(1)
-				if (existing[0]?.status === 'uploaded' || existing[0]?.status === 'processing') { idempotentNoop += 1; continue }
-				if (existing[0]?.status === 'failed' && process.env.AIH_GOOGLE_ADS_SIGNUP_RETRY_FAILED !== 'true') { idempotentNoop += 1; continue }
-				if (existing[0]?.status === 'failed') {
-					const reservation = await db.update(googleAdsSignupConversionUpload).set({ status: 'processing', attemptCount: sql`${googleAdsSignupConversionUpload.attemptCount} + 1`, updatedAt: new Date() }).where(and(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey), eq(googleAdsSignupConversionUpload.status, 'failed')))
-					if (Number((reservation as any).rowsAffected ?? (reservation as any)[0]?.affectedRows ?? 0) === 0) { idempotentNoop += 1; continue }
-				} else {
-					try {
-						await db.insert(googleAdsSignupConversionUpload).values({ contactId: conversion.contactId, conversionActionResourceName: conversion.conversionActionResourceName, clickIdType: conversion.clickIdType, clickIdHash: conversion.clickIdHash, conversionDateTime: conversion.conversionDateTime, status: 'processing', attemptCount: 1, idempotencyKey: conversion.idempotencyKey, requestSummary: conversion.requestSummary })
-					} catch { idempotentNoop += 1; continue }
-				}
-				try {
-					const response = await googleAdsRestUploadClient.upload({ ...conversion, purchaseId: conversion.contactId }, config)
-					await db.update(googleAdsSignupConversionUpload).set({ status: response.status, responseSummary: response, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
-					if (response.status === 'uploaded') uploaded += 1
-					else if (response.status === 'failed') failed += 1
-				} catch (error) {
-					await db.update(googleAdsSignupConversionUpload).set({ status: 'failed', responseSummary: { error: error instanceof Error ? error.message : String(error) }, updatedAt: new Date() }).where(eq(googleAdsSignupConversionUpload.idempotencyKey, conversion.idempotencyKey))
-					failed += 1
-				}
-			}
+		if (writeAttempted && !actionResource) {
+			throw new Error(
+				'GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME is required for signup uploads',
+			)
 		}
+		const result = await processGoogleAdsSignupConversionUploads({
+			database: db,
+			config: readGoogleAdsConversionUploadConfig({
+				enabled: writeAttempted,
+				conversionActionResourceName: actionResource ?? '',
+			}),
+			conversionActionResourceName: actionResource,
+			since,
+			limit: args.limit,
+			dryRun: !writeAttempted,
+			includePreviewRows: true,
+			retryFailed:
+				process.env.AIH_GOOGLE_ADS_SIGNUP_RETRY_FAILED === 'true',
+		})
+		await log.info('subscriber_funnel.conversion_eligibility', {
+			funnel: 'skills-newsletter',
+			range: args.range,
+			scanned: result.scanned,
+			eligible: result.eligible,
+			excluded: result.excluded,
+			writeAttempted,
+		})
 		const payload = {
-			ready: true, verdict: writeAttempted ? (failed ? 'upload_failed' : 'upload_processed') : 'preview', writeStatus: writeAttempted ? 'write_attempted' : 'no_write', range: args.range,
-			productId: 'email-course', preview: preview.counts, previewRows: preview.rows, ...batch.counts, uploaded, idempotentNoop, failed,
-			privacy: 'aggregate-only-no-click-ids-no-emails-no-contact-ids',
-			notes: ['Signup candidates come from durable ContactState optInAttribution.', 'TEST_ click IDs are excluded from upload eligibility.', 'Writes require --allow-write, a live signup action resource, Google credentials, and the signup idempotency ledger.'],
+			ready: true,
+			verdict: writeAttempted
+				? result.failed
+					? 'upload_failed'
+					: 'upload_processed'
+				: 'preview',
+			writeStatus: writeAttempted ? 'write_attempted' : 'no_write',
+			range: args.range,
+			productId: 'email-course',
+			...result,
+			notes: [
+				'Signup candidates come from durable ContactState optInAttribution.',
+				'TEST_ click IDs are excluded from upload eligibility.',
+				'Writes require --allow-write, a live signup action resource, Google credentials, and the signup idempotency ledger.',
+			],
 		}
 		const receiptPath = writeReceipt(args.receipt, payload)
 		return { ...payload, receiptPath }
@@ -988,22 +986,50 @@ function maskEmail(value: string | null | undefined) {
 	return `${local?.slice(0, 2) ?? ''}***@${domain}`
 }
 
+async function signupConversionStatus(args: {
+	productId?: string
+	startAt?: string
+	endAt?: string
+	limit: number
+}) {
+	if (args.productId !== 'email-course') {
+		throw new Error('signup-conversion-status requires --product-id email-course')
+	}
+	if (!args.startAt || !args.endAt) {
+		throw new Error('signup-conversion-status requires --start-at and --end-at ISO timestamps')
+	}
+	const startAt = new Date(args.startAt)
+	const endAt = new Date(args.endAt)
+	if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+		throw new Error('--start-at and --end-at must be valid ISO timestamps')
+	}
+	if (startAt >= endAt) throw new Error('--start-at must be before --end-at')
+	return getLocalSignupConversionStatus({ startAt, endAt, limit: args.limit })
+}
+
 async function funnelStatus(range: Range) {
-	const metricsRange = range === '7d' || range === '30d' ? range : 'today'
-	const metrics = await getAdsCourseFunnelMetrics({ range: metricsRange })
-	const legacyStages = Object.fromEntries(
-		Object.entries(metrics.stages).map(([key, value]) => [key, { today: value.range, total: value.total }]),
+	if (range !== '24h' && range !== '7d' && range !== '30d') {
+		throw new Error('funnel-status --range must be 24h, 7d, or 30d')
+	}
+	const metrics = await getAdsCourseFunnelMetrics({ range })
+	const stages = Object.fromEntries(
+		Object.entries(metrics.stages).map(([key, value]) => [key, {
+			range: value.range,
+			total: value.total,
+			countType: metrics.stageSemantics[key as keyof typeof metrics.stageSemantics],
+			today: value.range,
+		}]),
 	)
 	return {
 		...metrics,
-		stages: legacyStages,
-		dropOff: {
-			eventToContact: metrics.dropOff.eventToContact.total,
-			contactToEmailZero: metrics.dropOff.contactToEmailZero.total,
-			emailZeroToSent: metrics.dropOff.emailZeroToSent.total,
+		stages,
+		compatibility: {
+			stagesTodayAlias: 'Deprecated compatibility alias. For every supported range, stages.*.today equals stages.*.range and does not mean UTC today.',
+			attributionTodayAlias: 'Deprecated compatibility alias. attribution.today equals attribution.range.',
+			conversionTodayAlias: 'Deprecated compatibility alias. conversion.today equals conversion.range.',
 		},
-		attribution: { today: metrics.attribution.range, total: metrics.attribution.total },
-		conversion: { today: metrics.conversion.range, total: metrics.conversion.total },
+		attribution: { range: metrics.attribution.range, total: metrics.attribution.total, today: metrics.attribution.range },
+		conversion: { range: metrics.conversion.range, total: metrics.conversion.total, today: metrics.conversion.range },
 	}
 }
 
@@ -1067,6 +1093,8 @@ const {
 	email,
 	productId,
 	receipt,
+	startAt,
+	endAt,
 	limit,
 	dryRun,
 	allowWrite,
@@ -1079,6 +1107,8 @@ try {
 			? await status(range)
 			: command === 'funnel-status'
 				? await funnelStatus(range)
+				: command === 'signup-conversion-status'
+					? await signupConversionStatus({ productId, startAt, endAt, limit })
 				: command === 'ads-course-metrics'
 					? await getAdsCourseMetrics({ productId: productId ?? 'email-course', range: range === '7d' || range === '30d' ? range : 'today' })
 				: command === 'funnel-trace'
