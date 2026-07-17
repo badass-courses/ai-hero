@@ -3,7 +3,8 @@ title: "Approve the Coverage Matrix Edges"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
+status: "closed"
+closed_at: "2026-07-17"
 assignee: "claude (flagg, herdr pane w19:p1, 2026-07-17)"
 parent: "./agent-content-tokens-brief.svx"
 blockers: ["./inventory-content-api-surface.svx"]
@@ -17,3 +18,18 @@ created_at: "2026-07-17"
 Walk Joel through the drafted coverage matrix's contested rows only — the routes flagged include/exclude/include-with-note (Mux asset exposure, signed upload URLs, search index fields, memory/surveys). One question per edge, recommendation first. Output: the matrix rows locked as the contract; the approved matrix graduates from draft asset to the spec the CI test table implements.
 
 Resolved when every flagged row has an operator decision recorded and the matrix asset is marked approved.
+
+## Result (2026-07-17)
+
+Joel approved all edges ("edges aligned") in one pass:
+
+1. **All three pre-existing anonymous holes close inside the seam step**, accepting the behavior change: anonymous single-resource `/api/resources` reads, anonymous `/api/uploads/signed-url` issuance, and search's missing visibility filter. Matt gets a #cc-matt-p heads-up at ship since his tooling is the most plausible anonymous caller.
+2. Video resources excluded (playable Mux payload); sanitized transcript projection stays latent.
+3. Generic resources included with every branch gated and capability-bearing video fields sanitized.
+4. Search included with the privileged branch; payload stays the existing allowlist.
+5. Surveys split: definitions included (gate loosens admin-only → content-read), analytics excluded (PII, future scope).
+6. Products included-with-note (structure/price yes, purchasers/enrollment no). Memory excluded entirely and its anonymous GET gets a gate.
+
+Standing call landed at approval (Joel): **the handoff is an agent prompt, not human docs** — Matt should be able to point his agent at a URL with his admin PAT and have it self-onboard from the discovery doc + OpenAPI spec. Add agent instructions wherever needed; no hand-holding breakdown. This shapes [Teach OpenAPI and Agent Discovery the Bearer Scheme](./document-auth-in-openapi.svx) and [Live Verification and Matt Handoff](./live-verify-and-matt-handoff.svx).
+
+The [coverage matrix](./coverage-matrix-draft.svx) is now the approved contract the CI test table implements.

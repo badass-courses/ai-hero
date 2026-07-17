@@ -40,6 +40,8 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
   - Optional `expiresAt` at mint, default none; revocation is the kill switch; stamp `lastUsedAt` on verify.
   - Four systemic improvements ride along: (1) one auth seam, (2) typed scope registry → CASL rules, (3) structured auth observability, (4) OpenAPI `securitySchemes` + agent-discovery documents auth.
   - Minting gated on admin ability, mint-for-self, token attributed to the minting user.
+  - (2026-07-17, at matrix approval) Handoff is a paste-able **agent prompt**, not human docs: Matt points his agent at a URL with his admin PAT and it self-onboards from the discovery doc + OpenAPI spec. Add agent instructions wherever needed.
+  - (2026-07-17, at matrix approval) The three pre-existing anonymous holes (resources single-read, uploads/signed-url, search visibility) close inside the seam step; #cc-matt-p heads-up at ship for the behavior change.
 - Joel's standing rules that bind here: observability is a launch gate; live remainders must block; Matt heads-up on surface changes (Matt is the requester — delivery is the reply in his thread).
 - No prototype step chartered: the design settled at charter; the first touchable artifact is the coverage matrix draft, which the approval grilling reacts to.
 - Slack context: https://eggheadio.slack.com/archives/C0211NSK3TP/p1784281556387689
@@ -47,6 +49,7 @@ Maintained by: the coverage matrix test suite in CI (route × method × token ki
 ## Decision ledger
 
 - [Inventory the Content API Surface and Draft the Coverage Matrix](./inventory-content-api-surface.svx) — 50 route-method rows inventoried; privileged content reads include posts, lessons, safe resources/search, product structure, and survey definitions, while Mux playback, uploads/signed URLs, memory, survey-response PII, and commerce analytics stay out.
+- [Approve the Coverage Matrix Edges](./approve-coverage-matrix.svx) — all edges locked as drafted; the three anonymous holes close inside the seam step (with Matt heads-up); handoff becomes a paste-able agent prompt against a self-sufficient discovery surface.
 
 ## Latent
 

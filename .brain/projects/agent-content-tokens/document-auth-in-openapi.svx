@@ -20,4 +20,6 @@ Build (execution authorized in the brief):
 - `agent-discovery.ts` / `/api` discovery document and `llms.txt` explain agent-token auth: how to present the token, what `content:read` grants, where an admin mints one.
 - Copy is agent-first: an agent reading only the discovery surface can auth without human folklore.
 
-Resolved when discovery output + openapi.json describe the full auth story and a fresh agent session can, from those documents alone, form a correct authenticated request in dev.
+Sharpened at matrix approval (Joel, 2026-07-17): the discovery surface must be **self-sufficient** — an agent pointed at one URL with an admin PAT self-onboards: what scopes exist, how to mint a scoped token (admins), how to present it, what `content:read` sees, what returns 403 and why. Add agent instructions wherever an agent might land: discovery doc, llms.txt, openapi operation descriptions, and 401/403 error bodies that point back at the discovery URL.
+
+Resolved when discovery output + openapi.json describe the full auth story and a fresh agent session can, from those documents alone, mint nothing it shouldn't, form a correct authenticated request in dev, and explain its own 403s.

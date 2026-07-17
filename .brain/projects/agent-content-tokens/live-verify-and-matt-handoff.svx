@@ -25,6 +25,6 @@ Assert the finish line in production, behaviorally — live remainders block:
 2. That token reads an unpublished post.
 3. A write attempt with it returns 403.
 4. Axiom shows both as structured auth events.
-5. Reply in Matt's Slack thread (https://eggheadio.slack.com/archives/C0211NSK3TP/p1784281556387689) with the how-to; Matt confirms his agent works.
+5. Reply in Matt's Slack thread (https://eggheadio.slack.com/archives/C0211NSK3TP/p1784281556387689) with a **paste-able agent prompt** — one URL + his admin PAT and the agent self-onboards from the discovery surface (Joel, 2026-07-17: no hand-holding breakdown). Matt confirms his agent works. Then ✅ react on the thread root (`jc-slack react '<permalink>' --emoji white_check_mark`).
 
 Resolved when all five held, receipts (curl transcripts redacted of token material, Axiom query + result, Slack permalink) are linked in the Result, and the brief flips to done.

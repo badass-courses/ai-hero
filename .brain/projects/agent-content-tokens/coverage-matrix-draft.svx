@@ -8,6 +8,8 @@ privacy: "private"
 
 # Agent token content API coverage matrix draft
 
+**Approved as the contract** (Joel, 2026-07-17) via [Approve the Coverage Matrix Edges](./approve-coverage-matrix.svx) — all worker recommendations locked as written; the CI test table implements these rows.
+
 This inventory contains **50 route-method rows across 18 `route.ts` files** under `apps/ai-hero/src/app/api/(content)/`. A whole-API-tree search found no additional route outside that group containing `ability.can('read', 'Content')` or `ability.cannot('read', 'Content')`; the only direct route checks are in products and resources (`apps/ai-hero/src/app/api/(content)/products/route.ts:41`, `apps/ai-hero/src/app/api/(content)/resources/route.ts:65`).
 
 “Admin” below means an admin-backed device token, because the current request seam only resolves `DeviceAccessToken` rows and returns an anonymous ability for missing, invalid, or expired bearers (`apps/ai-hero/src/server/ability-for-request.ts:11-34`, `apps/ai-hero/src/server/ability-for-request.ts:38-67`). Admins receive `can('manage', 'all')` (`apps/ai-hero/src/ability/index.ts:125-126`).
