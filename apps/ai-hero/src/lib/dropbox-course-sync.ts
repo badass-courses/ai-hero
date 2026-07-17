@@ -24,6 +24,12 @@ export type DropboxSyncConfig = {
 type Environment = Record<string, string | undefined>
 type Fetch = typeof fetch
 
+export type DropboxFrozenAsset = {
+	providerRevision: string
+	bytes: number
+	stream: ReadableStream<Uint8Array>
+}
+
 type DropboxTokenResponse = {
 	access_token?: string
 	refresh_token?: string
@@ -300,6 +306,79 @@ function validateCourseJsonVideo(value: unknown) {
 		throw new Error('Dropbox course manifest video chapters were missing or invalid.')
 	}
 	return video
+}
+
+function assertSharedLinkAssetPath(relativePath: string) {
+	if (
+		!relativePath ||
+		relativePath.startsWith('/') ||
+		relativePath.includes('\\') ||
+		relativePath.split('/').some((part) => part === '..' || part === '') ||
+		!relativePath.toLowerCase().endsWith('.mp4')
+	) {
+		throw new Error('Dropbox course asset path must be a relative MP4 path beneath the approved shared link.')
+	}
+}
+
+/**
+ * Creates one revision-freezing reader with one short-lived Dropbox token.
+ * Each read returns the bytes from the same response whose metadata supplies
+ * the frozen `rev`; callers stream/hash that response and never re-open latest.
+ */
+export async function createDropboxSharedLinkAssetReader({
+	config,
+	refreshToken,
+	fetchImpl = fetch,
+}: {
+	config: DropboxSyncConfig
+	refreshToken: string
+	fetchImpl?: Fetch
+}) {
+	if (config.source.kind !== 'shared-link') {
+		throw new Error('Dropbox course asset reads require the approved shared-link boundary.')
+	}
+	const sharedLink = config.source.sharedLink
+	const { accessToken } = await refreshDropboxAccessToken({
+		refreshToken,
+		config,
+		fetchImpl,
+	})
+	return {
+		async read(relativePath: string): Promise<DropboxFrozenAsset> {
+			assertSharedLinkAssetPath(relativePath)
+			const response = await fetchImpl(
+				'https://content.dropboxapi.com/2/sharing/get_shared_link_file',
+				{
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${accessToken}`,
+						'Dropbox-API-Arg': JSON.stringify({
+							url: sharedLink,
+							path: `/${relativePath}`,
+						}),
+					},
+				},
+			)
+			if (!response.ok) {
+				throw new Error(`Dropbox course asset read failed (${response.status})`)
+			}
+			const metadataHeader = response.headers.get('Dropbox-API-Result')
+			if (!metadataHeader || !response.body) {
+				throw new Error('Dropbox course asset response was missing metadata or a byte stream.')
+			}
+			const metadata = asRecord(JSON.parse(metadataHeader))
+			const providerRevision = requiredString(
+				metadata,
+				'rev',
+				'Dropbox course asset revision was missing.',
+			)
+			const bytes = metadata?.size
+			if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) {
+				throw new Error('Dropbox course asset size was missing or invalid.')
+			}
+			return { providerRevision, bytes, stream: response.body }
+		},
+	}
 }
 
 export async function readDropboxCourseManifestSummary({

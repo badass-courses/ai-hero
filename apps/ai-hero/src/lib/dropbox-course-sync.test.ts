@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	DEFAULT_DROPBOX_OAUTH_REDIRECT_URI,
 	buildDropboxAuthorizationUrl,
+	createDropboxSharedLinkAssetReader,
 	exchangeDropboxAuthorizationCode,
 	getDropboxSyncConfig,
 	readDropboxCourseManifestSummary,
@@ -142,6 +143,44 @@ describe('Dropbox course sync OAuth', () => {
 			url: 'https://www.dropbox.com/scl/fo/example?rlkey=example',
 			path: '/course.json',
 		})
+	})
+
+	it('freezes a shared-link asset revision on the same streamed response', async () => {
+		const sharedLink = 'https://www.dropbox.com/scl/fo/example?rlkey=secret-link-key'
+		const { config } = getDropboxSyncConfig({
+			DROPBOX_APP_KEY: 'app-key',
+			DROPBOX_APP_SECRET: 'app-secret',
+			DROPBOX_SYNC_SHARED_LINK: sharedLink,
+		})
+		const bytes = new TextEncoder().encode('streamed-mp4-bytes')
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ access_token: 'short-lived-token' }))
+			.mockResolvedValueOnce(
+				new Response(bytes, {
+					headers: {
+						'Dropbox-API-Result': JSON.stringify({
+							rev: '015frozenassetrev',
+							size: bytes.byteLength,
+						}),
+					},
+				}),
+			)
+		const reader = await createDropboxSharedLinkAssetReader({
+			config: config!,
+			refreshToken: 'stored-refresh-token',
+			fetchImpl,
+		})
+		const asset = await reader.read('frozen/section/lesson/video.mp4')
+		expect(asset.providerRevision).toBe('015frozenassetrev')
+		expect(asset.bytes).toBe(bytes.byteLength)
+		expect(new Uint8Array(await new Response(asset.stream).arrayBuffer())).toEqual(bytes)
+		expect(JSON.parse(fetchImpl.mock.calls[1][1].headers['Dropbox-API-Arg'])).toEqual({
+			url: sharedLink,
+			path: '/frozen/section/lesson/video.mp4',
+		})
+		await expect(reader.read('../outside.mp4')).rejects.toThrow('relative MP4 path')
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
 	})
 
 	it('reads a revision-pinned manifest summary without exposing the shared link or source body', async () => {
