@@ -8,7 +8,7 @@ const source = readFileSync(
 
 describe('Google Ads conversion upload schedule', () => {
 	it('runs signup uploads only on the shared fifteen-minute cron', () => {
-		expect(source).toContain("{ cron: '*/15 * * * *' }")
+		expect(source).toContain("{ cron: '0 5,17 * * *' }")
 		expect(source).toContain("if (trigger.kind === 'purchase-event') {")
 		expect(source).toContain("'process-google-ads-signup-conversion-uploads'")
 		expect(source).toContain('processGoogleAdsSignupConversionUploads({')

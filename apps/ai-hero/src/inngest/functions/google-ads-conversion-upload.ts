@@ -30,7 +30,10 @@ export const googleAdsConversionUpload = inngest.createFunction(
 			limit: 1,
 		},
 	},
-	[{ event: NEW_PURCHASE_CREATED_EVENT }, { cron: '*/15 * * * *' }],
+	// Fresh purchases upload immediately via the event trigger; the cron is a
+	// straggler/fallback sweep and twice daily is plenty (Google registers
+	// offline conversions on click date regardless of upload lag).
+	[{ event: NEW_PURCHASE_CREATED_EVENT }, { cron: '0 5,17 * * *' }],
 	async ({ event, step, logger }) => {
 		const config = await step.run('read-google-ads-upload-config', () =>
 			readGoogleAdsConversionUploadConfig(),
