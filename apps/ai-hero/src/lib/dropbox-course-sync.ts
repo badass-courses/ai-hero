@@ -8,6 +8,7 @@ export const DROPBOX_REQUIRED_SCOPES = [
 	'files.content.read',
 	'sharing.read',
 ] as const
+export const MAX_DROPBOX_COURSE_MANIFEST_BYTES = 5 * 1024 * 1024
 
 export type DropboxSharedSource =
 	| { kind: 'folder'; sharedFolderId: string; allowedRoot: string }
@@ -40,6 +41,37 @@ export type DropboxConnectionVerification = {
 	sharedFolderBoundary: {
 		configured: boolean
 		verified: boolean
+	}
+}
+
+export type DropboxCourseManifestSummary = {
+	schema: 'aihero.course-sync.v1'
+	producer: {
+		name: 'course-video-manager'
+		revision: string | null
+		exportedAt: string
+	}
+	course: {
+		sourceId: string
+		versionSourceId: string
+	}
+	structure: {
+		sectionCount: number
+		lessonCount: number
+		videoCount: number
+		declaredAssetCount: number
+		declaredAssetsMissingSha256: number
+		videoMediaCount: number
+		videoMediaMissingSha256: number
+	}
+	manifest: {
+		sourcePath: '/course.json'
+		id: string | null
+		rev: string
+		contentHash: string | null
+		bytes: number
+		serverModified: string | null
+		sha256: string
 	}
 }
 
@@ -222,6 +254,192 @@ async function dropboxJson({
 	}
 
 	return response.json() as Promise<Record<string, unknown>>
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null
+}
+
+function requiredString(
+	record: Record<string, unknown> | null,
+	key: string,
+	error: string,
+) {
+	const value = record?.[key]
+	if (typeof value !== 'string' || value.length === 0) throw new Error(error)
+	return value
+}
+
+function optionalString(record: Record<string, unknown>, key: string) {
+	const value = record[key]
+	return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+export async function readDropboxCourseManifestSummary({
+	config,
+	refreshToken,
+	fetchImpl = fetch,
+}: {
+	config: DropboxSyncConfig
+	refreshToken: string
+	fetchImpl?: Fetch
+}): Promise<DropboxCourseManifestSummary> {
+	if (config.source.kind !== 'shared-link') {
+		throw new Error('Dropbox course manifest reads require the approved shared-link boundary.')
+	}
+
+	const { accessToken } = await refreshDropboxAccessToken({
+		refreshToken,
+		config,
+		fetchImpl,
+	})
+	const response = await fetchImpl(
+		'https://content.dropboxapi.com/2/sharing/get_shared_link_file',
+		{
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				'Dropbox-API-Arg': JSON.stringify({
+					url: config.source.sharedLink,
+					path: '/course.json',
+				}),
+			},
+		},
+	)
+	if (!response.ok) {
+		throw new Error(`Dropbox course manifest read failed (${response.status})`)
+	}
+
+	const metadataHeader = response.headers.get('Dropbox-API-Result')
+	if (!metadataHeader) throw new Error('Dropbox course manifest metadata was missing.')
+
+	const metadata = asRecord(JSON.parse(metadataHeader))
+	const metadataSize = metadata?.size
+	if (typeof metadataSize !== 'number' || !Number.isSafeInteger(metadataSize) || metadataSize < 0) {
+		throw new Error('Dropbox course manifest size was missing or invalid.')
+	}
+	if (metadataSize > MAX_DROPBOX_COURSE_MANIFEST_BYTES) {
+		throw new Error('Dropbox course manifest exceeds the maximum allowed size.')
+	}
+
+	const bytes = new Uint8Array(await response.arrayBuffer())
+	if (bytes.byteLength > MAX_DROPBOX_COURSE_MANIFEST_BYTES) {
+		throw new Error('Dropbox course manifest exceeds the maximum allowed size.')
+	}
+	const manifestSha256 = createHash('sha256').update(bytes).digest('hex')
+	const document = asRecord(JSON.parse(new TextDecoder().decode(bytes)))
+	const producer = asRecord(document?.producer)
+	const course = asRecord(document?.course)
+	const version = asRecord(course?.version)
+
+	if (document?.schema !== 'aihero.course-sync.v1') {
+		throw new Error('Dropbox course manifest schema is not aihero.course-sync.v1.')
+	}
+	if (producer?.name !== 'course-video-manager') {
+		throw new Error('Dropbox course manifest producer is not course-video-manager.')
+	}
+
+	if (!Array.isArray(document.sections)) {
+		throw new Error('Dropbox course manifest sections were missing or invalid.')
+	}
+	const sections = document.sections.map((section) => {
+		const record = asRecord(section)
+		if (!record) throw new Error('Dropbox course manifest section was invalid.')
+		return record
+	})
+	const lessons = sections.flatMap((section) => {
+		const value = section.lessons
+		if (!Array.isArray(value)) {
+			throw new Error('Dropbox course manifest section lessons were missing or invalid.')
+		}
+		return value.map((lesson) => {
+			const record = asRecord(lesson)
+			if (!record) throw new Error('Dropbox course manifest lesson was invalid.')
+			return record
+		})
+	})
+	const videos = lessons.flatMap((lesson) => {
+		const value = lesson.videos
+		if (!Array.isArray(value)) {
+			throw new Error('Dropbox course manifest lesson videos were missing or invalid.')
+		}
+		return value.map((video) => {
+			const record = asRecord(video)
+			if (!record) throw new Error('Dropbox course manifest video was invalid.')
+			return record
+		})
+	})
+	if (document.assets !== undefined && !Array.isArray(document.assets)) {
+		throw new Error('Dropbox course manifest assets were invalid.')
+	}
+	const declaredAssets = Array.isArray(document.assets)
+		? document.assets.map((asset) => {
+				const record = asRecord(asset)
+				if (!record) throw new Error('Dropbox course manifest asset was invalid.')
+				return record
+			})
+		: []
+	const videoMedia = videos
+		.map((video) => {
+			if (video.media === undefined) return null
+			const record = asRecord(video.media)
+			if (!record) throw new Error('Dropbox course manifest video media was invalid.')
+			return record
+		})
+		.filter((media): media is Record<string, unknown> => media !== null)
+
+	return {
+		schema: 'aihero.course-sync.v1',
+		producer: {
+			name: 'course-video-manager',
+			revision: optionalString(producer, 'revision'),
+			exportedAt: requiredString(
+				producer,
+				'exportedAt',
+				'Dropbox course manifest producer exportedAt was missing.',
+			),
+		},
+		course: {
+			sourceId: requiredString(
+				course,
+				'sourceId',
+				'Dropbox course manifest course sourceId was missing.',
+			),
+			versionSourceId: requiredString(
+				version,
+				'sourceId',
+				'Dropbox course manifest version sourceId was missing.',
+			),
+		},
+		structure: {
+			sectionCount: sections.length,
+			lessonCount: lessons.length,
+			videoCount: videos.length,
+			declaredAssetCount: declaredAssets.length,
+			declaredAssetsMissingSha256: declaredAssets.filter(
+				(asset) => typeof asRecord(asset)?.sha256 !== 'string',
+			).length,
+			videoMediaCount: videoMedia.length,
+			videoMediaMissingSha256: videoMedia.filter(
+				(media) => typeof media.sha256 !== 'string',
+			).length,
+		},
+		manifest: {
+			sourcePath: '/course.json',
+			id: optionalString(metadata ?? {}, 'id'),
+			rev: requiredString(
+				metadata,
+				'rev',
+				'Dropbox course manifest revision was missing.',
+			),
+			contentHash: optionalString(metadata ?? {}, 'content_hash'),
+			bytes: metadataSize,
+			serverModified: optionalString(metadata ?? {}, 'server_modified'),
+			sha256: manifestSha256,
+		},
+	}
 }
 
 export async function verifyDropboxConnection({

@@ -4,10 +4,12 @@ import {
 	buildDropboxAuthorizationUrl,
 	exchangeDropboxAuthorizationCode,
 	getDropboxSyncConfig,
+	readDropboxCourseManifestSummary,
 	redeployAfterDropboxAuthorization,
 	storeDropboxRefreshToken,
 	verifyDropboxConnection,
 } from '@/lib/dropbox-course-sync'
+import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -43,9 +45,12 @@ function page(title: string, body: string, clearState = false) {
 	return response
 }
 
-async function requireAdmin() {
-	const { ability } = await getServerAuthSession()
-	return ability.can('manage', 'all')
+async function requireAdmin(request: NextRequest) {
+	const deviceAuth = await getUserAbilityForRequest(request)
+	if (deviceAuth.user && deviceAuth.ability.can('manage', 'all')) return true
+
+	const { session, ability } = await getServerAuthSession()
+	return Boolean(session?.user && ability.can('manage', 'all'))
 }
 
 function tokenStoreIsConfigured() {
@@ -58,10 +63,12 @@ function tokenStoreIsConfigured() {
  * - no query parameters: start a state-protected OAuth authorization flow
  * - `?code=...&state=...`: verify Dropbox access and store the refresh token in Vercel encrypted env
  * - `?verify=1`: confirm the stored token can read the configured shared folder and approved root
+ * - `?manifest=summary`: return a redacted, revision-pinned summary of the root course manifest
  */
 export const GET = withSkill(async (request: NextRequest) => {
 	const url = new URL(request.url)
 	const verify = url.searchParams.get('verify') === '1'
+	const manifestSummary = url.searchParams.get('manifest') === 'summary'
 	const code = url.searchParams.get('code')
 	const oauthError = url.searchParams.get('error')
 	const stateFromQuery = url.searchParams.get('state')
@@ -69,8 +76,62 @@ export const GET = withSkill(async (request: NextRequest) => {
 	const requestId = stateFromQuery ?? stateFromCookie ?? randomUUID()
 	const { config, missingConfig } = getDropboxSyncConfig()
 
+	if (manifestSummary) {
+		if (!(await requireAdmin(request))) {
+			return NextResponse.json(
+				{ ok: false, error: 'Unauthorized, admin only' },
+				{ status: 401, headers: { 'Cache-Control': 'no-store' } },
+			)
+		}
+		if (!config || config.source.kind !== 'shared-link' || !process.env.DROPBOX_REFRESH_TOKEN) {
+			return NextResponse.json(
+				{
+					ok: false,
+					error: 'Dropbox course manifest source is not configured.',
+					missingConfig: [
+						...missingConfig,
+						...(config?.source.kind === 'shared-link'
+							? []
+							: ['DROPBOX_SYNC_SHARED_LINK']),
+						...(process.env.DROPBOX_REFRESH_TOKEN ? [] : ['DROPBOX_REFRESH_TOKEN']),
+					],
+				},
+				{ status: 503, headers: { 'Cache-Control': 'no-store' } },
+			)
+		}
+
+		try {
+			const summary = await readDropboxCourseManifestSummary({
+				config,
+				refreshToken: process.env.DROPBOX_REFRESH_TOKEN,
+			})
+			await log.info('dropbox-course-sync.manifest-summary.completed', {
+				requestId,
+				manifestRev: summary.manifest.rev,
+				manifestSha256: summary.manifest.sha256,
+				sourceCourseId: summary.course.sourceId,
+				sourceVersionId: summary.course.versionSourceId,
+				sectionCount: summary.structure.sectionCount,
+				lessonCount: summary.structure.lessonCount,
+			})
+			return NextResponse.json(
+				{ ok: true, summary },
+				{ headers: { 'Cache-Control': 'no-store' } },
+			)
+		} catch (error) {
+			await log.error('dropbox-course-sync.manifest-summary.failed', {
+				requestId,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			})
+			return NextResponse.json(
+				{ ok: false, error: 'Dropbox course manifest summary failed.' },
+				{ status: 500, headers: { 'Cache-Control': 'no-store' } },
+			)
+		}
+	}
+
 	if (verify) {
-		if (!(await requireAdmin())) {
+		if (!(await requireAdmin(request))) {
 			return NextResponse.json({ ok: false, error: 'Unauthorized, admin only' }, { status: 401 })
 		}
 
@@ -165,7 +226,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 		}
 	}
 
-	if (!(await requireAdmin())) {
+	if (!(await requireAdmin(request))) {
 		return NextResponse.json({ ok: false, error: 'Unauthorized, admin only' }, { status: 401 })
 	}
 	if (!config || !tokenStoreIsConfigured()) {
