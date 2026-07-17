@@ -1,3 +1,5 @@
+import { log } from '@/server/logger'
+
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import {
 	CONTACT_EVENT_SCHEMA_VERSION,
@@ -124,6 +126,7 @@ export async function progressValuePathDrips(args: {
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
 	now?: string
+	logger?: Pick<typeof log, 'info' | 'warn'>
 }): Promise<ValuePathDripProgressionResult> {
 	const now = args.now ?? new Date().toISOString()
 	const results: ValuePathDripProgressionContactResult[] = []
@@ -153,6 +156,7 @@ async function progressCompletedIntent(args: {
 	acceptedReviewReasons?: string[]
 	now: string
 	intent: SideEffectIntent
+	logger?: Pick<typeof log, 'info' | 'warn'>
 }): Promise<ValuePathDripProgressionContactResult> {
 	const metadata = args.intent.metadata
 	const fromEmailResourceId = stringField(metadata.emailResourceId)
@@ -197,6 +201,16 @@ async function progressCompletedIntent(args: {
 		fromEmailResourceId,
 		completedAt: stringField(args.intent.metadata.completedAt),
 	})
+	const logger = args.logger ?? log
+	await logger.info('value-path.ask.answer_click_verification', {
+		contactId: args.intent.contactId,
+		completedIntentId: args.intent.id,
+		fromEmailResourceId,
+		verdict: answerClick.verdict,
+		...(answerClick.verdict === 'verified'
+			? { answerClickEventId: answerClick.event.id }
+			: {}),
+	})
 	if (answerClick.verdict === 'verified') {
 		const clickOwned = await findDeliverableIntentSinceClick({
 			repository: args.repository,
@@ -219,6 +233,16 @@ async function progressCompletedIntent(args: {
 			}
 		}
 		clickAdvisories.push('answer-click-undelivered-drip-fallback')
+		await logger.warn(
+			'value-path.ask.answer_click_undelivered_drip_fallback',
+			{
+				contactId: args.intent.contactId,
+				completedIntentId: args.intent.id,
+				fromEmailResourceId,
+				answerClickEventId: answerClick.event.id,
+				advisory: 'answer-click-undelivered-drip-fallback',
+			},
+		)
 	} else if (answerClick.verdict !== 'none') {
 		// Scanner/bot-like click volume: do not treat the clicks as answers.
 		clickAdvisories.push(`answer-click-unverified:${answerClick.verdict}`)

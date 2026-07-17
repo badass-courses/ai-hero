@@ -340,6 +340,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 							contactEvent.providerReference,
 							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
 						),
+						excludeLearnerFlowCanary({
+							contactId: contactEvent.contactId,
+						}),
 					),
 				),
 		])

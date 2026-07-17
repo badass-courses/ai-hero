@@ -44,6 +44,7 @@ export type ValuePathEmailListProvider = Pick<
 export type ValuePathEmailExecutorConfig = {
 	mode?: ValuePathSendGateMode
 	limit?: number
+	allowWrite?: boolean
 	baseUrl?: string
 	pathTokenSecret?: string
 	answerPages?: ValuePathAnswerPageResource[]
@@ -62,7 +63,7 @@ export type ValuePathEmailExecutorConfig = {
 
 export type ValuePathEmailExecutionResult =
 	| {
-			status: 'completed'
+			status: 'completed' | 'planned'
 			intentId: string
 			kitSequenceId: string
 			email: string
@@ -184,16 +185,18 @@ export async function executeValuePathEmailIntent(args: {
 		...decision.reviewReasons,
 	])
 	if (reviewReasons.length > 0 || !decision.passed) {
-		await args.repository.updateSideEffectIntent(intent.id, {
-			status: 'blocked',
-			gates: decision.gates,
-			reviewReasons,
-			metadata: {
-				...intent.metadata,
-				providerResult: null,
-				blockedAt: args.now ?? new Date().toISOString(),
-			},
-		})
+		if (args.config?.allowWrite !== false) {
+			await args.repository.updateSideEffectIntent(intent.id, {
+				status: 'blocked',
+				gates: decision.gates,
+				reviewReasons,
+				metadata: {
+					...intent.metadata,
+					providerResult: null,
+					blockedAt: args.now ?? new Date().toISOString(),
+				},
+			})
+		}
 		return { status: 'blocked', intentId: intent.id, reviewReasons }
 	}
 
@@ -208,20 +211,31 @@ export async function executeValuePathEmailIntent(args: {
 			pathTokenSecret: args.config?.pathTokenSecret,
 		})
 		if (!personalization.passed) {
-			await args.repository.updateSideEffectIntent(intent.id, {
-				status: 'blocked',
-				gates: decision.gates,
-				reviewReasons: personalization.reviewReasons,
-				metadata: {
-					...intent.metadata,
-					providerResult: null,
-					blockedAt: args.now ?? new Date().toISOString(),
-				},
-			})
+			if (args.config?.allowWrite !== false) {
+				await args.repository.updateSideEffectIntent(intent.id, {
+					status: 'blocked',
+					gates: decision.gates,
+					reviewReasons: personalization.reviewReasons,
+					metadata: {
+						...intent.metadata,
+						providerResult: null,
+						blockedAt: args.now ?? new Date().toISOString(),
+					},
+				})
+			}
 			return {
 				status: 'blocked',
 				intentId: intent.id,
 				reviewReasons: personalization.reviewReasons,
+			}
+		}
+
+		if (args.config?.allowWrite === false) {
+			return {
+				status: 'planned',
+				intentId: intent.id,
+				kitSequenceId: metadata.kitSequenceId!,
+				email: email!,
 			}
 		}
 

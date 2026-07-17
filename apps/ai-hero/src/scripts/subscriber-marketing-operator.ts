@@ -1100,7 +1100,7 @@ async function buildLearnerFlowUnstick(args: {
 	const retryLimit = allowlist?.maxSendsPerRun ?? 25
 	const retryableIntentIds = retryIntentIds.slice(0, retryLimit)
 	const retryResults =
-		args.allowWrite && allowlist && retryableIntentIds.length > 0
+		allowlist && retryableIntentIds.length > 0
 			? await executePendingValuePathEmailIntents({
 				repository,
 				emailListProvider: (await import('@/coursebuilder/email-list-provider'))
@@ -1109,6 +1109,7 @@ async function buildLearnerFlowUnstick(args: {
 				config: {
 					mode: allowlist.mode,
 					limit: retryableIntentIds.length,
+					allowWrite: args.allowWrite,
 					intentIds: retryableIntentIds,
 					baseUrl:
 						process.env.NEXT_PUBLIC_URL ??
@@ -1123,7 +1124,7 @@ async function buildLearnerFlowUnstick(args: {
 					verifiedEmailResourceIds: allowlist.emailResourceIds,
 					verifiedKitSequenceIds: allowlist.kitSequenceIds,
 					allowedActions: allowlist.allowedActions,
-								retryPolicy: allowlist.retryPolicy,
+					retryPolicy: allowlist.retryPolicy,
 				},
 			})
 			: []
@@ -1207,9 +1208,21 @@ async function buildLearnerFlowUnstick(args: {
 				replan: replan?.counts ?? { contacts: 0, blockedIntentsFound: 0, replanned: 0, wouldReplan: 0 },
 				retry: {
 					eligible: retryIntentIds.length,
-					executed: retryResults.length,
-					completed: retryResults.filter((result) => result.status === 'completed').length,
+					previewed: args.allowWrite ? 0 : retryResults.length,
+					planned: retryResults.filter((result) => result.status === 'planned')
+						.length,
+					executed: args.allowWrite ? retryResults.length : 0,
+					completed: retryResults.filter(
+						(result) => result.status === 'completed',
+					).length,
 					deferred: retryIntentIds.length - retryableIntentIds.length,
+					results: retryResults.map((result) => ({
+						intentId: result.intentId,
+						status: result.status,
+						...('reviewReasons' in result
+							? { reviewReasons: result.reviewReasons }
+							: {}),
+					})),
 				},
 				drip: {
 					contactCount: dripContactIds.length,
@@ -1256,7 +1269,7 @@ function formatLearnerFlowUnstick(
 		`Learner flow unstick (${result.allowWrite ? 'allow-write' : 'dry-run'})`,
 		`Generated: ${result.generatedAt}`,
 		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
-		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
+		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-previewed=${result.tiers.tier1.retry.previewed} retry-planned=${result.tiers.tier1.retry.planned} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
 		`Tier 2 ask Joel: ${result.tiers.tier2.ask.length}`,
 	]
 	for (const item of result.tiers.tier2.ask) {
@@ -1537,7 +1550,24 @@ async function buildValuePathGateDStatus() {
 	const allowlist = allowlistDecision.allowlist
 		? normalizeGateDRuntimeAllowlist(allowlistDecision.allowlist)
 		: undefined
-	const contactIds = allowlist?.contactIds ?? []
+	const activationContactIds = allowlist?.contactIds ?? []
+	const reportingCohortSource =
+		allowlist?.authorizationMode === 'rolling-public-enrollment'
+			? 'live-rolling-learner-flow'
+			: 'activation-snapshot'
+	const liveLearnerFlowRecords =
+		reportingCohortSource === 'live-rolling-learner-flow'
+			? await (
+					await createCaptureRepository()
+				).findSkillsWorkflowLearnerFlowRecords()
+			: []
+	const contactIds = Array.from(
+		new Set(
+			reportingCohortSource === 'live-rolling-learner-flow'
+				? liveLearnerFlowRecords.map((record) => record.contactId)
+				: activationContactIds,
+		),
+	)
 	const [intents, events] = contactIds.length
 		? await Promise.all([
 				db
@@ -1652,6 +1682,11 @@ async function buildValuePathGateDStatus() {
 	})
 	return {
 		checkedAt,
+		reportingCohort: {
+			source: reportingCohortSource,
+			contacts: contactIds.length,
+			activationSnapshotContacts: activationContactIds.length,
+		},
 		allowlist: {
 			passed: allowlistDecision.passed,
 			reviewReasons: allowlistDecision.reviewReasons,
@@ -1676,6 +1711,9 @@ async function buildValuePathGateDStatus() {
 					authorizationMode: allowlist.authorizationMode,
 					pathSlugs: allowlist.pathSlugs,
 					participantCounts: {
+						contacts: contactIds.length,
+					},
+					activationSnapshotParticipantCounts: {
 						contacts: allowlist.contactIds.length,
 						kitSubscribers: allowlist.kitSubscriberIds.length,
 						emailHashes: allowlist.emailHashes.length,

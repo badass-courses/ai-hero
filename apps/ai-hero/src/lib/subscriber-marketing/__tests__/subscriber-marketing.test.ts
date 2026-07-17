@@ -1103,9 +1103,22 @@ describe('subscriber marketing Gate D allowlist', () => {
 			createdAt: '2026-05-15T12:10:00.000Z',
 		})
 
+		const answerClickLogs: Array<{
+			level: 'info' | 'warn'
+			event: string
+			data: Record<string, unknown>
+		}> = []
 		const result = await progressValuePathDrips({
 			repository,
 			allowWrite: true,
+			logger: {
+				info: async (event, data) => {
+					answerClickLogs.push({ level: 'info', event, data: data ?? {} })
+				},
+				warn: async (event, data) => {
+					answerClickLogs.push({ level: 'warn', event, data: data ?? {} })
+				},
+			},
 			allowlist: {
 				activationId: 'rig-test-2026-05-15-a',
 				status: 'active',
@@ -1134,6 +1147,23 @@ describe('subscriber marketing Gate D allowlist', () => {
 		expect(result.results[0]?.advisoryReasons).toContain(
 			'answer-click-undelivered-drip-fallback',
 		)
+		expect(answerClickLogs).toEqual([
+			expect.objectContaining({
+				level: 'info',
+				event: 'value-path.ask.answer_click_verification',
+				data: expect.objectContaining({
+					completedIntentId: 'intent_email_0',
+					verdict: 'verified',
+				}),
+			}),
+			expect.objectContaining({
+				level: 'warn',
+				event: 'value-path.ask.answer_click_undelivered_drip_fallback',
+				data: expect.objectContaining({
+					advisory: 'answer-click-undelivered-drip-fallback',
+				}),
+			}),
+		])
 		expect(
 			Array.from(repository.sideEffectIntents.values()).find(
 				(intent) =>

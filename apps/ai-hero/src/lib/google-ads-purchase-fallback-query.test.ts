@@ -12,8 +12,8 @@ const resolverEnd = source.indexOf('function affectedRows', resolverStart)
 const resolver = source.slice(resolverStart, resolverEnd)
 
 describe('purchase conversion signup-gclid fallback query', () => {
-	it('filters paid candidates before limiting the batch', () => {
-		const queryStart = source.indexOf('async function fetchCandidatePurchases')
+	it('filters paid candidates and terminal ledger rows before paging', () => {
+		const queryStart = source.indexOf('async function fetchCandidatePurchasePage')
 		const queryEnd = source.indexOf(
 			'function normalizeKitSubscriberId',
 			queryStart,
@@ -25,6 +25,8 @@ describe('purchase conversion signup-gclid fallback query', () => {
 			'googleAdsConversionUpload.conversionActionResourceName',
 		)
 		expect(query).toContain('args.conversionActionResourceName')
+		expect(query).toContain("'skipped-terminal'")
+		expect(query).toContain('notInArray(purchases.id, terminalLedgerRows)')
 		expect(query.indexOf('.where(')).toBeLessThan(query.indexOf('.limit('))
 	})
 

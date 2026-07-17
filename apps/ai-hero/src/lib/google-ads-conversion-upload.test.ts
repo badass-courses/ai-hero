@@ -37,6 +37,21 @@ function memoryLedger(): GoogleAdsPurchaseConversionLedger {
 		}),
 		recordResult: vi.fn(async () => undefined),
 		recordThrownError: vi.fn(async () => undefined),
+		recordTerminalSkip: vi.fn(async () => undefined),
+	}
+}
+
+function purchase(
+	id: string,
+	fields: unknown = { attribution: { kitSubscriberId: `kit_${id}` } },
+): PurchaseRow {
+	return {
+		id,
+		createdAt: '2026-07-17T12:00:00.000Z',
+		productId: 'product-pqkk5',
+		status: 'Valid',
+		totalAmount: 697,
+		fields,
 	}
 }
 
@@ -237,14 +252,9 @@ describe('google ads conversion upload helpers', () => {
 		const fallbackResolver = vi.fn()
 		const result = await processGoogleAdsConversionUploads({
 			candidates: [
-				{
-					id: 'purchase_checkout',
-					createdAt: '2026-07-17T12:00:00.000Z',
-					productId: 'product-pqkk5',
-					status: 'Valid',
-					totalAmount: 697,
-					fields: { attribution: { clickIds: { gclid: 'checkout-click' } } },
-				},
+				purchase('purchase_checkout', {
+					attribution: { clickIds: { gclid: 'checkout-click' } },
+				}),
 			],
 			config,
 			fallbackResolver,
@@ -253,5 +263,115 @@ describe('google ads conversion upload helpers', () => {
 
 		expect(result.byAttributionSource).toEqual({ checkout: 1 })
 		expect(fallbackResolver).not.toHaveBeenCalled()
+	})
+
+	it('pages past a full reject window before applying the eligible limit', async () => {
+		const rejectPage = Array.from({ length: 50 }, (_, index) =>
+			purchase(`reject_${index}`),
+		)
+		const eligible = purchase('eligible_after_rejects')
+		const fetchCandidatePage = vi
+			.fn()
+			.mockResolvedValueOnce(rejectPage)
+			.mockResolvedValueOnce([eligible])
+		const fallbackResolver = vi.fn(async (row: PurchaseRow) =>
+			row.id === eligible.id
+				? {
+						ok: true as const,
+						fallback: {
+							clickIdValue: 'stored-signup-gclid',
+							capturedAt: '2026-07-01T12:00:00.000Z',
+							resolution: 'kit-provider-identity' as const,
+						},
+					}
+				: { ok: false as const, reason: 'fallback-contact-not-found' },
+		)
+
+		const result = await processGoogleAdsConversionUploads({
+			config,
+			fetchCandidatePage,
+			fallbackResolver,
+			ledger: memoryLedger(),
+			limit: 1,
+			dryRun: true,
+		})
+
+		expect(result).toMatchObject({
+			checked: 51,
+			eligible: 1,
+			pagesScanned: 2,
+			scanExhausted: true,
+			byReason: { 'fallback-contact-not-found': 50 },
+		})
+	})
+
+	it('uses the same terminal-ledger cohort in dry-run and live-equivalent mode', async () => {
+		const run = (dryRun: boolean) => {
+			let page = 0
+			return processGoogleAdsConversionUploads({
+				config: { ...config, enabled: false },
+				fetchCandidatePage: async () =>
+					page++ === 0
+						? [
+								purchase('already-filtered-outside-the-scan'),
+								purchase('eligible', {
+									attribution: {
+										clickIds: { gclid: 'checkout-click' },
+									},
+								}),
+							]
+						: [],
+				fallbackResolver: async (row) =>
+					row.id === 'eligible'
+						? { ok: false as const, reason: 'should-not-resolve' }
+						: { ok: false as const, reason: 'fallback-contact-not-found' },
+				ledger: memoryLedger(),
+				limit: 5,
+				dryRun,
+			})
+		}
+
+		const [preview, liveEquivalent] = await Promise.all([run(true), run(false)])
+		expect({ checked: preview.checked, eligible: preview.eligible }).toEqual({
+			checked: liveEquivalent.checked,
+			eligible: liveEquivalent.eligible,
+		})
+	})
+
+	it('durably skips only synthetic purchases in a live run', async () => {
+		const ledger = memoryLedger()
+		const result = await processGoogleAdsConversionUploads({
+			candidates: [
+				purchase('synthetic', {
+					attribution: {
+						synthetic: true,
+						clickIds: { gclid: 'TEST_SYNTHETIC' },
+					},
+				}),
+				purchase('identity-can-arrive-later'),
+			],
+			config,
+			fallbackResolver: async () => ({
+				ok: false as const,
+				reason: 'fallback-contact-not-found',
+			}),
+			ledger,
+			dryRun: false,
+		})
+
+		expect(result).toMatchObject({
+			terminalSkipsRecorded: 1,
+			byReason: {
+				'synthetic-google-click-id': 1,
+				'fallback-contact-not-found': 1,
+			},
+		})
+		expect(ledger.recordTerminalSkip).toHaveBeenCalledOnce()
+		expect(ledger.recordTerminalSkip).toHaveBeenCalledWith(
+			expect.objectContaining({
+				reason: 'synthetic-google-click-id',
+				purchase: expect.objectContaining({ id: 'synthetic' }),
+			}),
+		)
 	})
 })
