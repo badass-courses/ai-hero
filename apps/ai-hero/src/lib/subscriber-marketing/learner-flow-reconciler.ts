@@ -41,10 +41,16 @@ import {
 import { valuePathIntentCompletedAt } from './value-path-completion'
 
 /**
- * Maintained-after safety config. The 150-send wall is below the observed
- * 189-item backlog drain. The 25% ratio is above that drain's 22.8% of the
- * ~830 learner cohort, while the 313 false-stuck incident would hit 37.7%.
- * Change these values only with reconciler receipts beside the change.
+ * Maintained-after safety config. The send cap bounds one run's blast radius:
+ * overflow is served oldest-first up to the cap and the rest DEFERS to the
+ * next run (reported, never dropped) — exceeding the cap is normal on a big
+ * signup day, not an anomaly. The brake is the anomaly detector: the 25%
+ * plan-to-cohort ratio wall sits above the observed 22.8% backlog-drain peak,
+ * while the 313 false-stuck incident would hit 37.7% and trip it. The first
+ * live brake trip (2026-07-18: 172 planned / 1,006 learners = 17.1%, a
+ * healthy big day) proved cap-exceeds must not brake — it stalled 172 real
+ * learners for an hour. Change these values only with reconciler receipts
+ * beside the change.
  */
 export type LearnerFlowReconcilerConfig = {
 	sendCap: number
@@ -312,17 +318,15 @@ export function evaluateLearnerFlowReconcilerBrake(args: {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
 	const plannedToCohortRatio =
 		args.cohortSize > 0 ? args.planned / args.cohortSize : 0
-	const reasons = [
-		...(args.planned > config.sendCap
-			? [`planned-${args.planned}-exceeds-cap-${config.sendCap}`]
-			: []),
-		...(args.cohortSize > 0 &&
-		plannedToCohortRatio > config.maxPlannedToCohortRatio
+	// Cap overflow is NOT a brake reason: the cap slice serves oldest-first and
+	// defers the remainder to the next run. The brake only trips on anomalous
+	// plan SHAPE (ratio wall), so a healthy big day cannot stall the loop.
+	const reasons =
+		args.cohortSize > 0 && plannedToCohortRatio > config.maxPlannedToCohortRatio
 			? [
 					`planned-ratio-${formatRatio(plannedToCohortRatio)}-exceeds-${formatRatio(config.maxPlannedToCohortRatio)}`,
 				]
-			: []),
-	]
+			: []
 	return {
 		status: reasons.length > 0 ? 'tripped' : 'clear',
 		reasons,

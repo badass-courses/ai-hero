@@ -226,6 +226,18 @@ describe('learner flow reconciler', () => {
 		).toMatchObject({ status: 'clear', cap: 150 })
 	})
 
+	it('does not brake a healthy big day that exceeds the cap (2026-07-18 incident)', () => {
+		// 172 planned for 1,006 learners = 17.1%, under the 25% wall. The cap
+		// slice serves 150 oldest-first and defers 22; braking here stalled 172
+		// real learners for an hour.
+		expect(
+			evaluateLearnerFlowReconcilerBrake({ planned: 172, cohortSize: 1006 }),
+		).toMatchObject({ status: 'clear', cap: 150 })
+		expect(
+			evaluateLearnerFlowReconcilerBrake({ planned: 300, cohortSize: 1006 }),
+		).toMatchObject({ status: 'tripped' })
+	})
+
 	it('brakes the 313 false-stuck wolf before every write', async () => {
 		const records = Array.from({ length: 830 }, (_, index) => {
 			const contactId = `contact-${index}`
@@ -271,7 +283,7 @@ describe('learner flow reconciler', () => {
 		})
 		expect(receipt.dmLine).toContain('failed-send=1')
 		expect(receipt.brakeReasons).toContain(
-			`planned-313-exceeds-cap-${LEARNER_FLOW_RECONCILER_CONFIG.sendCap}`,
+			'planned-ratio-37.7%-exceeds-25.0%',
 		)
 		expect(receipt.plannedToCohortRatio).toBeCloseTo(313 / 830)
 		expect(repository.includeCanary).toBe(true)
