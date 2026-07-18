@@ -9,6 +9,10 @@ import {
 	type LearnerFlowCohortRecord,
 	type LearnerFlowCohortRepository,
 } from './learner-flow-cohort'
+import {
+	learnerFlowDrillSuppression,
+	type LearnerFlowDrillSuppression,
+} from './learner-flow-drill'
 import { learnerFlowUnstickAction } from './learner-flow-unstick'
 import type { SideEffectIntent } from './types'
 import {
@@ -28,6 +32,13 @@ import {
 	type IntentReplanRepository,
 	type IntentReplanResult,
 } from './value-path-intent-replan'
+import {
+	repairValuePathCompletionFacts,
+	valuePathCompletionRepairEvidence,
+	type ValuePathCompletedAtBackfillRepository,
+	type ValuePathCompletionRepairEvidence,
+} from './value-path-completed-at-backfill'
+import { valuePathIntentCompletedAt } from './value-path-completion'
 
 /**
  * Maintained-after safety config. The 150-send wall is below the observed
@@ -35,10 +46,15 @@ import {
  * ~830 learner cohort, while the 313 false-stuck incident would hit 37.7%.
  * Change these values only with reconciler receipts beside the change.
  */
-export const LEARNER_FLOW_RECONCILER_CONFIG = {
+export type LearnerFlowReconcilerConfig = {
+	sendCap: number
+	maxPlannedToCohortRatio: number
+}
+
+export const LEARNER_FLOW_RECONCILER_CONFIG: LearnerFlowReconcilerConfig = {
 	sendCap: 150,
 	maxPlannedToCohortRatio: 0.25,
-} as const
+}
 
 export const LEARNER_FLOW_RECONCILER_CHECK_COMMAND =
 	'pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list --json'
@@ -50,6 +66,8 @@ export type LearnerFlowReconcilerCandidate = {
 		| 'replan-blocked-intent'
 		| 'retry-transient-failure'
 		| 'nudge-drip-progression'
+		| 'repair-completion-and-nudge-drip'
+	repairEvidence?: ValuePathCompletionRepairEvidence
 	cause: LearnerFlowStuckCause
 	stage: string
 	stuckAgeHours?: number
@@ -78,10 +96,12 @@ export type LearnerFlowReconcilerPlan = {
 		terminal: number
 		stuck: number
 		planned: number
+		suppressedFixtureStarved: number
 		tier2: number
 	}
 	causeCounts: Partial<Record<LearnerFlowStuckCause, number>>
 	candidates: LearnerFlowReconcilerCandidate[]
+	suppressedFixtureStarved: LearnerFlowDrillSuppression[]
 	tier2: LearnerFlowReconcilerTier2Ask[]
 	records: LearnerFlowCohortRecord[]
 }
@@ -97,7 +117,8 @@ export type LearnerFlowReconcilerBrake = {
 export type LearnerFlowReconcilerRepository = LearnerFlowCohortRepository &
 	ValuePathDripProgressionRepository &
 	ValuePathEmailExecutorRepository &
-	IntentReplanRepository
+	IntentReplanRepository &
+	Pick<ValuePathCompletedAtBackfillRepository, 'updateSideEffectIntent'>
 
 export type LearnerFlowReconcilerReceipt = {
 	event: 'subscriber_funnel.drip_run_completed'
@@ -117,6 +138,7 @@ export type LearnerFlowReconcilerReceipt = {
 	oldestUnservedAgeHours: number | null
 	oldestUnservedAt: string | null
 	created: number
+	repairedCompletionFacts: number
 	replanned: number
 	retried: number
 	served: number
@@ -134,6 +156,8 @@ export type LearnerFlowReconcilerReceipt = {
 	idempotentNoop: number
 	notDue: number
 	starved: number
+	suppressedFixtureStarved: number
+	suppressionExpiresAt: string | null
 	zeroPlanWhileStarved: boolean
 	scanTruncated: boolean
 	scanned: number
@@ -185,12 +209,44 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		}),
 	}))
 	const candidates: LearnerFlowReconcilerCandidate[] = []
+	const suppressedFixtureStarved: LearnerFlowDrillSuppression[] = []
 	const tier2: LearnerFlowReconcilerTier2Ask[] = []
 	for (const item of classified) {
 		const { classification } = item
 		if (classification.state !== 'stuck' || !classification.cause) continue
+		const repairEvidence = item.record.intents
+			.map(valuePathCompletionRepairEvidence)
+			.find(
+				(evidence): evidence is ValuePathCompletionRepairEvidence =>
+					Boolean(evidence),
+			)
+		if (repairEvidence && classification.cause === 'classifier-gap') {
+			candidates.push({
+				contactId: item.record.contactId,
+				intentId: repairEvidence.intent.id,
+				action: 'repair-completion-and-nudge-drip',
+				repairEvidence,
+				cause: 'classifier-gap',
+				stage:
+					stringField(repairEvidence.intent.metadata.emailResourceId) ??
+					classification.stage,
+				stuckAgeHours: hoursSince(
+					repairEvidence.completedAt,
+					args.now,
+				),
+				lastActivityAt: repairEvidence.completedAt,
+			})
+			continue
+		}
 		const action = learnerFlowUnstickAction(classification.cause)
 		if (action !== 'ask-joel' && classification.intentId) {
+			if (action === 'nudge-drip-progression') {
+				const suppression = learnerFlowDrillSuppression(item.record, args.now)
+				if (suppression) {
+					suppressedFixtureStarved.push(suppression)
+					continue
+				}
+			}
 			candidates.push({
 				contactId: item.record.contactId,
 				intentId: classification.intentId,
@@ -237,10 +293,12 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			stuck: classified.filter((item) => item.classification.state === 'stuck')
 				.length,
 			planned: candidates.length,
+			suppressedFixtureStarved: suppressedFixtureStarved.length,
 			tier2: tier2.length,
 		},
 		causeCounts,
 		candidates,
+		suppressedFixtureStarved,
 		tier2,
 		records: cohort.records,
 	}
@@ -249,7 +307,7 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 export function evaluateLearnerFlowReconcilerBrake(args: {
 	planned: number
 	cohortSize: number
-	config?: typeof LEARNER_FLOW_RECONCILER_CONFIG
+	config?: LearnerFlowReconcilerConfig
 }): LearnerFlowReconcilerBrake {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
 	const plannedToCohortRatio =
@@ -280,7 +338,7 @@ export async function reconcileLearnerFlow(args: {
 	emailListProvider: Pick<EmailListConfig, 'subscribeToList'>
 	executorConfig: ValuePathEmailExecutorConfig
 	now: string
-	config?: typeof LEARNER_FLOW_RECONCILER_CONFIG
+	config?: LearnerFlowReconcilerConfig
 }): Promise<LearnerFlowReconcilerReceipt> {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
 	const plan = await buildLearnerFlowReconcilerPlan(args)
@@ -305,6 +363,19 @@ export async function reconcileLearnerFlow(args: {
 	const drip = selected.filter(
 		(candidate) => candidate.action === 'nudge-drip-progression',
 	)
+	const repairCandidates = selected.filter(
+		(candidate) =>
+			candidate.action === 'repair-completion-and-nudge-drip' &&
+			candidate.repairEvidence,
+	)
+	const repairResults = await repairValuePathCompletionFacts({
+		repository: args.repository,
+		evidence: repairCandidates.map(
+			(candidate) => candidate.repairEvidence!,
+		),
+		allowWrite: true,
+		now: args.now,
+	})
 	const replanResult = blocked.length
 		? await replanBlockedValuePathEmailIntents({
 				repository: args.repository,
@@ -314,9 +385,14 @@ export async function reconcileLearnerFlow(args: {
 				now: args.now,
 			})
 		: emptyReplanResult()
-	const dripIntents = intentsById(plan.records).filter((intent) =>
-		drip.some((candidate) => candidate.intentId === intent.id),
-	)
+	const dripIntents = [
+		...intentsById(plan.records).filter((intent) =>
+			drip.some((candidate) => candidate.intentId === intent.id),
+		),
+		...repairResults.flatMap((result) =>
+			result.updatedIntent ? [result.updatedIntent] : [],
+		),
+	]
 	const dripResult = dripIntents.length
 		? await progressValuePathDrips({
 				repository: args.repository,
@@ -357,17 +433,19 @@ export async function reconcileLearnerFlow(args: {
 		dripResult,
 		executorResults,
 		selected,
+		repairedCompletionFacts: repairResults.length,
 	})
 }
 
 function receiptFor(args: {
 	plan: LearnerFlowReconcilerPlan
 	brake: LearnerFlowReconcilerBrake
-	config: typeof LEARNER_FLOW_RECONCILER_CONFIG
+	config: LearnerFlowReconcilerConfig
 	replanResult?: IntentReplanResult
 	dripResult?: ValuePathDripProgressionResult
 	executorResults?: ValuePathEmailExecutionResult[]
 	selected?: LearnerFlowReconcilerCandidate[]
+	repairedCompletionFacts?: number
 }): LearnerFlowReconcilerReceipt {
 	const executorResults = args.executorResults ?? []
 	const completedIntentIds = new Set(
@@ -390,13 +468,34 @@ function receiptFor(args: {
 		args.brake.status === 'tripped'
 			? args.plan.candidates
 			: args.plan.candidates.slice(args.config.sendCap)
-	const unserved =
-		args.brake.status === 'tripped'
+	const suppressedAsCandidates = args.plan.suppressedFixtureStarved
+		.map((suppression) => {
+			const intent = intentsById(args.plan.records).find(
+				(candidate) => candidate.id === suppression.intentId,
+			)
+			const lastActivityAt = valuePathIntentCompletedAt(intent)
+			return {
+				contactId: suppression.contactId,
+				intentId: suppression.intentId,
+				action: 'nudge-drip-progression' as const,
+				cause: 'drip-starved' as const,
+				stage: stringField(intent?.metadata.emailResourceId) ?? 'unknown',
+				lastActivityAt,
+				stuckAgeHours: lastActivityAt
+					? hoursSince(lastActivityAt, args.plan.generatedAt)
+					: undefined,
+			}
+		})
+		.sort(compareCandidateAge)
+	const unserved = [
+		...(args.brake.status === 'tripped'
 			? args.plan.candidates
 			: (args.selected ?? []).filter((candidate) => {
 					const intentId = intentIdByContact.get(candidate.contactId)
 					return !intentId || !completedIntentIds.has(intentId)
-				})
+				})),
+		...suppressedAsCandidates,
+	].sort(compareCandidateAge)
 	const oldestDeferred = deferred[0]
 	const oldestUnserved = unserved[0]
 	const dripResult = args.dripResult ?? emptyDripResult()
@@ -418,15 +517,18 @@ function receiptFor(args: {
 			.length,
 	}
 	const dripCandidates = args.plan.candidates.filter(
-		(candidate) => candidate.action === 'nudge-drip-progression',
+		(candidate) =>
+			candidate.action === 'nudge-drip-progression' ||
+			candidate.action === 'repair-completion-and-nudge-drip',
 	)
+	const allStarved = [...dripCandidates, ...suppressedAsCandidates]
 	const allIntents = args.plan.records.flatMap((record) => record.intents)
 	const terminal = args.plan.counts.terminal
 	const tier2Causes = formatTier2Causes(args.plan.tier2)
 	const dmLine =
 		args.brake.status === 'tripped'
 			? `RECONCILER BRAKED: ${args.plan.counts.planned} planned for ${args.plan.cohort.contacts} learners (${formatRatio(args.brake.plannedToCohortRatio)}; cap ${args.brake.cap}, ratio wall ${formatRatio(args.brake.maxPlannedToCohortRatio)}). Tier 2: ${tier2Causes}. Check: ${LEARNER_FLOW_RECONCILER_CHECK_COMMAND}. Action: inspect classifier causes and keep writes paused until the plan is explained.`
-			: `Reconciler clear: ${created} created, ${served} served, ${deferred.length} deferred. Tier 2: ${tier2Causes}.`
+			: `Reconciler clear: ${created} created, ${served} served, ${deferred.length} deferred, ${suppressedAsCandidates.length} fixture-suppressed. Tier 2: ${tier2Causes}.`
 	return {
 		event: 'subscriber_funnel.drip_run_completed',
 		receiptVersion: 1,
@@ -440,11 +542,12 @@ function receiptFor(args: {
 		maxPlannedToCohortRatio: args.brake.maxPlannedToCohortRatio,
 		plannedToCohortRatio: args.brake.plannedToCohortRatio,
 		cohortSize: args.plan.cohort.contacts,
-		workSeen: args.plan.candidates.length,
+		workSeen: args.plan.candidates.length + suppressedAsCandidates.length,
 		workDone: served,
 		oldestUnservedAgeHours: oldestUnserved?.stuckAgeHours ?? null,
 		oldestUnservedAt: oldestUnserved?.lastActivityAt ?? null,
 		created,
+		repairedCompletionFacts: args.repairedCompletionFacts ?? 0,
 		replanned: args.replanResult?.counts.replanned ?? 0,
 		retried: (args.selected ?? []).filter(
 			(candidate) => candidate.action === 'retry-transient-failure',
@@ -455,7 +558,7 @@ function receiptFor(args: {
 		oldestDeferredAt: oldestDeferred?.lastActivityAt ?? null,
 		tier2: args.plan.tier2.length,
 		causeCounts: args.plan.causeCounts,
-		completedIntents: dripCandidates.length,
+		completedIntents: allStarved.length,
 		planned: created,
 		terminal,
 		noop: dripResult.counts.idempotentNoop + dripResult.counts.notDue,
@@ -463,21 +566,28 @@ function receiptFor(args: {
 		blocked: dripResult.counts.blocked + executorCounts.blocked,
 		idempotentNoop: dripResult.counts.idempotentNoop,
 		notDue: dripResult.counts.notDue,
-		starved: dripCandidates.length,
-		zeroPlanWhileStarved: dripCandidates.length > 0 && created === 0,
+		starved: allStarved.length,
+		suppressedFixtureStarved: suppressedAsCandidates.length,
+		suppressionExpiresAt:
+			args.plan.suppressedFixtureStarved
+				.map((item) => item.suppressedUntil)
+				.sort()[0] ?? null,
+		zeroPlanWhileStarved: allStarved.length > 0 && created === 0,
 		scanTruncated: false,
 		scanned: allIntents.length,
 		eligible: args.plan.counts.planned,
-		frontierSize: dripCandidates.length,
-		actionableFrontierSize: dripCandidates.length,
-		returned: dripCandidates.length,
+		frontierSize: allStarved.length,
+		actionableFrontierSize: allStarved.length,
+		returned: allStarved.length,
 		truncated: 0,
 		excludedMissingCompletedAt: 0,
 		excludedByScope: 0,
 		excludedTerminal: terminal,
 		excludedExistingNextIntent: args.plan.counts.moving,
-		oldestFrontierCompletedAt: dripCandidates[0]?.lastActivityAt,
-		oldestFrontierAgeHours: dripCandidates[0]?.stuckAgeHours,
+		oldestFrontierCompletedAt: allStarved
+			.sort(compareCandidateAge)[0]?.lastActivityAt,
+		oldestFrontierAgeHours: allStarved.sort(compareCandidateAge)[0]
+			?.stuckAgeHours,
 		executor: executorCounts,
 		dmPriority: args.brake.status === 'tripped' ? 'high' : null,
 		dmLine,
@@ -545,6 +655,14 @@ function formatTier2Causes(tier2: LearnerFlowReconcilerTier2Ask[]) {
 		.map(([cause, count]) => `${cause}=${count}`)
 		.join(', ')
 	return summary || 'none'
+}
+
+function hoursSince(then: string, now: string) {
+	return Math.max(0, Date.parse(now) - Date.parse(then)) / (60 * 60 * 1000)
+}
+
+function stringField(value: unknown) {
+	return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
 function unique(values: string[]) {

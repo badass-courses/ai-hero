@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { isLearnerFlowBusinessMetricFixtureEmail } from './learner-flow-canary-exclusion'
 import {
 	cleanupLearnerFlowStuckFixture,
 	createLearnerFlowStuckFixture,
@@ -82,6 +83,32 @@ describe('learner-flow stuck fixture', () => {
 		expect(
 			isLearnerFlowCanaryEmail('joel+aih-synth-fixture-1@badass.dev'),
 		).toBe(false)
+	})
+
+	it('excludes canary and drill namespaces from business metrics', () => {
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-canary-learner-v1-run@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-drill-drift-v1-run-1@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-drill-zombie-v1-run-1@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-unrelated-fixture@badass.dev',
+			),
+		).toBe(false)
+		expect(isLearnerFlowBusinessMetricFixtureEmail('person@example.com')).toBe(
+			false,
+		)
 	})
 
 	it('plans without writing unless --allow-write is represented', async () => {

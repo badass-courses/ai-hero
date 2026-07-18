@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { db } from '@/db'
@@ -34,12 +35,29 @@ import {
 	type LearnerFlowCanaryRepository,
 	type LearnerFlowCanaryResidue,
 } from '@/lib/subscriber-marketing/learner-flow-canary'
-import { learnerFlowCanaryEmailSql } from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
+import {
+	learnerFlowCanaryEmailSql,
+	learnerFlowDrillEmailSql,
+} from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
 import { queryLearnerFlowCohort } from '@/lib/subscriber-marketing/learner-flow-cohort'
 import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
 } from '@/lib/subscriber-marketing/learner-flow-classifier'
+import {
+	cleanupLearnerFlowDrillFixtures,
+	createLearnerFlowDrillFixtures,
+	learnerFlowDrillEligibility,
+	type LearnerFlowDrillFixture,
+	type LearnerFlowDrillRepository,
+	type LearnerFlowDrillScenario,
+} from '@/lib/subscriber-marketing/learner-flow-drill'
+import {
+	parseLearnerFlowDrillAxiomOutput,
+	parseLearnerFlowDrillPulseOutput,
+	runLearnerFlowDrill,
+	type LearnerFlowDrillObservation,
+} from '@/lib/subscriber-marketing/learner-flow-drill-runner'
 import { DrizzleOperatorLookupRepository } from '@/lib/subscriber-marketing/drizzle-operator-lookup-repository'
 import { DrizzlePurchasePreviewRepository } from '@/lib/subscriber-marketing/drizzle-purchase-preview-repository'
 import { previewMatchedPurchaserValuePaths } from '@/lib/subscriber-marketing/matched-purchaser-value-path-preview'
@@ -85,7 +103,10 @@ import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-a
 import { importValuePathContentResources } from '@/lib/subscriber-marketing/value-path-content-import'
 import { previewValuePathContentImport } from '@/lib/subscriber-marketing/value-path-content-import-preview'
 import { backfillMissingValuePathCompletedAt } from '@/lib/subscriber-marketing/value-path-completed-at-backfill'
-import { isValuePathIntentCompleted } from '@/lib/subscriber-marketing/value-path-completion'
+import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from '@/lib/subscriber-marketing/value-path-completion'
 import { progressValuePathDrips } from '@/lib/subscriber-marketing/value-path-drip-progression'
 import {
 	executePendingValuePathEmailIntents,
@@ -362,6 +383,102 @@ if (command === 'lookup') {
 				allowWrite,
 			})
 	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'learner-flow-drill') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	const repository = await createLearnerFlowDrillRepository()
+	const scenario = parseLearnerFlowDrillScenario(
+		readFlag(args, '--scenario') ?? 'both',
+	)
+	const runId = parseLearnerFlowDrillRunId(
+		readFlag(args, '--run-id') ?? learnerFlowFixtureId(),
+	)
+	const receiptWriter = createLearnerFlowDrillReceiptWriter(runId)
+	if (args.includes('--cleanup')) {
+		const cleanup = await cleanupLearnerFlowDrillFixtures({
+			repository,
+			allowWrite,
+		})
+		const receiptPath = allowWrite
+			? await receiptWriter('cleanup', {
+					mode: 'learner-flow-drill',
+					runId,
+					phase: 'cleanup',
+					cleanedAt: new Date().toISOString(),
+					cleanup,
+				})
+			: undefined
+		console.log(JSON.stringify({ ...cleanup, receiptPath }, null, 2))
+	} else if (!allowWrite) {
+		const scenarios = scenario === 'both' ? (['drift', 'zombie'] as const) : [scenario]
+		const fixtureShapes = (
+			await Promise.all(
+				scenarios.map((drillScenario) =>
+					createLearnerFlowDrillFixtures({
+						repository,
+						runId,
+						scenario: drillScenario,
+						allowWrite: false,
+					}),
+				),
+			)
+		).flat()
+		console.log(
+			JSON.stringify(
+				{
+					mode: 'learner-flow-drill',
+					operation: 'go-checkpoint',
+					allowWrite: false,
+					runId,
+					scenario,
+					suppressionMechanism:
+						'Only active joel+aih-synth-drill-zombie-v1-*@badass.dev contacts with matching drill metadata and an unexpired per-fixture suppression timestamp can be omitted from planning. The receipt still counts them as starved. The timestamp releases them without a human write.',
+					designTensionResolution:
+						'The command starts zombie induction immediately after an hourly drift heal, then requires four real quiet-window receipts. Real due work honestly resets the identical streak; the command keeps observing until four consecutive zero-progress receipts or fails without claiming proof.',
+					fixtureShapes,
+					next: 'Wait for explicit GO, then rerun with --allow-write.',
+				},
+				null,
+				2,
+			),
+		)
+	} else {
+		const allowlist = await requireActiveGateDAllowlist()
+		const eligibility = learnerFlowDrillEligibility(allowlist)
+		if (!eligibility.passed) {
+			throw new Error(
+				`Learner-flow drill is not eligible for the live reconciler: ${eligibility.reviewReasons.join(', ')}`,
+			)
+		}
+		const preflightReceipt = await receiptWriter('preflight', {
+			mode: 'learner-flow-drill',
+			runId,
+			phase: 'preflight',
+			checkedAt: new Date().toISOString(),
+			eligibility,
+		})
+		const result = await runLearnerFlowDrill({
+			ports: {
+				repository,
+				observe: createLearnerFlowDrillObserver(),
+				readFixtureReadbacks: (fixtures) =>
+					readLearnerFlowDrillFixtureReadbacks(repository, fixtures),
+				writeReceipt: receiptWriter,
+				sleep: (milliseconds) =>
+					new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
+				now: () => new Date().toISOString(),
+			},
+			runId,
+			scenario,
+		})
+		console.log(
+			JSON.stringify(
+				{ ...result, receipts: [preflightReceipt, ...result.receipts] },
+				null,
+				2,
+			),
+		)
+	}
 } else if (command === 'learner-flow-canary') {
 	const allowWrite = args.includes('--allow-write')
 	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
@@ -2772,6 +2889,201 @@ async function createCaptureRepository() {
 	return new DrizzleCaptureMarketingRepository(db)
 }
 
+async function createLearnerFlowDrillRepository(): Promise<
+	DrizzleCaptureMarketingRepository & LearnerFlowDrillRepository
+> {
+	const repository = await createLearnerFlowCanaryRepository()
+	return Object.assign(repository, {
+		createDriftIntentWithoutCompletionFact: async (intent: Parameters<
+			LearnerFlowDrillRepository['createDriftIntentWithoutCompletionFact']
+		>[0]) => {
+			if (
+				intent.status !== 'completed' ||
+				intent.completedAt !== null ||
+				Object.hasOwn(intent.metadata, 'completedAt') ||
+				intent.metadata.learnerFlowDrillScenario !== 'drift'
+			) {
+				throw new Error('Drift insert refused: intent shape is not the exact drill drift shape')
+			}
+			const owner = await repository.findContactById(intent.contactId)
+			if (!owner || !owner.email?.startsWith('joel+aih-synth-drill-drift-v1-')) {
+				throw new Error('Drift insert refused: contact is outside the drift fixture namespace')
+			}
+			await db.insert(sideEffectIntent).values({
+				...intent,
+				completedAt: null,
+				createdAt: new Date(intent.createdAt),
+			})
+			return intent
+		},
+		findLearnerFlowDrillContacts: async () => {
+			const rows = await db
+				.select({ id: contact.id })
+				.from(contact)
+				.where(learnerFlowDrillEmailSql(contact.email))
+				.orderBy(desc(contact.createdAt))
+			const contacts = await Promise.all(
+				rows.map((row) => repository.findContactById(row.id)),
+			)
+			return contacts.filter(
+				(record): record is NonNullable<typeof record> => Boolean(record),
+			)
+		},
+	})
+}
+
+async function readLearnerFlowDrillFixtureReadbacks(
+	repository: DrizzleCaptureMarketingRepository & LearnerFlowDrillRepository,
+	fixtures: readonly LearnerFlowDrillFixture[],
+) {
+	return Promise.all(
+		fixtures.map(async (fixture) => {
+			if (!fixture.contactId || !fixture.intentId) {
+				throw new Error(`Drill fixture ${fixture.fixtureId} has no persisted IDs`)
+			}
+			const intents =
+				await repository.findValuePathEmailSideEffectIntentsByContact(
+					fixture.contactId,
+				)
+			const seed = intents.find((intent) => intent.id === fixture.intentId)
+			if (!seed) throw new Error(`Missing drill seed intent ${fixture.intentId}`)
+			const next = intents.find(
+				(intent) =>
+					intent.id !== seed.id &&
+					intent.metadata.emailResourceId ===
+						'ai-hero-skills-workflow.email-1',
+			)
+			return {
+				contactId: fixture.contactId,
+				seedIntentId: seed.id,
+				seedCompletedAt: seed.completedAt ?? null,
+				seedMetadataCompletedAt:
+					typeof seed.metadata.completedAt === 'string'
+						? seed.metadata.completedAt
+						: null,
+				nextIntentId: next?.id,
+				nextIntentStatus: next?.status,
+				nextIntentCompletedAt: valuePathIntentCompletedAt(next) ?? null,
+			}
+		}),
+	)
+}
+
+function createLearnerFlowDrillReceiptWriter(runId: string) {
+	return async (phase: string, body: Record<string, unknown>) => {
+		const timestamp = new Date()
+			.toISOString()
+			.replace(/[:.]/g, '-')
+			.toLowerCase()
+		const receiptPath = resolve(
+			'/Users/joel/Code/badass-courses/aihero-support/.brain/data/learner-flow/receipts',
+			`${timestamp}-learner-flow-drill-${runId}-${phase}.json`,
+		)
+		await mkdir(dirname(receiptPath), { recursive: true })
+		await writeFile(
+			receiptPath,
+			`${JSON.stringify({ ...body, receiptPath }, null, 2)}\n`,
+			{ encoding: 'utf8', flag: 'wx' },
+		)
+		return receiptPath
+	}
+}
+
+function createLearnerFlowDrillObserver() {
+	let lastPulseRun = ''
+	let pulse: LearnerFlowDrillObservation['pulse']
+	return async (since: string): Promise<LearnerFlowDrillObservation> => {
+		const runs = await queryLearnerFlowDrillReconcilerRuns(since)
+		const latest = runs.at(-1)?.observedAt ?? ''
+		if (latest && latest !== lastPulseRun) {
+			pulse = await readLearnerFlowDrillPulseEvidence()
+			lastPulseRun = latest
+		}
+		return { runs, pulse }
+	}
+}
+
+async function queryLearnerFlowDrillReconcilerRuns(since: string) {
+	const apl = [
+		"['vercel']",
+		"| where ['vercel.projectName'] == 'ai-hero'",
+		"  and tostring(['message']) contains '\"event\":\"subscriber_funnel.drip_run_completed\"'",
+		"| extend payload = parse_json(tostring(['message']))",
+		'| project _time, payload',
+		'| sort by _time asc',
+		'| limit 1000',
+	].join('\n')
+	const token = (
+		await runOperatorProcess('secrets', [
+			'lease',
+			'skill::axiom_query_key',
+			'--ttl',
+			'15m',
+		])
+	).trim()
+	const stdout = await runOperatorProcess(
+		'skill',
+		['axiom', 'query', apl, '--since', '12h', '--json'],
+		{
+			cwd: '/Users/joel/Code/skillrecordings/support',
+			env: { ...process.env, AXIOM_TOKEN: token },
+		},
+	)
+	return parseLearnerFlowDrillAxiomOutput(stdout, since)
+}
+
+async function readLearnerFlowDrillPulseEvidence() {
+	const stdout = await runOperatorProcess(
+		'/Users/joel/Code/badass-courses/aihero-support/bin/aih-pulse',
+		['snapshot', '--json'],
+		{ cwd: '/Users/joel/Code/badass-courses/aihero-support' },
+	)
+	return parseLearnerFlowDrillPulseOutput(stdout)
+}
+
+function runOperatorProcess(
+	command: string,
+	args: string[],
+	options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+) {
+	return new Promise<string>((resolveProcess, rejectProcess) => {
+		execFile(
+			command,
+			args,
+			{
+				cwd: options.cwd,
+				env: options.env ?? process.env,
+				maxBuffer: 10 * 1024 * 1024,
+			},
+			(error, stdout, stderr) => {
+				if (error) {
+					rejectProcess(
+						new Error(
+							`${command} failed: ${stderr.trim() || error.message}`,
+						),
+					)
+					return
+				}
+				resolveProcess(stdout)
+			},
+		)
+	})
+}
+
+function parseLearnerFlowDrillScenario(
+	value: string,
+): LearnerFlowDrillScenario {
+	if (value === 'drift' || value === 'zombie' || value === 'both') return value
+	printUsageAndExit()
+}
+
+function parseLearnerFlowDrillRunId(value: string) {
+	if (/^[a-z0-9-]{6,48}$/i.test(value)) return value.toLowerCase()
+	throw new Error(
+		'Learner-flow drill run id must be 6-48 letters, numbers, or hyphens',
+	)
+}
+
 async function createLearnerFlowCanaryRepository(): Promise<
 	DrizzleCaptureMarketingRepository & LearnerFlowCanaryRepository
 > {
@@ -3017,6 +3329,9 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck [--fixture-id <id>] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck --cleanup --contact-id <synthetic-contact-id> [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --scenario drift|zombie|both [--run-id <id>] [--dry-run]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --scenario drift|zombie|both [--run-id <id>] --allow-write
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --cleanup [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary [--status|--tick] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --seed [--stalled] [--now <iso>] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --cleanup [--allow-write]

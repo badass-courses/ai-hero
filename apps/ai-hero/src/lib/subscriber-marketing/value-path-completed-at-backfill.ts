@@ -18,10 +18,18 @@ export type ValuePathCompletedAtBackfillRepository = {
 	): Promise<SideEffectIntent> | SideEffectIntent
 }
 
-type CompletionEvidence = {
+export type ValuePathCompletionRepairEvidence = {
 	intent: SideEffectIntent
 	completedAt: string
 	source: 'legacy-metadata' | 'provider-completion-evidence'
+}
+
+export type ValuePathCompletionRepairResult = {
+	intentId: string
+	contactId: string
+	completedAt: string
+	source: ValuePathCompletionRepairEvidence['source']
+	updatedIntent?: SideEffectIntent
 }
 
 export type ValuePathCompletedAtBackfillReceipt = {
@@ -42,6 +50,64 @@ export type ValuePathCompletedAtBackfillReceipt = {
 	}
 }
 
+export function valuePathCompletionRepairEvidence(
+	intent: SideEffectIntent,
+): ValuePathCompletionRepairEvidence | undefined {
+	if (!isCourseValuePathIntent(intent)) return undefined
+	if (hasCanonicalValuePathCompletion(intent)) return undefined
+	const legacyCompletedAt = valuePathIntentCompletedAt(intent)
+	if (legacyCompletedAt) {
+		return {
+			intent,
+			completedAt: legacyCompletedAt,
+			source: 'legacy-metadata',
+		}
+	}
+	if (intent.status !== 'completed') return undefined
+	const providerCompletedAt = authoritativeProviderCompletedAt(intent)
+	return providerCompletedAt
+		? {
+				intent,
+				completedAt: providerCompletedAt,
+				source: 'provider-completion-evidence',
+			}
+		: undefined
+}
+
+export async function repairValuePathCompletionFacts(args: {
+	repository: Pick<ValuePathCompletedAtBackfillRepository, 'updateSideEffectIntent'>
+	evidence: readonly ValuePathCompletionRepairEvidence[]
+	allowWrite: boolean
+	now: string
+}): Promise<ValuePathCompletionRepairResult[]> {
+	const results: ValuePathCompletionRepairResult[] = []
+	for (const item of args.evidence) {
+		const updatedIntent = args.allowWrite
+			? await args.repository.updateSideEffectIntent(item.intent.id, {
+					status: 'completed',
+					completedAt: item.completedAt,
+					gates: item.intent.gates,
+					reviewReasons: item.intent.reviewReasons,
+					metadata: {
+						...item.intent.metadata,
+						// Dual-stamp for one release so old code remains rollback-safe.
+						completedAt: item.completedAt,
+						completedAtBackfilledAt: args.now,
+						completedAtBackfillSource: item.source,
+					},
+				})
+			: undefined
+		results.push({
+			intentId: item.intent.id,
+			contactId: item.intent.contactId,
+			completedAt: item.completedAt,
+			source: item.source,
+			updatedIntent,
+		})
+	}
+	return results
+}
+
 export async function backfillMissingValuePathCompletedAt(args: {
 	repository: ValuePathCompletedAtBackfillRepository
 	allowWrite: boolean
@@ -54,24 +120,16 @@ export async function backfillMissingValuePathCompletedAt(args: {
 	const missing = courseCompleted.filter(
 		(intent) => !hasCanonicalValuePathCompletion(intent),
 	)
-	const repairable = missing.flatMap(completionEvidence)
-	if (args.allowWrite) {
-		for (const { intent, completedAt, source } of repairable) {
-			await args.repository.updateSideEffectIntent(intent.id, {
-				status: 'completed',
-				completedAt,
-				gates: intent.gates,
-				reviewReasons: intent.reviewReasons,
-				metadata: {
-					...intent.metadata,
-					// Dual-stamp for one release so old code remains rollback-safe.
-					completedAt,
-					completedAtBackfilledAt: generatedAt,
-					completedAtBackfillSource: source,
-				},
-			})
-		}
-	}
+	const repairable = missing.flatMap((intent) => {
+		const evidence = valuePathCompletionRepairEvidence(intent)
+		return evidence ? [evidence] : []
+	})
+	await repairValuePathCompletionFacts({
+		repository: args.repository,
+		evidence: repairable,
+		allowWrite: args.allowWrite,
+		now: generatedAt,
+	})
 	const repairableFromLegacyMetadata = repairable.filter(
 		(item) => item.source === 'legacy-metadata',
 	).length
@@ -95,23 +153,6 @@ export async function backfillMissingValuePathCompletedAt(args: {
 			alreadyCanonical: courseCompleted.length - missing.length,
 		},
 	}
-}
-
-function completionEvidence(intent: SideEffectIntent): CompletionEvidence[] {
-	const legacyCompletedAt = valuePathIntentCompletedAt(intent)
-	if (legacyCompletedAt) {
-		return [{ intent, completedAt: legacyCompletedAt, source: 'legacy-metadata' }]
-	}
-	const providerCompletedAt = authoritativeProviderCompletedAt(intent)
-	return providerCompletedAt
-		? [
-				{
-					intent,
-					completedAt: providerCompletedAt,
-					source: 'provider-completion-evidence',
-				},
-			]
-		: []
 }
 
 function authoritativeProviderCompletedAt(intent: SideEffectIntent) {

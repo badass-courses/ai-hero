@@ -6,8 +6,10 @@ import {
 	dryRunSubscriberMarketingFixture,
 	InMemorySubscriberMarketingRepository,
 } from './dry-run'
+import type { LearnerFlowCohortRecord } from './learner-flow-cohort'
 import { classifyLearnerFlowContact } from './learner-flow-classifier'
 import {
+	buildLearnerFlowReconcilerPlan,
 	LEARNER_FLOW_RECONCILER_CONFIG,
 	reconcileLearnerFlow,
 	type LearnerFlowReconcilerRepository,
@@ -87,13 +89,7 @@ class BrakeOnlyRepository implements LearnerFlowReconcilerRepository {
 	writeAttempts = 0
 	includeCanary: boolean | undefined
 
-	constructor(
-		private readonly records: Array<{
-			contactId: string
-			intents: SideEffectIntent[]
-			entryEvents: ContactEventRecord[]
-		}>,
-	) {}
+	constructor(private readonly records: LearnerFlowCohortRecord[]) {}
 
 	findSkillsWorkflowLearnerFlowRecords(options?: { includeCanary?: boolean }) {
 		this.includeCanary = options?.includeCanary
@@ -236,6 +232,193 @@ describe('learner flow reconciler', () => {
 		expect(repository.includeCanary).toBe(true)
 		expect(repository.writeAttempts).toBe(0)
 		expect(providerWrites).toBe(0)
+	})
+
+	it('repairs a completed drift fixture with both stamps absent, then serves its next step', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const captured = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: codingWorkflowFixture,
+			now: '2026-07-15T20:00:00.000Z',
+		})
+		repository.sideEffectIntents.clear()
+		const driftIntent: SideEffectIntent = {
+			...courseIntent({
+				contactId: captured.contact.id,
+				id: 'drift-email-0',
+				status: 'completed',
+				createdAt: '2026-07-15T20:00:00.000Z',
+			}),
+			completedAt: null,
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				kitSequenceId: '2757199',
+				kitSubscriberId: '4089521940',
+				providerCompletedAt: '2026-07-15T20:00:00.000Z',
+				learnerFlowFixture: true,
+				learnerFlowFixtureId: 'drill-drift-v1-test-1',
+				learnerFlowFixtureStatus: 'active',
+				learnerFlowDrill: true,
+				learnerFlowDrillScenario: 'drift',
+			},
+		}
+		repository.sideEffectIntents.set(driftIntent.id, driftIntent)
+		const reconcilerRepository = Object.assign(repository, {
+			findSkillsWorkflowLearnerFlowRecords: () => [
+				{
+					contactId: captured.contact.id,
+					contact: captured.contact,
+					contactState: captured.contactState,
+					intents: Array.from(repository.sideEffectIntents.values()),
+					entryEvents: [],
+				},
+			],
+		})
+		const allowlist = rollingAllowlist()
+		expect(allowlist.contactIds).toEqual([])
+		expect(allowlist.kitSubscriberIds).toEqual([])
+		expect(allowlist.emails).toEqual([])
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository: reconcilerRepository,
+			allowlist,
+			now,
+		})
+		expect(plan.candidates).toMatchObject([
+			{
+				action: 'repair-completion-and-nudge-drip',
+				intentId: driftIntent.id,
+			},
+		])
+		expect(plan.tier2).toHaveLength(0)
+
+		const receipt = await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist,
+			emailListProvider: {
+				subscribeToList: async () => ({ success: true }),
+			},
+			executorConfig: {
+				mode: 'scoped-live',
+				baseUrl: 'https://www.aihero.dev',
+				pathTokenSecret: 'test-secret',
+				answerPages: [
+					{
+						id: 'answer-email-1',
+						type: 'value-path-page',
+						fields: {
+							kind: 'answer',
+							slug: 'answer-email-1',
+							sequenceId: 'ai-hero-skills-workflow',
+							emailId: 'email-1',
+							optionValue: 'continue',
+						},
+					},
+				],
+				allowlistedContactIds: [],
+				allowlistedKitSubscriberIds: [],
+				allowlistedEmails: [],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: [
+					'ai-hero-skills-workflow.email-1',
+				],
+				verifiedKitSequenceIds: ['2757200'],
+				allowedActions: ['send-path-emails'],
+			},
+			now,
+			config: {
+				sendCap: 150,
+				maxPlannedToCohortRatio: 1,
+			},
+		})
+		const repaired = repository.sideEffectIntents.get(driftIntent.id)!
+		const next = Array.from(repository.sideEffectIntents.values()).find(
+			(intent) =>
+				intent.metadata.emailResourceId ===
+				'ai-hero-skills-workflow.email-1',
+		)
+		expect(driftIntent.completedAt).toBeNull()
+		expect(driftIntent.metadata.completedAt).toBeUndefined()
+		expect(repaired.completedAt).toBe('2026-07-15T20:00:00.000Z')
+		expect(repaired.metadata.completedAt).toBe(
+			'2026-07-15T20:00:00.000Z',
+		)
+		expect(next?.status).toBe('completed')
+		expect(receipt).toMatchObject({
+			brake: 'clear',
+			repairedCompletionFacts: 1,
+			created: 1,
+			served: 1,
+			starved: 1,
+		})
+	})
+
+	it('counts fixture-scoped zombie suppression as starvation without planning it', async () => {
+		const completedAt = '2026-07-15T20:00:00.000Z'
+		const intent = {
+			...courseIntent({
+				contactId: 'zombie-contact',
+				id: 'zombie-email-0',
+				status: 'completed',
+				completedAt,
+			}),
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				kitSequenceId: '2757199',
+				completedAt,
+				providerCompletedAt: completedAt,
+				learnerFlowFixture: true,
+				learnerFlowFixtureId: 'drill-zombie-v1-test-1',
+				learnerFlowFixtureStatus: 'active',
+				learnerFlowDrill: true,
+				learnerFlowDrillScenario: 'zombie',
+				learnerFlowDrillSuppressedUntil: '2026-07-18T05:30:00.000Z',
+			},
+		}
+		const repository = new BrakeOnlyRepository([
+			{
+				contactId: 'zombie-contact',
+				contact: {
+					id: 'zombie-contact',
+					email:
+						'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
+					lifecycle: 'nurture-ready',
+					isProvisional: true,
+					createdAt: completedAt,
+					updatedAt: completedAt,
+				},
+				intents: [intent],
+				entryEvents: [],
+			},
+		])
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository,
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		expect(plan.counts).toMatchObject({
+			planned: 0,
+			suppressedFixtureStarved: 1,
+		})
+		const receipt = await reconcileLearnerFlow({
+			repository,
+			allowlist: rollingAllowlist(),
+			emailListProvider: {
+				subscribeToList: async () => ({ success: true }),
+			},
+			executorConfig: {},
+			now,
+		})
+		expect(receipt).toMatchObject({
+			workSeen: 1,
+			workDone: 0,
+			planned: 0,
+			starved: 1,
+			suppressedFixtureStarved: 1,
+			zeroPlanWhileStarved: true,
+		})
+		expect(repository.writeAttempts).toBe(0)
 	})
 
 	it('uses the existing intent idempotency key when an Inngest step retries after create', async () => {
