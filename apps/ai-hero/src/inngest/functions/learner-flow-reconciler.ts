@@ -2,6 +2,7 @@ import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import {
 	LEARNER_FLOW_RECONCILER_CHECK_COMMAND,
 	reconcileLearnerFlow,
@@ -92,6 +93,9 @@ export const learnerFlowReconciler = inngest.createFunction(
 					verifiedKitSequenceIds: allowlist.kitSequenceIds,
 					allowedActions: allowlist.allowedActions,
 					retryPolicy: allowlist.retryPolicy,
+					email7LiveEnabled: parseEmail7LiveEnabled(
+						process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
+					),
 					acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 						allowlist,
 						legacyEnvReviewReasons: parseExecutorList(

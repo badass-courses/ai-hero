@@ -1,6 +1,11 @@
 import { isDueRetryableValuePathEmailIntent } from './value-path-email-executor'
 import { isCleanedLearnerFlowFixtureIntent } from './learner-flow-fixture'
 import {
+	isTerminalSkillsWorkflowEmailResourceId,
+	nextSkillsWorkflowEmailResourceId,
+	SKILLS_WORKFLOW_PATH_SLUGS,
+} from './skills-workflow-path'
+import {
 	isValuePathIntentCompleted,
 	valuePathIntentCompletedAt,
 } from './value-path-completion'
@@ -14,10 +19,7 @@ import { isLocalDayDripDue } from './value-path-drip-due'
 
 export const LEARNER_FLOW_MOVEMENT_TOLERANCE_HOURS = 48
 
-export const COURSE_VALUE_PATH_SLUGS = [
-	'ai-hero-skills-workflow',
-	'ai-hero-skills-team-workflow',
-] as const
+export const COURSE_VALUE_PATH_SLUGS = SKILLS_WORKFLOW_PATH_SLUGS
 
 type CourseValuePathSlug = (typeof COURSE_VALUE_PATH_SLUGS)[number]
 
@@ -153,7 +155,7 @@ export function classifyLearnerFlowContact(
 
 	const completed = mostAdvancedCompletedIntent(pathIntents)
 	if (completed) {
-		const nextStep = nextEmailResourceId(emailResourceId(completed))
+		const nextStep = nextSkillsWorkflowEmailResourceId(emailResourceId(completed))
 		if (!nextStep) {
 			return stuck({
 				stage: emailResourceId(completed) ?? stage,
@@ -265,7 +267,7 @@ function unstickCommand(cause: LearnerFlowStuckCause, contactId: string) {
 function isCompletedTerminalIntent(intent: SideEffectIntent) {
 	return (
 		isValuePathIntentCompleted(intent) &&
-		isTerminalEmailResourceId(emailResourceId(intent))
+		isTerminalSkillsWorkflowEmailResourceId(emailResourceId(intent))
 	)
 }
 
@@ -304,10 +306,6 @@ function emailResourceId(intent?: SideEffectIntent) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-function isTerminalEmailResourceId(value?: string) {
-	return value?.endsWith('.email-6') || value?.endsWith('.team-email-6')
-}
-
 function latestCourseEntryEvent(
 	events: LearnerFlowContactInput['entryEvents'],
 ) {
@@ -325,19 +323,6 @@ function firstEmailResourceId(providerReference: string) {
 	return path === 'ai-hero-skills-team-workflow'
 		? `${path}.team-email-0`
 		: `${path}.email-0`
-}
-
-function nextEmailResourceId(value?: string) {
-	if (!value) return undefined
-	const match = value.match(/(?:team-)?email-(\d+)$/)
-	if (!match) return undefined
-	const step = Number(match[1])
-	if (!Number.isInteger(step) || step >= 6) return undefined
-	return value.replace(/(?:team-)?email-\d+$/, (segment) =>
-		segment.startsWith('team-email-')
-			? `team-email-${step + 1}`
-			: `email-${step + 1}`,
-	)
 }
 
 function emailStepNumber(intent: SideEffectIntent) {

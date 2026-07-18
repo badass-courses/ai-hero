@@ -7,6 +7,7 @@ import {
 	LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX,
 	type LearnerFlowFixtureRepository,
 } from './learner-flow-fixture'
+import { isTerminalSkillsWorkflowEmailResourceId } from './skills-workflow-path'
 import type { ContactRecord, SideEffectIntent } from './types'
 import {
 	isValuePathIntentCompleted,
@@ -352,7 +353,7 @@ function emailResourceId(intent?: SideEffectIntent) {
 }
 
 function isTerminalCanaryIntent(intent: SideEffectIntent) {
-	return emailResourceId(intent)?.endsWith('.email-6') === true
+	return isTerminalSkillsWorkflowEmailResourceId(emailResourceId(intent))
 }
 
 function activityAt(intent: SideEffectIntent) {

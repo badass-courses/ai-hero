@@ -95,14 +95,14 @@ export async function getAdsCourseFunnelMetrics(options: {
 	)
 	const allSent = await countRows(and(emailIntentWhere, eq(sideEffectIntent.status, 'completed')), { table: sideEffectIntent, column: sideEffectIntent.createdAt })
 	const midPath = await countRows(
-		and(emailIntentWhere, sql`${emailResourceId} NOT LIKE '%email-0'`, sql`${emailResourceId} NOT LIKE '%email-6'`),
+		and(emailIntentWhere, sql`${emailResourceId} NOT LIKE '%email-0'`, sql`${emailResourceId} NOT LIKE '%email-7'`),
 		{ table: sideEffectIntent, column: sideEffectIntent.createdAt },
 	)
 	const terminal = await countRows(
-		and(emailIntentWhere, sql`${emailResourceId} LIKE '%email-6'`, eq(sideEffectIntent.status, 'completed')),
+		and(emailIntentWhere, sql`${emailResourceId} LIKE '%email-7'`, eq(sideEffectIntent.status, 'completed')),
 		{ table: sideEffectIntent, column: sideEffectIntent.createdAt },
 	)
-	const isMidPathEmail = (value: string) => /(?:^|\.)(?:team-)?email-[1-5]$/.test(value)
+	const isMidPathEmail = (value: string) => /(?:^|\.)(?:team-)?email-[1-6]$/.test(value)
 	const countByEmail = async (where: any) => {
 		const rows = await db
 			.select({ emailResourceId, value: count() })

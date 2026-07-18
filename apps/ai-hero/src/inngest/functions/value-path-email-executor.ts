@@ -4,6 +4,7 @@ import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import {
 	getValuePathAnswerPages,
 	type ValuePathAnswerPageResource,
@@ -60,6 +61,9 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			verifiedKitSequenceIds: runtimeAllowlist.kitSequenceIds,
 			allowedActions: runtimeAllowlist?.allowedActions,
 			retryPolicy: runtimeAllowlist?.retryPolicy,
+			email7LiveEnabled: parseEmail7LiveEnabled(
+				process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
+			),
 			acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 				allowlist: runtimeAllowlist,
 				legacyEnvReviewReasons: parseExecutorList(

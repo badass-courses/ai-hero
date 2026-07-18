@@ -1,6 +1,11 @@
 import { log } from '@/server/logger'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
+import {
+	SKILLS_WORKFLOW_EMAIL_STEPS,
+	type SkillsWorkflowEmailStep,
+} from './skills-workflow-path'
 import {
 	CONTACT_EVENT_SCHEMA_VERSION,
 	type Gate,
@@ -29,45 +34,8 @@ import {
 	shouldBlockValuePathForContactState,
 } from './value-path-send-gate'
 
-export const SKILLS_WORKFLOW_EMAIL_STEPS = [
-	{
-		valuePathSlug: 'ai-hero-skills-workflow',
-		emailResourceId: 'ai-hero-skills-workflow.email-0',
-		kitSequenceId: '2757199',
-		nextValuePathSlug: 'ai-hero-skills-workflow',
-		nextEmailResourceId: 'ai-hero-skills-workflow.email-1',
-		nextKitSequenceId: '2757200',
-	},
-	...Array.from({ length: 5 }, (_, index) => ({
-		valuePathSlug: 'ai-hero-skills-workflow',
-		emailResourceId: `ai-hero-skills-workflow.email-${index + 1}`,
-		kitSequenceId: String(2757200 + index),
-		nextValuePathSlug: 'ai-hero-skills-workflow',
-		nextEmailResourceId: `ai-hero-skills-workflow.email-${index + 2}`,
-		nextKitSequenceId: String(2757201 + index),
-	})),
-	{
-		valuePathSlug: 'ai-hero-skills-workflow',
-		emailResourceId: 'ai-hero-skills-workflow.email-6',
-		kitSequenceId: '2757205',
-	},
-	...Array.from({ length: 6 }, (_, index) => ({
-		valuePathSlug: 'ai-hero-skills-team-workflow',
-		emailResourceId: `ai-hero-skills-team-workflow.team-email-${index}`,
-		kitSequenceId: String(2757206 + index),
-		nextValuePathSlug: 'ai-hero-skills-team-workflow',
-		nextEmailResourceId: `ai-hero-skills-team-workflow.team-email-${index + 1}`,
-		nextKitSequenceId: String(2757207 + index),
-	})),
-	{
-		valuePathSlug: 'ai-hero-skills-team-workflow',
-		emailResourceId: 'ai-hero-skills-team-workflow.team-email-6',
-		kitSequenceId: '2757212',
-	},
-] as const
-
-export type SkillsWorkflowEmailStep =
-	(typeof SKILLS_WORKFLOW_EMAIL_STEPS)[number]
+export { SKILLS_WORKFLOW_EMAIL_STEPS }
+export type { SkillsWorkflowEmailStep }
 
 export type ValuePathDripProgressionRepository = Pick<
 	CaptureMarketingRepository,
@@ -132,6 +100,7 @@ export async function progressValuePathDrips(args: {
 	completedIntents: SideEffectIntent[]
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
+	email7LiveEnabled?: boolean
 	now?: string
 	logger?: Pick<typeof log, 'info' | 'warn'>
 }): Promise<ValuePathDripProgressionResult> {
@@ -161,6 +130,7 @@ async function progressCompletedIntent(args: {
 	allowlist: GateDRuntimeAllowlist
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
+	email7LiveEnabled?: boolean
 	now: string
 	intent: SideEffectIntent
 	logger?: Pick<typeof log, 'info' | 'warn'>
@@ -178,7 +148,11 @@ async function progressCompletedIntent(args: {
 			reviewReasons: ['value-path-step-missing'],
 		}
 	}
-	if (!('nextEmailResourceId' in step)) {
+	if (
+		!step.nextEmailResourceId ||
+		!step.nextKitSequenceId ||
+		!step.nextValuePathSlug
+	) {
 		return {
 			contactId: args.intent.contactId,
 			fromEmailResourceId,
@@ -299,6 +273,11 @@ async function progressCompletedIntent(args: {
 		allowlist: args.allowlist,
 		explicitReviewReasons: args.acceptedReviewReasons,
 	})
+	const email7LaunchGate = evaluateEmail7LaunchGate({
+		emailResourceId: nextEmailResourceId,
+		email,
+		liveEnabled: args.email7LiveEnabled,
+	})
 	const sendDecision = applyAcceptedValuePathSendGateReviewReasons(
 		evaluateValuePathEmailSendGate({
 			mode: args.allowlist.mode,
@@ -327,6 +306,7 @@ async function progressCompletedIntent(args: {
 			requiredActions: ['advance-by-daily-drip', 'send-path-emails'],
 		}),
 		...runtimeDecision.reviewReasons,
+		...email7LaunchGate.reviewReasons,
 		...sendDecision.reviewReasons,
 	])
 	const advisoryReasons = unique([
@@ -340,6 +320,11 @@ async function progressCompletedIntent(args: {
 			reason: runtimeDecision.passed
 				? 'Gate D Runtime Allowlist passed.'
 				: `Gate D Runtime Allowlist blocked: ${runtimeDecision.reviewReasons.join(', ')}`,
+		},
+		{
+			slug: email7LaunchGate.slug,
+			passed: email7LaunchGate.passed,
+			reason: email7LaunchGate.reason,
 		},
 		...sendDecision.gates,
 	]

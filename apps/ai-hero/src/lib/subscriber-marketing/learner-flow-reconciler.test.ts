@@ -10,6 +10,7 @@ import type { LearnerFlowCohortRecord } from './learner-flow-cohort'
 import { classifyLearnerFlowContact } from './learner-flow-classifier'
 import {
 	buildLearnerFlowReconcilerPlan,
+	evaluateLearnerFlowReconcilerBrake,
 	LEARNER_FLOW_RECONCILER_CONFIG,
 	reconcileLearnerFlow,
 	type LearnerFlowReconcilerRepository,
@@ -34,6 +35,8 @@ function courseIntent(args: {
 	createdAt?: string
 	completedAt?: string
 	cadenceHours?: number
+	emailResourceId?: string
+	kitSequenceId?: string
 }): SideEffectIntent {
 	return {
 		id: args.id,
@@ -47,8 +50,9 @@ function courseIntent(args: {
 		reviewReasons: [],
 		metadata: {
 			valuePathSlug: 'ai-hero-skills-workflow',
-			emailResourceId: 'ai-hero-skills-workflow.email-0',
-			kitSequenceId: '2757199',
+			emailResourceId:
+				args.emailResourceId ?? 'ai-hero-skills-workflow.email-0',
+			kitSequenceId: args.kitSequenceId ?? '2757199',
 			...(args.completedAt ? { completedAt: args.completedAt } : {}),
 			...(args.cadenceHours
 				? {
@@ -179,6 +183,47 @@ describe('learner flow reconciler', () => {
 			cause: 'drip-starved',
 			intentId: 'canary-0',
 		})
+	})
+
+	it('plans the existing-finisher email-7 wave as normal reconciler work', async () => {
+		const records = Array.from({ length: 300 }, (_, index) => {
+			const contactId = `contact-${index}`
+			return {
+				contactId,
+				entryEvents: [],
+				intents: [
+					courseIntent({
+						contactId,
+						id: `intent-${index}`,
+						status: index < 60 ? 'completed' : 'pending',
+						completedAt:
+							index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
+						emailResourceId:
+							index < 60
+								? 'ai-hero-skills-workflow.email-6'
+								: 'ai-hero-skills-workflow.email-0',
+						kitSequenceId: index < 60 ? '2757205' : '2757199',
+					}),
+				],
+			}
+		})
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository: new BrakeOnlyRepository(records),
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		expect(plan.counts).toMatchObject({ planned: 60, stuck: 60 })
+		expect(plan.candidates).toHaveLength(60)
+		expect(plan.candidates[0]).toMatchObject({
+			action: 'nudge-drip-progression',
+			stage: 'ai-hero-skills-workflow.email-6',
+		})
+		expect(
+			evaluateLearnerFlowReconcilerBrake({
+				planned: plan.counts.planned,
+				cohortSize: plan.cohort.contacts,
+			}),
+		).toMatchObject({ status: 'clear', cap: 150 })
 	})
 
 	it('brakes the 313 false-stuck wolf before every write', async () => {

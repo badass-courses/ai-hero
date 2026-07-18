@@ -187,6 +187,7 @@ export type Gate = {
 		| 'human-review'
 		| 'customer-visible-side-effects'
 		| 'gate-d-value-path-email'
+		| 'email-7-copy-approval'
 	passed: boolean
 	reason: string
 }
@@ -220,6 +221,7 @@ export type SideEffectIntent = {
 		| 'none'
 		| 'human-review'
 		| 'preview-shadow-field-sync'
+		| 'write-value-path-finisher-fields'
 		| 'send-value-path-email'
 	status: SideEffectIntentStatus
 	completedAt?: string | null

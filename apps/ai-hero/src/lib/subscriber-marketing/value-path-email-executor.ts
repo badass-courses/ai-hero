@@ -1,9 +1,15 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
+import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
+import {
+	isContentCompleteSkillsWorkflowEmailResourceId,
+	isTerminalSkillsWorkflowEmailResourceId,
+} from './skills-workflow-path'
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
 import { isValuePathIntentCompleted } from './value-path-completion'
 import { buildValuePathAnswerLinks } from './value-path-answer-links'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
+import { AIH_COURSE_COMPLETED_AT_FIELD } from './value-path-finisher-capture'
 import {
 	DEFAULT_GATE_D_RETRY_POLICY,
 	gateDActionReviewReasons,
@@ -59,6 +65,7 @@ export type ValuePathEmailExecutorConfig = {
 	allowedActions?: readonly string[]
 	retryPolicy?: Partial<GateDRetryPolicy>
 	providerPacingMs?: number
+	email7LiveEnabled?: boolean
 	intentIds?: string[]
 }
 
@@ -162,6 +169,11 @@ export async function executeValuePathEmailIntent(args: {
 		...(metadata.valuePathSlug ? [] : ['value-path-missing']),
 	]
 
+	const email7LaunchGate = evaluateEmail7LaunchGate({
+		emailResourceId: metadata.emailResourceId,
+		email,
+		liveEnabled: args.config?.email7LiveEnabled,
+	})
 	const decision = applyAcceptedValuePathSendGateReviewReasons(
 		evaluateValuePathEmailSendGate({
 			mode,
@@ -190,13 +202,22 @@ export async function executeValuePathEmailIntent(args: {
 			allowedActions: args.config?.allowedActions,
 			requiredActions: requiredExecutorActions(intent, args.now),
 		}),
+		...email7LaunchGate.reviewReasons,
 		...decision.reviewReasons,
 	])
+	const gates = [
+		{
+			slug: email7LaunchGate.slug,
+			passed: email7LaunchGate.passed,
+			reason: email7LaunchGate.reason,
+		},
+		...decision.gates,
+	]
 	if (reviewReasons.length > 0 || !decision.passed) {
 		if (args.config?.allowWrite !== false) {
 			await args.repository.updateSideEffectIntent(intent.id, {
 				status: 'blocked',
-				gates: decision.gates,
+				gates,
 				reviewReasons,
 				metadata: {
 					...intent.metadata,
@@ -217,12 +238,13 @@ export async function executeValuePathEmailIntent(args: {
 			answerPages: args.config?.answerPages ?? [],
 			baseUrl: args.config?.baseUrl,
 			pathTokenSecret: args.config?.pathTokenSecret,
+			now: args.now,
 		})
 		if (!personalization.passed) {
 			if (args.config?.allowWrite !== false) {
 				await args.repository.updateSideEffectIntent(intent.id, {
 					status: 'blocked',
-					gates: decision.gates,
+					gates,
 					reviewReasons: personalization.reviewReasons,
 					metadata: {
 						...intent.metadata,
@@ -260,7 +282,7 @@ export async function executeValuePathEmailIntent(args: {
 		await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'completed',
 			completedAt,
-			gates: decision.gates,
+			gates,
 			reviewReasons: [],
 			metadata: {
 				...intent.metadata,
@@ -295,7 +317,7 @@ export async function executeValuePathEmailIntent(args: {
 			: undefined
 		await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'failed',
-			gates: decision.gates,
+			gates,
 			reviewReasons: [
 				canRetry
 					? 'kit-sequence-enrollment-retryable'
@@ -332,6 +354,7 @@ export function buildValuePathEmailPersonalization(args: {
 	answerPages: ValuePathAnswerPageResource[]
 	baseUrl?: string
 	pathTokenSecret?: string
+	now?: string
 }) {
 	const reviewReasons: string[] = []
 	if (!args.valuePathSlug) reviewReasons.push('value-path-slug-missing')
@@ -343,10 +366,17 @@ export function buildValuePathEmailPersonalization(args: {
 			page.fields.sequenceId === args.valuePathSlug &&
 			page.fields.emailId === emailId,
 	)
-	if (answerPages.length === 0 && !isTerminalValuePathEmail(emailId)) {
+	if (
+		answerPages.length === 0 &&
+		!isContentCompleteSkillsWorkflowEmailResourceId(args.emailResourceId)
+	) {
 		reviewReasons.push('answer-pages-missing')
 	}
-	if (answerPages.length > 0 && !args.baseUrl) {
+	if (
+		(answerPages.length > 0 ||
+			isTerminalSkillsWorkflowEmailResourceId(args.emailResourceId)) &&
+		!args.baseUrl
+	) {
 		reviewReasons.push('value-path-base-url-missing')
 	}
 	if (answerPages.length > 0 && !args.pathTokenSecret) {
@@ -356,8 +386,21 @@ export function buildValuePathEmailPersonalization(args: {
 	if (reviewReasons.length > 0) {
 		return { passed: false, reviewReasons, fields: {} }
 	}
+	const now = args.now ?? new Date().toISOString()
+	const lifecycleFields: Record<string, string> = {}
+	if (emailId === 'email-0' || emailId === 'team-email-0') {
+		lifecycleFields.aih_course_started_at = now
+	}
+	if (isTerminalSkillsWorkflowEmailResourceId(args.emailResourceId)) {
+		lifecycleFields[AIH_COURSE_COMPLETED_AT_FIELD] = now
+		lifecycleFields.aih_value_path_certificate_url =
+			buildValuePathCertificateUrl({
+				baseUrl: args.baseUrl!,
+				contactId: args.contactId,
+			})
+	}
 	if (answerPages.length === 0) {
-		return { passed: true, reviewReasons: [], fields: {} }
+		return { passed: true, reviewReasons: [], fields: lifecycleFields }
 	}
 
 	const answerLinks = buildValuePathAnswerLinks({
@@ -369,19 +412,15 @@ export function buildValuePathEmailPersonalization(args: {
 			valuePathResourceId: args.valuePathSlug!,
 			emailResourceId: args.emailResourceId!,
 			sequenceId: args.valuePathSlug!,
-			expiresAt: expirationDateIso(),
+			expiresAt: expirationDateIso(now),
 		},
 		answerPages,
 	})
 	const fields: Record<string, string> = {
+		...lifecycleFields,
 		aih_value_path_email_resource_id: args.emailResourceId!,
 		aih_value_path_slug: args.valuePathSlug!,
 		aih_value_path_answer_links_json: JSON.stringify(answerLinks),
-	}
-	// Lifecycle property (Joel: properties with a date over tags) — campaign
-	// audiences exclude course starters by this field being present.
-	if (emailId === 'email-0') {
-		fields.aih_course_started_at = new Date().toISOString()
 	}
 	for (const [index, link] of answerLinks.entries()) {
 		const ordinal = String(index + 1)
@@ -427,8 +466,8 @@ function valuePathEmailExecutorConfigBlockers(args: {
 }) {
 	const requiresAnswerLinks = args.intents.some((intent) => {
 		const metadata = parseValuePathEmailIntentMetadata(intent.metadata)
-		return !isTerminalValuePathEmail(
-			emailIdFromResourceId(metadata.emailResourceId),
+		return !isContentCompleteSkillsWorkflowEmailResourceId(
+			metadata.emailResourceId,
 		)
 	})
 	if (!requiresAnswerLinks) return []
@@ -444,12 +483,18 @@ function emailIdFromResourceId(resourceId?: string) {
 	return emailId
 }
 
-function isTerminalValuePathEmail(emailId?: string) {
-	return emailId === 'email-6' || emailId === 'team-email-6'
+function buildValuePathCertificateUrl(args: {
+	baseUrl: string
+	contactId: string
+}) {
+	const url = new URL('/api/certificates', args.baseUrl)
+	url.searchParams.set('resource', 'value-path:ai-hero-skills-workflow')
+	url.searchParams.set('user', args.contactId)
+	return url.toString()
 }
 
-function expirationDateIso() {
-	const expiresAt = new Date()
+function expirationDateIso(now: string) {
+	const expiresAt = new Date(now)
 	expiresAt.setDate(expiresAt.getDate() + 30)
 	return expiresAt.toISOString()
 }

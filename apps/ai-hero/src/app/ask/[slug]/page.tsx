@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { VALUE_PATH_ANSWER_SELECTED_EVENT } from '@/inngest/events/value-path'
 import { inngest } from '@/inngest/inngest.server'
@@ -47,6 +48,7 @@ export default async function ValuePathAnswerPage(props: {
 		token.valid && runtimeAllowlist
 			? await recordValuePathAnswerProgression({
 					repository: new DrizzleCaptureMarketingRepository(db),
+					finisherFieldProvider: emailListProvider,
 					token: token.payload,
 					answerPage,
 					mode: runtimeAllowlist.mode,
@@ -94,6 +96,7 @@ export default async function ValuePathAnswerPage(props: {
 			valuePathSlug: token.payload.valuePathResourceId,
 			emailResourceId: token.payload.emailResourceId,
 			contactEventId: progression.contactEventId,
+			finisherCapture: progression.finisherCapture,
 		})
 		await inngest.send({
 			name: VALUE_PATH_ANSWER_SELECTED_EVENT,

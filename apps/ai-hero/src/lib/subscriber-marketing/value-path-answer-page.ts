@@ -22,6 +22,8 @@ export type ValuePathAnswerPageResource = {
 		nextEmailId?: string
 		nextEmailResourceId?: string
 		kitSequenceId?: string
+		captureFieldKey?: string
+		captureDateFieldKey?: string
 	}
 }
 
@@ -60,6 +62,8 @@ export function parseValuePathAnswerPageResource(
 			nextEmailId: stringField(fields.nextEmailId),
 			nextEmailResourceId: stringField(fields.nextEmailResourceId),
 			kitSequenceId: stringField(fields.kitSequenceId),
+			captureFieldKey: stringField(fields.captureFieldKey),
+			captureDateFieldKey: stringField(fields.captureDateFieldKey),
 		},
 	}
 }

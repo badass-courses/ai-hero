@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { SideEffectIntent } from './types'
 import {
+	buildValuePathEmailPersonalization,
 	executePendingValuePathEmailIntents,
 	executeValuePathEmailIntent,
 } from './value-path-email-executor'
@@ -143,6 +144,92 @@ describe('value path email executor', () => {
 			reviewReasons: ['intent-already-completed'],
 		})
 		expect(subscribeToList).not.toHaveBeenCalled()
+	})
+
+	it('stamps course completion and the certificate URL into email-7 personalization', () => {
+		const now = '2026-07-18T12:00:00.000Z'
+		const result = buildValuePathEmailPersonalization({
+			contactId: 'contact-1',
+			kitSubscriberId: 'kit-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-7',
+			baseUrl: 'https://www.aihero.dev',
+			pathTokenSecret: 'test-secret',
+			now,
+			answerPages: [
+				{
+					id: 'answer-7-a',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-7-placeholder-a',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-7',
+						optionValue: 'placeholder-option-a',
+					},
+				},
+			],
+		})
+		expect(result).toMatchObject({
+			passed: true,
+			fields: {
+				aih_course_completed_at: now,
+				aih_value_path_certificate_url:
+					'https://www.aihero.dev/api/certificates?resource=value-path%3Aai-hero-skills-workflow&user=contact-1',
+			},
+		})
+	})
+
+	it('blocks a real email-7 send until copy approval explicitly opens the gate', async () => {
+		const updateSideEffectIntent = vi.fn()
+		const subscribeToList = vi.fn()
+		const intent = valuePathIntent({
+			metadata: {
+				mode: 'scoped-live',
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				kitSequenceId: '2831545',
+				kitSubscriberId: 'kit-1',
+			},
+		})
+		const result = await executeValuePathEmailIntent({
+			repository: {
+				findPendingValuePathEmailSideEffectIntents: vi.fn(),
+				findContactById: vi.fn().mockResolvedValue({
+					id: 'contact-1',
+					email: 'learner@example.com',
+				}),
+				findCurrentContactState: vi.fn().mockResolvedValue({
+					id: 'state-1',
+					contactId: 'contact-1',
+					lifecycle: 'nurture-ready',
+					reviewSignals: [],
+					humanReview: false,
+				}),
+				updateSideEffectIntent,
+			},
+			emailListProvider: { subscribeToList },
+			intent,
+			config: {
+				mode: 'scoped-live',
+				allowlistedContactIds: ['contact-1'],
+				allowlistedKitSubscriberIds: ['kit-1'],
+				allowlistedEmails: ['learner@example.com'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-7'],
+				verifiedKitSequenceIds: ['2831545'],
+				allowedActions: ['send-path-emails'],
+			},
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['email-7-copy-approval-required'],
+		})
+		expect(subscribeToList).not.toHaveBeenCalled()
+		expect(updateSideEffectIntent).toHaveBeenCalledWith(
+			'intent-1',
+			expect.objectContaining({ status: 'blocked' }),
+		)
 	})
 
 	it('writes canonical and rollback stamps in the same completion update', async () => {

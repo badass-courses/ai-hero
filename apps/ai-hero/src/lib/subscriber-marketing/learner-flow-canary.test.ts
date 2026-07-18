@@ -211,6 +211,88 @@ describe('learner-flow canary', () => {
 		)
 	})
 
+	it('walks all eight emails and self-resets only after email-7', async () => {
+		const repository = new CanaryRepository()
+		const created = await seedLearnerFlowCanary({
+			repository,
+			allowWrite: true,
+			now: '2026-07-17T21:50:00.000Z',
+		})
+		const contactId = created.contactId!
+		let current = repository.intents.get(createdIntentId(created)!)!
+		const visited: string[] = []
+
+		for (let step = 0; step < 7; step += 1) {
+			const emailResourceId = `ai-hero-skills-workflow.email-${step}`
+			visited.push(emailResourceId)
+			current = {
+				...current,
+				status: 'completed',
+				completedAt: `2026-07-17T21:${String(50 + step).padStart(2, '0')}:00.000Z`,
+				metadata: {
+					...current.metadata,
+					emailResourceId,
+					completedAt: `2026-07-17T21:${String(50 + step).padStart(2, '0')}:00.000Z`,
+				},
+			}
+			repository.intents.set(current.id, current)
+			const nextStep = step + 1
+			const nextIntent: SideEffectIntent = {
+				...current,
+				id: `canary-email-${nextStep}`,
+				status: 'pending',
+				completedAt: null,
+				idempotencyKey: `canary:${contactId}:email-${nextStep}`,
+				metadata: {
+					...current.metadata,
+					emailResourceId: `ai-hero-skills-workflow.email-${nextStep}`,
+					kitSequenceId: nextStep === 7 ? '2831545' : String(2757199 + nextStep),
+					completedAt: undefined,
+				},
+			}
+			const ticked = await tickLearnerFlowCanary({
+				repository,
+				allowWrite: true,
+				now,
+				advance: async () => {
+					repository.intents.set(nextIntent.id, nextIntent)
+					return progressionResult
+				},
+			})
+			expect(ticked).toMatchObject({ action: 'advanced' })
+			current = nextIntent
+		}
+
+		visited.push('ai-hero-skills-workflow.email-7')
+		current = {
+			...current,
+			status: 'completed',
+			completedAt: '2026-07-17T21:59:00.000Z',
+			metadata: {
+				...current.metadata,
+				completedAt: '2026-07-17T21:59:00.000Z',
+			},
+		}
+		repository.intents.set(current.id, current)
+		const reset = await tickLearnerFlowCanary({
+			repository,
+			advance: vi.fn(),
+			allowWrite: true,
+			now,
+		})
+		expect(visited).toEqual(
+			Array.from(
+				{ length: 8 },
+				(_, step) => `ai-hero-skills-workflow.email-${step}`,
+			),
+		)
+		expect(reset).toMatchObject({
+			action: 'self-reset',
+			postDeleteReadback: { total: 0 },
+			seeded: { intentStatus: 'pending' },
+		})
+	})
+
 	it('self-resets after terminal completion and proves old-id zero residue', async () => {
 		const repository = new CanaryRepository()
 		const created = await seedLearnerFlowCanary({
@@ -225,8 +307,8 @@ describe('learner-flow canary', () => {
 			reviewReasons: [],
 			metadata: {
 				...intent.metadata,
-				emailResourceId: 'ai-hero-skills-workflow.email-6',
-				kitSequenceId: '2757205',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				kitSequenceId: '2831545',
 				completedAt: '2026-07-17T21:55:00.000Z',
 			},
 		})

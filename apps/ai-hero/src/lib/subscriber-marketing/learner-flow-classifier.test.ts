@@ -75,22 +75,29 @@ describe('learner-flow classifier', () => {
 		).toBe(false)
 	})
 
-	it('marks completed final emails terminal', () => {
-		expect(
-			classify({
-				contactId: 'contact-1',
-				intents: [
-					intent({
-						status: 'completed',
-						metadata: {
-							valuePathSlug: 'ai-hero-skills-workflow',
-							emailResourceId: 'ai-hero-skills-workflow.email-6',
-							completedAt: '2026-07-15T11:00:00.000Z',
-						},
-					}),
-				],
-			}),
-		).toMatchObject({ state: 'terminal' })
+	it('moves terminal to email-7 while email-6 remains content-complete', () => {
+		const email6 = intent({
+			status: 'completed',
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				completedAt: '2026-07-14T11:00:00.000Z',
+			},
+		})
+		const email7 = intent({
+			status: 'completed',
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				completedAt: '2026-07-15T11:00:00.000Z',
+			},
+		})
+		expect(classify({ contactId: 'contact-1', intents: [email6] })).toMatchObject(
+			{ state: 'stuck', cause: 'drip-starved' },
+		)
+		expect(classify({ contactId: 'contact-1', intents: [email7] })).toMatchObject(
+			{ state: 'terminal' },
+		)
 	})
 
 	it.each([

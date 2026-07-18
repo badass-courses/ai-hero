@@ -11,6 +11,11 @@ export type ValuePathSurveyPreview = {
 	options: ValuePathSurveyOptionPreview[]
 }
 
+export type ValuePathCertificateLinkPreview = {
+	href: string
+	label?: string
+}
+
 export type ValuePathEmailPagePreview = {
 	kind: 'email'
 	id: string
@@ -24,6 +29,8 @@ export type ValuePathEmailPagePreview = {
 	subject?: string
 	preview?: string
 	body?: string
+	certificateLink?: ValuePathCertificateLinkPreview
+	waitlistLine?: string
 	survey?: ValuePathSurveyPreview
 	kitSequenceId?: string
 }
@@ -45,6 +52,8 @@ export type ValuePathAnswerPagePreview = {
 	nextEmailId?: string
 	nextEmailResourceId?: string
 	kitSequenceId?: string
+	captureFieldKey?: string
+	captureDateFieldKey?: string
 }
 
 export type ValuePathParentPreview = {
@@ -183,6 +192,8 @@ function parseEmailSequence(source: string) {
 			subject: textOf(body, 'Subject'),
 			preview: textOf(body, 'Preview'),
 			body: textOf(body, 'Body'),
+			certificateLink: parseCertificateLink(body),
+			waitlistLine: textOf(body, 'WaitlistLine'),
 			survey: parseSurvey(body),
 			kitSequenceId: attrs.kitSequenceId,
 		})
@@ -221,9 +232,24 @@ function parseAnswerPageSet(source: string) {
 			nextNotice: textOf(body, 'NextNotice'),
 			nextSequenceId: attrs.nextSequenceId,
 			nextEmailId: attrs.nextEmailId,
+			captureFieldKey: attrs.captureFieldKey,
+			captureDateFieldKey: attrs.captureDateFieldKey,
 		})
 	}
 	return { id: rootAttrs.id ?? 'unknown-answer-pages', pages }
+}
+
+function parseCertificateLink(
+	body: string,
+): ValuePathCertificateLinkPreview | undefined {
+	const match = body.match(/<CertificateLink\b([^>]*)>([\s\S]*?)<\/CertificateLink>/)
+	if (!match) return undefined
+	const attrs = parseAttrs(match[1] ?? '')
+	if (!attrs.href) return undefined
+	return {
+		href: attrs.href,
+		label: normalizeText(match[2] ?? '') || undefined,
+	}
 }
 
 function parseSurvey(body: string): ValuePathSurveyPreview | undefined {

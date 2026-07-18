@@ -162,6 +162,8 @@ function emailToResource(
 			subject: page.subject,
 			preview: page.preview,
 			body: page.body,
+			certificateLink: page.certificateLink,
+			waitlistLine: page.waitlistLine,
 			survey: page.survey,
 			kitSequenceId: page.kitSequenceId,
 		}),
@@ -190,6 +192,8 @@ function answerToResource(
 			nextEmailId: page.nextEmailId,
 			nextEmailResourceId: page.nextEmailResourceId,
 			kitSequenceId: page.kitSequenceId,
+			captureFieldKey: page.captureFieldKey,
+			captureDateFieldKey: page.captureDateFieldKey,
 		}),
 	}
 }

@@ -1,3 +1,4 @@
+import { nextSkillsWorkflowEmailResourceId } from './skills-workflow-path'
 import type { SideEffectIntent } from './types'
 import {
 	isValuePathIntentCompleted,
@@ -168,18 +169,10 @@ function nextIntentStepKey(intent: SideEffectIntent) {
 	const slug = valuePathSlug(intent)
 	const resourceId = stringField(intent.metadata.emailResourceId)
 	if (!slug || !resourceId) return undefined
-	const match = resourceId.match(/(?:team-)?email-(\d+)$/)
-	if (!match) return undefined
-	const step = Number(match[1])
-	if (!Number.isInteger(step) || step >= 6) return undefined
-	const nextResourceId = resourceId.replace(
-		/(?:team-)?email-\d+$/,
-		(segment) =>
-			segment.startsWith('team-email-')
-				? `team-email-${step + 1}`
-				: `email-${step + 1}`,
-	)
-	return `${intent.contactId}:${slug}:${nextResourceId}`
+	const nextResourceId = nextSkillsWorkflowEmailResourceId(resourceId)
+	return nextResourceId
+		? `${intent.contactId}:${slug}:${nextResourceId}`
+		: undefined
 }
 
 function valuePathSlug(intent: SideEffectIntent) {

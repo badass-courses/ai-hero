@@ -399,6 +399,7 @@ export async function reconcileLearnerFlow(args: {
 				allowlist: args.allowlist,
 				completedIntents: dripIntents,
 				allowWrite: true,
+				email7LiveEnabled: args.executorConfig.email7LiveEnabled,
 				now: args.now,
 			})
 		: emptyDripResult()

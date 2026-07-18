@@ -27,6 +27,7 @@ import {
 } from '@/lib/subscriber-marketing/contact-event-normalizer-preview'
 import { renderContactEventReviewHtml } from '@/lib/subscriber-marketing/contact-event-review-page'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import {
 	cleanupLearnerFlowCanary,
 	inspectLearnerFlowCanary,
@@ -69,6 +70,12 @@ import {
 import { buildContactEventProductionReceipt } from '@/lib/subscriber-marketing/production-receipt'
 import { previewPurchaseCorrelation } from '@/lib/subscriber-marketing/purchase-preview'
 import { previewSeenContent } from '@/lib/subscriber-marketing/seen-content'
+import {
+	isTerminalSkillsWorkflowEmailResourceId,
+	SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS,
+	SKILLS_WORKFLOW_KIT_SEQUENCE_IDS,
+	SKILLS_WORKFLOW_PATH_SLUGS,
+} from '@/lib/subscriber-marketing/skills-workflow-path'
 import { syncSeenContentKitFieldsForContactSnapshot } from '@/lib/subscriber-marketing/seen-content-kit-sync'
 import { previewShadowFieldCandidates } from '@/lib/subscriber-marketing/shadow-field-candidates'
 import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-planner'
@@ -157,23 +164,8 @@ import { and, count, desc, eq, gte, inArray } from 'drizzle-orm'
 const providers = ['fixture', 'front', 'kit', 'ai-hero'] as const
 const [command, ...args] = process.argv.slice(2)
 
-const SKILLS_WORKFLOW_PATH_SLUGS = [
-	'ai-hero-skills-workflow',
-	'ai-hero-skills-team-workflow',
-]
-const SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS = [
-	...Array.from(
-		{ length: 7 },
-		(_, index) => `ai-hero-skills-workflow.email-${index}`,
-	),
-	...Array.from(
-		{ length: 7 },
-		(_, index) => `ai-hero-skills-team-workflow.team-email-${index}`,
-	),
-]
-const SKILLS_WORKFLOW_KIT_SEQUENCE_IDS = Array.from(
-	{ length: 14 },
-	(_, index) => String(2757199 + index),
+const EMAIL_7_LIVE_ENABLED = parseEmail7LiveEnabled(
+	process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
 )
 
 const VALUE_PATH_COMPLETION_SURVEY_SPEC = {
@@ -509,6 +501,7 @@ if (command === 'lookup') {
 								allowWrite: true,
 								acceptedReviewReasons:
 									resolveGateDPreAuthorizedReviewReasons({ allowlist }),
+								email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 								now: progressionNow,
 							})
 						},
@@ -879,6 +872,7 @@ if (command === 'lookup') {
 			allowedActions: runtimeAllowlist?.allowedActions,
 			retryPolicy: runtimeAllowlist?.retryPolicy,
 			providerPacingMs: readIntegerFlag(args, '--provider-pacing-ms') ?? 1500,
+			email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 			acceptedReviewReasons,
 			intentIds:
 				requestedIntentIds.length > 0 ? requestedIntentIds : undefined,
@@ -1266,6 +1260,7 @@ async function buildLearnerFlowUnstick(args: {
 				allowlist,
 				completedIntents,
 				allowWrite: args.allowWrite,
+				email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 				now: generatedAt,
 			})
 			: undefined
@@ -1492,7 +1487,7 @@ async function buildValuePathGateDActivation(args: {
 				? 'scoped-live'
 				: 'allowlisted-test',
 		authorizationMode: args.authorizationMode,
-		pathSlugs: SKILLS_WORKFLOW_PATH_SLUGS,
+		pathSlugs: [...SKILLS_WORKFLOW_PATH_SLUGS],
 		contactIds: candidates.map((candidate) => candidate.contactId!),
 		kitSubscriberIds: candidates
 			.map((candidate) => candidate.kitSubscriberId)
@@ -1503,8 +1498,8 @@ async function buildValuePathGateDActivation(args: {
 		emailHashes: candidates
 			.map((candidate) => candidate.emailHash)
 			.filter((hash): hash is string => Boolean(hash)),
-		emailResourceIds: SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS,
-		kitSequenceIds: SKILLS_WORKFLOW_KIT_SEQUENCE_IDS,
+		emailResourceIds: [...SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS],
+		kitSequenceIds: [...SKILLS_WORKFLOW_KIT_SEQUENCE_IDS],
 		candidates: candidates.map(candidatePreviewToAllowlistCandidate),
 		allowedActions: [...DEFAULT_GATE_D_ALLOWED_ACTIONS],
 		preAuthorizedReviewReasons: [
@@ -2022,6 +2017,7 @@ async function buildValuePathDripProgress(args: {
 				process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 			),
 		}),
+		email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 		now,
 	})
 	return {
@@ -2068,6 +2064,7 @@ async function buildComputedGateDDripStatus(
 				process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 			),
 		}),
+		email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 		now,
 	})
 	const blocked = result.results.filter((item) => item.status === 'blocked')
@@ -2172,7 +2169,7 @@ function countByValues(values: readonly string[]) {
 }
 
 function isTerminalValuePathEmailResourceId(value: string) {
-	return value.endsWith('.email-6') || value.endsWith('.team-email-6')
+	return isTerminalSkillsWorkflowEmailResourceId(value)
 }
 
 function coversFullSkillsWorkflowPath(allowlist: GateDRuntimeAllowlist) {
@@ -2345,7 +2342,7 @@ async function fetchContactMatchesForSkillsSubscribers(
 			const emailResourceId = String(intent.metadata?.emailResourceId ?? '')
 			if (
 				isValuePathIntentCompleted(intent) &&
-				/(?:^|\.)(?:email-6|team-email-6)$/.test(emailResourceId)
+				isTerminalSkillsWorkflowEmailResourceId(emailResourceId)
 			) {
 				completedContactIds.add(intent.contactId)
 			}
