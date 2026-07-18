@@ -9,6 +9,7 @@ import type { ContactRecord, ContactState, SideEffectIntent } from './types'
 import { isValuePathIntentCompleted } from './value-path-completion'
 import { buildValuePathAnswerLinks } from './value-path-answer-links'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
+import { buildSkillsWorkflowValuePathCertificateUrl } from './value-path-certificates'
 import { AIH_COURSE_COMPLETED_AT_FIELD } from './value-path-finisher-capture'
 import {
 	DEFAULT_GATE_D_RETRY_POLICY,
@@ -394,7 +395,7 @@ export function buildValuePathEmailPersonalization(args: {
 	if (isTerminalSkillsWorkflowEmailResourceId(args.emailResourceId)) {
 		lifecycleFields[AIH_COURSE_COMPLETED_AT_FIELD] = now
 		lifecycleFields.aih_value_path_certificate_url =
-			buildValuePathCertificateUrl({
+			buildSkillsWorkflowValuePathCertificateUrl({
 				baseUrl: args.baseUrl!,
 				contactId: args.contactId,
 			})
@@ -481,16 +482,6 @@ function emailIdFromResourceId(resourceId?: string) {
 	if (!resourceId) return undefined
 	const [, emailId] = resourceId.split(/\.(.+)/)
 	return emailId
-}
-
-function buildValuePathCertificateUrl(args: {
-	baseUrl: string
-	contactId: string
-}) {
-	const url = new URL('/api/certificates', args.baseUrl)
-	url.searchParams.set('resource', 'value-path:ai-hero-skills-workflow')
-	url.searchParams.set('user', args.contactId)
-	return url.toString()
 }
 
 function expirationDateIso(now: string) {

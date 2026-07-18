@@ -2383,9 +2383,15 @@ describe('subscriber marketing value path foundation', () => {
 		})
 	})
 
-	it('keeps email-7 copy slots and finisher field wiring data-driven', () => {
-		const email7 = `<EmailPlan id="email-7" kitSequenceId="2831545"><Subject>[COPY SLOT]</Subject><Body>[BODY SLOT]</Body><CertificateLink href="{{ subscriber.aih_value_path_certificate_url }}">[CERTIFICATE LINK SLOT]</CertificateLink><Survey id="email-7-finisher-segment" type="segmentation"><Question>[QUESTION SLOT]</Question><Option value="placeholder-option-a">[OPTION A SLOT]</Option></Survey><WaitlistLine>[WAITLIST SLOT]</WaitlistLine></EmailPlan>`
-		const answer7 = `<AnswerPage id="email-7-finisher-segment.placeholder-option-a" emailId="email-7" surveyId="email-7-finisher-segment" optionValue="placeholder-option-a" captureFieldKey="aih_finisher_segment" captureDateFieldKey="aih_next_course_waitlist_at"><Headline>[HEADLINE SLOT]</Headline></AnswerPage>`
+	it('keeps the one-CTA email-7 copy and shared certificate-page variants data-driven', () => {
+		const certificateSlug = 'ai-hero-skills-workflow-certificate'
+		const email7 = `<EmailPlan id="email-7" kitSequenceId="2831545"><Subject>You finished. Here's your certificate.</Subject><Preview>All seven lessons done. One question for you.</Preview><Body>You did it. Seven lessons, start to finish. Most people never finish things like this. You did.</Body><Survey id="email-7-finisher-segment" type="segmentation"><Question>One question, then your certificate. What are you working toward right now?</Question><Option value="shipping">Shipping an AI product</Option><Option value="day-job">Getting better at my day job</Option><Option value="exploring">Just exploring for now</Option><Option value="other">Something else</Option></Survey><WaitlistLine>Click your answer and your certificate is on the other side. When the next crash course opens, you'll be the first to know.</WaitlistLine></EmailPlan>`
+		const answer7 = ['shipping', 'day-job', 'exploring', 'other']
+			.map(
+				(optionValue) =>
+					`<AnswerPage id="email-7-finisher-segment.${optionValue}" slug="${certificateSlug}" emailId="email-7" surveyId="email-7-finisher-segment" optionValue="${optionValue}" captureFieldKey="aih_finisher_segment" captureDateFieldKey="aih_next_course_waitlist_at"><Headline>${optionValue === 'other' ? 'Noted. Your certificate is below.' : `Noted: ${optionValue}`}</Headline></AnswerPage>`,
+			)
+			.join('')
 		const preview = previewValuePathContentImport({
 			individualSequenceMdx: individualSequence.replace(
 				'</EmailSequence>',
@@ -2401,44 +2407,100 @@ describe('subscriber marketing value path foundation', () => {
 		const email = preview.pages.find(
 			(page) => page.kind === 'email' && page.emailId === 'email-7',
 		)
-		const answer = preview.pages.find(
+		const other = preview.pages.find(
 			(page) =>
 				page.kind === 'answer' &&
 				page.emailId === 'email-7' &&
-				page.optionValue === 'placeholder-option-a',
+				page.optionValue === 'other',
 		)
 		expect(email).toMatchObject({
-			certificateLink: {
-				href: '{{ subscriber.aih_value_path_certificate_url }}',
-				label: '[CERTIFICATE LINK SLOT]',
-			},
-			waitlistLine: '[WAITLIST SLOT]',
+			body:
+				'You did it. Seven lessons, start to finish. Most people never finish things like this. You did.',
+			certificateLink: undefined,
+			waitlistLine:
+				"Click your answer and your certificate is on the other side. When the next crash course opens, you'll be the first to know.",
 			survey: {
-				question: '[QUESTION SLOT]',
+				question:
+					'One question, then your certificate. What are you working toward right now?',
 				options: [
-					{
-						value: 'placeholder-option-a',
-						label: '[OPTION A SLOT]',
-					},
+					{ value: 'shipping', label: 'Shipping an AI product' },
+					{ value: 'day-job', label: 'Getting better at my day job' },
+					{ value: 'exploring', label: 'Just exploring for now' },
+					{ value: 'other', label: 'Something else' },
 				],
 			},
 		})
-		expect(answer).toMatchObject({
+		expect(other).toMatchObject({
+			slug: certificateSlug,
+			headline: 'Noted. Your certificate is below.',
 			captureFieldKey: 'aih_finisher_segment',
 			captureDateFieldKey: 'aih_next_course_waitlist_at',
 		})
+		expect(preview.warnings).not.toContain(`duplicate-page-slug:${certificateSlug}`)
+		const qa = previewSkillsWorkflowValuePathQa({
+			preview,
+			individualSequenceMdx: individualSequence,
+			teamSequenceMdx: teamSequence,
+			baseUrl: 'https://www.aihero.dev',
+		})
 		expect(
-			buildValuePathContentResourcePlan(preview).resources.find(
+			qa.surveyOptions.find(
+				(option) =>
+					option.emailId === 'email-7' && option.optionValue === 'other',
+			)?.askLinkPreview,
+		).toBe(
+			'https://www.aihero.dev/ask/ai-hero-skills-workflow-certificate?answer=other&pt=<redacted-path-token>',
+		)
+		const plan = buildValuePathContentResourcePlan(preview)
+		expect(
+			plan.resources.find(
 				(resource) =>
 					resource.id ===
-					'ai-hero-skills-workflow.email-7-finisher-segment.placeholder-option-a',
+					'ai-hero-skills-workflow.email-7-finisher-segment.other',
 			),
 		).toMatchObject({
 			fields: {
+				optionValue: 'other',
+				position: expect.any(Number),
 				captureFieldKey: 'aih_finisher_segment',
 				captureDateFieldKey: 'aih_next_course_waitlist_at',
 			},
 		})
+		const roundTrippedVariants = plan.resources
+			.filter(
+				(resource) =>
+					resource.fields.emailId === 'email-7' &&
+					resource.fields.surveyId === 'email-7-finisher-segment',
+			)
+			.map(parseValuePathAnswerPageResource)
+			.filter((page) => Boolean(page))
+			.sort((left, right) => left!.fields.position! - right!.fields.position!)
+		expect(roundTrippedVariants.map((page) => page!.fields.position)).toEqual([
+			3, 4, 5, 6,
+		])
+		expect(roundTrippedVariants.map((page) => page!.fields.optionValue)).toEqual([
+			'shipping',
+			'day-job',
+			'exploring',
+			'other',
+		])
+
+		const duplicateVariant = `<AnswerPage id="email-7-finisher-segment.duplicate" slug="${certificateSlug}" emailId="email-7" surveyId="email-7-finisher-segment" optionValue="shipping" captureFieldKey="aih_finisher_segment" captureDateFieldKey="aih_next_course_waitlist_at"><Headline>Wrong duplicate.</Headline></AnswerPage>`
+		const duplicatePreview = previewValuePathContentImport({
+			individualSequenceMdx: individualSequence.replace(
+				'</EmailSequence>',
+				`${email7}</EmailSequence>`,
+			),
+			teamSequenceMdx: teamSequence,
+			individualAnswerPagesMdx: individualAnswers.replace(
+				'</AnswerPageSet>',
+				`${answer7}${duplicateVariant}</AnswerPageSet>`,
+			),
+			teamAnswerPagesMdx: teamAnswers,
+		})
+		expect(duplicatePreview.warnings).toContain(
+			'duplicate-answer-variant:ai-hero-skills-workflow:email-7:email-7-finisher-segment:shipping',
+		)
 	})
 
 	it('builds an operator QA preview with redacted ask links and share metadata', () => {

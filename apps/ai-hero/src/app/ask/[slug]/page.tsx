@@ -8,6 +8,10 @@ import { log } from '@/server/logger'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { verifyValuePathToken } from '@/lib/subscriber-marketing/path-token'
 import { getValuePathAnswerPageBySlug } from '@/lib/subscriber-marketing/value-path-answer-page'
+import {
+	buildSkillsWorkflowValuePathCertificateUrl,
+	checkSkillsWorkflowValuePathCertificateEligibility,
+} from '@/lib/subscriber-marketing/value-path-certificates'
 import { recordValuePathAnswerProgression } from '@/lib/subscriber-marketing/value-path-click-progression'
 import { parseExecutorList } from '@/lib/subscriber-marketing/value-path-email-executor'
 import {
@@ -17,19 +21,25 @@ import {
 
 export default async function ValuePathAnswerPage(props: {
 	params: Promise<{ slug: string }>
-	searchParams: Promise<{ pt?: string }>
+	searchParams: Promise<{ pt?: string; answer?: string }>
 }) {
 	const [{ slug }, searchParams] = await Promise.all([
 		props.params,
 		props.searchParams,
 	])
-	const answerPage = await getValuePathAnswerPageBySlug(slug)
-	if (!answerPage) notFound()
-
 	const token = verifyValuePathToken({
 		token: searchParams.pt,
 		secret: getPathTokenSecret(),
 	})
+	const answerPage = await getValuePathAnswerPageBySlug({
+		slug,
+		optionValue: searchParams.answer,
+		sequenceId: token.valid ? token.payload.sequenceId : undefined,
+		emailId: token.valid
+			? emailIdFromResourceId(token.payload.emailResourceId)
+			: undefined,
+	})
+	if (!answerPage) notFound()
 	if (!token.valid) {
 		await log.warn('value-path.ask.token_invalid', {
 			slug,
@@ -110,6 +120,25 @@ export default async function ValuePathAnswerPage(props: {
 		})
 	}
 
+	const isCertificateAnswer =
+		answerPage.fields.emailId === 'email-7' ||
+		answerPage.fields.emailId === 'team-email-7'
+	const answerAccepted =
+		progression?.status === 'recorded' ||
+		progression?.status === 'idempotent-noop'
+	const certificateEligibility =
+		isCertificateAnswer && token.valid && answerAccepted
+			? await checkSkillsWorkflowValuePathCertificateEligibility({
+					contactId: token.payload.contactId,
+				})
+			: undefined
+	const certificateUrl =
+		certificateEligibility?.eligible && certificateEligibility.contactId
+			? buildSkillsWorkflowValuePathCertificateUrl({
+					contactId: certificateEligibility.contactId,
+				})
+			: undefined
+
 	return (
 		<main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-6 py-16 text-white">
 			<div className="space-y-3">
@@ -141,6 +170,42 @@ export default async function ValuePathAnswerPage(props: {
 				</p>
 			) : null}
 
+			{isCertificateAnswer ? (
+				!token.valid ? (
+					<section
+						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
+						data-value-path-certificate="identity-unavailable"
+					>
+						Open the signed link from your course email to get your certificate.
+					</section>
+				) : !answerAccepted ? (
+					<section
+						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
+						data-value-path-certificate="answer-not-recorded"
+					>
+						We could not save your answer. Open the link again in a moment.
+					</section>
+				) : certificateUrl ? (
+					<section data-value-path-certificate="available">
+						<a
+							className="inline-flex min-h-12 items-center justify-center bg-cyan-300 px-6 py-3 text-base font-semibold text-slate-950 transition hover:bg-cyan-200"
+							href={certificateUrl}
+							target="_blank"
+							rel="noreferrer"
+						>
+							Get your certificate
+						</a>
+					</section>
+				) : (
+					<section
+						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
+						data-value-path-certificate="ineligible"
+					>
+						Your certificate unlocks after you complete the full Skills Workflow.
+					</section>
+				)
+			) : null}
+
 			{token.valid ? (
 				<p
 					className="sr-only"
@@ -156,6 +221,11 @@ export default async function ValuePathAnswerPage(props: {
 			)}
 		</main>
 	)
+}
+
+function emailIdFromResourceId(resourceId: string) {
+	const [, emailId] = resourceId.split(/\.(.+)/)
+	return emailId
 }
 
 function getPathTokenSecret() {

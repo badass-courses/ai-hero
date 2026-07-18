@@ -9,14 +9,14 @@ import {
 const now = '2026-07-18T04:30:00.000Z'
 
 describe('value path finisher capture', () => {
-	it('writes the selected segment and waitlist date through one bounded provider call', async () => {
+	it('writes the other escape hatch and waitlist date through one bounded provider call', async () => {
 		const updateSubscriberFields = vi.fn().mockResolvedValue({ id: 'kit-1' })
 		const result = await captureValuePathFinisherFields({
 			provider: { updateSubscriberFields },
 			mode: 'scoped-live',
 			email: 'learner@example.com',
 			kitSubscriberId: 'kit-1',
-			optionValue: 'placeholder-option-a',
+			optionValue: 'other',
 			captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
 			captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
 			now,
@@ -24,7 +24,7 @@ describe('value path finisher capture', () => {
 		expect(result).toEqual({
 			status: 'written',
 			fields: {
-				aih_finisher_segment: 'placeholder-option-a',
+				aih_finisher_segment: 'other',
 				aih_next_course_waitlist_at: now,
 			},
 		})
@@ -33,7 +33,7 @@ describe('value path finisher capture', () => {
 			subscriberId: 'kit-1',
 			subscriberEmail: 'learner@example.com',
 			fields: {
-				aih_finisher_segment: 'placeholder-option-a',
+				aih_finisher_segment: 'other',
 				aih_next_course_waitlist_at: now,
 			},
 		})

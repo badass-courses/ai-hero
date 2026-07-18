@@ -2,6 +2,9 @@ import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 
+export const SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG =
+	'ai-hero-skills-workflow-certificate'
+
 export type ValuePathAnswerPageResource = {
 	id: string
 	type: 'value-path-page'
@@ -18,6 +21,7 @@ export type ValuePathAnswerPageResource = {
 		surveyId?: string
 		optionValue?: string
 		result?: string
+		position?: number
 		nextSequenceId?: string
 		nextEmailId?: string
 		nextEmailResourceId?: string
@@ -58,6 +62,7 @@ export function parseValuePathAnswerPageResource(
 			surveyId: stringField(fields.surveyId),
 			optionValue: stringField(fields.optionValue),
 			result: stringField(fields.result),
+			position: numberField(fields.position),
 			nextSequenceId: stringField(fields.nextSequenceId),
 			nextEmailId: stringField(fields.nextEmailId),
 			nextEmailResourceId: stringField(fields.nextEmailResourceId),
@@ -68,15 +73,43 @@ export function parseValuePathAnswerPageResource(
 	}
 }
 
-export async function getValuePathAnswerPageBySlug(slug: string) {
-	const resource = await db.query.contentResource.findFirst({
+export async function getValuePathAnswerPageBySlug(input: {
+	slug: string
+	optionValue?: string
+	sequenceId?: string
+	emailId?: string
+}) {
+	const resources = await db.query.contentResource.findMany({
 		where: and(
 			eq(contentResource.type, 'value-path-page'),
 			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.kind")`, 'answer'),
-			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`, slug),
+			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`, input.slug),
 		),
 	})
-	return parseValuePathAnswerPageResource(resource)
+	return selectValuePathAnswerPageVariant(
+		resources
+			.map(parseValuePathAnswerPageResource)
+			.filter((page): page is ValuePathAnswerPageResource => Boolean(page)),
+		input,
+	)
+}
+
+export function selectValuePathAnswerPageVariant(
+	pages: ValuePathAnswerPageResource[],
+	input: {
+		optionValue?: string
+		sequenceId?: string
+		emailId?: string
+	},
+) {
+	const matching = pages.filter(
+		(page) =>
+			(!input.optionValue || page.fields.optionValue === input.optionValue) &&
+			(!input.sequenceId || page.fields.sequenceId === input.sequenceId) &&
+			(!input.emailId || page.fields.emailId === input.emailId),
+	)
+
+	return matching.length === 1 ? matching[0] : undefined
 }
 
 export async function getValuePathAnswerPages() {
@@ -93,4 +126,8 @@ export async function getValuePathAnswerPages() {
 
 function stringField(value: unknown) {
 	return typeof value === 'string' ? value : undefined
+}
+
+function numberField(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }

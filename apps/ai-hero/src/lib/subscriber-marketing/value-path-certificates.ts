@@ -7,6 +7,20 @@ import { valuePathIntentCompletedAt } from './value-path-completion'
 export const SKILLS_WORKFLOW_CERTIFICATE_RESOURCE =
 	'value-path:ai-hero-skills-workflow'
 
+export function buildSkillsWorkflowValuePathCertificateUrl(input: {
+	contactId: string
+	baseUrl?: string
+}) {
+	const path = '/api/certificates'
+	const params = new URLSearchParams({
+		resource: SKILLS_WORKFLOW_CERTIFICATE_RESOURCE,
+		user: input.contactId,
+	})
+	return input.baseUrl
+		? new URL(`${path}?${params}`, input.baseUrl).toString()
+		: `${path}?${params}`
+}
+
 export type ValuePathCertificateEligibility = {
 	eligible: boolean
 	resourceIdOrSlug: typeof SKILLS_WORKFLOW_CERTIFICATE_RESOURCE

@@ -184,6 +184,7 @@ function answerToResource(
 			surveyId: page.surveyId,
 			optionValue: page.optionValue,
 			result: page.result,
+			position: page.position,
 			headline: page.headline,
 			body: page.body,
 			takeaway: page.takeaway,
