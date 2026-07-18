@@ -323,7 +323,7 @@ describe('learner flow induced-failure drill', () => {
 							current: {
 								alarms: [
 									{
-										id: 'learner-flow-drip-zero-plan-while-starved',
+										id: 'learner-flow-drip-fixture-zero-plan',
 										observedAt: '2026-07-18T01:30:00.000Z',
 									},
 								],
@@ -345,7 +345,7 @@ describe('learner flow induced-failure drill', () => {
 			identicalRunStreak: 1,
 			alarms: [
 				{
-					id: 'learner-flow-drip-zero-plan-while-starved',
+					id: 'learner-flow-drip-fixture-zero-plan',
 					observedAt: '2026-07-18T01:30:00.000Z',
 				},
 			],
@@ -382,8 +382,9 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T03:00:10.000Z',
 						payload: {
-							zeroPlanWhileStarved: true,
-							planned: 0,
+							zeroPlanWhileStarved: false,
+							planned: 9,
+							served: 9,
 							suppressedFixtureStarved: 3,
 						},
 					},
@@ -392,26 +393,38 @@ describe('learner flow induced-failure drill', () => {
 					capturedAt: '2026-07-18T03:01:00.000Z',
 					alarms: [
 						{
-							id: 'learner-flow-drip-zero-plan-while-starved',
+							id: 'learner-flow-drip-fixture-zero-plan',
 							observedAt: '2026-07-18T03:00:10.000Z',
 						},
 					],
 					dripObservedAt: '2026-07-18T03:00:10.000Z',
-					identicalRunStreak: 1,
+					identicalRunStreak: 0,
 				},
 			},
 			{
-				runs: [],
+				runs: [
+					'2026-07-18T03:00:10.000Z',
+					'2026-07-18T04:00:10.000Z',
+					'2026-07-18T05:00:10.000Z',
+					'2026-07-18T06:00:10.000Z',
+				].map((observedAt) => ({
+					observedAt,
+					payload: {
+						planned: 9,
+						served: 9,
+						suppressedFixtureStarved: 3,
+					},
+				})),
 				pulse: {
 					capturedAt: '2026-07-18T06:01:00.000Z',
 					alarms: [
 						{
-							id: 'learner-flow-drip-identical-payloads',
+							id: 'learner-flow-drip-fixture-identical-payloads',
 							observedAt: '2026-07-18T06:00:10.000Z',
 						},
 					],
 					dripObservedAt: '2026-07-18T06:00:10.000Z',
-					identicalRunStreak: 4,
+					identicalRunStreak: 0,
 				},
 			},
 			{
@@ -427,6 +440,7 @@ describe('learner flow induced-failure drill', () => {
 			},
 		]
 		const phases: string[] = []
+		const receiptBodies = new Map<string, Record<string, unknown>>()
 		const readbackCalls = { drift: 0, zombie: 0 }
 		let currentTime = now
 		const result = await runLearnerFlowDrill({
@@ -462,8 +476,9 @@ describe('learner flow induced-failure drill', () => {
 							: undefined,
 					}))
 				},
-				writeReceipt: async (phase) => {
+				writeReceipt: async (phase, body) => {
 					phases.push(phase)
+					receiptBodies.set(phase, body)
 					return `/receipts/${phase}.json`
 				},
 				sleep: async () => undefined,
@@ -483,6 +498,25 @@ describe('learner flow induced-failure drill', () => {
 			'cleanup',
 		])
 		expect(repository.contacts.size).toBe(0)
+		expect(receiptBodies.get('zombie-zero-plan-detected')).toMatchObject({
+			pulseInvocationAt: '2026-07-18T03:01:00.000Z',
+			alarmProofContract: {
+				aggregateIncidentBacktest: {
+					incidentDate: '2026-07-16',
+					pulseCommit: '96143a17',
+				},
+				busyNightRationaleReceipt:
+					'.brain/data/learner-flow/receipts/2026-07-18t05-37-18-000z-learner-flow-drill-zombie-alarm-gate-analysis.json',
+			},
+		})
+		expect(
+			receiptBodies.get('zombie-identical-payload-detected'),
+		).toMatchObject({
+			pulseInvocationAt: '2026-07-18T06:01:00.000Z',
+			pulseAlarmEvidence: {
+				id: 'learner-flow-drip-fixture-identical-payloads',
+			},
+		})
 	})
 
 	it('cleans persisted drill fixtures when observation fails', async () => {

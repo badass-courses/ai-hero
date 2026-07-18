@@ -9,6 +9,22 @@ import {
 	type LearnerFlowDrillScenario,
 } from './learner-flow-drill'
 
+const zombieAlarmProofContract = {
+	subsetAlarmIds: {
+		zeroPlan: 'learner-flow-drip-fixture-zero-plan',
+		identicalPayloads: 'learner-flow-drip-fixture-identical-payloads',
+	},
+	aggregateIncidentBacktest: {
+		incidentDate: '2026-07-16',
+		proof:
+			'the production Pulse backtest proves the aggregate zero-plan and identical-payload alarms against the real incident payloads',
+		pulseCommit: '96143a17',
+		testPath: 'tools/aih-pulse/src/liveness.test.ts',
+	},
+	busyNightRationaleReceipt:
+		'.brain/data/learner-flow/receipts/2026-07-18t05-37-18-000z-learner-flow-drill-zombie-alarm-gate-analysis.json',
+} as const
+
 export type LearnerFlowDrillReconcilerRun = {
 	observedAt: string
 	payload: Record<string, unknown>
@@ -206,6 +222,7 @@ export async function runLearnerFlowDrill(args: {
 					suppressionExpiresAt,
 					suppressionMechanism:
 						'reconciler suppression requires the synthetic badass.dev email namespace, the drill-zombie-v1 fixture-id prefix, active drill metadata, and an unexpired per-fixture timestamp',
+					alarmProofContract: zombieAlarmProofContract,
 					fixtures: zombieFixtures,
 					fixtureReadbacks: zombieInducedReadbacks,
 				}),
@@ -219,14 +236,13 @@ export async function runLearnerFlowDrill(args: {
 				predicate: (observation) => {
 					const run = observation.runs.find(
 						(item) =>
-							item.payload.zeroPlanWhileStarved === true &&
-							numberField(item.payload.planned) === 0 &&
+							item.observedAt >= inducedAt &&
 							numberField(item.payload.suppressedFixtureStarved) >=
 								zombieFixtures.length,
 					)
 					const alarm = observation.pulse?.alarms.find(
 						(item) =>
-							item.id === 'learner-flow-drip-zero-plan-while-starved' &&
+							item.id === zombieAlarmProofContract.subsetAlarmIds.zeroPlan &&
 							item.observedAt === run?.observedAt,
 					)
 					return run &&
@@ -244,7 +260,9 @@ export async function runLearnerFlowDrill(args: {
 					inducedAt,
 					detectedAt: zeroPlan.run.observedAt,
 					reconcilerReceiptEvidence: zeroPlan.run,
+					pulseInvocationAt: zeroPlan.observation.pulse?.capturedAt,
 					pulseAlarmEvidence: zeroPlan.alarm,
+					alarmProofContract: zombieAlarmProofContract,
 				}),
 			)
 			actor.send({ type: 'ZERO_PLAN_DETECTED' })
@@ -257,14 +275,25 @@ export async function runLearnerFlowDrill(args: {
 				predicate: (observation) => {
 					const alarm = observation.pulse?.alarms.find(
 						(item) =>
-							item.id === 'learner-flow-drip-identical-payloads' &&
+							item.id ===
+								zombieAlarmProofContract.subsetAlarmIds.identicalPayloads &&
 							typeof item.observedAt === 'string' &&
 							item.observedAt === observation.pulse?.dripObservedAt &&
 							item.observedAt >= inducedAt,
 					)
-					return alarm &&
-						(observation.pulse?.identicalRunStreak ?? 0) >= 4
-						? { observation, alarm }
+					const postInductionSuppressedRuns = observation.runs.filter(
+						(item) =>
+							item.observedAt >= inducedAt &&
+							numberField(item.payload.suppressedFixtureStarved) >=
+								zombieFixtures.length,
+					)
+					return alarm && postInductionSuppressedRuns.length >= 4
+						? {
+								observation,
+								alarm,
+								postInductionSuppressedRuns:
+									postInductionSuppressedRuns.slice(-4),
+							}
 						: undefined
 				},
 			})
@@ -277,10 +306,12 @@ export async function runLearnerFlowDrill(args: {
 						phase: 'zombie-identical-payload-detected',
 						inducedAt,
 						detectedAt: identical.alarm.observedAt,
+						pulseInvocationAt: identical.observation.pulse?.capturedAt,
 						pulseAlarmEvidence: identical.alarm,
 						pulseEvidence: identical.observation.pulse,
+						alarmProofContract: zombieAlarmProofContract,
 						reconcilerReceiptEvidence:
-							identical.observation.runs.slice(-4),
+							identical.postInductionSuppressedRuns,
 					},
 				),
 			)
@@ -320,6 +351,7 @@ export async function runLearnerFlowDrill(args: {
 					healedAt: healed.run.observedAt,
 					reconcilerReceiptEvidence: healed.run,
 					fixtureReadbacks: healed.readbacks,
+					alarmProofContract: zombieAlarmProofContract,
 				}),
 			)
 			actor.send({ type: 'ZOMBIE_HEALED' })
