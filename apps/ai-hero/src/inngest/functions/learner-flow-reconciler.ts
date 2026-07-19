@@ -28,7 +28,13 @@ export const learnerFlowReconciler = inngest.createFunction(
 		// retry guard inside the run; this guard stops overlapping plans.
 		concurrency: 1,
 	},
-	{ cron: '0 * * * *' },
+	[
+		{ cron: '0 * * * *' },
+		// Operator lever: fire one reconcile on demand without waiting for the
+		// top of the hour. Concurrency 1 above still serializes it against the
+		// cron, and intent idempotency keeps a double-fire harmless.
+		{ event: 'subscriber_funnel.reconciler_run_requested' },
+	],
 	async ({ step }) => {
 		const allowlistDecision = await step.run('read-gate-d-allowlist', () =>
 			readActiveGateDRuntimeAllowlist({ redis }),

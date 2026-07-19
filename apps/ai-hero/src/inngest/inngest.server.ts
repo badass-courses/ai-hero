@@ -225,6 +225,10 @@ export type Events = {
 	[ARTWORK_FAL_COMPLETED_EVENT]: ArtworkFalCompleted
 	[ARTWORK_GENERATION_FAILED_EVENT]: ArtworkGenerationFailed
 	[VALUE_PATH_ANSWER_SELECTED_EVENT]: ValuePathAnswerSelected
+	// Operator lever: fire one learner-flow reconcile outside the hourly cron.
+	'subscriber_funnel.reconciler_run_requested': {
+		data: { requestedBy?: string; reason?: string }
+	}
 }
 
 const callbackBase =
