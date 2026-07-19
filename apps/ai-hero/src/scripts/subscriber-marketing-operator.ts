@@ -14,6 +14,7 @@ import {
 	providerIdentity,
 	sideEffectIntent,
 	stateTransition,
+	valuePathCertificateShare,
 } from '@/db/schema'
 import { captureFrontQuickQuestionCsv } from '@/lib/subscriber-marketing/capture-front-quick-question-csv'
 import { captureFrontQuickQuestion } from '@/lib/subscriber-marketing/capture-quick-question'
@@ -3103,6 +3104,9 @@ async function createLearnerFlowCanaryRepository(): Promise<
 		deleteLearnerFlowFixtureContact: async (contactId: string) => {
 			await db.transaction(async (transaction) => {
 				await transaction
+					.delete(valuePathCertificateShare)
+					.where(eq(valuePathCertificateShare.contactId, contactId))
+				await transaction
 					.delete(googleAdsSignupConversionUpload)
 					.where(eq(googleAdsSignupConversionUpload.contactId, contactId))
 				await transaction
@@ -3146,6 +3150,7 @@ async function readLearnerFlowFixtureResidue(
 		sideEffectIntents,
 		contactLinks,
 		conversionUploads,
+		certificateShares,
 	] = await Promise.all([
 		countRows(contact, eq(contact.id, contactId)),
 		countRows(contactState, eq(contactState.contactId, contactId)),
@@ -3159,6 +3164,10 @@ async function readLearnerFlowFixtureResidue(
 			googleAdsSignupConversionUpload,
 			eq(googleAdsSignupConversionUpload.contactId, contactId),
 		),
+		countRows(
+			valuePathCertificateShare,
+			eq(valuePathCertificateShare.contactId, contactId),
+		),
 	])
 	return {
 		contacts,
@@ -3170,6 +3179,7 @@ async function readLearnerFlowFixtureResidue(
 		sideEffectIntents,
 		contactLinks,
 		conversionUploads,
+		certificateShares,
 		total:
 			contacts +
 			contactStates +
@@ -3179,7 +3189,8 @@ async function readLearnerFlowFixtureResidue(
 			nextActions +
 			sideEffectIntents +
 			contactLinks +
-			conversionUploads,
+			conversionUploads +
+			certificateShares,
 	}
 }
 

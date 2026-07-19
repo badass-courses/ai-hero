@@ -29,6 +29,7 @@ export type LearnerFlowCanaryResidue = {
 	sideEffectIntents: number
 	contactLinks: number
 	conversionUploads: number
+	certificateShares: number
 	total: number
 }
 
@@ -441,6 +442,7 @@ function emptyResidue(): LearnerFlowCanaryResidue {
 		sideEffectIntents: 0,
 		contactLinks: 0,
 		conversionUploads: 0,
+		certificateShares: 0,
 		total: 0,
 	}
 }
@@ -457,6 +459,7 @@ function sumResidue(items: LearnerFlowCanaryResidue[]): LearnerFlowCanaryResidue
 			sideEffectIntents: total.sideEffectIntents + item.sideEffectIntents,
 			contactLinks: total.contactLinks + item.contactLinks,
 			conversionUploads: total.conversionUploads + item.conversionUploads,
+			certificateShares: total.certificateShares + item.certificateShares,
 			total: total.total + item.total,
 		}),
 		emptyResidue(),

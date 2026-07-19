@@ -472,6 +472,33 @@ export const sideEffectIntent = mysqlTable(
 	}),
 )
 
+export const valuePathCertificateShare = mysqlTable(
+	'ValuePathCertificateShare',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		slug: varchar('slug', { length: 64 }).notNull(),
+		contactId: varchar('contactId', { length: 255 }).notNull(),
+		resourceId: varchar('resourceId', { length: 255 }).notNull(),
+		learnerName: varchar('learnerName', { length: 255 }).notNull(),
+		courseName: varchar('courseName', { length: 255 }).notNull(),
+		completedAt: timestamp('completedAt', { fsp: 3 }).notNull(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		slugUq: uniqueIndex('ValuePathCertificateShare_slug_uq').on(table.slug),
+		contactResourceUq: uniqueIndex(
+			'ValuePathCertificateShare_contact_resource_uq',
+		).on(table.contactId, table.resourceId),
+		contactIdIdx: index('ValuePathCertificateShare_contactId_idx').on(
+			table.contactId,
+		),
+	}),
+)
+
 export const googleAdsConversionUpload = mysqlTable(
 	'GoogleAdsConversionUpload',
 	{

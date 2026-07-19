@@ -14,6 +14,7 @@ import {
 	checkSkillsWorkflowValuePathCertificateEligibility,
 	isSkillsWorkflowCertificateResource,
 } from '@/lib/subscriber-marketing/value-path-certificates'
+import { getPublicSkillsWorkflowCertificateShare } from '@/lib/subscriber-marketing/value-path-certificate-shares'
 import { format } from 'date-fns'
 import { and, eq, or, sql } from 'drizzle-orm'
 
@@ -25,19 +26,26 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
+		const shareSlug = searchParams.get('share')
+		const publicShare = shareSlug
+			? await getPublicSkillsWorkflowCertificateShare(shareSlug)
+			: null
+		if (shareSlug && !publicShare) {
+			return new Response(JSON.stringify({ error: 'Certificate not found' }), {
+				status: 404,
+				headers: { 'Content-Type': 'application/json' },
+			})
+		}
 
-		const hasResource = searchParams.has('resource')
-		const resourceSlugOrID = hasResource ? searchParams.get('resource') : null
-		if (!resourceSlugOrID) {
+		const resourceSlugOrID = searchParams.get('resource')
+		if (!publicShare && !resourceSlugOrID) {
 			return new Response(JSON.stringify({ error: 'Missing resource' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' },
 			})
 		}
-		const hasUser = searchParams.has('user')
-		const userId = hasUser ? searchParams.get('user') : null
-
-		if (!userId) {
+		const userId = searchParams.get('user')
+		if (!publicShare && !userId) {
 			return new Response(JSON.stringify({ error: 'Missing user' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' },
@@ -45,33 +53,42 @@ export async function GET(request: Request) {
 		}
 
 		const valuePathCertificate =
-			isSkillsWorkflowCertificateResource(resourceSlugOrID)
-		const resource = valuePathCertificate
-			? null
-			: await db.query.contentResource.findFirst({
-					where: and(
-						or(
-							eq(
-								sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
-								resourceSlugOrID,
+			!publicShare &&
+			Boolean(
+				resourceSlugOrID &&
+					isSkillsWorkflowCertificateResource(resourceSlugOrID),
+			)
+		const resource =
+			publicShare || valuePathCertificate || !resourceSlugOrID
+				? null
+				: await db.query.contentResource.findFirst({
+						where: and(
+							or(
+								eq(
+									sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
+									resourceSlugOrID,
+								),
+								eq(contentResource.id, resourceSlugOrID),
 							),
-							eq(contentResource.id, resourceSlugOrID),
 						),
-					),
-				})
+					})
 
-		if (!resource && !valuePathCertificate) {
+		if (!publicShare && !resource && !valuePathCertificate) {
 			return new Response(JSON.stringify({ error: 'Resource not found' }), {
 				status: 404,
 				headers: { 'Content-Type': 'application/json' },
 			})
 		}
 
-		let isEligible = false
-		let completedAt: Date | null | undefined = null
-		let certificateTitle = resource?.fields?.title
-		let certificateKind = resource?.type === 'cohort' ? 'Cohort' : 'Workshop'
-		let certificateName: string | null | undefined = null
+		let isEligible = Boolean(publicShare)
+		let completedAt: Date | null | undefined = publicShare?.completedAt
+		let certificateTitle = publicShare?.courseName ?? resource?.fields?.title
+		let certificateKind = publicShare
+			? 'Course'
+			: resource?.type === 'cohort'
+				? 'Cohort'
+				: 'Workshop'
+		let certificateName: string | null | undefined = publicShare?.learnerName
 
 		if (valuePathCertificate) {
 			const eligibility =
@@ -83,12 +100,12 @@ export async function GET(request: Request) {
 			certificateTitle = 'AI Hero Skills Workflow'
 			certificateKind = 'Course'
 			certificateName = eligibility.learnerName || eligibility.learnerEmail
-		} else if (resource?.type === 'cohort') {
+		} else if (!publicShare && resource?.type === 'cohort' && userId) {
 			const { hasCompletedCohort, date } =
 				await checkCohortCertificateEligibility(resource.id, userId)
 			isEligible = hasCompletedCohort
 			completedAt = date
-		} else {
+		} else if (!publicShare && resourceSlugOrID && userId) {
 			const { hasCompletedModule, date } = await checkCertificateEligibility(
 				resourceSlugOrID,
 				userId,
@@ -107,13 +124,14 @@ export async function GET(request: Request) {
 			)
 		}
 
-		const user = valuePathCertificate
-			? null
-			: await db.query.users.findFirst({
-					where: or(eq(users.id, userId), eq(users.email, userId)),
-				})
+		const user =
+			publicShare || valuePathCertificate || !userId
+				? null
+				: await db.query.users.findFirst({
+						where: or(eq(users.id, userId), eq(users.email, userId)),
+					})
 
-		if (!user && !valuePathCertificate) {
+		if (!user && !publicShare && !valuePathCertificate) {
 			return new Response(JSON.stringify({ error: 'User not found' }), {
 				status: 404,
 				headers: { 'Content-Type': 'application/json' },
@@ -192,6 +210,12 @@ export async function GET(request: Request) {
 			{
 				width: 842 * 2,
 				height: 595 * 2,
+				headers:
+					publicShare && searchParams.get('download') === '1'
+						? {
+								'Content-Disposition': `attachment; filename="${certificateFilename(publicShare.learnerName)}"`,
+							}
+						: undefined,
 				fonts: [
 					{
 						name: 'Maison',
@@ -211,4 +235,12 @@ export async function GET(request: Request) {
 			},
 		)
 	}
+}
+
+function certificateFilename(learnerName: string) {
+	const safeName = learnerName
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-|-$/g, '')
+	return `${safeName || 'ai-hero'}-skills-workflow-certificate.png`
 }

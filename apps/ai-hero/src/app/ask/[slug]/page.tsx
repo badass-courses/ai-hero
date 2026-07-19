@@ -1,4 +1,6 @@
+import Image from 'next/image'
 import { notFound } from 'next/navigation'
+import LayoutClient from '@/components/layout-client'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { VALUE_PATH_ANSWER_SELECTED_EVENT } from '@/inngest/events/value-path'
@@ -8,16 +10,22 @@ import { log } from '@/server/logger'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { verifyValuePathToken } from '@/lib/subscriber-marketing/path-token'
 import { getValuePathAnswerPageBySlug } from '@/lib/subscriber-marketing/value-path-answer-page'
+import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
 import {
-	buildSkillsWorkflowValuePathCertificateUrl,
-	checkSkillsWorkflowValuePathCertificateEligibility,
-} from '@/lib/subscriber-marketing/value-path-certificates'
+	buildSkillsWorkflowCertificateShareImageUrl,
+	buildSkillsWorkflowCertificateShareUrl,
+	ensureSkillsWorkflowCertificateShare,
+	SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME,
+} from '@/lib/subscriber-marketing/value-path-certificate-shares'
 import { recordValuePathAnswerProgression } from '@/lib/subscriber-marketing/value-path-click-progression'
 import { parseExecutorList } from '@/lib/subscriber-marketing/value-path-email-executor'
 import {
 	readActiveGateDRuntimeAllowlist,
 	resolveGateDPreAuthorizedReviewReasons,
 } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
+import { Download } from 'lucide-react'
+
+import { CertificateShareActions } from './certificate-share-actions'
 
 export default async function ValuePathAnswerPage(props: {
 	params: Promise<{ slug: string }>
@@ -132,12 +140,51 @@ export default async function ValuePathAnswerPage(props: {
 					contactId: token.payload.contactId,
 				})
 			: undefined
-	const certificateUrl =
-		certificateEligibility?.eligible && certificateEligibility.contactId
-			? buildSkillsWorkflowValuePathCertificateUrl({
-					contactId: certificateEligibility.contactId,
-				})
-			: undefined
+	const certificateShareResult = certificateEligibility?.eligible
+		? await ensureSkillsWorkflowCertificateShare({
+				eligibility: certificateEligibility,
+			}).catch(() => ({
+				available: false as const,
+				reason: 'share-persistence-failed',
+			}))
+		: undefined
+	const certificateShare = certificateShareResult?.available
+		? certificateShareResult.share
+		: undefined
+
+	if (certificateEligibility?.eligible && !certificateShare) {
+		await log.warn('value-path.certificate.share_unavailable', {
+			slug,
+			contactId: certificateEligibility.contactId,
+			reason:
+				certificateShareResult && !certificateShareResult.available
+					? certificateShareResult.reason
+					: 'share-not-created',
+		})
+	}
+
+	if (isCertificateAnswer && token.valid && answerAccepted && certificateShare) {
+		const baseUrl = process.env.NEXT_PUBLIC_URL ?? 'https://www.aihero.dev'
+		return (
+			<CertificateTrophyPage
+				answerPage={answerPage}
+				certificateImageUrl={buildSkillsWorkflowCertificateShareImageUrl({
+					slug: certificateShare.slug,
+				})}
+				downloadUrl={buildSkillsWorkflowCertificateShareImageUrl({
+					slug: certificateShare.slug,
+					download: true,
+				})}
+				learnerName={certificateShare.learnerName}
+				permalink={buildSkillsWorkflowCertificateShareUrl({
+					slug: certificateShare.slug,
+					baseUrl,
+				})}
+				progressionStatus={progression?.status}
+				valuePathSlug={token.payload.valuePathResourceId}
+			/>
+		)
+	}
 
 	return (
 		<main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-6 py-16 text-white">
@@ -185,16 +232,12 @@ export default async function ValuePathAnswerPage(props: {
 					>
 						We could not save your answer. Open the link again in a moment.
 					</section>
-				) : certificateUrl ? (
-					<section data-value-path-certificate="available">
-						<a
-							className="inline-flex min-h-12 items-center justify-center bg-cyan-300 px-6 py-3 text-base font-semibold text-slate-950 transition hover:bg-cyan-200"
-							href={certificateUrl}
-							target="_blank"
-							rel="noreferrer"
-						>
-							Get your certificate
-						</a>
+				) : certificateEligibility?.eligible ? (
+					<section
+						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
+						data-value-path-certificate="share-unavailable"
+					>
+						Your certificate is ready, but the share page could not load. Open this link again in a moment.
 					</section>
 				) : (
 					<section
@@ -220,6 +263,119 @@ export default async function ValuePathAnswerPage(props: {
 				</p>
 			)}
 		</main>
+	)
+}
+
+function CertificateTrophyPage({
+	answerPage,
+	certificateImageUrl,
+	downloadUrl,
+	learnerName,
+	permalink,
+	progressionStatus,
+	valuePathSlug,
+}: {
+	answerPage: NonNullable<
+		Awaited<ReturnType<typeof getValuePathAnswerPageBySlug>>
+	>
+	certificateImageUrl: string
+	downloadUrl: string
+	learnerName: string
+	permalink: string
+	progressionStatus?: string
+	valuePathSlug: string
+}) {
+	return (
+		<LayoutClient
+			withContainer
+			withNavigation={false}
+			withFooter={false}
+			className="min-h-screen"
+		>
+			<main className="bg-background text-foreground min-h-screen">
+				<section className="border-border border-b">
+					<div className="px-8 py-16 sm:px-16 md:py-24 lg:px-24">
+						<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+							Certificate of completion
+						</p>
+						<h1 className="mt-4 max-w-4xl text-balance text-4xl font-medium leading-tight tracking-tight sm:text-5xl lg:text-6xl">
+							You finished the AI Hero Skills Workflow.
+						</h1>
+					</div>
+				</section>
+
+				<section
+					className="border-border border-b"
+					data-value-path-certificate="available"
+				>
+					<div className="px-4 py-16 sm:px-8 md:py-24 lg:px-16">
+						<div className="border-border bg-card border p-1 sm:p-2">
+							<Image
+								alt={`${learnerName}'s ${SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME} certificate`}
+								className="h-auto w-full"
+								height={1190}
+								priority
+								src={certificateImageUrl}
+								unoptimized
+								width={1684}
+							/>
+						</div>
+						<div className="mt-4 flex justify-end">
+							<a
+								className="focus-visible:ring-ring focus-visible:ring-offset-background inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background px-4 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+								download
+								href={downloadUrl}
+							>
+								<Download aria-hidden="true" className="size-4" />
+								Download PNG
+							</a>
+						</div>
+					</div>
+				</section>
+
+				<section>
+					<div className="grid gap-8 px-8 py-16 sm:px-16 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24 lg:px-24">
+						<div>
+							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+								Share the work
+							</p>
+						</div>
+						<div className="max-w-[70ch] space-y-6">
+							<p className="text-xl font-medium leading-relaxed tracking-tight sm:text-2xl">
+								{answerPage.fields.headline ?? 'Noted. Your certificate is ready.'}
+							</p>
+							{answerPage.fields.body ? (
+								<p className="text-base leading-relaxed opacity-80 sm:text-lg">
+									{answerPage.fields.body}
+								</p>
+							) : null}
+							{answerPage.fields.takeaway ? (
+								<p className="text-base leading-relaxed opacity-80 sm:text-lg">
+									{answerPage.fields.takeaway}
+								</p>
+							) : null}
+							{answerPage.fields.nextNotice ? (
+								<p className="text-muted-foreground text-base leading-relaxed sm:text-lg">
+									{answerPage.fields.nextNotice}
+								</p>
+							) : null}
+							<CertificateShareActions
+								courseName={SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME}
+								permalink={permalink}
+							/>
+						</div>
+					</div>
+				</section>
+
+				<p
+					className="sr-only"
+					data-value-path-token="valid"
+					data-value-path-progression={progressionStatus}
+				>
+					Path token verified for {valuePathSlug}.
+				</p>
+			</main>
+		</LayoutClient>
 	)
 }
 

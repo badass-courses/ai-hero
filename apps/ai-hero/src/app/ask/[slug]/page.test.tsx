@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	readActiveGateDRuntimeAllowlist: vi.fn(),
 	resolveGateDPreAuthorizedReviewReasons: vi.fn(() => []),
 	checkSkillsWorkflowValuePathCertificateEligibility: vi.fn(),
+	ensureSkillsWorkflowCertificateShare: vi.fn(),
 	inngestSend: vi.fn(),
 	logInfo: vi.fn(),
 	logWarn: vi.fn(),
@@ -57,9 +58,18 @@ vi.mock('@/lib/subscriber-marketing/value-path-gate-d-allowlist', () => ({
 vi.mock('@/lib/subscriber-marketing/value-path-certificates', () => ({
 	checkSkillsWorkflowValuePathCertificateEligibility:
 		mocks.checkSkillsWorkflowValuePathCertificateEligibility,
-	buildSkillsWorkflowValuePathCertificateUrl: vi.fn(
-		({ contactId }: { contactId: string }) =>
-			`/api/certificates?resource=value-path%3Aai-hero-skills-workflow&user=${contactId}`,
+}))
+vi.mock('@/lib/subscriber-marketing/value-path-certificate-shares', () => ({
+	SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME: 'AI Hero Skills Workflow',
+	ensureSkillsWorkflowCertificateShare:
+		mocks.ensureSkillsWorkflowCertificateShare,
+	buildSkillsWorkflowCertificateShareUrl: vi.fn(
+		({ slug }: { slug: string }) =>
+			`https://www.aihero.dev/certificates/${slug}`,
+	),
+	buildSkillsWorkflowCertificateShareImageUrl: vi.fn(
+		({ slug, download }: { slug: string; download?: boolean }) =>
+			`/api/certificates?share=${slug}${download ? '&download=1' : ''}`,
 	),
 }))
 
@@ -86,6 +96,7 @@ const answerPage = {
 		optionValue: 'other',
 		result: 'other',
 		headline: 'Noted. Your certificate is below.',
+		nextNotice: 'You are on the waitlist for the next course.',
 		captureFieldKey: 'aih_finisher_segment',
 		captureDateFieldKey: 'aih_next_course_waitlist_at',
 	},
@@ -119,12 +130,23 @@ beforeEach(() => {
 		eligible: true,
 		resourceIdOrSlug: 'value-path:ai-hero-skills-workflow',
 		contactId: 'contact-1',
+		learnerName: 'Joel Hooks',
 		completedAt: new Date('2026-07-18T00:00:00.000Z'),
+	})
+	mocks.ensureSkillsWorkflowCertificateShare.mockResolvedValue({
+		available: true,
+		created: true,
+		share: {
+			slug: 'opaque-public-certificate-slug-123',
+			learnerName: 'Joel Hooks',
+			courseName: 'AI Hero Skills Workflow',
+			completedAt: new Date('2026-07-18T00:00:00.000Z'),
+		},
 	})
 })
 
 describe('Email 7 certificate answer landing page', () => {
-	it('records the selected variant, then renders the contact-bound certificate CTA', async () => {
+	it('records the selected variant, then renders the certificate trophy and safe share actions', async () => {
 		const page = await ValuePathAnswerPage({
 			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
 			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
@@ -147,12 +169,29 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(
 			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
 		).toHaveBeenCalledWith({ contactId: 'contact-1' })
+		expect(mocks.ensureSkillsWorkflowCertificateShare).toHaveBeenCalledWith({
+			eligibility: expect.objectContaining({
+				eligible: true,
+				contactId: 'contact-1',
+			}),
+		})
+		expect(markup).toContain('You finished the AI Hero Skills Workflow.')
 		expect(markup).toContain('Noted. Your certificate is below.')
+		expect(markup).toContain('You are on the waitlist for the next course.')
 		expect(markup).toContain('data-value-path-certificate="available"')
-		expect(markup).toContain('Get your certificate')
+		expect(markup).toContain('Download PNG')
 		expect(markup).toContain(
-			'/api/certificates?resource=value-path%3Aai-hero-skills-workflow&amp;user=contact-1',
+			'/api/certificates?share=opaque-public-certificate-slug-123',
 		)
+		expect(markup).toContain(
+			'https://www.aihero.dev/certificates/opaque-public-certificate-slug-123',
+		)
+		expect(markup).toContain('Share on X')
+		expect(markup).toContain('LinkedIn')
+		expect(markup).toContain('Copy link')
+		expect(markup).not.toContain('signed-token')
+		expect(markup).not.toContain('contact-1')
+		expect(markup).not.toContain('pt=')
 	})
 
 	it('does not reveal the certificate when the answer could not be recorded', async () => {
@@ -177,7 +216,31 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(markup).toContain(
 			'We could not save your answer. Open the link again in a moment.',
 		)
+		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
 		expect(markup).not.toContain('/api/certificates?')
+	})
+
+	it('contains share persistence failure without losing the signed landing page', async () => {
+		mocks.ensureSkillsWorkflowCertificateShare.mockRejectedValue(
+			new Error('database unavailable'),
+		)
+		const page = await ValuePathAnswerPage({
+			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
+			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'shipping' }),
+		})
+		const markup = renderToStaticMarkup(page)
+
+		expect(markup).toContain(
+			'data-value-path-certificate="share-unavailable"',
+		)
+		expect(markup).toContain(
+			'Your certificate is ready, but the share page could not load.',
+		)
+		expect(markup).not.toContain('/api/certificates?')
+		expect(mocks.logWarn).toHaveBeenCalledWith(
+			'value-path.certificate.share_unavailable',
+			expect.objectContaining({ reason: 'share-persistence-failed' }),
+		)
 	})
 
 	it('renders a useful fallback without exposing a certificate URL when incomplete', async () => {
@@ -197,6 +260,7 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(markup).toContain(
 			'Your certificate unlocks after you complete the full Skills Workflow.',
 		)
+		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
 		expect(markup).not.toContain('/api/certificates?')
 	})
 })

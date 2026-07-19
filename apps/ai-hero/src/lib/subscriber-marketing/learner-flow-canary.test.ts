@@ -16,6 +16,7 @@ class CanaryRepository implements LearnerFlowCanaryRepository {
 	contacts = new Map<string, ContactRecord>()
 	states = new Map<string, ContactState>()
 	intents = new Map<string, SideEffectIntent>()
+	certificateShares = new Set<string>()
 	contactSequence = 0
 
 	async findContactById(id: string) {
@@ -66,6 +67,7 @@ class CanaryRepository implements LearnerFlowCanaryRepository {
 	async deleteLearnerFlowFixtureContact(contactId: string) {
 		this.contacts.delete(contactId)
 		this.states.delete(contactId)
+		this.certificateShares.delete(contactId)
 		for (const [id, intent] of this.intents) {
 			if (intent.contactId === contactId) this.intents.delete(id)
 		}
@@ -77,6 +79,7 @@ class CanaryRepository implements LearnerFlowCanaryRepository {
 		const sideEffectIntents = Array.from(this.intents.values()).filter(
 			(intent) => intent.contactId === contactId,
 		).length
+		const certificateShares = this.certificateShares.has(contactId) ? 1 : 0
 		return {
 			contacts,
 			contactStates,
@@ -87,7 +90,8 @@ class CanaryRepository implements LearnerFlowCanaryRepository {
 			sideEffectIntents,
 			contactLinks: 0,
 			conversionUploads: 0,
-			total: contacts + contactStates + sideEffectIntents,
+			certificateShares,
+			total: contacts + contactStates + sideEffectIntents + certificateShares,
 		}
 	}
 }
@@ -354,11 +358,16 @@ describe('learner-flow canary', () => {
 
 	it('cleans the canary namespace idempotently with zero residue', async () => {
 		const repository = new CanaryRepository()
-		await seedLearnerFlowCanary({
+		const seeded = await seedLearnerFlowCanary({
 			repository,
 			allowWrite: true,
 			now,
 		})
+		if (!seeded.contactId) throw new Error('Canary seed did not create a contact')
+		repository.certificateShares.add(seeded.contactId)
+		expect(
+			await repository.readLearnerFlowFixtureResidue(seeded.contactId),
+		).toMatchObject({ certificateShares: 1 })
 		const first = await cleanupLearnerFlowCanary({
 			repository,
 			allowWrite: true,
