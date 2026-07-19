@@ -3,6 +3,7 @@ import { sql, type SQLWrapper } from 'drizzle-orm'
 export const LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX = 'canary-learner-v1-'
 export const LEARNER_FLOW_CANARY_EMAIL_PREFIX = `joel+aih-synth-${LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX}`
 export const LEARNER_FLOW_CANARY_EMAIL_DOMAIN = 'badass.dev'
+export const LEARNER_FLOW_CERTIFICATE_TEST_EMAIL = 'joel+certtest@egghead.io'
 export const LEARNER_FLOW_DRILL_EMAIL_PREFIXES = [
 	'joel+aih-synth-drill-drift-v1-',
 	'joel+aih-synth-drill-zombie-v1-',
@@ -15,6 +16,7 @@ const LEARNER_FLOW_DRILL_EMAIL_SQL_PATTERNS =
 
 export function isLearnerFlowCanaryEmail(value?: string | null) {
 	const normalized = value?.trim().toLowerCase()
+	if (normalized === LEARNER_FLOW_CERTIFICATE_TEST_EMAIL) return true
 	if (!normalized?.startsWith(LEARNER_FLOW_CANARY_EMAIL_PREFIX)) return false
 	const domain = `@${LEARNER_FLOW_CANARY_EMAIL_DOMAIN}`
 	if (!normalized.endsWith(domain)) return false
@@ -40,7 +42,10 @@ export function isLearnerFlowBusinessMetricFixtureEmail(
 }
 
 export function learnerFlowCanaryEmailSql(email: SQLWrapper) {
-	return sql`COALESCE(LOWER(TRIM(${email})), '') LIKE ${LEARNER_FLOW_CANARY_EMAIL_SQL_PATTERN}`
+	return sql`(
+		COALESCE(LOWER(TRIM(${email})), '') LIKE ${LEARNER_FLOW_CANARY_EMAIL_SQL_PATTERN}
+		OR COALESCE(LOWER(TRIM(${email})), '') = ${LEARNER_FLOW_CERTIFICATE_TEST_EMAIL}
+	)`
 }
 
 export function learnerFlowDrillEmailSql(email: SQLWrapper) {

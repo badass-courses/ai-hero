@@ -9,6 +9,7 @@ import {
 	type LearnerFlowCanaryResidue,
 } from './learner-flow-canary'
 import { isLearnerFlowCanaryEmail } from './learner-flow-fixture'
+import { LEARNER_FLOW_CERTIFICATE_TEST_EMAIL } from './learner-flow-canary-exclusion'
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
 
 class CanaryRepository implements LearnerFlowCanaryRepository {
@@ -111,6 +112,31 @@ const progressionResult = {
 }
 
 describe('learner-flow canary', () => {
+	it('treats the reserved certificate inbox as canary-only reporting data', async () => {
+		expect(isLearnerFlowCanaryEmail(LEARNER_FLOW_CERTIFICATE_TEST_EMAIL)).toBe(true)
+		expect(isLearnerFlowCanaryEmail('customer@egghead.io')).toBe(false)
+
+		const repository = new CanaryRepository()
+		const seeded = await seedLearnerFlowCanary({
+			repository,
+			allowWrite: true,
+			recipientEmail: LEARNER_FLOW_CERTIFICATE_TEST_EMAIL,
+			now,
+		})
+		expect(seeded).toMatchObject({ created: true, intentStatus: 'pending' })
+		expect(Array.from(repository.contacts.values())[0]?.email).toBe(
+			LEARNER_FLOW_CERTIFICATE_TEST_EMAIL,
+		)
+		await expect(
+			seedLearnerFlowCanary({
+				repository: new CanaryRepository(),
+				allowWrite: true,
+				recipientEmail: 'customer@egghead.io',
+				now,
+			}),
+		).rejects.toThrow('Recipient email is outside the canary namespace')
+	})
+
 	it('plans a seed without writing, then seeds one pending real-pipeline intent', async () => {
 		const repository = new CanaryRepository()
 		const dryRun = await tickLearnerFlowCanary({

@@ -1,6 +1,9 @@
 import { guid } from '@coursebuilder/utils/guid'
 
-import { LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX } from './learner-flow-canary-exclusion'
+import {
+	isLearnerFlowCanaryEmail,
+	LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX,
+} from './learner-flow-canary-exclusion'
 import type {
 	ContactRecord,
 	ContactState,
@@ -76,10 +79,16 @@ export async function createLearnerFlowStuckFixture(args: {
 	repository: LearnerFlowFixtureRepository
 	fixtureId: string
 	allowWrite: boolean
+	recipientEmail?: string
 	now?: string
 }) {
 	const now = args.now ?? new Date().toISOString()
-	const email = learnerFlowFixtureEmail(args.fixtureId)
+	const email =
+		args.recipientEmail?.trim().toLowerCase() ??
+		learnerFlowFixtureEmail(args.fixtureId)
+	if (args.recipientEmail && !isLearnerFlowCanaryEmail(email)) {
+		throw new Error('Recipient email is outside the canary namespace')
+	}
 	const existing = await args.repository.findContactByEmail(email)
 	if (existing) {
 		const intents =
@@ -190,6 +199,7 @@ export async function createLearnerFlowCanaryFixture(args: {
 	allowWrite: boolean
 	fixtureId: string
 	stalled?: boolean
+	recipientEmail?: string
 	now?: string
 }) {
 	if (!args.fixtureId.startsWith(LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX)) {
@@ -199,6 +209,7 @@ export async function createLearnerFlowCanaryFixture(args: {
 		repository: args.repository,
 		fixtureId: args.fixtureId,
 		allowWrite: args.allowWrite,
+		recipientEmail: args.recipientEmail,
 		now: args.now,
 	})
 	if (!args.allowWrite || !created.intentId) {
