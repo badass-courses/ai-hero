@@ -26,6 +26,7 @@ export function verifyValuePathToken(args: {
 	token?: string | null
 	secret: string
 	now?: Date
+	expirationPolicy?: 'enforce' | 'allow-expired'
 }): ValuePathTokenVerification {
 	if (!args.token) return { valid: false, reason: 'missing' }
 	const [encodedPayload, signature, extra] = args.token.split('.')
@@ -41,7 +42,10 @@ export function verifyValuePathToken(args: {
 			return { valid: false, reason: 'malformed' }
 		}
 		const now = args.now ?? new Date()
-		if (new Date(payload.expiresAt).getTime() <= now.getTime()) {
+		if (
+			(args.expirationPolicy ?? 'enforce') === 'enforce' &&
+			new Date(payload.expiresAt).getTime() <= now.getTime()
+		) {
 			return { valid: false, reason: 'expired' }
 		}
 		return { valid: true, payload }

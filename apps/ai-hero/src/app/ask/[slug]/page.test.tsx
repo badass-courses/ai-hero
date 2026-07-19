@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	verifyValuePathToken: vi.fn(),
@@ -104,6 +104,7 @@ const answerPage = {
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	vi.stubEnv('AI_HERO_VALUE_PATH_TOKEN_SECRET', 'test-value-path-token-secret')
 	mocks.verifyValuePathToken.mockReturnValue({ valid: true, payload: tokenPayload })
 	mocks.getValuePathAnswerPageBySlug.mockResolvedValue(answerPage)
 	mocks.readActiveGateDRuntimeAllowlist.mockResolvedValue({
@@ -143,6 +144,10 @@ beforeEach(() => {
 			completedAt: new Date('2026-07-18T00:00:00.000Z'),
 		},
 	})
+})
+
+afterEach(() => {
+	vi.unstubAllEnvs()
 })
 
 describe('Email 7 certificate answer landing page', () => {
@@ -192,6 +197,40 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(markup).not.toContain('signed-token')
 		expect(markup).not.toContain('contact-1')
 		expect(markup).not.toContain('pt=')
+	})
+
+	it('lands on the certificate with an authentic token past expiresAt', async () => {
+		const actualPathToken = await vi.importActual<
+			typeof import('@/lib/subscriber-marketing/path-token')
+		>('@/lib/subscriber-marketing/path-token')
+		const expiredPayload = {
+			...tokenPayload,
+			expiresAt: '2020-01-01T00:00:00.000Z',
+		}
+		const expiredToken = actualPathToken.signValuePathToken({
+			payload: expiredPayload,
+			secret: 'test-value-path-token-secret',
+		})
+		mocks.verifyValuePathToken.mockImplementation(
+			actualPathToken.verifyValuePathToken,
+		)
+
+		const page = await ValuePathAnswerPage({
+			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
+			searchParams: Promise.resolve({ pt: expiredToken, answer: 'other' }),
+		})
+		const markup = renderToStaticMarkup(page)
+
+		expect(mocks.verifyValuePathToken).toHaveBeenCalledWith({
+			token: expiredToken,
+			secret: 'test-value-path-token-secret',
+			expirationPolicy: 'allow-expired',
+		})
+		expect(mocks.recordValuePathAnswerProgression).toHaveBeenCalledWith(
+			expect.objectContaining({ token: expiredPayload }),
+		)
+		expect(markup).toContain('data-value-path-certificate="available"')
+		expect(markup).toContain('Download PNG')
 	})
 
 	it('does not reveal the certificate when the answer could not be recorded', async () => {

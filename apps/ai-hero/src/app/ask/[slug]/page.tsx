@@ -9,7 +9,10 @@ import { redis } from '@/server/redis-client'
 import { log } from '@/server/logger'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { verifyValuePathToken } from '@/lib/subscriber-marketing/path-token'
-import { getValuePathAnswerPageBySlug } from '@/lib/subscriber-marketing/value-path-answer-page'
+import {
+	getValuePathAnswerPageBySlug,
+	SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG,
+} from '@/lib/subscriber-marketing/value-path-answer-page'
 import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
 import {
 	buildSkillsWorkflowCertificateShareImageUrl,
@@ -38,6 +41,10 @@ export default async function ValuePathAnswerPage(props: {
 	const token = verifyValuePathToken({
 		token: searchParams.pt,
 		secret: getPathTokenSecret(),
+		expirationPolicy:
+			slug === SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG
+				? 'allow-expired'
+				: 'enforce',
 	})
 	const answerPage = await getValuePathAnswerPageBySlug({
 		slug,
