@@ -13,6 +13,7 @@ import {
 	evaluateLearnerFlowReconcilerBrake,
 	LEARNER_FLOW_RECONCILER_CONFIG,
 	reconcileLearnerFlow,
+	type LearnerFlowReconcilerCandidate,
 	type LearnerFlowReconcilerRepository,
 } from './learner-flow-reconciler'
 import type {
@@ -236,6 +237,26 @@ describe('learner flow reconciler', () => {
 		expect(
 			evaluateLearnerFlowReconcilerBrake({ planned: 300, cohortSize: 1006 }),
 		).toMatchObject({ status: 'tripped' })
+	})
+
+	it('does not ratio-brake a large oldest-first drip backlog', () => {
+		const candidates = Array.from({ length: 456 }, (_, index) => ({
+			contactId: `contact-${index}`,
+			intentId: `intent-${index}`,
+			action: 'nudge-drip-progression' as const,
+			cause: 'drip-starved' as const,
+			stage: 'ai-hero-skills-workflow.email-6',
+			stuckAgeHours: 24 + index,
+			lastActivityAt: now,
+		})) satisfies LearnerFlowReconcilerCandidate[]
+
+		expect(
+			evaluateLearnerFlowReconcilerBrake({
+				planned: candidates.length,
+				cohortSize: 1028,
+				candidates,
+			}),
+		).toMatchObject({ status: 'clear', cap: 150 })
 	})
 
 	it('brakes the 313 false-stuck wolf before every write', async () => {

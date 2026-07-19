@@ -313,16 +313,26 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 export function evaluateLearnerFlowReconcilerBrake(args: {
 	planned: number
 	cohortSize: number
+	candidates?: LearnerFlowReconcilerCandidate[]
 	config?: LearnerFlowReconcilerConfig
 }): LearnerFlowReconcilerBrake {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
 	const plannedToCohortRatio =
 		args.cohortSize > 0 ? args.planned / args.cohortSize : 0
 	// Cap overflow is NOT a brake reason: the cap slice serves oldest-first and
-	// defers the remainder to the next run. The brake only trips on anomalous
-	// plan SHAPE (ratio wall), so a healthy big day cannot stall the loop.
+	// defers the remainder to the next run. A pure drip-starved backlog has one
+	// known-safe action and is bounded by that cap. Keep the ratio wall for plans
+	// containing repairs, retries, or replans, where a classifier bug can create
+	// a dangerous write shape.
+	const ratioWallApplies =
+		!args.candidates ||
+		args.candidates.some(
+			(candidate) => candidate.action !== 'nudge-drip-progression',
+		)
 	const reasons =
-		args.cohortSize > 0 && plannedToCohortRatio > config.maxPlannedToCohortRatio
+		ratioWallApplies &&
+		args.cohortSize > 0 &&
+		plannedToCohortRatio > config.maxPlannedToCohortRatio
 			? [
 					`planned-ratio-${formatRatio(plannedToCohortRatio)}-exceeds-${formatRatio(config.maxPlannedToCohortRatio)}`,
 				]
@@ -349,6 +359,7 @@ export async function reconcileLearnerFlow(args: {
 	const brake = evaluateLearnerFlowReconcilerBrake({
 		planned: plan.counts.planned,
 		cohortSize: plan.cohort.contacts,
+		candidates: plan.candidates,
 		config,
 	})
 	if (brake.status === 'tripped') {
