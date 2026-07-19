@@ -14,7 +14,7 @@ jobs:
     if: >-
       github.event.deployment_status.state == 'success' &&
       github.event.deployment.environment == 'Production' &&
-      contains(github.event.deployment_status.target_url, 'aihero')
+      contains(github.event.deployment_status.target_url, 'ai-hero')
 
     steps:
       - name: Sync Inngest registry
