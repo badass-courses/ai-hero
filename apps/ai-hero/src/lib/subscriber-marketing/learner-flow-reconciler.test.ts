@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 import { codingWorkflowFixture } from './__fixtures__/quick-question-fixtures'
+import { DrizzleCaptureMarketingRepository } from './drizzle-capture-repository'
 import {
 	dryRunSubscriberMarketingFixture,
 	InMemorySubscriberMarketingRepository,
@@ -550,6 +551,173 @@ describe('learner flow reconciler', () => {
 					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-1',
 			),
 		).toHaveLength(1)
+	})
+
+	it('treats an existing semantic event as proof that a raced insert already completed', async () => {
+		const existing = {
+			id: 'existing-event',
+			contactId: 'contact-1',
+			providerIdentityId: 'identity-1',
+			provider: 'ai-hero' as const,
+			providerEventId: 'event-key',
+			providerReference: 'value-path:ai-hero-skills-workflow',
+			eventType: 'value-path.drip-progressed',
+			semanticIdempotencyKey: 'event-key',
+			privacyLevel: 'internal' as const,
+			identityEvidence: {
+				source: 'ai-hero' as const,
+				strength: 'strong' as const,
+			},
+			payloadSummary: {
+				summary: 'existing event',
+				keywords: ['value-path'],
+				restrictedPayloadStored: false as const,
+			},
+			schemaVersion: 1 as const,
+			occurredAt: new Date(now),
+			createdAt: new Date(now),
+		}
+		const database = {
+			insert: () => ({
+				values: async () => {
+					throw new Error(
+						"Duplicate entry 'event-key' for key 'ContactEvent_semanticIdempotencyKey_uq'",
+					)
+				},
+			}),
+			select: () => ({
+				from: () => ({
+					where: () => ({ limit: async () => [existing] }),
+				}),
+			}),
+		}
+		const repository = new DrizzleCaptureMarketingRepository(database)
+
+		await expect(
+			repository.createContactEvent({
+				contactId: existing.contactId,
+				providerIdentityId: existing.providerIdentityId,
+				provider: existing.provider,
+				providerEventId: existing.providerEventId,
+				providerReference: existing.providerReference,
+				eventType: existing.eventType,
+				semanticIdempotencyKey: existing.semanticIdempotencyKey,
+				privacyLevel: existing.privacyLevel,
+				identityEvidence: existing.identityEvidence,
+				payloadSummary: existing.payloadSummary,
+				schemaVersion: existing.schemaVersion,
+				occurredAt: now,
+				createdAt: now,
+			}),
+		).resolves.toMatchObject({
+			id: existing.id,
+			semanticIdempotencyKey: existing.semanticIdempotencyKey,
+		})
+	})
+
+	it('defers one failed learner and continues planning the rest', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const first = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: codingWorkflowFixture,
+			now: '2026-07-15T20:00:00.000Z',
+		})
+		const second = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: {
+				...codingWorkflowFixture,
+				providerEventId: 'fixture-event-002',
+				externalId: 'fixture-contact-002',
+				email: 'second@example.com',
+			},
+			now: '2026-07-15T20:00:00.000Z',
+		})
+		const completed = [first, second].map((captured, index) =>
+			repository.createSideEffectIntent({
+				...courseIntent({
+					contactId: captured.contact.id,
+					id: `completed-email-0-${index}`,
+					status: 'completed',
+					completedAt: '2026-07-15T20:00:00.000Z',
+				}),
+				idempotencyKey: `contact:${captured.contact.id}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
+				metadata: {
+					valuePathSlug: 'ai-hero-skills-workflow',
+					emailResourceId: 'ai-hero-skills-workflow.email-0',
+					kitSequenceId: '2757199',
+					kitSubscriberId: `kit-${index}`,
+					completedAt: '2026-07-15T20:00:00.000Z',
+				},
+			}),
+		)
+		const createContactEvent = repository.createContactEvent.bind(repository)
+		repository.createContactEvent = (input) => {
+			if (input.contactId === first.contact.id) {
+				throw new Error('simulated per-learner write failure')
+			}
+			return createContactEvent(input)
+		}
+		const allowlist = {
+			...rollingAllowlist(),
+			contactIds: [first.contact.id, second.contact.id],
+			kitSubscriberIds: ['kit-0', 'kit-1'],
+			emails: [first.contact.email!, second.contact.email!],
+		}
+		const warnings: Array<Record<string, unknown>> = []
+		const logger = {
+			info: async () => undefined,
+			warn: async (_event: string, fields: Record<string, unknown>) => {
+				warnings.push(fields)
+			},
+		}
+		const result = await progressValuePathDrips({
+			repository,
+			allowlist,
+			completedIntents: completed,
+			allowWrite: true,
+			now,
+			logger,
+		})
+
+		expect(result.counts).toMatchObject({ planned: 1, deferred: 1 })
+		expect(result.results.map((item) => item.status)).toEqual([
+			'deferred',
+			'planned',
+		])
+		expect(warnings).toMatchObject([
+			{
+				errorCategory: 'write-failed',
+				fromEmailResourceId: 'ai-hero-skills-workflow.email-0',
+			},
+		])
+
+		const reconcilerRepository = Object.assign(repository, {
+			findSkillsWorkflowLearnerFlowRecords: () =>
+				[first, second].map((captured) => ({
+					contactId: captured.contact.id,
+					contact: captured.contact,
+					contactState: repository.findCurrentContactState(captured.contact.id),
+					intents: repository.findValuePathEmailSideEffectIntentsByContact(
+						captured.contact.id,
+					),
+					entryEvents: [],
+				})),
+		})
+		const receipt = await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist,
+			emailListProvider: {
+				subscribeToList: async () => ({ success: true }),
+			},
+			executorConfig: {},
+			now,
+		})
+		expect(receipt).toMatchObject({
+			brake: 'clear',
+			deferred: 1,
+			writeFailedDeferred: 1,
+		})
+		expect(receipt.dmLine).toContain('1 deferred (1 write-failed)')
 	})
 
 	it('registers one hourly reconciler and removes the old hourly planner binding', async () => {

@@ -117,6 +117,7 @@ export const learnerFlowReconciler = inngest.createFunction(
 				receipt.brake === 'tripped' ||
 				receipt.executor.failed > 0 ||
 				receipt.executor.retryableFailed > 0 ||
+				receipt.writeFailedDeferred > 0 ||
 				receipt.tier2 > 0
 					? 'warn'
 					: 'info'

@@ -77,6 +77,7 @@ export type ValuePathDripProgressionResult = {
 		terminal: number
 		idempotentNoop: number
 		notDue: number
+		deferred: number
 	}
 	results: ValuePathDripProgressionContactResult[]
 }
@@ -86,7 +87,13 @@ export type ValuePathDripProgressionContactResult = {
 	fromEmailResourceId?: string
 	nextEmailResourceId?: string
 	nextKitSequenceId?: string
-	status: 'planned' | 'blocked' | 'terminal' | 'idempotent-noop' | 'not-due'
+	status:
+		| 'planned'
+		| 'blocked'
+		| 'terminal'
+		| 'idempotent-noop'
+		| 'not-due'
+		| 'deferred'
 	reviewReasons: string[]
 	advisoryReasons?: string[]
 	contactEventId?: string
@@ -106,8 +113,23 @@ export async function progressValuePathDrips(args: {
 }): Promise<ValuePathDripProgressionResult> {
 	const now = args.now ?? new Date().toISOString()
 	const results: ValuePathDripProgressionContactResult[] = []
+	const logger = args.logger ?? log
 	for (const intent of args.completedIntents) {
-		results.push(await progressCompletedIntent({ ...args, intent, now }))
+		try {
+			results.push(await progressCompletedIntent({ ...args, intent, now }))
+		} catch (cause) {
+			const fromEmailResourceId = stringField(intent.metadata.emailResourceId)
+			await logger.warn('value-path.drip.progression_deferred', {
+				fromEmailResourceId,
+				errorCategory: 'write-failed',
+			})
+			results.push({
+				contactId: intent.contactId,
+				fromEmailResourceId,
+				status: 'deferred',
+				reviewReasons: ['drip-progression-write-failed'],
+			})
+		}
 	}
 	return {
 		mode: args.allowWrite ? 'allow-write' : 'dry-run',
@@ -120,6 +142,7 @@ export async function progressValuePathDrips(args: {
 				(result) => result.status === 'idempotent-noop',
 			).length,
 			notDue: results.filter((result) => result.status === 'not-due').length,
+			deferred: results.filter((result) => result.status === 'deferred').length,
 		},
 		results,
 	}

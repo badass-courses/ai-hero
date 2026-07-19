@@ -149,6 +149,7 @@ export type LearnerFlowReconcilerReceipt = {
 	retried: number
 	served: number
 	deferred: number
+	writeFailedDeferred: number
 	oldestDeferredAgeHours: number | null
 	oldestDeferredAt: string | null
 	tier2: number
@@ -480,10 +481,22 @@ function receiptFor(args: {
 			intentIdByContact.set(result.contactId, result.sideEffectIntentId)
 		}
 	}
-	const deferred =
+	const writeFailedContactIds = new Set(
+		(args.dripResult?.results ?? []).flatMap((result) =>
+			result.status === 'deferred' ? [result.contactId] : [],
+		),
+	)
+	const writeFailedDeferred = (args.selected ?? []).filter((candidate) =>
+		writeFailedContactIds.has(candidate.contactId),
+	)
+	const deferred = (
 		args.brake.status === 'tripped'
 			? args.plan.candidates
-			: args.plan.candidates.slice(args.config.sendCap)
+			: [
+					...args.plan.candidates.slice(args.config.sendCap),
+					...writeFailedDeferred,
+				]
+	).sort(compareCandidateAge)
 	const suppressedAsCandidates = args.plan.suppressedFixtureStarved
 		.map((suppression) => {
 			const intent = intentsById(args.plan.records).find(
@@ -544,7 +557,7 @@ function receiptFor(args: {
 	const dmLine =
 		args.brake.status === 'tripped'
 			? `RECONCILER BRAKED: ${args.plan.counts.planned} planned for ${args.plan.cohort.contacts} learners (${formatRatio(args.brake.plannedToCohortRatio)}; cap ${args.brake.cap}, ratio wall ${formatRatio(args.brake.maxPlannedToCohortRatio)}). Tier 2: ${tier2Causes}. Check: ${LEARNER_FLOW_RECONCILER_CHECK_COMMAND}. Action: inspect classifier causes and keep writes paused until the plan is explained.`
-			: `Reconciler clear: ${created} created, ${served} served, ${deferred.length} deferred, ${suppressedAsCandidates.length} fixture-suppressed. Tier 2: ${tier2Causes}.`
+			: `Reconciler clear: ${created} created, ${served} served, ${deferred.length} deferred (${writeFailedDeferred.length} write-failed), ${suppressedAsCandidates.length} fixture-suppressed. Tier 2: ${tier2Causes}.`
 	return {
 		event: 'subscriber_funnel.drip_run_completed',
 		receiptVersion: 1,
@@ -570,6 +583,7 @@ function receiptFor(args: {
 		).length,
 		served,
 		deferred: deferred.length,
+		writeFailedDeferred: writeFailedDeferred.length,
 		oldestDeferredAgeHours: oldestDeferred?.stuckAgeHours ?? null,
 		oldestDeferredAt: oldestDeferred?.lastActivityAt ?? null,
 		tier2: args.plan.tier2.length,
@@ -634,6 +648,7 @@ function emptyDripResult(): ValuePathDripProgressionResult {
 			terminal: 0,
 			idempotentNoop: 0,
 			notDue: 0,
+			deferred: 0,
 		},
 		results: [],
 	}

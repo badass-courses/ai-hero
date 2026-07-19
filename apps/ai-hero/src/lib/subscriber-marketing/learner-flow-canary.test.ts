@@ -111,6 +111,7 @@ const progressionResult = {
 		terminal: 0,
 		idempotentNoop: 0,
 		notDue: 0,
+		deferred: 0,
 	},
 	results: [],
 }

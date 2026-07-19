@@ -168,12 +168,24 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			createdAt: input.createdAt ?? new Date().toISOString(),
 			...input,
 		}
-		await this.database.insert(contactEvent).values({
-			...record,
-			occurredAt: new Date(record.occurredAt),
-			createdAt: new Date(record.createdAt),
-		})
-		return record
+		try {
+			await this.database.insert(contactEvent).values({
+				...record,
+				occurredAt: new Date(record.occurredAt),
+				createdAt: new Date(record.createdAt),
+			})
+			return record
+		} catch (cause) {
+			// The semantic key is the durable replay boundary. A concurrent or
+			// retried insert may lose the race after the preflight read. If the row
+			// now exists, the requested fact is already recorded and the caller can
+			// safely continue from it. Any other insert failure still escapes.
+			const existing = await this.findContactEventBySemanticKey(
+				record.semanticIdempotencyKey,
+			)
+			if (existing) return existing
+			throw cause
+		}
 	}
 
 	async findCurrentContactState(contactId: string) {
