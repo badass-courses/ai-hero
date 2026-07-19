@@ -486,6 +486,7 @@ if (command === 'lookup') {
 						repository,
 						allowWrite,
 						stalled: args.includes('--stalled'),
+						recipientEmail: readFlag(args, '--recipient-email'),
 						now,
 					})
 				: await tickLearnerFlowCanary({
@@ -3330,7 +3331,7 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --scenario drift|zombie|both [--run-id <id>] --allow-write
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --cleanup [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary [--status|--tick] [--allow-write]
-  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --seed [--stalled] [--now <iso>] [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --seed [--stalled] [--recipient-email joel+certtest@egghead.io] [--now <iso>] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --cleanup [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill [--dry-run] [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill --allow-write [--receipt .brain/data/learner-flow/receipts/receipt.json]

@@ -112,6 +112,7 @@ export async function seedLearnerFlowCanary(args: {
 	repository: LearnerFlowCanaryRepository
 	allowWrite: boolean
 	stalled?: boolean
+	recipientEmail?: string
 	now?: string
 }) {
 	const now = args.now ?? new Date().toISOString()
@@ -132,6 +133,7 @@ export async function seedLearnerFlowCanary(args: {
 		allowWrite: args.allowWrite,
 		fixtureId: `${LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX}${learnerFlowFixtureId(new Date(now))}`,
 		stalled: args.stalled,
+		recipientEmail: args.recipientEmail,
 		now,
 	})
 }
