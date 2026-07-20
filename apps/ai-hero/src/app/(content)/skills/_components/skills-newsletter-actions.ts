@@ -11,10 +11,12 @@ import {
 import { inngest } from '@/inngest/inngest.server'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
+import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 
 import {
 	SKILLS_FORM_ID,
+	SKILLS_HOSTED_RESUBSCRIBE_URL,
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
@@ -41,6 +43,17 @@ export async function tagSubscriberAsSkills() {
 		})
 
 		const subscribed = SubscriberSchema.parse(updated ?? subscriber)
+		const optIn = await reconcileAiHeroEmailOptInWithKit({
+			email: subscribed.email_address!,
+			subscriberState: subscribed.state,
+		})
+		if (optIn.status === 'confirmation-required') {
+			return {
+				success: false as const,
+				reason: 'confirmation-required' as const,
+				confirmationUrl: SKILLS_HOSTED_RESUBSCRIBE_URL,
+			}
+		}
 		if (updated) {
 			await setSubscriberCookie(subscribed)
 		}

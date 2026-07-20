@@ -29,13 +29,14 @@ export const metadata: Metadata = {
 
 async function resolveSubscriber(ckSubscriberId: string | undefined) {
 	const fromCookie = await getSubscriberFromCookie()
-	if (fromCookie) return fromCookie
-	if (!ckSubscriberId || !/^\d+$/.test(ckSubscriberId)) return null
+	if (fromCookie?.state === 'active') return fromCookie
+	const subscriberId = fromCookie?.id?.toString() ?? ckSubscriberId
+	if (!subscriberId || !/^\d+$/.test(subscriberId)) return fromCookie
 	try {
-		const subscriber = await emailListProvider.getSubscriber(ckSubscriberId)
-		return subscriber ? SubscriberSchema.parse(subscriber) : null
+		const subscriber = await emailListProvider.getSubscriber(subscriberId)
+		return subscriber ? SubscriberSchema.parse(subscriber) : fromCookie
 	} catch {
-		return null
+		return fromCookie
 	}
 }
 
@@ -65,11 +66,12 @@ export default async function SkillsSubscribePage({
 	const enrolled = subscriber
 		? await hasCourseContact(subscriber.email_address ?? undefined)
 		: false
-	const status: SkillsNewsletterStatus = !subscriber
-		? 'show-form'
-		: enrolled
-			? 'subscribed'
-			: 'tag-me'
+	const status: SkillsNewsletterStatus =
+		subscriber?.state !== 'active'
+			? 'show-form'
+			: enrolled
+				? 'subscribed'
+				: 'tag-me'
 
 	return (
 		<LayoutClient withContainer>
