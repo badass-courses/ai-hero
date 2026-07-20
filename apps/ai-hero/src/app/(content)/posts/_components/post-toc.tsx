@@ -122,8 +122,12 @@ function TocText({ children }: { children: string }) {
 	return (
 		<ReactMarkdown
 			components={{
-				p: ({ children }) => <>{children}</>,
-				a: ({ children }) => <>{children}</>,
+				// Chrome Translate replaces text nodes with <font> elements. Keep the
+				// markdown output behind real elements so changing the active heading
+				// never makes React remove a text node that Translate moved.
+				// https://github.com/facebook/react/issues/11538#issuecomment-390386520
+				p: ({ children }) => <span>{children}</span>,
+				a: ({ children }) => <span>{children}</span>,
 				code: ({ children }) => (
 					<code className="bg-muted rounded px-1 py-0.5 font-mono text-[0.9em]">
 						{children}
