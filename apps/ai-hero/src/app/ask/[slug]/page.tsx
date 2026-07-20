@@ -1,5 +1,7 @@
 import Image from 'next/image'
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { Logo } from '@/components/brand/logo'
 import LayoutClient from '@/components/layout-client'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
@@ -26,7 +28,7 @@ import {
 	readActiveGateDRuntimeAllowlist,
 	resolveGateDPreAuthorizedReviewReasons,
 } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
-import { Download } from 'lucide-react'
+import { Download, Plus } from 'lucide-react'
 
 import { CertificateShareActions } from './certificate-share-actions'
 
@@ -194,82 +196,125 @@ export default async function ValuePathAnswerPage(props: {
 	}
 
 	return (
-		<main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-6 py-16 text-white">
-			<div className="space-y-3">
-				<p className="text-sm font-medium uppercase tracking-[0.3em] text-cyan-300">
-					AI Hero Skills Workflow
-				</p>
-				<h1 className="text-balance text-4xl font-semibold leading-tight md:text-5xl">
-					{answerPage.fields.headline ??
-						answerPage.fields.title ??
-						'Good answer.'}
-				</h1>
-			</div>
-
-			{answerPage.fields.body ? (
-				<div className="whitespace-pre-wrap text-lg leading-8 text-slate-200">
-					{answerPage.fields.body}
+		<LayoutClient withContainer withNavigation={false} withFooter={false}>
+			<div className="bg-size-[12px_12px] flex h-full min-h-[100svh] w-full grid-cols-6 grid-rows-[1fr_auto_1fr] bg-[radial-gradient(rgba(0,0,0,0.08)_1px,transparent_1px)] sm:grid sm:bg-none dark:bg-[radial-gradient(rgba(255,255,255,0.08)_1px,transparent_1px)] sm:dark:bg-none">
+				<div className="hidden h-full w-full sm:flex" />
+				<div className="border-border col-span-4 hidden h-full w-full items-start justify-center border-x p-10 sm:flex">
+					<Link href="/">
+						<span className="leading-none! inline-flex flex-col items-center justify-center gap-2 text-xl font-semibold">
+							<Logo
+								className="inline-flex opacity-80 transition-all ease-out hover:opacity-100"
+								withAuthor={true}
+							/>
+						</span>
+					</Link>
 				</div>
-			) : null}
+				<div className="hidden h-full w-full sm:flex" />
+				<div className="border-border bg-size-[12px_12px] hidden h-full w-full border-y bg-transparent bg-[radial-gradient(rgba(0,0,0,0.08)_1px,transparent_1px)] sm:flex dark:bg-[radial-gradient(rgba(255,255,255,0.08)_1px,transparent_1px)]" />
+				<main className="border-border bg-card relative col-span-4 mx-auto flex w-full shrink-0 justify-center p-5 pt-10 sm:border sm:p-10">
+					<Plus
+						className="absolute -left-2 -top-2 hidden size-4 opacity-50 sm:block"
+						strokeWidth={1}
+					/>
+					<Plus
+						className="absolute -right-2 -top-2 hidden size-4 opacity-50 sm:block"
+						strokeWidth={1}
+					/>
+					<div className="flex w-full max-w-2xl flex-col gap-8">
+						<div className="space-y-3">
+							<p className="text-primary text-sm font-medium uppercase tracking-[0.3em]">
+								AI Hero Skills Workflow
+							</p>
+							<h1 className="font-heading text-balance text-4xl font-bold leading-tight md:text-5xl">
+								{answerPage.fields.headline ??
+									answerPage.fields.title ??
+									'Good answer.'}
+							</h1>
+						</div>
 
-			{answerPage.fields.takeaway ? (
-				<section className="border-l-2 border-cyan-300 pl-5 text-lg leading-8 text-slate-100">
-					{answerPage.fields.takeaway}
-				</section>
-			) : null}
+						{answerPage.fields.body ? (
+							<div className="whitespace-pre-wrap text-lg font-light leading-relaxed">
+								{answerPage.fields.body}
+							</div>
+						) : null}
 
-			{answerPage.fields.nextNotice ? (
-				<p className="text-base leading-7 text-slate-300">
-					{answerPage.fields.nextNotice}
-				</p>
-			) : null}
+						{answerPage.fields.takeaway ? (
+							<section className="border-primary border-l-2 pl-5 text-lg font-light leading-relaxed">
+								{answerPage.fields.takeaway}
+							</section>
+						) : null}
 
-			{isCertificateAnswer ? (
-				!token.valid ? (
-					<section
-						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
-						data-value-path-certificate="identity-unavailable"
-					>
-						Open the signed link from your course email to get your certificate.
-					</section>
-				) : !answerAccepted ? (
-					<section
-						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
-						data-value-path-certificate="answer-not-recorded"
-					>
-						We could not save your answer. Open the link again in a moment.
-					</section>
-				) : certificateEligibility?.eligible ? (
-					<section
-						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
-						data-value-path-certificate="share-unavailable"
-					>
-						Your certificate is ready, but the share page could not load. Open this link again in a moment.
-					</section>
-				) : (
-					<section
-						className="border-l-2 border-amber-300 pl-5 text-base leading-7 text-slate-200"
-						data-value-path-certificate="ineligible"
-					>
-						Your certificate unlocks after you complete the full Skills Workflow.
-					</section>
-				)
-			) : null}
+						{answerPage.fields.nextNotice ? (
+							<p className="text-muted-foreground text-base leading-7">
+								{answerPage.fields.nextNotice}
+							</p>
+						) : null}
 
-			{token.valid ? (
-				<p
-					className="sr-only"
-					data-value-path-token="valid"
-					data-value-path-progression={progression?.status}
-				>
-					Path token verified for {token.payload.valuePathResourceId}.
-				</p>
-			) : (
-				<p className="sr-only" data-value-path-token={token.reason}>
-					Path token unavailable.
-				</p>
-			)}
-		</main>
+						{isCertificateAnswer ? (
+							!token.valid ? (
+								<section
+									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
+									data-value-path-certificate="identity-unavailable"
+								>
+									Open the signed link from your course email to get your
+									certificate.
+								</section>
+							) : !answerAccepted ? (
+								<section
+									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
+									data-value-path-certificate="answer-not-recorded"
+								>
+									We could not save your answer. Open the link again in a
+									moment.
+								</section>
+							) : certificateEligibility?.eligible ? (
+								<section
+									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
+									data-value-path-certificate="share-unavailable"
+								>
+									Your certificate is ready, but the share page could not load.
+									Open this link again in a moment.
+								</section>
+							) : (
+								<section
+									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
+									data-value-path-certificate="ineligible"
+								>
+									Your certificate unlocks after you complete the full Skills
+									Workflow.
+								</section>
+							)
+						) : null}
+
+						{token.valid ? (
+							<p
+								className="sr-only"
+								data-value-path-token="valid"
+								data-value-path-progression={progression?.status}
+							>
+								Path token verified for {token.payload.valuePathResourceId}.
+							</p>
+						) : (
+							<p className="sr-only" data-value-path-token={token.reason}>
+								Path token unavailable.
+							</p>
+						)}
+					</div>
+					<Plus
+						className="absolute -bottom-2 -left-2 hidden size-4 opacity-50 sm:block"
+						strokeWidth={1}
+					/>
+					<Plus
+						className="absolute -bottom-2 -right-2 hidden size-4 opacity-50 sm:block"
+						strokeWidth={1}
+					/>
+				</main>
+				<div className="border-border bg-size-[12px_12px] hidden h-full w-full border-y bg-transparent bg-[radial-gradient(rgba(0,0,0,0.08)_1px,transparent_1px)] sm:flex dark:bg-[radial-gradient(rgba(255,255,255,0.06)_1px,transparent_1px)]" />
+				<div className="hidden h-full w-full sm:flex" />
+				<div className="border-border col-span-4 hidden h-full w-full border-x sm:flex" />
+				<div className="hidden h-full w-full sm:flex" />
+			</div>
+		</LayoutClient>
 	)
 }
 
