@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+	buildSignupConfirmationReconciliationPlan,
 	buildSignupGapPreview,
 	fetchKitSignupGapPageWithRetry,
 	replaySignupGap,
@@ -52,6 +53,84 @@ describe('signup-gap Kit source resilience', () => {
 	})
 })
 
+describe('confirmed signup reconciliation', () => {
+	it('enqueues only confirmed active subscribers with stable event ids', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-07-21T12:00:00.000Z',
+			now: '2026-07-21T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-active',
+					email: 'active@example.com',
+					createdAt: '2026-07-20T12:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-unconfirmed',
+					email: 'unconfirmed@example.com',
+					createdAt: '2026-07-20T12:01:00.000Z',
+					state: 'inactive',
+				},
+			],
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 200,
+		})
+
+		expect(plan.counts).toEqual({
+			deferred: 0,
+			excludedSynthetic: 0,
+			planned: 1,
+			replayable: 1,
+			unconfirmed: 1,
+		})
+		expect(plan.events).toEqual([
+			{
+				id: 'skills-confirmed:9376133:kit-active',
+				name: 'skills-newsletter/subscribed',
+				data: expect.objectContaining({
+					kitSubscriberId: 'kit-active',
+					source: 'kit-confirmation-reconciler',
+				}),
+			},
+		])
+	})
+
+	it('caps each run and reports deferred confirmed subscribers', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-07-21T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: Array.from({ length: 3 }, (_, index) => ({
+				kitSubscriberId: `kit-${index}`,
+				email: `active-${index}@example.com`,
+				createdAt: `2026-07-20T12:0${index}:00.000Z`,
+				state: 'active' as const,
+			})),
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 2,
+		})
+
+		expect(plan.events).toHaveLength(2)
+		expect(plan.counts).toMatchObject({ planned: 2, deferred: 1 })
+	})
+})
+
 describe('signup-gap liveness metrics', () => {
 	it('reports work seen, work done, and the oldest unserved age through the replay seam', async () => {
 		const preview = buildSignupGapPreview({
@@ -68,11 +147,13 @@ describe('signup-gap liveness metrics', () => {
 					kitSubscriberId: 'kit-oldest',
 					email: 'oldest@example.com',
 					createdAt: '2026-07-17T08:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-known-later',
 					email: 'known@example.com',
 					createdAt: '2026-07-17T10:00:00.000Z',
+					state: 'active',
 				},
 			],
 		})

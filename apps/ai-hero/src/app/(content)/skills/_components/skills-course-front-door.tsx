@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 
+import { SkillsCourseConfirmed } from './skills-course-confirmed'
 import * as SkillsNewsletter from './skills-newsletter'
 import { type SkillsNewsletterStatus } from './skills-newsletter'
 
@@ -74,17 +75,7 @@ export function SkillsCourseFrontDoor({
 								Get lesson one in your inbox
 							</h2>
 							<SkillsNewsletter.StatusView
-								subscribed={
-									<div className="flex flex-col gap-3">
-										<p className="bg-primary/10 text-primary border-primary/20 border p-4 text-sm font-medium">
-											You’re enrolled. Check your inbox for the first lesson.
-										</p>
-										<SkillsNewsletter.TagMeButton
-											label="Not getting emails? Reconnect"
-											className="bg-secondary text-secondary-foreground"
-										/>
-									</div>
-								}
+								subscribed={<SkillsCourseConfirmed />}
 								tagMe={
 									<>
 										<SkillsNewsletter.TagMeButton

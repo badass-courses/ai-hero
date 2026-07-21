@@ -88,6 +88,7 @@ import {
 	replaySignupGap,
 	signupGapPreviewForOutput,
 	type SignupGapKitSubscriber,
+	type SignupGapKitSubscriberState,
 	type SignupGapPreview,
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { replanBlockedValuePathEmailIntents } from '@/lib/subscriber-marketing/value-path-intent-replan'
@@ -163,6 +164,13 @@ import { redis } from '@/server/redis-client'
 import { and, count, desc, eq, gte, inArray } from 'drizzle-orm'
 
 const providers = ['fixture', 'front', 'kit', 'ai-hero'] as const
+const KIT_SIGNUP_GAP_SUBSCRIBER_STATES = [
+	'active',
+	'inactive',
+	'cancelled',
+	'bounced',
+	'complained',
+] as const satisfies readonly SignupGapKitSubscriberState[]
 const [command, ...args] = process.argv.slice(2)
 
 const EMAIL_7_LIVE_ENABLED = parseEmail7LiveEnabled(
@@ -2229,9 +2237,10 @@ async function buildSignupGapOperatorPreview(args: {
 	from: string
 	to: string
 }): Promise<SignupGapPreview> {
-	const records = await fetchKitFormSubscriberRecords({
+	const records = await fetchKitFormSubscriberRecordsForStates({
 		formId: String(args.formId),
 		addedAfter: args.from,
+		states: KIT_SIGNUP_GAP_SUBSCRIBER_STATES,
 	})
 	const subscribers: SignupGapKitSubscriber[] = records.map((subscriber) => {
 		if (!subscriber.createdAt) {
@@ -2244,6 +2253,7 @@ async function buildSignupGapOperatorPreview(args: {
 			email: subscriber.email,
 			firstName: subscriber.firstName,
 			createdAt: subscriber.createdAt,
+			state: subscriber.state,
 			fields: subscriber.fields,
 		}
 	})
@@ -2425,6 +2435,7 @@ type KitFormSubscriberRecord = {
 	firstName?: string
 	createdAt?: string
 	addedAt: string
+	state: SignupGapKitSubscriberState
 	fields?: Record<string, unknown>
 }
 
@@ -2445,9 +2456,30 @@ async function fetchKitFormSubscribers(args: {
 	) satisfies SkillsFormSubscriberEvidence[]
 }
 
+async function fetchKitFormSubscriberRecordsForStates(args: {
+	formId: string
+	addedAfter: string
+	states: readonly SignupGapKitSubscriberState[]
+}) {
+	const records: KitFormSubscriberRecord[] = []
+	for (const state of args.states) {
+		records.push(
+			...(await fetchKitFormSubscriberRecords({
+				formId: args.formId,
+				addedAfter: args.addedAfter,
+				state,
+			})),
+		)
+	}
+	return Array.from(
+		new Map(records.map((record) => [record.kitSubscriberId, record])).values(),
+	)
+}
+
 async function fetchKitFormSubscriberRecords(args: {
 	formId: string
 	addedAfter: string
+	state?: SignupGapKitSubscriberState
 }) {
 	const apiKey =
 		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
@@ -2462,7 +2494,7 @@ async function fetchKitFormSubscriberRecords(args: {
 		const url = new URL(
 			`https://api.convertkit.com/v4/forms/${args.formId}/subscribers`,
 		)
-		url.searchParams.set('status', 'active')
+		url.searchParams.set('status', args.state ?? 'active')
 		url.searchParams.set('per_page', '1000')
 		url.searchParams.set(
 			'added_after',
@@ -2527,6 +2559,12 @@ function parseKitFormSubscriberRecords(
 				? (subscriber.fields as Record<string, unknown>)
 				: undefined
 		const createdAt = stringField(subscriber.created_at)
+		const state = stringField(subscriber.state)
+		if (!isSignupGapKitSubscriberState(state)) {
+			throw new Error(
+				`Kit form subscriber payload has unsupported state: ${state ?? 'missing'}`,
+			)
+		}
 		const addedAt =
 			stringField(subscriber.added_at) ??
 			stringField(subscriber.subscribed_at) ??
@@ -2546,10 +2584,17 @@ function parseKitFormSubscriberRecords(
 				firstName: stringField(subscriber.first_name),
 				createdAt,
 				addedAt,
+				state,
 				fields,
 			},
 		]
 	})
+}
+
+function isSignupGapKitSubscriberState(
+	value: string | undefined,
+): value is SignupGapKitSubscriberState {
+	return KIT_SIGNUP_GAP_SUBSCRIBER_STATES.some((state) => state === value)
 }
 
 function stringField(value: unknown) {

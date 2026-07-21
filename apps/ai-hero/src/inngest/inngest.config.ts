@@ -58,6 +58,7 @@ import { sendLiveEventWelcomeEmail } from './functions/send-live-event-welcome-e
 import { shortlinkAttribution } from './functions/shortlink-attribution'
 import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
+import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
@@ -128,6 +129,7 @@ export const inngestConfig = {
 		syncGithubSourcedPosts,
 		skillChangelogBroadcast,
 		skillsNewsletterPathEntry,
+		skillsNewsletterConfirmationReconciler,
 		notifyOnPostCreated,
 		generateArtwork,
 		pickVariant,

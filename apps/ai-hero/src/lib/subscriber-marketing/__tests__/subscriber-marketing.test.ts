@@ -146,39 +146,58 @@ describe('subscriber marketing signup gap recovery', () => {
 					email: 'Real.Person@Example.com',
 					firstName: 'Real',
 					createdAt: '2026-07-15T05:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-synthetic',
 					email: 'joel+aih-warmup-synth-1@example.com',
 					createdAt: '2026-07-15T06:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-contact-known',
 					email: 'known@example.com',
 					createdAt: '2026-07-15T07:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-provider-known',
 					email: 'provider@example.com',
 					createdAt: '2026-07-15T08:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-unconfirmed',
+					email: 'unconfirmed@example.com',
+					createdAt: '2026-07-15T09:00:00.000Z',
+					state: 'inactive',
 				},
 				{
 					kitSubscriberId: 'kit-at-end',
 					email: 'end@example.com',
 					createdAt: '2026-07-15T15:00:00.000Z',
+					state: 'active',
 				},
 			],
 		})
 
 		expect(preview.counts).toEqual({
-			kitFormSubscribersFetched: 5,
-			inWindow: 4,
+			kitFormSubscribersFetched: 6,
+			inWindow: 5,
 			withExistingContact: 1,
 			withExistingProviderIdentity: 1,
 			withExistingIdentity: 2,
 			gapCandidates: 2,
 			excludedSynthetic: 1,
+			unconfirmed: 1,
 			replayable: 1,
+			stateBreakdown: {
+				active: 4,
+				inactiveUnconfirmed: 1,
+				cancelled: 0,
+				bounced: 0,
+				complained: 0,
+			},
 		})
 		expect(preview.candidates).toEqual([
 			expect.objectContaining({
@@ -214,16 +233,19 @@ describe('subscriber marketing signup gap recovery', () => {
 					email: 'replay@example.com',
 					firstName: 'Replay',
 					createdAt: '2026-07-15T06:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-now-known',
 					email: 'known-later@example.com',
 					createdAt: '2026-07-15T07:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-synthetic',
 					email: 'joel+aih-synth-2@example.com',
 					createdAt: '2026-07-15T08:00:00.000Z',
+					state: 'active',
 				},
 			],
 		})
@@ -5552,7 +5574,11 @@ describe('Skills Newsletter Path Entry', () => {
 		const second = await enterSkillsNewsletterSubscriber({
 			repository,
 			allowlist: rollingAllowlist,
-			input,
+			input: {
+				...input,
+				source: 'kit-confirmation-reconciler',
+				subscribedAt: '2026-07-14T12:05:00.000Z',
+			},
 			allowWrite: true,
 		})
 

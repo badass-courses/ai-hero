@@ -3,11 +3,19 @@ import {
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 
+export type SignupGapKitSubscriberState =
+	| 'active'
+	| 'inactive'
+	| 'cancelled'
+	| 'bounced'
+	| 'complained'
+
 export type SignupGapKitSubscriber = {
 	kitSubscriberId: string
 	email: string
 	firstName?: string
 	createdAt: string
+	state: SignupGapKitSubscriberState
 	fields?: Record<string, unknown>
 }
 
@@ -42,7 +50,15 @@ export type SignupGapPreview = {
 		withExistingIdentity: number
 		gapCandidates: number
 		excludedSynthetic: number
+		unconfirmed: number
 		replayable: number
+		stateBreakdown: {
+			active: number
+			inactiveUnconfirmed: number
+			cancelled: number
+			bounced: number
+			complained: number
+		}
 	}
 	workSeen: number
 	workDone: number
@@ -58,6 +74,21 @@ export type SignupGapPreviewOutput = Omit<SignupGapPreview, 'candidates'> & {
 			'maskedEmail' | 'createdAt' | 'excludedSynthetic' | 'exclusionReason'
 		>
 	>
+}
+
+export type SignupConfirmationReconciliationPlan = {
+	mode: 'signup-confirmation-reconciliation-plan'
+	generatedAt: string
+	formId: number
+	window: SignupGapPreview['window']
+	counts: {
+		replayable: number
+		unconfirmed: number
+		excludedSynthetic: number
+		planned: number
+		deferred: number
+	}
+	events: Array<SkillsNewsletterSubscribed & { id: string }>
 }
 
 export type SignupGapReplayReceipt = {
@@ -154,12 +185,25 @@ export function buildSignupGapPreview(args: {
 		return createdAt >= window.fromMs && createdAt < window.toMs
 	})
 
+	const stateBreakdown = {
+		active: inWindow.filter((subscriber) => subscriber.state === 'active').length,
+		inactiveUnconfirmed: inWindow.filter(
+			(subscriber) => subscriber.state === 'inactive',
+		).length,
+		cancelled: inWindow.filter((subscriber) => subscriber.state === 'cancelled')
+			.length,
+		bounced: inWindow.filter((subscriber) => subscriber.state === 'bounced')
+			.length,
+		complained: inWindow.filter((subscriber) => subscriber.state === 'complained')
+			.length,
+	}
 	let withExistingContact = 0
 	let withExistingProviderIdentity = 0
 	let withExistingIdentity = 0
 	const candidates: SignupGapPreviewCandidate[] = []
 
 	for (const subscriber of inWindow) {
+		if (subscriber.state !== 'active') continue
 		const email = normalizeSignupGapEmail(subscriber.email)
 		if (!email) {
 			throw new Error(
@@ -211,7 +255,9 @@ export function buildSignupGapPreview(args: {
 			withExistingIdentity,
 			gapCandidates: candidates.length,
 			excludedSynthetic,
+			unconfirmed: stateBreakdown.inactiveUnconfirmed,
 			replayable: candidates.length - excludedSynthetic,
+			stateBreakdown,
 		},
 		...liveness,
 		candidates,
@@ -231,6 +277,45 @@ export function signupGapPreviewForOutput(
 				...(exclusionReason ? { exclusionReason } : {}),
 			}),
 		),
+	}
+}
+
+export function buildSignupConfirmationReconciliationPlan(args: {
+	preview: SignupGapPreview
+	limit: number
+	source?: string
+}): SignupConfirmationReconciliationPlan {
+	if (!Number.isInteger(args.limit) || args.limit < 1) {
+		throw new Error('Confirmation reconciliation limit must be a positive integer')
+	}
+	const replayable = args.preview.candidates.filter(
+		(candidate) => !candidate.excludedSynthetic,
+	)
+	const planned = replayable.slice(0, args.limit)
+	return {
+		mode: 'signup-confirmation-reconciliation-plan',
+		generatedAt: args.preview.generatedAt,
+		formId: args.preview.formId,
+		window: args.preview.window,
+		counts: {
+			replayable: replayable.length,
+			unconfirmed: args.preview.counts.unconfirmed,
+			excludedSynthetic: args.preview.counts.excludedSynthetic,
+			planned: planned.length,
+			deferred: Math.max(0, replayable.length - planned.length),
+		},
+		events: planned.map((candidate) => ({
+			id: `skills-confirmed:${args.preview.formId}:${candidate.kitSubscriberId}`,
+			name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+			data: {
+				kitSubscriberId: candidate.kitSubscriberId,
+				email: candidate.email,
+				name: candidate.firstName,
+				formId: args.preview.formId,
+				source: args.source ?? 'kit-confirmation-reconciler',
+				subscribedAt: candidate.createdAt,
+			},
+		})),
 	}
 }
 

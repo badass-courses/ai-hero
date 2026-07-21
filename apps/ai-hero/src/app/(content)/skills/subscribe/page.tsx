@@ -2,9 +2,7 @@ import type { Metadata } from 'next'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import LayoutClient from '@/components/layout-client'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
-import { db } from '@/db'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
-import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { SubscriberSchema } from '@/schemas/subscriber'
 
 import { SkillsCourseFrontDoor } from '../_components/skills-course-front-door'
@@ -40,19 +38,6 @@ async function resolveSubscriber(ckSubscriberId: string | undefined) {
 	}
 }
 
-async function hasCourseContact(email: string | undefined) {
-	if (!email) return false
-	try {
-		const repository = new DrizzleCaptureMarketingRepository(db)
-		const contact = await repository.findContactByEmail(
-			email.trim().toLowerCase(),
-		)
-		return Boolean(contact)
-	} catch {
-		return false
-	}
-}
-
 export default async function SkillsSubscribePage({
 	searchParams,
 }: {
@@ -60,18 +45,10 @@ export default async function SkillsSubscribePage({
 }) {
 	const { ck_subscriber_id } = await searchParams
 	const subscriber = await resolveSubscriber(ck_subscriber_id)
-	// "Enrolled" means an app contact exists on the course paths — a Kit
-	// interest field alone means they subscribed on the skills pages before the
-	// course pipeline existed and still need one-click entry.
-	const enrolled = subscriber
-		? await hasCourseContact(subscriber.email_address ?? undefined)
-		: false
+	// Kit confirmation is enrollment. The hourly reconciler guarantees path
+	// entry, so this page reassures instead of asking for a third click.
 	const status: SkillsNewsletterStatus =
-		subscriber?.state !== 'active'
-			? 'show-form'
-			: enrolled
-				? 'subscribed'
-				: 'tag-me'
+		subscriber?.state === 'active' ? 'subscribed' : 'show-form'
 
 	return (
 		<LayoutClient withContainer>
