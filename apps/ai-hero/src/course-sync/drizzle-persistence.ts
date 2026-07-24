@@ -11,10 +11,14 @@ import {
 	courseSyncSourceRevisionAsset,
 	products,
 } from '@/db/schema'
-import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, max, ne, sql } from 'drizzle-orm'
 
 import { CourseSyncError } from './errors'
 import { sha256, stableJson } from './control-plane'
+import {
+	assertManagedChildRelations,
+	chunkCourseSyncWrites,
+} from './persistence-invariants'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -167,37 +171,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				409,
 			)
 		}
-		const childPositions = childRelations.map((child) => child.position)
-		if (
-			childRelations.length > 2 ||
-			new Set(childPositions).size !== childPositions.length
-		) {
-			throw new CourseSyncError(
-				'TARGET_CHILD_SCOPE_WIDENED',
-				'The bound workshop does not have one unique slot per managed section.',
-				409,
-			)
-		}
-		for (const child of childRelations) {
-			const fields = child.resource?.fields as
-				| Record<string, unknown>
-				| undefined
-			const sync = fields?.courseSync as Record<string, unknown> | undefined
-			if (
-				child.resource?.type !== 'section' ||
-				fields?.state !== binding.requiredState ||
-				fields.visibility !== binding.requiredVisibility ||
-				sync?.bindingId !== binding.bindingId ||
-				child.position < 0 ||
-				child.position > 1
-			) {
-				throw new CourseSyncError(
-					'TARGET_CHILD_SCOPE_WIDENED',
-					'The bound workshop contains a relation outside the two managed sections.',
-					409,
-				)
-			}
-		}
+		assertManagedChildRelations(binding, childRelations)
 	},
 
 	async findRunByStageKey(bindingId, key) {
@@ -339,52 +313,123 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			})
 			if (
 				!row ||
-				row.state !== 'previewed' ||
+				(row.state !== 'previewed' && row.state !== 'failed') ||
 				row.planSha256 !== plan.planSha256
 			) {
 				throw new CourseSyncError(
 					'APPLY_CONCURRENCY_CONFLICT',
-					'The previewed run changed before apply.',
+					'The run or content-addressed plan changed before apply.',
 					409,
 				)
 			}
-			await trx
-				.update(courseSyncRun)
-				.set({ state: 'applying', applyIdempotencyKey: idempotencyKey })
-				.where(eq(courseSyncRun.runId, runId))
+			if (
+				row.state === 'failed' &&
+				row.applyIdempotencyKey &&
+				row.applyIdempotencyKey !== idempotencyKey
+			) {
+				throw new CourseSyncError(
+					'IDEMPOTENCY_CONFLICT',
+					'Failed apply retry used another idempotency key.',
+					409,
+				)
+			}
 
-			const pointerUpdates: Array<{ resourceId: string; versionId: string }> =
-				[]
-			for (const item of plan.resources) {
-				const existing = await trx.query.contentResource.findFirst({
-					where: eq(contentResource.id, item.targetResourceId),
+			const priorReceipts = await trx
+				.select({ resourceId: courseSyncRunResourceVersion.resourceId })
+				.from(courseSyncRunResourceVersion)
+				.where(eq(courseSyncRunResourceVersion.runId, runId))
+			if (priorReceipts.length > 0) {
+				throw new CourseSyncError(
+					'FAILED_APPLY_NOT_ROLLED_BACK',
+					'A failed apply retained resource receipts and cannot be retried.',
+					409,
+				)
+			}
+
+			const resourceIds = plan.resources.map((item) => item.targetResourceId)
+			const existingRows = await trx
+				.select({
+					id: contentResource.id,
+					type: contentResource.type,
+					currentVersionId: contentResource.currentVersionId,
+					fields: contentResource.fields,
 				})
+				.from(contentResource)
+				.where(inArray(contentResource.id, resourceIds))
+			const existingById = new Map(existingRows.map((item) => [item.id, item]))
+			const relationRows = await trx
+				.select({
+					resourceOfId: contentResourceResource.resourceOfId,
+					resourceId: contentResourceResource.resourceId,
+					position: contentResourceResource.position,
+					deletedAt: contentResourceResource.deletedAt,
+				})
+				.from(contentResourceResource)
+				.where(inArray(contentResourceResource.resourceId, resourceIds))
+			const relationsByResource = new Map<
+				string,
+				Array<(typeof relationRows)[number]>
+			>()
+			for (const relation of relationRows) {
+				const relations = relationsByResource.get(relation.resourceId) ?? []
+				relations.push(relation)
+				relationsByResource.set(relation.resourceId, relations)
+			}
+			const latestVersions = await trx
+				.select({
+					resourceId: contentResourceVersion.resourceId,
+					versionNumber: max(contentResourceVersion.versionNumber),
+				})
+				.from(contentResourceVersion)
+				.where(inArray(contentResourceVersion.resourceId, resourceIds))
+				.groupBy(contentResourceVersion.resourceId)
+			const latestVersionByResource = new Map(
+				latestVersions.map((item) => [
+					item.resourceId,
+					Number(item.versionNumber ?? 0),
+				]),
+			)
+
+			const newResources: Array<typeof contentResource.$inferInsert> = []
+			const versions: Array<typeof contentResourceVersion.$inferInsert> = []
+			const receipts: Array<typeof courseSyncRunResourceVersion.$inferInsert> = []
+			const relationPromotions: Array<
+				typeof contentResourceResource.$inferInsert
+			> = []
+			const pointerPromotions: Array<typeof contentResource.$inferInsert> = []
+
+			for (const item of plan.resources) {
+				const existing = existingById.get(item.targetResourceId)
 				if (item.action === 'create') {
-					if (existing)
+					if (existing) {
 						throw new CourseSyncError(
 							'RESOURCE_ALREADY_EXISTS',
 							'A planned resource ID already exists.',
 							409,
 						)
-					await trx.insert(contentResource).values({
+					}
+					if ((relationsByResource.get(item.targetResourceId) ?? []).length > 0) {
+						throw new CourseSyncError(
+							'ORPHAN_RELATION_CONFLICT',
+							'A create target already has a relation, including a tombstone.',
+							409,
+						)
+					}
+					newResources.push({
 						id: item.targetResourceId,
 						type: item.sourceKind,
 						createdById,
 						fields: item.fields,
+						currentVersionId: null,
 					})
-					await trx.insert(contentResourceResource).values({
-						resourceOfId: item.parentResourceId,
-						resourceId: item.targetResourceId,
-						position: item.position,
-						metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
-					})
-				} else if (!existing) {
-					throw new CourseSyncError(
-						'MANAGED_RESOURCE_MISSING',
-						'A managed target resource disappeared.',
-						409,
-					)
 				} else {
+					if (!existing) {
+						throw new CourseSyncError(
+							'MANAGED_RESOURCE_MISSING',
+							'A managed target resource disappeared.',
+							409,
+						)
+					}
 					const fields = existing.fields as Record<string, unknown>
 					const sync = fields.courseSync as Record<string, unknown> | undefined
 					if (
@@ -399,84 +444,158 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							409,
 						)
 					}
-					const relation = await trx.query.contentResourceResource.findFirst({
-						where: and(
-							eq(contentResourceResource.resourceOfId, item.parentResourceId),
-							eq(contentResourceResource.resourceId, item.targetResourceId),
-							isNull(contentResourceResource.deletedAt),
-						),
-					})
-					if (!relation)
+					if (existing.currentVersionId !== item.previousVersionId) {
 						throw new CourseSyncError(
-							'MANAGED_RELATION_MISSING',
-							'A managed relation disappeared.',
+							'APPLY_TARGET_CHANGED',
+							'A managed resource pointer changed after preview.',
 							409,
 						)
-					if (relation.position !== item.position) {
-						await trx
-							.update(contentResourceResource)
-							.set({ position: item.position })
-							.where(
-								and(
-									eq(
-										contentResourceResource.resourceOfId,
-										item.parentResourceId,
-									),
-									eq(contentResourceResource.resourceId, item.targetResourceId),
-								),
-							)
+					}
+					const relations = (
+						relationsByResource.get(item.targetResourceId) ?? []
+					).filter((relation) => relation.deletedAt === null)
+					if (
+						relations.length !== 1 ||
+						relations[0]?.resourceOfId !== item.parentResourceId
+					) {
+						throw new CourseSyncError(
+							'MANAGED_RELATION_MISSING',
+							'The managed relation changed after preview.',
+							409,
+						)
 					}
 				}
 
-				if (item.action === 'retain') {
-					if (!existing?.currentVersionId) {
-						throw new CourseSyncError(
-							'RETAINED_VERSION_MISSING',
-							'A retained resource has no current version.',
-							409,
-						)
-					}
-					await trx.insert(courseSyncRunResourceVersion).values({
-						runId,
+				const parentVersionId = existing?.currentVersionId ?? null
+				let contentResourceVersionId = parentVersionId
+				if (item.action !== 'retain') {
+					contentResourceVersionId = `version~${sha256(
+						stableJson({
+							runId,
+							resourceId: item.targetResourceId,
+							fields: item.fields,
+						}),
+					)}`
+					versions.push({
+						id: contentResourceVersionId,
 						resourceId: item.targetResourceId,
-						contentResourceVersionId: existing.currentVersionId,
-						parentVersionId: existing.currentVersionId,
-						previousParentResourceId: item.previousParentResourceId,
-						previousPosition: item.previousPosition,
-						action: item.action,
+						parentVersionId,
+						versionNumber:
+							(latestVersionByResource.get(item.targetResourceId) ?? 0) + 1,
+						fields: item.fields,
+						createdById,
 					})
-					continue
+					pointerPromotions.push({
+						id: item.targetResourceId,
+						type: item.sourceKind,
+						createdById,
+						fields: item.fields,
+						currentVersionId: contentResourceVersionId,
+					})
+				} else if (!contentResourceVersionId) {
+					throw new CourseSyncError(
+						'RETAINED_VERSION_MISSING',
+						'A retained resource has no current version.',
+						409,
+					)
 				}
-				const latest = await trx.query.contentResourceVersion.findFirst({
-					where: eq(contentResourceVersion.resourceId, item.targetResourceId),
-					orderBy: desc(contentResourceVersion.versionNumber),
-				})
-				const versionId = `version~${sha256(stableJson({ runId, resourceId: item.targetResourceId, fields: item.fields }))}`
-				await trx.insert(contentResourceVersion).values({
-					id: versionId,
-					resourceId: item.targetResourceId,
-					parentVersionId: existing?.currentVersionId ?? null,
-					versionNumber: (latest?.versionNumber ?? 0) + 1,
-					fields: item.fields,
-					createdById,
-				})
-				await trx.insert(courseSyncRunResourceVersion).values({
+				receipts.push({
 					runId,
 					resourceId: item.targetResourceId,
-					contentResourceVersionId: versionId,
-					parentVersionId: existing?.currentVersionId ?? null,
+					contentResourceVersionId,
+					parentVersionId,
 					previousParentResourceId: item.previousParentResourceId,
 					previousPosition: item.previousPosition,
 					action: item.action,
 				})
-				pointerUpdates.push({ resourceId: item.targetResourceId, versionId })
+				relationPromotions.push({
+					resourceOfId: item.parentResourceId,
+					resourceId: item.targetResourceId,
+					position: item.position,
+					metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
+					deletedAt: null,
+				})
 			}
 
-			for (const pointer of pointerUpdates) {
+			await trx
+				.update(courseSyncRun)
+				.set({
+					state: 'applying',
+					applyIdempotencyKey: idempotencyKey,
+					failureCode: null,
+					failureReason: null,
+					updatedAt: new Date(),
+				})
+				.where(eq(courseSyncRun.runId, runId))
+
+			for (const batch of chunkCourseSyncWrites(newResources)) {
+				await trx.insert(contentResource).values(batch)
+			}
+			for (const batch of chunkCourseSyncWrites(versions)) {
+				await trx.insert(contentResourceVersion).values(batch)
+			}
+			for (const batch of chunkCourseSyncWrites(receipts)) {
+				await trx.insert(courseSyncRunResourceVersion).values(batch)
+			}
+
+			const preparedResources = await trx
+				.select({ id: contentResource.id })
+				.from(contentResource)
+				.where(inArray(contentResource.id, resourceIds))
+			const preparedVersions =
+				versions.length === 0
+					? []
+					: await trx
+							.select({ id: contentResourceVersion.id })
+							.from(contentResourceVersion)
+							.where(
+								inArray(
+									contentResourceVersion.id,
+									versions.map((version) => version.id),
+								),
+							)
+			const preparedReceipts = await trx
+				.select({ resourceId: courseSyncRunResourceVersion.resourceId })
+				.from(courseSyncRunResourceVersion)
+				.where(eq(courseSyncRunResourceVersion.runId, runId))
+			if (
+				preparedResources.length !== plan.resources.length ||
+				preparedVersions.length !== versions.length ||
+				preparedReceipts.length !== plan.resources.length
+			) {
+				throw new CourseSyncError(
+					'APPLY_PREPARATION_COUNT_MISMATCH',
+					'Prepared apply rows do not match the content-addressed plan.',
+					500,
+				)
+			}
+
+			// Relations and current-version pointers are the activation boundary. These
+			// batched upserts and the applied state commit together or all roll back.
+			for (const batch of chunkCourseSyncWrites(relationPromotions)) {
 				await trx
-					.update(contentResource)
-					.set({ currentVersionId: pointer.versionId, updatedAt: new Date() })
-					.where(eq(contentResource.id, pointer.resourceId))
+					.insert(contentResourceResource)
+					.values(batch)
+					.onDuplicateKeyUpdate({
+						set: {
+							position: sql`values(${contentResourceResource.position})`,
+							metadata: sql`values(${contentResourceResource.metadata})`,
+							deletedAt: null,
+							updatedAt: new Date(),
+						},
+					})
+			}
+			for (const batch of chunkCourseSyncWrites(pointerPromotions)) {
+				await trx
+					.insert(contentResource)
+					.values(batch)
+					.onDuplicateKeyUpdate({
+						set: {
+							currentVersionId: sql`values(${contentResource.currentVersionId})`,
+							fields: sql`values(${contentResource.fields})`,
+							updatedAt: new Date(),
+						},
+					})
 			}
 			await trx
 				.update(courseSyncRun)
@@ -493,16 +612,22 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 		return applied
 	},
 
-	async markFailed(runId, code, reason) {
+	async markFailed(runId, code, reason, applyIdempotencyKey) {
 		await db
 			.update(courseSyncRun)
 			.set({
 				state: 'failed',
+				applyIdempotencyKey,
 				failureCode: code,
 				failureReason: reason,
 				updatedAt: new Date(),
 			})
-			.where(eq(courseSyncRun.runId, runId))
+			.where(
+				and(
+					eq(courseSyncRun.runId, runId),
+					ne(courseSyncRun.state, 'applied'),
+				),
+			)
 		const failed = await readRun(runId)
 		if (!failed)
 			throw new CourseSyncError('RUN_NOT_FOUND', 'Failed run disappeared.', 500)

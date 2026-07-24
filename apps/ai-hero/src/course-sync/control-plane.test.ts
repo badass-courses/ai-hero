@@ -182,11 +182,15 @@ async function stagedAndPreviewed(
 }
 
 describe('draft course sync control plane', () => {
-	it('models only the allowed finite lifecycle and has no publish transition', () => {
+	it('models apply failure recovery explicitly and has no publish transition', () => {
 		const actor = createActor(courseSyncRunMachine).start()
 		expect(actor.getSnapshot().value).toBe('staged')
 		actor.send({ type: 'PREVIEW' })
 		actor.send({ type: 'APPLY' })
+		actor.send({ type: 'FAIL' })
+		expect(actor.getSnapshot().value).toBe('failed')
+		actor.send({ type: 'RETRY' })
+		expect(actor.getSnapshot().value).toBe('applying')
 		actor.send({ type: 'APPLIED' })
 		expect(actor.getSnapshot().value).toBe('applied')
 		expect(courseSyncRunMachine.events).not.toContain('PUBLISH')
@@ -356,9 +360,13 @@ describe('draft course sync control plane', () => {
 		).toBe(0)
 	})
 
-	it('rolls back the whole mutation transaction when one version write fails', async () => {
+	it('retries a rolled-back mid-apply failure with the same plan and key without duplicates', async () => {
 		const testHarness = harness()
 		const { staged } = await stagedAndPreviewed(testHarness)
+		const planSha256 = testHarness.persistence.runs.get(
+			staged.runId,
+		)?.planSha256
+		expect(planSha256).toHaveLength(64)
 		testHarness.persistence.failAfterVersionWrites = 3
 		await expect(
 			testHarness.controlPlane.apply({
@@ -368,7 +376,40 @@ describe('draft course sync control plane', () => {
 		).rejects.toMatchObject({ code: 'INJECTED_APPLY_FAILURE' })
 		expect(testHarness.persistence.resources.size).toBe(0)
 		expect(testHarness.persistence.versions.size).toBe(0)
-		expect(testHarness.persistence.runs.get(staged.runId)?.state).toBe('failed')
+		expect(testHarness.persistence.relations.size).toBe(0)
+		expect(testHarness.persistence.receipts).toHaveLength(0)
+		expect(testHarness.persistence.runs.get(staged.runId)).toMatchObject({
+			state: 'failed',
+			applyIdempotencyKey: 'apply-failure-key',
+			planSha256,
+		})
+
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: staged.runId,
+				idempotencyKey: 'another-apply-key',
+			}),
+		).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+
+		testHarness.persistence.failAfterVersionWrites = null
+		const retried = await testHarness.controlPlane.apply({
+			runId: staged.runId,
+			idempotencyKey: 'apply-failure-key',
+		})
+		expect(retried).toMatchObject({ state: 'applied', noOp: false })
+		expect(testHarness.persistence.resources.size).toBe(18)
+		expect(testHarness.persistence.versions.size).toBe(18)
+		expect(testHarness.persistence.receipts).toHaveLength(18)
+
+		const replay = await testHarness.controlPlane.apply({
+			runId: staged.runId,
+			idempotencyKey: 'apply-failure-key',
+		})
+		expect(replay).toMatchObject({ state: 'applied', noOp: true })
+		expect(testHarness.persistence.resources.size).toBe(18)
+		expect(testHarness.persistence.versions.size).toBe(18)
+		expect(testHarness.persistence.relations.size).toBe(18)
+		expect(testHarness.persistence.receipts).toHaveLength(18)
 	})
 
 	it('diffs a new revision and changes only the one lesson whose frozen media changed', async () => {
