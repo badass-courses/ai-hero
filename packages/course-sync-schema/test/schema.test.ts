@@ -9,6 +9,15 @@ import {
 	decodeCourseSyncDocument,
 	makeCourseBuilderClientKey,
 } from "../src/schema.js"
+import {
+	courseJsonVideos,
+	decodeCourseJsonDocumentV3,
+} from "../src/course-json-v3.js"
+import {
+	decodeCourseSyncBindingSummary,
+	decodeStageSourceRevisionRequest,
+} from "../src/control-plane.js"
+import { makeCourseJsonV3Fixture } from "./fixtures/course-json.v3.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixturePath = join(here, "fixtures/course-sync.v1.json")
@@ -68,5 +77,73 @@ assert.throws(() => {
 assert.doesNotThrow(() => {
 	Schema.encodeUnknownSync(CourseSyncDocument)(decoded)
 })
+
+const v3 = decodeCourseJsonDocumentV3(makeCourseJsonV3Fixture())
+assert.equal(v3.schemaVersion, 3)
+assert.equal(v3.archiveTTL, "90d")
+assert.equal(v3.sections.length, 3)
+assert.equal(courseJsonVideos(v3).length, 24)
+
+assert.throws(() =>
+	decodeCourseJsonDocumentV3({
+		...makeCourseJsonV3Fixture(),
+		schemaVersion: 2,
+	}),
+)
+assert.throws(() =>
+	decodeCourseJsonDocumentV3({
+		...makeCourseJsonV3Fixture(),
+		sections: [
+			{
+				...makeCourseJsonV3Fixture().sections[0],
+				lessons: [
+					{
+						...makeCourseJsonV3Fixture().sections[0]?.lessons[0],
+						explainer: {
+							...makeCourseJsonV3Fixture().sections[0]?.lessons[0]?.explainer,
+							relativePath: "../outside.mp4",
+						},
+					},
+				],
+			},
+		],
+	}),
+)
+assert.doesNotThrow(() =>
+	decodeStageSourceRevisionRequest({ manifest: makeCourseJsonV3Fixture() }),
+)
+assert.doesNotThrow(() =>
+	decodeCourseSyncBindingSummary({
+		bindingId: "csb_ai_coding_crash_course",
+		status: "active",
+		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
+		target: {
+			productType: "self-paced",
+			anchorResourceType: "workshop",
+			requiredState: "draft",
+			requiredVisibility: "unlisted",
+			sectionMappingPolicy: "sections-in-anchor-workshop",
+		},
+	}),
+)
+assert.throws(() =>
+	decodeCourseSyncBindingSummary({
+		bindingId: "csb_ai_coding_crash_course",
+		status: "active",
+		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
+		target: {
+			productType: "self-paced",
+			anchorResourceType: "workshop",
+			requiredState: "draft",
+			requiredVisibility: "unlisted",
+			sectionMappingPolicy: "two-sections-in-anchor-workshop",
+		},
+	}),
+)
+assert.throws(() =>
+	decodeStageSourceRevisionRequest({
+		manifest: { ...makeCourseJsonV3Fixture(), productId: "caller-target" },
+	}),
+)
 
 console.log("course-sync-schema tests passed")

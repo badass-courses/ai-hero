@@ -55,6 +55,7 @@ const config = {
 	},
 	pageExtensions: ['mdx', 'ts', 'tsx'],
 	transpilePackages: [
+		'@ai-hero/course-sync-schema',
 		'@coursebuilder/ui',
 		'@coursebuilder/commerce-next',
 		'@coursebuilder/survey',

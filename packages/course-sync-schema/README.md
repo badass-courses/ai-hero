@@ -2,11 +2,11 @@
 
 Effect v4 schema contract for moving a Course Video Manager course export into AI Hero/Course Builder import tooling.
 
-This package is intentionally a small bridge surface. It does not mirror CVM tables and it does not write Course Builder records. It validates the shared `course.json` shape that a producer can write at the root of a course folder and a consumer can turn into Course Builder resources and relations.
+This package is intentionally a small bridge surface. It does not mirror CVM tables and it does not write Course Builder records. `CourseJsonDocumentV3` is the consumer copy of Course Video Manager's immutable v3 package-entry contract. The older `CourseSyncDocument` v1 remains exported only for compatibility; it is not accepted by the draft sync control plane because it contains caller-supplied Course Builder target hints.
 
 ## Contract
 
-The root document is `CourseSyncDocument` with schema marker `aihero.course-sync.v1`.
+The draft sync root document is `CourseJsonDocumentV3` with `schemaVersion: 3`, an immutable `courseVersionId`, `archiveTTL: "90d"`, and full MP4 byte `sha256` plus `bytes` receipts. Control-plane request and redacted response schemas live beside it. Stage requests carry only `{ manifest }`; all target IDs stay server-owned.
 
 It contains:
 
