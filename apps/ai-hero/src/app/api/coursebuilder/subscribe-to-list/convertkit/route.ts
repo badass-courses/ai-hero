@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
 import { POST as courseBuilderPOST } from '@/coursebuilder/course-builder-config'
+import { env } from '@/env.mjs'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -9,6 +10,10 @@ import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
+import {
+	AIH_OPTIN_ATTRIBUTION_FIELD,
+	serializeOptInAttributionForKit,
+} from '@/lib/subscriber-marketing/opt-in-attribution-stash'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -46,16 +51,56 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 					email: subscriber.email_address,
 					subscriberState: subscriber.state,
 				})
+				const cookieStore = await cookies()
+				const optInAttribution = parseOptInAttributionCookie(
+					cookieStore.get('ft_attr')?.value,
+				)
 				if (optIn.status === 'confirmation-required') {
+					// Enrollment happens later, from Kit data, via the confirmation
+					// reconciler — this request is the only moment the browser's
+					// attribution exists, so stash it on the Kit subscriber now.
+					let attributionStashed = false
+					const serialized = optInAttribution
+						? serializeOptInAttributionForKit(optInAttribution)
+						: undefined
+					if (serialized) {
+						try {
+							const { setConvertkitSubscriberFields } = await import(
+								'@coursebuilder/core/providers/convertkit'
+							)
+							await setConvertkitSubscriberFields({
+								subscriber: { id: subscriber.id, fields: subscriber.fields },
+								fields: { [AIH_OPTIN_ATTRIBUTION_FIELD]: serialized },
+								convertkitApiSecret: env.CONVERTKIT_API_SECRET,
+								convertkitApiKey: env.CONVERTKIT_API_KEY,
+							})
+							attributionStashed = true
+						} catch (stashError) {
+							await log.error('skills.newsletter.attribution.stash.failed', {
+								formId: 9376133,
+								kitSubscriberId: String(subscriber.id),
+								error:
+									stashError instanceof Error
+										? stashError.message
+										: String(stashError),
+							})
+						}
+					}
+					// optInAttribution rides the log line so a lost Kit write can
+					// still be recovered from Axiom by kitSubscriberId.
 					await log.info('skills.newsletter.confirmation.required', {
 						formId: 9376133,
 						kitSubscriberId: String(subscriber.id),
+						hasAttribution: Boolean(optInAttribution),
+						hasClickId: Boolean(
+							optInAttribution?.gclid ||
+								optInAttribution?.gbraid ||
+								optInAttribution?.wbraid,
+						),
+						attributionStashed,
+						optInAttribution,
 					})
 				} else {
-					const cookieStore = await cookies()
-					const optInAttribution = parseOptInAttributionCookie(
-						cookieStore.get('ft_attr')?.value,
-					)
 					const event: SkillsNewsletterSubscribed = {
 						name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 						data: {
