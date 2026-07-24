@@ -190,10 +190,22 @@ describe('Dropbox course sync OAuth', () => {
 			DROPBOX_APP_SECRET: 'app-secret',
 			DROPBOX_SYNC_SHARED_LINK: sharedLink,
 		})
+		const video = (id: string) => ({
+			id,
+			relativePath: `PRIVATE_ASSET_PATH_SENTINEL/${id}.mp4`,
+			body: 'PRIVATE_LESSON_BODY_SENTINEL',
+			description: 'PRIVATE_DESCRIPTION_SENTINEL',
+			hash: `export-fingerprint-${id}`,
+			sha256: 'a'.repeat(64),
+			bytes: 123,
+			chapters: [],
+		})
 		const document = {
 			$schema: './course.schema.json',
-			schemaVersion: 2,
+			schemaVersion: 3,
 			courseId: 'course-source-1',
+			courseVersionId: '8471116f-6201-406f-9a40-3672e457fd50',
+			archiveTTL: '90d',
 			courseName: 'PRIVATE_COURSE_TITLE_SENTINEL',
 			sections: [
 				{
@@ -204,14 +216,14 @@ describe('Dropbox course sync OAuth', () => {
 							type: 'explainer',
 							id: 'lesson-1',
 							title: 'PRIVATE_LESSON_TITLE_SENTINEL',
-							explainer: {
-								id: 'video-1',
-								relativePath: 'PRIVATE_ASSET_PATH_SENTINEL/video.mp4',
-								body: 'PRIVATE_LESSON_BODY_SENTINEL',
-								description: 'PRIVATE_DESCRIPTION_SENTINEL',
-								hash: 'export-fingerprint',
-								chapters: [],
-							},
+							explainer: video('video-1'),
+						},
+						{
+							type: 'problem',
+							id: 'lesson-2',
+							title: 'PRIVATE_PROBLEM_TITLE_SENTINEL',
+							problem: video('video-2'),
+							solution: video('video-3'),
 						},
 					],
 				},
@@ -244,23 +256,19 @@ describe('Dropbox course sync OAuth', () => {
 		expect(summary).toEqual({
 			contract: {
 				name: 'course-video-manager.course-json',
-				schemaVersion: 2,
 			},
+			contractSchemaVersion: 3,
 			producer: { name: 'course-video-manager' },
 			course: {
 				sourceId: 'course-source-1',
-				sourceVersionId: null,
 			},
+			courseVersionId: '8471116f-6201-406f-9a40-3672e457fd50',
+			archiveTTL: '90d',
 			structure: {
 				sectionCount: 1,
-				lessonCount: 1,
-				videoCount: 1,
-				videoExportHashCount: 1,
-			},
-			bindingReadiness: {
-				sourceVersionPinned: false,
-				videoDropboxRevisionsPinned: false,
-				videoByteSha256Complete: false,
+				lessonCount: 2,
+				videoCount: 3,
+				videosWithByteSha256: 3,
 			},
 			manifest: {
 				sourcePath: '/course.json',
@@ -288,7 +296,42 @@ describe('Dropbox course sync OAuth', () => {
 		})
 	})
 
-	it('rejects malformed or oversized manifests before returning a summary', async () => {
+	it('rejects retired v2 manifests with the observed version', async () => {
+		const { config } = getDropboxSyncConfig({
+			DROPBOX_APP_KEY: 'app-key',
+			DROPBOX_APP_SECRET: 'app-secret',
+			DROPBOX_SYNC_SHARED_LINK: 'https://www.dropbox.com/scl/fo/example?rlkey=example',
+		})
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ access_token: 'short-lived-token' }))
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						$schema: './course.schema.json',
+						schemaVersion: 2,
+						courseId: 'retired-course',
+						courseName: 'Retired course',
+						sections: [],
+					}),
+					{
+						headers: {
+							'Dropbox-API-Result': JSON.stringify({ rev: 'rev-v2', size: 200 }),
+						},
+					},
+				),
+			)
+
+		await expect(
+			readDropboxCourseManifestSummary({
+				config: config!,
+				refreshToken: 'stored-refresh-token',
+				fetchImpl,
+			}),
+		).rejects.toThrow('observedVersion=2; v2 is retired')
+	})
+
+	it('rejects malformed or oversized v3 manifests before returning a summary', async () => {
 		const { config } = getDropboxSyncConfig({
 			DROPBOX_APP_KEY: 'app-key',
 			DROPBOX_APP_SECRET: 'app-secret',
@@ -298,8 +341,10 @@ describe('Dropbox course sync OAuth', () => {
 		const malformedResponse = new Response(
 			JSON.stringify({
 				$schema: './course.schema.json',
-				schemaVersion: 2,
+				schemaVersion: 3,
 				courseId: 'course-1',
+				courseVersionId: 'course-version-1',
+				archiveTTL: '90d',
 				courseName: 'Course',
 				sections: {},
 			}),
@@ -320,7 +365,7 @@ describe('Dropbox course sync OAuth', () => {
 				refreshToken: 'stored-refresh-token',
 				fetchImpl: malformedFetch,
 			}),
-		).rejects.toThrow('sections were missing or invalid')
+		).rejects.toThrow('v3 validation failed (observedVersion=3)')
 
 		const invalidVideoFetch = vi
 			.fn()
@@ -329,8 +374,10 @@ describe('Dropbox course sync OAuth', () => {
 				new Response(
 					JSON.stringify({
 						$schema: './course.schema.json',
-						schemaVersion: 2,
+						schemaVersion: 3,
 						courseId: 'course-1',
+						courseVersionId: 'course-version-1',
+						archiveTTL: '90d',
 						courseName: 'Course',
 						sections: [
 							{
@@ -355,7 +402,7 @@ describe('Dropbox course sync OAuth', () => {
 				refreshToken: 'stored-refresh-token',
 				fetchImpl: invalidVideoFetch,
 			}),
-		).rejects.toThrow('video was invalid')
+		).rejects.toThrow('v3 validation failed (observedVersion=3)')
 
 		const oversizedFetch = vi
 			.fn()
