@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
 	courseJsonVideos,
 	decodeCourseJsonDocumentV3,
+	type CourseJsonDocumentV3,
 } from '@ai-hero/course-sync-schema'
 
 export const DROPBOX_OAUTH_CALLBACK_PATH = '/api/integrations/dropbox'
@@ -82,6 +83,11 @@ export type DropboxCourseManifestSummary = {
 		serverModified: string | null
 		sha256: string
 	}
+}
+
+export type DropboxCourseManifestRead = {
+	manifest: CourseJsonDocumentV3
+	summary: DropboxCourseManifestSummary
 }
 
 export type DropboxTokenStoreResult = {
@@ -359,7 +365,7 @@ export async function createDropboxSharedLinkAssetReader({
 	}
 }
 
-export async function readDropboxCourseManifestSummary({
+export async function readDropboxCourseManifest({
 	config,
 	refreshToken,
 	fetchImpl = fetch,
@@ -367,7 +373,7 @@ export async function readDropboxCourseManifestSummary({
 	config: DropboxSyncConfig
 	refreshToken: string
 	fetchImpl?: Fetch
-}): Promise<DropboxCourseManifestSummary> {
+}): Promise<DropboxCourseManifestRead> {
 	if (config.source.kind !== 'shared-link') {
 		throw new Error('Dropbox course manifest reads require the approved shared-link boundary.')
 	}
@@ -433,38 +439,47 @@ export async function readDropboxCourseManifestSummary({
 	const videos = courseJsonVideos(document)
 
 	return {
-		contract: {
-			name: 'course-video-manager.course-json',
-		},
-		contractSchemaVersion: 3,
-		producer: { name: 'course-video-manager' },
-		course: {
-			sourceId: document.courseId,
-		},
-		courseVersionId: document.courseVersionId,
-		archiveTTL: document.archiveTTL,
-		structure: {
-			sectionCount: document.sections.length,
-			lessonCount: lessons.length,
-			videoCount: videos.length,
-			videosWithByteSha256: videos.filter(
-				(video) => /^[a-f0-9]{64}$/.test(video.sha256),
-			).length,
-		},
-		manifest: {
-			sourcePath: '/course.json',
-			id: optionalString(metadata ?? {}, 'id'),
-			rev: requiredString(
-				metadata,
-				'rev',
-				'Dropbox course manifest revision was missing.',
-			),
-			contentHash: optionalString(metadata ?? {}, 'content_hash'),
-			bytes: metadataSize,
-			serverModified: optionalString(metadata ?? {}, 'server_modified'),
-			sha256: manifestSha256,
+		manifest: document,
+		summary: {
+			contract: {
+				name: 'course-video-manager.course-json',
+			},
+			contractSchemaVersion: 3,
+			producer: { name: 'course-video-manager' },
+			course: {
+				sourceId: document.courseId,
+			},
+			courseVersionId: document.courseVersionId,
+			archiveTTL: document.archiveTTL,
+			structure: {
+				sectionCount: document.sections.length,
+				lessonCount: lessons.length,
+				videoCount: videos.length,
+				videosWithByteSha256: videos.filter(
+					(video) => /^[a-f0-9]{64}$/.test(video.sha256),
+				).length,
+			},
+			manifest: {
+				sourcePath: '/course.json',
+				id: optionalString(metadata ?? {}, 'id'),
+				rev: requiredString(
+					metadata,
+					'rev',
+					'Dropbox course manifest revision was missing.',
+				),
+				contentHash: optionalString(metadata ?? {}, 'content_hash'),
+				bytes: metadataSize,
+				serverModified: optionalString(metadata ?? {}, 'server_modified'),
+				sha256: manifestSha256,
+			},
 		},
 	}
+}
+
+export async function readDropboxCourseManifestSummary(
+	input: Parameters<typeof readDropboxCourseManifest>[0],
+): Promise<DropboxCourseManifestSummary> {
+	return (await readDropboxCourseManifest(input)).summary
 }
 
 export async function verifyDropboxConnection({

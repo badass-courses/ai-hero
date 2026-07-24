@@ -298,6 +298,7 @@ export function createCourseSyncControlPlane(
 			bindingId: string
 			idempotencyKey: string
 			manifest: unknown
+			providerRevision?: string
 		}) {
 			if (!input.idempotencyKey.trim()) {
 				throw new CourseSyncError(
@@ -412,7 +413,8 @@ export function createCourseSyncControlPlane(
 				sourceRevisionId,
 				bindingId: binding.bindingId,
 				courseVersionId: manifest.courseVersionId,
-				providerRevision: manifest.courseVersionId,
+				providerRevision:
+					input.providerRevision?.trim() || manifest.courseVersionId,
 				manifestSha256,
 				manifestSnapshotUri,
 				manifest,
