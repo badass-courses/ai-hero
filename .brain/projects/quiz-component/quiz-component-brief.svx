@@ -1,0 +1,104 @@
+---
+title: "Quiz Component for the Crash Course"
+type: "brief"
+status: "active"
+created_at: "2026-07-24"
+privacy: "private"
+---
+
+# Quiz Component for the Crash Course
+
+## Finish line
+
+NOT YET PINNED — the charter grilling has not happened. Joel asked first for a
+trace of what exists. Research steps run first; the finish line gets pinned with
+`grill-me` once the facts are in hand.
+
+Draft conditions, to be confirmed or replaced:
+
+- Matt can author a text quiz inline in a crash-course lesson body and it
+  renders, accepts an answer, and tells the learner whether they were right.
+- Matt (or his agent) has a documented API path for creating and editing quiz
+  content without hand-editing app code.
+- Answers persist somewhere Joel is willing to maintain, at a durability level
+  both parties agreed to on purpose.
+- Whoever maintains this after launch can find the quiz data, the renderer, and
+  the persistence path from one entry point.
+
+## Vocabulary
+
+- **quiz** — a set of questions that have correct answers and grade the learner.
+  Distinct from a survey, which collects opinions and has no correctness.
+- **survey** — the existing AI Hero / course-builder system for collecting
+  learner answers with no notion of right or wrong.
+- **crash course** — the AI Hero product surface Matt named in the request;
+  exact identity to be confirmed by research.
+- **inline authoring** — the quiz question and its answers live in the lesson's
+  MDX body, not in a separate record the author creates first. This is Matt's
+  stated preference and it is in tension with Joel's data-driven position.
+- **data-driven authoring** — quiz content is a content resource, fetched over
+  the same API as every other resource; MDX carries only a reference.
+
+## Notes
+
+- Domain: AI Hero app (`~/Code/badass-courses/ai-hero`, `apps/ai-hero`) plus the
+  course-builder monorepo (`~/Code/badass-courses/course-builder`, notably
+  `packages/survey`, `packages/adapter-drizzle`, `packages/ui`).
+- Source of the request: Matt Pocock in Slack `#cc-matt-p`, thread
+  `https://eggheadio.slack.com/archives/C0211NSK3TP/p1784717959599139`
+  (2026-07-24). Tagged `:shitrat:` on the root.
+- What Matt asked for, verbatim in substance:
+  - A `<Quiz>` component for the crash course, text-based questions only.
+  - Persisted answers preferred; `localStorage` explicitly acceptable to him.
+  - It must work inline in the lesson body.
+  - Shape `<Quiz><QuizQuestion data={} /></Quiz>`, with the question and answer
+    baked in so there is "no extra thing to author" — this makes it easy for his
+    agent to generate and edit quizzes.
+  - "Yep as long as I've got an API for it I'm OK."
+- What Joel said in the thread: the survey system already is quizzes; an MDX
+  component may need wiring but "the hard bits are done/baked in"; it is data
+  driven, content resources, over the same API.
+- Open tension to grill: Matt wants content inline in MDX, Joel wants content
+  resources over the API. Matt's last message suggests an API satisfies him, but
+  that has not been confirmed against his authoring loop.
+- Skills to consult: `grill-me`, `herdr-orchestration`, `prototype`.
+- Execution authorization: NOT granted. Sessions produce decisions until Joel
+  says otherwise.
+
+## Decision ledger
+
+- [Trace the course-builder survey primitives](./trace-coursebuilder-survey-primitives.svx)
+  — `@coursebuilder/survey` is a quiz engine named "survey": machine id is
+  `quizMachine`, questions carry `correct` + `answer`, and the machine grades into
+  `answered.correct`/`incorrect`/`neutral`. Five gaps to a real quiz, including a
+  multi-select grading bug that accepts a proper subset as fully correct.
+- [Trace the AI Hero survey system end to end](./trace-ai-hero-survey-system.svx)
+  — Surveys and questions are `contentResource` rows joined by
+  `contentResourceResource`; answers are `QuestionResponse.fields.answer` mirrored
+  to Kit. The REST API covers surveys only: **there is no question CRUD endpoint**,
+  and the admin form does not expose `correct`. No supported path can author a
+  graded question today.
+- [Trace AI Hero MDX rendering and the crash course](./trace-ai-hero-mdx-and-crash-course.svx)
+  — Lesson bodies compile through `next-mdx-remote/rsc` at request time with
+  `blockJS: false`. Structured object props work (`ThemeImage urls={{...}}` ships
+  today), stateful client components work, and no quiz component is registered.
+  Crash-course content flows Course Video Manager → Dropbox `/course.json` →
+  course-sync, whose v3 schema carries `body` strings and rejects extra properties.
+
+## Latent
+
+- Whether quiz answers should feed the existing subscriber/segmentation
+  machinery the surveys feed, or stay inert learner-facing state.
+- Whether this ships as an AI Hero-only component or a `@coursebuilder/*`
+  primitive other apps inherit. AI Hero pins `@coursebuilder/survey@^1.0.5` while
+  the source package is at `1.0.13` — any package-level change has to cross that
+  version gap.
+- How quiz content gets reviewed and kept correct as course content changes.
+- Whether the accumulated dead surfaces found during the trace get cleaned up as
+  part of this work or logged separately: the commented-out published-state check
+  on `/survey/[slug]`, `deleteSurvey` orphaning question resources, unwritten
+  `respondentKey`/`surveySessionId` columns, and the unimported analytics provider.
+
+## Out of scope
+
+<!-- work ruled past the finish line -->

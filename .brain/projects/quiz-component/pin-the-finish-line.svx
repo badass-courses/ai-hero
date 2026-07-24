@@ -1,0 +1,51 @@
+---
+title: "Pin the finish line: inline MDX quiz or content-resource quiz"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Pin the finish line: inline MDX quiz or content-resource quiz
+
+## Step
+
+The three research steps closed and they turned Joel's Slack answer ("it's data
+driven, content resources, same as any of it via the same api") into a concrete
+fork rather than a settled position. Grill Joel to pin the finish line.
+
+The load-bearing facts the grilling has to respect:
+
+- The grading engine exists and works. This is not in question.
+- **No supported path can author a graded question today.** The REST API has no
+  question create/update/delete endpoint at all — only survey-level CRUD — and the
+  AI Hero admin question form does not expose the `correct` or `answer` fields.
+  Questions are only writable through Next.js server actions behind the admin UI.
+- The crash course's content pipeline (Course Video Manager → Dropbox
+  `/course.json` v3 → course-sync) can carry quiz markup inside a lesson `body`
+  string for free, and cannot carry typed quiz data at all without a schema change.
+- MDX can take real object props, so Matt's requested `<QuizQuestion data={{…}} />`
+  shape compiles as-is.
+- Nothing persists an in-flight answer. A refresh loses it. The only
+  `localStorage` use in AI Hero survey code is the hard-coded checkout question.
+
+Decisions to resolve:
+
+1. Does quiz content live inline in the lesson MDX body, or as a content
+   resource referenced by id from the body? This is the fork and everything else
+   hangs off it.
+2. Which crash course is Matt talking about — the draft **AI Coding Crash Course**
+   (`csb_ai_coding_crash_course`, anchor `workshop-2ozd9`) or the public
+   **AI SDK v6 Crash Course**?
+3. What durability do answers actually need? Matt said localStorage is fine.
+   Nothing exists today at any level.
+4. Does grading get persisted, or is correct/incorrect purely a client-side
+   reveal?
+5. Who fixes the multi-select grading bug, and is it in scope here or its own
+   thing?
+
+## Result

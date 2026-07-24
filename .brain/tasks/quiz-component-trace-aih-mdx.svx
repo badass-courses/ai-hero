@@ -1,0 +1,65 @@
+---
+title: "Worker task: trace AI Hero MDX rendering and the crash course"
+type: "task"
+assignee: "shitrat (flagg, herdr pane w2S:p4, 2026-07-24)"
+created_at: "2026-07-24"
+---
+
+# Worker task: trace AI Hero MDX rendering and the crash course
+
+You are a read-only research worker. You do not write code and you do not commit.
+
+## Claim first
+
+Before any other work, edit
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/trace-ai-hero-mdx-and-crash-course.svx`
+and set its frontmatter `assignee:` to your callsign plus machine, e.g.
+`assignee: "<yourname> (flagg, herdr pane <pane id>, 2026-07-24)"`.
+Also set the `assignee:` in this task file. Do this immediately — it is the
+liveness signal the steering session watches for.
+
+## Context
+
+Matt Pocock asked for a `<Quiz>` MDX component for the AI Hero crash course. He
+wants the shape `<Quiz><QuizQuestion data={} /></Quiz>` with question and answer
+baked in, rendering inline in the lesson body, so his agent can generate and edit
+them. Joel said it "might need an mdx component wired up but the hard bits are
+done". The brief is
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`.
+Read the brief before you start.
+
+## Your step
+
+Execute the step file
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/trace-ai-hero-mdx-and-crash-course.svx`
+exactly as written. It lists what to trace and the numbered questions to answer.
+
+Your scope is the **MDX/content rendering pipeline and the crash course product**
+in `/Users/joel/Code/badass-courses/ai-hero`. Two sibling workers own the survey
+feature and the course-builder packages; do not read or write their step files,
+and do not go deep on survey internals — note it and move on.
+
+## Rules
+
+- Read-only on all source. Never edit anything under `apps/` or `packages/`.
+- The ONLY files you may write are your own step file and this task file.
+- Do not commit. Do not run `git add`, `git commit`, or `git push`.
+- Do not run the app or hit production. Static reading only.
+- Every claim needs `path:line` evidence. If you cannot find evidence, write
+  "not found" — do not infer, do not guess.
+- No product recommendations. Facts only.
+- Question 4 is decisive and must be answered YES or NO with proof: can an MDX
+  component in a lesson body receive a real structured object prop
+  (`data={{ ... }}`), given how AI Hero actually compiles MDX? Trace the compile
+  path to justify the answer rather than reasoning about MDX in general.
+- Question 5 (what "the crash course" actually is) must end with a concrete
+  named product or content resource, or an explicit "could not identify" with a
+  list of the candidates you ruled out.
+
+## Finish
+
+Write the `## Result (2026-07-24)` section into your step file, flip its
+frontmatter to `status: "closed"` with `closed_at: "2026-07-24"`, then print a
+`DONE` summary of at most 15 lines covering: the MDX pipeline in one sentence,
+the YES/NO on structured object props, what the crash course is, and how Matt
+authors lesson bodies today.
