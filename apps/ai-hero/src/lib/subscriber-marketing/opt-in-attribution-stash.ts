@@ -31,6 +31,12 @@ function bounded(value: unknown, max = MAX_VALUE_LENGTH) {
 	return trimmed ? trimmed.slice(0, max) : undefined
 }
 
+export function compactOptInAttribution(
+	value: OptInAttribution,
+): OptInAttribution | undefined {
+	return compactAttribution(value)
+}
+
 function compactAttribution(value: OptInAttribution): OptInAttribution | undefined {
 	const capturedAt = bounded(value.capturedAt)
 	if (!capturedAt || Number.isNaN(Date.parse(capturedAt))) return undefined
