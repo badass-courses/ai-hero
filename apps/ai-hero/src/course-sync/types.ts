@@ -166,6 +166,7 @@ export interface CourseSyncPersistence {
 		runId: string,
 		code: string,
 		reason: string,
+		applyIdempotencyKey: string,
 	): Promise<SyncRunRecord>
 	rollbackAtomically(input: {
 		runId: string

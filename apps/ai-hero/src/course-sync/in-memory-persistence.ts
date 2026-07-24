@@ -169,14 +169,37 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		idempotencyKey: string
 		createdById: string
 	}) {
-		const run = this.runs.get(input.runId)
-		if (!run || run.state !== 'previewed') {
+		const current = this.runs.get(input.runId)
+		if (
+			!current ||
+			(current.state !== 'previewed' && current.state !== 'failed') ||
+			current.planSha256 !== input.plan.planSha256
+		) {
 			throw new CourseSyncError(
 				'APPLY_CONCURRENCY_CONFLICT',
-				'Run changed.',
+				'Run or content-addressed plan changed.',
 				409,
 			)
 		}
+		if (
+			current.state === 'failed' &&
+			current.applyIdempotencyKey &&
+			current.applyIdempotencyKey !== input.idempotencyKey
+		) {
+			throw new CourseSyncError(
+				'IDEMPOTENCY_CONFLICT',
+				'Failed apply retry used another idempotency key.',
+				409,
+			)
+		}
+		const run: SyncRunRecord = {
+			...current,
+			state: 'applying',
+			applyIdempotencyKey: input.idempotencyKey,
+			failureCode: null,
+			failureReason: null,
+		}
+		this.runs.set(input.runId, structuredClone(run))
 		const resources = cloneMap(this.resources)
 		const versions = cloneMap(this.versions)
 		const relations = cloneMap(this.relations)
@@ -310,12 +333,18 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		return structuredClone(applied)
 	}
 
-	async markFailed(runId: string, code: string, reason: string) {
+	async markFailed(
+		runId: string,
+		code: string,
+		reason: string,
+		applyIdempotencyKey: string,
+	) {
 		const run = this.runs.get(runId)
 		if (!run) throw new CourseSyncError('RUN_NOT_FOUND', 'Run missing.', 500)
 		const failed = {
 			...run,
 			state: 'failed' as const,
+			applyIdempotencyKey,
 			failureCode: code,
 			failureReason: reason,
 			updatedAt: new Date(run.updatedAt.getTime() + 1),

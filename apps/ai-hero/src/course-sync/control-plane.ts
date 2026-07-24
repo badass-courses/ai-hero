@@ -550,10 +550,21 @@ export function createCourseSyncControlPlane(
 				}
 				return publicRun(run, true)
 			}
-			if (run.state !== 'previewed' || !run.plan) {
+			if (!run.plan || (run.state !== 'previewed' && run.state !== 'failed')) {
 				throw new CourseSyncError(
 					'INVALID_RUN_STATE',
-					'Only a previewed run can be applied.',
+					'Only a previewed or safely rolled-back failed run can be applied.',
+					409,
+				)
+			}
+			if (
+				run.state === 'failed' &&
+				run.applyIdempotencyKey &&
+				run.applyIdempotencyKey !== input.idempotencyKey
+			) {
+				throw new CourseSyncError(
+					'IDEMPOTENCY_CONFLICT',
+					'Failed apply retry must use the original idempotency key.',
 					409,
 				)
 			}
@@ -569,7 +580,12 @@ export function createCourseSyncControlPlane(
 				)
 			} catch (error) {
 				const failure = asCourseSyncError(error)
-				await persistence.markFailed(run.runId, failure.code, failure.message)
+				await persistence.markFailed(
+					run.runId,
+					failure.code,
+					failure.message,
+					input.idempotencyKey,
+				)
 				throw failure
 			}
 		},
