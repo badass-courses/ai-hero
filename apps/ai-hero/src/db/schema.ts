@@ -241,6 +241,44 @@ export const courseSyncRunResourceVersion = mysqlTable(
 	}),
 )
 
+export const courseSyncPollState = mysqlTable('CourseSyncPollState', {
+	bindingId: varchar('bindingId', { length: 255 }).notNull().primaryKey(),
+	courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+	providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+	status: varchar('status', { length: 32 }).notNull(),
+	consecutiveFailures: int('consecutiveFailures').notNull().default(0),
+	controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
+	failureClass: varchar('failureClass', { length: 100 }),
+	updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+})
+
+export const courseSyncPollLog = mysqlTable(
+	'CourseSyncPollLog',
+	{
+		id: varchar('id', { length: 255 }).notNull().primaryKey(),
+		bindingId: varchar('bindingId', { length: 255 }).notNull(),
+		courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+		providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+		runId: varchar('runId', { length: 255 }).notNull(),
+		controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
+		stage: varchar('stage', { length: 32 }).notNull(),
+		outcome: varchar('outcome', { length: 32 }).notNull(),
+		failureClass: varchar('failureClass', { length: 100 }),
+		metadata: json('metadata').$type<Record<string, unknown>>(),
+		occurredAt: timestamp('occurredAt', { fsp: 3 }).notNull(),
+	},
+	(table) => ({
+		versionTimeIdx: index('CourseSyncPollLog_version_time_idx').on(
+			table.courseVersionId,
+			table.occurredAt,
+		),
+		runTimeIdx: index('CourseSyncPollLog_run_time_idx').on(
+			table.runId,
+			table.occurredAt,
+		),
+	}),
+)
+
 /**
  * Shortlink table for URL shortening
  */
