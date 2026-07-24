@@ -98,15 +98,17 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				),
 			notify: async (notification) => {
 				await step.run('notify-course-sync-completion', async () => {
-					if (!slackProvider.defaultChannelId) {
+					const channel =
+						env.COURSE_SYNC_SLACK_CHANNEL_ID ?? slackProvider.defaultChannelId
+					if (!channel) {
 						throw new CourseSyncError(
 							'COURSE_SYNC_NOTIFICATION_NOT_CONFIGURED',
-							'Slack default channel is not configured.',
+							'No course-sync Slack channel is configured.',
 							503,
 						)
 					}
 					await slackProvider.sendNotification({
-						channel: slackProvider.defaultChannelId,
+						channel,
 						...buildCourseSyncNotificationPayload(notification),
 					})
 				})

@@ -108,6 +108,7 @@ export const env = createEnv({
 		SLACK_TOKEN: z.string().optional(),
 		SLACK_SIGNING_SECRET: z.string().optional(),
 		SLACK_DEFAULT_CHANNEL_ID: z.string().optional(),
+		COURSE_SYNC_SLACK_CHANNEL_ID: z.string().optional(),
 		SLACK_CONTENT_BOT_TOKEN: z.string().optional(),
 		SLACK_CONTENT_BOT_SIGNING_SECRET: z.string().optional(),
 		SLACK_CONTENT_CHANNEL_ID: z.string().optional(),
@@ -243,6 +244,7 @@ export const env = createEnv({
 		SLACK_TOKEN: process.env.SLACK_TOKEN,
 		SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET,
 		SLACK_DEFAULT_CHANNEL_ID: process.env.SLACK_DEFAULT_CHANNEL_ID,
+		COURSE_SYNC_SLACK_CHANNEL_ID: process.env.COURSE_SYNC_SLACK_CHANNEL_ID,
 		SLACK_CONTENT_BOT_TOKEN: process.env.SLACK_CONTENT_BOT_TOKEN,
 		SLACK_CONTENT_BOT_SIGNING_SECRET:
 			process.env.SLACK_CONTENT_BOT_SIGNING_SECRET,
