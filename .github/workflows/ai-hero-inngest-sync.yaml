@@ -3,6 +3,9 @@ name: AI Hero Inngest Sync
 on:
   deployment_status:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ai-hero-inngest-sync-production
   cancel-in-progress: false
@@ -11,30 +14,73 @@ jobs:
   sync:
     name: Sync production Inngest functions
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: >-
       github.event.deployment_status.state == 'success' &&
       github.event.deployment.environment == 'Production' &&
       contains(github.event.deployment_status.target_url, 'ai-hero')
+    env:
+      DEPLOYMENT_URL: ${{ github.event.deployment_status.target_url }}
 
     steps:
       - name: Sync Inngest registry
         run: |
           set -euo pipefail
 
-          echo "Vercel deployment is ready: ${{ github.event.deployment_status.target_url }}"
-          echo "Syncing AI Hero Inngest functions..."
+          # Sync the immutable production deployment URL from Vercel's deployment
+          # event. The custom-domain alias can still point at the prior deployment
+          # when this event fires, which leaves new or renamed functions unregistered.
+          endpoint="${DEPLOYMENT_URL%/}/api/inngest"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
 
+          echo "Vercel production deployment is ready: ${DEPLOYMENT_URL}"
+          echo "Syncing Inngest from: ${endpoint}"
+
+          synced=false
+          http_status=000
           for attempt in 1 2 3 4 5; do
-            response=$(curl -fsS -X PUT "https://www.aihero.dev/api/inngest" \
-              -H "Content-Type: application/json") && break
+            if http_status=$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --request PUT "$endpoint" \
+              --header "Content-Type: application/json"); then
+              response="$(cat "$response_file")"
+              echo "Inngest response (HTTP ${http_status}): ${response}"
 
-            echo "Sync attempt ${attempt} failed, retrying..."
-            sleep $((attempt * 10))
+              if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+                synced=true
+                break
+              fi
+            else
+              response="$(cat "$response_file")"
+              echo "Inngest sync attempt ${attempt} failed (HTTP ${http_status}): ${response}" >&2
+            fi
+
+            if (( attempt < 5 )); then
+              sleep $((attempt * 10))
+            fi
           done
 
-          echo "$response"
-
-          if ! echo "$response" | grep -Eq 'Successfully registered|No changes|modified'; then
-            echo "Unexpected Inngest sync response" >&2
+          if [[ "$synced" != true ]]; then
+            echo "::error::Inngest sync failed after 5 attempts (last HTTP status: ${http_status})"
             exit 1
           fi
+
+          if ! jq -e 'has("modified") and (.modified | type == "boolean")' "$response_file" > /dev/null; then
+            echo "::error::Inngest returned HTTP ${http_status}, but its response did not contain a boolean modified field"
+            exit 1
+          fi
+          modified="$(jq -r '.modified' "$response_file")"
+
+          {
+            echo "### AI Hero Inngest sync"
+            echo
+            echo "- Production deployment: \`${DEPLOYMENT_URL}\`"
+            echo "- HTTP status: \`${http_status}\`"
+            echo "- Manifest modified: \`${modified}\`"
+            echo
+            echo "> Registration success does not prove function health. Run-recency verification belongs to the separate joelclaw-side check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Inngest manifest sync succeeded: modified=${modified}"
