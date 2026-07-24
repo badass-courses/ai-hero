@@ -3,8 +3,9 @@ title: "Decide what identifies an inline quiz and its questions"
 type: "step"
 kind: "grilling"
 interaction: "HITL"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "claude (flagg, herdr pane w2S:p1, 2026-07-24)"
+closed_at: "2026-07-24"
 parent: "./quiz-component-brief.svx"
 blockers: []
 created_at: "2026-07-24"
@@ -63,4 +64,71 @@ The exact strings written to `surveyId` and `questionId` are specified, along
 with what happens when a lesson body is rewritten, and the brief's Vocabulary
 carries the settled terms.
 
-## Result
+## Result (2026-07-24)
+
+Four decisions, then a fifth from Joel mid-grilling that superseded one of them.
+
+**1. Question identity: author-supplied `id`, required.** A reworded question
+keeps its answers. Rejected the text hash because a regenerated lesson body with
+cosmetically different wording would orphan every prior answer with no error
+anywhere — you would find out from a chart that quietly lied. Rejected
+hash-plus-fuzzy-migration because it rebuilds identity you chose to discard, and
+guesses wrong in both directions. The cost is one short string per question in an
+object literal Matt's agent is already generating.
+
+**2. `surveyId`: the lesson's content resource id.** Automatic, no authoring. The
+natural grouping is "how did learners do on this lesson", and two `<Quiz>` blocks
+in one lesson merging into one series reads as a feature. Known cost: moving a
+question to another lesson forks its answers by `surveyId`, recoverable by
+querying on `questionId` alone.
+
+**3. Missing or duplicate `id`: render, grade, skip persistence, alarm loudly.**
+An authoring mistake must never break a learner's lesson. The quiz still renders
+and grades; the answer is not written; a server-side error fires and surfaces in
+the trace command; a visible warning shows outside production. This follows the
+observability launch-gate rule — loud to operators, invisible to learners.
+
+**4. Server-side grading: HMAC-sign the answer key at render.
+SUPERSEDED — see 5.** The reasoning was sound given what was on the table: the
+server holds the key at compile time, so it could embed an HMAC of
+(questionId, correct), verify on POST, and grade without a re-fetch or re-parse.
+
+**5. Sync extracts quiz questions into content resources.** Joel, mid-grilling:
+"we are PROCESSING aih lessons via a syncing mechanism so have some opportunity
+to SHA during that process." That reframes the problem, because course-sync
+already mints stable ids exactly this way:
+
+```ts
+`sync_${kind}_${sha256(`${bindingId}:${kind}:${sourceId}`).slice(0, 24)}`
+```
+(`apps/ai-hero/src/course-sync/control-plane.ts:42-48`)
+
+Critically, that SHA is over **stable source identifiers, not content** — which is
+why renaming a lesson does not change its id. Extending it to
+`targetResourceId(bindingId, 'question', <authored id>)` puts quiz questions in
+the same deterministic namespace as sections and lessons.
+
+So sync parses the body, finds `QuizQuestion` blocks, mints question content
+resources joined to the lesson, and validates ids at sync time. Consequences:
+
+- **The HMAC becomes unnecessary.** The answer key is in the database, so the
+  server grades authoritatively from the question row. Decision 4 is superseded,
+  not amended.
+- **Queryability comes back.** "List every question" works again — the capability
+  the inline-authoring choice had given up. Quiz content is DB-shaped without
+  Matt authoring anything differently.
+- **Missing/duplicate ids fail at sync**, before publish, in front of the person
+  who caused it — strictly better than decision 3's after-the-fact alarm.
+  Decision 3 stays as the runtime backstop for anything that slips through or
+  reaches a lesson by a path other than sync.
+- **Authoring does not change at all.** Matt still writes everything inline. This
+  is inline authoring with derived storage, a shape the original fork did not
+  contemplate.
+
+**Honest limit on what any of this buys.** The answer key is visible in page
+source no matter the scheme, because the UI reveals the correct answer and the
+explanation immediately after answering. Server-side grading guarantees that a
+stored `correct` truthfully reflects the submitted answer against the real key.
+It cannot stop a learner who reads the key from the page and submits the right
+answer — and nothing can, given the interaction. For an ungraded self-assessment
+on a free course, that is the right place to stop.

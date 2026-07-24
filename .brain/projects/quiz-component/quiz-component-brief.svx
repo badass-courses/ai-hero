@@ -25,7 +25,10 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   (`respondentKey` / `surveySessionId`), upgrading to `userId` /
   `emailListSubscriberId` when identity resolves.
 - Correct/incorrect rates are queryable per question without parsing lesson
-  bodies.
+  bodies, because course-sync derives a `question` content resource from each
+  inline `QuizQuestion` and joins it to the lesson.
+- A quiz whose `id` is missing or duplicated fails at sync, in front of the
+  author, before it reaches a learner.
 - **Maintained after ship:** one entry point documents the MDX component, the
   answer endpoint contract, and the `fields` shape, so the next person does not
   have to trace three repos to find out how a quiz works.
@@ -52,6 +55,13 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
 - **survey session id** — the minted anonymous identifier written to
   `QuestionResponse.respondentKey` / `surveySessionId`. This effort is the first
   writer of those columns, so it defines what they mean.
+- **derived storage** — settled 2026-07-24: quiz content is authored inline in
+  MDX and course-sync derives `question` content resources from it. Authoring is
+  inline; storage is relational. Neither "inline" nor "content resource" alone
+  describes the model, which is why both earlier terms kept fighting.
+- **question id** — the author-supplied `id` inside a `QuizQuestion` data object.
+  Stable across rewording; the source key sync SHAs into
+  `sync_question_<hash>`. Not the question text, and not its position.
 
 ## Notes
 
@@ -119,6 +129,14 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   which fired execution authorization. Surfaced that `correct` silently shuffles
   choices.
 
+- [Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx) —
+  author-supplied `id` per question; `surveyId` = lesson resource id; missing or
+  duplicate ids render but skip persistence and alarm loudly. Joel's mid-grilling
+  input that sync is a processing step superseded the render-time HMAC plan:
+  **course-sync now derives `question` content resources from inline markup**, so
+  the server grades from the DB and quiz content is queryable again, with Matt's
+  authoring unchanged.
+
 ## Latent
 
 - Whether quiz answers should feed the existing subscriber/segmentation
@@ -150,10 +168,14 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   line. Revisit only if the content-resource model is ever chosen.
 - **Adding `correct` / `answer` controls to the admin question form.** Same
   reason: the answer key lives in MDX now, not in the admin CRUD path.
-- **The content-resource quiz model** (`<Quiz id="…" />` referencing DB rows).
-  Considered and rejected in [Pin the finish line](./pin-the-finish-line.svx)
-  because it does not ride course-sync and would force Matt to author quizzes out
-  of band from how his course content actually moves.
+- **The content-resource quiz model as an _authoring_ model** (`<Quiz id="…" />`
+  where Matt creates DB rows first). Rejected in
+  [Pin the finish line](./pin-the-finish-line.svx) because it does not ride
+  course-sync and would force Matt to author out of band. That still holds for
+  authoring. **It no longer holds for storage** — see
+  [Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx):
+  sync derives question content resources from the inline markup, so the rows
+  exist without Matt authoring them.
 - **Fixing the multi-select grading bug in `@coursebuilder/survey`.** Real bug
   affecting existing surveys, but it is package work with its own release and pin
   move. Ruled out of this effort by Joel, 2026-07-24.

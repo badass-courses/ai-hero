@@ -7,7 +7,7 @@ status: "open"
 assignee: ""
 parent: "./quiz-component-brief.svx"
 blockers:
-  - "./decide-inline-quiz-identity.svx"
+  - "./build-sync-question-extraction.svx"
   - "./build-the-quiz-component.svx"
 created_at: "2026-07-24"
 ---
@@ -20,9 +20,13 @@ Persist quiz answers so correct/incorrect rates are queryable per question.
 Execution is authorized (brief Notes, Joel 2026-07-24).
 
 Write to `QuestionResponse` with `fields: { answer, correct }`, per the pinned
-finish line. The identity strings come from
+finish line. Identity is already settled in
 [Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx) — do
-not invent them here.
+not invent it here:
+
+- `surveyId` = the lesson's content resource id
+- `questionId` = the `sync_question_<hash>` id minted by
+  [sync extraction](./build-sync-question-extraction.svx)
 
 What the endpoint has to get right:
 
@@ -40,11 +44,13 @@ What the endpoint has to get right:
   `(surveyId, questionId, respondentKey)` is a unique index
   (`question-response.ts:56-58`), so a resubmit updates rather than duplicates.
   Use it deliberately; do not let a retry mint a second row.
-- **Grade server-side, do not trust the client.** The client posts an answer; the
-  server decides `correct` against the answer key. If the key only exists in the
-  MDX body, then say plainly how the server gets it — this is the one genuinely
-  hard part of the step and it may force the key to travel with the request.
-  Flag it rather than quietly trusting a client-supplied boolean.
+- **Grade server-side from the question row.** This used to be the hard part of
+  the step; sync extraction solved it. The client posts `{ questionId, answer }`
+  and the server reads `correct` from the `sync_question_<hash>` content resource
+  and decides. No HMAC, no client-supplied boolean, no MDX re-parse. Never accept
+  a `correct` value from the client.
+- A posted `questionId` with no matching question resource is an error, not a
+  silent insert — it means sync has not run or the body drifted.
 - **Do not mirror to Kit.** Surveys write answers into Kit subscriber fields
   (`convertkit.ts:157-180`, `surveys-query.ts:587-619`). Whether quizzes should is
   an open latent question on the brief, not a decision for this step. Default to
