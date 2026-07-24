@@ -104,6 +104,62 @@ describe('confirmed signup reconciliation', () => {
 		])
 	})
 
+	it('carries stashed opt-in attribution from Kit fields into the enrollment event', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-07-24T12:00:00.000Z',
+			now: '2026-07-24T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-paid',
+					email: 'paid@example.com',
+					createdAt: '2026-07-24T09:00:00.000Z',
+					state: 'active',
+					fields: {
+						aih_optin_attribution: JSON.stringify({
+							utmSource: 'google',
+							utmMedium: 'cpc',
+							gclid: 'Cj0KCQjw-example-gclid',
+							capturedAt: '2026-07-24T08:55:00.000Z',
+						}),
+					},
+				},
+				{
+					kitSubscriberId: 'kit-organic',
+					email: 'organic@example.com',
+					createdAt: '2026-07-24T09:01:00.000Z',
+					state: 'active',
+					fields: { aih_optin_attribution: 'not-json' },
+				},
+			],
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 200,
+		})
+
+		expect(plan.events).toHaveLength(2)
+		const paid = plan.events.find(
+			(event) => event.data.kitSubscriberId === 'kit-paid',
+		)
+		expect(paid?.data.optInAttribution).toEqual({
+			utmSource: 'google',
+			utmMedium: 'cpc',
+			gclid: 'Cj0KCQjw-example-gclid',
+			capturedAt: '2026-07-24T08:55:00.000Z',
+		})
+		const organic = plan.events.find(
+			(event) => event.data.kitSubscriberId === 'kit-organic',
+		)
+		expect(organic?.data.optInAttribution).toBeUndefined()
+	})
+
 	it('caps each run and reports deferred confirmed subscribers', () => {
 		const preview = buildSignupGapPreview({
 			formId: 9376133,
