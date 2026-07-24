@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { db } from '@/db'
 import {
 	contact,
 	contactEvent,
+	contactState,
 	providerIdentity,
 	sideEffectIntent,
 	stateTransition,
@@ -22,8 +23,13 @@ import { getAdsCourseFunnelMetrics, getAdsCourseMetrics } from '@/lib/ads-course
 import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
 import { getPurchaseConversionStatus } from '@/lib/purchase-conversion-status'
 import { getLocalSignupConversionStatus } from '@/lib/signup-conversion-status'
+import {
+	backfillOptInAttribution,
+	parseOptInAttributionBackfillEntries,
+	type OptInAttributionBackfillRepository,
+} from '@/lib/subscriber-marketing/opt-in-attribution-backfill'
 import { log } from '@/server/logger'
-import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 
 const rangeOptions = ['24h', '7d', '30d', '90d', 'all'] as const
 type Range = (typeof rangeOptions)[number]
@@ -75,6 +81,7 @@ function parseArgs(argv: readonly string[]) {
 	const allowWrite = hasFlag(argv, '--allow-write')
 	const dryRun = hasFlag(argv, '--dry-run') || !allowWrite
 	const withStripe = hasFlag(argv, '--with-stripe')
+	const entriesPath = readFlag(argv, '--entries')
 	return {
 		command,
 		range,
@@ -89,7 +96,76 @@ function parseArgs(argv: readonly string[]) {
 		allowWrite,
 		dryRun,
 		withStripe,
+		entriesPath,
 	}
+}
+
+async function optInAttributionBackfill(args: {
+	entriesPath?: string
+	allowWrite: boolean
+}) {
+	if (!args.entriesPath) {
+		throw new Error(
+			'optin-attribution-backfill requires --entries <path-to-json-array>',
+		)
+	}
+	const entries = parseOptInAttributionBackfillEntries(
+		JSON.parse(readFileSync(resolve(args.entriesPath), 'utf8')),
+	)
+	const repository: OptInAttributionBackfillRepository = {
+		resolveKitContactId: async (kitSubscriberId) => {
+			const rows = await db
+				.select({ contactId: providerIdentity.contactId })
+				.from(providerIdentity)
+				.where(
+					and(
+						eq(providerIdentity.provider, 'kit'),
+						eq(providerIdentity.externalId, kitSubscriberId),
+					),
+				)
+				.limit(1)
+			return rows[0]?.contactId ?? null
+		},
+		contactAttributionPresent: async (contactId) => {
+			const rows = await db
+				.select({ attribution: contact.optInAttribution })
+				.from(contact)
+				.where(eq(contact.id, contactId))
+				.limit(1)
+			return Boolean(rows[0]?.attribution)
+		},
+		contactStateAttributionPresent: async (contactId) => {
+			const rows = await db
+				.select({ attribution: contactState.optInAttribution })
+				.from(contactState)
+				.where(eq(contactState.contactId, contactId))
+				.limit(1)
+			if (rows.length === 0) return null
+			return Boolean(rows[0]?.attribution)
+		},
+		fillContactAttribution: async (contactId, attribution) => {
+			await db
+				.update(contact)
+				.set({ optInAttribution: attribution, updatedAt: new Date() })
+				.where(and(eq(contact.id, contactId), isNull(contact.optInAttribution)))
+		},
+		fillContactStateAttribution: async (contactId, attribution) => {
+			await db
+				.update(contactState)
+				.set({ optInAttribution: attribution, updatedAt: new Date() })
+				.where(
+					and(
+						eq(contactState.contactId, contactId),
+						isNull(contactState.optInAttribution),
+					),
+				)
+		},
+	}
+	return backfillOptInAttribution({
+		repository,
+		entries,
+		allowWrite: args.allowWrite,
+	})
 }
 
 function sinceForRange(range: Range) {
@@ -1118,6 +1194,7 @@ const {
 	dryRun,
 	allowWrite,
 	withStripe,
+	entriesPath,
 } = parseArgs(process.argv.slice(2))
 
 try {
@@ -1167,7 +1244,9 @@ try {
 										dryRun,
 										allowWrite,
 									})
-								: undefined
+								: command === 'optin-attribution-backfill'
+									? await optInAttributionBackfill({ entriesPath, allowWrite })
+									: undefined
 	if (!result) {
 		throw new Error(`Unsupported command: ${command}`)
 	}
