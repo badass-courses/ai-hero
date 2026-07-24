@@ -12,7 +12,7 @@ export const AI_HERO_DRAFT_SYNC_BINDING = {
 	productType: 'self-paced',
 	requiredState: 'draft',
 	requiredVisibility: 'unlisted',
-	sectionMappingPolicy: 'two-sections-in-anchor-workshop',
+	sectionMappingPolicy: 'sections-in-anchor-workshop',
 	assetConnector: 'dropbox-shared-link',
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
 	status: 'active',
@@ -26,7 +26,7 @@ export type CourseSyncBinding = {
 	productType: 'self-paced'
 	requiredState: 'draft'
 	requiredVisibility: 'unlisted'
-	sectionMappingPolicy: 'two-sections-in-anchor-workshop'
+	sectionMappingPolicy: 'sections-in-anchor-workshop'
 	assetConnector: 'dropbox-shared-link'
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK'
 	status: 'active' | 'suspended' | 'revoked'

@@ -80,10 +80,10 @@ function assertManifestScope(
 			409,
 		)
 	}
-	if (manifest.sections.length !== 2) {
+	if (manifest.sections.length === 0) {
 		throw new CourseSyncError(
-			'SOURCE_SECTION_COUNT_MISMATCH',
-			'The bound source must contain exactly two sections.',
+			'SOURCE_SECTIONS_EMPTY',
+			'The bound source must contain at least one section.',
 			409,
 		)
 	}

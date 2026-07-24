@@ -9,7 +9,7 @@ export function makeCourseJsonV3Fixture() {
 		courseVersionId: "course-version-fixture-v3",
 		archiveTTL: "90d",
 		courseName: "Fixture Course",
-		sections: Array.from({ length: 2 }, (_, sectionIndex) => ({
+		sections: Array.from({ length: 3 }, (_, sectionIndex) => ({
 			id: `section-${sectionIndex + 1}`,
 			title: `Section ${sectionIndex + 1}`,
 			lessons: Array.from({ length: 8 }, (_, lessonIndex) => {

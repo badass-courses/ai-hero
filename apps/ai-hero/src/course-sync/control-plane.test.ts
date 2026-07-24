@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createActor } from 'xstate'
+import type { CourseJsonDocumentV3 } from '@ai-hero/course-sync-schema'
 import { describe, expect, it } from 'vitest'
 
 import { createCourseSyncControlPlane } from './control-plane'
@@ -48,6 +49,55 @@ function fixture(courseVersionId = 'course-version-v1', changedVideo = 0) {
 				}
 			}),
 		})),
+	}
+}
+
+function fixture060(): CourseJsonDocumentV3 {
+	const manifest = fixture('course-version-0.6.0')
+	const video = (videoNumber: number) => {
+		const bytes = bytesFor(videoNumber)
+		return {
+			id: `video-${videoNumber}`,
+			relativePath: `frozen/3/video-${videoNumber}.mp4`,
+			body: `Body ${videoNumber}`,
+			description: `Description ${videoNumber}`,
+			hash: `render-${videoNumber}`,
+			sha256: createHash('sha256').update(bytes).digest('hex'),
+			bytes: bytes.byteLength,
+			chapters: [],
+		}
+	}
+	return {
+		...manifest,
+		sections: [
+			...manifest.sections,
+			{
+				id: 'section-3',
+				title: 'Fundamentals',
+				lessons: [
+					...Array.from({ length: 8 }, (_, index) => {
+						const videoNumber = 17 + index
+						return {
+							type: 'explainer' as const,
+							id: `lesson-${videoNumber}`,
+							title: `Lesson ${videoNumber}`,
+							explainer: video(videoNumber),
+						}
+					}),
+					...Array.from({ length: 5 }, (_, index) => {
+						const lessonNumber = 25 + index
+						const problemVideoNumber = 25 + index * 2
+						return {
+							type: 'problem' as const,
+							id: `lesson-${lessonNumber}`,
+							title: `Lesson ${lessonNumber}`,
+							problem: video(problemVideoNumber),
+							solution: video(problemVideoNumber + 1),
+						}
+					}),
+				],
+			},
+		],
 	}
 }
 
@@ -119,7 +169,7 @@ function harness(
 
 async function stagedAndPreviewed(
 	testHarness: ReturnType<typeof harness>,
-	manifest = fixture(),
+	manifest: CourseJsonDocumentV3 = fixture(),
 	key = 'stage-key',
 ) {
 	const staged = await testHarness.controlPlane.stage({
@@ -156,7 +206,7 @@ describe('draft course sync control plane', () => {
 		expect(testHarness.persistence.runs.size).toBe(0)
 	})
 
-	it('freezes and stream-verifies all 16 v3 videos, then previews two sections in one workshop', async () => {
+	it('freezes and stream-verifies a baseline v3 revision into one workshop', async () => {
 		const testHarness = harness()
 		const { staged, previewed } = await stagedAndPreviewed(testHarness)
 		expect(staged.state).toBe('staged')
@@ -183,6 +233,48 @@ describe('draft course sync control plane', () => {
 		expect(JSON.stringify(previewed)).not.toContain(
 			AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId,
 		)
+	})
+
+	it('accepts a 0.6.0-shaped three-section revision and maps sections by manifest order', async () => {
+		const testHarness = harness()
+		const { staged, previewed } = await stagedAndPreviewed(
+			testHarness,
+			fixture060(),
+			'stage-0.6.0',
+		)
+		expect(testHarness.reads()).toBe(34)
+		expect(testHarness.snapshots).toHaveLength(35)
+		expect(previewed.resourceCounts).toEqual({
+			create: 32,
+			update: 0,
+			retain: 0,
+		})
+		const sections = testHarness.persistence.runs
+			.get(staged.runId)
+			?.plan?.resources.filter((item) => item.sourceKind === 'section')
+		expect(
+			sections?.map((item) => [
+				item.sourceId,
+				item.parentResourceId,
+				item.position,
+			]),
+		).toEqual([
+			['section-1', AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 0],
+			['section-2', AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 1],
+			['section-3', AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 2],
+		])
+	})
+
+	it('rejects an empty section list without reading source videos', async () => {
+		const testHarness = harness()
+		await expect(
+			testHarness.controlPlane.stage({
+				bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+				idempotencyKey: 'empty-sections',
+				manifest: { ...fixture(), sections: [] },
+			}),
+		).rejects.toMatchObject({ code: 'SOURCE_SECTIONS_EMPTY' })
+		expect(testHarness.reads()).toBe(0)
 	})
 
 	it('applies all versions atomically, returns no-op on replay, and compensates without deleting drafts', async () => {

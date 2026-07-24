@@ -31,7 +31,14 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 					security: [{ ReadBearer: [] }],
 					parameters: [idParameter('bindingId')],
 					responses: {
-						200: { description: 'Redacted immutable binding assertion' },
+						200: {
+							description: 'Redacted immutable binding assertion',
+							content: {
+								'application/json': {
+									schema: { $ref: '#/components/schemas/SyncBinding' },
+								},
+							},
+						},
 					},
 				},
 			},
@@ -146,9 +153,39 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 						courseName: { type: 'string' },
 						sections: {
 							type: 'array',
-							minItems: 2,
-							maxItems: 2,
+							minItems: 1,
 							items: { type: 'object' },
+						},
+					},
+				},
+				SyncBinding: {
+					type: 'object',
+					required: ['bindingId', 'status', 'sourceCourseId', 'target'],
+					properties: {
+						bindingId: { type: 'string', minLength: 1 },
+						status: {
+							type: 'string',
+							enum: ['active', 'suspended', 'revoked'],
+						},
+						sourceCourseId: { type: 'string', minLength: 1 },
+						target: {
+							type: 'object',
+							required: [
+								'productType',
+								'anchorResourceType',
+								'requiredState',
+								'requiredVisibility',
+								'sectionMappingPolicy',
+							],
+							properties: {
+								productType: { const: 'self-paced' },
+								anchorResourceType: { const: 'workshop' },
+								requiredState: { const: 'draft' },
+								requiredVisibility: { const: 'unlisted' },
+								sectionMappingPolicy: {
+									const: 'sections-in-anchor-workshop',
+								},
+							},
 						},
 					},
 				},

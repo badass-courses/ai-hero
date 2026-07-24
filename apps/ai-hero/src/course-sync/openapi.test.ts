@@ -22,5 +22,16 @@ describe('course sync OpenAPI contract', () => {
 		const schema = stage.requestBody.content['application/json'].schema
 		expect(Object.keys(schema.properties)).toEqual(['manifest'])
 		expect(schema.additionalProperties).toBe(false)
+		expect(
+			document.components.schemas.CourseJsonV3.properties.sections,
+		).toMatchObject({ minItems: 1 })
+		expect(
+			'maxItems' in
+				document.components.schemas.CourseJsonV3.properties.sections,
+		).toBe(false)
+		expect(
+			document.components.schemas.SyncBinding.properties.target.properties
+				.sectionMappingPolicy,
+		).toEqual({ const: 'sections-in-anchor-workshop' })
 	})
 })

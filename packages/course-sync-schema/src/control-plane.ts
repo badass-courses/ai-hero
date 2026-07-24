@@ -38,7 +38,7 @@ export const CourseSyncBindingSummary = Schema.Struct({
 		anchorResourceType: Schema.Literal("workshop"),
 		requiredState: Schema.Literal("draft"),
 		requiredVisibility: Schema.Literal("unlisted"),
-		sectionMappingPolicy: Schema.Literal("two-sections-in-anchor-workshop"),
+		sectionMappingPolicy: Schema.Literal("sections-in-anchor-workshop"),
 	}),
 })
 
