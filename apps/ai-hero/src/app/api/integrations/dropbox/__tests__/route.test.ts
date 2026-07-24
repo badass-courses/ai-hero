@@ -60,23 +60,19 @@ const sharedLinkConfig = {
 const summary = {
 	contract: {
 		name: 'course-video-manager.course-json' as const,
-		schemaVersion: 2 as const,
 	},
+	contractSchemaVersion: 3 as const,
 	producer: { name: 'course-video-manager' as const },
 	course: {
 		sourceId: 'course-source-id',
-		sourceVersionId: null,
 	},
+	courseVersionId: '8471116f-6201-406f-9a40-3672e457fd50',
+	archiveTTL: '90d' as const,
 	structure: {
-		sectionCount: 1,
-		lessonCount: 2,
-		videoCount: 3,
-		videoExportHashCount: 3,
-	},
-	bindingReadiness: {
-		sourceVersionPinned: false as const,
-		videoDropboxRevisionsPinned: false as const,
-		videoByteSha256Complete: false as const,
+		sectionCount: 3,
+		lessonCount: 29,
+		videoCount: 34,
+		videosWithByteSha256: 34,
 	},
 	manifest: {
 		sourcePath: '/course.json' as const,
@@ -155,6 +151,18 @@ describe('Dropbox course manifest summary route', () => {
 			config: sharedLinkConfig,
 			refreshToken: 'stored-refresh-token',
 		})
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'dropbox-course-sync.manifest-summary.completed',
+			expect.objectContaining({
+				contractSchemaVersion: 3,
+				courseVersionId: '8471116f-6201-406f-9a40-3672e457fd50',
+				archiveTTL: '90d',
+				sectionCount: 3,
+				lessonCount: 29,
+				videoCount: 34,
+				videosWithByteSha256: 34,
+			}),
+		)
 	})
 
 	it('accepts an admin browser session when no device token is present', async () => {

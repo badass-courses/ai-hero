@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import {
+	courseJsonVideos,
+	decodeCourseJsonDocumentV3,
+} from '@ai-hero/course-sync-schema'
 
 export const DROPBOX_OAUTH_CALLBACK_PATH = '/api/integrations/dropbox'
 export const DEFAULT_DROPBOX_OAUTH_REDIRECT_URI = `https://www.aihero.dev${DROPBOX_OAUTH_CALLBACK_PATH}`
@@ -53,25 +57,21 @@ export type DropboxConnectionVerification = {
 export type DropboxCourseManifestSummary = {
 	contract: {
 		name: 'course-video-manager.course-json'
-		schemaVersion: 2
 	}
+	contractSchemaVersion: 3
 	producer: {
 		name: 'course-video-manager'
 	}
 	course: {
 		sourceId: string
-		sourceVersionId: null
 	}
+	courseVersionId: string
+	archiveTTL: '90d'
 	structure: {
 		sectionCount: number
 		lessonCount: number
 		videoCount: number
-		videoExportHashCount: number
-	}
-	bindingReadiness: {
-		sourceVersionPinned: false
-		videoDropboxRevisionsPinned: false
-		videoByteSha256Complete: false
+		videosWithByteSha256: number
 	}
 	manifest: {
 		sourcePath: '/course.json'
@@ -286,28 +286,6 @@ function optionalString(record: Record<string, unknown>, key: string) {
 	return typeof value === 'string' && value.length > 0 ? value : null
 }
 
-function validateCourseJsonVideo(value: unknown) {
-	const video = asRecord(value)
-	if (!video) throw new Error('Dropbox course manifest video was invalid.')
-	requiredString(video, 'id', 'Dropbox course manifest video id was missing.')
-	requiredString(
-		video,
-		'relativePath',
-		'Dropbox course manifest video relativePath was missing.',
-	)
-	requiredString(video, 'body', 'Dropbox course manifest video body was missing.')
-	requiredString(
-		video,
-		'description',
-		'Dropbox course manifest video description was missing.',
-	)
-	requiredString(video, 'hash', 'Dropbox course manifest video export hash was missing.')
-	if (!Array.isArray(video.chapters)) {
-		throw new Error('Dropbox course manifest video chapters were missing or invalid.')
-	}
-	return video
-}
-
 function assertSharedLinkAssetPath(relativePath: string) {
 	if (
 		!relativePath ||
@@ -433,84 +411,45 @@ export async function readDropboxCourseManifestSummary({
 		throw new Error('Dropbox course manifest exceeds the maximum allowed size.')
 	}
 	const manifestSha256 = createHash('sha256').update(bytes).digest('hex')
-	const document = asRecord(JSON.parse(new TextDecoder().decode(bytes)))
-
-	if (
-		document?.schemaVersion !== 2 ||
-		typeof document?.['$schema'] !== 'string'
-	) {
-		const observedVersion = document?.schemaVersion ?? 'missing'
-		const topLevelKeys = Object.keys(document ?? {}).sort().join(',')
+	const input = JSON.parse(new TextDecoder().decode(bytes)) as unknown
+	const rawDocument = asRecord(input)
+	const observedVersion = rawDocument?.schemaVersion ?? 'missing'
+	if (observedVersion !== 3) {
 		throw new Error(
-			`Dropbox course manifest is not Course Video Manager course.json v2 (observedVersion=${String(observedVersion)}; topLevelKeys=${topLevelKeys}).`,
+			`Dropbox course manifest requires Course Video Manager course.json v3 (observedVersion=${String(observedVersion)}; v2 is retired).`,
 		)
 	}
-	const courseId = requiredString(
-		document,
-		'courseId',
-		'Dropbox course manifest courseId was missing.',
-	)
-	requiredString(
-		document,
-		'courseName',
-		'Dropbox course manifest courseName was missing.',
-	)
-	if (!Array.isArray(document.sections)) {
-		throw new Error('Dropbox course manifest sections were missing or invalid.')
-	}
 
-	const sections = document.sections.map((section) => {
-		const record = asRecord(section)
-		if (!record) throw new Error('Dropbox course manifest section was invalid.')
-		requiredString(record, 'id', 'Dropbox course manifest section id was missing.')
-		if (!Array.isArray(record.lessons)) {
-			throw new Error('Dropbox course manifest section lessons were missing or invalid.')
+	const document = (() => {
+		try {
+			return decodeCourseJsonDocumentV3(input)
+		} catch {
+			throw new Error(
+				`Dropbox course manifest v3 validation failed (observedVersion=${String(observedVersion)}).`,
+			)
 		}
-		return record
-	})
-	const lessons = sections.flatMap((section) =>
-		(section.lessons as unknown[]).map((lesson) => {
-			const record = asRecord(lesson)
-			if (!record) throw new Error('Dropbox course manifest lesson was invalid.')
-			requiredString(record, 'id', 'Dropbox course manifest lesson id was missing.')
-			if (record.type !== 'explainer' && record.type !== 'problem') {
-				throw new Error('Dropbox course manifest lesson type was invalid.')
-			}
-			return record
-		}),
-	)
-	const videos = lessons.flatMap((lesson) => {
-		if (lesson.type === 'explainer') {
-			return [validateCourseJsonVideo(lesson.explainer)]
-		}
-		const problem = validateCourseJsonVideo(lesson.problem)
-		return lesson.solution === undefined
-			? [problem]
-			: [problem, validateCourseJsonVideo(lesson.solution)]
-	})
+	})()
+	const lessons = document.sections.flatMap((section) => section.lessons)
+	const videos = courseJsonVideos(document)
 
 	return {
 		contract: {
 			name: 'course-video-manager.course-json',
-			schemaVersion: 2,
 		},
+		contractSchemaVersion: 3,
 		producer: { name: 'course-video-manager' },
 		course: {
-			sourceId: courseId,
-			sourceVersionId: null,
+			sourceId: document.courseId,
 		},
+		courseVersionId: document.courseVersionId,
+		archiveTTL: document.archiveTTL,
 		structure: {
-			sectionCount: sections.length,
+			sectionCount: document.sections.length,
 			lessonCount: lessons.length,
 			videoCount: videos.length,
-			videoExportHashCount: videos.filter(
-				(video) => typeof video.hash === 'string' && video.hash.length > 0,
+			videosWithByteSha256: videos.filter(
+				(video) => /^[a-f0-9]{64}$/.test(video.sha256),
 			).length,
-		},
-		bindingReadiness: {
-			sourceVersionPinned: false,
-			videoDropboxRevisionsPinned: false,
-			videoByteSha256Complete: false,
 		},
 		manifest: {
 			sourcePath: '/course.json',

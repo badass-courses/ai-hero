@@ -110,9 +110,13 @@ export const GET = withSkill(async (request: NextRequest) => {
 				manifestRev: summary.manifest.rev,
 				manifestSha256: summary.manifest.sha256,
 				sourceCourseId: summary.course.sourceId,
-				sourceVersionId: summary.course.sourceVersionId,
+				courseVersionId: summary.courseVersionId,
+				contractSchemaVersion: summary.contractSchemaVersion,
+				archiveTTL: summary.archiveTTL,
 				sectionCount: summary.structure.sectionCount,
 				lessonCount: summary.structure.lessonCount,
+				videoCount: summary.structure.videoCount,
+				videosWithByteSha256: summary.structure.videosWithByteSha256,
 			})
 			return NextResponse.json(
 				{ ok: true, summary },
