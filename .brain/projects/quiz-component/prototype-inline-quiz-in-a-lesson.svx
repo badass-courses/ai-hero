@@ -4,7 +4,7 @@ type: "step"
 kind: "prototype"
 interaction: "HITL"
 status: "open"
-assignee: ""
+assignee: "claude (flagg, herdr pane w2S:p1, 2026-07-24)"
 parent: "./quiz-component-brief.svx"
 blockers: []
 created_at: "2026-07-24"
@@ -42,10 +42,11 @@ Scope it to the smallest thing that produces a real reaction:
 - **No persistence.** Answers live in component state and die on refresh. The
   answer endpoint is a separate decision and would slow the reaction down.
 
-Put it in the draft AI Coding Crash Course (anchor `workshop-2ozd9`, edit URL
-`https://www.aihero.dev/workshops/ai-coding-crash-course/edit`) so nothing
-published is touched. A local dev render is fine if that is faster to get in
-front of Joel.
+**Surface (Joel, 2026-07-24): a freestanding public MDX page, not a lesson.**
+A standalone route in AI Hero that needs no login and renders an MDX body
+containing the quiz, so Joel can open it on his phone without an account and
+without touching the draft course. It ships on a Vercel preview deploy, not
+production. Joel gets the link by DM when it is running.
 
 ## What Joel is being asked to react to
 
@@ -61,4 +62,65 @@ Joel has clicked through a real question in a lesson body and said either "build
 it" — which fires the brief's execution authorization — or named what has to
 change first.
 
-## Result
+## Result (2026-07-24) — built, awaiting Joel's reaction
+
+The prototype exists and is deployed. The step stays **open** until Joel clicks
+it, because his reaction is the whole point of the step and it is what fires the
+brief's execution authorization.
+
+**What was built.** Route `/quiz-prototype`, no auth, three files
+(commit `73f6aaf` on `prototype/inline-quiz`):
+
+- `apps/ai-hero/src/app/quiz-prototype/page.tsx` — defines the lesson content as
+  an MDX **string** and runs it through `compileMDX`, the same path a real lesson
+  body takes. Four questions about steering coding agents, with explanations that
+  carry real weight.
+- `apps/ai-hero/src/components/mdx/quiz-prototype.tsx` — lean `Quiz` /
+  `QuizQuestion` UI driving `surveyMachine` from `@coursebuilder/survey@1.0.5`
+  via `useMachine`, reading `state.matches('answered.correct')`. No
+  `SurveyQuestion` compound components, no `offerMachine`, per the pinned call.
+- `apps/ai-hero/src/utils/compile-mdx.tsx` — `Quiz` and `QuizQuestion` registered
+  with `dynamic()` alongside the ~30 existing entries.
+
+**The authoring shape works exactly as Matt asked for it.** Real object literals
+inside a database-shaped MDX string compile and reach the component:
+
+```mdx
+<Quiz>
+  <QuizQuestion data={{
+    question: "…", type: "multiple-choice",
+    choices: [{ answer: "a", label: "…" }, { answer: "b", label: "…" }],
+    correct: "b",
+    answer: "The explanation revealed after answering."
+  }} />
+</Quiz>
+```
+
+**Verification.** The worker confirmed the render at 390px width: MDX compiled,
+four questions rendered, the correct choice graded, the explanation revealed.
+Typecheck passed; ESLint passed with one pre-existing `<img>` warning. A full
+production build reached compilation but failed at page collection because the
+local database was unavailable — an environment limitation, not a code fault.
+The **deployed** page is unverified: Vercel SSO protection covers all
+non-custom-domain deployments and blocks automated fetches as well as browsers,
+so `vercel curl` redirects to login just like a plain request.
+
+**Deployment.** Preview at
+`https://ai-hero-11aqp4o2d-skillrecordings.vercel.app/quiz-prototype`. Joel must
+pass Vercel SSO to open it. The project has no protection-bypass secret and
+creating one changes project settings, so it was not done unilaterally.
+
+**Unfold finding — `correct` silently forces choice shuffling.** In
+`loadQuestion`, the machine does
+`question.correct || question.shuffleChoices ? shuffle(question.choices) : question.choices`
+(`packages/survey/src/survey-machine.ts:57-60`). Setting an answer key implicitly
+enables shuffling with no opt-out. Authored choice order is therefore never
+honored on a graded question. Reasonable default for a quiz, but it is a side
+effect of a field that does not advertise it, and an author who writes
+"all of the above" as the last choice will be surprised. Logged as latent on the
+brief.
+
+## Awaiting
+
+Joel clicks the page and either says "build it" — firing the brief's execution
+authorization — or names what has to change first.

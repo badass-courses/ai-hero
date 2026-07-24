@@ -124,6 +124,12 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   in a lesson body that Matt's agent rewrites.
 - Whether aggregate scoring ("you got 7 of 10") is ever wanted. Explicitly not in
   this finish line.
+- **`correct` silently forces choice shuffling.** `loadQuestion` shuffles whenever
+  `correct` or `shuffleChoices` is set, with no opt-out
+  (`packages/survey/src/survey-machine.ts:57-60`). Found while building the
+  prototype. Authored choice order is never honored on a graded question, so an
+  author writing "all of the above" last gets a surprise. Decide whether the real
+  component needs an escape hatch.
 - Dead surfaces found during the trace, to be cleaned up or logged separately:
   the commented-out published-state check on `/survey/[slug]`
   (`page.tsx:47-51`), `deleteSurvey` orphaning question resources and responses
