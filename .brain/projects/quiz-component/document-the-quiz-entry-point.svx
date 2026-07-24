@@ -1,0 +1,55 @@
+---
+title: "Document the quiz entry point"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers:
+  - "./build-the-quiz-component.svx"
+  - "./build-the-answer-endpoint.svx"
+created_at: "2026-07-24"
+---
+
+# Document the quiz entry point
+
+## Step
+
+The finish line requires that whoever maintains this later does not have to trace
+three repos to learn how a quiz works. This step satisfies that condition, and
+the effort is not done without it.
+
+Write **one** document that covers:
+
+- The authoring contract Matt uses: the exact `<Quiz>` / `<QuizQuestion data={{…}} />`
+  shape, every field, which are required, and a copyable example. This is the part
+  Matt's agent needs, so it has to be precise enough to generate against.
+- What identifies a quiz and its questions, and **what happens when a lesson body
+  is rewritten** — the failure mode that silently forks response history.
+- Where answers land: the table, the `fields` shape, how anonymous learners are
+  attributed, and how to query correct rates per question.
+- The MDX registration point (`compile-mdx.tsx`) so the next person adding a
+  component finds the pattern.
+- The known sharp edges: `correct` silently shuffles choices
+  (`survey-machine.ts:57-60`); the package's multi-select guard accepts a proper
+  subset as correct (`survey-machine.ts:160-174`); AI Hero pins
+  `@coursebuilder/survey@^1.0.5` against a source at `1.0.13`.
+
+Put it where a maintainer will actually hit it, not only in `.brain/`. Link it
+from the component source.
+
+Also send Matt the authoring contract — he asked for an API and this is what he
+actually got. Per the Matt heads-up rule this is a customer-facing surface change
+worth a note in `#cc-matt-p`, and the Slack thread root
+(`https://eggheadio.slack.com/archives/C0211NSK3TP/p1784717959599139`) should get
+its ✅ reaction when this ships:
+`jc-slack react '<permalink>' --emoji white_check_mark`.
+
+## Resolved when
+
+One document exists that answers "how do quizzes work here" without reading
+source in three repos, it is linked from the component, and Matt has the
+authoring contract.
+
+## Result

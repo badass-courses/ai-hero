@@ -3,8 +3,9 @@ title: "Prototype an inline quiz Joel can click"
 type: "step"
 kind: "prototype"
 interaction: "HITL"
-status: "open"
+status: "closed"
 assignee: "claude (flagg, herdr pane w2S:p1, 2026-07-24)"
+closed_at: "2026-07-24"
 parent: "./quiz-component-brief.svx"
 blockers: []
 created_at: "2026-07-24"
@@ -120,7 +121,11 @@ effect of a field that does not advertise it, and an author who writes
 "all of the above" as the last choice will be surprised. Logged as latent on the
 brief.
 
-## Awaiting
+## Reaction (2026-07-24)
 
-Joel clicks the page and either says "build it" — firing the brief's execution
-authorization — or names what has to change first.
+Joel: "looks good to me." No changes requested to the interaction, the reveal, or
+the `data={{ … }}` authoring shape.
+
+**This fires the brief's execution authorization.** Sessions may now build the
+real component, the answer endpoint, and the MDX registration. Recorded in the
+brief's Notes.

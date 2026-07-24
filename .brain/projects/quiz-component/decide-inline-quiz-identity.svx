@@ -1,0 +1,66 @@
+---
+title: "Decide what identifies an inline quiz and its questions"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Decide what identifies an inline quiz and its questions
+
+## Step
+
+The answer endpoint cannot be built until this is settled, and getting it wrong
+is expensive in a way that only shows up months later as broken analytics.
+
+**The constraint is looser than feared.** `QuestionResponse.surveyId` and
+`questionId` are `varchar(255) NOT NULL` with plain indexes and **no foreign key
+constraints** — the drizzle `relations()` are logical joins, not DB enforcement
+(`packages/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts:21-43,64-89`).
+The table's own doc comment says it "Supports surveys, quizzes, polls, and other
+question-based interactions." So an inline question with no content-resource row
+can write there with any stable string. Nothing structural blocks this.
+
+**The real question is stability.** There is a unique index on
+`(surveyId, questionId, respondentKey)`
+(`question-response.ts:56-58`), which makes the write idempotent per respondent
+per question — good — but it also means the identity strings are load-bearing
+forever. Decide what they are:
+
+1. **What is `surveyId` for an inline quiz?** The lesson's content resource id is
+   the obvious candidate, but then a lesson with two separate `<Quiz>` blocks
+   collides. A per-`<Quiz>` id would need authoring.
+2. **What is `questionId`?** Options, each with a real cost:
+   - **Hash of the question text.** Zero authoring burden, which honors Matt's
+     "no extra thing to author". But fixing a typo mints a new id and silently
+     forks the response history — the old answers become unattributable and the
+     charts lie.
+   - **Author-supplied `id` in the data object.** Stable across edits, one extra
+     field Matt's agent has to invent and keep unique. Mildly violates the
+     no-extra-authoring principle, but it is one short string.
+   - **Ordinal position in the lesson.** No authoring, but reordering or
+     inserting a question silently reassigns every downstream id.
+3. **What happens when Matt's agent rewrites a lesson body?** This is the actual
+   failure mode. The answer key lives in a body that an agent regenerates. Under
+   a text hash, a regenerated body with cosmetically different wording orphans
+   every prior answer without any error.
+4. Does the same question appearing in two lessons count as one question or two?
+
+## Recommendation to put to Joel
+
+Author-supplied `id`, because it is the only option where an edit does not
+silently corrupt history, and silent corruption of analytics is worse than one
+extra field. Pair it with a dev-time warning when an `id` is missing or
+duplicated within a lesson, so the failure is loud instead of quiet.
+
+## Resolved when
+
+The exact strings written to `surveyId` and `questionId` are specified, along
+with what happens when a lesson body is rewritten, and the brief's Vocabulary
+carries the settled terms.
+
+## Result

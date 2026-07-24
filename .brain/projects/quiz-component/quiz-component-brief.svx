@@ -76,11 +76,11 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   resources over the API. Matt's last message suggests an API satisfies him, but
   that has not been confirmed against his authoring loop.
 - Skills to consult: `grill-me`, `herdr-orchestration`, `prototype`.
-- **Execution authorization (Joel, 2026-07-24): granted, gated on one prototype.**
-  Sessions decide until a throwaway `<Quiz>` exists that Joel can actually click
-  in a lesson body. Once he has touched it and said it feels right, sessions are
-  authorized to build the real component, the answer endpoint, and the MDX
-  registration. Until then, decisions only.
+- **Execution authorization (Joel, 2026-07-24): GRANTED AND FIRED.** The gate was
+  one clickable prototype; Joel saw it and said "looks good to me" with no
+  requested changes. Sessions are now authorized to build the real component, the
+  answer endpoint, and the MDX registration. Approved interaction and the
+  `data={{ … }}` authoring shape are settled — do not redesign them.
 - Mid-effort call (Joel, 2026-07-24): the multi-select grading bug in
   `@coursebuilder/survey` gets fixed in the package as separate work, not folded
   into this effort. See the chartered step for how the inline quiz behaves in the
@@ -112,6 +112,12 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   minted survey session id; `fields: { answer, correct }`; grading machine reused
   but fresh UI; multi-select bug fixed separately; build authorized after one
   prototype.
+- [Prototype an inline quiz Joel can click](./prototype-inline-quiz-in-a-lesson.svx)
+  — built at `/quiz-prototype` (commit `73f6aaf`, branch `prototype/inline-quiz`):
+  a real MDX string through `compileMDX`, `Quiz`/`QuizQuestion` registered with
+  `dynamic()`, grading on `surveyMachine`, fresh UI. Joel approved it unchanged,
+  which fired execution authorization. Surfaced that `correct` silently shuffles
+  choices.
 
 ## Latent
 
