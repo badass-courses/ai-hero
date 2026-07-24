@@ -66,7 +66,14 @@ export default async function ValuePathAnswerPage(props: {
 	}
 
 	const runtimeAllowlistDecision = token.valid
-		? await readActiveGateDRuntimeAllowlist({ redis })
+		? await readActiveGateDRuntimeAllowlist({ redis }).catch(async (error) => {
+				await log.error('value-path.ask.allowlist_read_failed', {
+					slug,
+					contactId: token.payload.contactId,
+					error: errorMessage(error),
+				})
+				return undefined
+			})
 		: undefined
 	const runtimeAllowlist = runtimeAllowlistDecision?.passed
 		? runtimeAllowlistDecision.allowlist
@@ -94,6 +101,13 @@ export default async function ValuePathAnswerPage(props: {
 							process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 						),
 					}),
+				}).catch(async (error) => {
+					await log.error('value-path.ask.progression_failed', {
+						slug,
+						contactId: token.payload.contactId,
+						error: errorMessage(error),
+					})
+					return undefined
 				})
 			: undefined
 
@@ -125,28 +139,43 @@ export default async function ValuePathAnswerPage(props: {
 			contactEventId: progression.contactEventId,
 			finisherCapture: progression.finisherCapture,
 		})
-		await inngest.send({
-			name: VALUE_PATH_ANSWER_SELECTED_EVENT,
-			data: {
-				contactId: token.payload.contactId,
-				valuePathSlug: token.payload.valuePathResourceId,
-				sentEmailResourceId: token.payload.emailResourceId,
-				answerPageId: answerPage.id,
-				contactEventId: progression.contactEventId,
-			},
-		})
+		await inngest
+			.send({
+				name: VALUE_PATH_ANSWER_SELECTED_EVENT,
+				data: {
+					contactId: token.payload.contactId,
+					valuePathSlug: token.payload.valuePathResourceId,
+					sentEmailResourceId: token.payload.emailResourceId,
+					answerPageId: answerPage.id,
+					contactEventId: progression.contactEventId,
+				},
+			})
+			.catch(async (error) => {
+				await log.error('value-path.ask.answer_event_send_failed', {
+					slug,
+					contactId: token.payload.contactId,
+					contactEventId: progression.contactEventId,
+					error: errorMessage(error),
+				})
+			})
 	}
 
 	const isCertificateAnswer =
 		answerPage.fields.emailId === 'email-7' ||
 		answerPage.fields.emailId === 'team-email-7'
-	const answerAccepted =
-		progression?.status === 'recorded' ||
-		progression?.status === 'idempotent-noop'
+	let certificateEligibilityUnavailable = false
 	const certificateEligibility =
-		isCertificateAnswer && token.valid && answerAccepted
+		isCertificateAnswer && token.valid
 			? await checkSkillsWorkflowValuePathCertificateEligibility({
 					contactId: token.payload.contactId,
+				}).catch(async (error) => {
+					certificateEligibilityUnavailable = true
+					await log.error('value-path.certificate.eligibility_failed', {
+						slug,
+						contactId: token.payload.contactId,
+						error: errorMessage(error),
+					})
+					return undefined
 				})
 			: undefined
 	const certificateShareResult = certificateEligibility?.eligible
@@ -172,7 +201,7 @@ export default async function ValuePathAnswerPage(props: {
 		})
 	}
 
-	if (isCertificateAnswer && token.valid && answerAccepted && certificateShare) {
+	if (isCertificateAnswer && token.valid && certificateShare) {
 		const baseUrl = process.env.NEXT_PUBLIC_URL ?? 'https://www.aihero.dev'
 		return (
 			<CertificateTrophyPage
@@ -259,14 +288,6 @@ export default async function ValuePathAnswerPage(props: {
 									Open the signed link from your course email to get your
 									certificate.
 								</section>
-							) : !answerAccepted ? (
-								<section
-									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
-									data-value-path-certificate="answer-not-recorded"
-								>
-									We could not save your answer. Open the link again in a
-									moment.
-								</section>
 							) : certificateEligibility?.eligible ? (
 								<section
 									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
@@ -274,6 +295,14 @@ export default async function ValuePathAnswerPage(props: {
 								>
 									Your certificate is ready, but the share page could not load.
 									Open this link again in a moment.
+								</section>
+							) : certificateEligibilityUnavailable ? (
+								<section
+									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
+									data-value-path-certificate="eligibility-unavailable"
+								>
+									We could not load your certificate. Open this link again in a
+									moment.
 								</section>
 							) : (
 								<section
@@ -434,6 +463,10 @@ function CertificateTrophyPage({
 function emailIdFromResourceId(resourceId: string) {
 	const [, emailId] = resourceId.split(/\.(.+)/)
 	return emailId
+}
+
+function errorMessage(error: unknown) {
+	return error instanceof Error ? error.message : String(error)
 }
 
 function getPathTokenSecret() {

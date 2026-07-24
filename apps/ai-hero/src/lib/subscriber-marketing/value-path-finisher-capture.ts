@@ -42,7 +42,13 @@ export async function captureValuePathFinisherFields(args: {
 	if (!args.captureFieldKey && !args.captureDateFieldKey) {
 		return { status: 'not-configured', fields: {} }
 	}
-	const reviewReasons = [
+	const fields: Record<string, string> = args.optionValue
+		? {
+				[AIH_FINISHER_SEGMENT_FIELD]: args.optionValue,
+				[AIH_NEXT_COURSE_WAITLIST_AT_FIELD]: args.now,
+			}
+		: {}
+	const configurationReviewReasons = [
 		...(args.captureFieldKey === AIH_FINISHER_SEGMENT_FIELD
 			? []
 			: ['finisher-segment-field-key-invalid']),
@@ -50,24 +56,26 @@ export async function captureValuePathFinisherFields(args: {
 			? []
 			: ['finisher-waitlist-field-key-invalid']),
 		...(args.optionValue ? [] : ['finisher-segment-option-missing']),
-		...(args.kitSubscriberId || args.email
-			? []
-			: ['kit-subscriber-identity-missing']),
 	]
-	const fields: Record<string, string> = args.optionValue
-		? {
-				[AIH_FINISHER_SEGMENT_FIELD]: args.optionValue,
-				[AIH_NEXT_COURSE_WAITLIST_AT_FIELD]: args.now,
-			}
-		: {}
-	if (reviewReasons.length > 0) {
-		return { status: 'blocked', fields, reviewReasons }
+	if (configurationReviewReasons.length > 0) {
+		return {
+			status: 'blocked',
+			fields,
+			reviewReasons: configurationReviewReasons,
+		}
 	}
 	if (isLearnerFlowBusinessMetricFixtureEmail(args.email)) {
 		return {
 			status: 'excluded',
 			fields,
 			reviewReasons: ['learner-flow-fixture-kit-field-write-excluded'],
+		}
+	}
+	if (!args.kitSubscriberId) {
+		return {
+			status: 'blocked',
+			fields,
+			reviewReasons: ['kit-subscriber-id-missing'],
 		}
 	}
 	if (args.mode === 'dry-run') return { status: 'dry-run', fields }

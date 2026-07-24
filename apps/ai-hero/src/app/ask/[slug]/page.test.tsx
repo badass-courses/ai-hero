@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	checkSkillsWorkflowValuePathCertificateEligibility: vi.fn(),
 	ensureSkillsWorkflowCertificateShare: vi.fn(),
 	inngestSend: vi.fn(),
+	logError: vi.fn(),
 	logInfo: vi.fn(),
 	logWarn: vi.fn(),
 }))
@@ -31,7 +32,7 @@ vi.mock('@/inngest/inngest.server', () => ({
 }))
 vi.mock('@/server/redis-client', () => ({ redis: {} }))
 vi.mock('@/server/logger', () => ({
-	log: { info: mocks.logInfo, warn: mocks.logWarn },
+	log: { error: mocks.logError, info: mocks.logInfo, warn: mocks.logWarn },
 }))
 vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 	DrizzleCaptureMarketingRepository: class {},
@@ -120,6 +121,7 @@ beforeEach(() => {
 			kitSequenceIds: ['2831545'],
 		},
 	})
+	mocks.inngestSend.mockResolvedValue(undefined)
 	mocks.recordValuePathAnswerProgression.mockResolvedValue({
 		status: 'recorded',
 		contactEventId: 'event-1',
@@ -233,13 +235,10 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(markup).toContain('Download PNG')
 	})
 
-	it('does not reveal the certificate when the answer could not be recorded', async () => {
-		mocks.recordValuePathAnswerProgression.mockResolvedValue({
-			status: 'skipped',
-			reason: 'finisher-capture-action-not-authorized',
-			idempotentNoop: false,
-			reviewReasons: ['advance-by-answer-click-not-allowed'],
-		})
+	it('renders the certificate when answer progression fails after course completion', async () => {
+		mocks.recordValuePathAnswerProgression.mockRejectedValue(
+			new Error('Kit field write failed'),
+		)
 		const page = await ValuePathAnswerPage({
 			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
 			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
@@ -248,15 +247,81 @@ describe('Email 7 certificate answer landing page', () => {
 
 		expect(
 			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
-		).not.toHaveBeenCalled()
-		expect(markup).toContain(
-			'data-value-path-certificate="answer-not-recorded"',
+		).toHaveBeenCalledWith({ contactId: 'contact-1' })
+		expect(markup).toContain('data-value-path-certificate="available"')
+		expect(markup).toContain('Noted. Your certificate is below.')
+		expect(mocks.logError).toHaveBeenCalledWith(
+			'value-path.ask.progression_failed',
+			expect.objectContaining({ error: 'Kit field write failed' }),
 		)
-		expect(markup).toContain(
-			'We could not save your answer. Open the link again in a moment.',
+	})
+
+	it('renders the certificate when the runtime allowlist cannot be read', async () => {
+		mocks.readActiveGateDRuntimeAllowlist.mockRejectedValue(
+			new Error('Redis unavailable'),
 		)
-		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
-		expect(markup).not.toContain('/api/certificates?')
+		const page = await ValuePathAnswerPage({
+			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
+			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
+		})
+		const markup = renderToStaticMarkup(page)
+
+		expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
+		expect(markup).toContain('data-value-path-certificate="available"')
+		expect(mocks.logError).toHaveBeenCalledWith(
+			'value-path.ask.allowlist_read_failed',
+			expect.objectContaining({ error: 'Redis unavailable' }),
+		)
+	})
+
+	it('renders the certificate when the answer event cannot be sent', async () => {
+		mocks.inngestSend.mockRejectedValue(new Error('Inngest unavailable'))
+		const page = await ValuePathAnswerPage({
+			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
+			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
+		})
+		const markup = renderToStaticMarkup(page)
+
+		expect(markup).toContain('data-value-path-certificate="available"')
+		expect(mocks.logError).toHaveBeenCalledWith(
+			'value-path.ask.answer_event_send_failed',
+			expect.objectContaining({ error: 'Inngest unavailable' }),
+		)
+	})
+
+	it('keeps team-email-7 on the same resilient certificate path', async () => {
+		const teamTokenPayload = {
+			...tokenPayload,
+			valuePathResourceId: 'ai-hero-skills-team-workflow',
+			emailResourceId: 'ai-hero-skills-team-workflow.team-email-7',
+			sequenceId: 'ai-hero-skills-team-workflow',
+		}
+		mocks.verifyValuePathToken.mockReturnValue({
+			valid: true,
+			payload: teamTokenPayload,
+		})
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue({
+			...answerPage,
+			fields: {
+				...answerPage.fields,
+				sequenceId: 'ai-hero-skills-team-workflow',
+				emailId: 'team-email-7',
+			},
+		})
+		mocks.recordValuePathAnswerProgression.mockRejectedValue(
+			new Error('Kit field write failed'),
+		)
+
+		const page = await ValuePathAnswerPage({
+			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
+			searchParams: Promise.resolve({ pt: 'team-signed-token', answer: 'other' }),
+		})
+		const markup = renderToStaticMarkup(page)
+
+		expect(markup).toContain('data-value-path-certificate="available"')
+		expect(
+			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
+		).toHaveBeenCalledWith({ contactId: 'contact-1' })
 	})
 
 	it('contains share persistence failure without losing the signed landing page', async () => {
@@ -279,6 +344,29 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(mocks.logWarn).toHaveBeenCalledWith(
 			'value-path.certificate.share_unavailable',
 			expect.objectContaining({ reason: 'share-persistence-failed' }),
+		)
+	})
+
+	it('renders a graceful fallback when eligibility cannot be checked', async () => {
+		mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockRejectedValue(
+			new Error('database unavailable'),
+		)
+		const page = await ValuePathAnswerPage({
+			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
+			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
+		})
+		const markup = renderToStaticMarkup(page)
+
+		expect(markup).toContain(
+			'data-value-path-certificate="eligibility-unavailable"',
+		)
+		expect(markup).toContain(
+			'We could not load your certificate. Open this link again in a moment.',
+		)
+		expect(markup).not.toContain('/api/certificates?')
+		expect(mocks.logError).toHaveBeenCalledWith(
+			'value-path.certificate.eligibility_failed',
+			expect.objectContaining({ error: 'database unavailable' }),
 		)
 	})
 

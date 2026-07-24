@@ -1997,8 +1997,12 @@ describe('subscriber marketing value path click progression', () => {
 			now: '2026-07-18T11:05:00.000Z',
 		}
 
-		await expect(recordValuePathAnswerProgression(progression)).rejects.toThrow(
-			'temporary Kit failure',
+		await expect(recordValuePathAnswerProgression(progression)).resolves.toMatchObject(
+			{
+				status: 'recorded',
+				finisherCapture: 'failed',
+				reviewReasons: ['kit-finisher-field-write-failed'],
+			},
 		)
 		const retry = await recordValuePathAnswerProgression({
 			...progression,

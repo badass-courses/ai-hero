@@ -24,7 +24,7 @@ export type ValuePathAnswerProgressionResult =
 			contactEventId: string
 			nextActionId?: string
 			sideEffectIntentId?: string
-			finisherCapture?: ValuePathFinisherCaptureResult['status']
+			finisherCapture?: ValuePathFinisherCaptureResult['status'] | 'failed'
 			idempotentNoop: false
 			reviewReasons: string[]
 	  }
@@ -339,11 +339,12 @@ export async function recordValuePathAnswerProgression(args: {
 				now: selectedAt,
 			})
 		} catch (error) {
+			const reviewReasons = ['kit-finisher-field-write-failed']
 			await args.repository.updateSideEffectIntent?.(intent.id, {
 				status: 'failed',
 				completedAt: null,
 				gates: intent.gates,
-				reviewReasons: ['kit-finisher-field-write-failed'],
+				reviewReasons,
 				metadata: {
 					...intent.metadata,
 					providerResult: {
@@ -352,7 +353,15 @@ export async function recordValuePathAnswerProgression(args: {
 					},
 				},
 			})
-			throw error
+			return {
+				status: 'recorded',
+				contactEventId: event.id,
+				nextActionId: nextAction?.id ?? intent.nextActionId,
+				sideEffectIntentId: intent.id,
+				finisherCapture: 'failed',
+				idempotentNoop: false,
+				reviewReasons,
+			}
 		}
 		if (finisherCapture.status === 'blocked') {
 			await args.repository.updateSideEffectIntent?.(intent.id, {
@@ -366,8 +375,11 @@ export async function recordValuePathAnswerProgression(args: {
 				},
 			})
 			return {
-				status: 'skipped',
-				reason: 'finisher-capture-blocked',
+				status: 'recorded',
+				contactEventId: event.id,
+				nextActionId: nextAction?.id ?? intent.nextActionId,
+				sideEffectIntentId: intent.id,
+				finisherCapture: 'blocked',
 				idempotentNoop: false,
 				reviewReasons: finisherCapture.reviewReasons,
 			}

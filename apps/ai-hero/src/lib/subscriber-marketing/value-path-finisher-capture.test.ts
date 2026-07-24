@@ -39,6 +39,25 @@ describe('value path finisher capture', () => {
 		})
 	})
 
+	it('blocks an other answer when the signed token has no Kit subscriber id', async () => {
+		const updateSubscriberFields = vi.fn()
+		const result = await captureValuePathFinisherFields({
+			provider: { updateSubscriberFields },
+			mode: 'scoped-live',
+			email: 'learner@example.com',
+			optionValue: 'other',
+			captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+			captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			now,
+		})
+
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['kit-subscriber-id-missing'],
+		})
+		expect(updateSubscriberFields).not.toHaveBeenCalled()
+	})
+
 	it('excludes canary and drill fixtures from Kit field writes', async () => {
 		const updateSubscriberFields = vi.fn()
 		const result = await captureValuePathFinisherFields({
@@ -61,6 +80,7 @@ describe('value path finisher capture', () => {
 		const result = await captureValuePathFinisherFields({
 			mode: 'scoped-live',
 			email: 'learner@example.com',
+			kitSubscriberId: 'kit-1',
 			optionValue: 'placeholder-option-a',
 			captureFieldKey: 'arbitrary_field',
 			captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
