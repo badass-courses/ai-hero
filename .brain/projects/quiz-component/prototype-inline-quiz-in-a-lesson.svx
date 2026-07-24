@@ -1,0 +1,64 @@
+---
+title: "Prototype an inline quiz Joel can click"
+type: "step"
+kind: "prototype"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Prototype an inline quiz Joel can click
+
+## Step
+
+Build a throwaway `<Quiz>` / `<QuizQuestion>` that renders in an AI Coding Crash
+Course lesson body, so Joel can answer a question and see what it feels like.
+This step is the gate on the brief's execution authorization: build is authorized
+only after Joel touches this and says it feels right.
+
+Use the `prototype` skill. Throwaway means throwaway — this is an alignment
+instrument, not the first commit of the real component.
+
+Scope it to the smallest thing that produces a real reaction:
+
+- Register `Quiz` and `QuizQuestion` in the lesson runtime component map
+  (`apps/ai-hero/src/utils/compile-mdx.tsx:285-488`). The map already carries
+  ~30 entries and already loads stateful client components dynamically
+  (`compile-mdx.tsx:40-98`), so this is joining an existing pattern.
+- Accept the exact shape Matt asked for, with a real object literal:
+  `<QuizQuestion data={{ question, type, choices, correct, answer }} />`.
+  Object props are proven to compile — `<ThemeImage urls={{ dark, light }} />`
+  ships in `apps/ai-hero/content/cohort-copy.mdx:17` and the compile call sets
+  `blockJS: false` (`compile-mdx.tsx:285-296`).
+- Drive grading with `surveyMachine` from `@coursebuilder/survey`
+  (installed at `1.0.5`), not a fresh implementation. Fresh UI, per the pinned
+  decision.
+- **Single-answer multiple choice only** for the prototype. Multi-select is
+  unresolved; see
+  [Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx).
+- **No persistence.** Answers live in component state and die on refresh. The
+  answer endpoint is a separate decision and would slow the reaction down.
+
+Put it in the draft AI Coding Crash Course (anchor `workshop-2ozd9`, edit URL
+`https://www.aihero.dev/workshops/ai-coding-crash-course/edit`) so nothing
+published is touched. A local dev render is fine if that is faster to get in
+front of Joel.
+
+## What Joel is being asked to react to
+
+- Does answering feel right inline, mid-lesson, or does it interrupt reading?
+- Is the correct/incorrect reveal the right amount of feedback, and does the
+  authored explanation land in the right place?
+- Is the `data={{ … }}` authoring shape actually pleasant to read in a body full
+  of prose, or does it wreck the source?
+
+## Resolved when
+
+Joel has clicked through a real question in a lesson body and said either "build
+it" — which fires the brief's execution authorization — or named what has to
+change first.
+
+## Result

@@ -1,0 +1,55 @@
+---
+title: "Decide multi-select handling in the inline quiz"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Decide multi-select handling in the inline quiz
+
+## Step
+
+Two pinned decisions interact in a way that was not visible when either was made,
+and the gap has to be closed before the real component ships.
+
+**The interaction.** The inline quiz reuses `surveyMachine` for grading (pinned
+decision 5). The machine's multi-select guard is wrong: it proves every submitted
+answer belongs to the correct set, but never compares lengths, so a non-empty
+proper subset enters `answered.correct`
+(`packages/survey/src/survey-machine.ts:160-174`). Pick one of three correct
+answers and the learner is told they were right. Fixing that bug was ruled
+separate work (pinned decision 6), and AI Hero pins
+`@coursebuilder/survey@^1.0.5` against a source at `1.0.13`, so even a released
+fix does not arrive on its own.
+
+So: the quiz inherits a known-wrong grader on any question with an array
+`correct`.
+
+Resolve which way out:
+
+1. **Ship single-answer only.** The inline component rejects or ignores array
+   `correct` until the package fix lands and the pin moves. Matt asked for
+   text-based quizzes and may not need multi-select at all — worth asking him
+   rather than assuming.
+2. **Guard locally.** The AI Hero component wraps the machine and applies its own
+   exact-set comparison before trusting `answered.correct`. Ships multi-select
+   now, but puts a second grading rule in a second place, which is the thing
+   pinned decision 5 was trying to avoid.
+3. **Pull the fix forward.** Fix the package, release, move AI Hero's pin as part
+   of this effort after all — reversing pinned decision 6 with eyes open now that
+   the coupling is visible.
+
+Worth putting to Matt directly: does any crash-course question actually need more
+than one correct answer? A no collapses this step to option 1.
+
+## Resolved when
+
+The inline quiz has one documented, correct behavior for array `correct` values,
+and the brief records whether pinned decision 6 stands or was superseded.
+
+## Result
