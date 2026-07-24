@@ -78,7 +78,12 @@ export type CourseSyncNotification =
 		failureClass: string
 	}
 
+export const COURSE_SYNC_SLACK_USERNAME = 'AI Hero Course Sync'
+export const COURSE_SYNC_SLACK_ICON_EMOJI = ':repeat:'
+
 export type CourseSyncSlackNotificationPayload = {
+	username: typeof COURSE_SYNC_SLACK_USERNAME
+	icon_emoji: typeof COURSE_SYNC_SLACK_ICON_EMOJI
 	text: string
 	attachments: Array<{
 		fallback: string
@@ -168,6 +173,8 @@ export function buildCourseSyncNotificationPayload(
 		const title = `AI Hero course sync applied ${notification.courseVersionId}`
 		const fallback = `${title}: ${notification.resourceCounts.create} created, ${notification.resourceCounts.update} updated, ${notification.mediaCount} media updated.`
 		return {
+			username: COURSE_SYNC_SLACK_USERNAME,
+			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
 			text: title,
 			attachments: [
 				{
@@ -191,6 +198,8 @@ export function buildCourseSyncNotificationPayload(
 	const title = `AI Hero course sync failed ${notification.courseVersionId}`
 	const fallback = `${title}: ${notification.failureClass} (poll ${notification.runId}).`
 	return {
+		username: COURSE_SYNC_SLACK_USERNAME,
+		icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
 		text: title,
 		attachments: [
 			{
