@@ -376,29 +376,37 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const runReceipts = this.receipts.filter(
 			(receipt) => receipt.runId === input.runId,
 		)
-		for (const receipt of runReceipts) {
-			if (receipt.action === 'retain') continue
-			const planItem = original.plan?.resources.find(
-				(item) => item.targetResourceId === receipt.resourceId,
-			)
-			if (!planItem) {
-				// Detached state is restored from this item. Defaulting it silently
-				// would re-attach a resource that should stay detached, which is the
-				// exact thing this rollback path exists to get right.
-				throw new CourseSyncError(
-					'ROLLBACK_PLAN_ITEM_MISSING',
-					`No plan item found for resource ${receipt.resourceId} during rollback.`,
-					409,
+		// Preflight every lookup before touching any state. Throwing partway
+		// through the mutation loop below would leave versions, resources,
+		// relations, and receipts half-rolled-back with no way to finish or undo.
+		const plannedRollbacks = runReceipts
+			.filter((receipt) => receipt.action !== 'retain')
+			.map((receipt) => {
+				const planItem = original.plan?.resources.find(
+					(item) => item.targetResourceId === receipt.resourceId,
 				)
-			}
-			const resource = this.resources.get(receipt.resourceId)
-			if (!resource) {
-				throw new CourseSyncError(
-					'ROLLBACK_RESOURCE_MISSING',
-					'A rollback resource disappeared.',
-					409,
-				)
-			}
+				if (!planItem) {
+					// Detached state is restored from this item. Defaulting it silently
+					// would re-attach a resource that should stay detached, which is the
+					// exact thing this rollback path exists to get right.
+					throw new CourseSyncError(
+						'ROLLBACK_PLAN_ITEM_MISSING',
+						`No plan item found for resource ${receipt.resourceId} during rollback.`,
+						409,
+					)
+				}
+				const resource = this.resources.get(receipt.resourceId)
+				if (!resource) {
+					throw new CourseSyncError(
+						'ROLLBACK_RESOURCE_MISSING',
+						'A rollback resource disappeared.',
+						409,
+					)
+				}
+				return { receipt, planItem, resource }
+			})
+
+		for (const { receipt, planItem, resource } of plannedRollbacks) {
 			const parent = receipt.parentVersionId
 				? this.versions.get(receipt.parentVersionId)
 				: null
