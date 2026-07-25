@@ -52,6 +52,16 @@ This page exercises the same MDX path used by lesson bodies.
 </Quiz>
 `
 
+/**
+ * Development fixture for the inline quiz components.
+ *
+ * Kept deliberately rather than deleted: it compiles a real MDX string through
+ * `compileMDX`, the same path a lesson body takes, so it exercises the authoring
+ * contract end to end rather than just rendering the components directly. Its
+ * fixtures cover single answer, multi-select, and intentionally invalid data.
+ *
+ * Not linked from navigation and carries no persistence.
+ */
 export default async function QuizPrototypePage() {
 	const { content } = await compileMDX(quizFixtureMdx)
 
