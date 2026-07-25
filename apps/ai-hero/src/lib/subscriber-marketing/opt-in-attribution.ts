@@ -8,6 +8,7 @@ export type OptInAttribution = {
 	gbraid?: string
 	wbraid?: string
 	landingPath?: string
+	referrer?: string
 	capturedAt: string
 	subscribedAt?: string
 }
@@ -42,6 +43,7 @@ export function parseOptInAttributionCookie(raw?: string | null): OptInAttributi
 			gbraid: bounded(clickIds.gbraid),
 			wbraid: bounded(clickIds.wbraid),
 			landingPath: bounded(input.landing_path, MAX_PATH_LENGTH),
+			referrer: bounded(input.referrer, MAX_PATH_LENGTH),
 			capturedAt,
 		}
 		return Object.values(result).some(Boolean) ? result : undefined

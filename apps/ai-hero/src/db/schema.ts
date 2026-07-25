@@ -361,6 +361,47 @@ export const shortlinkAttributionRelations = relations(
 )
 
 /**
+ * Lean first-touch signup attribution for every newsletter form submit.
+ * Separate from subscriber-marketing funnel tables on purpose.
+ */
+export const signupAttribution = mysqlTable(
+	'SignupAttribution',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		email: varchar('email', { length: 255 }).notNull(),
+		kitSubscriberId: varchar('kitSubscriberId', { length: 255 }),
+		formId: varchar('formId', { length: 255 }),
+		landingPath: varchar('landingPath', { length: 500 }),
+		referrer: varchar('referrer', { length: 500 }),
+		utmSource: varchar('utmSource', { length: 255 }),
+		utmMedium: varchar('utmMedium', { length: 255 }),
+		utmCampaign: varchar('utmCampaign', { length: 255 }),
+		utmContent: varchar('utmContent', { length: 255 }),
+		utmTerm: varchar('utmTerm', { length: 255 }),
+		clickIds: json('clickIds').$type<{
+			gclid?: string
+			gbraid?: string
+			wbraid?: string
+		}>(),
+		capturedAt: timestamp('capturedAt'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		emailFormIdUq: uniqueIndex('SignupAttribution_email_formId_uq').on(
+			table.email,
+			table.formId,
+		),
+		landingPathIdx: index('SignupAttribution_landingPath_idx').on(
+			table.landingPath,
+		),
+		createdAtIdx: index('SignupAttribution_createdAt_idx').on(table.createdAt),
+	}),
+)
+
+/**
  * Staged content read signals for gated subscriber marketing attribution.
  */
 export const contentRead = mysqlTable(

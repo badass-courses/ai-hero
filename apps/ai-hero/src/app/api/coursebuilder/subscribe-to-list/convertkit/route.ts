@@ -8,6 +8,7 @@ import {
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
+import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import {
@@ -41,12 +42,21 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 
 	// Only track successful subscriptions (status 200).
 	if (response.status === 200 && email) {
+		let kitSubscriberId: string | number | undefined
+		try {
+			const subscriber = SubscriberSchema.parse(await response.clone().json())
+			kitSubscriberId = subscriber.id
+		} catch {
+			// Subscriber body is optional for lean attribution; skip kit id.
+		}
+
 		if (Number(body.listId) === 9376133) {
 			try {
 				const subscriber = SubscriberSchema.parse(await response.clone().json())
 				if (!subscriber.email_address) {
 					throw new Error('Skills subscriber response is missing an email')
 				}
+				kitSubscriberId = subscriber.id
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
 					email: subscriber.email_address,
 					subscriberState: subscriber.state,
@@ -125,8 +135,23 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 		}
 
 		try {
-			// Read the sl_ref cookie to get the shortlink slug
 			const cookieStore = await cookies()
+			const ftAttr = cookieStore.get('ft_attr')?.value
+			// Lean page-level attribution for every successful subscribe.
+			// Must never fail or slow the subscription response.
+			recordSignupAttribution({
+				email,
+				formId: body.listId,
+				kitSubscriberId,
+				rawCookie: ftAttr,
+			}).catch((error) => {
+				void log.error('signup.attribution.failed', {
+					formId: body.listId != null ? String(body.listId) : undefined,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			})
+
+			// Read the sl_ref cookie to get the shortlink slug
 			const shortlinkSlug = cookieStore.get('sl_ref')?.value
 
 			if (shortlinkSlug) {
