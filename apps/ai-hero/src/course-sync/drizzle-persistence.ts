@@ -460,7 +460,11 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						? relations.filter(
 								(relation) =>
 									relation.deletedAt !== null &&
-									relation.resourceOfId === item.parentResourceId,
+									// The tombstone was written under the OLD parent. Filtering
+									// by the new planned parent finds nothing when a restore
+									// also moves the resource, aborting the apply.
+									relation.resourceOfId ===
+										(item.previousParentResourceId ?? item.parentResourceId),
 							)
 						: activeRelations.filter(
 								(relation) => relation.resourceOfId === item.parentResourceId,

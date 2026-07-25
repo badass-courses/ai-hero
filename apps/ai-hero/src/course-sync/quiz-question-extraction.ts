@@ -71,6 +71,15 @@ function staticValue(value: unknown): unknown {
 	}
 }
 
+function hasSpreadAttribute(node: MdxNode): boolean {
+	return Boolean(
+		node.attributes?.some(
+			(candidate) =>
+				(candidate as MdxNode).type === 'mdxJsxExpressionAttribute',
+		),
+	)
+}
+
 function dataExpression(node: MdxNode): AstNode | null {
 	const attribute = node.attributes?.find((candidate) => {
 		const value = candidate as MdxNode
@@ -123,6 +132,19 @@ export function extractQuizQuestions(
 				node.type === 'mdxJsxTextElement') &&
 			node.name === 'QuizQuestion'
 		) {
+			// Reject spreads rather than skipping them. `<QuizQuestion {...props} />`
+			// renders a real question the learner can answer, but nothing static is
+			// extractable — so silently ignoring it would persist no question, or
+			// persist a stale literal that a later spread overrode at runtime. A
+			// loud failure at sync beats a lesson whose stored questions disagree
+			// with what is on screen.
+			if (hasSpreadAttribute(node)) {
+				throw questionError(
+					lessonId,
+					'<spread>',
+					'spread attributes are not supported; write data as a literal object',
+				)
+			}
 			const expression = dataExpression(node)
 			if (!expression) {
 				throw questionError(lessonId, '<missing>', 'data must be a static object literal')

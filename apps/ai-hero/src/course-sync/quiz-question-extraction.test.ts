@@ -104,3 +104,30 @@ describe('quiz question extraction', () => {
 		).toThrow('dynamic expression Identifier is not supported')
 	})
 })
+
+describe('spread attributes', () => {
+	it('rejects a spread instead of silently skipping the question', () => {
+		const body = `<Quiz>\n  <QuizQuestion {...{ data: { id: 'a' } }} />\n</Quiz>`
+		expect(() => extractQuizQuestions(body, 'lesson-1')).toThrow(
+			/spread attributes are not supported/,
+		)
+	})
+
+	it('rejects a spread that follows an explicit data attribute', () => {
+		const body = [
+			'<Quiz>',
+			'  <QuizQuestion data={{',
+			'    id: "q1",',
+			'    question: "Real question?",',
+			'    type: "multiple-choice",',
+			'    choices: [{ answer: "a" }, { answer: "b" }],',
+			'    correct: "a",',
+			'    answer: "Because."',
+			'  }} {...override} />',
+			'</Quiz>',
+		].join('\n')
+		expect(() => extractQuizQuestions(body, 'lesson-1')).toThrow(
+			/spread attributes are not supported/,
+		)
+	})
+})

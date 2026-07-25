@@ -226,7 +226,11 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: item.parentResourceId,
 					childId: item.targetResourceId,
 					position: item.position,
-					detached: false,
+					// Honor the plan rather than assuming attached. Recreating a
+					// question that was previously removed arrives as create +
+					// detached: true, and hard-coding false would silently make it
+					// visible again.
+					detached: item.detached,
 				})
 			}
 			if (!resource)
@@ -377,6 +381,16 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			const planItem = original.plan?.resources.find(
 				(item) => item.targetResourceId === receipt.resourceId,
 			)
+			if (!planItem) {
+				// Detached state is restored from this item. Defaulting it silently
+				// would re-attach a resource that should stay detached, which is the
+				// exact thing this rollback path exists to get right.
+				throw new CourseSyncError(
+					'ROLLBACK_PLAN_ITEM_MISSING',
+					`No plan item found for resource ${receipt.resourceId} during rollback.`,
+					409,
+				)
+			}
 			const resource = this.resources.get(receipt.resourceId)
 			if (!resource) {
 				throw new CourseSyncError(
@@ -427,7 +441,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: receipt.previousParentResourceId,
 					childId: receipt.resourceId,
 					position: receipt.previousPosition,
-					detached: planItem?.previousDetached ?? false,
+					detached: planItem.previousDetached,
 				})
 			}
 			this.receipts.push({
