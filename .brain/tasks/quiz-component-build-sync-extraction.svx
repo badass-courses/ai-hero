@@ -1,0 +1,97 @@
+---
+title: "Worker task: quiz question extraction in course-sync"
+type: "task"
+assignee: ""
+created_at: "2026-07-25"
+---
+
+# Worker task: quiz question extraction in course-sync
+
+## Claim first
+
+Set `assignee:` in this file to your callsign plus machine before anything else.
+The steering session watches for it as a liveness signal.
+
+## Where you work
+
+Worktree `/Users/joel/Code/worktrees/aih-quiz-sync`, branch
+`feat/quiz-sync-extraction`. Commit freely there. **Never touch `main` or any
+other branch.** Run `pnpm install` from the worktree root if needed.
+
+## Your file fence
+
+A sibling worker is building the Quiz component in a separate worktree at the
+same time. Stay inside your fence:
+
+- **You own:** `apps/ai-hero/src/course-sync/**`, plus any new test files for it.
+- **You do NOT touch:** `apps/ai-hero/src/components/mdx/**`,
+  `apps/ai-hero/src/utils/compile-mdx.tsx`,
+  `apps/ai-hero/src/app/quiz-prototype/**`, or the shared `gradeAnswer` module.
+  The sibling owns all of those. You do not need `gradeAnswer` — **sync does not
+  grade anything**, it only extracts and persists.
+- If you believe you need a file outside your fence, stop and say so in your DONE
+  summary instead of editing it.
+
+## Context
+
+Read these before starting:
+
+- Brief: `/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`
+- Your step: `/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/build-sync-question-extraction.svx`
+- The decision behind it: `.../decide-inline-quiz-identity.svx`
+
+The design is settled. Do not redesign it. Execution is authorized.
+
+## The work
+
+Your step file states it precisely. In short: teach course-sync to parse lesson
+bodies for inline `QuizQuestion` markup and derive `question` content resources
+from it, following the id scheme sync already uses at
+`apps/ai-hero/src/course-sync/control-plane.ts:42-48`.
+
+Points that will decide whether this is any good:
+
+1. **Follow the existing pattern.** `targetResourceId` is the template. Its `kind`
+   parameter is typed `'section' | 'lesson'` and needs widening to include
+   `'question'`. The `sourceId` is the **author-supplied `id`** from the question's
+   data object, never the question text.
+2. **Parsing.** The body is MDX containing JSX object literals. Choose real
+   AST-based parsing or something narrower, and **write down why** in your result.
+   A regex over JSX object literals will rot — if you use one anyway, justify it
+   explicitly and say what will break it.
+3. **`correct` may be a string OR an array of strings.** Multi-select is required.
+   Array values and `allowMultiple` must survive extraction intact.
+4. **Fail the sync loudly** on a question with no `id`, or two questions in one
+   lesson sharing an `id`. The error names the lesson and the offending id. This
+   is the design's early-warning mechanism — it is not optional.
+5. **Idempotency.** Re-running sync must not duplicate question rows or churn ids.
+   Match the no-op replay behavior the existing sync already proves.
+6. **Removal.** A question deleted from a body must stop appearing without
+   destroying its `QuestionResponse` history. Decide soft-delete vs detach, do it,
+   and say which you chose and why.
+7. **Do not change the v3 manifest schema.** Quiz data rides inside `body`;
+   `packages/course-sync-schema/src/course-json-v3.ts:86-89` rejects excess
+   properties and that stays true.
+
+## Rules
+
+- Do not deploy, do not run migrations against a shared database, do not call
+  production.
+- Do not modify anything under `.brain/` except this task file.
+- Write tests for the parser and the id derivation. Extraction that silently
+  drops a question is the worst possible failure here.
+- Typecheck and lint must pass. A full production build may fail at page
+  collection because the local database is unavailable — that is a known
+  environment limit, not your bug. Say so if you hit it.
+- If a decision in the step looks wrong now that you are building it, say so in
+  your DONE summary. Do not quietly do something else.
+
+## Finish
+
+Commit on `feat/quiz-sync-extraction`. Print a `DONE` summary, max 15 lines:
+
+- files touched and what each does
+- your parsing choice and the justification
+- how you verified idempotency and the loud-failure path
+- what you chose for question removal
+- anything that fought you or looks wrong in the design

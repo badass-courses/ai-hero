@@ -1,0 +1,108 @@
+---
+title: "Worker task: build the real Quiz component"
+type: "task"
+assignee: ""
+created_at: "2026-07-25"
+---
+
+# Worker task: build the real Quiz component
+
+## Claim first
+
+Set `assignee:` in this file to your callsign plus machine before anything else.
+The steering session watches for it as a liveness signal.
+
+## Where you work
+
+Worktree `/Users/joel/Code/worktrees/aih-quiz-component`, branch
+`feat/quiz-component`. Commit freely there. **Never touch `main` or any other
+branch.** Run `pnpm install` from the worktree root if needed.
+
+## Your file fence
+
+A sibling worker is building course-sync extraction in a separate worktree at the
+same time. Stay inside your fence:
+
+- **You own:** `apps/ai-hero/src/components/mdx/**`,
+  `apps/ai-hero/src/utils/compile-mdx.tsx`,
+  `apps/ai-hero/src/app/quiz-prototype/**`, and the new shared `gradeAnswer`
+  module (you create it — pick a sensible shared location and say where).
+- **You do NOT touch:** `apps/ai-hero/src/course-sync/**`. The sibling owns it.
+- If you believe you need a file outside your fence, stop and say so in your DONE
+  summary instead of editing it.
+
+## Context
+
+Read these before starting:
+
+- Brief: `/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`
+- Your step: `/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/build-the-quiz-component.svx`
+- Grading decision: `.../decide-multi-select-in-the-inline-quiz.svx`
+- The approved prototype: commit `73f6aaf` on branch `prototype/inline-quiz`
+
+Joel approved the prototype's interaction and the `data={{ … }}` authoring shape
+unchanged. **Do not redesign the UX.** Execution is authorized.
+
+## The work
+
+Promote the prototype into the component that ships. Your step file has the
+detail. The parts that matter most:
+
+1. **`gradeAnswer` is the centerpiece.** One exact-set function, one module,
+   imported by the component now and by the answer endpoint later. The code and
+   rationale are in the multi-select decision file. Two copies of this logic will
+   drift, and drift means the learner sees one verdict while the database records
+   another.
+2. **Multi-select is required** (Joel, 2026-07-25). Checkboxes when `correct` is
+   an array or `allowMultiple` is set; radios otherwise. Exact set match, all or
+   nothing, no partial credit.
+3. **Override the machine's broken guard, do not fork the package:**
+   `surveyMachine.provide({ guards: { answeredCorrectly: … } })` calling
+   `gradeAnswer`. `StateMachine.provide` is confirmed present in `xstate@5.32.0`,
+   the installed version. **Do not vendor `@coursebuilder/survey` and do not move
+   the `^1.0.5` pin.**
+4. **Validate the `data` prop with zod**, derived from `QuestionResourceSchema`
+   (`packages/survey/src/types.ts:25-52`). An agent-generated MDX object literal
+   is untrusted input. A malformed quiz degrades **visibly** — it must not crash
+   the lesson body. The MDX compile path has a whole-body escaping fallback
+   (`compile-mdx.tsx:183-205`), which is NOT the same as graceful per-component
+   degradation. You are building the latter.
+5. **Missing or duplicate `id`:** render and grade normally, skip persistence,
+   fire a server-side error, and show a visible warning outside production. A
+   learner's lesson is never broken by an authoring mistake.
+6. **The shuffle side effect.** Setting `correct` silently shuffles choices
+   (`packages/survey/src/survey-machine.ts:57-60`) with no opt-out. Decide whether
+   authors get an escape hatch, implement your decision, and record it.
+7. **Accessibility is not optional.** Keyboard operable, properly labelled
+   radios/checkboxes, visible focus state. Verify at 390px — this is read on
+   phones.
+8. Keep the MDX names exactly `Quiz` and `QuizQuestion`. Matt is authoring
+   against them.
+9. Decide whether `/quiz-prototype` is removed or kept as a deliberate dev
+   fixture, and say which.
+
+**Do not build the answer endpoint.** Persistence is a separate step. This ships a
+component that grades client-side, same as the prototype.
+
+## Rules
+
+- Do not deploy, do not run migrations, do not call production.
+- Do not modify anything under `.brain/` except this task file.
+- Write tests for `gradeAnswer`, especially the multi-select cases: exact match,
+  proper subset (must be false — this is the bug being fixed), superset, wrong
+  order, empty.
+- Typecheck and lint must pass. A full production build may fail at page
+  collection because the local database is unavailable — known environment limit,
+  not your bug. Say so if you hit it.
+- If a decision looks wrong now that you are building it, say so in your DONE
+  summary. Do not quietly do something else.
+
+## Finish
+
+Commit on `feat/quiz-component`. Print a `DONE` summary, max 15 lines:
+
+- files touched, and where `gradeAnswer` lives
+- how you verified it renders and grades, including a multi-select question
+- your shuffle decision and your `/quiz-prototype` decision
+- what invalid `data` looks like on screen
+- anything that fought you or looks wrong in the design
