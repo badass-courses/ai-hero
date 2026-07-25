@@ -1,0 +1,72 @@
+---
+title: "Build quiz question extraction into course-sync"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Build quiz question extraction into course-sync
+
+## Step
+
+Teach course-sync to derive `question` content resources from inline
+`QuizQuestion` markup. Execution is authorized (brief Notes, Joel 2026-07-24).
+Decided in
+[Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx).
+
+This is the load-bearing piece of the architecture: it is what makes quiz data
+queryable and what lets the server grade authoritatively, while leaving Matt's
+authoring entirely inline.
+
+**Follow the existing pattern, do not invent a parallel one.** Sync already mints
+deterministic ids as
+`sync_${kind}_${sha256(bindingId:kind:sourceId).slice(0,24)}`
+(`apps/ai-hero/src/course-sync/control-plane.ts:42-48`) and already writes
+`courseSync` provenance into resource fields
+(`control-plane.ts:175-236`). Questions join that same scheme with
+`kind: 'question'` and the **author-supplied `id`** as `sourceId`. Note that the
+existing helper's `kind` parameter is typed `'section' | 'lesson'` and needs
+widening.
+
+What to build:
+
+- Parse each lesson `body` for `QuizQuestion` blocks and extract the `data`
+  object. Be deliberate about how: the body is MDX with JSX object literals, so
+  decide between real MDX/AST parsing and something narrower, and write down why.
+  A regex over JSX object literals will rot.
+- Mint `targetResourceId(bindingId, 'question', <authored id>)` per question and
+  write a `question` content resource, joined to its lesson through
+  `contentResourceResource` with `position` preserved
+  (see `packages/adapter-drizzle/.../content-resource-resource.ts:14-42`).
+- Carry the full `QuestionResourceSchema` fields — including `correct` and the
+  `answer` explanation — so the server can grade from the row
+  (`packages/survey/src/types.ts:25-52`). `correct` may be a **string or an array
+  of strings**; multi-select is required (Joel, 2026-07-25), so array values must
+  survive extraction intact. Carry `allowMultiple` too.
+- **Validate and fail the sync** when a question has no `id`, or when two
+  questions in one lesson share an `id`. This is the loud, early failure the
+  design depends on. The error must name the lesson and the offending id.
+- Handle removal: a question deleted from a body should stop appearing, without
+  destroying its `QuestionResponse` history. Decide soft-delete versus detach and
+  say which.
+- Sync is idempotent by design — re-running must not duplicate question rows or
+  churn ids. The tracer run and no-op replay behavior in
+  `apps/ai-hero/src/course-sync/` is the standard to match.
+
+**Do not change the v3 manifest schema.** Quiz data rides inside the existing
+`body` string; `course-json-v3.ts:86-89` rejects excess properties and that stays
+true.
+
+## Resolved when
+
+A lesson body containing inline quizzes syncs into question content resources
+with stable ids, a re-sync is a no-op, a missing or duplicate id fails the sync
+with a message naming the lesson, and removing a question from a body does not
+destroy collected answers.
+
+## Result

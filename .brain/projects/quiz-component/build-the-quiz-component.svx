@@ -1,0 +1,67 @@
+---
+title: "Build the real Quiz component"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Build the real Quiz component
+
+## Step
+
+Promote the prototype into the component that ships. Execution is authorized
+(brief Notes, Joel 2026-07-24).
+
+Start from `73f6aaf` on `prototype/inline-quiz` —
+`apps/ai-hero/src/components/mdx/quiz-prototype.tsx`,
+`apps/ai-hero/src/app/quiz-prototype/page.tsx`, and the `dynamic()` registrations
+in `apps/ai-hero/src/utils/compile-mdx.tsx`. Joel approved that interaction as-is,
+so do not redesign the UX.
+
+What changes from prototype to real:
+
+- Move the component out of the `quiz-prototype` name into its permanent home and
+  keep the `Quiz` / `QuizQuestion` MDX names exactly as registered — Matt is
+  authoring against them.
+- Validate the `data` prop with a zod schema derived from
+  `QuestionResourceSchema` (`packages/survey/src/types.ts:25-52`) rather than
+  trusting whatever an agent-generated MDX object literal contains. A malformed
+  quiz must degrade visibly, not crash the lesson body. Note that the MDX compile
+  path already has an escaping fallback for total failure
+  (`compile-mdx.tsx:183-205`), which is not the same as graceful per-component
+  degradation.
+- **Multi-select is required, not optional** (Joel, 2026-07-25). Render checkboxes
+  when `correct` is an array or `allowMultiple` is set; radios otherwise. Grade
+  through the shared `gradeAnswer` exact-set function and override the machine's
+  broken guard with `surveyMachine.provide({ guards: { answeredCorrectly } })` —
+  full rationale and the code in
+  [Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx).
+  Do not fork or vendor `@coursebuilder/survey`, and do not move the `^1.0.5` pin.
+- `gradeAnswer` lives in one module imported by both the component and the answer
+  endpoint. Two copies will drift, and a drift here means the learner sees one
+  verdict while the database records the other.
+- Handle the shuffle side effect: setting `correct` silently shuffles choices
+  (`survey-machine.ts:57-60`). Decide and implement whether authors get an opt-out
+  and record what you chose.
+- Accessible by keyboard, labelled radios, and a visible focus state. It sits in
+  a lesson body that people read on phones — the prototype was verified at 390px
+  and the real one must stay that way.
+- Remove `/quiz-prototype` once the real component is registered, or keep it
+  deliberately as a dev fixture and say which.
+
+**Do not build the answer endpoint here.** Wiring persistence is a separate step
+that waits on [Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx).
+This step ships a component that grades client-side, exactly like the prototype.
+
+## Resolved when
+
+`<Quiz>` / `<QuizQuestion>` render from a real lesson body in the draft AI Coding
+Crash Course, graded, keyboard-accessible, with invalid data degrading visibly,
+and the work merged.
+
+## Result

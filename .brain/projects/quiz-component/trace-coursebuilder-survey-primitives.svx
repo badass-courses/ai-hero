@@ -1,0 +1,311 @@
+---
+title: "Trace the course-builder survey primitives"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+assignee: "cb-survey (flagg, herdr pane w2S:p2, 2026-07-24)"
+closed_at: "2026-07-24"
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Trace the course-builder survey primitives
+
+## Step
+
+Establish what the shared course-builder packages already give us toward a quiz,
+and what they cannot do.
+
+Read (do not modify) in `~/Code/badass-courses/course-builder`:
+
+- `packages/survey/src/**` — `types.ts`, `survey-machine.ts`, `survey-question.tsx`,
+  `offer-machine.ts`, `use-survey-page-offer-machine.tsx`,
+  `use-survey-popup-offer-machine.tsx`, `index.tsx`.
+- `packages/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts`
+  and any sibling schema files a survey or question touches.
+- `packages/ui/**` for any question or answer rendering primitives the survey
+  package leans on.
+- `packages/analytics/src/providers/survey.ts` and `packages/analytics/src/types.ts`
+  for how answers become analytics.
+
+Answer these, each with file:line evidence:
+
+1. What is the data model of a survey, a question, and an answer? Give the exact
+   TypeScript types and the exact DB columns.
+2. Is there any notion of a **correct** answer, grading, scoring, or feedback
+   after answering? Quote the code that supports or refutes this. This is the
+   single most important question in the step.
+3. What question types exist (multiple choice, free text, etc.)? What renders
+   them?
+4. What does the XState survey machine actually model — the flow of one question,
+   a sequence, an offer/popup lifecycle? Describe the states and events.
+5. Where do answers get written, and by what code path? Client to server, or
+   client to a third party?
+6. Is `packages/survey` coupled to the popup/offer/ConvertKit marketing use case,
+   or can a question render standalone inside arbitrary page content? Be concrete
+   about what the coupling is.
+7. What would have to change in these packages to support a graded quiz? List
+   concrete gaps, smallest first.
+
+## Deliverable
+
+Write your findings into this file as a `## Result (2026-07-24)` section:
+prose plus a short table of "primitive → what it does → does it help a quiz".
+Set `status: "closed"` and add `closed_at: "2026-07-24"` to the frontmatter.
+Keep it dense and factual. No recommendations about product direction — that is
+the operator's call. Cite `path:line` for every claim.
+
+## Result (2026-07-24)
+
+### 1. Data model
+
+The active package-level survey shape is `QuizResource = { title?: string;
+slug?: string; questions: QuestionSet }`, where `QuestionSet` is
+`Record<string, QuestionResource>` (`packages/survey/src/types.ts:5-8`,
+`packages/survey/src/types.ts:25-56`). A `QuestionResource` has this exact
+schema-derived shape:
+
+```ts
+{
+  question: string | (() => string)
+  type: 'multiple-choice' | 'essay' | 'multiple-image-choice'
+  tagId?: number
+  correct?: string | string[]
+  answer?: string
+  choices?: Array<{ answer: string; label?: string; image?: string }>
+  template?: string
+  shuffleChoices?: boolean
+  allowMultiple?: boolean
+  required?: boolean
+  dependsOn?: { question: string; answer: string }
+  code?: Array<{ filename: string; active: boolean; code: string }>
+}
+```
+
+That shape comes directly from `QuestionResourceSchema` and `ChoiceSchema`
+(`packages/survey/src/types.ts:18-52`). The package also exports an older,
+looser `Survey = Record<string, SurveyQuestion | string>` model; its
+`SurveyQuestion` has display and navigation fields rather than the current
+resource schema (`packages/survey/src/types.ts:68-91`).
+
+A submitted in-memory answer is `string | string[]`; `allAnswers` is
+`Record<string, string | string[]>` (`packages/survey/src/survey-machine.ts:12-21`).
+The form temporarily permits `null` before submission
+(`packages/survey/src/survey-question.tsx:33-35`,
+`packages/survey/src/survey-question.tsx:124-128`).
+
+Surveys and questions are both `ContentResource` rows distinguished by `type`.
+The exact `ContentResource` columns are `id`, `organizationId`,
+`createdByOrganizationMembershipId`, `type`, `createdById`, `fields`, generated
+`slug`, `currentVersionId`, `createdAt`, `updatedAt`, and `deletedAt`
+(`packages/adapter-drizzle/src/lib/mysql/schemas/content/content-resource.ts:20-57`).
+Survey-specific fields are `title`, `slug`, `state`, `visibility`, and optional
+`afterCompletionMessages`; question-specific fields are the
+`QuestionResourceSchema` fields plus `slug` and the admin form's
+`dependsOn.questionId` shape (`apps/dev-build/src/lib/surveys.ts:11-61`).
+
+Survey membership is a `ContentResourceResource` row. Its exact columns are
+`resourceOfId`, `resourceId`, `position`, `metadata`, `organizationId`,
+`createdAt`, `updatedAt`, and `deletedAt`; the composite primary key is
+`resourceOfId + resourceId`
+(`packages/adapter-drizzle/src/lib/mysql/schemas/content/content-resource-resource.ts:14-42`).
+Analytics treats `resourceOfId` as the survey and linked resources of type
+`question` as its questions (`packages/analytics/src/providers/survey.ts:329-350`).
+
+A persisted answer is a `QuestionResponse` row. Its exact columns are `id`,
+`surveyId`, `questionId`, `respondentKey`, `surveySessionId`, `userId`,
+`emailListSubscriberId`, `fields`, `createdAt`, `updatedAt`, and `deletedAt`
+(`packages/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts:21-43`).
+The raw answer is stored at `fields.answer`; the table does not have a dedicated
+answer, correctness, grade, or score column
+(`apps/dev-build/src/trpc/api/routers/surveys.ts:204-233`,
+`packages/analytics/src/providers/survey.ts:210-224`). The relations point
+`surveyId` and `questionId` back to `ContentResource`, and `userId` to the user
+row (`packages/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts:64-89`).
+
+### 2. Correct answers, grading, scoring, and feedback
+
+**Yes: per-question correct answers, grading, and feedback already exist. No:
+there is no aggregate quiz score or persisted grade.** The decisive machine code is:
+
+```ts
+onDone: [
+  { target: 'answered', guard: ({ context }) => isEmpty(context.currentQuestion.correct) },
+  { target: 'answered.correct', guard: 'answeredCorrectly' },
+  { target: 'answered.incorrect' },
+]
+```
+
+That transition is at `packages/survey/src/survey-machine.ts:132-142`.
+
+The source of truth can declare `correct?: string | string[]` and a post-answer
+explanation in `answer?: string` (`packages/survey/src/types.ts:25-32`). On
+submission, the machine enters `answered.neutral` when `correct` is empty,
+`answered.correct` when its guard passes, and `answered.incorrect` otherwise
+(`packages/survey/src/survey-machine.ts:132-151`). The guard compares a scalar
+answer by equality. For an array, it checks that every submitted value occurs in
+the declared correct array (`packages/survey/src/survey-machine.ts:155-174`).
+
+The renderer exposes that result. Each choice gets `correct` or `incorrect`
+state and visible text after submission
+(`packages/survey/src/survey-question.tsx:337-352`,
+`packages/survey/src/survey-question.tsx:386-434`). `SurveyQuestionAnswer`
+reveals the authored explanation after any answered state
+(`packages/survey/src/survey-question.tsx:524-550`). The footer selects neutral,
+correct, or incorrect completion copy from `SurveyConfig`
+(`packages/survey/src/survey-question.tsx:603-650`), whose exact message groups
+are defined at `packages/survey/src/types.ts:93-113`.
+
+No package state accumulates points or computes a final result. The question
+machine holds one `answeredCorrectly: boolean`, while `allAnswers` stores only
+raw answers (`packages/survey/src/survey-machine.ts:12-21`). The sequence machine
+stores only an answer map and reaches `offerComplete`; it has no score context or
+result state (`packages/survey/src/offer-machine.ts:27-36`,
+`packages/survey/src/offer-machine.ts:135-176`). Analytics likewise exposes
+response counts and answer distributions, not correctness or scores
+(`packages/analytics/src/types.ts:249-277`,
+`packages/analytics/src/providers/survey.ts:405-455`).
+
+### 3. Question types and rendering
+
+The exact enum is `multiple-choice`, `essay`, and `multiple-image-choice`
+(`packages/survey/src/types.ts:11-16`). The shared renderer chooses
+`SurveyQuestionEssay` only for `essay`; both choice types use
+`SurveyQuestionChoices` (`apps/dev-build/src/app/survey/_components/survey-renderer.tsx:86-97`).
+`SurveyQuestionChoices` renders a Radix `RadioGroup` for single choice and
+checkbox items when `correct` is an array or `allowMultiple` is true
+(`packages/survey/src/survey-question.tsx:240-306`). A choice can carry an image,
+and the choice renderer emits `<img>` before its radio or checkbox, which is how
+`multiple-image-choice` gains image rendering
+(`packages/survey/src/survey-question.tsx:369-371`). Essay answers use the shared
+`Textarea` (`packages/survey/src/survey-question.tsx:658-695`).
+
+The survey package leans on `Button`, `Checkbox`, `Input`, `Label`,
+`RadioGroup`, `RadioGroupItem`, and `Textarea` from `@coursebuilder/ui`
+(`packages/survey/src/survey-question.tsx:13-24`). The base radio primitives wrap
+Radix UI (`packages/ui/primitives/radio-group.tsx:1-44`), the checkbox wraps
+Radix UI (`packages/ui/primitives/checkbox.tsx:1-31`), and the textarea is a
+styled native `<textarea>` (`packages/ui/primitives/textarea.tsx:1-24`).
+
+### 4. XState model
+
+`surveyMachine` models **one question**, not a full sequence. Its states are
+`initializing`, `unanswered`, `answering`, compound `answered` with `neutral`,
+`correct`, and `incorrect` substates, and `failure`. Its events are `ANSWER`,
+`ANSWERED`, and `LOAD_QUESTION`
+(`packages/survey/src/survey-machine.ts:26-33`,
+`packages/survey/src/survey-machine.ts:68-151`). `ANSWER` records the answer,
+invokes the injected async submit callback, then grades the current question
+(`packages/survey/src/survey-machine.ts:112-144`). `ANSWERED` is declared but no
+transition consumes it (`packages/survey/src/survey-machine.ts:26-33`,
+`packages/survey/src/survey-machine.ts:94-151`).
+
+`offerMachine` models the surrounding offer lifecycle: `loadingSubscriber` →
+`verifyingOfferEligibility` → `loadingCurrentOffer` →
+`presentingCurrentOffer`, with optional `collectEmail`, then final
+`offerComplete` (`packages/survey/src/offer-machine.ts:94-177`). It applies a
+three-day subscriber nag interval and a `do_not_survey` field unless callers
+bypass it (`packages/survey/src/offer-machine.ts:44-67`).
+`useSurveyPageOfferMachine` configures anonymous access, asks all questions,
+bypasses nag protection, selects the next dependency-eligible question, and
+loops `RESPONDED_TO_OFFER` back through `loadingCurrentOffer`
+(`packages/survey/src/use-survey-page-offer-machine.tsx:19-29`,
+`packages/survey/src/use-survey-page-offer-machine.tsx:44-93`,
+`packages/survey/src/use-survey-page-offer-machine.tsx:113-121`).
+
+### 5. Answer write path
+
+`SurveyQuestion` does not choose persistence. It requires the caller to provide
+`handleSubmitAnswer`, sends the form value as `ANSWER`, and the machine invokes
+that callback as its `submitAnswer` actor
+(`packages/survey/src/survey-question.tsx:46-58`,
+`packages/survey/src/survey-question.tsx:146-152`,
+`packages/survey/src/survey-machine.ts:176-182`). The package's page hook callback
+only updates React state and sends `RESPONDED_TO_OFFER`; it performs no network
+write (`packages/survey/src/use-survey-page-offer-machine.tsx:105-121`).
+
+In the concrete dev-build page, the client wraps that callback and calls the
+`tRPC` `surveys.answerSurvey` mutation before advancing the package machine
+(`apps/dev-build/src/app/survey/_components/survey-page-client.tsx:202-233`).
+The server resolves survey and question slugs, upserts `QuestionResponse` with
+`fields.answer`, then optionally syncs the same answer to ConvertKit
+(`apps/dev-build/src/trpc/api/routers/surveys.ts:685-755`,
+`apps/dev-build/src/trpc/api/routers/surveys.ts:757-817`). Batch completion also
+writes all answers to the database first, then runs optional ConvertKit sync
+(`apps/dev-build/src/trpc/api/routers/surveys.ts:443-536`,
+`apps/dev-build/src/trpc/api/routers/surveys.ts:549-575`). Thus the shared package
+is callback-driven; this app's concrete path is client → tRPC server → database,
+with a non-blocking third-party mirror.
+
+Analytics reads `QuestionResponse.fields.answer`, joins survey and question
+content resources, deduplicates by survey + question + respondent, and produces
+counts and answer distributions
+(`packages/analytics/src/providers/survey.ts:205-274`,
+`packages/analytics/src/providers/survey.ts:405-455`).
+
+### 6. Standalone versus offer/marketing coupling
+
+The question primitive can render standalone inside arbitrary React page
+content. `SurveyQuestion` receives a question, ID, config, and submit callback;
+it does not receive an offer machine or subscriber
+(`packages/survey/src/survey-question.tsx:46-58`,
+`packages/survey/src/survey-question.tsx:79-186`). The package exports the root
+and its compound pieces directly, including `Root`, `Header`, `Choices`,
+`Answer`, and `Footer` aliases (`packages/survey/src/index.tsx:4-27`,
+`packages/survey/src/survey-question.tsx:774-785`).
+
+The surrounding hooks are marketing-coupled. `offerMachine` names surveys as
+offers, gates subscribers with `last_surveyed_on` and `do_not_survey`, and can
+collect email (`packages/survey/src/offer-machine.ts:7-25`,
+`packages/survey/src/offer-machine.ts:44-67`,
+`packages/survey/src/offer-machine.ts:163-176`). The popup hook performs
+progressive profiling by skipping subscriber fields already answered
+(`packages/survey/src/use-survey-popup-offer-machine.tsx:8-12`,
+`packages/survey/src/use-survey-popup-offer-machine.tsx:45-79`). The email
+component's defaults explicitly ask for email to receive updates and insights
+(`packages/survey/src/survey-question.tsx:714-770`). The standalone root still
+requires a full `SurveyConfig`, including email, neutral, correct, and incorrect
+message groups, even if a caller renders only one question
+(`packages/survey/src/types.ts:93-113`).
+
+### 7. Concrete gaps to a graded quiz, smallest first
+
+1. **Exact multi-select grading is incomplete.** The guard proves every submitted
+   value belongs to the correct array, but it does not compare array lengths.
+   A non-empty proper subset can therefore enter `answered.correct`
+   (`packages/survey/src/survey-machine.ts:155-174`;
+   `packages/survey/src/survey-question.tsx:101-111`).
+2. **No aggregate score or quiz result exists.** The question machine retains one
+   boolean result; the sequence machine retains raw answers and only completes
+   the offer (`packages/survey/src/survey-machine.ts:12-21`,
+   `packages/survey/src/offer-machine.ts:27-36`,
+   `packages/survey/src/offer-machine.ts:135-176`).
+3. **Persistence and analytics lose grading results.** `QuestionResponse` stores
+   raw `fields.answer` only, and analytics reports distributions rather than
+   correct/incorrect counts or scores
+   (`apps/dev-build/src/trpc/api/routers/surveys.ts:204-233`,
+   `packages/analytics/src/types.ts:249-277`).
+4. **The standard create action cannot author grading data.** Although
+   `QuestionFieldsSchema` inherits optional `correct` and `answer`,
+   `createQuestion` accepts and writes neither field
+   (`apps/dev-build/src/lib/surveys.ts:11-30`,
+   `apps/dev-build/src/lib/surveys-query.ts:252-296`). The read path does carry
+   existing `fields.correct` and `fields.answer` into `QuizResource`
+   (`apps/dev-build/src/lib/surveys-query.ts:515-551`).
+5. **No custom grader or normalization contract exists.** Scalar grading is exact
+   equality and array grading is membership-only; the machine exposes no grader
+   callback or partial-credit model (`packages/survey/src/survey-machine.ts:155-174`).
+
+### Primitive table
+
+| Primitive | What it does | Does it help a quiz? |
+|---|---|---|
+| `QuestionResourceSchema` | Defines prompts, choices, correct answers, explanations, dependencies, and display metadata (`packages/survey/src/types.ts:18-52`) | Yes: it already carries core graded-question data. |
+| `surveyMachine` | Submits and grades one question into neutral/correct/incorrect (`packages/survey/src/survey-machine.ts:68-182`) | Yes: per-question grading; no aggregate result. |
+| `SurveyQuestion.*` | Renders forms, choices, essay input, explanations, and result copy (`packages/survey/src/survey-question.tsx:79-785`) | Yes: standalone compound UI and learner feedback. |
+| `offerMachine` | Runs subscriber eligibility, offer presentation, email collection, and completion (`packages/survey/src/offer-machine.ts:38-177`) | Partly: sequences questions, but carries marketing lifecycle and no score. |
+| `useSurveyPageOfferMachine` | Selects dependency-eligible questions and accumulates raw answers (`packages/survey/src/use-survey-page-offer-machine.tsx:10-139`) | Partly: provides sequence flow without aggregate grading. |
+| `QuestionResponse` | Stores one raw answer per survey/question/respondent identity (`packages/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts:19-61`) | Partly: persistence exists; grade and score fields do not. |
+| Survey analytics provider | Deduplicates responses and reports counts/distributions (`packages/analytics/src/providers/survey.ts:205-274`, `packages/analytics/src/providers/survey.ts:405-455`) | Partly: answer analytics exists; graded analytics does not. |

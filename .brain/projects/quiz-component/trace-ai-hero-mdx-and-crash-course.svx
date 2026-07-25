@@ -1,0 +1,270 @@
+---
+title: "Trace AI Hero MDX rendering and the crash course"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+assignee: "shitrat (flagg, herdr pane w2S:p4, 2026-07-24)"
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+closed_at: "2026-07-24"
+---
+
+# Trace AI Hero MDX rendering and the crash course
+
+## Step
+
+Establish how lesson body content becomes rendered React in AI Hero, what custom
+MDX components already exist, and what "the crash course" concretely is. This is
+the step that decides how hard wiring a `<Quiz>` MDX component actually is.
+
+Read (do not modify) in `~/Code/badass-courses/ai-hero/apps/ai-hero`, plus
+`~/Code/badass-courses/course-builder/packages/**` where AI Hero imports from it.
+
+Answer these, each with file:line evidence:
+
+1. **The MDX pipeline.** How does a lesson's body string become rendered output?
+   Name the library (next-mdx-remote, MDXRemote, mdx-bundler, compiled at build
+   time, compiled at request time — find out which), where compilation happens
+   (server component, RSC, client), and every place a component map is passed in.
+2. **The component map.** Enumerate the custom components already available to
+   authors inside a lesson body. For each, show how it is registered and give a
+   usage example from real content if one exists. This is the list a `<Quiz>`
+   would join.
+3. Can a component in that map be a **client component with state**? Show an
+   existing example that holds state or does data fetching, or prove none exists.
+   Say what constrains this (RSC boundaries, serialization of props, etc.).
+4. Can a component in that map receive a **structured object prop** —
+   i.e. does `<QuizQuestion data={{...}} />` with a real JS object literal work
+   in this pipeline, or does MDX-in-database force props to be strings? Test the
+   claim against the actual compile path. This is decisive for Matt's requested
+   shape.
+5. **The crash course.** Find what Matt means. Look for a product, course, or
+   content resource in AI Hero that is called a crash course or is clearly the
+   current free intro offering. Identify its content resources, where its lesson
+   bodies live, and how Matt authors them today (admin UI? repo files? the
+   course-sync path in `packages/course-sync-schema`?).
+6. **How Matt authors content today.** Trace the actual write path an author or
+   an author's agent uses to change a lesson body. If `course-sync` is that path,
+   describe its schema and what fields it can carry — specifically whether it
+   could carry quiz data.
+7. What existing components, if any, already do something quiz-like or
+   interactive inside lesson bodies?
+
+## Deliverable
+
+Write your findings into this file as a `## Result (2026-07-24)` section.
+Lead with the MDX pipeline narrative, then a table of available MDX components,
+then the answers to the numbered questions, with question 4 called out plainly
+as YES or NO with evidence. Set `status: "closed"` and add
+`closed_at: "2026-07-24"` to the frontmatter. Cite `path:line` for every claim.
+No product recommendations — facts only.
+
+## Result (2026-07-24)
+
+### Pipeline narrative
+
+A workshop lesson is a `lesson` content resource whose `fields.body` is a string
+(`apps/ai-hero/src/lib/lessons.ts:12-31`). The workshop lesson server component
+checks access, then passes that string to AI Hero's `compileMDX` with an empty
+call-site component map and the lesson id
+(`apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/(view)/shared-page.tsx:34-70`).
+`compileMDX` uses `compileMDX` from `next-mdx-remote/rsc`, sanitizes only HTML
+comments, and compiles the body at request/render time on the server
+(`apps/ai-hero/src/utils/compile-mdx.tsx:23-29`,
+`apps/ai-hero/src/utils/sanitize-mdx-source.ts:1-3`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:259-296`). The returned React-node promise
+crosses into the client `LessonBody`, which unwraps it with React `use()` and
+renders `content` (`apps/ai-hero/src/app/(content)/workshops/_components/lesson-body.tsx:1-20`,
+`apps/ai-hero/src/app/(content)/workshops/_components/lesson-body.tsx:47-56`).
+
+The lesson call site passes `{}` as its component map
+(`apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/(view)/shared-page.tsx:65-70`).
+`compileMDXInternal` passes one merged map to `next-mdx-remote/rsc`: first the
+shared Course Builder map, then AI Hero's map, then call-site overrides
+(`apps/ai-hero/src/utils/compile-mdx.tsx:285-300`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:314-488`). If full MDX compilation fails,
+the fallback passes an empty map and escapes MDX-significant tokens
+(`apps/ai-hero/src/utils/compile-mdx.tsx:183-205`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:525-551`).
+
+### Components available in a lesson body
+
+The runtime map below is the map that every lesson receives. The editor exposes
+only the four `COMMON_MDX` snippets (`Video`, `Callout`, `Testimonial`,
+`Spoiler`) in its picker
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/manifests/common-mdx.ts:22-47`,
+`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/manifests/lesson.ts:120-132`).
+The other runtime names remain valid when typed directly into the body.
+
+| MDX name | Registration evidence | Tracked content usage |
+|---|---|---|
+| `Video` | `apps/ai-hero/src/utils/compile-mdx.tsx:328-344` | not found |
+| `Callout` | `apps/ai-hero/src/utils/compile-mdx.tsx:457-462` | not found |
+| `Testimonial` | `apps/ai-hero/src/utils/compile-mdx.tsx:389-401` | `apps/ai-hero/content/landing.md:48-52` (landing body, not a lesson) |
+| `Spoiler` | `apps/ai-hero/src/utils/compile-mdx.tsx:410-410` | not found |
+| `CldImage` | `apps/ai-hero/src/utils/compile-mdx.tsx:443-447` | not found |
+| `ThemeImage` | `apps/ai-hero/src/utils/compile-mdx.tsx:345-349` | `apps/ai-hero/content/cohort-copy.mdx:17` (cohort body, not a lesson) |
+| `ProjectVideo` | `apps/ai-hero/src/utils/compile-mdx.tsx:411-418` | not found |
+| `Recommendation` | `apps/ai-hero/src/utils/compile-mdx.tsx:402-406` | not found |
+| `TableWrapper` | `apps/ai-hero/src/utils/compile-mdx.tsx:407-409` | not found |
+| `Spacer`, `CenteredTitle`, `Section`, `BlueSection`, `Instructor` | shared map at `/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/mdx-components/index.tsx:246-257,383-400`; spread at `apps/ai-hero/src/utils/compile-mdx.tsx:285-300` | not found |
+| `CheckList` | `apps/ai-hero/src/utils/compile-mdx.tsx:350` | not found |
+| `Code`, `Scrollycoding` | `apps/ai-hero/src/utils/compile-mdx.tsx:314-315` | not found |
+| `AISummary` | `apps/ai-hero/src/utils/compile-mdx.tsx:316` | not found |
+| `Mermaid` | `apps/ai-hero/src/utils/compile-mdx.tsx:317-327` | not found |
+| `Link`, `AIOnly` | `apps/ai-hero/src/utils/compile-mdx.tsx:354-359` | not found |
+| `SubscriberCount` | `apps/ai-hero/src/utils/compile-mdx.tsx:360-368` | not found |
+| `SkillsNewsletterCta`, `SkillsCta` | `apps/ai-hero/src/utils/compile-mdx.tsx:369-384` | not found |
+| `Button` | `apps/ai-hero/src/utils/compile-mdx.tsx:385-387` | not found |
+| `Image` | `apps/ai-hero/src/utils/compile-mdx.tsx:443-447` | not found |
+| `CommitMap`, `Commit` | `apps/ai-hero/src/utils/compile-mdx.tsx:448-449` | not found |
+| `CompareTable`, `CompareRow` | `apps/ai-hero/src/utils/compile-mdx.tsx:450-456` | not found |
+| `PromoCard` | `apps/ai-hero/src/utils/compile-mdx.tsx:463` | not found |
+| `Timeline`, `TimelineItem` | `apps/ai-hero/src/utils/compile-mdx.tsx:464-468` | not found |
+| `OfficeHoursSchedule` | `apps/ai-hero/src/utils/compile-mdx.tsx:469-487` | not found |
+
+The map also overrides markdown/HTML elements: lesson checkboxes become
+persistent `MDXCheckbox` instances when a lesson id exists; `h1`-`h3`, `a`,
+`img`, `input`, and `hr` have custom renderers
+(`apps/ai-hero/src/utils/compile-mdx.tsx:301-313`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:350-354`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:419-447`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:386-388`).
+
+### Numbered answers
+
+#### 1. The MDX pipeline
+
+This is `next-mdx-remote` v6's RSC compiler, not `MDXRemote`, `mdx-bundler`, or a
+build-time import (`apps/ai-hero/package.json:194`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:26-29`). Compilation starts in the lesson
+server component after access succeeds, at request/render time
+(`apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/(view)/shared-page.tsx:51-70`).
+The map handoffs are: lesson call-site `{}` at `shared-page.tsx:65-70`; wrapper
+arguments/defaults at `compile-mdx.tsx:566-587`; merged runtime map at
+`compile-mdx.tsx:285-300,314-488`; and empty-map degraded fallback at
+`compile-mdx.tsx:188-205`.
+
+#### 2. The component map
+
+The table above enumerates the lesson runtime map. The shared factory provides
+all `COMMON_MDX` and `PAGE_MDX` implementations and AI Hero spreads it first so
+local entries win
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/mdx-components/index.tsx:246-257,383-400`,
+`apps/ai-hero/src/utils/compile-mdx.tsx:285-300`). Repo-tracked content contains a
+real `ThemeImage` object-prop example and a `Testimonial` example, but no
+repo-tracked workshop lesson bodies; those bodies live in content resources or
+the external course manifest (`apps/ai-hero/content/cohort-copy.mdx:17`,
+`apps/ai-hero/content/landing.md:48-52`,
+`apps/ai-hero/src/lib/lessons.ts:12-31`).
+
+#### 3. Client components with state
+
+**YES.** The runtime map dynamically loads client components
+(`apps/ai-hero/src/utils/compile-mdx.tsx:40-98`). `Spoiler` is a concrete mapped
+example with `useState` and a reveal button
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/mdx-components/interactive.tsx:1-13,25-64`).
+`Commit` is another mapped client component with open/copy state
+(`apps/ai-hero/src/components/mdx/commit-map.tsx:1-4,52-70`). Lesson markdown
+checkboxes are converted to `MDXCheckbox`, which stores state in IndexedDB
+(`apps/ai-hero/src/utils/compile-mdx.tsx:301-313`,
+`apps/ai-hero/src/components/mdx-checkbox.tsx:1-46`). The server compiler emits
+an RSC tree containing those client boundaries; props crossing a client boundary
+must therefore be serializable. The existing mapped client examples receive
+strings, booleans, and React children, not functions
+(`apps/ai-hero/src/components/mdx-checkbox.tsx:14-22`,
+`apps/ai-hero/src/components/mdx/commit-map.tsx:52-58`).
+
+#### 4. Structured object props
+
+**YES.** A lesson body can use `<QuizQuestion data={{ ... }} />` with a real,
+plain structured object after that component name is registered. The actual
+compile call uses `next-mdx-remote/rsc` with `blockJS: false`, so MDX expressions
+are compiled rather than reduced to strings
+(`apps/ai-hero/src/utils/compile-mdx.tsx:285-296,489-515`). The sanitizer removes
+only HTML comments and does not rewrite braces
+(`apps/ai-hero/src/utils/sanitize-mdx-source.ts:1-3`). The repository already
+contains the same syntax in real MDX:
+`<ThemeImage urls={{ dark: "...", light: "..." }} ... />`
+(`apps/ai-hero/content/cohort-copy.mdx:17`), and the registered renderer receives
+`urls` as `{ dark: string; light: string }`
+(`apps/ai-hero/src/utils/compile-mdx.tsx:345-349`). The editor's shared snippet
+also emits this exact object-literal syntax
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/manifests/page.ts:64-71`).
+A plain data object is serializable across the RSC/client boundary; a function in
+that object would not meet the client-boundary shape demonstrated by the mapped
+client components (`apps/ai-hero/src/components/mdx-checkbox.tsx:14-22`).
+
+#### 5. The crash course
+
+The concrete resource is the draft **AI Coding Crash Course**. Its active binding
+is named `csb_ai_coding_crash_course`, points at source course
+`50385098-a712-486f-b777-1f76ef31e9e5`, product `product-ma254`, and anchor
+workshop `workshop-2ozd9`
+(`apps/ai-hero/src/course-sync/types.ts:7-16`). The sync system's own edit URL is
+`https://www.aihero.dev/workshops/ai-coding-crash-course/edit`
+(`apps/ai-hero/src/course-sync/detection-poller.ts:9-11`). Its sections become
+children of that anchor workshop, and each lesson becomes a lesson content
+resource whose body is the primary video's `body` string
+(`apps/ai-hero/src/course-sync/control-plane.ts:175-236`). Applying a run writes
+those fields into `contentResource` and version rows
+(`apps/ai-hero/src/course-sync/drizzle-persistence.ts:400-425,470-532`).
+
+The separate public named course **AI SDK v6 Crash Course** is present at
+`/workshops/ai-sdk-v6-crash-course`; the old v5 route redirects to it
+(`apps/ai-hero/src/components/navigation/use-nav-links.tsx:94-103`,
+`apps/ai-hero/next.config.mjs:78-83`). The draft sync binding and explicit
+`ai-coding-crash-course/edit` URL are the source-code resource that matches the
+new Course Video Manager authoring flow; no source file identifies the public
+AI SDK v6 slug with that binding.
+
+#### 6. How Matt authors content today
+
+The crash-course source path is Course Video Manager -> Dropbox ->
+`/course.json` -> AI Hero's draft course-sync control plane. The scheduled
+Inngest function polls every 30 minutes and reads the Dropbox manifest
+(`apps/ai-hero/src/inngest/functions/course-sync-detection-poller.ts:22-33`,
+`apps/ai-hero/src/inngest/functions/course-sync-detection-poller.ts:34-55`). The
+Dropbox reader fetches `/course.json`, requires schema v3, and identifies the
+producer as `course-video-manager`
+(`apps/ai-hero/src/lib/dropbox-course-sync.ts:380-431`,
+`apps/ai-hero/src/lib/dropbox-course-sync.ts:451-476`). The API also exposes
+binding lookup plus authenticated stage, preview, apply, read, and rollback
+operations (`apps/ai-hero/src/course-sync/generated-client.ts:39-88`,
+`apps/ai-hero/src/course-sync/openapi.ts:28-111`).
+
+The v3 manifest carries course/version/name, sections, lesson ids/titles/types,
+and video records with `body`, `description`, media hashes/paths/bytes, and
+chapters (`packages/course-sync-schema/src/course-json-v3.ts:23-78`). It has no
+quiz-specific field, and decoding rejects excess properties
+(`packages/course-sync-schema/src/course-json-v3.ts:86-89`). It **can carry quiz
+markup inside the existing `body` string**, because sync copies that string
+verbatim to lesson `fields.body`; it cannot carry separate typed quiz data under
+its current exact schema (`apps/ai-hero/src/course-sync/control-plane.ts:225-236`).
+
+A direct admin write path also exists. The lesson edit route loads the lesson and
+renders `EditLessonClient`
+(`apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/edit/page.tsx:42-93`).
+That client builds the shared lesson editor
+(`apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/edit/edit-lesson-client.tsx:65-119`),
+whose manifest declares `fields.body` and the `COMMON_MDX` picker
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/manifests/lesson.ts:120-132`).
+The body surface is a raw MDX textarea with slash/snippet insertion
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/body-editor.tsx:325-375,527-550`),
+and save passes the body string to `updateLesson`
+(`apps/ai-hero/src/lib/cms/lesson-bindings.ts:70-107`), which merges and writes
+resource fields (`apps/ai-hero/src/lib/lessons-query.ts:453-511`).
+
+#### 7. Existing quiz-like lesson components
+
+No `Quiz`, `QuizQuestion`, correctness, answer-key, or grading component exists
+in the lesson runtime map (`apps/ai-hero/src/utils/compile-mdx.tsx:285-488`). The
+closest interactive lesson-body pieces are: persistent IndexedDB checkboxes
+(`apps/ai-hero/src/components/mdx-checkbox.tsx:8-46`), `Spoiler` reveal state
+(`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/mdx-components/interactive.tsx:25-64`),
+and copy-command interactions in `Commit`/`Recommendation`
+(`apps/ai-hero/src/components/mdx/commit-map.tsx:52-70`,
+`/Users/joel/Code/badass-courses/course-builder/packages/ui/cms/mdx-components/interactive.tsx:111-174`).
+None of those records a selected answer or compares it with a correct answer.

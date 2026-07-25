@@ -1,0 +1,131 @@
+---
+title: "Prototype an inline quiz Joel can click"
+type: "step"
+kind: "prototype"
+interaction: "HITL"
+status: "closed"
+assignee: "claude (flagg, herdr pane w2S:p1, 2026-07-24)"
+closed_at: "2026-07-24"
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Prototype an inline quiz Joel can click
+
+## Step
+
+Build a throwaway `<Quiz>` / `<QuizQuestion>` that renders in an AI Coding Crash
+Course lesson body, so Joel can answer a question and see what it feels like.
+This step is the gate on the brief's execution authorization: build is authorized
+only after Joel touches this and says it feels right.
+
+Use the `prototype` skill. Throwaway means throwaway — this is an alignment
+instrument, not the first commit of the real component.
+
+Scope it to the smallest thing that produces a real reaction:
+
+- Register `Quiz` and `QuizQuestion` in the lesson runtime component map
+  (`apps/ai-hero/src/utils/compile-mdx.tsx:285-488`). The map already carries
+  ~30 entries and already loads stateful client components dynamically
+  (`compile-mdx.tsx:40-98`), so this is joining an existing pattern.
+- Accept the exact shape Matt asked for, with a real object literal:
+  `<QuizQuestion data={{ question, type, choices, correct, answer }} />`.
+  Object props are proven to compile — `<ThemeImage urls={{ dark, light }} />`
+  ships in `apps/ai-hero/content/cohort-copy.mdx:17` and the compile call sets
+  `blockJS: false` (`compile-mdx.tsx:285-296`).
+- Drive grading with `surveyMachine` from `@coursebuilder/survey`
+  (installed at `1.0.5`), not a fresh implementation. Fresh UI, per the pinned
+  decision.
+- **Single-answer multiple choice only** for the prototype. Multi-select is
+  unresolved; see
+  [Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx).
+- **No persistence.** Answers live in component state and die on refresh. The
+  answer endpoint is a separate decision and would slow the reaction down.
+
+**Surface (Joel, 2026-07-24): a freestanding public MDX page, not a lesson.**
+A standalone route in AI Hero that needs no login and renders an MDX body
+containing the quiz, so Joel can open it on his phone without an account and
+without touching the draft course. It ships on a Vercel preview deploy, not
+production. Joel gets the link by DM when it is running.
+
+## What Joel is being asked to react to
+
+- Does answering feel right inline, mid-lesson, or does it interrupt reading?
+- Is the correct/incorrect reveal the right amount of feedback, and does the
+  authored explanation land in the right place?
+- Is the `data={{ … }}` authoring shape actually pleasant to read in a body full
+  of prose, or does it wreck the source?
+
+## Resolved when
+
+Joel has clicked through a real question in a lesson body and said either "build
+it" — which fires the brief's execution authorization — or named what has to
+change first.
+
+## Result (2026-07-24) — built, awaiting Joel's reaction
+
+The prototype exists and is deployed. The step stays **open** until Joel clicks
+it, because his reaction is the whole point of the step and it is what fires the
+brief's execution authorization.
+
+**What was built.** Route `/quiz-prototype`, no auth, three files
+(commit `73f6aaf` on `prototype/inline-quiz`):
+
+- `apps/ai-hero/src/app/quiz-prototype/page.tsx` — defines the lesson content as
+  an MDX **string** and runs it through `compileMDX`, the same path a real lesson
+  body takes. Four questions about steering coding agents, with explanations that
+  carry real weight.
+- `apps/ai-hero/src/components/mdx/quiz-prototype.tsx` — lean `Quiz` /
+  `QuizQuestion` UI driving `surveyMachine` from `@coursebuilder/survey@1.0.5`
+  via `useMachine`, reading `state.matches('answered.correct')`. No
+  `SurveyQuestion` compound components, no `offerMachine`, per the pinned call.
+- `apps/ai-hero/src/utils/compile-mdx.tsx` — `Quiz` and `QuizQuestion` registered
+  with `dynamic()` alongside the ~30 existing entries.
+
+**The authoring shape works exactly as Matt asked for it.** Real object literals
+inside a database-shaped MDX string compile and reach the component:
+
+```mdx
+<Quiz>
+  <QuizQuestion data={{
+    question: "…", type: "multiple-choice",
+    choices: [{ answer: "a", label: "…" }, { answer: "b", label: "…" }],
+    correct: "b",
+    answer: "The explanation revealed after answering."
+  }} />
+</Quiz>
+```
+
+**Verification.** The worker confirmed the render at 390px width: MDX compiled,
+four questions rendered, the correct choice graded, the explanation revealed.
+Typecheck passed; ESLint passed with one pre-existing `<img>` warning. A full
+production build reached compilation but failed at page collection because the
+local database was unavailable — an environment limitation, not a code fault.
+The **deployed** page is unverified: Vercel SSO protection covers all
+non-custom-domain deployments and blocks automated fetches as well as browsers,
+so `vercel curl` redirects to login just like a plain request.
+
+**Deployment.** Preview at
+`https://ai-hero-11aqp4o2d-skillrecordings.vercel.app/quiz-prototype`. Joel must
+pass Vercel SSO to open it. The project has no protection-bypass secret and
+creating one changes project settings, so it was not done unilaterally.
+
+**Unfold finding — `correct` silently forces choice shuffling.** In
+`loadQuestion`, the machine does
+`question.correct || question.shuffleChoices ? shuffle(question.choices) : question.choices`
+(`packages/survey/src/survey-machine.ts:57-60`). Setting an answer key implicitly
+enables shuffling with no opt-out. Authored choice order is therefore never
+honored on a graded question. Reasonable default for a quiz, but it is a side
+effect of a field that does not advertise it, and an author who writes
+"all of the above" as the last choice will be surprised. Logged as latent on the
+brief.
+
+## Reaction (2026-07-24)
+
+Joel: "looks good to me." No changes requested to the interaction, the reveal, or
+the `data={{ … }}` authoring shape.
+
+**This fires the brief's execution authorization.** Sessions may now build the
+real component, the answer endpoint, and the MDX registration. Recorded in the
+brief's Notes.

@@ -1,0 +1,103 @@
+---
+title: "Pin the finish line: inline MDX quiz or content-resource quiz"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "closed"
+assignee: "claude (flagg, herdr pane w2S:p1, 2026-07-24)"
+closed_at: "2026-07-24"
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Pin the finish line: inline MDX quiz or content-resource quiz
+
+## Step
+
+The three research steps closed and they turned Joel's Slack answer ("it's data
+driven, content resources, same as any of it via the same api") into a concrete
+fork rather than a settled position. Grill Joel to pin the finish line.
+
+The load-bearing facts the grilling has to respect:
+
+- The grading engine exists and works. This is not in question.
+- **No supported path can author a graded question today.** The REST API has no
+  question create/update/delete endpoint at all — only survey-level CRUD — and the
+  AI Hero admin question form does not expose the `correct` or `answer` fields.
+  Questions are only writable through Next.js server actions behind the admin UI.
+- The crash course's content pipeline (Course Video Manager → Dropbox
+  `/course.json` v3 → course-sync) can carry quiz markup inside a lesson `body`
+  string for free, and cannot carry typed quiz data at all without a schema change.
+- MDX can take real object props, so Matt's requested `<QuizQuestion data={{…}} />`
+  shape compiles as-is.
+- Nothing persists an in-flight answer. A refresh loses it. The only
+  `localStorage` use in AI Hero survey code is the hard-coded checkout question.
+
+Decisions to resolve:
+
+1. Does quiz content live inline in the lesson MDX body, or as a content
+   resource referenced by id from the body? This is the fork and everything else
+   hangs off it.
+2. Which crash course is Matt talking about — the draft **AI Coding Crash Course**
+   (`csb_ai_coding_crash_course`, anchor `workshop-2ozd9`) or the public
+   **AI SDK v6 Crash Course**?
+3. What durability do answers actually need? Matt said localStorage is fine.
+   Nothing exists today at any level.
+4. Does grading get persisted, or is correct/incorrect purely a client-side
+   reveal?
+5. Who fixes the multi-select grading bug, and is it in scope here or its own
+   thing?
+
+## Result (2026-07-24)
+
+Joel resolved every question in one grilling round. The finish line is pinned on
+the brief; the calls and their consequences:
+
+**1. Authoring: inline MDX, answers server-side.** Matt authors the question and
+its answer key inline in the lesson body. Course-sync carries it in the `body`
+string with no v3 schema change. Answers POST to a small endpoint keyed by lesson
+id plus question id. Consequence: the REST question-CRUD gap and the missing
+`correct` control on the admin form both become irrelevant to this effort — they
+move out of scope. Quiz content is not DB-queryable; "list every question" would
+mean parsing lesson bodies. Joel accepted that trade for response data plus a
+free ride on the pipeline Matt already uses.
+
+**2. Target: the draft AI Coding Crash Course.** Binding
+`csb_ai_coding_crash_course`, source course `50385098-a712-486f-b777-1f76ef31e9e5`,
+product `product-ma254`, anchor `workshop-2ozd9`, edit URL
+`https://www.aihero.dev/workshops/ai-coding-crash-course/edit`. Not the public
+AI SDK v6 Crash Course. Consequence: the first surface is a draft, so a prototype
+can land without touching published learner-facing content.
+
+**3. Identity: anonymous allowed, mint a survey session id.** Write the currently
+unused `respondentKey` and `surveySessionId` columns on `QuestionResponse` —
+they exist, `respondentKey` carries a uniqueness index, and no current writer
+touches either. Upgrade the row to `userId` / `emailListSubscriberId` when
+identity resolves. Consequence: this is the first writer of those columns, so
+their semantics get defined here.
+
+**4. Grade storage: yes.** `QuestionResponse.fields` carries `{ answer, correct }`.
+Consequence: correctness is queryable without re-deriving it against an answer
+key that lives in an MDX body. This is the analytics payoff that justified
+choosing server-side answers over localStorage.
+
+**5. Reuse: grading machine only, fresh UI.** Import `surveyMachine` from
+`@coursebuilder/survey` for correct/incorrect/neutral grading; write a lean AI
+Hero `<Quiz>` / `<QuizQuestion>` UI. Consequence: avoids `offerMachine`'s
+marketing coupling (subscriber nag intervals, `do_not_survey`) and avoids having
+to synthesize a full four-group `SurveyConfig` to render one inline question.
+
+**6. Multi-select grading bug: fixed in the package, as separate work.** Not
+folded into this effort. **Unfold finding — this interacts with call 5.** Because
+the inline component imports `surveyMachine`, it inherits the bug: the guard
+proves every submitted answer is in the correct set but never compares lengths,
+so a proper subset grades as fully correct
+(`packages/survey/src/survey-machine.ts:160-174`). AI Hero also pins
+`@coursebuilder/survey@^1.0.5` while source is `1.0.13`, so a package fix does not
+reach AI Hero automatically. A step is chartered to resolve what the inline quiz
+does about multi-select in the meantime.
+
+**7. Execution: authorized after one prototype.** Sessions decide until a
+throwaway `<Quiz>` exists that Joel can click. If it feels right, build is
+authorized. Recorded in the brief's Notes.

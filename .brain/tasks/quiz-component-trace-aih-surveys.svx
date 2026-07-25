@@ -1,0 +1,62 @@
+---
+title: "Worker task: trace the AI Hero survey system"
+type: "task"
+assignee: "quiz-trace (flagg, herdr pane w2S:p3, 2026-07-24)"
+created_at: "2026-07-24"
+---
+
+# Worker task: trace the AI Hero survey system
+
+You are a read-only research worker. You do not write code and you do not commit.
+
+## Claim first
+
+Before any other work, edit
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/trace-ai-hero-survey-system.svx`
+and set its frontmatter `assignee:` to your callsign plus machine, e.g.
+`assignee: "<yourname> (flagg, herdr pane <pane id>, 2026-07-24)"`.
+Also set the `assignee:` in this task file. Do this immediately — it is the
+liveness signal the steering session watches for.
+
+## Context
+
+Matt Pocock asked for a `<Quiz>` MDX component for the AI Hero crash course. He
+said "as long as I've got an API for it I'm OK". Joel's position is that the
+existing survey system already covers most of it and is data driven over the same
+content-resource API. The brief is
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`.
+Read the brief before you start.
+
+## Your step
+
+Execute the step file
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/trace-ai-hero-survey-system.svx`
+exactly as written. It lists the files to read and the numbered questions to
+answer.
+
+Your scope is the **AI Hero survey feature**:
+`/Users/joel/Code/badass-courses/ai-hero/apps/ai-hero`, the admin surfaces, the
+API, the persistence, the analytics. A sibling worker owns the MDX rendering
+pipeline and the crash course; another owns the course-builder packages. Do not
+read or write their step files, and do not go deep on MDX rendering — note it and
+move on.
+
+## Rules
+
+- Read-only on all source. Never edit anything under `apps/` or `packages/`.
+- The ONLY files you may write are your own step file and this task file.
+- Do not commit. Do not run `git add`, `git commit`, or `git push`.
+- Do not run the app, hit production, or call any live API. Static reading only.
+- Every claim needs `path:line` evidence. If you cannot find evidence, write
+  "not found" — do not infer, do not guess.
+- No product recommendations. Facts only.
+- Question 2 (what exactly is the API, its auth, and its operations) and
+  question 6 (does correctness/grading exist anywhere) are the two that matter
+  most. Answer both exhaustively.
+
+## Finish
+
+Write the `## Result (2026-07-24)` section into your step file, flip its
+frontmatter to `status: "closed"` with `closed_at: "2026-07-24"`, then print a
+`DONE` summary of at most 15 lines covering: the one-paragraph lifecycle, the
+API surface in one sentence, where answers persist, and whether grading exists.
