@@ -174,4 +174,52 @@ describe('recordSignupAttribution', () => {
 			error: 'db down',
 		})
 	})
+
+	it('coalesces an absent formId to default', async () => {
+		const result = await recordSignupAttribution({
+			email: 'reader@example.com',
+			rawCookie: realCookie,
+		})
+
+		expect(result).toBe('captured')
+		expect(mocks.insertValues).toHaveBeenCalledWith(
+			expect.objectContaining({
+				email: 'reader@example.com',
+				formId: 'default',
+				landingPath: '/blog/some-post',
+			}),
+		)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'signup.attribution.captured',
+			expect.objectContaining({ formId: 'default' }),
+		)
+	})
+
+	it('treats a second no-formId signup for the same email as a duplicate', async () => {
+		mocks.insertValues.mockRejectedValueOnce({
+			code: 'ER_DUP_ENTRY',
+			errno: 1062,
+			message: "Duplicate entry 'reader@example.com-default' for key",
+		})
+
+		const result = await recordSignupAttribution({
+			email: 'reader@example.com',
+			rawCookie: realCookie,
+		})
+
+		expect(result).toBe('duplicate')
+		expect(mocks.insertValues).toHaveBeenCalledWith(
+			expect.objectContaining({
+				email: 'reader@example.com',
+				formId: 'default',
+			}),
+		)
+		expect(mocks.log.warn).toHaveBeenCalledWith('signup.attribution.skipped', {
+			reason: 'duplicate',
+			formId: 'default',
+			kitSubscriberId: undefined,
+		})
+		expect(mocks.log.error).not.toHaveBeenCalled()
+	})
+
 })

@@ -2,7 +2,7 @@ CREATE TABLE `AI_SignupAttribution` (
   `id` varchar(255) NOT NULL,
   `email` varchar(255) NOT NULL,
   `kitSubscriberId` varchar(255),
-  `formId` varchar(255),
+  `formId` varchar(255) NOT NULL DEFAULT 'default',
   `landingPath` varchar(500),
   `referrer` varchar(500),
   `utmSource` varchar(255),

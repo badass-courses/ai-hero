@@ -373,7 +373,7 @@ export const signupAttribution = mysqlTable(
 			.$defaultFn(() => guid()),
 		email: varchar('email', { length: 255 }).notNull(),
 		kitSubscriberId: varchar('kitSubscriberId', { length: 255 }),
-		formId: varchar('formId', { length: 255 }),
+		formId: varchar('formId', { length: 255 }).notNull().default('default'),
 		landingPath: varchar('landingPath', { length: 500 }),
 		referrer: varchar('referrer', { length: 500 }),
 		utmSource: varchar('utmSource', { length: 255 }),

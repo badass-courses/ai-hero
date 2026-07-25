@@ -230,4 +230,30 @@ describe('subscribe-to-list convertkit route attribution', () => {
 			rawCookie: undefined,
 		})
 	})
+
+	it('writes formId default when the body has no listId and still returns 200', async () => {
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 42,
+				email_address: 'reader@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+
+		const response = await POST(
+			request({
+				email: 'reader@example.com',
+			}),
+		)
+
+		expect(response.status).toBe(200)
+		expect(mocks.recordSignupAttribution).toHaveBeenCalledWith({
+			email: 'reader@example.com',
+			formId: undefined,
+			kitSubscriberId: 42,
+			rawCookie: expect.stringContaining('/blog/post'),
+		})
+	})
+
 })

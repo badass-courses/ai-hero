@@ -61,7 +61,7 @@ function clickIdsFromAttribution(attribution: OptInAttribution) {
 export async function recordSignupAttribution(
 	input: RecordSignupAttributionInput,
 ): Promise<RecordSignupAttributionResult> {
-	const formId = asOptionalString(input.formId)
+	const formId = asOptionalString(input.formId) ?? 'default'
 	const kitSubscriberId = asOptionalString(input.kitSubscriberId)
 
 	try {
