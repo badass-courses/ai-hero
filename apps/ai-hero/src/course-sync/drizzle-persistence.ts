@@ -451,12 +451,25 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							409,
 						)
 					}
-					const relations = (
+					const relations =
 						relationsByResource.get(item.targetResourceId) ?? []
-					).filter((relation) => relation.deletedAt === null)
+					const activeRelations = relations.filter(
+						(relation) => relation.deletedAt === null,
+					)
+					const expectedRelations = item.previousDetached
+						? relations.filter(
+								(relation) =>
+									relation.deletedAt !== null &&
+									relation.resourceOfId === item.parentResourceId,
+							)
+						: activeRelations.filter(
+								(relation) => relation.resourceOfId === item.parentResourceId,
+							)
 					if (
-						relations.length !== 1 ||
-						relations[0]?.resourceOfId !== item.parentResourceId
+						expectedRelations.length !== 1 ||
+						(item.previousDetached
+							? activeRelations.length !== 0
+							: activeRelations.length !== 1)
 					) {
 						throw new CourseSyncError(
 							'MANAGED_RELATION_MISSING',
@@ -513,7 +526,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					resourceId: item.targetResourceId,
 					position: item.position,
 					metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
-					deletedAt: null,
+					deletedAt: item.detached ? new Date() : null,
 				})
 			}
 
@@ -580,7 +593,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						set: {
 							position: sql`values(${contentResourceResource.position})`,
 							metadata: sql`values(${contentResourceResource.metadata})`,
-							deletedAt: null,
+							deletedAt: sql`values(${contentResourceResource.deletedAt})`,
 							updatedAt: new Date(),
 						},
 					})
@@ -673,6 +686,9 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const pointers: Array<{ resourceId: string; versionId: string }> = []
 			for (const receipt of receipts) {
 				if (receipt.action === 'retain') continue
+				const planItem = original.plan?.resources.find(
+					(item) => item.targetResourceId === receipt.resourceId,
+				)
 				const current = await trx.query.contentResource.findFirst({
 					where: eq(contentResource.id, receipt.resourceId),
 				})
@@ -729,11 +745,15 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						.set({
 							resourceOfId: receipt.previousParentResourceId,
 							position: receipt.previousPosition,
+							deletedAt: planItem?.previousDetached ? now : null,
 						})
 						.where(
 							and(
 								eq(contentResourceResource.resourceId, receipt.resourceId),
-								isNull(contentResourceResource.deletedAt),
+								eq(
+									contentResourceResource.resourceOfId,
+									receipt.previousParentResourceId,
+								),
 							),
 						)
 				}

@@ -8,6 +8,7 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
+import { extractQuizQuestions } from './quiz-question-extraction'
 import {
 	AI_HERO_DRAFT_SYNC_BINDING,
 	type CourseSyncBinding,
@@ -39,9 +40,9 @@ export function sha256(value: string | Uint8Array): string {
 	return createHash('sha256').update(value).digest('hex')
 }
 
-function targetResourceId(
+export function targetResourceId(
 	bindingId: string,
-	kind: 'section' | 'lesson',
+	kind: 'section' | 'lesson' | 'question',
 	sourceId: string,
 ): string {
 	return `sync_${kind}_${sha256(`${bindingId}:${kind}:${sourceId}`).slice(0, 24)}`
@@ -125,6 +126,23 @@ function assertManifestScope(
 			)
 		}
 	}
+	const questionLessons = new Map<string, string>()
+	for (const section of manifest.sections) {
+		for (const lesson of section.lessons) {
+			const primary =
+				lesson.type === 'explainer' ? lesson.explainer : lesson.problem
+			for (const question of extractQuizQuestions(primary.body, lesson.id)) {
+				const firstLessonId = questionLessons.get(question.id)
+				if (firstLessonId) {
+					throw new CourseSyncError(
+						'DUPLICATE_QUIZ_QUESTION_ID',
+						`Lesson ${lesson.id} has duplicate QuizQuestion id ${question.id}; first used in lesson ${firstLessonId}.`,
+					)
+				}
+				questionLessons.set(question.id, lesson.id)
+			}
+		}
+	}
 }
 
 function publicBinding(binding: CourseSyncBinding): CourseSyncBindingSummary {
@@ -155,12 +173,17 @@ function publicRun(run: SyncRunRecord, noOp = false): CourseSyncRunSummary {
 		failureCode: run.failureCode,
 		plan: run.plan
 			? {
-					resources: run.plan.resources.map((item) => ({
-						sourceKind: item.sourceKind,
-						sourceId: item.sourceId,
-						action: item.action,
-						position: item.position,
-					})),
+					resources: run.plan.resources
+						.filter(
+							(item) =>
+								item.sourceKind === 'section' || item.sourceKind === 'lesson',
+						)
+						.map((item) => ({
+							sourceKind: item.sourceKind as 'section' | 'lesson',
+							sourceId: item.sourceId,
+							action: item.action,
+							position: item.position,
+						})),
 					media: run.plan.media.map((item) => ({
 						sourceVideoId: item.sourceVideoId,
 						action: item.action,
@@ -191,6 +214,8 @@ function sourceResourceFields(
 			targetResourceId: sectionId,
 			parentResourceId: binding.anchorWorkshopId,
 			position: sectionIndex,
+			detached: false,
+			previousDetached: false,
 			fields: {
 				title: section.title,
 				slug: slug(section.id, section.title),
@@ -203,7 +228,7 @@ function sourceResourceFields(
 				},
 			},
 		}
-		const lessonItems = section.lessons.map((lesson, lessonIndex) => {
+		const lessonItems = section.lessons.flatMap((lesson, lessonIndex) => {
 			const videos =
 				lesson.type === 'explainer'
 					? [lesson.explainer]
@@ -215,16 +240,19 @@ function sourceResourceFields(
 					`Lesson ${lesson.id} has no importable video.`,
 				)
 			}
-			return {
+			const lessonId = targetResourceId(
+				binding.bindingId,
+				'lesson',
+				lesson.id,
+			)
+			const lessonItem = {
 				sourceKind: 'lesson' as const,
 				sourceId: lesson.id,
-				targetResourceId: targetResourceId(
-					binding.bindingId,
-					'lesson',
-					lesson.id,
-				),
+				targetResourceId: lessonId,
 				parentResourceId: sectionId,
 				position: lessonIndex,
+				detached: false,
+				previousDetached: false,
 				fields: {
 					title: lesson.title,
 					slug: slug(lesson.id, lesson.title),
@@ -248,6 +276,34 @@ function sourceResourceFields(
 					},
 				},
 			}
+			const questionItems = extractQuizQuestions(primary.body, lesson.id).map(
+				(question) => ({
+					sourceKind: 'question' as const,
+					sourceId: question.id,
+					targetResourceId: targetResourceId(
+						binding.bindingId,
+						'question',
+						question.id,
+					),
+					parentResourceId: lessonId,
+					position: question.position,
+					detached: false,
+					previousDetached: false,
+					fields: {
+						...question.fields,
+						state: 'draft',
+						visibility: 'unlisted',
+						courseSync: {
+							bindingId: binding.bindingId,
+							sourceCourseId: manifest.courseId,
+							sourceSectionId: section.id,
+							sourceLessonId: lesson.id,
+							sourceQuestionId: question.id,
+						},
+					},
+				}),
+			)
+			return [lessonItem, ...questionItems]
 		})
 		return [sectionItem, ...lessonItems]
 	})
@@ -471,10 +527,23 @@ export function createCourseSyncControlPlane(
 				]),
 			)
 			const desired = sourceResourceFields(binding, revision.manifest)
-			const snapshots = await persistence.getTargetResources(
+			const desiredIds = new Set(
 				desired.map((item) => item.targetResourceId),
 			)
-			const resources: ResourcePlanItem[] = desired.map((item) => {
+			const removedQuestions = [...previousByTarget.values()].filter(
+				(item) =>
+					item.sourceKind === 'question' &&
+					!item.detached &&
+					!desiredIds.has(item.targetResourceId),
+			)
+			const planned = [
+				...desired,
+				...removedQuestions.map((item) => ({ ...item, detached: true })),
+			]
+			const snapshots = await persistence.getTargetResources(
+				planned.map((item) => item.targetResourceId),
+			)
+			const resources: ResourcePlanItem[] = planned.map((item) => {
 				const previous = previousByTarget.get(item.targetResourceId)
 				const snapshot = snapshots.get(item.targetResourceId)
 				const action = !snapshot
@@ -483,12 +552,14 @@ export function createCourseSyncControlPlane(
 						  stableJson(previous.fields) !== stableJson(item.fields) ||
 						  stableJson(snapshot.fields) !== stableJson(item.fields) ||
 						  previous.parentResourceId !== item.parentResourceId ||
-						  previous.position !== item.position
+						  previous.position !== item.position ||
+						  previous.detached !== item.detached
 						? 'update'
 						: 'retain'
 				return {
 					...item,
 					action,
+					previousDetached: previous?.detached ?? false,
 					previousVersionId: snapshot?.currentVersionId ?? null,
 					previousParentResourceId: previous?.parentResourceId ?? null,
 					previousPosition: previous?.position ?? null,

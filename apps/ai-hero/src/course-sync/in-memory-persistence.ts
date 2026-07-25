@@ -44,7 +44,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly receipts: MemoryReceipt[] = []
 	readonly relations = new Map<
 		string,
-		{ parentId: string; childId: string; position: number }
+		{ parentId: string; childId: string; position: number; detached: boolean }
 	>()
 	targetValid = true
 	assertTargetCalls = 0
@@ -226,6 +226,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: item.parentResourceId,
 					childId: item.targetResourceId,
 					position: item.position,
+					detached: false,
 				})
 			}
 			if (!resource)
@@ -236,15 +237,16 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				)
 			if (item.action !== 'create') {
 				const relation = relations.get(item.targetResourceId)
-				if (!relation) {
+				if (!relation || relation.detached !== item.previousDetached) {
 					throw new CourseSyncError(
 						'MANAGED_RELATION_MISSING',
-						'Relation missing.',
+						'Relation missing or detached state changed.',
 						409,
 					)
 				}
 				relation.parentId = item.parentResourceId
 				relation.position = item.position
+				relation.detached = item.detached
 			}
 			if (item.action === 'retain') {
 				if (!resource.currentVersionId)
@@ -372,6 +374,9 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		)
 		for (const receipt of runReceipts) {
 			if (receipt.action === 'retain') continue
+			const planItem = original.plan?.resources.find(
+				(item) => item.targetResourceId === receipt.resourceId,
+			)
 			const resource = this.resources.get(receipt.resourceId)
 			if (!resource) {
 				throw new CourseSyncError(
@@ -422,6 +427,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: receipt.previousParentResourceId,
 					childId: receipt.resourceId,
 					position: receipt.previousPosition,
+					detached: planItem?.previousDetached ?? false,
 				})
 			}
 			this.receipts.push({
