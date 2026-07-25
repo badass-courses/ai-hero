@@ -144,6 +144,16 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   is overridden with `surveyMachine.provide({ guards })` rather than forked, so
   the `^1.0.5` pin stays put and pinned decision 6 survives intact.
 
+- [Build quiz question extraction into course-sync](./build-sync-question-extraction.svx)
+  — `feat/quiz-sync-extraction` / `d7262ba`. Real MDX AST parsing, `kind` widened
+  to `'question'`, removal by detachment so answer history survives. Caught that
+  duplicate ids must be unique **across** lessons, not within one — the id hash
+  has no lesson component, so the spec as written would have collided rows.
+- [Build the real Quiz component](./build-the-quiz-component.svx) —
+  `feat/quiz-component` / `e167e86`. `gradeAnswer` at `src/lib/quiz/`, guard
+  overridden via `.provide()` with no fork, zod schema that also rejects
+  answer-key typos, `shuffleChoices: false` as the shuffle escape hatch.
+
 ## Latent
 
 - Whether quiz answers should feed the existing subscriber/segmentation
@@ -155,12 +165,10 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   in a lesson body that Matt's agent rewrites.
 - Whether aggregate scoring ("you got 7 of 10") is ever wanted. Explicitly not in
   this finish line.
-- **`correct` silently forces choice shuffling.** `loadQuestion` shuffles whenever
-  `correct` or `shuffleChoices` is set, with no opt-out
-  (`packages/survey/src/survey-machine.ts:57-60`). Found while building the
-  prototype. Authored choice order is never honored on a graded question, so an
-  author writing "all of the above" last gets a surprise. Decide whether the real
-  component needs an escape hatch.
+- ~~`correct` silently forces choice shuffling.~~ **Resolved 2026-07-25** in
+  [Build the real Quiz component](./build-the-quiz-component.svx): authors opt out
+  with `shuffleChoices: false`; shuffling stays the default. The underlying
+  package behavior (`survey-machine.ts:57-60`) is untouched.
 - Dead surfaces found during the trace, to be cleaned up or logged separately:
   the commented-out published-state check on `/survey/[slug]`
   (`page.tsx:47-51`), `deleteSurvey` orphaning question resources and responses

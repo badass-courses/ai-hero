@@ -3,8 +3,9 @@ title: "Build the real Quiz component"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: "component-worker (flagg, 2026-07-25)"
+status: "closed"
+assignee: "component-worker (flagg, herdr pane w2S:pA, 2026-07-25)"
+closed_at: "2026-07-25"
 parent: "./quiz-component-brief.svx"
 blockers: []
 created_at: "2026-07-24"
@@ -64,4 +65,33 @@ This step ships a component that grades client-side, exactly like the prototype.
 Crash Course, graded, keyboard-accessible, with invalid data degrading visibly,
 and the work merged.
 
-## Result
+## Result (2026-07-25)
+
+Built on `feat/quiz-component`, commit `e167e86` (7 files, +508).
+Reviewed and independently re-verified by the steering session.
+
+**`gradeAnswer` lives at `apps/ai-hero/src/lib/quiz/grade-answer.ts`** — 14 lines,
+exact-set match, the length comparison the package omits. Six tests cover single
+answer, exact multi-select, proper subset (false — the bug being fixed),
+superset, order independence, and the empty set. Steering ran them: all pass.
+
+**Guard override, no fork.**
+`surveyMachine.provide({ guards: { answeredCorrectly } })` calling `gradeAnswer`
+(`quiz-question-client.tsx:14-18`). `@coursebuilder/survey` is neither vendored
+nor un-pinned.
+
+**The zod schema is stronger than the step asked for**
+(`quiz-schema.ts`). Beyond validating shape it rejects duplicate choice answers,
+rejects duplicate `correct` values — which independently closes an edge case
+where `gradeAnswer(['a','a'], ['a','b'])` would wrongly pass — and requires every
+correct answer to match an actual choice, catching answer-key typos in
+agent-generated content before a learner sees them.
+
+**Shuffle escape hatch:** `shuffleChoices: false` preserves authored order; the
+machine's implicit shuffle remains the default
+(`quiz-question-client.tsx:64-68`). This answers the latent shuffle question.
+
+**Decisions the worker made and recorded:** `/quiz-prototype` kept deliberately as
+a development fixture rather than deleted. Invalid `data` renders an inline error
+without breaking the surrounding lesson body. Missing or duplicate ids log a
+server-side error and show a non-production warning, matching the pinned design.
