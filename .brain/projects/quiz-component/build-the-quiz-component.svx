@@ -35,9 +35,16 @@ What changes from prototype to real:
   path already has an escaping fallback for total failure
   (`compile-mdx.tsx:183-205`), which is not the same as graceful per-component
   degradation.
-- Keep grading on `surveyMachine`. Keep single-answer only until
-  [Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx)
-  closes.
+- **Multi-select is required, not optional** (Joel, 2026-07-25). Render checkboxes
+  when `correct` is an array or `allowMultiple` is set; radios otherwise. Grade
+  through the shared `gradeAnswer` exact-set function and override the machine's
+  broken guard with `surveyMachine.provide({ guards: { answeredCorrectly } })` —
+  full rationale and the code in
+  [Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx).
+  Do not fork or vendor `@coursebuilder/survey`, and do not move the `^1.0.5` pin.
+- `gradeAnswer` lives in one module imported by both the component and the answer
+  endpoint. Two copies will drift, and a drift here means the learner sees one
+  verdict while the database records the other.
 - Handle the shuffle side effect: setting `correct` silently shuffles choices
   (`survey-machine.ts:57-60`). Decide and implement whether authors get an opt-out
   and record what you chose.

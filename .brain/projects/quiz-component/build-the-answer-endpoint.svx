@@ -51,6 +51,11 @@ What the endpoint has to get right:
   a `correct` value from the client.
 - A posted `questionId` with no matching question resource is an error, not a
   silent insert — it means sync has not run or the body drifted.
+- Grade with the shared `gradeAnswer` function, the same module the component
+  imports. Multi-select is required, so `answer` may be an array and the match is
+  exact-set, all or nothing
+  ([Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx)).
+  `QuestionResponse.fields` is JSON, so an array answer needs no schema change.
 - **Do not mirror to Kit.** Surveys write answers into Kit subscriber fields
   (`convertkit.ts:157-180`, `surveys-query.ts:587-619`). Whether quizzes should is
   an open latent question on the brief, not a decision for this step. Default to

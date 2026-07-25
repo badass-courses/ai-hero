@@ -45,7 +45,9 @@ What to build:
   (see `packages/adapter-drizzle/.../content-resource-resource.ts:14-42`).
 - Carry the full `QuestionResourceSchema` fields — including `correct` and the
   `answer` explanation — so the server can grade from the row
-  (`packages/survey/src/types.ts:25-52`).
+  (`packages/survey/src/types.ts:25-52`). `correct` may be a **string or an array
+  of strings**; multi-select is required (Joel, 2026-07-25), so array values must
+  survive extraction intact. Carry `allowMultiple` too.
 - **Validate and fail the sync** when a question has no `id`, or when two
   questions in one lesson share an `id`. This is the loud, early failure the
   design depends on. The error must name the lesson and the offending id.

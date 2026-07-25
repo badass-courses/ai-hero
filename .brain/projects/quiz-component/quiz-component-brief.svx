@@ -48,8 +48,9 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
 - **data-driven authoring** — quiz content as a content resource with MDX
   carrying only a reference. Considered and rejected; see Out of scope.
 - **grading** — deciding whether one submitted answer matches that question's
-  `correct` value. Per-question, client-side, already implemented in
-  `@coursebuilder/survey`. Distinct from scoring.
+  `correct` value. Exact-set match, all or nothing, no partial credit. Decided
+  server-side from the question row and mirrored in the client by one shared
+  `gradeAnswer` function. Distinct from scoring.
 - **scoring** — an aggregate result across a set of questions. Does not exist
   anywhere today and is not in the finish line.
 - **survey session id** — the minted anonymous identifier written to
@@ -136,6 +137,12 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   **course-sync now derives `question` content resources from inline markup**, so
   the server grades from the DB and quiz content is queryable again, with Matt's
   authoring unchanged.
+
+- [Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx) —
+  Joel: multiple correct answers is essential. One shared `gradeAnswer` exact-set
+  function used by both the server and the component; the package's broken guard
+  is overridden with `surveyMachine.provide({ guards })` rather than forked, so
+  the `^1.0.5` pin stays put and pinned decision 6 survives intact.
 
 ## Latent
 
