@@ -96,6 +96,12 @@ const DynamicOfficeHoursSchedule = dynamic(() =>
 		(mod) => mod.OfficeHoursSchedule,
 	),
 )
+const Quiz = dynamic(() =>
+	import('@/components/mdx/quiz').then((mod) => mod.Quiz),
+)
+const QuizQuestion = dynamic(() =>
+	import('@/components/mdx/quiz').then((mod) => mod.QuizQuestion),
+)
 
 const getCachedVideoResourceForMdx = cache((id: string) =>
 	courseBuilderAdapter.getVideoResource(id),
@@ -465,6 +471,8 @@ async function compileMDXInternal(
 					TimelineItem: ({ children, icon }) => (
 						<TimelineItem icon={icon}>{children}</TimelineItem>
 					),
+					Quiz: ({ children }) => <Quiz>{children}</Quiz>,
+					QuizQuestion: (props) => <QuizQuestion {...props} />,
 					OfficeHoursSchedule: ({
 						sessions,
 						cohortId,
