@@ -52,12 +52,16 @@ export function QuizQuestionClient({
 	})
 
 	useEffect(() => {
+		// Clear the previous question's selection. Without this a remount with new
+		// data keeps the old answer selected, so the learner can submit the stale
+		// choice against the new question and be graded on it.
+		setSelectedAnswer(isMultiple ? [] : '')
 		send({
 			type: 'LOAD_QUESTION',
 			currentQuestionId: questionId,
 			currentQuestion: machineQuestion,
 		})
-	}, [machineQuestion, questionId, send])
+	}, [machineQuestion, questionId, send, isMultiple])
 
 	const isAnswered = state.matches('answered')
 	const isCorrect = state.matches('answered.correct')

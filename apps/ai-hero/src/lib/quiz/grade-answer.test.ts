@@ -28,4 +28,11 @@ describe('gradeAnswer', () => {
 		expect(gradeAnswer(['a'], [])).toBe(false)
 		expect(gradeAnswer([], [])).toBe(true)
 	})
+
+	it('treats a scalar and a single-element array as the same answer', () => {
+		expect(gradeAnswer('a', ['a'])).toBe(true)
+		expect(gradeAnswer(['a'], 'a')).toBe(true)
+		expect(gradeAnswer('a', ['b'])).toBe(false)
+		expect(gradeAnswer('a', ['a', 'b'])).toBe(false)
+	})
 })
