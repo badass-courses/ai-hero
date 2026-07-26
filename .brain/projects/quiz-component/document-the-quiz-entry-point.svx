@@ -52,4 +52,37 @@ One document exists that answers "how do quizzes work here" without reading
 source in three repos, it is linked from the component, and Matt has the
 authoring contract.
 
+## Progress (2026-07-25) — Matt's half done, repo half open
+
+**Published:** https://aihero-quiz-authoring.wzrrd.sh/ — the agent-facing
+authoring contract, written for Matt's agent to generate against. Permanent
+(published under Joel's wzrrd account), `noindex`, verified HTTP 200.
+
+Covers the exact `<Quiz>` / `<QuizQuestion data={{…}} />` shape, every field with
+required/optional, the validation rules that reject output, single vs
+multi-select, exact-set grading with no partial credit, the id contract and why
+a changed id silently forks answer history, what fails at sync vs at render, and
+what is explicitly not built yet (persistence, non-multiple-choice types, choice
+images, scoring, partial credit). Spreads and non-static `data` are called out
+because sync parses the source rather than running it.
+
+**Announced:** posted to the `#cc-matt-p` thread
+(`ts 1785038754.501759`), signed ShitRat. The `joelclaw` bot could not be used —
+it is not a member of that private channel (`channel_not_found`) — so it went via
+Joel's user token with his explicit authorization to post from his account and
+sign it. Thread root re-tagged ✅.
+
+**Still open — the repo-side half of this step:**
+
+- A doc a maintainer hits without leaving the codebase, linked from the component
+  source. The wzrrd page serves Matt; it does not serve whoever maintains this.
+- The maintainer-facing content the step asks for and the public page omits:
+  where answers land, the `fields` shape, how anonymous learners are attributed,
+  how to query correct rates, the MDX registration point, and the sharp-edges
+  list with its mitigations.
+
+Most of that describes the answer endpoint, which is not built, so this step
+should close after
+[Build the quiz answer endpoint](./build-the-answer-endpoint.svx).
+
 ## Result
