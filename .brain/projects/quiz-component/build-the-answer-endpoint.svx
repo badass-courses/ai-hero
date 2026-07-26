@@ -41,14 +41,22 @@ What the endpoint has to get right:
   exists and falls back to the cookie session id when it does not.
   `surveySessionId` stays the browser session in both cases — `respondentKey`
   answers "who", `surveySessionId` answers "which browser".
-  **Open:** whether login is a hard gate, an expectation, or a gate on saving
-  only. Asked; unanswered at time of writing. Built as an expectation because
-  that superset works under all three readings.
-- **Anonymous learners must work.** Mint a survey session id and write
-  `respondentKey` / `surveySessionId`. This effort is the **first writer** of
-  those columns — no existing code sets them
-  (`convertkit.ts:273-310`, `convertkit.ts:552-559`) — so the semantics you
-  choose become the definition. Write them down.
+  **Settled (Joel, 2026-07-25): gate the saving, not the answering.**
+  Answering stays open to everyone — a logged-out learner still gets graded and
+  still sees the explanation, with no auth wall and no new UI. Only persistence
+  requires a session. Chosen as the simplest of the three: it reuses the guard
+  that already skips posting for a missing `id` or `lessonId`, so it adds one
+  condition rather than a component, and it deletes the whole anonymous identity
+  branch server-side. The hard gate looked simpler but was the only option
+  needing NEW UI — deciding and building what a logged-out visitor sees.
+  Consequence: `respondentKey` is always `user:<userId>`; cookie minting, the
+  `session:` fallback, and the anonymous-then-login transition are all removed.
+  Logged-out answers are not recorded at all, which keeps the free top-of-funnel
+  open while making the data strictly per-user.
+- ~~**Anonymous learners must work.**~~ **Superseded 2026-07-25** by the
+  gate-the-saving decision above. Anonymous learners answer but are not stored,
+  so there is no anonymous respondent identity to define. `respondentKey` is
+  always `user:<userId>`.
 - **Upgrade identity when it resolves.** Follow the existing resolution order:
   NextAuth session, then `ck_subscriber_id` / `ck_subscriber` cookie, then
   nothing (`convertkit.ts:140-143`, `convertkit.ts:448-500`). A learner who logs
