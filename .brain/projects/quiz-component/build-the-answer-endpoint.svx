@@ -63,11 +63,40 @@ What the endpoint has to get right:
 - Per the observability rule: ship per-stage structured logs and one command that
   traces a single answer end to end, before this goes live.
 
+## Announcement obligations (Joel, 2026-07-25)
+
+**This step is not done when the code merges.** Two things ship with it, and
+neither is optional:
+
+1. **Update the published authoring contract**
+   (https://aihero-quiz-authoring.wzrrd.sh/). The published source is preserved
+   at `.brain/data/quiz-component/authoring-contract.html` so it survives this
+   session — edit that, then republish:
+   `wzrrd publish --file <dir-containing-it-as-index.html> --slug aihero-quiz-authoring`.
+   The page currently states plainly that answers are not saved and lists
+   persistence under "Not supported yet". Both become false the moment this
+   merges. Also revisit: what a learner sees on refresh, whether an answer can be
+   changed after submitting, and anything the endpoint's behavior adds to the
+   `id` contract.
+2. **Tell Matt in the `#cc-matt-p` thread**
+   (`https://eggheadio.slack.com/archives/C0211NSK3TP/p1784717959599139`).
+   He is authoring against the published contract right now, and the ids he is
+   writing today become the keys his answer data hangs off. He should hear that
+   from us rather than discover it.
+
+Order matters: **republish the page first, then post**, so the link Matt opens is
+already correct. Post via Joel's user token (the `joelclaw` bot is not a member of
+that private channel), signed ShitRat.
+
+Do not do either while the endpoint is unmerged. Saying persistence works before
+it does is the exact error review already caught once in this effort.
+
 ## Resolved when
 
 A learner answering a quiz in a lesson body produces exactly one
 `QuestionResponse` row carrying `{ answer, correct }`, anonymous learners are
-attributed by a minted session id, a resubmit updates in place, and correct rates
-per question are queryable.
+attributed by a minted session id, a resubmit updates in place, correct rates
+per question are queryable, **the published authoring contract reflects the new
+behavior, and Matt has been told in the thread.**
 
 ## Result

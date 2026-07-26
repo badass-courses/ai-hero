@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Hero — Quiz authoring contract</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf9;
+    --fg: #1c1917;
+    --muted: #6b6560;
+    --line: #e5e1dc;
+    --card: #ffffff;
+    --code-bg: #f5f2ef;
+    --accent: #b4530a;
+    --good: #2f6f3e;
+    --bad: #a52222;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16130f;
+      --fg: #ede9e4;
+      --muted: #a09890;
+      --line: #302a24;
+      --card: #1e1a16;
+      --code-bg: #221d18;
+      --accent: #f0a05a;
+      --good: #7fc98f;
+      --bad: #f08a8a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 2.5rem 1.25rem 6rem; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 1.5rem; margin-bottom: 2.5rem; }
+  .eyebrow {
+    font-size: .75rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin: 0 0 .6rem;
+  }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.4rem); line-height: 1.15; margin: 0 0 .6rem; letter-spacing: -.02em; }
+  h2 {
+    font-size: 1.3rem; margin: 3rem 0 .9rem; letter-spacing: -.01em;
+    padding-top: 1.4rem; border-top: 1px solid var(--line);
+  }
+  h3 { font-size: 1.02rem; margin: 1.8rem 0 .5rem; }
+  p, li { color: var(--fg); }
+  .lede { font-size: 1.08rem; color: var(--muted); margin: 0; max-width: 46rem; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: .875em; background: var(--code-bg); padding: .12em .38em;
+    border-radius: 4px; border: 1px solid var(--line);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1rem 1.1rem; overflow-x: auto; margin: 1rem 0;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: .84rem; line-height: 1.6; }
+  .table-scroll { overflow-x: auto; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 40rem; font-size: .92rem; }
+  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .74rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 700; }
+  td code { white-space: nowrap; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.25rem; margin: 1.25rem 0; }
+  .card.warn { border-left: 3px solid var(--accent); }
+  .card.stop { border-left: 3px solid var(--bad); }
+  .card h3 { margin-top: 0; }
+  .yes::before { content: "✓ "; color: var(--good); font-weight: 700; }
+  .no::before  { content: "✗ "; color: var(--bad); font-weight: 700; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin: .35rem 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: .88rem; }
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+  .pill {
+    display: inline-block; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase;
+    font-weight: 700; padding: .18em .55em; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--code-bg); color: var(--muted); vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">AI Hero · authoring contract</p>
+  <h1>Writing quizzes in a lesson body</h1>
+  <p class="lede">Everything an agent needs to generate a working <code>&lt;Quiz&gt;</code> for an AI Hero lesson. Quizzes are authored inline in the lesson MDX — there is no separate record to create first and no API call to make.</p>
+</header>
+
+<h2>The shape</h2>
+
+<p>Copy this. It is the whole contract.</p>
+
+<pre><code>&lt;Quiz&gt;
+  &lt;QuizQuestion data={{
+    id: "agent-fix-verification",
+    question: "What is the strongest first move when an agent reports that a bug is fixed?",
+    type: "multiple-choice",
+    choices: [
+      { answer: "a", label: "Ask it to explain the code in more detail" },
+      { answer: "b", label: "Reproduce the original failure and run the relevant check" },
+      { answer: "c", label: "Accept the fix if the diff looks reasonable" }
+    ],
+    correct: "b",
+    answer: "A plausible diff is not proof. Reproducing the failure first gives you a baseline, and rerunning the same path after the change proves the behavior actually changed."
+  }} /&gt;
+&lt;/Quiz&gt;</code></pre>
+
+<p>Put as many <code>&lt;QuizQuestion&gt;</code> children inside one <code>&lt;Quiz&gt;</code> as you like. The wrapper renders the heading and spacing; each question grades independently.</p>
+
+<h2>Fields</h2>
+
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>Field</th><th>Required</th><th>Type</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>id</code></td>
+      <td><strong>Yes</strong></td>
+      <td>string</td>
+      <td>Stable identifier. See <a href="#ids">Choosing ids</a> — this is the one field that will hurt you later if you get it wrong.</td>
+    </tr>
+    <tr>
+      <td><code>question</code></td>
+      <td>Yes</td>
+      <td>string</td>
+      <td>The prompt. Non-empty.</td>
+    </tr>
+    <tr>
+      <td><code>type</code></td>
+      <td>Yes</td>
+      <td><code>"multiple-choice"</code></td>
+      <td>This exact literal. No other value is accepted today.</td>
+    </tr>
+    <tr>
+      <td><code>choices</code></td>
+      <td>Yes</td>
+      <td>array</td>
+      <td>At least 2. Each is <code>{ answer, label?, image? }</code>. <code>answer</code> values must be unique within the question — they are the identity of each option, so keep them short and stable (<code>"a"</code>, <code>"b"</code>).</td>
+    </tr>
+    <tr>
+      <td><code>correct</code></td>
+      <td>Yes</td>
+      <td>string or string[]</td>
+      <td>Must match <code>choices[].answer</code> values. An array turns on multi-select. Values must be unique.</td>
+    </tr>
+    <tr>
+      <td><code>answer</code></td>
+      <td>Yes</td>
+      <td>string</td>
+      <td>The explanation shown <em>after</em> the learner answers. Non-empty. This is where the teaching happens — make it earn its place.</td>
+    </tr>
+    <tr>
+      <td><code>allowMultiple</code></td>
+      <td>No</td>
+      <td>boolean</td>
+      <td>Forces checkboxes even when <code>correct</code> is a single string. Use when exactly one answer is right but you want the learner to consider combinations.</td>
+    </tr>
+    <tr>
+      <td><code>shuffleChoices</code></td>
+      <td>No</td>
+      <td>boolean</td>
+      <td>Choices shuffle by default on any graded question. Set <code>false</code> to preserve your authored order — needed for "all of the above" or ordered options.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Rules that will reject your output</h2>
+
+<p>These are enforced, not advisory. Two layers check your work: the renderer validates on the page, and the content sync validates before publish.</p>
+
+<ul>
+  <li class="no"><strong>Missing <code>id</code></strong> — sync fails; the page renders but warns and saves nothing.</li>
+  <li class="no"><strong>Duplicate <code>id</code></strong> — within a lesson <em>or across lessons</em>. Ids are globally unique.</li>
+  <li class="no"><strong>A <code>correct</code> value with no matching choice</strong> — the classic answer-key typo. Caught before a learner sees it.</li>
+  <li class="no"><strong>Duplicate choice <code>answer</code> values</strong>, or duplicates inside <code>correct</code>.</li>
+  <li class="no"><strong>Fewer than 2 choices.</strong></li>
+  <li class="no"><strong>Empty <code>question</code>, <code>answer</code>, or any choice <code>answer</code></strong> — whitespace-only counts as empty.</li>
+  <li class="no"><strong>Anything non-static in <code>data</code></strong> — see below.</li>
+</ul>
+
+<div class="card stop">
+  <h3>Write a literal object. Nothing computed.</h3>
+  <p>The sync reads your <code>data</code> by parsing the source, not by running it. Only plain literals survive: strings, numbers, booleans, arrays, nested objects.</p>
+  <p class="small muted" style="margin-bottom:.4rem">These all fail:</p>
+<pre><code>&lt;QuizQuestion {...props} /&gt;              {/* spread — rejected outright */}
+&lt;QuizQuestion data={questionData} /&gt;     {/* variable reference */}
+&lt;QuizQuestion data={{ ...base, id: 1 }} /&gt; {/* spread inside the object */}
+&lt;QuizQuestion data={{ question: makeQ() }} /&gt; {/* function call */}
+&lt;QuizQuestion data={{ correct: x ? "a" : "b" }} /&gt; {/* conditional */}</code></pre>
+  <p class="small">Spreads are rejected loudly rather than skipped, because a spread renders a real question the learner can answer while nothing extractable reaches the database — the stored quiz would silently disagree with what is on screen.</p>
+</div>
+
+<h2 id="ids">Choosing ids</h2>
+
+<p>The <code>id</code> is the permanent identity of a question. Everything else about a question can change; the id should not.</p>
+
+<div class="card warn">
+  <h3>Why it matters</h3>
+  <p>Answers are keyed to the id, not the question text. That is deliberate: it means you can fix a typo, tighten the wording, or rewrite a question entirely and the answer history stays attached.</p>
+  <p style="margin-bottom:0"><strong>Change the id and you fork the history.</strong> The old answers stay in the database attached to an id nothing references anymore, and the question looks brand new. Nothing errors. You would find out from a chart that quietly stopped making sense.</p>
+</div>
+
+<p>Good ids describe the <em>concept being tested</em>, so a rewrite naturally keeps the same one:</p>
+
+<ul>
+  <li class="yes"><code>agent-fix-verification</code></li>
+  <li class="yes"><code>prompt-specificity-checkout</code></li>
+  <li class="yes"><code>narrow-diff-preference</code></li>
+</ul>
+
+<p>Bad ids encode something that changes:</p>
+
+<ul>
+  <li class="no"><code>question-1</code> — breaks the moment you insert a question above it</li>
+  <li class="no"><code>lesson-3-q2</code> — breaks when the lesson moves</li>
+  <li class="no"><code>what-is-the-strongest-first-move</code> — breaks when you reword</li>
+</ul>
+
+<p class="small muted">Ids are unique across the whole course, not just one lesson. If a question genuinely belongs in two lessons, give each its own id.</p>
+
+<h2>Single answer vs multi-select</h2>
+
+<p>A question is multi-select when <code>correct</code> is an array, or when <code>allowMultiple: true</code>. Otherwise it renders radios.</p>
+
+<pre><code>{/* radios — one right answer */}
+correct: "b"
+
+{/* checkboxes — two right answers, both required */}
+correct: ["a", "c"]
+
+{/* checkboxes, but only one answer is right */}
+correct: "b",
+allowMultiple: true</code></pre>
+
+<div class="card">
+  <h3>Grading is exact-set. All or nothing.</h3>
+  <p>For <code>correct: ["a", "c"]</code>, a learner who selects only <code>"a"</code> is marked <strong>wrong</strong>. So is one who selects <code>"a"</code>, <code>"b"</code>, and <code>"c"</code>. Order does not matter.</p>
+  <p style="margin-bottom:0"><strong>There is no partial credit.</strong> If you write a five-option question with three correct answers, most learners will get it wrong. That may be what you want — just choose it on purpose.</p>
+</div>
+
+<h2>What a learner sees</h2>
+
+<ol>
+  <li>The question with its choices, shuffled unless you set <code>shuffleChoices: false</code>.</li>
+  <li>They select and submit.</li>
+  <li>Each choice is marked correct or incorrect, and your <code>answer</code> explanation appears.</li>
+</ol>
+
+<p>Quizzes are open to everyone — no login required. Answers do not persist across a page refresh yet <span class="pill">see below</span>.</p>
+
+<h2>When authoring goes wrong</h2>
+
+<p>A bad quiz never breaks the lesson around it. The failure surfaces differently depending on where it is caught:</p>
+
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>Problem</th><th>Caught at</th><th>What happens</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Missing or duplicate <code>id</code>, spread, non-static data, schema violation</td>
+      <td>Content sync</td>
+      <td>Sync fails and names the lesson and the offending id. Nothing publishes.</td>
+    </tr>
+    <tr>
+      <td>Invalid <code>data</code> that reaches the page anyway</td>
+      <td>Render</td>
+      <td>That one question becomes an inline error box. The rest of the lesson is untouched. Outside production, the exact validation issues are listed.</td>
+    </tr>
+    <tr>
+      <td>Missing or duplicate <code>id</code> at render</td>
+      <td>Render</td>
+      <td>The question works normally but warns that answers will not be saved.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Not supported yet</h2>
+
+<ul>
+  <li><strong>Answer persistence.</strong> Grading happens in the browser today and nothing is recorded. The server-side answer endpoint is built next; when it lands, answers save automatically for questions that have a valid <code>id</code> — which is the reason to get ids right now rather than later.</li>
+  <li><strong>Question types other than multiple choice.</strong> No free-text or essay questions.</li>
+  <li><strong>Images in choices.</strong> The <code>image</code> field exists in the schema but the component does not render it.</li>
+  <li><strong>Scoring.</strong> Questions grade individually. There is no "you got 7 of 10".</li>
+  <li><strong>Partial credit</strong> on multi-select.</li>
+</ul>
+
+<h2>A complete example</h2>
+
+<pre><code>&lt;Quiz&gt;
+  &lt;QuizQuestion data={{
+    id: "prompt-evidence-quality",
+    question: "Which prompt gives an agent the best chance of diagnosing a failing checkout?",
+    type: "multiple-choice",
+    choices: [
+      { answer: "vague", label: "Checkout is broken. Fix it." },
+      { answer: "broad", label: "Rewrite the checkout so it is more robust." },
+      { answer: "specific", label: "On the payment step, clicking Pay returns HTTP 500. Here is the exact error, the expected result, and a test account." }
+    ],
+    correct: "specific",
+    answer: "The third prompt supplies a reproducible action, observed behavior, expected behavior, and concrete evidence. That lets the agent investigate instead of guessing what 'broken' means."
+  }} /&gt;
+
+  &lt;QuizQuestion data={{
+    id: "review-report-contents",
+    question: "Which of these belong in the report after an AI-assisted change? Select all that apply.",
+    type: "multiple-choice",
+    shuffleChoices: false,
+    choices: [
+      { answer: "files", label: "The files that changed" },
+      { answer: "checks", label: "The checks that were run and their results" },
+      { answer: "risk", label: "Any remaining risk or unverified assumption" },
+      { answer: "transcript", label: "A full transcript of every reasoning step" }
+    ],
+    correct: ["files", "checks", "risk"],
+    answer: "A useful report leaves receipts: where the change lives, what was verified, and what still needs judgment. The full transcript buries all of that."
+  }} /&gt;
+&lt;/Quiz&gt;</code></pre>
+
+<footer>
+  <p>Quizzes are authored inline in the lesson body and flow through the normal content sync — no schema change, no separate authoring step. Content sync derives a question record from each <code>&lt;QuizQuestion&gt;</code>, which is what makes answers reportable once persistence lands.</p>
+  <p>Questions about the contract, or want a field that is not here? Ask in the thread.</p>
+</footer>
+
+</div>
+</body>
+</html>
