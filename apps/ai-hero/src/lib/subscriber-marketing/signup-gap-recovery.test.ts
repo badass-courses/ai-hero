@@ -188,7 +188,7 @@ describe('confirmed signup reconciliation', () => {
 })
 
 describe('signup-gap liveness metrics', () => {
-	it('reports work seen, work done, and the oldest unserved age through the replay seam', async () => {
+	it('keeps signup age separate from unserved age when Kit has no confirmation timestamp', async () => {
 		const preview = buildSignupGapPreview({
 			formId: 9376133,
 			from: '2026-07-17T08:00:00.000Z',
@@ -227,8 +227,11 @@ describe('signup-gap liveness metrics', () => {
 		expect(preview).toMatchObject({
 			workSeen: 2,
 			workDone: 0,
-			oldestUnservedAgeHours: 6,
-			oldestUnservedAt: '2026-07-17T08:00:00.000Z',
+			oldestUnservedAgeHours: null,
+			oldestUnservedAt: null,
+			oldestCandidateSubscriberAgeHours: 6,
+			oldestCandidateSubscriberCreatedAt: '2026-07-17T08:00:00.000Z',
+			unservedAgeBasis: 'unavailable-kit-confirmation-time',
 		})
 		expect(receipt).toMatchObject({
 			generatedAt: '2026-07-17T14:00:00.000Z',

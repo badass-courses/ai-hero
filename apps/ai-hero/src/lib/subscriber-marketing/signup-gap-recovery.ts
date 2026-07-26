@@ -65,8 +65,17 @@ export type SignupGapPreview = {
 	}
 	workSeen: number
 	workDone: number
+	/**
+	 * Kit does not expose when a subscriber changed from inactive to active.
+	 * These stay null until we have a real confirmation timestamp or durable
+	 * first-seen tracking across reconciliation runs.
+	 */
 	oldestUnservedAgeHours: number | null
 	oldestUnservedAt: string | null
+	/** Subscriber creation time is source context, not gap age. */
+	oldestCandidateSubscriberAgeHours: number | null
+	oldestCandidateSubscriberCreatedAt: string | null
+	unservedAgeBasis: 'unavailable-kit-confirmation-time'
 	candidates: SignupGapPreviewCandidate[]
 }
 
@@ -404,21 +413,28 @@ function signupGapLiveness(
 	generatedAt: string,
 ) {
 	const replayable = candidates.filter((candidate) => !candidate.excludedSynthetic)
-	const oldestUnservedAt = replayable
+	const oldestCandidateSubscriberCreatedAt = replayable
 		.map((candidate) => candidate.createdAt)
 		.sort()[0] ?? null
 	return {
 		workSeen: replayable.length,
 		workDone: 0,
-		oldestUnservedAgeHours:
-			oldestUnservedAt === null
+		// Kit's form-subscriber payload exposes subscriber creation time, not the
+		// inactive -> active transition time. Treating createdAt as confirmation
+		// time made a candidate first seen before a sweep look hours overdue.
+		oldestUnservedAgeHours: null,
+		oldestUnservedAt: null,
+		oldestCandidateSubscriberAgeHours:
+			oldestCandidateSubscriberCreatedAt === null
 				? null
 				: Math.max(
 						0,
-						(Date.parse(generatedAt) - Date.parse(oldestUnservedAt)) /
+						(Date.parse(generatedAt) -
+							Date.parse(oldestCandidateSubscriberCreatedAt)) /
 							(60 * 60 * 1000),
 					),
-		oldestUnservedAt,
+		oldestCandidateSubscriberCreatedAt,
+		unservedAgeBasis: 'unavailable-kit-confirmation-time' as const,
 	}
 }
 
