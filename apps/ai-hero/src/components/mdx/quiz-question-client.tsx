@@ -1,25 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react'
-import { gradeAnswer } from '@/lib/quiz/grade-answer'
+import { useEffect, useId, useMemo, useState } from 'react'
+import * as Sentry from '@sentry/nextjs'
+import {
+	bestEffortQuizPersistence,
+	quizMachine,
+} from '@/lib/quiz/quiz-machine'
 import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
 import { Check, CheckSquare, Circle, Square, X } from 'lucide-react'
-
-import { surveyMachine } from '@coursebuilder/survey'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import type { QuizQuestionData } from './quiz-schema'
-
-const quizMachine = surveyMachine.provide({
-	guards: {
-		answeredCorrectly: ({ context }) => {
-			const correct = context.currentQuestion.correct
-			return correct !== undefined && gradeAnswer(correct, context.answer)
-		},
-	},
-})
 
 export function QuizQuestionClient({
 	data,
@@ -46,15 +39,27 @@ export function QuizQuestionClient({
 		isMultiple ? [] : '',
 	)
 	const answerMutation = api.quiz.answer.useMutation()
-	const persistAnswer = useCallback(
-		async ({ answer }: { answer: string | string[] }) => {
-			if (!lessonId || !data.id || authoringWarning) return
-			await answerMutation.mutateAsync({
-				lessonId,
-				questionId: data.id,
-				answer,
-			})
-		},
+	const persistAnswer = useMemo(
+		() =>
+			bestEffortQuizPersistence({
+				persist: async ({ answer }) => {
+					if (!lessonId || !data.id || authoringWarning) return
+					await answerMutation.mutateAsync({
+						lessonId,
+						questionId: data.id,
+						answer,
+					})
+				},
+				reportError: (error) => {
+					Sentry.captureException(error, {
+						tags: { event: 'quiz.answer.client-persist.failed' },
+						extra: {
+							lessonId,
+							questionId: data.id,
+						},
+					})
+				},
+			}),
 		[answerMutation, authoringWarning, data.id, lessonId],
 	)
 	const [state, send] = useMachine(quizMachine, {
@@ -226,11 +231,6 @@ export function QuizQuestionClient({
 				</div>
 			)}
 
-			{state.matches('failure') ? (
-				<p role="alert" className="text-destructive mt-4 text-sm">
-					Your answer could not be checked. Try again.
-				</p>
-			) : null}
 		</fieldset>
 	)
 }
