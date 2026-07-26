@@ -30,6 +30,20 @@ not invent it here:
 
 What the endpoint has to get right:
 
+- **Identity is user-first** (Joel, 2026-07-25: "for these quizzes they will have
+  to be logged in, generally"). This supersedes the anonymous-primary assumption
+  in [Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx),
+  which was pinned before we knew learners would typically be authenticated.
+  The old design had a real defect under the new assumption: with `respondentKey`
+  minted from a browser cookie, one logged-in learner on laptop and phone becomes
+  two respondents, gets two rows for the same question, and double-counts in
+  correct-rate analytics. So `respondentKey` derives from `userId` when a session
+  exists and falls back to the cookie session id when it does not.
+  `surveySessionId` stays the browser session in both cases — `respondentKey`
+  answers "who", `surveySessionId` answers "which browser".
+  **Open:** whether login is a hard gate, an expectation, or a gate on saving
+  only. Asked; unanswered at time of writing. Built as an expectation because
+  that superset works under all three readings.
 - **Anonymous learners must work.** Mint a survey session id and write
   `respondentKey` / `surveySessionId`. This effort is the **first writer** of
   those columns — no existing code sets them
