@@ -3,8 +3,9 @@ title: "Build the quiz answer endpoint"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: "endpoint-worker (flagg, 2026-07-25)"
+status: "closed"
+assignee: "endpoint-worker (flagg, herdr pane w2S:pB, 2026-07-25)"
+closed_at: "2026-07-26"
 parent: "./quiz-component-brief.svx"
 blockers:
   - "./build-sync-question-extraction.svx"
@@ -132,4 +133,70 @@ attributed by a minted session id, a resubmit updates in place, correct rates
 per question are queryable, **the published authoring contract reflects the new
 behavior, and Matt has been told in the thread.**
 
-## Result
+## Result (2026-07-26)
+
+Merged as `791c777` (PR #26), production deploy Ready. Both announcement
+obligations discharged.
+
+**Shape.** Client posts `{ lessonId, questionId, answer }` with the *authored*
+id. Server resolves the question content resource — joined through
+`contentResourceResource` to the lesson, matched on
+`fields.courseSync.sourceQuestionId`, so an id from another lesson cannot match —
+reads `correct` from that row, grades with the shared `gradeAnswer`, and upserts
+one `QuestionResponse` with `fields: { answer, correct }` via
+`onDuplicateKeyUpdate` on the `(surveyId, questionId, respondentKey)` unique
+index. A client-supplied `correct` is never accepted.
+
+**Identity.** `respondentKey` is always `user:<userId>`; `surveySessionId` is
+`null`. Cookie minting, the `session:` fallback, and the anonymous-then-login
+transition were all deleted after Joel's gate-the-saving call. `quiz.answer` is
+`protectedProcedure`, so an unauthenticated write is impossible even if the
+client guard is bypassed.
+
+**Persistence is best-effort.** `bestEffortQuizPersistence` consumes write errors
+after reporting them, so a failed save never costs the learner grading or the
+explanation. It also guards `reportError` throwing, which would otherwise
+re-enter the machine's terminal `failure` state.
+
+**No Kit on this path.** Zero external calls, so the learner never waits on a
+third party to be told whether they were right.
+
+### Review rounds — three, five real defects
+
+Two came from reviewers and were genuinely nasty; two came from Joel's direction
+changes landing on latent bugs; one was self-inflicted.
+
+1. **Stale closure corrupting data** (Macroscope, blocking). `useMachine` reads
+   `input` only at actor creation, so after `LOAD_QUESTION` the actor still held
+   the original `persistAnswer` closure and posted the new answer under the
+   *previous* question's ids — upserting onto the wrong row. Silent wrongness,
+   no error.
+2. **Persistence gating the teaching moment** (found by steering review before
+   PR). The mutation was wired directly as the machine's submit actor, so a
+   rejected write sent it to `onError → failure`, which is terminal in
+   `@coursebuilder/survey`. A failed database write cost the learner all grading
+   feedback, and the "try again" affordance was a dead end. Realistic trigger: an
+   unsynced question throws on every attempt, so during a 30-minute sync window
+   every quiz on a draft lesson would look broken.
+3. **External round-trip per answer** (CodeRabbit). `getSubscriber()` on every
+   submission meant the learner waited on Kit to be told something computed
+   locally. Fixed at the root by deleting the call rather than caching it — the
+   `ck_subscriber_id` cookie already *is* the subscriber id.
+4. **Cross-device respondent split** (surfaced by Joel's "generally logged in").
+   A cookie-derived `respondentKey` made one logged-in learner on laptop and
+   phone into two respondents, two rows per question, double-counted correct
+   rates.
+5. Fixing (2) initially introduced a partial-mutation hazard in a sibling path;
+   caught and preflighted.
+
+### Announcements
+
+- **Page republished:** https://aihero-quiz-authoring.wzrrd.sh/ — persistence
+  removed from "Not supported yet", new "What gets saved" section with the
+  logged-in / logged-out / no-id matrix, server-graded note, replace-not-append
+  behavior, and the sync-before-recording caveat. Verified live: no stale
+  "nothing is recorded" claims remain. Source preserved at
+  `.brain/data/quiz-component/authoring-contract.html`.
+- **Matt told** in the `#cc-matt-p` thread (`ts 1785045635.393009`), signed
+  ShitRat, via Joel's user token. Led with the part that affects him: the ids he
+  is writing now are live keys, and changing one forks history silently.

@@ -1,0 +1,36 @@
+---
+title: "Diagnose why the 17:00Z confirmation sweep drained only 2 of 11 waiting learners"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Diagnose the partial confirmation sweep (2026-07-24)
+
+## Situation
+
+Timeline, verified by the steering session:
+
+- The hourly `skills-newsletter-confirmation-reconciler` (Kit form 9376133, from 2026-07-15, cap 200/run) was dead-bound in Inngest Cloud from ~12:13Z today: ~10 deploys since the 07-21 registration, and gap candidates accumulated from 12:13Z onward. Sweeps at 13/14/15/16:00Z did not route.
+- 16:09Z: steering re-issued `curl -X PUT https://www.aihero.dev/api/inngest` → `{"message":"Successfully registered","modified":true}`.
+- 17:07Z preview (`signup-gap-preview --form-id 9376133 --from 2026-07-24T00:00:00Z`): `replayable` dropped 11 → 9; the oldest candidate (createdAt 12:13:25Z) was swept; new oldest is 13:03:34Z at 4.06h. So the 17:00Z run routed but left 9 behind — a healthy run with cap 200 should have drained all.
+
+## Hypotheses to prove or kill (read-only)
+
+1. **Idempotency suppression.** Enrollment events for these learners were minted during the dead-binding window with stable IDs (`skills-confirmed:<formId>:<kitSubscriberId>` / `skills-form:<formId>:subscriber:<kitSubscriberId>`). Inngest Cloud may have accepted those events while the function binding was dead, so re-minting now dedupes against a consumed-but-never-run event. Check the reconciler source: does it mint with a stable event ID, what is Inngest's dedupe window, and does a dropped-binding event still burn the ID?
+2. **Criteria mismatch.** The preview's `replayable` definition and the reconciler's candidate query may disagree (confirmation state source, window edges, existing-contact checks) so the 9 are invisible to the reconciler.
+3. **Cap or pagination artifact.** Kit pagination or per-run limits truncating the candidate set (`kit-cli quirks`: customfields pagination lies).
+
+## Task (all read-only)
+
+1. Read `src/inngest/functions/skills-newsletter-confirmation-reconciler.ts` (or current path), `signup-confirmation-reconciler.server.ts`, and the `signup-gap-preview` implementation in apps/ai-hero. Map both candidate pipelines side by side.
+2. Run `DOTENV_CONFIG_PATH=.env.vercel pnpm subscriber-marketing:operator signup-gap-preview --form-id 9376133 --from 2026-07-24T00:00:00.000Z --to <now>` from `apps/ai-hero` and, for each remaining candidate (masked emails only), determine which hypothesis explains why the 17:00Z run skipped it. Query only read paths; if you need DB reads, use existing read-only operator commands.
+3. State the winning hypothesis with evidence, per-candidate (masked). If it is idempotency suppression, state exactly what a safe re-mint looks like (e.g. suffixed event ID) WITHOUT implementing it, and whether `signup-gap-replay --allow-write` would bypass the suppression.
+4. DONE summary: root cause, per-candidate table (masked), recommended fix + exact commands for steering, and whether the 18:00Z run will self-heal or not.
+
+## Constraints
+
+- READ-ONLY: no `--allow-write`, no event minting, no commits, no deploys, no PUT syncs.
+- Masked/aggregate customer data only in output. Never print raw emails or secrets.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary when finished.

@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "aih.drip-starvation-incident.v1",
+  "incidentDate": "2026-07-17",
+  "privacy": "aggregate-only-no-emails-no-contact-ids-no-click-ids",
+  "status": "root-cause-fixed-locally-original-cohort-served-not-shipped",
+  "rootCause": {
+    "primaryHypothesisConfirmed": false,
+    "completedAtEvidence": {
+      "firstReadAt": "2026-07-17T20:02:00Z",
+      "completedCourseIntents": 1767,
+      "missingOrInvalidCompletedAt": 0,
+      "latestPreWriteReadAt": "2026-07-17T20:25:00Z",
+      "completedCourseIntents": 1781,
+      "missingOrInvalidCompletedAtAtExecution": 0
+    },
+    "confirmedCause": [
+      "Gate D was rolling-public-enrollment, but the hourly drip caller filtered completed intents to the activation's original 98 static contacts.",
+      "The 200-row frontier limit ran before that caller-side filter, so live public frontiers crowded out the static cohort and the visible hourly set fell from 107 to 19.",
+      "learner-flow-unstick only invoked the drip planner under allow-write, so its dry-run falsely reported planned:0."
+    ],
+    "diagnosis": {
+      "authorizationMode": "rolling-public-enrollment",
+      "staticActivationContacts": 98,
+      "learnerFlowContactsAtProbe": 806,
+      "starvedContactsAtProbe": 103,
+      "contactScopedDryRunPlanned": 103,
+      "contactScopedDryRunBlocked": 0
+    }
+  },
+  "fix": {
+    "summary": [
+      "Apply authorization and asset scope before the frontier limit; rolling enrollment no longer filters to the original contact list.",
+      "Exclude terminal frontiers and completed frontiers that already have a next intent before limiting, preventing permanent rescans.",
+      "Run the contact-scoped drip planner during learner-flow-unstick dry-runs with no writes.",
+      "Expose scanned, frontierSize, actionableFrontierSize, returned, truncated, exclusion counts, oldestFrontierAgeHours, starved, zeroPlanWhileStarved, and scanTruncated in the hourly result/log.",
+      "Add an idempotent receipt-writing completedAt repair command that only uses authoritative provider completion evidence."
+    ],
+    "review": {
+      "firstPass": "blocked unsafe createdAt inference and persistent 200-row terminal/no-op crowding",
+      "fixesApplied": true,
+      "secondPass": "clean-no-blockers"
+    }
+  },
+  "backfill": {
+    "dryRunReceipt": ".brain/data/learner-flow/receipts/2026-07-17-drip-starvation-completed-at-backfill-dry-run.json",
+    "executionReceipt": ".brain/data/learner-flow/receipts/2026-07-17-drip-starvation-completed-at-backfill-executed.json",
+    "postLiveReceipt": ".brain/data/learner-flow/receipts/2026-07-17-drip-starvation-completed-at-backfill-post-live.json",
+    "execution": {
+      "scanned": 1781,
+      "missingOrInvalidCompletedAt": 0,
+      "wouldUpdate": 0,
+      "updated": 0
+    },
+    "postLive": {
+      "scanned": 1894,
+      "missingOrInvalidCompletedAt": 0,
+      "wouldUpdate": 0
+    }
+  },
+  "liveRecovery": {
+    "approvedEnvelope": "learner-flow-unstick --allow-write --json",
+    "initialDryRun": {
+      "capturedAt": "2026-07-17T20:25:00Z",
+      "contacts": 104,
+      "uniqueContacts": 104,
+      "duplicateContacts": 0,
+      "planned": 104,
+      "blocked": 0,
+      "idempotentNoop": 0,
+      "notDue": 0
+    },
+    "initialWrite": {
+      "generatedAt": "2026-07-17T20:25:36.335Z",
+      "planned": 104,
+      "databaseWrite": true,
+      "providerWriteInCommand": false,
+      "executorCompleted": 104,
+      "executorCompletedAt": "2026-07-17T20:50:28Z"
+    },
+    "agedInDuringExecutorDrain": {
+      "note": "Additional learners crossed the classifier tolerance while the five-minute executor drained the original cohort. Steering stopped further straggler chasing; hourly reconciliation owns continuous arrivals.",
+      "completedCatchups": 9,
+      "finalQueuedIntent": {
+        "intentId": "6iu4q",
+        "statusAtStop": "pending",
+        "createdAt": "2026-07-17T21:01:19Z"
+      }
+    },
+    "originalCohortOutcome": "104-of-104 completed; no duplicates, blocks, failures, or no-ops"
+  },
+  "verification": {
+    "focusedTests": "124 passed",
+    "fullTests": "84 files passed, 841 tests passed, 5 obsolete snapshots reported from pre-existing snapshot changes",
+    "workspaceTypecheck": "2 tasks successful",
+    "appTypecheck": "passed",
+    "lint": "0 errors, 43 pre-existing warnings",
+    "gitDiffCheck": "passed",
+    "review": "clean-no-blockers"
+  },
+  "sourceControl": {
+    "branch": "feat/draft-course-sync-control-plane",
+    "branchMoveWasAgentAuthored": false,
+    "committed": false,
+    "pushed": false,
+    "deployed": false,
+    "workingTreeClean": false,
+    "incidentDiffWhitespaceClean": true,
+    "unrelatedChangesPreserved": [
+      "five pre-existing email snapshot modifications",
+      "existing untracked Brain/pi/wzrrd files"
+    ]
+  },
+  "shipSteps": [
+    "Move or apply only the incident files and receipts onto the intended release branch; do not include the unrelated snapshot or workspace files.",
+    "Run pnpm --filter ai-hero test, pnpm typecheck, and pnpm --filter ai-hero lint; expect zero errors and verify whether the 43 existing warnings remain unchanged.",
+    "Commit and push through the configured ShitRat GitHub actor, then deploy AI Hero through the normal Vercel path.",
+    "After deployment, run value-path-drip-progress --dry-run --limit 200 and verify actionable frontier work is visible without static-contact filtering.",
+    "Verify the next subscriber_funnel.drip_run_completed log contains scan diagnostics, zeroPlanWhileStarved=false, and an expected scanTruncated value; alert when zeroPlanWhileStarved=true or scanTruncated=true."
+  ]
+}

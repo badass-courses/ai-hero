@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aih.value-path-completed-at-backfill.v1",
+  "mode": "allow-write",
+  "generatedAt": "2026-07-17T20:24:50.839Z",
+  "strategy": "authoritative-provider-completion-evidence-only",
+  "counts": {
+    "scanned": 1781,
+    "courseCompleted": 1781,
+    "missingOrInvalidCompletedAt": 0,
+    "repairableFromProviderEvidence": 0,
+    "unrepairableWithoutProviderEvidence": 0,
+    "wouldUpdate": 0,
+    "updated": 0,
+    "alreadyStamped": 1781
+  },
+  "receiptPath": ".brain/data/learner-flow/receipts/2026-07-17-drip-starvation-completed-at-backfill-executed.json"
+}

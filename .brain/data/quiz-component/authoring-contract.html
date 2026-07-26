@@ -208,7 +208,8 @@
 <div class="card warn">
   <h3>Why it matters</h3>
   <p>Answers are keyed to the id, not the question text. That is deliberate: it means you can fix a typo, tighten the wording, or rewrite a question entirely and the answer history stays attached.</p>
-  <p style="margin-bottom:0"><strong>Change the id and you fork the history.</strong> The old answers stay in the database attached to an id nothing references anymore, and the question looks brand new. Nothing errors. You would find out from a chart that quietly stopped making sense.</p>
+  <p><strong>Change the id and you fork the history.</strong> The old answers stay in the database attached to an id nothing references anymore, and the question looks brand new. Nothing errors. You would find out from a chart that quietly stopped making sense.</p>
+  <p style="margin-bottom:0">Answers are being recorded now, so this is live rather than theoretical — every id you write today is the key its answer data hangs off.</p>
 </div>
 
 <p>Good ids describe the <em>concept being tested</em>, so a rewrite naturally keeps the same one:</p>
@@ -257,7 +258,38 @@ allowMultiple: true</code></pre>
   <li>Each choice is marked correct or incorrect, and your <code>answer</code> explanation appears.</li>
 </ol>
 
-<p>Quizzes are open to everyone — no login required. Answers do not persist across a page refresh yet <span class="pill">see below</span>.</p>
+<p>Quizzes are open to everyone. No login is required to answer, and a logged-out learner gets the same grading and the same explanation.</p>
+
+<h2>What gets saved</h2>
+
+<p>Answers are recorded so you can see which questions people miss. This is the part your <code>id</code> choices have been feeding all along.</p>
+
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>Learner</th><th>Sees grading</th><th>Answer recorded</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Logged in</td><td class="yes">yes</td><td class="yes">yes</td></tr>
+    <tr><td>Logged out</td><td class="yes">yes</td><td class="no">no</td></tr>
+    <tr><td>Question has no <code>id</code></td><td class="yes">yes</td><td class="no">no</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Answering is never gated; only saving is.</strong> A logged-out learner still gets the full teaching moment — grading, correct/incorrect marking, and your explanation. Their answer just is not stored.</p>
+
+<div class="card warn">
+  <h3>Grading is graded on the server</h3>
+  <p>The browser shows the result immediately, but what gets <em>recorded</em> is decided server-side against the answer key stored with the question. The page cannot tell the database that a wrong answer was right.</p>
+  <p style="margin-bottom:0">This is why a question must be synced before its answers can be saved. If you add a quiz and answer it before the content sync has run, the grading still shows — the answer just is not recorded. It starts recording once the question syncs.</p>
+</div>
+
+<h3>Changing an answer</h3>
+
+<p>One record per learner per question. If the same learner answers a question again, the new answer replaces the old one rather than adding a second record. Refreshing the page clears the on-screen state and lets them answer again.</p>
+
+<p class="small muted">Saving is best-effort and never blocks the learner. If a save fails, they still see whether they were right and still get the explanation — the failure is logged on our side, not shown to them.</p>
 
 <h2>When authoring goes wrong</h2>
 
@@ -291,7 +323,6 @@ allowMultiple: true</code></pre>
 <h2>Not supported yet</h2>
 
 <ul>
-  <li><strong>Answer persistence.</strong> Grading happens in the browser today and nothing is recorded. The server-side answer endpoint is built next; when it lands, answers save automatically for questions that have a valid <code>id</code> — which is the reason to get ids right now rather than later.</li>
   <li><strong>Question types other than multiple choice.</strong> No free-text or essay questions.</li>
   <li><strong>Images in choices.</strong> The <code>image</code> field exists in the schema but the component does not render it.</li>
   <li><strong>Scoring.</strong> Questions grade individually. There is no "you got 7 of 10".</li>

@@ -154,6 +154,14 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   overridden via `.provide()` with no fork, zod schema that also rejects
   answer-key typos, `shuffleChoices: false` as the shuffle escape hatch.
 
+- [Build the quiz answer endpoint](./build-the-answer-endpoint.svx) —
+  `791c777` (PR #26). Server grades from the question row and upserts one
+  `QuestionResponse` per learner per question. Identity collapsed to
+  `user:<userId>` after Joel's gate-the-saving call; answering stays open to
+  everyone, only saving needs a session. No Kit on the path. Three review rounds,
+  five real defects, the worst being a stale closure that wrote answers onto the
+  previous question's row.
+
 ## Latent
 
 - Whether quiz answers should feed the existing subscriber/segmentation

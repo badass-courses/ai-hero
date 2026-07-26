@@ -1,0 +1,67 @@
+---
+title: "LIVE 500 on the email-7 certificate ask page"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# LIVE customer-facing 500 — certificate ask page
+
+**This is live and customer-facing. Real subscribers clicking the certificate link in email 7 are getting a 500.** Treat as urgent.
+
+## The failing request
+
+Joel clicked the certificate CTA from Kit broadcast "You finished. Here's your certificate." and got **HTTP 500**.
+
+Route: `/ask/ai-hero-skills-workflow-certificate` with `answer=other`.
+
+Decoded `pt` token payload (do NOT reuse this token to reproduce — see constraints):
+
+```json
+{
+  "contactId": "surdw",
+  "valuePathResourceId": "ai-hero-skills-workflow",
+  "emailResourceId": "ai-hero-skills-workflow.email-7",
+  "sequenceId": "ai-hero-skills-workflow",
+  "expiresAt": "2026-08-23T05:00:23.494Z"
+}
+```
+
+Note `answer=other` — the "other" option, not one of the enumerated answers. That is a prime suspect: the certificate path may assume a known answer option.
+
+## Environment facts (verified by steering)
+
+- Current production deployment: `https://ai-hero-m2bgzu1i9-skillrecordings.vercel.app` (Ready, ~2h old).
+- Vercel scope: `team_QwoK7Pe6T0HIuFjig2Pm4qH8`, project `skillrecordings/ai-hero`.
+- `vercel logs <deployment-url> --scope <scope>` works from `apps/ai-hero`. AXIOM env vars exist in `.env.vercel` — the `axiom-investigation` skill is available and is probably the faster path to the stack trace.
+- Route source: `apps/ai-hero/src/app/ask/[slug]/page.tsx`.
+
+## Suspects (from steering's read of the route)
+
+The page awaits many things. `ensureSkillsWorkflowCertificateShare` is wrapped in `.catch()`, but these are NOT:
+
+1. `checkSkillsWorkflowValuePathCertificateEligibility({ contactId })` — unguarded.
+2. `getValuePathAnswerPageBySlug({ slug, optionValue: 'other', ... })` — behavior with `answer=other` unverified.
+3. `readActiveGateDRuntimeAllowlist({ redis })` — unguarded; Redis dependency.
+4. `recordValuePathAnswerProgression(...)` — unguarded; DB write.
+5. `inngest.send(...)` for `VALUE_PATH_ANSWER_SELECTED_EVENT` — unguarded network call.
+
+Steering has NOT confirmed which one throws. Get the real stack trace before changing anything.
+
+## Task
+
+1. **Get the actual error.** Axiom or `vercel logs`. Find the stack trace for the 500 on `/ask/ai-hero-skills-workflow-certificate`. Report the exact throwing call.
+2. **Reproduce safely.** Mint your OWN test token with a synthetic/test contact if the codebase supports it, or write a failing unit/integration test against the route's server functions. Do NOT replay Joel's token or any real subscriber's token.
+3. **Fix the root cause**, and separately **make the page resilient**: a certificate/share/analytics failure must never 500 the page for a learner who finished the course. Worst case they should see the page (or a graceful message), not an error. Degrade, don't explode.
+4. **Test** covering `answer=other` and whatever the real trigger turns out to be.
+5. **Assess blast radius**: how many subscribers received this broadcast and could hit it? Report the number (aggregate only). Check whether the same failure affects `team-email-7`.
+
+## Constraints
+
+- Do NOT commit, push, or deploy. Steering commits and Joel controls the deploy.
+- Do NOT replay real customer tokens. Do NOT send email. No `--allow-write` replays.
+- Masked/aggregate customer data only in output. Never print raw emails or the full token.
+- Never print secrets or `.env` contents.
+- This checkout sits on a foreign branch with other sessions' work — `git status` first, touch only files you own, report what you find.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary: root cause, the fix, tests, blast radius.

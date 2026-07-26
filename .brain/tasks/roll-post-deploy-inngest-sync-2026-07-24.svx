@@ -1,0 +1,39 @@
+---
+title: "Post-deploy Inngest sync for ai-hero"
+type: "task"
+date: "2026-07-24"
+privacy: "private"
+---
+
+# Post-deploy Inngest sync
+
+## Problem
+
+ai-hero deploys do not sync their Inngest function manifest. Every push auto-deploys and aliases in ~2 minutes, but the Inngest registration is only refreshed when a human remembers to `curl -X PUT https://www.aihero.dev/api/inngest`. New or renamed functions therefore register late or never — the "dead binding" failure mode.
+
+Receipts:
+- 2026-07-20: system-bus reconciler dead-bound after a deploy; recovered by manual PUT.
+- 2026-07-21: same on ai-hero after the confirmation-reconciler shipped; recovered by manual PUT.
+- 2026-07-24: ~10 deploys since the 07-21 registration; a manual PUT returned `modified:true`, confirming the manifest had drifted the whole time.
+
+## What to build
+
+A post-deploy step that issues the registration PUT against the production deployment automatically, on every production deploy, and **fails loudly** if the PUT does not return success. Investigate the repo's existing deploy pipeline first (Vercel project settings, GitHub Actions in `.github/workflows/`, any `vercel.json` hooks) and choose the mechanism that fits what is already there — do not invent a parallel pipeline.
+
+Requirements:
+- Runs only for production deploys, not previews.
+- Idempotent and safe to re-run.
+- Its output must be findable later: log the response (`modified` true/false) where a human can see it in the deploy record.
+- Registration success is NOT proof of health — note in the implementation (comment or doc) that run-recency assertion is the real check, owned by a separate joelclaw-side step.
+
+## Deliverable
+
+The change, plus a short written explanation of where it hooks in and how to verify it fired on the next real deploy. **Do not deploy.** Steering reviews and commits; the first real verification happens on the next natural push.
+
+## Constraints
+
+- Do NOT commit, do NOT push, do NOT deploy, do NOT trigger a build.
+- Do not add secrets to the repo. If the mechanism needs a token or env var, state exactly which one and where it must be set — never inline a value, never print an existing one.
+- This checkout may sit on a foreign branch with other sessions' work — check `git status` first, touch only your own files, and report what you found.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary when finished.
