@@ -20,10 +20,13 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   course-sync path unchanged, with no manifest schema change.
 - A learner — **including a logged-out one** — answers in the lesson body, and
   immediately sees whether they were right plus the authored explanation.
-- Each answer writes a `QuestionResponse` row carrying
-  `fields: { answer, correct }`, keyed by a minted survey session id
-  (`respondentKey` / `surveySessionId`), upgrading to `userId` /
-  `emailListSubscriberId` when identity resolves.
+- **A logged-in** learner's answer writes a `QuestionResponse` row carrying
+  `fields: { answer, correct }`, keyed by `respondentKey = user:<userId>` so one
+  person is one respondent across devices. Answering again replaces the row
+  rather than appending. *(Revised 2026-07-25 from "keyed by a minted survey
+  session id, upgrading when identity resolves" — see the gate-the-saving
+  decision in [Build the quiz answer endpoint](./build-the-answer-endpoint.svx).
+  Logged-out answers are graded but not stored.)*
 - Correct/incorrect rates are queryable per question without parsing lesson
   bodies, because course-sync derives a `question` content resource from each
   inline `QuizQuestion` and joins it to the lesson.
@@ -53,9 +56,12 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   `gradeAnswer` function. Distinct from scoring.
 - **scoring** — an aggregate result across a set of questions. Does not exist
   anywhere today and is not in the finish line.
-- **survey session id** — the minted anonymous identifier written to
-  `QuestionResponse.respondentKey` / `surveySessionId`. This effort is the first
-  writer of those columns, so it defines what they mean.
+- **respondent** — settled 2026-07-25: one *person*, not one browser.
+  `respondentKey` is `user:<userId>`, so the same learner on laptop and phone is
+  one respondent with one row per question. `surveySessionId` is written `null`;
+  the browser-session identifier it was going to hold was deleted along with the
+  anonymous path. *(Replaces the earlier "survey session id" term, which assumed
+  anonymous-primary identity.)*
 - **derived storage** — settled 2026-07-24: quiz content is authored inline in
   MDX and course-sync derives `question` content resources from it. Authoring is
   inline; storage is relational. Neither "inline" nor "content resource" alone
@@ -83,9 +89,11 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
 - What Joel said in the thread: the survey system already is quizzes; an MDX
   component may need wiring but "the hard bits are done/baked in"; it is data
   driven, content resources, over the same API.
-- Open tension to grill: Matt wants content inline in MDX, Joel wants content
-  resources over the API. Matt's last message suggests an API satisfies him, but
-  that has not been confirmed against his authoring loop.
+- ~~Open tension: inline MDX vs content resources over the API.~~ **Resolved**
+  by derived storage — Matt authors inline, course-sync derives the content
+  resources. Both positions turned out to be right about different layers.
+- Mid-effort calls (Joel, 2026-07-25): no Kit on the answer path, quizzes store
+  in our DB only; and login gates *saving*, not answering.
 - Skills to consult: `grill-me`, `herdr-orchestration`, `prototype`.
 - **Execution authorization (Joel, 2026-07-24): GRANTED AND FIRED.** The gate was
   one clickable prototype; Joel saw it and said "looks good to me" with no
