@@ -103,3 +103,24 @@ clean. Tests cover parsing, id derivation, replay idempotency, removal, rollback
 restoration, and the loud-failure paths.
 
 The v3 manifest schema is unchanged, as required.
+
+**Review round (PR #24, merged as `1a646a6`).** Macroscope and CodeRabbit found
+four real defects the steering review had missed:
+
+1. **Spreads were silently skipped.** `dataExpression` only inspected
+   `mdxJsxAttribute`, so `<QuizQuestion {...props} />` rendered a real question
+   while extraction produced nothing — and a spread after an explicit `data`
+   attribute overrode the props at runtime while sync persisted the earlier
+   literal. This is exactly the silent-drop failure the task file named as the
+   worst possible outcome, and it shipped anyway. Now rejected loudly at sync,
+   with two tests.
+2. `create` hard-coded `detached: false` instead of honoring `item.detached`,
+   making a recreated-but-removed question visible again.
+3. Rollback defaulted `detached` to false when a plan item was missing. Now
+   throws `ROLLBACK_PLAN_ITEM_MISSING`.
+4. `expectedRelations` filtered tombstones by the new parent when tombstones are
+   written under the old one, aborting any restore that also moved a resource.
+
+Fixing (3) introduced a fifth: the mid-loop throw left rollback state partially
+mutated. Resolved by preflighting every receipt lookup before the mutation loop.
+Final state: 28 course-sync tests pass, all reviewers green.

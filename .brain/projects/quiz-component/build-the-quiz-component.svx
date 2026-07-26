@@ -91,6 +91,22 @@ agent-generated content before a learner sees them.
 machine's implicit shuffle remains the default
 (`quiz-question-client.tsx:64-68`). This answers the latent shuffle question.
 
+**Review round (PR #25, merged as `905ca0b`).** Two real defects plus doc
+corrections:
+
+1. **`gradeAnswer('a', ['a'])` returned false.** Only the array branch
+   normalized, so a scalar `correct` fell through to `===` against an array.
+   Load-bearing, not cosmetic: `allowMultiple: true` renders checkboxes even with
+   a scalar `correct`, so a right answer arrives as `["a"]` and would grade
+   wrong — and the server side, which does not exist yet, may submit arrays
+   uniformly. Both sides normalize now, with a test in each direction.
+2. **Stale selection across questions.** `LOAD_QUESTION` reloaded the machine
+   without clearing `selectedAnswer`, letting a learner submit the previous
+   answer against a new question and be graded on it.
+3. Brain docs described server-side grading as shipped when it is chartered, and
+   listed already-mitigated upstream behavior as active sharp edges. Both
+   corrected so a maintainer does not re-solve finished work.
+
 **Decisions the worker made and recorded:** `/quiz-prototype` kept deliberately as
 a development fixture rather than deleted. Invalid `data` renders an inline error
 without breaking the surrounding lesson body. Missing or duplicate ids log a
