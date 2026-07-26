@@ -4,7 +4,7 @@ type: "step"
 kind: "task"
 interaction: "AFK"
 status: "open"
-assignee: ""
+assignee: "endpoint-worker (flagg, 2026-07-25)"
 parent: "./quiz-component-brief.svx"
 blockers:
   - "./build-sync-question-extraction.svx"

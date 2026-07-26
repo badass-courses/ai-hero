@@ -1,0 +1,141 @@
+---
+title: "Worker task: build the quiz answer endpoint"
+type: "task"
+assignee: ""
+created_at: "2026-07-25"
+---
+
+# Worker task: build the quiz answer endpoint
+
+## Claim first
+
+Set `assignee:` in this file to your callsign plus machine before anything else.
+
+## Where you work
+
+Worktree `/Users/joel/Code/worktrees/aih-quiz-endpoint`, branch
+`feat/quiz-answer-endpoint`, based on current `origin/main`. Commit there.
+**Never touch `main`.** Run `pnpm install` from the worktree root if needed, and
+`pnpm --filter @ai-hero/course-sync-schema build` if course-sync tests complain
+about a missing entry.
+
+## Context
+
+Read before starting:
+
+- Brief: `/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`
+- Your step: `.../build-the-answer-endpoint.svx`
+- Identity decisions: `.../decide-inline-quiz-identity.svx`
+- Grading decisions: `.../decide-multi-select-in-the-inline-quiz.svx`
+
+Already shipped and on `main`: the `Quiz`/`QuizQuestion` MDX components with
+client-side grading, and course-sync extraction that derives `question` content
+resources from inline markup. **Nothing persists yet. That is your job.**
+
+## Reuse decision (already made — do not relitigate)
+
+`convertkit.answerSurvey` (`src/trpc/api/routers/convertkit.ts`) is the existing
+survey write path. **Reuse its identity resolution and its logging shape. Do not
+call it and do not extend it.** Why it does not fit as-is:
+
+- plain `db.insert`, not an upsert — every resubmit mints another row and the
+  `(surveyId, questionId, respondentKey)` unique index goes unused
+- writes `fields: { answer }` only, with no grading
+- never sets `respondentKey` / `surveySessionId`, so an anonymous learner with no
+  Kit cookie is unattributable — exactly the learner a free crash course has
+- always mirrors to Kit, which is explicitly out of scope for quizzes
+- resolves questions by `fields.slug`; quiz questions resolve by
+  `fields.courseSync.sourceQuestionId`
+
+Extract the identity resolution (session → `ck_subscriber_id` cookie →
+`ck_subscriber` cookie) into something both paths can share if that is clean;
+otherwise mirror the logic and say why in your summary. Do not regress the
+existing survey behavior either way.
+
+## Build this
+
+**1. The write.** One `QuestionResponse` row per learner per question:
+
+- `surveyId` = the **lesson's content resource id**
+- `questionId` = the **`sync_question_<hash>` content resource id**, resolved
+  server-side — never a client-supplied string
+- `fields` = `{ answer, correct }`, where `answer` may be a string or an array
+  for multi-select. `fields` is JSON so no schema change is needed.
+- **Upsert on the unique index** `(surveyId, questionId, respondentKey)`
+  (`@coursebuilder/adapter-drizzle .../question-response.ts:56-58`). A resubmit
+  updates in place. A retry must not mint a second row.
+
+**2. Identity.** Anonymous learners must work — the crash course is free and
+mostly logged out.
+
+- Mint a stable survey session id and write **`respondentKey` and
+  `surveySessionId`**. This effort is the **first writer** of those columns;
+  nothing else in the codebase sets them, so the semantics you choose become the
+  definition. Write them down in your result.
+- Resolve richer identity when available (session, then Kit cookies) and set
+  `userId` / `emailListSubscriberId` too.
+- Say explicitly in your result what happens when an anonymous learner later logs
+  in. If cheaply avoidable, do not fork them into two respondents; if not cheap,
+  accept it deliberately and say so.
+
+**3. Grade on the server.** The client posts `{ lessonId, questionId, answer }`
+where `questionId` is the **authored** id from the MDX. The server:
+
+- resolves the question content resource — sync stores the authored id at
+  `fields.courseSync.sourceQuestionId` (`course-sync/control-plane.ts:292-301`)
+- reads `correct` from that row
+- grades with the shared `gradeAnswer` (`src/lib/quiz/grade-answer.ts`) — the
+  same function the component uses
+
+**Never accept a `correct` value from the client.** A posted question id with no
+matching resource is an error, not a silent insert: it means sync has not run or
+the body drifted.
+
+**4. Wire the component to post.** Persistence is not done until a learner
+answering in a lesson body produces a row.
+
+- `compile-mdx` already threads `context.lessonId` to components — copy the
+  `MDXCheckbox` pattern (`src/utils/compile-mdx.tsx:308-313`).
+- A question with no `id`, or one whose lesson id is unavailable, must still
+  render and grade — it just does not post. That is the existing
+  "answers will not be saved" warning path; keep it working.
+- `/quiz-prototype` has no lesson resource. It must keep working as a fixture
+  without erroring. Say how you handled it.
+
+**5. Do not mirror to Kit.** Whether quiz answers should feed the subscriber
+machinery is an open question on the brief, not a decision for this step.
+
+**6. Observability is a launch gate, not a follow-up.** Ship per-stage structured
+logs (received → resolved → graded → saved, plus failure branches) following the
+`survey.answer.*` naming already in the codebase, and **one documented command
+that traces a single answer end to end**. This is required before it goes live.
+
+## Rules
+
+- Do not deploy. Do not run migrations against a shared database. Do not call
+  production. The steering session owns merge and deploy.
+- Do not modify anything under `.brain/` except this task file.
+- Do not change the `Quiz`/`QuizQuestion` authoring contract — it is published
+  and Matt is authoring against it. Adding behavior is fine; changing field names
+  or semantics is not.
+- Write tests: upsert idempotency (same respondent answering twice → one row,
+  updated), server grading for single and multi-select, unknown question id
+  rejected, anonymous respondent key minted and reused, and a client-supplied
+  `correct` being ignored.
+- Typecheck and lint must pass. A full production build may fail at page
+  collection because the local database is unavailable — known environment limit,
+  not your bug.
+- If a decision looks wrong now that you are building it, say so in your DONE
+  summary rather than quietly doing something else.
+
+## Finish
+
+Commit on `feat/quiz-answer-endpoint`. Print a `DONE` summary, max 15 lines:
+
+- files touched and the endpoint's shape
+- what you chose for `respondentKey` / `surveySessionId` semantics, and the
+  anonymous-then-login behavior
+- how you verified upsert idempotency and server-side grading
+- the trace command
+- how `/quiz-prototype` behaves without a lesson
+- anything that fought you or looks wrong in the design
