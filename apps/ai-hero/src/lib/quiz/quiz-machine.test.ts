@@ -118,6 +118,47 @@ describe('best-effort quiz persistence', () => {
 		},
 	)
 
+	it.each([
+		{ answer: 'a', expectedState: 'answered.correct' },
+		{ answer: 'b', expectedState: 'answered.incorrect' },
+	])(
+		'grades logged-out answers in $expectedState without posting',
+		async ({ answer, expectedState }) => {
+			const persist = vi.fn()
+			const questionWithoutPersistence = {
+				...question,
+				persistence: undefined,
+			}
+			const actor = createActor(quizMachine, {
+				input: {
+					currentQuestionId: 'question-1',
+					currentQuestion: questionWithoutPersistence,
+					questionSet: { 'question-1': questionWithoutPersistence },
+					handleSubmitAnswer: createBestEffortQuizPersistence({
+						persist,
+						reportError: vi.fn(),
+					}),
+				},
+			}).start()
+
+			actor.send({
+				type: 'LOAD_QUESTION',
+				currentQuestionId: 'question-1',
+				currentQuestion: questionWithoutPersistence,
+			})
+			actor.send({ type: 'ANSWER', answer })
+
+			await vi.waitFor(() => {
+				expect(actor.getSnapshot().matches(expectedState)).toBe(true)
+			})
+			expect(actor.getSnapshot().context.currentQuestion.answer).toBe(
+				'The explanation stays available.',
+			)
+			expect(persist).not.toHaveBeenCalled()
+			actor.stop()
+		},
+	)
+
 	it('posts the live question ids after the question changes', async () => {
 		const persist = vi.fn().mockResolvedValue(undefined)
 		const handleSubmitAnswer = createBestEffortQuizPersistence({

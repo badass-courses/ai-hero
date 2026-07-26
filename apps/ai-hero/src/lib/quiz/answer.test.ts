@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-	getOrCreateQuizSessionId,
 	quizRespondentKey,
 	QuizAnswerInputSchema,
 	QuizQuestionNotFoundError,
@@ -11,9 +10,9 @@ import {
 } from './answer'
 
 const identity: QuizAnswerIdentity = {
-	respondentKey: 'session:anon-session-1',
-	surveySessionId: 'anon-session-1',
-	userId: null,
+	respondentKey: 'user:user-1',
+	surveySessionId: null,
+	userId: 'user-1',
 	emailListSubscriberId: null,
 }
 
@@ -60,7 +59,7 @@ describe('submitQuizAnswer', () => {
 		expect(harness.responses.size).toBe(1)
 		expect([...harness.responses.values()][0]).toMatchObject({
 			id: 'response-1',
-			respondentKey: 'session:anon-session-1',
+			respondentKey: 'user:user-1',
 			fields: { answer: 'a', correct: true },
 		})
 	})
@@ -142,19 +141,12 @@ describe('submitQuizAnswer', () => {
 
 	it('keeps one row for the same user across browser sessions', async () => {
 		const harness = createHarness('a')
-		harness.dependencies.resolveIdentity
-			.mockResolvedValueOnce({
-				respondentKey: quizRespondentKey('user-1', 'browser-1'),
-				surveySessionId: 'browser-1',
-				userId: 'user-1',
-				emailListSubscriberId: null,
-			})
-			.mockResolvedValueOnce({
-				respondentKey: quizRespondentKey('user-1', 'browser-2'),
-				surveySessionId: 'browser-2',
-				userId: 'user-1',
-				emailListSubscriberId: null,
-			})
+		harness.dependencies.resolveIdentity.mockResolvedValue({
+			respondentKey: quizRespondentKey('user-1'),
+			surveySessionId: null,
+			userId: 'user-1',
+			emailListSubscriberId: null,
+		})
 
 		await submitQuizAnswer(
 			{ lessonId: 'lesson-1', questionId: 'authored-1', answer: 'b' },
@@ -170,34 +162,8 @@ describe('submitQuizAnswer', () => {
 		expect(harness.responses.size).toBe(1)
 		expect([...harness.responses.values()][0]).toMatchObject({
 			respondentKey: 'user:user-1',
-			surveySessionId: 'browser-2',
+			surveySessionId: null,
 			fields: { answer: 'a', correct: true },
 		})
-	})
-})
-
-describe('getOrCreateQuizSessionId', () => {
-	it('mints one anonymous respondent key and reuses it', () => {
-		const values = new Map<string, string>()
-		const set = vi.fn((name: string, value: string) => values.set(name, value))
-		const cookieStore = {
-			get: (name: string) => {
-				const value = values.get(name)
-				return value ? { value } : undefined
-			},
-			set,
-		}
-		const newId = vi.fn(() => 'stable-anonymous-id')
-
-		const first = getOrCreateQuizSessionId(cookieStore, 'quiz-session', newId)
-		const second = getOrCreateQuizSessionId(cookieStore, 'quiz-session', newId)
-
-		expect(first).toBe('stable-anonymous-id')
-		expect(second).toBe(first)
-		expect(newId).toHaveBeenCalledTimes(1)
-		expect(set).toHaveBeenCalledTimes(1)
-		expect(quizRespondentKey(null, first)).toBe(
-			'session:stable-anonymous-id',
-		)
 	})
 })

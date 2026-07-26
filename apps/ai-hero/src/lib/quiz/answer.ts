@@ -16,9 +16,9 @@ export type QuizAnswerInput = z.infer<typeof QuizAnswerInputSchema>
 
 export type QuizAnswerIdentity = {
 	respondentKey: string
-	surveySessionId: string
-	userId: string | null
-	emailListSubscriberId: string | null
+	surveySessionId: null
+	userId: string
+	emailListSubscriberId: null
 }
 
 export type QuizAnswerQuestion = {
@@ -63,53 +63,12 @@ export class QuizQuestionNotFoundError extends Error {
 }
 
 /**
- * Return the existing anonymous quiz session or mint and persist one.
- * surveySessionId identifies this browser session. respondentKey is derived
- * separately so an authenticated user keeps one response row across devices.
+ * Quiz persistence is authenticated. respondentKey answers "who" with one
+ * stable value across devices. surveySessionId stays null because this endpoint
+ * no longer creates or tracks an anonymous browser session.
  */
-export function getOrCreateQuizSessionId(
-	cookieStore: {
-		get(name: string): { value: string } | undefined
-		set(
-			name: string,
-			value: string,
-			options: {
-				maxAge: number
-				path: string
-				httpOnly: boolean
-				sameSite: 'lax'
-				secure: boolean
-			},
-		): void
-	},
-	cookieName: string,
-	newId: () => string,
-): string {
-	const existing = cookieStore.get(cookieName)?.value?.trim()
-	if (existing) return existing
-
-	const surveySessionId = newId()
-	cookieStore.set(cookieName, surveySessionId, {
-		maxAge: 60 * 60 * 24 * 365,
-		path: '/',
-		httpOnly: true,
-		sameSite: 'lax',
-		secure: process.env.NODE_ENV === 'production',
-	})
-	return surveySessionId
-}
-
-/**
- * respondentKey answers "who": a stable user id when authenticated, otherwise
- * this anonymous browser session. surveySessionId separately answers "which
- * browser session". We deliberately do not migrate earlier anonymous rows on
- * login; merging them can collide with answers the user already made elsewhere.
- */
-export function quizRespondentKey(
-	userId: string | null,
-	surveySessionId: string,
-): string {
-	return userId ? `user:${userId}` : `session:${surveySessionId}`
+export function quizRespondentKey(userId: string): string {
+	return `user:${userId}`
 }
 
 export async function submitQuizAnswer(

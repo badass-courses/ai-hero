@@ -9,6 +9,7 @@ import {
 import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
 import { Check, CheckSquare, Circle, Square, X } from 'lucide-react'
+import { useSession } from 'next-auth/react'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -23,6 +24,7 @@ export function QuizQuestionClient({
 	lessonId?: string
 	authoringWarning?: string
 }) {
+	const { data: session } = useSession()
 	const generatedId = useId()
 	const questionId = data.id ?? generatedId
 	const inputName = `quiz-question-${generatedId}`
@@ -39,11 +41,11 @@ export function QuizQuestionClient({
 			...data,
 			correct,
 			persistence:
-				lessonId && data.id && !authoringWarning
+				session?.user?.id && lessonId && data.id && !authoringWarning
 					? { lessonId, questionId: data.id }
 					: undefined,
 		}),
-		[authoringWarning, correct, data, lessonId],
+		[authoringWarning, correct, data, lessonId, session?.user?.id],
 	)
 	const [selectedAnswer, setSelectedAnswer] = useState<string | string[]>(
 		isMultiple ? [] : '',
