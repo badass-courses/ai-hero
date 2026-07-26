@@ -7,6 +7,7 @@ import { QuizQuestionDataSchema } from './quiz-schema'
 type QuizQuestionProps = {
 	data?: unknown
 	authoringWarning?: string
+	lessonId?: string
 }
 
 function getAuthoredQuestionId(child: React.ReactNode): string | undefined {
@@ -66,6 +67,7 @@ export async function Quiz({ children }: { children: React.ReactNode }) {
 export async function QuizQuestion({
 	data,
 	authoringWarning,
+	lessonId,
 }: QuizQuestionProps) {
 	const parsed = QuizQuestionDataSchema.safeParse(data)
 
@@ -108,6 +110,11 @@ export async function QuizQuestion({
 	}
 
 	return (
-		<QuizQuestionClient data={parsed.data} authoringWarning={warning} />
+		<QuizQuestionClient
+			key={`${lessonId ?? 'no-lesson'}:${parsed.data.id ?? 'no-id'}`}
+			data={parsed.data}
+			lessonId={warning ? undefined : lessonId}
+			authoringWarning={warning}
+		/>
 	)
 }

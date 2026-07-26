@@ -1,32 +1,30 @@
 'use client'
 
 import { useEffect, useId, useMemo, useState } from 'react'
-import { gradeAnswer } from '@/lib/quiz/grade-answer'
+import * as Sentry from '@sentry/nextjs'
+import {
+	createBestEffortQuizPersistence,
+	quizMachine,
+} from '@/lib/quiz/quiz-machine'
+import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
 import { Check, CheckSquare, Circle, Square, X } from 'lucide-react'
-
-import { surveyMachine } from '@coursebuilder/survey'
+import { useSession } from 'next-auth/react'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import type { QuizQuestionData } from './quiz-schema'
 
-const quizMachine = surveyMachine.provide({
-	guards: {
-		answeredCorrectly: ({ context }) => {
-			const correct = context.currentQuestion.correct
-			return correct !== undefined && gradeAnswer(correct, context.answer)
-		},
-	},
-})
-
 export function QuizQuestionClient({
 	data,
+	lessonId,
 	authoringWarning,
 }: {
 	data: QuizQuestionData
+	lessonId?: string
 	authoringWarning?: string
 }) {
+	const { data: session } = useSession()
 	const generatedId = useId()
 	const questionId = data.id ?? generatedId
 	const inputName = `quiz-question-${generatedId}`
@@ -38,16 +36,43 @@ export function QuizQuestionClient({
 				: data.correct,
 		[data.correct, isMultiple],
 	)
-	const machineQuestion = useMemo(() => ({ ...data, correct }), [data, correct])
+	const machineQuestion = useMemo(
+		() => ({
+			...data,
+			correct,
+			persistence:
+				session?.user?.id && lessonId && data.id && !authoringWarning
+					? { lessonId, questionId: data.id }
+					: undefined,
+		}),
+		[authoringWarning, correct, data, lessonId, session?.user?.id],
+	)
 	const [selectedAnswer, setSelectedAnswer] = useState<string | string[]>(
 		isMultiple ? [] : '',
+	)
+	const answerMutation = api.quiz.answer.useMutation()
+	const persistAnswer = useMemo(
+		() =>
+			createBestEffortQuizPersistence({
+				persist: (request) => answerMutation.mutateAsync(request),
+				reportError: (error, request) => {
+					Sentry.captureException(error, {
+						tags: { event: 'quiz.answer.client-persist.failed' },
+						extra: {
+							lessonId: request.lessonId,
+							questionId: request.questionId,
+						},
+					})
+				},
+			}),
+		[answerMutation],
 	)
 	const [state, send] = useMachine(quizMachine, {
 		input: {
 			currentQuestionId: questionId,
 			currentQuestion: machineQuestion,
 			questionSet: { [questionId]: machineQuestion },
-			handleSubmitAnswer: async () => undefined,
+			handleSubmitAnswer: persistAnswer,
 		},
 	})
 
@@ -211,11 +236,6 @@ export function QuizQuestionClient({
 				</div>
 			)}
 
-			{state.matches('failure') ? (
-				<p role="alert" className="text-destructive mt-4 text-sm">
-					Your answer could not be checked. Try again.
-				</p>
-			) : null}
 		</fieldset>
 	)
 }
