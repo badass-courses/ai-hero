@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { gradeAnswer } from '@/lib/quiz/grade-answer'
+import { api } from '@/trpc/react'
 import { useMachine } from '@xstate/react'
 import { Check, CheckSquare, Circle, Square, X } from 'lucide-react'
 
@@ -22,9 +23,11 @@ const quizMachine = surveyMachine.provide({
 
 export function QuizQuestionClient({
 	data,
+	lessonId,
 	authoringWarning,
 }: {
 	data: QuizQuestionData
+	lessonId?: string
 	authoringWarning?: string
 }) {
 	const generatedId = useId()
@@ -42,12 +45,24 @@ export function QuizQuestionClient({
 	const [selectedAnswer, setSelectedAnswer] = useState<string | string[]>(
 		isMultiple ? [] : '',
 	)
+	const answerMutation = api.quiz.answer.useMutation()
+	const persistAnswer = useCallback(
+		async ({ answer }: { answer: string | string[] }) => {
+			if (!lessonId || !data.id || authoringWarning) return
+			await answerMutation.mutateAsync({
+				lessonId,
+				questionId: data.id,
+				answer,
+			})
+		},
+		[answerMutation, authoringWarning, data.id, lessonId],
+	)
 	const [state, send] = useMachine(quizMachine, {
 		input: {
 			currentQuestionId: questionId,
 			currentQuestion: machineQuestion,
 			questionSet: { [questionId]: machineQuestion },
-			handleSubmitAnswer: async () => undefined,
+			handleSubmitAnswer: persistAnswer,
 		},
 	})
 

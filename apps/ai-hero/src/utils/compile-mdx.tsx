@@ -472,7 +472,9 @@ async function compileMDXInternal(
 						<TimelineItem icon={icon}>{children}</TimelineItem>
 					),
 					Quiz: ({ children }) => <Quiz>{children}</Quiz>,
-					QuizQuestion: (props) => <QuizQuestion {...props} />,
+					QuizQuestion: (props) => (
+						<QuizQuestion {...props} lessonId={context?.lessonId} />
+					),
 					OfficeHoursSchedule: ({
 						sessions,
 						cohortId,
