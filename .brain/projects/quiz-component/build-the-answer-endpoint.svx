@@ -56,6 +56,17 @@ What the endpoint has to get right:
   exact-set, all or nothing
   ([Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx)).
   `QuestionResponse.fields` is JSON, so an array answer needs no schema change.
+- **No Kit on the answer path at all** (Joel, 2026-07-25: "these quizzes should
+  store in our db not kit"). Answers live in `QuestionResponse` and nothing is
+  written to Kit — that was always true. What changed: identity resolution must
+  not *call* Kit either. `emailListProvider.getSubscriber()` is removed from this
+  path, because the round-trip fetched an id we already hold — the
+  `ck_subscriber_id` cookie IS the subscriber id, so `emailListSubscriberId` is
+  set straight from the cookie. Accepted loss: the
+  `subscriber.email_address` → `users.findFirst` inference that mapped a
+  logged-out Kit subscriber to a `userId`. `respondentKey` still ties that
+  learner's answers together and `userId` fills in on real login. No replacement
+  lookup, no external calls on the answer path.
 - **Do not mirror to Kit.** Surveys write answers into Kit subscriber fields
   (`convertkit.ts:157-180`, `surveys-query.ts:587-619`). Whether quizzes should is
   an open latent question on the brief, not a decision for this step. Default to
