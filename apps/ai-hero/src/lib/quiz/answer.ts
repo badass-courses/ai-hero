@@ -63,9 +63,9 @@ export class QuizQuestionNotFoundError extends Error {
 }
 
 /**
- * Return the existing anonymous quiz session or mint and persist one. The same
- * opaque id is both respondentKey and surveySessionId. Richer identity is
- * metadata on that stable browser identity, never a replacement for it.
+ * Return the existing anonymous quiz session or mint and persist one.
+ * surveySessionId identifies this browser session. respondentKey is derived
+ * separately so an authenticated user keeps one response row across devices.
  */
 export function getOrCreateQuizSessionId(
 	cookieStore: {
@@ -97,6 +97,19 @@ export function getOrCreateQuizSessionId(
 		secure: process.env.NODE_ENV === 'production',
 	})
 	return surveySessionId
+}
+
+/**
+ * respondentKey answers "who": a stable user id when authenticated, otherwise
+ * this anonymous browser session. surveySessionId separately answers "which
+ * browser session". We deliberately do not migrate earlier anonymous rows on
+ * login; merging them can collide with answers the user already made elsewhere.
+ */
+export function quizRespondentKey(
+	userId: string | null,
+	surveySessionId: string,
+): string {
+	return userId ? `user:${userId}` : `session:${surveySessionId}`
 }
 
 export async function submitQuizAnswer(

@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import {
-	bestEffortQuizPersistence,
+	createBestEffortQuizPersistence,
 	quizMachine,
 } from '@/lib/quiz/quiz-machine'
 import { api } from '@/trpc/react'
@@ -34,33 +34,36 @@ export function QuizQuestionClient({
 				: data.correct,
 		[data.correct, isMultiple],
 	)
-	const machineQuestion = useMemo(() => ({ ...data, correct }), [data, correct])
+	const machineQuestion = useMemo(
+		() => ({
+			...data,
+			correct,
+			persistence:
+				lessonId && data.id && !authoringWarning
+					? { lessonId, questionId: data.id }
+					: undefined,
+		}),
+		[authoringWarning, correct, data, lessonId],
+	)
 	const [selectedAnswer, setSelectedAnswer] = useState<string | string[]>(
 		isMultiple ? [] : '',
 	)
 	const answerMutation = api.quiz.answer.useMutation()
 	const persistAnswer = useMemo(
 		() =>
-			bestEffortQuizPersistence({
-				persist: async ({ answer }) => {
-					if (!lessonId || !data.id || authoringWarning) return
-					await answerMutation.mutateAsync({
-						lessonId,
-						questionId: data.id,
-						answer,
-					})
-				},
-				reportError: (error) => {
+			createBestEffortQuizPersistence({
+				persist: (request) => answerMutation.mutateAsync(request),
+				reportError: (error, request) => {
 					Sentry.captureException(error, {
 						tags: { event: 'quiz.answer.client-persist.failed' },
 						extra: {
-							lessonId,
-							questionId: data.id,
+							lessonId: request.lessonId,
+							questionId: request.questionId,
 						},
 					})
 				},
 			}),
-		[answerMutation, authoringWarning, data.id, lessonId],
+		[answerMutation],
 	)
 	const [state, send] = useMachine(quizMachine, {
 		input: {

@@ -1,6 +1,18 @@
-import { surveyMachine } from '@coursebuilder/survey'
+import {
+	surveyMachine,
+	type SurveyMachineContext,
+} from '@coursebuilder/survey'
 
 import { gradeAnswer } from './grade-answer'
+
+export type QuizPersistenceTarget = {
+	lessonId: string
+	questionId: string
+}
+
+export type QuizPersistenceRequest = QuizPersistenceTarget & {
+	answer: string | string[]
+}
 
 export const quizMachine = surveyMachine.provide({
 	guards: {
@@ -11,32 +23,42 @@ export const quizMachine = surveyMachine.provide({
 	},
 })
 
-type PersistenceInput = {
-	answer: string | string[]
-}
-
 /**
- * Quiz persistence is telemetry, not the teaching interaction's gate. The
- * survey machine sends a rejected submit actor to its terminal failure state,
- * so this adapter must consume persistence errors after reporting them.
+ * Start persistence from the machine's live question context, then resolve the
+ * submit actor immediately. The learner gets feedback without waiting for the
+ * database. Rejections still reach telemetry but never the machine's
+ * terminal failure state.
  */
-export function bestEffortQuizPersistence({
+export function createBestEffortQuizPersistence({
 	persist,
 	reportError,
 }: {
-	persist(input: PersistenceInput): Promise<unknown>
-	reportError(error: unknown, input: PersistenceInput): void
+	persist(input: QuizPersistenceRequest): Promise<unknown>
+	reportError(error: unknown, input: QuizPersistenceRequest): void
 }) {
-	return async (input: PersistenceInput) => {
+	const reportSafely = (error: unknown, input: QuizPersistenceRequest) => {
 		try {
-			await persist(input)
-		} catch (error) {
-			try {
-				reportError(error, input)
-			} catch {
-				// Telemetry must not become a second path into the machine's dead-end
-				// failure state.
-			}
+			reportError(error, input)
+		} catch {
+			// Telemetry must not become a second path into the machine's dead-end
+			// failure state.
 		}
+	}
+
+	return (input: SurveyMachineContext) => {
+		const target = (
+			input.currentQuestion as SurveyMachineContext['currentQuestion'] & {
+				persistence?: QuizPersistenceTarget
+			}
+		).persistence
+		if (!target) return Promise.resolve()
+
+		const request = { ...target, answer: input.answer }
+		try {
+			void persist(request).catch((error) => reportSafely(error, request))
+		} catch (error) {
+			reportSafely(error, request)
+		}
+		return Promise.resolve()
 	}
 }

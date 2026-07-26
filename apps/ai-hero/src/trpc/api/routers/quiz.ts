@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { cookies } from 'next/headers'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import {
 	contentResource,
@@ -9,6 +8,7 @@ import {
 } from '@/db/schema'
 import {
 	getOrCreateQuizSessionId,
+	quizRespondentKey,
 	QuizAnswerInputSchema,
 	QuizQuestionNotFoundError,
 	submitQuizAnswer,
@@ -46,42 +46,37 @@ export const quizRouter = createTRPCRouter({
 						)
 						const convertkitId = cookieStore.get('ck_subscriber_id')?.value
 						const subscriberCookie = cookieStore.get('ck_subscriber')?.value
-						let subscriber: z.infer<typeof SubscriberSchema> | null = null
-
-						try {
-							if (convertkitId) {
-								subscriber = SubscriberSchema.parse(
-									await emailListProvider.getSubscriber(convertkitId),
-								)
-							} else if (subscriberCookie) {
-								subscriber = SubscriberSchema.parse(
-									JSON.parse(subscriberCookie),
-								)
+						const normalizedConvertkitId = (() => {
+							if (!convertkitId) return null
+							try {
+								return String(JSON.parse(convertkitId))
+							} catch {
+								return convertkitId
 							}
-						} catch (error) {
-							await log.error('quiz.answer.subscriber.failed', {
-								answerAttemptId,
-								lessonId: input.lessonId,
-								authoredQuestionId: input.questionId,
-								userId: ctx.session?.user?.id,
-								error: error instanceof Error ? error.message : String(error),
-							})
+						})()
+						let subscriberCookieId: string | null = null
+
+						if (!normalizedConvertkitId && subscriberCookie) {
+							try {
+								subscriberCookieId = SubscriberSchema.parse(
+									JSON.parse(subscriberCookie),
+								).id.toString()
+							} catch (error) {
+								await log.error('quiz.answer.subscriber-cookie.failed', {
+									answerAttemptId,
+									lessonId: input.lessonId,
+									authoredQuestionId: input.questionId,
+									error: error instanceof Error ? error.message : String(error),
+								})
+							}
 						}
 
-						let userId = ctx.session?.user?.id ?? null
-						const emailListSubscriberId = subscriber?.id?.toString() ?? null
-						const identityEmail =
-							subscriber?.email_address ?? ctx.session?.user?.email ?? null
-
-						if (!userId && identityEmail) {
-							const existingUser = await db.query.users.findFirst({
-								where: (users, { eq }) => eq(users.email, identityEmail),
-							})
-							userId = existingUser?.id ?? null
-						}
+						const userId = ctx.session?.user?.id ?? null
+						const emailListSubscriberId =
+							normalizedConvertkitId ?? subscriberCookieId
 
 						return {
-							respondentKey: surveySessionId,
+							respondentKey: quizRespondentKey(userId, surveySessionId),
 							surveySessionId,
 							userId,
 							emailListSubscriberId,

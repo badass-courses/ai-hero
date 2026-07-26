@@ -2,14 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
 	getOrCreateQuizSessionId,
+	quizRespondentKey,
 	QuizAnswerInputSchema,
 	QuizQuestionNotFoundError,
 	submitQuizAnswer,
+	type QuizAnswerIdentity,
 	type QuizAnswerRecord,
 } from './answer'
 
-const identity = {
-	respondentKey: 'anon-session-1',
+const identity: QuizAnswerIdentity = {
+	respondentKey: 'session:anon-session-1',
 	surveySessionId: 'anon-session-1',
 	userId: null,
 	emailListSubscriberId: null,
@@ -58,7 +60,7 @@ describe('submitQuizAnswer', () => {
 		expect(harness.responses.size).toBe(1)
 		expect([...harness.responses.values()][0]).toMatchObject({
 			id: 'response-1',
-			respondentKey: 'anon-session-1',
+			respondentKey: 'session:anon-session-1',
 			fields: { answer: 'a', correct: true },
 		})
 	})
@@ -137,6 +139,41 @@ describe('submitQuizAnswer', () => {
 		expect(input).not.toHaveProperty('correct')
 		expect(result.correct).toBe(true)
 	})
+
+	it('keeps one row for the same user across browser sessions', async () => {
+		const harness = createHarness('a')
+		harness.dependencies.resolveIdentity
+			.mockResolvedValueOnce({
+				respondentKey: quizRespondentKey('user-1', 'browser-1'),
+				surveySessionId: 'browser-1',
+				userId: 'user-1',
+				emailListSubscriberId: null,
+			})
+			.mockResolvedValueOnce({
+				respondentKey: quizRespondentKey('user-1', 'browser-2'),
+				surveySessionId: 'browser-2',
+				userId: 'user-1',
+				emailListSubscriberId: null,
+			})
+
+		await submitQuizAnswer(
+			{ lessonId: 'lesson-1', questionId: 'authored-1', answer: 'b' },
+			'attempt-browser-1',
+			harness.dependencies,
+		)
+		await submitQuizAnswer(
+			{ lessonId: 'lesson-1', questionId: 'authored-1', answer: 'a' },
+			'attempt-browser-2',
+			harness.dependencies,
+		)
+
+		expect(harness.responses.size).toBe(1)
+		expect([...harness.responses.values()][0]).toMatchObject({
+			respondentKey: 'user:user-1',
+			surveySessionId: 'browser-2',
+			fields: { answer: 'a', correct: true },
+		})
+	})
 })
 
 describe('getOrCreateQuizSessionId', () => {
@@ -159,5 +196,8 @@ describe('getOrCreateQuizSessionId', () => {
 		expect(second).toBe(first)
 		expect(newId).toHaveBeenCalledTimes(1)
 		expect(set).toHaveBeenCalledTimes(1)
+		expect(quizRespondentKey(null, first)).toBe(
+			'session:stable-anonymous-id',
+		)
 	})
 })

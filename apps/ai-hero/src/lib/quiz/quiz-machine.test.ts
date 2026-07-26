@@ -57,7 +57,7 @@ vi.mock('@coursebuilder/survey', async () => {
 	return { surveyMachine }
 })
 
-import { bestEffortQuizPersistence, quizMachine } from './quiz-machine'
+import { createBestEffortQuizPersistence, quizMachine } from './quiz-machine'
 
 const question = {
 	question: 'Which answer is correct?',
@@ -69,6 +69,7 @@ const question = {
 	correct: 'a',
 	answer: 'The explanation stays available.',
 	shuffleChoices: false,
+	persistence: { lessonId: 'lesson-a', questionId: 'question-a' },
 }
 
 describe('best-effort quiz persistence', () => {
@@ -81,7 +82,7 @@ describe('best-effort quiz persistence', () => {
 			const persistenceError = new Error('database unavailable')
 			const persist = vi.fn().mockRejectedValue(persistenceError)
 			const reportError = vi.fn()
-			const handleSubmitAnswer = bestEffortQuizPersistence({
+			const handleSubmitAnswer = createBestEffortQuizPersistence({
 				persist,
 				reportError,
 			})
@@ -116,4 +117,36 @@ describe('best-effort quiz persistence', () => {
 			actor.stop()
 		},
 	)
+
+	it('posts the live question ids after the question changes', async () => {
+		const persist = vi.fn().mockResolvedValue(undefined)
+		const handleSubmitAnswer = createBestEffortQuizPersistence({
+			persist,
+			reportError: vi.fn(),
+		})
+
+		await handleSubmitAnswer({
+			answer: 'a',
+			currentQuestion: {
+				persistence: { lessonId: 'lesson-a', questionId: 'question-a' },
+			},
+		} as unknown as Parameters<typeof handleSubmitAnswer>[0])
+		await handleSubmitAnswer({
+			answer: 'b',
+			currentQuestion: {
+				persistence: { lessonId: 'lesson-b', questionId: 'question-b' },
+			},
+		} as unknown as Parameters<typeof handleSubmitAnswer>[0])
+
+		expect(persist).toHaveBeenNthCalledWith(1, {
+			lessonId: 'lesson-a',
+			questionId: 'question-a',
+			answer: 'a',
+		})
+		expect(persist).toHaveBeenNthCalledWith(2, {
+			lessonId: 'lesson-b',
+			questionId: 'question-b',
+			answer: 'b',
+		})
+	})
 })

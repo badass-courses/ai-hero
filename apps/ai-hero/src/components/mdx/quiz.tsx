@@ -111,6 +111,7 @@ export async function QuizQuestion({
 
 	return (
 		<QuizQuestionClient
+			key={`${lessonId ?? 'no-lesson'}:${parsed.data.id ?? 'no-id'}`}
 			data={parsed.data}
 			lessonId={warning ? undefined : lessonId}
 			authoringWarning={warning}
