@@ -54,11 +54,13 @@ export type SourceRevisionRecord = {
 }
 
 export type ResourcePlanItem = {
-	sourceKind: 'section' | 'lesson'
+	sourceKind: 'section' | 'lesson' | 'question'
 	sourceId: string
 	targetResourceId: string
 	parentResourceId: string
 	position: number
+	detached: boolean
+	previousDetached: boolean
 	previousParentResourceId: string | null
 	previousPosition: number | null
 	action: CourseSyncResourceAction

@@ -44,7 +44,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly receipts: MemoryReceipt[] = []
 	readonly relations = new Map<
 		string,
-		{ parentId: string; childId: string; position: number }
+		{ parentId: string; childId: string; position: number; detached: boolean }
 	>()
 	targetValid = true
 	assertTargetCalls = 0
@@ -226,6 +226,11 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: item.parentResourceId,
 					childId: item.targetResourceId,
 					position: item.position,
+					// Honor the plan rather than assuming attached. Recreating a
+					// question that was previously removed arrives as create +
+					// detached: true, and hard-coding false would silently make it
+					// visible again.
+					detached: item.detached,
 				})
 			}
 			if (!resource)
@@ -236,15 +241,16 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				)
 			if (item.action !== 'create') {
 				const relation = relations.get(item.targetResourceId)
-				if (!relation) {
+				if (!relation || relation.detached !== item.previousDetached) {
 					throw new CourseSyncError(
 						'MANAGED_RELATION_MISSING',
-						'Relation missing.',
+						'Relation missing or detached state changed.',
 						409,
 					)
 				}
 				relation.parentId = item.parentResourceId
 				relation.position = item.position
+				relation.detached = item.detached
 			}
 			if (item.action === 'retain') {
 				if (!resource.currentVersionId)
@@ -370,16 +376,37 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const runReceipts = this.receipts.filter(
 			(receipt) => receipt.runId === input.runId,
 		)
-		for (const receipt of runReceipts) {
-			if (receipt.action === 'retain') continue
-			const resource = this.resources.get(receipt.resourceId)
-			if (!resource) {
-				throw new CourseSyncError(
-					'ROLLBACK_RESOURCE_MISSING',
-					'A rollback resource disappeared.',
-					409,
+		// Preflight every lookup before touching any state. Throwing partway
+		// through the mutation loop below would leave versions, resources,
+		// relations, and receipts half-rolled-back with no way to finish or undo.
+		const plannedRollbacks = runReceipts
+			.filter((receipt) => receipt.action !== 'retain')
+			.map((receipt) => {
+				const planItem = original.plan?.resources.find(
+					(item) => item.targetResourceId === receipt.resourceId,
 				)
-			}
+				if (!planItem) {
+					// Detached state is restored from this item. Defaulting it silently
+					// would re-attach a resource that should stay detached, which is the
+					// exact thing this rollback path exists to get right.
+					throw new CourseSyncError(
+						'ROLLBACK_PLAN_ITEM_MISSING',
+						`No plan item found for resource ${receipt.resourceId} during rollback.`,
+						409,
+					)
+				}
+				const resource = this.resources.get(receipt.resourceId)
+				if (!resource) {
+					throw new CourseSyncError(
+						'ROLLBACK_RESOURCE_MISSING',
+						'A rollback resource disappeared.',
+						409,
+					)
+				}
+				return { receipt, planItem, resource }
+			})
+
+		for (const { receipt, planItem, resource } of plannedRollbacks) {
 			const parent = receipt.parentVersionId
 				? this.versions.get(receipt.parentVersionId)
 				: null
@@ -422,6 +449,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					parentId: receipt.previousParentResourceId,
 					childId: receipt.resourceId,
 					position: receipt.previousPosition,
+					detached: planItem.previousDetached,
 				})
 			}
 			this.receipts.push({

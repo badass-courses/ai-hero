@@ -1,9 +1,23 @@
+import { log } from '@/server/logger'
+
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
+import {
+	SKILLS_WORKFLOW_EMAIL_STEPS,
+	type SkillsWorkflowEmailStep,
+} from './skills-workflow-path'
 import {
 	CONTACT_EVENT_SCHEMA_VERSION,
 	type Gate,
 	type SideEffectIntent,
 } from './types'
+import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from './value-path-completion'
+import { isLocalDayDripDue } from './value-path-drip-due'
+
+export { isLocalDayDripDue } from './value-path-drip-due'
 import {
 	verifyAnswerClickForStep,
 	type AnswerClickVerification,
@@ -20,45 +34,8 @@ import {
 	shouldBlockValuePathForContactState,
 } from './value-path-send-gate'
 
-export const SKILLS_WORKFLOW_EMAIL_STEPS = [
-	{
-		valuePathSlug: 'ai-hero-skills-workflow',
-		emailResourceId: 'ai-hero-skills-workflow.email-0',
-		kitSequenceId: '2757199',
-		nextValuePathSlug: 'ai-hero-skills-workflow',
-		nextEmailResourceId: 'ai-hero-skills-workflow.email-1',
-		nextKitSequenceId: '2757200',
-	},
-	...Array.from({ length: 5 }, (_, index) => ({
-		valuePathSlug: 'ai-hero-skills-workflow',
-		emailResourceId: `ai-hero-skills-workflow.email-${index + 1}`,
-		kitSequenceId: String(2757200 + index),
-		nextValuePathSlug: 'ai-hero-skills-workflow',
-		nextEmailResourceId: `ai-hero-skills-workflow.email-${index + 2}`,
-		nextKitSequenceId: String(2757201 + index),
-	})),
-	{
-		valuePathSlug: 'ai-hero-skills-workflow',
-		emailResourceId: 'ai-hero-skills-workflow.email-6',
-		kitSequenceId: '2757205',
-	},
-	...Array.from({ length: 6 }, (_, index) => ({
-		valuePathSlug: 'ai-hero-skills-team-workflow',
-		emailResourceId: `ai-hero-skills-team-workflow.team-email-${index}`,
-		kitSequenceId: String(2757206 + index),
-		nextValuePathSlug: 'ai-hero-skills-team-workflow',
-		nextEmailResourceId: `ai-hero-skills-team-workflow.team-email-${index + 1}`,
-		nextKitSequenceId: String(2757207 + index),
-	})),
-	{
-		valuePathSlug: 'ai-hero-skills-team-workflow',
-		emailResourceId: 'ai-hero-skills-team-workflow.team-email-6',
-		kitSequenceId: '2757212',
-	},
-] as const
-
-export type SkillsWorkflowEmailStep =
-	(typeof SKILLS_WORKFLOW_EMAIL_STEPS)[number]
+export { SKILLS_WORKFLOW_EMAIL_STEPS }
+export type { SkillsWorkflowEmailStep }
 
 export type ValuePathDripProgressionRepository = Pick<
 	CaptureMarketingRepository,
@@ -100,6 +77,7 @@ export type ValuePathDripProgressionResult = {
 		terminal: number
 		idempotentNoop: number
 		notDue: number
+		deferred: number
 	}
 	results: ValuePathDripProgressionContactResult[]
 }
@@ -109,7 +87,13 @@ export type ValuePathDripProgressionContactResult = {
 	fromEmailResourceId?: string
 	nextEmailResourceId?: string
 	nextKitSequenceId?: string
-	status: 'planned' | 'blocked' | 'terminal' | 'idempotent-noop' | 'not-due'
+	status:
+		| 'planned'
+		| 'blocked'
+		| 'terminal'
+		| 'idempotent-noop'
+		| 'not-due'
+		| 'deferred'
 	reviewReasons: string[]
 	advisoryReasons?: string[]
 	contactEventId?: string
@@ -123,12 +107,29 @@ export async function progressValuePathDrips(args: {
 	completedIntents: SideEffectIntent[]
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
+	email7LiveEnabled?: boolean
 	now?: string
+	logger?: Pick<typeof log, 'info' | 'warn'>
 }): Promise<ValuePathDripProgressionResult> {
 	const now = args.now ?? new Date().toISOString()
 	const results: ValuePathDripProgressionContactResult[] = []
+	const logger = args.logger ?? log
 	for (const intent of args.completedIntents) {
-		results.push(await progressCompletedIntent({ ...args, intent, now }))
+		try {
+			results.push(await progressCompletedIntent({ ...args, intent, now }))
+		} catch (cause) {
+			const fromEmailResourceId = stringField(intent.metadata.emailResourceId)
+			await logger.warn('value-path.drip.progression_deferred', {
+				fromEmailResourceId,
+				errorCategory: 'write-failed',
+			})
+			results.push({
+				contactId: intent.contactId,
+				fromEmailResourceId,
+				status: 'deferred',
+				reviewReasons: ['drip-progression-write-failed'],
+			})
+		}
 	}
 	return {
 		mode: args.allowWrite ? 'allow-write' : 'dry-run',
@@ -141,6 +142,7 @@ export async function progressValuePathDrips(args: {
 				(result) => result.status === 'idempotent-noop',
 			).length,
 			notDue: results.filter((result) => result.status === 'not-due').length,
+			deferred: results.filter((result) => result.status === 'deferred').length,
 		},
 		results,
 	}
@@ -151,8 +153,10 @@ async function progressCompletedIntent(args: {
 	allowlist: GateDRuntimeAllowlist
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
+	email7LiveEnabled?: boolean
 	now: string
 	intent: SideEffectIntent
+	logger?: Pick<typeof log, 'info' | 'warn'>
 }): Promise<ValuePathDripProgressionContactResult> {
 	const metadata = args.intent.metadata
 	const fromEmailResourceId = stringField(metadata.emailResourceId)
@@ -167,7 +171,11 @@ async function progressCompletedIntent(args: {
 			reviewReasons: ['value-path-step-missing'],
 		}
 	}
-	if (!('nextEmailResourceId' in step)) {
+	if (
+		!step.nextEmailResourceId ||
+		!step.nextKitSequenceId ||
+		!step.nextValuePathSlug
+	) {
 		return {
 			contactId: args.intent.contactId,
 			fromEmailResourceId,
@@ -175,12 +183,14 @@ async function progressCompletedIntent(args: {
 			reviewReasons: [],
 		}
 	}
+	const completedAt = valuePathIntentCompletedAt(args.intent)
 	const due = isLocalDayDripDue({
-		completedAt: stringField(args.intent.metadata.completedAt),
+		completedAt,
 		now: args.now,
 		scheduleEvidence: args.allowlist.candidates.find(
 			(candidate) => candidate.contactId === args.intent.contactId,
 		)?.scheduleEvidence,
+		cadenceHours: numberField(metadata.learnerFlowCanaryCadenceHours),
 	})
 	if (!due.due) {
 		return {
@@ -195,7 +205,17 @@ async function progressCompletedIntent(args: {
 		repository: args.repository,
 		contactId: args.intent.contactId,
 		fromEmailResourceId,
-		completedAt: stringField(args.intent.metadata.completedAt),
+		completedAt,
+	})
+	const logger = args.logger ?? log
+	await logger.info('value-path.ask.answer_click_verification', {
+		contactId: args.intent.contactId,
+		completedIntentId: args.intent.id,
+		fromEmailResourceId,
+		verdict: answerClick.verdict,
+		...(answerClick.verdict === 'verified'
+			? { answerClickEventId: answerClick.event.id }
+			: {}),
 	})
 	if (answerClick.verdict === 'verified') {
 		const clickOwned = await findDeliverableIntentSinceClick({
@@ -219,6 +239,16 @@ async function progressCompletedIntent(args: {
 			}
 		}
 		clickAdvisories.push('answer-click-undelivered-drip-fallback')
+		await logger.warn(
+			'value-path.ask.answer_click_undelivered_drip_fallback',
+			{
+				contactId: args.intent.contactId,
+				completedIntentId: args.intent.id,
+				fromEmailResourceId,
+				answerClickEventId: answerClick.event.id,
+				advisory: 'answer-click-undelivered-drip-fallback',
+			},
+		)
 	} else if (answerClick.verdict !== 'none') {
 		// Scanner/bot-like click volume: do not treat the clicks as answers.
 		clickAdvisories.push(`answer-click-unverified:${answerClick.verdict}`)
@@ -266,6 +296,11 @@ async function progressCompletedIntent(args: {
 		allowlist: args.allowlist,
 		explicitReviewReasons: args.acceptedReviewReasons,
 	})
+	const email7LaunchGate = evaluateEmail7LaunchGate({
+		emailResourceId: nextEmailResourceId,
+		email,
+		liveEnabled: args.email7LiveEnabled,
+	})
 	const sendDecision = applyAcceptedValuePathSendGateReviewReasons(
 		evaluateValuePathEmailSendGate({
 			mode: args.allowlist.mode,
@@ -294,6 +329,7 @@ async function progressCompletedIntent(args: {
 			requiredActions: ['advance-by-daily-drip', 'send-path-emails'],
 		}),
 		...runtimeDecision.reviewReasons,
+		...email7LaunchGate.reviewReasons,
 		...sendDecision.reviewReasons,
 	])
 	const advisoryReasons = unique([
@@ -307,6 +343,11 @@ async function progressCompletedIntent(args: {
 			reason: runtimeDecision.passed
 				? 'Gate D Runtime Allowlist passed.'
 				: `Gate D Runtime Allowlist blocked: ${runtimeDecision.reviewReasons.join(', ')}`,
+		},
+		{
+			slug: email7LaunchGate.slug,
+			passed: email7LaunchGate.passed,
+			reason: email7LaunchGate.reason,
 		},
 		...sendDecision.gates,
 	]
@@ -476,7 +517,7 @@ async function findDeliverableIntentSinceClick(args: {
 }
 
 function isDeliverableIntentStatus(intent: SideEffectIntent) {
-	if (intent.status === 'pending' || intent.status === 'completed') return true
+	if (intent.status === 'pending' || isValuePathIntentCompleted(intent)) return true
 	return intent.status === 'failed' && intent.metadata.retryable === true
 }
 
@@ -485,71 +526,12 @@ function emailStepIdFromResourceId(emailResourceId: string) {
 	return parts[parts.length - 1]
 }
 
-export function isLocalDayDripDue(args: {
-	completedAt?: string
-	now: string
-	scheduleEvidence?: { timezone?: string }
-}) {
-	const completedAt = args.completedAt ? new Date(args.completedAt) : undefined
-	const now = new Date(args.now)
-	if (!completedAt || Number.isNaN(completedAt.getTime())) {
-		return { due: false, reason: 'completed-at-missing' }
-	}
-	const minimumDueAt = new Date(completedAt.getTime() + 18 * 60 * 60 * 1000)
-	if (now < minimumDueAt)
-		return { due: false, reason: 'drip-min-age-not-reached' }
-
-	const timezone = args.scheduleEvidence?.timezone
-	if (!timezone) {
-		const fallbackDueAt = new Date(completedAt.getTime() + 24 * 60 * 60 * 1000)
-		return now >= fallbackDueAt
-			? { due: true, reason: 'fallback-24h-due' }
-			: { due: false, reason: 'fallback-24h-not-reached' }
-	}
-	const localNow = localParts(now, timezone)
-	const localCompleted = localParts(completedAt, timezone)
-	if (!localNow || !localCompleted) {
-		const fallbackDueAt = new Date(completedAt.getTime() + 24 * 60 * 60 * 1000)
-		return now >= fallbackDueAt
-			? { due: true, reason: 'fallback-24h-due' }
-			: { due: false, reason: 'fallback-24h-not-reached' }
-	}
-	const afterCompletedLocalDay =
-		localDateKey(localNow) > localDateKey(localCompleted)
-	return afterCompletedLocalDay && localNow.hour >= 9
-		? { due: true, reason: 'local-day-9am-due' }
-		: { due: false, reason: 'local-day-9am-not-reached' }
-}
-
-function localParts(date: Date, timezone: string) {
-	try {
-		const parts = new Intl.DateTimeFormat('en-US', {
-			timeZone: timezone,
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit',
-			hour: '2-digit',
-			hourCycle: 'h23',
-		}).formatToParts(date)
-		const part = (type: string) =>
-			parts.find((item) => item.type === type)?.value
-		return {
-			year: Number(part('year')),
-			month: Number(part('month')),
-			day: Number(part('day')),
-			hour: Number(part('hour')),
-		}
-	} catch {
-		return undefined
-	}
-}
-
-function localDateKey(parts: { year: number; month: number; day: number }) {
-	return parts.year * 10000 + parts.month * 100 + parts.day
-}
-
 function stringField(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function numberField(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function unique(values: string[]) {

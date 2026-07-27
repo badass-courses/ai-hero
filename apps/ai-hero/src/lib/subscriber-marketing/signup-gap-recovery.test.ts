@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+	buildSignupConfirmationReconciliationPlan,
+	buildSignupGapPreview,
 	fetchKitSignupGapPageWithRetry,
+	replaySignupGap,
 	SignupGapSourceUnavailableError,
 } from './signup-gap-recovery'
 
@@ -47,5 +50,207 @@ describe('signup-gap Kit source resilience', () => {
 			}),
 		)
 		expect(request).toHaveBeenCalledTimes(3)
+	})
+})
+
+describe('confirmed signup reconciliation', () => {
+	it('enqueues only confirmed active subscribers with stable event ids', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-07-21T12:00:00.000Z',
+			now: '2026-07-21T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-active',
+					email: 'active@example.com',
+					createdAt: '2026-07-20T12:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-unconfirmed',
+					email: 'unconfirmed@example.com',
+					createdAt: '2026-07-20T12:01:00.000Z',
+					state: 'inactive',
+				},
+			],
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 200,
+		})
+
+		expect(plan.counts).toEqual({
+			deferred: 0,
+			excludedSynthetic: 0,
+			planned: 1,
+			replayable: 1,
+			unconfirmed: 1,
+		})
+		expect(plan.events).toEqual([
+			{
+				id: 'skills-confirmed:9376133:kit-active',
+				name: 'skills-newsletter/subscribed',
+				data: expect.objectContaining({
+					kitSubscriberId: 'kit-active',
+					source: 'kit-confirmation-reconciler',
+				}),
+			},
+		])
+	})
+
+	it('carries stashed opt-in attribution from Kit fields into the enrollment event', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-07-24T12:00:00.000Z',
+			now: '2026-07-24T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-paid',
+					email: 'paid@example.com',
+					createdAt: '2026-07-24T09:00:00.000Z',
+					state: 'active',
+					fields: {
+						aih_optin_attribution: JSON.stringify({
+							utmSource: 'google',
+							utmMedium: 'cpc',
+							gclid: 'Cj0KCQjw-example-gclid',
+							capturedAt: '2026-07-24T08:55:00.000Z',
+						}),
+					},
+				},
+				{
+					kitSubscriberId: 'kit-organic',
+					email: 'organic@example.com',
+					createdAt: '2026-07-24T09:01:00.000Z',
+					state: 'active',
+					fields: { aih_optin_attribution: 'not-json' },
+				},
+			],
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 200,
+		})
+
+		expect(plan.events).toHaveLength(2)
+		const paid = plan.events.find(
+			(event) => event.data.kitSubscriberId === 'kit-paid',
+		)
+		expect(paid?.data.optInAttribution).toEqual({
+			utmSource: 'google',
+			utmMedium: 'cpc',
+			gclid: 'Cj0KCQjw-example-gclid',
+			capturedAt: '2026-07-24T08:55:00.000Z',
+		})
+		const organic = plan.events.find(
+			(event) => event.data.kitSubscriberId === 'kit-organic',
+		)
+		expect(organic?.data.optInAttribution).toBeUndefined()
+	})
+
+	it('caps each run and reports deferred confirmed subscribers', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-07-21T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: Array.from({ length: 3 }, (_, index) => ({
+				kitSubscriberId: `kit-${index}`,
+				email: `active-${index}@example.com`,
+				createdAt: `2026-07-20T12:0${index}:00.000Z`,
+				state: 'active' as const,
+			})),
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 2,
+		})
+
+		expect(plan.events).toHaveLength(2)
+		expect(plan.counts).toMatchObject({ planned: 2, deferred: 1 })
+	})
+})
+
+describe('signup-gap liveness metrics', () => {
+	it('keeps signup age separate from unserved age when Kit has no confirmation timestamp', async () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-17T08:00:00.000Z',
+			to: '2026-07-17T12:00:00.000Z',
+			now: '2026-07-17T14:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-oldest',
+					email: 'oldest@example.com',
+					createdAt: '2026-07-17T08:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-known-later',
+					email: 'known@example.com',
+					createdAt: '2026-07-17T10:00:00.000Z',
+					state: 'active',
+				},
+			],
+		})
+		const emitted: unknown[] = []
+
+		const receipt = await replaySignupGap({
+			preview,
+			hasExistingIdentity: async (candidate) =>
+				candidate.kitSubscriberId === 'kit-known-later',
+			emit: async (event) => {
+				emitted.push(event)
+			},
+		})
+
+		expect(preview).toMatchObject({
+			workSeen: 2,
+			workDone: 0,
+			oldestUnservedAgeHours: null,
+			oldestUnservedAt: null,
+			oldestCandidateSubscriberAgeHours: 6,
+			oldestCandidateSubscriberCreatedAt: '2026-07-17T08:00:00.000Z',
+			unservedAgeBasis: 'unavailable-kit-confirmation-time',
+		})
+		expect(receipt).toMatchObject({
+			generatedAt: '2026-07-17T14:00:00.000Z',
+			workSeen: 2,
+			workDone: 2,
+			oldestUnservedAgeHours: null,
+			oldestUnservedAt: null,
+		})
+		expect(emitted).toEqual([
+			expect.objectContaining({
+				data: expect.objectContaining({
+					signupGapLiveness: {
+						workSeen: 2,
+						workDone: 2,
+						oldestUnservedAgeHours: null,
+						oldestUnservedAt: null,
+					},
+				}),
+			}),
+		])
 	})
 })

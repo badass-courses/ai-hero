@@ -9,7 +9,17 @@ import {
 	users,
 } from '@/db/schema'
 import type { OptInAttribution } from './subscriber-marketing/opt-in-attribution'
-import { and, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	inArray,
+	lt,
+	notInArray,
+	or,
+	sql,
+} from 'drizzle-orm'
 
 const GOOGLE_CLICK_ID_KEYS = ['gclid', 'gbraid', 'wbraid'] as const
 const DEFAULT_CONVERSION_ACTION_RESOURCE_NAME =
@@ -124,6 +134,24 @@ export type GoogleAdsPurchaseConversionLedger = {
 		error: unknown
 		now: Date
 	}) => Promise<void>
+	recordTerminalSkip: (args: {
+		purchase: PurchaseRow
+		conversionActionResourceName: string
+		reason: TerminalPurchaseConversionSkipReason
+		now: Date
+	}) => Promise<void>
+}
+
+export type TerminalPurchaseConversionSkipReason =
+	| 'synthetic-google-click-id'
+
+export function isTerminalPurchaseConversionSkipReason(
+	reason: string,
+): reason is TerminalPurchaseConversionSkipReason {
+	// Contact identity and signup attribution can arrive late, so every fallback
+	// rejection remains retryable. Only an explicitly synthetic click is
+	// permanently barred from the real conversion lane.
+	return reason === 'synthetic-google-click-id'
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -239,11 +267,10 @@ export function prepareGoogleAdsConversion(args: {
 	const conversionDateTime = formatGoogleAdsConversionDateTime(
 		args.purchase.createdAt,
 	)
-	const idempotencyKey = [
-		'google-ads-click-conversion',
-		args.purchase.id,
-		args.conversionActionResourceName,
-	].join(':')
+	const idempotencyKey = googleAdsPurchaseConversionIdempotencyKey({
+		purchaseId: args.purchase.id,
+		conversionActionResourceName: args.conversionActionResourceName,
+	})
 	const requestSummary = {
 		purchaseId: args.purchase.id,
 		productId: args.purchase.productId,
@@ -281,6 +308,17 @@ export function prepareGoogleAdsConversion(args: {
 			requestSummary,
 		},
 	}
+}
+
+export function googleAdsPurchaseConversionIdempotencyKey(args: {
+	purchaseId: string
+	conversionActionResourceName: string
+}) {
+	return [
+		'google-ads-click-conversion',
+		args.purchaseId,
+		args.conversionActionResourceName,
+	].join(':')
 }
 
 export function readGoogleAdsConversionUploadConfig(
@@ -453,37 +491,55 @@ export const googleAdsRestUploadClient: GoogleAdsUploadClient = {
 	},
 }
 
-async function fetchCandidatePurchases(args: {
+export type PurchaseScanCursor = {
+	createdAt: Date | string
+	purchaseId: string
+}
+
+async function fetchCandidatePurchasePage(args: {
 	database: typeof db
 	conversionActionResourceName: string
 	purchaseId?: string
 	productId?: string
 	since?: Date | null
-	limit: number
-	excludeTerminalLedger: boolean
+	pageSize: number
+	cursor?: PurchaseScanCursor
 }) {
+	const terminalLedgerRows = args.database
+		.select({ purchaseId: googleAdsConversionUpload.purchaseId })
+		.from(googleAdsConversionUpload)
+		.where(
+			and(
+				inArray(googleAdsConversionUpload.status, [
+					'uploaded',
+					'skipped-terminal',
+				]),
+				eq(
+					googleAdsConversionUpload.conversionActionResourceName,
+					args.conversionActionResourceName,
+				),
+			),
+		)
 	const conditions = [
 		inArray(purchases.status, ['Valid', 'Restricted']),
 		sql`${purchases.totalAmount} > 0`,
+		notInArray(purchases.id, terminalLedgerRows),
 	]
-	if (args.excludeTerminalLedger) {
-		const terminalLedgerRows = args.database
-			.select({ purchaseId: googleAdsConversionUpload.purchaseId })
-			.from(googleAdsConversionUpload)
-			.where(
-				and(
-					inArray(googleAdsConversionUpload.status, ['uploaded']),
-					eq(
-						googleAdsConversionUpload.conversionActionResourceName,
-						args.conversionActionResourceName,
-					),
-				),
-			)
-		conditions.push(notInArray(purchases.id, terminalLedgerRows))
-	}
 	if (args.purchaseId) conditions.push(eq(purchases.id, args.purchaseId))
 	if (args.productId) conditions.push(eq(purchases.productId, args.productId))
 	if (args.since) conditions.push(gte(purchases.createdAt, args.since))
+	if (args.cursor) {
+		const cursorCreatedAt = new Date(args.cursor.createdAt)
+		conditions.push(
+			or(
+				lt(purchases.createdAt, cursorCreatedAt),
+				and(
+					eq(purchases.createdAt, cursorCreatedAt),
+					lt(purchases.id, args.cursor.purchaseId),
+				),
+			)!,
+		)
+	}
 
 	return args.database
 		.select({
@@ -497,9 +553,9 @@ async function fetchCandidatePurchases(args: {
 		})
 		.from(purchases)
 		.leftJoin(users, eq(purchases.userId, users.id))
-		.where(conditions.length > 0 ? and(...conditions) : undefined)
-		.orderBy(desc(purchases.createdAt))
-		.limit(args.limit)
+		.where(and(...conditions))
+		.orderBy(desc(purchases.createdAt), desc(purchases.id))
+		.limit(args.pageSize)
 }
 
 function normalizeKitSubscriberId(value: unknown) {
@@ -748,6 +804,51 @@ export function createGoogleAdsPurchaseConversionLedger(
 					),
 				)
 		},
+		async recordTerminalSkip({
+			purchase,
+			conversionActionResourceName,
+			reason,
+			now,
+		}) {
+			const idempotencyKey = googleAdsPurchaseConversionIdempotencyKey({
+				purchaseId: purchase.id,
+				conversionActionResourceName,
+			})
+			try {
+				await database.insert(googleAdsConversionUpload).values({
+					purchaseId: purchase.id,
+					conversionActionResourceName,
+					clickIdType: 'none',
+					clickIdHash: sha256(`terminal-skip:${reason}`),
+					attributionSource: 'checkout',
+					conversionDateTime: formatGoogleAdsConversionDateTime(
+						purchase.createdAt,
+					),
+					conversionValue: parseNumber(purchase.totalAmount).toFixed(2),
+					currencyCode: 'USD',
+					orderId: purchase.id,
+					status: 'skipped-terminal',
+					attemptCount: 0,
+					idempotencyKey,
+					requestSummary: {
+						purchaseId: purchase.id,
+						productId: purchase.productId,
+						conversionActionResourceName,
+						terminalSkipReason: reason,
+					},
+					lastAttemptAt: null,
+					createdAt: now,
+					updatedAt: now,
+				})
+			} catch (error) {
+				const existing = await database
+					.select({ id: googleAdsConversionUpload.id })
+					.from(googleAdsConversionUpload)
+					.where(eq(googleAdsConversionUpload.idempotencyKey, idempotencyKey))
+					.limit(1)
+				if (!existing[0]) throw error
+			}
+		},
 	}
 }
 
@@ -758,6 +859,10 @@ export async function processGoogleAdsConversionUploads(args: {
 	ledger?: GoogleAdsPurchaseConversionLedger
 	fallbackResolver?: GoogleAdsPurchaseFallbackResolver
 	candidates?: PurchaseRow[]
+	fetchCandidatePage?: (args: {
+		cursor?: PurchaseScanCursor
+		pageSize: number
+	}) => Promise<PurchaseRow[]>
 	purchaseId?: string
 	productId?: string
 	since?: Date | null
@@ -770,17 +875,10 @@ export async function processGoogleAdsConversionUploads(args: {
 	const uploadClient = args.uploadClient ?? googleAdsRestUploadClient
 	const now = args.now ?? new Date()
 	const dryRun = args.dryRun ?? true
-	const rows =
-		args.candidates ??
-		(await fetchCandidatePurchases({
-			database,
-			conversionActionResourceName: config.conversionActionResourceName,
-			purchaseId: args.purchaseId,
-			productId: args.productId,
-			since: args.since,
-			limit: args.limit ?? 100,
-			excludeTerminalLedger: !dryRun,
-		}))
+	const requestedLimit = Math.max(1, Math.floor(args.limit ?? 100))
+	const pageSize = args.purchaseId
+		? 1
+		: Math.min(500, Math.max(50, requestedLimit))
 	const fallbackResolver =
 		args.fallbackResolver ?? createGoogleAdsPurchaseFallbackResolver(database)
 	const ledger =
@@ -788,9 +886,13 @@ export async function processGoogleAdsConversionUploads(args: {
 	const missingConfig = missingGoogleAdsConfig(config)
 	const summary = {
 		mode: dryRun ? 'dry-run' : config.enabled ? 'upload' : 'disabled',
-		checked: rows.length,
-		candidates: rows.length,
+		limit: requestedLimit,
+		checked: 0,
+		candidates: 0,
 		eligible: 0,
+		pagesScanned: 0,
+		scanExhausted: false,
+		terminalSkipsRecorded: 0,
 		fallbackCandidates: 0,
 		fallbackResolved: 0,
 		uploaded: 0,
@@ -823,91 +925,139 @@ export async function processGoogleAdsConversionUploads(args: {
 			(summary.byAttributionSource[source] ?? 0) + 1
 	}
 
-	for (const row of rows) {
-		let prepared = prepareGoogleAdsConversion({
-			purchase: row,
-			conversionActionResourceName: config.conversionActionResourceName,
-		})
-		if (!prepared.ok && prepared.reason === 'missing-google-click-id') {
-			summary.fallbackCandidates += 1
-			const resolved = await fallbackResolver(row)
-			if (!resolved.ok) {
-				countReason(resolved.reason)
-				summary.skipped += 1
-				continue
-			}
-			summary.fallbackResolved += 1
-			summary.byFallbackResolution[resolved.fallback.resolution] =
-				(summary.byFallbackResolution[resolved.fallback.resolution] ?? 0) + 1
-			prepared = prepareGoogleAdsConversion({
+	let cursor: PurchaseScanCursor | undefined
+	let suppliedCandidatesConsumed = false
+	while (summary.eligible < requestedLimit && !summary.scanExhausted) {
+		const rows = args.candidates
+			? suppliedCandidatesConsumed
+				? []
+				: args.candidates
+			: args.fetchCandidatePage
+				? await args.fetchCandidatePage({ cursor, pageSize })
+				: await fetchCandidatePurchasePage({
+						database,
+						conversionActionResourceName:
+							config.conversionActionResourceName,
+						purchaseId: args.purchaseId,
+						productId: args.productId,
+						since: args.since,
+						pageSize,
+						cursor,
+					})
+		suppliedCandidatesConsumed = Boolean(args.candidates)
+		if (rows.length === 0) {
+			summary.scanExhausted = true
+			break
+		}
+		summary.pagesScanned += 1
+
+		for (const row of rows) {
+			summary.checked += 1
+			summary.candidates += 1
+			let prepared = prepareGoogleAdsConversion({
 				purchase: row,
 				conversionActionResourceName: config.conversionActionResourceName,
-				fallback: resolved.fallback,
 			})
-		}
-		if (!prepared.ok) {
-			countReason(prepared.reason)
-			summary.skipped += 1
-			continue
-		}
-		summary.eligible += 1
-		const conversion = prepared.conversion
-		countClickIdType(conversion.clickIdType)
-		countAttributionSource(conversion.attributionSource)
+			if (!prepared.ok && prepared.reason === 'missing-google-click-id') {
+				summary.fallbackCandidates += 1
+				const resolved = await fallbackResolver(row)
+				if (!resolved.ok) {
+					countReason(resolved.reason)
+					summary.skipped += 1
+					continue
+				}
+				summary.fallbackResolved += 1
+				summary.byFallbackResolution[resolved.fallback.resolution] =
+					(summary.byFallbackResolution[resolved.fallback.resolution] ?? 0) +
+					1
+				prepared = prepareGoogleAdsConversion({
+					purchase: row,
+					conversionActionResourceName:
+						config.conversionActionResourceName,
+					fallback: resolved.fallback,
+				})
+			}
+			if (!prepared.ok) {
+				countReason(prepared.reason)
+				summary.skipped += 1
+				if (
+					!dryRun &&
+					config.enabled &&
+					isTerminalPurchaseConversionSkipReason(prepared.reason)
+				) {
+					await ledger.recordTerminalSkip({
+						purchase: row,
+						conversionActionResourceName:
+							config.conversionActionResourceName,
+						reason: prepared.reason,
+						now,
+					})
+					summary.terminalSkipsRecorded += 1
+				}
+				continue
+			}
+			summary.eligible += 1
+			const conversion = prepared.conversion
+			countClickIdType(conversion.clickIdType)
+			countAttributionSource(conversion.attributionSource)
 
-		if (dryRun) {
-			summary.dryRunEligible += 1
-			countResult('dry-run')
-			continue
-		}
-		if (!config.enabled) {
-			summary.skipped += 1
-			countReason('upload-disabled')
-			countResult('skipped')
-			continue
-		}
-		if (missingConfig.length > 0) {
-			summary.skipped += 1
-			countReason('google-ads-config-missing')
-			countResult('skipped')
-			continue
+			if (dryRun) {
+				summary.dryRunEligible += 1
+				countResult('dry-run')
+			} else if (!config.enabled) {
+				summary.skipped += 1
+				countReason('upload-disabled')
+				countResult('skipped')
+			} else if (missingConfig.length > 0) {
+				summary.skipped += 1
+				countReason('google-ads-config-missing')
+				countResult('skipped')
+			} else {
+				const reservation = await ledger.reserve({ conversion, config, now })
+				if (reservation.status === 'idempotent-noop') {
+					summary.skipped += 1
+					countReason('ledger-idempotent-noop')
+					countResult('skipped')
+				} else {
+					let upload: GoogleAdsUploadClientResult
+					try {
+						upload = await uploadClient.upload(conversion, config)
+					} catch (error) {
+						await ledger.recordThrownError({
+							conversion,
+							attemptCount: reservation.attemptCount,
+							error,
+							now,
+						})
+						summary.failed += 1
+						countResult('failed')
+						continue
+					}
+
+					const status: UploadStatus = upload.status
+					await ledger.recordResult({
+						conversion,
+						attemptCount: reservation.attemptCount,
+						result: upload,
+						now,
+					})
+					if (status === 'uploaded') summary.uploaded += 1
+					else if (status === 'validated') summary.validated += 1
+					else summary.failed += 1
+					countResult(status)
+				}
+			}
+
+			if (summary.eligible >= requestedLimit) break
 		}
 
-		const reservation = await ledger.reserve({ conversion, config, now })
-		if (reservation.status === 'idempotent-noop') {
-			summary.skipped += 1
-			countReason('ledger-idempotent-noop')
-			countResult('skipped')
-			continue
+		if (args.candidates || rows.length < pageSize || args.purchaseId) {
+			summary.scanExhausted = true
+			break
 		}
-
-		let upload: GoogleAdsUploadClientResult
-		try {
-			upload = await uploadClient.upload(conversion, config)
-		} catch (error) {
-			await ledger.recordThrownError({
-				conversion,
-				attemptCount: reservation.attemptCount,
-				error,
-				now,
-			})
-			summary.failed += 1
-			countResult('failed')
-			continue
-		}
-
-		const status: UploadStatus = upload.status
-		await ledger.recordResult({
-			conversion,
-			attemptCount: reservation.attemptCount,
-			result: upload,
-			now,
-		})
-
-		if (status === 'uploaded') summary.uploaded += 1
-		else if (status === 'validated') summary.validated += 1
-		else summary.failed += 1
-		countResult(status)
+		if (summary.eligible >= requestedLimit) break
+		const last = rows[rows.length - 1]!
+		cursor = { createdAt: last.createdAt, purchaseId: last.id }
 	}
 
 	return summary

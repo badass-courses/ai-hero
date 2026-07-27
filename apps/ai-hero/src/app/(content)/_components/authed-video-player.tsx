@@ -8,6 +8,7 @@ import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
 import {
 	handleTextTrackChange,
+	setPreferredPlaybackRate,
 	setPreferredTextTrack,
 } from '@/hooks/use-mux-player-prefs'
 import {
@@ -145,12 +146,16 @@ export function AuthedVideoPlayer({
 		onLoadedData: () => {
 			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
 			handleTextTrackChange(playerRef, setPlayerPrefs)
+			setPreferredPlaybackRate(playerRef, playbackRate)
 			setPreferredTextTrack(playerRef)
 			// setMuxPlayerRef(playerRef)
 
 			if (bingeMode) {
 				playerRef?.current?.play().catch(console.warn)
 			}
+		},
+		onSeeked: () => {
+			setPreferredPlaybackRate(playerRef, playbackRate)
 		},
 		onEnded: () => {
 			startTransition(async () => {

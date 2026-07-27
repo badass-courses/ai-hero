@@ -13,6 +13,7 @@ import { ArrowUpRight, ShieldCheckIcon } from 'lucide-react'
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import {
 	SKILLS_FORM_ID,
+	SKILLS_HOSTED_RESUBSCRIBE_URL,
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
@@ -35,17 +36,20 @@ export function SkillsNewsletterCta({
 
 	const state: SkillsNewsletterCtaState =
 		forceState ??
-		(!subscriber
+		(!subscriber || subscriber.state !== 'active'
 			? 'fresh'
 			: subscriber.fields?.interest === 'skills'
 				? 'subscribed'
 				: 'tag-me')
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
-		if (subscriber) {
-			track('subscribed', { location: 'mdx_inline_skills' })
-			router.push(redirectUrlBuilder(subscriber, '/confirm'))
+		if (!subscriber) return
+		if (subscriber.state !== 'active') {
+			window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
+			return
 		}
+		track('subscribed', { location: 'mdx_inline_skills' })
+		router.push(redirectUrlBuilder(subscriber, '/confirm'))
 	}
 
 	if (state === 'subscribed') {
@@ -105,6 +109,8 @@ function SkillsCtaTagMe({
 			if (result.success) {
 				track('subscribed', { location: 'mdx_inline_skills', method: 'tag-me' })
 				setDone(true)
+			} else if (result.reason === 'confirmation-required') {
+				window.location.assign(result.confirmationUrl)
 			} else {
 				setError(
 					result.reason === 'not-subscribed'

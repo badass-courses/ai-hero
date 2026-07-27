@@ -412,6 +412,170 @@ describe('draft course sync control plane', () => {
 		expect(testHarness.persistence.receipts).toHaveLength(18)
 	})
 
+	it('extracts questions, replays without churn, and detaches removed questions', async () => {
+		const quizBody = `
+<Quiz>
+  <QuizQuestion data={{
+    id: 'single', question: 'Single?', type: 'multiple-choice',
+    choices: [{ answer: 'a' }, { answer: 'b' }], correct: 'b',
+    answer: 'Because B.',
+  }} />
+  <QuizQuestion data={{
+    id: 'multiple', question: 'Multiple?', type: 'multiple-choice',
+    choices: [{ answer: 'a' }, { answer: 'b' }, { answer: 'c' }],
+    correct: ['a', 'c'], allowMultiple: true, answer: 'A and C.',
+  }} />
+</Quiz>`
+		const manifest = fixture('quiz-v1')
+		const firstLesson = manifest.sections[0]?.lessons[0]
+		if (!firstLesson || firstLesson.type !== 'explainer') {
+			throw new Error('quiz fixture lesson missing')
+		}
+		firstLesson.explainer.body = quizBody
+
+		const testHarness = harness()
+		const first = await stagedAndPreviewed(
+			testHarness,
+			manifest,
+			'stage-quiz-v1',
+		)
+		expect(first.previewed.resourceCounts).toEqual({
+			create: 20,
+			update: 0,
+			retain: 0,
+		})
+		const firstPlan = testHarness.persistence.runs.get(first.staged.runId)?.plan
+		const questions = firstPlan?.resources.filter(
+			(item) => item.sourceKind === 'question',
+		)
+		expect(questions).toHaveLength(2)
+		expect(questions?.[1]).toMatchObject({
+			sourceId: 'multiple',
+			position: 1,
+			fields: {
+				correct: ['a', 'c'],
+				allowMultiple: true,
+				answer: 'A and C.',
+			},
+		})
+		await testHarness.controlPlane.apply({
+			runId: first.staged.runId,
+			idempotencyKey: 'apply-quiz-v1',
+		})
+		const questionId = questions?.[1]?.targetResourceId
+		if (!questionId) throw new Error('derived question missing')
+		const versionCount = testHarness.persistence.versions.size
+
+		const replay = await testHarness.controlPlane.stage({
+			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			idempotencyKey: 'stage-quiz-replay',
+			manifest,
+		})
+		expect(replay).toMatchObject({ state: 'applied', noOp: true })
+		expect(testHarness.persistence.resources.size).toBe(20)
+		expect(testHarness.persistence.versions.size).toBe(versionCount)
+
+		const removed = structuredClone(manifest)
+		removed.courseVersionId = 'quiz-v2'
+		const removedLesson = removed.sections[0]?.lessons[0]
+		if (!removedLesson || removedLesson.type !== 'explainer') {
+			throw new Error('removed quiz fixture lesson missing')
+		}
+		removedLesson.explainer.body = quizBody.replace(
+			/\n  <QuizQuestion data=\{\{\n    id: 'multiple'[\s\S]*?\n  \}\} \/>/,
+			'',
+		)
+		const second = await stagedAndPreviewed(
+			testHarness,
+			removed,
+			'stage-quiz-v2',
+		)
+		expect(second.previewed.resourceCounts).toEqual({
+			create: 0,
+			update: 2,
+			retain: 18,
+		})
+		await testHarness.controlPlane.apply({
+			runId: second.staged.runId,
+			idempotencyKey: 'apply-quiz-v2',
+		})
+		expect(testHarness.persistence.resources.has(questionId)).toBe(true)
+		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(true)
+
+		await testHarness.controlPlane.rollback({
+			runId: second.staged.runId,
+			idempotencyKey: 'rollback-quiz-v2',
+		})
+		expect(testHarness.persistence.resources.has(questionId)).toBe(true)
+		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
+			false,
+		)
+
+		removed.courseVersionId = 'quiz-v2-detached-again'
+		const detachedAgain = await stagedAndPreviewed(
+			testHarness,
+			removed,
+			'stage-quiz-v2-detached-again',
+		)
+		await testHarness.controlPlane.apply({
+			runId: detachedAgain.staged.runId,
+			idempotencyKey: 'apply-quiz-v2-detached-again',
+		})
+		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(true)
+
+		const restored = structuredClone(manifest)
+		restored.courseVersionId = 'quiz-v3'
+		const third = await stagedAndPreviewed(
+			testHarness,
+			restored,
+			'stage-quiz-v3',
+		)
+		await testHarness.controlPlane.apply({
+			runId: third.staged.runId,
+			idempotencyKey: 'apply-quiz-v3',
+		})
+		expect(testHarness.persistence.resources.size).toBe(20)
+		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
+			false,
+		)
+	})
+
+	it('rejects missing and duplicate question ids before reading source assets', async () => {
+		for (const [label, body, offendingId] of [
+			[
+				'missing',
+				`<QuizQuestion data={{ question: 'Missing', type: 'essay' }} />`,
+				'<missing>',
+			],
+			[
+				'duplicate',
+				`<QuizQuestion data={{ id: 'same', question: 'One', type: 'essay' }} />\n<QuizQuestion data={{ id: 'same', question: 'Two', type: 'essay' }} />`,
+				'same',
+			],
+		] as const) {
+			const manifest = fixture(`invalid-${label}`)
+			const lesson = manifest.sections[0]?.lessons[0]
+			if (!lesson || lesson.type !== 'explainer') {
+				throw new Error('invalid quiz fixture lesson missing')
+			}
+			lesson.explainer.body = body
+			const testHarness = harness()
+			await expect(
+				testHarness.controlPlane.stage({
+					bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+					idempotencyKey: `stage-invalid-${label}`,
+					manifest,
+				}),
+			).rejects.toMatchObject({
+				code: 'INVALID_QUIZ_QUESTION',
+				message: expect.stringContaining(
+					`Lesson lesson-1 has invalid QuizQuestion id ${offendingId}`,
+				),
+			})
+			expect(testHarness.reads()).toBe(0)
+		}
+	})
+
 	it('diffs a new revision and changes only the one lesson whose frozen media changed', async () => {
 		const first = harness()
 		const { staged } = await stagedAndPreviewed(first)

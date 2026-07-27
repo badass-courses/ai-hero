@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import { isLearnerFlowBusinessMetricFixtureEmail } from './learner-flow-canary-exclusion'
 import {
 	cleanupLearnerFlowStuckFixture,
 	createLearnerFlowStuckFixture,
 	isCleanedLearnerFlowFixtureIntent,
+	isLearnerFlowCanaryEmail,
 	isLearnerFlowFixtureEmail,
 	learnerFlowFixtureEmail,
 	type LearnerFlowFixtureRepository,
@@ -67,6 +69,48 @@ class FixtureRepository implements LearnerFlowFixtureRepository {
 const now = '2026-07-16T16:30:00.000Z'
 
 describe('learner-flow stuck fixture', () => {
+	it('matches only the canonical canary namespace', () => {
+		expect(
+			isLearnerFlowCanaryEmail(
+				'joel+aih-synth-canary-learner-v1-20260717t220000z@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowCanaryEmail(
+				'JOEL+AIH-SYNTH-CANARY-LEARNER-V1-20260717T220000Z@BADASS.DEV',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowCanaryEmail('joel+aih-synth-fixture-1@badass.dev'),
+		).toBe(false)
+	})
+
+	it('excludes canary and drill namespaces from business metrics', () => {
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-canary-learner-v1-run@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-drill-drift-v1-run-1@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-drill-zombie-v1-run-1@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowBusinessMetricFixtureEmail(
+				'joel+aih-synth-unrelated-fixture@badass.dev',
+			),
+		).toBe(false)
+		expect(isLearnerFlowBusinessMetricFixtureEmail('person@example.com')).toBe(
+			false,
+		)
+	})
+
 	it('plans without writing unless --allow-write is represented', async () => {
 		const repository = new FixtureRepository()
 		const result = await createLearnerFlowStuckFixture({

@@ -1,13 +1,20 @@
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { db } from '@/db'
 import {
 	contact,
 	contactEvent,
+	contactLink,
 	contactState,
 	contentResource,
 	contentResourceResource,
+	googleAdsSignupConversionUpload,
+	nextAction,
 	providerIdentity,
 	sideEffectIntent,
+	stateTransition,
+	valuePathCertificateShare,
 } from '@/db/schema'
 import { captureFrontQuickQuestionCsv } from '@/lib/subscriber-marketing/capture-front-quick-question-csv'
 import { captureFrontQuickQuestion } from '@/lib/subscriber-marketing/capture-quick-question'
@@ -21,10 +28,38 @@ import {
 } from '@/lib/subscriber-marketing/contact-event-normalizer-preview'
 import { renderContactEventReviewHtml } from '@/lib/subscriber-marketing/contact-event-review-page'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
+import {
+	cleanupLearnerFlowCanary,
+	inspectLearnerFlowCanary,
+	seedLearnerFlowCanary,
+	tickLearnerFlowCanary,
+	type LearnerFlowCanaryRepository,
+	type LearnerFlowCanaryResidue,
+} from '@/lib/subscriber-marketing/learner-flow-canary'
+import {
+	learnerFlowCanaryEmailSql,
+	learnerFlowDrillEmailSql,
+} from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
+import { queryLearnerFlowCohort } from '@/lib/subscriber-marketing/learner-flow-cohort'
 import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
 } from '@/lib/subscriber-marketing/learner-flow-classifier'
+import {
+	cleanupLearnerFlowDrillFixtures,
+	createLearnerFlowDrillFixtures,
+	learnerFlowDrillEligibility,
+	type LearnerFlowDrillFixture,
+	type LearnerFlowDrillRepository,
+	type LearnerFlowDrillScenario,
+} from '@/lib/subscriber-marketing/learner-flow-drill'
+import {
+	parseLearnerFlowDrillAxiomOutput,
+	parseLearnerFlowDrillPulseOutput,
+	runLearnerFlowDrill,
+	type LearnerFlowDrillObservation,
+} from '@/lib/subscriber-marketing/learner-flow-drill-runner'
 import { DrizzleOperatorLookupRepository } from '@/lib/subscriber-marketing/drizzle-operator-lookup-repository'
 import { DrizzlePurchasePreviewRepository } from '@/lib/subscriber-marketing/drizzle-purchase-preview-repository'
 import { previewMatchedPurchaserValuePaths } from '@/lib/subscriber-marketing/matched-purchaser-value-path-preview'
@@ -36,6 +71,12 @@ import {
 import { buildContactEventProductionReceipt } from '@/lib/subscriber-marketing/production-receipt'
 import { previewPurchaseCorrelation } from '@/lib/subscriber-marketing/purchase-preview'
 import { previewSeenContent } from '@/lib/subscriber-marketing/seen-content'
+import {
+	isTerminalSkillsWorkflowEmailResourceId,
+	SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS,
+	SKILLS_WORKFLOW_KIT_SEQUENCE_IDS,
+	SKILLS_WORKFLOW_PATH_SLUGS,
+} from '@/lib/subscriber-marketing/skills-workflow-path'
 import { syncSeenContentKitFieldsForContactSnapshot } from '@/lib/subscriber-marketing/seen-content-kit-sync'
 import { previewShadowFieldCandidates } from '@/lib/subscriber-marketing/shadow-field-candidates'
 import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-planner'
@@ -47,6 +88,7 @@ import {
 	replaySignupGap,
 	signupGapPreviewForOutput,
 	type SignupGapKitSubscriber,
+	type SignupGapKitSubscriberState,
 	type SignupGapPreview,
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { replanBlockedValuePathEmailIntents } from '@/lib/subscriber-marketing/value-path-intent-replan'
@@ -69,6 +111,11 @@ import {
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
 import { importValuePathContentResources } from '@/lib/subscriber-marketing/value-path-content-import'
 import { previewValuePathContentImport } from '@/lib/subscriber-marketing/value-path-content-import-preview'
+import { backfillMissingValuePathCompletedAt } from '@/lib/subscriber-marketing/value-path-completed-at-backfill'
+import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from '@/lib/subscriber-marketing/value-path-completion'
 import { progressValuePathDrips } from '@/lib/subscriber-marketing/value-path-drip-progression'
 import {
 	executePendingValuePathEmailIntents,
@@ -114,28 +161,20 @@ import {
 	LEARNER_FLOW_REPORT_REDIS_KEY,
 } from '@/lib/learner-flow-report'
 import { redis } from '@/server/redis-client'
-import { and, desc, eq, gte, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray } from 'drizzle-orm'
 
 const providers = ['fixture', 'front', 'kit', 'ai-hero'] as const
+const KIT_SIGNUP_GAP_SUBSCRIBER_STATES = [
+	'active',
+	'inactive',
+	'cancelled',
+	'bounced',
+	'complained',
+] as const satisfies readonly SignupGapKitSubscriberState[]
 const [command, ...args] = process.argv.slice(2)
 
-const SKILLS_WORKFLOW_PATH_SLUGS = [
-	'ai-hero-skills-workflow',
-	'ai-hero-skills-team-workflow',
-]
-const SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS = [
-	...Array.from(
-		{ length: 7 },
-		(_, index) => `ai-hero-skills-workflow.email-${index}`,
-	),
-	...Array.from(
-		{ length: 7 },
-		(_, index) => `ai-hero-skills-team-workflow.team-email-${index}`,
-	),
-]
-const SKILLS_WORKFLOW_KIT_SEQUENCE_IDS = Array.from(
-	{ length: 14 },
-	(_, index) => String(2757199 + index),
+const EMAIL_7_LIVE_ENABLED = parseEmail7LiveEnabled(
+	process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
 )
 
 const VALUE_PATH_COMPLETION_SURVEY_SPEC = {
@@ -345,6 +384,156 @@ if (command === 'lookup') {
 				allowWrite,
 			})
 	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'learner-flow-drill') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	const repository = await createLearnerFlowDrillRepository()
+	const scenario = parseLearnerFlowDrillScenario(
+		readFlag(args, '--scenario') ?? 'both',
+	)
+	const runId = parseLearnerFlowDrillRunId(
+		readFlag(args, '--run-id') ?? learnerFlowFixtureId(),
+	)
+	const receiptWriter = createLearnerFlowDrillReceiptWriter(runId)
+	if (args.includes('--cleanup')) {
+		const cleanup = await cleanupLearnerFlowDrillFixtures({
+			repository,
+			allowWrite,
+		})
+		const receiptPath = allowWrite
+			? await receiptWriter('cleanup', {
+					mode: 'learner-flow-drill',
+					runId,
+					phase: 'cleanup',
+					cleanedAt: new Date().toISOString(),
+					cleanup,
+				})
+			: undefined
+		console.log(JSON.stringify({ ...cleanup, receiptPath }, null, 2))
+	} else if (!allowWrite) {
+		const scenarios = scenario === 'both' ? (['drift', 'zombie'] as const) : [scenario]
+		const fixtureShapes = (
+			await Promise.all(
+				scenarios.map((drillScenario) =>
+					createLearnerFlowDrillFixtures({
+						repository,
+						runId,
+						scenario: drillScenario,
+						allowWrite: false,
+					}),
+				),
+			)
+		).flat()
+		console.log(
+			JSON.stringify(
+				{
+					mode: 'learner-flow-drill',
+					operation: 'go-checkpoint',
+					allowWrite: false,
+					runId,
+					scenario,
+					suppressionMechanism:
+						'Only active joel+aih-synth-drill-zombie-v1-*@badass.dev contacts with matching drill metadata and an unexpired per-fixture suppression timestamp can be omitted from planning. The receipt still counts them as starved. The timestamp releases them without a human write.',
+					designTensionResolution:
+						'The command starts zombie induction immediately after an hourly drift heal, then requires four real quiet-window receipts. Real due work honestly resets the identical streak; the command keeps observing until four consecutive zero-progress receipts or fails without claiming proof.',
+					fixtureShapes,
+					next: 'Wait for explicit GO, then rerun with --allow-write.',
+				},
+				null,
+				2,
+			),
+		)
+	} else {
+		const allowlist = await requireActiveGateDAllowlist()
+		const eligibility = learnerFlowDrillEligibility(allowlist)
+		if (!eligibility.passed) {
+			throw new Error(
+				`Learner-flow drill is not eligible for the live reconciler: ${eligibility.reviewReasons.join(', ')}`,
+			)
+		}
+		const preflightReceipt = await receiptWriter('preflight', {
+			mode: 'learner-flow-drill',
+			runId,
+			phase: 'preflight',
+			checkedAt: new Date().toISOString(),
+			eligibility,
+		})
+		const result = await runLearnerFlowDrill({
+			ports: {
+				repository,
+				observe: createLearnerFlowDrillObserver(),
+				readFixtureReadbacks: (fixtures) =>
+					readLearnerFlowDrillFixtureReadbacks(repository, fixtures),
+				writeReceipt: receiptWriter,
+				sleep: (milliseconds) =>
+					new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
+				now: () => new Date().toISOString(),
+			},
+			runId,
+			scenario,
+		})
+		console.log(
+			JSON.stringify(
+				{ ...result, receipts: [preflightReceipt, ...result.receipts] },
+				null,
+				2,
+			),
+		)
+	}
+} else if (command === 'learner-flow-canary') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	if (args.includes('--stalled') && !args.includes('--seed')) printUsageAndExit()
+	const repository = await createLearnerFlowCanaryRepository()
+	const now = readFlag(args, '--now')
+	const result = args.includes('--cleanup')
+		? await cleanupLearnerFlowCanary({ repository, allowWrite })
+		: args.includes('--status')
+			? await inspectLearnerFlowCanary({ repository, now })
+			: args.includes('--seed')
+				? await seedLearnerFlowCanary({
+						repository,
+						allowWrite,
+						stalled: args.includes('--stalled'),
+						recipientEmail: readFlag(args, '--recipient-email'),
+						now,
+					})
+				: await tickLearnerFlowCanary({
+						repository,
+						allowWrite,
+						now,
+						advance: async ({ intent, now: progressionNow }) => {
+							const allowlist = await requireActiveGateDAllowlist()
+							return progressValuePathDrips({
+								repository,
+								allowlist,
+								completedIntents: [intent],
+								allowWrite: true,
+								acceptedReviewReasons:
+									resolveGateDPreAuthorizedReviewReasons({ allowlist }),
+								email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
+								now: progressionNow,
+							})
+						},
+					})
+	console.log(JSON.stringify(result, null, 2))
+} else if (command === 'value-path-completed-at-backfill') {
+	const allowWrite = args.includes('--allow-write')
+	if (allowWrite && args.includes('--dry-run')) printUsageAndExit()
+	const result = await backfillMissingValuePathCompletedAt({
+		repository: await createCaptureRepository(),
+		allowWrite,
+	})
+	const receiptPath =
+		readFlag(args, '--receipt') ?? defaultCompletedAtBackfillReceiptPath(result)
+	const absoluteReceiptPath = resolve(operatorWorkspaceRoot(), receiptPath)
+	await mkdir(dirname(absoluteReceiptPath), { recursive: true })
+	await writeFile(
+		absoluteReceiptPath,
+		`${JSON.stringify({ ...result, receiptPath }, null, 2)}\n`,
+		'utf8',
+	)
+	console.log(JSON.stringify({ ...result, receiptPath }, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
 	const result = await buildLearnerFlowStuckList()
 	if (args.includes('--json')) {
@@ -693,6 +882,7 @@ if (command === 'lookup') {
 			allowedActions: runtimeAllowlist?.allowedActions,
 			retryPolicy: runtimeAllowlist?.retryPolicy,
 			providerPacingMs: readIntegerFlag(args, '--provider-pacing-ms') ?? 1500,
+			email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 			acceptedReviewReasons,
 			intentIds:
 				requestedIntentIds.length > 0 ? requestedIntentIds : undefined,
@@ -1016,8 +1206,10 @@ async function buildLearnerFlowUnstick(args: {
 			}),
 	)
 	const requiresGateD = retryIntentIds.length > 0 || dripContactIds.length > 0
-	const allowlist =
-		args.allowWrite && requiresGateD ? await requireActiveGateDAllowlist() : undefined
+	// Reading the active authorization is safe and required for an honest
+	// dry-run. The old allow-write guard made every drip recovery preview report
+	// planned: 0 without actually invoking the planner.
+	const allowlist = requiresGateD ? await requireActiveGateDAllowlist() : undefined
 	const repository = await createCaptureRepository()
 	const replan = blockedIntentIds.length
 		? await replanBlockedValuePathEmailIntents({
@@ -1031,7 +1223,7 @@ async function buildLearnerFlowUnstick(args: {
 	const retryLimit = allowlist?.maxSendsPerRun ?? 25
 	const retryableIntentIds = retryIntentIds.slice(0, retryLimit)
 	const retryResults =
-		args.allowWrite && allowlist && retryableIntentIds.length > 0
+		allowlist && retryableIntentIds.length > 0
 			? await executePendingValuePathEmailIntents({
 				repository,
 				emailListProvider: (await import('@/coursebuilder/email-list-provider'))
@@ -1040,6 +1232,7 @@ async function buildLearnerFlowUnstick(args: {
 				config: {
 					mode: allowlist.mode,
 					limit: retryableIntentIds.length,
+					allowWrite: args.allowWrite,
 					intentIds: retryableIntentIds,
 					baseUrl:
 						process.env.NEXT_PUBLIC_URL ??
@@ -1054,7 +1247,7 @@ async function buildLearnerFlowUnstick(args: {
 					verifiedEmailResourceIds: allowlist.emailResourceIds,
 					verifiedKitSequenceIds: allowlist.kitSequenceIds,
 					allowedActions: allowlist.allowedActions,
-								retryPolicy: allowlist.retryPolicy,
+					retryPolicy: allowlist.retryPolicy,
 				},
 			})
 			: []
@@ -1067,16 +1260,17 @@ async function buildLearnerFlowUnstick(args: {
 	).flatMap((intents) =>
 		intents.filter(
 			(intent) =>
-				intent.status === 'completed' && dripIntentIds.has(intent.id),
+				isValuePathIntentCompleted(intent) && dripIntentIds.has(intent.id),
 		),
 	)
 	const drip =
-		args.allowWrite && allowlist && completedIntents.length > 0
+		allowlist && completedIntents.length > 0
 			? await progressValuePathDrips({
 				repository,
 				allowlist,
 				completedIntents,
-				allowWrite: true,
+				allowWrite: args.allowWrite,
+				email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
 				now: generatedAt,
 			})
 			: undefined
@@ -1122,7 +1316,12 @@ async function buildLearnerFlowUnstick(args: {
 		allowWrite: args.allowWrite,
 		generatedAt,
 		writes: {
-			database: Boolean(args.allowWrite && (replan?.counts.replanned || retryResults.length || drip)),
+			database: Boolean(
+				args.allowWrite &&
+					(replan?.counts.replanned ||
+						retryResults.length ||
+						(drip?.counts.planned ?? 0) > 0),
+			),
 			provider: Boolean(args.allowWrite && (retryResults.length || signupGapReplay)),
 		},
 		counts: stuckList.counts,
@@ -1133,11 +1332,29 @@ async function buildLearnerFlowUnstick(args: {
 				replan: replan?.counts ?? { contacts: 0, blockedIntentsFound: 0, replanned: 0, wouldReplan: 0 },
 				retry: {
 					eligible: retryIntentIds.length,
-					executed: retryResults.length,
-					completed: retryResults.filter((result) => result.status === 'completed').length,
+					previewed: args.allowWrite ? 0 : retryResults.length,
+					planned: retryResults.filter((result) => result.status === 'planned')
+						.length,
+					executed: args.allowWrite ? retryResults.length : 0,
+					completed: retryResults.filter(
+						(result) => result.status === 'completed',
+					).length,
 					deferred: retryIntentIds.length - retryableIntentIds.length,
+					results: retryResults.map((result) => ({
+						intentId: result.intentId,
+						status: result.status,
+						...('reviewReasons' in result
+							? { reviewReasons: result.reviewReasons }
+							: {}),
+					})),
 				},
-				drip: drip?.counts ?? { contactCount: dripContactIds.length, planned: 0 },
+				drip: {
+					contactCount: dripContactIds.length,
+					uniqueContactCount: new Set(dripContactIds).size,
+					duplicateContactCount:
+						dripContactIds.length - new Set(dripContactIds).size,
+					...(drip?.counts ?? { planned: 0 }),
+				},
 				signupGap:
 					signupGapPreview
 						? {
@@ -1176,7 +1393,7 @@ function formatLearnerFlowUnstick(
 		`Learner flow unstick (${result.allowWrite ? 'allow-write' : 'dry-run'})`,
 		`Generated: ${result.generatedAt}`,
 		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
-		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
+		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-previewed=${result.tiers.tier1.retry.previewed} retry-planned=${result.tiers.tier1.retry.planned} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
 		`Tier 2 ask Joel: ${result.tiers.tier2.ask.length}`,
 	]
 	for (const item of result.tiers.tier2.ask) {
@@ -1280,7 +1497,7 @@ async function buildValuePathGateDActivation(args: {
 				? 'scoped-live'
 				: 'allowlisted-test',
 		authorizationMode: args.authorizationMode,
-		pathSlugs: SKILLS_WORKFLOW_PATH_SLUGS,
+		pathSlugs: [...SKILLS_WORKFLOW_PATH_SLUGS],
 		contactIds: candidates.map((candidate) => candidate.contactId!),
 		kitSubscriberIds: candidates
 			.map((candidate) => candidate.kitSubscriberId)
@@ -1291,8 +1508,8 @@ async function buildValuePathGateDActivation(args: {
 		emailHashes: candidates
 			.map((candidate) => candidate.emailHash)
 			.filter((hash): hash is string => Boolean(hash)),
-		emailResourceIds: SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS,
-		kitSequenceIds: SKILLS_WORKFLOW_KIT_SEQUENCE_IDS,
+		emailResourceIds: [...SKILLS_WORKFLOW_EMAIL_RESOURCE_IDS],
+		kitSequenceIds: [...SKILLS_WORKFLOW_KIT_SEQUENCE_IDS],
 		candidates: candidates.map(candidatePreviewToAllowlistCandidate),
 		allowedActions: [...DEFAULT_GATE_D_ALLOWED_ACTIONS],
 		preAuthorizedReviewReasons: [
@@ -1457,7 +1674,12 @@ async function buildValuePathGateDStatus() {
 	const allowlist = allowlistDecision.allowlist
 		? normalizeGateDRuntimeAllowlist(allowlistDecision.allowlist)
 		: undefined
-	const contactIds = allowlist?.contactIds ?? []
+	const activationContactIds = allowlist?.contactIds ?? []
+	const repository = await createCaptureRepository()
+	const cohort = allowlist
+		? await queryLearnerFlowCohort({ repository, allowlist })
+		: undefined
+	const contactIds = cohort?.contactIds ?? []
 	const [intents, events] = contactIds.length
 		? await Promise.all([
 				db
@@ -1492,8 +1714,16 @@ async function buildValuePathGateDStatus() {
 			(intent) => intent.status === 'blocked',
 		)
 		const lastIntent = contactIntents[contactIntents.length - 1]
+		const completedPath = contactIntents.some(
+			(intent) =>
+				isValuePathIntentCompleted(intent) &&
+				isTerminalValuePathEmailResourceId(
+					String(intent.metadata?.emailResourceId ?? ''),
+				),
+		)
 		return {
 			contactId,
+			completedPath,
 			lastEmailResourceId: lastIntent?.metadata?.emailResourceId,
 			lastKitSequenceId: lastIntent?.metadata?.kitSequenceId,
 			lastStatus: lastIntent?.status,
@@ -1509,24 +1739,28 @@ async function buildValuePathGateDStatus() {
 	})
 	const grouped: Record<string, number> = {}
 	for (const intent of intents) {
-		const key = `${intent.status}:${intent.metadata?.emailResourceId}:${intent.metadata?.kitSequenceId}`
+		const completionStatus = isValuePathIntentCompleted(intent)
+			? 'completed'
+			: intent.status
+		const key = `${completionStatus}:${intent.metadata?.emailResourceId}:${intent.metadata?.kitSequenceId}`
 		grouped[key] = (grouped[key] ?? 0) + 1
 	}
 	const eventTypes: Record<string, number> = {}
 	for (const event of events) {
 		eventTypes[event.eventType] = (eventTypes[event.eventType] ?? 0) + 1
 	}
-	const computedDrip = allowlist
-		? await buildComputedGateDDripStatus(allowlist)
+	const computedDrip = allowlist && cohort
+		? await buildComputedGateDDripStatus(allowlist, cohort)
 		: null
-	const retrying = summarizeRetryingValuePathIntents(intents, checkedAt)
+	const retrying = summarizeRetryingValuePathIntents(
+		intents.filter((intent) => !isValuePathIntentCompleted(intent)),
+		checkedAt,
+	)
 	const currentStepDistribution = countByValues(
 		byContact.map((contact) => String(contact.lastEmailResourceId ?? 'none')),
 	)
-	const completedPathCount = byContact.filter((contact) =>
-		isTerminalValuePathEmailResourceId(
-			String(contact.lastEmailResourceId ?? ''),
-		),
+	const completedPathCount = byContact.filter(
+		(contact) => contact.completedPath,
 	).length
 	const persistedBlockedReasons = countReviewReasons(
 		intents.filter((intent) => intent.status === 'blocked'),
@@ -1547,6 +1781,7 @@ async function buildValuePathGateDStatus() {
 	const movement = evaluateValuePathMovement({
 		intents: intents.map((intent) => ({
 			createdAt: intent.createdAt,
+			completedAt: intent.completedAt,
 			metadata: intent.metadata ?? undefined,
 		})),
 		events: events.map((event) => ({
@@ -1564,7 +1799,10 @@ async function buildValuePathGateDStatus() {
 		retryableDue: retrying.retryableDue,
 		retryableWaiting: retrying.retryableWaiting,
 		nextRetryAt: retrying.nextRetryAt,
-		pending: intents.filter((intent) => intent.status === 'pending').length,
+		pending: intents.filter(
+			(intent) =>
+				intent.status === 'pending' && !isValuePathIntentCompleted(intent),
+		).length,
 		dueSends: computedDrip?.counts.planned ?? 0,
 		participants: contactIds.length,
 		completedPathCount,
@@ -1572,6 +1810,12 @@ async function buildValuePathGateDStatus() {
 	})
 	return {
 		checkedAt,
+		reportingCohort: {
+			source: cohort?.source ?? 'unavailable',
+			contacts: contactIds.length,
+			liveRecordsScanned: cohort?.liveRecordsScanned ?? 0,
+			activationSnapshotContacts: activationContactIds.length,
+		},
 		allowlist: {
 			passed: allowlistDecision.passed,
 			reviewReasons: allowlistDecision.reviewReasons,
@@ -1596,6 +1840,9 @@ async function buildValuePathGateDStatus() {
 					authorizationMode: allowlist.authorizationMode,
 					pathSlugs: allowlist.pathSlugs,
 					participantCounts: {
+						contacts: contactIds.length,
+					},
+					activationSnapshotParticipantCounts: {
 						contacts: allowlist.contactIds.length,
 						kitSubscribers: allowlist.kitSubscriberIds.length,
 						emailHashes: allowlist.emailHashes.length,
@@ -1614,9 +1861,11 @@ async function buildValuePathGateDStatus() {
 		totals: {
 			contacts: contactIds.length,
 			intents: intents.length,
-			pending: intents.filter((intent) => intent.status === 'pending').length,
-			completed: intents.filter((intent) => intent.status === 'completed')
-				.length,
+			pending: intents.filter(
+				(intent) =>
+					intent.status === 'pending' && !isValuePathIntentCompleted(intent),
+			).length,
+			completed: intents.filter(isValuePathIntentCompleted).length,
 			blocked: intents.filter((intent) => intent.status === 'blocked').length,
 			stale: intents.filter((intent) => intent.status === 'stale').length,
 		},
@@ -1754,25 +2003,22 @@ async function buildValuePathDripProgress(args: {
 	const maxCompletedAt = new Date(
 		Date.now() - args.minAgeHours * 60 * 60 * 1000,
 	).toISOString()
-	const completedIntents = (
-		await repository.findCompletedValuePathEmailSideEffectIntents({
+	const now = new Date().toISOString()
+	const cohort = await queryLearnerFlowCohort({ repository, allowlist })
+	const completedScan =
+		await repository.findCompletedValuePathEmailSideEffectIntentScan({
 			limit: args.limit,
 			maxCompletedAt,
+			now,
+			contactIds: cohort.contactIds,
+			valuePathSlugs: allowlist.pathSlugs,
+			emailResourceIds: allowlist.emailResourceIds,
+			kitSequenceIds: allowlist.kitSequenceIds,
 		})
-	).filter(
-		(intent) =>
-			allowlist.contactIds.includes(intent.contactId) &&
-			allowlist.emailResourceIds.includes(
-				String(intent.metadata.emailResourceId ?? ''),
-			) &&
-			allowlist.kitSequenceIds.includes(
-				String(intent.metadata.kitSequenceId ?? ''),
-			),
-	)
-	return progressValuePathDrips({
+	const result = await progressValuePathDrips({
 		repository,
 		allowlist,
-		completedIntents,
+		completedIntents: completedScan.intents,
 		allowWrite: args.allowWrite,
 		acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 			allowlist,
@@ -1781,10 +2027,24 @@ async function buildValuePathDripProgress(args: {
 				process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 			),
 		}),
+		email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
+		now,
 	})
+	return {
+		...result,
+		cohort: {
+			source: cohort.source,
+			contacts: cohort.contactIds.length,
+			liveRecordsScanned: cohort.liveRecordsScanned,
+		},
+		scan: completedScan.diagnostics,
+	}
 }
 
-async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
+async function buildComputedGateDDripStatus(
+	allowlist: GateDRuntimeAllowlist,
+	cohort: Awaited<ReturnType<typeof queryLearnerFlowCohort>>,
+) {
 	const repository = await createCaptureRepository()
 	const minAgeHours = Number(
 		process.env.AIH_VALUE_PATH_DRIP_MIN_AGE_HOURS || 18,
@@ -1792,25 +2052,21 @@ async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
 	const maxCompletedAt = new Date(
 		Date.now() - minAgeHours * 60 * 60 * 1000,
 	).toISOString()
-	const completedIntents = (
-		await repository.findCompletedValuePathEmailSideEffectIntents({
+	const now = new Date().toISOString()
+	const completedScan =
+		await repository.findCompletedValuePathEmailSideEffectIntentScan({
 			limit: 200,
 			maxCompletedAt,
+			now,
+			contactIds: cohort.contactIds,
+			valuePathSlugs: allowlist.pathSlugs,
+			emailResourceIds: allowlist.emailResourceIds,
+			kitSequenceIds: allowlist.kitSequenceIds,
 		})
-	).filter(
-		(intent) =>
-			allowlist.contactIds.includes(intent.contactId) &&
-			allowlist.emailResourceIds.includes(
-				String(intent.metadata.emailResourceId ?? ''),
-			) &&
-			allowlist.kitSequenceIds.includes(
-				String(intent.metadata.kitSequenceId ?? ''),
-			),
-	)
 	const result = await progressValuePathDrips({
 		repository,
 		allowlist,
-		completedIntents,
+		completedIntents: completedScan.intents,
 		allowWrite: false,
 		acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 			allowlist,
@@ -1818,10 +2074,18 @@ async function buildComputedGateDDripStatus(allowlist: GateDRuntimeAllowlist) {
 				process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
 			),
 		}),
+		email7LiveEnabled: EMAIL_7_LIVE_ENABLED,
+		now,
 	})
 	const blocked = result.results.filter((item) => item.status === 'blocked')
 	return {
 		counts: result.counts,
+		cohort: {
+			source: cohort.source,
+			contacts: cohort.contactIds.length,
+			liveRecordsScanned: cohort.liveRecordsScanned,
+		},
+		scan: completedScan.diagnostics,
 		blockedReasons: countReviewReasons(blocked),
 		planned: result.results
 			.filter((item) => item.status === 'planned')
@@ -1915,7 +2179,7 @@ function countByValues(values: readonly string[]) {
 }
 
 function isTerminalValuePathEmailResourceId(value: string) {
-	return value.endsWith('.email-6') || value.endsWith('.team-email-6')
+	return isTerminalSkillsWorkflowEmailResourceId(value)
 }
 
 function coversFullSkillsWorkflowPath(allowlist: GateDRuntimeAllowlist) {
@@ -1973,9 +2237,10 @@ async function buildSignupGapOperatorPreview(args: {
 	from: string
 	to: string
 }): Promise<SignupGapPreview> {
-	const records = await fetchKitFormSubscriberRecords({
+	const records = await fetchKitFormSubscriberRecordsForStates({
 		formId: String(args.formId),
 		addedAfter: args.from,
+		states: KIT_SIGNUP_GAP_SUBSCRIBER_STATES,
 	})
 	const subscribers: SignupGapKitSubscriber[] = records.map((subscriber) => {
 		if (!subscriber.createdAt) {
@@ -1988,6 +2253,7 @@ async function buildSignupGapOperatorPreview(args: {
 			email: subscriber.email,
 			firstName: subscriber.firstName,
 			createdAt: subscriber.createdAt,
+			state: subscriber.state,
 			fields: subscriber.fields,
 		}
 	})
@@ -2074,6 +2340,7 @@ async function fetchContactMatchesForSkillsSubscribers(
 		const intents = await db
 			.select({
 				contactId: sideEffectIntent.contactId,
+				completedAt: sideEffectIntent.completedAt,
 				metadata: sideEffectIntent.metadata,
 			})
 			.from(sideEffectIntent)
@@ -2081,12 +2348,14 @@ async function fetchContactMatchesForSkillsSubscribers(
 				and(
 					inArray(sideEffectIntent.contactId, idChunk),
 					eq(sideEffectIntent.type, 'send-value-path-email'),
-					eq(sideEffectIntent.status, 'completed'),
 				),
 			)
 		for (const intent of intents) {
 			const emailResourceId = String(intent.metadata?.emailResourceId ?? '')
-			if (/(?:^|\.)(?:email-6|team-email-6)$/.test(emailResourceId)) {
+			if (
+				isValuePathIntentCompleted(intent) &&
+				isTerminalSkillsWorkflowEmailResourceId(emailResourceId)
+			) {
 				completedContactIds.add(intent.contactId)
 			}
 		}
@@ -2166,6 +2435,7 @@ type KitFormSubscriberRecord = {
 	firstName?: string
 	createdAt?: string
 	addedAt: string
+	state: SignupGapKitSubscriberState
 	fields?: Record<string, unknown>
 }
 
@@ -2186,9 +2456,30 @@ async function fetchKitFormSubscribers(args: {
 	) satisfies SkillsFormSubscriberEvidence[]
 }
 
+async function fetchKitFormSubscriberRecordsForStates(args: {
+	formId: string
+	addedAfter: string
+	states: readonly SignupGapKitSubscriberState[]
+}) {
+	const records: KitFormSubscriberRecord[] = []
+	for (const state of args.states) {
+		records.push(
+			...(await fetchKitFormSubscriberRecords({
+				formId: args.formId,
+				addedAfter: args.addedAfter,
+				state,
+			})),
+		)
+	}
+	return Array.from(
+		new Map(records.map((record) => [record.kitSubscriberId, record])).values(),
+	)
+}
+
 async function fetchKitFormSubscriberRecords(args: {
 	formId: string
 	addedAfter: string
+	state?: SignupGapKitSubscriberState
 }) {
 	const apiKey =
 		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
@@ -2203,7 +2494,7 @@ async function fetchKitFormSubscriberRecords(args: {
 		const url = new URL(
 			`https://api.convertkit.com/v4/forms/${args.formId}/subscribers`,
 		)
-		url.searchParams.set('status', 'active')
+		url.searchParams.set('status', args.state ?? 'active')
 		url.searchParams.set('per_page', '1000')
 		url.searchParams.set(
 			'added_after',
@@ -2268,6 +2559,12 @@ function parseKitFormSubscriberRecords(
 				? (subscriber.fields as Record<string, unknown>)
 				: undefined
 		const createdAt = stringField(subscriber.created_at)
+		const state = stringField(subscriber.state)
+		if (!isSignupGapKitSubscriberState(state)) {
+			throw new Error(
+				`Kit form subscriber payload has unsupported state: ${state ?? 'missing'}`,
+			)
+		}
 		const addedAt =
 			stringField(subscriber.added_at) ??
 			stringField(subscriber.subscribed_at) ??
@@ -2287,10 +2584,17 @@ function parseKitFormSubscriberRecords(
 				firstName: stringField(subscriber.first_name),
 				createdAt,
 				addedAt,
+				state,
 				fields,
 			},
 		]
 	})
+}
+
+function isSignupGapKitSubscriberState(
+	value: string | undefined,
+): value is SignupGapKitSubscriberState {
+	return KIT_SIGNUP_GAP_SUBSCRIBER_STATES.some((state) => state === value)
 }
 
 function stringField(value: unknown) {
@@ -2629,6 +2933,317 @@ async function createCaptureRepository() {
 	return new DrizzleCaptureMarketingRepository(db)
 }
 
+async function createLearnerFlowDrillRepository(): Promise<
+	DrizzleCaptureMarketingRepository & LearnerFlowDrillRepository
+> {
+	const repository = await createLearnerFlowCanaryRepository()
+	return Object.assign(repository, {
+		createDriftIntentWithoutCompletionFact: async (intent: Parameters<
+			LearnerFlowDrillRepository['createDriftIntentWithoutCompletionFact']
+		>[0]) => {
+			if (
+				intent.status !== 'completed' ||
+				intent.completedAt !== null ||
+				Object.hasOwn(intent.metadata, 'completedAt') ||
+				intent.metadata.learnerFlowDrillScenario !== 'drift'
+			) {
+				throw new Error('Drift insert refused: intent shape is not the exact drill drift shape')
+			}
+			const owner = await repository.findContactById(intent.contactId)
+			if (!owner || !owner.email?.startsWith('joel+aih-synth-drill-drift-v1-')) {
+				throw new Error('Drift insert refused: contact is outside the drift fixture namespace')
+			}
+			await db.insert(sideEffectIntent).values({
+				...intent,
+				completedAt: null,
+				createdAt: new Date(intent.createdAt),
+			})
+			return intent
+		},
+		findLearnerFlowDrillContacts: async () => {
+			const rows = await db
+				.select({ id: contact.id })
+				.from(contact)
+				.where(learnerFlowDrillEmailSql(contact.email))
+				.orderBy(desc(contact.createdAt))
+			const contacts = await Promise.all(
+				rows.map((row) => repository.findContactById(row.id)),
+			)
+			return contacts.filter(
+				(record): record is NonNullable<typeof record> => Boolean(record),
+			)
+		},
+	})
+}
+
+async function readLearnerFlowDrillFixtureReadbacks(
+	repository: DrizzleCaptureMarketingRepository & LearnerFlowDrillRepository,
+	fixtures: readonly LearnerFlowDrillFixture[],
+) {
+	return Promise.all(
+		fixtures.map(async (fixture) => {
+			if (!fixture.contactId || !fixture.intentId) {
+				throw new Error(`Drill fixture ${fixture.fixtureId} has no persisted IDs`)
+			}
+			const intents =
+				await repository.findValuePathEmailSideEffectIntentsByContact(
+					fixture.contactId,
+				)
+			const seed = intents.find((intent) => intent.id === fixture.intentId)
+			if (!seed) throw new Error(`Missing drill seed intent ${fixture.intentId}`)
+			const next = intents.find(
+				(intent) =>
+					intent.id !== seed.id &&
+					intent.metadata.emailResourceId ===
+						'ai-hero-skills-workflow.email-1',
+			)
+			return {
+				contactId: fixture.contactId,
+				seedIntentId: seed.id,
+				seedCompletedAt: seed.completedAt ?? null,
+				seedMetadataCompletedAt:
+					typeof seed.metadata.completedAt === 'string'
+						? seed.metadata.completedAt
+						: null,
+				nextIntentId: next?.id,
+				nextIntentStatus: next?.status,
+				nextIntentCompletedAt: valuePathIntentCompletedAt(next) ?? null,
+			}
+		}),
+	)
+}
+
+function createLearnerFlowDrillReceiptWriter(runId: string) {
+	return async (phase: string, body: Record<string, unknown>) => {
+		const timestamp = new Date()
+			.toISOString()
+			.replace(/[:.]/g, '-')
+			.toLowerCase()
+		const receiptPath = resolve(
+			'/Users/joel/Code/badass-courses/aihero-support/.brain/data/learner-flow/receipts',
+			`${timestamp}-learner-flow-drill-${runId}-${phase}.json`,
+		)
+		await mkdir(dirname(receiptPath), { recursive: true })
+		await writeFile(
+			receiptPath,
+			`${JSON.stringify({ ...body, receiptPath }, null, 2)}\n`,
+			{ encoding: 'utf8', flag: 'wx' },
+		)
+		return receiptPath
+	}
+}
+
+function createLearnerFlowDrillObserver() {
+	let lastPulseRun = ''
+	let pulse: LearnerFlowDrillObservation['pulse']
+	return async (since: string): Promise<LearnerFlowDrillObservation> => {
+		const runs = await queryLearnerFlowDrillReconcilerRuns(since)
+		const latest = runs.at(-1)?.observedAt ?? ''
+		if (latest && latest !== lastPulseRun) {
+			pulse = await readLearnerFlowDrillPulseEvidence()
+			lastPulseRun = latest
+		}
+		return { runs, pulse }
+	}
+}
+
+async function queryLearnerFlowDrillReconcilerRuns(since: string) {
+	const apl = [
+		"['vercel']",
+		"| where ['vercel.projectName'] == 'ai-hero'",
+		"  and tostring(['message']) contains '\"event\":\"subscriber_funnel.drip_run_completed\"'",
+		"| extend payload = parse_json(tostring(['message']))",
+		'| project _time, payload',
+		'| sort by _time asc',
+		'| limit 1000',
+	].join('\n')
+	const token = (
+		await runOperatorProcess('secrets', [
+			'lease',
+			'skill::axiom_query_key',
+			'--ttl',
+			'15m',
+		])
+	).trim()
+	const stdout = await runOperatorProcess(
+		'skill',
+		['axiom', 'query', apl, '--since', '12h', '--json'],
+		{
+			cwd: '/Users/joel/Code/skillrecordings/support',
+			env: { ...process.env, AXIOM_TOKEN: token },
+		},
+	)
+	return parseLearnerFlowDrillAxiomOutput(stdout, since)
+}
+
+async function readLearnerFlowDrillPulseEvidence() {
+	const stdout = await runOperatorProcess(
+		'/Users/joel/Code/badass-courses/aihero-support/bin/aih-pulse',
+		['snapshot', '--json'],
+		{ cwd: '/Users/joel/Code/badass-courses/aihero-support' },
+	)
+	return parseLearnerFlowDrillPulseOutput(stdout)
+}
+
+function runOperatorProcess(
+	command: string,
+	args: string[],
+	options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+) {
+	return new Promise<string>((resolveProcess, rejectProcess) => {
+		execFile(
+			command,
+			args,
+			{
+				cwd: options.cwd,
+				env: options.env ?? process.env,
+				maxBuffer: 10 * 1024 * 1024,
+			},
+			(error, stdout, stderr) => {
+				if (error) {
+					rejectProcess(
+						new Error(
+							`${command} failed: ${stderr.trim() || error.message}`,
+						),
+					)
+					return
+				}
+				resolveProcess(stdout)
+			},
+		)
+	})
+}
+
+function parseLearnerFlowDrillScenario(
+	value: string,
+): LearnerFlowDrillScenario {
+	if (value === 'drift' || value === 'zombie' || value === 'both') return value
+	printUsageAndExit()
+}
+
+function parseLearnerFlowDrillRunId(value: string) {
+	if (/^[a-z0-9-]{6,48}$/i.test(value)) return value.toLowerCase()
+	throw new Error(
+		'Learner-flow drill run id must be 6-48 letters, numbers, or hyphens',
+	)
+}
+
+async function createLearnerFlowCanaryRepository(): Promise<
+	DrizzleCaptureMarketingRepository & LearnerFlowCanaryRepository
+> {
+	const repository = await createCaptureRepository()
+	return Object.assign(repository, {
+		findLearnerFlowCanaryContacts: async () => {
+			const rows = await db
+				.select({ id: contact.id })
+				.from(contact)
+				.where(learnerFlowCanaryEmailSql(contact.email))
+				.orderBy(desc(contact.createdAt))
+			const contacts = await Promise.all(
+				rows.map((row) => repository.findContactById(row.id)),
+			)
+			return contacts.filter(
+				(record): record is NonNullable<typeof record> => Boolean(record),
+			)
+		},
+		deleteLearnerFlowFixtureContact: async (contactId: string) => {
+			await db.transaction(async (transaction) => {
+				await transaction
+					.delete(valuePathCertificateShare)
+					.where(eq(valuePathCertificateShare.contactId, contactId))
+				await transaction
+					.delete(googleAdsSignupConversionUpload)
+					.where(eq(googleAdsSignupConversionUpload.contactId, contactId))
+				await transaction
+					.delete(sideEffectIntent)
+					.where(eq(sideEffectIntent.contactId, contactId))
+				await transaction
+					.delete(nextAction)
+					.where(eq(nextAction.contactId, contactId))
+				await transaction
+					.delete(stateTransition)
+					.where(eq(stateTransition.contactId, contactId))
+				await transaction
+					.delete(contactEvent)
+					.where(eq(contactEvent.contactId, contactId))
+				await transaction
+					.delete(contactLink)
+					.where(eq(contactLink.contactId, contactId))
+				await transaction
+					.delete(providerIdentity)
+					.where(eq(providerIdentity.contactId, contactId))
+				await transaction
+					.delete(contactState)
+					.where(eq(contactState.contactId, contactId))
+				await transaction.delete(contact).where(eq(contact.id, contactId))
+			})
+		},
+		readLearnerFlowFixtureResidue: readLearnerFlowFixtureResidue,
+	})
+}
+
+async function readLearnerFlowFixtureResidue(
+	contactId: string,
+): Promise<LearnerFlowCanaryResidue> {
+	const [
+		contacts,
+		contactStates,
+		providerIdentities,
+		contactEvents,
+		stateTransitions,
+		nextActions,
+		sideEffectIntents,
+		contactLinks,
+		conversionUploads,
+		certificateShares,
+	] = await Promise.all([
+		countRows(contact, eq(contact.id, contactId)),
+		countRows(contactState, eq(contactState.contactId, contactId)),
+		countRows(providerIdentity, eq(providerIdentity.contactId, contactId)),
+		countRows(contactEvent, eq(contactEvent.contactId, contactId)),
+		countRows(stateTransition, eq(stateTransition.contactId, contactId)),
+		countRows(nextAction, eq(nextAction.contactId, contactId)),
+		countRows(sideEffectIntent, eq(sideEffectIntent.contactId, contactId)),
+		countRows(contactLink, eq(contactLink.contactId, contactId)),
+		countRows(
+			googleAdsSignupConversionUpload,
+			eq(googleAdsSignupConversionUpload.contactId, contactId),
+		),
+		countRows(
+			valuePathCertificateShare,
+			eq(valuePathCertificateShare.contactId, contactId),
+		),
+	])
+	return {
+		contacts,
+		contactStates,
+		providerIdentities,
+		contactEvents,
+		stateTransitions,
+		nextActions,
+		sideEffectIntents,
+		contactLinks,
+		conversionUploads,
+		certificateShares,
+		total:
+			contacts +
+			contactStates +
+			providerIdentities +
+			contactEvents +
+			stateTransitions +
+			nextActions +
+			sideEffectIntents +
+			contactLinks +
+			conversionUploads +
+			certificateShares,
+	}
+}
+
+async function countRows(table: any, where: any) {
+	const rows = await db.select({ value: count() }).from(table).where(where)
+	return Number(rows[0]?.value ?? 0)
+}
+
 async function createPurchasePreviewRepository() {
 	const { db } = await import('@/db')
 	return new DrizzlePurchasePreviewRepository(db)
@@ -2725,6 +3340,20 @@ function normalizeEmail(value?: string | null) {
 	return normalized && normalized.includes('@') ? normalized : undefined
 }
 
+function operatorWorkspaceRoot() {
+	return process.cwd().endsWith('/apps/ai-hero')
+		? resolve(process.cwd(), '../..')
+		: process.cwd()
+}
+
+function defaultCompletedAtBackfillReceiptPath(result: {
+	mode: 'dry-run' | 'allow-write'
+	generatedAt: string
+}) {
+	const timestamp = result.generatedAt.replace(/[:.]/g, '-').toLowerCase()
+	return `.brain/data/learner-flow/receipts/${timestamp}-completed-at-backfill-${result.mode}.json`
+}
+
 function printUsageAndExit(): never {
 	console.error(`Usage:
   pnpm --filter ai-hero subscriber-marketing:operator lookup --email person@example.com
@@ -2754,6 +3383,14 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completion-survey-sync --allow-write [--created-by-id user_123]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck [--fixture-id <id>] [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-fixture-stuck --cleanup --contact-id <synthetic-contact-id> [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --scenario drift|zombie|both [--run-id <id>] [--dry-run]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --scenario drift|zombie|both [--run-id <id>] --allow-write
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-drill --cleanup [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary [--status|--tick] [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --seed [--stalled] [--recipient-email joel+certtest@egghead.io] [--now <iso>] [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --cleanup [--allow-write]
+  pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill [--dry-run] [--receipt .brain/data/learner-flow/receipts/receipt.json]
+  pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill --allow-write [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick --allow-write [--json] [--signup-gap-form-id 9376133]

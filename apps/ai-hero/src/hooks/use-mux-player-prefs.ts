@@ -32,6 +32,21 @@ export const useMuxPlayerPrefs = () => {
 }
 
 /**
+ * Reapplies the preferred playback rate after the media element resets
+ */
+export const setPreferredPlaybackRate = (
+	muxPlayerRef: React.RefObject<MuxPlayerRefAttributes | null>,
+	playbackRate: number,
+) => {
+	if (
+		muxPlayerRef.current &&
+		muxPlayerRef.current.playbackRate !== playbackRate
+	) {
+		muxPlayerRef.current.playbackRate = playbackRate
+	}
+}
+
+/**
  * Sets the preferred text track on the Mux Player
  */
 export const setPreferredTextTrack = (

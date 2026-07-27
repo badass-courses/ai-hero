@@ -1,3 +1,5 @@
+import { SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG } from './value-path-answer-page'
+
 export type ValuePathSurveyOptionPreview = {
 	value: string
 	label: string
@@ -9,6 +11,11 @@ export type ValuePathSurveyPreview = {
 	type?: string
 	question?: string
 	options: ValuePathSurveyOptionPreview[]
+}
+
+export type ValuePathCertificateLinkPreview = {
+	href: string
+	label?: string
 }
 
 export type ValuePathEmailPagePreview = {
@@ -24,6 +31,8 @@ export type ValuePathEmailPagePreview = {
 	subject?: string
 	preview?: string
 	body?: string
+	certificateLink?: ValuePathCertificateLinkPreview
+	waitlistLine?: string
 	survey?: ValuePathSurveyPreview
 	kitSequenceId?: string
 }
@@ -37,6 +46,7 @@ export type ValuePathAnswerPagePreview = {
 	surveyId: string
 	optionValue: string
 	result?: string
+	position: number
 	headline?: string
 	body?: string
 	takeaway?: string
@@ -45,6 +55,8 @@ export type ValuePathAnswerPagePreview = {
 	nextEmailId?: string
 	nextEmailResourceId?: string
 	kitSequenceId?: string
+	captureFieldKey?: string
+	captureDateFieldKey?: string
 }
 
 export type ValuePathParentPreview = {
@@ -105,12 +117,29 @@ export function previewValuePathContentImport(args: {
 	const warnings: string[] = []
 	const ids = new Set<string>()
 	const slugs = new Set<string>()
+	const answerVariantKeys = new Set<string>()
 
 	for (const page of [...emailPages, ...answerPages]) {
 		if (ids.has(page.id)) warnings.push(`duplicate-page-id:${page.id}`)
 		ids.add(page.id)
-		if (slugs.has(page.slug)) warnings.push(`duplicate-page-slug:${page.slug}`)
+		if (
+			slugs.has(page.slug) &&
+			!(
+				page.kind === 'answer' &&
+				page.slug === SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG &&
+				(page.emailId === 'email-7' || page.emailId === 'team-email-7')
+			)
+		) {
+			warnings.push(`duplicate-page-slug:${page.slug}`)
+		}
 		slugs.add(page.slug)
+		if (page.kind === 'answer') {
+			const variantKey = `${page.sequenceId}:${page.emailId}:${page.surveyId}:${page.optionValue}`
+			if (answerVariantKeys.has(variantKey)) {
+				warnings.push(`duplicate-answer-variant:${variantKey}`)
+			}
+			answerVariantKeys.add(variantKey)
+		}
 		if (page.kind === 'email' && !page.kitSequenceId) {
 			warnings.push(`kit-sequence-missing:${page.id}`)
 		}
@@ -183,6 +212,8 @@ function parseEmailSequence(source: string) {
 			subject: textOf(body, 'Subject'),
 			preview: textOf(body, 'Preview'),
 			body: textOf(body, 'Body'),
+			certificateLink: parseCertificateLink(body),
+			waitlistLine: textOf(body, 'WaitlistLine'),
 			survey: parseSurvey(body),
 			kitSequenceId: attrs.kitSequenceId,
 		})
@@ -202,7 +233,9 @@ function parseAnswerPageSet(source: string) {
 	const pages: ValuePathAnswerPagePreview[] = []
 	const pageRe = /<AnswerPage\b([^>]*)>([\s\S]*?)<\/AnswerPage>/g
 	let match: RegExpExecArray | null
+	let position = 0
 	while ((match = pageRe.exec(source))) {
+		position += 1
 		const attrs = parseAttrs(match[1] ?? '')
 		const body = match[2] ?? ''
 		const id = attrs.id ?? `${attrs.surveyId}.${attrs.optionValue}`
@@ -215,15 +248,31 @@ function parseAnswerPageSet(source: string) {
 			surveyId: attrs.surveyId ?? 'unknown-survey',
 			optionValue: attrs.optionValue ?? 'unknown-option',
 			result: attrs.result,
+			position,
 			headline: textOf(body, 'Headline'),
 			body: textOf(body, 'Body'),
 			takeaway: textOf(body, 'Takeaway'),
 			nextNotice: textOf(body, 'NextNotice'),
 			nextSequenceId: attrs.nextSequenceId,
 			nextEmailId: attrs.nextEmailId,
+			captureFieldKey: attrs.captureFieldKey,
+			captureDateFieldKey: attrs.captureDateFieldKey,
 		})
 	}
 	return { id: rootAttrs.id ?? 'unknown-answer-pages', pages }
+}
+
+function parseCertificateLink(
+	body: string,
+): ValuePathCertificateLinkPreview | undefined {
+	const match = body.match(/<CertificateLink\b([^>]*)>([\s\S]*?)<\/CertificateLink>/)
+	if (!match) return undefined
+	const attrs = parseAttrs(match[1] ?? '')
+	if (!attrs.href) return undefined
+	return {
+		href: attrs.href,
+		label: normalizeText(match[2] ?? '') || undefined,
+	}
 }
 
 function parseSurvey(body: string): ValuePathSurveyPreview | undefined {
