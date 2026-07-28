@@ -60,13 +60,15 @@ export function ActivityLadder({
 				</SectionHeader>
 			) : null}
 
-			{/* Rows, hairline-separated (DESIGN rule 2), rather than columns: the
-			    rungs are a sequence a reader walks down, and columns would set them
-			    side by side as equal alternatives to pick between. `border-t` only
-			    — the section supplies the closing rule. */}
-			<ul className="border-border bg-border flex flex-col gap-px border-t">
-				{children}
-			</ul>
+			{/* Rows rather than columns: the rungs are a sequence a reader walks
+			    down, and columns would set them side by side as equal alternatives
+			    to pick between.
+
+			    No rule between rungs. Each already carries an internal hairline
+			    stack (its resource rows), so a divider on top of that made four
+			    lines where the eye needed one break, and the page as a whole leans
+			    hard on horizontal rules already. Whitespace does the separating. */}
+			<ul className="flex flex-col gap-4 pb-4">{children}</ul>
 		</section>
 	)
 }
@@ -98,7 +100,7 @@ export function ActivityRung({
 	children: React.ReactNode
 }) {
 	return (
-		<li className="bg-background grid grid-cols-1 gap-x-12 gap-y-6 px-8 py-10 sm:px-16 md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
+		<li className="grid grid-cols-1 gap-x-12 gap-y-6 px-8 py-6 sm:px-16 md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
 			<div className="flex flex-col gap-2">
 				<p className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
 					{audience}
@@ -120,9 +122,11 @@ export function ActivityRung({
 				) : null}
 			</div>
 
-			<ul className="border-border flex flex-col border-t md:-mt-2 md:border-t-0">
+			{/* Dividers come from the rows themselves (see `ResourceLadderItem`);
+			    the last one drops its rule so the rung ends on whitespace. */}
+			<ul className="flex flex-col md:-mt-2 [&>li:last-child_a]:border-b-0">
 				{React.Children.map(children, (child) => (
-					<li className="border-border border-b">{child}</li>
+					<li>{child}</li>
 				))}
 			</ul>
 		</li>

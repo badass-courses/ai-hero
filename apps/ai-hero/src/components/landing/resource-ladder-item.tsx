@@ -6,11 +6,15 @@ import { ArrowRight } from 'lucide-react'
  * The `Resource` variant for `ActivityRung` (`variant="ladder"`): a catalogue
  * entry — format label, title, arrow — with no artwork.
  *
- * Distinct from `list` (the dense `TopicsGrid` variant) in two ways that
- * matter at this size. The arrow is persistent rather than revealed on hover,
- * and the title carries a hover underline: as bare text at body weight these
- * rows read as prose and get skipped, and a rung whose whole job is to offer
- * somewhere to go cannot afford that.
+ * Distinct from `list` (the dense `TopicsGrid` variant): the arrow is
+ * persistent rather than revealed on hover, because as bare text at body
+ * weight these rows read as prose and get skipped, and a rung whose whole job
+ * is to offer somewhere to go cannot afford that.
+ *
+ * The divider lives on the anchor, not on a wrapping `<li>`. The anchor pulls
+ * its hover fill wider than the text column (`-mx-4`), so a border drawn on
+ * the wrapper stopped short of the fill and the two edges disagreed by 4 on
+ * each side. Same element, same box, no drift.
  *
  * The meta line is the format, not the reading time. Duration resolves for
  * only a fraction of posts, so it appeared on roughly one row per rung and
@@ -29,13 +33,13 @@ export function ResourceLadderItem({
 	return (
 		<Link
 			href={href}
-			className="group hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
+			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			<span className="flex min-w-0 flex-1 flex-col gap-1">
 				<span className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
 					{isVideo ? 'Video' : 'Article'}
 				</span>
-				<span className="text-balance text-base font-medium leading-snug decoration-current/30 underline-offset-4 group-hover:underline">
+				<span className="text-balance text-base font-medium leading-snug">
 					{title}
 				</span>
 			</span>

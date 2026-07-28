@@ -65,9 +65,20 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 
 
 {/*
-  Questions and topic links mirror `GOAL_SECTIONS` on /learn (Matt's three
-  audience buckets) so the homepage and the Map agree. Picks here avoid the
-  "My latest posts" grid below, so nothing appears twice on the page.
+  Rungs are four of the hub sidebar's own topic groups, in the sidebar's order
+  (`hub-sidebar-fallback.ts`) — that ordering is already a curriculum arc, so
+  the homepage borrows it rather than inventing a fifth taxonomy. Four of the
+  eight, not all: these are the groups with real depth (4 to 9 published posts
+  behind each `moreHref`) and no overlap with each other.
+
+  `audience` carries the sidebar's label so the two surfaces name the same
+  thing; the heading asks the question the reader actually has.
+
+  Deliberately skipped: "Build the Right Thing" and "Get Better Results" are
+  almost entirely skills, which the section above already covers, and "Score
+  First Wins" is three posts that all appear elsewhere on this page.
+
+  Picks avoid the "My latest posts" grid below, so nothing appears twice.
 */}
 
 <ActivityLadder
@@ -77,34 +88,44 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 	ctaLabel="See the full map"
 >
 	<ActivityRung
-		audience="If you have never written code"
-		question="How do I get started?"
+		audience="Learn how LLMs think"
+		question="What is actually happening when I prompt a model?"
 		moreHref="/topics/learn-how-llms-think"
-		moreLabel="More fundamentals"
+		moreLabel="More on how LLMs think"
 	>
 		<Resource slugOrId="what-is-an-llm" variant="ladder" />
-		<Resource slugOrId="what-is-an-agent" variant="ladder" />
-		<Resource slugOrId="personal-software-is-insane-in-the-age-of-ai-u2hx2" variant="ladder" />
+		<Resource slugOrId="what-is-the-context-window" variant="ladder" />
+		<Resource slugOrId="what-are-tokens" variant="ladder" />
 	</ActivityRung>
 	<ActivityRung
-		audience="If you can already code"
-		question="How can I get AI to write code like me?"
+		audience="Set up your agent"
+		question="How do I get it working the way I work?"
 		moreHref="/topics/set-up-your-agent"
 		moreLabel="More ways to set up your agent"
 	>
 		<Resource slugOrId="a-complete-guide-to-agents-md" variant="ladder" />
 		<Resource slugOrId="plan-mode-introduction" variant="ladder" />
+		<Resource slugOrId="never-run-claude-init" variant="ladder" />
+	</ActivityRung>
+	<ActivityRung
+		audience="Ship solid code"
+		question="How do I ship code I would put my name on?"
+		moreHref="/topics/ship-solid-code"
+		moreLabel="More on shipping solid code"
+	>
+		<Resource slugOrId="skill-test-driven-development-claude-code" variant="ladder" />
+		<Resource slugOrId="skills-improve-codebase-architecture" variant="ladder" />
 		<Resource slugOrId="essential-ai-coding-feedback-loops-for-type-script-projects" variant="ladder" />
 	</ActivityRung>
 	<ActivityRung
-		audience="If you use an agent every day"
-		question="How can I get the most out of AI coding?"
-		moreHref="/topics/get-better-results"
-		moreLabel="More ways to get better results"
+		audience="Build a software factory"
+		question="How far can I let an agent run on its own?"
+		moreHref="/topics/build-a-software-factory"
+		moreLabel="More on running agents unattended"
 	>
-		<Resource slugOrId="how-to-kill-the-bloat-in-claude-codes-system-prompt" variant="ladder" />
 		<Resource slugOrId="getting-started-with-ralph" variant="ladder" />
-		<Resource slugOrId="my-7-phases-of-ai-development" variant="ladder" />
+		<Resource slugOrId="heres-how-to-stream-claude-code-with-afk-ralph" variant="ladder" />
+		<Resource slugOrId="tips-for-ai-coding-with-ralph-wiggum" variant="ladder" />
 	</ActivityRung>
 </ActivityLadder>
 

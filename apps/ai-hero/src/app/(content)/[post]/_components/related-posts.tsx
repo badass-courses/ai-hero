@@ -284,9 +284,14 @@ export async function RelatedPosts({
 	const fillerCount = items.length % 2 === 0 ? 0 : 1
 
 	return (
+		// `border-t` only, never `border-y`. This is the last block on a post
+		// page, and the global footer already owns a `border-t` — a bottom rule
+		// here lands on exactly the same pixel row and renders as a 2px line
+		// (DESIGN rule 1: consecutive sections SHARE one hairline). Nothing above
+		// this section emits a bottom rule, so the top one is still ours to draw.
 		<section
 			aria-label={heading}
-			className={cn('bg-background border-y', className)}
+			className={cn('bg-background border-t', className)}
 		>
 			<div className="px-5 pb-6 pt-10 sm:px-8 sm:pt-12">
 				<h2 className="text-balance text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">
