@@ -76,6 +76,7 @@ export function NewsletterSection({
 			{!compact && (
 				<div
 					aria-hidden
+					data-newsletter-stripe
 					className="h-1.5 w-full bg-[url('/landing/colorful-stripe.jpg')] bg-contain bg-center bg-no-repeat sm:h-3"
 				/>
 			)}

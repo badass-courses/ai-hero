@@ -40,26 +40,49 @@ export function TestimonialDivider({
 	authorName,
 	authorTitle,
 	authorAvatar,
+	compact = false,
 	children,
 }: {
 	authorName: string
 	/** Falls back to the part after an em dash in `authorName`. */
 	authorTitle?: string
 	authorAvatar?: string
+	/**
+	 * For a narrow column — inside a `SplitRow`, say. Steps the quote down from
+	 * `subhead` to `bodyTight` and drops the surface tint. At full quote size in
+	 * a third of the width the lines break every four or five words, which reads
+	 * as a stack of fragments rather than a sentence.
+	 */
+	compact?: boolean
 	children: React.ReactNode
 }) {
 	const { name, title } = splitAttribution(authorName, authorTitle)
 
 	return (
-		<section className="border-border bg-muted/30 border-b">
-			<figure className="mx-auto flex max-w-3xl flex-col items-center gap-4 px-8 py-10 text-center sm:px-16">
+		<section
+			className={cn('border-border border-b', compact ? '' : 'bg-muted/30')}
+		>
+			<figure
+				className={cn(
+					'mx-auto flex flex-col items-center gap-4 text-center',
+					compact ? 'max-w-md px-8 py-10' : 'max-w-3xl px-8 py-10 sm:px-16',
+				)}
+			>
 				<span
 					aria-hidden
-					className="text-foreground/20 -mb-6 text-5xl font-medium leading-none"
+					className={cn(
+						'text-foreground/20 font-medium leading-none',
+						compact ? '-mb-5 text-4xl' : '-mb-6 text-5xl',
+					)}
 				>
 					&ldquo;
 				</span>
-				<blockquote className={cn(TYPE.subhead, 'text-balance font-medium italic')}>
+				<blockquote
+					className={cn(
+						compact ? TYPE.bodyTight : TYPE.subhead,
+						'text-balance italic',
+					)}
+				>
 					{children}
 				</blockquote>
 				<figcaption className="flex items-center gap-3">
@@ -89,7 +112,7 @@ export function TestimonialDivider({
  * because that is what `Testimonial` takes; this keeps that API while still
  * letting the two parts be styled differently.
  */
-function splitAttribution(
+export function splitAttribution(
 	authorName: string,
 	authorTitle?: string,
 ): { name: string; title?: string } {

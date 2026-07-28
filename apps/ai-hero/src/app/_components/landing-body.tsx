@@ -19,6 +19,7 @@ import {
 import { SectionHeader } from '@/components/landing/section-header'
 import { SectionLink } from '@/components/landing/section-link'
 import { SkillsShowcase } from '@/components/landing/skills-showcase'
+import { SplitRow } from '@/components/landing/split-row'
 import { SlimNewsletterForm } from '@/components/landing/slim-newsletter-form'
 import { TestimonialDivider } from '@/components/landing/testimonial-divider'
 import { TopicsGrid, TopicsGridColumn } from '@/components/landing/topics-grid'
@@ -68,6 +69,7 @@ export async function LandingBody({
 		TopicsGrid,
 		TopicsGridColumn,
 		SkillsShowcase,
+		SplitRow,
 		ActivityLadder,
 		ActivityRung,
 		SectionHeader,

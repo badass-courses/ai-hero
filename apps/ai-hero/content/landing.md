@@ -39,19 +39,20 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
   outdated." Pointing at that post until the refreshed one exists.
 */}
 
+{/*
 <Resource slugOrId="5-agent-skills-i-use-every-day" badge="Start here" />
 <Resource slugOrId="llm-fundamentals" />
 <Resource slugOrId="ai-sdk-v6-crash-course" />
 <Resource slugOrId="model-context-protocol-tutorial" />
-
-{/*
-  Wording confirmed. Source: x.com/badlogicgames/status/2075329079931212197.
-  Avatar from github.com/badlogic (Twitter handle on that profile is
-  badlogicgames, which is how the identity was verified), uploaded to
-  Cloudinary rather than hotlinked.
 */}
 
+
+<SplitRow>
+
+<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
+
 <TestimonialDivider
+	compact
 	authorName="Mario Zechner — creator of Pi"
 	authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/mario-zechner.jpg"
 >
@@ -60,10 +61,7 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 
 </TestimonialDivider>
 
-
-<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
-
-
+</SplitRow>
 {/*
   Rungs are four of the hub sidebar's own topic groups, in the sidebar's order
   (`hub-sidebar-fallback.ts`) — that ordering is already a curriculum arc, so
@@ -163,7 +161,7 @@ Every company needs its own Matt Pocock.
 
 <Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 
-“Matt is one of the best developer educators in the world.”
+Matt is one of the best developer educators in the world.
 
 </Testimonial>
 
