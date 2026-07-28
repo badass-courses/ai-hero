@@ -26,7 +26,7 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 
 </Manifesto>
 
-<NewsletterSection heading={<>Join <SubscriberCount /> developers</>} subTitle="Notes on what actually works with AI coding agents, straight to your inbox."><NewsletterCta /></NewsletterSection>
+<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
 
 ## Level up your coding practice with **Real AI Engineering**
 
@@ -120,7 +120,7 @@ Every company needs its own Matt Pocock.
 
 <SectionLink href="/posts">See more in my blog</SectionLink>
 
-<NewsletterSection compact heading="Get the next one in your inbox" subTitle="New posts and skills as I publish them."><NewsletterCta /></NewsletterSection>
+<NewsletterSection compact heading="Get the next one in your inbox" subTitle={<>New posts and skills as I publish them. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
 
 <Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 

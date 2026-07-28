@@ -7,6 +7,9 @@ export type UpcomingCohortSummary = {
 	slug: string
 	/** ISO datetime when the cohort starts, when set on the resource. */
 	startsAt?: string
+	/** Cohort artwork. Every cohort has one; the homepage leads with it. */
+	image?: string
+	description?: string
 }
 
 function readString(obj: unknown, key: string): string | undefined {
@@ -65,6 +68,8 @@ export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null>
 		title: readString(winner.fields, 'title') ?? 'Upcoming cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),
+		image: readString(winner.fields, 'image'),
+		description: readString(winner.fields, 'description'),
 	}
 }
 
@@ -100,5 +105,7 @@ export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
 		title: readString(winner.fields, 'title') ?? 'The next cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),
+		image: readString(winner.fields, 'image'),
+		description: readString(winner.fields, 'description'),
 	}
 }

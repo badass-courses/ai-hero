@@ -18,9 +18,10 @@ export function NewsletterSection({
 	 */
 	subTitle?: React.ReactNode
 	/**
-	 * Tighter treatment for a SECOND ask on the same page. The first newsletter
-	 * bar is the real pitch and keeps full height; repeating that scale after
-	 * the posts grid reads as shouting the same thing twice.
+	 * A SECOND ask on the same page, laid out as one row: copy left, form
+	 * right. The first newsletter bar is the real pitch and keeps full height;
+	 * repeating that scale after the posts grid says the same thing twice at
+	 * the same volume.
 	 */
 	compact?: boolean
 	children: React.ReactNode
@@ -29,16 +30,25 @@ export function NewsletterSection({
 		<section className="border-border relative flex flex-col items-center border-b">
 			<div
 				className={cn(
-					'flex w-full max-w-4xl flex-col items-center px-8 sm:px-16',
-					compact ? 'gap-6 py-10 md:py-12' : 'gap-8 py-16 md:py-20',
+					'flex w-full px-8 sm:px-16',
+					compact
+						? 'max-w-6xl flex-col items-start gap-6 py-10 md:flex-row md:items-center md:justify-between md:gap-12'
+						: 'max-w-4xl flex-col items-center gap-8 py-16 md:py-20',
 				)}
 			>
-				<div className="flex flex-col items-center gap-2.5">
+				<div
+					className={cn(
+						'flex flex-col gap-2.5',
+						compact ? 'items-start text-left' : 'items-center',
+					)}
+				>
 					{heading && (
 						<h2
 							className={cn(
-								'text-balance text-center font-sans font-semibold leading-tight tracking-tight',
-								compact ? 'text-xl sm:text-2xl' : 'text-3xl sm:text-4xl',
+								'text-balance font-sans font-semibold leading-tight tracking-tight',
+								compact
+									? 'text-xl sm:text-2xl'
+									: 'text-center text-3xl sm:text-4xl',
 							)}
 						>
 							{heading}
@@ -47,15 +57,19 @@ export function NewsletterSection({
 					{subTitle && (
 						<p
 							className={cn(
-								'text-balance text-center font-sans font-normal leading-snug opacity-80',
-								compact ? 'text-sm sm:text-base' : 'text-base sm:text-lg',
+								'text-balance font-sans font-normal leading-snug opacity-80',
+								compact
+									? 'text-sm sm:text-base'
+									: 'text-center text-base sm:text-lg',
 							)}
 						>
 							{subTitle}
 						</p>
 					)}
 				</div>
-				{children}
+				<div className={cn(compact && 'w-full md:max-w-xl md:shrink-0')}>
+					{children}
+				</div>
 			</div>
 			{!compact && (
 				<div
