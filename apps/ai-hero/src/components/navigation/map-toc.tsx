@@ -115,7 +115,7 @@ export function MapToc({
 					<button
 						type="button"
 						onClick={() => setBotOpen(true)}
-						className="focus-visible:ring-ring inline-flex items-center gap-2 border px-4 py-2.5 text-sm font-medium tracking-tight transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+						className="border-border focus-visible:ring-ring hover:bg-muted inline-flex items-center gap-2 rounded-full border px-6 py-2.5 text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 					>
 						<Sparkles aria-hidden className="size-4 shrink-0" />
 						Ask AIHero Bot

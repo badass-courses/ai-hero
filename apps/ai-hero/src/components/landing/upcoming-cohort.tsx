@@ -80,8 +80,13 @@ export async function UpcomingCohort({
 				    offer above it. Its own quiet surface says "aside" without
 				    claiming a boundary. */}
 				<dl className={cn(TYPE.metaProse, 'bg-muted flex w-fit flex-wrap gap-x-8 gap-y-2 px-4 py-3')}>
-					<div className="flex items-baseline gap-2">
-						<dt className="text-muted-foreground shrink-0">
+					{/* Stacked, not baseline-aligned on one row. The two states differ
+					    in length by an order of magnitude — "March 3" against a full
+					    sentence — and side by side the long one wrapped into a ragged
+					    column beside a label stranded on the first line. Label over
+					    value holds for both. */}
+					<div className="flex flex-col gap-0.5">
+						<dt className="text-muted-foreground">
 							{isOpen ? 'Starts' : 'Enrollment'}
 						</dt>
 						<dd className="font-medium tabular-nums">

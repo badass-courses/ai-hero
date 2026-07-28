@@ -15,6 +15,15 @@ import {
 import { Sidebar, SidebarContent } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import * as TooltipPrimitive from '@radix-ui/react-tooltip'
+
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from '@/components/ui/tooltip'
+
 import { NAV_ICONS, type NavIconProps } from './nav-icons'
 import { normalizePath } from './sidebar-client'
 
@@ -112,36 +121,55 @@ export function HubSidebarShell({
 					<PanelLeftOpen className="size-4" />
 				</button>
 				<div aria-hidden="true" className="bg-border my-1 h-px w-6 shrink-0" />
-				<nav className="flex flex-col items-center gap-1">
-					{ICON_RAIL_LINKS.map((item) => {
-						const isActive = normalizePath(item.href) === current
-						return (
-							<Link
-								key={item.href}
-								href={item.href}
-								prefetch={false}
-								title={item.label}
-								aria-current={isActive ? 'page' : undefined}
-								onClick={() =>
-									track('nav_link_clicked', {
-										label: item.label,
-										href: item.href,
-										category: 'hub_sidebar_rail',
-									})
-								}
-								className={cn(
-									'focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2',
-									isActive
-										? 'bg-accent text-accent-foreground'
-										: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-								)}
-							>
-								<item.icon active={isActive} className="size-4" />
-								<span className="sr-only">{item.label}</span>
-							</Link>
-						)
-					})}
-				</nav>
+				{/* Real tooltips rather than the native `title`. Collapsed to a 48px
+				    rail these links are icons and nothing else, so the label is the
+				    only thing identifying them — and `title` takes about a second to
+				    appear, renders wherever the OS decides, and is invisible to
+				    touch and to keyboard focus.
+
+				    Portalled to `document.body`: the rail is `sticky` inside a
+				    fixed-width column, so a tooltip rendered in place is clipped by
+				    the rail's own 48px box the moment it opens. The portal is what
+				    makes "visible" true rather than hoped for. */}
+				<TooltipProvider delayDuration={150}>
+					<nav className="flex flex-col items-center gap-1">
+						{ICON_RAIL_LINKS.map((item) => {
+							const isActive = normalizePath(item.href) === current
+							return (
+								<Tooltip key={item.href}>
+									<TooltipTrigger asChild>
+										<Link
+											href={item.href}
+											prefetch={false}
+											aria-current={isActive ? 'page' : undefined}
+											onClick={() =>
+												track('nav_link_clicked', {
+													label: item.label,
+													href: item.href,
+													category: 'hub_sidebar_rail',
+												})
+											}
+											className={cn(
+												'focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2',
+												isActive
+													? 'bg-accent text-accent-foreground'
+													: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+											)}
+										>
+											<item.icon active={isActive} className="size-4" />
+											<span className="sr-only">{item.label}</span>
+										</Link>
+									</TooltipTrigger>
+									<TooltipPrimitive.Portal>
+										<TooltipContent side="right" sideOffset={8}>
+											{item.label}
+										</TooltipContent>
+									</TooltipPrimitive.Portal>
+								</Tooltip>
+							)
+						})}
+					</nav>
+				</TooltipProvider>
 			</aside>
 		)
 	}
