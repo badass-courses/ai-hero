@@ -110,7 +110,7 @@ export async function SkillsShowcase({
 						{group.skills[0] ? (
 							<Link
 								href={`/${group.skills[0].slug}`}
-								className={cn(TYPE.meta, 'border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border px-4 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
+								className={cn(TYPE.meta, 'text-foreground hover:bg-primary/10 focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border border-[color-mix(in_oklch,var(--primary)_40%,transparent)] px-4 py-2.5 transition-colors hover:border-[color-mix(in_oklch,var(--primary)_70%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 							>
 								<span className="truncate">
 									Start with{' '}
@@ -120,7 +120,7 @@ export async function SkillsShowcase({
 								</span>
 								<ArrowRight
 									aria-hidden
-									className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+									className="text-primary ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 								/>
 							</Link>
 						) : null}

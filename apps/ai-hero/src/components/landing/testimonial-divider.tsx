@@ -71,6 +71,9 @@ export function TestimonialDivider({
 				<span
 					aria-hidden
 					className={cn(
+						// Grey, deliberately. Tried at 45% of the brand hue and it turned
+						// a piece of quiet punctuation into a mark that announced
+						// itself before the quote did.
 						'text-foreground/20 font-medium leading-none',
 						compact ? '-mb-5 text-4xl' : '-mb-6 text-5xl',
 					)}

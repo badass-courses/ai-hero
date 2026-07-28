@@ -107,7 +107,7 @@ export const CohortSidebarMobile = ({
 				</p>
 			</div>
 			<Button
-				className="dark:bg-primary relative rounded-xl bg-blue-600 shadow"
+				className="bg-primary relative rounded-xl shadow"
 				asChild
 			>
 				<Link href="#buy" onClick={handleScrollToBuy}>

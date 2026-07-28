@@ -261,7 +261,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						<div className="mt-5 flex flex-col items-start gap-2">
 							<button
 								disabled
-								className="dark:bg-primary/50 relative h-auto w-full cursor-not-allowed rounded-lg bg-blue-600/50 px-8 py-3 font-semibold opacity-75 sm:h-14 sm:w-auto md:px-16"
+								className="bg-primary/50 text-primary-foreground relative h-auto w-full cursor-not-allowed rounded-lg px-8 py-3 font-semibold opacity-75 sm:h-14 sm:w-auto md:px-16"
 							>
 								<span className="relative z-10">{children}</span>
 							</button>
@@ -288,7 +288,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						className="mt-5 items-start justify-start"
 					>
 						<Pricing.Product>
-							<CheckoutSurveyBuyButton className="dark:bg-primary dark:hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg bg-blue-600 px-8 font-semibold hover:bg-blue-700 sm:h-14 sm:w-auto md:px-16">
+							<CheckoutSurveyBuyButton className="bg-primary text-primary-foreground hover:bg-primary/90 relative h-auto w-full cursor-pointer rounded-lg px-8 font-semibold sm:h-14 sm:w-auto md:px-16">
 								<span className="relative z-10">{children}</span>
 								<div
 									style={{
