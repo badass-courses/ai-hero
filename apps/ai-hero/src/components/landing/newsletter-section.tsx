@@ -5,7 +5,9 @@ export function NewsletterSection({
 	subTitle,
 	children,
 }: {
-	heading?: string
+	/** ReactNode for the same reason as `subTitle`: the heading can carry a
+	 *  live `<SubscriberCount />` ("Join 97,000+ developers"). */
+	heading?: React.ReactNode
 	/**
 	 * ReactNode, not string, so the CMS body can drop a live element in here:
 	 * `subTitle={<>Join over <SubscriberCount /> developers…</>}`. Subscriber
@@ -16,7 +18,7 @@ export function NewsletterSection({
 }) {
 	return (
 		<section className="border-border relative flex flex-col items-center border-b">
-			<div className="flex w-full max-w-4xl flex-col items-center gap-16 px-8 py-24 sm:px-16">
+			<div className="flex w-full max-w-4xl flex-col items-center gap-8 px-8 py-16 sm:px-16 md:py-20">
 				<div className="flex flex-col items-center gap-4">
 					{heading && (
 						<h2 className="text-balance text-center font-sans text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">

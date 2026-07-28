@@ -14,7 +14,8 @@ import {
 	SectionHeading,
 	YellowStrong,
 } from '@/components/landing/section-heading'
-import { SkillCycleSection } from '@/components/landing/skill-cycle-section'
+import { SectionLink } from '@/components/landing/section-link'
+import { SkillsShowcase } from '@/components/landing/skills-showcase'
 import { SlimNewsletterForm } from '@/components/landing/slim-newsletter-form'
 import { TestimonialDivider } from '@/components/landing/testimonial-divider'
 import {
@@ -115,7 +116,8 @@ export default async function DraftLandingPage(props: Props) {
 		TestimonialDivider,
 		TopicsGrid,
 		TopicsGridColumn,
-		SkillCycleSection,
+		SkillsShowcase,
+		SectionLink,
 		SubscriberCount,
 		Prose,
 		h2: SectionHeading,

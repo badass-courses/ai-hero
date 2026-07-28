@@ -48,17 +48,21 @@ export function ResourceListItem({
 }
 
 /**
- * One line of context under the title. A lesson count beats a type label when
- * we have one: "6 lessons" tells the reader what they are committing to.
+ * One line of context under the title, or nothing.
+ *
+ * A count only appears for genuine multi-part resources. `resources.length` is
+ * NOT a lesson count: an ordinary post carries its own videoResource there, so
+ * counting it naively labelled every article "1 LESSON", which is both wrong
+ * and noise. A single-item count tells the reader nothing either way, so the
+ * floor is 2.
+ *
+ * Plain articles get no meta at all. In a dense three-per-column list the type
+ * label was the same word repeated down the page, which is decoration, not
+ * information.
  */
 function listMeta(type?: string, lessonCount?: number): string | null {
-	if (lessonCount && lessonCount > 0) {
-		return `${lessonCount} ${lessonCount === 1 ? 'lesson' : 'lessons'}`
-	}
-	if (!type) return null
+	if (lessonCount && lessonCount > 1) return `${lessonCount} lessons`
 	switch (type) {
-		case 'post':
-			return 'Article'
 		case 'list':
 			return 'Series'
 		case 'workshop':
@@ -68,6 +72,6 @@ function listMeta(type?: string, lessonCount?: number): string | null {
 		case 'event':
 			return 'Event'
 		default:
-			return type.charAt(0).toUpperCase() + type.slice(1)
+			return null
 	}
 }

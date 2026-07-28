@@ -57,13 +57,13 @@ export function TopicsGridColumn({
 	heading: string
 	/** Link to the full topic. Omit for a column with no "more" destination. */
 	moreHref?: string
-	/** Defaults to "All {heading}". */
+	/** Defaults to "More" (the wireframe's per-column link). */
 	moreLabel?: string
 	children: React.ReactNode
 }) {
 	return (
 		<div className="bg-background flex flex-col">
-			<h3 className="px-6 pb-2 pt-8 font-mono text-[11px] font-medium uppercase tracking-wider opacity-60 sm:px-8">
+			<h3 className="text-balance px-6 pb-3 pt-8 text-xl font-semibold leading-tight tracking-tight sm:px-8">
 				{heading}
 			</h3>
 			{/* No gap: the list items own their padding, so they read as one stack
@@ -74,7 +74,7 @@ export function TopicsGridColumn({
 					href={moreHref}
 					className="group text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-auto inline-flex items-center gap-1.5 px-6 pb-8 pt-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8"
 				>
-					{moreLabel ?? `All ${heading}`}
+					{moreLabel ?? 'More'}
 					<ArrowRight
 						aria-hidden
 						className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"

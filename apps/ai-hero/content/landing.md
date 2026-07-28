@@ -10,25 +10,29 @@
 */}
 
 <Hero
-	h1="Become a<br />**Real** AI Hero"
-	h2="with Matt Pocock"
+	h1="**Real**<br />Engineering<br />with AI"
+	h2="Engineering fundamentals aren't obsolete. They're essential."
 />
 
-<Manifesto headline="Most AI engineering isn't engineering yet.">
+<Manifesto headline="Engineering fundamentals are your biggest advantage.">
 
-There's a class of code that ships to production, and a class that lives on someone's laptop in a notebook. The line between them isn't how impressive the demo is. It's evals, observability, and the boring infrastructure that makes a system answerable to its bug reports.
+A lot of people think the rules of software development are being rewritten by AI. They think that code is cheap. That software engineering, as a profession, is finished.
 
-Real AI Engineering is the part nobody tweets about. Prompts that fail loudly. Retrieval that you can debug. Models you can swap out. Tests that run on every commit. Logs you actually read.
+Coding agents like Claude Code and Codex ship code faster than any human ever has. But without careful guidance, they make codebases worse. And the worse the codebase, the worse the AI performs. It's a vicious circle.
 
-This site is for engineers who want to learn to build that — and stop pretending the rest of it doesn't matter.
+Code isn't cheap. In fact, bad code is the most expensive it's ever been. If you can design codebases agents love, you can reap the rewards of this new era.
+
+Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone who cares about the code they ship.
 
 </Manifesto>
 
-<NewsletterCta />
+<NewsletterSection heading="Get my notes on AI engineering" subTitle={<>What actually works with coding agents, roughly weekly. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
 
 ## Level up your coding practice with **Real AI Engineering**
 
-<SkillCycleSection ctaHref="/skills" ctaLabel="See all skills" />
+<SkillsShowcase
+	intro="I've built an engineering process for working with AI coding agents, from grilling an idea to shipping reviewed code. Every skill here is free, installs in one command, and you can use it today."
+/>
 
 <Resource slugOrId="ai-engineer-roadmap" badge="Start here" />
 
@@ -42,37 +46,56 @@ This site is for engineers who want to learn to build that — and stop pretendi
   <Resource slugOrId="model-context-protocol-tutorial" />
 */}
 
-<TestimonialDivider authorName="Placeholder — real quote pending">
+{/*
+  Wording confirmed. Source: x.com/badlogicgames/status/2075329079931212197.
+  Avatar from github.com/badlogic (Twitter handle on that profile is
+  badlogicgames, which is how the identity was verified), uploaded to
+  Cloudinary rather than hotlinked.
+*/}
 
-PLACEHOLDER: a short line about the skills workflow, to be replaced with a real quote before launch.
+<TestimonialDivider
+	authorName="Mario Zechner — creator of libGDX"
+	authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/mario-zechner.jpg"
+>
+
+Matt Pocock is a true educator and I admire how he brings structure to this mess we are in.
 
 </TestimonialDivider>
 
 <TopicsGrid>
-	<TopicsGridColumn heading="Think like an AI engineer" moreHref="/topics/think-like-an-ai-engineer">
-		<Resource slugOrId="the-ai-engineer-mindset" variant="list" />
+	<TopicsGridColumn heading="Ship better code" moreHref="/learn">
+		<Resource slugOrId="skill-test-driven-development-claude-code" variant="list" />
+		<Resource slugOrId="tracer-bullets" variant="list" />
+		<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="list" />
+	</TopicsGridColumn>
+	<TopicsGridColumn heading="Understand AI fundamentals" moreHref="/learn">
 		<Resource slugOrId="what-is-an-ai-engineer" variant="list" />
-		<Resource slugOrId="my-7-phases-of-ai-development" variant="list" />
+		<Resource slugOrId="what-are-llms-used-for" variant="list" />
+		<Resource slugOrId="ai-engineer-roadmap" variant="list" />
 	</TopicsGridColumn>
-	<TopicsGridColumn heading="Learn how LLMs think" moreHref="/topics/learn-how-llms-think">
-		<Resource slugOrId="what-is-an-llm" variant="list" />
-		<Resource slugOrId="what-are-tokens" variant="list" />
-		<Resource slugOrId="what-is-the-context-window" variant="list" />
-	</TopicsGridColumn>
-	<TopicsGridColumn heading="Set up your agent" moreHref="/topics/set-up-your-agent">
-		<Resource slugOrId="a-complete-guide-to-agents-md" variant="list" />
-		<Resource slugOrId="plan-mode-introduction" variant="list" />
-		<Resource slugOrId="connect-claude-code-to-github" variant="list" />
+	<TopicsGridColumn heading="Level up your workflow" moreHref="/learn">
+		<Resource slugOrId="ways-ai-coding-has-rewired-my-brain" variant="list" />
+		<Resource slugOrId="real-world-feature-build-with-claude-code" variant="list" />
+		<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="list" />
 	</TopicsGridColumn>
 </TopicsGrid>
 
-<TestimonialDivider authorName="Placeholder — real quote pending">
+{/*
+  DELIBERATELY CLIPPED, and confirmed. The full tweet frames Matt as tracking
+  every model release, which Alex flagged and Matt agreed was not how he sees
+  himself ("[aih] Banger testimonial from high-trust dev", Jun 24); the agreed
+  use is this line alone. Do NOT "restore" the full quote.
+  Source: x.com/shadcn/status/2069746957292130319.
+*/}
 
-PLACEHOLDER: a short line about the cohort, to be replaced with a real quote before launch.
+<TestimonialDivider
+	authorName="shadcn — creator of shadcn/ui"
+	authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/shadcn.jpg"
+>
+
+Every company needs its own Matt Pocock.
 
 </TestimonialDivider>
-
-## Go further on a **live cohort**
 
 <UpcomingCohort />
 
@@ -84,12 +107,14 @@ PLACEHOLDER: a short line about the cohort, to be replaced with a real quote bef
 	<Resource slugOrId="real-world-feature-build-with-claude-code" variant="card" />
 	<Resource slugOrId="5-agent-skills-i-use-every-day" variant="card" />
 	<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="card" />
-	<Resource slugOrId="tracer-bullets" variant="card" />
+	<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="card" />
 </ResourceGrid>
 
-<NewsletterSection heading="Get the next one in your inbox" subTitle={<>Join over <SubscriberCount /> developers becoming AI Heroes</>}><NewsletterCta /></NewsletterSection>
+<SectionLink href="/posts">See more in my blog</SectionLink>
 
-<Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="http://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
+<NewsletterSection heading="Get the next one in your inbox" subTitle={<>New posts, skills and workflow notes as I publish them. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
+
+<Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 
 “Matt is one of the best developer educators in the world.”
 
