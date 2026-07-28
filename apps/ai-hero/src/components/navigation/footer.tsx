@@ -330,7 +330,9 @@ export default function Footer() {
 	return (
 		<footer className="border-border w-full border-t print:hidden">
 			<div className="mx-auto w-full max-w-7xl px-10 pb-12 pt-16 lg:px-0 lg:pb-0 lg:pt-0">
-				<div className="divide-border grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-[3fr_3fr_2fr_2fr] lg:grid-rows-[auto_1fr] lg:gap-x-0 lg:gap-y-6 lg:divide-x">
+				{/* First column is pinned to 320px so its divider lines up with the
+				    hub sidebar's right border (STICKY_SIDEBAR_CLASSES, w-[320px]). */}
+				<div className="divide-border grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-[320px_3fr_2fr_2fr] lg:grid-rows-[auto_1fr] lg:gap-x-0 lg:gap-y-6 lg:divide-x">
 					<div className={cn(columnClass, 'lg:pb-12 lg:pl-8 lg:pr-8 lg:pt-10')}>
 						<LearnColumn />
 					</div>

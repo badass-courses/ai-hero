@@ -276,7 +276,7 @@ export function SidebarSection({
 						// Item-like when collapsed, bold when open. Same row indent as
 						// sibling items; the disclosure chevron sits on the RIGHT
 						// (2026-07-14 — unified across all sidebar disclosure rows).
-						className="text-sidebar-foreground h-auto gap-1.5 py-2 pr-2 text-sm font-normal data-[state=open]:font-semibold"
+						className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-auto gap-1.5 py-2 pr-2 text-sm font-normal transition-colors data-[state=open]:text-sidebar-foreground"
 						style={rowIndent(depth)}
 					>
 						<button
@@ -290,7 +290,9 @@ export function SidebarSection({
 						</button>
 					</SidebarGroupLabel>
 				</CollapsibleTrigger>
-				<CollapsibleContent>
+				{/* mt-1 matches SidebarMenu's gap-1 so an open section's first row
+				    never touches the (highlighted) trigger above it. */}
+				<CollapsibleContent className="mt-1 overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
 					<SidebarDepth>
 						<SidebarGroupContent>{children}</SidebarGroupContent>
 					</SidebarDepth>

@@ -22,7 +22,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
-import { rowIndent, useSidebarDepth } from './sidebar-indent'
+import { rowIndent, SidebarDepth, useSidebarDepth } from './sidebar-indent'
 
 /** Local path normalizer — kept here to avoid a cycle with sidebar-client. */
 function norm(path: string): string {
@@ -30,15 +30,29 @@ function norm(path: string): string {
 	return trimmed === '' ? '/' : trimmed.toLowerCase()
 }
 
-type NumberedLesson = { lesson: ContentResource; n: number }
+/** `n` is a display label, not an index: "4" for a top-level lesson, "3.2" for
+ *  the second lesson of the third top-level entry. */
+type NumberedLesson = { lesson: ContentResource; n: string }
 type SeriesGroup =
 	| { kind: 'loose'; id: string; lessons: NumberedLesson[] }
-	| { kind: 'section'; id: string; title: string; lessons: NumberedLesson[] }
+	| {
+			kind: 'section'
+			id: string
+			title: string
+			/** The section's own position in the series, e.g. 3 for "3.1, 3.2, …". */
+			n: number
+			lessons: NumberedLesson[]
+	  }
 
 /**
  * Walk a list's resources into render groups: a `section` becomes a titled,
  * collapsible group of its children; consecutive loose lessons collapse into
- * untitled runs. Lesson numbering is continuous across the whole series.
+ * untitled runs.
+ *
+ * Numbering is outline-style. One counter runs over TOP-LEVEL entries, so a
+ * section and a loose lesson are peers in it; a section's children then number
+ * within their parent ("3.1", "3.2"). Sections are entries in their own right,
+ * which is why they consume a number rather than being transparent.
  */
 export function toSeriesGroups(
 	resources: { resource?: ContentResource }[] | undefined,
@@ -50,24 +64,29 @@ export function toSeriesGroups(
 		const res = entry?.resource
 		if (!res) continue
 		if (res.type === 'section') {
-			const lessons = (((res as any).resources ?? []) as any[])
-				.filter((child) => child?.resource)
-				.map((child) => ({ lesson: child.resource, n: ++n }))
-			if (lessons.length === 0) continue
+			const children = (((res as any).resources ?? []) as any[]).filter(
+				(child) => child?.resource,
+			)
+			if (children.length === 0) continue
 			looseRun = null
+			const sectionNumber = ++n
 			const title = (res as any).fields?.title
 			groups.push({
 				kind: 'section',
 				id: res.id,
 				title: typeof title === 'string' && title ? title : 'Section',
-				lessons,
+				n: sectionNumber,
+				lessons: children.map((child, i) => ({
+					lesson: child.resource,
+					n: `${sectionNumber}.${i + 1}`,
+				})),
 			})
 		} else {
 			if (!looseRun) {
 				looseRun = { kind: 'loose', id: `loose-${groups.length}`, lessons: [] }
 				groups.push(looseRun)
 			}
-			looseRun.lessons.push({ lesson: res, n: ++n })
+			looseRun.lessons.push({ lesson: res, n: String(++n) })
 		}
 	}
 	return groups
@@ -116,16 +135,10 @@ export function SeriesLessons({
 					<SidebarMenuButton
 						asChild
 						isActive={overviewActive}
-						className="text-muted-foreground h-auto items-start gap-2 py-2 pr-2 text-sm font-normal"
+						className="text-muted-foreground h-auto items-start gap-1.5 py-2 pr-2 text-sm font-normal"
 						style={rowIndent(depth)}
 					>
 						<Link href={overviewHref} prefetch={false}>
-							<span
-								aria-hidden
-								className="text-muted-foreground/60 flex h-5 w-4 shrink-0 items-center justify-center font-mono text-[11px] tabular-nums"
-							>
-								0
-							</span>
 							<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
 								Overview
 							</span>
@@ -147,6 +160,7 @@ export function SeriesLessons({
 					<SeriesSectionGroup
 						key={group.id}
 						title={group.title}
+						n={group.n}
 						lessons={group.lessons}
 						currentSlug={currentSlug}
 						completed={completed}
@@ -165,11 +179,13 @@ export function SeriesLessons({
  */
 function SeriesSectionGroup({
 	title,
+	n,
 	lessons,
 	currentSlug,
 	completed,
 }: {
 	title: string
+	n: number
 	lessons: NumberedLesson[]
 	currentSlug: string | undefined
 	completed: Set<string>
@@ -199,24 +215,39 @@ function SeriesSectionGroup({
 					<button
 						type="button"
 						aria-label={`Toggle ${title} section`}
-						className="text-muted-foreground hover:text-foreground flex w-full cursor-pointer select-none items-center gap-2 pb-1 pt-3 pr-2 text-[11px] font-semibold uppercase tracking-wider transition-colors"
+						className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex w-full cursor-pointer select-none items-baseline gap-1.5 rounded-md py-2 pr-2 text-sm font-normal transition-colors group-data-[state=open]/series-section:text-foreground"
 						style={rowIndent(depth)}
 					>
+						{/* w-4 sits between the lesson rows' w-6 and content width: a
+						    section number is a single figure, so it needs less room than
+						    "3.2", but flush against the title reads cramped. */}
+						<span
+							aria-hidden
+							className="text-muted-foreground/60 w-4 shrink-0 font-mono text-[11px] leading-5 tabular-nums"
+						>
+							{n}
+						</span>
 						<span className="min-w-0 truncate">{title}</span>
-						<ChevronRight className="ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]/series-section:rotate-90" />
+						{/* self-center: the row is baseline-aligned for the number, but an
+						    icon has no meaningful baseline to sit on. */}
+						<ChevronRight className="ml-auto size-3.5 shrink-0 self-center transition-transform group-data-[state=open]/series-section:rotate-90" />
 					</button>
 				</CollapsibleTrigger>
-				<CollapsibleContent>
-					<SidebarMenu>
-						{lessons.map((numbered) => (
-							<LessonRow
-								key={numbered.lesson.id}
-								numbered={numbered}
-								currentSlug={currentSlug}
-								completed={completed}
-							/>
-						))}
-					</SidebarMenu>
+				<CollapsibleContent className="mt-1 overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+					{/* One level deeper than the section header, so "3.1" sits under
+					    "3" rather than beside it. */}
+					<SidebarDepth>
+						<SidebarMenu>
+							{lessons.map((numbered) => (
+								<LessonRow
+									key={numbered.lesson.id}
+									numbered={numbered}
+									currentSlug={currentSlug}
+									completed={completed}
+								/>
+							))}
+						</SidebarMenu>
+					</SidebarDepth>
 				</CollapsibleContent>
 			</Collapsible>
 		</SidebarMenuItem>
@@ -245,7 +276,7 @@ function LessonRow({
 			<SidebarMenuButton
 				asChild
 				isActive={isActive}
-				className="text-muted-foreground h-auto items-start gap-2 py-2 pr-2 text-sm font-normal"
+				className="text-muted-foreground h-auto items-start gap-1.5 py-2 pr-2 text-sm font-normal"
 				style={rowIndent(depth)}
 			>
 				<Link
@@ -263,7 +294,8 @@ function LessonRow({
 					<span
 						aria-hidden
 						className={cn(
-							'flex h-5 w-4 shrink-0 items-center justify-center font-mono text-[11px] tabular-nums',
+							// w-6, not w-4: section children render "3.2", not "7".
+							'flex h-5 w-6 shrink-0 items-center font-mono text-[11px] tabular-nums',
 							isDone
 								? 'text-foreground dark:text-primary'
 								: 'text-muted-foreground/60',

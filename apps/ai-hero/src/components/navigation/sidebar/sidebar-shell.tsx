@@ -161,7 +161,7 @@ export function HubSidebarShell({
 					</button>
 				</div>
 			) : null}
-			<SidebarContent className="no-scrollbar scroll-fade gap-0 px-2 py-3">
+			<SidebarContent className="no-scrollbar scroll-fade gap-1 px-2 py-3">
 				{children}
 			</SidebarContent>
 		</Sidebar>

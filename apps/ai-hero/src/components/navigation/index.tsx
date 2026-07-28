@@ -209,7 +209,7 @@ const Navigation = () => {
 							tabIndex={isRoot ? -1 : 0}
 							href="/"
 							aria-label="AI Hero home"
-							className="font-heading h-(--nav-height) group focus-visible:ring-ring flex w-full items-center justify-center gap-2 pl-3 pr-3 text-lg font-semibold leading-none transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+							className="font-heading group focus-visible:ring-ring flex h-full w-full items-center justify-center gap-2 pl-3 pr-3 text-lg font-semibold leading-none transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 						>
 							{/* Brand mark: fills the full nav height — no vertical padding
 							    (the 124px @2x asset is cut for the 63px bar). */}
@@ -219,7 +219,7 @@ const Navigation = () => {
 								width={124}
 								height={124}
 								priority
-								className="h-(--nav-height) w-auto shrink-0 self-end object-contain object-bottom"
+								className="h-[calc(var(--nav-height)-1px)] w-auto shrink-0 self-end object-contain object-bottom"
 							/>
 							<span className="text-foreground leading-none! text-lg font-semibold tracking-tight">
 								<span className="font-mono">AI</span>Hero
