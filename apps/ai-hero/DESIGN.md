@@ -149,6 +149,7 @@ the scatter came back last time.
 | Display | `TYPE.display` | 4xl → 5xl → 3.5rem | The hero `h1`. Nothing else. |
 | Heading | `TYPE.heading` | 3xl → 4xl | Section `h2`s. |
 | Subhead | `TYPE.subhead` | xl → 2xl | `h3`s, card and row titles, pull quotes. |
+| Deck | `TYPE.deck` | xl → 2xl | The hero's supporting line. Subhead's size at normal weight. |
 | Body | `TYPE.body` / `TYPE.bodyTight` | base | Prose, list rows. |
 | Meta | `TYPE.meta` / `TYPE.metaProse` | sm | Captions, buttons, inline links. |
 
@@ -156,10 +157,12 @@ Plus `TYPE.micro` — the mono uppercase eyebrow at `text-xs`. It does `meta`'s
 job at a smaller optical size, which is why it is not a sixth step. `TYPE.command`
 is the same size for slash commands, which are literally code.
 
-**Three weights.** `font-medium` for headings, `font-semibold` for titles and
-UI emphasis, `font-bold` for exactly one thing: the emphasised span in the hero
-`h1`. `font-light` and `font-normal` are gone — at these sizes on a dark
-background they read as a rendering fault rather than a choice.
+**Weights.** `font-medium` for headings, `font-semibold` for titles and UI
+emphasis, `font-bold` for exactly one thing (the emphasised span in the hero
+`h1`), `font-normal` for exactly one other (`deck`, which is prose sitting
+under a display heading and has to yield to it). `font-light` is gone — at
+these sizes on a dark background it reads as a rendering fault rather than a
+choice.
 
 **Two families, two accents.** Geist and Geist Mono (rule 10). Mono appears in
 two places only: `micro` labels and slash commands. Uppercase appears in one:

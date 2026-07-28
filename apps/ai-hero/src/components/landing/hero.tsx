@@ -95,7 +95,7 @@ export async function Hero({
 					</h1>
 				)}
 				{h2 && (
-					<p className={cn(TYPE.subhead, 'font-medium opacity-70')}>
+					<p className={cn(TYPE.deck, 'opacity-70')}>
 						<ReactMarkdown
 							components={{
 								p: ({ children }) => <>{children}</>,

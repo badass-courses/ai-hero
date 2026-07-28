@@ -32,8 +32,9 @@
  *
  * `font-medium` for headings, `font-semibold` for titles and UI emphasis.
  * `font-bold` exists for exactly one thing: the emphasised span in the hero
- * `h1`. `font-light` and `font-normal` are gone — at these sizes they read as
- * a rendering fault on a dark background rather than as a choice.
+ * `h1`. `font-normal` for exactly one other: `deck`, which is prose rather
+ * than a heading. `font-light` is gone — at these sizes on a dark background
+ * it reads as a rendering fault rather than as a choice.
  *
  * ## Families
  *
@@ -50,6 +51,13 @@ export const TYPE = {
 	heading: 'text-3xl font-medium leading-tight tracking-tight sm:text-4xl',
 	/** `h3`, card and row titles, pull quotes. */
 	subhead: 'text-xl font-semibold leading-tight tracking-tight sm:text-2xl',
+	/**
+	 * The hero's supporting line. `subhead`'s size at a normal weight — this is
+	 * prose sitting under a display heading, not a heading itself, and at
+	 * `semibold` it competed with the `h1` instead of yielding to it. A weight
+	 * variant of an existing step, not a sixth size.
+	 */
+	deck: 'text-xl font-normal leading-snug tracking-tight sm:text-2xl',
 	/** Prose and list rows. */
 	body: 'text-base leading-relaxed',
 	/** Prose that needs to sit tighter — list rows, dense stacks. */
