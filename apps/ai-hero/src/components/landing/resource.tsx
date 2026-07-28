@@ -12,15 +12,18 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import { DiscountBadge } from './discount-badge'
 import { formatPriceUSD, formatStartsAt } from './format'
 import { ResourceCard } from './resource-card'
+import { ResourceLadderItem } from './resource-ladder-item'
 import { ResourceListItem } from './resource-list-item'
 import { ResourceRow } from './resource-row'
 
 /**
  * `list` is the dense variant for `TopicsGrid`: title plus a one-line meta,
- * no image. The row and card variants carry artwork and a description, which
- * is far too heavy at three-per-column inside a three-column grid.
+ * no image. `ladder` is its sibling for `ActivityRung` — same "no artwork"
+ * economy, but with a persistent arrow and a format label, because those rows
+ * exist to be clicked. The row and card variants carry artwork and a
+ * description, which is far too heavy at three-per-column.
  */
-export type ResourceVariant = 'row' | 'card' | 'list'
+export type ResourceVariant = 'row' | 'card' | 'list' | 'ladder'
 
 type InlineProps = {
 	title: string
@@ -252,6 +255,16 @@ export async function Resource(props: ResourceProps) {
 		resolved?.image ??
 		youtubeThumbnailUrl(href) ??
 		undefined
+
+	if (variant === 'ladder') {
+		return (
+			<ResourceLadderItem
+				title={title}
+				href={href}
+				isVideo={Boolean(resolved?.muxPlaybackId) || Boolean(youtubeThumbnailUrl(href))}
+			/>
+		)
+	}
 
 	if (variant === 'list') {
 		return (

@@ -77,7 +77,7 @@ cohort, workshop, tutorial, post, or external link and renders accordingly.
 | `href`        | `string`            | Required when no `slugOrId`. External `https://…` opens in a new tab.                                                                             |
 | `image`       | `string`            | URL. Override the resolved cover image.                                                                                                           |
 | `badge`       | `string`            | Editorial pill that wins over auto-defaults (discount badge, etc.). Use sparingly — `"Start here"`, `"New"`, `"Featured"`.                        |
-| `variant`     | `'row'` \| `'card'` \| `'list'` | `'row'` (default) is the image-on-side row used in main sections. `'card'` is the vertical card used inside `<ResourceGrid>`. `'list'` is the dense title-plus-meta line, no artwork, used inside `<TopicsGridColumn>`. |
+| `variant`     | `'row'` \| `'card'` \| `'list'` \| `'ladder'` | `'row'` (default) is the image-on-side row used in main sections. `'card'` is the vertical card used inside `<ResourceGrid>`. `'list'` is the dense title-plus-meta line, no artwork, used inside `<TopicsGridColumn>`. `'ladder'` is its sibling for `<ActivityRung>`: format label, title, persistent arrow. |
 
 ### What renders for which type
 
@@ -265,6 +265,54 @@ artwork and a description, which is far too heavy at three-per-column inside a
 three-column grid. Unresolvable slugs silently render nothing and log
 `draft.resource.missing`, so a bad slug thins a column instead of breaking the
 page.
+
+---
+
+## `<ActivityLadder>` / `<ActivityRung>`
+
+The homepage's "what do you want to do?" block. Each rung names an audience,
+asks their question, lists a few resources, and links to the topic page holding
+the rest.
+
+| Prop (`ActivityLadder`) | Type     | Notes                                          |
+| ----------------------- | -------- | ---------------------------------------------- |
+| `heading`               | `string` | Section title, left of the header link.        |
+| `intro`                 | `string` | One or two sentences under the heading.        |
+| `ctaHref` / `ctaLabel`  | `string` | Optional "see everything" link, right-aligned. |
+
+| Prop (`ActivityRung`)  | Type     | Notes                                                       |
+| ---------------------- | -------- | ----------------------------------------------------------- |
+| `audience`             | `string` | Who the rung is for, as a mono micro-label.                 |
+| `question`             | `string` | The rung's heading, phrased as the visitor's own question.  |
+| `moreHref` / `moreLabel` | `string` | Optional topic page holding the rest.                     |
+
+```mdx
+<ActivityLadder heading="What do you want to do?" ctaHref="/learn" ctaLabel="See the full map">
+	<ActivityRung
+		audience="If you have never written code"
+		question="How do I get started?"
+		moreHref="/topics/learn-how-llms-think"
+		moreLabel="More fundamentals"
+	>
+		<Resource slugOrId="what-is-an-llm" variant="ladder" />
+	</ActivityRung>
+	…
+</ActivityLadder>
+```
+
+Use `variant="ladder"` for the children.
+
+Two editorial rules worth keeping when you retune this:
+
+- **Keep the questions in step with `GOAL_SECTIONS`** (`src/components/navigation/goal-sections-data.ts`),
+  which drives the same three buckets on `/learn`. Nothing in code enforces it;
+  the point of the correspondence is that clicking "See the full map" shows the
+  shape the visitor just scanned.
+- **Write `audience` as a plain phrase, not a difficulty badge.** "Beginner"
+  invites people to rule themselves out, and the fundamentals rung is the one
+  experienced developers most often turn out to need. "If you can already code"
+  lets a reader locate themselves while the rung above stays just as readable —
+  which is also why this is not tabs or an accordion.
 
 ---
 

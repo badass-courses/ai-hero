@@ -64,7 +64,49 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 <NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
 
 
-<ActivityLadder intro="Start where you are. Most developers find the gap is further back than they expected." />
+{/*
+  Questions and topic links mirror `GOAL_SECTIONS` on /learn (Matt's three
+  audience buckets) so the homepage and the Map agree. Picks here avoid the
+  "My latest posts" grid below, so nothing appears twice on the page.
+*/}
+
+<ActivityLadder
+	heading="What do you want to do?"
+	intro="Start where you are. Most developers find the gap is further back than they expected."
+	ctaHref="/learn"
+	ctaLabel="See the full map"
+>
+	<ActivityRung
+		audience="If you have never written code"
+		question="How do I get started?"
+		moreHref="/topics/learn-how-llms-think"
+		moreLabel="More fundamentals"
+	>
+		<Resource slugOrId="what-is-an-llm" variant="ladder" />
+		<Resource slugOrId="what-is-an-agent" variant="ladder" />
+		<Resource slugOrId="personal-software-is-insane-in-the-age-of-ai-u2hx2" variant="ladder" />
+	</ActivityRung>
+	<ActivityRung
+		audience="If you can already code"
+		question="How can I get AI to write code like me?"
+		moreHref="/topics/set-up-your-agent"
+		moreLabel="More ways to set up your agent"
+	>
+		<Resource slugOrId="a-complete-guide-to-agents-md" variant="ladder" />
+		<Resource slugOrId="plan-mode-introduction" variant="ladder" />
+		<Resource slugOrId="essential-ai-coding-feedback-loops-for-type-script-projects" variant="ladder" />
+	</ActivityRung>
+	<ActivityRung
+		audience="If you use an agent every day"
+		question="How can I get the most out of AI coding?"
+		moreHref="/topics/get-better-results"
+		moreLabel="More ways to get better results"
+	>
+		<Resource slugOrId="how-to-kill-the-bloat-in-claude-codes-system-prompt" variant="ladder" />
+		<Resource slugOrId="getting-started-with-ralph" variant="ladder" />
+		<Resource slugOrId="my-7-phases-of-ai-development" variant="ladder" />
+	</ActivityRung>
+</ActivityLadder>
 
 {/*
   DELIBERATELY CLIPPED, and confirmed. The full tweet frames Matt as tracking
