@@ -72,8 +72,14 @@ export async function UpcomingCohort({
 				{/* The meta line carries whatever a reader can act on. Between
 				    cohorts that is the enrollment status, not the date the last one
 				    ran — "Last cohort June 2026" tells you the thing is over and
-				    nothing about what to do next. */}
-				<dl className={cn(TYPE.metaProse, 'border-border flex flex-wrap gap-x-8 gap-y-2 border-t pt-5')}>
+				    nothing about what to do next.
+
+				    A filled callout, not a rule above it. A `border-t` here read as
+				    the block ending and a new one starting, which is what every
+				    other hairline on this page means; this is a note attached to the
+				    offer above it. Its own quiet surface says "aside" without
+				    claiming a boundary. */}
+				<dl className={cn(TYPE.metaProse, 'bg-muted flex w-fit flex-wrap gap-x-8 gap-y-2 px-4 py-3')}>
 					<div className="flex items-baseline gap-2">
 						<dt className="text-muted-foreground shrink-0">
 							{isOpen ? 'Starts' : 'Enrollment'}

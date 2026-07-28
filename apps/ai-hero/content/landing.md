@@ -157,7 +157,7 @@ Every company needs its own Matt Pocock.
 	<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="card" />
 </ResourceGrid>
 
-<NewsletterSection compact heading="Get the next one in your inbox" subTitle={<>New posts and skills as I publish them. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
+<NewsletterSection compact heading={<>Get the next one with <SubscriberCount /> developers</>} subTitle="New posts and skills as I publish them."><NewsletterCta /></NewsletterSection>
 
 <Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 
