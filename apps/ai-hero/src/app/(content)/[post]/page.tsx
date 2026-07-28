@@ -53,6 +53,7 @@ import { getRelatedSkillPosts, SkillExtras } from "./_components/skill-extras";
 import {
   SkillInstallPanel,
   SkillPhaseRail,
+  SkillStickyAction,
   workflowPhases,
 } from "@/components/skills";
 import { getSkillEntries } from "@/lib/skills-query";
@@ -223,6 +224,13 @@ ${post?.fields?.body}`;
               />
             )}
           </article>
+          {/* Below 900px a skill page's primary action pins to the bottom.
+              Rendered OUTSIDE `<article>` on purpose: the article's
+              `[&>*+*]:border-t` would hand it a hairline it should not have.
+              It pads the document for its own height — see the component. */}
+          {isSkillPost && (
+            <SkillStickyAction slug={String(post.fields?.slug ?? "")} />
+          )}
         </div>
       </div>
       {/* {ckSubscriber && product && allowPurchase && pricingDataLoader ? (
@@ -345,7 +353,7 @@ async function PostBody({ post }: { post: Post | null }) {
   );
 
   return (
-    <div className="px-8 pb-16 pt-10 sm:px-16 md:pb-20 md:pt-14">
+    <div className="px-8 pb-16 pt-10 sm:px-11 md:pb-20 md:pt-14">
       <article
         className={`prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto ${PROSE_MEASURE}`}
       >
@@ -487,7 +495,7 @@ async function PostHead({
         </div>
       )}
       <div>
-        <div className="relative flex flex-col justify-center px-8 pb-10 pt-10 sm:px-16 md:pb-12 md:pt-12">
+        <div className="relative flex flex-col justify-center px-8 pb-10 pt-10 sm:px-11 md:pb-12 md:pt-12">
           {(position || metaLine) && (
             <div className="mb-4 flex flex-wrap items-center gap-x-2.5 gap-y-1">
               {position && (

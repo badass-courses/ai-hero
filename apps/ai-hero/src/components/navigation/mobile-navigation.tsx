@@ -16,9 +16,9 @@ type MobileNavigationProps = {
 /**
  * Mobile top-bar controls (right side, < lg): search (opens the full-screen
  * search palette), an optional newsletter link, and the hamburger that toggles
- * the push-down menu panel. The panel itself is rendered as a sibling of the
- * header (see `MobileMenuPanel`) so it pushes content down instead of
- * overlaying it.
+ * the navigation drawer. The drawer itself (`MobileMenuPanel`) is a fixed
+ * full-height sheet from the left, so it overlays the page rather than pushing
+ * it down — the hub tree is far too tall to push.
  */
 export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	isMobileMenuOpen,

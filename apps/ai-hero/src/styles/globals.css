@@ -29,6 +29,16 @@
 	/* Screens */
 	--breakpoint-2xl: 1820px;
 
+	/* The redesign has exactly ONE breakpoint: 900px ("Mobile Patterns.dc.html"
+	   — "One breakpoint at 900px"). It is deliberately not `md` (768px): the
+	   patterns that have to change — the sidebar becoming a drawer, the right
+	   rail folding into the body, a 3-up row becoming 2-up — all break between
+	   768 and 900, so a tablet held in portrait gets the desktop structure at
+	   `md` and it does not fit. Use `desk:` for those structural switches. The
+	   existing sm/md/lg utilities stay as they are; this does not replace them,
+	   it names the one line the spec actually draws. */
+	--breakpoint-desk: 900px;
+
 	/* Container */
 	--container-center: true;
 	--container-padding: 1.5rem;
@@ -668,6 +678,25 @@ li.task-list-item {
 		color-mix(in oklch, var(--foreground) 7%, transparent) 0 6px,
 		transparent 6px 12px
 	);
+}
+
+/* Bottom clearance for a page whose primary action is pinned to the bottom of
+   the viewport below 900px (`SkillStickyAction`). The bar is `fixed` so it
+   takes no space of its own, and the footer is rendered by the LAYOUT rather
+   than by the page — so no spacer the page can render lands after the footer.
+   Padding the body is the only place that clears both. The class is added and
+   removed by the bar's own effect, so a page without one is never padded.
+
+   Unlayered, like the rest of this block: a Tailwind utility on `<body>` would
+   otherwise beat it. */
+.has-sticky-action {
+	padding-bottom: calc(68px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 900px) {
+	.has-sticky-action {
+		padding-bottom: 0;
+	}
 }
 
 /** Same hatch, half the ink — for structural fills that must not compete with

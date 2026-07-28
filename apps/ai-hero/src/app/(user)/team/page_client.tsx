@@ -114,7 +114,7 @@ function ManagerMutationForm({
 function ManagersSection({ organizations }: Pick<TeamPageData, 'organizations'>) {
 	return (
 		<section className="border-b">
-			<div className="px-8 py-16 sm:px-16 md:py-24">
+			<div className="px-8 py-16 sm:px-11 md:py-24">
 				<div className="mb-8 max-w-2xl">
 					<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 						Access
@@ -130,7 +130,7 @@ function ManagersSection({ organizations }: Pick<TeamPageData, 'organizations'>)
 			</div>
 			<div className="border-border bg-border grid gap-px border-y">
 				{organizations.map((organization) => (
-					<div key={organization.id} className="bg-background px-8 py-10 sm:px-16">
+					<div key={organization.id} className="bg-background px-8 py-10 sm:px-11">
 						<div className="mb-6">
 							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 								Organization
@@ -201,7 +201,7 @@ function TeamPurchases({
 }: Pick<TeamPageData, 'bulkPurchases' | 'organizations' | 'viewer'>) {
 	return (
 		<section>
-			<div className="px-8 py-16 sm:px-16 md:py-24">
+			<div className="px-8 py-16 sm:px-11 md:py-24">
 				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					Seats and invoices
 				</p>
@@ -210,7 +210,7 @@ function TeamPurchases({
 				</h2>
 			</div>
 			{bulkPurchases.length === 0 ? (
-				<div className="bg-stripes border-y px-8 py-16 text-center sm:px-16">
+				<div className="bg-stripes border-y px-8 py-16 text-center sm:px-11">
 					<p className="bg-background inline-block px-4 py-2 font-mono text-[11px] uppercase tracking-wider">
 						No active team purchases
 					</p>
@@ -228,7 +228,7 @@ function TeamPurchases({
 						)
 						const purchaseWithCoupon = { ...purchase, bulkCoupon }
 						return (
-							<article key={purchase.id} className="bg-background flex flex-col gap-6 px-8 py-10 sm:px-16">
+							<article key={purchase.id} className="bg-background flex flex-col gap-6 px-8 py-10 sm:px-11">
 								<div>
 									<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 										{organizationName || 'Team organization'}
@@ -291,7 +291,7 @@ export function TeamPageTemplate(data: TeamPageData) {
 	if (data.view === 'anonymous') {
 		return (
 			<section className="border-b">
-				<div className="px-8 py-20 sm:px-16 md:py-24">
+				<div className="px-8 py-20 sm:px-11 md:py-24">
 					<h1 className="text-4xl font-normal leading-tight tracking-tight sm:text-5xl">
 						Team access
 					</h1>
@@ -309,7 +309,7 @@ export function TeamPageTemplate(data: TeamPageData) {
 	if (data.view === 'member') {
 		return (
 			<section className="border-b">
-				<div className="px-8 py-20 sm:px-16 md:py-24">
+				<div className="px-8 py-20 sm:px-11 md:py-24">
 					<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 						Member access
 					</p>
@@ -327,7 +327,7 @@ export function TeamPageTemplate(data: TeamPageData) {
 	return (
 		<div className="w-full">
 			<section className="border-b">
-				<div className="px-8 py-20 sm:px-16 md:py-24">
+				<div className="px-8 py-20 sm:px-11 md:py-24">
 					<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 						Organization billing
 					</p>

@@ -7,6 +7,7 @@ export {
 export { SkillActions } from './skill-actions'
 export { SkillInstallPanel } from './skill-install-panel'
 export { SkillPhaseRail, workflowPhases } from './skill-phase-rail'
+export { SkillStickyAction } from './skill-sticky-action'
 export {
 	getSkillNeighbors,
 	invocationName,

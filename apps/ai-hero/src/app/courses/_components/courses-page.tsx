@@ -128,7 +128,7 @@ export function CoursesPage({
 			    object on the page rather than the page's own structure
 			    (DESIGN rule 12). */}
 			<section aria-label={COURSES_DETAILS_EYEBROW} className="border-b">
-				<div className="flex flex-col gap-4 px-8 py-16 sm:px-16 md:py-20">
+				<div className="flex flex-col gap-4 px-8 py-16 sm:px-11 md:py-20">
 					<div className="flex flex-col gap-6">
 						<p className={MONO_LABEL}>{COURSES_DETAILS_EYEBROW}</p>
 						<div className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))]">
@@ -192,7 +192,7 @@ export function CoursesPage({
 			    them in a 2-up hairline grid — two quotes read as the only two
 			    that exist. */}
 			<section aria-label={COURSES_TESTIMONIALS_EYEBROW} className="border-b">
-				<div className="px-8 pb-6 pt-12 sm:px-16">
+				<div className="px-8 pb-6 pt-12 sm:px-11">
 					<p className={MONO_LABEL}>{COURSES_TESTIMONIALS_EYEBROW}</p>
 				</div>
 				<div className="border-border bg-border grid grid-cols-1 gap-px border-t md:grid-cols-2">
@@ -249,7 +249,7 @@ export function CoursesPage({
 			{/* 5. Everything else Matt teaches. Cards float on the page surface,
 			    so they take the card radius; the section itself does not. */}
 			<section aria-label={COURSES_CATALOG.eyebrow}>
-				<div className="px-8 py-16 sm:px-16 md:py-20">
+				<div className="px-8 py-16 sm:px-11 md:py-20">
 					<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
 						<p className={MONO_LABEL}>{COURSES_CATALOG.eyebrow}</p>
 						<p

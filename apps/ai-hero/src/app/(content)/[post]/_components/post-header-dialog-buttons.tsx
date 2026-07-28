@@ -115,7 +115,7 @@ export function PostSubscribeDialogButton({
 								Subscribe
 							</Button>
 						}
-						className="flex flex-col gap-3 [&_input]:h-10 [&_input]:rounded-[9px] [&_input]:border [&_label]:text-sm"
+						className="flex flex-col gap-3 [&_input]:h-12 desk:[&_input]:h-10 [&_input]:rounded-[9px] [&_input]:border [&_label]:text-sm"
 					/>
 				</div>
 			</DialogContent>

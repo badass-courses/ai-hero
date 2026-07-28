@@ -64,7 +64,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
             dictionary={dictionary}
           />
 
-          <div className="border-border flex items-center border-b px-8 py-4 sm:px-16">
+          <div className="border-border flex items-center border-b px-8 py-4 sm:px-11">
             <Link
               href="/ai-coding-dictionary"
               className="text-muted-foreground hover:text-foreground group inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-wider transition-colors"
@@ -78,7 +78,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
           </div>
 
           <header className="border-border border-b">
-            <div className="flex flex-col gap-5 px-8 py-12 sm:px-16 sm:py-16">
+            <div className="flex flex-col gap-5 px-8 py-12 sm:px-11 sm:py-16">
               <p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
                 {entry.sectionTitle}
               </p>
@@ -118,7 +118,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
             }}
           />
 
-          <div className="border-border flex flex-wrap items-center justify-center gap-5 border-t px-8 sm:px-16">
+          <div className="border-border flex flex-wrap items-center justify-center gap-5 border-t px-8 sm:px-11">
             <strong className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
               Share
             </strong>
@@ -137,7 +137,7 @@ async function DictionaryEntryBody({ body }: { body: string }) {
   const { content } = await compileMDX(body, {}, {});
 
   return (
-    <div className="border-border border-b px-8 py-12 sm:px-16 sm:py-16">
+    <div className="border-border border-b px-8 py-12 sm:px-11 sm:py-16">
       <article className="prose prose-hr:border-border dark:prose-invert dark:prose-a:text-primary prose-a:text-blue-600 sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none">
         {content}
       </article>

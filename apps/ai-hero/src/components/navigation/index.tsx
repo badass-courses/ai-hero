@@ -272,7 +272,10 @@ const Navigation = () => {
 					subscriber={subscriber}
 				/>
 			</header>
-			<MobileMenuPanel isOpen={isMobileMenuOpen} />
+			<MobileMenuPanel
+				isOpen={isMobileMenuOpen}
+				onClose={() => setIsMobileMenuOpen(false)}
+			/>
 			{showSearch && (
 				<SearchPalette open={isSearchOpen} onOpenChange={setIsSearchOpen} />
 			)}

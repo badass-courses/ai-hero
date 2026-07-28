@@ -375,7 +375,7 @@ function CertificateTrophyPage({
 		>
 			<main className="bg-background text-foreground min-h-screen">
 				<section className="border-border border-b">
-					<div className="px-8 py-16 sm:px-16 md:py-24 lg:px-24">
+					<div className="px-8 py-16 sm:px-11 md:py-24">
 						<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 							Certificate of completion
 						</p>
@@ -389,7 +389,7 @@ function CertificateTrophyPage({
 					className="border-border border-b"
 					data-value-path-certificate="available"
 				>
-					<div className="px-4 py-16 sm:px-8 md:py-24 lg:px-16">
+					<div className="px-4 py-16 sm:px-8 md:py-24">
 						<div className="border-border bg-card border p-1 sm:p-2">
 							<Image
 								alt={`${learnerName}'s ${SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME} certificate`}
@@ -415,7 +415,7 @@ function CertificateTrophyPage({
 				</section>
 
 				<section>
-					<div className="grid gap-8 px-8 py-16 sm:px-16 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24 lg:px-24">
+					<div className="grid gap-8 px-8 py-16 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24">
 						<div>
 							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 								Share the work

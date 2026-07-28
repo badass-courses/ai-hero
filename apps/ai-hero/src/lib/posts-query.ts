@@ -598,33 +598,64 @@ export async function updatePost(
 	}
 }
 
-const _getCachedPost = unstable_cache(
-	async (slug: string) => getPost(slug),
+/**
+ * The cached read is the PUBLIC view only, and the editor check happens outside
+ * it (`getCachedPost`).
+ *
+ * Two reasons, one of which was a live bug:
+ *
+ * 1. `getPost` calls `getServerAuthSession()`, which reads `headers()`. Doing
+ *    that inside `unstable_cache` is unsupported and throws
+ *    "used `headers()` inside a function cached with `unstable_cache()`".
+ *    It only threw SOMETIMES because `getServerAuthSession` is request-memoised:
+ *    whenever something else on the page happened to read the session first,
+ *    the memoised value was reused here and no dynamic access occurred. Which
+ *    call ran first depended on the route and, during `next build`, on the
+ *    prerender worker — so the same commit built green one run and failed the
+ *    next.
+ * 2. The cache key was the slug alone while the RESULT varied by ability, so an
+ *    editor's read (drafts, private, archived) could be stored under the same
+ *    key the public then read back.
+ *
+ * The public view is also the RIGHT view for the one thing this reads: the
+ * related-reading rows at the end of a post. Those are links offered to a
+ * reader, and an editor should not be shown a draft there — following it would
+ * take them somewhere no reader can go. So this resolves no session at all,
+ * which additionally keeps `/[post]` statically prerenderable. An editor who
+ * needs the elevated view calls `getPost` directly, as the edit routes do.
+ */
+const _getCachedPublicPost = unstable_cache(
+	async (slug: string) => getPost(slug, { canEditContent: false }),
 	['posts-v3'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
 export async function getCachedPost(slug: string) {
-	const result = await _getCachedPost(slug)
+	const result = await _getCachedPublicPost(slug)
 	return result ? reviveDates(result) : null
 }
 
-export async function getPost(slugOrId: string) {
-	const { ability } = await getServerAuthSession()
+/**
+ * `canEditContent` may be passed by a caller that has ALREADY resolved the
+ * session — that is what lets the cached wrapper above stay free of dynamic
+ * data. Omitted, it resolves the session itself, so every existing call site
+ * keeps its behaviour.
+ */
+export async function getPost(
+	slugOrId: string,
+	options?: { canEditContent: boolean },
+) {
+	const canEditContent =
+		options?.canEditContent ??
+		(await getServerAuthSession()).ability.can('update', 'Content')
 
-	const visibility: ('public' | 'private' | 'unlisted')[] = ability.can(
-		'update',
-		'Content',
-	)
+	const visibility: ('public' | 'private' | 'unlisted')[] = canEditContent
 		? ['public', 'private', 'unlisted']
 		: ['public', 'unlisted']
 	// Editors also see archived posts — otherwise archiving is a one-way door
 	// (the edit route itself would 404, leaving no way to restore). The public
 	// "archived 404s for everyone" rule is enforced by the view routes.
-	const states: ('draft' | 'published' | 'archived')[] = ability.can(
-		'update',
-		'Content',
-	)
+	const states: ('draft' | 'published' | 'archived')[] = canEditContent
 		? ['draft', 'published', 'archived']
 		: ['published']
 

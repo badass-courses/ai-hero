@@ -29,7 +29,7 @@ The desktop horizontal gutter is **44px** (`--ah-gut`), 18px on mobile. Vertical
 
 ```tsx
 ✅  <section className="border-b">
-      <div className="px-8 py-20 sm:px-16">…</div>
+      <div className="px-8 py-20 sm:px-11">…</div>
     </section>
 
 ❌  <section className="border-b px-8 py-20">…</section>   // pulls content away from the container's border-x
@@ -68,7 +68,7 @@ Sections breathe. Use these values, not freehand padding:
 
 Pick one row per surface; do not mix `py-12` with `py-20` siblings.
 
-**The desktop gutter is 44px, not 64.** `sm:px-16` predates the redesign and is being migrated out; it does not line up with the nav, the footer or any section written against the spec, and a page mixing the two has a visibly ragged left edge. Mobile stays at `px-8` rather than the spec's 18px — 32px is this app's established mobile gutter and 18px reads as cramped at the body size we use.
+**The desktop gutter is 44px, not 64.** `sm:px-16` predates the redesign and is gone from `src/` — it did not line up with the nav, the footer or any section written against the spec, and a page mixing the two had a visibly ragged left edge. Do not reintroduce it, and do not override the gutter upward at a larger breakpoint (`lg:px-24` and friends): 44px holds at every desktop width. A block may inset *less* than the gutter when its content wants the width — the certificate image on `/certificates/[slug]` is `px-4 sm:px-8` — but never more. Mobile stays at `px-8` rather than the spec's 18px — 32px is this app's established mobile gutter and 18px reads as cramped at the body size we use.
 
 ### 4. Two-column grids are intentionally asymmetric
 
@@ -322,6 +322,23 @@ The signature interaction is the **resource row gradient frame**. Everything els
 Use `bg-stripes` (rule 6) plus a centered mono placeholder string when the slot is meaningful. Do not render gray skeletons in editorial content.
 
 ---
+
+### 19. Mobile: one breakpoint, and the patterns that don't just stack
+
+The redesign draws exactly ONE line, at **900px** — `desk:` (`--breakpoint-desk`). Use it for structural switches: a layout that changes shape rather than a size that changes value. It is deliberately not `md` (768px), because every pattern that has to change breaks between 768 and 900, and a tablet in portrait would otherwise get a desktop structure that does not fit. The existing `sm`/`md`/`lg` utilities are untouched; `desk:` names the one line the spec actually draws.
+
+Six cases need a decision rather than a stack (`AI Hero Courses Redesign/Mobile Patterns.dc.html`). What is built so far:
+
+| Pattern | Rule | Where |
+| --- | --- | --- |
+| Primary action | The page's one primary action pins to the bottom, with safe-area padding | `SkillStickyAction`, `.has-sticky-action` |
+| Sidebar | Full-height sheet from the LEFT, never a dropdown — the hub tree is too tall for a popover. Body scroll locks; the drawer keeps its own scroll and opens on the current item; only the active branch is expanded | `MobileMenuPanel`, `useBodyScrollLock` |
+| Rows | 44px minimum tap height | `rowClass` in the same file |
+| Inline forms | Wrap to full-width fields. **Fields 48px, submit 50px** — the one deliberate size increase, because 44px is a fine pointer target and a poor thumb target | `SubscribeToConvertkitForm` and its callers |
+
+A `fixed` bottom bar cannot be cleared by a spacer the page renders: the footer comes from `HubLayout`, above the page in the tree, so the spacer lands before it. Pad the document (`.has-sticky-action`) instead.
+
+Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, the phase list rotating to a horizontal scroller, and prose stepping back to 16.5px.
 
 ## Accessibility
 

@@ -73,7 +73,7 @@ export async function FlagshipHero({
 			aria-labelledby="flagship-heading"
 			className="border-border bg-border grid scroll-mt-24 grid-cols-1 gap-px border-b lg:grid-cols-[minmax(0,1fr)_400px]"
 		>
-			<div className="bg-background flex flex-col justify-center px-8 py-16 sm:px-16 md:py-20">
+			<div className="bg-background flex flex-col justify-center px-8 py-16 sm:px-11 md:py-20">
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
 					<span
 						className={cn(

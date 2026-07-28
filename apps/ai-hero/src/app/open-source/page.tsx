@@ -42,7 +42,7 @@ export default async function OpenSourcePage() {
 			<HubLayout>
 				<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
 					<section className="border-b">
-						<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
+						<div className="flex flex-col gap-6 px-8 py-16 sm:px-11 md:py-24">
 							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 								{OPEN_SOURCE_HERO.eyebrow}
 							</p>
@@ -99,7 +99,7 @@ function ProjectRow({
 		// Standard editorial split (DESIGN.md rule 4): the copy carries the weight,
 		// the wordmark is the lighter peer. The logo comes FIRST in the DOM so it
 		// leads on mobile, then is placed into the right column on desktop.
-		<div className="grid grid-cols-1 items-center gap-x-10 gap-y-6 px-8 py-8 sm:px-16 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] md:py-10">
+		<div className="grid grid-cols-1 items-center gap-x-10 gap-y-6 px-8 py-8 sm:px-11 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] md:py-10">
 			{project.logo ? (
 				// Clickable, but hidden from assistive tech and the tab order: a
 				// wordmark link would either announce the project twice or read as an

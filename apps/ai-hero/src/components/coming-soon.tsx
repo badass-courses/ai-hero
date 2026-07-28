@@ -26,7 +26,7 @@ export function ComingSoon({
 				className,
 			)}
 		>
-			<div className="flex w-full max-w-2xl flex-col items-center gap-4 px-8 py-24 text-center sm:px-16">
+			<div className="flex w-full max-w-2xl flex-col items-center gap-4 px-8 py-24 text-center sm:px-11">
 				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					{label}
 				</p>

@@ -4,10 +4,11 @@ import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createAppAbility } from '@/ability'
+import { useBodyScrollLock } from '@/hooks/use-body-scroll-lock'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { ArrowRightEndOnRectangleIcon } from '@heroicons/react/24/outline'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 
 import {
@@ -36,13 +37,33 @@ function normalize(path: string): string {
 }
 
 /**
- * Push-down mobile menu. Rendered as a sibling of the sticky header (normal
- * flow), so it pushes page content down instead of overlaying it. Scrollable
- * when taller than the viewport. Mirrors the desktop IA: primary links,
- * Resources, collapsible Topics, and account actions, with Courses + account
- * prominent near the top. See plans/navigation-redesign.md (Phase 9).
+ * Mobile navigation drawer — a full-height sheet from the left, per Mobile
+ * Patterns § 3b.
+ *
+ * It used to be a push-down panel in normal flow. A push-down cannot hold the
+ * hub IA: the tree is Skills → group → 5.1, and pushing a tree that tall down
+ * from the top means the reader loses the page entirely and the panel force-
+ * scrolls the window to the top to compensate. The spec is explicit — "Drawer
+ * is a full-height sheet from the left, not a dropdown — the tree is too tall
+ * for a popover."
+ *
+ * Three behaviours the sheet owes the reader, all from § 3b:
+ *
+ * - Body scroll locks while open, and the drawer keeps its OWN scroll. See
+ *   `useBodyScrollLock` and the scroll effect below.
+ * - It opens scrolled to the current item rather than at the top, so a reader
+ *   four levels into Skills sees where they are without hunting.
+ * - Only the active branch is expanded; every sibling group stays collapsed.
+ *   That is what `openGroups` + a `type="single"` Accordion already did, and it
+ *   is why it stays single rather than becoming multiple.
  */
-export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
+export function MobileMenuPanel({
+	isOpen,
+	onClose,
+}: {
+	isOpen: boolean
+	onClose?: () => void
+}) {
 	const pathname = usePathname()
 	const current = normalize(pathname ?? '/')
 	const isActive = (href: string) => normalize(href) === current
@@ -79,11 +100,59 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 		)
 		.map((group) => group.title)
 
-	// Push-down menu (not an overlay): if opened while scrolled down, the panel
-	// inserts above the fold and the reader wouldn't see it — pull them to it.
+	const scrollerRef = React.useRef<HTMLElement>(null)
+	// Survives close because this component stays mounted (the parent always
+	// renders it and we bail on `isOpen` below) — that is what makes "the drawer
+	// keeps its own scroll position" possible at all.
+	const savedScrollTop = React.useRef<number | null>(null)
+
+	useBodyScrollLock(isOpen)
+
+	// Close on Escape — a full-height sheet that traps the page behind it needs
+	// the standard way out, not only the hamburger.
 	React.useEffect(() => {
-		if (isOpen) window.scrollTo({ top: 0, behavior: 'smooth' })
-	}, [isOpen])
+		if (!isOpen || !onClose) return
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') onClose()
+		}
+		document.addEventListener('keydown', onKeyDown)
+		return () => document.removeEventListener('keydown', onKeyDown)
+	}, [isOpen, onClose])
+
+	// Where the drawer lands when it opens. First open: on the current item, so
+	// a reader deep in the tree sees their place. Later opens: exactly where
+	// they left it. `nav` is the scroll container, so `scrollIntoView` on the
+	// row would also scroll the PAGE behind the drawer — hence the manual
+	// arithmetic against the container's own box.
+	React.useEffect(() => {
+		if (!isOpen) return
+		const scroller = scrollerRef.current
+		if (!scroller) return
+
+		if (savedScrollTop.current !== null) {
+			scroller.scrollTop = savedScrollTop.current
+			return
+		}
+
+		const active = scroller.querySelector<HTMLElement>('[aria-current="page"]')
+		if (!active) return
+		// Centre it rather than top-align: the rows above a deep item are its
+		// ancestors, and they are the context that makes it legible.
+		const target =
+			active.offsetTop - scroller.clientHeight / 2 + active.offsetHeight / 2
+		scroller.scrollTop = Math.max(0, target)
+	}, [isOpen, navSections.length])
+
+	// Recorded as it happens rather than on close: the drawer unmounts its
+	// contents when `isOpen` goes false, so by the time a close effect ran the
+	// scroller would already be gone. This is a ref write, so it costs a number
+	// and no render.
+	const rememberScroll = React.useCallback(
+		(event: React.UIEvent<HTMLElement>) => {
+			savedScrollTop.current = event.currentTarget.scrollTop
+		},
+		[],
+	)
 
 	const isAuthed = sessionStatus === 'authenticated'
 	const canViewTeam = ability.can('invite', 'Team')
@@ -97,9 +166,12 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 		(item) => item.href !== COURSES_NAV_ITEM.href,
 	)
 
+	// 44px minimum tap height (§ 3b: `padding:11px 10px;font-size:15px`). The
+	// horizontal pad is 20px rather than the spec's 10 because this drawer keeps
+	// the app's own gutter, and nested rows indent from it.
 	const rowClass = (href: string) =>
 		cn(
-			'focus-visible:ring-ring flex items-center px-5 py-2.5 text-base transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+			'focus-visible:ring-ring flex min-h-11 items-center px-5 py-[11px] text-[15px] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
 			isActive(href) && 'bg-muted font-medium',
 		)
 
@@ -115,14 +187,40 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 		})
 
 	return (
-		<div
-			id="mobile-menu-panel"
-			className="bg-background animate-in slide-in-from-top-2 fade-in-0 max-h-[calc(100svh-var(--nav-height))] overflow-y-auto border-b duration-200 lg:hidden"
-		>
-			<nav
-				aria-label="Mobile navigation"
-				className="divide-border flex flex-col divide-y"
+		<>
+			{/* Scrim. The drawer covers most of the viewport but not all of it, and
+			    the uncovered strip has to be a way out or it reads as dead space. */}
+			<button
+				type="button"
+				aria-label="Close menu"
+				tabIndex={-1}
+				onClick={onClose}
+				className="animate-in fade-in-0 fixed inset-0 z-40 bg-black/50 duration-200 lg:hidden"
+			/>
+			<div
+				id="mobile-menu-panel"
+				className="bg-background animate-in slide-in-from-left-2 fade-in-0 fixed inset-y-0 left-0 z-50 flex w-[min(86vw,340px)] flex-col border-r duration-200 lg:hidden"
 			>
+				{/* Its own header row: the sheet covers the site header, so without one
+				    the drawer has no close affordance of its own and the only way out
+				    is the scrim. */}
+				<div className="border-border flex h-(--nav-height) flex-none items-center justify-between border-b px-5">
+					<span className={categoryLabelClass + ' p-0'}>Browse</span>
+					<button
+						type="button"
+						onClick={onClose}
+						aria-label="Close menu"
+						className="text-muted-foreground hover:text-foreground focus-visible:ring-ring -mr-2 flex size-11 items-center justify-center focus-visible:outline-none focus-visible:ring-2"
+					>
+						<X className="size-5" />
+					</button>
+				</div>
+				<nav
+					ref={scrollerRef}
+					onScroll={rememberScroll}
+					aria-label="Mobile navigation"
+					className="divide-border flex min-h-0 flex-1 flex-col divide-y overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
+				>
 				{/* Prominent actions */}
 				<div className="grid grid-cols-2 gap-2 p-4">
 					<Button asChild className="rounded-none">
@@ -353,9 +451,10 @@ export function MobileMenuPanel({ isOpen }: { isOpen: boolean }) {
 							<ChevronRight className="size-3.5" />
 						</Link>
 					)}
-					<ThemeToggle className="text-sm [&_svg]:size-5" />
-				</div>
-			</nav>
-		</div>
+						<ThemeToggle className="text-sm [&_svg]:size-5" />
+					</div>
+				</nav>
+			</div>
+		</>
 	)
 }

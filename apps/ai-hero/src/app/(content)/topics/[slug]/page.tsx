@@ -69,7 +69,7 @@ export default async function TopicPage({ params }: Props) {
 			<HubLayout>
 				<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
 					<section className="border-b">
-						<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
+						<div className="flex flex-col gap-6 px-8 py-16 sm:px-11 md:py-24">
 							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 								Topic
 							</p>
@@ -103,7 +103,7 @@ export default async function TopicPage({ params }: Props) {
 						</section>
 					) : (
 						<section aria-label="No posts yet" className="border-b">
-							<div className="bg-stripes flex items-center justify-center px-8 py-16 sm:px-16 md:py-24">
+							<div className="bg-stripes flex items-center justify-center px-8 py-16 sm:px-11 md:py-24">
 								<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 									No posts yet
 								</p>

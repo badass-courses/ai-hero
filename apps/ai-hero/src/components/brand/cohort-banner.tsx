@@ -16,7 +16,7 @@ export function CohortBanner({ cohort }: { cohort: Cohort }) {
 			className="group relative flex w-full grid-cols-2 flex-col-reverse overflow-hidden border-y sm:grid"
 			prefetch
 		>
-			<div className="flex flex-col justify-center gap-4 px-6 py-6 sm:px-16 sm:py-10">
+			<div className="flex flex-col justify-center gap-4 px-6 py-6 sm:px-11 sm:py-10">
 				{dateString && (
 					<p className="text-muted-foreground font-mono text-xs uppercase tracking-widest">
 						{dateString}

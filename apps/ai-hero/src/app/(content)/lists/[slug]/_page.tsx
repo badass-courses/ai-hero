@@ -197,7 +197,7 @@ export default async function ListPage(props: {
 							'min-[1120px]:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]',
 					)}
 				>
-					<div className="bg-background flex flex-col px-8 py-16 sm:px-16 md:py-20">
+					<div className="bg-background flex flex-col px-8 py-16 sm:px-11 md:py-20">
 						<div className="mb-5 flex flex-wrap items-center gap-3">
 							{list.fields.type !== 'workshop' && (
 								<span
@@ -298,7 +298,7 @@ export default async function ListPage(props: {
 			    still the spec's shape rather than a heading invented for it. */}
 			{body && (
 				<section className="border-b">
-					<div className="grid grid-cols-1 gap-6 px-8 py-16 sm:px-16 md:py-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:gap-16">
+					<div className="grid grid-cols-1 gap-6 px-8 py-16 sm:px-11 md:py-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:gap-16">
 						<div className="flex flex-col gap-4">
 							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 								Why this matters
@@ -320,7 +320,7 @@ export default async function ListPage(props: {
 			    promises the reader counts, and bullets read as an aside. */}
 			{parts.outcomes.length > 0 && (
 				<section className="bg-muted border-b">
-					<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-20">
+					<div className="flex flex-col gap-6 px-8 py-16 sm:px-11 md:py-20">
 						<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 							What you'll learn
 						</p>
@@ -358,7 +358,7 @@ export default async function ListPage(props: {
 			    carrying the nav, this list's job is to say where to start. */}
 			{rows.length > 0 && (
 				<section className="border-b">
-					<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-20">
+					<div className="flex flex-col gap-6 px-8 py-16 sm:px-11 md:py-20">
 						<div className="flex flex-col gap-3">
 							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 								In this series
@@ -419,7 +419,7 @@ export default async function ListPage(props: {
 
 			{/* NEXT — one step forward and one way to stay, side by side. */}
 			<section className="border-border bg-border grid grid-cols-1 gap-px border-b lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-				<div className="bg-background flex flex-col items-start gap-4 px-8 py-16 sm:px-16 md:py-20">
+				<div className="bg-background flex flex-col items-start gap-4 px-8 py-16 sm:px-11 md:py-20">
 					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 						After this series
 					</p>
@@ -449,7 +449,7 @@ export default async function ListPage(props: {
 						/>
 					</Link>
 				</div>
-				<div className="bg-muted flex flex-col gap-4 px-8 py-16 sm:px-16 md:py-20">
+				<div className="bg-muted flex flex-col gap-4 px-8 py-16 sm:px-11 md:py-20">
 					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 						Keep learning
 					</p>
