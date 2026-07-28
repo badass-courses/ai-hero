@@ -555,6 +555,69 @@ li.task-list-item {
 	background-size: 5px 5px;
 }
 
+/* Painted corner wash for section headers.
+
+   The brand's colour language is painted VERTICAL BANDS — the hero backdrop,
+   `colorful-stripe.jpg`, the resource-row hover gradient. A radial blob would
+   be a generic SaaS glow that shares nothing with the rest of the site, so
+   this is the same band gradient (hues lifted from `resource-row.tsx`) blurred
+   into a wash and masked back to the top-right corner.
+
+   Anchored to the corner so it bleeds into the container's `border-x`, the way
+   the hero artwork does. Low opacity and heavily blurred: it must never take
+   contrast away from the heading on its left or the link sitting in it.
+
+   The wash is a `::before` at `z-index: -1` inside an isolated stacking
+   context, so it can never paint over content, and it is decorative only. */
+.brand-corner {
+	position: relative;
+	isolation: isolate;
+}
+
+.brand-corner::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	right: 0;
+	z-index: -1;
+	pointer-events: none;
+	width: min(30rem, 65%);
+	aspect-ratio: 1 / 1;
+	background-image: linear-gradient(
+		115deg,
+		oklch(0.5 0.2 260),
+		oklch(0.82 0.12 350),
+		oklch(0.74 0.18 50),
+		oklch(0.88 0.18 95)
+	);
+	filter: blur(56px);
+	opacity: 0.14;
+	-webkit-mask-image: radial-gradient(
+		ellipse at top right,
+		#000 0%,
+		transparent 72%
+	);
+	mask-image: radial-gradient(ellipse at top right, #000 0%, transparent 72%);
+}
+
+.dark .brand-corner::before {
+	opacity: 0.22;
+}
+
+/* Narrow viewports: the heading runs the full width, so the wash sits behind
+   text rather than beside it. Smaller and fainter. */
+@media (max-width: 48rem) {
+	.brand-corner::before {
+		width: 60%;
+		filter: blur(44px);
+		opacity: 0.1;
+	}
+
+	.dark .brand-corner::before {
+		opacity: 0.16;
+	}
+}
+
 /* Hide the raw scrollbar while keeping the element scrollable. Used by the
    tall hub sidebar nav, which pairs it with `scroll-fade`. */
 @utility no-scrollbar {

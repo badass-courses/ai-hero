@@ -52,32 +52,18 @@ export async function SkillsShowcase({
 			) : null}
 
 			{/* Rows, not a 3-up grid. Six groups with skill counts running 2 to 6
-			    made a grid of wildly unequal boxes with ragged bottoms; as full
-			    width rows the numerals form a left rail, every title sits on the
-			    same x, and the block reads as the ordered workflow it describes.
-			    Hairlines between rows, which is a list (the site's own language),
-			    not six boxes. */}
+			    made a grid of wildly unequal boxes with ragged bottoms. As full
+			    width rows every title sits on the same x and the pills get room to
+			    wrap. Hairlines between rows, which is a list (the site's own
+			    language), not six boxes. */}
 			<ul className="border-border bg-border flex flex-col gap-px border-y">
 				{groups.map((group) => (
 					<li
 						key={group.id}
-						className="bg-background grid grid-cols-1 gap-x-8 gap-y-4 px-8 py-8 sm:px-16 md:grid-cols-[auto_minmax(0,20rem)_minmax(0,1fr)] md:items-baseline"
+						className="bg-background grid grid-cols-1 gap-x-8 gap-y-4 px-8 py-8 sm:px-16 md:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] md:items-baseline"
 					>
-						{/* The count, not an index. These groups are named buckets,
-						    not a numbered process — "Reference Skills" is not step 6 of
-						    anything — so an ordinal asserts a sequence the content does
-						    not have. The count is the one number a reader actually wants
-						    here, and the rail keeps its numeral. */}
-						<p className="flex items-baseline gap-1.5 md:w-16 md:flex-col md:gap-0">
-							<span className="text-foreground/40 font-mono text-2xl font-medium leading-none tabular-nums">
-								{group.skills.length}
-							</span>
-							<span className="text-muted-foreground font-mono text-[11px] uppercase tracking-wider">
-								{group.skills.length === 1 ? 'skill' : 'skills'}
-							</span>
-						</p>
 						<div className="flex flex-col gap-1.5">
-							<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight">
+							<h3 className="text-balance text-2xl font-semibold leading-tight tracking-tight">
 								{group.title}
 							</h3>
 							{group.description ? (

@@ -27,7 +27,7 @@ import { ArrowRight } from 'lucide-react'
  * do the same thing.
  */
 export async function UpcomingCohort({
-	eyebrow = 'Live cohort',
+	eyebrow = 'Cohort-based course',
 }: { eyebrow?: string } = {}) {
 	const purchasable = await getUpcomingCohort()
 	const cohort = purchasable ?? (await getLatestCohort())
@@ -45,7 +45,7 @@ export async function UpcomingCohort({
 	return (
 		<section
 			aria-labelledby="cohort-heading"
-			className="border-border bg-muted/25 grid grid-cols-1 items-stretch border-y md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]"
+			className="border-border bg-muted/25 grid grid-cols-1 items-center border-y md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
 		>
 			<div className="flex flex-col justify-center gap-6 px-8 py-14 sm:px-16 md:py-20">
 				<div className="flex flex-col gap-4">
@@ -66,14 +66,12 @@ export async function UpcomingCohort({
 				</div>
 
 				<dl className="border-border flex flex-wrap gap-x-8 gap-y-2 border-t pt-5 text-sm">
-					<div className="flex items-baseline gap-2">
-						<dt className="text-muted-foreground">
-							{isOpen ? 'Starts' : 'Last cohort'}
-						</dt>
-						<dd className="font-medium tabular-nums">
-							{dateLabel ?? 'Dates to be announced'}
-						</dd>
-					</div>
+					{isOpen && dateLabel ? (
+						<div className="flex items-baseline gap-2">
+							<dt className="text-muted-foreground">Starts</dt>
+							<dd className="font-medium tabular-nums">{dateLabel}</dd>
+						</div>
+					) : null}
 					<div className="flex items-baseline gap-2">
 						<dt className="text-muted-foreground">Format</dt>
 						<dd className="font-medium">Live, with Matt</dd>
@@ -105,36 +103,24 @@ export async function UpcomingCohort({
 					href={`/cohorts/${cohort.slug}`}
 					aria-hidden
 					tabIndex={-1}
-					className="group relative min-h-64 overflow-hidden md:min-h-full"
+					className="group flex items-center px-8 pb-14 sm:px-16 md:py-20 md:pl-0"
 				>
-					<Image
-						src={subjectCrop(cohort.image)}
-						alt=""
-						fill
-						sizes="(min-width: 768px) 45vw, 100vw"
-						className="object-cover object-center transition-transform duration-500 ease-out group-hover:scale-[1.02] motion-reduce:transform-none motion-reduce:transition-none"
-					/>
+					{/* Native 16:9, not a cropped fill. Every resource image on the
+					    site is a thumbnail ratio, and this artwork is a designed title
+					    card — cropping it to fill a tall cell both sliced the type and
+					    made the one image on the page that is a different shape from
+					    all the others. */}
+					<span className="border-border relative block aspect-video w-full overflow-hidden border">
+						<Image
+							src={cohort.image}
+							alt=""
+							fill
+							sizes="(min-width: 768px) 45vw, 100vw"
+							className="object-cover transition-transform duration-500 ease-out group-hover:scale-[1.02] motion-reduce:transform-none motion-reduce:transition-none"
+						/>
+					</span>
 				</Link>
 			) : null}
 		</section>
 	)
-}
-
-/**
- * Cohort artwork follows one house template: a 16:9 title card with the course
- * name set in the left ~60% and Matt against painted backdrop on the right.
- * Dropped into a portrait-ish column, `object-cover` slices that title
- * mid-word, and even anchored right it stays in frame — the text runs almost
- * to the middle. No CSS crop fixes that, so the crop happens at delivery: take
- * the eastern 40%, which clears the last glyph of the title, and the block stops
- * repeating a title it already prints as its own `h2`.
- *
- * Cloudinary only (every cohort image is uploaded there). Anything else is
- * returned untouched rather than guessed at.
- */
-function subjectCrop(url: string): string {
-	if (!url.includes('res.cloudinary.com/') || !url.includes('/upload/')) {
-		return url
-	}
-	return url.replace('/upload/', '/upload/c_crop,w_0.40,h_1.0,g_east/')
 }

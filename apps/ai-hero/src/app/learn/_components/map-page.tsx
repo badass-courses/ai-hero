@@ -8,6 +8,8 @@ import { PrimaryNewsletterCta } from "@/components/primary-newsletter-cta";
 import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
 import type { ResolvedItem } from "@/lib/goal-sections-query";
 
+import { SkillCard } from "@/components/skills/skill-card";
+
 import { MoreWaysLink } from "./more-ways-link";
 
 /**
@@ -103,17 +105,17 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
           ))}
         </div>
 
-        {/* Footer: the signature "open" affordance for the whole topic, plus
-				    the optional skill CTA. */}
-        <div className="flex flex-wrap items-center gap-x-10 gap-y-4 px-8 sm:px-16 py-8">
+        {/* Footer: the signature "open" affordance for the whole topic. The
+				    skill, where one matches, gets a real card rather than a sentence
+				    in a box — the slash command is the token readers recognise. */}
+        <div className="flex flex-col gap-6 px-8 py-8 sm:px-16">
           <MoreWaysLink href={section.moreHref} label={section.moreLabel} />
           {section.skillCta ? (
-            <Link
-              href={section.skillCta.href}
-              className="focus-visible:ring-ring hover:bg-muted flex w-full items-center gap-2 border px-4 py-2.5 text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-            >
-              {section.skillCta.label}
-            </Link>
+            <SkillCard
+              slug={section.skillCta.href.replace(/^\//, "")}
+              label="Do this with"
+              className="sm:max-w-xl"
+            />
           ) : null}
         </div>
       </div>

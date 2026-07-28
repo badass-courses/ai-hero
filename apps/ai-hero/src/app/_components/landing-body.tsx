@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { AboutMatt } from '@/components/landing/about-matt'
+import { ActivityLadder } from '@/components/landing/activity-ladder'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { DraftTestimonial } from '@/components/landing/draft-testimonial'
 import { Hero as LandingHero } from '@/components/landing/hero'
@@ -64,6 +65,7 @@ export async function LandingBody({
 		TopicsGrid,
 		TopicsGridColumn,
 		SkillsShowcase,
+		ActivityLadder,
 		SectionHeader,
 		SectionLink,
 		SubscriberCount,

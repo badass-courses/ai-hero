@@ -10,7 +10,7 @@
 */}
 
 <Hero
-	h1="**Real** Engineering<br />with AI"
+	h1="**Real Engineering**<br />with AI"
 	h2="Engineering fundamentals aren't obsolete. They're essential."
 />
 
@@ -46,7 +46,7 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 {/*
   PARKED — the wireframe's section order lists only the "Start here" resource
   here. These three kept a homepage slot in v1; whether they return, move into
-  TopicsGrid, or drop is blocked on Matt/Amy. Restore by uncommenting.
+  the activity ladder, or drop is blocked on Matt/Amy. Restore by uncommenting.
 
   <Resource slugOrId="llm-fundamentals" />
   <Resource slugOrId="ai-sdk-v6-crash-course" />
@@ -69,23 +69,7 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 
 </TestimonialDivider>
 
-<TopicsGrid>
-	<TopicsGridColumn heading="Ship better code" moreHref="/topics/ship-solid-code" moreLabel="More on shipping code">
-		<Resource slugOrId="skill-test-driven-development-claude-code" variant="list" />
-		<Resource slugOrId="tracer-bullets" variant="list" />
-		<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="list" />
-	</TopicsGridColumn>
-	<TopicsGridColumn heading="Understand AI fundamentals" moreHref="/topics/understand-the-basics" moreLabel="More on the fundamentals">
-		<Resource slugOrId="what-is-an-ai-engineer" variant="list" />
-		<Resource slugOrId="what-are-llms-used-for" variant="list" />
-		<Resource slugOrId="ai-engineer-roadmap" variant="list" />
-	</TopicsGridColumn>
-	<TopicsGridColumn heading="Level up your workflow" moreHref="/topics/level-up-your-workflow" moreLabel="More on workflow">
-		<Resource slugOrId="ways-ai-coding-has-rewired-my-brain" variant="list" />
-		<Resource slugOrId="real-world-feature-build-with-claude-code" variant="list" />
-		<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="list" />
-	</TopicsGridColumn>
-</TopicsGrid>
+<ActivityLadder intro="Start where you are. Most developers find the gap is further back than they expected." />
 
 {/*
   DELIBERATELY CLIPPED, and confirmed. The full tweet frames Matt as tracking

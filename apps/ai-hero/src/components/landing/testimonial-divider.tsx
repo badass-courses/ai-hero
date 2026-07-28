@@ -12,7 +12,12 @@ import { CldImage } from '@/components/cld-image'
  *
  * 1. **Its own surface.** `bg-muted/30` between two `border-y` rules, so the
  *    band is visibly inset from the sections above and below rather than
- *    being more page.
+ *    being more page. Laid out as a single short ROW (glyph · quote ·
+ *    attribution) stacked tight and centred. Condensed, not tall: two of
+ *    these punctuate the homepage, and at full height they read as sections
+ *    in their own right and stall the scroll. The attribution stays directly
+ *    under the quote — pushed to the far edge of a wide row it stops reading
+ *    as "who said this".
  * 2. **A quotation mark as a typographic element**, large and low-contrast,
  *    the same move as the numerals in the skills showcase. It signals "someone
  *    said this" before a single word is read.
@@ -43,22 +48,22 @@ export function TestimonialDivider({
 
 	return (
 		<section className="border-border bg-muted/30 border-y">
-			<figure className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-8 py-14 text-center sm:px-16 md:py-16">
+			<figure className="mx-auto flex max-w-3xl flex-col items-center gap-4 px-8 py-10 text-center sm:px-16">
 				<span
 					aria-hidden
-					className="text-foreground/20 -mb-10 text-8xl font-medium leading-none"
+					className="text-foreground/20 -mb-6 text-5xl font-medium leading-none"
 				>
 					&ldquo;
 				</span>
-				<blockquote className="text-balance text-xl font-medium italic leading-snug tracking-tight sm:text-2xl">
+				<blockquote className="text-balance text-lg font-medium italic leading-snug tracking-tight sm:text-xl">
 					{children}
 				</blockquote>
 				<figcaption className="flex items-center gap-3">
 					{authorAvatar && authorAvatar.includes('res.cloudinary') ? (
 						<CldImage
 							alt={name}
-							width={44}
-							height={44}
+							width={40}
+							height={40}
 							className="rounded-full"
 							src={authorAvatar}
 						/>

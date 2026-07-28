@@ -34,7 +34,9 @@ export function SectionHeader({
 	children?: React.ReactNode
 }) {
 	return (
-		<div className="flex flex-col gap-6 px-8 pb-10 pt-16 sm:px-16 md:flex-row md:items-start md:justify-between md:gap-12 md:pb-12">
+		<div // `.brand-corner` (globals.css) paints a blurred band wash into the
+			// top-right corner. Parked for now — re-add the class to try it again.
+			className="flex flex-col gap-6 px-8 pb-10 pt-16 sm:px-16 md:flex-row md:items-start md:justify-between md:gap-12 md:pb-12">
 			<div className="flex flex-col gap-4 md:max-w-2xl">
 				{heading ? (
 					<h2 className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
