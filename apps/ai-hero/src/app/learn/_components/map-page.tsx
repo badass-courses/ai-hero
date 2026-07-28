@@ -169,8 +169,9 @@ export function MapPage({
             What would you like to do with AI coding?
           </h1>
           <p className="text-foreground/80 max-w-[60ch] text-lg leading-relaxed">
-            Not a catalog. A map. Pick the question that sounds like you, and
-            follow the trail of articles, videos, and skills that get you there.
+            Pick the question that sounds like you. Each one opens onto the
+            articles, videos, and skills that answer it, in the order they make
+            sense.
           </p>
         </div>
       </section>

@@ -13,6 +13,7 @@ import type { List } from '@/lib/lists'
 import { getAllLists, getList, getListWithSections } from '@/lib/lists-query'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
+import { ArrowRight } from 'lucide-react'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { Github, Share2 } from 'lucide-react'
 
@@ -215,7 +216,9 @@ export default async function ListPage(props: {
 			    numbered list. */}
 			{rows.length > 0 && (
 				<section>
-					<div className="flex flex-col gap-6 py-16 md:py-20">
+					{/* Lighter on top than the bottom: the body section above already
+					    ends with its own py-12/16, so a matching pt doubled the gap. */}
+					<div className="flex flex-col gap-6 pb-16 pt-8 md:pb-20 md:pt-10">
 						<p className="px-8 font-mono text-[11px] font-medium uppercase tracking-wider opacity-60 sm:px-16">
 							In this series
 						</p>
@@ -236,9 +239,16 @@ export default async function ListPage(props: {
 											<span className="text-muted-foreground/60 w-6 shrink-0 font-mono text-xs tabular-nums">
 												{String(row.n).padStart(2, '0')}
 											</span>
-											<span className="text-lg font-medium leading-snug tracking-tight text-balance group-hover:underline">
+											<span className="text-lg font-medium leading-snug tracking-tight text-balance">
 												{row.title}
 											</span>
+											{/* Slides in from the left edge of its own slot on hover
+											    (ease-out-quart, DESIGN.md rule 14). Decorative: the
+											    row is already a link with an accessible name. */}
+											<ArrowRight
+												aria-hidden
+												className="text-muted-foreground ease-out-quart ml-auto size-4 shrink-0 -translate-x-2 opacity-0 transition duration-300 group-hover:translate-x-0 group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
+											/>
 										</Link>
 									</li>
 								),

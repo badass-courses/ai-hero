@@ -28,7 +28,7 @@ export async function DictionaryHero({
 				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					AI Hero · Dictionary
 				</p>
-				<h1 className="text-balance font-sans text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+				<h1 className="text-balance font-sans text-3xl font-normal leading-[1.05] tracking-tight sm:text-4xl lg:text-5xl">
 					The vocabulary of AI coding,
 					<br className="hidden sm:block" />{' '}
 					<span className="text-primary">in plain English</span>.

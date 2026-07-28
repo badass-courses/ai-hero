@@ -156,7 +156,7 @@ export const PrimaryNewsletterCta: React.FC<
 						actionLabel={actionLabel}
 						formId={formId}
 						fields={fields}
-						className="[&_input]:ring-foreground/20 [&_input]:bg-background/30 relative z-10 [&_button]:mt-3 [&_button]:h-16 [&_button]:sm:text-lg [&_input]:h-16 [&_input]:border-none [&_input]:bg-blend-hard-light [&_input]:ring-1 [&_input]:backdrop-blur-xl"
+						className="[&_input]:ring-foreground/20 [&_input]:bg-background/30 relative z-10 [&_button]:mt-3 [&_button]:h-16 [&_button]:rounded-full [&_button]:px-8 [&_button]:sm:text-lg [&_input]:h-16 [&_input]:rounded-full [&_input]:border-none [&_input]:bg-blend-hard-light [&_input]:px-6 [&_input]:ring-1 [&_input]:backdrop-blur-xl"
 					/>
 					<p
 						data-nospam=""

@@ -109,7 +109,10 @@ export const SKILLS_MINI_COURSE_CTA = {
  * (or make it per-skill) once Matt decides. No template code change needed.
  */
 export const SKILLS_FREE_LESSON = {
-	href: '/newsletter',
+	// The skills email course, NOT the general newsletter: this CTA sits under a
+	// skill post, so it should continue that thread rather than dump the reader
+	// at the site-wide signup. Same destination as `SkillsCourseCta`.
+	href: '/skills/subscribe',
 	label: 'Take the free lesson',
 	description: 'See the skill in action on a real project.',
 } as const

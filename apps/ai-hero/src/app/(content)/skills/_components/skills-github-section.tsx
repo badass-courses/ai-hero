@@ -61,7 +61,7 @@ export async function SkillsGitHubSection({
 					href={REPO_URL}
 					target="_blank"
 					rel="noopener noreferrer"
-					className="border-border hover:bg-muted group inline-flex items-center gap-2 border px-5 py-3 font-mono text-sm font-semibold uppercase tracking-wider transition-colors"
+					className="border-border hover:bg-muted group inline-flex items-center gap-2 rounded-full border px-6 py-3 font-mono text-sm font-semibold uppercase tracking-wider transition-colors"
 				>
 					<Github aria-hidden className="size-4" />
 					<span>View on GitHub</span>

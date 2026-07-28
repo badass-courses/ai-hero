@@ -30,7 +30,7 @@ export async function SkillsHero({
 				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					AI Hero · Skill System
 				</p>
-				<h1 className="text-balance font-sans text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+				<h1 className="text-balance font-sans text-3xl font-normal leading-[1.05] tracking-tight sm:text-4xl lg:text-5xl">
 					{SKILLS_HERO.titleLead}{' '}
 					<strong className="text-primary font-semibold">
 						{SKILLS_HERO.titleEmphasis}

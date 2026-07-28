@@ -80,6 +80,8 @@ export default async function PostPage(props: {
       resource.type === "videoResource",
   );
 
+  const isSkillPost = post.type === "post" && post.fields?.postType === "skill";
+
   // W1 §5 — only plain articles get the cross-promo layers; podcast / tip /
   // skill-changelog / list keep their existing below-body behavior untouched.
   const isEligibleForCrossPromo =
@@ -189,9 +191,7 @@ ${post?.fields?.body}`;
             {/* W2 — skill posts render the normal post template (video,
 						    body, newsletter, next-up all intact); these are the only
 						    skill-specific additions, appended below the body. */}
-            {post.type === "post" && post.fields?.postType === "skill" && (
-              <SkillExtras post={post} />
-            )}
+            {isSkillPost && <SkillExtras post={post} />}
             {/* {listSlugFromParam && (
 									<PostProgressToggle
 										className="flex w-full items-center justify-center"
@@ -202,7 +202,14 @@ ${post?.fields?.body}`;
               <PrimaryNewsletterCta
                 title={<PrimaryNewsletterTitle />}
                 isHiddenForSubscribers
-                className="mt-20 border-t pt-14 sm:pb-5 sm:pt-20"
+                // mt-20 separates the CTA from a bare article body. Skill posts
+                // end with SkillExtras, whose last section already draws a
+                // border-t, so that margin would leave a floating gap above
+                // this CTA's own rule. Drop it in that case.
+                className={cn(
+                  "border-t pt-14 sm:pb-5 sm:pt-20",
+                  !isSkillPost && "mt-20",
+                )}
                 trackProps={{
                   event: "subscribed",
                   params: {
@@ -212,7 +219,16 @@ ${post?.fields?.body}`;
                 }}
               />
             )}
-            <div className="mx-auto mt-16 flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5">
+            {/* Same reasoning as the newsletter CTA above: mt-16 gives the
+                share row air after a bare body, but on skill posts the block
+                before it already closes with a rule, so the margin would leave
+                a floating gap above this one. */}
+            <div
+              className={cn(
+                "mx-auto flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5",
+                !isSkillPost && "mt-16",
+              )}
+            >
               <strong className="text-lg font-semibold">Share</strong>
               <Share
                 className="inline-flex rounded-none border-y-0"

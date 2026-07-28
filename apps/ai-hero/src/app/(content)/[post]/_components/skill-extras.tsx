@@ -21,7 +21,8 @@ import { type Post } from '@/lib/posts'
 import { getCachedPostsByTag } from '@/lib/posts-query'
 import { SKILLS_FREE_LESSON, SKILLS_HERO } from '@/lib/skills-content'
 import { getSkillEntries, isSkillPhaseTag, type SkillEntry } from '@/lib/skills-query'
-import { ArrowRight } from 'lucide-react'
+import { ResourceHoverFrame } from '@/components/resource-hover-frame'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -81,18 +82,18 @@ function SkillInstallBlock({ slug }: { slug: string }) {
 function FreeLessonCta() {
 	return (
 		<section className="border-t">
-			<div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-5 py-12 md:px-10 lg:px-14">
-				<h2 className="text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
+			<div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4 px-5 py-12 text-center md:px-10 lg:px-14">
+				<h2 className="text-balance text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
 					{SKILLS_FREE_LESSON.label}
 				</h2>
 				{SKILLS_FREE_LESSON.description ? (
-					<p className="text-muted-foreground max-w-2xl text-base leading-relaxed">
+					<p className="text-muted-foreground max-w-2xl text-balance text-base leading-relaxed">
 						{SKILLS_FREE_LESSON.description}
 					</p>
 				) : null}
 				<Link
 					href={SKILLS_FREE_LESSON.href}
-					className="group focus-visible:ring-ring inline-flex w-fit items-center gap-2 text-base font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring group inline-flex w-fit items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
 					Start lesson
 					<ArrowRight className="ease-[cubic-bezier(0.22,1,0.36,1)] size-4 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
@@ -139,7 +140,13 @@ function SkillMiniFlow({
 	const { prev, current, next } = neighbors
 
 	return (
-		<section aria-label="Skill workflow position" className="border-t">
+		// mt, not pt: the gap belongs BETWEEN the article body and this block, so
+		// the rule has to move down with it. Padding would have pulled the label
+		// away from a hairline still sitting tight against the body.
+		<section
+			aria-label="Skill workflow position"
+			className="mt-12 border-t sm:mt-16"
+		>
 			<div className="flex flex-wrap items-center gap-3 px-5 py-6 sm:py-8 md:px-10 lg:px-14">
 				{phaseLabel ? (
 					<span className="bg-muted text-foreground/80 w-fit rounded-full px-3 py-1 font-mono text-[11px] font-medium uppercase tracking-wider">
@@ -150,42 +157,68 @@ function SkillMiniFlow({
 					Where this fits in the cycle
 				</span>
 			</div>
+			{/* Reads left to right as a flow on desktop; on mobile it stacks in the
+			    same order, so "This skill" stays sandwiched between its neighbours
+			    rather than being reordered out of sequence. */}
 			<div className="border-border bg-border grid grid-cols-1 gap-px border-t sm:grid-cols-3">
-				<MiniFlowCell entry={prev} role="Previous" />
+				<MiniFlowCell entry={prev} role="Previous" direction="prev" />
 				<MiniFlowCell entry={current} role="This skill" isCurrent />
-				<MiniFlowCell entry={next} role="Next" />
+				<MiniFlowCell entry={next} role="Next" direction="next" />
 			</div>
 		</section>
 	)
 }
 
+const CELL_PADDING = 'flex h-full flex-col gap-2 px-6 py-6 sm:px-8 sm:py-7'
+
+/**
+ * One step of the cycle. Neighbours are links carrying the signature hover
+ * frame (DESIGN.md rule 13), the same treatment as the Up Next card, so the
+ * two "where do I go next" surfaces behave identically. The current skill is
+ * inert and marked with a filled dot rather than an arrow.
+ */
 function MiniFlowCell({
 	entry,
 	role,
 	isCurrent = false,
+	direction,
 }: {
 	entry: SkillEntry
 	role: string
 	isCurrent?: boolean
+	/** Which way this step points, which decides the arrow and its side. */
+	direction?: 'prev' | 'next'
 }) {
-	const label = (
-		<>
-			<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-				{role}
-			</span>
-			<span className="mt-1 block text-base font-medium leading-snug tracking-tight">
-				{entry.title}
-			</span>
-		</>
+	const Arrow = direction === 'prev' ? ArrowLeft : ArrowRight
+
+	const roleRow = (
+		<span className="flex items-center gap-1.5 font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+			{direction === 'prev' ? (
+				<Arrow
+					aria-hidden
+					className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover/resource:-translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+				/>
+			) : null}
+			{role}
+			{direction === 'next' ? (
+				<Arrow
+					aria-hidden
+					className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover/resource:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+				/>
+			) : null}
+		</span>
 	)
 
 	if (isCurrent) {
 		return (
-			<div
-				aria-current="true"
-				className="bg-muted flex flex-col px-6 py-6 sm:px-8"
-			>
-				{label}
+			<div aria-current="true" className={cn('bg-muted', CELL_PADDING)}>
+				<span className="text-primary flex items-center gap-1.5 font-mono text-[11px] font-medium uppercase tracking-wider">
+					<span aria-hidden className="bg-primary size-1.5 shrink-0 rounded-full" />
+					{role}
+				</span>
+				<span className="text-balance text-base font-semibold leading-snug tracking-tight">
+					{entry.title}
+				</span>
 			</div>
 		)
 	}
@@ -193,9 +226,17 @@ function MiniFlowCell({
 	return (
 		<Link
 			href={`/${entry.slug}`}
-			className="group bg-background hover:bg-muted focus-visible:ring-ring flex flex-col px-6 py-6 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8"
+			className="group/resource bg-background focus-visible:ring-ring relative flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 		>
-			{label}
+			<ResourceHoverFrame
+				surfaceClassName="bg-background"
+				className={CELL_PADDING}
+			>
+				{roleRow}
+				<span className="text-balance text-base font-medium leading-snug tracking-tight">
+					{entry.title}
+				</span>
+			</ResourceHoverFrame>
 		</Link>
 	)
 }
