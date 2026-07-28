@@ -4,6 +4,10 @@ import { ArrowRight } from 'lucide-react'
 
 import { SectionHeader } from './section-header'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * The homepage's activity ladder: what you might want to *do*, in rungs.
  *
@@ -102,16 +106,16 @@ export function ActivityRung({
 	return (
 		<li className="grid grid-cols-1 gap-x-12 gap-y-6 px-8 py-6 sm:px-16 md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
 			<div className="flex flex-col gap-2">
-				<p className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
+				<p className={cn(TYPE.micro, 'text-muted-foreground')}>
 					{audience}
 				</p>
-				<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
+				<h3 className={cn(TYPE.subhead, 'text-balance')}>
 					{question}
 				</h3>
 				{moreHref ? (
 					<Link
 						href={moreHref}
-						className="group text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-1 inline-flex w-fit items-center gap-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+						className={cn(TYPE.meta, 'group text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-1 inline-flex w-fit items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 					>
 						{moreLabel ?? 'More'}
 						<ArrowRight

@@ -2,6 +2,10 @@ import * as React from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * A section's opening row: title and intro on the left, the section's "see
  * everything" link on the right.
@@ -39,12 +43,12 @@ export function SectionHeader({
 			className="flex flex-col gap-6 px-8 pb-10 pt-16 sm:px-16 md:flex-row md:items-start md:justify-between md:gap-12 md:pb-12">
 			<div className="flex flex-col gap-4 md:max-w-2xl">
 				{heading ? (
-					<h2 className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
+					<h2 className={cn(TYPE.heading, 'text-balance')}>
 						{heading}
 					</h2>
 				) : null}
 				{children ? (
-					<p className="max-w-[62ch] text-pretty text-base leading-relaxed opacity-80 sm:text-lg">
+					<p className={cn(TYPE.body, 'max-w-[62ch] text-pretty opacity-80')}>
 						{children}
 					</p>
 				) : null}
@@ -52,7 +56,7 @@ export function SectionHeader({
 			{linkHref ? (
 				<Link
 					href={linkHref}
-					className="border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 md:mt-1.5"
+					className={cn(TYPE.meta, 'border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 md:mt-1.5')}
 				>
 					{linkLabel}
 					<ArrowRight

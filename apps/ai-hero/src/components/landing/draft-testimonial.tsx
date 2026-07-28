@@ -2,6 +2,10 @@ import * as React from 'react'
 import { CldImage } from '@/components/cld-image'
 import { Star } from 'lucide-react'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 export function DraftTestimonial({
 	authorName,
 	authorAvatar,
@@ -18,7 +22,7 @@ export function DraftTestimonial({
 					<Star key={i} className="h-5 w-5 fill-[#ffcf77]" />
 				))}
 			</div>
-			<blockquote className="text-balance text-center font-sans text-2xl font-semibold not-italic leading-snug tracking-tight sm:text-3xl">
+			<blockquote className={cn(TYPE.subhead, 'text-balance text-center font-sans not-italic')}>
 				{children}
 			</blockquote>
 			<div className="flex items-center gap-3">

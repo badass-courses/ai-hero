@@ -2,6 +2,10 @@ import * as React from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * The `Resource` variant for `ActivityRung` (`variant="ladder"`): a catalogue
  * entry — format label, title, arrow — with no artwork.
@@ -36,10 +40,10 @@ export function ResourceLadderItem({
 			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			<span className="flex min-w-0 flex-1 flex-col gap-1">
-				<span className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
+				<span className={cn(TYPE.micro, 'text-muted-foreground')}>
 					{isVideo ? 'Video' : 'Article'}
 				</span>
-				<span className="text-balance text-base font-medium leading-snug">
+				<span className={cn(TYPE.bodyTight, 'text-balance')}>
 					{title}
 				</span>
 			</span>

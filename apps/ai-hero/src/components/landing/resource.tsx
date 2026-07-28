@@ -392,7 +392,7 @@ function PriceLine({
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono">
 			<div className="flex items-baseline gap-2">
-				<span className="text-foreground text-base font-semibold sm:text-lg">
+				<span className="text-foreground text-base font-semibold">
 					{formatPriceUSD(Math.floor(calculated))}
 				</span>
 				{isDiscounted && (
@@ -402,7 +402,7 @@ function PriceLine({
 				)}
 			</div>
 			{pppOff > 0 && (
-				<span className="border-foreground/20 text-foreground/70 dark:border-amber-300/40 dark:text-amber-200 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+				<span className="border-foreground/20 text-foreground/70 dark:border-amber-300/40 dark:text-amber-200 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider">
 					PPP eligible · save {pppOff}%
 				</span>
 			)}
@@ -412,7 +412,7 @@ function PriceLine({
 
 function EditorialBadge({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider">
+		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-full px-2.5 py-1 font-mono text-xs font-semibold uppercase tracking-wider">
 			{children}
 		</span>
 	)

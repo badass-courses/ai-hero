@@ -59,7 +59,7 @@ export function ResourceCard({
 					</span>
 				)}
 			</div>
-			<h3 className="px-7 py-6 text-lg font-semibold leading-snug tracking-tight">
+			<h3 className="px-7 py-6 text-base font-semibold leading-snug tracking-tight">
 				{title}
 			</h3>
 		</Link>

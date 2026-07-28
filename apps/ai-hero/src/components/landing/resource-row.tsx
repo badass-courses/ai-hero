@@ -10,6 +10,8 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { AnimatedArrowCircle } from './animated-arrow-circle'
 
+import { TYPE } from './type'
+
 const MotionLink = motion.create(Link)
 
 export function ResourceRow({
@@ -95,13 +97,13 @@ export function ResourceRow({
 						<div className="flex flex-wrap items-center gap-3">
 							{renderedBadge && <span>{renderedBadge}</span>}
 							{typeLabel && (
-								<span className="font-mono text-[11px] font-medium uppercase tracking-wider z-10 relative">
+								<span className="font-mono text-xs font-medium uppercase tracking-wider z-10 relative">
 									{typeLabel}
 								</span>
 							)}
 						</div>
 					)}
-					<h3 className="text-2xl font-semibold leading-tight tracking-tight sm:text-2xl">
+					<h3 className={cn(TYPE.subhead, '')}>
 						{title}
 					</h3>
 					{description && (
@@ -125,7 +127,7 @@ export function ResourceRow({
 
 function DefaultBadge({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider">
+		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-full px-2.5 py-1 font-mono text-xs font-semibold uppercase tracking-wider">
 			{children}
 		</span>
 	)

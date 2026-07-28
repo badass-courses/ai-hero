@@ -2,6 +2,10 @@ import * as React from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * Homepage topic columns: a heading, a few hand-picked resources, and a link
  * to the full topic. Authored in the CMS body as
@@ -63,7 +67,7 @@ export function TopicsGridColumn({
 }) {
 	return (
 		<div className="bg-background flex flex-col">
-			<h3 className="text-balance px-6 pb-3 pt-8 text-xl font-semibold leading-tight tracking-tight sm:px-8">
+			<h3 className={cn(TYPE.subhead, 'text-balance px-6 pb-3 pt-8 sm:px-8')}>
 				{heading}
 			</h3>
 			{/* No gap: the list items own their padding, so they read as one stack

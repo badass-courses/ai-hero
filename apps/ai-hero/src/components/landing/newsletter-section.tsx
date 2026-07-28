@@ -2,6 +2,8 @@ import * as React from 'react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { TYPE } from './type'
+
 export function NewsletterSection({
 	heading,
 	subTitle,
@@ -47,8 +49,8 @@ export function NewsletterSection({
 							className={cn(
 								'text-balance font-sans font-semibold leading-tight tracking-tight',
 								compact
-									? 'text-xl sm:text-2xl'
-									: 'text-center text-3xl sm:text-4xl',
+									? TYPE.subhead
+									: cn(TYPE.heading, 'text-center'),
 							)}
 						>
 							{heading}
@@ -57,10 +59,10 @@ export function NewsletterSection({
 					{subTitle && (
 						<p
 							className={cn(
-								'text-balance font-sans font-normal leading-snug opacity-80',
+								'text-balance font-sans leading-snug opacity-80',
 								compact
 									? 'text-sm sm:text-base'
-									: 'text-center text-base sm:text-lg',
+									: 'text-center text-base',
 							)}
 						>
 							{subTitle}

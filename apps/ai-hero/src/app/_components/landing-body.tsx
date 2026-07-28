@@ -102,7 +102,7 @@ export async function LandingBody({
 				{compiled.content}
 			</article>
 			{/* Stays hardcoded outside the MDX by design. */}
-			<section className="border-border mx-auto w-full border-y pt-7">
+			<section className="border-border mx-auto w-full border-t pt-7">
 				<CompanyLogoGrid />
 			</section>
 		</main>

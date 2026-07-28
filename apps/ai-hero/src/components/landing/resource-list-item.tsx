@@ -39,7 +39,7 @@ export function ResourceListItem({
 				/>
 			</span>
 			{meta ? (
-				<span className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
+				<span className="text-muted-foreground font-mono text-xs font-medium uppercase tracking-wider">
 					{meta}
 				</span>
 			) : null}

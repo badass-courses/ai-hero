@@ -1,6 +1,10 @@
 import * as React from 'react'
 import { CldImage } from '@/components/cld-image'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * Slim quote break between homepage sections. Same prop shape as
  * [[draft-testimonial.tsx#DraftTestimonial]] (`authorName`, `authorAvatar`,
@@ -55,7 +59,7 @@ export function TestimonialDivider({
 				>
 					&ldquo;
 				</span>
-				<blockquote className="text-balance text-lg font-medium italic leading-snug tracking-tight sm:text-xl">
+				<blockquote className={cn(TYPE.subhead, 'text-balance font-medium italic')}>
 					{children}
 				</blockquote>
 				<figcaption className="flex items-center gap-3">
@@ -69,9 +73,9 @@ export function TestimonialDivider({
 						/>
 					) : null}
 					<span className="flex flex-col items-start text-left leading-tight">
-						<span className="text-foreground text-sm font-semibold">{name}</span>
+						<span className={cn(TYPE.meta, 'text-foreground font-semibold')}>{name}</span>
 						{title ? (
-							<span className="text-muted-foreground text-sm">{title}</span>
+							<span className={cn(TYPE.metaProse, 'text-muted-foreground')}>{title}</span>
 						) : null}
 					</span>
 				</figcaption>

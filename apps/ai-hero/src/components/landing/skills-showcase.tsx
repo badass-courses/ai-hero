@@ -6,6 +6,10 @@ import { ArrowRight } from 'lucide-react'
 
 import { SectionHeader } from './section-header'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * Homepage skills showcase (wireframe § ⑤).
  *
@@ -66,11 +70,11 @@ export async function SkillsShowcase({
 						className="bg-background flex flex-col gap-5 px-8 py-8 sm:px-10"
 					>
 						<div className="flex flex-col gap-1.5">
-							<h3 className="text-balance text-2xl font-semibold leading-tight tracking-tight">
+							<h3 className={cn(TYPE.subhead, 'text-balance')}>
 								{group.title}
 							</h3>
 							{group.description ? (
-								<p className="text-muted-foreground text-balance text-sm leading-relaxed">
+								<p className={cn(TYPE.metaProse, 'text-muted-foreground text-balance')}>
 									{group.description}
 								</p>
 							) : null}
@@ -86,7 +90,7 @@ export async function SkillsShowcase({
 										// A link's affordance rather than a chip's: full contrast
 										// text, a visible edge, and an unambiguous invert on
 										// hover/focus (the site's badge treatment).
-										className="border-foreground/20 bg-muted text-foreground hover:border-foreground hover:bg-foreground hover:text-background focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 font-mono text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+										className={cn(TYPE.command, 'border-foreground/20 bg-muted text-foreground hover:border-foreground hover:bg-foreground hover:text-background focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 									>
 										{skill.command}
 									</Link>
@@ -106,11 +110,11 @@ export async function SkillsShowcase({
 						{group.skills[0] ? (
 							<Link
 								href={`/${group.skills[0].slug}`}
-								className="border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+								className={cn(TYPE.meta, 'border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border px-4 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 							>
 								<span className="truncate">
 									Start with{' '}
-									<span className="font-mono text-xs">
+									<span className={TYPE.command}>
 										{group.skills[0].command}
 									</span>
 								</span>

@@ -10,6 +10,10 @@ import rehypeRaw from 'rehype-raw'
 import { HeroShader } from './hero-shader'
 import { HeroVideo } from './hero-video'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 type HeroVideoData = { playbackId: string; title?: string }
 
 function readString(obj: unknown, key: string): string | undefined {
@@ -76,7 +80,7 @@ export async function Hero({
 		>
 			<div className="flex flex-col justify-center gap-4 px-8 py-10 sm:px-16 sm:py-20">
 				{h1 && (
-					<h1 className="text-balance font-sans text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-[3.5rem] dark:text-white">
+					<h1 className={cn(TYPE.display, 'text-balance font-sans dark:text-white')}>
 						<ReactMarkdown
 							rehypePlugins={[rehypeRaw]}
 							components={{
@@ -91,7 +95,7 @@ export async function Hero({
 					</h1>
 				)}
 				{h2 && (
-					<p className="text-2xl font-light leading-tight tracking-tight opacity-70">
+					<p className={cn(TYPE.subhead, 'font-medium opacity-70')}>
 						<ReactMarkdown
 							components={{
 								p: ({ children }) => <>{children}</>,

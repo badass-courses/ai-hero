@@ -131,28 +131,48 @@ Color makes things pop; everything else stays monochrome on tokens.
 
 ### 11. Type scale
 
-Steps follow a roughly 1.25 ratio across major breakpoints. The full landing scale:
+**Compose `TYPE` from `src/components/landing/type.ts`. Do not write size classes inline.**
 
-| Role | Pattern |
-|------|---------|
-| Hero h1 (display) | `text-5xl lg:text-6xl font-normal leading-[1.05] tracking-tight` |
-| Hero subtitle | `text-2xl font-light leading-tight tracking-tight opacity-70` |
-| Section h2 | `text-3xl sm:text-4xl font-medium leading-tight tracking-tight` |
-| Centered standalone h2 (`SectionHeading`) | same scale, `font-semibold` |
-| Card / row h3 | `text-2xl sm:text-3xl font-semibold leading-tight tracking-tight` |
-| Body | `text-base sm:text-lg leading-relaxed opacity-80` |
-| Micro-label (mono caps) | `font-mono text-[11px] font-medium uppercase tracking-wider opacity-60` |
-| Price | `font-mono` (numerals and currency intentional) |
+The landing components between them once used nine Tailwind size steps plus
+arbitrary `text-[10px]` / `text-[11px]` values, five weights, and a scatter of
+`leading-*` / `tracking-*` combinations picked per component. None of it was
+wrong in isolation; together it meant two headings a screen apart could differ
+by a step for no reason a reader could name.
 
-When to use which h2:
-- **Centered standalone** (`SectionHeading`) introduces a section that has no body column. Heavier weight (`semibold`) anchors it.
-- **Section h2 inside a two-column editorial grid** (Manifesto, AboutMatt, Newsletter) sits next to body text. Lighter weight (`medium`) reads as a peer to the prose.
+**Five sizes.** Each constant carries its own leading and tracking, because
+those are part of the size — a display line at `leading-relaxed` is not the
+same decision as one at `leading-[1.05]`, and letting callers mix them is how
+the scatter came back last time.
+
+| Role | Constant | Steps | Used for |
+|------|----------|-------|----------|
+| Display | `TYPE.display` | 4xl → 5xl → 3.5rem | The hero `h1`. Nothing else. |
+| Heading | `TYPE.heading` | 3xl → 4xl | Section `h2`s. |
+| Subhead | `TYPE.subhead` | xl → 2xl | `h3`s, card and row titles, pull quotes. |
+| Body | `TYPE.body` / `TYPE.bodyTight` | base | Prose, list rows. |
+| Meta | `TYPE.meta` / `TYPE.metaProse` | sm | Captions, buttons, inline links. |
+
+Plus `TYPE.micro` — the mono uppercase eyebrow at `text-xs`. It does `meta`'s
+job at a smaller optical size, which is why it is not a sixth step. `TYPE.command`
+is the same size for slash commands, which are literally code.
+
+**Three weights.** `font-medium` for headings, `font-semibold` for titles and
+UI emphasis, `font-bold` for exactly one thing: the emphasised span in the hero
+`h1`. `font-light` and `font-normal` are gone — at these sizes on a dark
+background they read as a rendering fault rather than a choice.
+
+**Two families, two accents.** Geist and Geist Mono (rule 10). Mono appears in
+two places only: `micro` labels and slash commands. Uppercase appears in one:
+`micro`. Italic appears in one: pull quotes.
+
+Exempt, because they are ornaments rather than text: the oversized quotation
+glyph in `TestimonialDivider` and the placeholder word in an empty
+`ResourceCard` image slot. Both are drawings that happen to be made of letters.
 
 Other typography rules:
 
-- **Body measure:** cap reading columns at 65 to 75ch. Long prose blocks already do this; don't widen them in new layouts.
+- **Body measure:** cap reading columns at 65 to 75ch.
 - **`text-balance` on headings and blockquotes that wrap.**
-- **Display headings are deliberately lighter and larger** (h1 is `font-normal`). Card titles invert the relationship (heavier and shorter) because they need to anchor a smaller block.
 - Never let headings render with default Tailwind tracking. They look loose and generic.
 
 ---

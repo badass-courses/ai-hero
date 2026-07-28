@@ -4,6 +4,10 @@ import Image from 'next/image'
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for the parked shader below
 import { HeroStripes } from './hero-stripes-shader'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 export function AboutMatt({
 	headline = "Hi, I'm Matt Pocock",
 	children,
@@ -12,7 +16,7 @@ export function AboutMatt({
 	children: React.ReactNode
 }) {
 	return (
-		<section className="border-border grid grid-cols-1 items-center gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] lg:gap-8">
+		<section className="border-border grid grid-cols-1 items-center gap-4 border-t-0! lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] lg:gap-8">
 			<div className="pointer-events-none relative mx-auto flex w-full max-w-[420px] select-none items-end justify-center overflow-hidden px-8 pt-8 lg:px-0 lg:pt-0">
 				{/* <div className="sm:bg-linear-to-r bg-linear-to-b to-background absolute inset-0 z-10 h-full w-full from-transparent via-transparent" /> */}
 				{/* PARKED — the animated stripe shader behind the portrait. Restore
@@ -48,10 +52,10 @@ export function AboutMatt({
 				/>
 			</div>
 			<div className="flex flex-col gap-5 px-8 pb-12 pt-4 sm:pr-16 lg:py-16">
-				<h2 className="font-sans text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
+				<h2 className={cn(TYPE.heading, 'font-sans')}>
 					{headline}
 				</h2>
-				<div className="flex flex-col gap-4 text-base leading-relaxed opacity-90 sm:text-lg">
+				<div className={cn(TYPE.body, 'flex flex-col gap-4 opacity-90')}>
 					{children}
 				</div>
 			</div>

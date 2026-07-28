@@ -6,6 +6,10 @@ import { log } from '@/server/logger'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { ArrowRight } from 'lucide-react'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 /**
  * The cohort section (wireframe § ⑨). The most commercially important block on
  * the page, so it gets the page's strongest composition: the same two-column
@@ -49,17 +53,17 @@ export async function UpcomingCohort({
 		>
 			<div className="flex flex-col justify-center gap-6 px-8 py-14 sm:px-16 md:py-20">
 				<div className="flex flex-col gap-4">
-					<p className="text-primary font-mono text-[11px] font-medium uppercase tracking-wider">
+					<p className={cn(TYPE.micro, 'text-primary')}>
 						{eyebrow}
 					</p>
 					<h2
 						id="cohort-heading"
-						className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl"
+						className={cn(TYPE.heading, 'text-balance')}
 					>
 						{cohort.title.trim()}
 					</h2>
 					{cohort.description ? (
-						<p className="max-w-[52ch] text-balance text-base leading-relaxed opacity-80">
+						<p className={cn(TYPE.body, 'max-w-[52ch] text-balance opacity-80')}>
 							{cohort.description}
 						</p>
 					) : null}
@@ -69,7 +73,7 @@ export async function UpcomingCohort({
 				    cohorts that is the enrollment status, not the date the last one
 				    ran — "Last cohort June 2026" tells you the thing is over and
 				    nothing about what to do next. */}
-				<dl className="border-border flex flex-wrap gap-x-8 gap-y-2 border-t pt-5 text-sm">
+				<dl className={cn(TYPE.metaProse, 'border-border flex flex-wrap gap-x-8 gap-y-2 border-t pt-5')}>
 					<div className="flex items-baseline gap-2">
 						<dt className="text-muted-foreground shrink-0">
 							{isOpen ? 'Starts' : 'Enrollment'}
@@ -84,7 +88,7 @@ export async function UpcomingCohort({
 
 				<Link
 					href={`/cohorts/${cohort.slug}`}
-					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring group inline-flex h-12 w-fit items-center gap-2 rounded-full px-7 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+					className={cn(TYPE.meta, 'bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring group inline-flex h-12 w-fit items-center gap-2 rounded-full px-7 font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 				>
 					{isOpen ? 'See the cohort' : 'Join the waitlist'}
 					<ArrowRight
