@@ -26,7 +26,7 @@ export async function SkillsHero({
 			id="skills-hero"
 			className="border-border relative grid w-full grid-cols-1 items-stretch border-b md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"
 		>
-			<div className="flex flex-col justify-center gap-4 px-8 py-16 sm:px-16 sm:py-20">
+			<div className="flex flex-col justify-center gap-4 px-8 py-10 sm:px-16 sm:py-14">
 				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					AI Hero · Skill System
 				</p>

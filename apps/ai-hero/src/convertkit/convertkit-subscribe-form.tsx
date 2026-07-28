@@ -173,7 +173,10 @@ export const SubscribeToConvertkitForm: React.FC<
 						style={{
 							backgroundSize: '200% 100%',
 						}}
-						className="animate-shine absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
+						// rounded-[inherit]: the shine overlays the button edge to edge, so
+						// it has to take whatever radius the button was given (squared
+						// here, pill on the skills CTA) or it spills past rounded corners.
+						className="animate-shine absolute inset-0 overflow-hidden rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
 					/>
 				</Button>
 			)}

@@ -59,11 +59,11 @@ export default async function TopicPage({ params }: Props) {
 			<HubLayout>
 				<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
 					<section className="border-b">
-						<div className="flex flex-col gap-4 px-8 py-16 sm:px-16 md:py-24">
+						<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
 							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 								Topic
 							</p>
-							<h1 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
+							<h1 className="text-4xl font-normal leading-[1.05] tracking-tight text-balance sm:text-5xl">
 								{tag.fields.label}
 							</h1>
 							{tag.fields.description ? (
@@ -76,7 +76,7 @@ export default async function TopicPage({ params }: Props) {
 
 					{posts.length > 0 ? (
 						<section aria-label={`Posts about ${tag.fields.label}`}>
-							<ul className="bg-border flex flex-col gap-px border-b">
+							<ul className="bg-border flex flex-col gap-px">
 								{posts.map((post) => (
 									<li key={post.id} className="bg-background">
 										<TopicPostRow post={post} />
@@ -86,7 +86,7 @@ export default async function TopicPage({ params }: Props) {
 						</section>
 					) : (
 						<section aria-label="No posts yet" className="border-b">
-							<div className="bg-stripes flex items-center justify-center px-8 py-16 sm:px-16">
+							<div className="bg-stripes flex items-center justify-center px-8 py-16 sm:px-16 md:py-24">
 								<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 									No posts yet
 								</p>
@@ -103,13 +103,13 @@ function TopicPostRow({ post }: { post: Post }) {
 	return (
 		<Link
 			href={`/${post.fields.slug}`}
-			className="focus-visible:ring-ring group flex flex-col gap-2 px-8 py-6 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:px-16"
+			className="focus-visible:ring-ring group flex flex-col gap-3 px-8 py-8 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:px-16 md:py-10"
 		>
 			<h2 className="text-2xl font-semibold leading-tight tracking-tight text-balance group-hover:underline sm:text-3xl">
 				{post.fields.title}
 			</h2>
 			{post.fields.description ? (
-				<p className="max-w-[75ch] text-base leading-relaxed opacity-70">
+				<p className="max-w-[70ch] text-base leading-relaxed opacity-70">
 					{post.fields.description}
 				</p>
 			) : null}

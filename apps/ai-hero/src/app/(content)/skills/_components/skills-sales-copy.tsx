@@ -15,7 +15,7 @@ export function SkillsSalesCopy() {
 			aria-labelledby="skills-sales-heading"
 			className="border-b"
 		>
-			<div className="mx-auto flex max-w-3xl flex-col gap-4 px-8 py-16 sm:px-16 md:py-24">
+			<div className="flex flex-col gap-4 px-8 py-16 sm:px-16 md:py-24">
 				<p
 					id="skills-sales-heading"
 					className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60"
@@ -45,7 +45,7 @@ export function SkillsSalesCopy() {
 				))}
 			</div>
 
-			<div className="mx-auto flex max-w-3xl flex-col gap-4 px-8 py-16 sm:px-16 md:py-24">
+			<div className="flex flex-col gap-4 px-8 py-10 sm:px-16 md:py-14">
 				<h3 className="text-balance text-xl font-medium leading-tight tracking-tight sm:text-2xl">
 					{compatibility.heading}
 				</h3>
@@ -56,7 +56,7 @@ export function SkillsSalesCopy() {
 					{compatibility.agents.map((agent) => (
 						<li
 							key={agent}
-							className="border-border bg-muted/40 inline-flex items-center px-3 py-1.5 font-mono text-xs font-medium tracking-tight opacity-80"
+							className="border-border bg-muted/40 text-foreground/80 inline-flex items-center rounded-full border px-3.5 py-1.5 font-mono text-xs font-medium tracking-tight"
 						>
 							{agent}
 						</li>

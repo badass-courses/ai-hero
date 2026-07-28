@@ -87,9 +87,17 @@ export default async function SkillsPage({ searchParams }: Props) {
 					    2026-07-14: no custom card grid; sections from the CMS list
 					    drive the grouping). */}
 					<section aria-labelledby="skill-set-heading" className="border-b">
-						<SectionHeading>
-							<span id="skill-set-heading">The skill set</span>
-						</SectionHeading>
+						{/* The centered `SectionHeading` treatment, inlined rather than
+						    reused: its py-20 left a hole under the sales copy's CTA, so
+						    the vertical padding is tightened here. */}
+						<div className="mx-auto max-w-xl px-8 pb-4 pt-14 text-center">
+							<h2
+								id="skill-set-heading"
+								className="text-balance font-sans text-3xl font-semibold leading-tight tracking-tight sm:text-4xl"
+							>
+								The skill set
+							</h2>
+						</div>
 						<div>
 							{skillGroups.map((group) =>
 								group.kind === 'section' ? (

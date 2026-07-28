@@ -138,7 +138,7 @@ ${post?.fields?.body}`;
 				)} */}
         <div className="relative z-10">
           <article className="relative flex h-full flex-col">
-            <div className="bg-card mx-auto flex w-full flex-col gap-3 px-8 pb-5 pt-6">
+            <div className="bg-card mx-auto flex w-full flex-col gap-3 px-8 pb-5 pt-10">
               <PostTitle post={post} />
               <div className="relative mb-3 flex w-full items-center justify-between gap-3">
                 <div className="flex w-full flex-wrap items-center justify-between gap-5">

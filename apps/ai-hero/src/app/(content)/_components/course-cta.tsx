@@ -25,7 +25,7 @@ export type CourseCtaProps = {
  *
  * Generalizes `OrganicOpportunityCta`'s slug-gated hardcoded map; shares its
  * shell treatment (`border-primary/30 bg-primary/5`) as the high-weight baseline,
- * squared per DESIGN.md rule 12.
+ * rounded shell with a pill CTA, per DESIGN.md rule 12.
  */
 export async function CourseCta({
 	suppress,
@@ -59,7 +59,7 @@ export async function CourseCta({
 	return (
 		<aside
 			className={cn(
-				'not-prose border-primary/30 bg-primary/5 my-12 flex flex-col gap-4 border p-6 sm:p-8',
+				'not-prose border-primary/30 bg-primary/5 my-12 flex flex-col gap-4 rounded-xl border p-6 sm:p-8',
 				className,
 			)}
 		>
@@ -77,12 +77,19 @@ export async function CourseCta({
 			<div>
 				<Link
 					href={href}
-					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring focus-visible:ring-offset-background group inline-flex h-11 items-center gap-2 px-5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring focus-visible:ring-offset-background group relative isolate inline-flex h-11 items-center gap-2 overflow-hidden rounded-full px-6 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
 					{label}
 					<ArrowRight
 						className="size-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none motion-reduce:transition-none"
 						aria-hidden="true"
+					/>
+					{/* Same sweep as the newsletter submit button. Decorative only, so
+					    it sits behind the label and suppresses under reduced motion. */}
+					<span
+						aria-hidden
+						style={{ backgroundSize: '200% 100%' }}
+						className="animate-shine pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 motion-reduce:animate-none dark:opacity-20"
 					/>
 				</Link>
 			</div>

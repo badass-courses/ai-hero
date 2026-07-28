@@ -159,16 +159,31 @@ Other typography rules:
 
 ## Shape, motion, interactivity
 
-### 12. Square by default
+### 12. Sharp UI, pill buttons
 
-This UI is square. Avoid `rounded-md` and `rounded-lg` on cards, buttons, inputs, images. Newsletter inputs explicitly override default radii with `rounded-none` (see `slim-newsletter-form.tsx`).
+**Updated 2026-07-28.** The UI is still hard-cornered. The one deliberate softening is that **buttons and CTAs are pills**: a `rounded-full` call to action against sharp surroundings reads as the thing to press, and it is the only place the eye should find a curve.
 
-The only sanctioned rounded shapes:
+**Sharp (no radius) — the default.** Sections, hairline grids and their cells (rule 2), resource and list rows, cards, images, panels, table cells, anything meeting the container's `border-x`. If you are unsure, it is sharp.
 
-- `rounded-full` for avatars, dots, and small pill badges (`DiscountBadge`, `EditorialBadge`).
-- `rounded` (small radius) on inline `<code>` inside body copy.
+**Pill.** Buttons and CTA links: `rounded-full`. References: `course-cta.tsx`, the submit button in `skills-newsletter-cta.tsx`. Give a pill slightly more horizontal padding than a squared button (`px-6`/`px-7` rather than `px-5`), or the label crowds the curve.
 
-If a designer hands over rounded cards, push back or treat as a documented exception.
+Radius outside those two cases is a short list, not a spectrum:
+
+| Element | Radius | Why |
+|---------|--------|-----|
+| Text inputs sitting in a row with a pill button | `rounded-full` | A pill submit next to a squared input reads as a mismatch, not a contrast. Match the row. |
+| Small badges and tag pills | `rounded-full` | Already sanctioned. `DiscountBadge`, `EditorialBadge`, skills compatibility pills. |
+| Avatars, dots | `rounded-full` | |
+| Sidebar and menu rows | `rounded-md` | Inherited from the shadcn sidebar primitive; a hover highlight, not a surface. |
+| In-prose promo panel | `rounded-xl` | Narrow exception: an insert that floats inside body copy rather than meeting a page edge. `course-cta.tsx`. Do not extend this to page-level cards. |
+| Inline `<code>` in body copy | `rounded` | |
+
+Two things that bite:
+
+- A decorative overlay on a pill (a shine sweep, a gradient) needs `rounded-[inherit]`, or its square corners spill past the curve. See the submit button in `convertkit-subscribe-form.tsx`.
+- Not every surface is migrated. `slim-newsletter-form.tsx` forces `rounded-none`, and the shared `Button` hardcodes `rounded-none` which callers override. Not-yet-converted, not counter-examples.
+
+Anything else rounded is an exception and needs a note.
 
 ### 13. Hover patterns, signature first
 
@@ -220,7 +235,7 @@ Match-and-refuse list. If you are about to ship one of these, redesign the eleme
 - **Modal as first thought.** Exhaust inline and progressive alternatives first.
 - **Pure `#000` or `#fff`.** Tokens are tinted neutrals. Stay there.
 - **Em dashes in copy.** Use commas, periods, colons, semicolons, or parentheses.
-- **Rounded cards.** See rule 12.
+- **Rounded surfaces.** A radius on a section, card, hairline grid cell, or full-bleed row. Curves belong on buttons. See rule 12.
 - **Bouncy / springy motion.** See rule 14.
 
 ---
@@ -234,7 +249,7 @@ Match-and-refuse list. If you are about to ship one of these, redesign the eleme
 - [ ] Colors come from shadcn tokens; documented exceptions only (rule 9)
 - [ ] Headings have `tracking-tight` + tight leading; mono micro-labels where appropriate
 - [ ] Body columns capped near 65 to 75ch
-- [ ] No stray `rounded-md` / `rounded-lg`
+- [ ] Radius follows rule 12: sharp everywhere, `rounded-full` on buttons and CTAs
 - [ ] Empty image slots use `bg-stripes`
 - [ ] Motion uses ease-out-quart by default; reduced-motion guarded
 - [ ] Focus-visible rings present on every interactive element
