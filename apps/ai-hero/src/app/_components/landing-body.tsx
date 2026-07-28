@@ -82,7 +82,25 @@ export async function LandingBody({
 
 	return (
 		<main className="bg-background text-foreground">
-			<article>{compiled.content}</article>
+			{/* SEPARATORS ARE THE CONTAINER'S JOB, not each section's.
+			    
+			    Sections used to hand-manage `border-t` / `border-b` / `border-y`,
+			    which meant every reorder risked a doubled rule (two adjacent
+			    `border-y`s) or none at all (two `border-b`-less neighbours), and
+			    both kept happening.
+			    
+			    Here every child after the first draws its own top rule and pulls up
+			    1px. Two consequences make this reorder-proof: a child that already
+			    declares `border-t` sets the same property, so it cannot double; and
+			    a previous child's `border-b` ends up underneath the next child's
+			    `border-t` rather than stacking with it. Sections can be moved,
+			    added or removed in the CMS body without anyone touching a border.
+			    
+			    This is the `-mt-px` idiom `ResourceRow` already used to stack
+			    consecutive rows, generalised to the whole page. */}
+			<article className="[&>*+*]:border-border [&>*+*]:-mt-px [&>*+*]:border-t">
+				{compiled.content}
+			</article>
 			{/* Stays hardcoded outside the MDX by design. */}
 			<section className="border-border mx-auto w-full border-y pt-7">
 				<CompanyLogoGrid />

@@ -2,6 +2,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { getListWithSections } from '@/lib/lists-query'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
+import { ArrowRight } from 'lucide-react'
 
 import { SectionHeader } from './section-header'
 
@@ -51,16 +52,18 @@ export async function SkillsShowcase({
 				</SectionHeader>
 			) : null}
 
-			{/* Rows, not a 3-up grid. Six groups with skill counts running 2 to 6
-			    made a grid of wildly unequal boxes with ragged bottoms. As full
-			    width rows every title sits on the same x and the pills get room to
-			    wrap. Hairlines between rows, which is a list (the site's own
-			    language), not six boxes. */}
-			<ul className="border-border bg-border flex flex-col gap-px border-t">
+			{/* A grid after all. The earlier objection to one — counts running 2 to
+			    6 make wildly unequal boxes — does not hold once the cells are
+			    hairline grid children: they stretch to their row's height for free,
+			    and pinning the CTA with `mt-auto` lands every button on the same
+			    baseline across a row. Six groups fill three columns exactly; the
+			    filler cells keep the trailing line clean if that ever changes
+			    (DESIGN rule 2). */}
+			<ul className="border-border bg-border grid grid-cols-1 gap-px border-t sm:grid-cols-2 lg:grid-cols-3">
 				{groups.map((group) => (
 					<li
 						key={group.id}
-						className="bg-background grid grid-cols-1 gap-x-8 gap-y-4 px-8 py-8 sm:px-16 md:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] md:items-baseline"
+						className="bg-background flex flex-col gap-5 px-8 py-8 sm:px-10"
 					>
 						<div className="flex flex-col gap-1.5">
 							<h3 className="text-balance text-2xl font-semibold leading-tight tracking-tight">
@@ -72,6 +75,7 @@ export async function SkillsShowcase({
 								</p>
 							) : null}
 						</div>
+
 						{/* Pills, not bare mono text: these are the only links in the
 						    block and the entire point of it. */}
 						<ul className="flex flex-wrap gap-2">
@@ -79,10 +83,9 @@ export async function SkillsShowcase({
 								<li key={skill.slug}>
 									<Link
 										href={`/${skill.slug}`}
-										// These are the most important links in the section, so
-										// they get a link's affordance rather than a chip's: full
-										// contrast text, a visible edge, and an unambiguous
-										// invert on hover/focus (the site's badge treatment).
+										// A link's affordance rather than a chip's: full contrast
+										// text, a visible edge, and an unambiguous invert on
+										// hover/focus (the site's badge treatment).
 										className="border-foreground/20 bg-muted text-foreground hover:border-foreground hover:bg-foreground hover:text-background focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 font-mono text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 									>
 										{skill.command}
@@ -90,12 +93,52 @@ export async function SkillsShowcase({
 								</li>
 							))}
 						</ul>
+
+						{/* One obvious way in per group. A wall of equal-weight pills
+						    gives a reader no idea which to try first, and the list is
+						    ordered — the CMS position of the first skill IS the intended
+						    entry point.
+
+						    Full width, not hugging its label: `mt-auto` already bottom
+						    aligns them, and equal width stops the longest command
+						    (`/improve-codebase-architecture`) wrapping to two lines while
+						    its neighbours sit on one. */}
+						{group.skills[0] ? (
+							<Link
+								href={`/${group.skills[0].slug}`}
+								className="border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+							>
+								<span className="truncate">
+									Start with{' '}
+									<span className="font-mono text-xs">
+										{group.skills[0].command}
+									</span>
+								</span>
+								<ArrowRight
+									aria-hidden
+									className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+								/>
+							</Link>
+						) : null}
 					</li>
+				))}
+				{Array.from({ length: fillerCount(groups.length) }).map((_, i) => (
+					<li
+						key={`filler-${i}`}
+						aria-hidden
+						className="bg-background hidden lg:block"
+					/>
 				))}
 			</ul>
 
 		</section>
 	)
+}
+
+/** Empty cells to keep the trailing hairline clean at 3 across. */
+function fillerCount(count: number): number {
+	const remainder = count % 3
+	return remainder === 0 ? 0 : 3 - remainder
 }
 
 type ShowcaseGroup = {

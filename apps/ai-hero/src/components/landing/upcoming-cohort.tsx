@@ -45,7 +45,7 @@ export async function UpcomingCohort({
 	return (
 		<section
 			aria-labelledby="cohort-heading"
-			className="border-border bg-muted/25 grid grid-cols-1 items-center border-y md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
+			className="border-border bg-muted/25 grid grid-cols-1 items-center border-b md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
 		>
 			<div className="flex flex-col justify-center gap-6 px-8 py-14 sm:px-16 md:py-20">
 				<div className="flex flex-col gap-4">
@@ -65,37 +65,33 @@ export async function UpcomingCohort({
 					) : null}
 				</div>
 
+				{/* The meta line carries whatever a reader can act on. Between
+				    cohorts that is the enrollment status, not the date the last one
+				    ran — "Last cohort June 2026" tells you the thing is over and
+				    nothing about what to do next. */}
 				<dl className="border-border flex flex-wrap gap-x-8 gap-y-2 border-t pt-5 text-sm">
-					{isOpen && dateLabel ? (
-						<div className="flex items-baseline gap-2">
-							<dt className="text-muted-foreground">Starts</dt>
-							<dd className="font-medium tabular-nums">{dateLabel}</dd>
-						</div>
-					) : null}
 					<div className="flex items-baseline gap-2">
-						<dt className="text-muted-foreground">Format</dt>
-						<dd className="font-medium">Live, with Matt</dd>
+						<dt className="text-muted-foreground shrink-0">
+							{isOpen ? 'Starts' : 'Enrollment'}
+						</dt>
+						<dd className="font-medium tabular-nums">
+							{isOpen
+								? (dateLabel ?? 'Dates to be announced')
+								: 'Closed between cohorts. Join the waitlist and you will hear when the next one opens.'}
+						</dd>
 					</div>
 				</dl>
 
-				<div className="flex flex-col gap-3">
-					<Link
-						href={`/cohorts/${cohort.slug}`}
-						className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring group inline-flex h-12 w-fit items-center gap-2 rounded-full px-7 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-					>
-						{isOpen ? 'See the cohort' : 'Join the waitlist'}
-						<ArrowRight
-							aria-hidden
-							className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
-						/>
-					</Link>
-					{!isOpen ? (
-						<p className="text-muted-foreground text-xs">
-							Enrollment is closed between cohorts. Join the waitlist and you
-							will hear when the next one opens.
-						</p>
-					) : null}
-				</div>
+				<Link
+					href={`/cohorts/${cohort.slug}`}
+					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring group inline-flex h-12 w-fit items-center gap-2 rounded-full px-7 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+				>
+					{isOpen ? 'See the cohort' : 'Join the waitlist'}
+					<ArrowRight
+						aria-hidden
+						className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+					/>
+				</Link>
 			</div>
 
 			{cohort.image ? (

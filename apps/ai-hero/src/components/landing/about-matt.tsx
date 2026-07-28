@@ -1,6 +1,7 @@
 import * as React from 'react'
 import Image from 'next/image'
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for the parked shader below
 import { HeroStripes } from './hero-stripes-shader'
 
 export function AboutMatt({
@@ -11,9 +12,12 @@ export function AboutMatt({
 	children: React.ReactNode
 }) {
 	return (
-		<section className="border-border grid grid-cols-1 items-center gap-10 lg:grid-cols-2">
-			<div className="pointer-events-none relative mx-auto flex aspect-square w-full max-w-[600px] select-none items-end justify-center overflow-hidden">
+		<section className="border-border grid grid-cols-1 items-center gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] lg:gap-8">
+			<div className="pointer-events-none relative mx-auto flex w-full max-w-[420px] select-none items-end justify-center overflow-hidden px-8 pt-8 lg:px-0 lg:pt-0">
 				{/* <div className="sm:bg-linear-to-r bg-linear-to-b to-background absolute inset-0 z-10 h-full w-full from-transparent via-transparent" /> */}
+				{/* PARKED — the animated stripe shader behind the portrait. Restore
+				    by uncommenting; `HeroStripes` is still imported for that. */}
+				{/*
 				<HeroStripes
 					className="absolute inset-0"
 					speed={0.1}
@@ -32,6 +36,7 @@ export function AboutMatt({
 					mouseHalo={0.1}
 					mouseInfluence={0.4}
 				/>
+				*/}
 				<Image
 					src="/landing/matt-pocock@2x.png"
 					alt="Matt Pocock"
@@ -39,10 +44,10 @@ export function AboutMatt({
 					sizes="(min-width: 768px) 400px, 70vw"
 					width={473}
 					height={520}
-					className="relative z-20 h-auto w-full max-w-sm"
+					className="relative z-20 h-auto w-full"
 				/>
 			</div>
-			<div className="flex flex-col gap-6 px-8 py-12 sm:pr-16 md:py-24">
+			<div className="flex flex-col gap-5 px-8 pb-12 pt-4 sm:pr-16 lg:py-16">
 				<h2 className="font-sans text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
 					{headline}
 				</h2>
