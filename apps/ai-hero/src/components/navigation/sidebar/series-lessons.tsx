@@ -22,7 +22,13 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
-import { rowIndent, SidebarDepth, useSidebarDepth } from './sidebar-indent'
+import {
+	rowIndent,
+	SIDEBAR_NESTED_ROW_CLASS,
+	SIDEBAR_NUM_CLASS,
+	SidebarDepth,
+	useSidebarDepth,
+} from './sidebar-indent'
 
 /** Local path normalizer — kept here to avoid a cycle with sidebar-client. */
 function norm(path: string): string {
@@ -129,13 +135,13 @@ export function SeriesLessons({
 		overviewHref !== undefined && norm(overviewHref) === currentSlug
 
 	return (
-		<SidebarMenu className={className}>
+		<SidebarMenu className={cn('gap-px', className)}>
 			{overviewHref !== undefined ? (
 				<SidebarMenuItem>
 					<SidebarMenuButton
 						asChild
 						isActive={overviewActive}
-						className="text-muted-foreground h-auto items-start gap-1.5 py-2 pr-2 text-sm font-normal"
+						className={SIDEBAR_NESTED_ROW_CLASS}
 						style={rowIndent(depth)}
 					>
 						<Link href={overviewHref} prefetch={false}>
@@ -215,29 +221,35 @@ function SeriesSectionGroup({
 					<button
 						type="button"
 						aria-label={`Toggle ${title} section`}
-						className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex w-full cursor-pointer select-none items-baseline gap-1.5 rounded-md py-2 pr-2 text-sm font-normal transition-colors group-data-[state=open]/series-section:text-foreground"
+						className={cn(
+							SIDEBAR_NESTED_ROW_CLASS,
+							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground group-data-[state=open]/series-section:text-foreground flex w-full cursor-pointer select-none transition-colors',
+						)}
 						style={rowIndent(depth)}
 					>
-						{/* w-4 sits between the lesson rows' w-6 and content width: a
+						{/* w-4 sits between the lesson rows' w-5 and content width: a
 						    section number is a single figure, so it needs less room than
 						    "3.2", but flush against the title reads cramped. */}
 						<span
 							aria-hidden
-							className="text-muted-foreground/60 w-4 shrink-0 font-mono text-[11px] leading-5 tabular-nums"
+							className={cn(
+								SIDEBAR_NUM_CLASS,
+								'w-4 text-[color:var(--ah-fg-faint)]',
+							)}
 						>
 							{n}
 						</span>
 						<span className="min-w-0 truncate">{title}</span>
-						{/* self-center: the row is baseline-aligned for the number, but an
-						    icon has no meaningful baseline to sit on. */}
-						<ChevronRight className="ml-auto size-3.5 shrink-0 self-center transition-transform group-data-[state=open]/series-section:rotate-90" />
+						{/* self-center is gone with items-start: the chevron holds the
+						    first line, like the numeral opposite it. */}
+						<ChevronRight className="ml-auto mt-0.5 size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform group-data-[state=open]/series-section:rotate-90" />
 					</button>
 				</CollapsibleTrigger>
-				<CollapsibleContent className="mt-1 overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+				<CollapsibleContent className="mt-px overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
 					{/* One level deeper than the section header, so "3.1" sits under
 					    "3" rather than beside it. */}
 					<SidebarDepth>
-						<SidebarMenu>
+						<SidebarMenu className="gap-px">
 							{lessons.map((numbered) => (
 								<LessonRow
 									key={numbered.lesson.id}
@@ -276,7 +288,7 @@ function LessonRow({
 			<SidebarMenuButton
 				asChild
 				isActive={isActive}
-				className="text-muted-foreground h-auto items-start gap-1.5 py-2 pr-2 text-sm font-normal"
+				className={SIDEBAR_NESTED_ROW_CLASS}
 				style={rowIndent(depth)}
 			>
 				<Link
@@ -294,11 +306,14 @@ function LessonRow({
 					<span
 						aria-hidden
 						className={cn(
-							// w-6, not w-4: section children render "3.2", not "7".
-							'flex h-5 w-6 shrink-0 items-center font-mono text-[11px] tabular-nums',
+							SIDEBAR_NUM_CLASS,
+							// w-5, not w-4: section children render "3.2", not "7". Five is
+							// what "3.2" measures at 9.5px mono; six was slack the title
+							// could have been using.
+							'w-5',
 							isDone
 								? 'text-foreground dark:text-primary'
-								: 'text-muted-foreground/60',
+								: 'text-[color:var(--ah-fg-faint)]',
 						)}
 					>
 						{isDone ? <Check className="size-3.5" strokeWidth={2.4} /> : n}

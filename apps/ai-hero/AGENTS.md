@@ -8,10 +8,12 @@ This file applies to any agent working inside `apps/ai-hero/`. The monorepo-wide
 
 Key rules (full detail in `DESIGN.md`):
 
+- The normative source is `AI Hero Courses Redesign/aihero.css` at the repo root — a token + pattern spec. Where it and a component disagree, it wins.
 - The container owns `border-x`; section wrappers must not add horizontal padding, padding goes on inner content.
 - Grids use `bg-border` + `gap-px` to draw hairlines. Never put borders on individual cells. See `ResourceGrid` in `src/components/landing/resource.tsx`.
-- Colors come from shadcn semantic tokens only (`border-border`, `text-foreground`, `bg-primary`, `text-primary-foreground`, …). No raw hex, no raw Tailwind palette.
-- Headings (`h1`/`h2`/`h3`) use `tracking-tight` and tight leading.
+- Colors come from shadcn semantic tokens only (`border-border`, `text-foreground`, `bg-card`, …), plus the `--ah-fg-*` / `--ah-line*` alpha ramps. No raw hex, no raw Tailwind palette. Gold fills are `bg-accent-fill`; accent *type* is `text-primary`, which is ink in light mode (DESIGN rule 7).
+- Sizes come from `TYPE` in `src/components/landing/type.ts` — do not write size classes inline. Headings are 700.
+- Radii: 4 / 6 / 9 / 11 / 12. Page structure stays sharp; `rounded-full` only on genuine circles.
 - Both light and dark mode must work for every change.
 
 ## Customer-facing surface changes: Matt gets a heads-up

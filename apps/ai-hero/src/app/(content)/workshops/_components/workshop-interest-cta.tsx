@@ -2,15 +2,13 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { type Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
-import { CheckCircle, ShieldCheck } from 'lucide-react'
+import { CheckCircle } from 'lucide-react'
 
-import { GRADIENT_IMAGE } from '@/components/resource-hover-frame'
-
-import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import {
@@ -23,6 +21,12 @@ import { workshopInterestFieldKey } from './workshop-interest-config'
  * Pre-launch interest capture shown in the workshop sidebar while a workshop is
  * not yet published. New visitors subscribe via the ConvertKit form (carrying a
  * per-workshop custom field); people already on the list get a one-click button.
+ *
+ * Same panel language as `PrimaryNewsletterCta` and `NewsletterSection` — a
+ * bordered card on `--ah-band`, mono eyebrow, `panelTitle` ask, 44px controls
+ * at 9px radius, gold submit. It used to wear a permanently animating rainbow
+ * frame, which is the resource row's *hover* signature (DESIGN rule 13) spent
+ * on a sidebar form that never stops moving.
  */
 export const WorkshopInterestCta = ({
 	workshopSlug,
@@ -82,64 +86,75 @@ export const WorkshopInterestCta = ({
 
 	return (
 		<div
-			className={cn('animate-resource-gradient p-[2px]', className)}
-			style={{
-				backgroundImage: GRADIENT_IMAGE,
-				backgroundSize: '200% 200%',
-			}}
+			className={cn(
+				'border-border flex flex-col gap-4 rounded-lg border bg-[color:var(--ah-band)] px-5 py-6 sm:px-6',
+				className,
+			)}
 		>
-			<div className="bg-card flex flex-col gap-4 px-5 py-6">
 			<div className="flex flex-col gap-1.5">
-				<h3 className="text-xl font-semibold tracking-tight">
+				<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
+					Waitlist open
+				</p>
+				<h3 className={cn(TYPE.panelTitle, 'text-balance font-sans')}>
 					Be first in line
 				</h3>
-				<p className="text-muted-foreground text-sm leading-relaxed">
+				<p
+					className={cn(
+						TYPE.metaProse,
+						'text-pretty text-[color:var(--ah-fg-muted)]',
+					)}
+				>
 					{`${workshopTitle ?? 'This workshop'} is on the way. Leave your email and we’ll let you know the moment it’s live.`}
 				</p>
 			</div>
 
 			{done || alreadyInterested ? (
-				<p className="text-primary flex items-start gap-2 text-balance text-sm font-medium">
+				<p
+					className={cn(
+						TYPE.meta,
+						'text-primary flex items-start gap-2 text-balance',
+					)}
+				>
 					<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" /> You&rsquo;re on the
 					list. We&rsquo;ll email you the moment it&rsquo;s live.
 				</p>
 			) : status === 'pending' ? (
-				<div className="flex flex-col gap-3">
-					<div className="bg-muted h-12 w-full animate-pulse rounded-none" />
-					<div className="bg-muted h-12 w-full animate-pulse rounded-none" />
-					<div className="bg-muted mt-1 h-12 w-full animate-pulse rounded-none" />
+				<div className="flex flex-col gap-2.5">
+					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
+					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
+					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 				</div>
 			) : subscriber ? (
 				<div className="flex flex-col gap-2">
-					<Button
+					<button
+						type="button"
 						onClick={handleKnownSubscriberClick}
 						disabled={isPending}
-						size="lg"
-						className="h-12 w-full rounded-none"
+						className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-[9px] px-[18px] text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
 					>
 						{isPending ? 'Adding you…' : 'Keep me posted'}
-					</Button>
+					</button>
 					{error && (
-						<p className="text-destructive text-sm">
+						<p className={cn(TYPE.meta, 'text-destructive')}>
 							Something went wrong. Please try again.
 						</p>
 					)}
 				</div>
 			) : (
-				<>
+				<div>
 					<SubscribeToConvertkitForm
 						actionLabel="Notify me"
 						fields={{ [fieldKey]: today }}
 						onSuccess={handleFormSuccess}
-						className="flex flex-col gap-3 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_input]:h-12 [&_input]:rounded-none [&_label]:text-sm"
+						className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 [&_button]:h-11 [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_label]:hidden"
 					/>
-					<p className="text-muted-foreground inline-flex items-center text-xs">
-						<ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> No spam. Unsubscribe
-						anytime.
+					<p
+						className={cn(TYPE.command, 'mt-3 text-[color:var(--ah-fg-faint)]')}
+					>
+						No spam. Unsubscribe anytime.
 					</p>
-				</>
+				</div>
 			)}
-			</div>
 		</div>
 	)
 }

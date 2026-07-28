@@ -7,6 +7,7 @@ import { EyeIcon } from '@heroicons/react/24/outline'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { TYPE } from './type'
 import { VideoThumbnailPreview } from './video-thumbnail-preview'
 
 export function ResourceCard({
@@ -15,12 +16,15 @@ export function ResourceCard({
 	image,
 	muxPlaybackId,
 	thumbnailTime,
+	formatLabel,
 }: {
 	title: string
 	href: string
 	image?: string
 	muxPlaybackId?: string
 	thumbnailTime?: number
+	/** "Video · 12 min", "Video", or "Article". Built by `buildFormatLabel`. */
+	formatLabel?: string
 }) {
 	const isExternal = /^https?:\/\//i.test(href)
 
@@ -30,11 +34,11 @@ export function ResourceCard({
 			prefetch={!isExternal}
 			target={isExternal ? '_blank' : undefined}
 			rel={isExternal ? 'noopener noreferrer' : undefined}
-			className="bg-background group flex h-full flex-col overflow-hidden transition hover:brightness-110"
+			className="group flex h-full flex-col"
 		>
 			<div
 				className={cn(
-					'relative aspect-video w-full overflow-hidden',
+					'relative aspect-video w-full overflow-hidden rounded-[10px]',
 					image ? 'bg-muted' : 'bg-stripes',
 				)}
 			>
@@ -59,9 +63,23 @@ export function ResourceCard({
 					</span>
 				)}
 			</div>
-			<h3 className="px-7 py-6 text-base font-semibold leading-snug tracking-tight">
-				{title}
-			</h3>
+			<div className="flex flex-col gap-[7px] pt-[13px]">
+				{formatLabel ? (
+					<span
+						className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}
+					>
+						{formatLabel}
+					</span>
+				) : null}
+				<h3
+					className={cn(
+						TYPE.bodyTight,
+						'group-hover:text-primary text-balance tracking-[-0.012em] transition-colors',
+					)}
+				>
+					{title}
+				</h3>
+			</div>
 		</Link>
 	)
 }

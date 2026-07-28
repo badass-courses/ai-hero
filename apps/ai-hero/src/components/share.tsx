@@ -18,7 +18,7 @@ export const Share = ({
 }: {
 	className?: string
 	title?: string
-	variant?: 'inline' | 'dialog'
+	variant?: 'inline' | 'dialog' | 'rail'
 }) => {
 	const pathname = usePathname()
 	const url = env.NEXT_PUBLIC_URL + pathname
@@ -103,6 +103,49 @@ export const Share = ({
 			className: 'bg-muted text-foreground',
 		},
 	]
+
+	// The article rail has room for glyphs and nothing else, so it reuses the
+	// same hrefs and tracking as the dialog rather than growing a fourth share
+	// implementation.
+	if (variant === 'rail') {
+		const railButtonClass =
+			'focus-visible:ring-ring flex size-8 items-center justify-center rounded-sm border text-[color:var(--ah-fg-muted)] transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2'
+		return (
+			<div className={cn('flex gap-2', className)}>
+				{shareOptions
+					.filter((option) => option.platform !== 'email')
+					.map((option) => (
+						<a
+							key={option.label}
+							href={option.href}
+							target="_blank"
+							rel="noopener noreferrer"
+							title={`Share on ${option.label}`}
+							onClick={() => handleShare(option.platform)}
+							// The shared option icons carry their own dialog-sized classes and
+						// width/height attributes; the rail needs them all at one size.
+						className={cn(railButtonClass, '[&_svg]:size-4!')}
+						>
+							<span className="sr-only">{`Share on ${option.label}`}</span>
+							{option.icon}
+						</a>
+					))}
+				<button
+					type="button"
+					onClick={copyUrl}
+					title="Copy URL"
+					className={railButtonClass}
+				>
+					<span className="sr-only">Copy URL</span>
+					{copied ? (
+						<Check className="size-4" aria-hidden="true" />
+					) : (
+						<Copy className="size-4" aria-hidden="true" />
+					)}
+				</button>
+			</div>
+		)
+	}
 
 	if (variant === 'dialog') {
 		return (

@@ -46,3 +46,9 @@ yarn-error.log*
 
 # typesense
 tmp/
+
+# Design handoff prototypes — reference only, not part of the app
+/AI Hero Courses Redesign/
+
+# impeccable design-hook artifacts
+.impeccable/

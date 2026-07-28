@@ -1,22 +1,17 @@
 'use client'
 
 import * as React from 'react'
-import Image from 'next/image'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShinyText } from '@/app/admin/pages/_components/page-builder-mdx-components'
+import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
-import { LockIcon, ShieldCheckIcon } from 'lucide-react'
 import { useSession } from 'next-auth/react'
-import { twMerge } from 'tailwind-merge'
 
 import { cn } from '@coursebuilder/utils/cn'
 
 import common from '../text/common'
-import { CldImage } from './cld-image'
 
 type PrimaryNewsletterCtaProps = {
 	onSuccess?: () => void
@@ -27,7 +22,9 @@ type PrimaryNewsletterCtaProps = {
 	 * component and can't fetch the Kit count itself.
 	 */
 	title?: React.ReactNode
-	byline?: string
+	byline?: React.ReactNode
+	/** The mono eyebrow above the title. Pass `null` to drop it. */
+	label?: React.ReactNode
 	actionLabel?: string
 	/**
 	 * Heading element used for the CTA title. Defaults to `h2`; use `h1` when the CTA supplies the page's primary heading.
@@ -50,9 +47,17 @@ type PrimaryNewsletterCtaProps = {
 }
 
 /**
- * Primary ConvertKit newsletter CTA component.
+ * The site's primary Kit (ConvertKit) newsletter ask.
  *
- * Uses `titleElement` to keep page heading semantics correct while reusing the same visual CTA.
+ * It is a PANEL, not a band: a bordered card on `--ah-band` carrying a mono
+ * eyebrow, a `panelTitle` headline, one line of byline, the 44px control row
+ * and a mono privacy note. Same shape as `NewsletterSection` on the landing
+ * page and `PostNewsletterForm` in an article's "Keep learning" cell, so the
+ * one offer reads the same wherever it appears.
+ *
+ * `children` replaces the eyebrow/title/byline stack only — the form, the
+ * subscriber branch and the panel chrome stay put, so a call site can supply
+ * its own pitch without re-deriving the panel.
  */
 export const PrimaryNewsletterCta: React.FC<
 	React.PropsWithChildren<PrimaryNewsletterCtaProps>
@@ -63,6 +68,7 @@ export const PrimaryNewsletterCta: React.FC<
 	id = 'primary-newsletter-cta',
 	title = common['primary-newsletter-tittle'],
 	byline = common['primary-newsletter-byline'],
+	label = 'Newsletter',
 	actionLabel = common['primary-newsletter-button-cta-label'],
 	titleElement = 'h2',
 	trackProps = { event: 'subscribed', params: {} },
@@ -73,7 +79,7 @@ export const PrimaryNewsletterCta: React.FC<
 	onSuccess,
 }) => {
 	const router = useRouter()
-	const { data: subscriber, status } =
+	const { data: subscriber } =
 		api.ability.getCurrentSubscriberFromCookie.useQuery()
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
@@ -86,6 +92,7 @@ export const PrimaryNewsletterCta: React.FC<
 	const { data: session } = useSession()
 
 	const shouldHideForSubscriber = isHiddenForSubscribers && subscriber
+
 	const Title = titleElement
 
 	if (shouldHideForSubscriber && !reserveSpaceWhenHidden) {
@@ -94,77 +101,81 @@ export const PrimaryNewsletterCta: React.FC<
 
 	return (
 		<section
-			// data-theme="elysium"
 			id={id}
 			aria-label="Newsletter sign-up"
 			aria-hidden={shouldHideForSubscriber ? true : undefined}
 			className={cn(
-				'flex flex-col items-center justify-center px-5',
+				'flex flex-col items-center px-5',
 				{
 					'pointer-events-none invisible select-none': shouldHideForSubscriber,
 				},
 				className,
 			)}
 		>
-			{children ? (
-				children
-			) : (
-				<div className="relative z-10 flex max-w-3xl flex-col items-center justify-center pb-5 sm:pb-10">
-					{/* <CldImage
-						loading="lazy"
-						src="https://res.cloudinary.com/total-typescript/image/upload/v1741008166/aihero.dev/assets/textured-logo-mark_2x_ecauns.png"
-						alt=""
-						aria-hidden="true"
-						width={130}
-						height={130}
-						className="mb-8 rotate-12"
-					/> */}
-					<Title className="text-center text-3xl font-semibold tracking-tight sm:text-3xl lg:text-4xl dark:text-white">
-						{title}
-					</Title>
-					<h3 className="dark:text-primary pt-3 text-center font-sans text-base font-normal tracking-tight sm:pt-5 sm:text-lg lg:text-xl dark:brightness-110 dark:sm:font-light [&_strong]:font-bold">
-						{byline}
-					</h3>
-				</div>
-			)}
-
-			<div className="not-prose relative flex w-full items-center justify-center">
-				{subscriber && (
-					<div className="absolute z-10 flex -translate-y-8 flex-col text-center">
-						<ShinyText className="text-lg font-semibold sm:text-lg lg:text-xl">
-							You're subscribed, thanks!
-						</ShinyText>
-						<p className="pt-3 text-center font-sans text-lg font-normal opacity-90 sm:text-base lg:text-lg">
-							{session?.user
-								? common['newsletter-subscribed-logged-in']({
-										resource,
-									})
-								: common['newsletter-subscribed-logged-out']({
-										resource,
-									})}
-						</p>
-					</div>
+			<div className="border-border w-full max-w-[720px] rounded-lg border bg-[color:var(--ah-band)] px-6 py-6 sm:px-8 sm:py-[30px]">
+				{children ? (
+					children
+				) : (
+					<>
+						{label && (
+							<p
+								className={cn(
+									TYPE.micro,
+									'mb-3 text-[color:var(--ah-fg-label)]',
+								)}
+							>
+								{label}
+							</p>
+						)}
+						<Title className={cn(TYPE.panelTitle, 'text-balance font-sans')}>
+							{title}
+						</Title>
+						{byline && (
+							<p
+								className={cn(
+									TYPE.metaProse,
+									'mt-2 max-w-[56ch] text-pretty text-[color:var(--ah-fg-muted)]',
+								)}
+							>
+								{byline}
+							</p>
+						)}
+					</>
 				)}
-				<div
-					className={cn('flex w-full flex-col items-center justify-center', {
-						'blur-xs pointer-events-none select-none opacity-75 transition ease-in-out':
-							subscriber,
-					})}
-				>
-					<SubscribeToConvertkitForm
-						onSuccess={onSuccess ? onSuccess : handleOnSuccess}
-						actionLabel={actionLabel}
-						formId={formId}
-						fields={fields}
-						className="[&_input]:ring-foreground/20 [&_input]:bg-background/30 relative z-10 [&_button]:mt-3 [&_button]:h-16 [&_button]:rounded-full [&_button]:px-8 [&_button]:sm:text-lg [&_input]:h-16 [&_input]:rounded-full [&_input]:border-none [&_input]:bg-blend-hard-light [&_input]:px-6 [&_input]:ring-1 [&_input]:backdrop-blur-xl"
-					/>
-					<p
-						data-nospam=""
-						className="text-foreground/80 inline-flex items-center pt-8 text-xs sm:text-sm"
-					>
-						<ShieldCheckIcon className="mr-2 h-4 w-4" /> I respect your privacy.
-						Unsubscribe at any time.
-					</p>
+
+				<div className="not-prose mt-5">
+					{subscriber ? (
+						<p
+							className={cn(
+								TYPE.metaProse,
+								'text-[color:var(--ah-fg-muted)]',
+							)}
+						>
+							You&rsquo;re subscribed, thanks.{' '}
+							{session?.user
+								? common['newsletter-subscribed-logged-in']({ resource })
+								: common['newsletter-subscribed-logged-out']({ resource })}
+						</p>
+					) : (
+						<>
+							<SubscribeToConvertkitForm
+								onSuccess={onSuccess ? onSuccess : handleOnSuccess}
+								actionLabel={actionLabel}
+								formId={formId}
+								fields={fields}
+								className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_auto] [&_button]:h-11 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_label]:hidden"
+							/>
+							<p
+								data-nospam=""
+								className={cn(
+									TYPE.command,
+									'mt-3 text-[color:var(--ah-fg-faint)]',
+								)}
+							>
+								No spam. Unsubscribe anytime.
+							</p>
+						</>
+					)}
 				</div>
 			</div>
 		</section>

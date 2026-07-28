@@ -65,7 +65,7 @@ export default async function TopicPage({ params }: Props) {
 	)
 
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
 					<section className="border-b">

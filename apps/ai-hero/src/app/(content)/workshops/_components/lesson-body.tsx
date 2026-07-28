@@ -1,6 +1,7 @@
 'use client'
 
 import { use } from 'react'
+import { PROSE_MEASURE } from '@/components/mdx/prose'
 import type { Lesson } from '@/lib/lessons'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -30,7 +31,9 @@ export function LessonBody({
 
 	if (!canView) {
 		return (
-			<div className="prose dark:prose-invert prose-a:text-primary lg:prose-lg max-w-none">
+			<div
+				className={`prose dark:prose-invert prose-a:text-primary lg:prose-lg ${PROSE_MEASURE}`}
+			>
 				<p>
 					<Lock className="mr-1 inline-block size-5 opacity-75" />{' '}
 					{ability.isPendingOpenAccess && workshop?.fields?.startsAt
@@ -50,7 +53,9 @@ export function LessonBody({
 	const { content } = use(mdxContentPromise)
 
 	return (
-		<div className="prose-img:rounded-lg dark:prose-invert prose prose-a:text-primary lg:prose-pre:text-sm lg:prose-pre:leading-relaxed lg:prose-lg max-w-none">
+		<div
+			className={`prose-img:rounded-lg dark:prose-invert prose prose-a:text-primary lg:prose-pre:text-sm lg:prose-pre:leading-relaxed lg:prose-lg ${PROSE_MEASURE}`}
+		>
 			{content}
 		</div>
 	)

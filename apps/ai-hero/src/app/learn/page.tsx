@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import LayoutClient from '@/components/layout-client'
+import { AskAIHeroBotCard } from '@/components/navigation/ask-ai-hero-bot-card'
 import {
-	CURATED_SUGGESTIONS,
 	GOAL_SECTIONS,
 	TOC_ITEMS,
 } from '@/components/navigation/goal-sections-data'
@@ -58,14 +58,12 @@ export default async function LearnPage() {
 	})
 
 	return (
-		<LayoutClient withContainer>
-			<HubLayout>
+		<LayoutClient withContainer withFooter={false}>
+			<HubLayout sidebarFooter={<AskAIHeroBotCard />}>
 				<MapPage
 					goalSections={goalSections}
 					whatsNew={whatsNew}
 					tocItems={TOC_ITEMS}
-					suggestions={CURATED_SUGGESTIONS}
-					boostSlugs={allSlugs}
 				/>
 			</HubLayout>
 		</LayoutClient>

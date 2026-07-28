@@ -51,7 +51,7 @@ export default async function Layout(props: {
 		<ListProvider initialList={list} currentPostHasVideo={currentPostHasVideo}>
 			<ProgressProvider initialProgress={initialProgress}>
 				<ActiveHeadingProvider>
-					<LayoutClient withContainer>
+					<LayoutClient withContainer withFooter={false}>
 						<HubLayout
 							hideWhatsNew={post.type === 'post'}
 							currentListSlug={list?.fields.slug}

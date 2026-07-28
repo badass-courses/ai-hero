@@ -37,10 +37,28 @@ export function ResourceLadderItem({
 	return (
 		<Link
 			href={href}
-			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
+			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
+			{/* The label sits in its own fixed column to the LEFT of the title,
+			    not stacked above it. Stacked, three rows of two lines each read
+			    as six items; in a column the labels line up and the titles start
+			    on one left edge, so the rung scans as a list of three things with
+			    a format each. */}
+			<span
+				className={cn(
+					TYPE.micro,
+					'text-[color:var(--ah-fg-label)] hidden w-16 flex-none sm:block',
+				)}
+			>
+				{isVideo ? 'Video' : 'Article'}
+			</span>
 			<span className="flex min-w-0 flex-1 flex-col gap-1">
-				<span className={cn(TYPE.micro, 'text-muted-foreground')}>
+				<span
+					className={cn(
+						TYPE.micro,
+						'text-[color:var(--ah-fg-label)] sm:hidden',
+					)}
+				>
 					{isVideo ? 'Video' : 'Article'}
 				</span>
 				<span className={cn(TYPE.bodyTight, 'text-balance')}>

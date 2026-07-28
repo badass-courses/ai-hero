@@ -2,7 +2,7 @@ import '@/styles/globals.css'
 
 import * as React from 'react'
 import { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { DM_Sans, JetBrains_Mono } from 'next/font/google'
 import Script from 'next/script'
 import { FeedbackInsert } from '@/components/feedback-widget/feedback-insert'
 import { FirstTouchCapture } from '@/components/first-touch-capture'
@@ -28,15 +28,23 @@ import { CouponProvider } from '@coursebuilder/commerce-next/coupons/coupon-cont
 import { getCouponForCode } from '@coursebuilder/core/pricing/props-for-commerce'
 import { Toaster } from '@coursebuilder/ui/primitives/toaster'
 
-const geist = Geist({
+/**
+ * DM Sans + JetBrains Mono, per the redesign's token spec (`aihero.css`).
+ * The CSS variables keep their `--font-geist*` names so the hundreds of
+ * existing `font-sans` / `font-mono` call sites and the `@theme` mapping keep
+ * working — the families behind them are what changed, not the plumbing.
+ */
+const geist = DM_Sans({
 	subsets: ['latin'],
 	variable: '--font-geist',
-	weight: ['100', '200', '300', '400', '500', '600', '700', '800', '900'],
+	weight: ['400', '500', '600', '700'],
+	style: ['normal', 'italic'],
 })
 
-const geistMono = Geist_Mono({
+const geistMono = JetBrains_Mono({
 	subsets: ['latin'],
 	variable: '--font-geist-mono',
+	weight: ['400', '500'],
 })
 
 export const metadata: Metadata = {

@@ -16,6 +16,7 @@ import {
 	InlineBuyButton,
 	type PricingComponentProps,
 } from './inline-mdx-pricing'
+import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
 import type { WorkshopPageProps } from './workshop-page-props'
 
 export const WorkshopSidebar = ({
@@ -121,7 +122,7 @@ export const WorkshopSidebarMobile = ({
 			</div>
 			{interestCapture ? (
 				<Button
-					className="h-10 gap-2 px-5"
+					className={cn(WORKSHOP_CTA_BUTTON, 'h-10 gap-2 text-sm')}
 					onClick={handleScrollToBuy}
 				>
 					Get notified

@@ -28,7 +28,7 @@ export const metadata: Metadata = {
 export default async function PostsIndexPage() {
 	const graph = await getCachedPostsGraph()
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			{/* Dense catalog page: hub sidebar starts as the collapsed icon rail
 			    (expands in place) so the listing keeps its width. */}
 			<HubLayout sidebarDefaultCollapsed>

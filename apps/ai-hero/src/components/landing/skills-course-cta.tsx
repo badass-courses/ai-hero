@@ -25,20 +25,25 @@ import * as SkillsNewsletter from '@/app/(content)/skills/_components/skills-new
  * cacheable. An existing subscriber submitting the form again is handled
  * correctly by Kit; an uncacheable homepage is not.
  *
- * Pills, per DESIGN rule 12: the shared `SkillsNewsletter.Form` ships squared
- * inputs at `h-14`/`h-16` for the full-page front door, which at homepage
- * scale reads as a different site's form.
+ * Resized to the button/input radius step: the shared `SkillsNewsletter.Form`
+ * ships `h-14`/`h-16` for the full-page front door, which at homepage scale
+ * reads as a different site's form.
  */
 export function SkillsCourseCta() {
 	return (
 		<SkillsNewsletter.Root status="show-form" location="landing_hero_course">
-			<div className="flex w-full flex-col items-center gap-3">
+			<div className="flex w-full flex-col items-start gap-0">
+				{/* Field row per `Home Page.dc.html` § MATT + NEWSLETTER: a short
+				    name field (130px), the email taking the slack, the button
+				    sized to its label, all 46px tall on a 9px gap. */}
 				<SkillsNewsletter.Form
 					label="Start the free course"
-					className="[&_button]:bg-primary [&_button]:text-primary-foreground [&_button]:hover:bg-primary/90 [&_input]:border-foreground/15 [&_input]:bg-muted [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] [&_button]:col-span-1 [&_button]:h-11 [&_button]:rounded-full [&_button]:border-0 [&_button]:px-6 [&_button]:text-sm [&_button]:font-semibold [&_input]:h-11 [&_input]:rounded-full [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:hidden"
+					className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-border [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-[color:var(--ah-fg-faint)] grid w-full grid-cols-1 gap-[9px] sm:grid-cols-[minmax(0,130px)_minmax(0,1fr)_auto] [&_button]:col-span-1 [&_button]:h-[46px] [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-[46px] [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_label]:hidden"
 				/>
 				<SkillsNewsletter.Privacy
-					className="mt-2 opacity-70"
+					// Mono, small, unornamented — the prototype's privacy line is a
+					// note under the form, not a badge with an icon.
+					className="mt-3 gap-0 font-mono text-[11.5px] leading-[1.4] text-[color:var(--ah-fg-subtle)] opacity-100 [&_svg]:hidden"
 					// Says what actually happens. An earlier draft read "Seven emails,
 					// then it stops", which was a nicer promise and a false one —
 					// signing up here subscribes you to the list as well as the

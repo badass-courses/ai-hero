@@ -116,7 +116,7 @@ export const SubscribeToConvertkitForm: React.FC<
 					data-input-with-error={Boolean(
 						touched.first_name && errors.first_name,
 					)}
-					className="h-auto rounded-none"
+					className="h-11 rounded-[9px]"
 					name="first_name"
 					id={id ? `first_name_${id}` : 'first_name'}
 					onChange={handleChange}
@@ -133,7 +133,7 @@ export const SubscribeToConvertkitForm: React.FC<
 				</Label>
 				<Input
 					data-input-with-error={Boolean(touched.email && errors.email)}
-					className="h-auto rounded-none"
+					className="h-11 rounded-[9px]"
 					name="email"
 					id={id ? `email_${id}` : 'email'}
 					onChange={handleChange}
@@ -166,7 +166,12 @@ export const SubscribeToConvertkitForm: React.FC<
 					}
 					type="submit"
 					formNoValidate={Boolean(validationSchema)}
-					className="relative cursor-pointer rounded-none shadow-xl"
+					// House defaults, not `rounded-none`: this is the shared Kit form,
+					// so a caller that does not restyle it (the cohort pricing widget,
+					// for one) should still come out looking like the rest of the site.
+					// Callers that DO restyle still win — they target these through the
+					// form (`[&_input]:…`), which outscores a class on the element.
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover relative h-11 cursor-pointer rounded-[9px] px-5 text-[15px] font-bold"
 				>
 					{isSubmitting ? <Spinner className="h-5 w-5" /> : actionLabel}
 					<div

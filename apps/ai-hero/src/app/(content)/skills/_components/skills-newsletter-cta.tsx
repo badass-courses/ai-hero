@@ -81,7 +81,7 @@ export function SkillsNewsletterCta({
 				fields={{ ...SKILLS_INTEREST_FIELDS, source: 'mdx_inline_skills' }}
 				actionLabel="Stay up to date"
 				onSuccess={handleOnSuccess}
-				className="[&_button]:bg-primary [&_button]:text-primary-foreground [&_button]:hover:bg-primary/90 [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] [&_button]:h-12 [&_button]:rounded-full [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-semibold [&_button]:transition [&_input]:h-12 [&_input]:rounded-full [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:hidden"
+				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-semibold [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:hidden"
 			/>
 			<p className="text-foreground/60 inline-flex items-center gap-2 text-xs">
 				<ShieldCheckIcon className="h-3.5 w-3.5" />

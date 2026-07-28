@@ -41,7 +41,7 @@ export function SkillsCourseCta({
 					engineering standards.
 				</p>
 			</div>
-			<span className="bg-primary text-primary-foreground group-hover:bg-primary/90 inline-flex shrink-0 items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition">
+			<span className="bg-primary text-primary-foreground group-hover:bg-primary/90 inline-flex shrink-0 items-center gap-2 rounded-[9px] px-6 py-3 text-sm font-semibold transition">
 				Start the course
 				<ArrowRight
 					className="size-4 transition-transform group-hover:translate-x-1"

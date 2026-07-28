@@ -6,24 +6,17 @@ import Link from 'next/link'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
-import { Search } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { SearchPalette } from '../search-palette/search-palette'
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from '../ui/tooltip'
 import { MobileMenuPanel } from './mobile-menu-panel'
 import { MobileNavigation } from './mobile-navigation'
 import { NavLinkItem } from './nav-link-item'
 import { getNavMode } from './nav-mode'
-import { NavPill } from './nav-pill'
+import { NavPill, navTextLink } from './nav-pill'
 import {
 	COURSES_NAV_ITEM,
 	PRIMARY_LEARNING_ENTRY,
@@ -58,45 +51,32 @@ const SessionDependentNavItems = ({
 	return (
 		<>
 			{sessionStatus === 'authenticated' && (
-				<NavLinkItem
-					className="hidden font-normal lg:flex"
-					label="Feedback"
-					onClick={() => {
-						setIsFeedbackDialogOpen(true)
-					}}
-				/>
+				<li className="hidden items-center lg:flex">
+					<button
+						type="button"
+						onClick={() => setIsFeedbackDialogOpen(true)}
+						className={navTextLink}
+					>
+						Feedback
+					</button>
+				</li>
 			)}
-			{sessionStatus === 'unauthenticated' && !subscriber && (
-				<NavLinkItem
-					href="/newsletter"
-					className="rounded-none [&_span]:flex [&_span]:items-center"
-					label={
-						<>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								className="mr-1 size-4"
-								fill="none"
-								viewBox="0 0 24 24"
-							>
-								<path
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="1.5"
-									d="M6 8h8m-8 4h8m-8 4h4m8-8h1c1.414 0 2.121 0 2.56.44.44.439.44 1.146.44 2.56v8a2 2 0 1 1-4 0V8Z"
-								/>
-								<path
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="1.5"
-									d="M12 3H8c-2.828 0-4.243 0-5.121.879C2 4.757 2 6.172 2 9v6c0 2.828 0 4.243.879 5.121C3.757 21 5.172 21 8 21h12a2 2 0 0 1-2-2V9c0-2.828 0-4.243-.879-5.121C16.243 3 14.828 3 12 3Z"
-								/>
-							</svg>
-							Newsletter
-						</>
-					}
-				/>
+			{!subscriber && (
+				<li className="hidden items-center lg:flex">
+					<Link
+						prefetch
+						href="/newsletter"
+						onClick={() => {
+							track('nav_link_clicked', {
+								label: 'Newsletter',
+								href: '/newsletter',
+							})
+						}}
+						className={navTextLink}
+					>
+						Newsletter
+					</Link>
+				</li>
 			)}
 		</>
 	)
@@ -107,7 +87,7 @@ const SessionDependentNavItems = ({
  * highlight so it reads as the lead destination, separate from active state.
  */
 const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
-	<li className="flex items-stretch">
+	<li className="flex items-center">
 		<Link
 			prefetch
 			href={PRIMARY_LEARNING_ENTRY.href}
@@ -118,9 +98,9 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 				})
 			}}
 			aria-current={isActive ? 'page' : undefined}
-			className="group/nav-item focus-visible:ring-ring relative flex h-full items-center px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+			className="group/nav-item focus-visible:ring-ring text-[color:var(--ah-fg-muted)] relative flex items-center rounded-[7px] focus-visible:outline-none focus-visible:ring-2"
 		>
-			<NavPill active className="font-semibold">
+			<NavPill active className="font-medium">
 				{PRIMARY_LEARNING_ENTRY.label}
 			</NavPill>
 		</Link>
@@ -128,41 +108,31 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 )
 
 /**
- * Icon-only search affordance opening the ⌘K palette, with a designed
- * tooltip. The pill highlights while the palette is open.
+ * The one gold action in the bar: the free 7-day course, which is the site's
+ * front door for anyone who isn't logged in. Hidden on the course's own signup
+ * page, where the form itself is the ask.
  */
-const SearchIconButton = ({
-	isSearchOpen,
-	onOpen,
-}: {
-	isSearchOpen: boolean
-	onOpen: () => void
-}) => (
-	<li className="hidden items-stretch lg:flex">
-		<TooltipProvider delayDuration={200}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						type="button"
-						aria-label="Search"
-						onClick={() => {
-							track('search_palette_opened', { via: 'nav_icon' })
-							onOpen()
-						}}
-						className="group/nav-item focus-visible:ring-ring flex h-full items-center px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-					>
-						<NavPill active={isSearchOpen} className="px-2">
-							<Search aria-hidden className="size-4" />
-						</NavPill>
-					</button>
-				</TooltipTrigger>
-				<TooltipContent className="rounded-none">
-					Search <kbd className="font-mono">⌘K</kbd>
-				</TooltipContent>
-			</Tooltip>
-		</TooltipProvider>
-	</li>
-)
+const FreeCourseCta = ({ pathname }: { pathname: string }) => {
+	if (pathname.startsWith('/skills/subscribe')) return null
+
+	return (
+		<li className="hidden items-center lg:flex">
+			<Link
+				prefetch
+				href="/skills/subscribe"
+				onClick={() => {
+					track('nav_link_clicked', {
+						label: 'Get the free course',
+						href: '/skills/subscribe',
+					})
+				}}
+				className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex items-center rounded-[8px] px-3.5 py-2 text-[13px] font-bold leading-none transition focus-visible:outline-none focus-visible:ring-2"
+			>
+				Get the free course
+			</Link>
+		</li>
+	)
+}
 
 const Navigation = () => {
 	const pathname = usePathname()
@@ -190,85 +160,101 @@ const Navigation = () => {
 		<>
 			<header
 				className={cn(
-					'bg-background/90 h-(--nav-height) relative z-50 flex w-full items-stretch justify-between border-b px-0 backdrop-blur-md print:hidden',
+					// 44px gutter and a translucent, blurred bar, per the redesign
+					// spec. Height comes from `--nav-height` so every
+					// `calc(100vh - var(--nav-height))` consumer stays in step.
+					'bg-background/90 h-(--nav-height) relative z-50 flex w-full items-center gap-5 border-b px-[18px] backdrop-blur-md print:hidden lg:px-11',
 					{
 						'sticky top-0': !params.lesson,
 					},
 				)}
 			>
-			<div className="flex w-full items-stretch justify-between">
-				<div className="flex items-stretch">
-					<span
-						onContextMenu={(e) => {
-							e.preventDefault()
-							router.push('/brand')
-						}}
+				<span
+					className="flex shrink-0 items-center"
+					onContextMenu={(e) => {
+						e.preventDefault()
+						router.push('/brand')
+					}}
+				>
+					<Link
+						prefetch
+						tabIndex={isRoot ? -1 : 0}
+						href="/"
+						aria-label="AI Hero home"
+						className="group focus-visible:ring-ring flex items-center gap-2.5 rounded-[7px] leading-none transition focus-visible:outline-none focus-visible:ring-2"
 					>
-						<Link
-							prefetch
-							tabIndex={isRoot ? -1 : 0}
-							href="/"
-							aria-label="AI Hero home"
-							className="font-heading group focus-visible:ring-ring flex h-full w-full items-center justify-center gap-2 pl-3 pr-3 text-lg font-semibold leading-none transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-						>
-							{/* Brand mark: fills the full nav height — no vertical padding
-							    (the 124px @2x asset is cut for the 63px bar). */}
-							<Image
-								src="/matt-pocock-navigation-avatar@2x.png"
-								alt="Matt Pocock"
-								width={124}
-								height={124}
-								priority
-								className="h-[calc(var(--nav-height)-1px)] w-auto shrink-0 self-end object-contain object-bottom"
-							/>
-							<span className="text-foreground leading-none! text-lg font-semibold tracking-tight">
-								<span className="font-mono">AI</span>Hero
-							</span>
-						</Link>
-					</span>
-					{mode !== 'minimal' && (
-						<nav
-							className="hidden items-stretch lg:flex"
-							aria-label="Primary navigation"
-						>
-							<ul className="flex items-stretch">
-								{mode === 'full' ? (
-									<>
-										<PrimaryEntryLink
-											isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
-										/>
-										{PRIMARY_NAV_ITEMS.map((item) => (
-											<NavLinkItem
-												key={item.href}
-												href={item.href}
-												label={item.label}
-												textLabel={item.label}
-												className="font-normal"
-											/>
-										))}
-									</>
-								) : (
-									// Hub mode (per Amy's decisions doc): the sidebar carries
-									// Map/Principles/Skills/Tools; the top bar keeps only the
-									// persistent revenue path.
-									<NavLinkItem
-										href={COURSES_NAV_ITEM.href}
-										label={COURSES_NAV_ITEM.label}
-										textLabel={COURSES_NAV_ITEM.label}
-										className="font-normal"
+						{/* Brand mark: the cut-out portrait standing on the bar's bottom
+						    edge at the bar's full height, not a cropped circle. The
+						    silhouette IS the mark — putting it in a disc throws away the
+						    shoulders and leaves a generic avatar. `w-auto` keeps the
+						    aspect and `object-bottom` keeps it standing on the rule. */}
+						<Image
+							src="/matt-pocock-navigation-avatar@2x.png"
+							alt=""
+							width={124}
+							height={124}
+							priority
+							className="h-(--nav-height) w-auto shrink-0 object-contain object-bottom"
+						/>
+						<span className="text-foreground text-[15.5px] font-bold leading-none tracking-[-0.01em]">
+							<span className="font-mono">AI</span>Hero
+						</span>
+					</Link>
+				</span>
+				{mode !== 'minimal' && (
+					<nav
+						className="hidden items-center lg:flex"
+						aria-label="Primary navigation"
+					>
+						<ul className="flex items-center gap-0.5">
+							{mode === 'full' ? (
+								<>
+									<PrimaryEntryLink
+										isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
 									/>
-								)}
-							</ul>
-						</nav>
-					)}
-				</div>
-				<nav className="flex items-stretch" aria-label="User navigation">
-					<ul className="hidden items-stretch lg:flex">
+									{PRIMARY_NAV_ITEMS.map((item) => (
+										<NavLinkItem
+											key={item.href}
+											href={item.href}
+											label={item.label}
+											textLabel={item.label}
+										/>
+									))}
+								</>
+							) : (
+								// Hub mode (per Amy's decisions doc): the sidebar carries
+								// Map/Principles/Skills/Tools; the top bar keeps only the
+								// persistent revenue path.
+								<NavLinkItem
+									href={COURSES_NAV_ITEM.href}
+									label={COURSES_NAV_ITEM.label}
+									textLabel={COURSES_NAV_ITEM.label}
+								/>
+							)}
+						</ul>
+					</nav>
+				)}
+				<nav
+					className="ml-auto hidden items-center lg:flex"
+					aria-label="User navigation"
+				>
+					<ul className="flex items-center gap-[18px]">
 						{showSearch && (
-							<SearchIconButton
-								isSearchOpen={isSearchOpen}
-								onOpen={() => setIsSearchOpen(true)}
-							/>
+							<li className="flex items-center">
+								<button
+									type="button"
+									onClick={() => {
+										track('search_palette_opened', { via: 'nav_icon' })
+										setIsSearchOpen(true)
+									}}
+									className={cn(
+										navTextLink,
+										isSearchOpen && 'text-foreground',
+									)}
+								>
+									Search
+								</button>
+							</li>
 						)}
 						<SessionDependentNavItems
 							sessionStatus={sessionStatus}
@@ -276,6 +262,7 @@ const Navigation = () => {
 							setIsFeedbackDialogOpen={setIsFeedbackDialogOpen}
 						/>
 						<UserMenu />
+						{mode !== 'minimal' && <FreeCourseCta pathname={pathname} />}
 					</ul>
 				</nav>
 				<MobileNavigation
@@ -284,7 +271,6 @@ const Navigation = () => {
 					onSearchOpen={() => setIsSearchOpen(true)}
 					subscriber={subscriber}
 				/>
-			</div>
 			</header>
 			<MobileMenuPanel isOpen={isMobileMenuOpen} />
 			{showSearch && (

@@ -23,10 +23,13 @@ import {
 	SidebarNavLink,
 	SidebarSection,
 } from './sidebar-client'
+import { SIDEBAR_LABEL_CLASS } from './sidebar-indent'
 
-/** Small-caps, non-collapsible category label — matches the MDX `## Heading`. */
-const CATEGORY_LABEL_CLASS =
-	'text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider'
+/**
+ * Mono-caps, non-collapsible category label — matches the MDX `## Heading`.
+ * Re-exported rather than restated so the eyebrow has exactly one definition.
+ */
+export const CATEGORY_LABEL_CLASS = SIDEBAR_LABEL_CLASS
 
 /**
  * Server-driven sidebar sections registered in the hub-sidebar MDX components
@@ -40,7 +43,7 @@ const CATEGORY_LABEL_CLASS =
 function SectionSkeleton() {
 	return (
 		<SidebarGroup className="py-1" aria-hidden="true">
-			<SidebarMenu>
+			<SidebarMenu className="gap-px">
 				{Array.from({ length: 3 }).map((_, index) => (
 					<SidebarMenuItem key={index}>
 						<SidebarMenuSkeleton />
@@ -91,7 +94,7 @@ async function WhatsNewSection({
 					{title}
 				</SidebarGroupLabel>
 				<SidebarGroup className="p-0">
-					<SidebarMenu>
+					<SidebarMenu className="gap-px">
 						{postLinks(items)}
 						<SidebarMenuItem>
 							<SidebarNavLink href="/posts" muted ariaLabel="See all posts">
@@ -131,7 +134,7 @@ async function SkillsNavSection({ title = 'Skills' }: { title?: string }) {
 		return (
 			<SidebarSection title={title}>
 				<SidebarGroup className="p-0">
-					<SidebarMenu>
+					<SidebarMenu className="gap-px">
 						{entries.map((entry) => (
 							<SidebarMenuItem key={entry.id}>
 								<SidebarNavLink href={`/${entry.slug}`}>
@@ -345,7 +348,7 @@ async function TopicSectionInner({
 					// mapping nests in a SidebarGroup). Without this the "All" link is
 					// 8px shallower than its siblings — the topic-group inconsistency.
 					<SidebarGroup className="p-0">
-						<SidebarMenu>
+						<SidebarMenu className="gap-px">
 							{postLinks(posts)}
 							{topicTag ? (
 								<SidebarMenuItem>

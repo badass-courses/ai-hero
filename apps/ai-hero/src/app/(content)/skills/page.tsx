@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
-import { Resource } from '@/components/landing/resource'
-import { SectionHeading } from '@/components/landing/section-heading'
+import { TYPE } from '@/components/landing/type'
 import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { getRepoStarCount } from '@/lib/github-stars-query'
@@ -15,13 +15,15 @@ import {
 	SKILLS_HERO,
 	SKILLS_LIST_ID,
 	SKILLS_PAGE_SIZE,
+	SKILLS_REPO_URL,
 } from '@/lib/skills-content'
 import { RssIcon } from 'lucide-react'
 
+import { cn } from '@coursebuilder/utils/cn'
+
 import { ChangelogList, type ChangelogItem } from './_components/changelog-list'
 import { ChangelogPagination } from './_components/changelog-pagination'
-import { ChangelogTeaser } from './_components/changelog-teaser'
-import { InstallCommand } from './_components/install-command'
+import { SkillSet, type SkillSetGroup } from './_components/skill-set'
 import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
 import { SkillsSalesCopy } from './_components/skills-sales-copy'
@@ -52,139 +54,116 @@ type Props = {
 	searchParams: Promise<{ page?: string }>
 }
 
+/**
+ * /skills — the skill system's own page (`Skills Page.dc.html`).
+ *
+ * The order is the argument: what you get and how to install it (HEAD), what
+ * a skill even is (WHAT A SKILL IS), the catalog (THE SKILL SET), what changed
+ * (CHANGELOG), and the ask restated at the bottom (GET THE SKILLS).
+ *
+ * Every count, group, order and description on the page is CMS or GitHub data.
+ * The list (`SKILLS_LIST_ID`) owns the grouping AND the order of the groups —
+ * to lead with "The Main Flow" rather than "Getting Started", move the section
+ * in the list, not in this file.
+ */
 export default async function SkillsPage({ searchParams }: Props) {
 	const { page: pageParam } = await searchParams
 	const currentPage = Math.max(Number(pageParam ?? '1') || 1, 1)
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, skillsList, stars] = await Promise.all([
-		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
-		getSkillChangelogCount(),
-		getListWithSections(SKILLS_LIST_ID),
-		getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
-	])
+	const [entries, totalEntries, skillsList, stars, latestEntry] =
+		await Promise.all([
+			getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
+			getSkillChangelogCount(),
+			getListWithSections(SKILLS_LIST_ID),
+			getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
+			// The head's "latest release" stat. Page 2 shows older entries, so the
+			// newest one is fetched separately rather than read off `entries`.
+			getSkillChangelogEntries({ limit: 1, offset: 0 }),
+		])
 
 	const skillGroups = toSkillGroups(skillsList?.resources)
+	const skillCount = skillGroups.reduce(
+		(total, group) => total + group.skills.length,
+		0,
+	)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
-	// On page 1 the newest entry is promoted to the teaser; the full list below
-	// then starts from the second entry to avoid rendering it twice.
-	const latestChangelog = currentPage === 1 ? changelogItems[0] : undefined
-	const changelogListItems = latestChangelog
-		? changelogItems.slice(1)
-		: changelogItems
+	const latestVersion = latestEntry[0]
+		? toChangelogItem(latestEntry[0]).version
+		: null
+
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<main className="bg-background text-foreground">
-					{/* 1. Hero */}
-					<SkillsHero stars={stars} />
+					<SkillsHero
+						stars={stars}
+						skillCount={skillCount}
+						latestVersion={latestVersion}
+					/>
 
-					{/* 2. Sales copy */}
 					<SkillsSalesCopy />
 
-					{/* 3. The skill set — section-grouped Resource rows (images +
-					    taglines), same rendering as production /skills (Vojta,
-					    2026-07-14: no custom card grid; sections from the CMS list
-					    drive the grouping). */}
-					<section aria-labelledby="skill-set-heading" className="border-b">
-						{/* The centered `SectionHeading` treatment, inlined rather than
-						    reused: its py-20 left a hole under the sales copy's CTA, so
-						    the vertical padding is tightened here. */}
-						<div className="mx-auto max-w-xl px-8 pb-4 pt-14 text-center">
-							<h2
-								id="skill-set-heading"
-								className="text-balance font-sans text-3xl font-semibold leading-tight tracking-tight sm:text-4xl"
-							>
-								The skill set
-							</h2>
-						</div>
-						<div>
-							{skillGroups.map((group) =>
-								group.kind === 'section' ? (
-									<div key={group.id}>
-										{/* Group header: one step below the section h2 (3xl/4xl)
-										    so the scale reads SectionHeading → group → rows. */}
-										<div className="flex flex-col gap-2 px-8 pb-6 pt-12">
-											<h3 className="text-balance text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">
-												{group.title}
-											</h3>
-											{group.description ? (
-												<p className="text-foreground/70 max-w-2xl text-balance text-sm leading-relaxed sm:text-base">
-													{group.description}
-												</p>
-											) : null}
-										</div>
-										{group.slugs.map((slug) => (
-											<Resource key={slug} slugOrId={slug} variant="row" />
-										))}
-									</div>
-								) : (
-									<Resource
-										key={group.slug}
-										slugOrId={group.slug}
-										variant="row"
-									/>
-								),
-							)}
-						</div>
-					</section>
+					<SkillSet groups={skillGroups} skillCount={skillCount} />
 
-					{/* 4. How to get the skills */}
-					<section aria-labelledby="skills-install-heading" className="border-b">
-						<div className="flex flex-col items-center gap-6 px-8 py-16 text-center sm:px-16 md:py-24">
-							<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-								Install
-							</span>
-							<h2
-								id="skills-install-heading"
-								className="text-balance font-sans text-3xl font-medium leading-tight tracking-tight sm:text-4xl"
-							>
-								How to get the skills
-							</h2>
-							<div className="w-full max-w-xl">
-								<InstallCommand
-									command={SKILLS_HERO.installCommand}
-									className="h-14"
-								/>
-							</div>
-							<p className="text-muted-foreground max-w-[60ch] text-balance text-base leading-relaxed sm:text-lg">
-								Run it once, then type a skill's slash command in your coding
-								agent to put it to work.
-							</p>
-						</div>
-					</section>
-
-					{/* 5. Latest changelog teaser + full history. (The free
-					    mini-course CTA was removed 2026-07-14 — the course doesn't
-					    exist yet; component parked in skills-mini-course-cta.tsx.) */}
 					<section aria-labelledby="changelog-heading" className="border-b">
-						<SectionHeading>
-							<span className="inline-flex items-center justify-center gap-3">
-								<span id="changelog-heading">Changelog</span>
-								<a
-									href="/skills/rss.xml"
-									className="border-primary/40 text-primary hover:bg-primary hover:text-primary-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium tracking-tight transition"
-								>
-									<RssIcon className="h-4 w-4" aria-hidden />
-									RSS
-								</a>
-							</span>
-						</SectionHeading>
-						{latestChangelog ? (
-							<ChangelogTeaser item={latestChangelog} />
-						) : null}
-						<div id="changelog-all" className="scroll-mt-24">
-							<ChangelogList items={changelogListItems} />
+						<div className="px-8 pb-[50px] pt-12 sm:px-11">
+							<div className="mb-[26px] flex flex-col gap-4 md:flex-row md:items-end">
+								<div>
+									<p
+										className={cn(
+											TYPE.micro,
+											'text-[color:var(--ah-fg-label)]',
+										)}
+									>
+										Changelog
+									</p>
+									<h2
+										id="changelog-heading"
+										className={cn(TYPE.heading, 'mt-3.5 text-balance')}
+									>
+										What changed recently
+									</h2>
+								</div>
+								<div className="flex items-center gap-5 md:ml-auto md:shrink-0">
+									<Link
+										href="/skills/rss.xml"
+										className={cn(
+											TYPE.meta,
+											'hover:text-foreground inline-flex items-center gap-1.5 text-[color:var(--ah-fg-subtle)] transition-colors',
+										)}
+									>
+										<RssIcon className="size-3.5" aria-hidden />
+										RSS
+									</Link>
+									<Link
+										href={`${SKILLS_REPO_URL}/releases`}
+										target="_blank"
+										rel="noopener noreferrer"
+										className={cn(
+											TYPE.meta,
+											'hover:text-foreground text-[color:var(--ah-fg-subtle)] transition-colors',
+										)}
+									>
+										Full history on GitHub →
+									</Link>
+								</div>
+							</div>
+							<ChangelogList items={changelogItems} />
+							<ChangelogPagination
+								currentPage={currentPage}
+								totalPages={totalPages}
+							/>
 						</div>
-						<ChangelogPagination
-							currentPage={currentPage}
-							totalPages={totalPages}
-						/>
 					</section>
 
-					{/* 7. GitHub + logos */}
 					<SkillsGitHubSection stars={stars} />
-					<CompanyLogoGrid className="border-t pt-6" />
+
+					<CompanyLogoGrid
+						variant="row"
+						eyebrow="Engineers from"
+						className="border-border border-b px-8 py-[22px] sm:px-11"
+					/>
 				</main>
 			</HubLayout>
 		</LayoutClient>
@@ -200,65 +179,80 @@ type ListItem = {
 	} | null
 }
 
-type SkillGroup =
-	| { kind: 'skill'; slug: string }
-	| {
-			kind: 'section'
-			id: string
-			title: string
-			description?: string
-			slugs: string[]
-	  }
-
 function isPublicPublished(fields?: Record<string, unknown> | null) {
 	return fields?.state === 'published' && fields?.visibility === 'public'
 }
 
-function slugOf(item: ListItem): string | undefined {
-	const slug = item.resource?.fields?.slug
-	return typeof slug === 'string' && slug ? slug : undefined
+function stringField(
+	fields: Record<string, unknown> | null | undefined,
+	key: string,
+): string | undefined {
+	const value = fields?.[key]
+	return typeof value === 'string' && value ? value : undefined
+}
+
+function toSkillItem(item: ListItem) {
+	const fields = item.resource?.fields
+	const slug = stringField(fields, 'slug')
+	if (!slug) return null
+	return {
+		slug,
+		title: stringField(fields, 'title') ?? slug,
+		description: stringField(fields, 'description'),
+	}
 }
 
 // Walk the /skills list into ordered render groups. A `section` resource
-// becomes a titled sub-group of its published/public child skills; anything
-// else renders as a loose skill row. Empty sections are dropped so an
-// unpopulated (or fully-unpublished) section leaves no orphan heading.
-function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
-	const groups: SkillGroup[] = []
+// becomes a titled group of its published/public child skills; anything else
+// collapses into an untitled run of loose skills. Empty sections are dropped so
+// an unpopulated (or fully-unpublished) section leaves no orphan heading.
+function toSkillGroups(resources?: ListItem[] | null): SkillSetGroup[] {
+	const groups: SkillSetGroup[] = []
+	let looseRun: SkillSetGroup | null = null
+
 	for (const item of resources ?? []) {
 		if (item.resource?.type === 'section') {
 			// Sections are purely structural — their own state/visibility is
 			// ignored (they're created draft+unlisted with no publish UI). Their
 			// published/public children drive whether the section shows at all.
-			const slugs =
-				item.resource.resources
-					?.filter((child) => isPublicPublished(child.resource?.fields))
-					.map(slugOf)
-					.filter((slug): slug is string => Boolean(slug)) ?? []
-			if (slugs.length === 0) continue
-			const title = item.resource.fields?.title
-			const description = item.resource.fields?.description
+			const skills = (item.resource.resources ?? [])
+				.filter((child) => isPublicPublished(child.resource?.fields))
+				.map(toSkillItem)
+				.filter((skill): skill is NonNullable<typeof skill> => Boolean(skill))
+			if (skills.length === 0) continue
+			looseRun = null
 			groups.push({
-				kind: 'section',
-				id: item.resource.id ?? slugs[0]!,
-				title: typeof title === 'string' ? title : 'Skills',
-				description:
-					typeof description === 'string' && description
-						? description
-						: undefined,
-				slugs,
+				id: item.resource.id ?? skills[0]!.slug,
+				title: stringField(item.resource.fields, 'title') ?? 'Skills',
+				description: stringField(item.resource.fields, 'description'),
+				skills,
 			})
 			continue
 		}
 		if (!isPublicPublished(item.resource?.fields)) continue
-		const slug = slugOf(item)
-		if (slug) groups.push({ kind: 'skill', slug })
+		const skill = toSkillItem(item)
+		if (!skill) continue
+		if (!looseRun) {
+			looseRun = { id: `loose-${groups.length}`, title: null, skills: [] }
+			groups.push(looseRun)
+		}
+		looseRun.skills.push(skill)
 	}
+
 	return groups
 }
 
+/**
+ * Entries are authored as "v1.1: /wayfinder, /to-spec …", so the release
+ * number is already in the title. Splitting it out is what lets the changelog
+ * set version and date in their own column without a new CMS field; a title
+ * without the prefix simply renders without a version.
+ */
+const VERSION_PREFIX = /^(v\d+(?:\.\d+)*)\s*:\s*(.+)$/
+
 function toChangelogItem(entry: SkillChangelogEntry): ChangelogItem {
-	const title = String(entry.fields?.title ?? 'Untitled skill update')
+	const rawTitle = String(entry.fields?.title ?? 'Untitled skill update')
+	const match = rawTitle.match(VERSION_PREFIX)
 	const description = entry.fields?.description || entry.fields?.summary
 	const slug = String(entry.fields?.slug ?? entry.id)
 	const publishedAt = entry.createdAt
@@ -272,7 +266,8 @@ function toChangelogItem(entry: SkillChangelogEntry): ChangelogItem {
 	return {
 		id: entry.id,
 		href: `/skills/${slug}`,
-		title,
+		title: match?.[2] ?? rawTitle,
+		version: match?.[1] ?? null,
 		description: description ? String(description) : undefined,
 		publishedAt,
 	}

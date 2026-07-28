@@ -38,7 +38,7 @@ export default async function OpenSourcePage() {
 	const stars = new Map(starEntries)
 
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
 					<section className="border-b">

@@ -30,7 +30,7 @@ export function ThemeToggle({ className }: { className?: string }) {
 				<Button
 					variant="outline"
 					className={cn(
-						'text-foreground flex gap-2 rounded-full sm:aspect-square',
+						'text-foreground flex gap-2 rounded-sm sm:aspect-square',
 						className,
 					)}
 				>

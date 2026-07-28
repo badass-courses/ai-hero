@@ -6,8 +6,6 @@ import { Subscriber } from '@/schemas/subscriber'
 import { track } from '@/utils/analytics'
 import { Menu, Search, X } from 'lucide-react'
 
-import { Button } from '@coursebuilder/ui'
-
 type MobileNavigationProps = {
 	isMobileMenuOpen: boolean
 	setIsMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
@@ -28,8 +26,14 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	onSearchOpen,
 	subscriber,
 }) => {
+	// Glyphs, not words, below `lg`: the bar is 18px-gutter wide on a phone and
+	// three labelled links would not fit beside the wordmark. The desktop bar
+	// spells them out (see `Navigation`); this is the one place icons win.
+	const control =
+		'text-[color:var(--ah-fg-muted)] hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-ring flex size-9 items-center justify-center rounded-[7px] transition-colors focus-visible:outline-none focus-visible:ring-2'
+
 	return (
-		<div className="flex items-stretch lg:hidden">
+		<div className="ml-auto flex items-center gap-0.5 lg:hidden">
 			<button
 				type="button"
 				aria-label="Search"
@@ -37,7 +41,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 					track('search_palette_opened', { via: 'mobile_nav_icon' })
 					onSearchOpen()
 				}}
-				className="hover:bg-muted focus-visible:ring-ring flex aspect-square items-center justify-center border-l transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+				className={control}
 			>
 				<Search aria-hidden className="size-5" />
 			</button>
@@ -51,7 +55,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 							href: '/newsletter',
 						})
 					}
-					className="hover:bg-muted focus-visible:ring-ring flex aspect-square items-center justify-center border-l transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+					className={control}
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
@@ -76,9 +80,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 					</svg>
 				</Link>
 			)}
-			<Button
-				variant="ghost"
-				className="h-(--nav-height) aspect-square items-center justify-center rounded-none border-l"
+			<button
+				className={control}
 				type="button"
 				aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
 				aria-expanded={isMobileMenuOpen}
@@ -90,7 +93,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 				) : (
 					<Menu className="size-5" />
 				)}
-			</Button>
+			</button>
 		</div>
 	)
 }

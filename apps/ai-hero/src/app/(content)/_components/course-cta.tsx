@@ -77,7 +77,12 @@ export async function CourseCta({
 			<div>
 				<Link
 					href={href}
-					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring focus-visible:ring-offset-background group relative isolate inline-flex h-11 items-center gap-2 overflow-hidden rounded-full px-6 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+					// The house primary button (the spec's `.ah-btn`, same as the hero's):
+				// 46px tall, 9px radius, 15px/700, on the gold that survives BOTH
+				// themes. It was a `rounded-full` pill on `bg-primary` — which is the
+				// text-safe accent, so in light mode this rendered as a black button
+				// rather than a gold one (DESIGN rule 7).
+				className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background group relative isolate inline-flex h-[46px] items-center gap-2 overflow-hidden rounded-[9px] px-5 text-[15px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
 					{label}
 					<ArrowRight

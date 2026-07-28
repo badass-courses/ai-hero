@@ -62,13 +62,16 @@ export const NavLinkItem: React.FC<NavLinkItem> = ({
 			innerContent
 		)
 
+	// `nav` is the primary-bar link: the pill inside carries the geometry, so the
+	// anchor itself is a bare inline box (the bar is `items-center`, not
+	// full-height stretch, per the redesign spec).
 	const styles = {
-		nav: 'group/nav-item text-foreground relative flex h-full items-center px-2 w-full justify-start text-base sm:text-sm transition font-normal hover:no-underline sm:px-2',
+		nav: 'group/nav-item text-[color:var(--ah-fg-muted)] hover:text-foreground relative flex h-auto w-auto items-center justify-start p-0 text-[13.5px] font-normal transition hover:no-underline',
 		menu: 'text-foreground hover:bg-background flex w-full items-center justify-start font-normal text-xl hover:no-underline px-3 sm:text-sm',
 	}
 
 	return (
-		<li className="flex items-stretch">
+		<li className={variant === 'nav' ? 'flex items-center' : 'flex items-stretch'}>
 			<Button
 				className={cn(
 					styles[variant],

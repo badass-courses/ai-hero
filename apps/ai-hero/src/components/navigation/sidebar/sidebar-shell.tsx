@@ -62,8 +62,11 @@ const ICON_RAIL_LINKS: {
 	},
 ]
 
+// `bg-sidebar`, not `bg-background`: the rail sits on the raised surface so it
+// separates from the content (the spec's `--ah-bg-raised`). Hardcoding the page
+// background here defeated the `--sidebar` token.
 const STICKY_SIDEBAR_CLASSES =
-	'bg-background top-(--nav-height) w-[320px] sticky hidden h-[calc(100svh-var(--nav-height))] self-start border-r md:flex'
+	'bg-sidebar top-(--nav-height) w-[264px] sticky hidden h-[calc(100svh-var(--nav-height))] self-start border-r md:flex'
 
 /**
  * Client shell around the hub sidebar content. Two modes:
@@ -193,7 +196,12 @@ export function HubSidebarShell({
 					</button>
 				</div>
 			) : null}
-			<SidebarContent className="no-scrollbar scroll-fade gap-1 px-2 py-3">
+			{/* Gutter and rhythm are the prototype's `.ah-sidebar__inner`:
+			    `24px 18px 32px`, and `gap-0` because the vertical rhythm is owned
+			    by the group labels (`SIDEBAR_LABEL_CLASS` pads 26px above / 9px
+			    below), not by the flex gap — a gap here would push a label away
+			    from the very rows it names. */}
+			<SidebarContent className="no-scrollbar scroll-fade gap-0 px-[18px] pb-8 pt-6">
 				{children}
 			</SidebarContent>
 		</Sidebar>

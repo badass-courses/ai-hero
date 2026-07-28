@@ -4,6 +4,7 @@ import React, { use } from 'react'
 import { FaqItem } from '@/app/faq/_components/faq-item'
 import { AnimatedTitle } from '@/components/brand/animated-word'
 import { CldImage, ThemeImage } from '@/components/cld-image'
+import { TYPE } from '@/components/landing/type'
 import { Callout } from '@/components/mdx/callout'
 import { PromoCard } from '@/components/mdx/promo-card'
 import MDXVideo from '@/components/content/mdx-video'
@@ -156,19 +157,32 @@ const CheckList = ({ children }: { children: React.ReactNode }) => {
 	return <ul data-checklist="">{unwrapped}</ul>
 }
 
-const testimonialVariants = cva('', {
-	variants: {
-		variant: {
-			default:
-				'not-prose relative mx-auto flex w-full max-w-3xl flex-col items-start border-l-4 border-primary pl-5 italic gap-2',
-			centered:
-				'flex text-center text-balance flex-col items-center justify-center border-none dark:text-white',
+/**
+ * A testimonial inside an article body, matched to `.ah-prose-quote` in
+ * `globals.css`: a pair of hairlines above and below, and nothing on the left.
+ *
+ * Two things used to push it off the prose column. It carried a 4px
+ * `border-primary` left rail with `pl-5` behind it — a side-stripe border, which
+ * the design language bans outright and which by itself indented the quote 24px
+ * past every paragraph around it. And it was `mx-auto max-w-3xl` inside article
+ * prose that runs to `max-w-4xl`, so the leftover 128px got split evenly and
+ * centred the block against its neighbours. Both are gone: full width of the
+ * column it sits in, flush left.
+ */
+const testimonialVariants = cva(
+	'not-prose border-border relative my-8 flex w-full flex-col gap-3 border-y py-6',
+	{
+		variants: {
+			variant: {
+				default: 'items-start',
+				centered: 'items-center justify-center text-balance text-center',
+			},
+		},
+		defaultVariants: {
+			variant: 'default',
 		},
 	},
-	defaultVariants: {
-		variant: 'default',
-	},
-})
+)
 
 const Testimonial = ({
 	children,
@@ -182,10 +196,16 @@ const Testimonial = ({
 	variant?: VariantProps<typeof testimonialVariants>['variant']
 }) => {
 	return (
-		<blockquote className={cn(testimonialVariants({ variant }))}>
+		<blockquote
+			className={cn(
+				TYPE.quote,
+				'text-foreground [&>p]:m-0 [&>p]:text-pretty',
+				testimonialVariants({ variant }),
+			)}
+		>
 			{children}
 			{authorName && (
-				<div className="text-muted-foreground flex items-center gap-2 text-[80%] font-normal not-italic">
+				<div className="flex items-center gap-2.5 font-normal not-italic">
 					{authorAvatar && authorAvatar.includes('res.cloudinary') && (
 						<CldImage
 							alt={authorName}
@@ -195,7 +215,11 @@ const Testimonial = ({
 							src={authorAvatar}
 						/>
 					)}
-					<span className="font-mono text-sm">{authorName}</span>
+					<span
+						className={cn(TYPE.metaMono, 'text-[color:var(--ah-fg-subtle)]')}
+					>
+						{authorName}
+					</span>
 				</div>
 			)}
 		</blockquote>

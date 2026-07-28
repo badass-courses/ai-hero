@@ -1,8 +1,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { ResourceRow } from "@/components/landing/resource-row";
+import { TYPE } from "@/components/landing/type";
+import { cn } from "@coursebuilder/utils/cn";
 import type { MapTocItem } from "@/components/navigation/map-toc";
-import { MapToc } from "@/components/navigation/map-toc";
+import { MapQuestionGrid } from "@/components/navigation/map-toc";
+import { AskAIHeroBotCard } from "@/components/navigation/ask-ai-hero-bot-card";
 import type { GoalSection } from "@/components/navigation/goal-sections-data";
 import { PrimaryNewsletterCta } from "@/components/primary-newsletter-cta";
 import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
@@ -17,8 +20,8 @@ import { MoreWaysLink } from "./more-ways-link";
  *
  * Pure server component: every piece of data (resolved goal-section items,
  * What's New posts) is fetched up front in `page.tsx` and passed as props. The
- * only client interactivity lives inside `MapToc` (active-section observer +
- * the search-only Ask AIHero bot) and `PrimaryNewsletterCta`.
+ * only client interactivity lives inside `MapQuestionGrid` (active-section
+ * observer), `AskAIHeroBotCard` and `PrimaryNewsletterCta`.
  *
  * NO breadcrumbs (deliberate — the Map is a wayfinding layer, not a hierarchy).
  * NO section background tints — typography and whitespace differentiate goals.
@@ -37,10 +40,6 @@ export interface MapPageProps {
   whatsNew: ResolvedItem[];
   /** Flat anchor-TOC entries (one per goal section). */
   tocItems: MapTocItem[];
-  /** Curated "Try asking" prompts for the bot. */
-  suggestions: string[];
-  /** Every goal-section item slug — the bot's Map-linked boost set. */
-  boostSlugs: string[];
 }
 
 function capitalize(s: string): string {
@@ -48,32 +47,39 @@ function capitalize(s: string): string {
   return s[0]!.toUpperCase() + s.slice(1);
 }
 
-/** "Article · 12 min read" style meta from a resolved item. */
+/**
+ * "Video · 12 min" style meta from a resolved item.
+ *
+ * `isVideo` wins over `type`: a post carrying a video is stored as an article,
+ * and the row used to show a VIDEO badge next to the word ARTICLE, which reads
+ * as a bug rather than as two facts.
+ */
 function metaLabel(item: ResolvedItem): string {
   const parts: string[] = [];
-  if (item.type) parts.push(capitalize(item.type));
+  if (item.isVideo) parts.push("Video");
+  else if (item.type) parts.push(capitalize(item.type));
   if (item.durationLabel) parts.push(item.durationLabel);
   return parts.join(" · ");
 }
 
-const MONO_LABEL =
-  "font-mono text-[11px] font-medium uppercase tracking-wider opacity-60";
-
 /**
- * One list row for a resolved item — the landing `ResourceRow` (signature
- * gradient-frame hover + arrow circle). Hub-sidebar pages use lists, never
- * multi-column grids: the content column is too narrow (DESIGN / decisions.md
- * "Hub-sidebar pages use lists, not grids").
+ * One list row for a resolved item — the spec's `.ah-row` card. Hub-sidebar
+ * pages use lists, never multi-column grids: the content column is too narrow
+ * (DESIGN / decisions.md "Hub-sidebar pages use lists, not grids").
+ *
+ * Compact rather than the landing page's full-bleed row: a question here has
+ * up to a dozen answers under it, and at full-bleed height the reader sees
+ * three and stops reading it as a list.
  */
 function ItemRow({ item, summary }: { item: ResolvedItem; summary?: string }) {
   return (
     <ResourceRow
+      compact
       title={item.title}
       description={summary ?? item.description ?? undefined}
       href={item.href}
       image={item.thumbnailUrl ?? undefined}
       typeLabel={metaLabel(item) || undefined}
-      badge={item.isVideo ? "Video" : undefined}
       fallbackPlaceholder={item.type ? capitalize(item.type) : undefined}
     />
   );
@@ -90,25 +96,27 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
       {/* Text keeps the side padding; the row list bleeds full-width to the
 			    container edges (DESIGN rule 1), like the landing rows. */}
       <div className="flex flex-col">
-        <div className="flex flex-col gap-3 px-8 sm:px-16 py-16">
-          <h2 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
+        <div className="flex flex-col gap-3 px-8 pb-8 pt-16 sm:px-11">
+          <h2 className={cn(TYPE.heading, "text-balance")}>
             {section.question}
           </h2>
-          <p className="text-foreground/80 max-w-[65ch] text-base leading-relaxed sm:text-lg">
+          <p className={cn(TYPE.lead, "text-muted-foreground max-w-[64ch]")}>
             {section.strapline}
           </p>
         </div>
 
-        <div>
+        <ul className="flex flex-col gap-2.5 px-8 sm:px-11">
           {items.map((item) => (
-            <ItemRow key={item.slug} item={item} />
+            <li key={item.slug}>
+              <ItemRow item={item} />
+            </li>
           ))}
-        </div>
+        </ul>
 
         {/* Footer: the signature "open" affordance for the whole topic. The
 				    skill, where one matches, gets a real card rather than a sentence
 				    in a box — the slash command is the token readers recognise. */}
-        <div className="flex flex-col gap-6 px-8 py-8 sm:px-16">
+        <div className="flex flex-col gap-6 px-8 py-8 sm:px-11">
           <MoreWaysLink href={section.moreHref} label={section.moreLabel} />
           {section.skillCta ? (
             <SkillCard
@@ -133,25 +141,35 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
     <section
       id="whats-new"
       data-goal-section
-      className="border-b scroll-mt-24 py-16 md:py-24"
+      className="border-b scroll-mt-24"
     >
-      <div className="flex flex-col gap-6 md:gap-8">
-        <div className="flex flex-wrap items-end justify-between gap-4 px-8 sm:px-16">
+      {/* Same rhythm as GoalSectionBlock: the section itself has no padding so
+          the row list can bleed to the container's edges, and the head block
+          carries the vertical space. It used to set py-16/md:py-24 on the
+          section AND gaps inside, which stacked into a much taller band than
+          its neighbours. */}
+      <div className="flex flex-col">
+        <div className="flex flex-wrap items-end justify-between gap-4 px-8 pb-8 pt-16 sm:px-11">
           <div className="flex flex-col gap-2">
-            <p className={MONO_LABEL}>What&rsquo;s New</p>
-            <h2 className="text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
-              Fresh from the blog
-            </h2>
+            <p
+              className={cn(TYPE.micro, "text-[color:var(--ah-fg-label)]")}
+            >
+              What&rsquo;s New
+            </p>
+            <h2 className={TYPE.heading}>Fresh from the blog</h2>
           </div>
           <Link
             href="/posts"
-            className="text-foreground/70 hover:text-foreground focus-visible:ring-ring text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2"
+            className={cn(
+              TYPE.meta,
+              "text-foreground/70 hover:text-foreground focus-visible:ring-ring transition-colors focus-visible:outline-none focus-visible:ring-2",
+            )}
           >
             See all posts →
           </Link>
         </div>
 
-        <div>
+        <div className="pb-8">
           {items.map((item) => (
             <ItemRow key={item.slug} item={item} summary={item.summary} />
           ))}
@@ -165,33 +183,34 @@ export function MapPage({
   goalSections,
   whatsNew,
   tocItems,
-  suggestions,
-  boostSlugs,
 }: MapPageProps) {
   return (
     <div>
       {/* Hero — single column (the hub content column is too narrow for a
 			    two-up split). Newsletter lives at the bookend below. */}
       <section id="top" className="border-b">
-        <div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
-          <p className={MONO_LABEL}>The Map</p>
-          <h1 className="text-4xl font-normal leading-[1.05] tracking-tight text-balance sm:text-5xl">
+        <div className="flex flex-col gap-6 px-8 py-16 sm:px-11 md:py-24">
+          <p className={cn(TYPE.micro, "text-[color:var(--ah-fg-label)]")}>
+            The Map
+          </p>
+          <h1 className={cn(TYPE.title, "text-balance max-w-[24ch]")}>
             What would you like to do with AI coding?
           </h1>
-          <p className="text-foreground/80 max-w-[60ch] text-lg leading-relaxed">
+          <p className={cn(TYPE.lead, "text-muted-foreground max-w-[64ch]")}>
             Pick the question that sounds like you. Each one opens onto the
             articles, videos, and skills that answer it, in the order they make
             sense.
           </p>
+
+          {/* The questions themselves are the offer, so they sit in the hero
+				      rather than in a TOC block below it. */}
+          <MapQuestionGrid items={tocItems} className="mt-2" />
+
+          {/* The bot lives in the sidebar, which is desktop-only — so the
+				      reader none of the four questions fits still gets it on a phone. */}
+          <AskAIHeroBotCard className="mt-2 max-w-[380px] md:hidden" />
         </div>
       </section>
-
-      {/* TOC + Ask AIHero bot (bot open state + render lives in MapToc) */}
-      <MapToc
-        items={tocItems}
-        suggestions={suggestions}
-        boostSlugs={boostSlugs}
-      />
 
       {/* Goal sections */}
       {goalSections.map((goal) => (
@@ -203,7 +222,7 @@ export function MapPage({
 
       {/* Bookend CTA */}
       <section>
-        <div className="px-8 py-16 sm:px-16 md:py-24">
+        <div className="py-16 md:py-24">
           <PrimaryNewsletterCta
             title={<PrimaryNewsletterTitle />}
             titleElement="h2"

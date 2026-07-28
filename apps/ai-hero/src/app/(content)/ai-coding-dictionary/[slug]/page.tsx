@@ -6,7 +6,6 @@ import { Contributor } from "@/components/contributor";
 import LayoutClient from "@/components/layout-client";
 import { HubLayout } from "@/components/navigation/hub-layout";
 import { PrimaryNewsletterCta } from "@/components/primary-newsletter-cta";
-import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
 import { Share } from "@/components/share";
 import {
   AI_CODING_DICTIONARY_DESCRIPTION,
@@ -51,7 +50,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
   const markdownToCopy = `# ${entry.title}\n\n${entry.rawBody}`;
 
   return (
-    <LayoutClient withContainer>
+    <LayoutClient withContainer withFooter={false}>
       <HubLayout>
         <ContentReadTracker
           contentId={`ai-coding-dictionary:${entry.slug}`}
@@ -103,10 +102,11 @@ export default async function DictionaryEntryPage({ params }: Props) {
           <DictionaryEntryNav previous={previousEntry} next={nextEntry} />
 
           <PrimaryNewsletterCta
-            title={<PrimaryNewsletterTitle />}
+            title="Want more than vocabulary?"
+            byline="Join AI Hero for practical skills, thinking on AI engineering, and resources that keep you ahead of the curve."
             id="dictionary-entry-newsletter-cta"
             isHiddenForSubscribers
-            className="not-prose border-t py-16 [&_button]:w-full"
+            className="not-prose border-t py-16"
             actionLabel="Get AI Hero updates"
             fields={{
               interest: "dictionary",
@@ -116,17 +116,7 @@ export default async function DictionaryEntryPage({ params }: Props) {
               event: "subscribed",
               params: { location: "dictionary-entry", post: entry.slug },
             }}
-          >
-            <div className="relative z-10 flex max-w-3xl flex-col items-center justify-center px-5 pb-5 pt-10 text-center sm:pb-10">
-              <h2 className="font-sans text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
-                Want more than vocabulary?
-              </h2>
-              <p className="text-muted-foreground mt-3 max-w-2xl text-base leading-7">
-                Join AI Hero for practical skills, thinking on AI engineering,
-                and resources that keep you ahead of the curve.
-              </p>
-            </div>
-          </PrimaryNewsletterCta>
+          />
 
           <div className="border-border flex flex-wrap items-center justify-center gap-5 border-t px-8 sm:px-16">
             <strong className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">

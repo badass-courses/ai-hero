@@ -1,12 +1,11 @@
 import type { Metadata } from 'next'
-import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import LayoutClient from '@/components/layout-client'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { SubscriberSchema } from '@/schemas/subscriber'
 
-import { SkillsCourseFrontDoor } from '../_components/skills-course-front-door'
 import { type SkillsNewsletterStatus } from '../_components/skills-newsletter'
+import { SkillsSubscribeFrontDoor } from './_components/skills-subscribe-page'
 import { SubscriberUrlParam } from './subscriber-url-param'
 
 export const metadata: Metadata = {
@@ -53,11 +52,10 @@ export default async function SkillsSubscribePage({
 	return (
 		<LayoutClient withContainer>
 			<SubscriberUrlParam />
-			<SkillsCourseFrontDoor
+			<SkillsSubscribeFrontDoor
 				status={status}
 				location="skills_course_front_door"
 			/>
-			<CompanyLogoGrid className="border-t pt-6" />
 		</LayoutClient>
 	)
 }

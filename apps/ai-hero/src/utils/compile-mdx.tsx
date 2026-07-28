@@ -15,6 +15,9 @@ import { SubscriberCount } from '@/components/subscriber-count'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import type { CalloutIntent } from '@/components/mdx/callout'
+import type { CommandCardProps } from '@/components/mdx/command-card'
+import type { ComparisonProps } from '@/components/mdx/comparison'
+import type { ContrastProps } from '@/components/mdx/contrast'
 import { PromoCard } from '@/components/mdx/promo-card'
 import type { PromoCardProps } from '@/components/mdx/promo-card'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
@@ -83,6 +86,18 @@ const CompareTable = dynamic(() =>
 )
 const CompareRow = dynamic(() =>
 	import('@/components/mdx/compare-table').then((mod) => mod.CompareRow),
+)
+// `Comparison` is not a variant of `CompareTable`: that one is a children-based
+// before/after narrative, this one is the redesign's structured attribute table
+// that restructures itself below 900px. Both stay registered.
+const Comparison = dynamic(() =>
+	import('@/components/mdx/comparison').then((mod) => mod.Comparison),
+)
+const Contrast = dynamic(() =>
+	import('@/components/mdx/contrast').then((mod) => mod.Contrast),
+)
+const CommandCard = dynamic(() =>
+	import('@/components/mdx/command-card').then((mod) => mod.CommandCard),
 )
 const Callout = dynamic(() =>
 	import('@/components/mdx/callout').then((mod) => mod.Callout),
@@ -410,7 +425,49 @@ async function compileMDXInternal(
 					Button: ({ children, ...props }) => (
 						<Button {...props}>{children}</Button>
 					),
-					hr: () => <hr className="bg-stripes my-1 h-2 w-full border-none" />,
+					// Article prose. These elements used to fall through to
+					// @tailwindcss/typography, which meant none of the redesign's
+					// prose rules applied anywhere on the site. The rules themselves
+					// live in `globals.css` as `.ah-*` classes (see the ARTICLE PROSE
+					// block there for why they are CSS and not utility strings);
+					// Typography still owns code blocks and tables inside the same
+					// wrapper.
+					// `cn` merges rather than replaces: remark-gfm tags checkbox
+					// lists with `contains-task-list`, and dropping it would put a
+					// bullet in front of every checkbox.
+					p: (props) => (
+						<p {...props} className={cn('ah-prose-p', props.className)} />
+					),
+					strong: (props) => (
+						<strong
+							{...props}
+							className={cn('ah-prose-strong', props.className)}
+						/>
+					),
+					em: (props) => (
+						<em {...props} className={cn('ah-prose-em', props.className)} />
+					),
+					ul: (props) => (
+						<ul {...props} className={cn('ah-bullets', props.className)} />
+					),
+					ol: (props) => (
+						<ol {...props} className={cn('ah-numbers', props.className)} />
+					),
+					// Fenced code is CodeHike's `<Code>`, so this only ever sees
+					// inline spans.
+					code: (props) => (
+						<code
+							{...props}
+							className={cn('ah-code-inline', props.className)}
+						/>
+					),
+					blockquote: (props) => (
+						<blockquote
+							{...props}
+							className={cn('ah-prose-quote', props.className)}
+						/>
+					),
+					hr: () => <hr className="ah-prose-hr" />,
 					Testimonial: ({
 						children,
 						authorName,
@@ -460,7 +517,12 @@ async function compileMDXInternal(
 						}
 
 						return (
-							<a href={href} title={title} {...props}>
+							<a
+								href={href}
+								title={title}
+								{...props}
+								className={cn('ah-prose-a', props.className)}
+							>
 								{children}
 							</a>
 						)
@@ -480,6 +542,9 @@ async function compileMDXInternal(
 					CompareRow: ({ before, after }) => (
 						<CompareRow before={before} after={after} />
 					),
+					Comparison: (props: ComparisonProps) => <Comparison {...props} />,
+					Contrast: (props: ContrastProps) => <Contrast {...props} />,
+					CommandCard: (props: CommandCardProps) => <CommandCard {...props} />,
 					Callout: ({ children, icon, className, intent }) => (
 						<Callout icon={icon} className={className} intent={intent}>
 							{children}

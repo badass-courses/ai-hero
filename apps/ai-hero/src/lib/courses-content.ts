@@ -11,29 +11,63 @@
  * roadmap was cut per Vojta: "great design work on currently existing
  * content". Testimonials are real cohort-student quotes Matt collected in
  * the [aih] Testimonial threads (first names only).
+ *
+ * v3 (2026-07-28): re-cut for the redesign's direction `1a` (the "spec
+ * sheet"). The flagship stopped being a block *under* a masthead and became
+ * the hero itself, so the masthead's copy is gone and the cohort's slogan is
+ * now the page `h1`. The bookend newsletter is gone too: the hero's waitlist
+ * form is the same Kit form making the same ask, and asking twice on a page
+ * whose whole argument is one offer was the old order's tell.
  */
 
-export const COURSES_HERO = {
-	eyebrow: 'Courses',
-	title: 'Learn with Matt',
-	intro:
-		'You can already code. The gap is getting an agent to write code you would put your name on. These courses teach the workflow Matt uses every day: real engineering with agents, not vibe coding.',
+/**
+ * The hero's left cell. `pitchLead` and `pitchTail` bracket the product name
+ * so the one place it is emphasised in prose stays live data rather than a
+ * string that quietly goes stale when the cohort is renamed.
+ */
+export const FLAGSHIP_HERO = {
+	eyebrow: 'The flagship cohort · semi-live',
+	headline: 'Stop babysitting your agent. Start engineering with it.',
+	pitchLead:
+		'You can already code. The gap is getting an agent to write code you would put your name on.',
+	pitchTail:
+		'teaches the workflow Matt uses every day: real engineering with agents, not vibe coding.',
+	/** The hairline fact row under the pitch. */
+	trainedLabel: 'Engineers trained',
+	formatLabel: 'Format',
+	formatValue: 'Async lessons + live office hours',
+	datesLabel: 'Next dates',
+	datesWaitlistValue: 'Announced to the list first',
 } as const
 
-export const FLAGSHIP_SECTION = {
-	eyebrow: 'The flagship cohort',
-	heading: 'Stop babysitting your agent. Start engineering with it.',
-	strapline:
-		'AI Coding for Real Engineers is a semi-live cohort: async lessons and exercises you run on your own schedule, plus live office hours with Matt when you want a human.',
-} as const
-
+/** The hero's right cell, between cohorts: the waitlist capture. */
 export const FLAGSHIP_WAITLIST = {
+	/** Anchor for every "join the list" link on the site. */
+	anchorId: 'join',
 	badge: 'Waitlist open',
+	heading: 'Get the dates first',
 	description:
-		'Enrollment is closed between cohorts, and seats go to the waitlist first. Join it and you get the dates the moment they are set, with everything you need to get budget approved.',
+		'Enrollment closes between cohorts and seats go to the waitlist. Join and you get the dates the moment they are set, plus what you need for budget approval.',
+	actionLabel: 'Join the waitlist',
+	note: 'No spam. Unsubscribe anytime.',
 } as const
 
-/** Objection-defusing facts — every line is the canonical support answer. */
+/** The same cell while a cohort is actually purchasable. */
+export const FLAGSHIP_ENROLLING = {
+	badge: 'Enrollment open',
+	heading: 'Seats are open',
+	description:
+		'A semi-live cohort: async lessons and exercises you run on your own schedule, plus live office hours with Matt when you want a human.',
+	ctaLabel: 'See the cohort',
+} as const
+
+export const COURSES_DETAILS_EYEBROW = "What you're signing up for"
+
+/**
+ * Objection-defusing facts — every line is the canonical support answer.
+ * Ordered as the design reads them: cost in hours, then the two anxieties
+ * (timezone, pace), then the reassurance that closes.
+ */
 export const FLAGSHIP_FACTS = [
 	{
 		label: 'Fits a full-time job',
@@ -44,12 +78,12 @@ export const FLAGSHIP_FACTS = [
 		body: 'Office hours run in morning and evening slots, and every session is recorded with transcripts. Send questions ahead if you cannot make it live.',
 	},
 	{
-		label: 'Yours to keep',
-		body: 'Lessons, exercises, the course repo, recordings, transcripts. All of it stays yours after the cohort ends.',
-	},
-	{
 		label: 'Your pace is fine',
 		body: 'Most people finish inside the cohort window. Plenty stretch it over 4 to 8 weeks instead. Both work.',
+	},
+	{
+		label: 'Yours to keep',
+		body: 'Lessons, exercises, the course repo, recordings, transcripts. All of it stays yours after the cohort ends.',
 	},
 ] as const
 
@@ -58,20 +92,6 @@ export const FLAGSHIP_TEAM = {
 	body: 'Team seats, bulk discounts, invoicing and procurement: all handled. Start with a single seat if you need to convince your engineering director first.',
 	linkLabel: 'See team options',
 	href: '/for-your-team',
-} as const
-
-/**
- * Copy for the stat band welded under the flagship row. Values render live
- * (alumni count from cohort-stats.ts, enrollment state from the page fetch).
- */
-export const FLAGSHIP_STATS = {
-	trainedLabel: 'Engineers trained',
-	trainedSub: 'Across every cohort so far',
-	enrollmentLabel: 'Enrollment',
-	openValue: 'Open now',
-	openSub: 'Dates and price on the cohort page',
-	waitlistValue: 'Waitlist open',
-	waitlistSub: 'The list gets the dates first',
 } as const
 
 export const COURSES_TESTIMONIALS_EYEBROW = 'From past cohorts'
@@ -122,24 +142,56 @@ export const COURSES_TESTIMONIALS = [
 ] as const
 
 /**
- * The crash course pre-launch row. The workshop (`ai-coding-crash-course`) is
- * draft + unlisted on purpose: its page is a public interest-capture landing
- * with its own "Join Waitlist" Kit form, so the row clicks straight through
- * to that list. Image is fetched live from the workshop resource in page.tsx.
+ * The crash course. The workshop (`ai-coding-crash-course`) is draft +
+ * unlisted on purpose: its page is a public interest-capture landing with its
+ * own "Join Waitlist" Kit form, so its card clicks straight through to that
+ * list. Image is fetched live from the workshop resource in page.tsx.
+ *
+ * It used to have a "Coming next" section to itself. It does not need one: a
+ * course that has not shipped announced above the fold of its own section had
+ * more of the page than the course you can buy today.
  */
 export const COURSES_COMING_NEXT = {
-	eyebrow: 'Coming next',
 	title: 'AI Coding Crash Course',
 	slug: 'ai-coding-crash-course',
-	typeLabel: 'Self-paced course · In production',
 	badge: 'Waitlist open',
 	description:
 		'Matt is recording a self-paced AI coding course you can start any day, no cohort dates required. Join the waitlist and you hear the moment it ships.',
 } as const
 
-export const COURSES_NEWSLETTER = {
-	anchorId: 'join',
-	title: 'Be first in line when enrollment opens',
-	byline:
-		'Cohort dates, new course launches, and Matt’s AI coding letters. No spam, unsubscribe anytime.',
+/**
+ * Everything that is not the cohort, as one grid. Badges are the honest
+ * status of each thing rather than a uniform label: one is not built yet, one
+ * costs money, one is free, and flattening that difference is what a "browse
+ * our catalog" grid usually gets wrong.
+ *
+ * `image` values are the same committed Cloudinary assets the nav menu uses
+ * (`use-nav-links.tsx`); the crash course's is fetched live because its
+ * resource is the one that still changes.
+ */
+export const COURSES_CATALOG = {
+	eyebrow: 'Everything else Matt teaches',
+	note: 'self-paced, start any day',
+	items: [
+		{
+			title: 'AI SDK v6 Crash Course',
+			href: '/workshops/ai-sdk-v6-crash-course',
+			description:
+				"Ship your first production agent with Vercel's AI SDK. 94 videos, 59 exercises, 10 modules.",
+			badge: 'Available now',
+			badgeTone: 'neutral',
+			image:
+				'https://res.cloudinary.com/total-typescript/image/upload/v1769629206/v6imageforproduct.png',
+		},
+		{
+			title: 'LLM Fundamentals',
+			href: '/llm-fundamentals',
+			description:
+				'The mental model under everything else: tokens, context windows, evals.',
+			badge: 'Free',
+			badgeTone: 'neutral',
+			image:
+				'https://res.cloudinary.com/total-typescript/image/upload/v1759305215/llm-fundamentals-thumbnail_2x.jpg',
+		},
+	],
 } as const

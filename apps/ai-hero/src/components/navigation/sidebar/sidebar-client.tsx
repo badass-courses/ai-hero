@@ -16,6 +16,7 @@ import {
 	SidebarGroupLabel,
 	SidebarMenuButton,
 } from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 import {
 	Collapsible,
@@ -23,7 +24,12 @@ import {
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
 import { NAV_ICONS } from './nav-icons'
-import { rowIndent, SidebarDepth, useSidebarDepth } from './sidebar-indent'
+import {
+	rowIndent,
+	SIDEBAR_ROW_CLASS,
+	SidebarDepth,
+	useSidebarDepth,
+} from './sidebar-indent'
 import { SeriesLessons } from './series-lessons'
 
 /** Strip query/hash + trailing slash, lowercase; '' → '/'. */
@@ -82,7 +88,23 @@ export function SidebarNavLink({
 				isActive={isCurrentList ? false : isActive}
 				// Links read as the secondary tier: muted, regular weight. Left
 				// indent comes from nesting depth (rowIndent), not ad-hoc pl-*.
-				className="text-muted-foreground h-auto py-2 pr-2 text-sm font-normal"
+				//
+				// The active row is one of the three states the spec inverts between
+				// themes (DESIGN rule 8): a gold wash with gold type in dark, a SOLID
+				// ink fill with paper type in light. It can't come from
+				// `--sidebar-accent`, because the primitive uses that same token for
+				// hover — an ink-filled hover would light up every row the pointer
+				// crosses. So the active fill is stated here and beats the
+				// primitive's `data-[active=true]:bg-sidebar-accent` by order.
+				className={cn(
+					SIDEBAR_ROW_CLASS,
+					isActive &&
+						!isCurrentList && [
+							'font-medium',
+							'data-[active=true]:bg-foreground data-[active=true]:text-background',
+							'dark:data-[active=true]:bg-accent-fill/10 dark:data-[active=true]:text-primary',
+						],
+				)}
 				style={rowIndent(depth)}
 			>
 				<Link
@@ -104,7 +126,7 @@ export function SidebarNavLink({
 					{/* Expanded current-list link reads as a group header — disclosure
 					    chevron on the RIGHT (pointing down = expanded). */}
 					{isCurrentList ? (
-						<ChevronRight className="text-muted-foreground ml-auto size-3.5 shrink-0 rotate-90" />
+						<ChevronRight className="ml-auto size-3.5 shrink-0 rotate-90 text-[color:var(--ah-fg-faint)]" />
 					) : null}
 					{muted && !isCurrentList ? (
 						/* "All →" style link: an inline arrow, a small child action. */
@@ -276,23 +298,29 @@ export function SidebarSection({
 						// Item-like when collapsed, bold when open. Same row indent as
 						// sibling items; the disclosure chevron sits on the RIGHT
 						// (2026-07-14 — unified across all sidebar disclosure rows).
-						className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-auto gap-1.5 py-2 pr-2 text-sm font-normal transition-colors data-[state=open]:text-sidebar-foreground"
+						className={cn(
+							SIDEBAR_ROW_CLASS,
+							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors data-[state=open]:text-sidebar-foreground',
+						)}
 						style={rowIndent(depth)}
 					>
+						{/* `gap-[9px]` restated on the child: `SidebarGroupLabel asChild`
+						    slots onto this button, and Radix lets the CHILD's className
+						    win — a `gap-2` here would silently beat the row metric. */}
 						<button
 							type="button"
-							className="flex w-full cursor-pointer select-none items-center gap-2"
+							className="flex w-full cursor-pointer select-none items-center gap-[9px]"
 							aria-label={`Toggle ${typeof title === 'string' ? title : 'this'} section`}
 						>
 							{IconFor(iconHref)}
 							<span>{title}</span>
-							<ChevronRight className="text-muted-foreground ml-auto size-3.5 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+							<ChevronRight className="ml-auto size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform group-data-[state=open]/collapsible:rotate-90" />
 						</button>
 					</SidebarGroupLabel>
 				</CollapsibleTrigger>
-				{/* mt-1 matches SidebarMenu's gap-1 so an open section's first row
-				    never touches the (highlighted) trigger above it. */}
-				<CollapsibleContent className="mt-1 overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+				{/* mt-px matches the menus' gap-px, so an open section's first row
+				    sits on the same 1px rhythm as every other row boundary. */}
+				<CollapsibleContent className="mt-px overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
 					<SidebarDepth>
 						<SidebarGroupContent>{children}</SidebarGroupContent>
 					</SidebarDepth>

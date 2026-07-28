@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function PrinciplesPage() {
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<ComingSoon
 					label="Principles"

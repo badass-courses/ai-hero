@@ -4,38 +4,44 @@
   the DB at runtime. Kept in sync for diffing and review only. After editing
   here, PUT the body to the CMS (docs/landing-mdx-components.md §API).
 
-  PLACEHOLDER copy is marked inline. Blocked on Matt/Amy: both testimonial
-  divider quotes, and whether the three parked resource rows below keep a
-  homepage placement.
+  COPY UPDATED against `AI Hero Courses Redesign/Home Page.dc.html`. Needs
+  Matt's sign-off before it goes to the CMS. The two moves that change what the
+  page argues:
+
+  1. The manifesto's line is now the HERO headline ("Engineering fundamentals
+     aren't obsolete"), so the page leads with the claim instead of burying it
+     three sections down.
+  2. The manifesto opens on the cost ("Bad code is now the most expensive it
+     has ever been"), which is the sentence the rest of the section proves.
+
+  Em dashes from the prototype are commas here (DESIGN.md § Bans).
 */}
 
 <Hero
-	h1="**Real Engineering**<br />with AI"
-	h2="Engineering fundamentals aren't obsolete. They're essential."
+	h1="Engineering fundamentals aren't obsolete."
+	h2="They're your biggest advantage. AI Hero is the engineering process for working with coding agents, from an idea to shipped, reviewed code."
 />
 
-<Manifesto headline="Engineering fundamentals are your biggest advantage.">
+<Manifesto headline="Bad code is now the most expensive it has ever been.">
 
-A lot of people think the rules of software development are being rewritten by AI. They think that code is cheap. That software engineering, as a profession, is finished.
+A lot of people think the rules of software development are being rewritten by AI. They think that code is cheap. That software engineering, as a discipline, is finished.
 
 Coding agents like Claude Code and Codex ship code faster than any human ever has. But without careful guidance, they make codebases worse. And the worse the codebase, the worse the AI performs. It's a vicious circle.
 
-Code isn't cheap. In fact, bad code is the most expensive it's ever been. If you can design codebases agents love, you can reap the rewards of this new era.
-
-Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone who cares about the code they ship.
+If you can design codebases agents love, you can reap the rewards of this new era. AI Hero is for anyone who cares about the code they ship.
 
 </Manifesto>
 
 <SkillsShowcase
-	heading="Level up your coding practice with Real AI Engineering"
-	intro="I've built an engineering process for working with AI coding agents, from grilling an idea to shipping reviewed code. Every skill here is free, installs in one command, and you can use it today."
+	heading="A real engineering process, as installable skills"
+	intro="Every skill here is free, installs in one command, and you can use it today. Start anywhere. Most people start with the main flow."
 />
 
 {/*
   Wireframe § ⑤ wants an "updated skills overview" here, NOT the roadmap (the
-  roadmap already appears in the topics grid below, and Amy's slot is about the
-  skills workflow the section just explained). Her note: "Matt should create an
-  updated version of '5 Agent Skills I Use Every Day' — the current one is
+  roadmap already appears in the activity ladder below, and Amy's slot is about
+  the skills workflow the section just explained). Her note: "Matt should create
+  an updated version of '5 Agent Skills I Use Every Day' — the current one is
   outdated." Pointing at that post until the refreshed one exists.
 */}
 
@@ -46,22 +52,6 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 <Resource slugOrId="model-context-protocol-tutorial" />
 */}
 
-
-<SplitRow>
-
-<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Start with the free 7-day email course: one lesson a day, tried on real work, and a repeatable agent workflow at the end."><CourseCta /></NewsletterSection>
-
-<TestimonialDivider
-	compact
-	authorName="Mario Zechner — creator of Pi"
-	authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/mario-zechner.jpg"
->
-
-Matt Pocock is a true educator and I admire how he brings structure to this mess we are in.
-
-</TestimonialDivider>
-
-</SplitRow>
 {/*
   Rungs are four of the hub sidebar's own topic groups, in the sidebar's order
   (`hub-sidebar-fallback.ts`) — that ordering is already a curriculum arc, so
@@ -76,12 +66,12 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
   almost entirely skills, which the section above already covers, and "Score
   First Wins" is three posts that all appear elsewhere on this page.
 
-  Picks avoid the "My latest posts" grid below, so nothing appears twice.
+  Picks avoid the "Latest posts" grid below, so nothing appears twice.
 */}
 
 <ActivityLadder
 	heading="What do you want to do?"
-	intro="Start where you are. Most developers find the gap is further back than they expected."
+	intro="Most developers find the gap is further back than they expected. Pick the honest one."
 	ctaHref="/learn"
 	ctaLabel="See the full map"
 >
@@ -128,25 +118,36 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 </ActivityLadder>
 
 {/*
-  DELIBERATELY CLIPPED, and confirmed. The full tweet frames Matt as tracking
-  every model release, which Alex flagged and Matt agreed was not how he sees
-  himself ("[aih] Banger testimonial from high-trust dev", Jun 24); the agreed
-  use is this line alone. Do NOT "restore" the full quote.
-  Source: x.com/shadcn/status/2069746957292130319.
+  The shadcn quote is DELIBERATELY CLIPPED, and confirmed. The full tweet
+  frames Matt as tracking every model release, which Alex flagged and Matt
+  agreed was not how he sees himself ("[aih] Banger testimonial from high-trust
+  dev", Jun 24); the agreed use is this line alone. Do NOT "restore" the full
+  quote. Source: x.com/shadcn/status/2069746957292130319.
+
+  All three quotes now sit in one PROOF block rather than being spent one at a
+  time down the page — three recognisable names read together are an argument,
+  the same three a screenful apart are decoration.
 */}
 
-<TestimonialDivider
-	authorName="shadcn — creator of shadcn/ui"
-	authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/shadcn.jpg"
->
+<ProofGrid>
 
+<ProofQuote authorName="Guillermo Rauch" authorTitle="Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
+Matt is one of the best developer educators in the world.
+</ProofQuote>
+
+<ProofQuote authorName="shadcn" authorTitle="Creator of shadcn/ui" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/shadcn.jpg">
 Every company needs its own Matt Pocock.
+</ProofQuote>
 
-</TestimonialDivider>
+<ProofQuote authorName="Mario Zechner" authorTitle="Creator of Pi" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/mario-zechner.jpg">
+Matt Pocock is a true educator and I admire how he brings structure to this mess we are in.
+</ProofQuote>
+
+</ProofGrid>
 
 <UpcomingCohort />
 
-<SectionHeader heading="My latest posts/videos" linkHref="/posts" linkLabel="See more in my blog" />
+<SectionHeader eyebrow="Published recently" heading="Latest posts and videos" linkHref="/posts" linkLabel="See more in the blog" />
 
 <ResourceGrid>
 	<Resource slugOrId="skills-changelog-ubiquitous-language-grill-with-docs" variant="card" />
@@ -157,19 +158,19 @@ Every company needs its own Matt Pocock.
 	<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="card" />
 </ResourceGrid>
 
-<NewsletterSection compact heading={<>Get the next one with <SubscriberCount /> developers</>} subTitle="New posts and skills as I publish them."><NewsletterCta /></NewsletterSection>
+{/*
+  ONE newsletter on the page, and it lives here (`Home Page.dc.html` § MATT +
+  NEWSLETTER). The mid-page block and the slim end-of-page strip are both
+  gone: they made the same ask twice, at two volumes, neither of them next to
+  the person making it.
+*/}
 
-<Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
+<AboutMatt
+	headline="Hi, I'm Matt Pocock"
+	newsletter={<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Start with the free 7-day email course: one lesson a day, tied to real work, with a repeatable agent workflow at the end."><CourseCta /></NewsletterSection>}
+>
 
-Matt is one of the best developer educators in the world.
-
-</Testimonial>
-
-<AboutMatt headline="Hi, I'm Matt Pocock">
-
-Before creating AI Hero, I created Total TypeScript - the industry standard course for learning TS.
-
-I was a member of the XState core team, and was a developer advocate at Vercel.
+Before creating AI Hero, I created Total TypeScript, the industry standard course for learning TS. I was a member of the XState core team, and a developer advocate at Vercel.
 
 I'm building AI Hero to make the secrets of the AI Engineer available to everyone.
 

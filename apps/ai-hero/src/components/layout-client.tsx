@@ -9,6 +9,11 @@ import Footer from './navigation/footer'
 
 /**
  * Client-side layout component that handles container styling and side patterns
+ *
+ * `withFooter={false}` is how a page opts out of the shell's own footer. Hub
+ * pages do exactly that and let `HubLayout` render the footer inside the
+ * sidebar grid's content column instead, so the sidebar's border runs the full
+ * height of the page rather than stopping above the footer.
  */
 export default function LayoutClient({
 	children,
@@ -31,7 +36,10 @@ export default function LayoutClient({
 				'',
 				!withNavigation && '[--nav-height:0px]',
 				{
-					'relative mx-auto w-full max-w-[1200px] px-2 sm:px-2': withContainer,
+					// The redesign's shell is 1440px wide — that is the *bordered*
+					// box, so the wrapper caps at 1440 + 2×8px of page-background
+					// gutter and the `border-x` below lands exactly on 1440.
+					'relative mx-auto w-full max-w-[1456px] px-2': withContainer,
 				},
 				className,
 			)}

@@ -1,12 +1,26 @@
 import * as React from 'react'
 import Link from 'next/link'
+import { TYPE } from '@/components/landing/type'
 import { getRepoStarCount } from '@/lib/github-stars-query'
-import { ArrowUpRight, Github, Star } from 'lucide-react'
+import { SKILLS_HERO, SKILLS_REPO_URL } from '@/lib/skills-content'
+import { Star } from 'lucide-react'
 
-const REPO_OWNER = 'mattpocock'
-const REPO_NAME = 'skills'
-const REPO_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}`
+import { cn } from '@coursebuilder/utils/cn'
 
+import { InstallCommand } from './install-command'
+
+/**
+ * GET THE SKILLS (`Skills Page.dc.html` § GET THE SKILLS).
+ *
+ * The page's closing ask: the same command as the head, restated where a
+ * reader who has just finished the catalog is standing, with the repo under
+ * it. Two equal columns, because the sentence and the command are peers here
+ * (DESIGN rule 4 covers editorial splits; this is a claim and its control).
+ *
+ * The previous version spent a full section on the star count set at 60px,
+ * which is the hero-metric template DESIGN bans. The number now appears once
+ * in the head's fact row and once, small, on the repo badge.
+ */
 export async function SkillsGitHubSection({
 	stars: starsProp,
 }: {
@@ -19,57 +33,79 @@ export async function SkillsGitHubSection({
 	const stars =
 		starsProp !== undefined
 			? starsProp
-			: await getRepoStarCount(REPO_OWNER, REPO_NAME)
+			: await getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName)
 
 	return (
-		<section aria-labelledby="skills-github-heading">
-			<div className="flex flex-col items-center gap-6 px-8 py-20 sm:px-16 md:py-24">
-				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-					Open source
-				</span>
-				{stars !== null && (
-					<div
-						aria-label={`${stars.toLocaleString('en-US')} stars on GitHub`}
-						className="flex items-center gap-3"
+		<section
+			aria-labelledby="skills-install-heading"
+			className="border-border border-b bg-[color:var(--ah-band)]"
+		>
+			<div className="grid max-w-[1000px] grid-cols-1 gap-8 px-8 pb-[50px] pt-12 sm:px-11 lg:grid-cols-[repeat(2,minmax(0,1fr))] lg:items-center lg:gap-11">
+				<div className="min-w-0">
+					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
+						How to get the skills
+					</p>
+					<h2
+						id="skills-install-heading"
+						className={cn(TYPE.heading, 'mb-3 mt-3.5 text-balance')}
 					>
-						<Star
-							aria-hidden
-							className="text-primary h-7 w-7 fill-current sm:h-8 sm:w-8"
-						/>
-						<span className="font-mono text-5xl font-semibold tracking-tight sm:text-6xl">
-							{stars.toLocaleString('en-US')}
-						</span>
-					</div>
-				)}
-				<h2
-					id="skills-github-heading"
-					className="text-balance text-center font-sans text-2xl font-medium leading-tight tracking-tight sm:text-3xl"
-				>
+						One command, then get to work
+					</h2>
+					<p
+						className={cn(
+							TYPE.body,
+							'max-w-[46ch] text-pretty text-[color:var(--ah-fg-muted)]',
+						)}
+					>
+						Run it once, then type a slash command in your coding agent.
+						Everything is MIT licensed and lives in one repo.
+					</p>
+				</div>
+				<div className="min-w-0">
+					<InstallCommand
+						command={SKILLS_HERO.installCommand}
+						className="mb-3"
+					/>
 					<Link
-						href={REPO_URL}
+						href={SKILLS_REPO_URL}
 						target="_blank"
 						rel="noopener noreferrer"
-						className="font-mono underline-offset-4 hover:underline"
+						aria-label={
+							stars !== null
+								? `View ${SKILLS_HERO.repoOwner}/${SKILLS_HERO.repoName} on GitHub, ${stars.toLocaleString('en-US')} stars`
+								: `View ${SKILLS_HERO.repoOwner}/${SKILLS_HERO.repoName} on GitHub`
+						}
+						className="border-input bg-background hover:border-foreground/25 focus-visible:ring-ring flex items-center gap-2.5 rounded-[9px] border px-4 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 					>
-						{REPO_OWNER}/{REPO_NAME}
+						{stars !== null ? (
+							<>
+								<Star
+									aria-hidden
+									className="text-primary size-3.5 shrink-0 fill-current"
+								/>
+								<span className={cn(TYPE.metaMono, 'font-medium')}>
+									{stars.toLocaleString('en-US')}
+								</span>
+							</>
+						) : null}
+						<span
+							className={cn(
+								TYPE.metaMono,
+								'min-w-0 truncate text-[color:var(--ah-fg-subtle)]',
+							)}
+						>
+							{SKILLS_HERO.repoOwner}/{SKILLS_HERO.repoName}
+						</span>
+						<span
+							className={cn(
+								TYPE.metaSm,
+								'ml-auto whitespace-nowrap text-[color:var(--ah-fg-subtle)]',
+							)}
+						>
+							View on GitHub →
+						</span>
 					</Link>
-				</h2>
-				<p className="text-muted-foreground max-w-xl text-balance text-center text-base sm:text-lg">
-					Skills for Real Engineers. Straight from my .claude directory.
-				</p>
-				<Link
-					href={REPO_URL}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="border-border hover:bg-muted group inline-flex items-center gap-2 rounded-full border px-6 py-3 font-mono text-sm font-semibold uppercase tracking-wider transition-colors"
-				>
-					<Github aria-hidden className="size-4" />
-					<span>View on GitHub</span>
-					<ArrowUpRight
-						aria-hidden
-						className="size-4 transition-transform duration-200 ease-out group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-					/>
-				</Link>
+				</div>
 			</div>
 		</section>
 	)

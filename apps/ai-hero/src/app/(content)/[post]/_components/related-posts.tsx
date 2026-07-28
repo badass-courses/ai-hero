@@ -1,16 +1,13 @@
-import * as React from 'react'
-import Link from 'next/link'
 import { getCachedListForPost } from '@/lib/lists-query'
 import { getCachedPost } from '@/lib/posts-query'
 import { getNearestNeighbour } from '@/lib/typesense-query'
-import { ResourceHoverFrame } from '@/components/resource-hover-frame'
-import { ArrowRight } from 'lucide-react'
 import readingTime from 'reading-time'
 
-import { cn } from '@coursebuilder/utils/cn'
-
 /**
- * W1 §1.3 — cross-promo "related posts" block rendered below an article body.
+ * W1 §1.3 — the cross-promo "related posts" data for the end of a post. The
+ * rows themselves are drawn by `post-related-newsletter.tsx`, which pairs them
+ * with the newsletter in one hairline grid; this file only resolves what goes
+ * in them.
  *
  * Two content strategies:
  * - 'section'   (Option A, "More in {sectionTitle}") — siblings from the post's
@@ -33,12 +30,12 @@ export type RelatedPostsProps = {
 	className?: string
 }
 
-/** Normalized item shape consumed by the card, from either data source. */
-type RelatedPostItem = {
+/** Normalized item shape consumed by the row, from either data source. */
+export type RelatedPostItem = {
 	id: string
 	title: string
 	slug: string
-	/** derived from post.fields.postType, e.g. "Skill post", "Tutorial" */
+	/** derived from post.fields.postType, e.g. "Skill post", "Article" */
 	typeLabel: string
 	readTimeMinutes?: number
 	/**
@@ -54,15 +51,18 @@ const MAX_ITEMS = 2
 
 /**
  * Human label for the card eyebrow, derived from `fields.postType`.
- * "Tutorial" maps from the 'article' postType (the wireframe's long-form label);
- * "Skill post" maps from 'skill'.
+ *
+ * 'article' reads as "Article", not "Tutorial". An earlier wireframe used
+ * "Tutorial" as its long-form label, but the CMS applies `article` to ordinary
+ * posts, so the eyebrow was calling essays and news posts tutorials. The
+ * prototype's related rows say "Article · 7 min read".
  */
 function typeLabelForPostType(postType?: string | null): string {
 	switch (postType) {
 		case 'skill':
 			return 'Skill post'
 		case 'article':
-			return 'Tutorial'
+			return 'Article'
 		case 'podcast':
 			return 'Podcast'
 		case 'tip':
@@ -73,6 +73,10 @@ function typeLabelForPostType(postType?: string | null): string {
 			return 'Playlist'
 		case 'skill-changelog':
 			return 'Changelog'
+		// The CMS's generic type. "Post" is the database's word for it; a reader
+		// scanning a related row reads "Article".
+		case 'post':
+			return 'Article'
 		default:
 			if (!postType) return 'Article'
 			return postType.charAt(0).toUpperCase() + postType.slice(1)
@@ -206,110 +210,49 @@ async function resolveSuggested(
 }
 
 /**
- * Eyebrow suffix after the type label. A lesson count wins when we have one; a
- * tutorial shows nothing rather than a read time, since the number that matters
- * for a collection is its lesson count, not how long its intro takes to read.
+ * Eyebrow suffix after the type label. A lesson count wins when we have one,
+ * because for a collection that is the number that matters rather than how long
+ * its intro takes to read. Otherwise a read time, when the item has one.
  */
 function metaSuffix(item: RelatedPostItem): string {
 	if (item.lessonCount) {
 		return ` · ${item.lessonCount} ${item.lessonCount === 1 ? 'lesson' : 'lessons'}`
 	}
-	if (item.typeLabel === 'Tutorial') return ''
 	return item.readTimeMinutes ? ` · ${item.readTimeMinutes} min read` : ''
 }
 
-function RelatedPostCard({ item }: { item: RelatedPostItem }) {
-	return (
-		// `group/resource` + `relative` are what ResourceHoverFrame anchors to, so
-		// this card gets the same signature gradient frame as the Up Next card
-		// (DESIGN.md rule 13) instead of its own bespoke bg-muted hover.
-		<Link
-			href={`/${item.slug}`}
-			className="group/resource group bg-card focus-visible:ring-ring relative flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-		>
-			<ResourceHoverFrame
-				surfaceClassName="bg-card"
-				className="flex h-full flex-col gap-4 px-5 py-8 sm:px-8 sm:py-10"
-			>
-				<div className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-					{item.typeLabel}
-					{metaSuffix(item)}
-				</div>
-				<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
-					{item.title}
-				</h3>
-				<span className="text-muted-foreground group-hover:text-foreground mt-auto inline-flex items-center gap-1.5 pt-2 text-sm font-medium transition-colors">
-					Read more
-					<ArrowRight className="ease-[cubic-bezier(0.22,1,0.36,1)] size-4 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
-				</span>
-			</ResourceHoverFrame>
-		</Link>
-	)
+/**
+ * The eyebrow the redesign's related row wants: "Article · 7 min read", or the
+ * bare type label when the item carries no duration or lesson count. Never
+ * invents a number.
+ */
+export function relatedItemMeta(item: RelatedPostItem): string {
+	return `${item.typeLabel}${metaSuffix(item)}`
 }
 
-export async function RelatedPosts({
+/**
+ * The data half of `RelatedPosts`, without its old full-width section markup.
+ *
+ * The post page renders these rows as the left cell of the RELATED +
+ * NEWSLETTER grid (`post-related-newsletter.tsx`), so it needs the items, not a
+ * section. Same two strategies and the same silent 'section' → 'suggested'
+ * degradation as before.
+ */
+export async function resolveRelatedPostItems({
 	postId,
 	variant,
 	sectionTitle,
 	documentIdsToSkip,
-	className,
-}: RelatedPostsProps): Promise<React.JSX.Element | null> {
+}: RelatedPostsProps): Promise<{
+	heading: string
+	items: RelatedPostItem[]
+}> {
 	const skipIds = new Set([postId, ...(documentIdsToSkip ?? [])])
-
-	let heading: string
-	let items: RelatedPostItem[]
 
 	if (variant === 'section') {
 		const section = await resolveSection(postId, sectionTitle, skipIds)
-		if (section) {
-			;({ heading, items } = section)
-		} else {
-			// Fewer than 2 siblings (or no list): fall through to Option B so the
-			// block never renders sparse.
-			;({ heading, items } = await resolveSuggested(
-				postId,
-				new Set(documentIdsToSkip ?? []),
-			))
-		}
-	} else {
-		;({ heading, items } = await resolveSuggested(
-			postId,
-			new Set(documentIdsToSkip ?? []),
-		))
+		if (section) return section
 	}
 
-	if (items.length === 0) return null
-
-	// Keep the 2-up grid's trailing hairline clean when only one item survived.
-	const fillerCount = items.length % 2 === 0 ? 0 : 1
-
-	return (
-		// `border-t` only, never `border-y`. This is the last block on a post
-		// page, and the global footer already owns a `border-t` — a bottom rule
-		// here lands on exactly the same pixel row and renders as a 2px line
-		// (DESIGN rule 1: consecutive sections SHARE one hairline). Nothing above
-		// this section emits a bottom rule, so the top one is still ours to draw.
-		<section
-			aria-label={heading}
-			className={cn('bg-background border-t', className)}
-		>
-			<div className="px-5 pb-6 pt-10 sm:px-8 sm:pt-12">
-				<h2 className="text-balance text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">
-					{heading}
-				</h2>
-			</div>
-			<div className="border-border bg-border grid grid-cols-1 gap-px border-t sm:grid-cols-2">
-				{items.map((item) => (
-					<RelatedPostCard key={item.id} item={item} />
-				))}
-				{Array.from({ length: fillerCount }).map((_, i) => (
-					<div
-						key={`filler-${i}`}
-						aria-hidden
-						className="bg-background hidden sm:block"
-					/>
-				))}
-			</div>
-		</section>
-	)
+	return resolveSuggested(postId, new Set(documentIdsToSkip ?? []))
 }

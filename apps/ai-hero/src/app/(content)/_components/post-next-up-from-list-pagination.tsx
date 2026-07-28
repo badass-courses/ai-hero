@@ -11,25 +11,25 @@ import { useProgress } from '../[post]/_components/progress-provider'
 import Recommendations from '../[post]/_components/recommendations'
 import { PostUpNextCard } from './post-up-next-card'
 
+/**
+ * The centred "Up Next" card shown INSIDE the video overlay when a lesson
+ * finishes (`post-player.tsx`).
+ *
+ * The post page itself no longer uses this: its ending is the two-cell hairline
+ * pager (`post-up-next-pager.tsx`, § UP NEXT). An overlay floating over a paused
+ * video is the one place a centred card is still the right object, so this one
+ * stays as it was.
+ */
 export default function PostNextUpFromListPagination({
 	postId,
 	className,
 	documentIdsToSkip,
 	hideLoginPrompt,
-	relatedPosts,
 }: {
 	postId: string
 	className?: string
 	documentIdsToSkip?: string[]
 	hideLoginPrompt?: boolean
-	/**
-	 * W1 §1.3 — server-rendered `RelatedPosts` slot for eligible articles. When
-	 * provided it replaces the `Recommendations` fallback on the no-next-up
-	 * branch. Non-article posts pass nothing and keep `Recommendations`. Passed
-	 * as a prop because this is a Client Component and `RelatedPosts` is an async
-	 * Server Component that must be rendered by a server parent.
-	 */
-	relatedPosts?: React.ReactNode
 }) {
 	const router = useRouter()
 	const { list } = useList()
@@ -48,16 +48,12 @@ export default function PostNextUpFromListPagination({
 
 	if (!nextUp)
 		return (
-			<>
-				{relatedPosts ?? (
-					<Recommendations
-						postId={postId}
-						className={className}
-						documentIdsToSkip={documentIdsToSkip}
-						hideLoginPrompt={hideLoginPrompt}
-					/>
-				)}
-			</>
+			<Recommendations
+				postId={postId}
+				className={className}
+				documentIdsToSkip={documentIdsToSkip}
+				hideLoginPrompt={hideLoginPrompt}
+			/>
 		)
 
 	return nextUp?.resource && nextUp?.resource?.fields?.state === 'published' ? (
