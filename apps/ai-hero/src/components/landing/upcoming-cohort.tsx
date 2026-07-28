@@ -49,7 +49,7 @@ export async function UpcomingCohort({
 	return (
 		<section
 			aria-labelledby="cohort-heading"
-			className="border-border bg-muted/25 grid grid-cols-1 items-center border-b md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
+			className="border-border bg-muted/25 grid grid-cols-1 items-center border-b md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
 		>
 			<div className="flex flex-col justify-center gap-6 px-8 py-14 sm:px-16 md:py-20">
 				<div className="flex flex-col gap-4">
