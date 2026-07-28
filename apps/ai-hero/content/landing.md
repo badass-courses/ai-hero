@@ -26,8 +26,6 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 
 </Manifesto>
 
-<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
-
 <SkillsShowcase
 	heading="Level up your coding practice with Real AI Engineering"
 	intro="I've built an engineering process for working with AI coding agents, from grilling an idea to shipping reviewed code. Every skill here is free, installs in one command, and you can use it today."
@@ -42,16 +40,9 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 */}
 
 <Resource slugOrId="5-agent-skills-i-use-every-day" badge="Start here" />
-
-{/*
-  PARKED — the wireframe's section order lists only the "Start here" resource
-  here. These three kept a homepage slot in v1; whether they return, move into
-  the activity ladder, or drop is blocked on Matt/Amy. Restore by uncommenting.
-
-  <Resource slugOrId="llm-fundamentals" />
-  <Resource slugOrId="ai-sdk-v6-crash-course" />
-  <Resource slugOrId="model-context-protocol-tutorial" />
-*/}
+<Resource slugOrId="llm-fundamentals" />
+<Resource slugOrId="ai-sdk-v6-crash-course" />
+<Resource slugOrId="model-context-protocol-tutorial" />
 
 {/*
   Wording confirmed. Source: x.com/badlogicgames/status/2075329079931212197.
@@ -68,6 +59,10 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 Matt Pocock is a true educator and I admire how he brings structure to this mess we are in.
 
 </TestimonialDivider>
+
+
+<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
+
 
 <ActivityLadder intro="Start where you are. Most developers find the gap is further back than they expected." />
 

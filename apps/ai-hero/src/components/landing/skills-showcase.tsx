@@ -56,7 +56,7 @@ export async function SkillsShowcase({
 			    width rows every title sits on the same x and the pills get room to
 			    wrap. Hairlines between rows, which is a list (the site's own
 			    language), not six boxes. */}
-			<ul className="border-border bg-border flex flex-col gap-px border-y">
+			<ul className="border-border bg-border flex flex-col gap-px border-t">
 				{groups.map((group) => (
 					<li
 						key={group.id}

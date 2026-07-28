@@ -10,7 +10,7 @@ import { CldImage } from '@/components/cld-image'
  * body measure, a quote is indistinguishable from the centered intro
  * paragraphs it sits between. Four things make it read as testimony instead:
  *
- * 1. **Its own surface.** `bg-muted/30` between two `border-y` rules, so the
+ * 1. **Its own surface.** `bg-muted/30` closed by a `border-b`, so the
  *    band is visibly inset from the sections above and below rather than
  *    being more page. Laid out as a single short ROW (glyph · quote ·
  *    attribution) stacked tight and centred. Condensed, not tall: two of
@@ -47,7 +47,7 @@ export function TestimonialDivider({
 	const { name, title } = splitAttribution(authorName, authorTitle)
 
 	return (
-		<section className="border-border bg-muted/30 border-y">
+		<section className="border-border bg-muted/30 border-b">
 			<figure className="mx-auto flex max-w-3xl flex-col items-center gap-4 px-8 py-10 text-center sm:px-16">
 				<span
 					aria-hidden

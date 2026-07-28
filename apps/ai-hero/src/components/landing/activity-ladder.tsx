@@ -52,7 +52,7 @@ export async function ActivityLadder({
 			{/* Rows, hairline-separated (DESIGN rule 2), rather than three columns:
 			    the rungs are a sequence a reader walks down, and columns would set
 			    them side by side as equal alternatives to pick between. */}
-			<ul className="border-border bg-border flex flex-col gap-px border-y">
+			<ul className="border-border bg-border flex flex-col gap-px border-t">
 				{rungs.map((rung) => (
 					<li
 						key={rung.id}
@@ -77,22 +77,30 @@ export async function ActivityLadder({
 							</Link>
 						</div>
 
-						{/* Titles only. Descriptions here would triple the block's height
-						    for copy nobody reads at this depth; the title is what a
-						    reader scans and clicks. */}
-						<ul className="flex flex-col">
+						{/* Full-width link rows, not a bulleted list of titles. As plain
+						    text at body weight these read as prose the eye skips; a
+						    catalogue entry needs a type label, an edge, and a persistent
+						    arrow so it is obviously somewhere you can go. Padding is
+						    pulled out to the row so the hover fill spans the whole cell
+						    rather than hugging the text. */}
+						<ul className="border-border flex flex-col border-t md:-mt-2 md:border-t-0">
 							{rung.items.map((item) => (
-								<li key={item.slug}>
+								<li key={item.slug} className="border-border border-b">
 									<Link
 										href={item.href}
-										className="group border-border hover:bg-muted/50 focus-visible:ring-ring flex items-center gap-4 border-b py-3 text-base font-medium leading-snug transition-colors first:pt-0 last:border-b-0 last:pb-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+										className="group hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 									>
-										<span className="min-w-0 flex-1 text-balance">
-											{item.title}
+										<span className="flex min-w-0 flex-1 flex-col gap-1">
+											<span className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
+												{item.isVideo ? 'Video' : 'Article'}
+											</span>
+											<span className="text-balance text-base font-medium leading-snug decoration-current/30 underline-offset-4 group-hover:underline">
+												{item.title}
+											</span>
 										</span>
 										<ArrowRight
 											aria-hidden
-											className="text-muted-foreground group-hover:text-foreground ease-out-quart size-4 shrink-0 opacity-0 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
+											className="text-muted-foreground group-hover:text-foreground ease-out-quart size-4 shrink-0 transition-all duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 										/>
 									</Link>
 								</li>
@@ -111,7 +119,7 @@ type LoadedRung = {
 	question: string
 	moreHref: string
 	moreLabel: string
-	items: { slug: string; title: string; href: string }[]
+	items: { slug: string; title: string; href: string; isVideo: boolean }[]
 }
 
 /**
@@ -137,6 +145,7 @@ async function loadRungs(): Promise<LoadedRung[]> {
 				slug: item.slug,
 				title: item.title,
 				href: item.href,
+				isVideo: item.isVideo,
 			}))
 
 		if (items.length === 0) continue
