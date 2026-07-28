@@ -2,9 +2,11 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
+import { ResourceRow } from '@/components/landing/resource-row'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { env } from '@/env.mjs'
 import { type Post } from '@/lib/posts'
+import { getCachedGoalSectionItems, type ResolvedItem } from '@/lib/goal-sections-query'
 import { getCachedPostsByTag } from '@/lib/posts-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
 
@@ -53,6 +55,14 @@ export default async function TopicPage({ params }: Props) {
 	}
 
 	const posts = await getCachedPostsByTag(slug)
+	// Thumbnails, not just cover images. Most posts here are videos, and the
+	// by-tag query does not join videoResource — so on cover images alone one
+	// row in nine had artwork and the rest fell through to stripes. This
+	// resolver already derives mux and YouTube thumbnails and is cached on the
+	// same 'posts' tag; one batched call beats duplicating that derivation.
+	const resolved = await getCachedGoalSectionItems(
+		posts.map((post) => post.fields.slug),
+	)
 
 	return (
 		<LayoutClient withContainer>
@@ -76,10 +86,17 @@ export default async function TopicPage({ params }: Props) {
 
 					{posts.length > 0 ? (
 						<section aria-label={`Posts about ${tag.fields.label}`}>
-							<ul className="bg-border flex flex-col gap-px">
+							{/* No `gap-px` line layer here: `ResourceRow` draws its own
+							    collapsing `-mt-px border-y`, and a container hairline
+							    underneath it shows through the row's hover inset as a
+							    stray line across the gradient. */}
+							<ul className="flex flex-col">
 								{posts.map((post) => (
-									<li key={post.id} className="bg-background">
-										<TopicPostRow post={post} />
+									<li key={post.id}>
+										<TopicPostRow
+											post={post}
+											resolved={resolved.get(post.fields.slug)}
+										/>
 									</li>
 								))}
 							</ul>
@@ -99,20 +116,36 @@ export default async function TopicPage({ params }: Props) {
 	)
 }
 
-function TopicPostRow({ post }: { post: Post }) {
+/**
+ * Topic listing row — the landing page's `ResourceRow`, not a bespoke one.
+ *
+ * These were title-plus-description text blocks, which made a topic page a
+ * wall of prose with nothing to scan by. The landing rows already solve that
+ * (artwork, format label, the gradient hover), and a reader arriving here from
+ * the homepage should not meet a different listing idiom one click in.
+ *
+ * Posts with no cover image fall through to `bg-stripes`, the sanctioned empty
+ * image slot (DESIGN rule 6), so a row is never a flat grey box.
+ */
+function TopicPostRow({
+	post,
+	resolved,
+}: {
+	post: Post
+	resolved?: ResolvedItem
+}) {
+	const image = resolved?.thumbnailUrl || post.fields.coverImage?.url || undefined
+	const label = resolved?.isVideo ? 'Video' : 'Article'
+
 	return (
-		<Link
+		<ResourceRow
+			title={post.fields.title}
+			description={post.fields.description ?? undefined}
 			href={`/${post.fields.slug}`}
-			className="focus-visible:ring-ring group flex flex-col gap-3 px-8 py-8 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:px-16 md:py-10"
-		>
-			<h2 className="text-2xl font-semibold leading-tight tracking-tight text-balance group-hover:underline sm:text-3xl">
-				{post.fields.title}
-			</h2>
-			{post.fields.description ? (
-				<p className="max-w-[70ch] text-base leading-relaxed opacity-70">
-					{post.fields.description}
-				</p>
-			) : null}
-		</Link>
+			image={image}
+			typeLabel={label}
+			meta={resolved?.durationLabel}
+			fallbackPlaceholder={label}
+		/>
 	)
 }
