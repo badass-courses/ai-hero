@@ -103,11 +103,20 @@ export const GOAL_SECTIONS: GoalSection[] = [
 	},
 ]
 
-/** Flat anchor-list source for the non-sticky `MapToc` (spec §3.2). */
-export const TOC_ITEMS = GOAL_SECTIONS.map((g) => ({
-	id: g.id,
-	label: g.question,
-}))
+/**
+ * Flat anchor-list source for the non-sticky `MapToc` (spec §3.2).
+ *
+ * The goal sections plus "What's new" — which is a real, anchorable section of
+ * the Map with its own heading, and was the one destination on the page a
+ * reader could not jump to. It is appended rather than folded into
+ * `GOAL_SECTIONS` because it is not a goal: it has no strapline, no curated
+ * items, and must stay out of the Ask AIHero bot's boost set, all of which are
+ * derived from that list.
+ */
+export const TOC_ITEMS = [
+	...GOAL_SECTIONS.map((g) => ({ id: g.id, label: g.question })),
+	{ id: 'whats-new', label: "What's new?" },
+]
 
 /** Editorial empty-state prompts for the Ask AIHero bot (spec §4.1). Exactly 3 — aligned with the audience buckets. */
 export const CURATED_SUGGESTIONS: string[] = [

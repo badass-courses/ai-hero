@@ -126,7 +126,15 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
   if (items.length === 0) return null;
   return (
-    <section className="border-b py-16 md:py-24">
+    // `data-goal-section` is the hook MapToc's IntersectionObserver watches,
+    // so carrying it here is what lets the TOC highlight this entry on the way
+    // past. The attribute names the observer's contract, not a claim that this
+    // is a goal.
+    <section
+      id="whats-new"
+      data-goal-section
+      className="border-b scroll-mt-24 py-16 md:py-24"
+    >
       <div className="flex flex-col gap-6 md:gap-8">
         <div className="flex flex-wrap items-end justify-between gap-4 px-8 sm:px-16">
           <div className="flex flex-col gap-2">
