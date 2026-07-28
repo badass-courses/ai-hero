@@ -79,7 +79,7 @@ const FULL_PREFIXES = [
 
 /**
  * Free learning / resource sections that get the hub nav + sidebar. New
- * learning routes (e.g. `/learn`, `/tools`, `/principles`) opt in here. Bare
+ * learning routes (e.g. `/learn`, `/open-source`, `/principles`) opt in here. Bare
  * top-level article slugs served by `/[post]` are also treated as `hub` via the
  * single-segment fallback below, so they need not be listed.
  */
@@ -88,7 +88,7 @@ const HUB_PREFIXES = [
 	'/skills',
 	'/ai-coding-dictionary',
 	'/learn',
-	'/tools',
+	'/open-source',
 	'/principles',
 	'/topics',
 ] as const

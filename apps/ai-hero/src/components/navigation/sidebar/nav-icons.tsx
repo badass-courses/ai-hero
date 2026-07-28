@@ -199,5 +199,5 @@ export const NAV_ICONS: Record<
 	'/learn': MapIcon,
 	'/principles': PrinciplesIcon,
 	'/skills': SkillsIcon,
-	'/tools': ToolsIcon,
+	'/open-source': ToolsIcon,
 }

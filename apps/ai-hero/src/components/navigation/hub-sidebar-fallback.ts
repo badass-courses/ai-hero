@@ -20,7 +20,7 @@ export const HUB_SIDEBAR_FALLBACK_MDX = `## Explore
 
 - [Map](/learn)
 - [Skills](/skills)
-- [Tools](/tools)
+- [Open source](/open-source)
 
 ## Guides
 

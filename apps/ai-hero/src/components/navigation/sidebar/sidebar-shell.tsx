@@ -46,7 +46,11 @@ const ICON_RAIL_LINKS: {
 		icon: lucideIcon(BookA),
 	},
 	{ label: 'Skills', href: '/skills', icon: NAV_ICONS['/skills']! },
-	{ label: 'Tools', href: '/tools', icon: NAV_ICONS['/tools']! },
+	{
+		label: 'Open source',
+		href: '/open-source',
+		icon: NAV_ICONS['/open-source']!,
+	},
 ]
 
 const STICKY_SIDEBAR_CLASSES =

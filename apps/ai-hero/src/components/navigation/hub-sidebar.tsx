@@ -29,7 +29,7 @@ function normalize(path: string): string {
  */
 const MINIMAL_LINKS = [
 	{ label: 'Map', href: '/learn' },
-	{ label: 'Tools', href: '/tools' },
+	{ label: 'Open source', href: '/open-source' },
 	{ label: 'All posts', href: '/posts' },
 ]
 
