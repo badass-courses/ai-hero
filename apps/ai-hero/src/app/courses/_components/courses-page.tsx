@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
+import { Hero } from '@/components/landing/hero'
 import { ResourceRow } from '@/components/landing/resource-row'
 import { MoreWaysLink } from '@/app/learn/_components/more-ways-link'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
@@ -17,10 +18,33 @@ import {
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import { Star } from 'lucide-react'
 
+import { TYPE } from '@/components/landing/type'
+
 import { FlagshipRow } from './flagship-row'
 
-const MONO_LABEL =
-	'font-mono text-[11px] font-medium uppercase tracking-wider opacity-60'
+import { cn } from '@coursebuilder/utils/cn'
+
+/** The landing page's eyebrow, at the landing page's size (DESIGN rule 11). */
+const MONO_LABEL = cn(TYPE.micro, 'opacity-60')
+
+/**
+ * "Heath, 15 years in industry" → name + role, so the attribution can be set
+ * name-over-role like every other quote on the site.
+ *
+ * Comma, not the em dash `splitAttribution` looks for: these authors are
+ * authored in `courses-content.ts` in that form, and rewriting the copy to
+ * match a different splitter would be the tail wagging the dog.
+ */
+function splitCourseAttribution(author: string): {
+	name: string
+	role?: string
+} {
+	const [name, ...rest] = author.split(',')
+	return {
+		name: (name ?? author).trim(),
+		role: rest.length > 0 ? rest.join(',').trim() : undefined,
+	}
+}
 
 /**
  * /courses ("Learn with Matt") — v2 layout. Full-nav sales-adjacent page: NO
@@ -51,22 +75,20 @@ export function CoursesPage({
 }) {
 	return (
 		<main className="bg-background text-foreground">
-			{/* 1. Hero — editorial intro, closed by the painted brand stripe */}
-			<section className="border-b">
-				<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
-					<p className={MONO_LABEL}>{COURSES_HERO.eyebrow}</p>
-					<h1 className="text-balance text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl">
-						{COURSES_HERO.title}
-					</h1>
-					<p className="text-foreground/80 max-w-[60ch] text-lg leading-relaxed">
-						{COURSES_HERO.intro}
-					</p>
-				</div>
-				<div
-					aria-hidden
-					className="h-1.5 w-full bg-[url('/landing/colorful-stripe.jpg')] bg-contain bg-center bg-no-repeat sm:h-3"
-				/>
-			</section>
+			{/* 1. Hero — the landing page's Hero component, not a lookalike.
+			    Someone arriving here from the homepage should meet the same
+			    masthead with different words, and sharing the component is the
+			    only way that stays true after the next change to either page.
+
+			    No painted stripe under it. On the landing page that stripe marks
+			    the newsletter, the one full-bleed colour moment (DESIGN rule 9);
+			    repeating it here as a plain section divider spent the same device
+			    on "the intro ended", which the hairline already says.
+
+			    The eyebrow is gone with it. "Courses" above an h1 reading "Learn
+			    with Matt" on a page at /courses is the third time the reader is
+			    told where they are. */}
+			<Hero h1={COURSES_HERO.title} h2={COURSES_HERO.intro} />
 
 			{/* 2. Flagship cohort — intro prose, then the welded offer slab */}
 			<section aria-labelledby="flagship-heading" className="border-b">
@@ -74,11 +96,11 @@ export function CoursesPage({
 					<p className={MONO_LABEL}>{FLAGSHIP_SECTION.eyebrow}</p>
 					<h2
 						id="flagship-heading"
-						className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl"
+						className={cn(TYPE.heading, 'text-balance')}
 					>
 						{FLAGSHIP_SECTION.heading}
 					</h2>
-					<p className="text-foreground/80 max-w-[65ch] text-base leading-relaxed sm:text-lg">
+					<p className={cn(TYPE.body, 'text-foreground/80 max-w-[65ch]')}>
 						{FLAGSHIP_SECTION.strapline}
 					</p>
 				</div>
@@ -87,99 +109,132 @@ export function CoursesPage({
 				    no padded gaps — so row, stats, facts and team read as one unit. */}
 				<FlagshipRow flagship={flagship} isPurchasable={isPurchasable} />
 
-				{/* Stat band — live offer metadata, tinted */}
-				<div
-					className={
-						alumniLabel
-							? 'bg-border grid grid-cols-1 gap-px border-b sm:grid-cols-2'
-							: 'bg-border grid grid-cols-1 gap-px border-b'
-					}
-				>
-					{alumniLabel ? (
-						<div className="bg-muted flex flex-col gap-1.5 px-8 py-6 sm:px-16">
-							<p className={MONO_LABEL}>{FLAGSHIP_STATS.trainedLabel}</p>
-							<p className="font-mono text-2xl font-semibold tracking-tight">
-								{alumniLabel}
-							</p>
-							<p className="text-sm opacity-70">{FLAGSHIP_STATS.trainedSub}</p>
+				{/* Offer metadata — one callout, not a hairline mosaic.
+
+				    This was five bordered cells stacked straight under the cohort
+				    row: two stats, two facts, one team strip, every one of them
+				    boxed. Each border said "new section" and the reader got five of
+				    those in a row, so the thing that is actually ONE offer arrived
+				    looking like a dashboard of unrelated tiles.
+
+				    The landing page's cohort block solved the same problem with a
+				    single tinted callout (`UpcomingCohort`). Same move here: the
+				    live numbers share one surface, the objection facts are plain
+				    text in a column grid, and only the team strip keeps a surface of
+				    its own — it is the one block that is a separate offer. */}
+				<div className="flex flex-col gap-10 px-8 py-10 sm:px-16">
+					<dl className="bg-muted flex w-fit flex-col gap-6 px-6 py-5 sm:flex-row sm:gap-12">
+						{alumniLabel ? (
+							<div className="flex flex-col gap-1">
+								<dt className={MONO_LABEL}>{FLAGSHIP_STATS.trainedLabel}</dt>
+								<dd className={cn(TYPE.subhead, 'font-mono tabular-nums')}>
+									{alumniLabel}
+								</dd>
+								<dd className={cn(TYPE.metaProse, 'opacity-70')}>
+									{FLAGSHIP_STATS.trainedSub}
+								</dd>
+							</div>
+						) : null}
+						<div className="flex flex-col gap-1">
+							<dt className={MONO_LABEL}>{FLAGSHIP_STATS.enrollmentLabel}</dt>
+							<dd className={cn(TYPE.subhead, 'font-mono')}>
+								{isPurchasable
+									? FLAGSHIP_STATS.openValue
+									: FLAGSHIP_STATS.waitlistValue}
+							</dd>
+							<dd className={cn(TYPE.metaProse, 'opacity-70')}>
+								{isPurchasable
+									? FLAGSHIP_STATS.openSub
+									: FLAGSHIP_STATS.waitlistSub}
+							</dd>
 						</div>
-					) : null}
-					<div className="bg-muted flex flex-col gap-1.5 px-8 py-6 sm:px-16">
-						<p className={MONO_LABEL}>{FLAGSHIP_STATS.enrollmentLabel}</p>
-						<p className="font-mono text-2xl font-semibold tracking-tight">
-							{isPurchasable
-								? FLAGSHIP_STATS.openValue
-								: FLAGSHIP_STATS.waitlistValue}
-						</p>
-						<p className="text-sm opacity-70">
-							{isPurchasable
-								? FLAGSHIP_STATS.openSub
-								: FLAGSHIP_STATS.waitlistSub}
-						</p>
+					</dl>
+
+					{/* Objection facts. Whitespace separates them; they are four short
+					    paragraphs, and boxing each one made the reader parse a grid
+					    before parsing a sentence. */}
+					<div className="grid grid-cols-1 gap-x-12 gap-y-8 sm:grid-cols-2">
+						{FLAGSHIP_FACTS.map((fact) => (
+							<div key={fact.label} className="flex flex-col gap-2">
+								<h3 className={MONO_LABEL}>{fact.label}</h3>
+								<p className={cn(TYPE.body, 'text-foreground/80 max-w-[55ch]')}>
+									{fact.body}
+								</p>
+							</div>
+						))}
 					</div>
 				</div>
 
-				{/* Objection facts + team strip — same hairline grid, so the whole
-				    thing stays one slab. Facts on background, team tinted to close
-				    the unit the same way the stat band opened it. */}
-				<div className="bg-border grid grid-cols-1 gap-px sm:grid-cols-2">
-					{FLAGSHIP_FACTS.map((fact) => (
-						<div
-							key={fact.label}
-							className="bg-background flex flex-col gap-2 px-8 py-8 sm:px-16"
-						>
-							<h3 className={MONO_LABEL}>{fact.label}</h3>
-							<p className="text-foreground/80 max-w-[55ch] text-base leading-relaxed">
-								{fact.body}
-							</p>
-						</div>
-					))}
-					<div className="bg-muted flex flex-col gap-4 px-8 py-8 sm:col-span-2 sm:flex-row sm:items-center sm:justify-between sm:px-16">
-						<div className="flex flex-col gap-2">
-							<h3 className="text-balance text-xl font-medium leading-tight tracking-tight sm:text-2xl">
-								{FLAGSHIP_TEAM.heading}
-							</h3>
-							<p className="text-foreground/80 max-w-[60ch] text-base leading-relaxed">
-								{FLAGSHIP_TEAM.body}
-							</p>
-						</div>
-						<div className="shrink-0">
-							<MoreWaysLink
-								href={FLAGSHIP_TEAM.href}
-								label={FLAGSHIP_TEAM.linkLabel}
-							/>
-						</div>
+				{/* Team strip — the one block here that IS a separate offer, so it
+				    keeps its own surface and its own rule. */}
+				<div className="bg-muted border-border flex flex-col gap-4 border-t px-8 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-16">
+					<div className="flex flex-col gap-2">
+						<h3 className={cn(TYPE.subhead, 'text-balance')}>
+							{FLAGSHIP_TEAM.heading}
+						</h3>
+						<p className={cn(TYPE.body, 'text-foreground/80 max-w-[60ch]')}>
+							{FLAGSHIP_TEAM.body}
+						</p>
+					</div>
+					<div className="shrink-0">
+						<MoreWaysLink
+							href={FLAGSHIP_TEAM.href}
+							label={FLAGSHIP_TEAM.linkLabel}
+						/>
 					</div>
 				</div>
 			</section>
 
-			{/* 3. Real cohort-student testimonials — labeled, tinted pair */}
+			{/* 3. Cohort-student testimonials.
+
+			    Typographically these are now the same voice as the landing page's
+			    quotes (`DraftTestimonial` / `TestimonialDivider`): italic at
+			    subhead, gold stars, name over role. They were upright `font-medium`
+			    inside tinted boxes, which read as feature cards that happened to
+			    contain speech — and the site already has a settled way of showing
+			    that a person said something.
+
+			    The tint and the hairline between them are gone for the same reason
+			    the metadata's went: two quotes side by side are two quotes, and
+			    boxing them made them look like a comparison table. */}
 			<section aria-label="What cohort students say" className="border-b">
 				<div className="px-8 pb-8 pt-12 sm:px-16">
 					<p className={MONO_LABEL}>{COURSES_TESTIMONIALS_EYEBROW}</p>
 				</div>
-				<div className="bg-border grid grid-cols-1 gap-px sm:grid-cols-2">
-					{COURSES_TESTIMONIALS.map((testimonial) => (
-						<figure
-							key={testimonial.author}
-							className="bg-muted flex flex-col gap-5 px-8 py-12 sm:px-16"
-						>
-							<div
-								aria-hidden
-								className="flex items-center gap-1 text-[#ffcf77]"
+				<div className="grid grid-cols-1 gap-10 px-8 pb-14 sm:grid-cols-2 sm:gap-12 sm:px-16">
+					{COURSES_TESTIMONIALS.map((testimonial) => {
+						const { name, role } = splitCourseAttribution(testimonial.author)
+						return (
+							<figure
+								key={testimonial.author}
+								className="flex flex-col items-start gap-5"
 							>
-								{Array.from({ length: 5 }).map((_, index) => (
-									<Star key={index} className="size-4 fill-[#ffcf77]" />
-								))}
-							</div>
-							<blockquote className="text-balance text-xl font-medium leading-snug tracking-tight not-italic sm:text-2xl">
-								&ldquo;{testimonial.quote}&rdquo;
-							</blockquote>
-							<figcaption className="text-base opacity-70">
-								{testimonial.author}
-							</figcaption>
-						</figure>
-					))}
+								<div
+									aria-hidden
+									className="flex items-center gap-1 text-[#ffcf77]"
+								>
+									{Array.from({ length: 5 }).map((_, index) => (
+										<Star key={index} className="size-4 fill-[#ffcf77]" />
+									))}
+								</div>
+								<blockquote
+									className={cn(TYPE.subhead, 'text-balance font-sans italic')}
+								>
+									&ldquo;{testimonial.quote}&rdquo;
+								</blockquote>
+								<figcaption className="flex flex-col leading-tight">
+									<span className={cn(TYPE.meta, 'text-foreground font-semibold')}>
+										{name}
+									</span>
+									{role ? (
+										<span className={cn(TYPE.metaProse, 'text-muted-foreground')}>
+											{role}
+										</span>
+									) : null}
+								</figcaption>
+							</figure>
+						)
+					})}
 				</div>
 			</section>
 
