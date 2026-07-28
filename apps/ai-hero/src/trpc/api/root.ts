@@ -8,6 +8,7 @@ import { imageResourceRouter } from '@/trpc/api/routers/imageResource'
 import { lessonsRouter } from '@/trpc/api/routers/lessons'
 import { pricingRouter } from '@/trpc/api/routers/pricing'
 import { progressRouter } from '@/trpc/api/routers/progress'
+import { quizRouter } from '@/trpc/api/routers/quiz'
 import { solutionsRouter } from '@/trpc/api/routers/solutions'
 import { usersRouter } from '@/trpc/api/routers/users'
 import { videoResourceRouter } from '@/trpc/api/routers/videoResource'
@@ -34,6 +35,7 @@ export const appRouter = createTRPCRouter({
 	cohorts: cohortsRouter,
 	events: eventsRouter,
 	progress: progressRouter,
+	quiz: quizRouter,
 	lessons: lessonsRouter,
 	solutions: solutionsRouter,
 	certificate: certificateRouter,

@@ -1,0 +1,22 @@
+CREATE TABLE `AI_SignupAttribution` (
+  `id` varchar(255) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  `kitSubscriberId` varchar(255),
+  `formId` varchar(255) NOT NULL DEFAULT 'default',
+  `landingPath` varchar(500),
+  `referrer` varchar(500),
+  `utmSource` varchar(255),
+  `utmMedium` varchar(255),
+  `utmCampaign` varchar(255),
+  `utmContent` varchar(255),
+  `utmTerm` varchar(255),
+  `clickIds` json,
+  `capturedAt` timestamp NULL,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `SignupAttribution_email_formId_uq` (`email`, `formId`),
+  KEY `SignupAttribution_landingPath_idx` (`landingPath`),
+  KEY `SignupAttribution_createdAt_idx` (`createdAt`)
+) ENGINE InnoDB,
+  CHARSET utf8mb4,
+  COLLATE utf8mb4_0900_ai_ci;

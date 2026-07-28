@@ -5,6 +5,7 @@ import {
 	contentResourceResource,
 	contentResourceTag,
 } from '@/db/schema'
+import { getContentReadFilters } from '@/lib/content-read-policy'
 import {
 	LessonActionSchema,
 	LessonSchema,
@@ -46,15 +47,7 @@ export async function getLesson(slugOrId: string, ability: Ability) {
 		slugOrId,
 	})
 
-	const visibility: ('public' | 'private' | 'unlisted')[] = ability.can(
-		'update',
-		'Content',
-	)
-		? ['public', 'private', 'unlisted']
-		: ['public', 'unlisted']
-	const states: ('draft' | 'published')[] = ability.can('update', 'Content')
-		? ['draft', 'published']
-		: ['published']
+	const { states, visibility } = getContentReadFilters(ability)
 
 	const lesson = await db.query.contentResource.findFirst({
 		where: and(
@@ -172,7 +165,7 @@ export async function createLesson({
 	ability: Ability
 }) {
 	if (ability.cannot('create', 'Content')) {
-		throw new LessonError('Unauthorized', 401)
+		throw new LessonError('Forbidden', 403)
 	}
 
 	const validatedData = NewLessonInputSchema.safeParse({
@@ -319,7 +312,7 @@ export async function updateLesson({
 			lessonId: id,
 			action: actionResult.data,
 		})
-		throw new LessonError('Unauthorized', 401)
+		throw new LessonError('Forbidden', 403)
 	}
 
 	// Handle state transitions for all actions
@@ -469,7 +462,7 @@ export async function deleteLesson({
 	}
 
 	if (ability.cannot('delete', subject('Content', lessonToDelete))) {
-		throw new LessonError('Unauthorized', 401)
+		throw new LessonError('Forbidden', 403)
 	}
 
 	try {

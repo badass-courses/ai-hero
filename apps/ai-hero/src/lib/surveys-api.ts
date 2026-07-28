@@ -96,7 +96,7 @@ export async function listSurveysForApi({
 	ability: Ability
 	search?: string
 }): Promise<SurveyWithQuestions[]> {
-	requireManageAll(ability)
+	requireAbility(ability, 'read')
 
 	const searchTerm = search?.trim()
 	const where = searchTerm

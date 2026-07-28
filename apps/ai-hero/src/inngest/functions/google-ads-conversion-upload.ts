@@ -5,6 +5,8 @@ import {
 	readGoogleAdsConversionUploadConfig,
 	sinceForGoogleAdsUploadRange,
 } from '@/lib/google-ads-conversion-upload'
+import { classifyGoogleAdsUploadTrigger } from '@/lib/google-ads-conversion-upload-trigger'
+import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
 
 import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
 
@@ -28,38 +30,133 @@ export const googleAdsConversionUpload = inngest.createFunction(
 			limit: 1,
 		},
 	},
-	[{ event: NEW_PURCHASE_CREATED_EVENT }, { cron: '*/15 * * * *' }],
-	async ({ event, step }) => {
+	// Fresh purchases upload immediately via the event trigger; the cron is a
+	// straggler/fallback sweep and twice daily is plenty (Google registers
+	// offline conversions on click date regardless of upload lag).
+	[{ event: NEW_PURCHASE_CREATED_EVENT }, { cron: '0 5,17 * * *' }],
+	async ({ event, step, logger }) => {
 		const config = await step.run('read-google-ads-upload-config', () =>
 			readGoogleAdsConversionUploadConfig(),
 		)
-		const purchaseId =
-			'name' in event && event.name === NEW_PURCHASE_CREATED_EVENT
-				? event.data.purchaseId
-				: undefined
-		const since = purchaseId
-			? undefined
-			: sinceForGoogleAdsUploadRange(
-					(process.env.AIH_GOOGLE_ADS_CONVERSION_UPLOAD_RANGE ?? '90d') as
-						| '24h'
-						| '7d'
-						| '30d'
-						| '90d'
-						| 'all',
-				)
-
-		return await step.run('process-google-ads-conversion-uploads', () =>
-			processGoogleAdsConversionUploads({
-				database: db,
-				config,
-				purchaseId,
-				productId: purchaseId
-					? undefined
-					: process.env.AIH_GOOGLE_ADS_PRODUCT_ID,
-				since,
-				limit: purchaseId ? 1 : readLimit(),
-				dryRun: !config.enabled,
-			}),
+		const trigger = classifyGoogleAdsUploadTrigger(
+			event,
+			NEW_PURCHASE_CREATED_EVENT,
 		)
+		const purchaseId =
+			trigger.kind === 'purchase-event' ? trigger.purchaseId : undefined
+		if (trigger.kind === 'purchase-event' && !purchaseId) {
+			const purchases = {
+				mode: 'skipped' as const,
+				reason: 'purchase-event-missing-purchase-id' as const,
+			}
+			logger.warn('google_ads_conversion_upload.stage_skipped', {
+				stage: 'purchases',
+				trigger: trigger.kind,
+				...purchases,
+			})
+			return { purchases, signups: null }
+		}
+		const since =
+			trigger.kind === 'purchase-event'
+				? undefined
+				: sinceForGoogleAdsUploadRange(
+						(process.env.AIH_GOOGLE_ADS_CONVERSION_UPLOAD_RANGE ?? '90d') as
+							| '24h'
+							| '7d'
+							| '30d'
+							| '90d'
+							| 'all',
+					)
+
+		const purchases = await step.run(
+			'process-google-ads-purchase-conversion-uploads',
+			() =>
+				processGoogleAdsConversionUploads({
+					database: db,
+					config,
+					purchaseId,
+					productId: purchaseId
+						? undefined
+						: process.env.AIH_GOOGLE_ADS_PRODUCT_ID,
+					since,
+					limit: purchaseId ? 1 : readLimit(),
+					dryRun: !config.enabled,
+				}),
+		)
+		const purchaseTrigger =
+			trigger.kind === 'purchase-event'
+				? 'purchase-event'
+				: 'fifteen-minute-cron'
+		logger.info('google_ads_conversion_upload.stage_complete', {
+			stage: 'purchase-candidates',
+			trigger: purchaseTrigger,
+			candidates: purchases.candidates,
+			eligible: purchases.eligible,
+		})
+		logger.info('google_ads_conversion_upload.stage_complete', {
+			stage: 'purchase-fallback',
+			trigger: purchaseTrigger,
+			fallbackCandidates: purchases.fallbackCandidates,
+			fallbackResolved: purchases.fallbackResolved,
+			byFallbackResolution: purchases.byFallbackResolution,
+			byReason: purchases.byReason,
+		})
+		logger.info('google_ads_conversion_upload.stage_complete', {
+			stage: 'purchase-results',
+			trigger: purchaseTrigger,
+			uploaded: purchases.uploaded,
+			validated: purchases.validated,
+			skipped: purchases.skipped,
+			failed: purchases.failed,
+			byAttributionSource: purchases.byAttributionSource,
+			byResultStatus: purchases.byResultStatus,
+		})
+
+		if (trigger.kind === 'purchase-event') {
+			return { purchases, signups: null }
+		}
+
+		const signupActionResourceName =
+			process.env.GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME?.trim()
+		if (!signupActionResourceName) {
+			const signups = {
+				mode: 'skipped' as const,
+				reason: 'missing-signup-conversion-action-resource' as const,
+				privacy:
+					'aggregate-only-no-click-ids-no-emails-no-contact-ids' as const,
+			}
+			logger.warn('google_ads_conversion_upload.stage_skipped', {
+				stage: 'signups',
+				trigger: 'fifteen-minute-cron',
+				uploadEnabled: config.enabled,
+				...signups,
+			})
+			return { purchases, signups }
+		}
+
+		const signups = await step.run(
+			'process-google-ads-signup-conversion-uploads',
+			() =>
+				processGoogleAdsSignupConversionUploads({
+					database: db,
+					config: {
+						...config,
+						conversionActionResourceName: signupActionResourceName,
+					},
+					conversionActionResourceName: signupActionResourceName,
+					since,
+					limit: readLimit(),
+					dryRun: !config.enabled,
+					includePreviewRows: false,
+					retryFailed:
+						process.env.AIH_GOOGLE_ADS_SIGNUP_RETRY_FAILED === 'true',
+				}),
+		)
+		logger.info('google_ads_conversion_upload.stage_complete', {
+			stage: 'signups',
+			trigger: 'fifteen-minute-cron',
+			...signups,
+		})
+		return { purchases, signups }
 	},
 )

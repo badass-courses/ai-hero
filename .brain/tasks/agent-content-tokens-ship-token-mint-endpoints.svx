@@ -1,0 +1,34 @@
+---
+title: "Worker Task: Ship Admin-Gated Mint, List, and Revoke Endpoints"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: ship admin-gated mint, list, and revoke endpoints
+
+You are a build worker for the effort **Agent Tokens for the AI Hero Content CMS**.
+
+Read these first, in full:
+
+1. The brief: `.brain/projects/agent-content-tokens/agent-content-tokens-brief.svx` — its Vocabulary binds your terms; execution is authorized there.
+2. Your claimed step: `.brain/projects/agent-content-tokens/ship-token-mint-endpoints.svx` — it carries the facts (no migration exists yet, secret needs env wiring, direct Drizzle only).
+3. The dormant lib you build on: `apps/ai-hero/src/lib/personal-access-tokens.ts` (+ its tests).
+
+## Deliverables
+
+1. Route handlers under `apps/ai-hero/src/app/api/personal-access-tokens/` (and `[id]/` for revoke):
+   - `POST` — requires an authenticated user whose ability `can('manage', 'all')` (use `getUserAbilityForRequest`); body validated with zod: `name` (1-100 chars), `scopes` (non-empty array validated against the `PersonalAccessTokenScope` union — reject unknown scopes), optional `expiresAt` (ISO datetime, must be future). Mint via `createPersonalAccessToken`, persist via `db.insert(personalAccessToken)`, return 201 with the raw token — the only time it is ever returned.
+   - `GET` — same admin gate; list the caller's own tokens: id, name, tokenPrefix, scopes, createdAt, lastUsedAt, expiresAt, revokedAt. Never raw token or hash.
+   - `DELETE /api/personal-access-tokens/[id]` — same admin gate; only tokens owned by the caller; set `revokedAt` (idempotent: already-revoked returns 200 with the record's state).
+   - Non-admin authenticated callers get 403; anonymous gets 401. Structured `log.info`/`log.warn` on mint, revoke, and denials (no raw token material, publicId prefix only).
+2. Env wiring for `PERSONAL_ACCESS_TOKEN_SECRET`: required server-only entry in `apps/ai-hero/src/env.mjs` (schema + runtimeEnv), add to `turbo.json` build env passthrough, placeholder line in `apps/ai-hero/.env.example`. Never `NEXT_PUBLIC_*`. Do NOT invent or commit a real secret anywhere.
+3. Drizzle migration: run the app's `db:generate` so a checked-in migration creates the `PersonalAccessToken` table; include the generated SQL. Do not run `db:push`/`db:migrate` against any remote database.
+4. Tests (vitest, colocated `__tests__` like the posts routes): mint happy path (201 + raw token shape `aih_pat_*`), scope validation rejection, non-admin 403, anonymous 401, list never leaks hashes, revoke idempotency, expiresAt-in-past rejection.
+5. Run `bun x ultracite fix` on touched files; ensure the app's existing test command passes for your test files.
+6. Brain updates: add `## Result (2026-07-17)` to your step file describing what shipped + file paths + the operator TODO (provision the secret in deployed envs, apply the migration); flip `status: "closed"`, add `closed_at: "2026-07-17"`; append one ledger line to the brief's `## Decision ledger`.
+
+## Rules
+
+- You own `apps/ai-hero/src/app/api/personal-access-tokens/**`, env/turbo/.env.example wiring, the generated migration, and your `.brain` step/brief edits. Touch nothing else — especially not `getUserAbilityForRequest` or any `(content)` route (a sibling step owns those).
+- Do not commit. Work autonomously. Print a DONE summary: files created, test results, and the operator TODOs.

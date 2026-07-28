@@ -1,0 +1,136 @@
+---
+title: "Decide multi-select handling in the inline quiz"
+type: "step"
+kind: "grilling"
+interaction: "HITL"
+status: "closed"
+assignee: "claude (flagg, herdr pane w2S:p1, 2026-07-25)"
+closed_at: "2026-07-25"
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Decide multi-select handling in the inline quiz
+
+## Step
+
+Two pinned decisions interact in a way that was not visible when either was made,
+and the gap has to be closed before the real component ships.
+
+**The interaction.** The inline quiz reuses `surveyMachine` for grading (pinned
+decision 5). The machine's multi-select guard is wrong: it proves every submitted
+answer belongs to the correct set, but never compares lengths, so a non-empty
+proper subset enters `answered.correct`
+(`packages/survey/src/survey-machine.ts:160-174`). Pick one of three correct
+answers and the learner is told they were right. Fixing that bug was ruled
+separate work (pinned decision 6), and AI Hero pins
+`@coursebuilder/survey@^1.0.5` against a source at `1.0.13`, so even a released
+fix does not arrive on its own.
+
+So: the quiz inherits a known-wrong grader on any question with an array
+`correct`.
+
+Resolve which way out:
+
+1. **Ship single-answer only.** The inline component rejects or ignores array
+   `correct` until the package fix lands and the pin moves. Matt asked for
+   text-based quizzes and may not need multi-select at all — worth asking him
+   rather than assuming.
+2. **Guard locally.** The AI Hero component wraps the machine and applies its own
+   exact-set comparison before trusting `answered.correct`. Ships multi-select
+   now, but puts a second grading rule in a second place, which is the thing
+   pinned decision 5 was trying to avoid.
+3. **Pull the fix forward.** Fix the package, release, move AI Hero's pin as part
+   of this effort after all — reversing pinned decision 6 with eyes open now that
+   the coupling is visible.
+
+Worth putting to Matt directly: does any crash-course question actually need more
+than one correct answer? A no collapses this step to option 1.
+
+## Resolved when
+
+The inline quiz has one documented, correct behavior for array `correct` values,
+and the brief records whether pinned decision 6 stands or was superseded.
+
+## Result (2026-07-25)
+
+**Joel: multiple correct answers is essential.** That removes option 1 outright,
+so the quiz must grade an array `correct` properly from day one.
+
+**Sync extraction moved the problem before this was answered.** Once the answer
+endpoint exists, grading *will be* authoritative on the server, from the
+`sync_question_<hash>` content resource rather than the browser — so the package's
+broken guard will not decide what gets stored. **Nothing is stored yet:**
+persistence is chartered in
+[Build the quiz answer endpoint](./build-the-answer-endpoint.svx) and is not
+built. Until then all grading is client-side and nothing is recorded.
+
+The guard still decides what the learner *sees*, in both the current and the
+future state, and that is worse than it sounds: an uncorrected client would tell
+a learner "correct" for a partial answer while the server later records
+incorrect. A visible lie is worse than a silent one.
+
+**Resolution: one shared grader, used in both places.**
+
+```ts
+export function gradeAnswer(
+  correct: string | string[],
+  answer: string | string[],
+): boolean {
+  const correctAnswers = Array.isArray(correct) ? correct : [correct]
+  const submitted = Array.isArray(answer) ? answer : [answer]
+  return (
+    correctAnswers.length === submitted.length &&
+    correctAnswers.every((c) => submitted.includes(c))
+  )
+}
+```
+
+The length comparison is the whole fix — it is exactly what
+`packages/survey/src/survey-machine.ts:160-174` omits.
+
+**Both sides normalize to arrays**, which review caught as load-bearing rather
+than cosmetic: `allowMultiple: true` renders checkboxes even when `correct` is a
+scalar, so a correct selection arrives as `["a"]` against a `correct` of `"a"`.
+Normalizing only the array branch would mark every such question wrong. The same
+applies across the client/server split, where one side may submit arrays
+uniformly.
+
+- **Server** will call it against the question row once the answer endpoint is
+  built — authoritative, deciding the stored `correct`. Not yet implemented.
+- **Client** gets identical behavior by overriding the machine's broken guard
+  rather than forking the package:
+
+  ```ts
+  const machine = surveyMachine.provide({
+    guards: { answeredCorrectly: ({ context }) =>
+      gradeAnswer(context.currentQuestion.correct, context.answer) },
+  })
+  ```
+
+  Verified available: `StateMachine.provide(implementations)` exists in
+  `xstate@5.32.0`, the version AI Hero actually has installed
+  (`node_modules/.pnpm/xstate@5.32.0/.../StateMachine.d.ts:34`).
+
+**This keeps pinned decision 6 intact.** The package bug still gets fixed in
+`@coursebuilder/survey` as separate work for other consumers. AI Hero does not
+wait on that release, and does not move its `^1.0.5` pin to get correct behavior.
+No fork, no vendored copy.
+
+**Honest note on what `surveyMachine` is still doing.** With grading overridden
+and the server authoritative, the machine contributes its state flow
+(`unanswered` → `answering` → `answered.{correct,incorrect,neutral}`) and its
+submit actor — not the grading logic pinned decision 5 nominally reused it for.
+That is a modest but real contribution and not worth reversing decision 5 over.
+It is recorded so nobody later assumes the machine is grading anything.
+
+**Consequences for the build:**
+
+- The UI needs checkboxes when `correct` is an array or `allowMultiple` is set,
+  not radios. The prototype was radios only.
+- Sync extraction must carry array `correct` values through intact.
+- The answer endpoint stores `answer` as an array for multi-select questions;
+  `QuestionResponse.fields` is JSON, so no schema change
+  (`question-response.ts:21-43`).
+- Partial credit is still not a thing. Exact set match only, all or nothing.

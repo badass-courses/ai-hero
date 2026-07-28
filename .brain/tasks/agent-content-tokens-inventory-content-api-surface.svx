@@ -1,0 +1,32 @@
+---
+title: "Worker Task: Inventory the Content API Surface and Draft the Coverage Matrix"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: inventory the content API surface, draft the coverage matrix
+
+You are a research worker for the effort **Agent Tokens for the AI Hero Content CMS**.
+
+Read these first, in full:
+
+1. The brief: `.brain/projects/agent-content-tokens/agent-content-tokens-brief.svx` — its Vocabulary binds your terms.
+2. Your claimed step: `.brain/projects/agent-content-tokens/inventory-content-api-surface.svx`
+
+## Deliverables (all file edits, nothing else)
+
+1. Create the asset `.brain/projects/agent-content-tokens/coverage-matrix-draft.svx` with frontmatter `type: "asset"`, `parent: "./inventory-content-api-surface.svx"`, `title`, `created_at: "2026-07-17"`, `privacy: "private"`. Body: a markdown table covering EVERY route under `apps/ai-hero/src/app/api/(content)/` (all `route.ts` files, every exported HTTP method) plus any other route that gates on `read Content` (search the whole `apps/ai-hero/src/app` API tree for `ability.can('read', 'Content')` / `ability.cannot('read', 'Content')`). Columns: route path | method | current ability gate (quote the check) | current anonymous behavior | current admin behavior | proposed `content:read` agent-token behavior (status + payload posture, drafts included or not) | flag (include / exclude / include-with-note) | note. Flag deliberately: videoResource routes exposing playable Mux assets, uploads and signed URLs, search index field exposure, memory and surveys routes.
+2. In your step file, add a `## Result (2026-07-17)` section answering the four fact-finds:
+   - `PersonalAccessToken` table: does the Drizzle schema export it, is there a migration, does the coursebuilder adapter expose queries for it? Cite file paths. (Check prod DB only if a read-only way exists in-repo config; do not touch prod credentials.)
+   - `PERSONAL_ACCESS_TOKEN_SECRET` or equivalent: present in `apps/ai-hero/src/env.mjs` / turbo env passthrough / `.env.example`? If absent, say what needs provisioning.
+   - The exact CASL rule shape a scope-derived privileged-read ability needs to see unpublished content — read `apps/ai-hero/src/ability` and quote the relevant rules for admin/contributor read of Content, noting how visibility/state filtering happens in the routes vs. the ability.
+   - Any route in the matrix whose privileged read leaks beyond content (Mux playback, signed URLs, user PII in payloads) — list them with your include/exclude recommendation.
+3. Flip your step file's `status` to `"closed"` and add `closed_at: "2026-07-17"` to its frontmatter.
+4. Append one ledger line to the brief under `## Decision ledger`: `- [Inventory the Content API Surface and Draft the Coverage Matrix](./inventory-content-api-surface.svx) — <one-line gist>`.
+
+## Rules
+
+- Read-only research: do NOT modify any code under `apps/`, only the `.brain/` files named above.
+- Facts only, cited to file paths with line numbers; where you recommend, mark it "recommendation".
+- Do not commit. Work autonomously. Print a DONE summary when finished: matrix row count, the four fact-find answers in one line each, and any surprises.

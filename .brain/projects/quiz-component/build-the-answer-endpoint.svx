@@ -1,0 +1,73 @@
+---
+title: "Build the quiz answer endpoint"
+type: "step"
+kind: "task"
+interaction: "AFK"
+status: "open"
+assignee: ""
+parent: "./quiz-component-brief.svx"
+blockers:
+  - "./build-sync-question-extraction.svx"
+  - "./build-the-quiz-component.svx"
+created_at: "2026-07-24"
+---
+
+# Build the quiz answer endpoint
+
+## Step
+
+Persist quiz answers so correct/incorrect rates are queryable per question.
+Execution is authorized (brief Notes, Joel 2026-07-24).
+
+Write to `QuestionResponse` with `fields: { answer, correct }`, per the pinned
+finish line. Identity is already settled in
+[Decide what identifies an inline quiz](./decide-inline-quiz-identity.svx) — do
+not invent it here:
+
+- `surveyId` = the lesson's content resource id
+- `questionId` = the `sync_question_<hash>` id minted by
+  [sync extraction](./build-sync-question-extraction.svx)
+
+What the endpoint has to get right:
+
+- **Anonymous learners must work.** Mint a survey session id and write
+  `respondentKey` / `surveySessionId`. This effort is the **first writer** of
+  those columns — no existing code sets them
+  (`convertkit.ts:273-310`, `convertkit.ts:552-559`) — so the semantics you
+  choose become the definition. Write them down.
+- **Upgrade identity when it resolves.** Follow the existing resolution order:
+  NextAuth session, then `ck_subscriber_id` / `ck_subscriber` cookie, then
+  nothing (`convertkit.ts:140-143`, `convertkit.ts:448-500`). A learner who logs
+  in later should not fork into two respondents if that is cheaply avoidable; if
+  it is not cheap, say so and accept it explicitly.
+- **The unique index is your upsert key.**
+  `(surveyId, questionId, respondentKey)` is a unique index
+  (`question-response.ts:56-58`), so a resubmit updates rather than duplicates.
+  Use it deliberately; do not let a retry mint a second row.
+- **Grade server-side from the question row.** This used to be the hard part of
+  the step; sync extraction solved it. The client posts `{ questionId, answer }`
+  and the server reads `correct` from the `sync_question_<hash>` content resource
+  and decides. No HMAC, no client-supplied boolean, no MDX re-parse. Never accept
+  a `correct` value from the client.
+- A posted `questionId` with no matching question resource is an error, not a
+  silent insert — it means sync has not run or the body drifted.
+- Grade with the shared `gradeAnswer` function, the same module the component
+  imports. Multi-select is required, so `answer` may be an array and the match is
+  exact-set, all or nothing
+  ([Decide multi-select handling](./decide-multi-select-in-the-inline-quiz.svx)).
+  `QuestionResponse.fields` is JSON, so an array answer needs no schema change.
+- **Do not mirror to Kit.** Surveys write answers into Kit subscriber fields
+  (`convertkit.ts:157-180`, `surveys-query.ts:587-619`). Whether quizzes should is
+  an open latent question on the brief, not a decision for this step. Default to
+  not doing it.
+- Per the observability rule: ship per-stage structured logs and one command that
+  traces a single answer end to end, before this goes live.
+
+## Resolved when
+
+A learner answering a quiz in a lesson body produces exactly one
+`QuestionResponse` row carrying `{ answer, correct }`, anonymous learners are
+attributed by a minted session id, a resubmit updates in place, and correct rates
+per question are queryable.
+
+## Result

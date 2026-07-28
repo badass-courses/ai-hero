@@ -1,0 +1,313 @@
+---
+title: "Trace the AI Hero survey system end to end"
+type: "step"
+kind: "research"
+interaction: "AFK"
+status: "closed"
+assignee: "quiz-trace (flagg, herdr pane w2S:p3, 2026-07-24)"
+closed_at: "2026-07-24"
+parent: "./quiz-component-brief.svx"
+blockers: []
+created_at: "2026-07-24"
+---
+
+# Trace the AI Hero survey system end to end
+
+## Step
+
+Establish exactly how a survey works today in the running AI Hero app: how it is
+authored, how it is served, how a learner answers it, where the answer lands, and
+what API surface exists for an outside agent to drive it.
+
+Read (do not modify) in `~/Code/badass-courses/ai-hero/apps/ai-hero`:
+
+- `src/app/admin/surveys/**` — the whole CRUD surface, including
+  `_components/survey-crud-dialog.tsx`, `question-crud-dialog.tsx`,
+  `questions-list.tsx`, `survey-settings.tsx`, `survey-responses.tsx`, and
+  `src/app/admin/surveys/[slug]/**`.
+- `src/lib/surveys-api.ts`, `src/lib/surveys.ts`, `src/lib/surveys-query.ts` if
+  present, and `src/lib/surveys-api.agent-token.test.ts`.
+- `src/lib/agent-openapi.ts` and `src/lib/agent-discovery.ts` — this looks like
+  the machine-facing API and it matters a lot; describe it precisely.
+- `src/app/survey/[slug]/page.tsx` and `src/app/survey/_components/**`
+  (`survey-renderer.tsx`, `survey-page-client.tsx`, and the result components).
+- `src/app/api/analytics/surveys/**` and `src/lib/analytics/providers/survey.ts`.
+- `src/lib/convertkit.ts` and `src/trpc/api/routers/convertkit.ts` where surveys
+  touch them.
+- Any `src/hooks/use-survey-session-id.ts` equivalent, for anonymous identity.
+
+Answer these, each with file:line evidence:
+
+1. Walk the full lifecycle of one survey: who creates it, in what UI, into what
+   storage, and how it reaches a learner's screen. Be a narrative, be exact.
+2. **What is the API?** Enumerate the endpoints, their auth (agent token? session?
+   admin?), and their request/response shapes. Matt's whole ask hinges on an API
+   he can point an agent at. If `agent-openapi.ts` publishes a spec, reproduce
+   its operation list.
+3. Is a survey a content resource in the same sense as a lesson, or a separate
+   table/entity? Show the schema and say plainly which it is.
+4. Where does an answer go? Name the table and columns, and say whether it is
+   also mirrored to ConvertKit/Kit, analytics, or anywhere else.
+5. How is the answering learner identified — session id, cookie, subscriber id,
+   authenticated user? Can a logged-out learner answer? What survives a refresh?
+6. Is there any correctness, grading, or "you got it right" feedback anywhere in
+   this system? Quote the code. If the answer is no, say no clearly.
+7. Can a survey question render **inline inside another page's content**, or does
+   it require the dedicated `/survey/[slug]` route or the floating widget? What
+   would block inline rendering?
+8. Note anything that looks abandoned, half-built, or unused — a dead admin
+   screen, an unrouted endpoint, a table with no writer.
+
+## Deliverable
+
+Write your findings into this file as a `## Result (2026-07-24)` section.
+Lead with a plain-language lifecycle narrative, then the API table, then the
+answers to the numbered questions. Set `status: "closed"` and add
+`closed_at: "2026-07-24"` to the frontmatter. Cite `path:line` for every claim.
+No product recommendations — facts only.
+
+## Result (2026-07-24)
+
+### Lifecycle
+
+An administrator opens `/admin/surveys`; the page requires `manage all`, loads
+all `contentResource` rows whose type is `survey`, and exposes create, edit, and
+delete controls (`apps/ai-hero/src/app/admin/surveys/page.tsx:8-16`,
+`apps/ai-hero/src/lib/surveys-query.ts:222-253`). Creating a survey calls a
+server action which writes one `contentResource` row with type `survey`; adding a
+question writes another `contentResource` row with type `question` and a
+`contentResourceResource` join row that holds its position in the survey
+(`apps/ai-hero/src/app/admin/surveys/_components/survey-crud-dialog.tsx:75-94`,
+`apps/ai-hero/src/lib/surveys-query.ts:41-82`,
+`apps/ai-hero/src/app/admin/surveys/_components/question-crud-dialog.tsx:280-314`,
+`apps/ai-hero/src/lib/surveys-query.ts:256-309`,
+`apps/ai-hero/src/lib/surveys-query.ts:400-434`). A learner visits
+`/survey/[slug]`; the server fetches the survey and ordered question resources,
+converts them into the `QuizResource` consumed by `@coursebuilder/survey`, and
+renders `SurveyPageClient` (`apps/ai-hero/src/app/survey/[slug]/page.tsx:36-54`,
+`apps/ai-hero/src/app/survey/[slug]/page.tsx:88-93`,
+`apps/ai-hero/src/lib/surveys-query.ts:184-219`,
+`apps/ai-hero/src/lib/surveys-query.ts:506-566`). The client runs the survey
+machine, submits known learners per question, or collects an email and submits
+all in-memory answers at completion; the tRPC mutations insert one
+`QuestionResponse` row per answer and then update Kit subscriber fields when a
+subscriber exists (`apps/ai-hero/src/app/survey/_components/survey-page-client.tsx:70-87`,
+`apps/ai-hero/src/app/survey/_components/survey-page-client.tsx:98-107`,
+`apps/ai-hero/src/app/survey/_components/survey-page-client.tsx:180-194`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:273-310`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:350-360`).
+
+### API surface
+
+| Surface | Auth | Input | Response |
+| --- | --- | --- | --- |
+| `GET /api/openapi.json` | Public | None | Generated OpenAPI 3.1 document (`apps/ai-hero/src/app/api/openapi.json/route.ts:6-13`). |
+| `GET /api/surveys` | Bearer only: `content:read` personal access token (PAT) or a device token with `read Content`; no browser-session fallback | Optional `slugOrId` returns one survey; optional `search` filters the list (`apps/ai-hero/src/app/api/(content)/surveys/route.ts:25-58`, `apps/ai-hero/src/server/ability-for-request.ts:34-55`). | One `SurveyWithQuestions` object or an array; each survey contains ordered relation rows and nested question resources (`apps/ai-hero/src/lib/surveys.ts:98-128`). |
+| `POST /api/surveys` | Device token with `create Content`; scoped PATs cannot write | JSON `{ title, slug?, state?, visibility?, afterCompletionMessages? }` (`apps/ai-hero/src/lib/surveys.ts:67-78`, `apps/ai-hero/src/app/api/(content)/surveys/route.ts:86-107`). | `201` plus the created `SurveyWithQuestions` (`apps/ai-hero/src/lib/surveys-api.ts:137-183`). |
+| `PATCH /api/surveys` | Device token with `update Content`; scoped PATs cannot write | JSON `{ id, title?, slug?, state?, visibility?, afterCompletionMessages? }` (`apps/ai-hero/src/lib/surveys.ts:83-95`, `apps/ai-hero/src/app/api/(content)/surveys/route.ts:134-155`). | Updated `SurveyWithQuestions` (`apps/ai-hero/src/lib/surveys-api.ts:186-261`). |
+| `DELETE /api/surveys?id=…` | Device token with `delete Content`; scoped PATs cannot write | Required survey id query parameter (`apps/ai-hero/src/app/api/(content)/surveys/route.ts:177-212`). | `{ success: true, surveyId }` after deleting joins, responses, and the survey row (`apps/ai-hero/src/lib/surveys-api.ts:264-311`). |
+| `GET /api/surveys/analytics?slugOrId=…` | Device token with `manage all`; `content:read` PAT is excluded | Required id or slug (`apps/ai-hero/src/app/api/(content)/surveys/analytics/route.ts:18-48`). | `{ surveyId, surveySlug, surveyTitle, totalResponses, uniqueRespondents, responsesByDay, topQuestions, recentResponses }` (`apps/ai-hero/src/lib/surveys-api.ts:314-480`). |
+| `GET /api/analytics/surveys?range=…` | Device token **or browser session** with `view Analytics` or `manage all` | `range` is `24h`, `7d`, `30d`, `90d`, or `all`; default `30d` (`apps/ai-hero/src/app/api/analytics/surveys/route.ts:23-56`, `apps/ai-hero/src/app/api/analytics/surveys/route.ts:59-83`). | Survey list with response, respondent, and question counts plus links (`apps/ai-hero/src/app/api/analytics/surveys/route.ts:86-165`). |
+| `GET /api/analytics/surveys/:id?range=…&limit=…` | Device token **or browser session** with `view Analytics` or `manage all` | Survey id or slug; the same ranges; response limit defaults to 100 and caps at 500 (`apps/ai-hero/src/app/api/analytics/surveys/[id]/route.ts:41-68`, `apps/ai-hero/src/app/api/analytics/surveys/[id]/route.ts:89-96`). | Summary, responses by day, per-question answer distribution, and individual response rows (`apps/ai-hero/src/app/api/analytics/surveys/[id]/route.ts:298-337`). |
+| tRPC `convertkit.answerSurvey` | `publicProcedure`; identity is resolved inside the mutation | `{ question: string, answer: string, surveyId?: string }` (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:448-457`). | Updated subscriber, or `{ success: true, storedInDb: true, subscriberLookupError }` when no subscriber exists (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:552-595`). |
+| tRPC `convertkit.answerSurveyMultiple` | `publicProcedure`; identity is resolved inside the mutation | `{ answers: Record<string, any>, email?: string, surveyId?: string }` (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:131-140`). | Updated subscriber, or `{ success: true, storedInDb: true, subscriberSyncError }` (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:310-369`). |
+| tRPC `convertkit.checkoutSurveyAnswer` | `publicProcedure`; requires a resolvable session/subscriber identity to find a row | None | `{ answered: boolean, answer: string | null }` (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:372-438`). |
+
+The OpenAPI document publishes this full non-preflight operation inventory:
+`getVideoResource`; `getLessonSolution`, `updateLessonSolution`,
+`createLessonSolution`, `deleteLessonSolution`; `getLessons`, `updateLesson`;
+`recallMemory`, `storeMemory`; `getPosts`, `createPost`, `updatePost`,
+`deletePost`; `getProductAvailability`; `getProductEnrollment`; `getProducts`,
+`createProduct`, `updateProduct`; `getResources`, `updateResource`,
+`createResource`; `searchContent`; `createSkillsChangelog`;
+`getSurveyAnalytics`; `getSurveys`, `createSurvey`, `updateSurvey`,
+`deleteSurvey`; `completeMultipartUpload`, `createMultipartUpload`,
+`getMultipartPartUrl`, `createUpload`, `getUploadSignedUrl`;
+`listPersonalAccessTokens`, `mintPersonalAccessToken`, and
+`revokePersonalAccessToken`. It also publishes named CORS preflight operations
+for every listed content path except signed-url and the PAT paths
+(`apps/ai-hero/src/lib/agent-openapi.ts:111-504`).
+
+The OpenAPI auth contract says `content:read` grants approved reads, while CMS
+writes and survey analytics require an admin device token
+(`apps/ai-hero/src/lib/agent-openapi.ts:72-83`,
+`apps/ai-hero/src/lib/agent-openapi.ts:330-365`). The runtime request authenticator
+reads only the `Authorization` header and recognizes personal access tokens and
+device tokens; it does not inspect a browser session
+(`apps/ai-hero/src/server/ability-for-request.ts:34-55`,
+`apps/ai-hero/src/server/ability-for-request.ts:110-113`,
+`apps/ai-hero/src/server/ability-for-request.ts:188-198`). The survey OpenAPI
+operations do **not** describe survey request or success schemas: the shared
+builder emits an empty success schema, and only PAT minting defines a
+`requestBody` (`apps/ai-hero/src/lib/agent-openapi.ts:86-91`,
+`apps/ai-hero/src/lib/agent-openapi.ts:449-456`). The REST API has no operation
+for question create, update, delete, attach, detach, or reorder; those operations
+exist only as authenticated Next.js server actions used by the admin UI
+(`apps/ai-hero/src/lib/surveys-query.ts:671-765`).
+
+### Numbered findings
+
+#### 1. Full lifecycle
+
+The lifecycle is the narrative above. The admin list and each detail page require
+`manage all`; the detail has Questions, Settings, and Responses tabs
+(`apps/ai-hero/src/app/admin/surveys/page.tsx:8-16`,
+`apps/ai-hero/src/app/admin/surveys/[slug]/survey-detail-page-data.ts:5-18`,
+`apps/ai-hero/src/app/admin/surveys/_components/survey-detail-nav.tsx:8-12`).
+The survey and each question are `contentResource` rows, their ordering is a
+join-row position, and responses are separate `QuestionResponse` rows
+(`apps/ai-hero/src/lib/surveys-query.ts:62-74`,
+`apps/ai-hero/src/lib/surveys-query.ts:280-294`,
+`apps/ai-hero/src/lib/surveys-query.ts:412-430`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:552-559`).
+
+#### 2. What exactly is the API?
+
+The survey-relevant endpoints, auth, inputs, and outputs are in the API table.
+The machine-facing discovery path is `/api/openapi.json`; `/api` points agents to
+that contract and explains that `aih_pat_*` credentials derive ability only from
+their scopes (`apps/ai-hero/src/lib/agent-discovery.ts:304-305`,
+`apps/ai-hero/src/lib/agent-discovery.ts:371-389`). A `content:read` PAT can read
+survey definitions, including draft/private definitions and questions, but it
+cannot create or edit them and cannot read answers or analytics
+(`apps/ai-hero/src/lib/agent-openapi.ts:340-365`). Survey write operations require
+a device token with the matching Content ability; browser admin sessions do not
+authenticate `/api/surveys` (`apps/ai-hero/src/app/api/(content)/surveys/route.ts:86-100`,
+`apps/ai-hero/src/app/api/(content)/surveys/route.ts:134-148`,
+`apps/ai-hero/src/app/api/(content)/surveys/route.ts:185-205`,
+`apps/ai-hero/src/server/ability-for-request.ts:34-55`).
+
+#### 3. Content resource or separate entity?
+
+A survey **is a content resource**, not a separate survey table. `SurveySchema`
+merges the generic `ContentResourceSchema` and fixes `type` to `survey`; a
+question does the same with type `question`
+(`apps/ai-hero/src/lib/surveys.ts:98-112`). Survey-to-question membership is the
+generic `contentResourceResource` relation, with `resourceOfId`, `resourceId`,
+`position`, metadata, timestamps, and the nested question resource
+(`apps/ai-hero/src/lib/surveys.ts:114-128`). Answers are the separate entity:
+`QuestionResponse` (`apps/ai-hero/src/db/schema.ts:65-82`).
+
+#### 4. Where does an answer go?
+
+Each answer goes into `QuestionResponse`. Its schema has `id`, required
+`surveyId` and `questionId`, optional `respondentKey`, `surveySessionId`,
+`userId`, and `emailListSubscriberId`, JSON `fields`, and create/update/delete
+timestamps
+(`node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts:21-42`).
+The current writers store the answer as `fields: { answer: … }`; they set user
+and/or Kit subscriber ids but do not set `respondentKey` or `surveySessionId`
+(`apps/ai-hero/src/trpc/api/routers/convertkit.ts:273-310`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:552-559`).
+
+Answers are also mirrored to Kit when a subscriber resolves. Bulk completion
+writes answer keys plus `last_surveyed_on` and
+`completed_<survey_slug>_survey_on`; per-question submission calls
+`answerSurvey`, which updates a snake-cased subscriber field
+(`apps/ai-hero/src/trpc/api/routers/convertkit.ts:157-180`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:350-360`,
+`apps/ai-hero/src/lib/surveys-query.ts:587-619`). Analytics does not receive a
+second answer write: its routes query `QuestionResponse` directly for counts,
+distributions, and rows (`apps/ai-hero/src/app/api/analytics/surveys/route.ts:86-105`,
+`apps/ai-hero/src/app/api/analytics/surveys/[id]/route.ts:148-184`,
+`apps/ai-hero/src/app/api/analytics/surveys/[id]/route.ts:219-285`).
+
+#### 5. Learner identity and refresh behavior
+
+Identity resolution checks the authenticated NextAuth session, then the
+`ck_subscriber_id` or serialized `ck_subscriber` cookies, then an input email.
+Bulk submission can create a Kit subscriber from that email and can map the
+email back to an existing user (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:140-143`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:181-216`). The single-answer
+mutation follows the same session/cookie/user lookup but has no input-email
+field (`apps/ai-hero/src/trpc/api/routers/convertkit.ts:448-500`).
+
+A logged-out learner can open and interact with the dedicated survey because the
+route has no auth check and the answer mutations are `publicProcedure`
+(`apps/ai-hero/src/app/survey/[slug]/page.tsx:36-54`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:131-140`,
+`apps/ai-hero/src/trpc/api/routers/convertkit.ts:448-457`). Before email
+collection, answers exist only in the client machine. Known subscribers are
+written per question; unknown learners are written in bulk when they submit an
+email (`apps/ai-hero/src/app/survey/_components/survey-page-client.tsx:98-107`,
+`apps/ai-hero/src/app/survey/_components/survey-page-client.tsx:183-194`). The
+app has no survey-session hook or dedicated-survey local/session-storage writer
+(not found). A refresh therefore rebuilds the client machine rather than loading
+saved responses. Database rows already submitted remain, and Kit identity
+cookies survive for one year (`apps/ai-hero/src/lib/convertkit.ts:11-30`). The
+separate checkout survey is the only AI Hero survey code found using
+`localStorage`; it stores one hard-coded checkout answer
+(`apps/ai-hero/src/components/commerce/checkout-survey-buy-button.tsx:29-29`,
+`apps/ai-hero/src/components/commerce/checkout-survey-buy-button.tsx:68-81`).
+
+#### 6. Correctness and grading
+
+**Yes, correctness feedback exists in the runtime.** The installed survey
+question schema has optional `correct` and `answer` fields
+(`node_modules/.pnpm/@coursebuilder+survey@1.0.5_@babel+core@7.29.7_@babel+runtime@7.29.7_@codemirror+autoco_b8efe066e4e4b100fa3412abcbc0dade/node_modules/@coursebuilder/survey/src/types.ts:23-31`).
+After answer submission, the survey machine goes neutral when `correct` is
+empty; otherwise it compares the submitted answer and enters
+`answered.correct` or `answered.incorrect`
+(`node_modules/.pnpm/@coursebuilder+survey@1.0.5_@babel+core@7.29.7_@babel+runtime@7.29.7_@codemirror+autoco_b8efe066e4e4b100fa3412abcbc0dade/node_modules/@coursebuilder/survey/src/survey-machine.ts:135-173`).
+The footer displays the configured neutral, correct, or incorrect message, and
+AI Hero renders that footer
+(`node_modules/.pnpm/@coursebuilder+survey@1.0.5_@babel+core@7.29.7_@babel+runtime@7.29.7_@codemirror+autoco_b8efe066e4e4b100fa3412abcbc0dade/node_modules/@coursebuilder/survey/src/survey-question.tsx:603-643`,
+`apps/ai-hero/src/app/survey/_components/survey-renderer.tsx:118-120`). AI Hero's
+DB-to-runtime transform explicitly carries `fields.correct` and `fields.answer`
+into the runtime resource (`apps/ai-hero/src/lib/surveys-query.ts:506-555`).
+
+The AI Hero admin question form does **not** expose a `correct` or `answer`
+control. Its visible controls cover question, slug, type, dependency, choices,
+required, shuffle, and multiple selection
+(`apps/ai-hero/src/app/admin/surveys/_components/question-crud-dialog.tsx:343-391`,
+`apps/ai-hero/src/app/admin/surveys/_components/question-crud-dialog.tsx:511-607`).
+Thus the runtime can grade a question whose stored resource already has
+`correct`, but the surveyed admin CRUD path cannot author that field. Separately,
+the AI Coding Readiness survey computes a weighted score and profile; that is
+survey scoring, not answer correctness
+(`apps/ai-hero/src/app/survey/_components/ai-coding-readiness-result.tsx:81-119`,
+`apps/ai-hero/src/app/survey/_components/ai-coding-readiness-result.tsx:134-158`).
+
+#### 7. Inline rendering
+
+No current general survey question renders inline inside another content page
+(not found). `SurveyPageClient` is used only by `/survey/[slug]`
+(`apps/ai-hero/src/app/survey/[slug]/page.tsx:16-16`,
+`apps/ai-hero/src/app/survey/[slug]/page.tsx:88-93`). `SurveyRenderer` is reusable
+React code, but its interface requires a current question, question id, submit
+handler, survey config, machine sender, and completion/email state; the dedicated
+client supplies that machinery (`apps/ai-hero/src/app/survey/_components/survey-renderer.tsx:28-52`,
+`apps/ai-hero/src/app/survey/_components/survey-page-client.tsx:180-220`). There
+is no AI Hero content/MDX registration for it (not found). The checkout screen
+does embed one question inside a buy-button flow, but it is a separate hard-coded
+question list and separate XState machine, not the data-driven survey renderer
+(`apps/ai-hero/src/components/commerce/checkout-survey-buy-button.tsx:25-40`,
+`apps/ai-hero/src/components/commerce/checkout-survey-buy-button.tsx:97-115`,
+`apps/ai-hero/src/components/commerce/checkout-survey-machine.ts:55-98`).
+
+#### 8. Half-built, unused, or inconsistent surfaces
+
+- The dedicated survey route's published-state check is commented out, so the
+  route does not enforce `fields.state === 'published'`
+  (`apps/ai-hero/src/app/survey/[slug]/page.tsx:47-51`).
+- The admin `deleteSurvey` comment says it deletes the survey and all associated
+  questions, but that code deletes only join rows and the survey resource. It
+  neither deletes question resources nor `QuestionResponse` rows
+  (`apps/ai-hero/src/lib/surveys-query.ts:151-173`). The REST delete path does
+  delete `QuestionResponse` rows before deleting the survey
+  (`apps/ai-hero/src/lib/surveys-api.ts:289-311`).
+- `QuestionResponse` has `respondentKey` and `surveySessionId` columns and a
+  uniqueness index keyed by `respondentKey`, but neither current answer mutation
+  writes those columns (`node_modules/.pnpm/@coursebuilder+adapter-drizzle@2.0.0_drizzle-orm@0.36.0_@cloudflare+workers-types@4.202_18bfcf1548b5b2457e0bde6c9a7d7f6e/node_modules/@coursebuilder/adapter-drizzle/src/lib/mysql/schemas/communication/question-response.ts:26-59`,
+  `apps/ai-hero/src/trpc/api/routers/convertkit.ts:273-310`,
+  `apps/ai-hero/src/trpc/api/routers/convertkit.ts:552-559`).
+- `src/lib/analytics/providers/survey.ts` instantiates and exports five provider
+  methods, but no AI Hero source import of those exports was found; the routed
+  analytics surfaces issue their own queries
+  (`apps/ai-hero/src/lib/analytics/providers/survey.ts:9-24`,
+  `apps/ai-hero/src/app/api/analytics/surveys/route.ts:86-105`).
+- The machine-readable OpenAPI advertises only `/api/surveys/analytics`; the
+  richer `/api/analytics/surveys` list/detail routes are routed but absent from
+  `contentPaths` (`apps/ai-hero/src/lib/agent-openapi.ts:111-418`,
+  `apps/ai-hero/src/app/api/analytics/surveys/route.ts:59-64`,
+  `apps/ai-hero/src/app/api/analytics/surveys/[id]/route.ts:60-75`).

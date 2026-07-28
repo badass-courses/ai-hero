@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
 	codingWorkflowFixture,
 	restrictedFixture,
 	supportFixture,
 } from '../__fixtures__/quick-question-fixtures'
+import { captureNormalizedContactEvent } from '../capture-contact-event'
 import { captureFrontQuickQuestionCsv } from '../capture-front-quick-question-csv'
 import { captureFrontQuickQuestion } from '../capture-quick-question'
 import {
@@ -17,6 +18,7 @@ import {
 	writeContentReadContactEvents,
 } from '../contact-event-normalizer-preview'
 import { renderContactEventReviewHtml } from '../contact-event-review-page'
+import { DrizzleCaptureMarketingRepository } from '../drizzle-capture-repository'
 import {
 	dryRunSubscriberMarketingFixture,
 	InMemorySubscriberMarketingRepository,
@@ -53,15 +55,30 @@ import {
 	type KitShadowFieldProvider,
 } from '../shadow-field-sync'
 import { classifyContactEvent } from '../signal-classifier'
+import { enterSkillsNewsletterSubscriber } from '../skills-newsletter-path-entry'
+import {
+	buildSignupGapPreview,
+	replaySignupGap,
+	signupGapPreviewForOutput,
+} from '../signup-gap-recovery'
 import {
 	buildTeamKitProjectionContacts,
 	previewTeamKitProjection,
 	type TeamKitProjectionProvider,
 	type TeamPurchaseRow,
 } from '../team-kit-projection'
+import {
+	MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT,
+	verifyAnswerClickForStep,
+} from '../value-path-answer-click-verification'
 import { buildValuePathAskUrl } from '../value-path-answer-links'
+import { replanBlockedValuePathEmailIntents } from '../value-path-intent-replan'
 import { parseValuePathAnswerPageResource } from '../value-path-answer-page'
 import { recordValuePathAnswerProgression } from '../value-path-click-progression'
+import {
+	AIH_FINISHER_SEGMENT_FIELD,
+	AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+} from '../value-path-finisher-capture'
 import {
 	buildValuePathContentResourcePlan,
 	importValuePathContentResources,
@@ -84,8 +101,16 @@ import {
 } from '../value-path-gate-d-allowlist'
 import { previewValuePathGateDCandidates } from '../value-path-gate-d-candidates'
 import { startValuePathGateDActivation } from '../value-path-gate-d-start'
+import {
+	scanCompletedValuePathIntentFrontier,
+	selectCompletedValuePathIntentFrontier,
+} from '../value-path-intent-scan'
 import { previewValuePath, SELLABLE_OFFERS } from '../value-path-planner'
 import { previewSkillsWorkflowValuePathQa } from '../value-path-qa-preview'
+import {
+	evaluateValuePathMovement,
+	resolveGateDRunState,
+} from '../value-path-run-state'
 import {
 	applyAcceptedValuePathSendGateReviewReasons,
 	evaluateValuePathEmailSendGate,
@@ -103,6 +128,188 @@ class InMemoryRedis {
 		return 'OK'
 	}
 }
+
+describe('subscriber marketing signup gap recovery', () => {
+	it('previews only missing identities in a half-open window and flags synthetic addresses', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T05:00:00.000Z',
+			to: '2026-07-15T15:00:00.000Z',
+			now: '2026-07-15T16:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(['known@example.com']),
+				kitSubscriberIds: new Set(['kit-provider-known']),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-real',
+					email: 'Real.Person@Example.com',
+					firstName: 'Real',
+					createdAt: '2026-07-15T05:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-synthetic',
+					email: 'joel+aih-warmup-synth-1@example.com',
+					createdAt: '2026-07-15T06:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-contact-known',
+					email: 'known@example.com',
+					createdAt: '2026-07-15T07:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-provider-known',
+					email: 'provider@example.com',
+					createdAt: '2026-07-15T08:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-unconfirmed',
+					email: 'unconfirmed@example.com',
+					createdAt: '2026-07-15T09:00:00.000Z',
+					state: 'inactive',
+				},
+				{
+					kitSubscriberId: 'kit-at-end',
+					email: 'end@example.com',
+					createdAt: '2026-07-15T15:00:00.000Z',
+					state: 'active',
+				},
+			],
+		})
+
+		expect(preview.counts).toEqual({
+			kitFormSubscribersFetched: 6,
+			inWindow: 5,
+			withExistingContact: 1,
+			withExistingProviderIdentity: 1,
+			withExistingIdentity: 2,
+			gapCandidates: 2,
+			excludedSynthetic: 1,
+			unconfirmed: 1,
+			replayable: 1,
+			stateBreakdown: {
+				active: 4,
+				inactiveUnconfirmed: 1,
+				cancelled: 0,
+				bounced: 0,
+				complained: 0,
+			},
+		})
+		expect(preview.candidates).toEqual([
+			expect.objectContaining({
+				kitSubscriberId: 'kit-real',
+				maskedEmail: 're***@example.com',
+				excludedSynthetic: false,
+			}),
+			expect.objectContaining({
+				kitSubscriberId: 'kit-synthetic',
+				maskedEmail: 'jo***@example.com',
+				excludedSynthetic: true,
+				exclusionReason: 'synthetic-address',
+			}),
+		])
+		const output = JSON.stringify(signupGapPreviewForOutput(preview))
+		expect(output).not.toContain('Real.Person@Example.com')
+		expect(output).not.toContain('kit-real')
+		expect(output).toContain('re***@example.com')
+	})
+
+	it('rechecks identity, excludes synthetic addresses, and emits the canonical event', async () => {
+		const preview = buildSignupGapPreview({
+			formId: 12345,
+			from: '2026-07-15T05:00:00.000Z',
+			to: '2026-07-15T15:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-replay',
+					email: 'replay@example.com',
+					firstName: 'Replay',
+					createdAt: '2026-07-15T06:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-now-known',
+					email: 'known-later@example.com',
+					createdAt: '2026-07-15T07:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-synthetic',
+					email: 'joel+aih-synth-2@example.com',
+					createdAt: '2026-07-15T08:00:00.000Z',
+					state: 'active',
+				},
+			],
+		})
+		const emitted: unknown[] = []
+		const receipt = await replaySignupGap({
+			preview,
+			source: 'operator-recovery',
+			hasExistingIdentity: async (candidate) =>
+				candidate.kitSubscriberId === 'kit-now-known',
+			emit: async (event) => {
+				emitted.push(event)
+			},
+		})
+
+		expect(emitted).toEqual([
+			{
+				name: 'skills-newsletter/subscribed',
+				data: {
+					kitSubscriberId: 'kit-replay',
+					email: 'replay@example.com',
+					name: 'Replay',
+					formId: 12345,
+					source: 'operator-recovery',
+					subscribedAt: '2026-07-15T06:00:00.000Z',
+					signupGapLiveness: expect.objectContaining({
+						workSeen: 2,
+						workDone: 2,
+						oldestUnservedAt: null,
+					}),
+				},
+			},
+		])
+		expect(receipt.counts).toEqual({
+			previewed: 3,
+			excludedSynthetic: 1,
+			skippedExisting: 1,
+			emitted: 1,
+		})
+		expect(receipt).toMatchObject({
+			generatedAt: preview.generatedAt,
+			workSeen: 2,
+			workDone: 2,
+			oldestUnservedAgeHours: null,
+			oldestUnservedAt: null,
+		})
+		expect(receipt.note).toContain('real email-0 send')
+		expect(JSON.stringify(receipt)).not.toContain('replay@example.com')
+	})
+
+	it('rejects invalid windows before recovery', () => {
+		expect(() =>
+			buildSignupGapPreview({
+				formId: 1,
+				from: '2026-07-15T15:00:00.000Z',
+				to: '2026-07-15T05:00:00.000Z',
+				identityMatches: {
+					contactEmails: new Set(),
+					kitSubscriberIds: new Set(),
+				},
+				subscribers: [],
+			}),
+		).toThrow('--from and --to')
+	})
+})
 
 describe('subscriber marketing Gate D allowlist', () => {
 	it('previews recent Skills QQ candidates with redacted identity and blockers', () => {
@@ -806,6 +1013,24 @@ describe('subscriber marketing Gate D allowlist', () => {
 			schemaVersion: 1,
 			createdAt: '2026-05-15T12:10:00.000Z',
 		})
+		repository.createSideEffectIntent({
+			id: 'intent_team_email_1_from_click',
+			nextActionId: 'next_action_click_team',
+			contactId: captured.contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			idempotencyKey: `contact:${captured.contact.id}:value-path:ai-hero-skills-team-workflow:email:ai-hero-skills-team-workflow.team-email-1`,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-team-workflow',
+				emailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+				kitSequenceId: '2757207',
+				progression: 'answer-click',
+			},
+			createdAt: '2026-05-15T12:10:00.000Z',
+		})
 
 		const result = await progressValuePathDrips({
 			repository,
@@ -845,6 +1070,225 @@ describe('subscriber marketing Gate D allowlist', () => {
 					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-1',
 			),
 		).toHaveLength(0)
+	})
+
+	it('drips the default next email when an answer click never produced a deliverable intent', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const captured = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: codingWorkflowFixture,
+		})
+		const completedIntent = repository.createSideEffectIntent({
+			id: 'intent_email_0',
+			nextActionId: 'next_action_0',
+			contactId: captured.contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'completed',
+			idempotencyKey: `contact:${captured.contact.id}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				kitSequenceId: '2757199',
+				kitSubscriberId: '4089521940',
+				completedAt: '2026-05-15T12:06:00.000Z',
+			},
+			createdAt: '2026-05-15T12:05:00.000Z',
+		})
+		repository.createContactEvent({
+			contactId: captured.contact.id,
+			providerIdentityId: captured.providerIdentity.id,
+			provider: 'ai-hero',
+			providerEventId: 'answer-team-undelivered',
+			providerReference: '/ask/team-email-1',
+			eventType: 'value-path.answer-selected',
+			occurredAt: '2026-05-15T12:10:00.000Z',
+			semanticIdempotencyKey: 'answer-team-undelivered',
+			privacyLevel: 'internal',
+			identityEvidence: captured.providerIdentity.evidence,
+			payloadSummary: {
+				summary: 'Selected answer team for email-0-path-survey',
+				keywords: [
+					'value-path',
+					'answer-selected',
+					'ai-hero-skills-workflow',
+					'team',
+				],
+				restrictedPayloadStored: false,
+			},
+			schemaVersion: 1,
+			createdAt: '2026-05-15T12:10:00.000Z',
+		})
+		// The click ran in dry-run mode, so its intent can never be delivered.
+		repository.createSideEffectIntent({
+			id: 'intent_team_email_1_dry_run_click',
+			nextActionId: 'next_action_click_team',
+			contactId: captured.contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'dry-run',
+			idempotencyKey: `contact:${captured.contact.id}:value-path:ai-hero-skills-team-workflow:email:ai-hero-skills-team-workflow.team-email-1`,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-team-workflow',
+				emailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+				kitSequenceId: '2757207',
+				progression: 'answer-click',
+			},
+			createdAt: '2026-05-15T12:10:00.000Z',
+		})
+
+		const answerClickLogs: Array<{
+			level: 'info' | 'warn'
+			event: string
+			data: Record<string, unknown>
+		}> = []
+		const result = await progressValuePathDrips({
+			repository,
+			allowWrite: true,
+			logger: {
+				info: async (event, data) => {
+					answerClickLogs.push({ level: 'info', event, data: data ?? {} })
+				},
+				warn: async (event, data) => {
+					answerClickLogs.push({ level: 'warn', event, data: data ?? {} })
+				},
+			},
+			allowlist: {
+				activationId: 'rig-test-2026-05-15-a',
+				status: 'active',
+				killSwitch: false,
+				mode: 'allowlisted-test',
+				pathSlugs: ['ai-hero-skills-workflow', 'ai-hero-skills-team-workflow'],
+				contactIds: [captured.contact.id],
+				kitSubscriberIds: ['4089521940'],
+				emails: [captured.contact.email!],
+				emailHashes: [],
+				emailResourceIds: [
+					'ai-hero-skills-workflow.email-0',
+					'ai-hero-skills-workflow.email-1',
+					'ai-hero-skills-team-workflow.team-email-1',
+				],
+				kitSequenceIds: ['2757199', '2757200', '2757207'],
+				candidates: [],
+				createdAt: '2026-05-15T12:00:00.000Z',
+			},
+			completedIntents: [completedIntent],
+			acceptedReviewReasons: ['human-review'],
+			now: '2026-05-16T12:06:00.000Z',
+		})
+
+		expect(result.counts).toMatchObject({ planned: 1, idempotentNoop: 0 })
+		expect(result.results[0]?.advisoryReasons).toContain(
+			'answer-click-undelivered-drip-fallback',
+		)
+		expect(answerClickLogs).toEqual([
+			expect.objectContaining({
+				level: 'info',
+				event: 'value-path.ask.answer_click_verification',
+				data: expect.objectContaining({
+					completedIntentId: 'intent_email_0',
+					verdict: 'verified',
+				}),
+			}),
+			expect.objectContaining({
+				level: 'warn',
+				event: 'value-path.ask.answer_click_undelivered_drip_fallback',
+				data: expect.objectContaining({
+					advisory: 'answer-click-undelivered-drip-fallback',
+				}),
+			}),
+		])
+		expect(
+			Array.from(repository.sideEffectIntents.values()).find(
+				(intent) =>
+					intent.type === 'send-value-path-email' &&
+					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-1',
+			),
+		).toMatchObject({ status: 'pending' })
+	})
+
+	it('does not park the drip on scanner-volume answer clicks', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const captured = await dryRunSubscriberMarketingFixture({
+			repository,
+			fixture: codingWorkflowFixture,
+		})
+		const completedIntent = repository.createSideEffectIntent({
+			id: 'intent_email_0',
+			nextActionId: 'next_action_0',
+			contactId: captured.contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'completed',
+			idempotencyKey: `contact:${captured.contact.id}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				kitSequenceId: '2757199',
+				kitSubscriberId: '4089521940',
+				completedAt: '2026-05-15T12:06:00.000Z',
+			},
+			createdAt: '2026-05-15T12:05:00.000Z',
+		})
+		// Security-scanner signature: far more answer clicks than emails exist.
+		for (let index = 0; index < 20; index++) {
+			repository.createContactEvent({
+				contactId: captured.contact.id,
+				providerIdentityId: captured.providerIdentity.id,
+				provider: 'ai-hero',
+				providerEventId: `scanner-click-${index}`,
+				providerReference: `/ask/option-${index}`,
+				eventType: 'value-path.answer-selected',
+				occurredAt: '2026-05-15T12:07:00.000Z',
+				semanticIdempotencyKey: `scanner-click-${index}`,
+				privacyLevel: 'internal',
+				identityEvidence: captured.providerIdentity.evidence,
+				payloadSummary: {
+					summary: `Selected answer option-${index} for email-0-path-survey`,
+					keywords: ['value-path', 'answer-selected'],
+					restrictedPayloadStored: false,
+				},
+				schemaVersion: 1,
+				createdAt: '2026-05-15T12:07:00.000Z',
+			})
+		}
+
+		const result = await progressValuePathDrips({
+			repository,
+			allowWrite: true,
+			allowlist: {
+				activationId: 'rig-test-2026-05-15-a',
+				status: 'active',
+				killSwitch: false,
+				mode: 'allowlisted-test',
+				pathSlugs: ['ai-hero-skills-workflow'],
+				contactIds: [captured.contact.id],
+				kitSubscriberIds: ['4089521940'],
+				emails: [captured.contact.email!],
+				emailHashes: [],
+				emailResourceIds: [
+					'ai-hero-skills-workflow.email-0',
+					'ai-hero-skills-workflow.email-1',
+				],
+				kitSequenceIds: ['2757199', '2757200'],
+				candidates: [],
+				createdAt: '2026-05-15T12:00:00.000Z',
+			},
+			completedIntents: [completedIntent],
+			acceptedReviewReasons: ['human-review'],
+			now: '2026-05-16T12:06:00.000Z',
+		})
+
+		expect(result.counts).toMatchObject({ planned: 1, idempotentNoop: 0 })
+		expect(result.results[0]?.advisoryReasons).toContain(
+			'answer-click-unverified:implausible-contact-volume',
+		)
 	})
 
 	it('blocks Gate D start when the Email 0 sequence is not allowlisted', async () => {
@@ -894,6 +1338,385 @@ describe('subscriber marketing Gate D allowlist', () => {
 				(intent) => intent.type === 'send-value-path-email',
 			),
 		).toHaveLength(0)
+	})
+})
+
+describe('subscriber marketing value path completed-intent scan', () => {
+	function completedIntent(args: {
+		id: string
+		contactId: string
+		emailResourceId: string
+		completedAt: string
+		valuePathSlug?: string
+	}) {
+		return {
+			id: args.id,
+			nextActionId: `next_action_${args.id}`,
+			contactId: args.contactId,
+			provider: 'kit' as const,
+			type: 'send-value-path-email' as const,
+			status: 'completed' as const,
+			idempotencyKey: `contact:${args.contactId}:value-path:${args.valuePathSlug ?? 'ai-hero-skills-workflow'}:email:${args.emailResourceId}`,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				valuePathSlug: args.valuePathSlug ?? 'ai-hero-skills-workflow',
+				emailResourceId: args.emailResourceId,
+				completedAt: args.completedAt,
+			},
+			createdAt: args.completedAt,
+		}
+	}
+
+	it('reduces the scan to each contact/path frontier ordered oldest first', () => {
+		const intents = [
+			completedIntent({
+				id: 'a_email_0',
+				contactId: 'contact-a',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-05-01T00:00:00.000Z',
+			}),
+			completedIntent({
+				id: 'a_email_1',
+				contactId: 'contact-a',
+				emailResourceId: 'ai-hero-skills-workflow.email-1',
+				completedAt: '2026-05-03T00:00:00.000Z',
+			}),
+			completedIntent({
+				id: 'b_email_0',
+				contactId: 'contact-b',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-05-02T00:00:00.000Z',
+			}),
+		]
+		const result = selectCompletedValuePathIntentFrontier({
+			intents,
+			limit: 200,
+		})
+		expect(result.map((intent) => intent.id)).toEqual(['b_email_0', 'a_email_1'])
+	})
+
+	it('honors maxCompletedAt without rewinding to an older completed step', () => {
+		const result = selectCompletedValuePathIntentFrontier({
+			intents: [
+				completedIntent({
+					id: 'too_recent',
+					contactId: 'contact-a',
+					emailResourceId: 'ai-hero-skills-workflow.email-1',
+					completedAt: '2026-05-16T00:00:00.000Z',
+				}),
+				completedIntent({
+					id: 'old_enough',
+					contactId: 'contact-a',
+					emailResourceId: 'ai-hero-skills-workflow.email-0',
+					completedAt: '2026-05-01T00:00:00.000Z',
+				}),
+			],
+			limit: 200,
+			maxCompletedAt: '2026-05-15T00:00:00.000Z',
+		})
+		expect(result).toEqual([])
+	})
+
+	it('applies rolling learner scope before the frontier limit', () => {
+		const intents = [
+			completedIntent({
+				id: 'static-oldest',
+				contactId: 'static-contact',
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				completedAt: '2026-05-01T00:00:00.000Z',
+			}),
+			completedIntent({
+				id: 'rolling-starved',
+				contactId: 'rolling-contact',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-05-02T00:00:00.000Z',
+			}),
+		]
+		const scan = scanCompletedValuePathIntentFrontier({
+			intents,
+			limit: 1,
+			contactIds: ['rolling-contact'],
+			now: '2026-05-03T00:00:00.000Z',
+		})
+		expect(scan.intents.map((intent) => intent.id)).toEqual([
+			'rolling-starved',
+		])
+		expect(scan.diagnostics).toMatchObject({
+			scanned: 2,
+			eligible: 1,
+			frontierSize: 1,
+			returned: 1,
+			excludedByScope: 1,
+			oldestFrontierAgeHours: 24,
+		})
+	})
+
+	it('does not let terminal and already-progressed frontiers consume the rolling limit', () => {
+		const terminal = Array.from({ length: 205 }, (_, index) =>
+			completedIntent({
+				id: `terminal-${index}`,
+				contactId: `terminal-contact-${index}`,
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				completedAt: `2026-05-01T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+			}),
+		)
+		const alreadyProgressed = completedIntent({
+			id: 'already-progressed-email-0',
+			contactId: 'already-progressed',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			completedAt: '2026-05-01T04:00:00.000Z',
+		})
+		const pendingNextFixture = completedIntent({
+			id: 'already-progressed-email-1',
+			contactId: 'already-progressed',
+			emailResourceId: 'ai-hero-skills-workflow.email-1',
+			completedAt: '2026-05-01T04:01:00.000Z',
+		})
+		const pendingNext = {
+			...pendingNextFixture,
+			status: 'pending' as const,
+			metadata: {
+				...pendingNextFixture.metadata,
+				completedAt: undefined,
+			},
+		}
+		const starved = completedIntent({
+			id: 'rolling-starved-after-terminal-history',
+			contactId: 'rolling-starved',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			completedAt: '2026-05-02T00:00:00.000Z',
+		})
+		const scan = scanCompletedValuePathIntentFrontier({
+			intents: [...terminal, alreadyProgressed, pendingNext, starved],
+			limit: 1,
+		})
+		expect(scan.intents.map((intent) => intent.id)).toEqual([
+			'rolling-starved-after-terminal-history',
+		])
+		expect(scan.diagnostics).toMatchObject({
+			excludedTerminal: 205,
+			excludedExistingNextIntent: 1,
+			actionableFrontierSize: 1,
+			truncated: 0,
+		})
+	})
+
+	it('reaches a starved contact frontier even when history exceeds the scan limit', async () => {
+		// Regression: 2026-05 cohort stall. The completed-intent history grew
+		// past the 200-row scan window and the hourly drip cron rescanned the
+		// same saturated window forever, never reaching the frontier.
+		const rows: Record<string, unknown>[] = []
+		for (let index = 0; index < 205; index++) {
+			rows.push(
+				completedIntent({
+					id: `noise_${index}`,
+					contactId: `noise-contact-${index}`,
+					emailResourceId: 'ai-hero-skills-workflow.email-0',
+					completedAt: `2026-05-01T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+				}),
+			)
+		}
+		// The starved contact sits past the old 200-row window in table order,
+		// with the oldest frontier of all — exactly the contact the scan lost.
+		rows.push(
+			completedIntent({
+				id: 'stalled_email_0',
+				contactId: 'contact-stalled',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-04-29T00:00:00.000Z',
+			}),
+			completedIntent({
+				id: 'stalled_email_1',
+				contactId: 'contact-stalled',
+				emailResourceId: 'ai-hero-skills-workflow.email-1',
+				completedAt: '2026-04-30T00:00:00.000Z',
+			}),
+		)
+		const database = {
+			select: () => ({ from: () => ({ where: async () => rows }) }),
+		}
+		const repository = new DrizzleCaptureMarketingRepository(database)
+		const result =
+			await repository.findCompletedValuePathEmailSideEffectIntents({
+				limit: 200,
+			})
+		expect(result).toHaveLength(200)
+		expect(result[0]).toMatchObject({
+			contactId: 'contact-stalled',
+			id: 'stalled_email_1',
+		})
+		expect(
+			result.filter((intent) => intent.contactId === 'contact-stalled'),
+		).toHaveLength(1)
+	})
+})
+
+describe('subscriber marketing value path run state', () => {
+	it('reads as stalled when mid-path participants have had no movement past the threshold', () => {
+		const movement = evaluateValuePathMovement({
+			intents: [
+				{
+					createdAt: '2026-05-29T00:00:00.000Z',
+					metadata: { completedAt: '2026-05-30T00:00:00.000Z' },
+				},
+			],
+			events: [
+				{
+					eventType: 'value-path.drip-progressed',
+					occurredAt: '2026-05-30T00:00:00.000Z',
+				},
+			],
+			participants: 100,
+			completedPathCount: 10,
+			now: '2026-07-14T00:00:00.000Z',
+		})
+		expect(movement.stalled).toBe(true)
+		expect(movement.midPathParticipants).toBe(90)
+		expect(movement.lastMovementAt).toBe('2026-05-30T00:00:00.000Z')
+
+		const runState = resolveGateDRunState({
+			authorizationPassed: true,
+			authorizationReviewReasons: [],
+			hardBlockerCount: 0,
+			retryableDue: 0,
+			retryableWaiting: 0,
+			pending: 0,
+			dueSends: 0,
+			participants: 100,
+			completedPathCount: 10,
+			movement,
+		})
+		expect(runState.state).toBe('stalled')
+		expect(runState.plainLanguage).toContain('STALLED')
+		expect(runState.plainLanguage).toContain('90')
+	})
+
+	it('reads as running when due sends exist even with stale movement', () => {
+		const movement = evaluateValuePathMovement({
+			intents: [
+				{
+					createdAt: '2026-05-29T00:00:00.000Z',
+					metadata: { completedAt: '2026-05-30T00:00:00.000Z' },
+				},
+			],
+			events: [],
+			participants: 100,
+			completedPathCount: 10,
+			now: '2026-07-14T00:00:00.000Z',
+		})
+		const runState = resolveGateDRunState({
+			authorizationPassed: true,
+			authorizationReviewReasons: [],
+			hardBlockerCount: 0,
+			retryableDue: 0,
+			retryableWaiting: 0,
+			pending: 0,
+			dueSends: 12,
+			participants: 100,
+			completedPathCount: 10,
+			movement,
+		})
+		expect(runState.state).toBe('running')
+	})
+
+	it('reads as waiting when movement is recent', () => {
+		const movement = evaluateValuePathMovement({
+			intents: [
+				{
+					createdAt: '2026-07-13T20:00:00.000Z',
+					metadata: { completedAt: '2026-07-13T22:00:00.000Z' },
+				},
+			],
+			events: [],
+			participants: 100,
+			completedPathCount: 10,
+			now: '2026-07-14T00:00:00.000Z',
+		})
+		expect(movement.stalled).toBe(false)
+		const runState = resolveGateDRunState({
+			authorizationPassed: true,
+			authorizationReviewReasons: [],
+			hardBlockerCount: 0,
+			retryableDue: 0,
+			retryableWaiting: 0,
+			pending: 0,
+			dueSends: 0,
+			participants: 100,
+			completedPathCount: 10,
+			movement,
+		})
+		expect(runState.state).toBe('waiting')
+	})
+
+	it('reads as completed when every participant reached a terminal email', () => {
+		const movement = evaluateValuePathMovement({
+			intents: [
+				{
+					createdAt: '2026-05-29T00:00:00.000Z',
+					metadata: { completedAt: '2026-05-30T00:00:00.000Z' },
+				},
+			],
+			events: [],
+			participants: 5,
+			completedPathCount: 5,
+			now: '2026-07-14T00:00:00.000Z',
+		})
+		expect(movement.stalled).toBe(false)
+		const runState = resolveGateDRunState({
+			authorizationPassed: true,
+			authorizationReviewReasons: [],
+			hardBlockerCount: 0,
+			retryableDue: 0,
+			retryableWaiting: 0,
+			pending: 0,
+			dueSends: 0,
+			participants: 5,
+			completedPathCount: 5,
+			movement,
+		})
+		expect(runState.state).toBe('completed')
+	})
+})
+
+describe('subscriber marketing answer click verification', () => {
+	const clickEvent = (summary: string, occurredAt = '2026-05-15T12:07:00.000Z') => ({
+		occurredAt,
+		payloadSummary: {
+			summary,
+			keywords: [],
+			restrictedPayloadStored: false as const,
+		},
+	})
+
+	it('verifies a single organic click for the step', () => {
+		const result = verifyAnswerClickForStep({
+			events: [clickEvent('Selected answer correct for email-0-path-survey')],
+			emailStepId: 'email-0',
+		})
+		expect(result.verdict).toBe('verified')
+	})
+
+	it('rejects contacts past the organic click ceiling', () => {
+		const events = Array.from(
+			{ length: MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT + 1 },
+			(_, index) =>
+				clickEvent(`Selected answer option-${index} for email-0-path-survey`),
+		)
+		const result = verifyAnswerClickForStep({ events, emailStepId: 'email-0' })
+		expect(result.verdict).toBe('implausible-contact-volume')
+	})
+
+	it('rejects several distinct selections for the same step', () => {
+		const result = verifyAnswerClickForStep({
+			events: [
+				clickEvent('Selected answer a for email-0-path-survey'),
+				clickEvent('Selected answer b for email-0-path-survey'),
+				clickEvent('Selected answer c for email-0-path-survey'),
+			],
+			emailStepId: 'email-0',
+		})
+		expect(result.verdict).toBe('implausible-step-volume')
 	})
 })
 
@@ -1014,6 +1837,281 @@ describe('subscriber marketing value path click progression', () => {
 		})
 	})
 
+	it('captures the terminal email-7 answer once without planning another email', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const updateSubscriberFields = vi.fn().mockResolvedValue({ id: 'kit_123' })
+		const progression = {
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-07-19T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				sequenceId: 'ai-hero-skills-workflow',
+				emailId: 'email-7',
+				surveyId: 'email-7-finisher-segment',
+				optionValue: 'placeholder-option-a',
+				nextEmailId: undefined,
+				nextEmailResourceId: undefined,
+				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			}),
+			mode: 'scoped-live' as const,
+			sendGate: {
+				allowedActions: ['advance-by-answer-click'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-7'],
+				verifiedKitSequenceIds: ['2831545'],
+			},
+			finisherFieldProvider: { updateSubscriberFields },
+			now: '2026-07-18T11:05:00.000Z',
+		}
+		const result = await recordValuePathAnswerProgression(progression)
+		const duplicate = await recordValuePathAnswerProgression({
+			...progression,
+			now: '2026-07-18T11:06:00.000Z',
+		})
+
+		expect(result).toMatchObject({
+			status: 'recorded',
+			finisherCapture: 'written',
+		})
+		expect(duplicate).toMatchObject({
+			status: 'idempotent-noop',
+			idempotentNoop: true,
+		})
+		expect(updateSubscriberFields).toHaveBeenCalledTimes(1)
+		expect(updateSubscriberFields).toHaveBeenCalledWith({
+			subscriberId: 'kit_123',
+			subscriberEmail: captured.contact.email,
+			fields: {
+				aih_finisher_segment: 'placeholder-option-a',
+				aih_next_course_waitlist_at: '2026-07-18T11:05:00.000Z',
+			},
+		})
+		expect(
+			Array.from(repository.sideEffectIntents.values()).filter(
+				(intent) => intent.type === 'write-value-path-finisher-fields',
+			),
+		).toEqual([
+			expect.objectContaining({
+				status: 'completed',
+				completedAt: '2026-07-18T11:05:00.000Z',
+			}),
+		])
+		expect(
+			Array.from(repository.nextActions.values()).filter(
+				(action) => action.type === 'advance-value-path',
+			),
+		).toHaveLength(0)
+	})
+
+	it('does not run a second Kit write while finisher capture is pending', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		let releaseWrite!: () => void
+		const updateSubscriberFields = vi.fn(
+			() =>
+				new Promise<{ id: string }>((resolve) => {
+					releaseWrite = () => resolve({ id: 'kit_123' })
+				}),
+		)
+		const progression = {
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-07-19T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				sequenceId: 'ai-hero-skills-workflow',
+				emailId: 'email-7',
+				nextEmailId: undefined,
+				nextEmailResourceId: undefined,
+				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			}),
+			mode: 'scoped-live' as const,
+			sendGate: {
+				allowedActions: ['advance-by-answer-click'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-7'],
+				verifiedKitSequenceIds: ['2831545'],
+			},
+			finisherFieldProvider: { updateSubscriberFields },
+			now: '2026-07-18T11:05:00.000Z',
+		}
+		const first = recordValuePathAnswerProgression(progression)
+		await vi.waitFor(() => expect(updateSubscriberFields).toHaveBeenCalledTimes(1))
+		const duplicate = await recordValuePathAnswerProgression(progression)
+		expect(duplicate).toMatchObject({
+			status: 'idempotent-noop',
+			reviewReasons: ['finisher-capture-in-progress'],
+		})
+		expect(updateSubscriberFields).toHaveBeenCalledTimes(1)
+		releaseWrite()
+		await expect(first).resolves.toMatchObject({
+			status: 'recorded',
+			finisherCapture: 'written',
+		})
+	})
+
+	it('retries a failed finisher write with the original durable timestamp', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const updateSubscriberFields = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('temporary Kit failure'))
+			.mockResolvedValueOnce({ id: 'kit_123' })
+		const progression = {
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-07-19T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				sequenceId: 'ai-hero-skills-workflow',
+				emailId: 'email-7',
+				nextEmailId: undefined,
+				nextEmailResourceId: undefined,
+				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			}),
+			mode: 'scoped-live' as const,
+			sendGate: {
+				allowedActions: ['advance-by-answer-click'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-7'],
+				verifiedKitSequenceIds: ['2831545'],
+			},
+			finisherFieldProvider: { updateSubscriberFields },
+			now: '2026-07-18T11:05:00.000Z',
+		}
+
+		await expect(recordValuePathAnswerProgression(progression)).resolves.toMatchObject(
+			{
+				status: 'recorded',
+				finisherCapture: 'failed',
+				reviewReasons: ['kit-finisher-field-write-failed'],
+			},
+		)
+		const retry = await recordValuePathAnswerProgression({
+			...progression,
+			now: '2026-07-18T11:10:00.000Z',
+		})
+		expect(retry).toMatchObject({ status: 'recorded', finisherCapture: 'written' })
+		expect(updateSubscriberFields).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				fields: expect.objectContaining({
+					aih_next_course_waitlist_at: '2026-07-18T11:05:00.000Z',
+				}),
+			}),
+		)
+		expect(
+			Array.from(repository.sideEffectIntents.values()).filter(
+				(intent) => intent.type === 'write-value-path-finisher-fields',
+			),
+		).toHaveLength(1)
+	})
+
+	it('rejects an email-7 answer page when the signed token belongs to another email', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const updateSubscriberFields = vi.fn()
+		const result = await recordValuePathAnswerProgression({
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-1',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-07-19T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				sequenceId: 'ai-hero-skills-workflow',
+				emailId: 'email-7',
+				nextEmailId: undefined,
+				nextEmailResourceId: undefined,
+				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			}),
+			mode: 'scoped-live',
+			finisherFieldProvider: { updateSubscriberFields },
+		})
+		expect(result).toMatchObject({
+			status: 'skipped',
+			reason: 'answer-page-token-email-mismatch',
+		})
+		expect(updateSubscriberFields).not.toHaveBeenCalled()
+	})
+
+	it('requires complete terminal token-binding metadata', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const updateSubscriberFields = vi.fn()
+		const result = await recordValuePathAnswerProgression({
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-07-19T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				emailId: undefined,
+				sequenceId: undefined,
+				nextEmailId: undefined,
+				nextEmailResourceId: undefined,
+				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			}),
+			mode: 'scoped-live',
+			finisherFieldProvider: { updateSubscriberFields },
+		})
+		expect(result).toMatchObject({
+			status: 'skipped',
+			reason: 'finisher-capture-token-binding-missing',
+		})
+		expect(updateSubscriberFields).not.toHaveBeenCalled()
+	})
+
+	it('rejects terminal sequence metadata that does not match the signed token', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const result = await recordValuePathAnswerProgression({
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-07-19T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				emailId: 'email-7',
+				sequenceId: 'ai-hero-skills-team-workflow',
+				nextEmailId: undefined,
+				nextEmailResourceId: undefined,
+				captureFieldKey: AIH_FINISHER_SEGMENT_FIELD,
+				captureDateFieldKey: AIH_NEXT_COURSE_WAITLIST_AT_FIELD,
+			}),
+		})
+		expect(result).toMatchObject({
+			status: 'skipped',
+			reason: 'answer-page-token-sequence-mismatch',
+		})
+	})
+
 	it('uses the answer page next sequence as the next value path slug', async () => {
 		const { repository, captured } = await makeProgressionFixture()
 		const result = await recordValuePathAnswerProgression({
@@ -1085,6 +2183,57 @@ describe('subscriber marketing value path click progression', () => {
 				(intent) => intent.type === 'send-value-path-email',
 			),
 		).toHaveLength(1)
+	})
+
+	it('skips progression once a contact exceeds the plausible click volume', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		for (
+			let index = 0;
+			index < MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT;
+			index++
+		) {
+			repository.createContactEvent({
+				contactId: captured.contact.id,
+				providerIdentityId: captured.providerIdentity.id,
+				provider: 'ai-hero',
+				providerEventId: `scanner-${index}`,
+				providerReference: `/ask/option-${index}`,
+				eventType: 'value-path.answer-selected',
+				occurredAt: '2026-05-14T11:04:00.000Z',
+				semanticIdempotencyKey: `scanner-${index}`,
+				privacyLevel: 'internal',
+				identityEvidence: captured.providerIdentity.evidence,
+				payloadSummary: {
+					summary: `Selected answer option-${index} for email-1.quiz`,
+					keywords: ['value-path', 'answer-selected'],
+					restrictedPayloadStored: false,
+				},
+				schemaVersion: 1,
+				createdAt: '2026-05-14T11:04:00.000Z',
+			})
+		}
+		const result = await recordValuePathAnswerProgression({
+			repository,
+			token: {
+				contactId: captured.contact.id,
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-1',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-05-14T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage(),
+			now: '2026-05-14T11:05:00.000Z',
+		})
+
+		expect(result).toMatchObject({
+			status: 'skipped',
+			reason: 'answer-click-volume-implausible',
+		})
+		expect(
+			Array.from(repository.sideEffectIntents.values()).filter(
+				(intent) => intent.type === 'send-value-path-email',
+			),
+		).toHaveLength(0)
 	})
 
 	it('skips progression when the answer page has no next email resource', async () => {
@@ -1258,6 +2407,126 @@ describe('subscriber marketing value path foundation', () => {
 				],
 			},
 		})
+	})
+
+	it('keeps the one-CTA email-7 copy and shared certificate-page variants data-driven', () => {
+		const certificateSlug = 'ai-hero-skills-workflow-certificate'
+		const email7 = `<EmailPlan id="email-7" kitSequenceId="2831545"><Subject>You finished. Here's your certificate.</Subject><Preview>All seven lessons done. One question for you.</Preview><Body>You did it. Seven lessons, start to finish. Most people never finish things like this. You did.</Body><Survey id="email-7-finisher-segment" type="segmentation"><Question>One question, then your certificate. What are you working toward right now?</Question><Option value="shipping">Shipping an AI product</Option><Option value="day-job">Getting better at my day job</Option><Option value="exploring">Just exploring for now</Option><Option value="other">Something else</Option></Survey><WaitlistLine>Click your answer and your certificate is on the other side. When the next crash course opens, you'll be the first to know.</WaitlistLine></EmailPlan>`
+		const answer7 = ['shipping', 'day-job', 'exploring', 'other']
+			.map(
+				(optionValue) =>
+					`<AnswerPage id="email-7-finisher-segment.${optionValue}" slug="${certificateSlug}" emailId="email-7" surveyId="email-7-finisher-segment" optionValue="${optionValue}" captureFieldKey="aih_finisher_segment" captureDateFieldKey="aih_next_course_waitlist_at"><Headline>${optionValue === 'other' ? 'Noted. Your certificate is below.' : `Noted: ${optionValue}`}</Headline></AnswerPage>`,
+			)
+			.join('')
+		const preview = previewValuePathContentImport({
+			individualSequenceMdx: individualSequence.replace(
+				'</EmailSequence>',
+				`${email7}</EmailSequence>`,
+			),
+			teamSequenceMdx: teamSequence,
+			individualAnswerPagesMdx: individualAnswers.replace(
+				'</AnswerPageSet>',
+				`${answer7}</AnswerPageSet>`,
+			),
+			teamAnswerPagesMdx: teamAnswers,
+		})
+		const email = preview.pages.find(
+			(page) => page.kind === 'email' && page.emailId === 'email-7',
+		)
+		const other = preview.pages.find(
+			(page) =>
+				page.kind === 'answer' &&
+				page.emailId === 'email-7' &&
+				page.optionValue === 'other',
+		)
+		expect(email).toMatchObject({
+			body:
+				'You did it. Seven lessons, start to finish. Most people never finish things like this. You did.',
+			certificateLink: undefined,
+			waitlistLine:
+				"Click your answer and your certificate is on the other side. When the next crash course opens, you'll be the first to know.",
+			survey: {
+				question:
+					'One question, then your certificate. What are you working toward right now?',
+				options: [
+					{ value: 'shipping', label: 'Shipping an AI product' },
+					{ value: 'day-job', label: 'Getting better at my day job' },
+					{ value: 'exploring', label: 'Just exploring for now' },
+					{ value: 'other', label: 'Something else' },
+				],
+			},
+		})
+		expect(other).toMatchObject({
+			slug: certificateSlug,
+			headline: 'Noted. Your certificate is below.',
+			captureFieldKey: 'aih_finisher_segment',
+			captureDateFieldKey: 'aih_next_course_waitlist_at',
+		})
+		expect(preview.warnings).not.toContain(`duplicate-page-slug:${certificateSlug}`)
+		const qa = previewSkillsWorkflowValuePathQa({
+			preview,
+			individualSequenceMdx: individualSequence,
+			teamSequenceMdx: teamSequence,
+			baseUrl: 'https://www.aihero.dev',
+		})
+		expect(
+			qa.surveyOptions.find(
+				(option) =>
+					option.emailId === 'email-7' && option.optionValue === 'other',
+			)?.askLinkPreview,
+		).toBe(
+			'https://www.aihero.dev/ask/ai-hero-skills-workflow-certificate?answer=other&pt=<redacted-path-token>',
+		)
+		const plan = buildValuePathContentResourcePlan(preview)
+		expect(
+			plan.resources.find(
+				(resource) =>
+					resource.id ===
+					'ai-hero-skills-workflow.email-7-finisher-segment.other',
+			),
+		).toMatchObject({
+			fields: {
+				optionValue: 'other',
+				position: expect.any(Number),
+				captureFieldKey: 'aih_finisher_segment',
+				captureDateFieldKey: 'aih_next_course_waitlist_at',
+			},
+		})
+		const roundTrippedVariants = plan.resources
+			.filter(
+				(resource) =>
+					resource.fields.emailId === 'email-7' &&
+					resource.fields.surveyId === 'email-7-finisher-segment',
+			)
+			.map(parseValuePathAnswerPageResource)
+			.filter((page) => Boolean(page))
+			.sort((left, right) => left!.fields.position! - right!.fields.position!)
+		expect(roundTrippedVariants.map((page) => page!.fields.position)).toEqual([
+			3, 4, 5, 6,
+		])
+		expect(roundTrippedVariants.map((page) => page!.fields.optionValue)).toEqual([
+			'shipping',
+			'day-job',
+			'exploring',
+			'other',
+		])
+
+		const duplicateVariant = `<AnswerPage id="email-7-finisher-segment.duplicate" slug="${certificateSlug}" emailId="email-7" surveyId="email-7-finisher-segment" optionValue="shipping" captureFieldKey="aih_finisher_segment" captureDateFieldKey="aih_next_course_waitlist_at"><Headline>Wrong duplicate.</Headline></AnswerPage>`
+		const duplicatePreview = previewValuePathContentImport({
+			individualSequenceMdx: individualSequence.replace(
+				'</EmailSequence>',
+				`${email7}</EmailSequence>`,
+			),
+			teamSequenceMdx: teamSequence,
+			individualAnswerPagesMdx: individualAnswers.replace(
+				'</AnswerPageSet>',
+				`${answer7}${duplicateVariant}</AnswerPageSet>`,
+			),
+			teamAnswerPagesMdx: teamAnswers,
+		})
+		expect(duplicatePreview.warnings).toContain(
+			'duplicate-answer-variant:ai-hero-skills-workflow:email-7:email-7-finisher-segment:shipping',
+		)
 	})
 
 	it('builds an operator QA preview with redacted ask links and share metadata', () => {
@@ -4174,6 +5443,205 @@ describe('subscriber marketing Gate A spine', () => {
 		expect(written.counts.tagWritesPerformed).toBe(2)
 		expect(updatedFields).toHaveLength(2)
 		expect(tagged.sort()).toEqual(['tag_member', 'tag_owner'])
+	})
+})
+
+describe('Skills Newsletter Path Entry', () => {
+	const rollingAllowlist = normalizeGateDRuntimeAllowlist({
+		activationId: 'skills-workflow:rolling-public',
+		status: 'active',
+		killSwitch: false,
+		mode: 'allowlisted-test',
+		authorizationMode: 'rolling-public-enrollment',
+		pathSlugs: ['ai-hero-skills-workflow'],
+		contactIds: [],
+		kitSubscriberIds: [],
+		emails: [],
+		emailHashes: [],
+		emailResourceIds: ['ai-hero-skills-workflow.email-0'],
+		kitSequenceIds: ['2757199'],
+		candidates: [],
+		createdAt: '2026-07-14T12:00:00.000Z',
+	})
+	const input = {
+		kitSubscriberId: '9376133001',
+		email: 'synthetic-signup@example.com',
+		name: 'Synthetic Signup',
+		formId: 9376133,
+		source: 'skills:test',
+		subscribedAt: '2026-07-14T12:00:00.000Z',
+		optInAttribution: {
+			gclid: 'TEST_email_course_signup',
+			utmSource: 'google',
+			utmMedium: 'cpc',
+			utmCampaign: 'email-course-warmup',
+			landingPath: '/skills',
+			capturedAt: '2026-07-14T11:59:00.000Z',
+		},
+	}
+
+	it('plans email-0 for a new public signup without a frozen contact allowlist', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: false,
+		})
+
+		expect(result.status).toBe('planned')
+		expect(result.entry.counts).toMatchObject({
+			candidates: 1,
+			planned: 1,
+			wouldCreate: 1,
+			created: 0,
+		})
+		expect(result.entry.results[0]).toMatchObject({
+			kitSubscriberId: '9376133001',
+			status: 'planned',
+			reviewReasons: [],
+		})
+	})
+
+	it('replans blocked email intents back to pending for executor re-evaluation', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		repository.createSideEffectIntent({
+			id: 'intent-blocked-1',
+			nextActionId: 'na-1',
+			contactId: 'contact-1',
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'blocked',
+			idempotencyKey: 'contact:contact-1:value-path:p:email:e0',
+			gates: [],
+			reviewReasons: ['contact-not-allowlisted'],
+			metadata: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+			createdAt: '2026-07-15T15:00:00.000Z',
+		})
+
+		const dryRun = await replanBlockedValuePathEmailIntents({
+			repository,
+			contactIds: ['contact-1'],
+			allowWrite: false,
+		})
+		expect(dryRun.counts).toMatchObject({
+			blockedIntentsFound: 1,
+			wouldReplan: 1,
+			replanned: 0,
+		})
+
+		const written = await replanBlockedValuePathEmailIntents({
+			repository,
+			contactIds: ['contact-1'],
+			allowWrite: true,
+			now: '2026-07-15T16:00:00.000Z',
+		})
+		expect(written.counts.replanned).toBe(1)
+		const intents =
+			repository.findValuePathEmailSideEffectIntentsByContact('contact-1')
+		expect(intents[0]).toMatchObject({
+			status: 'pending',
+			reviewReasons: [],
+		})
+		expect(intents[0]?.metadata).toMatchObject({
+			replannedFromReviewReasons: ['contact-not-allowlisted'],
+		})
+	})
+
+	it('plans email-0 under scoped-live mode, the mode rolling activations write', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: normalizeGateDRuntimeAllowlist({
+				...rollingAllowlist,
+				mode: 'scoped-live',
+			}),
+			input,
+			allowWrite: false,
+		})
+
+		expect(result.status).toBe('planned')
+		expect(result.entry.results[0]).toMatchObject({
+			status: 'planned',
+			reviewReasons: [],
+		})
+	})
+
+	it('creates Contact, ContactState, subscription evidence, and one email-0 intent idempotently in memory', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const first = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: true,
+		})
+		const second = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input: {
+				...input,
+				source: 'kit-confirmation-reconciler',
+				subscribedAt: '2026-07-14T12:05:00.000Z',
+			},
+			allowWrite: true,
+		})
+
+		expect(first.status).toBe('planned')
+		expect(first.entry.counts.created).toBe(1)
+		expect(second.status).toBe('idempotent-noop')
+		expect(second.entry.counts.idempotentNoop).toBe(1)
+		const state = await repository.findCurrentContactState(first.contactId)
+		expect(state?.optInAttribution).toMatchObject({
+			gclid: 'TEST_email_course_signup',
+			utmCampaign: 'email-course-warmup',
+		})
+		expect(repository.contacts.get(first.contactId)?.optInAttribution).toMatchObject({
+			gclid: 'TEST_email_course_signup',
+		})
+		const shadow = previewShadowFields({
+			contactId: first.contactId,
+			state: state!,
+		})
+		expect(shadow.fields.aih_ft_gclid).toBe('TEST_email_course_signup')
+		expect(
+			await repository.findSideEffectIntentByIdempotencyKey(
+				`contact:${first.contactId}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
+			),
+		).toMatchObject({
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			metadata: {
+				activationId: 'skills-workflow:rolling-public',
+				kitSequenceId: '2757199',
+			},
+		})
+	})
+
+	it('adds first attribution to an existing Kit Contact and ContactState', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		await captureNormalizedContactEvent({ repository, event: normalizeContactEvent({ provider: 'kit', providerEventId: 'older-event', eventType: 'kit.imported', occurredAt: '2026-07-13T12:00:00.000Z', email: input.email, externalId: input.kitSubscriberId, message: 'existing subscriber' }) })
+		const result = await enterSkillsNewsletterSubscriber({ repository, allowlist: rollingAllowlist, input, allowWrite: false })
+		expect(repository.contacts.get(result.contactId)?.optInAttribution).toMatchObject({ gclid: 'TEST_email_course_signup', subscribedAt: input.subscribedAt })
+		expect((await repository.findCurrentContactState(result.contactId))?.optInAttribution).toMatchObject({ gclid: 'TEST_email_course_signup', subscribedAt: input.subscribedAt })
+	})
+
+	it('captures the signup but blocks path entry unless rolling authorization is active', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: {
+				...rollingAllowlist,
+				authorizationMode: 'finish-approved-path',
+			},
+			input,
+			allowWrite: false,
+		})
+
+		expect(result.status).toBe('blocked')
+		expect(result.entry.results[0]?.reviewReasons).toEqual([
+			'rolling-public-enrollment-not-active',
+		])
 	})
 })
 

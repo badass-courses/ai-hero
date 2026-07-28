@@ -32,12 +32,14 @@ import { cohortEntitlementSyncWorkflow } from './functions/cohort-entitlement-sy
 import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
+import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
 import { createUserOrganizations } from './functions/create-user-organization'
 import { syncGithubSourcedPosts } from './functions/sync-github-sourced-posts'
 import { googleAdsConversionUpload } from './functions/google-ads-conversion-upload'
+import { invoiceShortfallReconciliation } from './functions/invoice-shortfall-reconciliation'
 import { addDiscordRoleWorkflow } from './functions/discord/add-discord-role-workflow'
 import { grantLegendDiscordRole } from './functions/discord/grant-legend-discord-role'
 import { eventReminderBroadcast } from './functions/event-reminder-broadcast'
@@ -57,10 +59,12 @@ import { sendLiveEventWelcomeEmail } from './functions/send-live-event-welcome-e
 import { shortlinkAttribution } from './functions/shortlink-attribution'
 import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
+import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
+import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
-import { valuePathDripProgression } from './functions/value-path-drip-progression'
+import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
 import { valuePathEmailExecutor } from './functions/value-path-email-executor'
 import {
 	videoResourceAttached,
@@ -118,12 +122,16 @@ export const inngestConfig = {
 		eventReminderBroadcast,
 		cohortReminderBroadcast,
 		contentReadRetention,
+		courseSyncDetectionPoller,
 		typesensePopularitySync,
 		valuePathEmailExecutor,
-		valuePathDripProgression,
+		learnerFlowReconciler,
 		googleAdsConversionUpload,
+		invoiceShortfallReconciliation,
 		syncGithubSourcedPosts,
 		skillChangelogBroadcast,
+		skillsNewsletterPathEntry,
+		skillsNewsletterConfirmationReconciler,
 		notifyOnPostCreated,
 		generateArtwork,
 		pickVariant,

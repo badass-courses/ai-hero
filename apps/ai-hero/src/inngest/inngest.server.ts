@@ -38,6 +38,10 @@ import {
 	ImageResourceCreated,
 } from '@/inngest/events/image-resource-created'
 import {
+	INVOICE_SHORTFALL_RECONCILE_EVENT,
+	InvoiceShortfallReconcile,
+} from '@/inngest/events/invoice-shortfall'
+import {
 	LESSON_COMPLETED_EVENT,
 	LessonCompleted,
 } from '@/inngest/events/lesson-completed'
@@ -57,6 +61,10 @@ import {
 	SKILL_CHANGELOG_PUBLISHED_EVENT,
 	SkillChangelogPublished,
 } from '@/inngest/events/skill-changelog'
+import {
+	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+	type SkillsNewsletterSubscribed,
+} from '@/inngest/events/skills-newsletter'
 import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
@@ -172,6 +180,7 @@ export type Events = {
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated
+	[INVOICE_SHORTFALL_RECONCILE_EVENT]: InvoiceShortfallReconcile
 	[RESOURCE_CHAT_REQUEST_EVENT]: ResourceChat
 	[EMAIL_SEND_BROADCAST]: EmailSendBroadcast
 	[OCR_WEBHOOK_EVENT]: OcrWebhook
@@ -206,6 +215,7 @@ export type Events = {
 	[RESOURCE_CREATED_EVENT]: ResourceCreated
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
+	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested
 	[SLACK_ARTWORK_REGENERATE_REQUESTED_EVENT]: SlackArtworkRegenerateRequested
@@ -215,6 +225,10 @@ export type Events = {
 	[ARTWORK_FAL_COMPLETED_EVENT]: ArtworkFalCompleted
 	[ARTWORK_GENERATION_FAILED_EVENT]: ArtworkGenerationFailed
 	[VALUE_PATH_ANSWER_SELECTED_EVENT]: ValuePathAnswerSelected
+	// Operator lever: fire one learner-flow reconcile outside the hourly cron.
+	'subscriber_funnel.reconciler_run_requested': {
+		data: { requestedBy?: string; reason?: string }
+	}
 }
 
 const callbackBase =

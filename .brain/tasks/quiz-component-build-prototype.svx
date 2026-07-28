@@ -1,0 +1,123 @@
+---
+title: "Worker task: build the freestanding inline-quiz prototype"
+type: "task"
+assignee: "ShitRat (flagg, herdr pane w2S:p6, 2026-07-24)"
+created_at: "2026-07-24"
+---
+
+# Worker task: build the freestanding inline-quiz prototype
+
+You are building a **throwaway prototype**. It is an alignment instrument, not
+the first commit of the real component. Optimize for Joel being able to click it
+soon, not for production quality.
+
+## Claim first
+
+Before any other work, set `assignee:` in this file to your callsign plus
+machine, e.g. `assignee: "<yourname> (flagg, herdr pane <pane id>, 2026-07-24)"`.
+Do it immediately — the steering session watches for it as a liveness signal.
+
+## Where you work
+
+Your worktree is `/Users/joel/Code/worktrees/ai-hero-quiz-prototype` on branch
+`prototype/inline-quiz`. Work only there. Commit freely on that branch. **Never
+touch `main` and never touch `feat/draft-course-sync-control-plane`.**
+
+Install deps with `pnpm install` from the worktree root if needed.
+
+## Context
+
+Read the brief first:
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`
+and the step you are executing:
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/prototype-inline-quiz-in-a-lesson.svx`
+
+Matt Pocock asked for a `<Quiz>` MDX component. The design is already pinned —
+do not redesign it. Three research steps in that same directory carry the
+file:line evidence for everything below; read them rather than re-tracing.
+
+## Build this
+
+A **freestanding public page** at route `/quiz-prototype` in
+`apps/ai-hero/src/app/`. Requirements:
+
+1. **No auth.** A logged-out visitor on a phone can open it and use it. Do not
+   put it behind any access check.
+2. **Real MDX.** The page must define an MDX body **as a string** and run it
+   through AI Hero's `compileMDX`
+   (`apps/ai-hero/src/utils/compile-mdx.tsx`), exactly the way a lesson body is
+   compiled. Do not import the Quiz component directly into JSX and call it done
+   — the whole point is proving the MDX authoring path works. Copy the pattern
+   from an existing caller such as `apps/ai-hero/src/app/(content)/[post]/page.tsx`
+   or `apps/ai-hero/src/app/boss/page.tsx`.
+3. **Register `Quiz` and `QuizQuestion`** in the runtime component map in
+   `apps/ai-hero/src/utils/compile-mdx.tsx` (the map around lines 285-488), the
+   same way the ~30 existing entries are registered. Stateful client components
+   are already loaded dynamically there — follow that pattern.
+4. **The authoring shape is fixed.** It must accept exactly this, with a real
+   object literal:
+
+   ```mdx
+   <Quiz>
+     <QuizQuestion data={{
+       question: "…",
+       type: "multiple-choice",
+       choices: [
+         { answer: "a", label: "…" },
+         { answer: "b", label: "…" }
+       ],
+       correct: "a",
+       answer: "The explanation shown after answering."
+     }} />
+   </Quiz>
+   ```
+
+   Object props are proven to work: `blockJS: false` at
+   `compile-mdx.tsx:285-296`, and `<ThemeImage urls={{ dark, light }} />` already
+   ships in `apps/ai-hero/content/cohort-copy.mdx:17`.
+5. **Grade with `surveyMachine`** from `@coursebuilder/survey` (installed at
+   `1.0.5`). Import the machine and drive it. Write your own lean UI — do NOT use
+   the package's `SurveyQuestion` compound components, and do NOT use
+   `offerMachine`. That is a pinned decision: the package UI demands a full
+   four-group `SurveyConfig` and `offerMachine` carries subscriber-nag and
+   `do_not_survey` marketing coupling that has no place in a lesson body.
+6. **Single-answer multiple choice only.** Do not implement multi-select. The
+   package's multi-select guard is known-buggy (`survey-machine.ts:160-174`
+   accepts a proper subset as fully correct) and handling it is a separate
+   chartered decision.
+7. **No persistence.** Answers live in component state and die on refresh. No
+   database write, no localStorage, no API call. The answer endpoint is a
+   separate decision.
+8. **Behavior:** learner picks an answer, submits, sees whether they were right,
+   the choices indicate correct/incorrect, and the authored `answer` explanation
+   is revealed.
+
+Put 3-4 real questions on the page about AI coding, so Joel is reacting to
+something that reads like actual course content rather than "Question 1 / Foo /
+Bar". Include at least one where the explanation carries real weight.
+
+Style it to match the surrounding app. It should look like it belongs in a
+lesson, not like a bare form.
+
+## Rules
+
+- Prototype quality is fine, but it must **build and run**. Verify with
+  `pnpm --filter ai-hero build` or by running the dev server and loading
+  `/quiz-prototype`. Do not report DONE on code you have not seen render.
+- Do not modify anything under `.brain/` except this task file.
+- Do not run database migrations, hit production, or call live APIs.
+- Do not deploy. The steering session owns deploy and the DM to Joel.
+- Do not merge to any other branch.
+- If a pinned decision above seems wrong, say so in your DONE summary. Do not
+  quietly do something different.
+
+## Finish
+
+Commit your work on `prototype/inline-quiz` with a clear message. Then print a
+`DONE` summary of at most 15 lines covering:
+
+- the route and the files you touched
+- how you verified it renders (build output, dev server, what you actually saw)
+- the exact MDX you put on the page
+- anything that fought you, especially in the MDX compile path
+- anything you think is wrong with the pinned design now that you have built it

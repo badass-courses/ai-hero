@@ -3,6 +3,7 @@ import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
+import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -63,11 +64,14 @@ export default async function LoginPage({
 	const shortlinkRef = cookieStore.get('sl_ref')?.value
 	const firstTouch = readJsonCookie(cookieStore.get('ft_attr')?.value)
 	const lastTouch = readJsonCookie(cookieStore.get('lt_attr')?.value)
-	const checkoutAttribution = buildCheckoutAttribution({
-		firstTouch,
-		lastTouch,
-		shortlinkRef,
-		selfReportedSource: checkoutParams.selfReportedSource,
+	const checkoutAttribution = addKitSubscriberToCheckoutAttribution({
+		checkoutAttribution: buildCheckoutAttribution({
+			firstTouch,
+			lastTouch,
+			shortlinkRef,
+			selfReportedSource: checkoutParams.selfReportedSource,
+		}),
+		rawSubscriberId: cookieStore.get('ck_subscriber_id')?.value,
 	})
 
 	const stripe = await stripeProvider.createCheckoutSession(

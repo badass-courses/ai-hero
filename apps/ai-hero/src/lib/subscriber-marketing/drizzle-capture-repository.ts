@@ -7,11 +7,20 @@ import {
 	sideEffectIntent,
 	stateTransition,
 } from '@/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/utils/guid'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
+import {
+	canonicalCompletionForWrite,
+	isValuePathIntentCompleted,
+} from './value-path-completion'
+import {
+	COURSE_VALUE_PATH_SLUGS,
+	isCourseValuePathIntent,
+} from './learner-flow-classifier'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -21,8 +30,21 @@ import type {
 	SideEffectIntent,
 	StateTransition,
 } from './types'
+import {
+	scanCompletedValuePathIntentFrontier,
+	sortValuePathIntentsByCreatedAt,
+	type CompletedValuePathIntentScanArgs,
+} from './value-path-intent-scan'
 
 type AiHeroWriteDatabase = any
+
+export type LearnerFlowRecord = {
+	contactId: string
+	contact?: ContactRecord
+	contactState?: ContactState
+	intents: SideEffectIntent[]
+	entryEvents: ContactEventRecord[]
+}
 
 export class DrizzleCaptureMarketingRepository implements CaptureMarketingRepository {
 	constructor(private readonly database: AiHeroWriteDatabase) {}
@@ -82,6 +104,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return record
 	}
 
+	async updateContactOptInAttribution(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>) {
+		const current = await this.findContactById(contactId)
+		if (!current) throw new Error(`Missing contact ${contactId}`)
+		if (!current.optInAttribution) {
+			await this.database.update(contact).set({ optInAttribution: attribution, updatedAt: new Date() }).where(eq(contact.id, contactId))
+		}
+		return { ...current, optInAttribution: current.optInAttribution ?? attribution }
+	}
+
 	async createProviderIdentity(input: Omit<ProviderIdentityRecord, 'id'>) {
 		const record: ProviderIdentityRecord = {
 			id: this.newId('provider_identity'),
@@ -137,12 +168,24 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			createdAt: input.createdAt ?? new Date().toISOString(),
 			...input,
 		}
-		await this.database.insert(contactEvent).values({
-			...record,
-			occurredAt: new Date(record.occurredAt),
-			createdAt: new Date(record.createdAt),
-		})
-		return record
+		try {
+			await this.database.insert(contactEvent).values({
+				...record,
+				occurredAt: new Date(record.occurredAt),
+				createdAt: new Date(record.createdAt),
+			})
+			return record
+		} catch (cause) {
+			// The semantic key is the durable replay boundary. A concurrent or
+			// retried insert may lose the race after the preflight read. If the row
+			// now exists, the requested fact is already recorded and the caller can
+			// safely continue from it. Any other insert failure still escapes.
+			const existing = await this.findContactEventBySemanticKey(
+				record.semanticIdempotencyKey,
+			)
+			if (existing) return existing
+			throw cause
+		}
 	}
 
 	async findCurrentContactState(contactId: string) {
@@ -202,14 +245,20 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async createSideEffectIntent(input: SideEffectIntent) {
+		const completedAt = canonicalCompletionForWrite(input)
+		const record = { ...input, completedAt }
 		await this.database.insert(sideEffectIntent).values({
-			...input,
+			...record,
+			completedAt: completedAt ? new Date(completedAt) : null,
 			createdAt: new Date(input.createdAt),
 		})
-		return input
+		return record
 	}
 
-	async findPendingValuePathEmailSideEffectIntents(args: { limit: number }) {
+	async findPendingValuePathEmailSideEffectIntents(args: {
+		limit: number
+		intentIds?: string[]
+	}) {
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -220,19 +269,38 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				),
 			)
 		const now = new Date().toISOString()
-		return rows
+		const requestedIntentIds = args.intentIds
+			? new Set(args.intentIds)
+			: undefined
+		const due = rows
 			.map(toSideEffectIntentRecord)
 			.filter(
 				(intent: SideEffectIntent) =>
-					intent.status === 'pending' || isDueRetryableIntent(intent, now),
+					!isValuePathIntentCompleted(intent) &&
+					(intent.status === 'pending' || isDueRetryableIntent(intent, now)) &&
+					(!requestedIntentIds || requestedIntentIds.has(intent.id)),
 			)
-			.slice(0, args.limit)
+		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
-	async findCompletedValuePathEmailSideEffectIntents(args: {
-		limit: number
-		maxCompletedAt?: string
-	}) {
+	async findCompletedValuePathEmailSideEffectIntentScan(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		const records = await this.findValuePathEmailSideEffectIntentsForScan()
+		// Reduce to each contact/path frontier after applying the authorization
+		// and asset scope, then apply the limit. Scope-after-limit starved rolling
+		// enrollments on 2026-07-17 when the original activation cohort crowded
+		// out the live public cohort.
+		return scanCompletedValuePathIntentFrontier({ ...args, intents: records })
+	}
+
+	async findCompletedValuePathEmailSideEffectIntents(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return (await this.findCompletedValuePathEmailSideEffectIntentScan(args)).intents
+	}
+
+	async findValuePathEmailSideEffectIntentsForScan() {
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -240,19 +308,123 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				and(
 					eq(sideEffectIntent.provider, 'kit'),
 					eq(sideEffectIntent.type, 'send-value-path-email'),
-					eq(sideEffectIntent.status, 'completed'),
 				),
 			)
-		const records: SideEffectIntent[] = rows.map(toSideEffectIntentRecord)
-		const eligible = records.filter((intent: SideEffectIntent) => {
-			const completedAt =
-				typeof intent.metadata.completedAt === 'string'
-					? intent.metadata.completedAt
-					: undefined
-			if (!completedAt) return false
-			return !args.maxCompletedAt || completedAt <= args.maxCompletedAt
-		})
-		return eligible.slice(0, args.limit)
+		return rows.map(toSideEffectIntentRecord)
+	}
+
+	async findCompletedValuePathEmailSideEffectIntentsForRepair() {
+		return (await this.findValuePathEmailSideEffectIntentsForScan()).filter(
+			(intent: SideEffectIntent) =>
+				intent.status === 'completed' || isValuePathIntentCompleted(intent),
+		)
+	}
+
+	async findValuePathEmailSideEffectIntentsByContact(contactId: string) {
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.contactId, contactId),
+					eq(sideEffectIntent.provider, 'kit'),
+					eq(sideEffectIntent.type, 'send-value-path-email'),
+				),
+			)
+		return sortValuePathIntentsByCreatedAt(rows.map(toSideEffectIntentRecord))
+	}
+
+	/** Read-only course-path scan for the daily learner-flow operator. */
+	async findSkillsWorkflowLearnerFlowRecords(options?: {
+		includeCanary?: boolean
+	}): Promise<LearnerFlowRecord[]> {
+		const [intentRows, entryEventRows]: [any[], any[]] = await Promise.all([
+			this.database
+				.select()
+				.from(sideEffectIntent)
+				.where(
+					and(
+						eq(sideEffectIntent.provider, 'kit'),
+						eq(sideEffectIntent.type, 'send-value-path-email'),
+						options?.includeCanary
+							? undefined
+							: excludeLearnerFlowCanary({
+									contactId: sideEffectIntent.contactId,
+								}),
+					),
+				),
+			this.database
+				.select()
+				.from(contactEvent)
+				.where(
+					and(
+						eq(contactEvent.eventType, 'value-path.entered'),
+						inArray(
+							contactEvent.providerReference,
+							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
+						),
+						options?.includeCanary
+							? undefined
+							: excludeLearnerFlowCanary({
+									contactId: contactEvent.contactId,
+								}),
+					),
+				),
+		])
+		const intents: SideEffectIntent[] = intentRows
+			.map(toSideEffectIntentRecord)
+			.filter(isCourseValuePathIntent)
+		const entryEvents: ContactEventRecord[] = entryEventRows.map(
+			toContactEventRecord,
+		)
+		const contactIds: string[] = Array.from(
+			new Set([
+				...intents.map((intent) => intent.contactId),
+				...entryEvents.map((event) => event.contactId),
+			]),
+		)
+		if (contactIds.length === 0) return []
+
+		const [contacts, states]: [any[], any[]] = await Promise.all([
+			this.database
+				.select()
+				.from(contact)
+				.where(inArray(contact.id, contactIds)),
+			this.database
+				.select()
+				.from(contactState)
+				.where(inArray(contactState.contactId, contactIds)),
+		])
+		const contactsById = new Map<string, ContactRecord>(
+			contacts.map((record) => [record.id, toContactRecord(record)]),
+		)
+		const statesByContactId = new Map<string, ContactState>(
+			states.map((record) => [
+				record.contactId,
+				toContactStateRecord(record),
+			]),
+		)
+		const intentsByContactId = new Map<string, SideEffectIntent[]>()
+		for (const intent of intents) {
+			const current = intentsByContactId.get(intent.contactId) ?? []
+			current.push(intent)
+			intentsByContactId.set(intent.contactId, current)
+		}
+		const entryEventsByContactId = new Map<string, ContactEventRecord[]>()
+		for (const event of entryEvents) {
+			const current = entryEventsByContactId.get(event.contactId) ?? []
+			current.push(event)
+			entryEventsByContactId.set(event.contactId, current)
+		}
+		return contactIds.map((contactId) => ({
+			contactId,
+			contact: contactsById.get(contactId),
+			contactState: statesByContactId.get(contactId),
+			intents: sortValuePathIntentsByCreatedAt(
+				intentsByContactId.get(contactId) ?? [],
+			),
+			entryEvents: entryEventsByContactId.get(contactId) ?? [],
+		}))
 	}
 
 	async updateSideEffectIntent(
@@ -260,11 +432,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	) {
+		const completedAt = canonicalCompletionForWrite(patch)
 		await this.database
 			.update(sideEffectIntent)
-			.set(patch)
+			.set({
+				...patch,
+				completedAt: completedAt ? new Date(completedAt) : null,
+			})
 			.where(eq(sideEffectIntent.id, id))
 		const rows = await this.database
 			.select()
@@ -293,6 +469,7 @@ function toContactRecord(row: any): ContactRecord {
 		name: row.name,
 		lifecycle: row.lifecycle,
 		isProvisional: Boolean(row.isProvisional),
+		optInAttribution: row.optInAttribution ?? null,
 		createdAt: toIso(row.createdAt),
 		updatedAt: toIso(row.updatedAt),
 	}
@@ -347,6 +524,7 @@ function toSideEffectIntentRecord(row: any): SideEffectIntent {
 		provider: row.provider,
 		type: row.type,
 		status: row.status,
+		completedAt: row.completedAt ? toIso(row.completedAt) : null,
 		idempotencyKey: row.idempotencyKey,
 		gates: row.gates,
 		reviewReasons: row.reviewReasons,
@@ -368,6 +546,7 @@ function toContactStateRecord(row: any): ContactState {
 		rationale: row.rationale,
 		reviewSignals: row.reviewSignals,
 		humanReview: Boolean(row.humanReview),
+		optInAttribution: row.optInAttribution ?? null,
 		lastEventId: row.lastEventId,
 		schemaVersion: row.schemaVersion,
 		updatedAt: toIso(row.updatedAt),

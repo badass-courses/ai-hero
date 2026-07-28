@@ -1,3 +1,4 @@
+import { SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG } from './value-path-answer-page'
 import type {
 	ValuePathAnswerPagePreview,
 	ValuePathContentImportPreview,
@@ -99,9 +100,7 @@ export function previewSkillsWorkflowValuePathQa(args: {
 				label: option.label,
 				answerPageId: answer?.id ?? null,
 				answerPageSlug: answer?.slug ?? null,
-				askLinkPreview: answer
-					? `${baseUrl}/ask/${answer.slug}?pt=${PATH_TOKEN_PLACEHOLDER}`
-					: null,
+				askLinkPreview: answer ? buildAskLinkPreview(baseUrl, answer) : null,
 			}
 		}),
 	)
@@ -197,6 +196,17 @@ export function previewSkillsWorkflowValuePathQa(args: {
 		warnings: args.preview.warnings,
 		blockers: [...blockers].sort(),
 	}
+}
+
+function buildAskLinkPreview(
+	baseUrl: string,
+	answer: ValuePathAnswerPagePreview,
+) {
+	const answerParam =
+		answer.slug === SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG
+			? `answer=${encodeURIComponent(answer.optionValue)}&`
+			: ''
+	return `${baseUrl}/ask/${answer.slug}?${answerParam}pt=${PATH_TOKEN_PLACEHOLDER}`
 }
 
 function isEmailPage(

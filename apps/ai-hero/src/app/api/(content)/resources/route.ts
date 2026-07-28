@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getAllLists } from '@/lib/lists-query'
+import { sanitizeResourcePayload } from '@/lib/resource-api-sanitizer'
 import {
 	sortByStartTime,
 	validateChapters,
@@ -47,6 +48,13 @@ const getResourceHandler = async (request: NextRequest) => {
 			type,
 		})
 
+		if (ability.cannot('read', 'Content')) {
+			return NextResponse.json(
+				{ error: user ? 'Forbidden' : 'Unauthorized', docs: '/api' },
+				{ status: user ? 403 : 401, headers: corsHeaders },
+			)
+		}
+
 		// List-all: GET /api/resources?type=list returns every list (no slugOrId).
 		// Gated like the single-lesson reader — a valid token with read access is
 		// required, which an admin token satisfies; guests get 401. Only `list` is
@@ -62,13 +70,6 @@ const getResourceHandler = async (request: NextRequest) => {
 				)
 			}
 
-			if (ability.cannot('read', 'Content')) {
-				return NextResponse.json(
-					{ error: 'Unauthorized' },
-					{ status: 401, headers: corsHeaders },
-				)
-			}
-
 			const lists = await getAllLists()
 
 			await log.info('api.resources.get.list-all.success', {
@@ -77,7 +78,9 @@ const getResourceHandler = async (request: NextRequest) => {
 				resultCount: lists.length,
 			})
 
-			return NextResponse.json(lists, { headers: corsHeaders })
+			return NextResponse.json(sanitizeResourcePayload(lists), {
+				headers: corsHeaders,
+			})
 		}
 
 		const conditions = [
@@ -124,7 +127,9 @@ const getResourceHandler = async (request: NextRequest) => {
 			type: resource.type,
 		})
 
-		return NextResponse.json(resource, { headers: corsHeaders })
+		return NextResponse.json(sanitizeResourcePayload(resource), {
+			headers: corsHeaders,
+		})
 	} catch (error) {
 		await log.error('api.resources.get.failed', {
 			error: error instanceof Error ? error.message : 'Unknown error',
@@ -160,7 +165,7 @@ const updateResourceHandler = async (request: NextRequest) => {
 				resourceId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -171,7 +176,7 @@ const updateResourceHandler = async (request: NextRequest) => {
 				resourceId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -300,7 +305,7 @@ const createResourceHandler = async (request: NextRequest) => {
 		if (!user) {
 			await log.warn('api.resources.post.unauthorized')
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
@@ -310,7 +315,7 @@ const createResourceHandler = async (request: NextRequest) => {
 				userId: user.id,
 			})
 			return NextResponse.json(
-				{ error: 'Forbidden' },
+				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}

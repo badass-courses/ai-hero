@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { sanitizeMdxSource } from './compile-mdx'
+import { sanitizeMdxSource } from './sanitize-mdx-source'
 
 describe('sanitizeMdxSource', () => {
 	it('removes html comments before MDX compilation', () => {

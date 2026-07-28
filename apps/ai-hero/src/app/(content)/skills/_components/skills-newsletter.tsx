@@ -14,6 +14,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import {
 	SKILLS_FORM_ID,
+	SKILLS_HOSTED_RESUBSCRIBE_URL,
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
@@ -65,13 +66,19 @@ export function Root({
 	const router = useRouter()
 	const [isPending, startTransition] = React.useTransition()
 	const [error, setError] = React.useState<string | null>(null)
+	// The server prop only changes on a fresh render; a successful one-click
+	// enrollment must confirm immediately without waiting for revalidation.
+	const [enrolledLocally, setEnrolledLocally] = React.useState(false)
 
 	const tagMe = React.useCallback(() => {
 		setError(null)
 		startTransition(async () => {
 			const result = await tagSubscriberAsSkills()
 			if (result.success) {
+				setEnrolledLocally(true)
 				track('subscribed', { location, method: 'tag-me' })
+			} else if (result.reason === 'confirmation-required') {
+				window.location.assign(result.confirmationUrl)
 			} else {
 				setError(
 					result.reason === 'not-subscribed'
@@ -84,21 +91,28 @@ export function Root({
 
 	const handleFormSuccess = React.useCallback(
 		(subscriber: Subscriber | undefined) => {
-			if (subscriber) {
-				track('subscribed', { location })
-				router.push(redirectUrlBuilder(subscriber, '/confirm'))
+			if (!subscriber) return
+			if (subscriber.state !== 'active') {
+				window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
+				return
 			}
+			track('subscribed', { location })
+			router.push(redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }))
 		},
 		[location, router],
 	)
 
 	const value = React.useMemo<SkillsNewsletterContextValue>(
 		() => ({
-			state: { status, isPending, error },
+			state: {
+				status: enrolledLocally ? 'subscribed' : status,
+				isPending,
+				error,
+			},
 			actions: { tagMe, handleFormSuccess },
 			meta: { location },
 		}),
-		[status, isPending, error, tagMe, handleFormSuccess, location],
+		[status, enrolledLocally, isPending, error, tagMe, handleFormSuccess, location],
 	)
 
 	return (
@@ -191,6 +205,26 @@ export function TagMeButton({
 			{state.isPending ? <Spinner className="h-5 w-5" /> : label}
 		</button>
 	)
+}
+
+/**
+ * Renders the variant matching the LIVE status from context, so a successful
+ * one-click enrollment flips to the subscribed confirmation immediately.
+ * Server components pass the variants as pre-rendered nodes.
+ */
+export function StatusView({
+	subscribed,
+	tagMe,
+	form,
+}: {
+	subscribed: React.ReactNode
+	tagMe: React.ReactNode
+	form: React.ReactNode
+}) {
+	const { state } = useSkillsNewsletter()
+	if (state.status === 'subscribed') return <>{subscribed}</>
+	if (state.status === 'tag-me') return <>{tagMe}</>
+	return <>{form}</>
 }
 
 export function Privacy({

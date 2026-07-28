@@ -1,6 +1,7 @@
 import { mysqlTable } from '@/db/mysql-table'
 import { relations } from 'drizzle-orm'
 import {
+	bigint,
 	boolean,
 	decimal,
 	index,
@@ -14,6 +15,7 @@ import {
 
 import { getCourseBuilderSchema } from '@coursebuilder/adapter-drizzle/mysql'
 import { guid } from '@coursebuilder/utils/guid'
+import type { CourseSyncBinding, SyncPlan } from '@/course-sync/types'
 
 export const {
 	accounts,
@@ -107,6 +109,177 @@ export const {
 } = getCourseBuilderSchema(mysqlTable)
 
 /**
+ * Draft-only Course Video Manager -> AI Hero control-plane records.
+ * The binding is server-created and immutable; public callers never write target IDs.
+ */
+export const courseSyncBinding = mysqlTable(
+	'CourseSyncBinding',
+	{
+		bindingId: varchar('bindingId', { length: 255 }).notNull().primaryKey(),
+		sourceCourseId: varchar('sourceCourseId', { length: 255 }).notNull(),
+		productId: varchar('productId', { length: 255 }).notNull(),
+		anchorWorkshopId: varchar('anchorWorkshopId', { length: 255 }).notNull(),
+		status: varchar('status', { length: 32 }).notNull(),
+		binding: json('binding').$type<CourseSyncBinding>().notNull(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		sourceCourseIdUq: uniqueIndex('CourseSyncBinding_sourceCourseId_uq').on(
+			table.sourceCourseId,
+		),
+		targetUq: uniqueIndex('CourseSyncBinding_target_uq').on(
+			table.productId,
+			table.anchorWorkshopId,
+		),
+	}),
+)
+
+export const courseSyncSourceRevision = mysqlTable(
+	'CourseSyncSourceRevision',
+	{
+		sourceRevisionId: varchar('sourceRevisionId', { length: 255 })
+			.notNull()
+			.primaryKey(),
+		bindingId: varchar('bindingId', { length: 255 }).notNull(),
+		courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+		providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+		manifestSha256: varchar('manifestSha256', { length: 64 }).notNull(),
+		manifestSnapshotUri: varchar('manifestSnapshotUri', {
+			length: 1000,
+		}).notNull(),
+		manifest: json('manifest').$type<Record<string, unknown>>().notNull(),
+		stagedAt: timestamp('stagedAt').notNull(),
+	},
+	(table) => ({
+		bindingVersionUq: uniqueIndex(
+			'CourseSyncSourceRevision_binding_version_uq',
+		).on(table.bindingId, table.courseVersionId),
+		bindingIdx: index('CourseSyncSourceRevision_binding_idx').on(
+			table.bindingId,
+		),
+	}),
+)
+
+export const courseSyncSourceRevisionAsset = mysqlTable(
+	'CourseSyncSourceRevisionAsset',
+	{
+		sourceRevisionId: varchar('sourceRevisionId', { length: 255 }).notNull(),
+		sourceVideoId: varchar('sourceVideoId', { length: 255 }).notNull(),
+		relativePath: varchar('relativePath', { length: 1000 }).notNull(),
+		providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+		producerSha256: varchar('producerSha256', { length: 64 }).notNull(),
+		bytes: bigint('bytes', { mode: 'number' }).notNull(),
+		snapshotUri: varchar('snapshotUri', { length: 1000 }).notNull(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		revisionVideoUq: uniqueIndex(
+			'CourseSyncSourceRevisionAsset_revision_video_uq',
+		).on(table.sourceRevisionId, table.sourceVideoId),
+		revisionIdx: index('CourseSyncSourceRevisionAsset_revision_idx').on(
+			table.sourceRevisionId,
+		),
+	}),
+)
+
+export const courseSyncRun = mysqlTable(
+	'CourseSyncRun',
+	{
+		runId: varchar('runId', { length: 255 }).notNull().primaryKey(),
+		bindingId: varchar('bindingId', { length: 255 }).notNull(),
+		sourceRevisionId: varchar('sourceRevisionId', { length: 255 }).notNull(),
+		courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+		state: varchar('state', { length: 32 }).notNull(),
+		stageIdempotencyKey: varchar('stageIdempotencyKey', {
+			length: 255,
+		}).notNull(),
+		stageFingerprint: varchar('stageFingerprint', { length: 64 }).notNull(),
+		applyIdempotencyKey: varchar('applyIdempotencyKey', { length: 255 }),
+		rollbackOfRunId: varchar('rollbackOfRunId', { length: 255 }),
+		compensatingRunId: varchar('compensatingRunId', { length: 255 }),
+		plan: json('plan').$type<SyncPlan>(),
+		planSha256: varchar('planSha256', { length: 64 }),
+		failureCode: varchar('failureCode', { length: 100 }),
+		failureReason: text('failureReason'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		stageKeyUq: uniqueIndex('CourseSyncRun_binding_stage_key_uq').on(
+			table.bindingId,
+			table.stageIdempotencyKey,
+		),
+		bindingStateIdx: index('CourseSyncRun_binding_state_idx').on(
+			table.bindingId,
+			table.state,
+		),
+		revisionIdx: index('CourseSyncRun_revision_idx').on(table.sourceRevisionId),
+	}),
+)
+
+export const courseSyncRunResourceVersion = mysqlTable(
+	'CourseSyncRunResourceVersion',
+	{
+		runId: varchar('runId', { length: 255 }).notNull(),
+		resourceId: varchar('resourceId', { length: 255 }).notNull(),
+		contentResourceVersionId: varchar('contentResourceVersionId', {
+			length: 255,
+		}).notNull(),
+		parentVersionId: varchar('parentVersionId', { length: 255 }),
+		previousParentResourceId: varchar('previousParentResourceId', {
+			length: 255,
+		}),
+		previousPosition: int('previousPosition'),
+		action: varchar('action', { length: 16 }).notNull(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		runResourceUq: uniqueIndex(
+			'CourseSyncRunResourceVersion_run_resource_uq',
+		).on(table.runId, table.resourceId),
+		runIdx: index('CourseSyncRunResourceVersion_run_idx').on(table.runId),
+	}),
+)
+
+export const courseSyncPollState = mysqlTable('CourseSyncPollState', {
+	bindingId: varchar('bindingId', { length: 255 }).notNull().primaryKey(),
+	courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+	providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+	status: varchar('status', { length: 32 }).notNull(),
+	consecutiveFailures: int('consecutiveFailures').notNull().default(0),
+	controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
+	failureClass: varchar('failureClass', { length: 100 }),
+	updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+})
+
+export const courseSyncPollLog = mysqlTable(
+	'CourseSyncPollLog',
+	{
+		id: varchar('id', { length: 255 }).notNull().primaryKey(),
+		bindingId: varchar('bindingId', { length: 255 }).notNull(),
+		courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+		providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+		runId: varchar('runId', { length: 255 }).notNull(),
+		controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
+		stage: varchar('stage', { length: 32 }).notNull(),
+		outcome: varchar('outcome', { length: 32 }).notNull(),
+		failureClass: varchar('failureClass', { length: 100 }),
+		metadata: json('metadata').$type<Record<string, unknown>>(),
+		occurredAt: timestamp('occurredAt', { fsp: 3 }).notNull(),
+	},
+	(table) => ({
+		versionTimeIdx: index('CourseSyncPollLog_version_time_idx').on(
+			table.courseVersionId,
+			table.occurredAt,
+		),
+		runTimeIdx: index('CourseSyncPollLog_run_time_idx').on(
+			table.runId,
+			table.occurredAt,
+		),
+	}),
+)
+
+/**
  * Shortlink table for URL shortening
  */
 export const shortlink = mysqlTable('Shortlink', {
@@ -188,6 +361,47 @@ export const shortlinkAttributionRelations = relations(
 )
 
 /**
+ * Lean first-touch signup attribution for every newsletter form submit.
+ * Separate from subscriber-marketing funnel tables on purpose.
+ */
+export const signupAttribution = mysqlTable(
+	'SignupAttribution',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		email: varchar('email', { length: 255 }).notNull(),
+		kitSubscriberId: varchar('kitSubscriberId', { length: 255 }),
+		formId: varchar('formId', { length: 255 }).notNull().default('default'),
+		landingPath: varchar('landingPath', { length: 500 }),
+		referrer: varchar('referrer', { length: 500 }),
+		utmSource: varchar('utmSource', { length: 255 }),
+		utmMedium: varchar('utmMedium', { length: 255 }),
+		utmCampaign: varchar('utmCampaign', { length: 255 }),
+		utmContent: varchar('utmContent', { length: 255 }),
+		utmTerm: varchar('utmTerm', { length: 255 }),
+		clickIds: json('clickIds').$type<{
+			gclid?: string
+			gbraid?: string
+			wbraid?: string
+		}>(),
+		capturedAt: timestamp('capturedAt'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		emailFormIdUq: uniqueIndex('SignupAttribution_email_formId_uq').on(
+			table.email,
+			table.formId,
+		),
+		landingPathIdx: index('SignupAttribution_landingPath_idx').on(
+			table.landingPath,
+		),
+		createdAtIdx: index('SignupAttribution_createdAt_idx').on(table.createdAt),
+	}),
+)
+
+/**
  * Staged content read signals for gated subscriber marketing attribution.
  */
 export const contentRead = mysqlTable(
@@ -259,6 +473,7 @@ export const contact = mysqlTable(
 		name: varchar('name', { length: 255 }),
 		lifecycle: varchar('lifecycle', { length: 50 }).notNull().default('new'),
 		isProvisional: boolean('isProvisional').notNull().default(true),
+		optInAttribution: json('optInAttribution').$type<Record<string, unknown>>(),
 		createdAt: timestamp('createdAt').defaultNow().notNull(),
 		updatedAt: timestamp('updatedAt').defaultNow().notNull(),
 	},
@@ -377,6 +592,7 @@ export const contactState = mysqlTable(
 		rationale: json('rationale').$type<string[]>().notNull(),
 		reviewSignals: json('reviewSignals').$type<string[]>().notNull(),
 		humanReview: boolean('humanReview').notNull().default(false),
+		optInAttribution: json('optInAttribution').$type<Record<string, unknown>>(),
 		lastEventId: varchar('lastEventId', { length: 255 }).notNull(),
 		schemaVersion: int('schemaVersion').notNull(),
 		updatedAt: timestamp('updatedAt').defaultNow().notNull(),
@@ -451,6 +667,7 @@ export const sideEffectIntent = mysqlTable(
 		provider: varchar('provider', { length: 50 }).notNull(),
 		type: varchar('type', { length: 100 }).notNull(),
 		status: varchar('status', { length: 50 }).notNull(),
+		completedAt: timestamp('completedAt', { fsp: 3 }),
 		idempotencyKey: varchar('idempotencyKey', { length: 500 }).notNull(),
 		gates: json('gates').$type<Record<string, unknown>[]>().notNull(),
 		reviewReasons: json('reviewReasons').$type<string[]>().notNull(),
@@ -469,6 +686,33 @@ export const sideEffectIntent = mysqlTable(
 	}),
 )
 
+export const valuePathCertificateShare = mysqlTable(
+	'ValuePathCertificateShare',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		slug: varchar('slug', { length: 64 }).notNull(),
+		contactId: varchar('contactId', { length: 255 }).notNull(),
+		resourceId: varchar('resourceId', { length: 255 }).notNull(),
+		learnerName: varchar('learnerName', { length: 255 }).notNull(),
+		courseName: varchar('courseName', { length: 255 }).notNull(),
+		completedAt: timestamp('completedAt', { fsp: 3 }).notNull(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		slugUq: uniqueIndex('ValuePathCertificateShare_slug_uq').on(table.slug),
+		contactResourceUq: uniqueIndex(
+			'ValuePathCertificateShare_contact_resource_uq',
+		).on(table.contactId, table.resourceId),
+		contactIdIdx: index('ValuePathCertificateShare_contactId_idx').on(
+			table.contactId,
+		),
+	}),
+)
+
 export const googleAdsConversionUpload = mysqlTable(
 	'GoogleAdsConversionUpload',
 	{
@@ -482,6 +726,9 @@ export const googleAdsConversionUpload = mysqlTable(
 		}).notNull(),
 		clickIdType: varchar('clickIdType', { length: 20 }).notNull(),
 		clickIdHash: varchar('clickIdHash', { length: 64 }).notNull(),
+		attributionSource: varchar('attributionSource', { length: 40 })
+			.notNull()
+			.default('checkout'),
 		conversionDateTime: varchar('conversionDateTime', { length: 40 }).notNull(),
 		conversionValue: decimal('conversionValue', {
 			precision: 12,
@@ -513,6 +760,43 @@ export const googleAdsConversionUpload = mysqlTable(
 		conversionActionIdx: index(
 			'GoogleAdsConversionUpload_conversionAction_idx',
 		).on(table.conversionActionResourceName),
+	}),
+)
+
+export const googleAdsSignupConversionUpload = mysqlTable(
+	'GoogleAdsSignupConversionUpload',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		contactId: varchar('contactId', { length: 255 }).notNull(),
+		conversionActionResourceName: varchar('conversionActionResourceName', {
+			length: 255,
+		}).notNull(),
+		clickIdType: varchar('clickIdType', { length: 20 }).notNull(),
+		clickIdHash: varchar('clickIdHash', { length: 64 }).notNull(),
+		conversionDateTime: varchar('conversionDateTime', { length: 40 }).notNull(),
+		status: varchar('status', { length: 40 }).notNull(),
+		attemptCount: int('attemptCount').notNull().default(0),
+		idempotencyKey: varchar('idempotencyKey', { length: 500 }).notNull(),
+		requestSummary: json('requestSummary')
+			.$type<Record<string, unknown>>()
+			.notNull(),
+		responseSummary: json('responseSummary').$type<Record<string, unknown>>(),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		idempotencyKeyUq: uniqueIndex(
+			'GoogleAdsSignupConversionUpload_idempotencyKey_uq',
+		).on(table.idempotencyKey),
+		contactIdIdx: index('GoogleAdsSignupConversionUpload_contactId_idx').on(
+			table.contactId,
+		),
+		statusIdx: index('GoogleAdsSignupConversionUpload_status_idx').on(
+			table.status,
+		),
 	}),
 )
 

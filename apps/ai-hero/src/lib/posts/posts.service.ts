@@ -14,12 +14,14 @@ import {
 	PostUpdateSchema,
 	type PostAction,
 } from '@/lib/posts'
+import { getContentReadFilters } from '@/lib/content-read-policy'
 import { log } from '@/server/logger'
 import { Ability, subject } from '@casl/ability'
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 
 import {
 	deletePostFromDatabase,
+	getAllPosts,
 	getAllPostsForUser,
 	writeNewPostToDatabase,
 	writePostUpdateToDatabase,
@@ -41,15 +43,7 @@ async function getPost(slugOrId: string, ability: Ability) {
 		slugOrId,
 	})
 
-	const visibility: ('public' | 'private' | 'unlisted')[] = ability.can(
-		'update',
-		'Content',
-	)
-		? ['public', 'private', 'unlisted']
-		: ['public', 'unlisted']
-	const states: ('draft' | 'published')[] = ability.can('update', 'Content')
-		? ['draft', 'published']
-		: ['published']
+	const { states, visibility } = getContentReadFilters(ability)
 
 	const post = await db.query.contentResource.findFirst({
 		where: and(
@@ -152,7 +146,7 @@ export async function createPost({
 	ability: Ability
 }) {
 	if (ability.cannot('create', 'Content')) {
-		throw new PostError('Unauthorized', 401)
+		throw new PostError('Forbidden', 403)
 	}
 
 	const validatedData = NewPostInputSchema.safeParse({
@@ -228,7 +222,9 @@ export async function getPosts({
 		throw new PostError('Unauthorized', 401)
 	}
 
-	return getAllPostsForUser(userId)
+	return ability.can('read_privileged', 'Content')
+		? getAllPosts()
+		: getAllPostsForUser(userId)
 }
 
 export async function updatePost({
@@ -288,7 +284,7 @@ export async function updatePost({
 			postId: id,
 			action: actionResult.data,
 		})
-		throw new PostError('Unauthorized', 401)
+		throw new PostError('Forbidden', 403)
 	}
 
 	// Handle state transitions for all actions
@@ -390,7 +386,7 @@ export async function deletePost({
 	}
 
 	if (ability.cannot('delete', subject('Content', postToDelete))) {
-		throw new PostError('Unauthorized', 401)
+		throw new PostError('Forbidden', 403)
 	}
 
 	try {

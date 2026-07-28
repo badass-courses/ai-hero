@@ -35,13 +35,13 @@ const getSurveysHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
 			)
 		}
-		if (!ability.can('manage', 'all')) {
+		if (!ability.can('read', 'Content')) {
 			return NextResponse.json(
-				{ error: 'Forbidden: Admin access required' },
+				{ error: 'Forbidden: Content read access required', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -86,8 +86,14 @@ const createSurveyHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('create', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -128,8 +134,14 @@ const updateSurveyHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('update', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -173,8 +185,14 @@ const deleteSurveyHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('delete', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 

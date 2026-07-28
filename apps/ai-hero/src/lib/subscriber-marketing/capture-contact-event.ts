@@ -23,6 +23,7 @@ export type CaptureMarketingRepository = {
 	findContactById(id: string): MaybePromise<ContactRecord | undefined>
 	findContactByEmail(email: string): MaybePromise<ContactRecord | undefined>
 	createContact(input: Omit<ContactRecord, 'id'>): MaybePromise<ContactRecord>
+	updateContactOptInAttribution?(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>): MaybePromise<ContactRecord>
 	createProviderIdentity(
 		input: Omit<ProviderIdentityRecord, 'id'>,
 	): MaybePromise<ProviderIdentityRecord>
@@ -33,6 +34,10 @@ export type CaptureMarketingRepository = {
 	findContactEventBySemanticKey(
 		key: string,
 	): MaybePromise<ContactEventRecord | undefined>
+	findContactEventsByType?(
+		contactId: string,
+		eventType: string,
+	): MaybePromise<ContactEventRecord[]>
 	createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string
@@ -59,12 +64,15 @@ export type CaptureMarketingRepository = {
 		limit: number
 		maxCompletedAt?: string
 	}): MaybePromise<SideEffectIntent[]>
+	findValuePathEmailSideEffectIntentsByContact?(
+		contactId: string,
+	): MaybePromise<SideEffectIntent[]>
 	updateSideEffectIntent?(
 		id: string,
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	): MaybePromise<SideEffectIntent>
 	newId(kind: string): string
 }
@@ -197,8 +205,12 @@ async function resolveOrCreateCaptureIdentity(args: {
 				`Provider identity ${existingIdentity.id} points at missing contact`,
 			)
 		}
+		const attributedContact =
+			!contact.optInAttribution && args.event.optInAttribution && args.repository.updateContactOptInAttribution
+				? await args.repository.updateContactOptInAttribution(contact.id, args.event.optInAttribution)
+				: contact
 		return {
-			contact,
+			contact: attributedContact,
 			providerIdentity: existingIdentity,
 			createdContact: false,
 			createdProviderIdentity: false,
@@ -211,6 +223,7 @@ async function resolveOrCreateCaptureIdentity(args: {
 		name: evidence.name ?? null,
 		lifecycle: 'new',
 		isProvisional: true,
+		optInAttribution: args.event.optInAttribution ?? null,
 		createdAt: args.now,
 		updatedAt: args.now,
 	})

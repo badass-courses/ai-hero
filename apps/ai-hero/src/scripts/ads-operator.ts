@@ -1,7 +1,14 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { db } from '@/db'
 import {
+	contact,
+	contactEvent,
+	contactState,
+	providerIdentity,
+	sideEffectIntent,
+	stateTransition,
+	googleAdsSignupConversionUpload,
 	merchantSession,
 	products,
 	purchases,
@@ -12,7 +19,17 @@ import {
 	processGoogleAdsConversionUploads,
 	readGoogleAdsConversionUploadConfig,
 } from '@/lib/google-ads-conversion-upload'
-import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { getAdsCourseFunnelMetrics, getAdsCourseMetrics } from '@/lib/ads-course-metrics'
+import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
+import { getPurchaseConversionStatus } from '@/lib/purchase-conversion-status'
+import { getLocalSignupConversionStatus } from '@/lib/signup-conversion-status'
+import {
+	backfillOptInAttribution,
+	parseOptInAttributionBackfillEntries,
+	type OptInAttributionBackfillRepository,
+} from '@/lib/subscriber-marketing/opt-in-attribution-backfill'
+import { log } from '@/server/logger'
+import { and, count, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 
 const rangeOptions = ['24h', '7d', '30d', '90d', 'all'] as const
 type Range = (typeof rangeOptions)[number]
@@ -51,8 +68,12 @@ function parseArgs(argv: readonly string[]) {
 		? (rawRange as Range)
 		: '30d'
 	const purchaseId = readFlag(argv, '--purchase-id')
+	const contactId = readFlag(argv, '--contact-id')
+	const email = readFlag(argv, '--email')
 	const productId = readFlag(argv, '--product-id')
 	const receipt = readFlag(argv, '--receipt')
+	const startAt = readFlag(argv, '--start-at')
+	const endAt = readFlag(argv, '--end-at')
 	const rawLimit = Number(readFlag(argv, '--limit') ?? '500')
 	const limit = Number.isFinite(rawLimit)
 		? Math.min(Math.max(Math.trunc(rawLimit), 1), 5000)
@@ -60,17 +81,91 @@ function parseArgs(argv: readonly string[]) {
 	const allowWrite = hasFlag(argv, '--allow-write')
 	const dryRun = hasFlag(argv, '--dry-run') || !allowWrite
 	const withStripe = hasFlag(argv, '--with-stripe')
+	const entriesPath = readFlag(argv, '--entries')
 	return {
 		command,
 		range,
 		purchaseId,
+		contactId,
+		email,
 		productId,
 		receipt,
+		startAt,
+		endAt,
 		limit,
 		allowWrite,
 		dryRun,
 		withStripe,
+		entriesPath,
 	}
+}
+
+async function optInAttributionBackfill(args: {
+	entriesPath?: string
+	allowWrite: boolean
+}) {
+	if (!args.entriesPath) {
+		throw new Error(
+			'optin-attribution-backfill requires --entries <path-to-json-array>',
+		)
+	}
+	const entries = parseOptInAttributionBackfillEntries(
+		JSON.parse(readFileSync(resolve(args.entriesPath), 'utf8')),
+	)
+	const repository: OptInAttributionBackfillRepository = {
+		resolveKitContactId: async (kitSubscriberId) => {
+			const rows = await db
+				.select({ contactId: providerIdentity.contactId })
+				.from(providerIdentity)
+				.where(
+					and(
+						eq(providerIdentity.provider, 'kit'),
+						eq(providerIdentity.externalId, kitSubscriberId),
+					),
+				)
+				.limit(1)
+			return rows[0]?.contactId ?? null
+		},
+		contactAttributionPresent: async (contactId) => {
+			const rows = await db
+				.select({ attribution: contact.optInAttribution })
+				.from(contact)
+				.where(eq(contact.id, contactId))
+				.limit(1)
+			return Boolean(rows[0]?.attribution)
+		},
+		contactStateAttributionPresent: async (contactId) => {
+			const rows = await db
+				.select({ attribution: contactState.optInAttribution })
+				.from(contactState)
+				.where(eq(contactState.contactId, contactId))
+				.limit(1)
+			if (rows.length === 0) return null
+			return Boolean(rows[0]?.attribution)
+		},
+		fillContactAttribution: async (contactId, attribution) => {
+			await db
+				.update(contact)
+				.set({ optInAttribution: attribution, updatedAt: new Date() })
+				.where(and(eq(contact.id, contactId), isNull(contact.optInAttribution)))
+		},
+		fillContactStateAttribution: async (contactId, attribution) => {
+			await db
+				.update(contactState)
+				.set({ optInAttribution: attribution, updatedAt: new Date() })
+				.where(
+					and(
+						eq(contactState.contactId, contactId),
+						isNull(contactState.optInAttribution),
+					),
+				)
+		},
+	}
+	return backfillOptInAttribution({
+		repository,
+		entries,
+		allowWrite: args.allowWrite,
+	})
 }
 
 function sinceForRange(range: Range) {
@@ -714,6 +809,57 @@ async function offlineConversionPreview(args: {
 	dryRun: boolean
 }) {
 	const since = sinceForRange(args.range)
+	if (args.productId === 'email-course') {
+		const actionResource =
+			process.env.GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME
+		const writeAttempted = args.allowWrite && !args.dryRun
+		if (writeAttempted && !actionResource) {
+			throw new Error(
+				'GOOGLE_ADS_SIGNUP_CONVERSION_ACTION_RESOURCE_NAME is required for signup uploads',
+			)
+		}
+		const result = await processGoogleAdsSignupConversionUploads({
+			database: db,
+			config: readGoogleAdsConversionUploadConfig({
+				enabled: writeAttempted,
+				conversionActionResourceName: actionResource ?? '',
+			}),
+			conversionActionResourceName: actionResource,
+			since,
+			limit: args.limit,
+			dryRun: !writeAttempted,
+			includePreviewRows: true,
+			retryFailed:
+				process.env.AIH_GOOGLE_ADS_SIGNUP_RETRY_FAILED === 'true',
+		})
+		await log.info('subscriber_funnel.conversion_eligibility', {
+			funnel: 'skills-newsletter',
+			range: args.range,
+			scanned: result.scanned,
+			eligible: result.eligible,
+			excluded: result.excluded,
+			writeAttempted,
+		})
+		const payload = {
+			ready: true,
+			verdict: writeAttempted
+				? result.failed
+					? 'upload_failed'
+					: 'upload_processed'
+				: 'preview',
+			writeStatus: writeAttempted ? 'write_attempted' : 'no_write',
+			range: args.range,
+			productId: 'email-course',
+			...result,
+			notes: [
+				'Signup candidates come from durable ContactState optInAttribution.',
+				'TEST_ click IDs are excluded from upload eligibility.',
+				'Writes require --allow-write, a live signup action resource, Google credentials, and the signup idempotency ledger.',
+			],
+		}
+		const receiptPath = writeReceipt(args.receipt, payload)
+		return { ...payload, receiptPath }
+	}
 	const uploadResult = await processGoogleAdsConversionUploads({
 		database: db,
 		config: readGoogleAdsConversionUploadConfig({
@@ -741,9 +887,9 @@ async function offlineConversionPreview(args: {
 			note: 'Uploads are idempotent through AI_GoogleAdsConversionUpload. Raw click IDs are not stored in the ledger.',
 		},
 		notes: [
-			'Raw Google click IDs and emails are intentionally omitted from output.',
-			'Eligible rows require a real gclid, gbraid, or wbraid and exclude TEST_ click IDs.',
-			'Exactly one Google click ID is uploaded per purchase, prioritizing gclid, then gbraid, then wbraid.',
+			'Raw Google click IDs, emails, contact IDs, and Kit subscriber IDs are intentionally omitted from output.',
+			'Checkout attribution wins. Missing checkout click IDs may fall back through buyer email, then existing Kit provider identity, to a recorded real-gclid signup within 90 days.',
+			'Exactly one Google click conversion is uploaded per purchase and action across both attribution sources.',
 		],
 	}
 	const receiptPath = writeReceipt(args.receipt, payload)
@@ -911,6 +1057,86 @@ async function invoiceAttributionAudit(args: {
 	return { ...payload, receiptPath }
 }
 
+function maskEmail(value: string | null | undefined) {
+	if (!value?.includes('@')) return null
+	const [local, domain] = value.split('@')
+	return `${local?.slice(0, 2) ?? ''}***@${domain}`
+}
+
+async function purchaseConversionStatus(args: {
+	range: Range
+	productId?: string
+	limit: number
+}) {
+	return getPurchaseConversionStatus({
+		since: sinceForRange(args.range),
+		productId: args.productId,
+		limit: args.limit,
+	})
+}
+
+async function signupConversionStatus(args: {
+	productId?: string
+	startAt?: string
+	endAt?: string
+	limit: number
+}) {
+	if (args.productId !== 'email-course') {
+		throw new Error('signup-conversion-status requires --product-id email-course')
+	}
+	if (!args.startAt || !args.endAt) {
+		throw new Error('signup-conversion-status requires --start-at and --end-at ISO timestamps')
+	}
+	const startAt = new Date(args.startAt)
+	const endAt = new Date(args.endAt)
+	if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+		throw new Error('--start-at and --end-at must be valid ISO timestamps')
+	}
+	if (startAt >= endAt) throw new Error('--start-at must be before --end-at')
+	return getLocalSignupConversionStatus({ startAt, endAt, limit: args.limit })
+}
+
+async function funnelStatus(range: Range) {
+	if (range !== '24h' && range !== '7d' && range !== '30d') {
+		throw new Error('funnel-status --range must be 24h, 7d, or 30d')
+	}
+	const metrics = await getAdsCourseFunnelMetrics({ range })
+	const stages = Object.fromEntries(
+		Object.entries(metrics.stages).map(([key, value]) => [key, {
+			range: value.range,
+			total: value.total,
+			countType: metrics.stageSemantics[key as keyof typeof metrics.stageSemantics],
+			today: value.range,
+		}]),
+	)
+	return {
+		...metrics,
+		stages,
+		compatibility: {
+			stagesTodayAlias: 'Deprecated compatibility alias. For every supported range, stages.*.today equals stages.*.range and does not mean UTC today.',
+			attributionTodayAlias: 'Deprecated compatibility alias. attribution.today equals attribution.range.',
+			conversionTodayAlias: 'Deprecated compatibility alias. conversion.today equals conversion.range.',
+		},
+		attribution: { range: metrics.attribution.range, total: metrics.attribution.total, today: metrics.attribution.range },
+		conversion: { range: metrics.conversion.range, total: metrics.conversion.total, today: metrics.conversion.range },
+	}
+}
+
+async function funnelTrace(contactId?: string, email?: string) {
+	if (!contactId && !email) throw new Error('funnel-trace requires --contact-id or --email')
+	const rows = await db.select().from(contact).where(contactId ? eq(contact.id, contactId) : eq(contact.email, email!.trim().toLowerCase())).limit(2)
+	if (rows.length !== 1) throw new Error(rows.length ? 'lookup matched more than one contact; use --contact-id' : 'contact not found')
+	const found = rows[0]!
+	const [events, transitions, intents, conversions, identities] = await Promise.all([
+		db.select().from(contactEvent).where(eq(contactEvent.contactId, found.id)).orderBy(contactEvent.occurredAt),
+		db.select().from(stateTransition).where(eq(stateTransition.contactId, found.id)).orderBy(stateTransition.createdAt),
+		db.select().from(sideEffectIntent).where(eq(sideEffectIntent.contactId, found.id)).orderBy(sideEffectIntent.createdAt),
+		db.select().from(googleAdsSignupConversionUpload).where(eq(googleAdsSignupConversionUpload.contactId, found.id)).orderBy(googleAdsSignupConversionUpload.createdAt),
+		db.select().from(providerIdentity).where(eq(providerIdentity.contactId, found.id)).orderBy(providerIdentity.createdAt),
+	])
+	return { generatedAt: new Date().toISOString(), readOnly: true, contact: { id: found.id, email: maskEmail(found.email), lifecycle: found.lifecycle, createdAt: found.createdAt, attributionCaptured: Boolean(found.optInAttribution) }, identities: identities.map((row) => ({ provider: row.provider, createdAt: row.createdAt })), events: events.map((row) => ({ at: row.occurredAt, id: row.id, type: row.eventType, provider: row.provider })), transitions: transitions.map((row) => ({ at: row.createdAt, eventId: row.eventId, toStateId: row.toStateId })), intents: intents.map((row) => ({ at: row.createdAt, id: row.id, type: row.type, status: row.status, emailResourceId: parseJsonRecord(row.metadata).emailResourceId ?? null, completedAt: parseJsonRecord(row.metadata).completedAt ?? null, failedAt: parseJsonRecord(row.metadata).failedAt ?? null, reviewReasons: row.reviewReasons })), conversions: conversions.map((row) => ({ at: row.createdAt, status: row.status, clickIdType: row.clickIdType, attemptCount: row.attemptCount, updatedAt: row.updatedAt })) }
+}
+
 function nextActions() {
 	return [
 		{
@@ -941,6 +1167,12 @@ function nextActions() {
 		},
 		{
 			command:
+				'bin/aih-ads purchase-conversion-status [--product-id <id>] [--range 24h|7d|30d|90d|all]',
+			description:
+				'Read fallback rescue eligibility and uploaded purchase conversions split by attribution source',
+		},
+		{
+			command:
 				'bin/aih-ads offline-conversion-preview --product-id product-pqkk5 --range 30d --receipt <path>',
 			description:
 				'Preview real Google Ads offline conversion eligibility with aggregate output only',
@@ -952,18 +1184,33 @@ const {
 	command,
 	range,
 	purchaseId,
+	contactId,
+	email,
 	productId,
 	receipt,
+	startAt,
+	endAt,
 	limit,
 	dryRun,
 	allowWrite,
 	withStripe,
+	entriesPath,
 } = parseArgs(process.argv.slice(2))
 
 try {
 	const result =
 		command === 'status'
 			? await status(range)
+			: command === 'funnel-status'
+				? await funnelStatus(range)
+				: command === 'purchase-conversion-status'
+					? await purchaseConversionStatus({ range, productId, limit })
+				: command === 'signup-conversion-status'
+					? await signupConversionStatus({ productId, startAt, endAt, limit })
+				: command === 'ads-course-metrics'
+					? await getAdsCourseMetrics({ productId: productId ?? 'email-course', range: range === '7d' || range === '30d' ? range : 'today' })
+				: command === 'funnel-trace'
+					? await funnelTrace(contactId, email)
 			: command === 'synthetic-receipt'
 				? await syntheticReceipt({ purchaseId, limit })
 				: command === 'checkout-receipt'
@@ -997,7 +1244,9 @@ try {
 										dryRun,
 										allowWrite,
 									})
-								: undefined
+								: command === 'optin-attribution-backfill'
+									? await optInAttributionBackfill({ entriesPath, allowWrite })
+									: undefined
 	if (!result) {
 		throw new Error(`Unsupported command: ${command}`)
 	}

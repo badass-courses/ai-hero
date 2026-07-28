@@ -1,0 +1,59 @@
+---
+title: "Worker task: trace course-builder survey primitives"
+type: "task"
+assignee: "cb-survey (flagg, herdr pane w2S:p2, 2026-07-24)"
+created_at: "2026-07-24"
+---
+
+# Worker task: trace course-builder survey primitives
+
+You are a read-only research worker. You do not write code and you do not commit.
+
+## Claim first
+
+Before any other work, edit
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/trace-coursebuilder-survey-primitives.svx`
+and set its frontmatter `assignee:` to your callsign plus machine, e.g.
+`assignee: "<yourname> (flagg, herdr pane <pane id>, 2026-07-24)"`.
+Also set the `assignee:` in this task file. Do this immediately — it is the
+liveness signal the steering session watches for.
+
+## Context
+
+Matt Pocock asked for a `<Quiz>` MDX component for the AI Hero crash course.
+Joel's position is that the existing survey system already covers most of it.
+The brief is
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/quiz-component-brief.svx`.
+Read the brief before you start.
+
+## Your step
+
+Execute the step file
+`/Users/joel/Code/badass-courses/ai-hero/.brain/projects/quiz-component/trace-coursebuilder-survey-primitives.svx`
+exactly as written. It lists the files to read and the numbered questions to
+answer.
+
+Your scope is the **course-builder monorepo only**:
+`/Users/joel/Code/badass-courses/course-builder`. Two sibling workers own the AI
+Hero app; do not read or write their step files.
+
+## Rules
+
+- Read-only on all source. Never edit anything under `course-builder` or
+  `apps/`.
+- The ONLY files you may write are your own step file and this task file.
+- Do not commit. Do not run `git add`, `git commit`, or `git push`.
+- Every claim needs `path:line` evidence. If you cannot find evidence, write
+  "not found" — do not infer, do not guess, do not describe what a system like
+  this usually does.
+- No product recommendations. Facts only. The operator decides direction.
+- Question 2 (is there any notion of a correct answer / grading) is the most
+  important one in the step. Answer it unambiguously.
+
+## Finish
+
+Write the `## Result (2026-07-24)` section into your step file, flip its
+frontmatter to `status: "closed"` with `closed_at: "2026-07-24"`, then print a
+`DONE` summary of at most 15 lines covering: whether grading exists, the survey
+data model in one sentence, and the top three gaps between what exists and a
+graded quiz.

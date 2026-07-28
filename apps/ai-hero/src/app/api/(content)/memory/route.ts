@@ -36,6 +36,21 @@ function getClient() {
  * with time decay applied.
  */
 const recallHandler = async (request: NextRequest) => {
+	const { authMethod } = await getUserAbilityForRequest(request)
+	if (authMethod === 'personal-access-token') {
+		return NextResponse.json(
+			{
+				ok: false,
+				command: 'memory recall',
+				error: { message: 'Forbidden', code: 'FORBIDDEN' },
+				fix: 'Use a credential with memory access.',
+				docs: '/api',
+				next_actions: [],
+			},
+			{ status: 403, headers: corsHeaders },
+		)
+	}
+
 	const { searchParams } = new URL(request.url)
 	const q = searchParams.get('q')
 	const category = searchParams.get('category')
@@ -194,7 +209,21 @@ const recallHandler = async (request: NextRequest) => {
  * increments merged_count on the existing doc instead of inserting.
  */
 const storeHandler = async (request: NextRequest) => {
-	const { ability, user } = await getUserAbilityForRequest(request)
+	const { authMethod, user } = await getUserAbilityForRequest(request)
+	if (authMethod === 'personal-access-token') {
+		return NextResponse.json(
+			{
+				ok: false,
+				command: 'memory store',
+				error: { message: 'Forbidden', code: 'FORBIDDEN' },
+				fix: 'Use a credential with memory write access.',
+				docs: '/api',
+				next_actions: [],
+			},
+			{ status: 403, headers: corsHeaders },
+		)
+	}
+
 	if (!user) {
 		return NextResponse.json(
 			{
@@ -202,6 +231,7 @@ const storeHandler = async (request: NextRequest) => {
 				command: 'memory store',
 				error: { message: 'Unauthorized', code: 'UNAUTHORIZED' },
 				fix: 'Authenticate with a valid device token.',
+				docs: '/api',
 				next_actions: [],
 			},
 			{ status: 401, headers: corsHeaders },

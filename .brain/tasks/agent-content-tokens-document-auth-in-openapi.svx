@@ -1,0 +1,37 @@
+---
+title: "Worker Task: Teach OpenAPI and Agent Discovery the Bearer Scheme"
+type: "task"
+created_at: "2026-07-17"
+privacy: "private"
+---
+
+# Worker task: teach OpenAPI and agent discovery the bearer scheme
+
+You are a build worker for the effort **Agent Tokens for the AI Hero Content CMS**.
+
+Read these first, in full:
+
+1. The brief: `.brain/projects/agent-content-tokens/agent-content-tokens-brief.svx` — Vocabulary binds; execution authorized.
+2. Your claimed step: `.brain/projects/agent-content-tokens/document-auth-in-openapi.svx` — note the sharpened self-sufficiency bar.
+3. The approved contract: `.brain/projects/agent-content-tokens/coverage-matrix-draft.svx` — documented behavior must match it exactly.
+4. What's already on main: mint/list/revoke at `/api/personal-access-tokens` (commit fd89203), the PAT auth seam + scope registry (commit 84d4f36, see `src/server/pat-scopes.ts`), and the discovery surface `src/lib/agent-discovery.ts` + `/api` + `/api/openapi.json` routes.
+
+## The bar (Joel, 2026-07-17)
+
+An agent pointed at ONE URL with an admin PAT (or admin device token) must self-onboard with zero human folklore: discover that agent tokens exist, how an admin mints one, which scopes exist, how to present the token, what `content:read` grants (privileged read: drafts + private included), what stays excluded (writes, Mux payloads, signed URLs, memory, survey analytics), and how to interpret its own 401/403s.
+
+## Deliverables
+
+1. **`openapi.json`**: add `components.securitySchemes` (HTTP bearer; describe both token kinds — `aih_pat_*` scoped agent tokens and admin device tokens) and per-operation `security` + scope documentation for the content routes and the three `/api/personal-access-tokens` operations (document those operations fully: request/response schemas, 201-returns-token-once semantics, 401/403/400/503 responses).
+2. **Discovery document** (`agent-discovery.ts` / `/api`): an agent-tokens section — what they are, mint/list/revoke usage with a curl example (placeholder token values only), scope table, privileged-read semantics, exclusion list with the *why* per exclusion, revocation and optional expiry, and pointers to `/api/openapi.json`.
+3. **`llms.txt`** (find how it's generated/served and extend it): same story, terse.
+4. **Error-body pointers**: where content routes and token routes return 401/403 for token callers, include a `docs` field (or equivalent existing pattern) pointing at the discovery URL so a confused agent can course-correct. Follow the existing error envelope shape in each route — do not invent a new envelope; skip any route where adding a field would break the documented response schema.
+5. Tests: extend the existing discovery/openapi tests (or add colocated ones) asserting the securitySchemes entry exists, the PAT operations are documented, and the agent-tokens discovery section renders.
+6. Style: tabs, single quotes, no semicolons (`bun x prettier --use-tabs --single-quote --no-semi --write <files>`); do NOT run ultracite. Run vitest on touched test files.
+7. Brain updates: `## Result (2026-07-17)` in your step file (what an agent can now discover, file paths), status closed + closed_at, one ledger line on the brief.
+
+## Rules
+
+- You own: `src/lib/agent-discovery.ts`, the `/api` + openapi routes, llms.txt generation, minimal error-body `docs` additions in routes you must touch, your tests, your `.brain` edits. Do not change auth behavior, ability rules, or the coverage matrix suite's expectations (if an error-body addition breaks a matrix test expectation, update the test's payload assertion only, never its status expectation).
+- Do not touch google-ads/inngest/attribution files (other sessions own them).
+- Do not commit. Work autonomously. Print a DONE summary: what an agent discovers at each URL, files touched, test results.

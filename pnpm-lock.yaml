@@ -22,6 +22,9 @@ importers:
 
   apps/ai-hero:
     dependencies:
+      '@ai-hero/course-sync-schema':
+        specifier: workspace:*
+        version: link:../../packages/course-sync-schema
       '@ai-sdk/gateway':
         specifier: ^3.0.77
         version: 3.0.127(zod@3.25.76)

@@ -26,8 +26,14 @@ const getSurveyAnalyticsHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('manage', 'all')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 

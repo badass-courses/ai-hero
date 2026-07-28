@@ -9,11 +9,13 @@ import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter, db } from '@/db'
 import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { canViewPurchaseInvoice, getTeamPurchasesForMember } from '@/lib/team-purchases'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
+import { getServerAuthSession } from '@/server/auth'
 import { format, fromUnixTime } from 'date-fns'
 import { eq } from 'drizzle-orm'
 import { ChevronLeft, MailIcon } from 'lucide-react'
@@ -84,7 +86,8 @@ async function getChargeDetails(merchantChargeId: string) {
 					charge,
 					quantity,
 					bulkCoupon,
-					purchaseId: purchase?.id,
+					purchaseId: purchase.id,
+					purchaseUserId: purchase.userId,
 				},
 			}
 		}
@@ -106,10 +109,31 @@ const Invoice = async (props: {
 	if (chargeDetails?.state !== 'SUCCESS') {
 		redirect('/invoices')
 	}
+	const { session } = await getServerAuthSession()
+	const viewerUserId = session?.user?.id
+	const managedTeamPurchases = viewerUserId
+		? await getTeamPurchasesForMember(viewerUserId)
+		: []
+	if (
+		!canViewPurchaseInvoice(
+			viewerUserId,
+			{
+				id: chargeDetails.result.purchaseId,
+				userId: chargeDetails.result.purchaseUserId,
+			},
+			managedTeamPurchases,
+		)
+	) {
+		redirect('/invoices')
+	}
 
-	const purchaseUserTransfers = await getPurchaseTransferForPurchaseId({
-		id: chargeDetails?.result?.purchaseId,
-	})
+	const isPurchaseOwner = viewerUserId === chargeDetails.result.purchaseUserId
+	const purchaseUserTransfers =
+		isPurchaseOwner
+			? await getPurchaseTransferForPurchaseId({
+					id: chargeDetails.result.purchaseId,
+				})
+			: []
 
 	if (chargeDetails?.state !== 'SUCCESS') {
 		return null
@@ -140,10 +164,11 @@ const Invoice = async (props: {
 				<main className="max-w-(--breakpoint-md) mx-auto w-full">
 					<div className="flex flex-col justify-between pb-5 pt-10 print:hidden">
 						<Link
-							href="/invoices"
+							href={isPurchaseOwner ? '/invoices' : '/team'}
 							className="mb-5 inline-flex items-center gap-1 text-sm opacity-75 transition hover:opacity-100"
 						>
-							<ChevronLeft className="h-3 w-3" /> Invoices
+							<ChevronLeft className="h-3 w-3" />{' '}
+							{isPurchaseOwner ? 'Invoices' : 'Team'}
 						</Link>
 						<h1 className="font-text text-center text-lg font-medium leading-tight sm:text-left sm:text-xl">
 							Your Invoice for {product.name}
@@ -292,7 +317,8 @@ const Invoice = async (props: {
 							</div>
 						</div>
 					</div>
-					{!bulkCoupon && purchaseUserTransfers.length > 0 ? (
+					{isPurchaseOwner && !bulkCoupon &&
+					purchaseUserTransfers.length > 0 ? (
 						<div className="py-16 print:hidden">
 							<div>
 								<h2 className="text-primary pb-4 text-sm uppercase">

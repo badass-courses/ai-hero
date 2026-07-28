@@ -12,6 +12,7 @@ import {
 import { OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT } from '@/inngest/events/oauth-provider-account-linked'
 import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
+import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
 import { log, serializeError } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import DiscordProvider from '@auth/core/providers/discord'
@@ -223,11 +224,13 @@ export const authOptions: NextAuthConfig = {
 	},
 	callbacks: {
 		signIn: async ({ user, account, profile }) => {
+			let effectiveUserId = user.id
 			if (account?.provider && isConnectableOAuthProvider(account.provider)) {
 				const provider = account.provider
 				const cookieStore = await cookies()
 				const linkCookieName = getOAuthLinkCookieName(provider)
 				const linkingUserId = cookieStore.get(linkCookieName)?.value ?? null
+				if (linkingUserId) effectiveUserId = linkingUserId
 
 				void log.info(`auth.${provider}.signin`, {
 					...getOAuthLogData({
@@ -340,6 +343,26 @@ export const authOptions: NextAuthConfig = {
 					}
 				}
 			}
+
+			if (effectiveUserId && user.email) {
+				try {
+					const accepted = await acceptBillingAdminInvitations({
+						userId: effectiveUserId,
+						email: user.email,
+					})
+					if (accepted.acceptedOrganizationIds.length > 0) {
+						void log.info('auth.billing-admin-invitations.accepted', {
+							userId: effectiveUserId,
+							organizationCount: accepted.acceptedOrganizationIds.length,
+						})
+					}
+				} catch (error) {
+					void log.error('auth.billing-admin-invitations.failed', {
+						userId: effectiveUserId,
+						error: error instanceof Error ? error.message : String(error),
+					})
+				}
+			}
 			return true
 		},
 		session: async ({ session, user }) => {
@@ -448,7 +471,14 @@ export const authOptions: NextAuthConfig = {
 
 			const organizationRoles =
 				dbUser?.organizationMemberships.flatMap((membership) =>
-					membership.organizationMembershipRoles.map((role) => role.role),
+					membership.organizationMembershipRoles.flatMap((membershipRole) =>
+						membershipRole.active &&
+						!membershipRole.deletedAt &&
+						membershipRole.role.active &&
+						!membershipRole.role.deletedAt
+							? [membershipRole.role]
+							: [],
+					),
 				) || []
 
 			const currentMembership = organizationId

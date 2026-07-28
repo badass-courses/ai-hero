@@ -36,9 +36,11 @@ export async function setSubscriberCookie(subscriber: {
  * Used when users click email links with ?ck_subscriber_id=X
  */
 export async function setSubscriberIdFromUrl(subscriberId: string) {
+	const normalizedSubscriberId = subscriberId.trim().slice(0, 255)
+	if (!normalizedSubscriberId) return
 	const cookieStore = await cookies()
 
-	cookieStore.set('ck_subscriber_id', subscriberId, {
+	cookieStore.set('ck_subscriber_id', normalizedSubscriberId, {
 		secure: process.env.NODE_ENV === 'production',
 		path: '/',
 		httpOnly: true,
@@ -79,8 +81,12 @@ export const getSubscriberFromCookie = cache(async () => {
 			const subscriber =
 				await emailListProvider.getSubscriber(subscriberIdCookie)
 			if (subscriber) {
-				// Populate the full ck_subscriber cookie for future requests
-				await setSubscriberCookie(subscriber)
+				try {
+					// Populate the full ck_subscriber cookie for future requests.
+					// Cookie writes are only legal in actions/route handlers — during
+					// an RSC render this throws, and the subscriber must still resolve.
+					await setSubscriberCookie(subscriber)
+				} catch {}
 				return SubscriberSchema.parse(subscriber)
 			}
 		} catch (e) {

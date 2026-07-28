@@ -33,6 +33,12 @@ const getLessonSolutionHandler = async (
 			lessonId,
 			hasAbility: !!ability,
 		})
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
 
 		const result = await getSolutionForLesson(lessonId, ability)
 
@@ -52,7 +58,13 @@ const getLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -75,8 +87,8 @@ const updateLessonSolutionHandler = async (
 ) => {
 	const { lessonId } = await params
 	try {
-		const body = await request.json()
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 		await log.info('api.lessons.solution.put.started', {
 			userId: user?.id,
 			lessonId,
@@ -88,8 +100,19 @@ const updateLessonSolutionHandler = async (
 				userId: user?.id,
 				lessonId,
 			})
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401 },
+			)
 		}
+		if (authMethod === 'personal-access-token') {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403 },
+			)
+		}
+
+		const body = await request.json()
 		const result = await updateSolutionForLesson(
 			lessonId,
 			ability,
@@ -113,7 +136,13 @@ const updateLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -136,16 +165,27 @@ const createLessonSolutionHandler = async (
 ) => {
 	const { lessonId } = await params
 	try {
-		const body = await request.json()
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user?.id) {
 			await log.warn('api.lessons.solution.post.unauthorized', {
 				userId: user?.id,
 				lessonId,
 			})
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401 },
+			)
 		}
+		if (authMethod === 'personal-access-token') {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403 },
+			)
+		}
+
+		const body = await request.json()
 		const solution = await createSolutionForLesson(
 			lessonId,
 			ability,
@@ -163,7 +203,13 @@ const createLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -186,15 +232,26 @@ const deleteLessonSolutionHandler = async (
 ) => {
 	const { lessonId } = await params
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user?.id) {
 			await log.warn('api.lessons.solution.post.unauthorized', {
 				userId: user?.id,
 				lessonId,
 			})
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401 },
+			)
 		}
+		if (authMethod === 'personal-access-token') {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403 },
+			)
+		}
+
 		const solution = await deleteSolutionForLesson(lessonId, ability, user?.id)
 
 		return NextResponse.json(solution, { headers: corsHeaders })
@@ -207,7 +264,13 @@ const deleteLessonSolutionHandler = async (
 				lessonId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}

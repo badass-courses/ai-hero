@@ -22,6 +22,7 @@ import { createCalloutLineAutoInsertRemarkPlugin } from '@/lib/callout-line-auto
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
+import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { CldImageProps } from 'next-cloudinary'
 import {
@@ -97,6 +98,12 @@ const DynamicOfficeHoursSchedule = dynamic(() =>
 		(mod) => mod.OfficeHoursSchedule,
 	),
 )
+const Quiz = dynamic(() =>
+	import('@/components/mdx/quiz').then((mod) => mod.Quiz),
+)
+const QuizQuestion = dynamic(() =>
+	import('@/components/mdx/quiz').then((mod) => mod.QuizQuestion),
+)
 
 const getCachedVideoResourceForMdx = cache((id: string) =>
 	courseBuilderAdapter.getVideoResource(id),
@@ -167,9 +174,7 @@ type CompileMDXContext = {
 	}
 }
 
-export function sanitizeMdxSource(source: string) {
-	return source.replace(/<!--[\s\S]*?-->/g, '')
-}
+export { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 
 function MDXCompileErrorFallback() {
 	return (
@@ -484,6 +489,10 @@ async function compileMDXInternal(
 					Timeline: ({ children }) => <Timeline>{children}</Timeline>,
 					TimelineItem: ({ children, icon }) => (
 						<TimelineItem icon={icon}>{children}</TimelineItem>
+					),
+					Quiz: ({ children }) => <Quiz>{children}</Quiz>,
+					QuizQuestion: (props) => (
+						<QuizQuestion {...props} lessonId={context?.lessonId} />
 					),
 					OfficeHoursSchedule: ({
 						sessions,

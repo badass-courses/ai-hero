@@ -73,7 +73,7 @@ export async function updateSolutionForLesson(
 			lessonId,
 			action: 'update',
 		})
-		throw new SolutionError('Unauthorized', 401)
+		throw new SolutionError('Forbidden', 403)
 	}
 
 	const solution = await getSolutionForLessonQuery(lessonId)
@@ -113,7 +113,7 @@ export async function createSolutionForLesson(
 			lessonId: lesson.id,
 			action: 'create',
 		})
-		throw new SolutionError('Unauthorized', 401)
+		throw new SolutionError('Forbidden', 403)
 	}
 
 	const existingSolution = await getSolutionForLessonQuery(lesson.id)
@@ -154,7 +154,7 @@ export async function deleteSolutionForLesson(
 			lessonId: lesson.id,
 			action: 'delete',
 		})
-		throw new SolutionError('Unauthorized', 401)
+		throw new SolutionError('Forbidden', 403)
 	}
 
 	const solution = await getSolutionForLessonQuery(lesson.id)

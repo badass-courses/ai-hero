@@ -33,6 +33,10 @@ export const env = createEnv({
 			process.env.NODE_ENV === 'production'
 				? z.string()
 				: z.string().optional(),
+		PERSONAL_ACCESS_TOKEN_SECRET:
+			process.env.NODE_ENV === 'production'
+				? z.string().min(1)
+				: z.string().min(1).optional(),
 		NEXTAUTH_URL: z.preprocess(
 			// This makes Vercel deployments not fail if you don't set NEXTAUTH_URL
 			// Since NextAuth.js automatically uses the VERCEL_URL if present.
@@ -64,6 +68,20 @@ export const env = createEnv({
 		YOUTUBE_OAUTH_CLIENT_ID: z.string().optional(),
 		YOUTUBE_OAUTH_CLIENT_SECRET: z.string().optional(),
 		YOUTUBE_ANALYTICS_REFRESH_TOKEN: z.string().optional(),
+		DROPBOX_APP_KEY: z.string().optional(),
+		DROPBOX_APP_SECRET: z.string().optional(),
+		DROPBOX_OAUTH_REDIRECT_URI: z.string().url().optional(),
+		DROPBOX_REFRESH_TOKEN: z.string().optional(),
+		DROPBOX_SYNC_SHARED_FOLDER_ID: z.string().optional(),
+		DROPBOX_SYNC_ALLOWED_ROOT: z.string().optional(),
+		DROPBOX_SYNC_SHARED_LINK: z.string().url().optional(),
+		COURSE_SYNC_SNAPSHOT_BUCKET: z.string().optional(),
+		COURSE_SYNC_STAGE_TOKEN: z.string().min(24).optional(),
+		COURSE_SYNC_WORKER_TOKEN: z.string().min(24).optional(),
+		COURSE_SYNC_OPERATOR_TOKEN: z.string().min(24).optional(),
+		VERCEL_API_TOKEN: z.string().optional(),
+		VERCEL_AI_HERO_PROJECT_ID: z.string().optional(),
+		VERCEL_TEAM_ID: z.string().optional(),
 		STATS_STRIPE_API_KEY: z.string().optional(),
 		OPENAI_MODEL_ID: z.string(),
 		UPSTASH_REDIS_REST_URL: z.string(),
@@ -90,6 +108,7 @@ export const env = createEnv({
 		SLACK_TOKEN: z.string().optional(),
 		SLACK_SIGNING_SECRET: z.string().optional(),
 		SLACK_DEFAULT_CHANNEL_ID: z.string().optional(),
+		COURSE_SYNC_SLACK_CHANNEL_ID: z.string().optional(),
 		SLACK_CONTENT_BOT_TOKEN: z.string().optional(),
 		SLACK_CONTENT_BOT_SIGNING_SECRET: z.string().optional(),
 		SLACK_CONTENT_CHANNEL_ID: z.string().optional(),
@@ -150,6 +169,7 @@ export const env = createEnv({
 		DATABASE_URL: process.env.DATABASE_URL,
 		NODE_ENV: process.env.NODE_ENV,
 		NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
+		PERSONAL_ACCESS_TOKEN_SECRET: process.env.PERSONAL_ACCESS_TOKEN_SECRET,
 		NEXTAUTH_URL: process.env.NEXTAUTH_URL,
 		REPLICATE_API_KEY: process.env.REPLICATE_API_KEY,
 		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
@@ -176,6 +196,20 @@ export const env = createEnv({
 		YOUTUBE_OAUTH_CLIENT_SECRET: process.env.YOUTUBE_OAUTH_CLIENT_SECRET,
 		YOUTUBE_ANALYTICS_REFRESH_TOKEN:
 			process.env.YOUTUBE_ANALYTICS_REFRESH_TOKEN,
+		DROPBOX_APP_KEY: process.env.DROPBOX_APP_KEY,
+		DROPBOX_APP_SECRET: process.env.DROPBOX_APP_SECRET,
+		DROPBOX_OAUTH_REDIRECT_URI: process.env.DROPBOX_OAUTH_REDIRECT_URI,
+		DROPBOX_REFRESH_TOKEN: process.env.DROPBOX_REFRESH_TOKEN,
+		DROPBOX_SYNC_SHARED_FOLDER_ID: process.env.DROPBOX_SYNC_SHARED_FOLDER_ID,
+		DROPBOX_SYNC_ALLOWED_ROOT: process.env.DROPBOX_SYNC_ALLOWED_ROOT,
+		DROPBOX_SYNC_SHARED_LINK: process.env.DROPBOX_SYNC_SHARED_LINK,
+		COURSE_SYNC_SNAPSHOT_BUCKET: process.env.COURSE_SYNC_SNAPSHOT_BUCKET,
+		COURSE_SYNC_STAGE_TOKEN: process.env.COURSE_SYNC_STAGE_TOKEN,
+		COURSE_SYNC_WORKER_TOKEN: process.env.COURSE_SYNC_WORKER_TOKEN,
+		COURSE_SYNC_OPERATOR_TOKEN: process.env.COURSE_SYNC_OPERATOR_TOKEN,
+		VERCEL_API_TOKEN: process.env.VERCEL_API_TOKEN,
+		VERCEL_AI_HERO_PROJECT_ID: process.env.VERCEL_AI_HERO_PROJECT_ID,
+		VERCEL_TEAM_ID: process.env.VERCEL_TEAM_ID,
 		STATS_STRIPE_API_KEY: process.env.STATS_STRIPE_API_KEY,
 		GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
 		GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
@@ -210,6 +244,7 @@ export const env = createEnv({
 		SLACK_TOKEN: process.env.SLACK_TOKEN,
 		SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET,
 		SLACK_DEFAULT_CHANNEL_ID: process.env.SLACK_DEFAULT_CHANNEL_ID,
+		COURSE_SYNC_SLACK_CHANNEL_ID: process.env.COURSE_SYNC_SLACK_CHANNEL_ID,
 		SLACK_CONTENT_BOT_TOKEN: process.env.SLACK_CONTENT_BOT_TOKEN,
 		SLACK_CONTENT_BOT_SIGNING_SECRET:
 			process.env.SLACK_CONTENT_BOT_SIGNING_SECRET,

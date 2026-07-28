@@ -1,8 +1,10 @@
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
+import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import {
 	getValuePathAnswerPages,
 	type ValuePathAnswerPageResource,
@@ -28,6 +30,9 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			readActiveGateDRuntimeAllowlist({ redis }),
 		)
 		if (!allowlistDecision.passed || !allowlistDecision.allowlist) {
+			await log.warn('subscriber_funnel.email_executor_blocked', {
+				funnel: 'skills-newsletter', reviewReasons: allowlistDecision.reviewReasons,
+			})
 			return {
 				status: 'blocked',
 				reviewReasons: allowlistDecision.reviewReasons,
@@ -56,6 +61,9 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			verifiedKitSequenceIds: runtimeAllowlist.kitSequenceIds,
 			allowedActions: runtimeAllowlist?.allowedActions,
 			retryPolicy: runtimeAllowlist?.retryPolicy,
+			email7LiveEnabled: parseEmail7LiveEnabled(
+				process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
+			),
 			acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
 				allowlist: runtimeAllowlist,
 				legacyEnvReviewReasons: parseExecutorList(
@@ -64,12 +72,38 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			}),
 		}))
 
-		return await step.run('execute-pending-value-path-email-intents', () =>
+		const results = await step.run('execute-pending-value-path-email-intents', () =>
 			executePendingValuePathEmailIntents({
 				repository: new DrizzleCaptureMarketingRepository(db),
 				emailListProvider,
 				config,
 			}),
 		)
+		for (const result of results) {
+			const level = result.status === 'failed' || result.status === 'retryable-failed' ? 'error' : result.status === 'blocked' ? 'warn' : 'info'
+			await log[level]('subscriber_funnel.email_intent_result', {
+				funnel: 'skills-newsletter', intentId: result.intentId,
+				status: result.status, reviewReasons: 'reviewReasons' in result ? result.reviewReasons : [],
+			})
+		}
+		const counts = {
+			processed: results.length,
+			completed: results.filter((result) => result.status === 'completed').length,
+			blocked: results.filter((result) => result.status === 'blocked').length,
+			failed: results.filter((result) => result.status === 'failed').length,
+			retryableFailed: results.filter(
+				(result) => result.status === 'retryable-failed',
+			).length,
+			skipped: results.filter((result) => result.status === 'skipped').length,
+			emailZeroCompleted: results.filter(
+				(result) =>
+					result.status === 'completed' && result.kitSequenceId === '2757199',
+			).length,
+		}
+		await log[counts.failed > 0 || counts.retryableFailed > 0 ? 'warn' : 'info'](
+			'subscriber_funnel.email_executor_run_completed',
+			{ funnel: 'skills-newsletter', ...counts },
+		)
+		return results
 	},
 )

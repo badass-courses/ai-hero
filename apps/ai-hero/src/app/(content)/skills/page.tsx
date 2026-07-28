@@ -4,7 +4,6 @@ import { Resource } from '@/components/landing/resource'
 import { SectionHeading } from '@/components/landing/section-heading'
 import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
-import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getRepoStarCount } from '@/lib/github-stars-query'
 import { getListWithSections } from '@/lib/lists-query'
 import {
@@ -25,7 +24,6 @@ import { ChangelogTeaser } from './_components/changelog-teaser'
 import { InstallCommand } from './_components/install-command'
 import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
-import { type SkillsNewsletterStatus } from './_components/skills-newsletter'
 import { SkillsSalesCopy } from './_components/skills-sales-copy'
 
 export const dynamic = 'force-dynamic'
@@ -51,21 +49,19 @@ export const metadata: Metadata = {
 }
 
 type Props = {
-	searchParams: Promise<{ page?: string; preview?: string }>
+	searchParams: Promise<{ page?: string }>
 }
 
 export default async function SkillsPage({ searchParams }: Props) {
-	const { page: pageParam, preview } = await searchParams
+	const { page: pageParam } = await searchParams
 	const currentPage = Math.max(Number(pageParam ?? '1') || 1, 1)
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, subscriber, skillsList, stars] =
-		await Promise.all([
-			getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
-			getSkillChangelogCount(),
-			getSubscriberFromCookie(),
-			getListWithSections(SKILLS_LIST_ID),
-			getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
-		])
+	const [entries, totalEntries, skillsList, stars] = await Promise.all([
+		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
+		getSkillChangelogCount(),
+		getListWithSections(SKILLS_LIST_ID),
+		getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
+	])
 
 	const skillGroups = toSkillGroups(skillsList?.resources)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
@@ -76,23 +72,12 @@ export default async function SkillsPage({ searchParams }: Props) {
 	const changelogListItems = latestChangelog
 		? changelogItems.slice(1)
 		: changelogItems
-	const newsletterState: SkillsNewsletterStatus =
-		preview === 'form'
-			? 'show-form'
-			: preview === 'tag-me'
-				? 'tag-me'
-				: !subscriber
-					? 'show-form'
-					: subscriber.fields?.interest === 'skills'
-						? 'subscribed'
-						: 'tag-me'
-
 	return (
 		<LayoutClient withContainer>
 			<HubLayout>
 				<main className="bg-background text-foreground">
 					{/* 1. Hero */}
-					<SkillsHero newsletterState={newsletterState} stars={stars} />
+					<SkillsHero stars={stars} />
 
 					{/* 2. Sales copy */}
 					<SkillsSalesCopy />

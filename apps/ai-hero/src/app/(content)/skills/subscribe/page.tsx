@@ -1,15 +1,18 @@
 import type { Metadata } from 'next'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import LayoutClient from '@/components/layout-client'
+import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { SubscriberSchema } from '@/schemas/subscriber'
 
-import * as SkillsNewsletter from '../_components/skills-newsletter'
+import { SkillsCourseFrontDoor } from '../_components/skills-course-front-door'
 import { type SkillsNewsletterStatus } from '../_components/skills-newsletter'
+import { SubscriberUrlParam } from './subscriber-url-param'
 
 export const metadata: Metadata = {
-	title: 'Skills Newsletter',
+	title: 'AI Skills for Real Engineers — Free 7-Day Email Course',
 	description:
-		'A practical skill system for engineers who want to use AI without giving up their standards.',
+		'A free seven-day email course for engineers building repeatable workflows with coding agents.',
 	alternates: {
 		canonical: '/skills/subscribe',
 	},
@@ -22,44 +25,39 @@ export const metadata: Metadata = {
 	},
 }
 
-export default async function SkillsSubscribePage() {
-	const subscriber = await getSubscriberFromCookie()
-	const status: SkillsNewsletterStatus = !subscriber
-		? 'show-form'
-		: subscriber.fields?.interest === 'skills'
-			? 'subscribed'
-			: 'tag-me'
+async function resolveSubscriber(ckSubscriberId: string | undefined) {
+	const fromCookie = await getSubscriberFromCookie()
+	if (fromCookie?.state === 'active') return fromCookie
+	const subscriberId = fromCookie?.id?.toString() ?? ckSubscriberId
+	if (!subscriberId || !/^\d+$/.test(subscriberId)) return fromCookie
+	try {
+		const subscriber = await emailListProvider.getSubscriber(subscriberId)
+		return subscriber ? SubscriberSchema.parse(subscriber) : fromCookie
+	} catch {
+		return fromCookie
+	}
+}
+
+export default async function SkillsSubscribePage({
+	searchParams,
+}: {
+	searchParams: Promise<{ ck_subscriber_id?: string }>
+}) {
+	const { ck_subscriber_id } = await searchParams
+	const subscriber = await resolveSubscriber(ck_subscriber_id)
+	// Kit confirmation is enrollment. The hourly reconciler guarantees path
+	// entry, so this page reassures instead of asking for a third click.
+	const status: SkillsNewsletterStatus =
+		subscriber?.state === 'active' ? 'subscribed' : 'show-form'
 
 	return (
-		<LayoutClient withContainer className="">
-			<main className="flex min-h-[calc(100vh-var(--nav-height))] items-center justify-center pb-24 pt-5">
-				<SkillsNewsletter.Root status={status} location="skills_subscribe">
-					<div className="mx-auto flex w-full max-w-3xl flex-col items-center gap-8 px-8 sm:px-16">
-						<SkillsNewsletter.Image className="sm:w-40" />
-						<div className="mb-2 flex flex-col gap-3 text-center font-normal">
-							<h1 className="leading-tighter text-4xl font-medium tracking-tight sm:text-5xl">
-								AI Skills for Real Engineers
-							</h1>
-							<h2 className="text-xl font-normal leading-tight opacity-90">
-								A practical skill system for engineers who want to use AI
-								without giving up their standards.
-							</h2>
-						</div>
-						<div className="flex w-full flex-col gap-3">
-							{status === 'tag-me' ? (
-								<SkillsNewsletter.TagMeButton className="bg-primary mx-auto w-full max-w-sm" />
-							) : (
-								<SkillsNewsletter.Form
-									label="Get the /skills"
-									className="[&_button]:bg-primary mx-auto flex max-w-sm flex-col gap-5 [&_label]:mb-2 [&_label]:block"
-								/>
-							)}
-							<SkillsNewsletter.Privacy className="mt-5 text-xs sm:text-sm" />
-						</div>
-					</div>
-				</SkillsNewsletter.Root>
-			</main>
-			<CompanyLogoGrid />
+		<LayoutClient withContainer>
+			<SubscriberUrlParam />
+			<SkillsCourseFrontDoor
+				status={status}
+				location="skills_course_front_door"
+			/>
+			<CompanyLogoGrid className="border-t pt-6" />
 		</LayoutClient>
 	)
 }

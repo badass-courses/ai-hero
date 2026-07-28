@@ -32,6 +32,12 @@ const getPostsHandler = async (request: NextRequest) => {
 			slugOrId,
 			hasAbility: !!ability,
 		})
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
 
 		const result = await getPosts({ userId: user?.id, ability, slug: slugOrId })
 
@@ -51,7 +57,13 @@ const getPostsHandler = async (request: NextRequest) => {
 				slugOrId,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -72,12 +84,16 @@ const createPostHandler = async (request: NextRequest) => {
 	try {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
-			await log.warn('api.posts.post.unauthorized', {
-				headers: Object.fromEntries(request.headers),
-			})
+			await log.warn('api.posts.post.unauthorized')
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('create', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -104,7 +120,13 @@ const createPostHandler = async (request: NextRequest) => {
 				statusCode: error.statusCode,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -129,12 +151,17 @@ const updatePostHandler = async (request: NextRequest) => {
 		const { ability, user } = await getUserAbilityForRequest(request)
 		if (!user) {
 			await log.warn('api.posts.put.unauthorized', {
-				headers: Object.fromEntries(request.headers),
 				postId: id,
 			})
 			return NextResponse.json(
-				{ error: 'Unauthorized' },
+				{ error: 'Unauthorized', docs: '/api' },
 				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('update', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
 			)
 		}
 
@@ -182,7 +209,13 @@ const updatePostHandler = async (request: NextRequest) => {
 				action,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}
@@ -206,6 +239,18 @@ const deletePostHandler = async (request: NextRequest) => {
 
 	try {
 		const { ability, user } = await getUserAbilityForRequest(request)
+		if (!user) {
+			return NextResponse.json(
+				{ error: 'Unauthorized', docs: '/api' },
+				{ status: 401, headers: corsHeaders },
+			)
+		}
+		if (ability.cannot('delete', 'Content')) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 
 		await log.info('api.posts.delete.started', {
 			userId: user?.id,
@@ -229,7 +274,13 @@ const deletePostHandler = async (request: NextRequest) => {
 				postId: id,
 			})
 			return NextResponse.json(
-				{ error: error.message, details: error.details },
+				{
+					error: error.message,
+					details: error.details,
+					...(error.statusCode === 401 || error.statusCode === 403
+						? { docs: '/api' }
+						: {}),
+				},
 				{ status: error.statusCode, headers: corsHeaders },
 			)
 		}

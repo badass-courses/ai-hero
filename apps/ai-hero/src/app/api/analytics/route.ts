@@ -247,6 +247,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 				description:
 					'AI Hero analytics, revenue, attribution, traffic, YouTube, and content correlation',
 				notes: [
+					'Paid campaign and email-course funnel metrics are available at GET /api/analytics/ads-course?productId=email-course&range=today.',
 					'The traffic surface includes GA4 device category, operating system, and screen resolution breakdowns with session percentages.',
 					'Use range=180d only for GA4 traffic surfaces. Non-GA4 surfaces intentionally reject it.',
 					'Attribution coverage includes quality lanes when the database provider exposes them. Coverage does not mean clean first-touch attribution.',
@@ -255,6 +256,10 @@ export const GET = withSkill(async (request: NextRequest) => {
 				],
 				surfaces: catalog,
 				next_actions: [
+					{
+						command: 'GET /api/analytics/ads-course?productId=email-course&range=today',
+						description: 'Read matching Google Ads economics and email-course funnel metrics',
+					},
 					{
 						command:
 							'GET /api/analytics?surface=<surface>&range=<range>&limit=<limit>',
