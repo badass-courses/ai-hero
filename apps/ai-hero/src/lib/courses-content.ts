@@ -77,8 +77,16 @@ export const FLAGSHIP_STATS = {
 export const COURSES_TESTIMONIALS_EYEBROW = 'From past cohorts'
 
 /**
- * Real cohort-student quotes from the [aih] Testimonial threads (condensed
- * faithfully; first names only). Swap or extend here as Matt collects more.
+ * Real cohort-student quotes. The first two come from the [aih] Testimonial
+ * threads; the rest are verbatim answers to "What was the most valuable part
+ * of the cohort for you?" in the post-cohort Completion Survey
+ * (`survey-1rd1m`, 45 essay responses), condensed faithfully. First names
+ * only, matching how Matt has published these before.
+ *
+ * Ordered so the first pair carries the emotional claim and the rest answer
+ * "what did you actually get" from different angles — a system rather than
+ * tips, planning over vibe coding, the whole flow, holistic vs piecemeal.
+ * Six is deliberate: two quotes read as the only two that exist.
  */
 export const COURSES_TESTIMONIALS = [
 	{
@@ -90,6 +98,26 @@ export const COURSES_TESTIMONIALS = [
 		quote:
 			'A genuine turning point for my career. I was a tactical developer, focused on the grind of writing the best lines possible. Now I let AI handle the tactical execution and focus on architecture and the big picture.',
 		author: 'Serge, cohort graduate',
+	},
+	{
+		quote:
+			'A working system for using Claude, beyond just tips for getting AI to write code. The planning and tracer bullet breakdown does not only improve code quality, it gives a really good framework for tackling feature tasks. I wish I knew it before AI could help.',
+		author: 'Daniel',
+	},
+	{
+		quote:
+			'Learning how to plan with AI instead of just vibe coding. It is like when CI/CD started to become a thing: you realise there is so much you can automate.',
+		author: 'Phil',
+	},
+	{
+		quote:
+			'My previous experience was using AI to think about one thing over here, solve an issue over there. This more holistic approach feels much more sensible, secure and workable.',
+		author: 'Richard',
+	},
+	{
+		quote:
+			'I came for the sandboxing with Ralph loops, and ended up really enjoying the whole flow: PRDs, to phases, to GitHub issues the loops could work on.',
+		author: 'Bo',
 	},
 ] as const
 

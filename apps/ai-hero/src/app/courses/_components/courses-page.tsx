@@ -11,7 +11,6 @@ import {
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
 	FLAGSHIP_FACTS,
-	FLAGSHIP_SECTION,
 	FLAGSHIP_STATS,
 	FLAGSHIP_TEAM,
 } from '@/lib/courses-content'
@@ -20,7 +19,7 @@ import { Star } from 'lucide-react'
 
 import { TYPE } from '@/components/landing/type'
 
-import { FlagshipRow } from './flagship-row'
+import { FlagshipOffer } from './flagship-offer'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -50,15 +49,25 @@ function splitCourseAttribution(author: string): {
  * /courses ("Learn with Matt") — v2 layout. Full-nav sales-adjacent page: NO
  * sidebar, NO breadcrumbs (Amy: "Courses will be landing pages").
  *
- * Surface logic (what makes groups readable):
- * - `bg-background` = editorial prose (hero, section intros).
- * - `bg-muted` = data about the offer (stat band, team strip, quotes,
- *   coming-next). The tint is what says "this belongs to the thing above".
- * - The painted brand stripe appears ONCE, under the hero — the page's single
- *   colorful moment (DESIGN rule 9), marking where the intro ends and the
- *   offer begins.
- * - The flagship offer is one welded slab: cohort row → stat band → facts
- *   grid → team strip, joined by hairlines with no padded gaps between them.
+ * The page is ordered as one argument, and the order IS the hierarchy:
+ *
+ *   1. Hero            — what this page is.
+ *   2. The offer       — the flagship, as the page's dominant block.
+ *   3. Objection facts — supporting detail for it.
+ *   4. Proof           — alumni count, then quotes, then logos, uninterrupted.
+ *   5. Team seats      — a different buyer, after the individual sale.
+ *   6. Coming next     — genuinely secondary, so a listing row is correct here.
+ *   7. Newsletter      — the fallback ask for everyone who did not convert.
+ *
+ * What this replaced: the flagship rendered through `ResourceRow`, the same
+ * listing component as the not-yet-released crash course, so the one thing
+ * this page sells had the same weight as a course that does not exist. Around
+ * it, evidence was scattered across three places on both sides of a team
+ * upsell, and the offer's own metadata sat in bordered bands below it.
+ *
+ * Surfaces carry one meaning each: `bg-background` is editorial, `bg-muted` is
+ * an offer you can act on (the flagship block, team seats). Nothing else is
+ * tinted — a tint that appears everywhere stops saying anything.
  */
 export function CoursesPage({
 	flagship,
@@ -90,102 +99,57 @@ export function CoursesPage({
 			    told where they are. */}
 			<Hero h1={COURSES_HERO.title} h2={COURSES_HERO.intro} />
 
-			{/* 2. Flagship cohort — intro prose, then the welded offer slab */}
-			<section aria-labelledby="flagship-heading" className="border-b">
-				<div className="flex flex-col gap-3 px-8 pb-12 pt-16 sm:px-16 md:pt-20">
-					<p className={MONO_LABEL}>{FLAGSHIP_SECTION.eyebrow}</p>
-					<h2
-						id="flagship-heading"
-						className={cn(TYPE.heading, 'text-balance')}
-					>
-						{FLAGSHIP_SECTION.heading}
-					</h2>
-					<p className={cn(TYPE.body, 'text-foreground/80 max-w-[65ch]')}>
-						{FLAGSHIP_SECTION.strapline}
-					</p>
-				</div>
+			{/* 2. THE offer. One dominant block — see flagship-offer.tsx for why
+			    this stopped being a ResourceRow. */}
+			<FlagshipOffer flagship={flagship} isPurchasable={isPurchasable} />
 
-				{/* The slab. Every block below shares hairlines with its neighbor —
-				    no padded gaps — so row, stats, facts and team read as one unit. */}
-				<FlagshipRow flagship={flagship} isPurchasable={isPurchasable} />
-
-				{/* Offer metadata — one callout, not a hairline mosaic.
-
-				    This was five bordered cells stacked straight under the cohort
-				    row: two stats, two facts, one team strip, every one of them
-				    boxed. Each border said "new section" and the reader got five of
-				    those in a row, so the thing that is actually ONE offer arrived
-				    looking like a dashboard of unrelated tiles.
-
-				    The landing page's cohort block solved the same problem with a
-				    single tinted callout (`UpcomingCohort`). Same move here: the
-				    live numbers share one surface, the objection facts are plain
-				    text in a column grid, and only the team strip keeps a surface of
-				    its own — it is the one block that is a separate offer. */}
-				<div className="flex flex-col gap-10 px-8 py-10 sm:px-16">
-					<dl className="bg-muted flex w-fit flex-col gap-6 px-6 py-5 sm:flex-row sm:gap-12">
-						{alumniLabel ? (
-							<div className="flex flex-col gap-1">
-								<dt className={MONO_LABEL}>{FLAGSHIP_STATS.trainedLabel}</dt>
-								<dd className={cn(TYPE.subhead, 'font-mono tabular-nums')}>
-									{alumniLabel}
-								</dd>
-								<dd className={cn(TYPE.metaProse, 'opacity-70')}>
-									{FLAGSHIP_STATS.trainedSub}
-								</dd>
-							</div>
-						) : null}
-						<div className="flex flex-col gap-1">
-							<dt className={MONO_LABEL}>{FLAGSHIP_STATS.enrollmentLabel}</dt>
-							<dd className={cn(TYPE.subhead, 'font-mono')}>
-								{isPurchasable
-									? FLAGSHIP_STATS.openValue
-									: FLAGSHIP_STATS.waitlistValue}
-							</dd>
-							<dd className={cn(TYPE.metaProse, 'opacity-70')}>
-								{isPurchasable
-									? FLAGSHIP_STATS.openSub
-									: FLAGSHIP_STATS.waitlistSub}
-							</dd>
+			{/* 3. The objection answers. Supporting detail for the block above, so
+			    plain text on the page surface — no boxes. Four short paragraphs
+			    boxed in a hairline grid made the reader parse a table before
+			    parsing a sentence. */}
+			<section aria-label="What the cohort asks of you" className="border-b">
+				<div className="grid grid-cols-1 gap-x-12 gap-y-8 px-8 py-14 sm:grid-cols-2 sm:px-16">
+					{FLAGSHIP_FACTS.map((fact) => (
+						<div key={fact.label} className="flex flex-col gap-2">
+							<h3 className={MONO_LABEL}>{fact.label}</h3>
+							<p className={cn(TYPE.body, 'text-foreground/80 max-w-[55ch]')}>
+								{fact.body}
+							</p>
 						</div>
-					</dl>
-
-					{/* Objection facts. Whitespace separates them; they are four short
-					    paragraphs, and boxing each one made the reader parse a grid
-					    before parsing a sentence. */}
-					<div className="grid grid-cols-1 gap-x-12 gap-y-8 sm:grid-cols-2">
-						{FLAGSHIP_FACTS.map((fact) => (
-							<div key={fact.label} className="flex flex-col gap-2">
-								<h3 className={MONO_LABEL}>{fact.label}</h3>
-								<p className={cn(TYPE.body, 'text-foreground/80 max-w-[55ch]')}>
-									{fact.body}
-								</p>
-							</div>
-						))}
-					</div>
-				</div>
-
-				{/* Team strip — the one block here that IS a separate offer, so it
-				    keeps its own surface and its own rule. */}
-				<div className="bg-muted border-border flex flex-col gap-4 border-t px-8 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-16">
-					<div className="flex flex-col gap-2">
-						<h3 className={cn(TYPE.subhead, 'text-balance')}>
-							{FLAGSHIP_TEAM.heading}
-						</h3>
-						<p className={cn(TYPE.body, 'text-foreground/80 max-w-[60ch]')}>
-							{FLAGSHIP_TEAM.body}
-						</p>
-					</div>
-					<div className="shrink-0">
-						<MoreWaysLink
-							href={FLAGSHIP_TEAM.href}
-							label={FLAGSHIP_TEAM.linkLabel}
-						/>
-					</div>
+					))}
 				</div>
 			</section>
 
-			{/* 3. Cohort-student testimonials.
+			{/* 4. Proof, in one continuous run: the number, then the people, then
+			    the logos.
+
+			    These were three separate pieces of evidence in three unrelated
+			    places — the alumni count in a stat band above the objection facts,
+			    the quotes below a team upsell, the logos below those. Evidence
+			    compounds when it is read together and does nothing when it is
+			    scattered, so it is now one section that opens on the count.
+
+			    The team upsell used to sit in the middle of this run. It addresses
+			    a different buyer entirely and it interrupted the path from "here
+			    is the offer" to "here is why you should believe it", so it moved
+			    below — after the individual sale has been made. */}
+			{alumniLabel ? (
+				<section aria-label="Cohort alumni" className="border-b">
+					<div className="flex flex-col gap-1 px-8 py-12 sm:px-16">
+					{/* Sans, not mono. `tabular-nums` gives the comma a full digit
+						    cell, so "8,500+" set in Geist Mono renders as "8 , 500+".
+						    Tabular figures are for columns that have to line up; this
+						    is a display number read once. */}
+						<p className={cn(TYPE.display, 'font-sans')}>{alumniLabel}</p>
+						<p className={cn(TYPE.subhead, 'font-normal opacity-80')}>
+							{FLAGSHIP_STATS.trainedLabel.toLowerCase()},{' '}
+							{FLAGSHIP_STATS.trainedSub.toLowerCase()}
+						</p>
+					</div>
+				</section>
+			) : null}
+
+			{/* Cohort-student testimonials.
 
 			    Typographically these are now the same voice as the landing page's
 			    quotes (`DraftTestimonial` / `TestimonialDivider`): italic at
@@ -238,9 +202,31 @@ export function CoursesPage({
 				</div>
 			</section>
 
-			{/* 4. Trusted by (full-bleed, same usage as /skills) */}
+			{/* Trusted by — closes the proof run (full-bleed, same usage as /skills) */}
 			<section className="border-b">
 				<CompanyLogoGrid className="pt-6" />
+			</section>
+
+			{/* 5. Team seats. A different buyer, addressed after the individual
+			    sale — it used to interrupt the offer-to-proof path. */}
+			<section
+				aria-label={FLAGSHIP_TEAM.heading}
+				className="bg-muted border-border flex flex-col gap-4 border-b px-8 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-16"
+			>
+				<div className="flex flex-col gap-2">
+					<h2 className={cn(TYPE.subhead, 'text-balance')}>
+						{FLAGSHIP_TEAM.heading}
+					</h2>
+					<p className={cn(TYPE.body, 'text-foreground/80 max-w-[60ch]')}>
+						{FLAGSHIP_TEAM.body}
+					</p>
+				</div>
+				<div className="shrink-0">
+					<MoreWaysLink
+						href={FLAGSHIP_TEAM.href}
+						label={FLAGSHIP_TEAM.linkLabel}
+					/>
+				</div>
 			</section>
 
 			{/* 5. Coming next — the crash course's pre-launch page is a public
