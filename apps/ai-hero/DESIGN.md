@@ -119,20 +119,6 @@ Why `#ffcf77` exists as a hardcoded hex: Lucide stars need a warmer, lower-chrom
 
 Color makes things pop; everything else stays monochrome on tokens.
 
-### 9a. Topic hues
-
-The one colour **system** on the site, as opposed to the one-off accents above. Added 2026-07-28.
-
-`--topic-1` … `--topic-6` in `globals.css` are not new colours: they are the six hue stops already committed in the `ResourceRow` rainbow gradient, pulled out as tokens. All six sit at one lightness (0.52 light, 0.78 dark) so no topic outranks another — **only the hue varies**, and both ends clear 4.5:1 for `text-xs` against their background.
-
-Rules:
-
-- **Wayfinding only.** A hue marks which group a row belongs to while someone is scrolling past. It never encodes state, quality, difficulty, or anything a reader would have to learn.
-- **Visible at rest, never on hover.** Colour that appears under the cursor cannot help someone scanning, which is the entire justification for the system. Hovers stay neutral (`bg-muted`).
-- **Never authored.** `ActivityLadder` assigns hue from the rung's position via `HUE_ORDER`, which steps around the wheel rather than along it — walking `1,2,3` hands out three neighbouring warms. An author who picks colours is an author who can pick the same one twice.
-- **Two marks per group, both small, both text.** Currently the audience label and the row's format label. A third needs a conversation.
-- Consumers read `var(--topic)`, set once on the group's container. Always give a neutral fallback (`var(--topic, var(--muted-foreground))`) so a component used outside a group still renders.
-
 ---
 
 ## Typography

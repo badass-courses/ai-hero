@@ -174,18 +174,6 @@
 	--popover-foreground: oklch(0.2477 0.053 66.43);
 	--primary: oklch(0.6483 0.2298 34.38);
 	--primary-foreground: oklch(1 0 0);
-
-	/* Topic hues. Not new colours — the six hue stops already committed in the
-	   `ResourceRow` rainbow gradient (`resource-row.tsx`), pulled out as tokens
-	   so a topic can be identified by one of them. Held at a single lightness
-	   so no topic outranks another; only the hue varies.
-	   L 0.52 clears 4.5:1 against `--background` (0.985) for text at `text-xs`. */
-	--topic-1: oklch(0.52 0.2 25); /* vermilion */
-	--topic-2: oklch(0.52 0.16 50); /* orange */
-	--topic-3: oklch(0.52 0.14 95); /* gold */
-	--topic-4: oklch(0.52 0.13 145); /* green */
-	--topic-5: oklch(0.52 0.19 260); /* blue-violet */
-	--topic-6: oklch(0.52 0.19 350); /* magenta */
 	--secondary: oklch(0.9312 0 0);
 	--secondary-foreground: oklch(0 0 0);
 	--muted: oklch(0.95 0 0);
@@ -256,16 +244,6 @@
 	--popover-foreground: oklch(0.9 0 0);
 	--primary: oklch(0.8501 0.15 79.28);
 	--primary-foreground: oklch(0 0 0);
-
-	/* Same six hues, lifted to clear 4.5:1 against the dark `--background`
-	   (0.15) instead of the light one. Dark mode is not an inversion (chroma
-	   comes down a little as lightness goes up, or these read as neon). */
-	--topic-1: oklch(0.78 0.16 25);
-	--topic-2: oklch(0.78 0.14 50);
-	--topic-3: oklch(0.78 0.13 95);
-	--topic-4: oklch(0.78 0.12 145);
-	--topic-5: oklch(0.78 0.13 260);
-	--topic-6: oklch(0.78 0.14 350);
 	--secondary: oklch(0.2267 0 0);
 	--secondary-foreground: oklch(1 0 0);
 
@@ -325,14 +303,6 @@
 	--font-mono:
 		var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
 		Consolas, 'Liberation Mono', 'Courier New', monospace;
-
-	/* Topic hues (DESIGN rule 9a) */
-	--color-topic-1: var(--topic-1);
-	--color-topic-2: var(--topic-2);
-	--color-topic-3: var(--topic-3);
-	--color-topic-4: var(--topic-4);
-	--color-topic-5: var(--topic-5);
-	--color-topic-6: var(--topic-6);
 
 	/* Shadcn color tokens */
 	--color-page-background: var(--page-background);
