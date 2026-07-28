@@ -6,7 +6,12 @@ export function NewsletterSection({
 	children,
 }: {
 	heading?: string
-	subTitle?: string
+	/**
+	 * ReactNode, not string, so the CMS body can drop a live element in here:
+	 * `subTitle={<>Join over <SubscriberCount /> developers…</>}`. Subscriber
+	 * counts must never be hardcoded (they go stale the week they are written).
+	 */
+	subTitle?: React.ReactNode
 	children: React.ReactNode
 }) {
 	return (

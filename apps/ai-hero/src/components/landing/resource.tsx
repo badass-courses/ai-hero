@@ -12,9 +12,15 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import { DiscountBadge } from './discount-badge'
 import { formatPriceUSD, formatStartsAt } from './format'
 import { ResourceCard } from './resource-card'
+import { ResourceListItem } from './resource-list-item'
 import { ResourceRow } from './resource-row'
 
-export type ResourceVariant = 'row' | 'card'
+/**
+ * `list` is the dense variant for `TopicsGrid`: title plus a one-line meta,
+ * no image. The row and card variants carry artwork and a description, which
+ * is far too heavy at three-per-column inside a three-column grid.
+ */
+export type ResourceVariant = 'row' | 'card' | 'list'
 
 type InlineProps = {
 	title: string
@@ -246,6 +252,17 @@ export async function Resource(props: ResourceProps) {
 		resolved?.image ??
 		youtubeThumbnailUrl(href) ??
 		undefined
+
+	if (variant === 'list') {
+		return (
+			<ResourceListItem
+				title={title}
+				href={href}
+				type={resolved?.type}
+				lessonCount={resolved?.lessonCount}
+			/>
+		)
+	}
 
 	if (variant === 'card') {
 		return (

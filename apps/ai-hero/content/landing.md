@@ -1,3 +1,14 @@
+{/*
+  LOCAL MIRROR of the CMS page `landing-page-v2` (type: page, published +
+  unlisted). NOT the source of truth: `src/app/page.tsx` loads the body from
+  the DB at runtime. Kept in sync for diffing and review only. After editing
+  here, PUT the body to the CMS (docs/landing-mdx-components.md §API).
+
+  PLACEHOLDER copy is marked inline. Blocked on Matt/Amy: both testimonial
+  divider quotes, and whether the three parked resource rows below keep a
+  homepage placement.
+*/}
+
 <Hero
 	h1="Become a<br />**Real** AI Hero"
 	h2="with Matt Pocock"
@@ -13,18 +24,57 @@ This site is for engineers who want to learn to build that — and stop pretendi
 
 </Manifesto>
 
+<NewsletterCta />
+
 ## Level up your coding practice with **Real AI Engineering**
 
-<UpcomingCohort />
+<SkillCycleSection ctaHref="/skills" ctaLabel="See all skills" />
+
 <Resource slugOrId="ai-engineer-roadmap" badge="Start here" />
-<Resource slugOrId="llm-fundamentals" />
-<Resource slugOrId="ai-sdk-v6-crash-course" />
-<Resource slugOrId="model-context-protocol-tutorial" />
 
-## New to AI?<br />Start here to nail the basics
+{/*
+  PARKED — the wireframe's section order lists only the "Start here" resource
+  here. These three kept a homepage slot in v1; whether they return, move into
+  TopicsGrid, or drop is blocked on Matt/Amy. Restore by uncommenting.
 
-<Resource slugOrId="what-is-an-ai-engineer" />
-<Resource slugOrId="what-are-llms-used-for" />
+  <Resource slugOrId="llm-fundamentals" />
+  <Resource slugOrId="ai-sdk-v6-crash-course" />
+  <Resource slugOrId="model-context-protocol-tutorial" />
+*/}
+
+<TestimonialDivider authorName="Placeholder — real quote pending">
+
+PLACEHOLDER: a short line about the skills workflow, to be replaced with a real quote before launch.
+
+</TestimonialDivider>
+
+<TopicsGrid>
+	<TopicsGridColumn heading="Think like an AI engineer" moreHref="/topics/think-like-an-ai-engineer">
+		<Resource slugOrId="the-ai-engineer-mindset" variant="list" />
+		<Resource slugOrId="what-is-an-ai-engineer" variant="list" />
+		<Resource slugOrId="my-7-phases-of-ai-development" variant="list" />
+	</TopicsGridColumn>
+	<TopicsGridColumn heading="Learn how LLMs think" moreHref="/topics/learn-how-llms-think">
+		<Resource slugOrId="what-is-an-llm" variant="list" />
+		<Resource slugOrId="what-are-tokens" variant="list" />
+		<Resource slugOrId="what-is-the-context-window" variant="list" />
+	</TopicsGridColumn>
+	<TopicsGridColumn heading="Set up your agent" moreHref="/topics/set-up-your-agent">
+		<Resource slugOrId="a-complete-guide-to-agents-md" variant="list" />
+		<Resource slugOrId="plan-mode-introduction" variant="list" />
+		<Resource slugOrId="connect-claude-code-to-github" variant="list" />
+	</TopicsGridColumn>
+</TopicsGrid>
+
+<TestimonialDivider authorName="Placeholder — real quote pending">
+
+PLACEHOLDER: a short line about the cohort, to be replaced with a real quote before launch.
+
+</TestimonialDivider>
+
+## Go further on a **live cohort**
+
+<UpcomingCohort />
 
 ## My latest posts/videos
 
@@ -32,18 +82,12 @@ This site is for engineers who want to learn to build that — and stop pretendi
 	<Resource slugOrId="skills-changelog-ubiquitous-language-grill-with-docs" variant="card" />
 	<Resource slugOrId="my-grill-me-skill-has-gone-viral" variant="card" />
 	<Resource slugOrId="real-world-feature-build-with-claude-code" variant="card" />
-	<Resource
-		title='"Software Fundamentals Matter More Than Ever" — Matt Pocock'
-		href="https://www.youtube.com/watch?v=v4F1gFy-hqg"
-		variant="card"
-	/>
 	<Resource slugOrId="5-agent-skills-i-use-every-day" variant="card" />
 	<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="card" />
 	<Resource slugOrId="tracer-bullets" variant="card" />
-	<Resource slugOrId="ways-ai-coding-has-rewired-my-brain" variant="card" />
 </ResourceGrid>
 
-<NewsletterSection heading="Get the next one in your inbox" subTitle="Join over 70,000 Developers Becoming AI Heroes"><NewsletterCta /></NewsletterSection>
+<NewsletterSection heading="Get the next one in your inbox" subTitle={<>Join over <SubscriberCount /> developers becoming AI Heroes</>}><NewsletterCta /></NewsletterSection>
 
 <Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="http://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 
