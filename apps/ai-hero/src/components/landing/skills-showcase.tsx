@@ -106,11 +106,16 @@ export async function SkillsShowcase({
 						    Full width, not hugging its label: `mt-auto` already bottom
 						    aligns them, and equal width stops the longest command
 						    (`/improve-codebase-architecture`) wrapping to two lines while
-						    its neighbours sit on one. */}
+						    its neighbours sit on one.
+
+						    Neutral, not brand-coloured. Six of these land in one grid,
+						    and colouring all six made the block shout louder than the
+						    section header above it — which is the one link here that
+						    actually is a destination rather than a starting point. */}
 						{group.skills[0] ? (
 							<Link
 								href={`/${group.skills[0].slug}`}
-								className={cn(TYPE.meta, 'text-foreground hover:bg-primary/10 focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border border-[color-mix(in_oklch,var(--primary)_40%,transparent)] px-4 py-2.5 transition-colors hover:border-[color-mix(in_oklch,var(--primary)_70%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
+								className={cn(TYPE.meta, 'border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border px-4 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 							>
 								<span className="truncate">
 									Start with{' '}
@@ -120,7 +125,7 @@ export async function SkillsShowcase({
 								</span>
 								<ArrowRight
 									aria-hidden
-									className="text-primary ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+									className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 								/>
 							</Link>
 						) : null}
