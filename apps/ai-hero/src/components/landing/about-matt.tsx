@@ -16,8 +16,8 @@ export function AboutMatt({
 	children: React.ReactNode
 }) {
 	return (
-		<section className="border-border grid grid-cols-1 items-center gap-4 border-t-0! lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] lg:gap-8">
-			<div className="pointer-events-none relative mx-auto flex w-full max-w-[420px] select-none items-end justify-center overflow-hidden px-8 pt-8 lg:px-0 lg:pt-0">
+		<section className="border-border grid grid-cols-1 items-center gap-4 border-t-0! border-b-0! lg:grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)] lg:gap-12">
+			<div className="pointer-events-none relative mx-auto flex w-full max-w-[320px] select-none items-end justify-center overflow-hidden px-8 pt-8 lg:px-0 lg:pt-0">
 				{/* <div className="sm:bg-linear-to-r bg-linear-to-b to-background absolute inset-0 z-10 h-full w-full from-transparent via-transparent" /> */}
 				{/* PARKED — the animated stripe shader behind the portrait. Restore
 				    by uncommenting; `HeroStripes` is still imported for that. */}
@@ -52,10 +52,10 @@ export function AboutMatt({
 				/>
 			</div>
 			<div className="flex flex-col gap-5 px-8 pb-12 pt-4 sm:pr-16 lg:py-16">
-				<h2 className={cn(TYPE.heading, 'font-sans')}>
+				<h2 className={cn(TYPE.heading, 'max-w-[54ch] font-sans')}>
 					{headline}
 				</h2>
-				<div className={cn(TYPE.body, 'flex flex-col gap-4 opacity-90')}>
+				<div className={cn(TYPE.body, 'flex max-w-[54ch] flex-col gap-4 opacity-90')}>
 					{children}
 				</div>
 			</div>
