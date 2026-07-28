@@ -39,11 +39,12 @@ export function SkillsCourseCta() {
 				/>
 				<SkillsNewsletter.Privacy
 					className="mt-2 opacity-70"
-					// Names the actual commitment. "Unsubscribe at any time" answers a
-					// worry the reader has about an open-ended list; this offer is not
-					// open-ended, and saying so is a better reassurance than the
-					// generic one.
-					formMessage="Seven emails, then it stops. Unsubscribe any time."
+					// Says what actually happens. An earlier draft read "Seven emails,
+					// then it stops", which was a nicer promise and a false one —
+					// signing up here subscribes you to the list as well as the
+					// course. Reassurance that the product does not honour is worse
+					// than no reassurance.
+					formMessage="Seven daily lessons, then my regular updates. Unsubscribe any time."
 				/>
 			</div>
 		</SkillsNewsletter.Root>
