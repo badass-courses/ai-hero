@@ -26,7 +26,7 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 
 </Manifesto>
 
-<NewsletterSection heading="Get my notes on AI engineering" subTitle={<>What actually works with coding agents, roughly weekly. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
+<NewsletterSection heading={<>Join <SubscriberCount /> developers</>} subTitle="Notes on what actually works with AI coding agents, straight to your inbox."><NewsletterCta /></NewsletterSection>
 
 ## Level up your coding practice with **Real AI Engineering**
 
@@ -34,7 +34,15 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 	intro="I've built an engineering process for working with AI coding agents, from grilling an idea to shipping reviewed code. Every skill here is free, installs in one command, and you can use it today."
 />
 
-<Resource slugOrId="ai-engineer-roadmap" badge="Start here" />
+{/*
+  Wireframe § ⑤ wants an "updated skills overview" here, NOT the roadmap (the
+  roadmap already appears in the topics grid below, and Amy's slot is about the
+  skills workflow the section just explained). Her note: "Matt should create an
+  updated version of '5 Agent Skills I Use Every Day' — the current one is
+  outdated." Pointing at that post until the refreshed one exists.
+*/}
+
+<Resource slugOrId="5-agent-skills-i-use-every-day" badge="Start here" />
 
 {/*
   PARKED — the wireframe's section order lists only the "Start here" resource
@@ -54,7 +62,7 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 */}
 
 <TestimonialDivider
-	authorName="Mario Zechner — creator of libGDX"
+	authorName="Mario Zechner — creator of Pi"
 	authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1785230951/aihero/testimonials/mario-zechner.jpg"
 >
 
@@ -63,17 +71,17 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 </TestimonialDivider>
 
 <TopicsGrid>
-	<TopicsGridColumn heading="Ship better code" moreHref="/learn">
+	<TopicsGridColumn heading="Ship better code" moreHref="/topics/ship-solid-code">
 		<Resource slugOrId="skill-test-driven-development-claude-code" variant="list" />
 		<Resource slugOrId="tracer-bullets" variant="list" />
 		<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="list" />
 	</TopicsGridColumn>
-	<TopicsGridColumn heading="Understand AI fundamentals" moreHref="/learn">
+	<TopicsGridColumn heading="Understand AI fundamentals" moreHref="/topics/understand-the-basics">
 		<Resource slugOrId="what-is-an-ai-engineer" variant="list" />
 		<Resource slugOrId="what-are-llms-used-for" variant="list" />
 		<Resource slugOrId="ai-engineer-roadmap" variant="list" />
 	</TopicsGridColumn>
-	<TopicsGridColumn heading="Level up your workflow" moreHref="/learn">
+	<TopicsGridColumn heading="Level up your workflow" moreHref="/topics/level-up-your-workflow">
 		<Resource slugOrId="ways-ai-coding-has-rewired-my-brain" variant="list" />
 		<Resource slugOrId="real-world-feature-build-with-claude-code" variant="list" />
 		<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="list" />
@@ -105,14 +113,14 @@ Every company needs its own Matt Pocock.
 	<Resource slugOrId="skills-changelog-ubiquitous-language-grill-with-docs" variant="card" />
 	<Resource slugOrId="my-grill-me-skill-has-gone-viral" variant="card" />
 	<Resource slugOrId="real-world-feature-build-with-claude-code" variant="card" />
-	<Resource slugOrId="5-agent-skills-i-use-every-day" variant="card" />
+	<Resource slugOrId="tracer-bullets" variant="card" />
 	<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="card" />
 	<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="card" />
 </ResourceGrid>
 
 <SectionLink href="/posts">See more in my blog</SectionLink>
 
-<NewsletterSection heading="Get the next one in your inbox" subTitle={<>New posts, skills and workflow notes as I publish them. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
+<NewsletterSection compact heading="Get the next one in your inbox" subTitle="New posts and skills as I publish them."><NewsletterCta /></NewsletterSection>
 
 <Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="https://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 

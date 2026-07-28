@@ -54,49 +54,51 @@ export async function SkillsShowcase({
 				</div>
 			) : null}
 
-			{/* Numerals carry the structure, not rules. A deliberate departure from
-			    DESIGN.md rule 2: at six cells the per-cell hairlines chopped one
-			    workflow into six unrelated boxes. The numerals give every cell the
-			    same optical anchor, so unequal skill counts (2 to 6) stop reading as
-			    ragged, and the section keeps its outer border so it still sits in
-			    the page's system. */}
-			<div className="grid grid-cols-1 gap-x-10 gap-y-12 px-8 sm:grid-cols-2 sm:px-16 lg:grid-cols-3">
+			{/* Rows, not a 3-up grid. Six groups with skill counts running 2 to 6
+			    made a grid of wildly unequal boxes with ragged bottoms; as full
+			    width rows the numerals form a left rail, every title sits on the
+			    same x, and the block reads as the ordered workflow it describes.
+			    Hairlines between rows, which is a list (the site's own language),
+			    not six boxes. */}
+			<ul className="border-border bg-border flex flex-col gap-px border-y">
 				{groups.map((group, i) => (
-					<div key={group.id} className="flex flex-col gap-3">
-						<div className="flex items-baseline gap-3">
-							<span
-								aria-hidden
-								className="text-foreground/25 font-mono text-3xl font-medium leading-none tabular-nums"
-							>
-								{String(i + 1).padStart(2, '0')}
-							</span>
+					<li
+						key={group.id}
+						className="bg-background grid grid-cols-1 gap-x-8 gap-y-4 px-8 py-8 sm:px-16 md:grid-cols-[auto_minmax(0,20rem)_minmax(0,1fr)] md:items-baseline"
+					>
+						<span
+							aria-hidden
+							className="text-foreground/25 font-mono text-2xl font-medium leading-none tabular-nums md:w-10"
+						>
+							{String(i + 1).padStart(2, '0')}
+						</span>
+						<div className="flex flex-col gap-1.5">
 							<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight">
 								{group.title}
 							</h3>
+							{group.description ? (
+								<p className="text-muted-foreground text-balance text-sm leading-relaxed">
+									{group.description}
+								</p>
+							) : null}
 						</div>
-						{group.description ? (
-							<p className="text-muted-foreground max-w-[38ch] text-balance pl-[calc(2ch+0.75rem)] text-sm leading-relaxed">
-								{group.description}
-							</p>
-						) : null}
-						{/* Pills, not bare mono text: these are the only links in the block
-						    and the entire point of it. Wrapping is also what equalises
-						    cells with very different skill counts. */}
-						<ul className="flex flex-wrap gap-2 pl-[calc(2ch+0.75rem)] pt-1">
+						{/* Pills, not bare mono text: these are the only links in the
+						    block and the entire point of it. */}
+						<ul className="flex flex-wrap gap-2">
 							{group.skills.map((skill) => (
 								<li key={skill.slug}>
 									<Link
 										href={`/${skill.slug}`}
-										className="border-border bg-muted/40 text-foreground/90 hover:border-foreground/30 hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex items-center rounded-full border px-3 py-1.5 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+										className="border-border bg-muted/40 text-foreground/90 hover:border-foreground/40 hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 									>
 										{skill.command}
 									</Link>
 								</li>
 							))}
 						</ul>
-					</div>
+					</li>
 				))}
-			</div>
+			</ul>
 
 			{/* Centered under the grid, matching the centered headline above. It used
 			    to sit alone in a bordered strip at the bottom left, which read as a
