@@ -108,17 +108,33 @@ export async function UpcomingCohort({
 					className="group relative min-h-64 overflow-hidden md:min-h-full"
 				>
 					<Image
-						src={cohort.image}
+						src={subjectCrop(cohort.image)}
 						alt=""
 						fill
 						sizes="(min-width: 768px) 45vw, 100vw"
-						// object-right: the artwork carries its own baked-in title, and a
-						// centered crop slices it mid-word. Anchoring right keeps Matt in
-						// frame and pushes the duplicated wordmark out of it.
-						className="object-cover object-right transition-transform duration-500 ease-out group-hover:scale-[1.02] motion-reduce:transform-none motion-reduce:transition-none"
+						className="object-cover object-center transition-transform duration-500 ease-out group-hover:scale-[1.02] motion-reduce:transform-none motion-reduce:transition-none"
 					/>
 				</Link>
 			) : null}
 		</section>
 	)
+}
+
+/**
+ * Cohort artwork follows one house template: a 16:9 title card with the course
+ * name set in the left ~60% and Matt against painted backdrop on the right.
+ * Dropped into a portrait-ish column, `object-cover` slices that title
+ * mid-word, and even anchored right it stays in frame — the text runs almost
+ * to the middle. No CSS crop fixes that, so the crop happens at delivery: take
+ * the eastern 40%, which clears the last glyph of the title, and the block stops
+ * repeating a title it already prints as its own `h2`.
+ *
+ * Cloudinary only (every cohort image is uploaded there). Anything else is
+ * returned untouched rather than guessed at.
+ */
+function subjectCrop(url: string): string {
+	if (!url.includes('res.cloudinary.com/') || !url.includes('/upload/')) {
+		return url
+	}
+	return url.replace('/upload/', '/upload/c_crop,w_0.40,h_1.0,g_east/')
 }

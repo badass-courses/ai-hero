@@ -10,7 +10,7 @@
 */}
 
 <Hero
-	h1="**Real**<br />Engineering<br />with AI"
+	h1="**Real** Engineering<br />with AI"
 	h2="Engineering fundamentals aren't obsolete. They're essential."
 />
 
@@ -28,9 +28,8 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 
 <NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
 
-## Level up your coding practice with **Real AI Engineering**
-
 <SkillsShowcase
+	heading="Level up your coding practice with Real AI Engineering"
 	intro="I've built an engineering process for working with AI coding agents, from grilling an idea to shipping reviewed code. Every skill here is free, installs in one command, and you can use it today."
 />
 
@@ -71,17 +70,17 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 </TestimonialDivider>
 
 <TopicsGrid>
-	<TopicsGridColumn heading="Ship better code" moreHref="/topics/ship-solid-code">
+	<TopicsGridColumn heading="Ship better code" moreHref="/topics/ship-solid-code" moreLabel="More on shipping code">
 		<Resource slugOrId="skill-test-driven-development-claude-code" variant="list" />
 		<Resource slugOrId="tracer-bullets" variant="list" />
 		<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="list" />
 	</TopicsGridColumn>
-	<TopicsGridColumn heading="Understand AI fundamentals" moreHref="/topics/understand-the-basics">
+	<TopicsGridColumn heading="Understand AI fundamentals" moreHref="/topics/understand-the-basics" moreLabel="More on the fundamentals">
 		<Resource slugOrId="what-is-an-ai-engineer" variant="list" />
 		<Resource slugOrId="what-are-llms-used-for" variant="list" />
 		<Resource slugOrId="ai-engineer-roadmap" variant="list" />
 	</TopicsGridColumn>
-	<TopicsGridColumn heading="Level up your workflow" moreHref="/topics/level-up-your-workflow">
+	<TopicsGridColumn heading="Level up your workflow" moreHref="/topics/level-up-your-workflow" moreLabel="More on workflow">
 		<Resource slugOrId="ways-ai-coding-has-rewired-my-brain" variant="list" />
 		<Resource slugOrId="real-world-feature-build-with-claude-code" variant="list" />
 		<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="list" />
@@ -107,7 +106,7 @@ Every company needs its own Matt Pocock.
 
 <UpcomingCohort />
 
-## My latest posts/videos
+<SectionHeader heading="My latest posts/videos" linkHref="/posts" linkLabel="See more in my blog" />
 
 <ResourceGrid>
 	<Resource slugOrId="skills-changelog-ubiquitous-language-grill-with-docs" variant="card" />
@@ -117,8 +116,6 @@ Every company needs its own Matt Pocock.
 	<Resource slugOrId="how-to-make-codebases-ai-agents-love" variant="card" />
 	<Resource slugOrId="things-people-get-wrong-with-grill-me-and-grill-with-docs" variant="card" />
 </ResourceGrid>
-
-<SectionLink href="/posts">See more in my blog</SectionLink>
 
 <NewsletterSection compact heading="Get the next one in your inbox" subTitle={<>New posts and skills as I publish them. Join <SubscriberCount /> developers.</>}><NewsletterCta /></NewsletterSection>
 

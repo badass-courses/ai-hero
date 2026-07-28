@@ -2,7 +2,8 @@ import * as React from 'react'
 import Link from 'next/link'
 import { getListWithSections } from '@/lib/lists-query'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
-import { ArrowRight } from 'lucide-react'
+
+import { SectionHeader } from './section-header'
 
 /**
  * Homepage skills showcase (wireframe § ⑤).
@@ -38,20 +39,16 @@ export async function SkillsShowcase({
 	return (
 		<section aria-label="The skills workflow" className="border-b">
 			{heading || intro ? (
-				<div className="mx-auto flex max-w-3xl flex-col items-center gap-4 px-8 pb-12 text-center sm:px-16">
-					{heading ? (
-						<h2
-										className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl"
-						>
-							{heading}
-						</h2>
-					) : null}
-					{intro ? (
-						<p className="max-w-[62ch] text-balance text-base leading-relaxed opacity-80 sm:text-lg">
-							{intro}
-						</p>
-					) : null}
-				</div>
+				<SectionHeader
+					heading={heading}
+					// Sits on the heading's baseline rather than trailing the rows:
+					// the reader learns where the section goes before deciding to
+					// read it, and the page keeps one primary (gold) action.
+					linkHref={ctaHref}
+					linkLabel={ctaLabel}
+				>
+					{intro}
+				</SectionHeader>
 			) : null}
 
 			{/* Rows, not a 3-up grid. Six groups with skill counts running 2 to 6
@@ -61,17 +58,24 @@ export async function SkillsShowcase({
 			    Hairlines between rows, which is a list (the site's own language),
 			    not six boxes. */}
 			<ul className="border-border bg-border flex flex-col gap-px border-y">
-				{groups.map((group, i) => (
+				{groups.map((group) => (
 					<li
 						key={group.id}
 						className="bg-background grid grid-cols-1 gap-x-8 gap-y-4 px-8 py-8 sm:px-16 md:grid-cols-[auto_minmax(0,20rem)_minmax(0,1fr)] md:items-baseline"
 					>
-						<span
-							aria-hidden
-							className="text-foreground/25 font-mono text-2xl font-medium leading-none tabular-nums md:w-10"
-						>
-							{String(i + 1).padStart(2, '0')}
-						</span>
+						{/* The count, not an index. These groups are named buckets,
+						    not a numbered process — "Reference Skills" is not step 6 of
+						    anything — so an ordinal asserts a sequence the content does
+						    not have. The count is the one number a reader actually wants
+						    here, and the rail keeps its numeral. */}
+						<p className="flex items-baseline gap-1.5 md:w-16 md:flex-col md:gap-0">
+							<span className="text-foreground/40 font-mono text-2xl font-medium leading-none tabular-nums">
+								{group.skills.length}
+							</span>
+							<span className="text-muted-foreground font-mono text-[11px] uppercase tracking-wider">
+								{group.skills.length === 1 ? 'skill' : 'skills'}
+							</span>
+						</p>
 						<div className="flex flex-col gap-1.5">
 							<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight">
 								{group.title}
@@ -89,7 +93,11 @@ export async function SkillsShowcase({
 								<li key={skill.slug}>
 									<Link
 										href={`/${skill.slug}`}
-										className="border-border bg-muted/40 text-foreground/90 hover:border-foreground/40 hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+										// These are the most important links in the section, so
+										// they get a link's affordance rather than a chip's: full
+										// contrast text, a visible edge, and an unambiguous
+										// invert on hover/focus (the site's badge treatment).
+										className="border-foreground/20 bg-muted text-foreground hover:border-foreground hover:bg-foreground hover:text-background focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 font-mono text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 									>
 										{skill.command}
 									</Link>
@@ -100,21 +108,6 @@ export async function SkillsShowcase({
 				))}
 			</ul>
 
-			{/* Centered under the grid, matching the centered headline above. It used
-			    to sit alone in a bordered strip at the bottom left, which read as a
-			    leftover rather than the section's exit. */}
-			<div className="flex justify-center px-8 pb-16 pt-14 sm:px-16">
-				<Link
-					href={ctaHref}
-					className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring group inline-flex h-12 items-center gap-2 rounded-full px-7 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-				>
-					{ctaLabel}
-					<ArrowRight
-						aria-hidden
-						className="size-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none motion-reduce:transition-none"
-					/>
-				</Link>
-			</div>
 		</section>
 	)
 }

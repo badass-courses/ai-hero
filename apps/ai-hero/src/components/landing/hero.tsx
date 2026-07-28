@@ -72,11 +72,11 @@ export async function Hero({
 	return (
 		<header
 			id="hero"
-			className="border-border min-h-104 relative grid w-full grid-cols-1 items-stretch border-b md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
+			className="border-border min-h-104 relative grid w-full grid-cols-1 items-stretch border-b md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]"
 		>
-			<div className="flex flex-col justify-center gap-4 px-8 py-10 sm:px-16 sm:py-20 lg:pl-32">
+			<div className="flex flex-col justify-center gap-4 px-8 py-10 sm:px-16 sm:py-20">
 				{h1 && (
-					<h1 className="text-nowrap font-sans text-5xl font-normal leading-[1.05] tracking-tight lg:text-6xl dark:text-white">
+					<h1 className="text-balance font-sans text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-[3.5rem] dark:text-white">
 						<ReactMarkdown
 							rehypePlugins={[rehypeRaw]}
 							components={{
