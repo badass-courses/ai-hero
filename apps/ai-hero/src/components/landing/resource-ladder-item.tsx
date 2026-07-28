@@ -37,10 +37,19 @@ export function ResourceLadderItem({
 	return (
 		<Link
 			href={href}
+			// The hover fill stays neutral. Hue lives on the format label below,
+			// which is visible at rest — colour that only appears under the
+			// cursor cannot help someone scrolling past, which is the entire job
+			// it was brought in to do.
 			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			<span className="flex min-w-0 flex-1 flex-col gap-1">
-				<span className={cn(TYPE.micro, 'text-muted-foreground')}>
+				<span
+					className={cn(
+						TYPE.micro,
+						'[color:var(--topic,var(--muted-foreground))]',
+					)}
+				>
 					{isVideo ? 'Video' : 'Article'}
 				</span>
 				<span className={cn(TYPE.bodyTight, 'text-balance')}>

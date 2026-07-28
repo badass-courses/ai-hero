@@ -54,7 +54,11 @@ export function AboutMatt({
 					sizes="(min-width: 768px) 400px, 70vw"
 					width={473}
 					height={520}
-					className="relative z-20 h-auto w-full"
+					// The bottom fifth dissolves into the page rather than ending on a hard
+					// photographic edge. A mask, not an overlay gradient: it needs no
+					// knowledge of the colour behind it, so it is right in both themes
+					// for free (DESIGN rule 8).
+					className="relative z-20 h-auto w-full [mask-image:linear-gradient(to_bottom,black_80%,transparent_100%)]"
 				/>
 			</div>
 			<div className="flex flex-col gap-5 px-8 pb-12 pt-4 lg:py-16 lg:pl-0 lg:pr-8">
