@@ -49,7 +49,7 @@ Software fundamentals aren't obsolete. They're essential. AI Hero is for anyone 
 
 <SplitRow>
 
-<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Short, practical notes on getting real work out of coding agents. Free, and you can leave whenever you like."><NewsletterCta /></NewsletterSection>
+<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Start with the free 7-day email course: one lesson a day, tried on real work, and a repeatable agent workflow at the end."><CourseCta /></NewsletterSection>
 
 <TestimonialDivider
 	compact

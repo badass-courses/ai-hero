@@ -10,6 +10,7 @@ import { Hero as LandingHero } from '@/components/landing/hero'
 import { HomepageLiveStreams } from '@/components/landing/homepage-live-streams'
 import { Manifesto } from '@/components/landing/manifesto'
 import { NewsletterSection } from '@/components/landing/newsletter-section'
+import { SkillsCourseCta } from '@/components/landing/skills-course-cta'
 import { Prose } from '@/components/landing/prose'
 import { Resource, ResourceGrid } from '@/components/landing/resource'
 import {
@@ -64,6 +65,9 @@ export async function LandingBody({
 		CompanyLogoGrid,
 		NewsletterSection,
 		NewsletterCta: () => <SlimNewsletterForm />,
+		// The same ask, pointed at the free 7-day course rather than the general
+		// list. Both are registered so a section can choose which offer it makes.
+		CourseCta: SkillsCourseCta,
 		Testimonial: DraftTestimonial,
 		TestimonialDivider,
 		TopicsGrid,
