@@ -139,8 +139,19 @@ export default async function ListPage(props: {
 			{/* Header */}
 			<section className="border-b">
 				<div className="flex flex-col gap-5 px-8 py-16 sm:px-16 md:py-20">
+					{/* `lessonNumber` finished the flattening loop as the total, so the
+					    count is free here and always matches the rows rendered below. */}
 					<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 						Series
+						{lessonNumber > 0 ? (
+							<>
+								<span aria-hidden className="px-2 opacity-50">
+									·
+								</span>
+								<span className="tabular-nums">{lessonNumber}</span>{' '}
+								{lessonNumber === 1 ? 'lesson' : 'lessons'}
+							</>
+						) : null}
 					</p>
 					<h1 className="text-3xl font-medium leading-tight tracking-tight text-balance sm:text-4xl">
 						{list.fields.title}

@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { getCachedListForPost } from '@/lib/lists-query'
 import { getCachedPost } from '@/lib/posts-query'
 import { getNearestNeighbour } from '@/lib/typesense-query'
+import { ResourceHoverFrame } from '@/components/resource-hover-frame'
 import { ArrowRight } from 'lucide-react'
 import readingTime from 'reading-time'
 
@@ -40,6 +41,13 @@ type RelatedPostItem = {
 	/** derived from post.fields.postType, e.g. "Skill post", "Tutorial" */
 	typeLabel: string
 	readTimeMinutes?: number
+	/**
+	 * Child resource count for collection-shaped posts (tutorials, courses,
+	 * playlists). When present it REPLACES read time in the eyebrow: "6 lessons"
+	 * describes a collection better than the reading time of its own body, which
+	 * is usually just a short intro.
+	 */
+	lessonCount?: number
 }
 
 const MAX_ITEMS = 2
@@ -75,6 +83,32 @@ function computeReadMinutes(body?: string | null): number | undefined {
 	if (!body) return undefined
 	const minutes = Math.round(readingTime(body).minutes)
 	return minutes > 0 ? minutes : 1
+}
+
+/**
+ * Child resource count, straight off the post `getCachedPost` already returns
+ * (`resources` is hydrated by that query, so this costs no extra fetch).
+ * Only the Option A / sibling path has it: Typesense docs carry no child data.
+ */
+/**
+ * Child resource types that read as a "lesson" in a collection. Everything else
+ * a post can hang off itself (videoResource, solution, question) is machinery,
+ * not an entry a reader would count.
+ */
+const LESSON_CHILD_TYPES = new Set(['post', 'lesson'])
+
+function computeLessonCount(resources?: unknown): number | undefined {
+	if (!Array.isArray(resources)) return undefined
+	// A post's `resources` is NOT just its lessons: an ordinary article carries
+	// its videoResource/solution here, which is why a naive length counted 1
+	// everywhere. Only child resources that are themselves readable/watchable
+	// entries count as lessons.
+	const count = resources.filter((join) =>
+		LESSON_CHILD_TYPES.has(
+			(join as { resource?: { type?: string } })?.resource?.type ?? '',
+		),
+	).length
+	return count > 0 ? count : undefined
 }
 
 /**
@@ -119,6 +153,7 @@ async function resolveSection(
 					fields.postType ?? full?.fields?.postType,
 				),
 				readTimeMinutes: computeReadMinutes(full?.fields?.body),
+				lessonCount: computeLessonCount(full?.resources),
 			}
 		}),
 	)
@@ -149,14 +184,20 @@ async function resolveSuggested(
 		).catch(() => null)
 		if (!doc) break
 
+		// Typesense indexes no child resources, so a collection-shaped hit needs
+		// the real post to count its lessons. Capped at MAX_ITEMS and
+		// cache-backed, same as the sibling path.
+		const full = await getCachedPost(doc.slug).catch(() => null)
+
 		items.push({
 			id: doc.id,
 			title: doc.title,
 			slug: doc.slug,
 			typeLabel: typeLabelForPostType(doc.type),
 			// Typesense stores the post body in `description` (see
-			// upsertPostToTypeSense), so read time is derivable without a DB hit.
+			// upsertPostToTypeSense), so read time needs no DB hit of its own.
 			readTimeMinutes: computeReadMinutes(doc.description),
+			lessonCount: computeLessonCount(full?.resources),
 		})
 		skip.add(doc.id)
 	}
@@ -164,23 +205,44 @@ async function resolveSuggested(
 	return { heading: 'You might also like', items }
 }
 
+/**
+ * Eyebrow suffix after the type label. A lesson count wins when we have one; a
+ * tutorial shows nothing rather than a read time, since the number that matters
+ * for a collection is its lesson count, not how long its intro takes to read.
+ */
+function metaSuffix(item: RelatedPostItem): string {
+	if (item.lessonCount) {
+		return ` · ${item.lessonCount} ${item.lessonCount === 1 ? 'lesson' : 'lessons'}`
+	}
+	if (item.typeLabel === 'Tutorial') return ''
+	return item.readTimeMinutes ? ` · ${item.readTimeMinutes} min read` : ''
+}
+
 function RelatedPostCard({ item }: { item: RelatedPostItem }) {
 	return (
+		// `group/resource` + `relative` are what ResourceHoverFrame anchors to, so
+		// this card gets the same signature gradient frame as the Up Next card
+		// (DESIGN.md rule 13) instead of its own bespoke bg-muted hover.
 		<Link
 			href={`/${item.slug}`}
-			className="group bg-card hover:bg-muted focus-visible:ring-ring relative flex flex-col gap-4 px-5 py-8 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-8 sm:py-10"
+			className="group/resource group bg-card focus-visible:ring-ring relative flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 		>
-			<div className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-				{item.typeLabel}
-				{item.readTimeMinutes ? ` · ${item.readTimeMinutes} min read` : ''}
-			</div>
-			<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
-				{item.title}
-			</h3>
-			<span className="text-muted-foreground group-hover:text-foreground mt-auto inline-flex items-center gap-1.5 pt-2 text-sm font-medium transition-colors">
-				Read more
-				<ArrowRight className="ease-[cubic-bezier(0.22,1,0.36,1)] size-4 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
-			</span>
+			<ResourceHoverFrame
+				surfaceClassName="bg-card"
+				className="flex h-full flex-col gap-4 px-5 py-8 sm:px-8 sm:py-10"
+			>
+				<div className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+					{item.typeLabel}
+					{metaSuffix(item)}
+				</div>
+				<h3 className="text-balance text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
+					{item.title}
+				</h3>
+				<span className="text-muted-foreground group-hover:text-foreground mt-auto inline-flex items-center gap-1.5 pt-2 text-sm font-medium transition-colors">
+					Read more
+					<ArrowRight className="ease-[cubic-bezier(0.22,1,0.36,1)] size-4 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
+				</span>
+			</ResourceHoverFrame>
 		</Link>
 	)
 }
