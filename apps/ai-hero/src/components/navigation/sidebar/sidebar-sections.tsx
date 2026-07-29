@@ -296,6 +296,15 @@ export function SkillsEntry(props: { href: string; label: React.ReactNode }) {
 					title={props.label}
 					iconHref={props.href}
 					href={props.href}
+					// `extraHrefs` is what tells a section one of its own pages is
+					// current, and it is the section's ONLY way to know while its
+					// children are still loading. Without it the fallback opened
+					// collapsed on /skills and the resolved section then expanded,
+					// so arriving at the page played a disclosure animation the
+					// reader never asked for. The resolved one passes every skill's
+					// href as well; the section's own href is all that is knowable
+					// here, and it is the one that matters for this page.
+					extraHrefs={[props.href]}
 				>
 					{null}
 				</SidebarSection>

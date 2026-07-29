@@ -287,16 +287,49 @@ export function SidebarSection({
 		[hrefs, pathname, listActive],
 	)
 	const [open, setOpen] = React.useState(defaultOpen || activeInside)
-	// Expand when navigation lands on one of this section's links (never
-	// auto-collapse it out from under the user).
+
+	// Whether a disclosure animation is allowed to play. It is not, on the
+	// first paint.
+	//
+	// `animate-collapsible-down` is bound to `data-[state=open]`, and Radix
+	// sets that attribute on mount as well as on toggle — so a section that
+	// mounts ALREADY open slid its whole tree down from zero height on arrival.
+	// Landing on /skills looked like the accordion opening itself, because the
+	// only thing distinguishing "already open" from "just opened" is whether a
+	// reader asked for it.
+	//
+	// Both writers below turn it on in the same commit that changes `open`, so
+	// the class is present the moment `data-state` flips and the animation
+	// still plays for every change the reader causes or navigates into.
+	const [animate, setAnimate] = React.useState(false)
+	const handleOpenChange = React.useCallback((next: boolean) => {
+		setAnimate(true)
+		setOpen(next)
+	}, [])
+
+	// Expand when navigation LANDS on one of this section's links — the
+	// false→true edge, not the condition. Never auto-collapses it out from
+	// under the user, and equally never re-opens it: keying this on `open`
+	// instead would re-fire the moment they collapsed the section they are
+	// currently in, so the one section they most likely want out of the way
+	// would be the one they could not close.
+	//
+	// The edge is also what keeps the first paint silent. On mount the ref
+	// already holds `activeInside`, so arriving at /skills is no transition,
+	// no state change, and nothing to animate.
+	const wasActiveInside = React.useRef(activeInside)
 	React.useEffect(() => {
-		if (activeInside) setOpen(true)
+		const landed = activeInside && !wasActiveInside.current
+		wasActiveInside.current = activeInside
+		if (!landed) return
+		setAnimate(true)
+		setOpen(true)
 	}, [activeInside])
 
 	return (
 		<Collapsible
 			open={open}
-			onOpenChange={setOpen}
+			onOpenChange={handleOpenChange}
 			className="group/collapsible"
 		>
 			<SidebarGroup className="p-0">
@@ -382,7 +415,13 @@ export function SidebarSection({
 				)}
 				{/* mt-px matches the menus' gap-px, so an open section's first row
 				    sits on the same 1px rhythm as every other row boundary. */}
-				<CollapsibleContent className="mt-px overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+				<CollapsibleContent
+					className={cn(
+						'mt-px overflow-hidden',
+						animate &&
+							'data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down',
+					)}
+				>
 					<SidebarDepth>
 						<SidebarGroupContent>{children}</SidebarGroupContent>
 					</SidebarDepth>
