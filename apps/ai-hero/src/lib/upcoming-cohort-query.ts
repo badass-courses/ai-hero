@@ -10,6 +10,13 @@ export type UpcomingCohortSummary = {
 	slug: string
 	/** ISO datetime when the cohort starts, when set on the resource. */
 	startsAt?: string
+	/**
+	 * The cohort's own IANA zone. Carried because `startsAt` is an instant and
+	 * a date is not: `formatCohortDateRange` defaults to `America/Los_Angeles`
+	 * when this is missing, so a caller that dropped it rendered a start date up
+	 * to a day off from the one the cohort's own page showed.
+	 */
+	timezone?: string
 	/** Cohort artwork. Every cohort has one; the homepage leads with it. */
 	image?: string
 	description?: string
@@ -80,6 +87,7 @@ async function getUpcomingCohortUncached(): Promise<UpcomingCohortSummary | null
 		title: readString(winner.fields, 'title') ?? 'Upcoming cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),
+		timezone: readString(winner.fields, 'timezone'),
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
 	}
@@ -132,9 +140,15 @@ async function getPastCohortsUncached(
 	return cohorts
 		.filter((cohort) => {
 			if (cohort.id === excludeId) return false
-			const ended =
-				readString(cohort.fields, 'endsAt') ??
-				readString(cohort.fields, 'startsAt')
+			// `endsAt` ONLY. The fallback used to be `startsAt`, on the grounds
+			// that a cohort which has begun is at least not upcoming — but the
+			// caller badges these rows "Cohort ended", and a cohort that started
+			// last week with no end date is RUNNING, not over. Advertising a live
+			// cohort as finished is the worse of the two failures; the other is a
+			// row missing from a catalog list. Every cohort in the data carries
+			// `endsAt`, so this drops nothing real, and a cohort authored without
+			// one is genuinely unknown rather than past.
+			const ended = readString(cohort.fields, 'endsAt')
 			// Lexicographic on ISO-8601 UTC, the same comparison
 			// `getUpcomingCohort` makes on the enrollment window above.
 			return ended !== undefined && ended < now
@@ -151,6 +165,7 @@ async function getPastCohortsUncached(
 			title: (readString(cohort.fields, 'title') ?? 'Cohort').trim(),
 			slug: readString(cohort.fields, 'slug') ?? cohort.id,
 			startsAt: readString(cohort.fields, 'startsAt'),
+			timezone: readString(cohort.fields, 'timezone'),
 			image: readString(cohort.fields, 'image'),
 			description: readString(cohort.fields, 'description'),
 		}))
@@ -189,6 +204,7 @@ async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> 
 		title: readString(winner.fields, 'title') ?? 'The next cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),
+		timezone: readString(winner.fields, 'timezone'),
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
 	}

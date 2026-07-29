@@ -43,7 +43,7 @@ export async function CourseCta({
 	const title = target.title
 
 	const startsLabel = cohort?.startsAt
-		? formatCohortDateRange(cohort.startsAt, null).dateString
+		? formatCohortDateRange(cohort.startsAt, null, cohort.timezone).dateString
 		: null
 
 	const description = cohort

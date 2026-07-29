@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { TYPE } from '@/components/landing/type'
 import { track } from '@/utils/analytics'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import {
@@ -426,14 +427,26 @@ export function SearchPalette({
 										'promo',
 									)
 								}
-								className="group focus-visible:ring-ring flex w-full items-center gap-2 border-t bg-emerald-500/10 px-4 py-2.5 text-left text-sm text-emerald-800 transition-colors hover:bg-emerald-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset dark:text-emerald-200"
+								// The same object as `PromoBar`, the site's other announcement
+								// surface: raised ground, gold chip, one line of copy. It used
+								// to be built from raw `emerald-*` palette classes, which
+								// DESIGN.md forbids outright — and being the one green thing
+								// on a monochrome-plus-gold site, it read as a system notice
+								// rather than as the offer it is. `text-emerald-800` on a 10%
+								// tint was also the palette's worst contrast in light mode.
+								className="group focus-visible:ring-ring bg-muted/40 hover:bg-muted/70 flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 							>
 								{promo.label && (
-									<span className="inline-flex shrink-0 items-center rounded-full bg-emerald-600 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-white">
+									<span
+										className={cn(
+											TYPE.micro,
+											'bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-1.5 py-1 leading-none',
+										)}
+									>
 										{promo.label}
 									</span>
 								)}
-								<span className="truncate font-medium tracking-tight">
+								<span className={cn(TYPE.meta, 'text-foreground truncate')}>
 									{promo.message}
 								</span>
 								<ArrowRight

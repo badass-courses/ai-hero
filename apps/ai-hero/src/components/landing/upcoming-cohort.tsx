@@ -51,7 +51,7 @@ export async function UpcomingCohort({
 	)
 	const isOpen = Boolean(purchasable)
 	const dateLabel = cohort.startsAt
-		? formatCohortDateRange(cohort.startsAt, null).dateString
+		? formatCohortDateRange(cohort.startsAt, null, cohort.timezone).dateString
 		: null
 
 	return (

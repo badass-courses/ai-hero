@@ -264,6 +264,40 @@ const _getCachedFilteredList = unstable_cache(
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
+/**
+ * The same view for someone allowed to see unpublished work.
+ *
+ * `getCachedFilteredList` gates on the list's own state/visibility, which is
+ * what stops a draft list reaching the public sidebar — but it also took the
+ * sidebar away from the editor previewing that draft, and a list landing page
+ * with no list context is exactly the state the filtered loader was written to
+ * fix. This restores it for editors only.
+ *
+ * NOT cached, and it must not be: it resolves the session, and a value that
+ * varies by viewer cannot share a cache key with one that does not. It is also
+ * only ever reached on a draft or private list, so the dynamic render it forces
+ * is paid on editor previews and on no published page.
+ *
+ * The ability is resolved HERE rather than passed in, for the reason spelled
+ * out on `getPost` in posts-query.ts: this module is `'use server'`, so every
+ * export is a Server Action endpoint and an access level taken as a parameter
+ * is an access level the caller can choose.
+ */
+export async function getFilteredListForEditor(listIdOrSlug: string) {
+	const { ability } = await getServerAuthSession()
+	if (ability.cannot('update', 'Content')) return null
+
+	const deep = await getListWithSections(listIdOrSlug)
+	if (!deep) return null
+
+	return {
+		...deep,
+		resources: filterSectionedResources(
+			deep.resources as ContentResourceResource[],
+		),
+	}
+}
+
 export async function getCachedFilteredList(listIdOrSlug: string) {
 	const result = await _getCachedFilteredList(listIdOrSlug)
 	return result ? reviveDates(result) : null

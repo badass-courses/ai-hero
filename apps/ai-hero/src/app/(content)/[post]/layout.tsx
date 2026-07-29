@@ -2,7 +2,11 @@ import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import type { List } from '@/lib/lists'
-import { getCachedFilteredList, getCachedListForPost } from '@/lib/lists-query'
+import {
+	getCachedFilteredList,
+	getCachedListForPost,
+	getFilteredListForEditor,
+} from '@/lib/lists-query'
 import { getModuleProgressForUser } from '@/lib/progress'
 
 import { getCachedPostOrList } from '../../../lib/posts-query'
@@ -34,6 +38,15 @@ export default async function Layout(props: {
 		// and left sectioned lists with no lessons at all. This is the same
 		// filtered, section-aware view the list body itself renders.
 		list = await getCachedFilteredList(params.post)
+		// `null` here means the list itself is draft or private — the public
+		// loader refuses those. `getCachedPostOrList` above still SERVES a draft
+		// list's page, so without this an editor previewing one got the page with
+		// no list context at all: no sidebar lessons, no mobile lesson sheet. The
+		// editor path resolves the session and so cannot be cached, which is why
+		// it is reached only on the pages the public loader already rejected.
+		if (!list) {
+			list = await getFilteredListForEditor(params.post)
+		}
 	}
 	const initialProgress = await getModuleProgressForUser(
 		list ? list.id : params.post,

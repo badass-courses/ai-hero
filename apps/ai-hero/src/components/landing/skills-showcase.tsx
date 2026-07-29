@@ -65,14 +65,14 @@ export async function SkillsShowcase({
 	ctaHref?: string
 	ctaLabel?: string
 }) {
-	const groups = await loadShowcaseGroups()
+	const { groups, totalSkillCount } = await loadShowcaseGroups()
 	if (groups.length === 0) return null
 
-	// Counted, never typed. The prototype's "See all 31 skills" is the shape;
-	// the number has to come from the same list the grid below was built from,
-	// or the page advertises a figure it then fails to show.
-	const skillCount = groups.reduce((n, group) => n + group.skills.length, 0)
-	const resolvedCtaLabel = ctaLabel ?? `See all ${skillCount} skills`
+	// Counted, never typed. The prototype's "See all 31 skills" is the shape,
+	// and the number is the count at the DESTINATION — /skills renders the loose
+	// skills this grid deliberately omits, so counting only what the grid shows
+	// sent the reader to a page with more skills than the link promised.
+	const resolvedCtaLabel = ctaLabel ?? `See all ${totalSkillCount} skills`
 
 	return (
 		<section
@@ -236,28 +236,44 @@ type ShowcaseGroup = {
  * on the homepage they would reintroduce the "everything else" bucket this
  * component exists to remove. `/skills` still shows them.
  */
-async function loadShowcaseGroups(): Promise<ShowcaseGroup[]> {
+async function loadShowcaseGroups(): Promise<{
+	groups: ShowcaseGroup[]
+	/**
+	 * Every published + public skill in the list, LOOSE ONES INCLUDED — which
+	 * is more than the grid renders. The CTA says "See all N skills" and points
+	 * at /skills, so the number describes the DESTINATION, not the grid; counting
+	 * only the sectioned skills advertised a figure lower than what the reader
+	 * then found there.
+	 */
+	totalSkillCount: number
+}> {
 	const list = await getListWithSections(SKILLS_LIST_ID)
 	const groups: ShowcaseGroup[] = []
+	let totalSkillCount = 0
+
+	const isPublicSkill = (child: any) =>
+		child?.fields?.state === 'published' &&
+		child?.fields?.visibility === 'public' &&
+		typeof child?.fields?.slug === 'string'
 
 	for (const item of list?.resources ?? []) {
 		const resource = item.resource as any
-		if (resource?.type !== 'section') continue
+		if (resource?.type !== 'section') {
+			// A loose skill: counted, not rendered.
+			if (isPublicSkill(resource)) totalSkillCount++
+			continue
+		}
 
 		const skills = (resource.resources ?? [])
 			.map((child: any) => child?.resource)
-			.filter(
-				(child: any) =>
-					child?.fields?.state === 'published' &&
-					child?.fields?.visibility === 'public' &&
-					typeof child?.fields?.slug === 'string',
-			)
+			.filter(isPublicSkill)
 			.map((child: any) => ({
 				slug: child.fields.slug as string,
 				title: String(child.fields.title ?? ''),
 				command: commandFor(child.fields.slug as string),
 			}))
 
+		totalSkillCount += skills.length
 		if (skills.length === 0) continue
 
 		const title = resource.fields?.title
@@ -271,7 +287,7 @@ async function loadShowcaseGroups(): Promise<ShowcaseGroup[]> {
 		})
 	}
 
-	return groups
+	return { groups, totalSkillCount }
 }
 
 /**
