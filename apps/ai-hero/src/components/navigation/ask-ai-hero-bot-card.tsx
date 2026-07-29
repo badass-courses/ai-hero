@@ -7,6 +7,8 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { TYPE } from '@/components/landing/type'
 
+import { AiHeroMascot } from '@/components/brand/mascot'
+
 import { AskAIHeroBot } from './ask-ai-hero-bot'
 import { CURATED_SUGGESTIONS, GOAL_SECTIONS } from './goal-sections-data'
 
@@ -49,14 +51,22 @@ export function AskAIHeroBotCard({
 		<div
 			className={cn(
 				'border-border bg-card flex flex-col gap-1.5 rounded-md border p-4',
+				// `group` so the mascot plays its idle loop on hover — the animation
+				// in `globals.css` is keyed to a hovered `.group` ancestor.
 				wide &&
-					'desk:flex-row desk:items-center gap-4 rounded-xl p-6 desk:gap-6 sm:p-8',
+					'group desk:flex-row desk:items-center gap-4 rounded-xl p-6 desk:gap-6 sm:p-8',
 				className,
 			)}
 		>
 			{wide && (
-				<span className="bg-accent-fill/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
-					<Sparkles className="size-6" aria-hidden />
+				/* The mascot, not a Sparkles glyph. This card is the one place the
+				   site offers a *character* to talk to, and it already ships one —
+				   `AiHeroMascot` was in the tree and rendered nowhere. A generic AI
+				   sparkle says "machine feature"; the mascot says who is answering.
+				   Bare rather than in a tinted tile: it is pixel art with its own
+				   silhouette, and a gold plate behind it just fights the sprite. */
+				<span className="flex size-12 shrink-0 items-center justify-center">
+					<AiHeroMascot size={48} title="" />
 				</span>
 			)}
 			<div className={cn('flex flex-col gap-1.5', wide && 'flex-1 gap-2')}>

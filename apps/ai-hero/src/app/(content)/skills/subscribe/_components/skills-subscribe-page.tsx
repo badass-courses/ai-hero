@@ -309,14 +309,18 @@ function Curriculum() {
 						>
 							{String(index + 1).padStart(2, '0')}
 						</span>
+						{/* `subhead`/`body`, a step up from `cardTitle`/`metaProse`.
+						    These cells are the page's actual curriculum — the thing a
+						    reader is deciding on — and at 16/14 they read as captions
+						    under the 17.5px intro that introduces them. */}
 						<div className="min-w-0">
-							<h3 className={cn(TYPE.cardTitle, 'mb-1.5 text-pretty')}>
+							<h3 className={cn(TYPE.subhead, 'mb-1.5 text-pretty')}>
 								<span className="sr-only">Day {index + 1}: </span>
 								{day.title}
 							</h3>
 							<p
 								className={cn(
-									TYPE.metaProse,
+									TYPE.body,
 									'text-pretty text-[color:var(--ah-fg-muted)]',
 								)}
 							>
@@ -333,7 +337,7 @@ function Curriculum() {
 					</p>
 					<p
 						className={cn(
-							TYPE.metaProse,
+							TYPE.body,
 							'text-pretty text-[color:var(--ah-fg-body)]',
 						)}
 					>
@@ -430,14 +434,16 @@ function ClosingCta({
 						<SkillsNewsletter.Form
 							label="Start the free course"
 							className={cn(
-								// `col-span-1` undoes the shared form's default two-column
-								// span, or the button drops to its own row here.
-								'grid w-full grid-cols-1 gap-[9px] [&_button]:col-span-1 sm:grid-cols-[minmax(0,1fr)_auto]',
+								// Three across from 900px — name, email, button — the same
+								// row the hero form uses. It was one field wide with the name
+								// fieldset hidden, which meant the page's last ask collected
+								// a different set of data from its first, and Kit got no
+								// first name for anyone who scrolled past the hero. Stacks
+								// to one column below 900px.
+								'grid w-full grid-cols-1 gap-[9px] [&_button]:col-span-1 desk:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_auto]',
 								FIELD_STYLES,
 								BUTTON_STYLES,
 								'[&_button]:h-[50px] [&_button]:whitespace-nowrap [&_button]:px-[22px] [&_button]:text-[15px]',
-								// The name fieldset, hidden so the last ask is one field wide.
-								'[&>div:first-of-type]:hidden',
 							)}
 						/>
 					}

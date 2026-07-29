@@ -76,6 +76,22 @@ function iconForType(type: string) {
 }
 
 /**
+ * A keycap in the palette's hint row. Bare mono glyphs read as punctuation next
+ * to their labels ("↑↓ navigate" looked like a typo); a bordered cap says
+ * "this is a key you press". Square-ish 4px corners and the mono micro-size are
+ * the badge step from DESIGN.md — a key is that scale of object, not a control,
+ * so it does not take the 9px control radius. `min-w` keeps single glyphs from
+ * collapsing into narrower caps than "esc".
+ */
+function Key({ children }: { children: React.ReactNode }) {
+	return (
+		<kbd className="border-input text-foreground/70 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[4px] border px-1 font-mono text-[10px] leading-none">
+			{children}
+		</kbd>
+	)
+}
+
+/**
  * Hit types whose `view` path is self-contained. `lesson`/`solution`/`section`
  * need parent (workshop/list) context the search API doesn't resolve — their
  * root-level URLs 404, so they're excluded from palette results.
@@ -237,6 +253,13 @@ export function SearchPalette({
 				<DialogPrimitive.Content
 					className={cn(
 						'bg-background fixed z-50 flex flex-col overflow-hidden border shadow-lg outline-none',
+						// 12px stated literally: `rounded-xl` resolves through `--radius`
+						// and lands on 14px here, off the spec's 4/6/9/11/12 scale.
+						// Desktop panel only —
+						// mobile is `inset-0` full-screen, where a radius would round
+						// the corners of the viewport. `overflow-hidden` above is what
+						// clips the input and the rows to it.
+						'sm:rounded-[12px]',
 						// Desktop: 540px, horizontally centered, anchored near the top so
 						// the dialog doesn't jump vertically as result counts change.
 						'sm:left-1/2 sm:top-[18%] sm:w-full sm:max-w-[540px] sm:-translate-x-1/2',
@@ -343,14 +366,18 @@ export function SearchPalette({
 							</Link>
 						)}
 						<div className="text-muted-foreground hidden items-center gap-4 border-t px-4 py-2 text-xs sm:flex">
-							<span>
-								<kbd className="font-mono">↑↓</kbd> navigate
+							<span className="flex items-center gap-1.5">
+								<Key>↑</Key>
+								<Key>↓</Key>
+								navigate
 							</span>
-							<span>
-								<kbd className="font-mono">⏎</kbd> open
+							<span className="flex items-center gap-1.5">
+								<Key>⏎</Key>
+								open
 							</span>
-							<span>
-								<kbd className="font-mono">esc</kbd> close
+							<span className="flex items-center gap-1.5">
+								<Key>esc</Key>
+								close
 							</span>
 						</div>
 					</Command>
