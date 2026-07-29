@@ -17,7 +17,6 @@ import {
 	AccordionItem,
 	AccordionTrigger,
 	Button,
-	SidebarMenuSkeleton,
 } from '@coursebuilder/ui'
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
@@ -32,6 +31,55 @@ import {
 import { NAV_ICONS } from './sidebar/nav-icons'
 import { normalizePath } from './sidebar/sidebar-client'
 import { ThemeToggle } from './theme-toggle'
+
+/**
+ * The drawer's loading state, drawn to the drawer's own metrics.
+ *
+ * It used to be four bare `SidebarMenuSkeleton` rows: too few to fill the
+ * sheet, too short to stand in for a row, and with no category labels, so the
+ * tree that replaced them arrived as one large jump rather than as the same
+ * shape filling in. This mirrors what actually loads — three labelled groups
+ * of `min-h-10` rows with a glyph slot — at roughly the height of the real
+ * thing, so the swap reads as text sharpening rather than as the panel
+ * rebuilding itself.
+ *
+ * Widths step down the list instead of being uniform: equal bars read as a
+ * table, and the thing being loaded is a list of titles of differing length.
+ * Deterministic per index — a random width would change on every re-render.
+ */
+const SKELETON_GROUPS = [
+	{ label: 'w-[72px]', rows: ['w-[62%]', 'w-[48%]', 'w-[70%]', 'w-[41%]'] },
+	{ label: 'w-[58px]', rows: ['w-[54%]', 'w-[66%]', 'w-[45%]'] },
+	{ label: 'w-[84px]', rows: ['w-[60%]', 'w-[38%]', 'w-[52%]'] },
+]
+
+function NavSkeleton() {
+	return (
+		<section aria-hidden className="animate-pulse pb-2">
+			{SKELETON_GROUPS.map((group, groupIndex) => (
+				<div
+					key={group.label}
+					className={cn(groupIndex > 0 && 'border-border border-t')}
+				>
+					<div className="px-5 pb-1 pt-4">
+						<span
+							className={cn('bg-muted block h-[9px] rounded-sm', group.label)}
+						/>
+					</div>
+					{group.rows.map((row, rowIndex) => (
+						<div
+							key={rowIndex}
+							className="flex min-h-10 items-center gap-2.5 px-5 py-[9px]"
+						>
+							<span className="bg-muted size-4 shrink-0 rounded-[4px]" />
+							<span className={cn('bg-muted h-[11px] rounded-sm', row)} />
+						</div>
+					))}
+				</div>
+			))}
+		</section>
+	)
+}
 
 /** What the drawer's focus trap counts as a stop. */
 const FOCUSABLE_SELECTOR = [
@@ -235,12 +283,18 @@ export function MobileMenuPanel({
 		(item) => item.href !== COURSES_NAV_ITEM.href,
 	)
 
-	// 44px minimum tap height (§ 3b: `padding:11px 10px;font-size:15px`). The
-	// horizontal pad is 20px rather than the spec's 10 because this drawer keeps
-	// the app's own gutter, and nested rows indent from it.
+	// 40px rows at 14px, tightened from the spec's `padding:11px 10px;
+	// font-size:15px` (44px at 15px). § 3b sized a row for a short flat menu;
+	// this drawer holds the whole hub tree, where 44px rows meant a reader saw
+	// six or seven entries per screen and scrolled past their own section to
+	// find anything. 40px is still a comfortable thumb target and buys roughly
+	// two extra rows per screen.
+	//
+	// The horizontal pad is 20px rather than the spec's 10 because this drawer
+	// keeps the app's own gutter, and nested rows indent from it.
 	const rowClass = (href: string) =>
 		cn(
-			'focus-visible:ring-ring flex min-h-11 items-center px-5 py-[11px] text-[15px] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+			'focus-visible:ring-ring flex min-h-10 items-center px-5 py-[9px] text-[14px] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
 			isActive(href) && 'bg-muted font-medium',
 		)
 
@@ -335,13 +389,7 @@ export function MobileMenuPanel({
 				    links inline; a bare category label (Topics) heads the collapsible
 				    topic groups that follow it. */}
 				{isNavLoading && navSections.length === 0 ? (
-					<section className="flex flex-col gap-1 py-3" aria-hidden>
-						{Array.from({ length: 4 }).map((_, i) => (
-							<div key={i} className="px-5">
-								<SidebarMenuSkeleton />
-							</div>
-						))}
-					</section>
+					<NavSkeleton />
 				) : navSections.length > 0 ? (
 					<section className="pb-2">
 						{navSections.map((section, index) => {
@@ -416,7 +464,7 @@ export function MobileMenuPanel({
 									className="w-full"
 								>
 									<AccordionItem value={section.title} className="border-none">
-										<AccordionTrigger className="px-5 py-2.5 text-[15px] hover:no-underline">
+										<AccordionTrigger className="px-5 py-2 text-[14px] hover:no-underline">
 											{section.title}
 										</AccordionTrigger>
 										<AccordionContent className="pb-1">
@@ -426,7 +474,7 @@ export function MobileMenuPanel({
 													href={item.href}
 													aria-current={isActive(item.href) ? 'page' : undefined}
 													onClick={() => track_(item)}
-													className={cn(rowClass(item.href), 'py-2 pl-9 text-sm')}
+													className={cn(rowClass(item.href), 'py-[7px] pl-9 text-[13px]')}
 												>
 													{item.label}
 												</Link>

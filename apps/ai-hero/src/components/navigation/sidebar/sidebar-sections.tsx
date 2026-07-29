@@ -253,6 +253,7 @@ async function SkillsEntrySection({
 			<SidebarSection
 				title={label}
 				iconHref={href}
+				href={href}
 				ownListSlug={listSlug}
 				extraHrefs={[href, ...itemHrefs]}
 			>
@@ -283,7 +284,22 @@ async function SkillsEntrySection({
 export function SkillsEntry(props: { href: string; label: React.ReactNode }) {
 	return (
 		<React.Suspense
-			fallback={<SidebarNavLink href={props.href}>{props.label}</SidebarNavLink>}
+			// The fallback is the SECTION HEADER, empty — not a plain nav link.
+			// A plain link matches `/skills` and so rendered with the active fill,
+			// then resolved into a header that carries no fill: on the one page
+			// this entry names, the row lit up and switched itself off again a
+			// moment later. Same row, same icon, same label either way now; the
+			// only thing that arrives late is the disclosed content, and the
+			// section is collapsed until something inside it is current.
+			fallback={
+				<SidebarSection
+					title={props.label}
+					iconHref={props.href}
+					href={props.href}
+				>
+					{null}
+				</SidebarSection>
+			}
 		>
 			<SkillsEntrySection {...props} />
 		</React.Suspense>

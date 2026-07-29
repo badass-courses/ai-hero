@@ -235,6 +235,7 @@ export function SidebarSection({
 	title,
 	defaultOpen = false,
 	iconHref,
+	href,
 	ownListSlug,
 	extraHrefs,
 	children,
@@ -243,6 +244,13 @@ export function SidebarSection({
 	defaultOpen?: boolean
 	/** Optional `NAV_ICONS` key (an href) — renders that icon before the title. */
 	iconHref?: string
+	/**
+	 * When the section itself names a page (Skills → `/skills`), that page.
+	 * The label becomes a link to it and the chevron alone toggles, so the
+	 * header behaves like every other nav row instead of being the one piece
+	 * of labelled navigation you cannot click through to.
+	 */
+	href?: string
 	/**
 	 * When this section IS a list's sidebar home (e.g. Skills = the
 	 * `skills-catalog` list), the list's slug — exempts it from the
@@ -292,6 +300,54 @@ export function SidebarSection({
 			className="group/collapsible"
 		>
 			<SidebarGroup className="p-0">
+				{href ? (
+					// Split row: the label navigates, the chevron discloses. One
+					// element cannot do both — a click that both routed away and
+					// toggled would leave the section in a state the reader did not
+					// ask for, and hiding the destination behind a nested "Overview"
+					// row made the header the only label in the rail that looked like
+					// a link and was not.
+					<SidebarGroupLabel
+						asChild
+						className={cn(
+							SIDEBAR_ROW_CLASS,
+							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=open]:text-sidebar-foreground pr-0',
+						)}
+						style={rowIndent(depth)}
+					>
+						<div className="flex w-full select-none items-center gap-[9px]">
+							<Link
+								href={href}
+								aria-current={
+									normalizePath(href) === normalizePath(pathname ?? '/')
+										? 'page'
+										: undefined
+								}
+								className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-[9px] rounded-[6px] focus-visible:outline-none focus-visible:ring-2"
+							>
+								{IconFor(iconHref)}
+								<span className="truncate">{title}</span>
+							</Link>
+							<CollapsibleTrigger asChild>
+								{/* Its own 32px hit area, and its own label: "Skills" is
+								    already spoken by the link beside it, so the button
+								    needs to announce the disclosure, not the section.
+								    `-my-[7px]` — exactly the row.s own `py-[7px]` — is what keeps that hit area from setting the
+								    row's height — the row is `h-auto py-[7px]`, so a 32px
+								    child made this one header taller than every sibling
+								    row in the rail. The negative margin lets the button
+								    overhang the padding instead of growing it. */}
+								<button
+									type="button"
+									aria-label={`${open ? 'Collapse' : 'Expand'} ${typeof title === 'string' ? title : 'this'} section`}
+									className="focus-visible:ring-ring -my-[7px] -mr-1 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[6px] focus-visible:outline-none focus-visible:ring-2"
+								>
+									<ChevronRight className="size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform group-data-[state=open]/collapsible:rotate-90" />
+								</button>
+							</CollapsibleTrigger>
+						</div>
+					</SidebarGroupLabel>
+				) : (
 				<CollapsibleTrigger asChild>
 					<SidebarGroupLabel
 						asChild
@@ -323,6 +379,7 @@ export function SidebarSection({
 						</button>
 					</SidebarGroupLabel>
 				</CollapsibleTrigger>
+				)}
 				{/* mt-px matches the menus' gap-px, so an open section's first row
 				    sits on the same 1px rhythm as every other row boundary. */}
 				<CollapsibleContent className="mt-px overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">

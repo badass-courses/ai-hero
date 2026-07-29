@@ -266,47 +266,61 @@
 
 	/* ---------------------------------------------------------------------
 	   Codehike / Shiki syntax theme ("github-from-css" reads these slots).
+	   LIGHT — cool slate.
 
-	   Was GitHub's light and dark themes verbatim: cool blues, purples and a
-	   pure-red keyword, dropped into a warm near-black page. A code block is
-	   often the largest object on an article, so borrowing another product's
-	   palette for it undid the restraint everywhere else.
+	   Two rewrites got here. It was GitHub's themes verbatim, which dropped
+	   another product's palette into the largest object on an article. Then it
+	   was a single warm ramp off the app's gold, one hue doing all the work.
+	   That second one failed on paper, exactly the way the prototype's light
+	   theme warns it will: "a dark-yellow text token reads brown". Keywords at
+	   #8a5f10, strings at #6a6046 and parameters at #5a5342 were three muddy
+	   browns within a few percent of each other on white — nothing separated
+	   from anything, and the whole block read washed out.
 
-	   Rewritten as a warm ramp off the app's own ink, with ONE hue doing the
-	   highlighting work: gold on keywords, the same accent the rest of the site
-	   uses for state. Identifiers separate by weight of ink rather than by hue —
-	   function names at full strength, ordinary code at .86, comments at .36.
-	   Diff greens and reds stay, muted, because they encode meaning a reader
-	   cannot get any other way.
+	   So: the SPEC's axis, not the accent's. The light theme is cool slate,
+	   blue-grey ink, no warm tints, and the yellow is a FILL that never becomes
+	   type. Four hues carry meaning — slate blue for keywords, deep teal for
+	   strings, plum for numbers, green and red for diffs — and identifiers
+	   still separate by weight of ink rather than by hue, which is the one part
+	   of the warm ramp that was working: function names at full strength,
+	   ordinary code at .88, comments at .5.
 
-	   NOTE this is the one place a darkened accent IS used as text in light mode
-	   (`--ch-7`), which DESIGN rule 7 otherwise forbids. That rule is about
-	   brand accent type — an eyebrow or a link that should be ink on paper.
-	   Syntax highlighting needs several distinguishable token colours by
-	   definition, and making keywords ink would make them identical to the
-	   identifiers around them.
+	   Every token that carries code clears 4.5:1 on the #ffffff editor ground,
+	   measured, so the block is legible before it is tasteful: keyword 8.5,
+	   param 9.8, number 7.4, deleted 7.6, string and tag 6.5, function 18.1,
+	   comment 4.7. Comments were the worst of the old set at 2.96 — quiet is a
+	   design intent, illegible is not. Line numbers and indent guides stay
+	   below that bar deliberately; they are chrome, not content.
+
+	   Keeping keywords off gold here also retires this palette's standing
+	   exception to DESIGN rule 7 — in light mode nothing in a code block is a
+	   darkened accent any more. Dark mode still spends gold on keywords, where
+	   the accent is at full strength against near-black and the rule does not
+	   apply.
 	   --------------------------------------------------------------------- */
 	--ch-0: light;
-	--ch-1: rgba(20, 22, 26, 0.45); /* comment */
-	--ch-2: #7a5c12; /* constant, number */
-	--ch-3: #5a5342; /* entity, parameter */
-	--ch-4: rgba(20, 22, 26, 0.86); /* default foreground */
+	--ch-1: rgba(20, 22, 26, 0.6); /* comment */
+	--ch-2: #6d3f9c; /* constant, number */
+	--ch-3: #3d4451; /* entity, parameter */
+	--ch-4: rgba(20, 22, 26, 0.88); /* default foreground */
 	--ch-5: #14161a; /* function name */
-	--ch-6: #3d6b46; /* tag, inserted text */
-	--ch-7: #8a5f10; /* keyword, storage */
-	--ch-8: #6a6046; /* string */
-	--ch-9: #8f3a33; /* deleted text */
+	--ch-6: #1f6b47; /* tag, inserted text */
+	--ch-7: #1f4c8c; /* keyword, storage */
+	--ch-8: #0f6b52; /* string */
+	--ch-9: #9b2c26; /* deleted text */
 	--ch-10: #14161a; /* heading */
-	--ch-11: #fbeceb; /* deleted background */
-	--ch-12: #eaf5ec; /* inserted background */
-	--ch-13: #fdf3e3; /* changed background */
+	--ch-11: #fbeaea; /* deleted background */
+	--ch-12: #e8f4ee; /* inserted background */
+	--ch-13: #edf2fb; /* changed background */
 	--ch-14: #eceef1; /* group border */
 	--ch-15: rgba(20, 22, 26, 0.38); /* line numbers */
 	--ch-16: #ffffff; /* editor background */
 	--ch-17: rgba(20, 22, 26, 0.07); /* indent guide */
 	--ch-18: rgba(20, 22, 26, 0.04); /* active line background */
 	--ch-19: rgba(20, 22, 26, 0.35); /* focus border */
-	--ch-20: rgba(245, 196, 81, 0.28); /* selection */
+	/* Slate, not the gold wash it was: per the spec, a yellow wash on white
+	   reads as a highlighter pen. On black it reads as glow, so dark keeps it. */
+	--ch-20: rgba(31, 76, 140, 0.16); /* selection */
 	--ch-21: #14161a; /* active border */
 	--ch-22: #f5f6f8; /* inactive tab */
 	--ch-23: rgba(20, 22, 26, 0.14); /* border */
@@ -384,16 +398,25 @@
 	--ah-accent-line: rgba(245, 196, 81, 0.35);
 	--ah-band: #0e0e0d;
 
-	/* Syntax theme — see the note in `:root`. Same ramp, dark values. */
+	/* Syntax theme — see the note in `:root`.
+	   DARK keeps the gold keyword: against near-black the accent is at full
+	   strength, so it is the brand doing the highlighting rather than a
+	   darkened stand-in for it, and this is the ground that palette was drawn
+	   for. What it does NOT keep is the single warm ramp underneath. Constants
+	   (#d8c07a), parameters (#e3d8bf) and strings (#c2b795) were three sands
+	   within about 12% of each other and of the .86 default ink — so past the
+	   gold, no token separated from its neighbours. They now take a hue each,
+	   held at low chroma and high lightness so the block still reads warm and
+	   quiet rather than like a christmas tree. */
 	--ch-0: dark;
-	--ch-1: rgba(244, 243, 241, 0.36); /* comment */
-	--ch-2: #d8c07a; /* constant, number */
-	--ch-3: #e3d8bf; /* entity, parameter */
+	--ch-1: rgba(244, 243, 241, 0.5); /* comment */
+	--ch-2: #d9a3c4; /* constant, number */
+	--ch-3: #cfd6e0; /* entity, parameter */
 	--ch-4: rgba(244, 243, 241, 0.86); /* default foreground */
 	--ch-5: #f4f3f1; /* function name */
-	--ch-6: #9fc09a; /* tag, inserted text */
+	--ch-6: #86c98d; /* tag, inserted text */
 	--ch-7: #f5c451; /* keyword, storage */
-	--ch-8: #c2b795; /* string */
+	--ch-8: #9dbfa4; /* string */
 	--ch-9: #d99a92; /* deleted text */
 	--ch-10: #f4f3f1; /* heading */
 	--ch-11: #2a1614; /* deleted background */
