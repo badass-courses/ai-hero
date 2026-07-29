@@ -1135,6 +1135,24 @@ pre .ah-code-inline {
 	margin-bottom: 0;
 }
 
+/* The `<Testimonial>` component's paragraphs.
+ *
+ * Its own classes live in `page-builder-mdx-components.tsx`, but its children
+ * are compiled by the same MDX map as the rest of the body, so every paragraph
+ * inside it arrives carrying `.ah-prose-p`. That class is UNLAYERED and every
+ * Tailwind utility is layered, so it won every conflict regardless of what the
+ * component asked for: the quote rendered at 17.5px body size instead of the
+ * `quoteProse` token, at 72% instead of full contrast, and with a 20px margin
+ * under the last line that the flex `gap` then stacked on top of. Same shape
+ * of fix as `.ah-prose-quote` above, for the same reason. */
+.ah-testimonial > .ah-prose-p {
+	font: inherit;
+	letter-spacing: inherit;
+	color: inherit;
+	margin: 0;
+	text-wrap: pretty;
+}
+
 .ah-prose-hr {
 	margin: 44px 0;
 	border: 0;

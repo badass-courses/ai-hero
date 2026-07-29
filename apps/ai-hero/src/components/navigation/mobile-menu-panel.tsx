@@ -33,6 +33,16 @@ import { NAV_ICONS } from './sidebar/nav-icons'
 import { normalizePath } from './sidebar/sidebar-client'
 import { ThemeToggle } from './theme-toggle'
 
+/** What the drawer's focus trap counts as a stop. */
+const FOCUSABLE_SELECTOR = [
+	'a[href]',
+	'button:not([disabled])',
+	'input:not([disabled])',
+	'select:not([disabled])',
+	'textarea:not([disabled])',
+	'[tabindex]:not([tabindex="-1"])',
+].join(',')
+
 function normalize(path: string): string {
 	const trimmed = path.split(/[?#]/)[0]?.replace(/\/+$/, '') || ''
 	return trimmed === '' ? '/' : trimmed.toLowerCase()
@@ -102,6 +112,8 @@ export function MobileMenuPanel({
 		)
 		.map((group) => group.title)
 
+	const panelRef = React.useRef<HTMLDivElement>(null)
+	const closeButtonRef = React.useRef<HTMLButtonElement>(null)
 	const scrollerRef = React.useRef<HTMLElement>(null)
 	// Survives close because this component stays mounted (the parent always
 	// renders it and we bail on `isOpen` below) — that is what makes "the drawer
@@ -109,6 +121,16 @@ export function MobileMenuPanel({
 	const savedScrollTop = React.useRef<number | null>(null)
 
 	useBodyScrollLock(isOpen)
+
+	// A remembered offset describes a place in the tree relative to where the
+	// reader WAS. Once they follow a link it points at an unrelated branch, and
+	// because the restore below returns early it would also suppress the
+	// centring that should have run for the new route. Forget it on navigation
+	// so the next open re-locates on the current item; within a route it still
+	// survives close, which is the behaviour it exists for.
+	React.useEffect(() => {
+		savedScrollTop.current = null
+	}, [pathname])
 
 	// Close on Escape — a full-height sheet that traps the page behind it needs
 	// the standard way out, not only the hamburger.
@@ -120,6 +142,51 @@ export function MobileMenuPanel({
 		document.addEventListener('keydown', onKeyDown)
 		return () => document.removeEventListener('keydown', onKeyDown)
 	}, [isOpen, onClose])
+
+	// A sheet that covers the page has to take the tab order with it. Without
+	// this, focus stays on the hamburger behind the scrim and Tab walks the
+	// obscured page — for a keyboard or screen-reader user the drawer never
+	// really opened, it just hid the thing they were still driving.
+	//
+	// Focus lands on Close rather than the first link: it is the way out, and
+	// the panel's own first row is a scrolled-to position, not a starting point.
+	React.useEffect(() => {
+		if (!isOpen) return
+		const previouslyFocused = document.activeElement as HTMLElement | null
+		closeButtonRef.current?.focus()
+		return () => previouslyFocused?.focus?.()
+	}, [isOpen])
+
+	// Tab wraps inside the panel. Queried per keystroke rather than cached
+	// because the accordion opens and closes branches while the drawer is
+	// open; `offsetParent` drops the rows inside a collapsed group, which are
+	// present in the DOM but not reachable.
+	React.useEffect(() => {
+		if (!isOpen) return
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== 'Tab') return
+			const panel = panelRef.current
+			if (!panel) return
+			const focusable = Array.from(
+				panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+			).filter((el) => el.offsetParent !== null)
+			const first = focusable[0]
+			const last = focusable[focusable.length - 1]
+			if (!first || !last) return
+
+			const active = document.activeElement
+			const outside = !panel.contains(active)
+			if (event.shiftKey ? active === first || outside : active === last) {
+				event.preventDefault()
+				;(event.shiftKey ? last : first).focus()
+			} else if (outside) {
+				event.preventDefault()
+				first.focus()
+			}
+		}
+		document.addEventListener('keydown', onKeyDown)
+		return () => document.removeEventListener('keydown', onKeyDown)
+	}, [isOpen])
 
 	// Where the drawer lands when it opens. First open: on the current item, so
 	// a reader deep in the tree sees their place. Later opens: exactly where
@@ -212,6 +279,10 @@ export function MobileMenuPanel({
 			/>
 			<div
 				id="mobile-menu-panel"
+				ref={panelRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Site navigation"
 				className="bg-background animate-in slide-in-from-left-2 fade-in-0 fixed inset-y-0 left-0 z-50 flex w-[min(86vw,340px)] flex-col border-r duration-200 lg:hidden"
 			>
 				{/* Its own header row: the sheet covers the site header, so without one
@@ -230,6 +301,7 @@ export function MobileMenuPanel({
 					</Link>
 					<button
 						type="button"
+						ref={closeButtonRef}
 						onClick={onClose}
 						aria-label="Close menu"
 						className="text-muted-foreground hover:text-foreground focus-visible:ring-ring -mr-2 flex size-11 items-center justify-center focus-visible:outline-none focus-visible:ring-2"

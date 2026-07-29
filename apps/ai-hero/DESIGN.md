@@ -362,7 +362,7 @@ Every PR is checked in both themes before merge. The light-mode primary asymmetr
 
 Match-and-refuse list. If you are about to ship one of these, redesign the element.
 
-- **Side-stripe borders.** A colored `border-l` or `border-r` thicker than 1px as a card or alert accent.
+- **Side-stripe borders.** A colored `border-l` or `border-r` thicker than 1px as a card or alert accent. One exception, and only one: a **pull quote in running prose** may take a 2px `border-primary` left rail (`Testimonial` in `page-builder-mdx-components.tsx`). There the rail is the quotation mark — the block has no surface of its own and the serif alone does not mark the change of speaker inside a column of sans. It stays banned anywhere the element already has a background, and at any width above 2px.
 - **Gradient text.** `background-clip: text` on a gradient is decorative, never meaningful. Use weight or size, or `text-primary` if dark mode.
 - **Glassmorphism as default.** Blurred translucent cards used decoratively. Rare and purposeful, or nothing.
 - **Hero-metric template.** Big number, small label, supporting stats, gradient accent. SaaS cliché.

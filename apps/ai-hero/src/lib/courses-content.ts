@@ -38,6 +38,12 @@ export const FLAGSHIP_HERO = {
 	formatValue: 'Async lessons + live office hours',
 	datesLabel: 'Next dates',
 	datesWaitlistValue: 'Announced to the list first',
+	/**
+	 * A cohort can be purchasable without a future start date — no date set
+	 * yet, or one already underway and still open. Neither is a waitlist, so
+	 * neither may borrow the waitlist's line.
+	 */
+	datesOpenValue: 'Enrolling now',
 } as const
 
 /** The hero's right cell, between cohorts: the waitlist capture. */

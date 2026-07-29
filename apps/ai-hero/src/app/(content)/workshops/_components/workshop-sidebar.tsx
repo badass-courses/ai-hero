@@ -34,9 +34,6 @@ export const WorkshopSidebar = ({
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
 }) => {
-	// The buy/waitlist widget, as opposed to the interest-capture CTA or the
-	// resource list. Only this one needs the shell to inset it.
-	const isPricingState = Boolean(pricingProps) && !interestCapture
 	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
 	const [windowHeight, setWindowHeight] = React.useState(0)
 	const buySectionRef = useRef<HTMLDivElement>(null)
@@ -61,32 +58,17 @@ export const WorkshopSidebar = ({
 				id="buy"
 				className={cn('scroll-mt-15 relative flex h-full flex-col', className)}
 			>
-				{/* Only the pricing widget needs the shell to pad it — its content
-				    starts flush at the top edge. The interest-capture CTA and the
-				    resource list both bring their own padding (the list is deliberately
-				    full-bleed), so padding the shell for everyone double-inset them.
-				    On `#buy` rather than here it would be worse still: that one is
-				    `h-full` and spans the whole article, so the padding would land in
-				    dead space and shift the sticky offset. */}
+				{/* No padding here, deliberately. Every state this shell hosts owns
+				    its own inset: the pricing widget is a `bg-card` surface that has
+				    to reach the column's edges to read as one, the interest-capture
+				    CTA pads itself, and the resource list is full-bleed by design.
+				    Padding the shell double-inset all three — it floated the pricing
+				    card inside its own column instead of filling it. */}
 				<div
 					ref={sidebarRef}
-					className={cn(
-						{ 'px-6 py-8': isPricingState },
-						{
-							'md:top-(--nav-height) md:sticky': true, //sticky && windowHeight - 63 > height,
-						},
-					)}
+					className="md:top-(--nav-height) md:sticky" //sticky && windowHeight - 63 > height,
 				>
-					<ScrollArea
-						className={cn(
-							"h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50",
-							// Subtract exactly what the wrapper added, so a long Includes
-							// list still ends inside the viewport rather than under it.
-							isPricingState
-								? 'lg:max-h-[calc(100vh-var(--nav-height)-4rem)]'
-								: 'lg:max-h-[calc(100vh-var(--nav-height))]',
-						)}
-					>
+					<ScrollArea className="lg:max-h-[calc(100vh-var(--nav-height))] h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{children}
 						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
 							<div className="from-background bg-linear-to-t pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full to-transparent lg:block" />

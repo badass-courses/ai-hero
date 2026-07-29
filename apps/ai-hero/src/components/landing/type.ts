@@ -165,6 +165,17 @@ export const TYPE = {
 	quote:
 		'font-serif text-[18px] font-normal leading-[1.45] tracking-[-0.005em] sm:text-[20px]',
 	/**
+	 * The same voice, one step up, for a testimonial set INSIDE article prose.
+	 *
+	 * `quote` is sized for a card or a grid cell, where the surface already
+	 * frames it. Dropped into a column of 17px body copy it has no frame, and a
+	 * serif at 400 reads optically lighter than the sans around it — at the same
+	 * nominal size it looks like a smaller aside rather than a change of
+	 * speaker. The step up is what makes it read as an interruption.
+	 */
+	quoteProse:
+		'font-serif text-[21px] font-normal leading-[1.45] tracking-[-0.005em] sm:text-[24px]',
+	/**
 	 * The paragraph under an `h1` or `h2`. Prose sitting beneath a display
 	 * line, so it stays at normal weight and yields to it.
 	 */

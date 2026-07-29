@@ -154,8 +154,10 @@ export async function FlagshipHero({
 					</Fact>
 					<Fact label={FLAGSHIP_HERO.datesLabel}>
 						<span className={cn(TYPE.bodyTight, !isOpen && 'text-primary')}>
-							{isOpen && startsInFuture && startsAt
-								? formatStartsAt(startsAt, timezone)
+							{isOpen
+								? startsInFuture && startsAt
+									? formatStartsAt(startsAt, timezone)
+									: FLAGSHIP_HERO.datesOpenValue
 								: FLAGSHIP_HERO.datesWaitlistValue}
 						</span>
 					</Fact>

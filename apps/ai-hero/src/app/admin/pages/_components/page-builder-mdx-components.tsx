@@ -158,27 +158,38 @@ const CheckList = ({ children }: { children: React.ReactNode }) => {
 }
 
 /**
- * A testimonial inside an article body, matched to `.ah-prose-quote` in
- * `globals.css`: a pair of hairlines above and below, and nothing on the left.
+ * A testimonial inside an article body.
  *
- * Two things used to push it off the prose column. It carried a 4px
- * `border-primary` left rail with `pl-5` behind it — a side-stripe border, which
- * the design language bans outright and which by itself indented the quote 24px
- * past every paragraph around it. And it was `mx-auto max-w-3xl` inside article
- * prose that runs to `max-w-4xl`, so the leftover 128px got split evenly and
- * centred the block against its neighbours. Both are gone: full width of the
- * column it sits in, flush left.
+ * It sits flush in the prose column: it used to be `mx-auto max-w-3xl` inside
+ * article prose that runs to `max-w-4xl`, so the leftover 128px got split
+ * evenly and centred the block against its neighbours.
+ *
+ * The 2px `border-primary` rail is the one sanctioned exception to the
+ * side-stripe ban (DESIGN "Bans"), and it is narrow: a pull quote in running
+ * prose, not a card or an alert. The ban is about borrowed urgency — a colour
+ * bar stuck on a box to make it look important. Here the rail is the quotation
+ * mark. Nothing else frames the block, and without it a serif paragraph in a
+ * column of sans body copy reads as a stylistic wobble rather than a second
+ * voice. Anything wider than 2px, or on anything that already has a surface,
+ * is still banned.
+ *
+ * `pl-5` is the rail's own offset, so the text hangs the way a quote should
+ * rather than starting on the line.
  */
-// No rules top or bottom: the serif already separates a quote from the prose
-// around it, and the hairlines turned every testimonial into a boxed callout.
-// `border-y` is why removing just the bottom was not an option — that leaves an
-// orphan line on top. The `my-8`/`py-6` band keeps the block breathing.
+// No rules top or bottom: the rail and the serif already separate the quote
+// from the prose, and the hairlines turned every testimonial into a boxed
+// callout. The `py-6` that survived them is gone too — with no band to hold
+// open, it only stacked on `my-8` and left the block floating in a gap half
+// again as deep as the paragraph spacing around it.
 const testimonialVariants = cva(
-	'not-prose relative my-8 flex w-full flex-col gap-3 py-6',
+	'not-prose relative my-8 flex w-full flex-col gap-3',
 	{
 		variants: {
 			variant: {
-				default: 'items-start',
+				// The rail belongs to the flush-left quote only. On the centred
+				// variant it would be a margin decoration with nothing to align to,
+				// pulling a symmetric block off-axis.
+				default: 'border-primary items-start border-l-2 pl-5',
 				centered: 'items-center justify-center text-balance text-center',
 			},
 		},
@@ -202,8 +213,12 @@ const Testimonial = ({
 	return (
 		<blockquote
 			className={cn(
-				TYPE.quote,
-				'text-foreground [&>p]:m-0 [&>p]:text-pretty',
+				TYPE.quoteProse,
+				// `ah-testimonial` is not decoration — it is what lets the type
+				// above actually apply. See the rule of that name in `globals.css`:
+				// the paragraphs inside come from the MDX map wearing the unlayered
+				// `.ah-prose-p`, which outranks every utility here.
+				'ah-testimonial text-foreground',
 				testimonialVariants({ variant }),
 			)}
 		>

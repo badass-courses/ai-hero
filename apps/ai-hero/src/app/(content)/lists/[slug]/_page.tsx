@@ -299,10 +299,21 @@ export default async function ListPage(props: {
 
 			{/* WHY THIS MATTERS — headline left, prose right. When the body didn't
 			    open with a bolded line the left cell is just the label, which is
-			    still the spec's shape rather than a heading invented for it. */}
-			{body && (
+			    still the spec's shape rather than a heading invented for it.
+			    Either half alone still earns the section: a body whose whole
+			    content was the bolded opener (or that one plus an outcomes list,
+			    both of which are hoisted out) leaves `rest` empty, and gating on
+			    the prose alone dropped the authored headline silently. With no
+			    prose the split collapses — an empty second column would drag the
+			    headline into a narrow left rail for no reason. */}
+			{(body || parts.headline) && (
 				<section className="border-b">
-					<div className="grid grid-cols-1 gap-6 px-[18px] py-16 sm:px-11 md:py-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:gap-16">
+					<div
+						className={cn(
+							'grid grid-cols-1 gap-6 px-[18px] py-16 sm:px-11 md:py-20 lg:gap-16',
+							body && 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]',
+						)}
+					>
 						<div className="flex flex-col gap-4">
 							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 								Why this matters
@@ -313,9 +324,11 @@ export default async function ListPage(props: {
 								</h2>
 							)}
 						</div>
-						<article className="prose dark:prose-invert prose-headings:tracking-tight max-w-none [&>*]:max-w-[70ch]">
-							{body}
-						</article>
+						{body && (
+							<article className="prose dark:prose-invert prose-headings:tracking-tight max-w-none [&>*]:max-w-[70ch]">
+								{body}
+							</article>
+						)}
 					</div>
 				</section>
 			)}
