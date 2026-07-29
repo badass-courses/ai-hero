@@ -10,7 +10,6 @@ import {
 	BookA,
 	BookOpen,
 	Calendar,
-	Cog,
 	FileText,
 	GraduationCap,
 	Map as MapIcon,
@@ -20,6 +19,7 @@ import {
 import { cn } from '@coursebuilder/utils/cn'
 
 import { FEATURED_PROMO, type Promo } from '../navigation/promo-config'
+import { NAV_ICONS, SkillsIcon } from '../navigation/sidebar/nav-icons'
 import {
 	Command,
 	CommandEmpty,
@@ -58,8 +58,11 @@ import {
 type PaletteResult = PaletteItem & { id: string }
 
 const TYPE_ICONS: Record<PaletteItemType, React.ComponentType<any>> = {
+	// `/learn` and `/skills` resolve to the sidebar's own glyphs via NAV_ICONS
+	// below; these two are the fallback for hits that share the type but not the
+	// destination (a skill POST, say, rather than the skill set).
 	map: MapIcon,
-	skill: Cog,
+	skill: SkillsIcon,
 	course: GraduationCap,
 	workshop: GraduationCap,
 	cohort: GraduationCap,
@@ -71,8 +74,23 @@ const TYPE_ICONS: Record<PaletteItemType, React.ComponentType<any>> = {
 	article: FileText,
 }
 
-function iconForType(type: string) {
-	return TYPE_ICONS[type as PaletteItemType] ?? FileText
+/** Trailing slash + case stripped, so `/Skills/` matches `/skills`. */
+function normalizeHref(href: string): string {
+	const path = href.split(/[?#]/)[0]?.replace(/\/+$/, '') || ''
+	return (path === '' ? '/' : path).toLowerCase()
+}
+
+/**
+ * The row's glyph. A destination the hub sidebar also lists (Map, Skills, Open
+ * source) takes the SIDEBAR's icon, not a lucide stand-in for its type: the two
+ * surfaces name the same places one keystroke apart, and drawing /skills as a
+ * cog here and as the skill glyph in the rail made them look like two different
+ * destinations. Everything else falls back to the type icon.
+ */
+function iconForItem(item: { type: string; href: string }) {
+	const navIcon = NAV_ICONS[normalizeHref(item.href)]
+	if (navIcon) return navIcon
+	return TYPE_ICONS[item.type as PaletteItemType] ?? FileText
 }
 
 /**
@@ -297,7 +315,7 @@ export function SearchPalette({
 									: 'Searching…'}
 							</CommandEmpty>
 							{items.map((item) => {
-								const Icon = iconForType(item.type)
+								const Icon = iconForItem(item)
 								return (
 									<CommandItem
 										key={item.id}
@@ -310,9 +328,13 @@ export function SearchPalette({
 											router.push(item.href)
 										}}
 										// cmdk's data-[selected] tracks both hover and keyboard
-										// position; bg-muted matches the nav pill affordance and
-										// reads clearly in both themes (bg-accent was too subtle).
-										className="data-[selected=true]:bg-muted data-[selected=true]:text-foreground rounded-none p-0"
+										// position. NOT `bg-muted`: the design refresh retoned the dark
+										// palette, and `--muted` (#0d0d0c) now sits two values off
+										// `--background` (#0b0b0b) — the cursor was invisible in the theme
+										// most people read in. `--secondary` is the app's raised-surface step
+										// (white/.07 dark, ink/.06 light) and it separates from the ground in
+										// both.
+										className="data-[selected=true]:bg-secondary data-[selected=true]:text-foreground rounded-none p-0"
 									>
 										{/* Real anchor: status-bar URL, cmd/middle-click,
 										    long-press context menu all work. */}
