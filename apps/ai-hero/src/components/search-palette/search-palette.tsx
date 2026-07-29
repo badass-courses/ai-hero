@@ -174,6 +174,11 @@ export function SearchPalette({
 	const [promo, setPromo] = React.useState<Promo | null>(
 		FEATURED_PROMO ?? PALETTE_PROMO,
 	)
+	// Set on a row's pointerdown, cleared by any keydown in the palette (see the
+	// row's `onSelect`). Cleared on keydown rather than after the click so a
+	// press that drags off the row and never becomes a click can't leave the
+	// flag set and swallow the next ⏎.
+	const pointerSelectRef = React.useRef(false)
 
 	// Global shortcut: ⌘K / Ctrl+K toggles the palette.
 	React.useEffect(() => {
@@ -289,7 +294,13 @@ export function SearchPalette({
 					<DialogPrimitive.Title className="sr-only">
 						Search AI Hero
 					</DialogPrimitive.Title>
-					<Command shouldFilter={false} className="rounded-none bg-background">
+					<Command
+						shouldFilter={false}
+						className="bg-background rounded-none"
+						onKeyDown={() => {
+							pointerSelectRef.current = false
+						}}
+					>
 						<div className="flex items-center">
 							<div className="min-w-0 flex-1">
 								<CommandInput
@@ -322,7 +333,18 @@ export function SearchPalette({
 										// Unique value keeps cmdk selection stable across
 										// duplicate titles; first item is auto-selected.
 										value={`${item.title} ${item.href}`}
+										// cmdk's Item attaches its own `onClick` that calls
+										// `onSelect`, so a mouse click on the anchor below BUBBLES
+										// into this handler as well: unguarded, one click tracked
+										// `search_palette_result_selected` twice and fired a
+										// `router.push` on top of the anchor's own navigation
+										// (a duplicate history entry, so Back appeared broken).
+										// The anchor owns the mouse; this owns the keyboard.
+										onPointerDown={() => {
+											pointerSelectRef.current = true
+										}}
 										onSelect={() => {
+											if (pointerSelectRef.current) return
 											// Keyboard ⏎ — same destination as the anchor.
 											trackAndClose(item, 'result')
 											router.push(item.href)

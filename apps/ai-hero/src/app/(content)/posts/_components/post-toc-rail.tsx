@@ -63,18 +63,30 @@ function getTocModel(markdown: string): TocModel {
  */
 function useActiveSection(model: TocModel): string | null {
 	const { visibleHeadings } = useActiveHeadingContext()
-	const lastActiveRef = React.useRef<string | null>(null)
+	const [lastActive, setLastActive] = React.useState<string | null>(null)
 
-	return React.useMemo(() => {
-		let current: string | null = null
+	// The section in view right now — null in the gaps between them.
+	const current = React.useMemo(() => {
+		let found: string | null = null
 		for (const slug of model.order) {
 			if (visibleHeadings.has(slug)) {
-				current = model.ownerBySlug.get(slug) ?? current
+				found = model.ownerBySlug.get(slug) ?? found
 			}
 		}
-		if (current) lastActiveRef.current = current
-		return lastActiveRef.current
+		return found
 	}, [model, visibleHeadings])
+
+	// The memory is committed in an effect rather than written during render.
+	// A ref mutated inside `useMemo` is not safe under concurrent rendering —
+	// React may discard and re-run a memo, so the value read back depended on
+	// how many times it happened to run.
+	React.useEffect(() => {
+		if (current) setLastActive(current)
+	}, [current])
+
+	// `current` still wins the frame it appears in, so nothing waits on the
+	// effect; `lastActive` only answers for the gaps.
+	return current ?? lastActive
 }
 
 /**
@@ -146,6 +158,13 @@ function useActiveLandmark(landmarks: TocLandmark[]): string | null {
  * Each row is placed under the last h2 above it, so the rail keeps document
  * order: a mid-article promo sits between the sections it actually sits
  * between, not in a tray at the bottom.
+ *
+ * PRECONDITION: every CTA must be in the DOM by the time this effect runs. It
+ * scans ONCE — there is no observer. That holds because the MDX components are
+ * `next/dynamic` WITHOUT `ssr: false`, so they arrive in the server HTML. A CTA
+ * that ever becomes client-only (`ssr: false`, or mounted behind a fetch) will
+ * not appear in the rail, and will fail silently — the rail will simply be
+ * short a row. Add a re-scan here before introducing one.
  */
 type CtaLandmark = { id: string; label: string; afterSlug: string | null }
 
@@ -244,7 +263,11 @@ function TocLinks({
 			// A promo above the first h2 (or in an article with none).
 			...ctas.filter((cta) => cta.afterSlug === null).map(ctaRow),
 			...model.sections.flatMap((section) => [
-				{ id: section.slug, label: <TocText>{section.text}</TocText>, isCta: false },
+				{
+					id: section.slug,
+					label: <TocText>{section.text}</TocText>,
+					isCta: false,
+				},
 				...ctas.filter((cta) => cta.afterSlug === section.slug).map(ctaRow),
 			]),
 			// The page's endings always close the list.

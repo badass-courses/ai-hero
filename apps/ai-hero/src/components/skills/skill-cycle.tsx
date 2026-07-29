@@ -1,8 +1,20 @@
 'use client'
 
 /**
- * SkillCycle — the interactive 7-phase skill cycle diagram, shared by the
- * /skills landing (W2) and the homepage (W4). Spec: w2-skills-pages §4.
+ * SkillCycle — the interactive 7-phase skill cycle diagram.
+ *
+ * ⚠️ NOT MOUNTED ANYWHERE as of 2026-07-29. It is built and exported, but
+ * neither /skills nor the homepage renders it: both show the CMS list's six
+ * named sections instead (Matt's own grouping of his skills, editable without
+ * a deploy), and the phase metadata survives only as the skill page's section
+ * rail. This is divergence #1 in the nav-redesign PR and is awaiting Amy's
+ * sign-off — the component is parked deliberately, not abandoned. The
+ * embedding examples below describe the INTENDED wiring, not current callers;
+ * nothing matches them today. Delete this file, `skill-cycle-context.tsx`, and
+ * their `index.ts` exports if the phase visual is dropped for good.
+ *
+ * Originally spec'd as shared by the /skills landing (W2) and the homepage
+ * (W4). Spec: w2-skills-pages §4.
  *
  * Pure client presentation: all data arrives serialized via props from a
  * server component (`getSkillEntries()` in `src/lib/skills-query.ts`). No
@@ -152,7 +164,8 @@ export function SkillCycle({
 	const [internalSlug, setInternalSlug] = React.useState<string | null>(null)
 
 	// Controlled props → shared context → internal state.
-	const isControlled = hoveredSlugProp !== undefined || onHoverSlug !== undefined
+	const isControlled =
+		hoveredSlugProp !== undefined || onHoverSlug !== undefined
 	const hoveredSlug = isControlled
 		? (hoveredSlugProp ?? null)
 		: (context?.hoveredSlug ?? internalSlug)
@@ -168,10 +181,7 @@ export function SkillCycle({
 	)
 
 	const coreEntries = skills.filter((entry) => !isUtility(entry))
-	const utilityEntries = [
-		...skills.filter(isUtility),
-		...(utilitySkills ?? []),
-	]
+	const utilityEntries = [...skills.filter(isUtility), ...(utilitySkills ?? [])]
 	const nodes = buildPhaseNodes(coreEntries)
 
 	const activePhaseKey =
@@ -300,8 +310,7 @@ function handleArrowKeys(event: React.KeyboardEvent<HTMLElement>) {
 	if (index === -1 || links.length === 0) return
 
 	event.preventDefault()
-	const nextIndex =
-		(index + (forward ? 1 : -1) + links.length) % links.length
+	const nextIndex = (index + (forward ? 1 : -1) + links.length) % links.length
 	links[nextIndex]?.focus()
 }
 
