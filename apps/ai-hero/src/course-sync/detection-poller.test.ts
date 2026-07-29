@@ -105,20 +105,16 @@ function harness(input?: {
 	let state = input?.state ?? null
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
-	const stage = vi.fn(
-		input?.stage ?? (async () => run('staged')),
-	)
+	const stage = vi.fn(input?.stage ?? (async () => run('staged')))
 	const preview = vi.fn(async () => run('previewed'))
-	const apply = vi.fn(
-		input?.apply ?? (async () => run('applied')),
-	)
+	const apply = vi.fn(input?.apply ?? (async () => run('applied')))
 	const freezeAsset = vi.fn(async () => frozenAsset)
 	const dependencies: CourseSyncDetectionPollerDependencies = {
 		readManifest: async () => ({
 			manifest,
 			summary: {
 				courseVersionId: 'version-2',
-				manifest: { rev: 'dropbox-rev-2' },
+				manifest: { rev: 'dropbox-rev-2', sha256: 'b'.repeat(64) },
 			},
 		}),
 		getRevisionHead: async () => input?.head ?? null,
@@ -331,38 +327,55 @@ describe('course sync detection poller', () => {
 		expect(notifications).toHaveLength(2)
 	})
 
-	it('builds the required success and failure notification payloads', () => {
+	it('builds human success and failure notification payloads with permalinks', () => {
+		const courseVersionId = '98479f85-7dc8-4053-83da-7f4d2df1a195'
+		const manifestSha256 = 'b'.repeat(64)
 		const success = buildCourseSyncNotificationPayload({
 			kind: 'success',
-			courseVersionId: 'version-2',
+			courseVersionId,
+			courseName: 'AI Coding Crash Course',
 			providerRevision: 'dropbox-rev-2',
+			manifestSha256,
 			runId: 'poll-2',
 			controlPlaneRunId: 'sync-run-2',
 			resourceCounts: { create: 3, update: 2, retain: 1 },
+			structureCounts: { sections: 4, lessons: 39, videos: 47 },
+			durationSeconds: 31 * 60,
 			mediaCount: 4,
 			workshopEditUrl:
 				'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
 		})
 		const failure = buildCourseSyncNotificationPayload({
 			kind: 'failure',
-			courseVersionId: 'version-2',
+			courseVersionId,
+			courseName: 'AI Coding Crash Course',
 			providerRevision: 'dropbox-rev-2',
+			manifestSha256,
 			runId: 'poll-failure',
 			controlPlaneRunId: 'sync-run-2',
+			stage: 'apply',
 			failureClass: 'PLANETSCALE_TRANSACTION_TIMEOUT',
+			reason: 'The database transaction timed out.',
 		})
 
+		expect(success.text).toBe(
+			'Synced AI Coding Crash Course (98479f85) into the draft workshop: 4 sections, 39 lessons, 47 videos, 31 min. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
+		)
 		expect(success.attachments[0]?.text).toContain(
 			'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
 		)
 		expect(success.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([
+				expect.objectContaining({
+					title: 'Manifest SHA',
+					value: 'bbbbbbbbbbbb',
+				}),
 				expect.objectContaining({ title: 'Created', value: '3' }),
 				expect.objectContaining({ title: 'Media updated', value: '4' }),
 			]),
 		)
-		expect(failure.text).toContain(
-			'failure=PLANETSCALE_TRANSACTION_TIMEOUT; poll=poll-failure; sync=sync-run-2; courseVersionId=version-2',
+		expect(failure.text).toBe(
+			'Course sync failed while apply AI Coding Crash Course (98479f85): The database transaction timed out. It will retry once, then hold for a human. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
 		)
 		expect(failure.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([
