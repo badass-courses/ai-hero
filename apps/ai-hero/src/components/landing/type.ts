@@ -155,9 +155,15 @@ export const TYPE = {
 	 * Pull quotes and testimonials (`.ah-quote`). Same size as `subhead` but
 	 * set looser: a quote is read as a sentence, and heading leading breaks it
 	 * into slabs.
+	 *
+	 * Source Serif 4, roman and regular. It used to be bold italic DM Sans —
+	 * two typographic shouts doing the job that a change of voice should do
+	 * quietly. The serif marks "someone else is talking" on its own, so the
+	 * weight and the slant both come off. The negative tracking goes with them:
+	 * it is a tight-set-sans device and it crowds a serif.
 	 */
 	quote:
-		'text-[18px] font-bold italic leading-[1.4] tracking-[-0.018em] sm:text-[20px]',
+		'font-serif text-[18px] font-normal leading-[1.45] tracking-[-0.005em] sm:text-[20px]',
 	/**
 	 * The paragraph under an `h1` or `h2`. Prose sitting beneath a display
 	 * line, so it stays at normal weight and yields to it.

@@ -60,7 +60,7 @@ export async function UpcomingCohort({
 			className="border-border grid grid-cols-1 items-center border-b md:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]"
 		>
 			{/* 64 / 44 / 60, per `Home Page.dc.html` § COHORT. */}
-			<div className="flex flex-col justify-center gap-6 px-8 py-14 sm:px-11 md:pb-[60px] md:pt-16">
+			<div className="flex flex-col justify-center gap-6 px-[18px] py-14 sm:px-11 md:pb-[60px] md:pt-16">
 				<div className="flex flex-col gap-4">
 					{/* Status first, then what the thing is. The badge is the only
 					    piece of this block that changes between visits, so it leads;
@@ -176,7 +176,7 @@ export async function UpcomingCohort({
 					href={`/cohorts/${cohort.slug}`}
 					aria-hidden
 					tabIndex={-1}
-					className="border-border group flex h-full items-center bg-[color:var(--ah-band)] px-8 pb-14 sm:px-11 md:border-l md:py-11"
+					className="border-border group flex h-full items-center bg-[color:var(--ah-band)] px-[18px] pb-14 sm:px-11 md:border-l md:py-11"
 				>
 					{/* Native 16:9, not a cropped fill. Every resource image on the
 					    site is a thumbnail ratio, and this artwork is a designed title

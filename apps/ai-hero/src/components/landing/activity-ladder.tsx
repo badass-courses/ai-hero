@@ -81,7 +81,7 @@ export function ActivityLadder({
 			    left the page reading as one long undifferentiated column of
 			    links. A hairline per rung costs nothing and gives the eye the
 			    break the gap was failing to. */}
-			<div className="px-8 pb-14 sm:px-11 sm:pb-[68px]">
+			<div className="px-[18px] pb-14 sm:px-11 sm:pb-[68px]">
 				<ul className="border-border border-t [&>li:last-child]:border-b-0">
 					{children}
 				</ul>

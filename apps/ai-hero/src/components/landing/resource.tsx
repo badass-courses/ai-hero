@@ -474,7 +474,7 @@ function EditorialBadge({ children }: { children: React.ReactNode }) {
  */
 export function ResourceGrid({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="mt-0! grid w-full grid-cols-1 gap-5 border-t-0! px-8 pb-14 sm:grid-cols-2 sm:px-11 sm:pb-16 lg:grid-cols-3">
+		<div className="mt-0! grid w-full grid-cols-1 gap-5 border-t-0! px-[18px] pb-14 sm:grid-cols-2 sm:px-11 sm:pb-16 lg:grid-cols-3">
 			{children}
 		</div>
 	)

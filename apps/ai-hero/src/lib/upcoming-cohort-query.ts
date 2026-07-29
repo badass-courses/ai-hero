@@ -3,6 +3,8 @@ import { contentResource } from '@/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 
 export type UpcomingCohortSummary = {
+	/** Resource id — lets callers ask whether this viewer already owns it. */
+	id: string
 	title: string
 	slug: string
 	/** ISO datetime when the cohort starts, when set on the resource. */
@@ -65,6 +67,7 @@ export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null>
 	if (!winner) return null
 
 	return {
+		id: winner.id,
 		title: readString(winner.fields, 'title') ?? 'Upcoming cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),
@@ -102,6 +105,7 @@ export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
 
 	const winner = sorted[0]!
 	return {
+		id: winner.id,
 		title: readString(winner.fields, 'title') ?? 'The next cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),

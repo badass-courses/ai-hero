@@ -53,21 +53,36 @@ function trackFooterClick(resource: string | undefined, type: FooterLinkType) {
 const focusRing =
 	'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background'
 
-/** Column links: 14px, muted ink, one gap per row. */
+/**
+ * Column links: 14px, muted ink. The row rhythm is `py-[5px]` on the link
+ * rather than a gap on the list, so neighbouring hit areas touch — see
+ * `linkListClass`.
+ */
 const linkClass = cn(
 	TYPE.meta,
 	focusRing,
-	'text-[color:var(--ah-fg-muted)] hover:text-foreground transition-colors',
+	'inline-block py-[5px] text-[color:var(--ah-fg-muted)] hover:text-foreground transition-colors',
 )
 
 /** The Agents column is data, so it is mono (rule 10). */
 const monoLinkClass = cn(
 	TYPE.metaMono,
 	focusRing,
-	'text-[color:var(--ah-fg-muted)] hover:text-foreground transition-colors',
+	'inline-block py-[5px] text-[color:var(--ah-fg-muted)] hover:text-foreground transition-colors',
 )
 
 const listClass = 'flex flex-col items-start gap-2.5'
+
+/**
+ * Link lists carry no gap. `dimSiblingsOnHover` keys off `:has(a:hover)`, so a
+ * dead gap between rows unhovers everything mid-travel and the whole column
+ * flashes back to full opacity between one link and the next. The 10px rhythm
+ * comes from `py-[5px]` on the links instead, which makes the hit areas tile:
+ * the pointer is always over some link, and the spotlight never drops. The
+ * negative margin gives back the 5px added above the first row and below the
+ * last so the column's outer spacing is unchanged.
+ */
+const linkListClass = '-my-[5px] flex flex-col items-start'
 
 const dimSiblingsOnHover =
 	'[&:has(a:hover,button:hover)_a:not(:hover)]:opacity-60 [&:has(a:hover,button:hover)_button:not(:hover)]:opacity-60'
@@ -95,7 +110,7 @@ function LearnColumn() {
 	return (
 		<div>
 			<Eyebrow>Learn</Eyebrow>
-			<ul className={cn(listClass, dimSiblingsOnHover)}>
+			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				{courses.map((course) => (
 					<li key={course.href}>
 						<Link
@@ -149,7 +164,7 @@ function LiveColumn() {
 					</Link>
 				</div>
 			) : (
-				<ul className={cn(listClass, dimSiblingsOnHover)}>
+				<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 					{cohorts.map((cohort) => (
 						<li key={cohort.href}>
 							<Link
@@ -204,7 +219,7 @@ function AccountColumn() {
 	return (
 		<div>
 			<Eyebrow>Account</Eyebrow>
-			<ul className={cn(listClass, dimSiblingsOnHover)}>
+			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				{!isAuthed && (
 					<li>
 						<Link
@@ -261,7 +276,7 @@ function AgentsColumn() {
 	return (
 		<div>
 			<Eyebrow>Agents</Eyebrow>
-			<ul className={cn(listClass, dimSiblingsOnHover)}>
+			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				{agentLinks.map((link) => (
 					<li key={link.href}>
 						<Link
@@ -307,7 +322,10 @@ function UtilityRow() {
 			<nav
 				aria-label="Footer"
 				className={cn(
-					'flex flex-wrap items-center gap-x-5 gap-y-2',
+					// Same reasoning as `linkListClass`: the 20px/8px rhythm lives in
+					// the links' padding so the row's hit areas touch and the
+					// spotlight survives the trip between them.
+					'-mx-2.5 -my-1 flex flex-wrap items-center',
 					dimSiblingsOnHover,
 				)}
 			>
@@ -318,7 +336,11 @@ function UtilityRow() {
 						className={cn(
 							TYPE.metaSm,
 							focusRing,
-							'text-[color:var(--ah-fg-subtle)] hover:text-foreground transition-colors',
+							// The 20px/8px rhythm this row used to get from `gap-x-5
+							// gap-y-2`, moved into the links so their hit areas tile and
+							// the hover spotlight survives the trip between them. The
+							// container cancels the outer edge with `-mx-2.5 -my-1`.
+							'inline-block px-2.5 py-1 text-[color:var(--ah-fg-subtle)] hover:text-foreground transition-colors',
 						)}
 						onClick={() => trackFooterClick(link.href, link.type)}
 					>

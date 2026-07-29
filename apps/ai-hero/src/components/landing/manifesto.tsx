@@ -26,7 +26,7 @@ export function Manifesto({
 	children: React.ReactNode
 }) {
 	return (
-		<section className="border-border grid grid-cols-1 gap-8 border-b px-8 py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px] md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] md:gap-16">
+		<section className="border-border grid grid-cols-1 gap-8 border-b px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px] md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] md:gap-16">
 			<div className="flex flex-col gap-5">
 				{eyebrow ? (
 					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>

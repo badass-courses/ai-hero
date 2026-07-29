@@ -29,8 +29,14 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	// Glyphs, not words, below `lg`: the bar is 18px-gutter wide on a phone and
 	// three labelled links would not fit beside the wordmark. The desktop bar
 	// spells them out (see `Navigation`); this is the one place icons win.
+	// Opaque stroke dimmed by element opacity, NOT a translucent one. These are
+	// multi-path glyphs — the search circle meets its handle, the envelope's flap
+	// crosses its body — and with the alpha in the stroke each overlap composites
+	// twice, so the joins read darker than the rest of the icon. Fading the whole
+	// shape once keeps it even. Values match `--ah-fg-muted` in both schemes.
+	// (Same fix as the related-reading arrow.)
 	const control =
-		'text-[color:var(--ah-fg-muted)] hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-ring flex size-9 items-center justify-center rounded-[7px] transition-colors focus-visible:outline-none focus-visible:ring-2'
+		'text-foreground opacity-70 hover:bg-foreground/[0.06] hover:opacity-100 focus-visible:ring-ring flex size-9 items-center justify-center rounded-[7px] transition focus-visible:outline-none focus-visible:ring-2 dark:opacity-60 dark:hover:opacity-100'
 
 	return (
 		<div className="ml-auto flex items-center gap-0.5 lg:hidden">

@@ -298,9 +298,14 @@ export function SidebarSection({
 						// Item-like when collapsed, bold when open. Same row indent as
 						// sibling items; the disclosure chevron sits on the RIGHT
 						// (2026-07-14 — unified across all sidebar disclosure rows).
+						// No `transition-colors`: every other sidebar row takes its hover
+						// fill from `SidebarMenuButton`, which snaps. With a transition
+						// here the section headers faded while the links under them
+						// changed instantly, so one row in the rail moved differently
+						// from the rest.
 						className={cn(
 							SIDEBAR_ROW_CLASS,
-							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors data-[state=open]:text-sidebar-foreground',
+							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=open]:text-sidebar-foreground',
 						)}
 						style={rowIndent(depth)}
 					>

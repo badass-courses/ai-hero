@@ -108,7 +108,7 @@ export function SkillsSubscribeFrontDoor({
 			<Credibility />
 			<CompanyLogoGrid
 				variant="row"
-				className="border-border border-b bg-muted px-8 py-9 sm:px-11"
+				className="border-border border-b bg-muted px-[18px] py-9 sm:px-11"
 			/>
 			<ClosingCta status={status} location={location} />
 		</main>
@@ -129,7 +129,7 @@ function Hero({
 }) {
 	return (
 		<section className="border-border grid border-b lg:grid-cols-[minmax(0,1fr)_520px]">
-			<div className="flex flex-col justify-center px-8 py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px]">
+			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px]">
 				<p className={cn(TYPE.micro, 'text-primary mb-[22px]')}>
 					Free 7-day email course
 				</p>
@@ -273,7 +273,7 @@ function Curriculum() {
 	return (
 		<section
 			aria-labelledby="curriculum-heading"
-			className="border-border border-b px-8 py-14 sm:px-11 sm:pb-[76px] sm:pt-[72px]"
+			className="border-border border-b px-[18px] py-14 sm:px-11 sm:pb-[76px] sm:pt-[72px]"
 		>
 			<p className={cn(TYPE.micro, 'text-primary mb-5')}>
 				The 7-day curriculum
@@ -353,7 +353,7 @@ function Curriculum() {
  */
 function Credibility() {
 	return (
-		<section className="border-border bg-muted grid gap-10 border-b px-8 py-11 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:items-center md:gap-11">
+		<section className="border-border bg-muted grid gap-10 border-b px-[18px] py-11 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:items-center md:gap-11">
 			<div className="flex items-center gap-[18px]">
 				<CldImage
 					src={MATT_AVATAR}
@@ -402,7 +402,7 @@ function ClosingCta({
 	location: string
 }) {
 	return (
-		<section className="border-border grid gap-8 border-b px-8 py-14 sm:px-11 sm:pb-16 sm:pt-[60px] lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:gap-12">
+		<section className="border-border grid gap-8 border-b px-[18px] py-14 sm:px-11 sm:pb-16 sm:pt-[60px] lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:gap-12">
 			<div>
 				<h2 className={cn(TYPE.heading, 'mb-3 max-w-[24ch] text-balance')}>
 					Lesson one lands the moment you sign up

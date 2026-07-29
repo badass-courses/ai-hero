@@ -52,11 +52,13 @@ import {
 import { getRelatedSkillPosts, SkillExtras } from "./_components/skill-extras";
 import {
   SkillInstallPanel,
-  SkillPhaseRail,
+  SkillSectionRail,
   SkillStickyAction,
-  workflowPhases,
 } from "@/components/skills";
-import { getSkillEntries } from "@/lib/skills-query";
+import {
+  getSkillSectionMap,
+  type SkillSectionMap,
+} from "@/lib/skills-query";
 import ListPage from "../lists/[slug]/_page";
 import { PostPlayer } from "../posts/_components/post-player";
 import {
@@ -177,7 +179,7 @@ ${post?.fields?.body}`;
                   {/* The rail's second block on a skill page is where that
                       skill sits in the workflow — the spec's slot, and the
                       one piece of orientation the body itself never gives. */}
-                  {isSkillPost && <SkillPhaseRailForPost post={post} />}
+                  {isSkillPost && <SkillSectionRailForPost post={post} />}
                 </PostToCRail>
               )}
             </div>
@@ -195,12 +197,16 @@ ${post?.fields?.body}`;
                 carries a Share button — three ways to do one thing, where the
                 prototype has one. Below `md` the rail is gone, so this row is
                 the only share affordance and stays. */}
-            <div className="flex w-full flex-wrap items-center justify-center gap-5 pl-5 md:hidden">
-              <strong className="text-lg font-semibold">Share</strong>
-              <Share
-                className="inline-flex rounded-none border-y-0"
-                title={post?.fields.title}
-              />
+            {/* Literally the rail's own SHARE block, on the article gutter.
+                It used to be the `inline` variant with a bold 18px "Share"
+                heading, centred, and a lone `pl-5` — a different label style,
+                a different button style and a different gutter from every
+                other section of the page. */}
+            <div className="flex w-full flex-col gap-2.5 px-[18px] py-8 sm:px-11 md:hidden">
+              <p className={cn(TYPE.micro, "text-[color:var(--ah-fg-label)]")}>
+                Share
+              </p>
+              <Share variant="rail" title={post?.fields.title} />
             </div>
             {/* § UP NEXT — previous on the page surface, next on the band. */}
             {showLessonPager && (
@@ -353,7 +359,7 @@ async function PostBody({ post }: { post: Post | null }) {
   );
 
   return (
-    <div className="px-8 pb-16 pt-10 sm:px-11 md:pb-20 md:pt-14">
+    <div className="px-[18px] pb-16 pt-10 sm:px-11 md:pb-20 md:pt-14">
       <article
         className={`prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto ${PROSE_MEASURE}`}
       >
@@ -495,7 +501,7 @@ async function PostHead({
         </div>
       )}
       <div>
-        <div className="relative flex flex-col justify-center px-8 pb-10 pt-10 sm:px-11 md:pb-12 md:pt-12">
+        <div className="relative flex flex-col justify-center px-[18px] pb-10 pt-10 sm:px-11 md:pb-12 md:pt-12">
           {(position || metaLine) && (
             <div className="mb-4 flex flex-wrap items-center gap-x-2.5 gap-y-1">
               {position && (
@@ -581,16 +587,14 @@ async function PostHead({
  * `PostPage`, and so a post that is not a list member renders nothing rather
  * than an empty phase ladder.
  */
-async function SkillPhaseRailForPost({ post }: { post: Post }) {
-  const entries = await getSkillEntries().catch(() => []);
+async function SkillSectionRailForPost({ post }: { post: Post }) {
+  const { sections, placement } = await getSkillSectionMap().catch(
+    (): SkillSectionMap => ({ sections: [], placement: {} }),
+  );
   const slug = String(post.fields?.slug ?? "");
-  const entry = entries.find((candidate) => candidate.slug === slug);
 
   return (
-    <SkillPhaseRail
-      phases={workflowPhases(entries)}
-      current={entry?.phase ?? null}
-    />
+    <SkillSectionRail sections={sections} current={placement[slug] ?? null} />
   );
 }
 

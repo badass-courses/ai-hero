@@ -109,10 +109,6 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 					seed={10}
 				/>
 				{/* <div data-login-background-fade="" /> */}
-				<div
-					data-login-background-grid=""
-					className="bg-stripes-muted absolute inset-0 opacity-30"
-				/>
 			</div>
 			<div data-login-card="">
 				{image ? image : null}

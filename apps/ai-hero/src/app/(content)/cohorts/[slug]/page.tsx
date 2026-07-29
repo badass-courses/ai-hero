@@ -293,7 +293,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									style={{
 										backgroundSize: '200% 100%',
 									}}
-									className="animate-shine absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
+									className="animate-shine pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
 								/>
 							</CheckoutSurveyBuyButton>
 						</Pricing.Product>
@@ -419,7 +419,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 				<div className="flex flex-col lg:flex-row">
 					<div className="min-w-0 flex-1">
-						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b md:gap-10 lg:flex-row lg:pt-8">
+						{/* `lg:pt-[52px]` is the spec's `--ah-section`; at `lg:pt-8` the
+						    title sat almost against the nav on desktop. */}
+						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b pt-6 md:gap-10 lg:flex-row lg:pt-[52px]">
 							{fields?.image && (
 								<CldImage
 									className="flex w-full lg:hidden"

@@ -40,7 +40,7 @@ export async function SkillsGitHubSection({
 			aria-labelledby="skills-install-heading"
 			className="border-border border-b bg-[color:var(--ah-band)]"
 		>
-			<div className="grid max-w-[1000px] grid-cols-1 gap-8 px-8 pb-[50px] pt-12 sm:px-11 lg:grid-cols-[repeat(2,minmax(0,1fr))] lg:items-center lg:gap-11">
+			<div className="grid max-w-[1000px] grid-cols-1 gap-8 px-[18px] pb-[50px] pt-12 sm:px-11 lg:grid-cols-[repeat(2,minmax(0,1fr))] lg:items-center lg:gap-11">
 				<div className="min-w-0">
 					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 						How to get the skills

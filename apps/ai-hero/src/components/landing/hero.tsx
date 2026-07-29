@@ -167,7 +167,7 @@ export async function Hero({
 			    hero's height rather than the portrait beside it. No rule between
 			    the columns — the portrait fades into this ground, and a hairline
 			    down the middle cuts the fade in half. */}
-			<div className="flex flex-col justify-center px-8 py-14 sm:px-11 sm:pb-[72px] sm:pt-[88px]">
+			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[88px]">
 				<div>
 					{isHome && eyebrow && (
 						<p

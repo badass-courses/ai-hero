@@ -31,9 +31,14 @@ import { navTextLink } from './nav-pill'
  * Skeleton placeholder to ensure consistent tree structure during hydration.
  * Using a separate component keeps the tree shape identical between server and client.
  */
+/**
+ * `w-[35px]` is measured, not guessed: it is the resolved width of the "Log in"
+ * link this skeleton stands in for. At `w-10` (40px) the bar reflowed 5px the
+ * moment the session landed.
+ */
 const UserMenuSkeleton = () => (
 	<li className="flex items-center">
-		<Skeleton className="bg-foreground/10 h-2 w-10 rounded" />
+		<Skeleton className="bg-foreground/10 h-2 w-[35px] rounded" />
 	</li>
 )
 

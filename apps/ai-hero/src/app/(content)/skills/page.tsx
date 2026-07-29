@@ -107,7 +107,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 					<SkillSet groups={skillGroups} skillCount={skillCount} />
 
 					<section aria-labelledby="changelog-heading" className="border-b">
-						<div className="px-8 pb-[50px] pt-12 sm:px-11">
+						<div className="px-[18px] pb-[50px] pt-12 sm:px-11">
 							<div className="mb-[26px] flex flex-col gap-4 md:flex-row md:items-end">
 								<div>
 									<p
@@ -162,7 +162,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 					<CompanyLogoGrid
 						variant="row"
 						eyebrow="Engineers from"
-						className="border-border border-b px-8 py-[22px] sm:px-11"
+						className="border-border border-b px-[18px] py-[22px] sm:px-11"
 					/>
 				</main>
 			</HubLayout>

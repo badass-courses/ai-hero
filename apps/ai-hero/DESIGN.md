@@ -29,7 +29,7 @@ The desktop horizontal gutter is **44px** (`--ah-gut`), 18px on mobile. Vertical
 
 ```tsx
 ✅  <section className="border-b">
-      <div className="px-8 py-20 sm:px-11">…</div>
+      <div className="px-[18px] py-20 sm:px-11">…</div>
     </section>
 
 ❌  <section className="border-b px-8 py-20">…</section>   // pulls content away from the container's border-x
@@ -62,13 +62,15 @@ Sections breathe. Use these values, not freehand padding:
 | Role | Mobile | Desktop |
 |------|--------|---------|
 | Section vertical | `py-12` to `py-16` | `md:py-[52px]` (`--ah-section`) |
-| Section horizontal | `px-8` | `sm:px-11` (44px, `--ah-gut`) |
+| Section horizontal | `px-[18px]` | `sm:px-11` (44px, `--ah-gut`) |
 | Interior content gap | `gap-4` to `gap-6` | `md:gap-8` to `md:gap-16` |
 | Inline element gap | `gap-2` to `gap-3` | same |
 
 Pick one row per surface; do not mix `py-12` with `py-20` siblings.
 
-**The desktop gutter is 44px, not 64.** `sm:px-16` predates the redesign and is gone from `src/` — it did not line up with the nav, the footer or any section written against the spec, and a page mixing the two had a visibly ragged left edge. Do not reintroduce it, and do not override the gutter upward at a larger breakpoint (`lg:px-24` and friends): 44px holds at every desktop width. A block may inset *less* than the gutter when its content wants the width — the certificate image on `/certificates/[slug]` is `px-4 sm:px-8` — but never more. Mobile stays at `px-8` rather than the spec's 18px — 32px is this app's established mobile gutter and 18px reads as cramped at the body size we use.
+**The desktop gutter is 44px, not 64.** `sm:px-16` predates the redesign and is gone from `src/` — it did not line up with the nav, the footer or any section written against the spec, and a page mixing the two had a visibly ragged left edge. Do not reintroduce it, and do not override the gutter upward at a larger breakpoint (`lg:px-24` and friends): 44px holds at every desktop width. A block may inset *less* than the gutter when its content wants the width — the certificate image on `/certificates/[slug]` is `px-4 sm:px-8` — but never more.
+
+**Mobile is 18px (`px-[18px]`), the spec's value.** This rule used to say the opposite — that mobile stayed at `px-8` because 18px read as cramped. It was wrong in practice for two reasons. 32px eats a sixth of a 390px screen, which costs a word a line at the body measure; and the nav and footer were both already on 18px, so every page had its chrome and its content on different gutters, with the seam visible wherever a full-width band met the header. Converged on 18px across all 76 gutter sites (2026-07-29). The desktop half is unchanged.
 
 ### 4. Two-column grids are intentionally asymmetric
 

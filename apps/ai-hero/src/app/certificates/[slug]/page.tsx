@@ -86,7 +86,7 @@ export default async function PublicCertificatePage({
 		>
 			<main className="bg-background text-foreground min-h-screen">
 				<section className="border-border border-b">
-					<div className="px-8 py-16 sm:px-11 md:py-24">
+					<div className="px-[18px] py-16 sm:px-11 md:py-24">
 						<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 							AI Hero certificate of completion
 						</p>
@@ -120,7 +120,7 @@ export default async function PublicCertificatePage({
 				</section>
 
 				<section>
-					<div className="grid gap-8 px-8 py-16 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24">
+					<div className="grid gap-8 px-[18px] py-16 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24">
 						<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 							Build yours
 						</p>

@@ -72,7 +72,7 @@ export function AboutMatt({
 					className="relative z-20 h-auto w-full max-w-[380px] [mask-image:linear-gradient(to_bottom,black_80%,transparent_100%)]"
 				/>
 			</div>
-			<div className="px-8 pb-14 pt-8 sm:px-11 lg:py-16">
+			<div className="px-[18px] pb-14 pt-8 sm:px-11 lg:py-16">
 				<div className="flex flex-col gap-[18px]">
 					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 						{eyebrow}

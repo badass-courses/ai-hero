@@ -73,12 +73,18 @@ export async function FlagshipHero({
 			aria-labelledby="flagship-heading"
 			className="border-border bg-border grid scroll-mt-24 grid-cols-1 gap-px border-b lg:grid-cols-[minmax(0,1fr)_400px]"
 		>
-			<div className="bg-background flex flex-col justify-center px-8 py-16 sm:px-11 md:py-20">
+			<div className="bg-background flex flex-col justify-center px-[18px] py-16 sm:px-11 md:py-20">
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
 					<span
 						className={cn(
 							TYPE.micro,
-							'bg-accent-fill text-accent-fill-foreground inline-flex items-center rounded-[4px] px-2 py-1.5',
+							// Optically centred, not geometrically. `TYPE.micro` is all-caps
+							// with `leading-[1.4]`, so the line box is 13.3px around a 9.5px
+							// font and the glyphs — having no descenders — hang in the top
+							// of it. Even padding centres the BOX and leaves the ink sitting
+							// ~1.25px high, which is visible on a chip this small. The 12px
+							// total is unchanged, just biased down.
+							'bg-accent-fill text-accent-fill-foreground inline-flex items-center rounded-[4px] px-2 pb-[5px] pt-[7px]',
 						)}
 					>
 						{isOpen ? FLAGSHIP_ENROLLING.badge : FLAGSHIP_WAITLIST.badge}
@@ -102,7 +108,23 @@ export async function FlagshipHero({
 					)}
 				>
 					{FLAGSHIP_HERO.pitchLead}{' '}
-					<strong className="text-foreground font-medium">{title}</strong>{' '}
+					{/* The cohort's name is the one place in this paragraph a reader
+					    wants to click, and it was inert — the only route to the cohort
+					    page was the right-hand button, which is a waitlist form while
+					    enrollment is closed. Linked only when a cohort actually exists;
+					    otherwise `href` is this section's own anchor and the name would
+					    link to itself. Underline rather than gold: the badge and the
+					    enroll button already spend this view's accent. */}
+					{flagship ? (
+						<Link
+							href={href}
+							className="text-foreground hover:decoration-foreground focus-visible:ring-ring rounded-sm font-medium underline decoration-[color:var(--ah-line-strong)] underline-offset-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
+						>
+							{title}
+						</Link>
+					) : (
+						<strong className="text-foreground font-medium">{title}</strong>
+					)}{' '}
 					{FLAGSHIP_HERO.pitchTail}
 				</p>
 

@@ -15,6 +15,7 @@ import { SearchPalette } from '../search-palette/search-palette'
 import { MobileMenuPanel } from './mobile-menu-panel'
 import { MobileNavigation } from './mobile-navigation'
 import { NavLinkItem } from './nav-link-item'
+import { useCohortOffer } from './nav-cta-context'
 import { getNavMode } from './nav-mode'
 import { NavPill, navTextLink } from './nav-pill'
 import {
@@ -43,14 +44,12 @@ const SessionDependentNavItems = ({
 		setMounted(true)
 	}, [])
 
-	// Return nothing during SSR and initial hydration to keep tree consistent
-	if (!mounted) {
-		return null
-	}
-
+	// The Newsletter link renders from SSR on purpose — see below. Only the
+	// session-dependent Feedback item waits for mount, because `sessionStatus`
+	// genuinely differs between server and client and would mismatch.
 	return (
 		<>
-			{sessionStatus === 'authenticated' && (
+			{mounted && sessionStatus === 'authenticated' && (
 				<li className="hidden items-center lg:flex">
 					<button
 						type="button"
@@ -61,6 +60,12 @@ const SessionDependentNavItems = ({
 					</button>
 				</li>
 			)}
+			{/* No mount gate. `subscriber` is `undefined` on the server AND on the
+			    first client render (the tRPC query has not resolved), so `!subscriber`
+			    agrees across hydration and this is safe to SSR. Behind the gate it
+			    appeared only after mount and shoved the whole cluster 78px left on
+			    every page load. Now the only movement is for people who turn out to
+			    be subscribed, once, when the query lands. */}
 			{!subscriber && (
 				<li className="hidden items-center lg:flex">
 					<Link
@@ -84,9 +89,19 @@ const SessionDependentNavItems = ({
 
 /**
  * Emphasized primary learning entry ("Start Here"). Carries a persistent
- * highlight so it reads as the lead destination, separate from active state.
+ * highlight so it reads as the lead destination, separate from active state —
+ * but it yields that highlight whenever another bar item IS the current page.
+ * The pill it renders is the same one `NavLinkItem` uses for "you are here", so
+ * on /courses the reader saw two identical highlights and no way to tell which
+ * one meant "you are here".
  */
-const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
+const PrimaryEntryLink = ({
+	isActive,
+	highlighted,
+}: {
+	isActive: boolean
+	highlighted: boolean
+}) => (
 	<li className="flex items-center">
 		<Link
 			prefetch
@@ -100,7 +115,7 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 			aria-current={isActive ? 'page' : undefined}
 			className="group/nav-item focus-visible:ring-ring text-[color:var(--ah-fg-muted)] relative flex items-center rounded-[7px] focus-visible:outline-none focus-visible:ring-2"
 		>
-			<NavPill active className="font-medium">
+			<NavPill active={highlighted || undefined} className="font-medium">
 				{PRIMARY_LEARNING_ENTRY.label}
 			</NavPill>
 		</Link>
@@ -108,27 +123,75 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 )
 
 /**
- * The one gold action in the bar: the free 7-day course, which is the site's
- * front door for anyone who isn't logged in. Hidden on the course's own signup
- * page, where the form itself is the ask.
+ * The one gold action in the bar, as a ladder rather than a fixed link:
+ *
+ * 1. **Not on the free course** → "Get the free course". This outranks
+ *    everything. The 7-day course is the front door, and someone who has not
+ *    walked through it should not be asked for a paid cohort first.
+ * 2. **On the free course** → the cohort: "Join the cohort" when one is
+ *    purchasable, "Join the waitlist" between cohorts.
+ * 3. **Nothing left to offer** → nothing. Never sell someone what they have.
+ *
+ * The cohort half comes from {@link getCohortOffer} via context — the same
+ * selector `CourseCta` uses at the foot of an article, so the bar and the
+ * article can never disagree about whether enrollment is open. It is resolved
+ * on the server and is therefore correct in the first paint.
+ *
+ * `state === 'active'` is the same test `/skills/subscribe` uses to choose
+ * between its "subscribed" and "show-form" views, off the same
+ * `getSubscriberFromCookie`. Anything looser (a truthy subscriber record) would
+ * also promote unconfirmed and cancelled subscribers past the free course.
  */
-const FreeCourseCta = ({ pathname }: { pathname: string }) => {
-	if (pathname.startsWith('/skills/subscribe')) return null
+const FreeCourseCta = ({
+	pathname,
+	subscriber,
+}: {
+	pathname: string
+	subscriber: unknown
+}) => {
+	const cohortOffer = useCohortOffer()
+
+	// `undefined` while the query is in flight. Treated as "not subscribed" so
+	// the free course renders from the first paint — the common case, and the
+	// step that takes precedence anyway, so nothing swaps for most visitors.
+	const isSubscribed =
+		Boolean(subscriber) &&
+		typeof subscriber === 'object' &&
+		subscriber !== null &&
+		'state' in subscriber &&
+		subscriber.state === 'active'
+
+	// The free course is the front door and outranks everything: someone who has
+	// not taken it is asked for that, cohort or no cohort. Only once they are on
+	// the list does the bar move them up the ladder to the cohort — enroll when
+	// one is purchasable, waitlist between cohorts.
+	const offer = !isSubscribed
+		? { label: 'Get the free course', href: '/skills/subscribe' }
+		: cohortOffer
+			? { label: cohortOffer.label, href: cohortOffer.href }
+			: null
+
+	if (!offer) return null
+	// Never sell the page you are standing on.
+	if (pathname.startsWith(offer.href)) return null
 
 	return (
 		<li className="hidden items-center lg:flex">
 			<Link
 				prefetch
-				href="/skills/subscribe"
+				href={offer.href}
 				onClick={() => {
 					track('nav_link_clicked', {
-						label: 'Get the free course',
-						href: '/skills/subscribe',
+						label: offer.label,
+						href: offer.href,
 					})
 				}}
-				className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex items-center rounded-[8px] px-3.5 py-2 text-[13px] font-bold leading-none transition focus-visible:outline-none focus-visible:ring-2"
+				// `min-w` holds the slot at the widest label so the bar's geometry is
+				// fixed from first paint — swapping "Get the free course" for "Join the
+				// waitlist" when the subscriber query lands must not reflow the row.
+				className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex min-w-[152px] items-center justify-center rounded-[8px] px-3.5 py-2 text-[13px] font-bold leading-none transition focus-visible:outline-none focus-visible:ring-2"
 			>
-				Get the free course
+				{offer.label}
 			</Link>
 		</li>
 	)
@@ -211,6 +274,12 @@ const Navigation = () => {
 								<>
 									<PrimaryEntryLink
 										isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
+										highlighted={
+											pathname === PRIMARY_LEARNING_ENTRY.href ||
+											!PRIMARY_NAV_ITEMS.some(
+												(item) => pathname === item.href.replace(/\/$/, ''),
+											)
+										}
 									/>
 									{PRIMARY_NAV_ITEMS.map((item) => (
 										<NavLinkItem
@@ -262,7 +331,9 @@ const Navigation = () => {
 							setIsFeedbackDialogOpen={setIsFeedbackDialogOpen}
 						/>
 						<UserMenu />
-						{mode !== 'minimal' && <FreeCourseCta pathname={pathname} />}
+						{mode !== 'minimal' && (
+							<FreeCourseCta pathname={pathname} subscriber={subscriber} />
+						)}
 					</ul>
 				</nav>
 				<MobileNavigation

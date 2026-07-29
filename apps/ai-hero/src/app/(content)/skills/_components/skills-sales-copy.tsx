@@ -21,7 +21,7 @@ export function SkillsSalesCopy() {
 
 	return (
 		<section aria-labelledby="skills-sales-heading" className="border-b">
-			<div className="px-8 pb-10 pt-11 sm:px-11">
+			<div className="px-[18px] pb-10 pt-11 sm:px-11">
 				<p
 					id="skills-sales-heading"
 					className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}

@@ -55,7 +55,7 @@ export function PostRelatedNewsletter({
 			)}
 		>
 			{hasRelated && (
-				<div className="bg-background px-8 py-10 sm:px-11">
+				<div className="bg-background px-[18px] py-10 sm:px-11">
 					<h2
 						className={cn(TYPE.micro, 'mb-5 text-[color:var(--ah-fg-label)]')}
 					>
@@ -83,9 +83,16 @@ export function PostRelatedNewsletter({
 											{item.title}
 										</span>
 									</span>
+									{/* Opaque stroke dimmed by element opacity, NOT a
+									    translucent stroke. `--ah-fg-faint` is the ink at 0.35
+									    alpha, and lucide's arrow is two paths whose ends
+									    overlap at the head — with alpha in the stroke the
+									    overlap composites twice and the tip reads darker than
+									    the shaft. Fading the whole shape once keeps it even.
+									    Values match the token in both schemes. */}
 									<ArrowRight
 										aria-hidden
-										className="ease-out-quart ml-auto size-4 flex-none text-[color:var(--ah-fg-faint)] transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+										className="ease-out-quart text-foreground ml-auto size-4 flex-none opacity-[0.35] transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none dark:opacity-30"
 									/>
 								</Link>
 							</li>
@@ -93,7 +100,7 @@ export function PostRelatedNewsletter({
 					</ul>
 				</div>
 			)}
-			<div className="flex flex-col bg-[color:var(--ah-band)] px-8 py-10 sm:px-11">
+			<div className="flex flex-col bg-[color:var(--ah-band)] px-[18px] py-10 sm:px-11">
 				<p className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
 					Keep learning
 				</p>

@@ -169,8 +169,12 @@ const CheckList = ({ children }: { children: React.ReactNode }) => {
  * centred the block against its neighbours. Both are gone: full width of the
  * column it sits in, flush left.
  */
+// No rules top or bottom: the serif already separates a quote from the prose
+// around it, and the hairlines turned every testimonial into a boxed callout.
+// `border-y` is why removing just the bottom was not an option — that leaves an
+// orphan line on top. The `my-8`/`py-6` band keeps the block breathing.
 const testimonialVariants = cva(
-	'not-prose border-border relative my-8 flex w-full flex-col gap-3 border-y py-6',
+	'not-prose relative my-8 flex w-full flex-col gap-3 py-6',
 	{
 		variants: {
 			variant: {

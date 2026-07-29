@@ -4,7 +4,7 @@ import { InstallCommand } from '@/app/(content)/skills/_components/install-comma
 import { TYPE } from '@/components/landing/type'
 import { SKILLS_FREE_LESSON } from '@/lib/skills-content'
 import { type SkillEntry } from '@/lib/skills-shared'
-import { ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -150,20 +150,26 @@ function PagerCard({
 	isCurrent?: boolean
 	direction?: 'prev' | 'next'
 }) {
+	// Lucide, not `←`/`→`: the characters render at the title's own weight and
+	// metrics, so they sat heavier and lower than every other arrow on the page.
+	// Laid out as a flex row so the glyph is optically centred against the text
+	// rather than riding the baseline, and pinned to the card's outer edge —
+	// previous on the left, next on the right — so the pair reads as a spread.
 	const label = (
-		<>
+		<span className="flex min-w-0 items-center gap-1.5">
+			{direction === 'prev' ? (
+				<ArrowLeft aria-hidden className="size-4 shrink-0" />
+			) : null}
 			{/* Two renderings of the same name, not two names: the half-width mobile
 			    card can only carry the command. */}
-			<span className={cn(TYPE.command, 'min-[901px]:hidden')}>
-				{direction === 'prev' ? '← ' : null}/{invocationName(entry.slug)}
-				{direction === 'next' ? ' →' : null}
+			<span className={cn(TYPE.command, 'truncate min-[901px]:hidden')}>
+				/{invocationName(entry.slug)}
 			</span>
-			<span className="hidden min-[901px]:inline">
-				{direction === 'prev' ? '← ' : null}
-				{entry.title}
-				{direction === 'next' ? ' →' : null}
-			</span>
-		</>
+			<span className="hidden truncate min-[901px]:inline">{entry.title}</span>
+			{direction === 'next' ? (
+				<ArrowRight aria-hidden className="ml-auto size-4 shrink-0" />
+			) : null}
+		</span>
 	)
 
 	if (isCurrent) {

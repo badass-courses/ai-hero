@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { TYPE } from '@/components/landing/type'
 import { setProgressForResource } from '@/lib/progress'
 import { type ListNeighbor } from '@/utils/get-nextup-resource-from-list'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 
 import { cn } from '@coursebuilder/utils/cn'
@@ -74,7 +75,7 @@ export function PostUpNextPager({
 				{prev && (
 					<Link
 						href={`/${prev.slug}`}
-						className="bg-background focus-visible:ring-ring group flex flex-col justify-center px-8 py-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
+						className="bg-background focus-visible:ring-ring group flex flex-col justify-center px-[18px] py-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
 					>
 						<span
 							className={cn(
@@ -90,12 +91,13 @@ export function PostUpNextPager({
 								'group-hover:text-foreground text-pretty text-[color:var(--ah-fg-muted)] transition-colors',
 							)}
 						>
-							<span
+							{/* Lucide, not the `←` character: the glyph rendered at the
+							    text's own weight and metrics, so it sat heavier and lower
+							    than the matching arrows everywhere else on the page. */}
+							<ArrowLeft
 								aria-hidden
-								className="ease-out-quart mr-1.5 inline-block transition-transform duration-300 group-hover:-translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
-							>
-								←
-							</span>
+								className="ease-out-quart mr-1.5 inline-block size-4 shrink-0 align-[-0.15em] transition-transform duration-300 group-hover:-translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+							/>
 							{prev.title}
 						</span>
 					</Link>
@@ -104,7 +106,7 @@ export function PostUpNextPager({
 					<Link
 						href={`/${next.slug}`}
 						onClick={onContinue}
-						className="focus-visible:ring-ring group flex items-center gap-5 bg-[color:var(--ah-band)] px-8 py-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
+						className="focus-visible:ring-ring group flex items-center gap-5 bg-[color:var(--ah-band)] px-[18px] py-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
 					>
 						<span className="min-w-0">
 							<span
@@ -120,9 +122,9 @@ export function PostUpNextPager({
 						    (DESIGN rule 8's documented invert). */}
 						<span
 							aria-hidden
-							className="text-background dark:bg-accent-fill dark:text-accent-fill-foreground bg-foreground ease-out-quart ml-auto flex size-11 flex-none items-center justify-center rounded-full text-lg font-bold transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+							className="text-background dark:bg-accent-fill dark:text-accent-fill-foreground bg-foreground ease-out-quart ml-auto flex size-11 flex-none items-center justify-center rounded-full transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 						>
-							→
+							<ArrowRight className="size-5" />
 						</span>
 					</Link>
 				)}

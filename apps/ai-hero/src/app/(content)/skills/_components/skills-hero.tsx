@@ -47,7 +47,7 @@ export async function SkillsHero({
 			id="skills-hero"
 			className="border-border grid grid-cols-1 items-stretch border-b lg:grid-cols-[minmax(0,1fr)_400px]"
 		>
-			<div className="px-8 pb-11 pt-12 sm:px-11">
+			<div className="px-[18px] pb-11 pt-12 sm:px-11">
 				<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 					{['Free', 'open source', skillCount ? `${skillCount} skills` : null]
 						.filter(Boolean)

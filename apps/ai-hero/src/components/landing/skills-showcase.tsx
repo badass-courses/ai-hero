@@ -106,7 +106,7 @@ export async function SkillsShowcase({
 			    container's edge: this is a panel of six things sitting ON the
 			    band, which is what the band is for. Full-bleed it read as six
 			    more page sections stacked sideways. */}
-			<div className="px-8 pb-14 sm:px-11 sm:pb-20 md:pt-[12px]">
+			<div className="px-[18px] pb-14 sm:px-11 sm:pb-20 md:pt-[12px]">
 			<ul className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-3">
 				{groups.map((group, index) => (
 					<li

@@ -50,7 +50,7 @@ export function SkillSet({
 			aria-labelledby="skill-set-heading"
 			className="border-border border-b bg-[color:var(--ah-band)]"
 		>
-			<div className="px-8 pb-[52px] pt-12 sm:px-11">
+			<div className="px-[18px] pb-[52px] pt-12 sm:px-11">
 				<div className="mb-[34px] flex flex-col gap-5 md:flex-row md:items-end md:gap-5">
 					<div>
 						<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>

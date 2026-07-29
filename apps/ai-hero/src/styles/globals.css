@@ -425,6 +425,8 @@
 	--font-mono:
 		var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
 		Consolas, 'Liberation Mono', 'Courier New', monospace;
+	/* Testimonials only — see the Source Serif 4 note in `app/layout.tsx`. */
+	--font-serif: var(--font-source-serif), ui-serif, Georgia, Cambria, serif;
 
 	/* Shadcn color tokens */
 	--color-page-background: var(--page-background);
@@ -558,6 +560,17 @@
 		@apply bg-background text-foreground font-sans font-normal;
 	}
 
+	/* Tailwind v4's preflight drops the UA stylesheet's `cursor: pointer` on
+	   buttons, so every `<button>` in the app pointed at nothing unless someone
+	   remembered `cursor-pointer` on it — and next to an `<a>`, which keeps the
+	   hand, one control in a row felt dead. Anchors, labels and `<summary>` are
+	   left to the UA. Disabled controls are excluded so they still read as
+	   unavailable rather than clickable. */
+	button:not(:disabled),
+	[role='button']:not([aria-disabled='true']) {
+		cursor: pointer;
+	}
+
 	#holy-progress [role='bar'] {
 		background: var(--primary) !important;
 	}
@@ -689,6 +702,22 @@ li.task-list-item {
 
    Unlayered, like the rest of this block: a Tailwind utility on `<body>` would
    otherwise beat it. */
+/* UPSTREAM WORKAROUND — `@coursebuilder/ui` FeedbackForm (a published dep at
+   ^2.4.0, not a workspace package, so it cannot be fixed at source here).
+   `feedback-fields.tsx` rounds its segmented emoji and category controls to
+   `rounded-md` (11px) on the first and last segment, inside a container rounded
+   to `--radius` (9px) with no `overflow-hidden`. The segments' corners bulge
+   past the container's own curve — the same class of defect as an unclipped
+   overlay. Let the container own the curve and clip its children. Scoped to
+   dialogs so it cannot reach the rest of the app. Delete once upstream fixes
+   it. */
+[role='dialog'] .divide-x.rounded.border {
+	overflow: hidden;
+}
+[role='dialog'] .divide-x.rounded.border > * {
+	border-radius: 0;
+}
+
 .has-sticky-action {
 	padding-bottom: calc(68px + env(safe-area-inset-bottom));
 }

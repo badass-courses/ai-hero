@@ -15,7 +15,7 @@ export function SkillsMiniCourseCta() {
 
 	return (
 		<section aria-labelledby="skills-mini-course-heading" className="border-b">
-			<div className="flex flex-col items-start gap-6 px-8 py-16 sm:px-11 md:py-24">
+			<div className="flex flex-col items-start gap-6 px-[18px] py-16 sm:px-11 md:py-24">
 				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					Free mini-course
 				</span>

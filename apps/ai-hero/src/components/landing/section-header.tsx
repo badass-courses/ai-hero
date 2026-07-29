@@ -80,7 +80,7 @@ export function SectionHeader({
 			// which is the only alignment available when the two columns are
 			// wildly different heights.
 			className={cn(
-				'flex flex-col gap-6 px-8 pt-14 sm:px-11 md:flex-row md:items-end md:justify-between md:gap-[30px]',
+				'flex flex-col gap-6 px-[18px] pt-14 sm:px-11 md:flex-row md:items-end md:justify-between md:gap-[30px]',
 				rank === 'quiet'
 					? 'pb-9 sm:pt-[68px] md:pb-[30px]'
 					: 'pb-10 sm:pt-[76px] md:pb-[38px]',

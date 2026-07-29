@@ -96,7 +96,7 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
       {/* Text keeps the side padding; the row list bleeds full-width to the
 			    container edges (DESIGN rule 1), like the landing rows. */}
       <div className="flex flex-col">
-        <div className="flex flex-col gap-3 px-8 pb-8 pt-16 sm:px-11">
+        <div className="flex flex-col gap-3 px-[18px] pb-8 pt-16 sm:px-11">
           <h2 className={cn(TYPE.heading, "text-balance")}>
             {section.question}
           </h2>
@@ -105,7 +105,7 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
           </p>
         </div>
 
-        <ul className="flex flex-col gap-2.5 px-8 sm:px-11">
+        <ul className="flex flex-col gap-2.5 px-[18px] sm:px-11">
           {items.map((item) => (
             <li key={item.slug}>
               <ItemRow item={item} />
@@ -116,7 +116,7 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
         {/* Footer: the signature "open" affordance for the whole topic. The
 				    skill, where one matches, gets a real card rather than a sentence
 				    in a box — the slash command is the token readers recognise. */}
-        <div className="flex flex-col gap-6 px-8 py-8 sm:px-11">
+        <div className="flex flex-col gap-6 px-[18px] py-8 sm:px-11">
           <MoreWaysLink href={section.moreHref} label={section.moreLabel} />
           {section.skillCta ? (
             <SkillCard
@@ -143,13 +143,12 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
       data-goal-section
       className="border-b scroll-mt-24"
     >
-      {/* Same rhythm as GoalSectionBlock: the section itself has no padding so
-          the row list can bleed to the container's edges, and the head block
-          carries the vertical space. It used to set py-16/md:py-24 on the
-          section AND gaps inside, which stacked into a much taller band than
-          its neighbours. */}
+      {/* Same rhythm as GoalSectionBlock: the section itself has no padding,
+          and the head block carries the vertical space. It used to set
+          py-16/md:py-24 on the section AND gaps inside, which stacked into a
+          much taller band than its neighbours. */}
       <div className="flex flex-col">
-        <div className="flex flex-wrap items-end justify-between gap-4 px-8 pb-8 pt-16 sm:px-11">
+        <div className="flex flex-wrap items-end justify-between gap-4 px-[18px] pb-8 pt-16 sm:px-11">
           <div className="flex flex-col gap-2">
             <p
               className={cn(TYPE.micro, "text-[color:var(--ah-fg-label)]")}
@@ -169,11 +168,17 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
           </Link>
         </div>
 
-        <div className="pb-8">
+        {/* Same list treatment as GoalSectionBlock — gutter, 10px gap, real
+            <ul>. This used to be a bare padded <div>, so the What's New rows
+            sat flush to the container edges and stacked with no space between
+            them while every goal section above them was inset and gapped. */}
+        <ul className="flex flex-col gap-2.5 px-[18px] pb-8 sm:px-11">
           {items.map((item) => (
-            <ItemRow key={item.slug} item={item} summary={item.summary} />
+            <li key={item.slug}>
+              <ItemRow item={item} summary={item.summary} />
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
     </section>
   );
@@ -189,7 +194,10 @@ export function MapPage({
       {/* Hero — single column (the hub content column is too narrow for a
 			    two-up split). Newsletter lives at the bookend below. */}
       <section id="top" className="border-b">
-        <div className="flex flex-col gap-6 px-8 py-16 sm:px-11 md:py-24">
+        {/* `pb-11 pt-12`, same as the /skills hero. This was `py-16 md:py-24`,
+            which put 96px of air above the first thing on the page while the
+            sibling hub page opened at 48px. */}
+        <div className="flex flex-col gap-6 px-[18px] pb-11 pt-12 sm:px-11">
           <p className={cn(TYPE.micro, "text-[color:var(--ah-fg-label)]")}>
             The Map
           </p>

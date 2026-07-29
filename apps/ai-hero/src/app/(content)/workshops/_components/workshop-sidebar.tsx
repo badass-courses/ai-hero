@@ -34,6 +34,9 @@ export const WorkshopSidebar = ({
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
 }) => {
+	// The buy/waitlist widget, as opposed to the interest-capture CTA or the
+	// resource list. Only this one needs the shell to inset it.
+	const isPricingState = Boolean(pricingProps) && !interestCapture
 	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
 	const [windowHeight, setWindowHeight] = React.useState(0)
 	const buySectionRef = useRef<HTMLDivElement>(null)
@@ -58,13 +61,32 @@ export const WorkshopSidebar = ({
 				id="buy"
 				className={cn('scroll-mt-15 relative flex h-full flex-col', className)}
 			>
+				{/* Only the pricing widget needs the shell to pad it — its content
+				    starts flush at the top edge. The interest-capture CTA and the
+				    resource list both bring their own padding (the list is deliberately
+				    full-bleed), so padding the shell for everyone double-inset them.
+				    On `#buy` rather than here it would be worse still: that one is
+				    `h-full` and spans the whole article, so the padding would land in
+				    dead space and shift the sticky offset. */}
 				<div
 					ref={sidebarRef}
-					className={cn('', {
-						'md:top-(--nav-height) md:sticky': true, //sticky && windowHeight - 63 > height,
-					})}
+					className={cn(
+						{ 'px-6 py-8': isPricingState },
+						{
+							'md:top-(--nav-height) md:sticky': true, //sticky && windowHeight - 63 > height,
+						},
+					)}
 				>
-					<ScrollArea className="h-full lg:max-h-[calc(100vh-var(--nav-height))] [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
+					<ScrollArea
+						className={cn(
+							"h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50",
+							// Subtract exactly what the wrapper added, so a long Includes
+							// list still ends inside the viewport rather than under it.
+							isPricingState
+								? 'lg:max-h-[calc(100vh-var(--nav-height)-4rem)]'
+								: 'lg:max-h-[calc(100vh-var(--nav-height))]',
+						)}
+					>
 						{children}
 						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
 							<div className="from-background bg-linear-to-t pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full to-transparent lg:block" />

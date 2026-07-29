@@ -34,7 +34,7 @@ export function ProofGrid({
 	return (
 		<section
 			aria-label={eyebrow}
-			className="border-border border-b bg-[color:var(--ah-band)] px-8 pb-8 pt-14 sm:px-11 sm:pb-[30px] sm:pt-16"
+			className="border-border border-b bg-[color:var(--ah-band)] px-[18px] pb-8 pt-14 sm:px-11 sm:pb-[30px] sm:pt-16"
 		>
 			<p className={cn(TYPE.micro, 'mb-8 text-[color:var(--ah-fg-label)]')}>
 				{eyebrow}

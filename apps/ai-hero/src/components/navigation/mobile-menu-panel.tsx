@@ -29,6 +29,8 @@ import {
 	PRIMARY_LEARNING_ENTRY,
 	PRIMARY_NAV_ITEMS,
 } from './primary-nav'
+import { NAV_ICONS } from './sidebar/nav-icons'
+import { normalizePath } from './sidebar/sidebar-client'
 import { ThemeToggle } from './theme-toggle'
 
 function normalize(path: string): string {
@@ -175,6 +177,17 @@ export function MobileMenuPanel({
 			isActive(href) && 'bg-muted font-medium',
 		)
 
+	/**
+	 * The Explore rows' glyph, from the same `NAV_ICONS` map the desktop rail
+	 * reads — the drawer IS that rail on a phone, and it was showing the four
+	 * entries as bare text while the sidebar gave them icons. Renders nothing for
+	 * hrefs with no icon, so other flat sections are unaffected.
+	 */
+	const NavIcon = ({ href, active }: { href: string; active: boolean }) => {
+		const Icon = NAV_ICONS[normalizePath(href)]
+		return Icon ? <Icon active={active} className="size-4 shrink-0" /> : null
+	}
+
 	// Small-caps category label — mirrors the desktop sidebar's `## Heading`.
 	const categoryLabelClass =
 		'text-muted-foreground px-5 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider'
@@ -205,7 +218,16 @@ export function MobileMenuPanel({
 				    the drawer has no close affordance of its own and the only way out
 				    is the scrim. */}
 				<div className="border-border flex h-(--nav-height) flex-none items-center justify-between border-b px-5">
-					<span className={categoryLabelClass + ' p-0'}>Browse</span>
+					{/* The drawer covers the site header, so it shows the same mark
+					    rather than a section eyebrow reading "Browse" — that label named
+					    the sheet after one of its own sections and gave no way home. */}
+					<Link
+						href="/"
+						onClick={onClose}
+						className="text-foreground focus-visible:ring-ring rounded-[7px] text-[15.5px] font-bold leading-none tracking-[-0.01em] focus-visible:outline-none focus-visible:ring-2"
+					>
+						<span className="font-mono">AI</span>Hero
+					</Link>
 					<button
 						type="button"
 						onClick={onClose}
@@ -221,20 +243,18 @@ export function MobileMenuPanel({
 					aria-label="Mobile navigation"
 					className="divide-border flex min-h-0 flex-1 flex-col divide-y overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
 				>
-				{/* Prominent actions */}
+				{/* Prominent actions. `rounded-[9px]` is the app's button radius and
+				    `h-11` the drawer's own 44px tap height — these were `rounded-none`,
+				    the only square-cornered buttons in the product. */}
 				<div className="grid grid-cols-2 gap-2 p-4">
-					<Button asChild className="rounded-none">
+					<Button asChild className="h-11 rounded-[9px]">
 						<Link href={COURSES_NAV_ITEM.href}>{COURSES_NAV_ITEM.label}</Link>
 					</Button>
-					{isAuthed ? (
-						<Button asChild variant="outline" className="rounded-none">
-							<Link href="/profile">Profile</Link>
-						</Button>
-					) : (
-						<Button asChild variant="outline" className="rounded-none">
-							<Link href="/login">Log in</Link>
-						</Button>
-					)}
+					<Button asChild variant="outline" className="h-11 rounded-[9px]">
+						<Link href={isAuthed ? '/profile' : '/login'}>
+							{isAuthed ? 'Profile' : 'Log in'}
+						</Link>
+					</Button>
 				</div>
 
 				{/* Hub sidebar IA — the SAME MDX source as the desktop sidebar,
@@ -281,8 +301,9 @@ export function MobileMenuPanel({
 														href={item.href}
 														aria-current={isActive(item.href) ? 'page' : undefined}
 														onClick={() => track_(item)}
-														className={cn(rowClass(item.href), 'text-sm')}
+														className={cn(rowClass(item.href), 'gap-2.5')}
 													>
+														<NavIcon href={item.href} active={isActive(item.href)} />
 														{item.label}
 													</Link>
 												</li>
@@ -299,7 +320,7 @@ export function MobileMenuPanel({
 														}
 														className={cn(
 															rowClass(section.moreHref),
-															'text-muted-foreground text-sm',
+															'text-muted-foreground',
 														)}
 													>
 														{section.moreLabel}
@@ -323,7 +344,7 @@ export function MobileMenuPanel({
 									className="w-full"
 								>
 									<AccordionItem value={section.title} className="border-none">
-										<AccordionTrigger className="px-5 py-2.5 text-base hover:no-underline">
+										<AccordionTrigger className="px-5 py-2.5 text-[15px] hover:no-underline">
 											{section.title}
 										</AccordionTrigger>
 										<AccordionContent className="pb-1">
