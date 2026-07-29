@@ -32,12 +32,14 @@ import {
 	isSkillPhaseTag,
 	SKILL_PHASE_TAG_CONTEXT,
 	SKILL_PHASE_UTILITY_NUMBER,
+	skillPhaseFromTag,
 	type SkillEntry,
 	type SkillPhase,
 } from './skills-shared'
 
 export {
 	isSkillPhaseTag,
+	skillPhaseFromTag,
 	SKILL_PHASE_TAG_CONTEXT,
 	SKILL_PHASE_UTILITY_NUMBER,
 } from './skills-shared'
@@ -54,31 +56,6 @@ type SkillCatalogGroup = {
 	title: string | null
 	description?: string
 	skills: SkillEntry[]
-}
-
-function skillPhaseFromTag(tag: Tag): SkillPhase | null {
-	const { label, slug, popularity_order } = tag.fields
-
-	let number = popularity_order ?? null
-	if (number === null) {
-		// Fallback: derive from the conventional slug ('phase-1'..'phase-7',
-		// 'phase-utility') when popularity_order wasn't set on the tag.
-		const slugMatch = slug.match(/^phase-(\d+)$/)
-		if (slugMatch?.[1]) {
-			number = Number(slugMatch[1])
-		} else if (slug === 'phase-utility') {
-			number = SKILL_PHASE_UTILITY_NUMBER
-		}
-	}
-	if (number === null) return null
-
-	return {
-		number,
-		// 'Phase 1: Idea' -> 'Idea'; labels without the prefix pass through as-is.
-		name: label.replace(/^phase\s*\d+\s*:\s*/i, '').trim() || label,
-		label,
-		slug,
-	}
 }
 
 /** Membership gate: published, public skill posts only. */

@@ -59,3 +59,39 @@ export type SkillEntry = {
 export function isSkillPhaseTag(tag: Tag): boolean {
 	return Boolean(tag.fields.contexts?.includes(SKILL_PHASE_TAG_CONTEXT))
 }
+
+/**
+ * Phase badge metadata from a skill-phase tag, or null when the tag carries no
+ * usable phase number (in which case the skill renders without a badge — a
+ * missing phase NEVER drops a skill from the set).
+ *
+ * `fields.popularity_order` is the intended source. The slug fallback exists
+ * because the phase tags were created by hand in a content-ops batch and the
+ * ordering field is easy to leave unset; the conventional slugs ('phase-1' …
+ * 'phase-7', 'phase-utility') then still carry the number.
+ *
+ * Lives here rather than in `skills-query.ts` because it is pure — no `db`, no
+ * logger — so it is directly testable and safe for client callers.
+ */
+export function skillPhaseFromTag(tag: Tag): SkillPhase | null {
+	const { label, slug, popularity_order } = tag.fields
+
+	let number = popularity_order ?? null
+	if (number === null) {
+		const slugMatch = slug.match(/^phase-(\d+)$/)
+		if (slugMatch?.[1]) {
+			number = Number(slugMatch[1])
+		} else if (slug === 'phase-utility') {
+			number = SKILL_PHASE_UTILITY_NUMBER
+		}
+	}
+	if (number === null) return null
+
+	return {
+		number,
+		// 'Phase 1: Idea' -> 'Idea'; labels without the prefix pass through as-is.
+		name: label.replace(/^phase\s*\d+\s*:\s*/i, '').trim() || label,
+		label,
+		slug,
+	}
+}
