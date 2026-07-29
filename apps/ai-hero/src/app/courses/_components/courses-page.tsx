@@ -7,12 +7,14 @@ import {
 	COURSES_CATALOG,
 	COURSES_COMING_NEXT,
 	COURSES_DETAILS_EYEBROW,
+	COURSES_PAST_COHORTS,
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
 	FLAGSHIP_FACTS,
 	FLAGSHIP_TEAM,
 } from '@/lib/courses-content'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
+import { getResourcePath } from '@/utils/resource-paths'
 import { ArrowRight, Star, Users } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
@@ -84,6 +86,7 @@ export function CoursesPage({
 	isPurchasable,
 	alumniLabel,
 	comingNext,
+	pastCohorts,
 }: {
 	flagship: UpcomingCohortSummary | null
 	isPurchasable: boolean
@@ -91,6 +94,8 @@ export function CoursesPage({
 	alumniLabel: string | null
 	/** Crash-course cover art; null (workshop missing) drops the card. */
 	comingNext: { image?: string } | null
+	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
+	pastCohorts: UpcomingCohortSummary[]
 }) {
 	// The crash course leads the catalog when it exists: it is the closest
 	// thing to the cohort, and the waitlist it feeds is the same ask the hero
@@ -271,16 +276,50 @@ export function CoursesPage({
 							{COURSES_CATALOG.note}
 						</p>
 					</div>
-					<div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
+					<div className={CATALOG_GRID}>
 						{catalog.map((item) => (
 							<CatalogCard key={item.href} {...item} />
 						))}
 					</div>
+
+					{/* Past cohorts — the same card and the same grid, under their own
+					    label rather than mixed into the rows above. Someone who bought
+					    a cohort had no route back to it once enrollment closed: the
+					    hero shows only the current one and /cohorts is unused. They
+					    cannot simply join the list above, though — that grid is headed
+					    "self-paced, start any day", which a finished cohort is not, and
+					    a closed thing sitting unlabelled among things you can start
+					    today reads as available. The badge and the label are what keep
+					    the row honest for a reader who has not bought. */}
+					{pastCohorts.length > 0 && (
+						<div className="mt-12">
+							<p className={MONO_LABEL}>{COURSES_PAST_COHORTS.eyebrow}</p>
+							<div className={cn(CATALOG_GRID, 'mt-6')}>
+								{pastCohorts.map((cohort) => (
+									<CatalogCard
+										key={cohort.id}
+										title={cohort.title}
+										href={getResourcePath('cohort', cohort.slug, 'view')}
+										description={
+											cohort.description ?? COURSES_PAST_COHORTS.fallbackBlurb
+										}
+										badge={COURSES_PAST_COHORTS.badge}
+										badgeTone="neutral"
+										image={cohort.image}
+									/>
+								))}
+							</div>
+						</div>
+					)}
 				</div>
 			</section>
 		</main>
 	)
 }
+
+/** One grid metric for both catalog groups, so they read as one shelf. */
+const CATALOG_GRID =
+	'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))]'
 
 function CatalogCard({
 	title,

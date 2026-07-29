@@ -175,6 +175,18 @@ export const COURSES_COMING_NEXT = {
  * (`use-nav-links.tsx`); the crash course's is fetched live because its
  * resource is the one that still changes.
  */
+/**
+ * The catalog's second shelf. Separate from `COURSES_CATALOG` because that
+ * one's note promises "self-paced, start any day" and a finished cohort is
+ * neither — these are here so alumni can find their way back, not to be sold.
+ */
+export const COURSES_PAST_COHORTS = {
+	eyebrow: 'Past cohorts',
+	badge: 'Cohort ended',
+	/** For a cohort authored without a description. */
+	fallbackBlurb: 'A past cohort. Open it if you were enrolled.',
+} as const
+
 export const COURSES_CATALOG = {
 	eyebrow: 'Everything else Matt teaches',
 	note: 'self-paced, start any day',

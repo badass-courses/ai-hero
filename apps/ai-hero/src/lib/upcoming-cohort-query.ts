@@ -77,6 +77,53 @@ export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null>
 }
 
 /**
+ * Every published+public cohort except one, newest `startsAt` first.
+ *
+ * For the /courses catalog: someone who bought a cohort has no route back to
+ * it from this site once its enrollment window shuts — the hero shows only
+ * the current or next one, and /cohorts is effectively unused. The excluded id
+ * is whatever the hero is already showing, so the page never lists the same
+ * cohort twice.
+ *
+ * Deliberately NOT filtered by ownership. The rows are navigation for people
+ * who bought, but gating them on a purchase would make this page personal and
+ * cost it its cache, and a closed cohort is public information anyway — it is
+ * how a reader sees the thing has run before.
+ */
+export async function getPastCohorts(
+	excludeId?: string,
+): Promise<UpcomingCohortSummary[]> {
+	const cohorts = await db.query.contentResource.findMany({
+		where: and(
+			eq(contentResource.type, 'cohort'),
+			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`, 'published'),
+			eq(
+				sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+				'public',
+			),
+		),
+	})
+
+	return cohorts
+		.filter((cohort) => cohort.id !== excludeId)
+		.sort((a, b) => {
+			const aStart =
+				readString(a.fields, 'startsAt') ?? a.createdAt?.toISOString() ?? ''
+			const bStart =
+				readString(b.fields, 'startsAt') ?? b.createdAt?.toISOString() ?? ''
+			return bStart.localeCompare(aStart)
+		})
+		.map((cohort) => ({
+			id: cohort.id,
+			title: (readString(cohort.fields, 'title') ?? 'Cohort').trim(),
+			slug: readString(cohort.fields, 'slug') ?? cohort.id,
+			startsAt: readString(cohort.fields, 'startsAt'),
+			image: readString(cohort.fields, 'image'),
+			description: readString(cohort.fields, 'description'),
+		}))
+}
+
+/**
  * The most recent published+public cohort regardless of enrollment window —
  * the waitlist target between cohorts. The /cohorts index page is effectively
  * unused (Vojta, 2026-07-14), so waitlist CTAs link straight to the latest
