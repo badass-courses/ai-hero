@@ -59,11 +59,17 @@ export default async function CourseSyncHistoryPage() {
 							</thead>
 							<tbody className="divide-y">
 								{history.map((item) => (
-									<tr key={item.courseVersionId} className="bg-background">
+									<tr
+										key={item.courseVersionId}
+										className="bg-background hover:bg-muted/50 relative transition-colors"
+									>
 										<td className="px-6 py-5 align-top">
-											<div className="font-semibold">
+											<Link
+												href={`/admin/course-sync/${encodeURIComponent(item.courseVersionId)}`}
+												className="focus-visible:ring-ring font-semibold underline-offset-4 after:absolute after:inset-0 after:content-[''] hover:underline focus-visible:ring-2 focus-visible:ring-offset-2"
+											>
 												{item.courseName ?? shortId(item.courseVersionId)}
-											</div>
+											</Link>
 											<div className="text-muted-foreground mt-1 font-mono text-xs">
 												{shortId(item.courseVersionId)}
 											</div>
