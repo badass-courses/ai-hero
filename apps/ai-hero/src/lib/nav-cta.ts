@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache'
+import { log } from '@/server/logger'
 
 import { getLatestCohort, getUpcomingCohort } from './upcoming-cohort-query'
 
@@ -57,3 +58,32 @@ export const getCohortOffer = unstable_cache(
 	['nav-cohort-offer-v1'],
 	{ revalidate: 600, tags: ['products', 'cohorts'] },
 )
+
+/**
+ * `getCohortOffer` for callers that must not fail with it.
+ *
+ * The root layout sits above every page AND above every error boundary, so an
+ * exception thrown there is not a degraded nav — it is the global error page
+ * instead of the site, on every route, including ones that touch no database
+ * at all. `getUpcomingCohort`/`getLatestCohort` have no try/catch of their own
+ * and `unstable_cache` re-throws on a miss, so a PlanetScale timeout with a
+ * cold cache did exactly that.
+ *
+ * A missing offer is a nav without a CTA, which is what a visitor sees between
+ * cohorts anyway. That is the right failure.
+ *
+ * The catch is deliberately OUT here rather than inside the cached function:
+ * `unstable_cache` does not store a thrown result, so a transient blip stays
+ * transient. Catching inside would cache `null` for the full 600s and keep the
+ * CTA missing long after the database came back.
+ */
+export async function getCohortOfferSafe(): Promise<CohortOffer | null> {
+	try {
+		return await getCohortOffer()
+	} catch (error) {
+		await log.error('nav.cohort-offer.failed', {
+			error: error instanceof Error ? error.message : 'Unknown error',
+		})
+		return null
+	}
+}

@@ -13,7 +13,7 @@ import config from '@/config'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { getProduct } from '@/lib/products-query'
-import { getCohortOffer } from '@/lib/nav-cta'
+import { getCohortOfferSafe } from '@/lib/nav-cta'
 import { SiteStructuredData } from '@/lib/structured-data'
 import { NavCtaProvider } from '@/components/navigation/nav-cta-context'
 import { PromoBar } from '@/components/navigation/promo-bar'
@@ -98,7 +98,11 @@ export default async function RootLayout({
 	// Safe to await here: `getCohortOffer` is a cached DB read with no
 	// `cookies()` / `headers()`, so it does not opt the tree out of static
 	// rendering. Anything viewer-specific stays on the client.
-	const cohortOffer = await getCohortOffer()
+	//
+	// `…Safe` because this is the ROOT layout: it renders above every page and
+	// above every error boundary, so a throw here replaces the whole site with
+	// the global error page rather than dropping one CTA. See `nav-cta.ts`.
+	const cohortOffer = await getCohortOfferSafe()
 
 	return (
 		<Providers>

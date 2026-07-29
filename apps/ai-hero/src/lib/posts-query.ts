@@ -625,7 +625,7 @@ export async function updatePost(
  * needs the elevated view calls `getPost` directly, as the edit routes do.
  */
 const _getCachedPublicPost = unstable_cache(
-	async (slug: string) => getPost(slug, { canEditContent: false }),
+	async (slug: string) => getPostWithAccess(slug, false),
 	['posts-v3'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
@@ -636,19 +636,40 @@ export async function getCachedPost(slug: string) {
 }
 
 /**
- * `canEditContent` may be passed by a caller that has ALREADY resolved the
- * session — that is what lets the cached wrapper above stay free of dynamic
- * data. Omitted, it resolves the session itself, so every existing call site
- * keeps its behaviour.
+ * The exported entry point. It ALWAYS resolves the session itself — the access
+ * level is never a parameter.
+ *
+ * That is not a style preference. This module is `'use server'` (line 1), so
+ * every EXPORTED function is a Server Action with a public endpoint as soon as
+ * the module is reachable from the client graph — and it is: the post editor
+ * (`edit-post-client.tsx`, a client component) imports `@/lib/cms/post-bindings`,
+ * which imports `updatePost`/`addTagToPost`/`removeTagFromPost` from here. An
+ * exported `getPost(slug, { canEditContent })` therefore let ANY caller — an
+ * unauthenticated one POSTing the action id straight from the browser — pass
+ * `{ canEditContent: true }` and read drafts, archived posts, and private
+ * posts. Every in-app call site omitted the flag, so nothing in the UI showed
+ * the hole; only the exposed endpoint did.
+ *
+ * Callers that have already resolved the session and want to skip re-resolving
+ * it use the module-private `getPostWithAccess` below. Not exporting it is what
+ * keeps it off the action manifest.
  */
-export async function getPost(
-	slugOrId: string,
-	options?: { canEditContent: boolean },
-) {
-	const canEditContent =
-		options?.canEditContent ??
-		(await getServerAuthSession()).ability.can('update', 'Content')
+export async function getPost(slugOrId: string) {
+	const { ability } = await getServerAuthSession()
+	return getPostWithAccess(slugOrId, ability.can('update', 'Content'))
+}
 
+/**
+ * Module-private, and must STAY module-private — see `getPost` above.
+ *
+ * `canEditContent` is passed rather than resolved so the cached public wrapper
+ * can stay free of dynamic data: reading the session inside `unstable_cache`
+ * throws "used `headers()` inside a function cached with `unstable_cache()`",
+ * and it only threw sometimes, because `getServerAuthSession` is
+ * request-memoised and whichever call ran first decided whether a dynamic
+ * access occurred.
+ */
+async function getPostWithAccess(slugOrId: string, canEditContent: boolean) {
 	const visibility: ('public' | 'private' | 'unlisted')[] = canEditContent
 		? ['public', 'private', 'unlisted']
 		: ['public', 'unlisted']

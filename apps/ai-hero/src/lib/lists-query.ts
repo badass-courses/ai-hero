@@ -214,6 +214,39 @@ export async function getCachedListForPost(slugOrId: string) {
 	return result ? reviveDates(result) : null
 }
 
+/**
+ * A list loaded section-aware and trimmed to what may render publicly — the
+ * same deep query + `filterSectionedResources` pass `getListForPost` applies,
+ * but keyed on the list itself rather than on one of its posts.
+ *
+ * Exists because a list LANDING page had no such loader. The layout was casting
+ * the shallow `getCachedPostOrList` row (one level deep, no state/visibility
+ * predicate) straight into `ListProvider`, which put draft and unlisted lessons
+ * into the sidebar and the mobile lesson sheet as working links while the page
+ * body beside them correctly hid the same lessons — and, because that shallow
+ * row gives `section` resources no children, made `toSeriesGroups` drop every
+ * section of a sectioned list, so its sidebar rendered empty.
+ */
+const _getCachedFilteredList = unstable_cache(
+	async (listIdOrSlug: string) => {
+		const deep = await getListWithSections(listIdOrSlug)
+		if (!deep) return null
+		return {
+			...deep,
+			resources: filterSectionedResources(
+				deep.resources as ContentResourceResource[],
+			),
+		}
+	},
+	['posts-v3'],
+	{ revalidate: 3600, tags: ['posts'] },
+)
+
+export async function getCachedFilteredList(listIdOrSlug: string) {
+	const result = await _getCachedFilteredList(listIdOrSlug)
+	return result ? reviveDates(result) : null
+}
+
 function reviveDates(obj: any): any {
 	if (obj === null || obj === undefined) return obj
 	if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(obj)) {

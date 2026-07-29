@@ -2,7 +2,7 @@ import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import type { List } from '@/lib/lists'
-import { getCachedListForPost } from '@/lib/lists-query'
+import { getCachedFilteredList, getCachedListForPost } from '@/lib/lists-query'
 import { getModuleProgressForUser } from '@/lib/progress'
 
 import { getCachedPostOrList } from '../../../lib/posts-query'
@@ -28,7 +28,12 @@ export default async function Layout(props: {
 	if (post.type === 'post') {
 		list = await getCachedListForPost(params.post)
 	} else if (post.type === 'list') {
-		list = post as unknown as List
+		// NOT `post as unknown as List`: `getCachedPostOrList` loads one level
+		// deep with no state/visibility predicate, so casting it here published
+		// draft and unlisted lessons into the sidebar and the mobile lesson sheet,
+		// and left sectioned lists with no lessons at all. This is the same
+		// filtered, section-aware view the list body itself renders.
+		list = await getCachedFilteredList(params.post)
 	}
 	const initialProgress = await getModuleProgressForUser(
 		list ? list.id : params.post,
