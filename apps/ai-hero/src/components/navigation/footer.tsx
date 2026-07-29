@@ -138,19 +138,31 @@ function LearnColumn() {
 	)
 }
 
-function LiveColumn() {
+/**
+ * Every cohort that has run, current one first.
+ *
+ * Was "Live", listing only the current cohort and any scheduled event. That
+ * gave someone who bought an earlier cohort no route back to it from any page
+ * — the footer is the one piece of navigation on every screen, and it was
+ * showing them a single cohort that is probably not theirs. `pastCohorts` was
+ * already in `useNavLinks`; nothing rendered it.
+ *
+ * Listing all of them also makes the current/past split in that data harmless
+ * here. It is hand-maintained, so a finished cohort sits in `cohorts` until
+ * someone moves it (June's is there now); a footer column of titles does not
+ * claim either way, so the drift stops mattering.
+ */
+function CohortsColumn() {
 	const navData = useNavLinks()
-	const cohorts = navData.live.cohorts
-	const events = navData.live.events
-	const isEmpty = cohorts.length === 0 && events.length === 0
+	const cohorts = [...navData.live.cohorts, ...navData.live.pastCohorts]
 
 	return (
 		<div>
-			<Eyebrow>Live</Eyebrow>
-			{isEmpty ? (
+			<Eyebrow>Cohorts</Eyebrow>
+			{cohorts.length === 0 ? (
 				<div className={listClass}>
 					<p className={cn(TYPE.metaProse, 'text-[color:var(--ah-fg-muted)]')}>
-						No live events scheduled atm.
+						No cohorts scheduled atm.
 					</p>
 					<Link
 						href="/newsletter"
@@ -173,17 +185,6 @@ function LiveColumn() {
 								onClick={() => trackFooterClick(cohort.title, 'cohort')}
 							>
 								{cohort.title}
-							</Link>
-						</li>
-					))}
-					{events.map((event) => (
-						<li key={event.href}>
-							<Link
-								href={event.href}
-								className={linkClass}
-								onClick={() => trackFooterClick(event.title, 'event')}
-							>
-								{event.title}
 							</Link>
 						</li>
 					))}
@@ -375,7 +376,7 @@ export default function Footer() {
 		<footer className="border-border w-full border-t print:hidden">
 			<div className="grid grid-cols-1 gap-9 border-b border-border px-[18px] pb-8 pt-10 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))] lg:px-11 lg:pb-[26px] lg:pt-[52px]">
 				<LearnColumn />
-				<LiveColumn />
+				<CohortsColumn />
 				<AccountColumn />
 				<AgentsColumn />
 			</div>
