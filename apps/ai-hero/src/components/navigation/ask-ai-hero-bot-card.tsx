@@ -26,31 +26,64 @@ const BOOST_SLUGS = GOAL_SECTIONS.flatMap((section) =>
 	section.items.map((item) => item.slugOrId),
 )
 
-export function AskAIHeroBotCard({ className }: { className?: string }) {
+export function AskAIHeroBotCard({
+	className,
+	wide = false,
+}: {
+	className?: string
+	/**
+	 * The in-page presentation, for the Map's content column.
+	 *
+	 * The default card is drawn for a 232px rail: 14px title, 12.5px copy, a
+	 * full-width 36px button. Dropped into a 1070px column that same card reads
+	 * as a sidebar widget someone left in the page — either stretched thin or
+	 * marooned at `max-w-[380px]`. `wide` gives it the shape the column wants:
+	 * one row from 900px up, type at the page's own sizes, and a button sized
+	 * to its label instead of to the container.
+	 */
+	wide?: boolean
+}) {
 	const [open, setOpen] = React.useState(false)
 
 	return (
 		<div
 			className={cn(
 				'border-border bg-card flex flex-col gap-1.5 rounded-md border p-4',
+				wide &&
+					'desk:flex-row desk:items-center gap-4 rounded-xl p-6 desk:gap-6 sm:p-8',
 				className,
 			)}
 		>
-			<p className={cn(TYPE.cardTitle, 'text-[14px]')}>
-				Not sure where to start?
-			</p>
-			<p className={cn(TYPE.metaProse, 'text-muted-foreground text-[12.5px]')}>
-				Ask the bot. It knows every article, video and skill on the site.
-			</p>
+			{wide && (
+				<span className="bg-accent-fill/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
+					<Sparkles className="size-6" aria-hidden />
+				</span>
+			)}
+			<div className={cn('flex flex-col gap-1.5', wide && 'flex-1 gap-2')}>
+				<p className={cn(TYPE.cardTitle, !wide && 'text-[14px]')}>
+					Not sure where to start?
+				</p>
+				<p
+					className={cn(
+						TYPE.metaProse,
+						'text-muted-foreground',
+						wide ? 'text-balance' : 'text-[12.5px]',
+					)}
+				>
+					Ask the bot. It knows every article, video and skill on the site.
+				</p>
+			</div>
 			<button
 				type="button"
 				onClick={() => setOpen(true)}
 				className={cn(
 					TYPE.meta,
 					'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring mt-2.5 flex h-9 w-full items-center justify-center gap-2 rounded-[9px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+					wide &&
+						'mt-0 h-11 w-full shrink-0 px-6 desk:w-auto',
 				)}
 			>
-				<Sparkles aria-hidden className="size-4 shrink-0" />
+				<Sparkles aria-hidden className={cn('size-4 shrink-0', wide && 'desk:hidden')} />
 				Ask AIHero Bot
 			</button>
 

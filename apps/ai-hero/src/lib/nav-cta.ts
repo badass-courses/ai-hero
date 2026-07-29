@@ -45,7 +45,10 @@ export const getCohortOffer = unstable_cache(
 				id: latest.id,
 				title: latest.title,
 				href: `/cohorts/${latest.slug}`,
-				label: 'Join the waitlist',
+				// "Join the waitlist" names the mechanism; this names the thing you
+				// get. The link goes to the cohort page either way, and between
+				// cohorts the next one is what the reader is actually after.
+				label: 'Join next cohort',
 			}
 		}
 

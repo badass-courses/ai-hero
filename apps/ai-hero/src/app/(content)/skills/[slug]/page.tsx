@@ -2,10 +2,6 @@ import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import {
-	OrganicOpportunityCta,
-	organicOpportunityCtaBySlug,
-} from '@/app/(content)/_components/organic-opportunity-cta'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
@@ -110,7 +106,7 @@ ${entry.fields?.body ?? ''}`
 													asChild
 													size="default"
 													variant="ghost"
-													className="rounded-full border"
+													className="rounded-[9px] border"
 												>
 													<Link href={entry.fields.github} target="_blank">
 														<Github className="text-muted-foreground size-4" />
@@ -121,7 +117,7 @@ ${entry.fields?.body ?? ''}`
 											{entry.fields?.body && (
 												<CopyPageButton
 													variant="ghost"
-													className="rounded-full border"
+													className="rounded-[9px] border"
 													markdown={markdownToCopy}
 												/>
 											)}
@@ -161,11 +157,10 @@ ${entry.fields?.body ?? ''}`
 }
 
 /**
- * Renders compiled skill changelog MDX with an optional organic opportunity CTA.
+ * Renders the compiled skill changelog MDX.
  *
  * @param body - Raw MDX body. Returns null when it is not a non-empty string.
- * @param slug - Skill changelog slug used to select a contextual CTA.
- * @returns Null for empty bodies, otherwise a JSX element containing compiled MDX and optional OrganicOpportunityCta.
+ * @returns Null for empty bodies, otherwise the compiled MDX article.
  */
 async function SkillChangelogBody({
 	body,
@@ -178,7 +173,11 @@ async function SkillChangelogBody({
 		return null
 	}
 
-	const ctaKind = organicOpportunityCtaBySlug[slug]
+	// No `OrganicOpportunityCta` here any more. The course CTA below the body
+	// is unconditional, so on the slugs this map covers the page closed on two
+	// gold cards in a row asking for the same email — `[post]` already carries
+	// a "never double up" rule for exactly this, and the changelog broke it the
+	// moment its own CTA stopped being gated on `!hasVideo`.
 	const { content } = await compileMDX(body, {}, {})
 
 	return (
@@ -190,7 +189,6 @@ async function SkillChangelogBody({
 				)}
 			>
 				<MdxErrorBoundary>{content}</MdxErrorBoundary>
-				{ctaKind ? <OrganicOpportunityCta kind={ctaKind} /> : null}
 			</article>
 		</div>
 	)

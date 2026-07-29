@@ -12,7 +12,6 @@ import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
 import type { ResolvedItem } from "@/lib/goal-sections-query";
 
 import { SkillCard } from "@/components/skills/skill-card";
-import { SkillsCourseCta } from "@/app/(content)/skills/_components/skills-course-cta";
 
 import { MoreWaysLink } from "./more-ways-link";
 
@@ -215,23 +214,18 @@ export function MapPage({
 				      rather than in a TOC block below it. */}
           <MapQuestionGrid items={tocItems} className="mt-2" />
 
-          {/* The bot lives in the sidebar, which is desktop-only — so the
-				      reader none of the four questions fits still gets it on a phone. */}
-          <AskAIHeroBotCard className="mt-2 max-w-[380px] md:hidden" />
+          {/* The bot, under the questions and at every width.
 
-          {/* The free course, under the questions.
+              It is also the sidebar's footer card, and stays there — that copy
+              is a persistent utility in the rail. This one is the answer to the
+              question grid directly above it: the reader who none of the four
+              questions fits needs it HERE, not at the bottom of a rail they
+              have to go looking down. It used to be `md:hidden`, so on desktop
+              the one place it was needed was the one place it was missing.
 
-              Last in the hero, after the bot card rather than before it: the
-              bot card belongs to the questions — it is what you reach for when
-              none of the four fits — while this is a different offer, and the
-              hero should finish on it rather than interrupt itself. On desktop
-              the bot card is hidden, so this simply follows the questions.
-
-              `mt-4` and not the block's own `gap-6`: a slightly wider gap marks
-              the change of subject from "pick your way in" to "here is the
-              course", without opening a hole the section border already
-              provides below. */}
-          <SkillsCourseCta className="mt-4" />
+              `wide` because the content column is 1070px and the rail card is
+              drawn for 232px. */}
+          <AskAIHeroBotCard wide className="mt-4" />
         </div>
       </section>
 
