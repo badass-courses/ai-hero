@@ -1,4 +1,5 @@
 import * as React from 'react'
+import Link from 'next/link'
 import { TYPE } from '@/components/landing/type'
 import type { SkillSection } from '@/lib/skills-query'
 
@@ -51,30 +52,69 @@ export function SkillSectionRail({
 			<ol className="flex snap-x snap-proximity gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden min-[901px]:flex-col min-[901px]:gap-[7px] min-[901px]:overflow-visible">
 				{sections.map((section) => {
 					const isCurrent = currentSection?.id === section.id
+					// The rung goes to the section's FIRST skill — its entry point.
+					// Two cases stay unlinked rather than link somewhere useless: a
+					// section with no members, and the rung the reader is standing on
+					// when they are already its first skill (a link to this page).
+					const isSelf = isCurrent && current?.position === 1
+					const href =
+						section.firstSlug && !isSelf ? `/${section.firstSlug}` : null
+					const dot = (
+						<span
+							aria-hidden
+							className={cn(
+								'size-[7px] flex-none rounded-full transition-colors',
+								isCurrent ? 'bg-primary' : 'bg-foreground/20',
+							)}
+						/>
+					)
+					// One label, whether or not it is inside a link: an extra wrapper
+					// element around it is an INLINE box, and its strut is set from the
+					// row's inherited font size rather than the label's 12px mono — it
+					// made every linked rung taller than the unlinked one.
+					const label = (
+						<span
+							className={cn(
+								TYPE.command,
+								'whitespace-nowrap transition-colors',
+								isCurrent ? 'text-primary' : 'text-[color:var(--ah-fg-label)]',
+								href && 'group-hover:text-foreground',
+							)}
+						>
+							{section.title}
+						</span>
+					)
+					// The row's box is identical in both branches — flex, same gap, no
+					// padding, no leading of its own — so linking a rung changes what it
+					// does and nothing about how it sits.
+					const rowClass = 'flex items-center gap-2.5'
 					return (
 						<li
 							key={section.id}
 							aria-current={isCurrent ? 'step' : undefined}
-							className="flex flex-none snap-start items-center gap-2.5 min-[901px]:flex-auto"
+							className="flex flex-none snap-start items-center min-[901px]:flex-auto"
 						>
-							<span
-								aria-hidden
-								className={cn(
-									'size-[7px] flex-none rounded-full',
-									isCurrent ? 'bg-primary' : 'bg-foreground/20',
-								)}
-							/>
-							<span
-								className={cn(
-									TYPE.command,
-									'whitespace-nowrap',
-									isCurrent
-										? 'text-primary'
-										: 'text-[color:var(--ah-fg-label)]',
-								)}
-							>
-								{section.title}
-							</span>
+							{href ? (
+								// The whole rung is the target, dot included: a 7px circle
+								// beside a mono label is two hit areas where the reader sees
+								// one row.
+								<Link
+									href={href}
+									prefetch={false}
+									className={cn(
+										rowClass,
+										'focus-visible:ring-ring group rounded-sm focus-visible:outline-none focus-visible:ring-2',
+									)}
+								>
+									{dot}
+									{label}
+								</Link>
+							) : (
+								<span className={rowClass}>
+									{dot}
+									{label}
+								</span>
+							)}
 						</li>
 					)
 				})}

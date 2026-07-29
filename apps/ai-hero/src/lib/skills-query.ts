@@ -209,6 +209,12 @@ export type SkillSection = {
 	title: string
 	/** How many skills the section holds — the "of 6" in "2 of 6". */
 	count: number
+	/**
+	 * The section's first skill — its entry point, and what the rail's rung
+	 * links to. Null only if a titled section somehow holds nothing, which the
+	 * catalog loader already filters out.
+	 */
+	firstSlug: string | null
 }
 
 export type SkillSectionMap = {
@@ -244,6 +250,7 @@ export const getSkillSectionMap = unstable_cache(
 				id: group.id,
 				title: group.title,
 				count: group.skills.length,
+				firstSlug: group.skills[0]?.slug ?? null,
 			})
 			group.skills.forEach((skill, index) => {
 				placement[skill.slug] = { sectionId: group.id, position: index + 1 }
@@ -252,6 +259,6 @@ export const getSkillSectionMap = unstable_cache(
 
 		return { sections, placement }
 	},
-	['skill-section-map-v1'],
+	['skill-section-map-v2'],
 	{ revalidate: 3600, tags: ['posts', 'lists'] },
 )
