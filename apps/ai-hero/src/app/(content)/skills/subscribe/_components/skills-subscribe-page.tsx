@@ -167,10 +167,14 @@ function Hero({
 				<HeroStats />
 			</div>
 
-			{/* The panel's ground is the raised band, the card inside it is the card
-			    surface — two steps, so the form reads as an object resting on the
-			    column rather than as a box drawn on the page. */}
-			<div className="border-border bg-muted flex items-center border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
+			{/* The panel's ground is the raised band under the hatch, the card
+			    inside it is the card surface — two steps, so the form reads as an
+			    object resting on the column rather than as a box drawn on the page.
+			    Same treatment as `/skills`'s hero panel (`skills-hero.tsx`): these
+			    are the same offer, one page apart, so they take the same ground.
+			    The card stays `bg-card` (opaque) — a translucent surface lets the
+			    diagonals read straight through and the panel becomes a hole. */}
+			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
 				<SkillsNewsletter.Root status={status} location={location}>
 					<div className="border-input bg-card w-full rounded-lg border p-[30px] pb-8">
 						<p
@@ -231,10 +235,15 @@ function Privacy() {
  * The three numbers under the lead. Two of them are constants of the offer
  * (seven lessons, no account); the middle one is live from Kit, because a
  * subscriber count typed into markup is stale the week it is written.
+ *
+ * Labels are one or two words. "Lessons, one a day" put the cadence in the
+ * label, where it wrapped to two lines and made this figure read longer than
+ * the two beside it — the pacing is already the first line of the curriculum
+ * section below.
  */
 function HeroStats() {
 	const stats: { value: React.ReactNode; label: string }[] = [
-		{ value: '7', label: 'Lessons, one a day' },
+		{ value: '7', label: 'Lessons' },
 		{ value: <SubscriberCount />, label: 'Developers subscribed' },
 		{ value: 'Free', label: 'No account needed' },
 	]
