@@ -7,7 +7,6 @@ import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
-import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
 import { courseBuilderAdapter } from '@/db'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
@@ -40,6 +39,7 @@ import {
 } from './_components/post-header-dialog-buttons'
 import { PostBodyCtaPlacement } from './_components/post-body-cta-placement'
 import { PostNextLessonButton } from './_components/post-next-lesson-button'
+import { PostPrimaryNewsletterPlacement } from './_components/post-primary-newsletter-placement'
 
 type Props = {
 	params: Promise<{ post: string }>
@@ -69,6 +69,17 @@ export default async function PostPage(props: {
 		({ resource }: ContentResourceResource) =>
 			resource.type === 'videoResource',
 	)
+	const resolvedCta = resolvePostCta({
+		postType: post.fields.postType,
+		cta: post.fields.cta,
+	})
+	if (resolvedCta.warning) {
+		void log.warn('post.cta.unrecognised', {
+			postId: post.id,
+			postType: post.fields.postType,
+			slug: post.fields.slug,
+		})
+	}
 	const markdownToCopy = `# ${post?.fields?.title}
 
 ${post?.fields?.body}`
@@ -157,7 +168,7 @@ ${post?.fields?.body}`
 						{post?.type === 'post' && post?.fields?.body && (
 							<PostToC markdown={post.fields.body} />
 						)}
-						<PostBody post={post} />
+						<PostBody post={post} resolvedCta={resolvedCta} />
 						{/* {listSlugFromParam && (
 									<PostProgressToggle
 										className="flex w-full items-center justify-center"
@@ -165,16 +176,9 @@ ${post?.fields?.body}`
 									/>
 								)} */}
 						{!hasVideo && (
-							<PrimaryNewsletterCta
-								isHiddenForSubscribers
-								className="mt-20 border-t pt-14 sm:pb-5 sm:pt-20"
-								trackProps={{
-									event: 'subscribed',
-									params: {
-										post: post.fields.slug,
-										location: 'post',
-									},
-								}}
+							<PostPrimaryNewsletterPlacement
+								postSlug={post.fields.slug}
+								resolvedCta={resolvedCta}
 							/>
 						)}
 						<div className="mx-auto mt-16 flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5">
@@ -214,7 +218,13 @@ ${post?.fields?.body}`
 	)
 }
 
-async function PostBody({ post }: { post: Post | null }) {
+async function PostBody({
+	post,
+	resolvedCta,
+}: {
+	post: Post | null
+	resolvedCta: ReturnType<typeof resolvePostCta>
+}) {
 	if (!post) {
 		return null
 	}
@@ -225,17 +235,6 @@ async function PostBody({ post }: { post: Post | null }) {
 
 	const dictionary = await getAiCodingDictionary()
 	const slug = String(post.fields?.slug ?? '')
-	const resolvedCta = resolvePostCta({
-		postType: post.fields.postType,
-		cta: post.fields.cta,
-	})
-	if (resolvedCta.warning) {
-		void log.warn('post.cta.unrecognised', {
-			postId: post.id,
-			postType: post.fields.postType,
-			slug,
-		})
-	}
 	const { content } = await compileMDX(
 		post.fields.body,
 		{},

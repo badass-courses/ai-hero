@@ -27,6 +27,8 @@ describe('PostBodyCtaPlacement', () => {
 		'grill-with-docs',
 		'skills-handoff',
 		'skills-wayfinder',
+		'skills-to-spec',
+		'skills-tdd',
 	])('puts a declared course CTA after the body on %s', (slug) => {
 		const resolvedCta = resolvePostCta({
 			postType: 'skill',
@@ -49,14 +51,34 @@ describe('PostBodyCtaPlacement', () => {
 		)
 	})
 
-	it('renders no CTA for an explicit none field', () => {
+	it('keeps the mapped CTA on the Claude Code status-line article', () => {
+		const markup = renderToStaticMarkup(
+			<PostBodyCtaPlacement
+				resolvedCta={resolvePostCta({
+					postType: 'article',
+					cta: undefined,
+				})}
+				slug="creating-the-perfect-claude-code-status-line"
+			>
+				<p>Post body</p>
+			</PostBodyCtaPlacement>,
+		)
+
+		expect(markup).toContain('Get practical AI coding workflow notes')
+	})
+
+	it.each([
+		'cohorts/claude-code-for-real-engineers-2026-04',
+		'cohorts/ai-coding-for-real-engineers-m0k0w',
+		'learn-anything-with-my-teach-skill',
+	])('renders no declared CTA for paid page %s', (slug) => {
 		const markup = renderToStaticMarkup(
 			<PostBodyCtaPlacement
 				resolvedCta={resolvePostCta({
 					postType: 'skill',
 					cta: 'none',
 				})}
-				slug="paid-page"
+				slug={slug}
 			>
 				<p>Paid ask</p>
 			</PostBodyCtaPlacement>,
