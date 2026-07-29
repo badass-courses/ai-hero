@@ -23,6 +23,8 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 export type ResolvedItem = {
 	/** post slug (also the flat root URL segment) */
 	slug: string
+	/** Resource id. Carried so lookups answer to an id as well as a slug. */
+	id: string
 	title: string
 	description?: string
 	/** post subtype label (`fields.postType`, e.g. 'article' | 'skill'); falls back to the resource type */
@@ -111,6 +113,7 @@ function buildDurationLabel(
 
 /** Row shape from the resolution query — mirror of resolveReference's join. */
 type ResolvedRow = {
+	id: string
 	type: string
 	fields: unknown
 	createdAt: Date | null
@@ -167,6 +170,7 @@ function toResolvedItem(resource: ResolvedRow): ResolvedItem | null {
 
 	return {
 		slug,
+		id: resource.id,
 		title,
 		description,
 		summary,
@@ -261,8 +265,15 @@ export async function getCachedGoalSectionItems(
 	try {
 		const result = await _getCachedGoalSectionItems(slugs)
 		const items: ResolvedItem[] = reviveDates(result)
+		// Keyed by BOTH, because the caller's field is `slugOrId` and the query
+		// deliberately matches on either — a config entry written as an id
+		// resolved out of the database and was then dropped on the floor by a
+		// slug-only lookup, with no error anywhere to say the row went missing.
 		const map = new Map<string, ResolvedItem>()
-		for (const item of items) map.set(item.slug, item)
+		for (const item of items) {
+			map.set(item.slug, item)
+			if (item.id) map.set(item.id, item)
+		}
 		return map
 	} catch (error) {
 		await log.error('goal-sections.resolve.error', {

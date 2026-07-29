@@ -128,17 +128,37 @@ async function resolveSection(
 	const list = await getCachedListForPost(postId).catch(() => null)
 	if (!list) return null
 
-	const siblings = (list.resources ?? [])
+	// Position matters, and it used to be thrown away: the current post was
+	// filtered out and the FIRST two survivors taken in raw list order, so every
+	// lesson in a series recommended the same two posts — usually lessons 1 and
+	// 2, including to the reader already past them. Ordering by distance from
+	// where the reader actually is makes "More in {series}" mean the lessons
+	// around this one.
+	const ordered = (list.resources ?? [])
 		.map((entry: any) => entry?.resource)
 		.filter(
 			(resource: any) =>
 				resource &&
 				resource.type === 'post' &&
-				resource.id !== postId &&
-				!skipIds.has(resource.id) &&
 				typeof resource.fields?.slug === 'string',
 		)
-		.slice(0, MAX_ITEMS)
+
+	const currentIndex = ordered.findIndex((r: any) => r.id === postId)
+	const eligible = ordered.filter(
+		(resource: any) => resource.id !== postId && !skipIds.has(resource.id),
+	)
+
+	// A post that is not in its own list (or a list that does not order) keeps
+	// the old behaviour rather than inventing a centre to measure from.
+	const siblings = (
+		currentIndex === -1
+			? eligible
+			: [...eligible].sort(
+					(a: any, b: any) =>
+						Math.abs(ordered.indexOf(a) - currentIndex) -
+						Math.abs(ordered.indexOf(b) - currentIndex),
+				)
+	).slice(0, MAX_ITEMS)
 
 	if (siblings.length < MAX_ITEMS) return null
 

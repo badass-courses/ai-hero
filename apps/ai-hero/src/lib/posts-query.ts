@@ -761,6 +761,20 @@ export async function deletePost(id: string) {
 }
 
 export async function addTagToPost(postId: string, tagId: string) {
+	// Attaching a tag twice is the same request twice, not two attachments. The
+	// bare insert made a retry — a double-click, a client retry, the CLI running
+	// the same command again — produce a SECOND join row, and every read that
+	// joins through this table then listed the tag twice on the post.
+	// `contentResourceId` + `tagId` is the natural key, but there is no unique
+	// constraint behind it, so the no-op is expressed here.
+	const existing = await db.query.contentResourceTag.findFirst({
+		where: and(
+			eq(contentResourceTagTable.contentResourceId, postId),
+			eq(contentResourceTagTable.tagId, tagId),
+		),
+	})
+	if (existing) return
+
 	await db.insert(contentResourceTagTable).values({
 		contentResourceId: postId,
 		tagId,
