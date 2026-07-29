@@ -3,10 +3,6 @@ import { type Metadata, type ResolvingMetadata } from 'next'
 import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import {
-	OrganicOpportunityCta,
-	organicOpportunityCtaBySlug,
-} from '@/app/(content)/_components/organic-opportunity-cta'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
@@ -18,8 +14,10 @@ import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
+import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
 import { getServerAuthSession } from '@/server/auth'
+import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { ArrowLeft, Github } from 'lucide-react'
@@ -40,6 +38,7 @@ import {
 	PostShareDialogButton,
 	PostSubscribeDialogButton,
 } from './_components/post-header-dialog-buttons'
+import { PostBodyCtaPlacement } from './_components/post-body-cta-placement'
 import { PostNextLessonButton } from './_components/post-next-lesson-button'
 
 type Props = {
@@ -226,7 +225,17 @@ async function PostBody({ post }: { post: Post | null }) {
 
 	const dictionary = await getAiCodingDictionary()
 	const slug = String(post.fields?.slug ?? '')
-	const ctaKind = organicOpportunityCtaBySlug[slug]
+	const resolvedCta = resolvePostCta({
+		postType: post.fields.postType,
+		cta: post.fields.cta,
+	})
+	if (resolvedCta.warning) {
+		void log.warn('post.cta.unrecognised', {
+			postId: post.id,
+			postType: post.fields.postType,
+			slug,
+		})
+	}
 	const { content } = await compileMDX(
 		post.fields.body,
 		{},
@@ -243,8 +252,9 @@ async function PostBody({ post }: { post: Post | null }) {
 	return (
 		<div className="px-5 md:px-10 lg:px-10">
 			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto mt-10 max-w-4xl">
-				<MdxErrorBoundary>{content}</MdxErrorBoundary>
-				{ctaKind ? <OrganicOpportunityCta kind={ctaKind} /> : null}
+				<PostBodyCtaPlacement resolvedCta={resolvedCta} slug={slug}>
+					<MdxErrorBoundary>{content}</MdxErrorBoundary>
+				</PostBodyCtaPlacement>
 			</article>
 		</div>
 	)

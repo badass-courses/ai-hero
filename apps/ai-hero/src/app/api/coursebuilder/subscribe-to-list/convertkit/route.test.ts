@@ -204,8 +204,9 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		})
 	})
 
-	it('does not throw when there is no ft_attr cookie', async () => {
+	it('subscribes to the Skills course when there is no ft_attr cookie', async () => {
 		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 7,
@@ -218,17 +219,26 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		const response = await POST(
 			request({
 				email: 'reader@example.com',
-				listId: 555,
+				listId: 9376133,
+				fields: { source: 'skill_page_course:skills-handoff' },
 			}),
 		)
 
 		expect(response.status).toBe(200)
 		expect(mocks.recordSignupAttribution).toHaveBeenCalledWith({
 			email: 'reader@example.com',
-			formId: 555,
+			formId: 9376133,
 			kitSubscriberId: 7,
 			rawCookie: undefined,
 		})
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({
+					source: 'skill_page_course:skills-handoff',
+					optInAttribution: undefined,
+				}),
+			}),
+		)
 	})
 
 	it('writes formId default when the body has no listId and still returns 200', async () => {

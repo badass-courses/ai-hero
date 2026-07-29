@@ -20,7 +20,7 @@ import {
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
-export async function tagSubscriberAsSkills() {
+export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	const subscriber = await getSubscriberFromCookie()
 
 	if (!subscriber?.id || !subscriber.email_address) {
@@ -39,7 +39,7 @@ export async function tagSubscriberAsSkills() {
 				email: subscriber.email_address,
 				name: subscriber.first_name ?? undefined,
 			} as any,
-			fields: { ...SKILLS_INTEREST_FIELDS },
+			fields: { ...SKILLS_INTEREST_FIELDS, source },
 		})
 
 		const subscribed = SubscriberSchema.parse(updated ?? subscriber)
@@ -57,7 +57,7 @@ export async function tagSubscriberAsSkills() {
 		if (updated) {
 			await setSubscriberCookie(subscribed)
 		}
-		await sendSkillsNewsletterPathEntry(subscribed, 'skills:tag-me')
+		await sendSkillsNewsletterPathEntry(subscribed, source)
 
 		await log.info('skills.tagme.success', {
 			subscriberId: subscriber.id,
