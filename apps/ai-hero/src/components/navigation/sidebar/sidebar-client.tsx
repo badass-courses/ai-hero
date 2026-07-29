@@ -130,7 +130,6 @@ export function SidebarNavLink({
 			>
 				<Link
 					href={href}
-					prefetch={false}
 					// Not when this row is an expanded series header: its "Overview"
 					// child is the row that points at this page and carries the
 					// highlight, so claiming it here put the accessible "you are

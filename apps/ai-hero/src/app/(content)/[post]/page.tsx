@@ -25,7 +25,10 @@ import { PostStructuredData } from '@/lib/structured-data'
 import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
 import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
-import { getListNeighborsFromList } from '@/utils/get-nextup-resource-from-list'
+import {
+	flattenListResources,
+	getListNeighborsFromList,
+} from '@/utils/get-nextup-resource-from-list'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { Github } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -460,11 +463,16 @@ async function PostHead({
 		: null
 	// "01 / 07" only means something inside a guide; a standalone article has no
 	// position to report, so the whole numeral drops rather than showing "01 / 1".
-	const lessonIndex =
-		list?.resources?.findIndex(
-			(resource: ContentResourceResource) => resource.resource.id === post.id,
-		) ?? -1
-	const lessonCount = list?.resources?.length ?? 0
+	// Counted over the FLATTENED list, the same order the pager below walks. On
+	// a sectioned list `list.resources` holds the sections, not the lessons, so
+	// counting it made the head disagree with the pager on the same screen —
+	// "02 / 03" (sections) beside "Lesson 7" (lessons) — or find no match at all
+	// and print nothing.
+	const flattenedLessons = flattenListResources(list)
+	const lessonIndex = flattenedLessons.findIndex(
+		(resource: ContentResourceResource) => resource.resource.id === post.id,
+	)
+	const lessonCount = flattenedLessons.length
 	const position =
 		lessonIndex >= 0 && lessonCount > 1
 			? `${String(lessonIndex + 1).padStart(2, '0')} / ${String(lessonCount).padStart(2, '0')}`

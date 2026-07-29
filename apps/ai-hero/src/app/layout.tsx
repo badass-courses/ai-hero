@@ -17,6 +17,7 @@ import { getCohortOfferSafe } from '@/lib/nav-cta'
 import { SiteStructuredData } from '@/lib/structured-data'
 import { NavCtaProvider } from '@/components/navigation/nav-cta-context'
 import { PromoBar } from '@/components/navigation/promo-bar'
+import { PromoBarSlot } from '@/components/navigation/promo-bar-slot'
 import { TRPCReactProvider } from '@/trpc/react'
 import { ourFileRouter } from '@/uploadthing/core'
 import { GoogleAnalytics } from '@next/third-parties/google'
@@ -161,7 +162,9 @@ export default async function RootLayout({
 									getProduct={getProduct}
 								>
 									<NavCtaProvider value={cohortOffer}>
-										<PromoBar />
+										<PromoBarSlot>
+											<PromoBar />
+										</PromoBarSlot>
 										{children}
 									</NavCtaProvider>
 								</CouponProvider>

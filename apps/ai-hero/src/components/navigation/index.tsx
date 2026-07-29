@@ -316,10 +316,7 @@ const Navigation = () => {
 										track('search_palette_opened', { via: 'nav_icon' })
 										setIsSearchOpen(true)
 									}}
-									className={cn(
-										navTextLink,
-										isSearchOpen && 'text-foreground',
-									)}
+									className={cn(navTextLink, isSearchOpen && 'text-foreground')}
 								>
 									Search
 								</button>
@@ -341,6 +338,10 @@ const Navigation = () => {
 					setIsMobileMenuOpen={setIsMobileMenuOpen}
 					onSearchOpen={() => setIsSearchOpen(true)}
 					subscriber={subscriber}
+					// The same flag that gates the palette below and the desktop
+					// Search link above — otherwise the mobile glyph renders on
+					// `minimal` routes and toggles state nothing is listening to.
+					showSearch={showSearch}
 				/>
 			</header>
 			<MobileMenuPanel

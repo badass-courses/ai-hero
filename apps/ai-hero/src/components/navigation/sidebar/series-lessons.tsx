@@ -155,7 +155,6 @@ export function SeriesLessons({
 					>
 						<Link
 							href={overviewHref}
-							prefetch={false}
 							// This row, not the group header above it, is the one that
 							// points at the list's own page and shows the active fill.
 							aria-current={overviewActive ? 'page' : undefined}
@@ -311,7 +310,6 @@ function LessonRow({
 			>
 				<Link
 					href={`/${slug}`}
-					prefetch={false}
 					aria-current={isActive ? 'page' : undefined}
 					onClick={() =>
 						track('nav_link_clicked', {

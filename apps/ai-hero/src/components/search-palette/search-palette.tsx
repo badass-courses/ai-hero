@@ -362,7 +362,11 @@ export function SearchPalette({
 										    long-press context menu all work. */}
 										<Link
 											href={item.href}
-											prefetch={false}
+											// Default `auto`: partial prefetch in the viewport, full
+											// on hover. Not `true` — the list re-renders per keystroke
+											// and full-fetching 8 speculative results each time is
+											// waste. Not `false` either: in Next 16 that kills hover
+											// prefetch too, and these rows are about to be clicked.
 											tabIndex={-1}
 											onClick={() => trackAndClose(item, 'result')}
 											className="flex w-full items-center gap-2 px-2 py-3"
@@ -382,7 +386,6 @@ export function SearchPalette({
 						{promo && (
 							<Link
 								href={promo.href}
-								prefetch={false}
 								onClick={() =>
 									trackAndClose(
 										{

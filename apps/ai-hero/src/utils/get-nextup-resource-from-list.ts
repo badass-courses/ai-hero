@@ -6,7 +6,7 @@ import { type List } from '@/lib/lists'
  * how the navigation renders sectioned lists, so "next up" walks across section
  * boundaries instead of only seeing top-level rows.
  */
-function flattenListResources(list: List | null) {
+export function flattenListResources(list: List | null) {
 	const flattened: NonNullable<List['resources']> = []
 
 	for (const wrapper of list?.resources ?? []) {

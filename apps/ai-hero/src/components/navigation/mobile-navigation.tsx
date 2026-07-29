@@ -11,6 +11,13 @@ type MobileNavigationProps = {
 	setIsMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
 	onSearchOpen: () => void
 	subscriber?: Subscriber | null
+	/**
+	 * Whether this route mounts the search palette at all. The desktop bar
+	 * already hides its Search link on `minimal` routes; without this the mobile
+	 * glyph stayed and opened nothing, because the palette it toggles is not
+	 * rendered there.
+	 */
+	showSearch?: boolean
 }
 
 /**
@@ -25,6 +32,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 	setIsMobileMenuOpen,
 	onSearchOpen,
 	subscriber,
+	showSearch = true,
 }) => {
 	// Glyphs, not words, below `lg`: the bar is 18px-gutter wide on a phone and
 	// three labelled links would not fit beside the wordmark. The desktop bar
@@ -40,17 +48,19 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
 	return (
 		<div className="ml-auto flex items-center gap-0.5 lg:hidden">
-			<button
-				type="button"
-				aria-label="Search"
-				onClick={() => {
-					track('search_palette_opened', { via: 'mobile_nav_icon' })
-					onSearchOpen()
-				}}
-				className={control}
-			>
-				<Search aria-hidden className="size-5" />
-			</button>
+			{showSearch && (
+				<button
+					type="button"
+					aria-label="Search"
+					onClick={() => {
+						track('search_palette_opened', { via: 'mobile_nav_icon' })
+						onSearchOpen()
+					}}
+					className={control}
+				>
+					<Search aria-hidden className="size-5" />
+				</button>
+			)}
 			{!subscriber && (
 				<Link
 					href="/newsletter"

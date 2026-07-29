@@ -100,7 +100,6 @@ export function SkillSectionRail({
 								// one row.
 								<Link
 									href={href}
-									prefetch={false}
 									className={cn(
 										rowClass,
 										'focus-visible:ring-ring group rounded-sm focus-visible:outline-none focus-visible:ring-2',

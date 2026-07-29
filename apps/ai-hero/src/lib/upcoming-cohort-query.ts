@@ -1,3 +1,4 @@
+import { unstable_cache } from 'next/cache'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
@@ -27,7 +28,7 @@ function readString(obj: unknown, key: string): string | undefined {
  * Single source of truth for "the upcoming cohort" — used by the landing
  * page's `UpcomingCohort` section and the search palette's promo row.
  */
-export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null> {
+async function getUpcomingCohortUncached(): Promise<UpcomingCohortSummary | null> {
 	const now = new Date().toISOString()
 
 	const cohorts = await db.query.contentResource.findMany({
@@ -57,9 +58,17 @@ export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null>
 		return true
 	})
 
+	// A cohort with no `startsAt` sorts LAST, not first. `?? ''` put it first,
+	// because the empty string precedes every ISO date — so an unscheduled
+	// placeholder outranked a genuinely scheduled cohort and became "the next
+	// cohort" everywhere this feeds: the homepage section, the ⌘K promo row,
+	// and the article CourseCta, rendered with no date at all.
 	purchasable.sort((a, b) => {
-		const aStart = readString(a.fields, 'startsAt') ?? ''
-		const bStart = readString(b.fields, 'startsAt') ?? ''
+		const aStart = readString(a.fields, 'startsAt')
+		const bStart = readString(b.fields, 'startsAt')
+		if (!aStart && !bStart) return 0
+		if (!aStart) return 1
+		if (!bStart) return -1
 		return aStart.localeCompare(bStart)
 	})
 
@@ -153,7 +162,7 @@ export async function getPastCohorts(
  * unused (Vojta, 2026-07-14), so waitlist CTAs link straight to the latest
  * cohort's own page instead. Newest `startsAt` first (createdAt fallback).
  */
-export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
+async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> {
 	const cohorts = await db.query.contentResource.findMany({
 		where: and(
 			eq(contentResource.type, 'cohort'),
@@ -183,4 +192,44 @@ export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
 	}
+}
+
+/**
+ * Cached entry points. The uncached implementations above stay module-private.
+ *
+ * Which cohort is running is the same fact for every visitor and changes on a
+ * human timescale, but these were being re-queried per call: the root layout
+ * resolves `getCohortOffer`, then `PostBody` and `CourseCta` each ran the same
+ * selector again — several `contentResource.findMany` calls with a
+ * `resourceProducts`/`product` join per article render, all to reach a value
+ * already computed higher in the same tree.
+ *
+ * Caching at the SOURCE fixes every caller at once, including the ones that
+ * were already wrapping these in their own cache (`getCohortOffer`, the palette
+ * promo route) — nested `unstable_cache` is fine, the inner entry is simply
+ * shared.
+ *
+ * The tradeoff is that `getUpcomingCohortUncached` reads `now` internally, so
+ * an enrollment window opening or closing takes up to `revalidate` to show. At
+ * 600s against windows measured in days, that is not a real edge; the tags mean
+ * a cohort or product edit invalidates it immediately anyway.
+ */
+const _getUpcomingCohort = unstable_cache(
+	getUpcomingCohortUncached,
+	['upcoming-cohort-v1'],
+	{ revalidate: 600, tags: ['products', 'cohorts'] },
+)
+
+const _getLatestCohort = unstable_cache(
+	getLatestCohortUncached,
+	['latest-cohort-v1'],
+	{ revalidate: 600, tags: ['products', 'cohorts'] },
+)
+
+export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null> {
+	return _getUpcomingCohort()
+}
+
+export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
+	return _getLatestCohort()
 }

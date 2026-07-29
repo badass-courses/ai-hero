@@ -53,7 +53,16 @@ export default async function DraftLandingPage(props: Props) {
 	//
 	// `content/landing.md` mirrors this body for diffing; `/preview/landing`
 	// renders that file directly in dev.
-	const page = await getPage('landing-page-v2')
+	//
+	// Falling back to `landing-page` makes that rollback REAL rather than
+	// theoretical. `getPage` returns null when the row is absent, renamed, or
+	// fails schema parsing, and the v2 row is created out-of-band from this
+	// deploy — so without the fallback, an empty body reached `LandingBody` and
+	// the site root served a completely blank page with HTTP 200: no error, no
+	// signal, nothing to alert on. The old row is the last thing that was known
+	// to render.
+	const page =
+		(await getPage('landing-page-v2')) ?? (await getPage('landing-page'))
 	const previewLiveStreams =
 		process.env.NODE_ENV !== 'production' && searchParams?.livePreview === '1'
 

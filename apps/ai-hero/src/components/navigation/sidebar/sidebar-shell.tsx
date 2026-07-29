@@ -143,7 +143,6 @@ export function HubSidebarShell({
 									<TooltipTrigger asChild>
 										<Link
 											href={item.href}
-											prefetch={false}
 											aria-current={isActive ? 'page' : undefined}
 											onClick={() =>
 												track('nav_link_clicked', {

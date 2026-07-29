@@ -50,7 +50,6 @@ export function SidebarMinimalFallback() {
 							>
 								<Link
 									href={item.href}
-									prefetch={false}
 									aria-current={
 										normalize(item.href) === current ? 'page' : undefined
 									}

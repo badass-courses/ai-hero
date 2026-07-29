@@ -22,6 +22,11 @@ export function useBodyScrollLock(locked: boolean) {
 
 		const { body } = document
 		const scrollY = window.scrollY
+		// Where we were when the lock went on. If the lock comes off because the
+		// reader NAVIGATED — the usual way a nav drawer closes — restoring this
+		// offset would scroll a page they have never seen to the previous page's
+		// position, dropping them into the middle of it. Compared at release.
+		const lockedAtPath = window.location.pathname
 		const previous = {
 			position: body.style.position,
 			top: body.style.top,
@@ -42,9 +47,15 @@ export function useBodyScrollLock(locked: boolean) {
 			body.style.left = previous.left
 			body.style.right = previous.right
 			body.style.overflow = previous.overflow
-			// `instant`: an animated scroll here reads as the page sliding away
-			// underneath the closing drawer.
-			window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior })
+			// Only restore when we are still on the page that was pinned. After a
+			// navigation the new page owns its own scroll position — Next has
+			// already put it at the top — and re-applying the old offset here is
+			// what made tapping a drawer link land mid-article.
+			if (window.location.pathname === lockedAtPath) {
+				// `instant`: an animated scroll here reads as the page sliding away
+				// underneath the closing drawer.
+				window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior })
+			}
 		}
 	}, [locked])
 }
