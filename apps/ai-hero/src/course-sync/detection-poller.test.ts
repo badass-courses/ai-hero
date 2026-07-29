@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	buildCourseSyncNotificationPayload,
 	createCourseSyncDetectionPoller,
+	recordCourseSyncPollFailure,
 	type CourseSyncDetectionPollerDependencies,
 	type CourseSyncNotification,
 	type CourseSyncPollLogInput,
@@ -15,9 +16,49 @@ import {
 } from './detection-poller'
 
 const manifest = {
+	$schema: 'course.schema.json',
 	schemaVersion: 3,
+	courseId: '50385098-a712-486f-b777-1f76ef31e9e5',
 	courseVersionId: 'version-2',
+	archiveTTL: '90d',
+	courseName: 'Fixture Course',
+	sections: [
+		{
+			id: 'section-1',
+			title: 'Section 1',
+			lessons: [
+				{
+					type: 'explainer',
+					id: 'lesson-1',
+					title: 'Lesson 1',
+					explainer: {
+						id: 'video-1',
+						relativePath: 'video-1.mp4',
+						sha256: 'a'.repeat(64),
+						bytes: 10,
+						body: 'Body',
+						description: 'Description',
+						hash: 'render-1',
+						chapters: [],
+					},
+				},
+			],
+		},
+	],
 } as CourseJsonDocumentV3
+
+const frozenAsset = {
+	sourceVideoId: 'video-1',
+	relativePath: 'video-1.mp4',
+	providerRevision: 'asset-rev-1',
+	providerContentHash: null,
+	producerSha256: 'a'.repeat(64),
+	bytes: 10,
+	snapshotUri: null,
+	muxAssetId: 'mux-1',
+	muxPlaybackId: 'playback-1',
+	duration: 60,
+}
 
 function run(
 	state: CourseSyncRunSummary['state'],
@@ -71,6 +112,7 @@ function harness(input?: {
 	const apply = vi.fn(
 		input?.apply ?? (async () => run('applied')),
 	)
+	const freezeAsset = vi.fn(async () => frozenAsset)
 	const dependencies: CourseSyncDetectionPollerDependencies = {
 		readManifest: async () => ({
 			manifest,
@@ -81,6 +123,7 @@ function harness(input?: {
 		}),
 		getRevisionHead: async () => input?.head ?? null,
 		getPollState: async () => state,
+		freezeAsset,
 		savePollState: async (next) => {
 			state = next
 		},
@@ -97,6 +140,7 @@ function harness(input?: {
 	}
 	return {
 		poll: createCourseSyncDetectionPoller(dependencies),
+		freezeAsset,
 		stage,
 		preview,
 		apply,
@@ -145,10 +189,16 @@ describe('course sync detection poller', () => {
 			outcome: 'applied',
 			controlPlaneRunId: 'sync-run-2',
 		})
+		expect(test.freezeAsset).toHaveBeenCalledWith({
+			bindingId: 'csb_ai_coding_crash_course',
+			manifest,
+			sourceVideoId: 'video-1',
+		})
 		expect(test.stage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				providerRevision: 'dropbox-rev-2',
 				idempotencyKey: 'course-sync-poll:version-2:dropbox-rev-2',
+				frozenAssets: [frozenAsset],
 			}),
 		)
 		expect(test.preview).toHaveBeenCalledWith('sync-run-2')
@@ -201,6 +251,86 @@ describe('course sync detection poller', () => {
 		)
 	})
 
+	it('skips a queued tick while a fresh staging marker exists', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'staging',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+		})
+
+		await expect(test.poll('poll-queued')).resolves.toEqual({
+			outcome: 'in-progress',
+			courseVersionId: 'version-2',
+			runId: 'poll-queued',
+		})
+		expect(test.freezeAsset).not.toHaveBeenCalled()
+		expect(test.stage).not.toHaveBeenCalled()
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stage: 'stage',
+					outcome: 'skipped',
+					metadata: { reason: 'freeze-sweep-in-progress' },
+				}),
+			]),
+		)
+	})
+
+	it('accounts for silent poll death and holds on the second strike', async () => {
+		let state: CourseSyncPollState = {
+			bindingId: 'csb_ai_coding_crash_course',
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			status: 'staging',
+			consecutiveFailures: 0,
+			controlPlaneRunId: null,
+			failureClass: null,
+			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
+		}
+		const logs: CourseSyncPollLogInput[] = []
+		const notifications: CourseSyncNotification[] = []
+		const dependencies = {
+			getPollState: async () => state,
+			savePollState: async (next: CourseSyncPollState) => {
+				state = next
+			},
+			appendLog: async (entry: CourseSyncPollLogInput) => {
+				logs.push(entry)
+			},
+			notify: async (notification: CourseSyncNotification) => {
+				notifications.push(notification)
+			},
+		}
+
+		await recordCourseSyncPollFailure(dependencies, {
+			runId: 'killed-1',
+			occurredAt: new Date('2026-07-24T18:01:00.000Z'),
+		})
+		await recordCourseSyncPollFailure(dependencies, {
+			runId: 'killed-2',
+			occurredAt: new Date('2026-07-24T18:02:00.000Z'),
+		})
+
+		expect(state).toMatchObject({
+			status: 'held',
+			consecutiveFailures: 2,
+			failureClass: 'POLL_RUN_KILLED',
+		})
+		expect(logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ stage: 'hold', outcome: 'held' }),
+			]),
+		)
+		expect(notifications).toHaveLength(2)
+	})
+
 	it('builds the required success and failure notification payloads', () => {
 		const success = buildCourseSyncNotificationPayload({
 			kind: 'success',
@@ -230,6 +360,9 @@ describe('course sync detection poller', () => {
 				expect.objectContaining({ title: 'Created', value: '3' }),
 				expect.objectContaining({ title: 'Media updated', value: '4' }),
 			]),
+		)
+		expect(failure.text).toContain(
+			'failure=PLANETSCALE_TRANSACTION_TIMEOUT; poll=poll-failure; sync=sync-run-2; courseVersionId=version-2',
 		)
 		expect(failure.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([

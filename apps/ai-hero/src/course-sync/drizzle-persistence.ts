@@ -56,6 +56,10 @@ function bindingFromRow(
 	return row.binding
 }
 
+function resourceType(sourceKind: SyncPlan['resources'][number]['sourceKind']) {
+	return sourceKind === 'video' ? 'videoResource' : sourceKind
+}
+
 function exactBinding(actual: CourseSyncBinding, expected: CourseSyncBinding) {
 	return stableJson(actual) === stableJson(expected)
 }
@@ -195,6 +199,40 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			orderBy: desc(courseSyncRun.updatedAt),
 		})
 		return row ? runFromRow(row) : null
+	},
+
+	async findFrozenAsset(bindingId, producerSha256, bytes) {
+		const [asset] = await db
+			.select({
+				sourceVideoId: courseSyncSourceRevisionAsset.sourceVideoId,
+				relativePath: courseSyncSourceRevisionAsset.relativePath,
+				providerRevision: courseSyncSourceRevisionAsset.providerRevision,
+				producerSha256: courseSyncSourceRevisionAsset.producerSha256,
+				bytes: courseSyncSourceRevisionAsset.bytes,
+				snapshotUri: courseSyncSourceRevisionAsset.snapshotUri,
+				muxAssetId: courseSyncSourceRevisionAsset.muxAssetId,
+				muxPlaybackId: courseSyncSourceRevisionAsset.muxPlaybackId,
+				providerContentHash: courseSyncSourceRevisionAsset.providerContentHash,
+				duration: courseSyncSourceRevisionAsset.duration,
+			})
+			.from(courseSyncSourceRevisionAsset)
+			.innerJoin(
+				courseSyncSourceRevision,
+				eq(
+					courseSyncSourceRevision.sourceRevisionId,
+					courseSyncSourceRevisionAsset.sourceRevisionId,
+				),
+			)
+			.where(
+				and(
+					eq(courseSyncSourceRevision.bindingId, bindingId),
+					eq(courseSyncSourceRevisionAsset.producerSha256, producerSha256),
+					eq(courseSyncSourceRevisionAsset.bytes, bytes),
+				),
+			)
+			.orderBy(desc(courseSyncSourceRevision.stagedAt))
+			.limit(1)
+		return asset ?? null
 	},
 
 	async createStaged({ revision, run }) {
@@ -417,7 +455,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					}
 					newResources.push({
 						id: item.targetResourceId,
-						type: item.sourceKind,
+						type: resourceType(item.sourceKind),
 						createdById,
 						fields: item.fields,
 						currentVersionId: null,
@@ -433,8 +471,8 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					const fields = existing.fields as Record<string, unknown>
 					const sync = fields.courseSync as Record<string, unknown> | undefined
 					if (
-						existing.type !== item.sourceKind ||
-						fields.state !== 'draft' ||
+						existing.type !== resourceType(item.sourceKind) ||
+						fields.state !== (item.sourceKind === 'video' ? 'ready' : 'draft') ||
 						fields.visibility !== 'unlisted' ||
 						sync?.bindingId !== plan.bindingId
 					) {
@@ -504,7 +542,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					})
 					pointerPromotions.push({
 						id: item.targetResourceId,
-						type: item.sourceKind,
+						type: resourceType(item.sourceKind),
 						createdById,
 						fields: item.fields,
 						currentVersionId: contentResourceVersionId,
@@ -710,7 +748,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				const currentFields = current.fields as Record<string, unknown>
 				const fields = parent?.fields ?? {
 					...currentFields,
-					state: 'draft',
+					state: planItem?.sourceKind === 'video' ? 'deleted' : 'draft',
 					visibility: 'unlisted',
 					courseSync: {
 						...((currentFields.courseSync as

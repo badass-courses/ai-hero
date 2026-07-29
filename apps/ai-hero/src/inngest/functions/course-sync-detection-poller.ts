@@ -8,9 +8,11 @@ import {
 import {
 	buildCourseSyncNotificationPayload,
 	createCourseSyncDetectionPoller,
+	recordCourseSyncPollFailure,
+	type CourseSyncNotification,
 } from '@/course-sync/detection-poller'
-import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { CourseSyncError } from '@/course-sync/errors'
+import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { env } from '@/env.mjs'
 import {
 	getDropboxSyncConfig,
@@ -19,12 +21,76 @@ import {
 
 import { inngest } from '../inngest.server'
 
+async function notifyCourseSync(notification: CourseSyncNotification) {
+	const channel =
+		env.COURSE_SYNC_SLACK_CHANNEL_ID ?? slackProvider.defaultChannelId
+	if (!channel) {
+		throw new CourseSyncError(
+			'COURSE_SYNC_NOTIFICATION_NOT_CONFIGURED',
+			'No course-sync Slack channel is configured.',
+			503,
+		)
+	}
+	await slackProvider.sendNotification({
+		channel,
+		...buildCourseSyncNotificationPayload(notification),
+	})
+}
+
+function originalFailureRunId(event: unknown, fallback: string) {
+	if (!event || typeof event !== 'object' || !('data' in event)) return fallback
+	const data = (event as { data?: unknown }).data
+	if (!data || typeof data !== 'object' || !('run_id' in data)) return fallback
+	const runId = (data as { run_id?: unknown }).run_id
+	return typeof runId === 'string' && runId ? runId : fallback
+}
+
 export const courseSyncDetectionPoller = inngest.createFunction(
 	{
 		id: 'ai-hero-course-sync-detection-poller',
 		name: 'AI Hero Course Sync Detection Poller',
 		concurrency: { limit: 1 },
 		retries: 0,
+		onFailure: async ({ event, step, runId }) => {
+			const failedRunId = originalFailureRunId(event, runId)
+			await recordCourseSyncPollFailure(
+				{
+					getPollState: async (bindingId) => {
+						const state = await step.run(
+							'load-failed-course-sync-poll-state',
+							() => getCourseSyncPollState(bindingId),
+						)
+						return state
+							? { ...state, updatedAt: new Date(state.updatedAt) }
+							: null
+					},
+					savePollState: async (state) => {
+						await step.run('save-failed-course-sync-poll-state', () =>
+							saveCourseSyncPollState({
+								...state,
+								updatedAt: new Date(state.updatedAt),
+							}),
+						)
+					},
+					appendLog: async (input) => {
+						await step.run(
+							`append-failed-course-sync-log-${input.stage}`,
+							() =>
+								appendCourseSyncPollLog({
+									...input,
+									occurredAt: new Date(input.occurredAt),
+								}),
+						)
+					},
+					notify: async (notification) => {
+						await step.run('notify-course-sync-failure', () =>
+							notifyCourseSync(notification),
+						)
+					},
+				},
+				{ runId: failedRunId, failureClass: 'POLL_RUN_KILLED' },
+			)
+		},
 	},
 	{ cron: 'TZ=UTC */30 * * * *' },
 	async ({ step, runId }) => {
@@ -84,9 +150,13 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					}),
 				)
 			},
+			freezeAsset: (input) =>
+				step.run(`freeze-asset-${input.sourceVideoId}`, () =>
+					courseSyncControlPlane.freezeAsset(input),
+				),
 			stage: (input) =>
 				step.run('stage-course-sync-revision', () =>
-					courseSyncControlPlane.stage(input),
+					courseSyncControlPlane.stageFrozen(input),
 				),
 			preview: (controlPlaneRunId) =>
 				step.run('preview-course-sync-revision', () =>
@@ -97,21 +167,9 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					courseSyncControlPlane.apply(input),
 				),
 			notify: async (notification) => {
-				await step.run('notify-course-sync-completion', async () => {
-					const channel =
-						env.COURSE_SYNC_SLACK_CHANNEL_ID ?? slackProvider.defaultChannelId
-					if (!channel) {
-						throw new CourseSyncError(
-							'COURSE_SYNC_NOTIFICATION_NOT_CONFIGURED',
-							'No course-sync Slack channel is configured.',
-							503,
-						)
-					}
-					await slackProvider.sendNotification({
-						channel,
-						...buildCourseSyncNotificationPayload(notification),
-					})
-				})
+				await step.run('notify-course-sync-completion', () =>
+					notifyCourseSync(notification),
+				)
 			},
 		})
 
