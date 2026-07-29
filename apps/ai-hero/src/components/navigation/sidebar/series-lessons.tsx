@@ -239,6 +239,9 @@ function SeriesSectionGroup({
 						className={cn(
 							SIDEBAR_NESTED_ROW_CLASS,
 							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground group-data-[state=open]/series-section:text-foreground flex w-full cursor-pointer select-none transition-colors',
+							// Same rule as the outer accordions: the section holding the
+							// current lesson stays at full strength even when collapsed.
+							activeInside && 'text-foreground',
 						)}
 						style={rowIndent(depth)}
 					>

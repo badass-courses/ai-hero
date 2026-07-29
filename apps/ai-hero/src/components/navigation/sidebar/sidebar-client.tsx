@@ -119,6 +119,12 @@ export function SidebarNavLink({
 							'data-[active=true]:bg-foreground data-[active=true]:text-background',
 							'dark:data-[active=true]:bg-accent-fill/10 dark:data-[active=true]:text-primary',
 						],
+					// The header of the group you are INSIDE reads at full strength.
+					// The fill still belongs to the one row that IS the page (its
+					// "Overview" child, or a lesson below) — this only lifts the label
+					// out of the muted tier, so the eye can find the group it is in
+					// without two rows claiming to be the destination.
+					isCurrentList && 'text-foreground',
 				)}
 				style={rowIndent(depth)}
 			>
@@ -469,6 +475,11 @@ export function SidebarSection({
 						className={cn(
 							SIDEBAR_ROW_CLASS,
 							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=open]:text-sidebar-foreground',
+							// Being OPEN is not the same as being the group you are IN.
+							// Open already reads at full strength; this keeps the label
+							// there for a reader who collapses the group holding the
+							// current page, which is the only sign of where they are left.
+							activeInside && 'text-foreground',
 						)}
 						style={rowIndent(depth)}
 					>

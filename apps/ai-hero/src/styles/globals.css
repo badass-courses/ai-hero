@@ -252,6 +252,12 @@
 	--ah-line-soft: rgba(20, 22, 26, 0.07);
 	--ah-hover: rgba(20, 22, 26, 0.06);
 	--ah-accent-wash: rgba(20, 22, 26, 0.04);
+	/* The wash, pre-composited over `--muted` so a panel can be OPAQUE.
+	   `--ah-accent-wash` is a tint meant to sit on the page surface; the
+	   /skills course panel sits on `bg-stripes-muted`, and at 4% the diagonal
+	   stripes read straight through it, so the panel looked like a hole rather
+	   than an object on the band. Same colour, no transparency. */
+	--ah-accent-panel: #ecedef;
 	--ah-accent-line: rgba(20, 22, 26, 0.22);
 
 	/* The spec's `--ah-bg-band`: the secondary band — newsletter panels, code
@@ -395,6 +401,8 @@
 	--ah-line-soft: rgba(255, 255, 255, 0.06);
 	--ah-hover: rgba(255, 255, 255, 0.07);
 	--ah-accent-wash: rgba(245, 196, 81, 0.07);
+	/* See `:root`. Gold at 7% over `--muted` (#0d0d0c). */
+	--ah-accent-panel: #1d1a11;
 	--ah-accent-line: rgba(245, 196, 81, 0.35);
 	--ah-band: #0e0e0d;
 

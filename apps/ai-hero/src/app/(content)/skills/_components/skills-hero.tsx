@@ -135,7 +135,7 @@ function Fact({
  */
 function CoursePanel() {
 	return (
-		<div className="rounded-lg border border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-wash)] px-6 pb-[26px] pt-6">
+		<div className="rounded-lg border border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-panel)] px-6 pb-[26px] pt-6">
 			<p className={cn(TYPE.micro, 'text-primary mb-3')}>
 				{SKILLS_COURSE_PANEL.eyebrow}
 			</p>
