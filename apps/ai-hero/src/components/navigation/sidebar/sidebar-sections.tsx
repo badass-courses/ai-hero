@@ -19,9 +19,9 @@ import {
 } from '@coursebuilder/ui'
 
 import {
-	ListSectionLessons,
 	SidebarNavLink,
 	SidebarSection,
+	SkillsNavEntry,
 } from './sidebar-client'
 import { SIDEBAR_LABEL_CLASS } from './sidebar-indent'
 
@@ -239,30 +239,21 @@ async function SkillsEntrySection({
 	label: React.ReactNode
 }) {
 	try {
-		const { listSlug, groups } = await getCachedSkillsSidebarGroups()
-		const itemHrefs = groups.flatMap((group) =>
-			group.items.map((item) => `/${item.slug}`),
-		)
-		if (itemHrefs.length === 0) {
+		const { groups } = await getCachedSkillsSidebarGroups()
+		const hasItems = groups.some((group) => group.items.length > 0)
+		if (!hasItems) {
 			return <SidebarNavLink href={href}>{label}</SidebarNavLink>
 		}
 		// Per-user, per-request (NOT in the shared cache): the ✓ marks must show
 		// on every hub page, not just inside the [post] layout's ProgressProvider.
 		const progress = await getModuleProgressForUser(SKILLS_LIST_ID)
 		return (
-			<SidebarSection
-				title={label}
-				iconHref={href}
+			<SkillsNavEntry
 				href={href}
-				ownListSlug={listSlug}
-				extraHrefs={[href, ...itemHrefs]}
-			>
-				<ListSectionLessons
-					groups={groups}
-					overviewHref={href}
-					completedLessons={progress?.completedLessons}
-				/>
-			</SidebarSection>
+				label={label}
+				groups={groups}
+				completedLessons={progress?.completedLessons}
+			/>
 		)
 	} catch (error) {
 		void log.error('hub-sidebar.skills-entry.error', {
@@ -273,42 +264,25 @@ async function SkillsEntrySection({
 }
 
 /**
- * The Explore "Skills" entry: the SAME `SidebarSection` accordion as the
- * topic groups (icon + right-side chevron), disclosing the skill list —
- * section sub-headings, Overview row, numbered skills — on ANY hub page.
- * Rendered by the MDX map whenever the sidebar body links `/skills` — the
- * body keeps its plain `[Skills](/skills)` line (which also keeps
- * `HubLayout`'s pinned-block gate satisfied). Falls back to the plain link
- * while loading or on error.
+ * The Explore "Skills" entry: a plain row that becomes the expanded skill list
+ * — header, "Overview", section sub-headings, numbered skills — while the
+ * reader is inside it. Exactly what a Guides link does when you are in that
+ * guide, because it is literally the same `SidebarNavLink`.
+ *
+ * It was a `SidebarSection` accordion disclosing the catalog on ANY hub page.
+ * See `SkillsNavEntry` for why the closed state that bought was the bug rather
+ * than a feature.
+ *
+ * Rendered by the MDX map whenever the sidebar body links `/skills` — the body
+ * keeps its plain `[Skills](/skills)` line (which also keeps `HubLayout`'s
+ * pinned-block gate satisfied). Falls back to the plain link while loading or
+ * on error, which is now also the resting shape, so nothing swaps underneath
+ * the reader on a page that is not /skills.
  */
 export function SkillsEntry(props: { href: string; label: React.ReactNode }) {
 	return (
 		<React.Suspense
-			// The fallback is the SECTION HEADER, empty — not a plain nav link.
-			// A plain link matches `/skills` and so rendered with the active fill,
-			// then resolved into a header that carries no fill: on the one page
-			// this entry names, the row lit up and switched itself off again a
-			// moment later. Same row, same icon, same label either way now; the
-			// only thing that arrives late is the disclosed content, and the
-			// section is collapsed until something inside it is current.
-			fallback={
-				<SidebarSection
-					title={props.label}
-					iconHref={props.href}
-					href={props.href}
-					// `extraHrefs` is what tells a section one of its own pages is
-					// current, and it is the section's ONLY way to know while its
-					// children are still loading. Without it the fallback opened
-					// collapsed on /skills and the resolved section then expanded,
-					// so arriving at the page played a disclosure animation the
-					// reader never asked for. The resolved one passes every skill's
-					// href as well; the section's own href is all that is knowable
-					// here, and it is the one that matters for this page.
-					extraHrefs={[props.href]}
-				>
-					{null}
-				</SidebarSection>
-			}
+			fallback={<SidebarNavLink href={props.href}>{props.label}</SidebarNavLink>}
 		>
 			<SkillsEntrySection {...props} />
 		</React.Suspense>

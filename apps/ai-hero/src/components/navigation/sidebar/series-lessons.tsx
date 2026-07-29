@@ -144,7 +144,13 @@ export function SeriesLessons({
 						className={SIDEBAR_NESTED_ROW_CLASS}
 						style={rowIndent(depth)}
 					>
-						<Link href={overviewHref} prefetch={false}>
+						<Link
+							href={overviewHref}
+							prefetch={false}
+							// This row, not the group header above it, is the one that
+							// points at the list's own page and shows the active fill.
+							aria-current={overviewActive ? 'page' : undefined}
+						>
 							<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
 								Overview
 							</span>

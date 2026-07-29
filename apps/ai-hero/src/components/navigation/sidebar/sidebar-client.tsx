@@ -49,12 +49,21 @@ export function SidebarNavLink({
 	children,
 	muted = false,
 	ariaLabel,
+	series,
 }: {
 	href: string
 	children: React.ReactNode
 	muted?: boolean
 	/** Accessible name when `children` is terse (e.g. the "All" links). */
 	ariaLabel?: string
+	/**
+	 * Rows to disclose beneath this link, when it is the home of a series the
+	 * reader is currently in. Supplying this puts the link in the same
+	 * "expanded group header" state `isCurrentList` produces below — the
+	 * caller has simply worked out membership some other way (the Skills entry
+	 * knows its own item slugs without a `ListProvider`).
+	 */
+	series?: React.ReactNode
 }) {
 	const pathname = usePathname()
 	const depth = useSidebarDepth()
@@ -75,8 +84,9 @@ export function SidebarNavLink({
 	// top). Only fires inside the [post] layout, where the list context is
 	// present. See lat.md/decisions.md "Series posts keep the hub sidebar".
 	const isCurrentList =
-		Boolean(list) &&
-		normalizePath(href) === normalizePath(listHomeHref(list!.fields.slug))
+		series !== undefined ||
+		(Boolean(list) &&
+			normalizePath(href) === normalizePath(listHomeHref(list!.fields.slug)))
 
 	return (
 		<>
@@ -110,7 +120,11 @@ export function SidebarNavLink({
 				<Link
 					href={href}
 					prefetch={false}
-					aria-current={isActive ? 'page' : undefined}
+					// Not when this row is an expanded series header: its "Overview"
+					// child is the row that points at this page and carries the
+					// highlight, so claiming it here put the accessible "you are
+					// here" on a different row than the visible one.
+					aria-current={isActive && !isCurrentList ? 'page' : undefined}
 					aria-label={ariaLabel}
 					onClick={() =>
 						track('nav_link_clicked', {
@@ -134,7 +148,9 @@ export function SidebarNavLink({
 					) : null}
 				</Link>
 			</SidebarMenuButton>
-			{isCurrentList ? (
+			{series !== undefined ? (
+				<SidebarDepth>{series}</SidebarDepth>
+			) : isCurrentList ? (
 				<SidebarDepth>
 					<SeriesLessons
 						resources={list!.resources as any}
@@ -144,6 +160,72 @@ export function SidebarNavLink({
 				</SidebarDepth>
 			) : null}
 		</>
+	)
+}
+
+/**
+ * The Explore "Skills" row, built on the same shape as a Guides link.
+ *
+ * It used to be a `SidebarSection` accordion, which meant it had a CLOSED
+ * state — and that closed state is the whole problem. `pathname` does not
+ * change until the RSC navigation commits, so arriving at /skills from
+ * anywhere the reader could not click this row (the nav bar, a link in a post,
+ * the back button) showed the previous page's collapsed section for the length
+ * of the navigation and then expanded it. No amount of animation gating fixes
+ * that: the shape itself has to change.
+ *
+ * A Guides link has no closed state to be caught in. It is a plain row until
+ * the reader is inside it, and then it IS the expanded group: header, an
+ * "Overview" child holding the active highlight, and the lessons. Nothing to
+ * open, so arriving never looks like an opening. This is the same
+ * `SidebarNavLink` those links use, handed its rows explicitly — the Skills
+ * catalog knows its own slugs, so it does not need the `ListProvider` that
+ * `isCurrentList` reads and that hub pages do not have.
+ *
+ * The cost, accepted: the skill list is no longer browsable from other hub
+ * pages. It was the accordion that offered that, and the accordion is what
+ * made the entry feel broken every time it was used.
+ */
+export function SkillsNavEntry({
+	href,
+	label,
+	groups,
+	completedLessons,
+}: {
+	href: string
+	label: React.ReactNode
+	groups: {
+		id: string
+		title: string | null
+		items: { id: string; slug: string; title: string }[]
+	}[]
+	completedLessons?: ModuleProgress['completedLessons']
+}) {
+	const pathname = usePathname()
+	const current = normalizePath(pathname ?? '/')
+	const isInside =
+		normalizePath(href) === current ||
+		groups.some((group) =>
+			group.items.some((item) => normalizePath(`/${item.slug}`) === current),
+		)
+
+	if (!isInside) {
+		return <SidebarNavLink href={href}>{label}</SidebarNavLink>
+	}
+
+	return (
+		<SidebarNavLink
+			href={href}
+			series={
+				<ListSectionLessons
+					groups={groups}
+					overviewHref={href}
+					completedLessons={completedLessons}
+				/>
+			}
+		>
+			{label}
+		</SidebarNavLink>
 	)
 }
 
@@ -235,7 +317,6 @@ export function SidebarSection({
 	title,
 	defaultOpen = false,
 	iconHref,
-	href,
 	ownListSlug,
 	extraHrefs,
 	children,
@@ -244,13 +325,6 @@ export function SidebarSection({
 	defaultOpen?: boolean
 	/** Optional `NAV_ICONS` key (an href) — renders that icon before the title. */
 	iconHref?: string
-	/**
-	 * When the section itself names a page (Skills → `/skills`), that page.
-	 * The label becomes a link to it and the chevron alone toggles, so the
-	 * header behaves like every other nav row instead of being the one piece
-	 * of labelled navigation you cannot click through to.
-	 */
-	href?: string
 	/**
 	 * When this section IS a list's sidebar home (e.g. Skills = the
 	 * `skills-catalog` list), the list's slug — exempts it from the
@@ -333,64 +407,6 @@ export function SidebarSection({
 			className="group/collapsible"
 		>
 			<SidebarGroup className="p-0">
-				{href ? (
-					// Split row: the label navigates, the chevron discloses. One
-					// element cannot do both — a click that both routed away and
-					// toggled would leave the section in a state the reader did not
-					// ask for, and hiding the destination behind a nested "Overview"
-					// row made the header the only label in the rail that looked like
-					// a link and was not.
-					<SidebarGroupLabel
-						asChild
-						className={cn(
-							SIDEBAR_ROW_CLASS,
-							'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=open]:text-sidebar-foreground pr-0',
-						)}
-						style={rowIndent(depth)}
-					>
-						<div className="flex w-full select-none items-center gap-[9px]">
-							<Link
-								href={href}
-								aria-current={
-									normalizePath(href) === normalizePath(pathname ?? '/')
-										? 'page'
-										: undefined
-								}
-								// Open on the CLICK, not on the navigation. Auto-open keys
-								// off `activeInside`, which keys off `pathname`, which does
-								// not change until the RSC navigation commits — measured at
-								// ~800ms here. For that whole time the reader is still
-								// looking at the previous page's sidebar with this section
-								// shut, so clicking "Skills" looked like nothing happened
-								// and then the tree appeared. Its own label is the one
-								// click where the intent is unambiguous, so it does not
-								// need to wait for the server to agree.
-								onClick={() => handleOpenChange(true)}
-								className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-[9px] rounded-[6px] focus-visible:outline-none focus-visible:ring-2"
-							>
-								{IconFor(iconHref)}
-								<span className="truncate">{title}</span>
-							</Link>
-							<CollapsibleTrigger asChild>
-								{/* Its own 32px hit area, and its own label: "Skills" is
-								    already spoken by the link beside it, so the button
-								    needs to announce the disclosure, not the section.
-								    `-my-[7px]` — exactly the row.s own `py-[7px]` — is what keeps that hit area from setting the
-								    row's height — the row is `h-auto py-[7px]`, so a 32px
-								    child made this one header taller than every sibling
-								    row in the rail. The negative margin lets the button
-								    overhang the padding instead of growing it. */}
-								<button
-									type="button"
-									aria-label={`${open ? 'Collapse' : 'Expand'} ${typeof title === 'string' ? title : 'this'} section`}
-									className="focus-visible:ring-ring -my-[7px] -mr-1 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[6px] focus-visible:outline-none focus-visible:ring-2"
-								>
-									<ChevronRight className="size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform group-data-[state=open]/collapsible:rotate-90" />
-								</button>
-							</CollapsibleTrigger>
-						</div>
-					</SidebarGroupLabel>
-				) : (
 				<CollapsibleTrigger asChild>
 					<SidebarGroupLabel
 						asChild
@@ -422,7 +438,6 @@ export function SidebarSection({
 						</button>
 					</SidebarGroupLabel>
 				</CollapsibleTrigger>
-				)}
 				{/* mt-px matches the menus' gap-px, so an open section's first row
 				    sits on the same 1px rhythm as every other row boundary. */}
 				<CollapsibleContent
