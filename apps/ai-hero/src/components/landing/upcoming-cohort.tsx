@@ -35,7 +35,7 @@ import { cn } from '@coursebuilder/utils/cn'
  * do the same thing.
  */
 export async function UpcomingCohort({
-	eyebrow = 'Cohort-based course · the one paid thing',
+	eyebrow = 'Cohort-based course',
 	note = 'Dates go to the list first',
 }: { eyebrow?: string; note?: string } = {}) {
 	const purchasable = await getUpcomingCohort()

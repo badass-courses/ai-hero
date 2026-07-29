@@ -29,7 +29,7 @@ export function DictionaryHit({ hit }: { hit: TypesenseResource }) {
 			className="bg-background hover:bg-muted/40 group relative flex h-full flex-col gap-3 p-6 transition-colors sm:p-7"
 		>
 			{hit.type === 'dictionary' ? (
-				<span className="font-mono text-[10px] font-medium uppercase tracking-wider opacity-60">
+				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					Index
 				</span>
 			) : null}

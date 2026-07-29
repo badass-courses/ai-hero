@@ -53,7 +53,7 @@ export function DictionarySearchResults() {
 	return (
 		<div aria-busy={isLoading || undefined} aria-live="polite">
 			<div className="border-border flex items-center justify-between border-b px-6 py-3 sm:px-8">
-				<p className="text-muted-foreground font-mono text-[10px] font-medium uppercase tracking-wider">
+				<p className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
 					{showSkeletons
 						? 'Searching…'
 						: `${items.length} ${items.length === 1 ? 'match' : 'matches'} for "${query}"`}

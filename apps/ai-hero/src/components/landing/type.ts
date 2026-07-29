@@ -37,10 +37,13 @@
  * | `metaSm`  | 13px    | —                | Attributions, footer links, nested nav rows. |
  * | `metaMono`| 13px    | —                | The mono sibling of `metaSm`.  |
  * | `statSm`  | 20px    | Skills § HEAD    | The mono numeral in a stat strip. |
- * | `micro`   | 9.5px   | `.ah-label`      | The mono uppercase eyebrow.    |
- * | `navNum`  | 9.5px   | `.ah-sidebar__num` | The mono numeral in a nav row. |
+ * | `micro`   | 11px    | `.ah-label`*     | The mono uppercase eyebrow.    |
+ * | `navNum`  | 11px    | `.ah-sidebar__num`* | The mono numeral in a nav row. |
  *
  * Display sizes step down about a third on mobile, per the spec's note.
+ *
+ * \* The two starred steps are the only places this scale overrides the spec:
+ * both are 9.5px there and 11px here. See `micro` for why.
  *
  * ## Weights
  *
@@ -226,12 +229,20 @@ export const TYPE = {
 	 */
 	metaMono: 'font-mono text-[13px] leading-[1.35]',
 	/**
-	 * The eyebrow label. Mono, caps, wide tracking, and genuinely small — at
-	 * 9.5px it reads as a tag on the section rather than as a line of text
-	 * competing with the heading under it.
+	 * The eyebrow label. Mono, caps, wide tracking.
+	 *
+	 * The prototype sets this at 9.5px and the app followed it for a while.
+	 * Overridden to 11px (Vojta, 2026-07-29): the spec's value was measured on
+	 * one label under one heading, but the app puts eyebrows on ~79 surfaces —
+	 * section heads, sidebar categories, ToC and rail labels, card meta — and
+	 * at 9.5px caps with 0.14em tracking they stopped reading as text and
+	 * started reading as texture. Still the smallest step in the scale, and
+	 * still unmistakably a tag rather than a line competing with the heading.
+	 *
+	 * Tracking stays at 0.14em: it is an em value, so it grew with the size.
 	 */
 	micro:
-		'font-mono text-[9.5px] font-medium uppercase leading-[1.4] tracking-[0.14em]',
+		'font-mono text-[11px] font-medium uppercase leading-[1.4] tracking-[0.14em]',
 	/**
 	 * The mono numeral leading a nav row (`.ah-sidebar__num`) — a lesson's
 	 * position, a section's index.
@@ -240,7 +251,7 @@ export const TYPE = {
 	 * not a label, so it takes no uppercase and no 0.14em tracking (which pulls
 	 * "3.2" apart into three characters). Tabular so a column of them lines up.
 	 */
-	navNum: 'font-mono text-[9.5px] font-medium leading-none tabular-nums',
+	navNum: 'font-mono text-[11px] font-medium leading-none tabular-nums',
 	/** Slash commands, durations, counts. Mono because they are data. */
 	command: 'font-mono text-xs font-medium',
 	/** Stats and numerals. */

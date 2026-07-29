@@ -127,8 +127,8 @@ already says the same thing.
 > **The ramp is raised above the spec's alphas, on purpose.** `aihero.css`
 > lists .72 / .62 / .48 / .45 / .35, but its own definition of done requires
 > WCAG AA "for body copy and all labels ≥ 9.5px" — and at those alphas
-> `--ah-fg-label` measures 2.94:1 in light and 3.53:1 in dark, which is the
-> 9.5px eyebrow the criterion is about. Every step that carries text now
+> `--ah-fg-label` measures 2.94:1 in light and 3.53:1 in dark, and the eyebrow
+> it draws is exactly the label the criterion is about. Every step that carries text now
 > passes 4.5:1; `--ah-fg-faint` keeps the spec's value because it never draws
 > text a reader has to make out. Do not "restore" the spec's numbers without
 > re-reading that criterion.
@@ -244,7 +244,7 @@ which an earlier pass did — makes the whole page read flatter than the mock.
 Off the home page, `TYPE.heading` is still the only section size.
 
 Plus four mono constants, because mono is a category rather than a size:
-`TYPE.micro` (the 9.5px uppercase eyebrow), `TYPE.command` (slash commands and
+`TYPE.micro` (the 11px uppercase eyebrow), `TYPE.command` (slash commands and
 durations), `TYPE.metaMono` (13px data links), and `TYPE.stat` (26px numerals).
 
 **Weights.** Headings are **700**. The spec has no medium-weight heading: at

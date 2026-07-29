@@ -104,7 +104,7 @@ export const CohortContents: React.FC<{
 															strokeWidth={2}
 														/>
 														<span
-															className="text-muted-foreground/60 mt-0.5 shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums tracking-wider"
+															className="text-muted-foreground/60 mt-0.5 shrink-0 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 															aria-hidden="true"
 														>
 															{String(index + 1).padStart(2, '0')}
@@ -113,7 +113,7 @@ export const CohortContents: React.FC<{
 															<h3 className="truncate text-[14px] font-medium leading-tight tracking-[-0.005em]">
 																{workshop.fields.title}
 															</h3>
-															<span className="text-muted-foreground/70 truncate font-mono text-[10px] font-medium uppercase tracking-wider">
+															<span className="text-muted-foreground/70 truncate font-mono text-[11px] font-medium uppercase tracking-wider">
 																{workshopDateString
 																	? `Available from ${workshopDateString}`
 																	: 'Available today'}

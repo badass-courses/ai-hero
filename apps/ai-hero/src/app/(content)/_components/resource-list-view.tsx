@@ -240,7 +240,7 @@ export function ResourceListView({
 																strokeWidth={2}
 															/>
 															<span
-																className="text-muted-foreground/60 font-mono text-[10px] font-medium uppercase tabular-nums tracking-wider"
+																className="text-muted-foreground/60 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 																aria-hidden="true"
 															>
 																{String(i + 1).padStart(2, '0')}
@@ -261,7 +261,7 @@ export function ResourceListView({
 																<>
 																	{metadata?.tier === 'free' &&
 																	!canViewSection ? (
-																		<span className="text-muted-foreground border-border inline-flex shrink-0 items-center border px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase leading-none tracking-wider">
+																		<span className="text-muted-foreground border-border inline-flex shrink-0 items-center border px-1.5 py-0.5 font-mono text-[11px] font-medium uppercase leading-none tracking-wider">
 																			Free
 																		</span>
 																	) : !canViewSection ? (
@@ -274,7 +274,7 @@ export function ResourceListView({
 															)}
 															{childResources.length > 0 && (
 																<span
-																	className="text-muted-foreground/70 shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums tracking-wider"
+																	className="text-muted-foreground/70 shrink-0 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 																	aria-label={`${sectionDoneCount} of ${childResources.length} lessons completed`}
 																>
 																	{sectionDoneCount}/{childResources.length}
