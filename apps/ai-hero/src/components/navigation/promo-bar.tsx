@@ -1,9 +1,53 @@
+import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
-import { type Post } from '@/lib/posts'
-import { getCachedAllPosts } from '@/lib/posts-query'
+import { db } from '@/db'
+import { contentResource } from '@/db/schema'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { ArrowRight } from 'lucide-react'
 
 import { FEATURED_PROMO, type Promo } from './promo-config'
+
+/**
+ * The newest published + public post, and nothing else about it.
+ *
+ * This used to call `getCachedAllPosts()` and `.find()` the first match — the
+ * entire posts table, deserialized out of the cache on every request of every
+ * page on the site, to read one title and one slug. The predicate belongs in
+ * SQL and `LIMIT 1` belongs with it.
+ *
+ * Rides the `'posts'` tag like every other post reader, so publishing swaps the
+ * bar immediately rather than at the end of the revalidate window.
+ */
+const getLatestPostPromo = unstable_cache(
+	async (): Promise<Promo | null> => {
+		const [latest] = await db
+			.select({
+				title: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, "$.title"))`,
+				slug: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, "$.slug"))`,
+			})
+			.from(contentResource)
+			.where(
+				and(
+					eq(contentResource.type, 'post'),
+					eq(
+						sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`,
+						'published',
+					),
+					eq(
+						sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+						'public',
+					),
+				),
+			)
+			.orderBy(desc(contentResource.createdAt))
+			.limit(1)
+
+		if (!latest?.slug || !latest?.title) return null
+		return { label: 'New', message: latest.title, href: `/${latest.slug}` }
+	},
+	['promo-bar-latest-post-v1'],
+	{ revalidate: 3600, tags: ['posts'] },
+)
 
 /**
  * Resolve the single active promo, server-side: a manual override wins,
@@ -13,20 +57,7 @@ import { FEATURED_PROMO, type Promo } from './promo-config'
 async function getActivePromo(): Promise<Promo | null> {
 	if (FEATURED_PROMO) return FEATURED_PROMO
 	try {
-		const posts: Post[] = await getCachedAllPosts()
-		const latest = posts.find(
-			(p: Post) =>
-				p?.fields?.state === 'published' &&
-				p?.fields?.visibility === 'public' &&
-				Boolean(p?.fields?.slug) &&
-				Boolean(p?.fields?.title),
-		)
-		if (!latest) return null
-		return {
-			label: 'New',
-			message: latest.fields.title,
-			href: `/${latest.fields.slug}`,
-		}
+		return await getLatestPostPromo()
 	} catch {
 		return null
 	}
@@ -36,6 +67,12 @@ async function getActivePromo(): Promise<Promo | null> {
  * Site-wide announcement bar. Server component rendered above the nav in the
  * root layout; full-width, not sticky (scrolls away while the nav stays
  * pinned), and not dismissible.
+ *
+ * NOTE: `PromoBarSlot` hides this on `minimal` routes (editors, admin, auth),
+ * but that gate is on the CLIENT — this component still executes there, because
+ * the root layout has no pathname to branch on without calling `headers()` and
+ * opting the whole site out of static rendering. Affordable now that the query
+ * above is one indexed row; it was not when this read the entire posts table.
  */
 export async function PromoBar() {
 	const promo = await getActivePromo()

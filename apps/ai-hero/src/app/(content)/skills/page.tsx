@@ -28,7 +28,11 @@ import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
 import { SkillsSalesCopy } from './_components/skills-sales-copy'
 
-export const dynamic = 'force-dynamic'
+// No `force-dynamic`. It was carried over with a comment about cohort
+// enrollment windows, but this page never reads a cohort — every reader on it
+// is cached and tag-invalidated. Reading `searchParams` for the changelog
+// pager already opts the route out of static rendering where it matters, and
+// dropping the flag lets the cached readers actually be cached.
 
 export const metadata: Metadata = {
 	title: SKILLS_HERO.title,

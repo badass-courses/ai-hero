@@ -113,7 +113,7 @@ async function getUpcomingCohortUncached(): Promise<UpcomingCohortSummary | null
  * cost it its cache, and a closed cohort is public information anyway — it is
  * how a reader sees the thing has run before.
  */
-export async function getPastCohorts(
+async function getPastCohortsUncached(
 	excludeId?: string,
 ): Promise<UpcomingCohortSummary[]> {
 	const now = new Date().toISOString()
@@ -226,10 +226,26 @@ const _getLatestCohort = unstable_cache(
 	{ revalidate: 600, tags: ['products', 'cohorts'] },
 )
 
+// The odd one out until now: same table, same predicate, same tags as the two
+// above, but re-queried on every request. `excludeId` is part of the key
+// because it is part of the signature; callers that filter afterwards (as
+// `/courses` does) pass nothing and share the one entry.
+const _getPastCohorts = unstable_cache(
+	getPastCohortsUncached,
+	['past-cohorts-v1'],
+	{ revalidate: 600, tags: ['products', 'cohorts'] },
+)
+
 export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null> {
 	return _getUpcomingCohort()
 }
 
 export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
 	return _getLatestCohort()
+}
+
+export async function getPastCohorts(
+	excludeId?: string,
+): Promise<UpcomingCohortSummary[]> {
+	return _getPastCohorts(excludeId)
 }

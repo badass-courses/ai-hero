@@ -28,15 +28,28 @@ export const metadata: Metadata = {
 export default async function CoursesRoute() {
 	// Purchasable cohort wins; between cohorts the latest published cohort is
 	// the waitlist target (never the /cohorts index — standing rule).
-	const [upcoming, alumniCount, comingNextWorkshop] = await Promise.all([
-		getUpcomingCohort(),
-		getCachedCohortAlumniCount(),
-		getCachedMinimalWorkshop(COURSES_COMING_NEXT.slug),
-	])
-	const flagship = upcoming ?? (await getLatestCohort())
-	// Excluding whatever the hero shows, so the page never lists a cohort
-	// twice. Sequential because the id to exclude is `flagship`'s.
-	const pastCohorts = await getPastCohorts(flagship?.id)
+	//
+	// All four run together. `getPastCohorts` looks like it depends on the
+	// flagship, but `excludeId` only ever filters rows already in memory — it
+	// does not shape the query — so waiting for the flagship bought nothing and
+	// cost a full round-trip on a `force-dynamic` page. The exclusion happens
+	// below instead. `getLatestCohort` is fetched unconditionally for the same
+	// reason: it is a cached read, and speculatively resolving it is cheaper than
+	// serializing it behind `upcoming`.
+	const [upcoming, latest, alumniCount, comingNextWorkshop, allPastCohorts] =
+		await Promise.all([
+			getUpcomingCohort(),
+			getLatestCohort(),
+			getCachedCohortAlumniCount(),
+			getCachedMinimalWorkshop(COURSES_COMING_NEXT.slug),
+			getPastCohorts(),
+		])
+
+	const flagship = upcoming ?? latest
+	// Excluding whatever the hero shows, so the page never lists a cohort twice.
+	const pastCohorts = flagship
+		? allPastCohorts.filter((cohort) => cohort.id !== flagship.id)
+		: allPastCohorts
 
 	return (
 		<LayoutClient withContainer>

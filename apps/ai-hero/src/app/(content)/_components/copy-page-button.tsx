@@ -10,21 +10,57 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 const easeOutQuint = [0.22, 1, 0.36, 1] as const
 
+/**
+ * Two ways to get the text, and the choice is a payload decision:
+ *
+ * - `markdown` — the source is already a prop. Fine for short bodies
+ *   (dictionary entries).
+ * - `sourceUrl` — the source is fetched on click. Long articles use this: the
+ *   compiled MDX tree is already in the RSC payload, so passing the raw body as
+ *   well doubles the cost of the page for a button most readers never press.
+ *
+ * Exactly one is required. `sourceUrl` wins when both are given.
+ */
+type CopySource =
+	| { markdown: string; sourceUrl?: never }
+	| { sourceUrl: string; markdown?: never }
+
 export function CopyPageButton({
 	markdown,
+	sourceUrl,
 	className,
 	variant = 'outline',
 	size = 'default',
 	...rest
-}: {
-	markdown: string
-} & ButtonProps) {
+}: CopySource & ButtonProps) {
 	const [copied, setCopied] = useState(false)
 	const prefersReducedMotion = useReducedMotion()
 
 	const handleCopy = async () => {
 		try {
-			await navigator.clipboard.writeText(markdown)
+			// The clipboard write must stay in the same task as the click on Safari,
+			// which revokes permission across an await. `ClipboardItem` with a
+			// promise is the sanctioned way to hand it a value that isn't resolved
+			// yet; everywhere else the plain await path is fine.
+			if (sourceUrl) {
+				const text = fetch(sourceUrl).then((response) => {
+					if (!response.ok) throw new Error(`HTTP ${response.status}`)
+					return response.text()
+				})
+				if (typeof ClipboardItem !== 'undefined') {
+					await navigator.clipboard.write([
+						new ClipboardItem({
+							'text/plain': text.then(
+								(value) => new Blob([value], { type: 'text/plain' }),
+							),
+						}),
+					])
+				} else {
+					await navigator.clipboard.writeText(await text)
+				}
+			} else {
+				await navigator.clipboard.writeText(markdown ?? '')
+			}
 			setCopied(true)
 			setTimeout(() => setCopied(false), 2000)
 		} catch (err) {

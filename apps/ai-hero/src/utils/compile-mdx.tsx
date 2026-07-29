@@ -671,15 +671,27 @@ export async function compileMDX(
 	const hasCustomComponents = Object.keys(resolvedComponents).length > 0
 	const hasCustomOptions = Object.keys(resolvedOptions).length > 0
 
-	// `calloutLineAutoInsert` depends on external state (the active cohort) that
-	// is NOT part of `compileDefaultMDX`'s cache key (source + lessonId), so its
-	// presence must force the non-cached path or two posts could leak each
-	// other's auto-inserted line (W1 §2.4). NOTE (observation, not fixed here per
-	// spec §7.6): `dictionaryAutoLink` is likewise absent from this bypass, so a
-	// post that passes only `dictionaryAutoLink` (no callout line) still routes
-	// through the cached default path, which drops the dictionary plugin. That is
-	// pre-existing behavior and out of this workstream's territory.
-	if (!hasCustomComponents && !hasCustomOptions && !context?.calloutLineAutoInsert) {
+	// Any context that changes the OUTPUT but is not in `compileDefaultMDX`'s
+	// cache key (source + lessonId) must route around it.
+	//
+	// `calloutLineAutoInsert` depends on the active cohort, so sharing an entry
+	// keyed on source alone would let two posts serve each other's auto-inserted
+	// line (W1 §2.4).
+	//
+	// `dictionaryAutoLink` belongs in the same test and was missing from it: a
+	// post passing only the dictionary entries (no callout line) took the cached
+	// path, which builds its plugin list from an empty context and therefore
+	// silently DROPPED the auto-linking. That is every article on the site — the
+	// feature was configured and not running. The cache here is React's
+	// request-scoped `cache()`, so the only cost of the wider test is losing
+	// dedup between two compiles of the same body inside one render, which does
+	// not happen on any current route.
+	if (
+		!hasCustomComponents &&
+		!hasCustomOptions &&
+		!context?.calloutLineAutoInsert &&
+		!context?.dictionaryAutoLink
+	) {
 		return compileDefaultMDX(source, context?.lessonId)
 	}
 

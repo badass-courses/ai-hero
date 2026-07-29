@@ -96,14 +96,16 @@ export default async function RootLayout({
 }: {
 	children: React.ReactNode
 }) {
-	// Safe to await here: `getCohortOffer` is a cached DB read with no
-	// `cookies()` / `headers()`, so it does not opt the tree out of static
-	// rendering. Anything viewer-specific stays on the client.
+	// NOT awaited. This is the ROOT layout — an await here holds the `html` tag
+	// itself, so every route on the site would wait on one cached DB read before
+	// a single byte streamed, to decide whether a nav button and an announcement
+	// bar appear. The promise crosses into `NavCtaProvider`, and the two
+	// components that read it unwrap it under their own Suspense.
 	//
-	// `…Safe` because this is the ROOT layout: it renders above every page and
-	// above every error boundary, so a throw here replaces the whole site with
-	// the global error page rather than dropping one CTA. See `nav-cta.ts`.
-	const cohortOffer = await getCohortOfferSafe()
+	// `…Safe` because a rejection here lands above every error boundary and would
+	// replace the whole site with the global error page rather than dropping one
+	// CTA; it resolves to `null` instead. See `nav-cta.ts`.
+	const cohortOffer = getCohortOfferSafe()
 
 	return (
 		<Providers>
@@ -162,8 +164,15 @@ export default async function RootLayout({
 									getProduct={getProduct}
 								>
 									<NavCtaProvider value={cohortOffer}>
+										{/* The bar resolves its own promo and suspends while it
+										    does; the fallback is its exact height so nothing
+										    below it moves when the row arrives. */}
 										<PromoBarSlot>
-											<PromoBar />
+											<React.Suspense
+												fallback={<div className="h-[34px] print:hidden" />}
+											>
+												<PromoBar />
+											</React.Suspense>
 										</PromoBarSlot>
 										{children}
 									</NavCtaProvider>

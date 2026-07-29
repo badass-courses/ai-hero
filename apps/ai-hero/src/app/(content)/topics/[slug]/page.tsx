@@ -48,13 +48,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
  */
 export default async function TopicPage({ params }: Props) {
 	const { slug } = await params
-	const tag = await getCachedTopicTag(slug)
+	// Both key off `slug` alone and neither needs the other, so they go
+	// together — the tag lookup used to gate the post query behind a full
+	// round-trip it had no say in. An unknown slug throws away one cheap
+	// by-tag query, which is the right trade against paying a serial hop on
+	// every real topic page.
+	const [tag, posts] = await Promise.all([
+		getCachedTopicTag(slug),
+		getCachedPostsByTag(slug),
+	])
 
 	if (!tag) {
 		notFound()
 	}
 
-	const posts = await getCachedPostsByTag(slug)
 	// Thumbnails, not just cover images. Most posts here are videos, and the
 	// by-tag query does not join videoResource — so on cover images alone one
 	// row in nine had artwork and the rest fell through to stripes. This

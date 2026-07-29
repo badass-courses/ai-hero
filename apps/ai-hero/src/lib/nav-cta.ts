@@ -17,6 +17,12 @@ export type CohortOffer = {
 	title: string
 	href: string
 	label: string
+	/**
+	 * ISO start date when the cohort carries one. Here so surfaces that want to
+	 * SAY the date (the ⌘K promo row) can, without a second resolution of the
+	 * same cohort over the network.
+	 */
+	startsAt?: string
 }
 
 /**
@@ -36,6 +42,7 @@ export const getCohortOffer = unstable_cache(
 				title: upcoming.title,
 				href: `/cohorts/${upcoming.slug}`,
 				label: 'Join the cohort',
+				startsAt: upcoming.startsAt,
 			}
 		}
 
@@ -50,6 +57,7 @@ export const getCohortOffer = unstable_cache(
 				// get. The link goes to the cohort page either way, and between
 				// cohorts the next one is what the reader is actually after.
 				label: 'Join next cohort',
+				startsAt: latest.startsAt,
 			}
 		}
 

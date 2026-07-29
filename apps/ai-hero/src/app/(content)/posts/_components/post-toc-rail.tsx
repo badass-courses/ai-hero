@@ -5,54 +5,14 @@ import Link from 'next/link'
 import { TYPE } from '@/components/landing/type'
 import { Share } from '@/components/share'
 import { useActiveHeadingContext } from '@/hooks/use-active-heading'
-import {
-	extractMarkdownHeadings,
-	type MarkdownHeading,
-} from '@/utils/extract-markdown-headings'
 import { AlignLeft, ArrowRight, ChevronRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { TocText } from './post-toc'
-
-interface TocSection {
-	slug: string
-	text: string
-}
-
-interface TocModel {
-	/** The h2s, in document order. The rail lists these and nothing else. */
-	sections: TocSection[]
-	/** Every heading slug in document order, h3s included. */
-	order: string[]
-	/** Any heading slug → the h2 it lives under. */
-	ownerBySlug: Map<string, string>
-}
+import { isTocModelEmpty, type TocModel } from './post-toc-model'
 
 const EYEBROW = cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')
-
-function getTocModel(markdown: string): TocModel {
-	const sections: TocSection[] = []
-	const order: string[] = []
-	const ownerBySlug = new Map<string, string>()
-
-	const walk = (nodes: MarkdownHeading[], owner: string | null) => {
-		for (const node of nodes) {
-			let nextOwner = owner
-			if (node.level === 2) {
-				sections.push({ slug: node.slug, text: node.text })
-				nextOwner = node.slug
-			}
-			order.push(node.slug)
-			if (nextOwner) ownerBySlug.set(node.slug, nextOwner)
-			walk(node.items, nextOwner)
-		}
-	}
-
-	walk(extractMarkdownHeadings(markdown), null)
-
-	return { sections, order, ownerBySlug }
-}
 
 /**
  * The rail lists h2s only, but the `Heading` component registers every heading
@@ -65,13 +25,13 @@ function useActiveSection(model: TocModel): string | null {
 	const { visibleHeadings } = useActiveHeadingContext()
 	const [lastActive, setLastActive] = React.useState<string | null>(null)
 
-	// The section in view right now — null in the gaps between them.
+	// The section in view right now — null in the gaps between them. `owners` is
+	// already in document order, so the last match wins the same way it did when
+	// this walked a separate `order` array against a `Map`.
 	const current = React.useMemo(() => {
 		let found: string | null = null
-		for (const slug of model.order) {
-			if (visibleHeadings.has(slug)) {
-				found = model.ownerBySlug.get(slug) ?? found
-			}
+		for (const [slug, owner] of model.owners) {
+			if (visibleHeadings.has(slug)) found = owner
 		}
 		return found
 	}, [model, visibleHeadings])
@@ -335,13 +295,14 @@ function ShareBlock({
  * drops out of the grid entirely and `PostToCDisclosure` takes over.
  */
 export function PostToCRail({
-	markdown,
+	model,
 	title,
 	landmarks,
 	className,
 	children,
 }: {
-	markdown: string
+	/** Derived on the server — see `post-toc-model.ts`. */
+	model: TocModel
 	title?: string
 	/** Non-heading parts of the page, listed under the h2s. See `TocLandmark`. */
 	landmarks?: TocLandmark[]
@@ -352,10 +313,9 @@ export function PostToCRail({
 	 */
 	children?: React.ReactNode
 }) {
-	const model = React.useMemo(() => getTocModel(markdown), [markdown])
 	// An article with no h2s can still have an ending worth listing, so the nav
 	// is gated on having ANY row rather than on having prose sections.
-	const hasSections = model.sections.length > 0 || (landmarks?.length ?? 0) > 0
+	const hasSections = !isTocModelEmpty(model, landmarks?.length ?? 0)
 
 	return (
 		<aside className={cn('hidden border-l md:block', className)}>
@@ -389,17 +349,16 @@ export function PostToCRail({
  * `<details>` because it needs no state, no observer and no JS to open.
  */
 export function PostToCDisclosure({
-	markdown,
+	model,
 	landmarks,
 	className,
 }: {
-	markdown: string
+	/** Derived on the server — see `post-toc-model.ts`. */
+	model: TocModel
 	landmarks?: TocLandmark[]
 	className?: string
 }) {
-	const model = React.useMemo(() => getTocModel(markdown), [markdown])
-
-	if (model.sections.length === 0 && (landmarks?.length ?? 0) === 0) return null
+	if (isTocModelEmpty(model, landmarks?.length ?? 0)) return null
 
 	return (
 		<details className={cn('group md:hidden', className)}>

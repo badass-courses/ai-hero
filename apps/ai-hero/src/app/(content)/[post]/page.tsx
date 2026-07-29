@@ -58,6 +58,7 @@ import {
 import { getSkillSectionMap, type SkillSectionMap } from '@/lib/skills-query'
 import ListPage from '../lists/[slug]/_page'
 import { PostPlayer } from '../posts/_components/post-player'
+import { getTocModel } from '../posts/_components/post-toc-model'
 import {
 	PostToCDisclosure,
 	PostToCRail,
@@ -145,9 +146,13 @@ export default async function PostPage(props: {
 			: []),
 	]
 
-	const markdownToCopy = `# ${post?.fields?.title}
-
-${post?.fields?.body}`
+	// The ToC is derived HERE, not from the body inside the two client
+	// components that draw it. They each used to take `markdown` and parse it
+	// themselves, which put the article's full source in the RSC payload twice
+	// over — beside the compiled MDX tree that was already there.
+	const tocModel = post.fields?.body
+		? getTocModel(post.fields.body)
+		: { sections: [], owners: [] }
 
 	return (
 		<main className="bg-card w-full dark:bg-transparent">
@@ -172,17 +177,9 @@ ${post?.fields?.body}`
               underneath rather than stacked. Same idiom as `LandingBody`. The
               footer owns the rule below, so nothing is needed at the end. */}
 					<article className="[&>*+*]:border-border relative flex h-full flex-col [&>*+*]:-mt-px [&>*+*]:border-t">
-						<PostHead
-							post={post}
-							list={list}
-							markdownToCopy={markdownToCopy}
-							isSkillPost={isSkillPost}
-						/>
+						<PostHead post={post} list={list} isSkillPost={isSkillPost} />
 						{post?.fields?.body && (
-							<PostToCDisclosure
-								markdown={post.fields.body}
-								landmarks={tocLandmarks}
-							/>
+							<PostToCDisclosure model={tocModel} landmarks={tocLandmarks} />
 						)}
 						{/* The spec's article shell: prose at the 70ch measure plus a
                 232px sticky rail. The rail drops below `md`, where
@@ -191,7 +188,7 @@ ${post?.fields?.body}`
 							<PostBody post={post} />
 							{post?.fields?.body && (
 								<PostToCRail
-									markdown={post.fields.body}
+									model={tocModel}
 									title={post.fields?.title}
 									landmarks={tocLandmarks}
 								>
@@ -444,12 +441,10 @@ function formatRuntime(seconds: number) {
 async function PostHead({
 	post,
 	list,
-	markdownToCopy,
 	isSkillPost,
 }: {
 	post: Post
 	list: Awaited<ReturnType<typeof getCachedListForPost>>
-	markdownToCopy: string
 	/** Skill posts carry the install panel directly under the title. */
 	isSkillPost?: boolean
 }) {
@@ -577,7 +572,9 @@ async function PostHead({
 								<CopyPageButton
 									variant="ghost"
 									className="rounded-[9px] border"
-									markdown={markdownToCopy}
+									sourceUrl={`/api/posts/${encodeURIComponent(
+										String(post.fields?.slug ?? ''),
+									)}/markdown`}
 								/>
 							)}
 							<PostShareDialogButton

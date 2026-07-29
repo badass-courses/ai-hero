@@ -1,6 +1,7 @@
 'use server'
 
 import crypto from 'node:crypto'
+import { cache } from 'react'
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { courseBuilderAdapter, db } from '@/db'
@@ -1417,9 +1418,23 @@ const _getCachedPostOrList = unstable_cache(
 	{ revalidate: 3600, tags: ['posts', 'lists'] },
 )
 
-export async function getCachedPostOrList(slugOrId: string) {
+/**
+ * Request-scoped on top of the cross-request cache.
+ *
+ * `/[post]` resolves the same row TWICE per navigation — once in `layout.tsx`
+ * to build the sidebar's list context, once in `page.tsx` to render it — and
+ * the two cannot see each other. `unstable_cache` turned the second call into a
+ * cache round-trip plus a full `reviveDates` walk of the resource tree; `cache`
+ * makes it a property read. The wrapper is module-private because this file is
+ * `'use server'` and every export becomes a Server Action endpoint.
+ */
+const _dedupedPostOrList = cache(async (slugOrId: string) => {
 	const result = await _getCachedPostOrList(slugOrId)
 	return result ? reviveDates(result) : null
+})
+
+export async function getCachedPostOrList(slugOrId: string) {
+	return _dedupedPostOrList(slugOrId)
 }
 
 export async function getPostOrList(slugOrId: string) {

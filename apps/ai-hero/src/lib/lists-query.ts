@@ -1,5 +1,6 @@
 'use server'
 
+import { cache } from 'react'
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import {
@@ -209,9 +210,16 @@ const _getCachedListForPost = unstable_cache(
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
-export async function getCachedListForPost(slugOrId: string) {
+// Request-scoped on top of the cross-request cache — `/[post]`'s layout and
+// page each resolve the post's list independently, and without this the second
+// one pays a cache round-trip plus a full `reviveDates` walk of the list tree.
+const _dedupedListForPost = cache(async (slugOrId: string) => {
 	const result = await _getCachedListForPost(slugOrId)
 	return result ? reviveDates(result) : null
+})
+
+export async function getCachedListForPost(slugOrId: string) {
+	return _dedupedListForPost(slugOrId)
 }
 
 /**

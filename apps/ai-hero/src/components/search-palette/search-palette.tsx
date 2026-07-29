@@ -18,6 +18,7 @@ import {
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { useCohortOffer } from '../navigation/nav-cta-context'
 import { FEATURED_PROMO, type Promo } from '../navigation/promo-config'
 import { NAV_ICONS, SkillsIcon } from '../navigation/sidebar/nav-icons'
 import {
@@ -46,9 +47,12 @@ import {
  * fixed below the scrollable results — the promo is never pushed out.
  *
  * Every row is a real `<Link>` (status-bar URL, cmd/middle-click work);
- * keyboard ⏎ routes through the same href. The promo row resolves dynamically
- * from `/api/palette-promo` (site-wide override → next cohort → static
- * fallback).
+ * keyboard ⏎ routes through the same href. The promo row resolves from the
+ * root layout's `NavCtaContext` (site-wide override → next cohort → static
+ * fallback), so it costs nothing and is right in the first paint.
+ *
+ * Loaded via `next/dynamic` from `Navigation`, which also owns the ⌘K binding —
+ * this component is not mounted until the first time it opens.
  *
  * Desktop: 540px, centered on a dimmed backdrop. Mobile: full-screen overlay
  * with a Cancel button instead of the esc hint.
@@ -169,42 +173,43 @@ export function SearchPalette({
 	const [query, setQuery] = React.useState('')
 	const [results, setResults] = React.useState<PaletteResult[]>([])
 	const [isSearching, setIsSearching] = React.useState(false)
-	// Static resolution first (no pop-in); replaced by the dynamic promo once
-	// fetched (manual override → upcoming cohort → static fallback).
-	const [promo, setPromo] = React.useState<Promo | null>(
-		FEATURED_PROMO ?? PALETTE_PROMO,
-	)
+	// The promo row, resolved with no network call at all.
+	//
+	// It used to `fetch('/api/palette-promo')` on every open — a round-trip, and
+	// a visible swap from the static fallback to the real row — for a cohort the
+	// ROOT LAYOUT has already resolved and put in `NavCtaContext`. Same
+	// `getUpcomingCohort` underneath, so the answer is identical; it is simply
+	// already here, correct in the first paint.
+	const cohortOffer = useCohortOffer()
+	const promo = React.useMemo<Promo | null>(() => {
+		if (FEATURED_PROMO) return FEATURED_PROMO
+		// Only a purchasable cohort earns the row. Between cohorts the nav still
+		// carries a waitlist CTA, but the palette's promo is a date-led
+		// announcement — "starts soon" is the whole point of it.
+		if (cohortOffer?.kind === 'enroll') {
+			const starts = cohortOffer.startsAt
+				? ` — starts ${new Intl.DateTimeFormat('en-US', {
+						month: 'long',
+						day: 'numeric',
+					}).format(new Date(cohortOffer.startsAt))}`
+				: ''
+			return {
+				label: 'Cohort',
+				message: `${cohortOffer.title}${starts}`,
+				href: cohortOffer.href,
+			}
+		}
+		return PALETTE_PROMO
+	}, [cohortOffer])
 	// Set on a row's pointerdown, cleared by any keydown in the palette (see the
 	// row's `onSelect`). Cleared on keydown rather than after the click so a
 	// press that drags off the row and never becomes a click can't leave the
 	// flag set and swallow the next ⏎.
 	const pointerSelectRef = React.useRef(false)
 
-	// Global shortcut: ⌘K / Ctrl+K toggles the palette.
-	React.useEffect(() => {
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
-				event.preventDefault()
-				onOpenChange(!open)
-				if (!open) track('search_palette_opened', { via: 'keyboard' })
-			}
-		}
-		document.addEventListener('keydown', onKeyDown)
-		return () => document.removeEventListener('keydown', onKeyDown)
-	}, [open, onOpenChange])
-
-	// Resolve the dynamic promo when the palette opens (cached server-side).
-	React.useEffect(() => {
-		if (!open) return
-		const controller = new AbortController()
-		fetch('/api/palette-promo', { signal: controller.signal })
-			.then((res) => (res.ok ? res.json() : null))
-			.then((data) => {
-				if (data && 'promo' in data) setPromo(data.promo ?? null)
-			})
-			.catch(() => {})
-		return () => controller.abort()
-	}, [open])
+	// ⌘K is owned by `Navigation`, not by this component: the palette is
+	// `next/dynamic` and not mounted until its first open, so a listener in here
+	// could never have fired the shortcut that opens it.
 
 	// Reset per open so a reopened palette starts at the curated defaults.
 	React.useEffect(() => {
@@ -251,9 +256,14 @@ export function SearchPalette({
 	}, [query])
 
 	const isQuerying = query.trim().length > 0
-	const items: PaletteResult[] = isQuerying
-		? results
-		: CURATED_DEFAULTS.map((item) => ({ ...item, id: item.href }))
+	// Hoisted rather than rebuilt per render: without the memo every keystroke
+	// re-allocated the whole curated list, including on the frames where it is
+	// not even the thing being displayed.
+	const defaults = React.useMemo<PaletteResult[]>(
+		() => CURATED_DEFAULTS.map((item) => ({ ...item, id: item.href })),
+		[],
+	)
+	const items: PaletteResult[] = isQuerying ? results : defaults
 
 	const trackAndClose = (
 		item: Pick<PaletteResult, 'title' | 'href' | 'type'>,

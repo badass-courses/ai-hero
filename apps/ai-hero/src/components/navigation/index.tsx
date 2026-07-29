@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useParams, usePathname, useRouter } from 'next/navigation'
@@ -11,8 +12,6 @@ import { useSession } from 'next-auth/react'
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
-import { SearchPalette } from '../search-palette/search-palette'
-import { MobileMenuPanel } from './mobile-menu-panel'
 import { MobileNavigation } from './mobile-navigation'
 import { NavLinkItem } from './nav-link-item'
 import { useCohortOffer } from './nav-cta-context'
@@ -24,6 +23,26 @@ import {
 	PRIMARY_NAV_ITEMS,
 } from './primary-nav'
 import { UserMenu } from './user-menu'
+
+/**
+ * Both of these render nothing until the visitor asks for them — the palette is
+ * closed until ⌘K or the Search link, the drawer until the hamburger — and both
+ * are heavy: the palette drags in cmdk and the whole radix dialog, the drawer an
+ * accordion, a focus trap and the nav icon set. `Navigation` sits in the root
+ * layout, so statically importing them put all of that in the chunk EVERY page
+ * loads before it can hydrate anything.
+ *
+ * Loaded on first open instead. No `ssr: false`: neither renders server markup
+ * while closed, so there is nothing to suppress, and keeping SSR on means a
+ * palette opened before hydration still works.
+ */
+const SearchPalette = dynamic(() =>
+	import('../search-palette/search-palette').then((mod) => mod.SearchPalette),
+)
+
+const MobileMenuPanel = dynamic(() =>
+	import('./mobile-menu-panel').then((mod) => mod.MobileMenuPanel),
+)
 
 /**
  * Session-dependent nav items that use mounted state to prevent hydration mismatch.
@@ -219,6 +238,40 @@ const Navigation = () => {
 	// Center destinations by mode. `minimal` (editors/admin/auth) shows none.
 	const showSearch = mode === 'full' || mode === 'hub'
 
+	// Both panels are `next/dynamic`, and a dynamic import only defers anything
+	// if the element is not rendered — so they are not rendered until the first
+	// time they are asked for, and stay mounted afterwards. Staying mounted is
+	// load-bearing for the drawer: it is what remembers the reader's place in the
+	// nav tree between opens.
+	const [hasOpenedSearch, setHasOpenedSearch] = React.useState(false)
+	const [hasOpenedMenu, setHasOpenedMenu] = React.useState(false)
+
+	React.useEffect(() => {
+		if (isSearchOpen) setHasOpenedSearch(true)
+	}, [isSearchOpen])
+
+	React.useEffect(() => {
+		if (isMobileMenuOpen) setHasOpenedMenu(true)
+	}, [isMobileMenuOpen])
+
+	// ⌘K lives HERE rather than inside the palette, because the palette is no
+	// longer mounted before its first open — a shortcut that only works once the
+	// component it opens is already on the page is not a shortcut.
+	React.useEffect(() => {
+		if (!showSearch) return
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
+				event.preventDefault()
+				setIsSearchOpen((open) => {
+					if (!open) track('search_palette_opened', { via: 'keyboard' })
+					return !open
+				})
+			}
+		}
+		document.addEventListener('keydown', onKeyDown)
+		return () => document.removeEventListener('keydown', onKeyDown)
+	}, [showSearch])
+
 	return (
 		<>
 			<header
@@ -329,7 +382,14 @@ const Navigation = () => {
 						/>
 						<UserMenu />
 						{mode !== 'minimal' && (
-							<FreeCourseCta pathname={pathname} subscriber={subscriber} />
+							// `useCohortOffer` unwraps the root layout's promise with
+							// `use()`, so this suspends until the offer lands. The fallback
+							// is nothing: the CTA reserves its own width via `min-w`, and an
+							// absent gold button reads better for one beat than a skeleton
+							// of one.
+							<React.Suspense fallback={null}>
+								<FreeCourseCta pathname={pathname} subscriber={subscriber} />
+							</React.Suspense>
 						)}
 					</ul>
 				</nav>
@@ -344,12 +404,20 @@ const Navigation = () => {
 					showSearch={showSearch}
 				/>
 			</header>
-			<MobileMenuPanel
-				isOpen={isMobileMenuOpen}
-				onClose={() => setIsMobileMenuOpen(false)}
-			/>
-			{showSearch && (
-				<SearchPalette open={isSearchOpen} onOpenChange={setIsSearchOpen} />
+			{hasOpenedMenu && (
+				<MobileMenuPanel
+					isOpen={isMobileMenuOpen}
+					onClose={() => setIsMobileMenuOpen(false)}
+				/>
+			)}
+			{showSearch && hasOpenedSearch && (
+				// Same reason as the CTA above: the palette reads the cohort offer for
+				// its promo row and therefore suspends on first open. By then the
+				// promise has almost always settled — it was started in the root
+				// layout, before this page rendered.
+				<React.Suspense fallback={null}>
+					<SearchPalette open={isSearchOpen} onOpenChange={setIsSearchOpen} />
+				</React.Suspense>
 			)}
 		</>
 	)
