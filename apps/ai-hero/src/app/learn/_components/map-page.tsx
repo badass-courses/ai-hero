@@ -12,6 +12,7 @@ import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
 import type { ResolvedItem } from "@/lib/goal-sections-query";
 
 import { SkillCard } from "@/components/skills/skill-card";
+import { SkillsCourseCta } from "@/app/(content)/skills/_components/skills-course-cta";
 
 import { MoreWaysLink } from "./more-ways-link";
 
@@ -217,6 +218,20 @@ export function MapPage({
           {/* The bot lives in the sidebar, which is desktop-only — so the
 				      reader none of the four questions fits still gets it on a phone. */}
           <AskAIHeroBotCard className="mt-2 max-w-[380px] md:hidden" />
+
+          {/* The free course, under the questions.
+
+              Last in the hero, after the bot card rather than before it: the
+              bot card belongs to the questions — it is what you reach for when
+              none of the four fits — while this is a different offer, and the
+              hero should finish on it rather than interrupt itself. On desktop
+              the bot card is hidden, so this simply follows the questions.
+
+              `mt-4` and not the block's own `gap-6`: a slightly wider gap marks
+              the change of subject from "pick your way in" to "here is the
+              course", without opening a hole the section border already
+              provides below. */}
+          <SkillsCourseCta className="mt-4" />
         </div>
       </section>
 

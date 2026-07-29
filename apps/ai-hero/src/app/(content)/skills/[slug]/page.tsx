@@ -139,11 +139,12 @@ ${entry.fields?.body ?? ''}`
 								body={entry.fields?.body}
 								slug={String(entry.fields?.slug ?? slug)}
 							/>
-							{!hasVideo ? (
-								<div className="mx-auto w-full max-w-4xl px-5 pt-20 md:px-10 lg:px-14">
-									<SkillsCourseCta />
-								</div>
-							) : null}
+							{/* Unconditional now: it was gated on `!hasVideo` only because
+							    the video branch rendered its own copy up in the player
+							    band. One CTA, one place, after what it is selling. */}
+							<div className="mx-auto w-full max-w-4xl px-5 pt-20 md:px-10 lg:px-14">
+								<SkillsCourseCta />
+							</div>
 							<div className="mx-auto mt-16 flex w-full flex-wrap items-center justify-center gap-5 border-t pl-5">
 								<strong className="text-lg font-semibold">Share</strong>
 								<Share
@@ -216,6 +217,11 @@ async function PlayerContainer({
 					aria-label="video"
 					className="mb-6 flex flex-col items-center justify-center border-b bg-black sm:mb-10"
 				>
+					{/* Player only. The course CTA used to sit here, inside the
+					    black video band and so ABOVE the entry's own breadcrumb,
+					    title and byline — the ask arrived before the thing being
+					    asked about. It now renders after the body for every entry,
+					    which is where the no-video branch always put it. */}
 					<PostPlayer
 						title={String(entry.fields?.title ?? '')}
 						thumbnailTime={Number(entry.fields?.thumbnailTime ?? 0)}
@@ -223,9 +229,6 @@ async function PlayerContainer({
 						className="aspect-video h-full max-h-[75vh] w-full overflow-hidden"
 						videoResource={videoResource}
 					/>
-					<div className="bg-background w-full px-5 py-8 md:px-10 lg:px-14">
-						<SkillsCourseCta className="mx-auto max-w-4xl" />
-					</div>
 				</section>
 			</Suspense>
 		</VideoPlayerOverlayProvider>
