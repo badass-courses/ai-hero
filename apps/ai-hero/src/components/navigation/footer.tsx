@@ -305,15 +305,22 @@ type UtilityLink = {
 function UtilityRow() {
 	const navData = useNavLinks()
 
+	// Skills and the free course lead, ahead of the Dictionary: they are the
+	// two things this row is actually for, and the free course is the site's
+	// primary ask — the nav's gold CTA points at the same page. "Skills
+	// Newsletter" undersold it as a mailing list rather than the course you
+	// get for signing up, which is how every other surface names it. The
+	// analytics `type` stays `skills_newsletter` so the label change does not
+	// break the series.
 	const utilityLinks: UtilityLink[] = [
 		{ href: navData.browseAll.href, label: 'Browse All', type: 'browse_all' },
-		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/skills', label: 'Skills', type: 'skills' },
 		{
 			href: '/skills/subscribe',
-			label: 'Skills Newsletter',
+			label: 'Free course',
 			type: 'skills_newsletter',
 		},
+		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
 		{ href: '/privacy', label: 'Terms', type: 'legal' },
 	]
