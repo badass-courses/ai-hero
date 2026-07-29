@@ -186,8 +186,18 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		: null
 
 	// "Trained" in the fact strip: a live count across every cohort to date,
-	// dropped rather than guessed when it is too small to quote.
-	const alumniLabel = formatAlumniCount(await getCachedCohortAlumniCount())
+	// dropped rather than guessed when it is too small to quote — including
+	// when the count itself fails, which must never take the sales page down
+	// with it (`.catch(() => 0)`, as on the landing page and /courses).
+	// Fetched alongside the product map because neither depends on the other,
+	// and serialising them only adds latency to the server render.
+	const [alumniCount, allProducts] = await Promise.all([
+		getCachedCohortAlumniCount().catch(() => 0),
+		db.query.products.findMany({
+			where: eq(products.status, 1),
+		}),
+	])
+	const alumniLabel = formatAlumniCount(alumniCount)
 
 	const providers = getProviders()
 	const discordProvider = providers?.discord
@@ -201,9 +211,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		: null
 
 	// Get product slug to ID map for HasPurchased component
-	const allProducts = await db.query.products.findMany({
-		where: eq(products.status, 1),
-	})
 	const productMap = new Map(allProducts.map((p) => [p.fields?.slug, p.id]))
 	// Use post-purchase body copy for purchasers when available,
 	// otherwise fall back to the standard sales body

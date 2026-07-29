@@ -95,14 +95,13 @@ export function HubSidebarShell({
 	const pathname = usePathname()
 	const current = normalizePath(pathname ?? '/')
 
+	// The next value is computed here rather than inside the updater: a state
+	// updater has to be pure, and React deliberately calls it twice in
+	// development — which fired two `nav_sidebar_toggled` events for one click.
 	const toggle = () => {
-		setCollapsed((value) => {
-			track('nav_sidebar_toggled', {
-				collapsed: !value,
-				category: 'hub_sidebar',
-			})
-			return !value
-		})
+		const next = !collapsed
+		track('nav_sidebar_toggled', { collapsed: next, category: 'hub_sidebar' })
+		setCollapsed(next)
 	}
 
 	if (collapsed) {

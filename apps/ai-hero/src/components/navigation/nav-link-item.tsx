@@ -92,6 +92,11 @@ export const NavLinkItem: React.FC<NavLinkItem> = ({
 						prefetch
 						href={href!}
 						onClick={handleClick}
+						// The pill and the mobile underline are the only "you are
+						// here" signals otherwise, and both are colour alone.
+						// `PrimaryEntryLink` in `index.tsx` already announces itself
+						// this way; the rest of the bar should too.
+						aria-current={isActive ? 'page' : undefined}
 						className={cn('relative', {
 							'underline md:no-underline': isActive,
 						})}

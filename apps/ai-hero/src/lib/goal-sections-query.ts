@@ -154,10 +154,16 @@ function toResolvedItem(resource: ResolvedRow): ResolvedItem | null {
 		image = youtubeThumbnailUrl(youtubeSource) ?? undefined
 	}
 
+	// `fields.publishedAt` is free-form JSON, so an unparseable stamp is possible.
+	// `new Date('whenever')` does not throw, it yields an Invalid Date — which
+	// serializes through the cache boundary as `null` and loses the createdAt
+	// fallback entirely. Only a date that actually parsed wins over createdAt.
 	const publishedAtStr = readString(resource.fields, 'publishedAt')
-	const publishedAt = publishedAtStr
-		? new Date(publishedAtStr)
-		: (resource.createdAt ?? null)
+	const parsedPublishedAt = publishedAtStr ? new Date(publishedAtStr) : null
+	const publishedAt =
+		parsedPublishedAt && !isNaN(parsedPublishedAt.getTime())
+			? parsedPublishedAt
+			: (resource.createdAt ?? null)
 
 	return {
 		slug,
@@ -179,54 +185,42 @@ const publishedPublic = () =>
 		eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`, 'public'),
 	)
 
+// Neither resolver catches its own errors, and that is the point: they run
+// INSIDE `unstable_cache`, which does not store a thrown result. A caught error
+// returning `[]` would be memoized as a perfectly valid "no items found" for
+// the full hour, turning a five-second database blip into an hour of empty Map
+// and What's New rows with no tag to invalidate. The degradation to `[]` lives
+// in the exported wrappers below, outside the cache boundary — the same
+// arrangement `getCohortOfferSafe` in `nav-cta.ts` documents.
 async function resolveItemsBySlugs(slugs: string[]): Promise<ResolvedItem[]> {
 	if (slugs.length === 0) return []
-	try {
-		const rows = await db.query.contentResource.findMany({
-			where: and(
-				or(
-					inArray(
-						sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
-						slugs,
-					),
-					inArray(contentResource.id, slugs),
-				),
-				publishedPublic(),
+	const rows = await db.query.contentResource.findMany({
+		where: and(
+			or(
+				inArray(sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`, slugs),
+				inArray(contentResource.id, slugs),
 			),
-			with: { resources: { with: { resource: true } } },
-		})
+			publishedPublic(),
+		),
+		with: { resources: { with: { resource: true } } },
+	})
 
-		return rows
-			.map((row) => toResolvedItem(row as ResolvedRow))
-			.filter((item): item is ResolvedItem => item !== null)
-	} catch (error) {
-		await log.error('goal-sections.resolve.error', {
-			slugCount: slugs.length,
-			error: error instanceof Error ? error.message : String(error),
-		})
-		return []
-	}
+	return rows
+		.map((row) => toResolvedItem(row as ResolvedRow))
+		.filter((item): item is ResolvedItem => item !== null)
 }
 
 async function resolveFeaturedWhatsNew(limit: number): Promise<ResolvedItem[]> {
-	try {
-		const rows = await db.query.contentResource.findMany({
-			where: and(eq(contentResource.type, 'post'), publishedPublic()),
-			orderBy: desc(contentResource.createdAt),
-			with: { resources: { with: { resource: true } } },
-			limit,
-		})
+	const rows = await db.query.contentResource.findMany({
+		where: and(eq(contentResource.type, 'post'), publishedPublic()),
+		orderBy: desc(contentResource.createdAt),
+		with: { resources: { with: { resource: true } } },
+		limit,
+	})
 
-		return rows
-			.map((row) => toResolvedItem(row as ResolvedRow))
-			.filter((item): item is ResolvedItem => item !== null)
-	} catch (error) {
-		await log.error('goal-sections.whats-new.error', {
-			limit,
-			error: error instanceof Error ? error.message : String(error),
-		})
-		return []
-	}
+	return rows
+		.map((row) => toResolvedItem(row as ResolvedRow))
+		.filter((item): item is ResolvedItem => item !== null)
 }
 
 // Cache boundary JSON-serializes Date fields to strings; revive them after the
@@ -264,11 +258,19 @@ const _getCachedGoalSectionItems = unstable_cache(
 export async function getCachedGoalSectionItems(
 	slugs: string[],
 ): Promise<Map<string, ResolvedItem>> {
-	const result = await _getCachedGoalSectionItems(slugs)
-	const items: ResolvedItem[] = reviveDates(result)
-	const map = new Map<string, ResolvedItem>()
-	for (const item of items) map.set(item.slug, item)
-	return map
+	try {
+		const result = await _getCachedGoalSectionItems(slugs)
+		const items: ResolvedItem[] = reviveDates(result)
+		const map = new Map<string, ResolvedItem>()
+		for (const item of items) map.set(item.slug, item)
+		return map
+	} catch (error) {
+		await log.error('goal-sections.resolve.error', {
+			slugCount: slugs.length,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return new Map()
+	}
 }
 
 const _getCachedFeaturedWhatsNew = unstable_cache(
@@ -286,6 +288,14 @@ const _getCachedFeaturedWhatsNew = unstable_cache(
 export async function getCachedFeaturedWhatsNew(
 	limit = 3,
 ): Promise<ResolvedItem[]> {
-	const result = await _getCachedFeaturedWhatsNew(limit)
-	return reviveDates(result)
+	try {
+		const result = await _getCachedFeaturedWhatsNew(limit)
+		return reviveDates(result)
+	} catch (error) {
+		await log.error('goal-sections.whats-new.error', {
+			limit,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return []
+	}
 }

@@ -227,8 +227,15 @@ const Navigation = () => {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false)
 	const [isSearchOpen, setIsSearchOpen] = React.useState(false)
 
+	// Both overlays close on navigation. The palette closes itself on select,
+	// but a route change it did not cause — browser back/forward, a link in the
+	// promo row's own page — used to leave `isSearchOpen` true underneath it.
+	// On a `minimal` route the gate below unmounts the palette without touching
+	// that state, so the next full/hub page mounted it open and the modal
+	// appeared unprompted.
 	React.useEffect(() => {
 		setIsMobileMenuOpen(false)
+		setIsSearchOpen(false)
 	}, [pathname])
 
 	const { data: sessionData, status: sessionStatus } = useSession()

@@ -39,17 +39,28 @@ function numberAttr(attrs: string, name: string): number | undefined {
 
 /** Markdown (`- [L](/h)`) and `<SidebarLink href>` links inside a section. */
 function parseLinks(inner: string): HubNavLink[] {
-	const links: HubNavLink[] = []
+	// Collected WITH their offset and sorted, not appended per syntax: a section
+	// may mix both forms, and scanning markdown first would put every markdown
+	// link above every JSX one regardless of how they were authored. The desktop
+	// sidebar renders the MDX in document order, so a per-syntax order here is
+	// exactly the kind of drift the two surfaces must not have.
+	const found: { index: number; link: HubNavLink }[] = []
 	const md = /-\s*\[([^\]]+)\]\(([^)]+)\)/g
 	let m: RegExpExecArray | null
 	while ((m = md.exec(inner))) {
-		links.push({ label: m[1]!.trim(), href: m[2]!.trim() })
+		found.push({
+			index: m.index,
+			link: { label: m[1]!.trim(), href: m[2]!.trim() },
+		})
 	}
 	const jsx = /<SidebarLink\s+href="([^"]+)"\s*>([\s\S]*?)<\/SidebarLink>/g
 	while ((m = jsx.exec(inner))) {
-		links.push({ label: m[2]!.trim(), href: m[1]!.trim() })
+		found.push({
+			index: m.index,
+			link: { label: m[2]!.trim(), href: m[1]!.trim() },
+		})
 	}
-	return links
+	return found.sort((a, b) => a.index - b.index).map((f) => f.link)
 }
 
 /**

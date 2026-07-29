@@ -239,6 +239,20 @@ const _getCachedFilteredList = unstable_cache(
 	async (listIdOrSlug: string) => {
 		const deep = await getListWithSections(listIdOrSlug)
 		if (!deep) return null
+		// `getListWithSections` matches on slug/id + type only — it is the shared
+		// deep loader, and the cms surfaces that use it MUST see drafts. This
+		// loader is the public one, so the list's OWN state/visibility is gated
+		// here, with the same sets `getPostWithAccess` applies to the public path
+		// (published; public or unlisted). Without it `filterSectionedResources`
+		// trimmed the children of a draft list while the draft list itself still
+		// resolved — the sidebar named an unpublished list and linked its
+		// lessons. Nothing viewer-specific is read, so this stays cacheable.
+		if (
+			deep.fields.state !== 'published' ||
+			!['public', 'unlisted'].includes(deep.fields.visibility)
+		) {
+			return null
+		}
 		return {
 			...deep,
 			resources: filterSectionedResources(

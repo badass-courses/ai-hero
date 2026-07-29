@@ -6,6 +6,7 @@ import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
+import { log } from '@/server/logger'
 
 import { HUB_SIDEBAR_FALLBACK_MDX } from '@/components/navigation/hub-sidebar-fallback'
 
@@ -200,7 +201,55 @@ const _getHubSidebarIa = unstable_cache(
 	{ revalidate: 3600, tags: ['pages', 'posts', 'tags', 'lists'] },
 )
 
-/** Resolved hub-sidebar IA for client surfaces (mobile menu) via tRPC. */
+/**
+ * Static-only resolution of the bundled fallback MDX: headings with their
+ * links, and each topic group's CURATED links. It touches no query, so it is
+ * what remains resolvable when the database does not answer. The tag-fed
+ * blocks (What's New, Skills, the tag feeds under each topic) are simply
+ * absent — a shorter menu of links that all still work, rather than no menu.
+ */
+function resolveStaticFallback(): HubNavSection[] {
+	const sections: HubNavSection[] = []
+	for (const block of parseHubSidebarBlocks(HUB_SIDEBAR_FALLBACK_MDX)) {
+		if (block.kind === 'static' && block.links.length > 0) {
+			sections.push({ title: block.title, variant: 'flat', links: block.links })
+		} else if (block.kind === 'category' && block.title) {
+			sections.push({ title: block.title, variant: 'category', links: [] })
+		} else if (block.kind === 'topic' && block.curated.length > 0) {
+			sections.push({
+				title: block.label ?? block.tag,
+				variant: 'group',
+				links: block.curated,
+			})
+		}
+	}
+	return sections
+}
+
+/**
+ * Resolved hub-sidebar IA for client surfaces (mobile menu) via tRPC.
+ *
+ * Guarded, because nothing else is: `navigation.getMobileNav` is a
+ * `publicProcedure` with no error boundary under it, and every query the
+ * resolver runs (the page body, all posts, the skills list, each topic tag and
+ * its feed) throws straight through on a database hiccup. That turned a blip
+ * into a mobile menu that rendered nothing at all — no Explore, no Guides, on
+ * a viewport where this IS the navigation.
+ *
+ * The catch is OUT here rather than inside `_getHubSidebarIa`: `unstable_cache`
+ * never stores a thrown result, so the next open retries against a live
+ * database instead of serving the degraded menu for the rest of the hour. Same
+ * arrangement, and same reason, as `getCohortOfferSafe` in `nav-cta.ts`.
+ */
 export async function getHubSidebarIa(): Promise<HubSidebarIa> {
-	return _getHubSidebarIa()
+	try {
+		return await _getHubSidebarIa()
+	} catch (error) {
+		await log
+			.error('hub-sidebar-ia.resolve.failed', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+			.catch(() => undefined)
+		return { sections: resolveStaticFallback() }
+	}
 }

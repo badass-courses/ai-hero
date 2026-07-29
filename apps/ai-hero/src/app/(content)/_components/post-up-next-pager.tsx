@@ -46,7 +46,7 @@ export function PostUpNextPager({
 	className?: string
 }) {
 	const router = useRouter()
-	const { progress, addLessonProgress } = useProgress()
+	const { progress, addLessonProgress, removeLessonProgress } = useProgress()
 	const { data: session } = useSession()
 
 	React.useEffect(() => {
@@ -59,10 +59,21 @@ export function PostUpNextPager({
 		(lesson) => lesson.resourceId === postId,
 	)
 
+	// `addLessonProgress` marks the lesson done client-side straight away, and
+	// the link navigates without waiting on the write. The action already
+	// swallows and logs server-side failures, but a transport failure (offline,
+	// a 500 from the action endpoint) still rejects — and nothing awaits this
+	// handler, so that would surface as an unhandled rejection. Roll the
+	// optimistic tick back instead, so we never leave a completion showing that
+	// the server never recorded.
 	const onContinue = async () => {
 		if (isCompleted) return
 		addLessonProgress(postId)
-		await setProgressForResource({ resourceId: postId, isCompleted: true })
+		try {
+			await setProgressForResource({ resourceId: postId, isCompleted: true })
+		} catch {
+			removeLessonProgress(postId)
+		}
 	}
 
 	return (

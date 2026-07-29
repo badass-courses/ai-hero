@@ -72,7 +72,10 @@ type Props = {
  */
 export default async function SkillsPage({ searchParams }: Props) {
 	const { page: pageParam } = await searchParams
-	const currentPage = Math.max(Number(pageParam ?? '1') || 1, 1)
+	// Floored, not just clamped: `?page=1.05` would otherwise reach the query as
+	// a fractional OFFSET, which the driver rejects — a hand-typed URL should
+	// land on a page, not a 500.
+	const currentPage = Math.max(Math.floor(Number(pageParam ?? '1')) || 1, 1)
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
 	const [entries, totalEntries, skillsList, stars, latestEntry] =
 		await Promise.all([

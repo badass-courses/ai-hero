@@ -48,9 +48,16 @@ export function ProofGrid({
 						{quote}
 					</li>
 				))}
-				{Array.from({ length: fillerCount(quotes.length) }).map((_, i) => (
+				{Array.from({ length: smFillerCount(quotes.length) }).map((_, i) => (
 					<li
-						key={`filler-${i}`}
+						key={`sm-filler-${i}`}
+						aria-hidden
+						className="bg-background hidden sm:block lg:hidden"
+					/>
+				))}
+				{Array.from({ length: lgFillerCount(quotes.length) }).map((_, i) => (
+					<li
+						key={`lg-filler-${i}`}
 						aria-hidden
 						className="bg-background hidden lg:block"
 					/>
@@ -73,8 +80,21 @@ export function ProofGrid({
 	)
 }
 
-/** Empty cells so the trailing hairline stays clean at 3 across. */
-function fillerCount(count: number): number {
+/**
+ * Empty cells so the trailing hairline stays clean, counted per breakpoint —
+ * the grid is 1 / 2 / 3 across and each width has its own short last row.
+ *
+ * Counting only the 3-across remainder left the usual three quotes with an
+ * unpainted cell beside the third one between `sm` and `lg`: the grid's own
+ * `bg-border` shows through anywhere a cell fails to paint, so that gap read
+ * as a solid half-width block of rule colour rather than a hairline.
+ * `TopicsGrid` has carried the two-count version of this from the start.
+ */
+function smFillerCount(count: number): number {
+	return count % 2 === 0 ? 0 : 1
+}
+
+function lgFillerCount(count: number): number {
 	const remainder = count % 3
 	return remainder === 0 ? 0 : 3 - remainder
 }

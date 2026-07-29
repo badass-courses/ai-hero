@@ -220,15 +220,37 @@ function SeriesSectionGroup({
 		[lessons, currentSlug],
 	)
 	const [open, setOpen] = React.useState(activeInside)
+
+	// Whether a disclosure animation is allowed to play — not on first paint.
+	// Radix sets `data-state="open"` on mount as well as on toggle, and the
+	// collapse animations are bound to that attribute, so a section that mounts
+	// already open (because the current lesson is inside it) slid its whole tree
+	// down from zero height on arrival, which reads as the sidebar opening
+	// itself. `SidebarSection` in `sidebar-client.tsx` solves it the same way;
+	// the two disclosures should behave identically.
+	const [animate, setAnimate] = React.useState(false)
+	const handleOpenChange = React.useCallback((next: boolean) => {
+		setAnimate(true)
+		setOpen(next)
+	}, [])
+
+	// The false→true edge, not the condition: expand when navigation LANDS
+	// inside this section, and stay silent on the mount where it was already
+	// true.
+	const wasActiveInside = React.useRef(activeInside)
 	React.useEffect(() => {
-		if (activeInside) setOpen(true)
+		const landed = activeInside && !wasActiveInside.current
+		wasActiveInside.current = activeInside
+		if (!landed) return
+		setAnimate(true)
+		setOpen(true)
 	}, [activeInside])
 
 	return (
 		<SidebarMenuItem>
 			<Collapsible
 				open={open}
-				onOpenChange={setOpen}
+				onOpenChange={handleOpenChange}
 				className="group/series-section"
 			>
 				<CollapsibleTrigger asChild>
@@ -262,7 +284,13 @@ function SeriesSectionGroup({
 						<ChevronRight className="ml-auto mt-0.5 size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform group-data-[state=open]/series-section:rotate-90" />
 					</button>
 				</CollapsibleTrigger>
-				<CollapsibleContent className="mt-px overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+				<CollapsibleContent
+					className={cn(
+						'mt-px overflow-hidden',
+						animate &&
+							'data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down',
+					)}
+				>
 					{/* One level deeper than the section header, so "3.1" sits under
 					    "3" rather than beside it. */}
 					<SidebarDepth>

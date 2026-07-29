@@ -18,7 +18,7 @@ import { unstable_cache } from 'next/cache'
 import { db } from '@/db'
 import { contentResourceTag as contentResourceTagTable } from '@/db/schema'
 import { log } from '@/server/logger'
-import { inArray } from 'drizzle-orm'
+import { asc, inArray } from 'drizzle-orm'
 
 import { getListWithSections } from './lists-query'
 import { SKILLS_LIST_ID } from './skills-content'
@@ -145,9 +145,19 @@ async function loadSkillCatalogGroups(): Promise<SkillCatalogGroup[]> {
 	// Batch-load every member's tags in one query, then pick each post's
 	// skill-phase tag (if any) — additive badge metadata only.
 	const memberIds = allSkills.map((skill) => skill.id)
+	// Ordered, because the loop below keeps the FIRST phase tag it sees for a
+	// post and a post may legitimately carry more than one. An unordered
+	// findMany lets MySQL return them in whatever order it likes, so the same
+	// skill could badge Phase 2 on one revalidation and Phase 4 on the next.
+	// `position` is the same authored order `lists-query` reads tags in; `tagId`
+	// only breaks the tie, since position defaults to 0 for every row.
 	const tagRows = await db.query.contentResourceTag.findMany({
 		where: inArray(contentResourceTagTable.contentResourceId, memberIds),
 		with: { tag: true },
+		orderBy: [
+			asc(contentResourceTagTable.position),
+			asc(contentResourceTagTable.tagId),
+		],
 	})
 
 	const phaseByPostId = new Map<string, SkillPhase>()

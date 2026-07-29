@@ -35,10 +35,27 @@ type Fact = {
  * Derives "2-week cohort" from the cohort's own dates. Rounds to whole weeks
  * because that is how the cohort is sold; a cohort without both dates has no
  * honest answer here, so it gets no cell.
+ *
+ * Calendar days are counted in the cohort's own timezone, matching the "Starts"
+ * fact beside it. Counting them in the runtime's zone instead (UTC in
+ * production) shifts a late-evening PT boundary onto the next day, which is
+ * enough to move a cohort across the 10-day "days vs weeks" threshold or the
+ * week rounding — the strip would then disagree with the date printed next to
+ * it.
  */
-function formatDuration(startsAt?: string, endsAt?: string): string | null {
+function formatDuration(
+	startsAt: string | undefined,
+	endsAt: string | undefined,
+	timeZone: string,
+): string | null {
 	if (!startsAt || !endsAt) return null
-	const days = differenceInCalendarDays(new Date(endsAt), new Date(startsAt)) + 1
+	// `yyyy-MM-dd` in the cohort's zone, parsed back as a plain local date, so
+	// the difference is a pure calendar-day count with no zone left in it.
+	const days =
+		differenceInCalendarDays(
+			new Date(formatInTimeZone(endsAt, timeZone, 'yyyy-MM-dd')),
+			new Date(formatInTimeZone(startsAt, timeZone, 'yyyy-MM-dd')),
+		) + 1
 	if (days < 1) return null
 	if (days <= 10) return `${days}-day cohort`
 	return `${Math.round(days / 7)}-week cohort`
@@ -60,7 +77,7 @@ export const CohortFactStrip: React.FC<{
 }> = ({ cohort, alumniLabel, className }) => {
 	const { startsAt, endsAt, timezone } = cohort.fields
 	const tz = timezone || 'America/Los_Angeles'
-	const duration = formatDuration(startsAt, endsAt)
+	const duration = formatDuration(startsAt, endsAt, tz)
 
 	const facts: Fact[] = [
 		duration ? { label: 'Format', value: duration } : null,

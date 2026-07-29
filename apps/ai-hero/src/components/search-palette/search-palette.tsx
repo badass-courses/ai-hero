@@ -173,6 +173,13 @@ export function SearchPalette({
 	const [query, setQuery] = React.useState('')
 	const [results, setResults] = React.useState<PaletteResult[]>([])
 	const [isSearching, setIsSearching] = React.useState(false)
+	// A failed search is not an empty one. Without this, a 500 from
+	// `/api/search` — or a body that isn't the shape we expect — rendered the
+	// same "No results — try different words." as a genuine miss, so a reader
+	// retyped their query against a service that was never going to answer.
+	// `AskAIHeroBot` draws the same distinction; the two search surfaces should
+	// fail the same way.
+	const [hasError, setHasError] = React.useState(false)
 	// The promo row, resolved with no network call at all.
 	//
 	// It used to `fetch('/api/palette-promo')` on every open — a round-trip, and
@@ -217,6 +224,7 @@ export function SearchPalette({
 			setQuery('')
 			setResults([])
 			setIsSearching(false)
+			setHasError(false)
 		}
 	}, [open])
 
@@ -226,9 +234,11 @@ export function SearchPalette({
 		if (!trimmed) {
 			setResults([])
 			setIsSearching(false)
+			setHasError(false)
 			return
 		}
 		setIsSearching(true)
+		setHasError(false)
 		const controller = new AbortController()
 		const timeout = setTimeout(async () => {
 			try {
@@ -236,14 +246,22 @@ export function SearchPalette({
 					`/api/search?q=${encodeURIComponent(trimmed)}&per_page=${SEARCH_PER_PAGE}`,
 					{ signal: controller.signal },
 				)
+				if (!response.ok) throw new Error(`search failed: ${response.status}`)
 				const data = await response.json()
+				// The predicate, not a bare `filter(Boolean)`: `data` is `any`, so
+				// nothing here would have complained about the nulls `hitToResult`
+				// returns for unlinkable hits — they would simply have arrived as
+				// rows with no title and no href.
 				const hits: PaletteResult[] = (data?.result?.hits ?? [])
 					.map(hitToResult)
-					.filter(Boolean)
+					.filter((item: PaletteResult | null): item is PaletteResult =>
+						Boolean(item),
+					)
 				setResults(hits)
 			} catch (error) {
 				if (!(error instanceof DOMException && error.name === 'AbortError')) {
 					setResults([])
+					setHasError(true)
 				}
 			} finally {
 				if (!controller.signal.aborted) setIsSearching(false)
@@ -331,9 +349,11 @@ export function SearchPalette({
 						</div>
 						<CommandList className="max-h-none flex-1 p-1 sm:max-h-[320px]">
 							<CommandEmpty>
-								{isQuerying && !isSearching
-									? 'No results — try different words.'
-									: 'Searching…'}
+								{hasError
+									? 'Search is unavailable right now. Try again in a moment.'
+									: isQuerying && !isSearching
+										? 'No results — try different words.'
+										: 'Searching…'}
 							</CommandEmpty>
 							{items.map((item) => {
 								const Icon = iconForItem(item)

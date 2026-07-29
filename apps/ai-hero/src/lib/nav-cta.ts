@@ -89,9 +89,15 @@ export async function getCohortOfferSafe(): Promise<CohortOffer | null> {
 	try {
 		return await getCohortOffer()
 	} catch (error) {
-		await log.error('nav.cohort-offer.failed', {
-			error: error instanceof Error ? error.message : 'Unknown error',
-		})
+		// The report itself is awaited but never allowed to fail the call: this
+		// function exists so the root layout cannot throw, and a logger that
+		// rejects (Axiom transport, a serialization edge) would otherwise take
+		// down every route the same way the database timeout did.
+		await log
+			.error('nav.cohort-offer.failed', {
+				error: error instanceof Error ? error.message : 'Unknown error',
+			})
+			.catch(() => undefined)
 		return null
 	}
 }

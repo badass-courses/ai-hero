@@ -138,6 +138,29 @@ describe('parseHubSidebarBlocks — components', () => {
 		})
 	})
 
+	it('keeps interleaved markdown and SidebarLink children in document order', () => {
+		const blocks = parseHubSidebarBlocks(
+			[
+				'<SidebarSection title="Guides">',
+				'<SidebarLink href="/first">First</SidebarLink>',
+				'- [Second](/second)',
+				'<SidebarLink href="/third">Third</SidebarLink>',
+				'- [Fourth](/fourth)',
+				'</SidebarSection>',
+			].join('\n'),
+		)
+
+		expect(blocks[0]).toMatchObject({
+			kind: 'static',
+			links: [
+				{ label: 'First', href: '/first' },
+				{ label: 'Second', href: '/second' },
+				{ label: 'Third', href: '/third' },
+				{ label: 'Fourth', href: '/fourth' },
+			],
+		})
+	})
+
 	it('defaults the titles of the two self-closing components', () => {
 		const blocks = parseHubSidebarBlocks('<WhatsNew />\n\n<SkillsNav />')
 		expect(blocks).toEqual([

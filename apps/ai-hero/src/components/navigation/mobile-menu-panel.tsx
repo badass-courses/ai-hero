@@ -563,7 +563,14 @@ export function MobileMenuPanel({
 						<li>
 							<button
 								type="button"
-								onClick={() => setIsFeedbackDialogOpen(true)}
+								// The only row that does not leave by navigating, so it is
+							// the only one that has to close the sheet itself —
+							// otherwise the fixed `z-50` drawer stays over the page
+							// with the feedback dialog behind it.
+							onClick={() => {
+								onClose?.()
+								setIsFeedbackDialogOpen(true)
+							}}
 								className="hover:bg-muted focus-visible:ring-ring flex w-full items-center px-5 py-2.5 text-left text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
 							>
 								Send Feedback

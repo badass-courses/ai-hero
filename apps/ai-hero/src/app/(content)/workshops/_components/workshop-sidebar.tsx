@@ -21,14 +21,12 @@ import type { WorkshopPageProps } from './workshop-page-props'
 
 export const WorkshopSidebar = ({
 	children,
-	sticky = true,
 	workshop,
 	className,
 	pricingProps,
 	interestCapture = false,
 }: {
 	children: React.ReactNode
-	sticky?: boolean
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
@@ -64,10 +62,12 @@ export const WorkshopSidebar = ({
 				    CTA pads itself, and the resource list is full-bleed by design.
 				    Padding the shell double-inset all three — it floated the pricing
 				    card inside its own column instead of filling it. */}
-				<div
-					ref={sidebarRef}
-					className="md:top-(--nav-height) md:sticky" //sticky && windowHeight - 63 > height,
-				>
+				{/* Sticky from `md` up, unconditionally. This used to be gated on the
+				    column being shorter than the viewport, which meant the one state
+				    that most needs to follow the reader — a tall pricing card — was
+				    the one state that scrolled away. The `ScrollArea` below caps the
+				    column at the viewport instead, so it can always stick. */}
+				<div ref={sidebarRef} className="md:top-(--nav-height) md:sticky">
 					<ScrollArea className="lg:max-h-[calc(100vh-var(--nav-height))] h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{children}
 						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
