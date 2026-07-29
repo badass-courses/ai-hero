@@ -81,7 +81,12 @@ export function OrganicOpportunityCta({
 	const cta = ctas[kind]
 
 	return (
-		<aside className="not-prose border-primary/30 bg-primary/5 my-12 flex flex-col gap-4 rounded-xl border p-6 sm:p-8">
+		<aside
+			id="course-cta"
+			data-toc-cta="course"
+			data-toc-label={cta.label}
+			className="not-prose border-primary/30 bg-primary/5 scroll-mt-(--nav-height) my-12 flex flex-col gap-4 rounded-xl border p-6 sm:p-8"
+		>
 			<div className="flex flex-col gap-2">
 				<span className="text-primary font-mono text-[11px] font-medium uppercase tracking-wider">
 					{cta.eyebrow}

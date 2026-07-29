@@ -9,7 +9,7 @@ import {
 	extractMarkdownHeadings,
 	type MarkdownHeading,
 } from '@/utils/extract-markdown-headings'
-import { AlignLeft, ChevronRight } from 'lucide-react'
+import { AlignLeft, ArrowRight, ChevronRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -77,42 +77,212 @@ function useActiveSection(model: TocModel): string | null {
 	}, [model, visibleHeadings])
 }
 
+/**
+ * A part of the page that is not a heading: the lesson pager, the related +
+ * newsletter grid. The rail lists these under the article's own h2s so it maps
+ * the whole page rather than only the prose — a reader looking for "what's
+ * after this" should not have to scroll to find out that anything is.
+ *
+ * The caller decides which exist, because the same route ends four different
+ * ways (skill actions, pager, related grid, none of it). Each `id` must be on
+ * a real element or the row silently drops out of the spy — never out of the
+ * list, since a link to a missing anchor is a dead row.
+ */
+export type TocLandmark = { id: string; label: string }
+
+/**
+ * The landmark equivalent of `useActiveSection`. Landmarks are not headings —
+ * nothing registers them with `ActiveHeadingContext` — so the rail observes
+ * them itself. Same rule as the heading spy when several are in view at once:
+ * the last one in document order wins.
+ *
+ * The band is deliberately the middle of the viewport rather than the top: the
+ * page's last two blocks are short and land together on tall screens, and a
+ * top-edge trigger lit the pager for the entire scroll to the bottom.
+ */
+function useActiveLandmark(landmarks: TocLandmark[]): string | null {
+	const [active, setActive] = React.useState<string | null>(null)
+	const key = landmarks.map((landmark) => landmark.id).join(',')
+
+	React.useEffect(() => {
+		const ids = key ? key.split(',') : []
+		const elements = ids
+			.map((id) => document.getElementById(id))
+			.filter((element): element is HTMLElement => element !== null)
+		if (elements.length === 0) return
+
+		const visible = new Set<string>()
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (entry.isIntersecting) visible.add(entry.target.id)
+					else visible.delete(entry.target.id)
+				}
+				let next: string | null = null
+				for (const id of ids) if (visible.has(id)) next = id
+				setActive(next)
+			},
+			{ rootMargin: '-20% 0px -55% 0px' },
+		)
+		for (const element of elements) observer.observe(element)
+		return () => observer.disconnect()
+	}, [key])
+
+	return active
+}
+
+/**
+ * The in-page CTAs, collected from the DOM after mount.
+ *
+ * They are NOT passed down like `landmarks` are, and deliberately: the rail is
+ * rendered by the page, while the promos are inside the compiled MDX (the
+ * auto-inserted line, any hand-placed `PromoCard`) or inside `PostBody` below
+ * it. The page would have to re-derive the auto-insert decision and parse the
+ * body to know they exist. Instead each CTA carries `data-toc-cta` and
+ * `data-toc-label` — one attribute pair per component, added where the CTA is
+ * already deciding its own copy, so a new promo shows up in the rail by
+ * existing rather than by being registered somewhere else.
+ *
+ * Each row is placed under the last h2 above it, so the rail keeps document
+ * order: a mid-article promo sits between the sections it actually sits
+ * between, not in a tray at the bottom.
+ */
+type CtaLandmark = { id: string; label: string; afterSlug: string | null }
+
+function useCtaLandmarks(sectionSlugs: string[]): CtaLandmark[] {
+	const [ctas, setCtas] = React.useState<CtaLandmark[]>([])
+	const key = sectionSlugs.join(',')
+
+	React.useEffect(() => {
+		const elements = Array.from(
+			document.querySelectorAll<HTMLElement>('[data-toc-cta]'),
+		)
+		if (elements.length === 0) {
+			setCtas([])
+			return
+		}
+
+		const headings = sectionSlugs
+			.map((slug) => document.getElementById(slug))
+			.filter((element): element is HTMLElement => element !== null)
+
+		const next = elements.map((element, index) => {
+			// A CTA that never needed an anchor gets one, so its row can link
+			// somewhere. Ids are only assigned when missing, so the ones the
+			// components DO set (`course-cta`, `skill-actions`) stay stable.
+			if (!element.id) element.id = `toc-cta-${index + 1}`
+			let afterSlug: string | null = null
+			for (const heading of headings) {
+				const precedes =
+					heading.compareDocumentPosition(element) &
+					Node.DOCUMENT_POSITION_FOLLOWING
+				if (precedes) afterSlug = heading.id
+			}
+			return {
+				id: element.id,
+				label: element.dataset.tocLabel ?? 'Read more',
+				afterSlug,
+			}
+		})
+		setCtas(next)
+	}, [key])
+
+	return ctas
+}
+
+const ROW_CLASS =
+	// The spec's `.ah-toc__link`: a hairline the whole list hangs off, with the
+	// active step lit from the same line. There is no 13px step in TYPE because
+	// this is chrome, not text.
+	'focus-visible:ring-ring flex w-full items-center gap-1.5 border-l py-1.5 pl-[13px] text-[13px] leading-[1.4] text-[color:var(--ah-fg-subtle)] transition-colors [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 hover:text-foreground'
+
+/** Gold border in both themes, but accent *type* is ink on paper — DESIGN rule 7. */
+const ROW_ACTIVE_CLASS = 'border-l-accent-fill text-primary'
+
+type TocRow = {
+	id: string
+	label: React.ReactNode
+	/** A CTA row: same list, but it says it is somewhere to GO, not to read. */
+	isCta: boolean
+}
+
 function TocLinks({
 	model,
+	landmarks = [],
 	closeOnSelect = false,
 }: {
 	model: TocModel
+	landmarks?: TocLandmark[]
 	/** Collapse the enclosing `<details>` after a jump, so the body is not
 	 *  pushed down by a list the reader is finished with. */
 	closeOnSelect?: boolean
 }) {
+	const sectionSlugs = React.useMemo(
+		() => model.sections.map((section) => section.slug),
+		[model],
+	)
+	const ctas = useCtaLandmarks(sectionSlugs)
+	// One spy for everything that is not a heading. CTAs and landmarks are the
+	// same kind of target as far as scroll position is concerned.
+	const nonHeading = React.useMemo(
+		() => [...ctas, ...landmarks],
+		[ctas, landmarks],
+	)
+	const activeAnchor = useActiveLandmark(nonHeading)
+	// Past the prose, the rail follows the page rather than the last heading it
+	// saw: anything else in view outranks the section the heading spy is holding.
 	const activeSlug = useActiveSection(model)
+	const activeSection = activeAnchor ? null : activeSlug
+
+	const rows: TocRow[] = React.useMemo(() => {
+		const ctaRow = (cta: CtaLandmark): TocRow => ({
+			id: cta.id,
+			label: cta.label,
+			isCta: true,
+		})
+		return [
+			// A promo above the first h2 (or in an article with none).
+			...ctas.filter((cta) => cta.afterSlug === null).map(ctaRow),
+			...model.sections.flatMap((section) => [
+				{ id: section.slug, label: <TocText>{section.text}</TocText>, isCta: false },
+				...ctas.filter((cta) => cta.afterSlug === section.slug).map(ctaRow),
+			]),
+			// The page's endings always close the list.
+			...landmarks.map((landmark) => ({
+				id: landmark.id,
+				label: landmark.label,
+				isCta: false,
+			})),
+		]
+	}, [model, ctas, landmarks])
 
 	return (
 		<ul className="flex flex-col">
-			{model.sections.map((section) => {
-				const active = section.slug === activeSlug
+			{rows.map((row) => {
+				const active = row.isCta
+					? row.id === activeAnchor
+					: row.id === activeSection || row.id === activeAnchor
 				return (
-					<li key={section.slug} className="flex">
+					<li key={row.id} className="flex">
 						<Link
-							href={`#${section.slug}`}
+							href={`#${row.id}`}
 							aria-current={active ? 'location' : undefined}
 							onClick={(event) => {
 								if (!closeOnSelect) return
 								event.currentTarget.closest('details')?.removeAttribute('open')
 							}}
-							className={cn(
-								// The spec's `.ah-toc__link`: a hairline the whole list hangs
-								// off, with the active step lit from the same line. There is
-								// no 13px step in TYPE because this is chrome, not text.
-								'focus-visible:ring-ring block w-full border-l py-1.5 pl-[13px] text-[13px] leading-[1.4] text-[color:var(--ah-fg-subtle)] transition-colors [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2',
-								'hover:text-foreground',
-								// Gold border in both themes, but accent *type* is ink on
-								// paper — DESIGN rule 7.
-								active && 'border-l-accent-fill text-primary',
-							)}
+							className={cn(ROW_CLASS, active && ROW_ACTIVE_CLASS)}
 						>
-							<TocText>{section.text}</TocText>
+							<span className="min-w-0">{row.label}</span>
+							{/* The one mark that separates a place to GO from a place to
+							    read. An icon rather than a colour, because colour in this
+							    rail already means "you are here". */}
+							{row.isCta ? (
+								<ArrowRight
+									aria-hidden
+									className="mt-px size-3 shrink-0 opacity-50"
+								/>
+							) : null}
 						</Link>
 					</li>
 				)
@@ -144,11 +314,14 @@ function ShareBlock({
 export function PostToCRail({
 	markdown,
 	title,
+	landmarks,
 	className,
 	children,
 }: {
 	markdown: string
 	title?: string
+	/** Non-heading parts of the page, listed under the h2s. See `TocLandmark`. */
+	landmarks?: TocLandmark[]
 	className?: string
 	/**
 	 * The rail's middle slot, between the section list and share. Skill pages
@@ -157,15 +330,22 @@ export function PostToCRail({
 	children?: React.ReactNode
 }) {
 	const model = React.useMemo(() => getTocModel(markdown), [markdown])
-	const hasSections = model.sections.length > 0
+	// An article with no h2s can still have an ending worth listing, so the nav
+	// is gated on having ANY row rather than on having prose sections.
+	const hasSections = model.sections.length > 0 || (landmarks?.length ?? 0) > 0
 
 	return (
 		<aside className={cn('hidden border-l md:block', className)}>
-			<div className="sticky top-(--nav-height) flex max-h-[calc(100vh-var(--nav-height))] flex-col gap-6 overflow-auto px-5 pb-8 pt-10">
+			{/* Half the body column's top padding (`pt-10` → `pt-5`), on purpose:
+			    the prose is set on a baseline that has to clear the rule above it,
+			    and the rail's first line is a 11px eyebrow. Matching the two put a
+			    40px hole above a label that is a third the height of the text it
+			    was aligning with. */}
+			<div className="sticky top-(--nav-height) flex max-h-[calc(100vh-var(--nav-height))] flex-col gap-6 overflow-auto px-5 pb-8 pt-5">
 				{hasSections && (
 					<nav aria-label="On this page">
 						<p className={cn(EYEBROW, 'mb-3')}>On this page</p>
-						<TocLinks model={model} />
+						<TocLinks model={model} landmarks={landmarks} />
 					</nav>
 				)}
 				{children ? (
@@ -187,14 +367,16 @@ export function PostToCRail({
  */
 export function PostToCDisclosure({
 	markdown,
+	landmarks,
 	className,
 }: {
 	markdown: string
+	landmarks?: TocLandmark[]
 	className?: string
 }) {
 	const model = React.useMemo(() => getTocModel(markdown), [markdown])
 
-	if (model.sections.length === 0) return null
+	if (model.sections.length === 0 && (landmarks?.length ?? 0) === 0) return null
 
 	return (
 		<details className={cn('group md:hidden', className)}>
@@ -209,7 +391,7 @@ export function PostToCDisclosure({
 				/>
 			</summary>
 			<nav aria-label="On this page" className="px-8 pb-5">
-				<TocLinks model={model} closeOnSelect />
+				<TocLinks model={model} landmarks={landmarks} closeOnSelect />
 			</nav>
 		</details>
 	)

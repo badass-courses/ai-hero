@@ -91,6 +91,11 @@ export function PromoCard({
 		<Link
 			href={href}
 			aria-label={`${resolvedEyebrow}: ${title}`}
+			// See `Callout`: in-article promos register themselves with the ToC
+			// rail. The card's own button verb is the row's label — it is already
+			// short, and it says the same thing in both places.
+			data-toc-cta="promo-card"
+			data-toc-label={ctaLabel}
 			className={cn(
 				'not-prose group focus-visible:ring-ring focus-visible:ring-offset-background my-10 flex flex-col items-start gap-5 rounded-xl border p-6 no-underline transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:flex-row sm:items-center sm:gap-8 sm:p-8',
 				config.surface,

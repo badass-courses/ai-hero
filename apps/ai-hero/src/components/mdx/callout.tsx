@@ -50,6 +50,17 @@ function CalloutIcon({ className }: { className?: string }) {
 export type CalloutKind = 'update' | 'note'
 
 /** Eyebrow copy per kind. `update` is Matt speaking; `note` is the page. */
+/**
+ * What a promo callout is called in the ToC rail — a verb for the row, not the
+ * callout's own copy, which is a sentence and would wrap to three lines in a
+ * 232px column.
+ */
+const intentTocLabel: Record<CalloutIntent, string> = {
+	skill: 'Try the skill',
+	course: 'Go deeper',
+	resource: 'Get the resource',
+}
+
 const kindEyebrow: Record<CalloutKind, string> = {
 	update: 'Update from Matt',
 	note: 'Note',
@@ -110,6 +121,15 @@ export function Callout({
 
 	return (
 		<div
+			// Cross-promo placements announce themselves to the article's ToC rail
+			// (`useCtaLandmarks` in `post-toc-rail.tsx`) rather than being wired
+			// into it from the page: the auto-inserted line and any hand-placed
+			// one are both invisible to the server that renders the rail. Bare
+			// informational callouts carry nothing, same contract as the
+			// suppression scan.
+			{...(intent
+				? { 'data-toc-cta': 'callout', 'data-toc-label': intentTocLabel[intent] }
+				: {})}
 			className={cn(
 				'not-prose bg-card shadow-md/3 my-3 flex items-stretch gap-4 rounded-xl border',
 				className,

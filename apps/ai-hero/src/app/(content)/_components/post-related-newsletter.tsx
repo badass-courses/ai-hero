@@ -32,24 +32,30 @@ export function PostRelatedNewsletter({
 	items,
 	heading = 'Related reading',
 	trackParams,
+	id,
 	className,
 }: {
 	items: PostRelatedItem[]
 	heading?: string
 	/** Merged into the `subscribed` track call, e.g. `{ post, location }`. */
 	trackParams?: Record<string, string>
+	/** Scroll target, so the ToC rail can list this block. */
+	id?: string
 	className?: string
 }) {
 	const hasRelated = items.length > 0
 
 	return (
 		<section
+			id={id}
 			aria-label="Related reading and newsletter"
 			// No border of its own: the article container draws the rule above every
 			// section (see the note on `<article>` in `[post]/page.tsx`), so a local
 			// one would double up against it.
 			className={cn(
 				'border-border bg-border grid grid-cols-1 gap-px',
+				// See the pager: a jump target has to clear the sticky header.
+				id && 'scroll-mt-(--nav-height)',
 				hasRelated && 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
 				className,
 			)}

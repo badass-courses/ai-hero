@@ -40,8 +40,11 @@ export function SkillActions({
 
 	return (
 		<section
+			id="skill-actions"
 			aria-label="Skill actions"
-			className={cn('bg-muted', className)}
+			data-toc-cta="skill"
+			data-toc-label="Install the skill"
+			className={cn('bg-muted scroll-mt-(--nav-height)', className)}
 		>
 			<div className="px-5 py-10 sm:px-11 sm:py-11">
 				<p className={cn(TYPE.micro, 'mb-5 text-[color:var(--ah-fg-label)]')}>

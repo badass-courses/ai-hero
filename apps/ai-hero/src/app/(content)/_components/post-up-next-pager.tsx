@@ -34,12 +34,15 @@ export function PostUpNextPager({
 	prev,
 	next,
 	hideLoginPrompt,
+	id,
 	className,
 }: {
 	postId: string
 	prev?: ListNeighbor | null
 	next?: ListNeighbor | null
 	hideLoginPrompt?: boolean
+	/** Scroll target, so the ToC rail can list this block. */
+	id?: string
 	className?: string
 }) {
 	const router = useRouter()
@@ -65,8 +68,12 @@ export function PostUpNextPager({
 	return (
 		<>
 			<nav
+				id={id}
 				aria-label="Lesson navigation"
+				// Anchored blocks sit under a sticky header, so the browser's jump
+				// has to stop short of it — same offset the headings use.
 				className={cn(
+					id && 'scroll-mt-(--nav-height)',
 					'border-border bg-border grid grid-cols-1 gap-px',
 					prev && next && 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
 					className,

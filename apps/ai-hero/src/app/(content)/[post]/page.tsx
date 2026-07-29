@@ -130,6 +130,23 @@ export default async function PostPage(props: {
           : "suggested",
         sectionTitle: list?.fields?.title,
       });
+  // The rail lists the page's non-heading endings alongside the article's own
+  // h2s. Only what actually renders, in document order, and labelled for what
+  // the reader will find rather than for the component: the related grid is
+  // "Related reading" when it HAS related rows and "Newsletter" when the
+  // newsletter is the only cell in it.
+  const tocLandmarks = [
+    ...(showLessonPager ? [{ id: "up-next", label: "Up next" }] : []),
+    ...(showRelatedNewsletter
+      ? [
+          {
+            id: "related-reading",
+            label: relatedItems.length > 0 ? "Related reading" : "Newsletter",
+          },
+        ]
+      : []),
+  ];
+
   const markdownToCopy = `# ${post?.fields?.title}
 
 ${post?.fields?.body}`;
@@ -164,7 +181,10 @@ ${post?.fields?.body}`;
               isSkillPost={isSkillPost}
             />
             {post?.fields?.body && (
-              <PostToCDisclosure markdown={post.fields.body} />
+              <PostToCDisclosure
+                markdown={post.fields.body}
+                landmarks={tocLandmarks}
+              />
             )}
             {/* The spec's article shell: prose at the 70ch measure plus a
                 232px sticky rail. The rail drops below `md`, where
@@ -175,6 +195,7 @@ ${post?.fields?.body}`;
                 <PostToCRail
                   markdown={post.fields.body}
                   title={post.fields?.title}
+                  landmarks={tocLandmarks}
                 >
                   {/* The rail's second block on a skill page is where that
                       skill sits in the workflow — the spec's slot, and the
@@ -211,6 +232,7 @@ ${post?.fields?.body}`;
             {/* § UP NEXT — previous on the page surface, next on the band. */}
             {showLessonPager && (
               <PostUpNextPager
+                id="up-next"
                 postId={post.id}
                 prev={neighbors.prev}
                 next={neighbors.next}
@@ -222,6 +244,7 @@ ${post?.fields?.body}`;
                 page. */}
             {showRelatedNewsletter && (
               <PostRelatedNewsletter
+                id="related-reading"
                 items={relatedItems}
                 trackParams={{
                   post: post.fields.slug,

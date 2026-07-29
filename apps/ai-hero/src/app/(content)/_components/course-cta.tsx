@@ -56,10 +56,19 @@ export async function CourseCta({
 
 	const label = cohort ? 'Learn more' : 'Join the waitlist'
 
+	// The rail says what the CTA does, which is not always what its button says:
+	// "Learn more" is fine under three lines of cohort copy and says nothing in a
+	// list of destinations.
+	const tocLabel = cohort ? 'Join the cohort' : 'Join the waitlist'
+
 	return (
 		<aside
+			id="course-cta"
+			data-toc-cta="course"
+			data-toc-label={tocLabel}
+			// A jump target has to clear the sticky header.
 			className={cn(
-				'not-prose border-primary/30 bg-primary/5 my-12 flex flex-col gap-4 rounded-xl border p-6 sm:p-8',
+				'not-prose border-primary/30 bg-primary/5 scroll-mt-(--nav-height) my-12 flex flex-col gap-4 rounded-xl border p-6 sm:p-8',
 				className,
 			)}
 		>
