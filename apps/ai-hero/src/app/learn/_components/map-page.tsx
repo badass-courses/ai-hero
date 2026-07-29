@@ -115,16 +115,26 @@ function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
 
         {/* Footer: the signature "open" affordance for the whole topic. The
 				    skill, where one matches, gets a real card rather than a sentence
-				    in a box — the slash command is the token readers recognise. */}
-        <div className="flex flex-col gap-6 px-[18px] py-8 sm:px-11">
-          <MoreWaysLink href={section.moreHref} label={section.moreLabel} />
+				    in a box — the slash command is the token readers recognise.
+				    Side by side from `md`, with the way-out link pinned right: the two
+				    are the section's two exits, and stacking them made a tall column
+				    of trailing affordances between one list and the next heading.
+				    `ml-auto` rather than `justify-between` so the link lands in the
+				    same place whether or not the section has a skill card — the exit
+				    is in one spot down the whole page. */}
+        <div className="flex flex-col gap-6 px-[18px] py-8 sm:px-11 md:flex-row md:items-center md:gap-8">
           {section.skillCta ? (
             <SkillCard
               slug={section.skillCta.href.replace(/^\//, "")}
               label="Do this with"
-              className="sm:max-w-xl"
+              className="sm:max-w-xl md:min-w-0 md:flex-1"
             />
           ) : null}
+          <MoreWaysLink
+            href={section.moreHref}
+            label={section.moreLabel}
+            className="md:ml-auto"
+          />
         </div>
       </div>
     </section>
@@ -157,15 +167,12 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
             </p>
             <h2 className={TYPE.heading}>Fresh from the blog</h2>
           </div>
-          <Link
-            href="/posts"
-            className={cn(
-              TYPE.meta,
-              "text-foreground/70 hover:text-foreground focus-visible:ring-ring transition-colors focus-visible:outline-none focus-visible:ring-2",
-            )}
-          >
-            See all posts →
-          </Link>
+          {/* The same outlined control the goal sections above use for their
+              way out (`MoreWaysLink`). This was a bare text link trailed by a
+              literal "→", so the one section whose exit is the blog drew it in
+              a different tier — and with a different arrow — from every
+              section above it. */}
+          <MoreWaysLink href="/posts" label="See all posts" />
         </div>
 
         {/* Same list treatment as GoalSectionBlock — gutter, 10px gap, real

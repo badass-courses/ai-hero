@@ -22,7 +22,16 @@ import { cn } from '@coursebuilder/utils/cn'
  * `label` may carry a trailing " →" (the config authors it that way); it is
  * stripped here so the icon is the only arrow.
  */
-export function MoreWaysLink({ href, label }: { href: string; label: string }) {
+export function MoreWaysLink({
+	href,
+	label,
+	className,
+}: {
+	href: string
+	label: string
+	/** Placement only — the control's own look is not the caller's business. */
+	className?: string
+}) {
 	const text = label.replace(/\s*→\s*$/, '')
 	return (
 		<Link
@@ -30,6 +39,7 @@ export function MoreWaysLink({ href, label }: { href: string; label: string }) {
 			className={cn(
 				TYPE.meta,
 				'border-foreground/20 hover:bg-secondary focus-visible:ring-ring group inline-flex h-11 w-fit shrink-0 items-center gap-2 rounded-[9px] border px-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+				className,
 			)}
 		>
 			{text}
