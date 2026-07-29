@@ -1,3 +1,4 @@
+import { env } from '@/env.mjs'
 import {
 	courseJsonVideos,
 	type CourseJsonDocumentV3,
@@ -44,7 +45,7 @@ export type CourseSyncManifestRead = {
 	manifest: CourseJsonDocumentV3
 	summary: {
 		courseVersionId: string
-		manifest: { rev: string }
+		manifest: { rev: string; sha256: string }
 	}
 }
 
@@ -63,23 +64,31 @@ export type CourseSyncPollLogInput = {
 
 export type CourseSyncNotification =
 	| {
-		kind: 'success'
-		courseVersionId: string
-		providerRevision: string
-		runId: string
-		controlPlaneRunId: string
-		resourceCounts: CourseSyncRunSummary['resourceCounts']
-		mediaCount: number
-		workshopEditUrl: string
-	}
+			kind: 'success'
+			courseVersionId: string
+			courseName: string | null
+			providerRevision: string
+			manifestSha256: string | null
+			runId: string
+			controlPlaneRunId: string
+			resourceCounts: CourseSyncRunSummary['resourceCounts']
+			structureCounts: { sections: number; lessons: number; videos: number }
+			durationSeconds: number
+			mediaCount: number
+			workshopEditUrl: string
+	  }
 	| {
-		kind: 'failure'
-		courseVersionId: string
-		providerRevision: string
-		runId: string
-		controlPlaneRunId: string | null
-		failureClass: string
-	}
+			kind: 'failure'
+			courseVersionId: string
+			courseName: string | null
+			providerRevision: string
+			manifestSha256: string | null
+			runId: string
+			controlPlaneRunId: string | null
+			stage: CourseSyncPollStage
+			failureClass: string
+			reason: string
+	  }
 
 export const COURSE_SYNC_SLACK_USERNAME = 'AI Hero Course Sync'
 export const COURSE_SYNC_SLACK_ICON_EMOJI = ':repeat:'
@@ -127,22 +136,25 @@ export type CourseSyncDetectionPollerDependencies = {
 export type CourseSyncPollResult =
 	| { outcome: 'no-op' | 'in-progress'; courseVersionId: string; runId: string }
 	| {
-		outcome: 'applied'
-		courseVersionId: string
-		runId: string
-		controlPlaneRunId: string
-	}
+			outcome: 'applied'
+			courseVersionId: string
+			runId: string
+			controlPlaneRunId: string
+	  }
 	| {
-		outcome: 'failed' | 'held'
-		courseVersionId: string
-		runId: string
-		controlPlaneRunId: string | null
-		failureClass: string
-		consecutiveFailures: number
-	}
+			outcome: 'failed' | 'held'
+			courseVersionId: string
+			runId: string
+			controlPlaneRunId: string | null
+			failureClass: string
+			consecutiveFailures: number
+	  }
 
 function sameRevision(
-	state: Pick<CourseSyncPollState, 'courseVersionId' | 'providerRevision'> | null,
+	state: Pick<
+		CourseSyncPollState,
+		'courseVersionId' | 'providerRevision'
+	> | null,
 	courseVersionId: string,
 	providerRevision: string,
 ) {
@@ -175,52 +187,138 @@ function mediaCount(run: CourseSyncRunSummary) {
 	return run.plan?.media.filter((item) => item.action === 'update').length ?? 0
 }
 
+export function shortCourseVersionId(courseVersionId: string) {
+	return courseVersionId.length > 12
+		? courseVersionId.slice(0, 8)
+		: courseVersionId
+}
+
+export function courseSyncVersionLabel(
+	courseVersionId: string,
+	courseName: string | null,
+) {
+	const shortId = shortCourseVersionId(courseVersionId)
+	return courseName ? `${courseName} (${shortId})` : shortId
+}
+
+export function courseSyncHistoryPermalink(courseVersionId: string) {
+	return new URL(
+		`/admin/course-sync/${encodeURIComponent(courseVersionId)}`,
+		env.NEXT_PUBLIC_URL,
+	).toString()
+}
+
+function compactFailureReason(reason: string) {
+	const compact = reason
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/[.!?]+$/, '')
+	return compact.length > 160 ? `${compact.slice(0, 157)}...` : compact
+}
+
 export function buildCourseSyncNotificationPayload(
 	notification: CourseSyncNotification,
 ): CourseSyncSlackNotificationPayload {
+	const versionLabel = courseSyncVersionLabel(
+		notification.courseVersionId,
+		notification.courseName,
+	)
+	const permalink = courseSyncHistoryPermalink(notification.courseVersionId)
+	const manifestSha =
+		notification.manifestSha256?.slice(0, 12) ?? 'not available'
+
 	if (notification.kind === 'success') {
-		const title = `AI Hero course sync applied ${notification.courseVersionId}`
-		const fallback = `${title}: ${notification.resourceCounts.create} created, ${notification.resourceCounts.update} updated, ${notification.mediaCount} media updated.`
+		const durationMinutes = Math.floor(notification.durationSeconds / 60)
+		const text = `Synced ${versionLabel} into the draft workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min. ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
 			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
-			text: title,
+			text,
 			attachments: [
 				{
-					fallback,
+					fallback: text,
 					color: '#2eb67d',
-					title,
+					title: 'AI Hero course sync applied',
 					text: `<${notification.workshopEditUrl}|Open the workshop editor>`,
 					fields: [
-						{ title: 'Dropbox rev', value: notification.providerRevision, short: true },
-						{ title: 'Run', value: notification.controlPlaneRunId, short: true },
-						{ title: 'Created', value: String(notification.resourceCounts.create), short: true },
-						{ title: 'Updated', value: String(notification.resourceCounts.update), short: true },
-						{ title: 'Retained', value: String(notification.resourceCounts.retain), short: true },
-						{ title: 'Media updated', value: String(notification.mediaCount), short: true },
+						{
+							title: 'Course version',
+							value: notification.courseVersionId,
+							short: true,
+						},
+						{ title: 'Manifest SHA', value: manifestSha, short: true },
+						{
+							title: 'Dropbox rev',
+							value: notification.providerRevision,
+							short: true,
+						},
+						{ title: 'Poll run', value: notification.runId, short: true },
+						{
+							title: 'Sync run',
+							value: notification.controlPlaneRunId,
+							short: true,
+						},
+						{
+							title: 'Created',
+							value: String(notification.resourceCounts.create),
+							short: true,
+						},
+						{
+							title: 'Updated',
+							value: String(notification.resourceCounts.update),
+							short: true,
+						},
+						{
+							title: 'Retained',
+							value: String(notification.resourceCounts.retain),
+							short: true,
+						},
+						{
+							title: 'Media updated',
+							value: String(notification.mediaCount),
+							short: true,
+						},
 					],
 				},
 			],
 		}
 	}
 
-	const title = `AI Hero course sync failed ${notification.courseVersionId}`
-	const fallback = `${title}: failure=${notification.failureClass}; poll=${notification.runId}; sync=${notification.controlPlaneRunId ?? 'not-staged'}; courseVersionId=${notification.courseVersionId}.`
+	const reason = compactFailureReason(notification.reason)
+	const text = `Course sync failed while ${notification.stage} ${versionLabel}: ${reason}. It will retry once, then hold for a human. ${permalink}`
 	return {
 		username: COURSE_SYNC_SLACK_USERNAME,
 		icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
-		text: fallback,
+		text,
 		attachments: [
 			{
-				fallback,
+				fallback: text,
 				color: '#d92d20',
-				title,
-				text: fallback,
+				title: 'AI Hero course sync failed',
+				text: `<${permalink}|Open the sync history>`,
 				fields: [
-					{ title: 'Failure class', value: notification.failureClass, short: true },
+					{
+						title: 'Course version',
+						value: notification.courseVersionId,
+						short: true,
+					},
+					{ title: 'Manifest SHA', value: manifestSha, short: true },
+					{
+						title: 'Failure class',
+						value: notification.failureClass,
+						short: true,
+					},
 					{ title: 'Poll run', value: notification.runId, short: true },
-					{ title: 'Sync run', value: notification.controlPlaneRunId ?? 'not staged', short: true },
-					{ title: 'Dropbox rev', value: notification.providerRevision, short: true },
+					{
+						title: 'Sync run',
+						value: notification.controlPlaneRunId ?? 'not staged',
+						short: true,
+					},
+					{
+						title: 'Dropbox rev',
+						value: notification.providerRevision,
+						short: true,
+					},
 				],
 			},
 		],
@@ -281,10 +379,14 @@ export async function recordCourseSyncPollFailure(
 	await dependencies.notify({
 		kind: 'failure',
 		courseVersionId,
+		courseName: null,
 		providerRevision,
+		manifestSha256: null,
 		runId: input.runId,
 		controlPlaneRunId: state?.controlPlaneRunId ?? null,
+		stage: 'stage',
 		failureClass: failureKind,
+		reason: 'The polling run stopped before it finished',
 	})
 	return { held, consecutiveFailures: strikes }
 }
@@ -295,13 +397,15 @@ export function createCourseSyncDetectionPoller(
 	const clock = dependencies.clock ?? (() => new Date())
 	const bindingId = AI_HERO_DRAFT_SYNC_BINDING.bindingId
 
-	const log = (
-		base: Omit<CourseSyncPollLogInput, 'occurredAt'>,
-	) => dependencies.appendLog({ ...base, occurredAt: clock() })
+	const log = (base: Omit<CourseSyncPollLogInput, 'occurredAt'>) =>
+		dependencies.appendLog({ ...base, occurredAt: clock() })
 
 	return async function poll(runId: string): Promise<CourseSyncPollResult> {
+		const pollStartedAt = clock()
 		let courseVersionId = 'unknown'
+		let courseName: string | null = null
 		let providerRevision = 'unknown'
+		let manifestSha256: string | null = null
 		let controlPlaneRunId: string | null = null
 		let previousState: CourseSyncPollState | null = null
 		let activeStage: CourseSyncPollStage = 'detect'
@@ -317,7 +421,9 @@ export function createCourseSyncDetectionPoller(
 			})
 			const detected = await dependencies.readManifest()
 			courseVersionId = detected.summary.courseVersionId
+			courseName = detected.manifest.courseName
 			providerRevision = detected.summary.manifest.rev
+			manifestSha256 = detected.summary.manifest.sha256
 			await log({
 				bindingId,
 				courseVersionId,
@@ -334,7 +440,11 @@ export function createCourseSyncDetectionPoller(
 			])
 			previousState = state
 			controlPlaneRunId = state?.controlPlaneRunId ?? head?.runId ?? null
-			const observedBefore = sameRevision(state, courseVersionId, providerRevision)
+			const observedBefore = sameRevision(
+				state,
+				courseVersionId,
+				providerRevision,
+			)
 			const appliedAlready =
 				(observedBefore && state?.status === 'succeeded') ||
 				(head?.courseVersionId === courseVersionId &&
@@ -452,7 +562,9 @@ export function createCourseSyncDetectionPoller(
 				providerRevision,
 				status: 'staging',
 				consecutiveFailures: retry ? 1 : 0,
-				controlPlaneRunId: observedBefore ? state?.controlPlaneRunId ?? null : null,
+				controlPlaneRunId: observedBefore
+					? (state?.controlPlaneRunId ?? null)
+					: null,
 				failureClass: null,
 				updatedAt: clock(),
 			})
@@ -559,10 +671,24 @@ export function createCourseSyncDetectionPoller(
 			await dependencies.notify({
 				kind: 'success',
 				courseVersionId,
+				courseName,
 				providerRevision,
+				manifestSha256,
 				runId,
 				controlPlaneRunId: syncRun.runId,
 				resourceCounts: syncRun.resourceCounts,
+				structureCounts: {
+					sections: detected.manifest.sections.length,
+					lessons: detected.manifest.sections.reduce(
+						(count, section) => count + section.lessons.length,
+						0,
+					),
+					videos: courseJsonVideos(detected.manifest).length,
+				},
+				durationSeconds: Math.max(
+					0,
+					(clock().getTime() - pollStartedAt.getTime()) / 1000,
+				),
 				mediaCount: mediaCount(syncRun),
 				workshopEditUrl: COURSE_SYNC_WORKSHOP_EDIT_URL,
 			})
@@ -600,7 +726,7 @@ export function createCourseSyncDetectionPoller(
 				courseVersionId,
 				providerRevision,
 			)
-				? previousState?.consecutiveFailures ?? 0
+				? (previousState?.consecutiveFailures ?? 0)
 				: 0
 			const strikes = Math.min(priorFailures + 1, 2)
 			const held = strikes >= 2
@@ -645,10 +771,14 @@ export function createCourseSyncDetectionPoller(
 				await dependencies.notify({
 					kind: 'failure',
 					courseVersionId,
+					courseName,
 					providerRevision,
+					manifestSha256,
 					runId,
 					controlPlaneRunId,
+					stage: activeStage,
 					failureClass: kind,
+					reason: failure.message,
 				})
 				await log({
 					bindingId,
