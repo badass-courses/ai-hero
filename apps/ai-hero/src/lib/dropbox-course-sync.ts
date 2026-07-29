@@ -209,7 +209,7 @@ export async function exchangeDropboxAuthorizationCode({
 	return { refreshToken: token.refresh_token, grantedScopes }
 }
 
-async function refreshDropboxAccessToken({
+export async function refreshDropboxAccessToken({
 	refreshToken,
 	config,
 	fetchImpl,
@@ -244,6 +244,14 @@ async function refreshDropboxAccessToken({
 	}
 }
 
+async function boundedDropboxErrorBody(response: Response) {
+	try {
+		return (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 300)
+	} catch {
+		return 'unreadable response body'
+	}
+}
+
 async function dropboxJson({
 	path,
 	accessToken,
@@ -265,7 +273,9 @@ async function dropboxJson({
 	})
 
 	if (!response.ok) {
-		throw new Error(`Dropbox ${path} failed (${response.status})`)
+		throw new Error(
+			`Dropbox ${path} failed (${response.status}): ${await boundedDropboxErrorBody(response)}`,
+		)
 	}
 
 	return response.json() as Promise<Record<string, unknown>>
@@ -344,7 +354,9 @@ export async function createDropboxSharedLinkAssetReader({
 				},
 			)
 			if (!response.ok) {
-				throw new Error(`Dropbox course asset read failed (${response.status})`)
+				throw new Error(
+					`Dropbox course asset read failed (${response.status}): ${await boundedDropboxErrorBody(response)}`,
+				)
 			}
 			const metadataHeader = response.headers.get('Dropbox-API-Result')
 			if (!metadataHeader || !response.body) {
@@ -397,7 +409,9 @@ export async function readDropboxCourseManifest({
 		},
 	)
 	if (!response.ok) {
-		throw new Error(`Dropbox course manifest read failed (${response.status})`)
+		throw new Error(
+			`Dropbox course manifest read failed (${response.status}): ${await boundedDropboxErrorBody(response)}`,
+		)
 	}
 
 	const metadataHeader = response.headers.get('Dropbox-API-Result')

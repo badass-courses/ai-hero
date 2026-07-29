@@ -1,7 +1,10 @@
-import type {
-	CourseJsonDocumentV3,
-	CourseSyncRunSummary,
+import {
+	courseJsonVideos,
+	type CourseJsonDocumentV3,
+	type CourseSyncRunSummary,
 } from '@ai-hero/course-sync-schema'
+
+import type { FrozenSourceAsset } from './types'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
 import { AI_HERO_DRAFT_SYNC_BINDING } from './types'
@@ -23,7 +26,7 @@ export type CourseSyncPollState = {
 	bindingId: string
 	courseVersionId: string
 	providerRevision: string
-	status: 'succeeded' | 'failed' | 'held'
+	status: 'staging' | 'succeeded' | 'failed' | 'held'
 	consecutiveFailures: number
 	controlPlaneRunId: string | null
 	failureClass: string | null
@@ -100,11 +103,17 @@ export type CourseSyncDetectionPollerDependencies = {
 	getPollState(bindingId: string): Promise<CourseSyncPollState | null>
 	savePollState(state: CourseSyncPollState): Promise<void>
 	appendLog(input: CourseSyncPollLogInput): Promise<void>
+	freezeAsset(input: {
+		bindingId: string
+		manifest: CourseJsonDocumentV3
+		sourceVideoId: string
+	}): Promise<FrozenSourceAsset>
 	stage(input: {
 		bindingId: string
 		idempotencyKey: string
 		manifest: CourseJsonDocumentV3
 		providerRevision: string
+		frozenAssets: ReadonlyArray<FrozenSourceAsset>
 	}): Promise<CourseSyncRunSummary>
 	preview(runId: string): Promise<CourseSyncRunSummary>
 	apply(input: {
@@ -116,7 +125,7 @@ export type CourseSyncDetectionPollerDependencies = {
 }
 
 export type CourseSyncPollResult =
-	| { outcome: 'no-op'; courseVersionId: string; runId: string }
+	| { outcome: 'no-op' | 'in-progress'; courseVersionId: string; runId: string }
 	| {
 		outcome: 'applied'
 		courseVersionId: string
@@ -196,11 +205,11 @@ export function buildCourseSyncNotificationPayload(
 	}
 
 	const title = `AI Hero course sync failed ${notification.courseVersionId}`
-	const fallback = `${title}: ${notification.failureClass} (poll ${notification.runId}).`
+	const fallback = `${title}: failure=${notification.failureClass}; poll=${notification.runId}; sync=${notification.controlPlaneRunId ?? 'not-staged'}; courseVersionId=${notification.courseVersionId}.`
 	return {
 		username: COURSE_SYNC_SLACK_USERNAME,
 		icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
-		text: title,
+		text: fallback,
 		attachments: [
 			{
 				fallback,
@@ -216,6 +225,68 @@ export function buildCourseSyncNotificationPayload(
 			},
 		],
 	}
+}
+
+export async function recordCourseSyncPollFailure(
+	dependencies: Pick<
+		CourseSyncDetectionPollerDependencies,
+		'getPollState' | 'savePollState' | 'appendLog' | 'notify'
+	>,
+	input: { runId: string; failureClass?: string; occurredAt?: Date },
+) {
+	const bindingId = AI_HERO_DRAFT_SYNC_BINDING.bindingId
+	const state = await dependencies.getPollState(bindingId)
+	const failureKind = input.failureClass ?? 'POLL_RUN_KILLED'
+	const strikes = Math.min((state?.consecutiveFailures ?? 0) + 1, 2)
+	const held = strikes >= 2
+	const occurredAt = input.occurredAt ?? new Date()
+	const courseVersionId = state?.courseVersionId ?? 'unknown'
+	const providerRevision = state?.providerRevision ?? 'unknown'
+	await dependencies.appendLog({
+		bindingId,
+		courseVersionId,
+		providerRevision,
+		runId: input.runId,
+		controlPlaneRunId: state?.controlPlaneRunId ?? null,
+		stage: 'stage',
+		outcome: 'failed',
+		failureClass: failureKind,
+		metadata: { consecutiveFailures: strikes, source: 'inngest-on-failure' },
+		occurredAt,
+	})
+	if (held) {
+		await dependencies.appendLog({
+			bindingId,
+			courseVersionId,
+			providerRevision,
+			runId: input.runId,
+			controlPlaneRunId: state?.controlPlaneRunId ?? null,
+			stage: 'hold',
+			outcome: 'held',
+			failureClass: failureKind,
+			metadata: { consecutiveFailures: strikes, source: 'inngest-on-failure' },
+			occurredAt,
+		})
+	}
+	await dependencies.savePollState({
+		bindingId,
+		courseVersionId,
+		providerRevision,
+		status: held ? 'held' : 'failed',
+		consecutiveFailures: strikes,
+		controlPlaneRunId: state?.controlPlaneRunId ?? null,
+		failureClass: failureKind,
+		updatedAt: occurredAt,
+	})
+	await dependencies.notify({
+		kind: 'failure',
+		courseVersionId,
+		providerRevision,
+		runId: input.runId,
+		controlPlaneRunId: state?.controlPlaneRunId ?? null,
+		failureClass: failureKind,
+	})
+	return { held, consecutiveFailures: strikes }
 }
 
 export function createCourseSyncDetectionPoller(
@@ -312,6 +383,24 @@ export function createCourseSyncDetectionPoller(
 				return { outcome: 'no-op', courseVersionId, runId }
 			}
 
+			const stagingMarkerFresh =
+				observedBefore &&
+				state?.status === 'staging' &&
+				clock().getTime() - state.updatedAt.getTime() < 2 * 60 * 60 * 1000
+			if (stagingMarkerFresh) {
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId,
+					stage: 'stage',
+					outcome: 'skipped',
+					metadata: { reason: 'freeze-sweep-in-progress' },
+				})
+				return { outcome: 'in-progress', courseVersionId, runId }
+			}
+
 			if (
 				observedBefore &&
 				state?.status === 'held' &&
@@ -357,6 +446,16 @@ export function createCourseSyncDetectionPoller(
 			}
 
 			activeStage = 'stage'
+			await dependencies.savePollState({
+				bindingId,
+				courseVersionId,
+				providerRevision,
+				status: 'staging',
+				consecutiveFailures: retry ? 1 : 0,
+				controlPlaneRunId: observedBefore ? state?.controlPlaneRunId ?? null : null,
+				failureClass: null,
+				updatedAt: clock(),
+			})
 			await log({
 				bindingId,
 				courseVersionId,
@@ -365,11 +464,22 @@ export function createCourseSyncDetectionPoller(
 				stage: 'stage',
 				outcome: 'started',
 			})
+			const frozenAssets: FrozenSourceAsset[] = []
+			for (const video of courseJsonVideos(detected.manifest)) {
+				frozenAssets.push(
+					await dependencies.freezeAsset({
+						bindingId,
+						manifest: detected.manifest,
+						sourceVideoId: video.id,
+					}),
+				)
+			}
 			let syncRun = await dependencies.stage({
 				bindingId,
 				idempotencyKey: `course-sync-poll:${courseVersionId}:${providerRevision}`,
 				manifest: detected.manifest,
 				providerRevision,
+				frozenAssets,
 			})
 			controlPlaneRunId = syncRun.runId
 			await log({

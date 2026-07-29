@@ -2,7 +2,7 @@ import { inngestConfig } from '@/inngest/inngest.config'
 import { withSkill } from '@/server/with-skill'
 import { serve } from 'inngest/next'
 
-export const maxDuration = 300
+export const maxDuration = 800
 
 const inngest = serve(inngestConfig)
 

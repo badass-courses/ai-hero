@@ -98,6 +98,23 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		)
 	}
 
+	async findFrozenAsset(
+		bindingId: string,
+		producerSha256: string,
+		bytes: number,
+	) {
+		for (const revision of [...this.revisions.values()].reverse()) {
+			if (revision.bindingId !== bindingId) continue
+			const asset = revision.assets.find(
+				(candidate) =>
+					candidate.producerSha256 === producerSha256 &&
+					candidate.bytes === bytes,
+			)
+			if (asset) return structuredClone(asset)
+		}
+		return null
+	}
+
 	async createStaged(input: {
 		revision: SourceRevisionRecord
 		run: SyncRunRecord
@@ -219,7 +236,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					resourceId: item.targetResourceId,
 					currentVersionId: null,
 					fields: structuredClone(item.fields),
-					type: item.sourceKind,
+					type: item.sourceKind === 'video' ? 'videoResource' : item.sourceKind,
 				}
 				resources.set(item.targetResourceId, resource)
 				relations.set(item.targetResourceId, {
@@ -412,7 +429,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				: null
 			const fields = parent?.fields ?? {
 				...resource.fields,
-				state: 'draft',
+				state: planItem.sourceKind === 'video' ? 'deleted' : 'draft',
 				visibility: 'unlisted',
 				courseSync: {
 					...((resource.fields.courseSync as
