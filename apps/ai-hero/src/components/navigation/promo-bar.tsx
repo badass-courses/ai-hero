@@ -42,13 +42,18 @@ export async function PromoBar() {
 	if (!promo) return null
 
 	return (
+		// Shell width matches `LayoutClient`: a 1440px bordered box plus 2×8px of
+		// page-background gutter either side.
 		<aside
 			aria-label="Announcement"
-			className="relative mx-auto w-full max-w-[1200px] px-2 print:hidden sm:px-2"
+			className="relative mx-auto w-full max-w-[1456px] px-2 print:hidden"
 		>
-			<div className="bg-muted/40 border-border flex items-center justify-center gap-2.5 border-x border-b px-4 py-2.5 text-center text-sm">
+			<div className="bg-muted/40 border-border flex h-[34px] items-center justify-center gap-2.5 border-x border-b px-4 text-center text-[12.5px] leading-none">
+				{/* Gold in both themes: `--primary` goes ink on paper, and an
+				    ink-filled "NEW" chip reads as a disabled state rather than as
+				    the one new thing on the site. */}
 				{promo.label && (
-					<span className="bg-primary text-primary-foreground inline-flex shrink-0 items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider">
+					<span className="bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-1.5 py-1 font-mono text-[9px] font-medium uppercase leading-none tracking-[0.1em]">
 						{promo.label}
 					</span>
 				)}

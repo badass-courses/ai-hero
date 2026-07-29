@@ -16,6 +16,7 @@ import {
 	InlineBuyButton,
 	type PricingComponentProps,
 } from './inline-mdx-pricing'
+import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
 import type { WorkshopPageProps } from './workshop-page-props'
 
 export const WorkshopSidebar = ({
@@ -57,13 +58,17 @@ export const WorkshopSidebar = ({
 				id="buy"
 				className={cn('scroll-mt-15 relative flex h-full flex-col', className)}
 			>
+				{/* No padding here, deliberately. Every state this shell hosts owns
+				    its own inset: the pricing widget is a `bg-card` surface that has
+				    to reach the column's edges to read as one, the interest-capture
+				    CTA pads itself, and the resource list is full-bleed by design.
+				    Padding the shell double-inset all three — it floated the pricing
+				    card inside its own column instead of filling it. */}
 				<div
 					ref={sidebarRef}
-					className={cn('', {
-						'md:top-(--nav-height) md:sticky': true, //sticky && windowHeight - 63 > height,
-					})}
+					className="md:top-(--nav-height) md:sticky" //sticky && windowHeight - 63 > height,
 				>
-					<ScrollArea className="h-full lg:max-h-[calc(100vh-var(--nav-height))] [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
+					<ScrollArea className="lg:max-h-[calc(100vh-var(--nav-height))] h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{children}
 						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
 							<div className="from-background bg-linear-to-t pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full to-transparent lg:block" />
@@ -121,7 +126,7 @@ export const WorkshopSidebarMobile = ({
 			</div>
 			{interestCapture ? (
 				<Button
-					className="h-10 gap-2 px-5"
+					className={cn(WORKSHOP_CTA_BUTTON, 'h-10 gap-2 text-sm')}
 					onClick={handleScrollToBuy}
 				>
 					Get notified

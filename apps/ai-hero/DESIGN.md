@@ -20,14 +20,16 @@ Color strategy is **Restrained plus abstract accents**:
 
 ### 1. The container owns the side borders
 
-The app container has `border-x` (see `src/components/layout-client.tsx`). Every child section bleeds to those edges. No horizontal padding on parents that wrap a section.
+The app container is **1440px** wide (`--ah-shell` in the spec) and has `border-x` (see `src/components/layout-client.tsx`). Every child section bleeds to those edges. No horizontal padding on parents that wrap a section.
+
+The desktop horizontal gutter is **44px** (`--ah-gut`), 18px on mobile. Vertical section padding is 52px. Anything inside the shell pads to those values rather than inventing its own.
 
 - Padding lives on the **inner content**, not on the section wrapper.
 - Section dividers come from `border-t` / `border-b` / `border-y` on the section itself, so consecutive sections share a single hairline.
 
 ```tsx
 ✅  <section className="border-b">
-      <div className="px-8 py-20 sm:px-16">…</div>
+      <div className="px-[18px] py-20 sm:px-11">…</div>
     </section>
 
 ❌  <section className="border-b px-8 py-20">…</section>   // pulls content away from the container's border-x
@@ -43,18 +45,32 @@ When laying out a grid of cards, do not put borders on each cell. Use the grid c
 
 Reference: `ResourceGrid` in `src/components/landing/resource.tsx`.
 
+**There are three line weights, and `border-border` is the lightest of them.** Reaching for the wrong one is the most common way this design drifts, because a divider one step too heavy reads as a card outline:
+
+| use | token | class |
+| --- | --- | --- |
+| Section dividers, grid gaps, nav and footer rules | `--border` (= the spec's `--ah-line`) | `border-border`, `bg-border` |
+| Card outlines, inputs, chips, ghost buttons | `--input` (= `--ah-line-strong`) | `border-input` |
+| Dividers *inside* a list or card | `--ah-line-soft` | `border-[color:var(--ah-line-soft)]` |
+
+Do not hand-write `border-[color:var(--ah-line)]` — that is what `border-border` already is. Mixing the two in one view is what makes neighbouring hairlines look mismatched.
+
 ### 3. Spacing scale
 
 Sections breathe. Use these values, not freehand padding:
 
 | Role | Mobile | Desktop |
 |------|--------|---------|
-| Section vertical | `py-16` to `py-20` | `md:py-24` |
-| Section horizontal | `px-8` | `sm:px-16` (`lg:pl-32` for hero-style insets) |
+| Section vertical | `py-12` to `py-16` | `md:py-[52px]` (`--ah-section`) |
+| Section horizontal | `px-[18px]` | `sm:px-11` (44px, `--ah-gut`) |
 | Interior content gap | `gap-4` to `gap-6` | `md:gap-8` to `md:gap-16` |
 | Inline element gap | `gap-2` to `gap-3` | same |
 
 Pick one row per surface; do not mix `py-12` with `py-20` siblings.
+
+**The desktop gutter is 44px, not 64.** `sm:px-16` predates the redesign and is gone from `src/` — it did not line up with the nav, the footer or any section written against the spec, and a page mixing the two had a visibly ragged left edge. Do not reintroduce it, and do not override the gutter upward at a larger breakpoint (`lg:px-24` and friends): 44px holds at every desktop width. A block may inset *less* than the gutter when its content wants the width — the certificate image on `/certificates/[slug]` is `px-4 sm:px-8` — but never more.
+
+**Mobile is 18px (`px-[18px]`), the spec's value.** This rule used to say the opposite — that mobile stayed at `px-8` because 18px read as cramped. It was wrong in practice for two reasons. 32px eats a sixth of a 390px screen, which costs a word a line at the body measure; and the nav and footer were both already on 18px, so every page had its chrome and its content on different gutters, with the seam visible wherever a full-width band met the header. Converged on 18px across all 76 gutter sites (2026-07-29). The desktop half is unchanged.
 
 ### 4. Two-column grids are intentionally asymmetric
 
@@ -84,7 +100,38 @@ Two utilities exist in `globals.css`:
 
 ### 7. Colors come from shadcn tokens, always
 
-Tokens live in `src/styles/globals.css` as OKLCH values. Never hardcode hex. Never use raw Tailwind palette colors (`text-zinc-500`, `bg-neutral-900`).
+Tokens live in `src/styles/globals.css`, transcribed from the redesign's
+normative spec (`AI Hero Courses Redesign/aihero.css`). **That file wins any
+disagreement.** Never hardcode hex in a component. Never use raw Tailwind
+palette colors (`text-zinc-500`, `bg-neutral-900`).
+
+The palette is four warm-neutral surfaces, one ink with an alpha ramp, one
+accent, and three line levels:
+
+| Role | Dark | Light | Token |
+|------|------|-------|-------|
+| Page | `#0b0b0b` | `#fbfbfc` | `bg-background` |
+| Raised band / sidebar | `#0d0d0c` | `#f5f6f8` | `bg-muted`, `bg-popover` |
+| Card / input / code | `#100f0e` | `#ffffff` | `bg-card` |
+| Ink | `#f4f3f1` | `#14161a` | `text-foreground` |
+| Accent | `#f5c451` on `#191510` | same fill | `bg-accent-fill` |
+| Lines | `white/.08`, `.12`, `.06` | `ink/.10`, `.14`, `.07` | `border-border`, `--ah-line*` |
+
+The ink and line ramps are alpha steps rather than palette entries, so they
+stay raw custom properties: `--ah-fg-body` (long-form prose), `--ah-fg-muted`
+(card descriptions), `--ah-fg-subtle` (meta and bylines), `--ah-fg-label`
+(eyebrows), `--ah-fg-faint` (placeholders and decorative numerals only).
+Consume them as `text-[color:var(--ah-fg-muted)]` where no semantic token
+already says the same thing.
+
+> **The ramp is raised above the spec's alphas, on purpose.** `aihero.css`
+> lists .72 / .62 / .48 / .45 / .35, but its own definition of done requires
+> WCAG AA "for body copy and all labels ≥ 9.5px" — and at those alphas
+> `--ah-fg-label` measures 2.94:1 in light and 3.53:1 in dark, which is the
+> 9.5px eyebrow the criterion is about. Every step that carries text now
+> passes 4.5:1; `--ah-fg-faint` keeps the spec's value because it never draws
+> text a reader has to make out. Do not "restore" the spec's numbers without
+> re-reading that criterion.
 
 Use the semantic tokens:
 
@@ -95,7 +142,16 @@ Use the semantic tokens:
 
 Opacity utilities on tokens are encouraged for secondary text: `opacity-60`, `opacity-70`, `opacity-80`, or `text-foreground/70`, `border-foreground/20`.
 
-> **Known asymmetry.** Today, light-mode `--primary` is pure black; dark-mode `--primary` is the brand gold (`oklch(0.85 0.13 79)`). `YellowStrong` therefore looks gold only in dark and black in light. This is a deliberate current state, not a token to copy. If a new component depends on yellow in both themes, raise it before shipping.
+> **`--primary` and `--accent-fill` are two different jobs.** The spec has two
+> rules that a single accent token cannot satisfy at once: the yellow **fill**
+> does not change between themes, and accent **text** in light mode is ink
+> (`#14161a`), never a darkened yellow — a dark-yellow text token reads as
+> brown on paper.
+>
+> So `--primary` carries the text-safe value (gold in dark, ink in light) and
+> `--accent-fill` carries the gold that must survive both themes. Use
+> `text-primary` for accent type, and `bg-accent-fill
+> text-accent-fill-foreground` for CTA fills and badges.
 
 ### 8. Both light and dark must work
 
@@ -103,6 +159,16 @@ Every change is reviewed in both modes. Toggle the theme during dev and verify b
 
 - Token-based colors handle this for free, which is why rule 7 exists.
 - If a `dark:` branch is genuinely needed, keep both sides token-based. Avoid raw palette colors in either branch.
+
+Three states in the spec genuinely invert rather than re-tint, because rule 7 takes the accent to ink in light and an ink-on-paper "accent" is invisible unless something else carries it:
+
+| state | dark | light |
+| --- | --- | --- |
+| Link in running text | gold, no underline | ink + 1px underline at .35 alpha, full ink on hover (`.ah-prose-a`) |
+| Active sidebar row | gold wash + gold type | **solid ink fill**, paper-coloured type |
+| Filled circular arrow | gold fill | ink fill |
+
+`--ah-band` is the secondary surface (newsletter panels, code, the announcement bar) — `#f1f2f5` light, `#0e0e0d` dark. It is not `--page-background`, which is the void outside the shell.
 
 ### 9. Abstract colorful accents, used sparingly
 
@@ -125,9 +191,9 @@ Color makes things pop; everything else stays monochrome on tokens.
 
 ### 10. Fonts
 
-- **Sans (default):** Geist, loaded via `next/font/google` in `src/app/layout.tsx`, exposed as `--font-geist`.
-- **Mono:** Geist Mono, exposed as `--font-geist-mono`. Reserved for labels, prices, badges, code.
-- Body className applies `font-sans`. Components opt into `font-mono` for the cases above.
+- **Sans (default):** DM Sans, loaded via `next/font/google` in `src/app/layout.tsx`.
+- **Mono:** JetBrains Mono. Reserved for labels, commands, durations, counts, prices, badges and code — mono marks a *category*, and nothing outside that category uses it.
+- Both are exposed on `<body>` as `--font-geist` / `--font-geist-mono`. The variable names are historical (they used to hold Geist); the families behind them are what the redesign changed. Components keep using `font-sans` / `font-mono`.
 
 ### 11. Type scale
 
@@ -139,34 +205,58 @@ arbitrary `text-[10px]` / `text-[11px]` values, five weights, and a scatter of
 wrong in isolation; together it meant two headings a screen apart could differ
 by a step for no reason a reader could name.
 
-**Five sizes.** Each constant carries its own leading and tracking, because
-those are part of the size — a display line at `leading-relaxed` is not the
-same decision as one at `leading-[1.05]`, and letting callers mix them is how
-the scatter came back last time.
+Each constant carries its own leading and tracking, because those are part of
+the size — a display line at `leading-relaxed` is not the same decision as one
+at `leading-[1.05]`, and letting callers mix them is how the scatter came back
+last time.
 
-| Role | Constant | Steps | Used for |
-|------|----------|-------|----------|
-| Display | `TYPE.display` | 4xl → 5xl → 3.5rem | The hero `h1`. Nothing else. |
-| Heading | `TYPE.heading` | 3xl → 4xl | Section `h2`s. |
-| Subhead | `TYPE.subhead` | xl → 2xl | `h3`s, card and row titles, pull quotes. |
-| Deck | `TYPE.deck` | xl → 2xl | The hero's supporting line. Subhead's size at normal weight. |
-| Body | `TYPE.body` / `TYPE.bodyTight` | base | Prose, list rows. |
-| Meta | `TYPE.meta` / `TYPE.metaProse` | sm | Captions, buttons, inline links. |
+The sizes are the redesign spec's, not invented here. Values are desktop; the
+constants step down about a third on mobile themselves, so callers never write a
+breakpoint.
 
-Plus `TYPE.micro` — the mono uppercase eyebrow at `text-xs`. It does `meta`'s
-job at a smaller optical size, which is why it is not a sixth step. `TYPE.command`
-is the same size for slash commands, which are literally code.
+| Role | Constant | Desktop | Used for |
+|------|----------|---------|----------|
+| Display | `TYPE.display` | 76px | The home hero `h1`. Nothing else. |
+| Display, landing | `TYPE.displayLanding` | 64px | A single-offer landing page's `h1` (`/skills/subscribe`). |
+| Title | `TYPE.title` | 52px | Page `h1`s. |
+| Article | `TYPE.article` | 44px | Article and lesson `h1`s. |
+| Section, lead | `TYPE.section` | 44px | The home page's load-bearing section heads. |
+| Section, offer | `TYPE.sectionOffer` | 42px | The cohort — the page's one paid thing. |
+| Section, claim | `TYPE.sectionClaim` | 40px | The manifesto's argument. |
+| Section, byline | `TYPE.sectionByline` | 38px | "Hi, I'm Matt Pocock". |
+| Section, quiet | `TYPE.sectionQuiet` | 36px | Supporting sections: the posts grid. |
+| Heading | `TYPE.heading` | 34px | The generic section `h2`, everywhere off the home page. |
+| Rung question | `TYPE.rungQuestion` | 25px | The ladder's questions. |
+| Panel title | `TYPE.panelTitle` | 24px | Titles inside a bordered panel. |
+| Subhead | `TYPE.subhead` | 20px | `h3`s, card and row titles. |
+| Quote | `TYPE.quote` | 20px | Pull quotes and testimonials (700, italic). |
+| Card title | `TYPE.cardTitle` | 16px | Dense row and cell titles. |
+| Lead, hero | `TYPE.leadHero` | 21px | The home hero's lead only. |
+| Lead | `TYPE.lead` | 18.5px | The paragraph under an `h1` / `h2`. |
+| Body | `TYPE.body` / `TYPE.bodyTight` | 17.5px | Prose, list rows. |
+| Meta | `TYPE.meta` / `TYPE.metaProse` | 14px | Captions, buttons, inline links. |
+| Meta, small | `TYPE.metaSm` | 13px | Attributions, footer utility links. |
 
-**Weights.** `font-medium` for headings, `font-semibold` for titles and UI
-emphasis, `font-bold` for exactly one thing (the emphasised span in the hero
-`h1`), `font-normal` for exactly one other (`deck`, which is prose sitting
-under a display heading and has to yield to it). `font-light` is gone — at
-these sizes on a dark background it reads as a rendering fault rather than a
-choice.
+**The five section steps are deliberate, and they are the one place this scale
+is not minimal.** The prototype sizes each section head by how much of the
+page's argument that section carries, and collapsing them to a single step —
+which an earlier pass did — makes the whole page read flatter than the mock.
+Off the home page, `TYPE.heading` is still the only section size.
 
-**Two families, two accents.** Geist and Geist Mono (rule 10). Mono appears in
-two places only: `micro` labels and slash commands. Uppercase appears in one:
-`micro`. Italic appears in one: pull quotes.
+Plus four mono constants, because mono is a category rather than a size:
+`TYPE.micro` (the 9.5px uppercase eyebrow), `TYPE.command` (slash commands and
+durations), `TYPE.metaMono` (13px data links), and `TYPE.stat` (26px numerals).
+
+**Weights.** Headings are **700**. The spec has no medium-weight heading: at
+these tracking values a 500 display line reads as a different typeface rather
+than as restraint. `font-medium` belongs to UI text and mono numerals,
+`font-normal` to prose and to `lead`, which sits under a display line and has
+to yield to it. `font-light` is gone — at these sizes on a dark background it
+reads as a rendering fault rather than as a choice.
+
+**Two families, two accents.** DM Sans and JetBrains Mono (rule 10). Mono
+marks a category: labels, commands, durations, counts, stats. Uppercase appears
+in one place: `micro`. Italic appears in one: pull quotes.
 
 Exempt, because they are ornaments rather than text: the oversized quotation
 glyph in `TestimonialDivider` and the placeholder word in an empty
@@ -182,31 +272,36 @@ Other typography rules:
 
 ## Shape, motion, interactivity
 
-### 12. Sharp UI, pill buttons
+### 12. Four radii, and edges stay sharp
 
-**Updated 2026-07-28.** The UI is still hard-cornered. The one deliberate softening is that **buttons and CTAs are pills**: a `rounded-full` call to action against sharp surroundings reads as the thing to press, and it is the only place the eye should find a curve.
+**Updated 2026-07-28, superseding the sharp-plus-pill rule.** The redesign
+spec defines four radius steps, and pills are not one of them. A `rounded-full`
+button was a house style; these values are the design's.
 
-**Sharp (no radius) — the default.** Sections, hairline grids and their cells (rule 2), resource and list rows, cards, images, panels, table cells, anything meeting the container's `border-x`. If you are unsure, it is sharp.
+| Step | Value | Utility | Used for |
+|------|-------|---------|----------|
+| Badge | 4px | `rounded-[4px]` | Uppercase mono badges — "New", "Free", "Waitlist open". |
+| Chip | 6px | `rounded-sm` | Command chips, tag pills, 28px icon buttons. |
+| Control | 9px | `rounded-[9px]` | Buttons, CTA links, inputs. Also `--radius`. |
+| Card | 11px | `rounded-md` | List cards and resource rows that float. |
+| Panel | 12px | `rounded-lg` | Panels, hairline grid containers, image slots. |
 
-**Pill.** Buttons and CTA links: `rounded-full`. References: `course-cta.tsx`, the submit button in `skills-newsletter-cta.tsx`. Give a pill slightly more horizontal padding than a squared button (`px-6`/`px-7` rather than `px-5`), or the label crowds the curve.
+**Edges are still sharp.** Anything meeting the container's `border-x` — full
+bleed sections, hairline grid cells, rows that span the shell — takes no
+radius. A radius belongs to something that reads as an object sitting *on* the
+page, not to the page's own structure. If you are unsure, it is sharp.
 
-Radius outside those two cases is a short list, not a spectrum:
-
-| Element | Radius | Why |
-|---------|--------|-----|
-| Text inputs sitting in a row with a pill button | `rounded-full` | A pill submit next to a squared input reads as a mismatch, not a contrast. Match the row. |
-| Small badges and tag pills | `rounded-full` | Already sanctioned. `DiscountBadge`, `EditorialBadge`, skills compatibility pills. |
-| Avatars, dots | `rounded-full` | |
-| Sidebar and menu rows | `rounded-md` | Inherited from the shadcn sidebar primitive; a hover highlight, not a surface. |
-| In-prose promo panel | `rounded-xl` | Narrow exception: an insert that floats inside body copy rather than meeting a page edge. `course-cta.tsx`. Do not extend this to page-level cards. |
-| Inline `<code>` in body copy | `rounded` | |
+`rounded-full` survives in exactly three places, all of them genuinely
+circular: avatars, dots and bullets, and circular icon-only glyph buttons (the
+video play button, `AnimatedArrowCircle`).
 
 Two things that bite:
 
-- A decorative overlay on a pill (a shine sweep, a gradient) needs `rounded-[inherit]`, or its square corners spill past the curve. See the submit button in `convertkit-subscribe-form.tsx`.
-- Not every surface is migrated. `slim-newsletter-form.tsx` forces `rounded-none`, and the shared `Button` hardcodes `rounded-none` which callers override. Not-yet-converted, not counter-examples.
-
-Anything else rounded is an exception and needs a note.
+- A decorative overlay on a button (a shine sweep, a gradient) needs
+  `rounded-[inherit]`, or its square corners spill past the curve. See the
+  submit button in `convertkit-subscribe-form.tsx`.
+- Not every surface is migrated. The shared `Button` hardcodes `rounded-none`,
+  which callers override. Not-yet-converted, not a counter-example.
 
 ### 13. Hover patterns, signature first
 
@@ -230,6 +325,23 @@ Use `bg-stripes` (rule 6) plus a centered mono placeholder string when the slot 
 
 ---
 
+### 19. Mobile: one breakpoint, and the patterns that don't just stack
+
+The redesign draws exactly ONE line, at **900px** — `desk:` (`--breakpoint-desk`). Use it for structural switches: a layout that changes shape rather than a size that changes value. It is deliberately not `md` (768px), because every pattern that has to change breaks between 768 and 900, and a tablet in portrait would otherwise get a desktop structure that does not fit. The existing `sm`/`md`/`lg` utilities are untouched; `desk:` names the one line the spec actually draws.
+
+Six cases need a decision rather than a stack (`AI Hero Courses Redesign/Mobile Patterns.dc.html`). What is built so far:
+
+| Pattern | Rule | Where |
+| --- | --- | --- |
+| Primary action | The page's one primary action pins to the bottom, with safe-area padding | `SkillStickyAction`, `.has-sticky-action` |
+| Sidebar | Full-height sheet from the LEFT, never a dropdown — the hub tree is too tall for a popover. Body scroll locks; the drawer keeps its own scroll and opens on the current item; only the active branch is expanded | `MobileMenuPanel`, `useBodyScrollLock` |
+| Rows | 44px minimum tap height | `rowClass` in the same file |
+| Inline forms | Wrap to full-width fields. **Fields 48px, submit 50px** — the one deliberate size increase, because 44px is a fine pointer target and a poor thumb target | `SubscribeToConvertkitForm` and its callers |
+
+A `fixed` bottom bar cannot be cleared by a spacer the page renders: the footer comes from `HubLayout`, above the page in the tree, so the spacer lands before it. Pad the document (`.has-sticky-action`) instead.
+
+Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, the phase list rotating to a horizontal scroller, and prose stepping back to 16.5px.
+
 ## Accessibility
 
 ### 16. Focus rings
@@ -250,7 +362,7 @@ Every PR is checked in both themes before merge. The light-mode primary asymmetr
 
 Match-and-refuse list. If you are about to ship one of these, redesign the element.
 
-- **Side-stripe borders.** A colored `border-l` or `border-r` thicker than 1px as a card or alert accent.
+- **Side-stripe borders.** A colored `border-l` or `border-r` thicker than 1px as a card or alert accent. One exception, and only one: a **pull quote in running prose** may take a 2px `border-primary` left rail (`Testimonial` in `page-builder-mdx-components.tsx`). There the rail is the quotation mark — the block has no surface of its own and the serif alone does not mark the change of speaker inside a column of sans. It stays banned anywhere the element already has a background, and at any width above 2px.
 - **Gradient text.** `background-clip: text` on a gradient is decorative, never meaningful. Use weight or size, or `text-primary` if dark mode.
 - **Glassmorphism as default.** Blurred translucent cards used decoratively. Rare and purposeful, or nothing.
 - **Hero-metric template.** Big number, small label, supporting stats, gradient accent. SaaS cliché.
@@ -258,7 +370,8 @@ Match-and-refuse list. If you are about to ship one of these, redesign the eleme
 - **Modal as first thought.** Exhaust inline and progressive alternatives first.
 - **Pure `#000` or `#fff`.** Tokens are tinted neutrals. Stay there.
 - **Em dashes in copy.** Use commas, periods, colons, semicolons, or parentheses.
-- **Rounded surfaces.** A radius on a section, card, hairline grid cell, or full-bleed row. Curves belong on buttons. See rule 12.
+- **Rounded page structure.** A radius on a section, a hairline grid cell, or any row that meets the container's `border-x`. Objects on the page get a radius; the page's own structure does not. See rule 12.
+- **Radii off the scale.** Four steps plus 4px badges (rule 12). `rounded-full` on anything that is not a circle.
 - **Bouncy / springy motion.** See rule 14.
 
 ---
@@ -270,9 +383,10 @@ Match-and-refuse list. If you are about to ship one of these, redesign the eleme
 - [ ] Spacing values match the table in rule 3
 - [ ] Two-column grids use the documented ratios in rule 4
 - [ ] Colors come from shadcn tokens; documented exceptions only (rule 9)
-- [ ] Headings have `tracking-tight` + tight leading; mono micro-labels where appropriate
-- [ ] Body columns capped near 65 to 75ch
-- [ ] Radius follows rule 12: sharp everywhere, `rounded-full` on buttons and CTAs
+- [ ] Sizes come from `TYPE` (rule 11); headings at 700; mono only for labels, commands, durations, counts and stats
+- [ ] Body columns capped at the spec's 70ch measure
+- [ ] Radius follows rule 12: sharp page structure, 4 / 6 / 9 / 11 / 12 on objects, `rounded-full` only on circles
+- [ ] Gold fills use `bg-accent-fill`, accent type uses `text-primary` (rule 7)
 - [ ] Empty image slots use `bg-stripes`
 - [ ] Motion uses ease-out-quart by default; reduced-motion guarded
 - [ ] Focus-visible rings present on every interactive element

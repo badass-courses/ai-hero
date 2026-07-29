@@ -18,7 +18,10 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-const pillButtonClass = 'rounded-full border cursor-pointer'
+/** The shared treatment for every action in the post head: a hairline-outlined
+ *  ghost at the 9px button radius (DESIGN rule 12 — `rounded-full` is for
+ *  circles). */
+const headActionClass = 'cursor-pointer rounded-[9px] border'
 
 export function PostShareDialogButton({
 	title,
@@ -34,7 +37,7 @@ export function PostShareDialogButton({
 					type="button"
 					variant="ghost"
 					size="default"
-					className={cn(pillButtonClass, className)}
+					className={cn(headActionClass, className)}
 				>
 					<Share2 className="size-4" aria-hidden="true" />
 					Share
@@ -58,9 +61,6 @@ export function PostSubscribeDialogButton({
 	postSlug?: string
 	className?: string
 }) {
-	const pillButtonClass =
-		'rounded-full hover:bg-foreground/90 cursor-pointer hover:text-background bg-foreground text-background'
-
 	const [subscribed, setSubscribed] = React.useState(false)
 	const [mounted, setMounted] = React.useState(false)
 	const { data: subscriber, status } =
@@ -77,11 +77,15 @@ export function PostSubscribeDialogButton({
 	return (
 		<Dialog>
 			<DialogTrigger asChild>
+				{/* Same treatment as the other head actions (Copy page, Share, Source
+				    Code): a hairline-outlined ghost at the 9px button radius. It was a
+				    filled `rounded-full` pill, which made it the only pill and the only
+				    solid fill in a row of outlined chips. */}
 				<Button
 					type="button"
-					variant="default"
-					size="sm"
-					className={cn(pillButtonClass, className)}
+					variant="ghost"
+					size="default"
+					className={cn(headActionClass, className)}
 				>
 					{/* <MailPlus className="size-4" aria-hidden="true" /> */}
 					Subscribe
@@ -107,11 +111,11 @@ export function PostSubscribeDialogButton({
 							}
 						}}
 						submitButtonElem={
-							<Button type="submit" className="mt-2 w-full rounded-full">
+							<Button type="submit" className="mt-2 w-full rounded-[9px]">
 								Subscribe
 							</Button>
 						}
-						className="flex flex-col gap-3 [&_input]:h-10 [&_input]:rounded-full [&_input]:border [&_label]:text-sm"
+						className="flex flex-col gap-3 [&_input]:h-12 desk:[&_input]:h-10 [&_input]:rounded-[9px] [&_input]:border [&_label]:text-sm"
 					/>
 				</div>
 			</DialogContent>

@@ -202,3 +202,56 @@ export const getSkillEntries = unstable_cache(
 	['skill-entries-v2'],
 	{ revalidate: 3600, tags: ['posts', 'tags', 'lists'] },
 )
+
+/** One titled section of the skills list, for the "Where this fits" rail. */
+export type SkillSection = {
+	id: string
+	title: string
+	/** How many skills the section holds — the "of 6" in "2 of 6". */
+	count: number
+}
+
+export type SkillSectionMap = {
+	/** Titled sections in list order. Loose members are not a section. */
+	sections: SkillSection[]
+	/** slug → where that skill sits. Absent for unlisted or loose skills. */
+	placement: Record<string, { sectionId: string; position: number }>
+}
+
+/**
+ * Where each skill sits in the list's sections — the source for the rail.
+ *
+ * SECTIONS, not phase tags. The sections are the live taxonomy (2026-07-14:
+ * sections drive the catalog, superseding the phase-tag split) and they are
+ * complete: every listed skill sits in one. The `skill-phase` tags cover 6 of
+ * 21 listed skills, and the Phase 2 tag is attached to an unlisted
+ * `grill-with-docs` rather than the listed `skills-grill-with-docs` — so a
+ * phase-derived ladder either skipped numbers or, once read from the tag
+ * vocabulary, lit nothing at all for two thirds of the skills. Sections answer
+ * "where does this fit" for every skill with no content backfill.
+ */
+export const getSkillSectionMap = unstable_cache(
+	async (): Promise<SkillSectionMap> => {
+		const groups = await loadSkillCatalogGroups()
+		const sections: SkillSection[] = []
+		const placement: SkillSectionMap['placement'] = {}
+
+		for (const group of groups) {
+			// A loose run has no title — it is not a place, so it gets no rung and
+			// its members render an unmarked ladder rather than a wrong one.
+			if (!group.title) continue
+			sections.push({
+				id: group.id,
+				title: group.title,
+				count: group.skills.length,
+			})
+			group.skills.forEach((skill, index) => {
+				placement[skill.slug] = { sectionId: group.id, position: index + 1 }
+			})
+		}
+
+		return { sections, placement }
+	},
+	['skill-section-map-v1'],
+	{ revalidate: 3600, tags: ['posts', 'lists'] },
+)

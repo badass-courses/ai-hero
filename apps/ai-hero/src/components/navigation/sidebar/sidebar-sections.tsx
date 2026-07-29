@@ -4,7 +4,6 @@ import { filterSectionedResources } from '@/lib/list-sections'
 import { getListWithSections } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
-import { getModuleProgressForUser } from '@/lib/progress'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
@@ -19,14 +18,17 @@ import {
 } from '@coursebuilder/ui'
 
 import {
-	ListSectionLessons,
 	SidebarNavLink,
 	SidebarSection,
+	SkillsNavEntry,
 } from './sidebar-client'
+import { SIDEBAR_LABEL_CLASS } from './sidebar-indent'
 
-/** Small-caps, non-collapsible category label — matches the MDX `## Heading`. */
-const CATEGORY_LABEL_CLASS =
-	'text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider'
+/**
+ * Mono-caps, non-collapsible category label — matches the MDX `## Heading`.
+ * Re-exported rather than restated so the eyebrow has exactly one definition.
+ */
+export const CATEGORY_LABEL_CLASS = SIDEBAR_LABEL_CLASS
 
 /**
  * Server-driven sidebar sections registered in the hub-sidebar MDX components
@@ -40,7 +42,7 @@ const CATEGORY_LABEL_CLASS =
 function SectionSkeleton() {
 	return (
 		<SidebarGroup className="py-1" aria-hidden="true">
-			<SidebarMenu>
+			<SidebarMenu className="gap-px">
 				{Array.from({ length: 3 }).map((_, index) => (
 					<SidebarMenuItem key={index}>
 						<SidebarMenuSkeleton />
@@ -91,7 +93,7 @@ async function WhatsNewSection({
 					{title}
 				</SidebarGroupLabel>
 				<SidebarGroup className="p-0">
-					<SidebarMenu>
+					<SidebarMenu className="gap-px">
 						{postLinks(items)}
 						<SidebarMenuItem>
 							<SidebarNavLink href="/posts" muted ariaLabel="See all posts">
@@ -131,7 +133,7 @@ async function SkillsNavSection({ title = 'Skills' }: { title?: string }) {
 		return (
 			<SidebarSection title={title}>
 				<SidebarGroup className="p-0">
-					<SidebarMenu>
+					<SidebarMenu className="gap-px">
 						{entries.map((entry) => (
 							<SidebarMenuItem key={entry.id}>
 								<SidebarNavLink href={`/${entry.slug}`}>
@@ -236,30 +238,19 @@ async function SkillsEntrySection({
 	label: React.ReactNode
 }) {
 	try {
-		const { listSlug, groups } = await getCachedSkillsSidebarGroups()
-		const itemHrefs = groups.flatMap((group) =>
-			group.items.map((item) => `/${item.slug}`),
-		)
-		if (itemHrefs.length === 0) {
+		const { groups } = await getCachedSkillsSidebarGroups()
+		const hasItems = groups.some((group) => group.items.length > 0)
+		if (!hasItems) {
 			return <SidebarNavLink href={href}>{label}</SidebarNavLink>
 		}
-		// Per-user, per-request (NOT in the shared cache): the ✓ marks must show
-		// on every hub page, not just inside the [post] layout's ProgressProvider.
-		const progress = await getModuleProgressForUser(SKILLS_LIST_ID)
-		return (
-			<SidebarSection
-				title={label}
-				iconHref={href}
-				ownListSlug={listSlug}
-				extraHrefs={[href, ...itemHrefs]}
-			>
-				<ListSectionLessons
-					groups={groups}
-					overviewHref={href}
-					completedLessons={progress?.completedLessons}
-				/>
-			</SidebarSection>
-		)
+		// No progress fetch here, deliberately. It is per-user and per-request,
+		// so awaiting it put an uncacheable query inside this Suspense boundary:
+		// every navigation re-suspended the entry, and the fallback is the plain
+		// collapsed row, so a logged-in reader watched the tree close and reopen
+		// on the way to the page it was already open on. Only the cached groups
+		// are awaited now — the ✓ marks arrive client-side in `SkillsNavEntry`,
+		// where they can be late without taking the structure with them.
+		return <SkillsNavEntry href={href} label={label} groups={groups} />
 	} catch (error) {
 		void log.error('hub-sidebar.skills-entry.error', {
 			error: error instanceof Error ? error.message : String(error),
@@ -269,13 +260,20 @@ async function SkillsEntrySection({
 }
 
 /**
- * The Explore "Skills" entry: the SAME `SidebarSection` accordion as the
- * topic groups (icon + right-side chevron), disclosing the skill list —
- * section sub-headings, Overview row, numbered skills — on ANY hub page.
- * Rendered by the MDX map whenever the sidebar body links `/skills` — the
- * body keeps its plain `[Skills](/skills)` line (which also keeps
- * `HubLayout`'s pinned-block gate satisfied). Falls back to the plain link
- * while loading or on error.
+ * The Explore "Skills" entry: a plain row that becomes the expanded skill list
+ * — header, "Overview", section sub-headings, numbered skills — while the
+ * reader is inside it. Exactly what a Guides link does when you are in that
+ * guide, because it is literally the same `SidebarNavLink`.
+ *
+ * It was a `SidebarSection` accordion disclosing the catalog on ANY hub page.
+ * See `SkillsNavEntry` for why the closed state that bought was the bug rather
+ * than a feature.
+ *
+ * Rendered by the MDX map whenever the sidebar body links `/skills` — the body
+ * keeps its plain `[Skills](/skills)` line (which also keeps `HubLayout`'s
+ * pinned-block gate satisfied). Falls back to the plain link while loading or
+ * on error, which is now also the resting shape, so nothing swaps underneath
+ * the reader on a page that is not /skills.
  */
 export function SkillsEntry(props: { href: string; label: React.ReactNode }) {
 	return (
@@ -345,7 +343,7 @@ async function TopicSectionInner({
 					// mapping nests in a SidebarGroup). Without this the "All" link is
 					// 8px shallower than its siblings — the topic-group inconsistency.
 					<SidebarGroup className="p-0">
-						<SidebarMenu>
+						<SidebarMenu className="gap-px">
 							{postLinks(posts)}
 							{topicTag ? (
 								<SidebarMenuItem>

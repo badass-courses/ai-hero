@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { createAppAbility } from '@/ability'
 import { api } from '@/trpc/react'
 import {
@@ -24,17 +25,21 @@ import { useFeedback } from '@coursebuilder/ui/feedback-widget'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { NavLinkItem } from './nav-link-item'
+import { navTextLink } from './nav-pill'
 
 /**
  * Skeleton placeholder to ensure consistent tree structure during hydration.
  * Using a separate component keeps the tree shape identical between server and client.
  */
+/**
+ * `w-[35px]` is measured, not guessed: it is the resolved width of the "Log in"
+ * link this skeleton stands in for. At `w-10` (40px) the bar reflowed 5px the
+ * moment the session landed.
+ */
 const UserMenuSkeleton = () => (
-	<div className="flex items-stretch">
-		<div className="flex h-full items-center justify-center px-5">
-			<Skeleton className="bg-foreground/10 h-2 w-10 rounded" />
-		</div>
-	</div>
+	<li className="flex items-center">
+		<Skeleton className="bg-foreground/10 h-2 w-[35px] rounded" />
+	</li>
 )
 
 /**
@@ -63,32 +68,15 @@ export const UserMenu = () => {
 	}
 
 	if (!sessionData?.user?.email) {
+		// A word, not a glyph: the desktop cluster reads `Search · Newsletter ·
+		// Log in`, and an outlined person icon in that row was the only item a
+		// reader had to decode.
 		return (
-			<NavLinkItem
-				icon={
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						className="mr-1 size-4"
-						fill="none"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke="currentColor"
-							strokeWidth="1.5"
-							d="M2.5 12c0-4.478 0-6.718 1.391-8.109S7.521 2.5 12 2.5c4.478 0 6.718 0 8.109 1.391S21.5 7.521 21.5 12c0 4.478 0 6.718-1.391 8.109C18.717 21.5 16.479 21.5 12 21.5c-4.478 0-6.718 0-8.109-1.391C2.5 18.717 2.5 16.479 2.5 12Z"
-						/>
-						<path
-							stroke="currentColor"
-							strokeLinecap="round"
-							strokeWidth="1.5"
-							d="M7.5 17c2.332-2.442 6.643-2.557 9 0m-2.005-7.5c0 1.38-1.12 2.5-2.503 2.5a2.502 2.502 0 0 1-2.504-2.5c0-1.38 1.12-2.5 2.504-2.5a2.502 2.502 0 0 1 2.503 2.5Z"
-						/>
-					</svg>
-				}
-				className="rounded-none"
-				label="Log In"
-				href="/login"
-			/>
+			<li className="flex items-center">
+				<Link href="/login" className={navTextLink}>
+					Log in
+				</Link>
+			</li>
 		)
 	}
 
@@ -113,12 +101,12 @@ export const UserMenu = () => {
 			{canViewTeam && !isAdmin && (
 				<NavLinkItem label="Invite Team" className="" href="/team" />
 			)}
-			<li className="hidden items-stretch sm:flex">
+			<li className="flex items-center">
 				<DropdownMenu modal={false}>
-					<DropdownMenuTrigger className="group/nav-item flex items-center px-5">
-						<span className="group-hover/nav-item:bg-muted group-data-[state=open]/nav-item:bg-muted inline-flex items-center gap-2 rounded-full pr-3 transition-colors duration-200">
+					<DropdownMenuTrigger className="group/nav-item focus-visible:ring-ring flex items-center rounded-[7px] focus-visible:outline-none focus-visible:ring-2">
+						<span className="group-hover/nav-item:bg-foreground/[0.06] group-data-[state=open]/nav-item:bg-foreground/[0.06] inline-flex items-center gap-2 rounded-[7px] p-1 pr-2.5 transition-colors duration-200">
 							{userAvatar}
-							<span className="text-foreground-muted inline-flex items-center gap-0.5 text-sm leading-tight">
+							<span className="inline-flex items-center gap-0.5 text-[13px] leading-none text-[color:var(--ah-fg-muted)]">
 								<span className="truncate sm:max-w-[8rem] lg:max-w-[11rem] xl:max-w-none">
 									{sessionData.user.name?.split(' ')[0] || 'Account'}
 								</span>

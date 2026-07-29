@@ -18,7 +18,7 @@ export function SectionLink({
 	children: React.ReactNode
 }) {
 	return (
-		<div className="border-b px-8 py-8 sm:px-16">
+		<div className="border-b px-[18px] py-8 sm:px-11">
 			<Link
 				href={href}
 				className="group text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"

@@ -4,7 +4,6 @@ import { ContentReadTracker } from "@/components/content-read-tracker";
 import LayoutClient from "@/components/layout-client";
 import { HubLayout } from "@/components/navigation/hub-layout";
 import { PrimaryNewsletterCta } from "@/components/primary-newsletter-cta";
-import { PrimaryNewsletterTitle } from "@/components/subscriber-count";
 import {
   AI_CODING_DICTIONARY_DESCRIPTION,
   AI_CODING_DICTIONARY_TITLE,
@@ -68,7 +67,7 @@ export default async function DictionaryPage() {
   const dictionary = await getAiCodingDictionary();
 
   return (
-    <LayoutClient withContainer>
+    <LayoutClient withContainer withFooter={false}>
       <ContentReadTracker
         contentId="ai-coding-dictionary"
         contentType="dictionary"
@@ -107,10 +106,11 @@ export default async function DictionaryPage() {
           </Suspense>
 
           <PrimaryNewsletterCta
-            title={<PrimaryNewsletterTitle />}
+            title="Want more than vocabulary?"
+            byline="Join AI Hero for practical skills, thinking on AI engineering, and resources that keep you ahead of the curve."
             id="dictionary-newsletter-cta"
             isHiddenForSubscribers
-            className="not-prose border-t py-16 [&_button]:w-full"
+            className="not-prose border-t py-16"
             actionLabel="Get AI Hero updates"
             fields={{
               interest: "dictionary",
@@ -120,17 +120,7 @@ export default async function DictionaryPage() {
               event: "subscribed",
               params: { location: "dictionary" },
             }}
-          >
-            <div className="relative z-10 flex max-w-3xl flex-col items-center justify-center px-5 pb-5 pt-10 text-center sm:pb-10">
-              <h2 className="font-sans text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
-                Want more than vocabulary?
-              </h2>
-              <p className="text-muted-foreground mt-3 max-w-2xl text-base leading-7">
-                Join AI Hero for practical skills, thinking on AI engineering,
-                and resources that keep you ahead of the curve.
-              </p>
-            </div>
-          </PrimaryNewsletterCta>
+          />
         </main>
       </HubLayout>
     </LayoutClient>

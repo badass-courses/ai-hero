@@ -10,6 +10,7 @@ import {
 } from '@coursebuilder/ui'
 
 import { SidebarNavLink, SidebarSection } from './sidebar-client'
+import { SIDEBAR_LABEL_CLASS } from './sidebar-indent'
 import {
 	SkillsEntry,
 	SkillsNav,
@@ -37,23 +38,26 @@ const sidebarMdxComponents = {
 	// (Explore, Guides, What's New, Topics). Non-collapsible. The collapsible
 	// topic groups (bold, `SidebarSection`) nest under the Topics heading.
 	h1: (props: { children?: React.ReactNode }) => (
-		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
+		<SidebarGroupLabel className={SIDEBAR_LABEL_CLASS}>
 			{props.children}
 		</SidebarGroupLabel>
 	),
 	h2: (props: { children?: React.ReactNode }) => (
-		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
+		<SidebarGroupLabel className={SIDEBAR_LABEL_CLASS}>
 			{props.children}
 		</SidebarGroupLabel>
 	),
 	h3: (props: { children?: React.ReactNode }) => (
-		<SidebarGroupLabel className="text-muted-foreground h-auto px-2 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider">
+		<SidebarGroupLabel className={SIDEBAR_LABEL_CLASS}>
 			{props.children}
 		</SidebarGroupLabel>
 	),
 	ul: (props: { children?: React.ReactNode }) => (
 		<SidebarGroup className="p-0">
-			<SidebarMenu className='gap-0'>{props.children}</SidebarMenu>
+			{/* gap-px, the prototype's `.ah-sidebar__group`: rows sit a hairline
+			    apart, so the group reads as one block and the hover/active fills
+			    still separate. */}
+			<SidebarMenu className="gap-px">{props.children}</SidebarMenu>
 		</SidebarGroup>
 	),
 	li: (props: { children?: React.ReactNode }) => (
@@ -71,11 +75,11 @@ const sidebarMdxComponents = {
 		),
 	// Stray prose renders as quiet fine print rather than breaking layout.
 	p: (props: { children?: React.ReactNode }) => (
-		<p className="text-muted-foreground px-4 py-1 text-xs leading-relaxed">
+		<p className="text-muted-foreground px-2.5 py-1 text-xs leading-relaxed">
 			{props.children}
 		</p>
 	),
-	hr: () => <SidebarSeparator className="my-2" />,
+	hr: () => <SidebarSeparator className="mx-2.5 my-3" />,
 	SidebarSection,
 	SidebarLink: (props: { href?: string; children?: React.ReactNode }) => (
 		<SidebarMenuItem>

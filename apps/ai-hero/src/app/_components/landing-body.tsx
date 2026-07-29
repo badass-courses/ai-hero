@@ -10,6 +10,7 @@ import { Hero as LandingHero } from '@/components/landing/hero'
 import { HomepageLiveStreams } from '@/components/landing/homepage-live-streams'
 import { Manifesto } from '@/components/landing/manifesto'
 import { NewsletterSection } from '@/components/landing/newsletter-section'
+import { ProofGrid, ProofQuote } from '@/components/landing/proof-grid'
 import { SkillsCourseCta } from '@/components/landing/skills-course-cta'
 import { Prose } from '@/components/landing/prose'
 import { Resource, ResourceGrid } from '@/components/landing/resource'
@@ -70,6 +71,8 @@ export async function LandingBody({
 		CourseCta: SkillsCourseCta,
 		Testimonial: DraftTestimonial,
 		TestimonialDivider,
+		ProofGrid,
+		ProofQuote,
 		TopicsGrid,
 		TopicsGridColumn,
 		SkillsShowcase,
@@ -104,13 +107,14 @@ export async function LandingBody({
 			    
 			    This is the `-mt-px` idiom `ResourceRow` already used to stack
 			    consecutive rows, generalised to the whole page. */}
+			{/* The company band used to be hardcoded here, after the MDX, which
+			    put it after the newsletter at the very tail of the page. The
+			    prototype has it inside PROOF (`Home Page.dc.html` § PROOF), so
+			    `ProofGrid` renders it now and the page ends on MATT +
+			    NEWSLETTER. */}
 			<article className="[&>*+*]:border-border [&>*+*]:-mt-px [&>*+*]:border-t">
 				{compiled.content}
 			</article>
-			{/* Stays hardcoded outside the MDX by design. */}
-			<section className="border-border mx-auto w-full pt-7">
-				<CompanyLogoGrid />
-			</section>
 		</main>
 	)
 }

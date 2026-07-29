@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { AnimatedArrowCircle } from '@/components/landing/animated-arrow-circle'
-import { ResourceHoverFrame } from '@/components/resource-hover-frame'
 import { motion } from 'framer-motion'
 import { useSession } from 'next-auth/react'
 
@@ -29,21 +28,30 @@ export function PostUpNextCard({
 }) {
 	return (
 		<>
+			{/* No `ResourceHoverFrame` here, and it is not an omission.
+			    The frame works by revealing an animated gradient from behind an
+			    inset opaque surface, so it needs something opaque to inset. This
+			    card's only caller is the video overlay (`post-player.tsx`), which
+			    hands it `bg-transparent dark:bg-transparent` so the blurred frame
+			    shows through — and the frame's surface was `bg-inherit`, so it
+			    inherited that transparency and masked nothing. The whole rainbow
+			    painted across the panel instead of a 5px edge. It could not have
+			    read correctly here anyway: the effect marks WHICH row of many the
+			    pointer is on, and this panel covers the player, so the pointer is
+			    always inside it and the effect is always on. The arrow circle is
+			    the hover affordance an overlay needs. */}
 			<motion.nav
 				initial="initial"
 				whileHover="hover"
 				animate="initial"
 				aria-label={ariaLabel}
 				className={cn(
-					'group/resource border-border relative flex w-full flex-col items-center overflow-hidden border-y py-16 text-center transition',
+					'border-border relative flex w-full flex-col items-center overflow-hidden border-y py-16 text-center transition',
 					surfaceClassName,
 					className,
 				)}
 			>
-				<ResourceHoverFrame
-					surfaceClassName="bg-inherit"
-					className="flex w-full flex-col items-center px-5"
-				>
+				<div className="relative flex w-full flex-col items-center px-5">
 					<h2 className="mb-5 text-xl font-semibold tracking-tight sm:text-3xl">
 						{heading}
 					</h2>
@@ -53,7 +61,7 @@ export function PostUpNextCard({
 					<span className="mt-5">
 						<AnimatedArrowCircle />
 					</span>
-				</ResourceHoverFrame>
+				</div>
 				<Link
 					href={href}
 					className="focus-visible:ring-ring focus-visible:ring-offset-background absolute inset-0 z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"

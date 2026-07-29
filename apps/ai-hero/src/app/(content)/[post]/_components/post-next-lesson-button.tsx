@@ -5,10 +5,17 @@ import { getNextUpResourceFromList } from '@/utils/get-nextup-resource-from-list
 import { ArrowRight } from 'lucide-react'
 
 import { Button } from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { useList } from './list-provider'
 
-export function PostNextLessonButton({ postId }: { postId: string }) {
+export function PostNextLessonButton({
+	postId,
+	className,
+}: {
+	postId: string
+	className?: string
+}) {
 	const { list } = useList()
 	const nextUp = list ? getNextUpResourceFromList(list, postId) : null
 
@@ -19,7 +26,7 @@ export function PostNextLessonButton({ postId }: { postId: string }) {
 			asChild
 			size="default"
 			variant="ghost"
-			className="rounded-full border"
+			className={cn('rounded-full border', className)}
 		>
 			<Link href={`/${nextUp.resource.fields.slug}`} prefetch>
 				Next lesson

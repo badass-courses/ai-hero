@@ -1,28 +1,28 @@
 'use client'
 
 import * as React from 'react'
-import { Sparkles } from 'lucide-react'
+import { ArrowDown } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { AskAIHeroBot } from './ask-ai-hero-bot'
+import { TYPE } from '@/components/landing/type'
 
 /**
- * MapToc — flat anchor TOC for the Map page (spec §3.2).
+ * MapQuestionGrid — the Map page's table of contents, drawn as a 2×2 grid of
+ * jump-link cards under the hero (spec `.ah-row` / `.ah-row--active`).
  *
- * Renders the goal-section TOC as plain `#{id}` anchor links, with an
- * active-section highlight driven by a LOCAL `IntersectionObserver` scoped to
- * `[data-goal-section]` elements (the page tags each goal `<section>`).
+ * A grid of numbered cards rather than a text list because the questions ARE
+ * the page's offer: as a list under the hero they read as chrome the eye skips
+ * on its way to the first section.
  *
- * Two deliberate divergences from the article `post-toc.tsx`:
- *   1. NOT sticky — per the wireframe mobile note, one sticky element (the nav
- *      bar) is enough; the goal TOC scrolls away.
- *   2. NOT coupled to `useActiveHeadingContext` — that shared provider is
- *      purpose-built for markdown article bodies; a local observer keeps this
- *      static goal list from risking regressions there.
+ * Active card is driven by a LOCAL `IntersectionObserver` scoped to
+ * `[data-goal-section]` elements (the page tags each goal `<section>`), so the
+ * accent follows the reader down the page. Before anything intersects — i.e.
+ * sitting at the top — the first card carries it.
  *
- * The "Ask AIHero Bot" trigger sits directly below the list, in the same block.
- * MapToc owns the bot's open state and forwards its data props.
+ * Deliberately NOT coupled to `useActiveHeadingContext`: that shared provider
+ * is purpose-built for markdown article bodies, and a local observer keeps this
+ * static goal list from risking regressions there.
  */
 
 export interface MapTocItem {
@@ -32,24 +32,14 @@ export interface MapTocItem {
 	label: string
 }
 
-export interface MapTocProps {
-	/** TOC entries, in document order. Typically `TOC_ITEMS` from goal-sections-data. */
+export interface MapQuestionGridProps {
+	/** Entries, in document order. Typically `TOC_ITEMS` from goal-sections-data. */
 	items: MapTocItem[]
-	/** Curated "Try asking" prompts, forwarded to the bot (spec §4.1). */
-	suggestions: string[]
-	/** Goal-section item slugs, forwarded to the bot for Map-linked boost. */
-	boostSlugs: string[]
 	className?: string
 }
 
-export function MapToc({
-	items,
-	suggestions,
-	boostSlugs,
-	className,
-}: MapTocProps) {
+export function MapQuestionGrid({ items, className }: MapQuestionGridProps) {
 	const [activeId, setActiveId] = React.useState<string | null>(null)
-	const [botOpen, setBotOpen] = React.useState(false)
 
 	React.useEffect(() => {
 		if (items.length === 0) return
@@ -67,9 +57,9 @@ export function MapToc({
 					if (entry.isIntersecting) visible.add(id)
 					else visible.delete(id)
 				}
-				// Highlight the first section in TOC order that is currently in view.
+				// Highlight the first section in list order that is currently in view.
 				const first = items.find((item) => visible.has(item.id))
-				if (first) setActiveId(first.id)
+				setActiveId(first ? first.id : null)
 			},
 			// Activate a section once its top crosses ~40% down the viewport; the
 			// bottom margin keeps the last short section from never activating.
@@ -84,51 +74,49 @@ export function MapToc({
 	return (
 		<nav
 			aria-label="On this page"
-			className={cn('border-b', className)}
+			className={cn('grid max-w-[800px] gap-2.5 sm:grid-cols-2', className)}
 		>
-			<div className="flex flex-col gap-6 px-8 py-10 sm:px-16">
-				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-					On this page
-				</p>
-				<ul className="flex flex-col gap-1">
-					{items.map((item) => {
-						const active = item.id === activeId
-						return (
-							<li key={item.id}>
-								<a
-									href={`#${item.id}`}
-									aria-current={active ? 'location' : undefined}
-									className={cn(
-										'focus-visible:ring-ring block py-1.5 text-base leading-snug tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 sm:text-lg [overflow-wrap:anywhere]',
-										active
-											? 'text-foreground font-medium'
-											: 'text-foreground/60 hover:text-foreground',
-									)}
-								>
-									{item.label}
-								</a>
-							</li>
-						)
-					})}
-				</ul>
-				<div>
-					<button
-						type="button"
-						onClick={() => setBotOpen(true)}
-						className="border-border focus-visible:ring-ring hover:bg-muted inline-flex items-center gap-2 rounded-full border px-6 py-2.5 text-sm font-medium tracking-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+			{items.map((item, index) => {
+				const active = activeId ? item.id === activeId : index === 0
+				return (
+					<a
+						key={item.id}
+						href={`#${item.id}`}
+						aria-current={active ? 'location' : undefined}
+						className={cn(
+							'focus-visible:ring-ring flex items-center gap-3 rounded-md border px-4 py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+							active
+								? 'border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-wash)]'
+								: 'border-border hover:border-foreground/20',
+						)}
 					>
-						<Sparkles aria-hidden className="size-4 shrink-0" />
-						Ask AIHero Bot
-					</button>
-				</div>
-			</div>
-
-			<AskAIHeroBot
-				open={botOpen}
-				onOpenChange={setBotOpen}
-				suggestions={suggestions}
-				boostSlugs={boostSlugs}
-			/>
+						<span
+							className={cn(
+								TYPE.command,
+								'shrink-0',
+								active ? 'text-primary' : 'text-[color:var(--ah-fg-faint)]',
+							)}
+						>
+							{String(index + 1).padStart(2, '0')}
+						</span>
+						<span
+							className={cn(
+								TYPE.bodyTight,
+								active ? 'text-foreground' : 'text-foreground/85',
+							)}
+						>
+							{item.label}
+						</span>
+						<ArrowDown
+							aria-hidden
+							className={cn(
+								'ml-auto size-4 shrink-0',
+								active ? 'text-primary' : 'text-[color:var(--ah-fg-faint)]',
+							)}
+						/>
+					</a>
+				)
+			})}
 		</nav>
 	)
 }

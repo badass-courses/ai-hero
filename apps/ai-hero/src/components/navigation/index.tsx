@@ -6,24 +6,18 @@ import Link from 'next/link'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
-import { Search } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 
 import { useFeedback } from '@coursebuilder/ui/feedback-widget/feedback-context'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { SearchPalette } from '../search-palette/search-palette'
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from '../ui/tooltip'
 import { MobileMenuPanel } from './mobile-menu-panel'
 import { MobileNavigation } from './mobile-navigation'
 import { NavLinkItem } from './nav-link-item'
+import { useCohortOffer } from './nav-cta-context'
 import { getNavMode } from './nav-mode'
-import { NavPill } from './nav-pill'
+import { NavPill, navTextLink } from './nav-pill'
 import {
 	COURSES_NAV_ITEM,
 	PRIMARY_LEARNING_ENTRY,
@@ -50,53 +44,44 @@ const SessionDependentNavItems = ({
 		setMounted(true)
 	}, [])
 
-	// Return nothing during SSR and initial hydration to keep tree consistent
-	if (!mounted) {
-		return null
-	}
-
+	// The Newsletter link renders from SSR on purpose — see below. Only the
+	// session-dependent Feedback item waits for mount, because `sessionStatus`
+	// genuinely differs between server and client and would mismatch.
 	return (
 		<>
-			{sessionStatus === 'authenticated' && (
-				<NavLinkItem
-					className="hidden font-normal lg:flex"
-					label="Feedback"
-					onClick={() => {
-						setIsFeedbackDialogOpen(true)
-					}}
-				/>
+			{mounted && sessionStatus === 'authenticated' && (
+				<li className="hidden items-center lg:flex">
+					<button
+						type="button"
+						onClick={() => setIsFeedbackDialogOpen(true)}
+						className={navTextLink}
+					>
+						Feedback
+					</button>
+				</li>
 			)}
-			{sessionStatus === 'unauthenticated' && !subscriber && (
-				<NavLinkItem
-					href="/newsletter"
-					className="rounded-none [&_span]:flex [&_span]:items-center"
-					label={
-						<>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								className="mr-1 size-4"
-								fill="none"
-								viewBox="0 0 24 24"
-							>
-								<path
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="1.5"
-									d="M6 8h8m-8 4h8m-8 4h4m8-8h1c1.414 0 2.121 0 2.56.44.44.439.44 1.146.44 2.56v8a2 2 0 1 1-4 0V8Z"
-								/>
-								<path
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="1.5"
-									d="M12 3H8c-2.828 0-4.243 0-5.121.879C2 4.757 2 6.172 2 9v6c0 2.828 0 4.243.879 5.121C3.757 21 5.172 21 8 21h12a2 2 0 0 1-2-2V9c0-2.828 0-4.243-.879-5.121C16.243 3 14.828 3 12 3Z"
-								/>
-							</svg>
-							Newsletter
-						</>
-					}
-				/>
+			{/* No mount gate. `subscriber` is `undefined` on the server AND on the
+			    first client render (the tRPC query has not resolved), so `!subscriber`
+			    agrees across hydration and this is safe to SSR. Behind the gate it
+			    appeared only after mount and shoved the whole cluster 78px left on
+			    every page load. Now the only movement is for people who turn out to
+			    be subscribed, once, when the query lands. */}
+			{!subscriber && (
+				<li className="hidden items-center lg:flex">
+					<Link
+						prefetch
+						href="/newsletter"
+						onClick={() => {
+							track('nav_link_clicked', {
+								label: 'Newsletter',
+								href: '/newsletter',
+							})
+						}}
+						className={navTextLink}
+					>
+						Newsletter
+					</Link>
+				</li>
 			)}
 		</>
 	)
@@ -104,10 +89,20 @@ const SessionDependentNavItems = ({
 
 /**
  * Emphasized primary learning entry ("Start Here"). Carries a persistent
- * highlight so it reads as the lead destination, separate from active state.
+ * highlight so it reads as the lead destination, separate from active state —
+ * but it yields that highlight whenever another bar item IS the current page.
+ * The pill it renders is the same one `NavLinkItem` uses for "you are here", so
+ * on /courses the reader saw two identical highlights and no way to tell which
+ * one meant "you are here".
  */
-const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
-	<li className="flex items-stretch">
+const PrimaryEntryLink = ({
+	isActive,
+	highlighted,
+}: {
+	isActive: boolean
+	highlighted: boolean
+}) => (
+	<li className="flex items-center">
 		<Link
 			prefetch
 			href={PRIMARY_LEARNING_ENTRY.href}
@@ -118,9 +113,9 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 				})
 			}}
 			aria-current={isActive ? 'page' : undefined}
-			className="group/nav-item focus-visible:ring-ring relative flex h-full items-center px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+			className="group/nav-item focus-visible:ring-ring text-[color:var(--ah-fg-muted)] relative flex items-center rounded-[7px] focus-visible:outline-none focus-visible:ring-2"
 		>
-			<NavPill active className="font-semibold">
+			<NavPill active={highlighted || undefined} className="font-medium">
 				{PRIMARY_LEARNING_ENTRY.label}
 			</NavPill>
 		</Link>
@@ -128,41 +123,79 @@ const PrimaryEntryLink = ({ isActive }: { isActive: boolean }) => (
 )
 
 /**
- * Icon-only search affordance opening the ⌘K palette, with a designed
- * tooltip. The pill highlights while the palette is open.
+ * The one gold action in the bar, as a ladder rather than a fixed link:
+ *
+ * 1. **Not on the free course** → "Get the free course". This outranks
+ *    everything. The 7-day course is the front door, and someone who has not
+ *    walked through it should not be asked for a paid cohort first.
+ * 2. **On the free course** → the cohort: "Join the cohort" when one is
+ *    purchasable, "Join the waitlist" between cohorts.
+ * 3. **Nothing left to offer** → nothing. Never sell someone what they have.
+ *
+ * The cohort half comes from {@link getCohortOffer} via context — the same
+ * selector `CourseCta` uses at the foot of an article, so the bar and the
+ * article can never disagree about whether enrollment is open. It is resolved
+ * on the server and is therefore correct in the first paint.
+ *
+ * `state === 'active'` is the same test `/skills/subscribe` uses to choose
+ * between its "subscribed" and "show-form" views, off the same
+ * `getSubscriberFromCookie`. Anything looser (a truthy subscriber record) would
+ * also promote unconfirmed and cancelled subscribers past the free course.
  */
-const SearchIconButton = ({
-	isSearchOpen,
-	onOpen,
+const FreeCourseCta = ({
+	pathname,
+	subscriber,
 }: {
-	isSearchOpen: boolean
-	onOpen: () => void
-}) => (
-	<li className="hidden items-stretch lg:flex">
-		<TooltipProvider delayDuration={200}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						type="button"
-						aria-label="Search"
-						onClick={() => {
-							track('search_palette_opened', { via: 'nav_icon' })
-							onOpen()
-						}}
-						className="group/nav-item focus-visible:ring-ring flex h-full items-center px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-					>
-						<NavPill active={isSearchOpen} className="px-2">
-							<Search aria-hidden className="size-4" />
-						</NavPill>
-					</button>
-				</TooltipTrigger>
-				<TooltipContent className="rounded-none">
-					Search <kbd className="font-mono">⌘K</kbd>
-				</TooltipContent>
-			</Tooltip>
-		</TooltipProvider>
-	</li>
-)
+	pathname: string
+	subscriber: unknown
+}) => {
+	const cohortOffer = useCohortOffer()
+
+	// `undefined` while the query is in flight. Treated as "not subscribed" so
+	// the free course renders from the first paint — the common case, and the
+	// step that takes precedence anyway, so nothing swaps for most visitors.
+	const isSubscribed =
+		Boolean(subscriber) &&
+		typeof subscriber === 'object' &&
+		subscriber !== null &&
+		'state' in subscriber &&
+		subscriber.state === 'active'
+
+	// The free course is the front door and outranks everything: someone who has
+	// not taken it is asked for that, cohort or no cohort. Only once they are on
+	// the list does the bar move them up the ladder to the cohort — enroll when
+	// one is purchasable, waitlist between cohorts.
+	const offer = !isSubscribed
+		? { label: 'Get the free course', href: '/skills/subscribe' }
+		: cohortOffer
+			? { label: cohortOffer.label, href: cohortOffer.href }
+			: null
+
+	if (!offer) return null
+	// Never sell the page you are standing on.
+	if (pathname.startsWith(offer.href)) return null
+
+	return (
+		<li className="hidden items-center lg:flex">
+			<Link
+				prefetch
+				href={offer.href}
+				onClick={() => {
+					track('nav_link_clicked', {
+						label: offer.label,
+						href: offer.href,
+					})
+				}}
+				// `min-w` holds the slot at the widest label so the bar's geometry is
+				// fixed from first paint — swapping "Get the free course" for "Join the
+				// waitlist" when the subscriber query lands must not reflow the row.
+				className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex min-w-[152px] items-center justify-center rounded-[8px] px-3.5 py-2 text-[13px] font-bold leading-none transition focus-visible:outline-none focus-visible:ring-2"
+			>
+				{offer.label}
+			</Link>
+		</li>
+	)
+}
 
 const Navigation = () => {
 	const pathname = usePathname()
@@ -190,85 +223,107 @@ const Navigation = () => {
 		<>
 			<header
 				className={cn(
-					'bg-background/90 h-(--nav-height) relative z-50 flex w-full items-stretch justify-between border-b px-0 backdrop-blur-md print:hidden',
+					// 44px gutter and a translucent, blurred bar, per the redesign
+					// spec. Height comes from `--nav-height` so every
+					// `calc(100vh - var(--nav-height))` consumer stays in step.
+					'bg-background/90 h-(--nav-height) relative z-50 flex w-full items-center gap-5 border-b px-[18px] backdrop-blur-md print:hidden lg:px-11',
 					{
 						'sticky top-0': !params.lesson,
 					},
 				)}
 			>
-			<div className="flex w-full items-stretch justify-between">
-				<div className="flex items-stretch">
-					<span
-						onContextMenu={(e) => {
-							e.preventDefault()
-							router.push('/brand')
-						}}
+				<span
+					className="flex shrink-0 items-center"
+					onContextMenu={(e) => {
+						e.preventDefault()
+						router.push('/brand')
+					}}
+				>
+					<Link
+						prefetch
+						tabIndex={isRoot ? -1 : 0}
+						href="/"
+						aria-label="AI Hero home"
+						className="group focus-visible:ring-ring flex items-center gap-2.5 rounded-[7px] leading-none transition focus-visible:outline-none focus-visible:ring-2"
 					>
-						<Link
-							prefetch
-							tabIndex={isRoot ? -1 : 0}
-							href="/"
-							aria-label="AI Hero home"
-							className="font-heading group focus-visible:ring-ring flex h-full w-full items-center justify-center gap-2 pl-3 pr-3 text-lg font-semibold leading-none transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-						>
-							{/* Brand mark: fills the full nav height — no vertical padding
-							    (the 124px @2x asset is cut for the 63px bar). */}
-							<Image
-								src="/matt-pocock-navigation-avatar@2x.png"
-								alt="Matt Pocock"
-								width={124}
-								height={124}
-								priority
-								className="h-[calc(var(--nav-height)-1px)] w-auto shrink-0 self-end object-contain object-bottom"
-							/>
-							<span className="text-foreground leading-none! text-lg font-semibold tracking-tight">
-								<span className="font-mono">AI</span>Hero
-							</span>
-						</Link>
-					</span>
-					{mode !== 'minimal' && (
-						<nav
-							className="hidden items-stretch lg:flex"
-							aria-label="Primary navigation"
-						>
-							<ul className="flex items-stretch">
-								{mode === 'full' ? (
-									<>
-										<PrimaryEntryLink
-											isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
-										/>
-										{PRIMARY_NAV_ITEMS.map((item) => (
-											<NavLinkItem
-												key={item.href}
-												href={item.href}
-												label={item.label}
-												textLabel={item.label}
-												className="font-normal"
-											/>
-										))}
-									</>
-								) : (
-									// Hub mode (per Amy's decisions doc): the sidebar carries
-									// Map/Principles/Skills/Tools; the top bar keeps only the
-									// persistent revenue path.
-									<NavLinkItem
-										href={COURSES_NAV_ITEM.href}
-										label={COURSES_NAV_ITEM.label}
-										textLabel={COURSES_NAV_ITEM.label}
-										className="font-normal"
+						{/* Brand mark: the cut-out portrait standing on the bar's bottom
+						    edge at the bar's full height, not a cropped circle. The
+						    silhouette IS the mark — putting it in a disc throws away the
+						    shoulders and leaves a generic avatar. `w-auto` keeps the
+						    aspect and `object-bottom` keeps it standing on the rule. */}
+						<Image
+							src="/matt-pocock-navigation-avatar@2x.png"
+							alt=""
+							width={124}
+							height={124}
+							priority
+							className="h-(--nav-height) w-auto shrink-0 object-contain object-bottom"
+						/>
+						<span className="text-foreground text-[15.5px] font-bold leading-none tracking-[-0.01em]">
+							<span className="font-mono">AI</span>Hero
+						</span>
+					</Link>
+				</span>
+				{mode !== 'minimal' && (
+					<nav
+						className="hidden items-center lg:flex"
+						aria-label="Primary navigation"
+					>
+						<ul className="flex items-center gap-0.5">
+							{mode === 'full' ? (
+								<>
+									<PrimaryEntryLink
+										isActive={pathname === PRIMARY_LEARNING_ENTRY.href}
+										highlighted={
+											pathname === PRIMARY_LEARNING_ENTRY.href ||
+											!PRIMARY_NAV_ITEMS.some(
+												(item) => pathname === item.href.replace(/\/$/, ''),
+											)
+										}
 									/>
-								)}
-							</ul>
-						</nav>
-					)}
-				</div>
-				<nav className="flex items-stretch" aria-label="User navigation">
-					<ul className="hidden items-stretch lg:flex">
+									{PRIMARY_NAV_ITEMS.map((item) => (
+										<NavLinkItem
+											key={item.href}
+											href={item.href}
+											label={item.label}
+											textLabel={item.label}
+										/>
+									))}
+								</>
+							) : (
+								// Hub mode (per Amy's decisions doc): the sidebar carries
+								// Map/Principles/Skills/Tools; the top bar keeps only the
+								// persistent revenue path.
+								<NavLinkItem
+									href={COURSES_NAV_ITEM.href}
+									label={COURSES_NAV_ITEM.label}
+									textLabel={COURSES_NAV_ITEM.label}
+								/>
+							)}
+						</ul>
+					</nav>
+				)}
+				<nav
+					className="ml-auto hidden items-center lg:flex"
+					aria-label="User navigation"
+				>
+					<ul className="flex items-center gap-[18px]">
 						{showSearch && (
-							<SearchIconButton
-								isSearchOpen={isSearchOpen}
-								onOpen={() => setIsSearchOpen(true)}
-							/>
+							<li className="flex items-center">
+								<button
+									type="button"
+									onClick={() => {
+										track('search_palette_opened', { via: 'nav_icon' })
+										setIsSearchOpen(true)
+									}}
+									className={cn(
+										navTextLink,
+										isSearchOpen && 'text-foreground',
+									)}
+								>
+									Search
+								</button>
+							</li>
 						)}
 						<SessionDependentNavItems
 							sessionStatus={sessionStatus}
@@ -276,6 +331,9 @@ const Navigation = () => {
 							setIsFeedbackDialogOpen={setIsFeedbackDialogOpen}
 						/>
 						<UserMenu />
+						{mode !== 'minimal' && (
+							<FreeCourseCta pathname={pathname} subscriber={subscriber} />
+						)}
 					</ul>
 				</nav>
 				<MobileNavigation
@@ -284,9 +342,11 @@ const Navigation = () => {
 					onSearchOpen={() => setIsSearchOpen(true)}
 					subscriber={subscriber}
 				/>
-			</div>
 			</header>
-			<MobileMenuPanel isOpen={isMobileMenuOpen} />
+			<MobileMenuPanel
+				isOpen={isMobileMenuOpen}
+				onClose={() => setIsMobileMenuOpen(false)}
+			/>
 			{showSearch && (
 				<SearchPalette open={isSearchOpen} onOpenChange={setIsSearchOpen} />
 			)}

@@ -4,3 +4,15 @@ export {
 	useSkillCycleHover,
 	type SkillCycleHoverValue,
 } from './skill-cycle-context'
+export { SkillActions } from './skill-actions'
+export { SkillInstallPanel } from './skill-install-panel'
+export { SkillSectionRail } from './skill-section-rail'
+export { SkillStickyAction } from './skill-sticky-action'
+export {
+	getSkillNeighbors,
+	invocationName,
+	skillInstallCommand,
+	SKILLS_INSTALL_ALL_COMMAND,
+	SKILL_SOURCE,
+	type SkillNeighbors,
+} from './skill-meta'

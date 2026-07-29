@@ -1,4 +1,5 @@
 import React from 'react'
+import { TYPE } from '@/components/landing/type'
 import { GraduationCap, Wrench, BookOpen } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -38,11 +39,29 @@ function CalloutIcon({ className }: { className?: string }) {
 	)
 }
 
+/**
+ * The redesign spec's `.ah-callout` shapes (`aihero.css`). A `kind` is a
+ * different *object* from an `intent`: `intent` says "this is a cross-promo,
+ * suppress auto-insertion around it" and keeps the icon-rail card, while `kind`
+ * is the spec's flat accent-washed notice — the "update from Matt" band above a
+ * skill body. They are deliberately not merged: existing `intent` callers must
+ * keep the card they have.
+ */
+export type CalloutKind = 'update' | 'note'
+
+/** Eyebrow copy per kind. `update` is Matt speaking; `note` is the page. */
+const kindEyebrow: Record<CalloutKind, string> = {
+	update: 'Update from Matt',
+	note: 'Note',
+}
+
 export function Callout({
 	children,
 	className,
 	icon,
 	intent,
+	kind,
+	eyebrow,
 }: {
 	children: React.ReactNode
 	className?: string
@@ -50,7 +69,39 @@ export function Callout({
 	/** Cross-promo intent. Selects the default icon per intent and MARKS this
 	 *  callout as a promo placement for the auto-insert suppression scan (W1 §2.2). */
 	intent?: CalloutIntent
+	/** Spec `.ah-callout` variant: an accent-washed notice with a mono eyebrow
+	 *  and no icon rail. Mutually exclusive with `intent` in practice. */
+	kind?: CalloutKind
+	/** Overrides the eyebrow copy for a `kind` callout. Ignored without `kind`. */
+	eyebrow?: string
 }) {
+	if (kind) {
+		return (
+			<div
+				className={cn(
+					// 3px accent LEFT border: the one place DESIGN's side-stripe ban
+					// yields, because the spec names it. Everything else is a hairline.
+					// Order matters: the all-sides accent line is set first so the
+					// 3px left rule can override just that edge (tailwind-merge
+					// drops an earlier border-l-color under a later border-color).
+					'not-prose border-[color:var(--ah-accent-line)] border-l-primary my-6 rounded-md border border-l-[3px] bg-[color:var(--ah-accent-wash)] px-5 py-[18px]',
+					className,
+				)}
+			>
+				<p
+					// Gold at full strength would out-shout the body it labels; in
+					// light `--primary` is ink, which needs no easing off.
+					className={cn(TYPE.micro, 'text-primary dark:text-primary/85 mb-2')}
+				>
+					{eyebrow ?? kindEyebrow[kind]}
+				</p>
+				<div className="prose prose-sm sm:prose-base dark:prose-invert prose-p:my-0 prose-p:text-foreground text-foreground text-pretty text-base leading-[1.55]">
+					{children}
+				</div>
+			</div>
+		)
+	}
+
 	// Explicit `icon` prop wins; otherwise the intent default; otherwise the
 	// generic informational glyph (bare `<Callout>` contract unchanged).
 	const resolvedIcon =
@@ -67,7 +118,11 @@ export function Callout({
 			<div className="text-primary bg-stripes flex shrink-0 items-center justify-center overflow-hidden rounded-l-xl border-r px-5 py-4">
 				{resolvedIcon}
 			</div>
-			<div className="prose prose-sm sm:prose-base dark:prose-invert prose-p:my-0 py-4 pr-5">
+			{/* Centred in its own stretched cell. The row is `items-stretch` so the
+			    striped icon rail runs the full height; without this the copy then
+			    sits hard against the top of that box whenever the rail is the taller
+			    of the two, which reads as misaligned against a centred glyph. */}
+			<div className="prose prose-sm sm:prose-base dark:prose-invert prose-p:my-0 flex flex-col justify-center py-4 pr-5">
 				{children}
 			</div>
 		</div>

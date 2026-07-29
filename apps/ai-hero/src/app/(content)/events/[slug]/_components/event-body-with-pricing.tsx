@@ -145,7 +145,7 @@ export async function EventBodyWithPricing({
 									style={{
 										backgroundSize: '200% 100%',
 									}}
-									className="animate-shine absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
+									className="animate-shine pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
 								/>
 							</Pricing.BuyButton>
 						</Pricing.Product>

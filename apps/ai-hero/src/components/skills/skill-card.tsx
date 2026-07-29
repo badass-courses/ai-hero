@@ -1,7 +1,10 @@
 import * as React from 'react'
 import Link from 'next/link'
+import { TYPE } from '@/components/landing/type'
 import { getCachedGoalSectionItems } from '@/lib/goal-sections-query'
 import { ArrowRight } from 'lucide-react'
+
+import { cn } from '@coursebuilder/utils/cn'
 
 /**
  * A skill, rendered as the thing it actually is: a slash command you type at
@@ -36,35 +39,46 @@ export async function SkillCard({
 	return (
 		<Link
 			href={`/${slug}`}
-			className={[
-				'border-border bg-muted/40 hover:border-foreground/30 hover:bg-muted focus-visible:ring-ring group flex w-full items-center gap-5 border px-5 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+			className={cn(
+				// The spec's list card: `--ah-r-md` (11px) on the card surface at the
+				// card border weight, hover moving the border only. It was a square
+				// `bg-muted/40` strip with a divider-weight border, which read as a
+				// band rather than as something you click.
+				'border-input bg-card hover:border-foreground/30 focus-visible:ring-ring group flex w-full items-center gap-5 rounded-md border px-5 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
 				className,
-			]
-				.filter(Boolean)
-				.join(' ')}
+			)}
 		>
 			<span className="flex min-w-0 flex-col gap-1">
 				{label ? (
-					<span className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
+					<span className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 						{label}
 					</span>
 				) : null}
-				<span className="truncate font-mono text-lg font-semibold tracking-tight sm:text-xl">
+				<span className={cn(TYPE.subhead, 'truncate font-mono')}>
 					<span aria-hidden className="text-primary">
 						/
 					</span>
 					{commandName(slug)}
 				</span>
 				{skill.description ? (
-					<span className="text-muted-foreground line-clamp-2 text-sm leading-relaxed">
+					<span
+						className={cn(
+							TYPE.metaProse,
+							'line-clamp-2 text-[color:var(--ah-fg-muted)]',
+						)}
+					>
 						{skill.description}
 					</span>
 				) : null}
 			</span>
-			<ArrowRight
+			{/* The spec's 34px circular row arrow, the same affordance the landing
+			    rows use, rather than a bare glyph. */}
+			<span
 				aria-hidden
-				className="text-muted-foreground group-hover:text-foreground ease-out-quart ml-auto size-5 shrink-0 transition-all duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
-			/>
+				className="border-input text-[color:var(--ah-fg-muted)] group-hover:text-foreground group-hover:border-foreground/30 ml-auto flex size-[34px] shrink-0 items-center justify-center rounded-full border transition-colors"
+			>
+				<ArrowRight className="ease-out-quart size-4 transition-transform duration-300 group-hover:translate-x-0.5 motion-reduce:transform-none motion-reduce:transition-none" />
+			</span>
 		</Link>
 	)
 }

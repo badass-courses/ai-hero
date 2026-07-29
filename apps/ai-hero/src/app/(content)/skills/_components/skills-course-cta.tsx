@@ -15,7 +15,11 @@ export function SkillsCourseCta({
 			href="/skills/subscribe"
 			aria-label="Start the free AI Skills for Real Engineers email course"
 			className={cn(
-				'not-prose border-primary/30 bg-primary/5 hover:bg-primary/10 group flex items-center gap-5 rounded-xl border p-6 no-underline transition sm:p-8',
+				// Stacks below 900px. As a single row the icon (44px) and the
+				// "Start the course" button (~182px, shrink-0) cannot compress, so
+				// on a phone the row pushed the document 43px wider than the
+				// viewport and squeezed the description into a ~120px ribbon.
+				'not-prose border-primary/30 bg-primary/5 hover:bg-primary/10 group flex flex-col items-start gap-5 rounded-xl border p-6 no-underline transition desk:flex-row desk:items-center sm:p-8',
 				compact &&
 					'h-full w-full flex-col items-start justify-center rounded-none border-0 bg-transparent px-8 py-10 sm:px-10',
 				className,
@@ -41,7 +45,7 @@ export function SkillsCourseCta({
 					engineering standards.
 				</p>
 			</div>
-			<span className="bg-primary text-primary-foreground group-hover:bg-primary/90 inline-flex shrink-0 items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition">
+			<span className="bg-primary text-primary-foreground group-hover:bg-primary/90 inline-flex shrink-0 items-center gap-2 rounded-[9px] px-6 py-3 text-sm font-semibold transition">
 				Start the course
 				<ArrowRight
 					className="size-4 transition-transform group-hover:translate-x-1"

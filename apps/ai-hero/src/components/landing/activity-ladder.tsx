@@ -43,12 +43,14 @@ import { cn } from '@coursebuilder/utils/cn'
  * on the way. Self-location without self-exclusion.
  */
 export function ActivityLadder({
+	eyebrow = 'Start where you are',
 	heading,
 	intro,
 	ctaHref,
 	ctaLabel,
 	children,
 }: {
+	eyebrow?: string
 	heading?: string
 	intro?: string
 	/** Optional "see everything" destination for the section header. */
@@ -59,7 +61,13 @@ export function ActivityLadder({
 	return (
 		<section aria-label={heading ?? 'Where to start'} className="border-b">
 			{heading || intro ? (
-				<SectionHeader heading={heading} linkHref={ctaHref} linkLabel={ctaLabel}>
+				<SectionHeader
+					eyebrow={eyebrow}
+					heading={heading}
+					rank="lead"
+					linkHref={ctaHref}
+					linkLabel={ctaLabel}
+				>
 					{intro}
 				</SectionHeader>
 			) : null}
@@ -68,11 +76,16 @@ export function ActivityLadder({
 			    down, and columns would set them side by side as equal alternatives
 			    to pick between.
 
-			    No rule between rungs. Each already carries an internal hairline
-			    stack (its resource rows), so a divider on top of that made four
-			    lines where the eye needed one break, and the page as a whole leans
-			    hard on horizontal rules already. Whitespace does the separating. */}
-			<ul className="flex flex-col gap-4 pb-4">{children}</ul>
+			    Ruled, and inset in the gutter. The earlier version separated
+			    rungs with whitespace alone, which at four rungs of unequal height
+			    left the page reading as one long undifferentiated column of
+			    links. A hairline per rung costs nothing and gives the eye the
+			    break the gap was failing to. */}
+			<div className="px-[18px] pb-14 sm:px-11 sm:pb-[68px]">
+				<ul className="border-border border-t [&>li:last-child]:border-b-0">
+					{children}
+				</ul>
+			</div>
 		</section>
 	)
 }
@@ -104,14 +117,13 @@ export function ActivityRung({
 	children: React.ReactNode
 }) {
 	return (
-		<li className="grid grid-cols-1 gap-x-12 gap-y-6 px-8 py-6 sm:px-16 md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
-			<div className="flex flex-col gap-2">
-				<p className={cn(TYPE.micro, 'text-muted-foreground')}>
-					{audience}
-				</p>
-				<h3 className={cn(TYPE.subhead, 'text-balance')}>
-					{question}
-				</h3>
+		<li className="border-border grid grid-cols-1 gap-x-12 gap-y-5 border-b py-[30px] md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+			<div className="flex flex-col gap-3">
+				{/* Accent, alone among the page's eyebrows: four of these carry the
+				    section's whole structure, and in muted ink the rungs read as one
+				    undifferentiated list of links. */}
+				<p className={cn(TYPE.micro, 'text-primary')}>{audience}</p>
+				<h3 className={cn(TYPE.rungQuestion, 'text-balance')}>{question}</h3>
 				{moreHref ? (
 					<Link
 						href={moreHref}
@@ -128,7 +140,7 @@ export function ActivityRung({
 
 			{/* Dividers come from the rows themselves (see `ResourceLadderItem`);
 			    the last one drops its rule so the rung ends on whitespace. */}
-			<ul className="flex flex-col md:-mt-2 [&>li:last-child_a]:border-b-0">
+			<ul className="flex flex-col [&>li:last-child_a]:border-b-0">
 				{React.Children.map(children, (child) => (
 					<li>{child}</li>
 				))}

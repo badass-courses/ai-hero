@@ -1,30 +1,28 @@
 import * as React from 'react'
+import Image from 'next/image'
+import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
-import { Hero } from '@/components/landing/hero'
-import { ResourceRow } from '@/components/landing/resource-row'
-import { MoreWaysLink } from '@/app/learn/_components/more-ways-link'
-import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
+import { TYPE } from '@/components/landing/type'
 import {
+	COURSES_CATALOG,
 	COURSES_COMING_NEXT,
-	COURSES_HERO,
-	COURSES_NEWSLETTER,
+	COURSES_DETAILS_EYEBROW,
+	COURSES_PAST_COHORTS,
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
 	FLAGSHIP_FACTS,
-	FLAGSHIP_STATS,
 	FLAGSHIP_TEAM,
 } from '@/lib/courses-content'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
-import { Star } from 'lucide-react'
-
-import { TYPE } from '@/components/landing/type'
-
-import { FlagshipOffer } from './flagship-offer'
+import { getResourcePath } from '@/utils/resource-paths'
+import { ArrowRight, Star, Users } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { FlagshipHero } from './flagship-hero'
+
 /** The landing page's eyebrow, at the landing page's size (DESIGN rule 11). */
-const MONO_LABEL = cn(TYPE.micro, 'opacity-60')
+const MONO_LABEL = cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')
 
 /**
  * "Heath, 15 years in industry" → name + role, so the attribution can be set
@@ -46,27 +44,41 @@ function splitCourseAttribution(author: string): {
 }
 
 /**
- * /courses ("Learn with Matt") — v2 layout. Full-nav sales-adjacent page: NO
- * sidebar, NO breadcrumbs (Amy: "Courses will be landing pages").
+ * /courses ("Learn with Matt") — the redesign's direction `1a`, the "spec
+ * sheet". Full-nav sales-adjacent page: NO sidebar, NO breadcrumbs (Amy:
+ * "Courses will be landing pages").
  *
- * The page is ordered as one argument, and the order IS the hierarchy:
+ * The page is one argument and the order IS the hierarchy:
  *
- *   1. Hero            — what this page is.
- *   2. The offer       — the flagship, as the page's dominant block.
- *   3. Objection facts — supporting detail for it.
- *   4. Proof           — alumni count, then quotes, then logos, uninterrupted.
- *   5. Team seats      — a different buyer, after the individual sale.
- *   6. Coming next     — genuinely secondary, so a listing row is correct here.
- *   7. Newsletter      — the fallback ask for everyone who did not convert.
+ *   1. The flagship, AS the hero — pitch left, the ask right, one hairline
+ *      between them. It is not introduced; it is the page.
+ *   2. What you're signing up for — the practical detail, as a 4-up hairline
+ *      grid you scan rather than four paragraphs you read.
+ *   3. Team seats — a different buyer, welded to the details because that is
+ *      where the question ("can I expense this?") actually arrives.
+ *   4. Proof — quotes, then logos, uninterrupted.
+ *   5. Everything else — the self-paced catalog.
  *
- * What this replaced: the flagship rendered through `ResourceRow`, the same
- * listing component as the not-yet-released crash course, so the one thing
- * this page sells had the same weight as a course that does not exist. Around
- * it, evidence was scattered across three places on both sides of a team
- * upsell, and the offer's own metadata sat in bordered bands below it.
+ * What this replaced, and why the previous ordering is gone:
  *
- * Surfaces carry one meaning each: `bg-background` is editorial, `bg-muted` is
- * an offer you can act on (the flagship block, team seats). Nothing else is
+ * - **The masthead.** The page opened on "Learn with Matt" and put the offer
+ *   in the block below it: two headlines and two asks before a reader who
+ *   came here to buy one thing had read anything. The flagship's slogan is
+ *   now the `h1` and the site's name for itself is not a headline.
+ * - **The alumni count as its own band.** "8,500+" spent a full-bleed section
+ *   on one number, below the offer it was evidence for. It is now the first
+ *   fact in the hero's fact row, where it is read while the claim is still on
+ *   screen.
+ * - **"Coming next".** A course that does not exist yet had a section to
+ *   itself, above the fold of that section, while the two courses you can
+ *   start today were nowhere on the page. All three are now cells in the
+ *   catalog grid, each badged with its honest status.
+ * - **The bookend newsletter.** It was the same Kit form making the same ask
+ *   as the hero's waitlist, 3000px later. The hero carries the `#join`
+ *   anchor now, so every link that pointed at the bookend still lands.
+ *
+ * Surfaces carry one meaning each: `bg-background` is editorial, `bg-muted`
+ * is an ask you can act on (the waitlist rail, team seats). Nothing else is
  * tinted — a tint that appears everywhere stops saying anything.
  */
 export function CoursesPage({
@@ -74,104 +86,133 @@ export function CoursesPage({
 	isPurchasable,
 	alumniLabel,
 	comingNext,
+	pastCohorts,
 }: {
 	flagship: UpcomingCohortSummary | null
 	isPurchasable: boolean
 	/** e.g. "8,500+" — null hides the stat. */
 	alumniLabel: string | null
-	/** Crash-course pre-launch row; null (workshop missing) hides the section. */
+	/** Crash-course cover art; null (workshop missing) drops the card. */
 	comingNext: { image?: string } | null
+	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
+	pastCohorts: UpcomingCohortSummary[]
 }) {
+	// The crash course leads the catalog when it exists: it is the closest
+	// thing to the cohort, and the waitlist it feeds is the same ask the hero
+	// makes. Missing workshop means missing card, never an empty cell.
+	const catalog = [
+		...(comingNext
+			? [
+					{
+						title: COURSES_COMING_NEXT.title,
+						href: `/workshops/${COURSES_COMING_NEXT.slug}`,
+						description: COURSES_COMING_NEXT.description,
+						badge: COURSES_COMING_NEXT.badge,
+						badgeTone: 'accent' as const,
+						image: comingNext.image,
+					},
+				]
+			: []),
+		...COURSES_CATALOG.items,
+	]
+
 	return (
 		<main className="bg-background text-foreground">
-			{/* 1. Hero — the landing page's Hero component, not a lookalike.
-			    Someone arriving here from the homepage should meet the same
-			    masthead with different words, and sharing the component is the
-			    only way that stays true after the next change to either page.
+			{/* 1. The flagship IS the hero. See flagship-hero.tsx. */}
+			<FlagshipHero
+				flagship={flagship}
+				isPurchasable={isPurchasable}
+				alumniLabel={alumniLabel}
+			/>
 
-			    No painted stripe under it. On the landing page that stripe marks
-			    the newsletter, the one full-bleed colour moment (DESIGN rule 9);
-			    repeating it here as a plain section divider spent the same device
-			    on "the intro ended", which the hairline already says.
+			{/* 2 + 3. The practical detail, then the team ask.
+			    Four short answers in a hairline grid rather than four
+			    paragraphs: these are the questions a buyer arrives with
+			    already formed, so they should be scannable, not readable.
+			    The grid is inset, so it takes the panel radius — it is an
+			    object on the page rather than the page's own structure
+			    (DESIGN rule 12). */}
+			<section aria-label={COURSES_DETAILS_EYEBROW} className="border-b">
+				<div className="flex flex-col gap-4 px-[18px] py-16 sm:px-11 md:py-20">
+					<div className="flex flex-col gap-6">
+						<p className={MONO_LABEL}>{COURSES_DETAILS_EYEBROW}</p>
+						<div className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))]">
+							{FLAGSHIP_FACTS.map((fact) => (
+								<div
+									key={fact.label}
+									className="bg-background flex flex-col gap-2.5 p-6"
+								>
+									<h3 className={cn(TYPE.micro, 'text-primary')}>
+										{fact.label}
+									</h3>
+									<p
+										className={cn(
+											TYPE.metaProse,
+											'text-[color:var(--ah-fg-muted)]',
+										)}
+									>
+										{fact.body}
+									</p>
+								</div>
+							))}
+						</div>
+					</div>
 
-			    The eyebrow is gone with it. "Courses" above an h1 reading "Learn
-			    with Matt" on a page at /courses is the third time the reader is
-			    told where they are. */}
-			<Hero h1={COURSES_HERO.title} h2={COURSES_HERO.intro} />
-
-			{/* 2. THE offer. One dominant block — see flagship-offer.tsx for why
-			    this stopped being a ResourceRow. */}
-			<FlagshipOffer flagship={flagship} isPurchasable={isPurchasable} />
-
-			{/* 3. The objection answers. Supporting detail for the block above, so
-			    plain text on the page surface — no boxes. Four short paragraphs
-			    boxed in a hairline grid made the reader parse a table before
-			    parsing a sentence. */}
-			<section aria-label="What the cohort asks of you" className="border-b">
-				<div className="grid grid-cols-1 gap-x-12 gap-y-8 px-8 py-14 sm:grid-cols-2 sm:px-16">
-					{FLAGSHIP_FACTS.map((fact) => (
-						<div key={fact.label} className="flex flex-col gap-2">
-							<h3 className={MONO_LABEL}>{fact.label}</h3>
-							<p className={cn(TYPE.body, 'text-foreground/80 max-w-[55ch]')}>
-								{fact.body}
+					{/* Team seats sits under the details, not between the offer and
+					    its proof, where it used to interrupt the one path this
+					    page has. Outline button: the hero already spent the
+					    viewport's one gold fill. */}
+					<div className="border-border bg-muted flex flex-col gap-5 rounded-lg border p-6 sm:flex-row sm:items-center sm:gap-8">
+						{/* Neutral, not gold — the hero already spent the viewport's one
+						    gold fill (see above). A `bg-background` tile on the muted
+						    surface reads as a quiet inset rather than a second accent. */}
+						<span className="border-border bg-background flex size-11 shrink-0 items-center justify-center rounded-lg border text-[color:var(--ah-fg-muted)]">
+							<Users className="size-5" aria-hidden />
+						</span>
+						<div className="flex min-w-0 flex-col gap-1.5">
+							<h2 className={TYPE.cardTitle}>{FLAGSHIP_TEAM.heading}</h2>
+							<p
+								className={cn(
+									TYPE.metaProse,
+									'max-w-[70ch] text-[color:var(--ah-fg-muted)]',
+								)}
+							>
+								{FLAGSHIP_TEAM.body}
 							</p>
 						</div>
-					))}
+						<Link
+							href={FLAGSHIP_TEAM.href}
+							className={cn(
+								TYPE.meta,
+								'border-foreground/20 hover:bg-secondary focus-visible:ring-ring group inline-flex h-11 shrink-0 items-center gap-2 rounded-[9px] border px-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:ml-auto',
+							)}
+						>
+							{FLAGSHIP_TEAM.linkLabel}
+							<ArrowRight
+								aria-hidden
+								className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+							/>
+						</Link>
+					</div>
 				</div>
 			</section>
 
-			{/* 4. Proof, in one continuous run: the number, then the people, then
-			    the logos.
-
-			    These were three separate pieces of evidence in three unrelated
-			    places — the alumni count in a stat band above the objection facts,
-			    the quotes below a team upsell, the logos below those. Evidence
-			    compounds when it is read together and does nothing when it is
-			    scattered, so it is now one section that opens on the count.
-
-			    The team upsell used to sit in the middle of this run. It addresses
-			    a different buyer entirely and it interrupted the path from "here
-			    is the offer" to "here is why you should believe it", so it moved
-			    below — after the individual sale has been made. */}
-			{alumniLabel ? (
-				<section aria-label="Cohort alumni" className="border-b">
-					<div className="flex flex-col gap-1 px-8 py-12 sm:px-16">
-					{/* Sans, not mono. `tabular-nums` gives the comma a full digit
-						    cell, so "8,500+" set in Geist Mono renders as "8 , 500+".
-						    Tabular figures are for columns that have to line up; this
-						    is a display number read once. */}
-						<p className={cn(TYPE.display, 'font-sans')}>{alumniLabel}</p>
-						<p className={cn(TYPE.subhead, 'font-normal opacity-80')}>
-							{FLAGSHIP_STATS.trainedLabel.toLowerCase()},{' '}
-							{FLAGSHIP_STATS.trainedSub.toLowerCase()}
-						</p>
-					</div>
-				</section>
-			) : null}
-
-			{/* Cohort-student testimonials.
-
-			    Typographically these are now the same voice as the landing page's
-			    quotes (`DraftTestimonial` / `TestimonialDivider`): italic at
-			    subhead, gold stars, name over role. They were upright `font-medium`
-			    inside tinted boxes, which read as feature cards that happened to
-			    contain speech — and the site already has a settled way of showing
-			    that a person said something.
-
-			    The tint and the hairline between them are gone for the same reason
-			    the metadata's went: two quotes side by side are two quotes, and
-			    boxing them made them look like a comparison table. */}
-			<section aria-label="What cohort students say" className="border-b">
-				<div className="px-8 pb-8 pt-12 sm:px-16">
+			{/* 4. Proof, in one run: the people, then the logos.
+			    Typographically these are the same voice as the landing page's
+			    quotes: italic at subhead, gold stars, name over role. Six of
+			    them in a 2-up hairline grid — two quotes read as the only two
+			    that exist. */}
+			<section aria-label={COURSES_TESTIMONIALS_EYEBROW} className="border-b">
+				<div className="px-[18px] pb-6 pt-12 sm:px-11">
 					<p className={MONO_LABEL}>{COURSES_TESTIMONIALS_EYEBROW}</p>
 				</div>
-				<div className="grid grid-cols-1 gap-10 px-8 pb-14 sm:grid-cols-2 sm:gap-12 sm:px-16">
+				<div className="border-border bg-border grid grid-cols-1 gap-px border-t md:grid-cols-2">
 					{COURSES_TESTIMONIALS.map((testimonial) => {
 						const { name, role } = splitCourseAttribution(testimonial.author)
 						return (
 							<figure
 								key={testimonial.author}
-								className="flex flex-col items-start gap-5"
+								className="bg-background flex flex-col items-start gap-5 p-8 sm:p-10 lg:px-16 lg:py-12"
 							>
 								<div
 									aria-hidden
@@ -182,16 +223,25 @@ export function CoursesPage({
 									))}
 								</div>
 								<blockquote
-									className={cn(TYPE.subhead, 'text-balance font-sans italic')}
+									className={cn(
+										TYPE.subhead,
+										// Serif roman rather than sans italic, matching `TYPE.quote`.
+										'text-balance font-serif font-normal',
+									)}
 								>
 									&ldquo;{testimonial.quote}&rdquo;
 								</blockquote>
-								<figcaption className="flex flex-col leading-tight">
-									<span className={cn(TYPE.meta, 'text-foreground font-semibold')}>
+								<figcaption className="mt-auto flex flex-col leading-tight">
+									<span className={cn(TYPE.meta, 'text-foreground')}>
 										{name}
 									</span>
 									{role ? (
-										<span className={cn(TYPE.metaProse, 'text-muted-foreground')}>
+										<span
+											className={cn(
+												TYPE.metaProse,
+												'text-[color:var(--ah-fg-subtle)]',
+											)}
+										>
 											{role}
 										</span>
 									) : null}
@@ -202,68 +252,128 @@ export function CoursesPage({
 				</div>
 			</section>
 
-			{/* Trusted by — closes the proof run (full-bleed, same usage as /skills) */}
+			{/* Trusted by — closes the proof run (full-bleed, same usage as
+			    /skills). The design draws this as a single row with a leading
+			    label; `CompanyLogoGrid` is the shared component that owns the
+			    real wordmarks, and its own hairline grid is the honest trade:
+			    twelve real logos beat one row of placeholder text. */}
 			<section className="border-b">
-				<CompanyLogoGrid className="pt-6" />
+				<CompanyLogoGrid className="pt-8" />
 			</section>
 
-			{/* 5. Team seats. A different buyer, addressed after the individual
-			    sale — it used to interrupt the offer-to-proof path. */}
-			<section
-				aria-label={FLAGSHIP_TEAM.heading}
-				className="bg-muted border-border flex flex-col gap-4 border-b px-8 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-16"
-			>
-				<div className="flex flex-col gap-2">
-					<h2 className={cn(TYPE.subhead, 'text-balance')}>
-						{FLAGSHIP_TEAM.heading}
-					</h2>
-					<p className={cn(TYPE.body, 'text-foreground/80 max-w-[60ch]')}>
-						{FLAGSHIP_TEAM.body}
-					</p>
-				</div>
-				<div className="shrink-0">
-					<MoreWaysLink
-						href={FLAGSHIP_TEAM.href}
-						label={FLAGSHIP_TEAM.linkLabel}
-					/>
-				</div>
-			</section>
-
-			{/* 5. Coming next — the crash course's pre-launch page is a public
-			    interest-capture with its own waitlist form, so this is a real
-			    click-through row, not an announcement. Row supplies the bottom
-			    hairline (its own border-y), so the section carries no border-b. */}
-			{comingNext ? (
-				<section aria-label={COURSES_COMING_NEXT.title}>
-					<div className="px-8 pb-8 pt-12 sm:px-16">
-						<p className={MONO_LABEL}>{COURSES_COMING_NEXT.eyebrow}</p>
+			{/* 5. Everything else Matt teaches. Cards float on the page surface,
+			    so they take the card radius; the section itself does not. */}
+			<section aria-label={COURSES_CATALOG.eyebrow}>
+				<div className="px-[18px] py-16 sm:px-11 md:py-20">
+					<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+						<p className={MONO_LABEL}>{COURSES_CATALOG.eyebrow}</p>
+						<p
+							className={cn(
+								TYPE.command,
+								'font-normal text-[color:var(--ah-fg-faint)]',
+							)}
+						>
+							{COURSES_CATALOG.note}
+						</p>
 					</div>
-					<ResourceRow
-						title={COURSES_COMING_NEXT.title}
-						description={COURSES_COMING_NEXT.description}
-						href={`/workshops/${COURSES_COMING_NEXT.slug}`}
-						image={comingNext.image}
-						typeLabel={COURSES_COMING_NEXT.typeLabel}
-						badge={COURSES_COMING_NEXT.badge}
-						fallbackPlaceholder="Course"
-					/>
-				</section>
-			) : null}
+					<div className={CATALOG_GRID}>
+						{catalog.map((item) => (
+							<CatalogCard key={item.href} {...item} />
+						))}
+					</div>
 
-			{/* 6. Newsletter bookend — the general capture */}
-			<section
-				id={COURSES_NEWSLETTER.anchorId}
-				className="scroll-mt-24"
-			>
-				<div className="px-8 py-16 sm:px-16 md:py-24">
-					<PrimaryNewsletterCta
-						title={COURSES_NEWSLETTER.title}
-						byline={COURSES_NEWSLETTER.byline}
-						titleElement="h2"
-						trackProps={{ event: 'courses_bookend_newsletter' }}
-					/>
+					{/* Past cohorts — the same card and the same grid, under their own
+					    label rather than mixed into the rows above. Someone who bought
+					    a cohort had no route back to it once enrollment closed: the
+					    hero shows only the current one and /cohorts is unused. They
+					    cannot simply join the list above, though — that grid is headed
+					    "self-paced, start any day", which a finished cohort is not, and
+					    a closed thing sitting unlabelled among things you can start
+					    today reads as available. The badge and the label are what keep
+					    the row honest for a reader who has not bought. */}
+					{pastCohorts.length > 0 && (
+						<div className="mt-12">
+							<p className={MONO_LABEL}>{COURSES_PAST_COHORTS.eyebrow}</p>
+							<div className={cn(CATALOG_GRID, 'mt-6')}>
+								{pastCohorts.map((cohort) => (
+									<CatalogCard
+										key={cohort.id}
+										title={cohort.title}
+										href={getResourcePath('cohort', cohort.slug, 'view')}
+										description={
+											cohort.description ?? COURSES_PAST_COHORTS.fallbackBlurb
+										}
+										badge={COURSES_PAST_COHORTS.badge}
+										badgeTone="neutral"
+										image={cohort.image}
+									/>
+								))}
+							</div>
+						</div>
+					)}
 				</div>
 			</section>
 		</main>
+	)
+}
+
+/** One grid metric for both catalog groups, so they read as one shelf. */
+const CATALOG_GRID =
+	'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))]'
+
+function CatalogCard({
+	title,
+	href,
+	description,
+	badge,
+	badgeTone,
+	image,
+}: {
+	title: string
+	href: string
+	description: string
+	badge: string
+	badgeTone: 'accent' | 'neutral'
+	image?: string
+}) {
+	return (
+		<Link
+			href={href}
+			className="border-border bg-card hover:border-foreground/20 focus-visible:ring-ring group flex flex-col overflow-hidden rounded-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+		>
+			<div
+				className={cn(
+					'border-border relative aspect-video w-full overflow-hidden border-b',
+					image ? 'bg-muted' : 'bg-stripes',
+				)}
+			>
+				{image ? (
+					<Image
+						src={image}
+						alt=""
+						fill
+						sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
+						className="object-cover transition-transform duration-500 ease-out group-hover:scale-[1.02] motion-reduce:transform-none motion-reduce:transition-none"
+					/>
+				) : null}
+			</div>
+			<div className="flex flex-col items-start gap-2.5 p-5">
+				<span
+					className={cn(
+						TYPE.micro,
+						'inline-flex items-center rounded-[4px] border px-2 py-1',
+						badgeTone === 'accent'
+							? 'text-primary border-[color:var(--ah-accent-line)]'
+							: 'border-border text-[color:var(--ah-fg-muted)]',
+					)}
+				>
+					{badge}
+				</span>
+				<h3 className={TYPE.cardTitle}>{title}</h3>
+				<p className={cn(TYPE.metaProse, 'text-[color:var(--ah-fg-muted)]')}>
+					{description}
+				</p>
+			</div>
+		</Link>
 	)
 }

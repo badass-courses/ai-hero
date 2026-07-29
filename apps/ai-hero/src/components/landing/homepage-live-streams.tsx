@@ -39,7 +39,7 @@ function LiveNowBanner({
 		>
 			<div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
 				<div className="flex flex-wrap items-center gap-3">
-					<span className="bg-primary-foreground text-primary inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-xs font-semibold uppercase tracking-wider">
+					<span className="bg-primary-foreground text-primary inline-flex w-fit items-center gap-1.5 rounded-[4px] px-2.5 py-1 font-mono text-xs font-semibold uppercase tracking-wider">
 						<Radio className="size-3" aria-hidden />
 						Live now
 					</span>

@@ -8,6 +8,7 @@ import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-b
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { DiscountCountdown } from '@/components/mdx/mdx-components'
+import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { HasPurchased } from '@/components/pricing/has-purchased'
 import { PricingInline } from '@/components/pricing/pricing-inline'
@@ -16,38 +17,32 @@ import { products, users } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { CampaignLanding } from '@/lib/campaign-landings'
 import { CohortPageProps, type Cohort } from '@/lib/cohort'
+import {
+	formatAlumniCount,
+	getCachedCohortAlumniCount,
+} from '@/lib/cohort-stats'
 import { getCachedCohort, loadCohortPageData } from '@/lib/cohorts-query'
 import {
 	CourseStructuredData,
 	ProductStructuredData,
 } from '@/lib/structured-data'
 import type { Workshop } from '@/lib/workshops'
-import { getCachedWorkshopNavigation } from '@/lib/workshops-query'
 import { getProviders } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
-import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { formatInTimeZone } from 'date-fns-tz'
 import { eq } from 'drizzle-orm'
-import { CheckCircle, ChevronRight } from 'lucide-react'
+import { CheckCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
-import {
-	Accordion,
-	AccordionContent,
-	AccordionItem,
-	AccordionTrigger,
-	Button,
-} from '@coursebuilder/ui'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { Certificate } from '../../_components/cohort-certificate-container'
-import { ModuleProgressProvider } from '../../_components/module-progress-provider'
 import { EditWorkshopButton } from '../../workshops/_components/edit-workshop-button'
-import { WorkshopNavigationProvider } from '../../workshops/_components/workshop-navigation-provider'
-import { WorkshopLessonList } from './_components/cohort-list/workshop-lesson-list'
-import WorkshopSidebarItem from './_components/cohort-list/workshop-sidebar-item'
+import { CohortContents } from './_components/cohort-contents'
+import { CohortFactStrip } from './_components/cohort-fact-strip'
+import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
 import ConnectDiscordButton from './_components/connect-discord-button'
@@ -190,6 +185,10 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		? formatInTimeZone(openEnrollmentDate, PT, "MMM d, yyyy 'at' h:mm a zzz")
 		: null
 
+	// "Trained" in the fact strip: a live count across every cohort to date,
+	// dropped rather than guessed when it is too small to quote.
+	const alumniLabel = formatAlumniCount(await getCachedCohortAlumniCount())
+
 	const providers = getProviders()
 	const discordProvider = providers?.discord
 	const userWithAccountsLoader = session?.user
@@ -294,7 +293,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									style={{
 										backgroundSize: '200% 100%',
 									}}
-									className="animate-shine absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
+									className="animate-shine pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
 								/>
 							</CheckoutSurveyBuyButton>
 						</Pricing.Product>
@@ -420,7 +419,9 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 				<div className="flex flex-col lg:flex-row">
 					<div className="min-w-0 flex-1">
-						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b md:gap-10 lg:flex-row lg:pt-8">
+						{/* `lg:pt-[52px]` is the spec's `--ah-section`; at `lg:pt-8` the
+						    title sat almost against the nav on desktop. */}
+						<header className="from-card to-background flex w-full flex-col items-center justify-between bg-gradient-to-b pt-6 md:gap-10 lg:flex-row lg:pt-[52px]">
 							{fields?.image && (
 								<CldImage
 									className="flex w-full lg:hidden"
@@ -486,96 +487,35 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									className="mt-8 [&_div]:text-left"
 									withBio
 								/>
+								<CohortFactStrip
+									className="mt-8 max-w-3xl"
+									cohort={displayCohort}
+									alumniLabel={alumniLabel}
+								/>
 							</div>
 						</header>
-						<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pt-10 sm:px-8 lg:px-10">
-							{content}
-						</article>
-
-						<div className="py-8">
-							<div className="px-5 sm:px-8 lg:px-10">
-								<h2 className="mb-5 text-2xl font-semibold tracking-tight">
-									Contents
-								</h2>
-							</div>
-							<div className="flex w-full">
-								<ul className="divide-border flex w-full flex-col divide-y border-y">
-									{displayWorkshops.map((workshop, index) => {
-										const workshopTimezone = workshop.fields.timezone || PT
-
-										const { dateString: workshopDateString } =
-											formatCohortDateRange(
-												workshop.fields.startsAt,
-												null,
-												workshopTimezone,
-											)
-
-										const moduleProgressLoader =
-											workshopProgressMap.get(workshop.fields.slug) ||
-											Promise.resolve(null)
-										return (
-											<li key={workshop.id}>
-												<ModuleProgressProvider
-													moduleProgressLoader={moduleProgressLoader}
-												>
-													<Accordion
-														type="multiple"
-														defaultValue={[`${workshop.id}-body`]}
-													>
-														<AccordionItem
-															value={`${workshop.id}-body`}
-															className="data-[state=open]:bg-card/50 border-none transition-colors ease-out"
-														>
-															<AccordionTrigger className="hover:bg-card text-foreground group relative flex w-full min-w-0 cursor-pointer items-start rounded-none py-3 pl-4 pr-4 text-left transition-colors duration-150 ease-out hover:no-underline [&>svg]:hidden">
-																<div className="flex w-full items-start gap-2.5">
-																	<ChevronRight
-																		className="text-muted-foreground mt-0.5 size-3.5 shrink-0 transition-transform duration-200 ease-out group-data-[state=open]:rotate-90"
-																		aria-hidden="true"
-																		strokeWidth={2}
-																	/>
-																	<span
-																		className="text-muted-foreground/60 mt-0.5 shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums tracking-wider"
-																		aria-hidden="true"
-																	>
-																		{String(index + 1).padStart(2, '0')}
-																	</span>
-																	<div className="flex min-w-0 flex-1 flex-col gap-1">
-																		<h3 className="truncate text-[14px] font-medium leading-tight tracking-[-0.005em]">
-																			{workshop.fields.title}
-																		</h3>
-																		<span className="text-muted-foreground/70 truncate font-mono text-[10px] font-medium uppercase tracking-wider">
-																			{workshopDateString
-																				? `Available from ${workshopDateString}`
-																				: 'Available today'}
-																		</span>
-																	</div>
-																</div>
-															</AccordionTrigger>
-															{workshop.resources &&
-																workshop.resources.length > 0 && (
-																	<AccordionContent className="border-t pb-0">
-																		<ol className="divide-border list-inside list-none divide-y">
-																			<WorkshopListRowRenderer
-																				workshop={workshop}
-																			/>
-																		</ol>
-																	</AccordionContent>
-																)}
-														</AccordionItem>
-													</Accordion>
-												</ModuleProgressProvider>
-											</li>
-										)
-									})}
-								</ul>
-								<div className="bg-stripes hidden min-h-0 w-4 shrink-0 border-y border-l sm:flex" />
-							</div>
+						{/* Padding sits outside the measure: boxes are border-box, so
+						    70ch on the padded element would be 70ch minus the gutter. */}
+						<div className="px-5 pt-10 sm:px-8 lg:px-10">
+							<article
+								className={`prose dark:prose-invert sm:prose-lg lg:prose-lg ${PROSE_MEASURE}`}
+							>
+								{content}
+							</article>
 						</div>
+
+						<CohortContents
+							className="py-8"
+							variant="full"
+							workshops={displayWorkshops as Workshop[]}
+							workshopProgressMap={workshopProgressMap}
+							timezone={PT}
+						/>
 					</div>
 					<CohortSidebar cohort={displayCohort}>
 						{fields?.image && (
 							<CldImage
-								className="hidden lg:flex"
+								className="hidden w-full lg:flex"
 								width={383}
 								height={204}
 								src={fields?.image}
@@ -585,42 +525,12 @@ export async function CohortPageView(props: CohortPageViewProps) {
 						{/* <CohortDetails cohort={displayCohort} /> */}
 						{hasCohortAccess ? (
 							<div>
-								<div className="flex h-12 items-center border-b px-4 py-3 text-[14px] font-semibold tracking-tight">
-									Workshops
-								</div>
-								<ol className="divide-border flex flex-col divide-y">
-									{displayWorkshops.map((workshop, index) => {
-										const moduleProgressLoader =
-											workshopProgressMap.get(workshop.fields.slug) ||
-											Promise.resolve(null)
-										return (
-											<li key={workshop.id}>
-												<ModuleProgressProvider
-													moduleProgressLoader={moduleProgressLoader}
-												>
-													<Accordion type="multiple">
-														<AccordionItem
-															value={workshop.id}
-															className="data-[state=open]:bg-muted/60 transition-colors ease-out"
-														>
-															<WorkshopSidebarItem
-																index={index + 1}
-																workshop={workshop}
-															/>
-															<AccordionContent className="pb-0">
-																<ol className="divide-border list-inside list-none divide-y border-t">
-																	<WorkshopListRowRenderer
-																		workshop={workshop}
-																	/>
-																</ol>
-															</AccordionContent>
-														</AccordionItem>
-													</Accordion>
-												</ModuleProgressProvider>
-											</li>
-										)
-									})}
-								</ol>
+								<CohortContents
+									variant="rail"
+									workshops={displayWorkshops as Workshop[]}
+									workshopProgressMap={workshopProgressMap}
+									timezone={PT}
+								/>
 								<Certificate
 									isCompleted={hasCompletedCohort}
 									resourceSlugOrId={cohort.fields?.slug}
@@ -633,29 +543,14 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								enrollmentOpenDateString={enrollmentOpenDateString}
 							/>
 						) : null}
+						{/* Last in the rail in every state: waitlist, pricing and
+						    purchased all answer the same "what do I get" question. */}
+						<CohortIncludes workshopCount={displayWorkshops.length} />
 					</CohortSidebar>
 				</div>
 				{/* <CohortSidebarMobile cohort={displayCohort} /> */}
 			</main>
 		</LayoutClient>
-	)
-}
-
-const WorkshopListRowRenderer = ({
-	workshop,
-	className,
-}: {
-	workshop: Workshop
-	className?: string
-}) => {
-	const workshopNavDataLoader = getCachedWorkshopNavigation(
-		workshop.fields.slug,
-	)
-
-	return (
-		<WorkshopNavigationProvider workshopNavDataLoader={workshopNavDataLoader}>
-			<WorkshopLessonList workshop={workshop} className={className} />
-		</WorkshopNavigationProvider>
 	)
 }
 

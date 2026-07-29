@@ -7,6 +7,7 @@ import {
 import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import {
 	getLatestCohort,
+	getPastCohorts,
 	getUpcomingCohort,
 } from '@/lib/upcoming-cohort-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
@@ -33,6 +34,9 @@ export default async function CoursesRoute() {
 		getCachedMinimalWorkshop(COURSES_COMING_NEXT.slug),
 	])
 	const flagship = upcoming ?? (await getLatestCohort())
+	// Excluding whatever the hero shows, so the page never lists a cohort
+	// twice. Sequential because the id to exclude is `flagship`'s.
+	const pastCohorts = await getPastCohorts(flagship?.id)
 
 	return (
 		<LayoutClient withContainer>
@@ -40,6 +44,7 @@ export default async function CoursesRoute() {
 				flagship={flagship}
 				isPurchasable={Boolean(upcoming)}
 				alumniLabel={formatAlumniCount(alumniCount)}
+				pastCohorts={pastCohorts}
 				comingNext={
 					comingNextWorkshop
 						? { image: comingNextWorkshop.fields?.coverImage?.url }

@@ -65,11 +65,15 @@ export default async function TopicPage({ params }: Props) {
 	)
 
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<main className="bg-background text-foreground min-h-[calc(100vh-var(--nav-height))]">
-					<section className="border-b">
-						<div className="flex flex-col gap-6 px-8 py-16 sm:px-16 md:py-24">
+					{/* No `border-b`: the row list below now sits inset on the gutter
+					    rather than bleeding full-width, so a rule here ended up
+					    floating above indented content instead of separating two
+					    full-width bands. `pb-11 pt-12` matches the /skills hero. */}
+					<section>
+						<div className="flex flex-col gap-6 px-[18px] pb-11 pt-12 sm:px-11">
 							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 								Topic
 							</p>
@@ -86,11 +90,12 @@ export default async function TopicPage({ params }: Props) {
 
 					{posts.length > 0 ? (
 						<section aria-label={`Posts about ${tag.fields.label}`}>
-							{/* No `gap-px` line layer here: `ResourceRow` draws its own
-							    collapsing `-mt-px border-y`, and a container hairline
-							    underneath it shows through the row's hover inset as a
-							    stray line across the gradient. */}
-							<ul className="flex flex-col">
+							{/* Same list treatment as the Map's goal sections: compact
+							    rows, inset to the gutter, 10px apart. A topic page is a
+							    hub-sidebar page too, and at full-bleed row height the
+							    reader sees three entries and stops reading it as a list
+							    (DESIGN / decisions.md, "Hub-sidebar pages use lists"). */}
+							<ul className="flex flex-col gap-2.5 px-[18px] pb-16 sm:px-11 md:pb-24">
 								{posts.map((post) => (
 									<li key={post.id}>
 										<TopicPostRow
@@ -103,7 +108,7 @@ export default async function TopicPage({ params }: Props) {
 						</section>
 					) : (
 						<section aria-label="No posts yet" className="border-b">
-							<div className="bg-stripes flex items-center justify-center px-8 py-16 sm:px-16 md:py-24">
+							<div className="bg-stripes flex items-center justify-center px-[18px] py-16 sm:px-11 md:py-24">
 								<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 									No posts yet
 								</p>
@@ -136,15 +141,18 @@ function TopicPostRow({
 }) {
 	const image = resolved?.thumbnailUrl || post.fields.coverImage?.url || undefined
 	const label = resolved?.isVideo ? 'Video' : 'Article'
+	// "Video · 12 min" on one line, matching `metaLabel` on the Map rather than
+	// splitting the duration onto its own `meta` row.
+	const typeLabel = [label, resolved?.durationLabel].filter(Boolean).join(' · ')
 
 	return (
 		<ResourceRow
+			compact
 			title={post.fields.title}
 			description={post.fields.description ?? undefined}
 			href={`/${post.fields.slug}`}
 			image={image}
-			typeLabel={label}
-			meta={resolved?.durationLabel}
+			typeLabel={typeLabel}
 			fallbackPlaceholder={label}
 		/>
 	)

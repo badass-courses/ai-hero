@@ -2,7 +2,7 @@ import '@/styles/globals.css'
 
 import * as React from 'react'
 import { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { DM_Sans, JetBrains_Mono, Source_Serif_4 } from 'next/font/google'
 import Script from 'next/script'
 import { FeedbackInsert } from '@/components/feedback-widget/feedback-insert'
 import { FirstTouchCapture } from '@/components/first-touch-capture'
@@ -13,7 +13,9 @@ import config from '@/config'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { getProduct } from '@/lib/products-query'
+import { getCohortOffer } from '@/lib/nav-cta'
 import { SiteStructuredData } from '@/lib/structured-data'
+import { NavCtaProvider } from '@/components/navigation/nav-cta-context'
 import { PromoBar } from '@/components/navigation/promo-bar'
 import { TRPCReactProvider } from '@/trpc/react'
 import { ourFileRouter } from '@/uploadthing/core'
@@ -28,15 +30,38 @@ import { CouponProvider } from '@coursebuilder/commerce-next/coupons/coupon-cont
 import { getCouponForCode } from '@coursebuilder/core/pricing/props-for-commerce'
 import { Toaster } from '@coursebuilder/ui/primitives/toaster'
 
-const geist = Geist({
+/**
+ * DM Sans + JetBrains Mono, per the redesign's token spec (`aihero.css`).
+ * The CSS variables keep their `--font-geist*` names so the hundreds of
+ * existing `font-sans` / `font-mono` call sites and the `@theme` mapping keep
+ * working — the families behind them are what changed, not the plumbing.
+ */
+const geist = DM_Sans({
 	subsets: ['latin'],
 	variable: '--font-geist',
-	weight: ['100', '200', '300', '400', '500', '600', '700', '800', '900'],
+	weight: ['400', '500', '600', '700'],
+	style: ['normal', 'italic'],
 })
 
-const geistMono = Geist_Mono({
+const geistMono = JetBrains_Mono({
 	subsets: ['latin'],
 	variable: '--font-geist-mono',
+	weight: ['400', '500'],
+})
+
+/**
+ * Source Serif 4 — testimonials only. A quote set in the same DM Sans as the
+ * page around it has to lean on italics and quote marks to read as someone
+ * else talking; a serif does that on its own. Variable optical sizing means
+ * the one face holds up at both the full-width pull quote and the small grid
+ * cells, and its stems survive the dark background better than a display
+ * serif would.
+ */
+const sourceSerif = Source_Serif_4({
+	subsets: ['latin'],
+	variable: '--font-source-serif',
+	weight: ['400', '600'],
+	style: ['normal', 'italic'],
 })
 
 export const metadata: Metadata = {
@@ -65,11 +90,16 @@ const isGoogleAnalyticsAvailable =
 const isGoogleAdsAvailable =
 	env.NODE_ENV !== 'development' && env.NEXT_PUBLIC_GOOGLE_ADS_ID
 
-export default function RootLayout({
+export default async function RootLayout({
 	children,
 }: {
 	children: React.ReactNode
 }) {
+	// Safe to await here: `getCohortOffer` is a cached DB read with no
+	// `cookies()` / `headers()`, so it does not opt the tree out of static
+	// rendering. Anything viewer-specific stays on the client.
+	const cohortOffer = await getCohortOffer()
+
 	return (
 		<Providers>
 			<html lang="en" suppressHydrationWarning>
@@ -85,7 +115,7 @@ export default function RootLayout({
 				<AxiomWebVitals />
 				<body
 					id="layout"
-					className={`bg-page-background relative overflow-x-hidden ${geist.variable} ${geistMono.variable} antialised font-sans`}
+					className={`bg-page-background relative overflow-x-hidden ${geist.variable} ${geistMono.variable} ${sourceSerif.variable} antialised font-sans`}
 				>
 					<SiteStructuredData />
 					<React.Suspense fallback={null}>
@@ -126,8 +156,10 @@ export default function RootLayout({
 									}}
 									getProduct={getProduct}
 								>
-									<PromoBar />
-									{children}
+									<NavCtaProvider value={cohortOffer}>
+										<PromoBar />
+										{children}
+									</NavCtaProvider>
 								</CouponProvider>
 							</ThemeProvider>
 						</NuqsAdapter>

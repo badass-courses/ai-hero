@@ -4,6 +4,7 @@ import React, { use } from 'react'
 import { FaqItem } from '@/app/faq/_components/faq-item'
 import { AnimatedTitle } from '@/components/brand/animated-word'
 import { CldImage, ThemeImage } from '@/components/cld-image'
+import { TYPE } from '@/components/landing/type'
 import { Callout } from '@/components/mdx/callout'
 import { PromoCard } from '@/components/mdx/promo-card'
 import MDXVideo from '@/components/content/mdx-video'
@@ -156,19 +157,47 @@ const CheckList = ({ children }: { children: React.ReactNode }) => {
 	return <ul data-checklist="">{unwrapped}</ul>
 }
 
-const testimonialVariants = cva('', {
-	variants: {
-		variant: {
-			default:
-				'not-prose relative mx-auto flex w-full max-w-3xl flex-col items-start border-l-4 border-primary pl-5 italic gap-2',
-			centered:
-				'flex text-center text-balance flex-col items-center justify-center border-none dark:text-white',
+/**
+ * A testimonial inside an article body.
+ *
+ * It sits flush in the prose column: it used to be `mx-auto max-w-3xl` inside
+ * article prose that runs to `max-w-4xl`, so the leftover 128px got split
+ * evenly and centred the block against its neighbours.
+ *
+ * The 2px `border-primary` rail is the one sanctioned exception to the
+ * side-stripe ban (DESIGN "Bans"), and it is narrow: a pull quote in running
+ * prose, not a card or an alert. The ban is about borrowed urgency — a colour
+ * bar stuck on a box to make it look important. Here the rail is the quotation
+ * mark. Nothing else frames the block, and without it a serif paragraph in a
+ * column of sans body copy reads as a stylistic wobble rather than a second
+ * voice. Anything wider than 2px, or on anything that already has a surface,
+ * is still banned.
+ *
+ * `pl-5` is the rail's own offset, so the text hangs the way a quote should
+ * rather than starting on the line.
+ */
+// No rules top or bottom: the rail and the serif already separate the quote
+// from the prose, and the hairlines turned every testimonial into a boxed
+// callout. The `py-6` that survived them is gone too — with no band to hold
+// open, it only stacked on `my-8` and left the block floating in a gap half
+// again as deep as the paragraph spacing around it.
+const testimonialVariants = cva(
+	'not-prose relative my-8 flex w-full flex-col gap-3',
+	{
+		variants: {
+			variant: {
+				// The rail belongs to the flush-left quote only. On the centred
+				// variant it would be a margin decoration with nothing to align to,
+				// pulling a symmetric block off-axis.
+				default: 'border-primary items-start border-l-2 pl-5',
+				centered: 'items-center justify-center text-balance text-center',
+			},
+		},
+		defaultVariants: {
+			variant: 'default',
 		},
 	},
-	defaultVariants: {
-		variant: 'default',
-	},
-})
+)
 
 const Testimonial = ({
 	children,
@@ -182,10 +211,20 @@ const Testimonial = ({
 	variant?: VariantProps<typeof testimonialVariants>['variant']
 }) => {
 	return (
-		<blockquote className={cn(testimonialVariants({ variant }))}>
+		<blockquote
+			className={cn(
+				TYPE.quoteProse,
+				// `ah-testimonial` is not decoration — it is what lets the type
+				// above actually apply. See the rule of that name in `globals.css`:
+				// the paragraphs inside come from the MDX map wearing the unlayered
+				// `.ah-prose-p`, which outranks every utility here.
+				'ah-testimonial text-foreground',
+				testimonialVariants({ variant }),
+			)}
+		>
 			{children}
 			{authorName && (
-				<div className="text-muted-foreground flex items-center gap-2 text-[80%] font-normal not-italic">
+				<div className="flex items-center gap-2.5 font-normal not-italic">
 					{authorAvatar && authorAvatar.includes('res.cloudinary') && (
 						<CldImage
 							alt={authorName}
@@ -195,7 +234,11 @@ const Testimonial = ({
 							src={authorAvatar}
 						/>
 					)}
-					<span className="font-mono text-sm">{authorName}</span>
+					<span
+						className={cn(TYPE.metaMono, 'text-[color:var(--ah-fg-subtle)]')}
+					>
+						{authorName}
+					</span>
 				</div>
 			)}
 		</blockquote>

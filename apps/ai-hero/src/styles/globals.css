@@ -29,6 +29,16 @@
 	/* Screens */
 	--breakpoint-2xl: 1820px;
 
+	/* The redesign has exactly ONE breakpoint: 900px ("Mobile Patterns.dc.html"
+	   — "One breakpoint at 900px"). It is deliberately not `md` (768px): the
+	   patterns that have to change — the sidebar becoming a drawer, the right
+	   rail folding into the body, a 3-up row becoming 2-up — all break between
+	   768 and 900, so a tablet held in portrait gets the desktop structure at
+	   `md` and it does not fit. Use `desk:` for those structural switches. The
+	   existing sm/md/lg utilities stay as they are; this does not replace them,
+	   it names the one line the spec actually draws. */
+	--breakpoint-desk: 900px;
+
 	/* Container */
 	--container-center: true;
 	--container-padding: 1.5rem;
@@ -156,7 +166,9 @@
 }
 
 :root {
-	--nav-height: 63px;
+	/* The spec's nav bar. Every sticky offset and `calc(100vh - …)` in the app
+	   reads this, so the bar's height is only ever changed here. */
+	--nav-height: 62px;
 	--command-bar-height: 37px;
 	--pane-layout-height: calc(
 		100vh - var(--nav-height) - var(--command-bar-height)
@@ -165,131 +177,264 @@
 		100vh - var(--nav-height) - var(--command-bar-height) - 30px
 	);
 
-	--page-background: oklch(0.965 0 0);
-	--background: oklch(0.985 0 0);
-	--foreground: oklch(0.2156 0 0);
-	--card: oklch(1 0 0);
-	--card-foreground: oklch(0.2156 0 0);
-	--popover: oklch(0.9925 0.0004 71.45);
-	--popover-foreground: oklch(0.2477 0.053 66.43);
-	--primary: oklch(0.6483 0.2298 34.38);
-	--primary-foreground: oklch(1 0 0);
-	--secondary: oklch(0.9312 0 0);
-	--secondary-foreground: oklch(0 0 0);
-	--muted: oklch(0.95 0 0);
-	--muted-foreground: oklch(0.3 0 0);
-	--accent: oklch(0.9389 0 0);
-	--accent-foreground: oklch(0.1579 0 0);
+	/* ---------------------------------------------------------------------
+	   Light theme — the redesign's "cool slate", from `aihero.css`.
+
+	   Two rules from the handoff that are easy to get wrong, and are the
+	   reason `--accent-fill` exists as a token separate from `--primary`:
+
+	   1. The yellow FILL does not change between themes. A gold button is
+	      gold on paper too — that is what carries the brand.
+	   2. Accent TEXT in light is ink (#14161a), never a darkened yellow: a
+	      dark-yellow text token reads as brown on paper.
+
+	   shadcn's `--primary` is used for both jobs by callers, so it takes the
+	   text-safe value (ink here, gold in dark) and `--accent-fill` carries
+	   the gold that must survive both themes.
+	   --------------------------------------------------------------------- */
+	--page-background: #f1f2f5;
+	--background: #fbfbfc;
+	--foreground: #14161a;
+	--card: #ffffff;
+	--card-foreground: #14161a;
+	--popover: #f5f6f8;
+	--popover-foreground: #14161a;
+	--primary: #14161a;
+	--primary-foreground: #fbfbfc;
+	--accent-fill: #f5c451;
+	--accent-fill-hover: #eab534;
+	--accent-fill-foreground: #191510;
+	--secondary: rgba(20, 22, 26, 0.06);
+	--secondary-foreground: #14161a;
+	--muted: #f5f6f8;
+	--muted-foreground: rgba(20, 22, 26, 0.62);
+	--accent: rgba(20, 22, 26, 0.06);
+	--accent-foreground: #14161a;
 	--destructive: oklch(0.5918 0.177 29.23);
 	--destructive-foreground: oklch(0.9915 0.004 81.45);
-	--border: oklch(0.9312 0 0);
-	--input: oklch(0.9234 0 0);
-	--ring: oklch(0.5 0 0);
-	--radius: 0.3rem;
+	/* `--border` is the SECTION-DIVIDER weight (the spec's `--ah-line`), not the
+	   card weight. Nearly every use of `border-border` / `bg-border` in this app
+	   is a section rule or a hairline grid gap, and the spec draws those at .1
+	   here — it reserves `--ah-line-strong` (.14) for card outlines, inputs and
+	   chips, which is what `--input` carries. They were both .14 before, so
+	   every divider sat one step too heavy and the few components that reached
+	   for `var(--ah-line)` directly read as mismatched next to their neighbours. */
+	--border: rgba(20, 22, 26, 0.1);
+	--input: rgba(20, 22, 26, 0.14);
+	--ring: rgba(20, 22, 26, 0.35);
+	--radius: 9px;
 	color-scheme: light;
+
+	/* Ink and line ramps. Alpha steps, not palette entries — they stay raw
+	   custom properties and are consumed as `text-[color:var(--ah-fg-muted)]`
+	   where a semantic token does not already say the same thing.
+
+	   DELIBERATE DEVIATION from the spec's alphas, and the one place the spec
+	   contradicts itself. Its ramp is .72 / .62 / .48 / .45 / .35, but its own
+	   definition of done requires WCAG AA "for body copy and all labels
+	   ≥ 9.5px" — and `--ah-fg-label` at .45 measures 2.94:1 here, `subtle` at
+	   .48 measures 3.21:1. Both fail 4.5:1, and `--ah-fg-label` is precisely
+	   the 9.5px eyebrow the criterion names.
+
+	   The acceptance criterion is the stronger statement, so the ramp is
+	   raised until every step that carries text passes: body 9.5:1, muted
+	   6.6:1, subtle 5.4:1, label 4.7:1. `faint` is left at the spec's value
+	   because it only ever draws placeholders and decorative numerals, never
+	   text a reader has to make out. Dark is raised for the same reason
+	   (label was 3.53:1 there). */
+	--ah-fg-body: rgba(20, 22, 26, 0.8);
+	--ah-fg-muted: rgba(20, 22, 26, 0.7);
+	--ah-fg-subtle: rgba(20, 22, 26, 0.64);
+	--ah-fg-label: rgba(20, 22, 26, 0.6);
+	--ah-fg-faint: rgba(20, 22, 26, 0.35);
+	--ah-line: rgba(20, 22, 26, 0.1);
+	--ah-line-strong: rgba(20, 22, 26, 0.14);
+	--ah-line-soft: rgba(20, 22, 26, 0.07);
+	--ah-hover: rgba(20, 22, 26, 0.06);
+	--ah-accent-wash: rgba(20, 22, 26, 0.04);
+	--ah-accent-line: rgba(20, 22, 26, 0.22);
+
+	/* The spec's `--ah-bg-band`: the secondary band — newsletter panels, code
+	   surfaces, the announcement bar. Distinct from `--page-background`, which
+	   is the void outside the 1440px shell and only coincides with this value
+	   in light. */
+	--ah-band: #f1f2f5;
 
 	--md-editor-background: var(--background);
 	--md-editor-foreground: var(--foreground);
 	--md-editor-border: var(--border);
 
-	/* codehike theme */
+	/* ---------------------------------------------------------------------
+	   Codehike / Shiki syntax theme ("github-from-css" reads these slots).
+	   LIGHT — cool slate.
+
+	   Two rewrites got here. It was GitHub's themes verbatim, which dropped
+	   another product's palette into the largest object on an article. Then it
+	   was a single warm ramp off the app's gold, one hue doing all the work.
+	   That second one failed on paper, exactly the way the prototype's light
+	   theme warns it will: "a dark-yellow text token reads brown". Keywords at
+	   #8a5f10, strings at #6a6046 and parameters at #5a5342 were three muddy
+	   browns within a few percent of each other on white — nothing separated
+	   from anything, and the whole block read washed out.
+
+	   So: the SPEC's axis, not the accent's. The light theme is cool slate,
+	   blue-grey ink, no warm tints, and the yellow is a FILL that never becomes
+	   type. Four hues carry meaning — slate blue for keywords, deep teal for
+	   strings, plum for numbers, green and red for diffs — and identifiers
+	   still separate by weight of ink rather than by hue, which is the one part
+	   of the warm ramp that was working: function names at full strength,
+	   ordinary code at .88, comments at .5.
+
+	   Every token that carries code clears 4.5:1 on the #ffffff editor ground,
+	   measured, so the block is legible before it is tasteful: keyword 8.5,
+	   param 9.8, number 7.4, deleted 7.6, string and tag 6.5, function 18.1,
+	   comment 4.7. Comments were the worst of the old set at 2.96 — quiet is a
+	   design intent, illegible is not. Line numbers and indent guides stay
+	   below that bar deliberately; they are chrome, not content.
+
+	   Keeping keywords off gold here also retires this palette's standing
+	   exception to DESIGN rule 7 — in light mode nothing in a code block is a
+	   darkened accent any more. Dark mode still spends gold on keywords, where
+	   the accent is at full strength against near-black and the rule does not
+	   apply.
+	   --------------------------------------------------------------------- */
 	--ch-0: light;
-	--ch-1: #6e7781;
-	--ch-2: #0550ae;
-	--ch-3: #953800;
-	--ch-4: #24292f;
-	--ch-5: #8250df;
-	--ch-6: #116329;
-	--ch-7: #cf222e;
-	--ch-8: #0a3069;
-	--ch-9: #82071e;
-	--ch-10: #f6f8fa;
-	--ch-11: #ffebe9;
-	--ch-12: #dafbe1;
-	--ch-13: #ffd8b5;
-	--ch-14: #eaeef2;
-	--ch-15: #57606a;
-	--ch-16: #ffffff;
-	--ch-17: #eaeef280;
-	--ch-18: #fdff0033;
-	--ch-19: #1a85ff;
-	--ch-20: #add6ff;
-	--ch-21: #0969da;
-	--ch-22: #f6f8fa;
-	--ch-23: #d0d7de;
-	--ch-24: #8c959f;
-	--ch-25: #afb8c133;
-	--ch-26: #ffffffe6;
+	--ch-1: rgba(20, 22, 26, 0.6); /* comment */
+	--ch-2: #6d3f9c; /* constant, number */
+	--ch-3: #3d4451; /* entity, parameter */
+	--ch-4: rgba(20, 22, 26, 0.88); /* default foreground */
+	--ch-5: #14161a; /* function name */
+	--ch-6: #1f6b47; /* tag, inserted text */
+	--ch-7: #1f4c8c; /* keyword, storage */
+	--ch-8: #0f6b52; /* string */
+	--ch-9: #9b2c26; /* deleted text */
+	--ch-10: #14161a; /* heading */
+	--ch-11: #fbeaea; /* deleted background */
+	--ch-12: #e8f4ee; /* inserted background */
+	--ch-13: #edf2fb; /* changed background */
+	--ch-14: #eceef1; /* group border */
+	--ch-15: rgba(20, 22, 26, 0.38); /* line numbers */
+	--ch-16: #ffffff; /* editor background */
+	--ch-17: rgba(20, 22, 26, 0.07); /* indent guide */
+	--ch-18: rgba(20, 22, 26, 0.04); /* active line background */
+	--ch-19: rgba(20, 22, 26, 0.35); /* focus border */
+	/* Slate, not the gold wash it was: per the spec, a yellow wash on white
+	   reads as a highlighter pen. On black it reads as glow, so dark keeps it. */
+	--ch-20: rgba(31, 76, 140, 0.16); /* selection */
+	--ch-21: #14161a; /* active border */
+	--ch-22: #f5f6f8; /* inactive tab */
+	--ch-23: rgba(20, 22, 26, 0.14); /* border */
+	--ch-24: rgba(20, 22, 26, 0.2); /* scrollbar */
+	--ch-25: rgba(20, 22, 26, 0.3); /* scrollbar hover */
+	--ch-26: rgba(255, 255, 255, 0.94); /* overlay */
 
 	/* Sidebar tokens (shadcn). Reference existing tokens so dark mode tracks
 	   automatically via lazy var() resolution. See plans/navigation-redesign.md. */
-	--sidebar: var(--background);
+	/* The sidebar is the RAISED surface (the spec's `--ah-bg-raised`), not the
+	   page. That one step of separation is what makes it read as a rail beside
+	   the content rather than as a column of the same sheet.
+
+	   Which forces the hover token too: `--sidebar-accent` used to be `--muted`,
+	   i.e. the very colour the sidebar now IS, so every hover was invisible
+	   against its own background. It is the alpha wash the spec uses
+	   (`.ah-sidebar__item:hover`), which sits on any surface. Note the primitive
+	   spends this token on hover AND `data-[active=true]`; the active row states
+	   its own fill in `sidebar-client.tsx`, so this one is hover's alone. */
+	--sidebar: var(--muted);
 	--sidebar-foreground: var(--foreground);
 	--sidebar-primary: var(--primary);
 	--sidebar-primary-foreground: var(--primary-foreground);
-	--sidebar-accent: var(--muted);
-	--sidebar-accent-foreground: var(--accent-foreground);
+	--sidebar-accent: var(--ah-hover);
+	--sidebar-accent-foreground: var(--foreground);
 	--sidebar-border: var(--border);
 	--sidebar-ring: var(--ring);
 }
 
 .dark {
-	--page-background: oklch(0.1 0 0);
-	--background: oklch(0.15 0 0);
-	/* --background: oklch(0.17 0.015 300); */
-	--foreground: oklch(0.9 0 0);
-	--card: oklch(0.2 0 0);
-	--card-foreground: oklch(0.9 0 0);
-	--popover: oklch(0.22 0 0);
-	--popover-foreground: oklch(0.9 0 0);
-	--primary: oklch(0.8501 0.15 79.28);
-	--primary-foreground: oklch(0 0 0);
-	--secondary: oklch(0.2267 0 0);
-	--secondary-foreground: oklch(1 0 0);
+	/* Dark theme — the primary one. Surfaces, ink ramp, single accent and
+	   line levels are the values in `aihero.css`; see the note in `:root`
+	   for why `--primary` and `--accent-fill` are two tokens. */
+	--page-background: #080808;
+	--background: #0b0b0b;
+	--foreground: #f4f3f1;
+	--card: #100f0e;
+	--card-foreground: #f4f3f1;
+	--popover: #0d0d0c;
+	--popover-foreground: #f4f3f1;
+	--primary: #f5c451;
+	--primary-foreground: #191510;
+	--accent-fill: #f5c451;
+	--accent-fill-hover: #ffd873;
+	--accent-fill-foreground: #191510;
+	--secondary: rgba(255, 255, 255, 0.07);
+	--secondary-foreground: #f4f3f1;
 
-	--muted: oklch(0.2156 0 0);
-	--muted-foreground: oklch(0.85 0 0);
+	--muted: #0d0d0c;
+	--muted-foreground: rgba(244, 243, 241, 0.6);
 
-	--accent: oklch(0.2156 0 0);
-	--accent-foreground: oklch(0.9242 0.0022 71.43);
+	--accent: rgba(255, 255, 255, 0.07);
+	--accent-foreground: #f4f3f1;
 
 	--destructive: oklch(0.4218 0.177 29.23);
 	--destructive-foreground: oklch(0.9185 0.004 81.45);
 
-	--border: oklch(0.25 0 0);
-	--input: oklch(0.3 0 0);
-	--ring: oklch(0.8501 0.1277 79.28);
-	--radius: 0.3rem;
+	/* Divider weight, not card weight — see the note in `:root`. */
+	--border: rgba(255, 255, 255, 0.08);
+	--input: rgba(255, 255, 255, 0.12);
+	--ring: rgba(245, 196, 81, 0.35);
+	--radius: 9px;
 	color-scheme: dark;
 
-	/* codehike theme */
+	--ah-fg-body: rgba(244, 243, 241, 0.72);
+	--ah-fg-muted: rgba(244, 243, 241, 0.6);
+	--ah-fg-subtle: rgba(244, 243, 241, 0.52);
+	--ah-fg-label: rgba(244, 243, 241, 0.48);
+	--ah-fg-faint: rgba(244, 243, 241, 0.3);
+	--ah-line: rgba(255, 255, 255, 0.08);
+	--ah-line-strong: rgba(255, 255, 255, 0.12);
+	--ah-line-soft: rgba(255, 255, 255, 0.06);
+	--ah-hover: rgba(255, 255, 255, 0.07);
+	--ah-accent-wash: rgba(245, 196, 81, 0.07);
+	--ah-accent-line: rgba(245, 196, 81, 0.35);
+	--ah-band: #0e0e0d;
+
+	/* Syntax theme — see the note in `:root`.
+	   DARK keeps the gold keyword: against near-black the accent is at full
+	   strength, so it is the brand doing the highlighting rather than a
+	   darkened stand-in for it, and this is the ground that palette was drawn
+	   for. What it does NOT keep is the single warm ramp underneath. Constants
+	   (#d8c07a), parameters (#e3d8bf) and strings (#c2b795) were three sands
+	   within about 12% of each other and of the .86 default ink — so past the
+	   gold, no token separated from its neighbours. They now take a hue each,
+	   held at low chroma and high lightness so the block still reads warm and
+	   quiet rather than like a christmas tree. */
 	--ch-0: dark;
-	--ch-1: #8b949e;
-	--ch-2: #79c0ff;
-	--ch-3: #ffa657;
-	--ch-4: #c9d1d9;
-	--ch-5: #d2a8ff;
-	--ch-6: #7ee787;
-	--ch-7: #ff7b72;
-	--ch-8: #a5d6ff;
-	--ch-9: #ffa198;
-	--ch-10: #f0f6fc;
-	--ch-11: #490202;
-	--ch-12: #04260f;
-	--ch-13: #5a1e02;
-	--ch-14: #161b22;
-	--ch-15: #8b949e;
-	--ch-16: #0d1117;
-	--ch-17: #6e76811a;
-	--ch-18: #ffffff0b;
-	--ch-19: #3794ff;
-	--ch-20: #264f78;
-	--ch-21: #1f6feb;
-	--ch-22: #010409;
-	--ch-23: #30363d;
-	--ch-24: #6e7681;
-	--ch-25: #6e768166;
-	--ch-26: #0d1117e6;
+	--ch-1: rgba(244, 243, 241, 0.5); /* comment */
+	--ch-2: #d9a3c4; /* constant, number */
+	--ch-3: #cfd6e0; /* entity, parameter */
+	--ch-4: rgba(244, 243, 241, 0.86); /* default foreground */
+	--ch-5: #f4f3f1; /* function name */
+	--ch-6: #86c98d; /* tag, inserted text */
+	--ch-7: #f5c451; /* keyword, storage */
+	--ch-8: #9dbfa4; /* string */
+	--ch-9: #d99a92; /* deleted text */
+	--ch-10: #f4f3f1; /* heading */
+	--ch-11: #2a1614; /* deleted background */
+	--ch-12: #17231a; /* inserted background */
+	--ch-13: #2b2315; /* changed background */
+	--ch-14: #1a1917; /* group border */
+	--ch-15: rgba(244, 243, 241, 0.28); /* line numbers */
+	--ch-16: #100f0e; /* editor background */
+	--ch-17: rgba(255, 255, 255, 0.06); /* indent guide */
+	--ch-18: rgba(255, 255, 255, 0.04); /* active line background */
+	--ch-19: rgba(245, 196, 81, 0.5); /* focus border */
+	--ch-20: rgba(245, 196, 81, 0.18); /* selection */
+	--ch-21: #f5c451; /* active border */
+	--ch-22: #0b0b0b; /* inactive tab */
+	--ch-23: rgba(255, 255, 255, 0.12); /* border */
+	--ch-24: rgba(255, 255, 255, 0.18); /* scrollbar */
+	--ch-25: rgba(255, 255, 255, 0.28); /* scrollbar hover */
+	--ch-26: rgba(16, 15, 14, 0.92); /* overlay */
 }
 
 @theme inline {
@@ -303,6 +448,8 @@
 	--font-mono:
 		var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
 		Consolas, 'Liberation Mono', 'Courier New', monospace;
+	/* Testimonials only — see the Source Serif 4 note in `app/layout.tsx`. */
+	--font-serif: var(--font-source-serif), ui-serif, Georgia, Cambria, serif;
 
 	/* Shadcn color tokens */
 	--color-page-background: var(--page-background);
@@ -314,6 +461,13 @@
 	--color-popover-foreground: var(--popover-foreground);
 	--color-primary: var(--primary);
 	--color-primary-foreground: var(--primary-foreground);
+	/* The gold that survives both themes — see the note in `:root`. Use
+	   `bg-accent-fill text-accent-fill-foreground` for CTAs and badges that
+	   must stay gold on paper; use `text-primary` for accent TYPE, which is
+	   ink in light. */
+	--color-accent-fill: var(--accent-fill);
+	--color-accent-fill-hover: var(--accent-fill-hover);
+	--color-accent-fill-foreground: var(--accent-fill-foreground);
 	--color-secondary: var(--secondary);
 	--color-secondary-foreground: var(--secondary-foreground);
 	--color-muted: var(--muted);
@@ -336,11 +490,13 @@
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-ring: var(--sidebar-ring);
 
-	/* Border radius */
-	--radius-sm: calc(var(--radius) - 4px);
-	--radius-md: calc(var(--radius) - 2px);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) + 4px);
+	/* Border radius — the redesign's four steps, not a spectrum.
+	   6 chips and icon buttons · 9 buttons and inputs · 11 list cards ·
+	   12 panels and grid containers. */
+	--radius-sm: 6px;
+	--radius-md: 11px;
+	--radius-lg: 12px;
+	--radius-xl: 14px;
 }
 
 @utility prose-base {
@@ -358,7 +514,7 @@
 	--tw-prose-code: var(--color-foreground);
 	--tw-prose-pre-code: var(--color-foreground);
 	--tw-prose-pre-bg: var(--color-muted);
-	--tw-prose-th-borders: var(--color-border);
+	--tw-prose-th-borders: var(--ah-fg-faint);
 	--tw-prose-td-borders: var(--color-border);
 	--tw-prose-invert-body: var(--color-foreground);
 	--tw-prose-invert-headings: var(--color-foreground);
@@ -374,7 +530,7 @@
 	--tw-prose-invert-code: var(--color-foreground);
 	--tw-prose-invert-pre-code: var(--color-foreground);
 	--tw-prose-invert-pre-bg: var(--color-muted);
-	--tw-prose-invert-th-borders: var(--color-foreground);
+	--tw-prose-invert-th-borders: var(--ah-fg-faint);
 	--tw-prose-invert-td-borders: var(--color-border);
 }
 
@@ -393,7 +549,7 @@
 	--tw-prose-code: var(--color-foreground);
 	--tw-prose-pre-code: var(--color-foreground);
 	--tw-prose-pre-bg: var(--color-muted);
-	--tw-prose-th-borders: var(--color-border);
+	--tw-prose-th-borders: var(--ah-fg-faint);
 	--tw-prose-td-borders: var(--color-border);
 	--tw-prose-invert-body: var(--color-foreground);
 	--tw-prose-invert-headings: var(--color-foreground);
@@ -409,7 +565,7 @@
 	--tw-prose-invert-code: var(--color-foreground);
 	--tw-prose-invert-pre-code: var(--color-foreground);
 	--tw-prose-invert-pre-bg: var(--color-muted);
-	--tw-prose-invert-th-borders: var(--color-foreground);
+	--tw-prose-invert-th-borders: var(--ah-fg-faint);
 	--tw-prose-invert-td-borders: var(--color-border);
 }
 
@@ -425,6 +581,17 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans font-normal;
+	}
+
+	/* Tailwind v4's preflight drops the UA stylesheet's `cursor: pointer` on
+	   buttons, so every `<button>` in the app pointed at nothing unless someone
+	   remembered `cursor-pointer` on it — and next to an `<a>`, which keeps the
+	   hand, one control in a row felt dead. Anchors, labels and `<summary>` are
+	   left to the UA. Disabled controls are excluded so they still read as
+	   unavailable rather than clickable. */
+	button:not(:disabled),
+	[role='button']:not([aria-disabled='true']) {
+		cursor: pointer;
 	}
 
 	#holy-progress [role='bar'] {
@@ -527,32 +694,89 @@ li.task-list-item {
 	background-color: #5a65ea;
 }
 
+/* The spec's `.ph` hatch: a 6px band and a 6px gap on a 12px period, at 135°.
+   The old version packed two hairline bands into a 5px tile, which at that
+   frequency stopped reading as stripes and started reading as noise (and
+   shimmered against the pixel grid when a panel moved).
+
+   `repeating-linear-gradient` rather than a tiled `background-size`: the tiled
+   version has to restate the stop positions as percentages of the tile, which
+   is why the numbers above were 14.29 / 64.29 rather than anything meaningful.
+
+   Only the ink is drawn, never a base colour, even though the spec's `.ph`
+   carries one — these utilities are layered over whatever surface is already
+   there (`bg-muted/40 bg-stripes`, gutters, banners), so an opaque base would
+   punch a hole through them. A placeholder that needs the spec's ground pairs
+   this with `bg-muted`. */
 .bg-stripes {
-	background-image: linear-gradient(
+	background-image: repeating-linear-gradient(
 		135deg,
-		color-mix(in oklch, var(--foreground) 10%, transparent) 14.29%,
-		color-mix(in oklch, var(--background) 10%, transparent) 14.29%,
-		color-mix(in oklch, var(--background) 10%, transparent) 50%,
-		color-mix(in oklch, var(--foreground) 10%, transparent) 50%,
-		color-mix(in oklch, var(--foreground) 10%, transparent) 64.29%,
-		color-mix(in oklch, var(--background) 10%, transparent) 64.29%,
-		color-mix(in oklch, var(--background) 10%, transparent) 100%
+		color-mix(in oklch, var(--foreground) 7%, transparent) 0 6px,
+		transparent 6px 12px
 	);
-	background-size: 5px 5px;
 }
 
+/* Bottom clearance for a page whose primary action is pinned to the bottom of
+   the viewport below 900px (`SkillStickyAction`). The bar is `fixed` so it
+   takes no space of its own, and the footer is rendered by the LAYOUT rather
+   than by the page — so no spacer the page can render lands after the footer.
+   Padding the body is the only place that clears both. The class is added and
+   removed by the bar's own effect, so a page without one is never padded.
+
+   Unlayered, like the rest of this block: a Tailwind utility on `<body>` would
+   otherwise beat it. */
+/* UPSTREAM WORKAROUND — `@coursebuilder/ui` FeedbackForm (a published dep at
+   ^2.4.0, not a workspace package, so it cannot be fixed at source here).
+   `feedback-fields.tsx` rounds its segmented emoji and category controls to
+   `rounded-md` (11px) on the first and last segment, inside a container rounded
+   to `--radius` (9px) with no `overflow-hidden`. The segments' corners bulge
+   past the container's own curve — the same class of defect as an unclipped
+   overlay. Let the container own the curve and clip its children. Scoped to
+   dialogs so it cannot reach the rest of the app. Delete once upstream fixes
+   it. */
+[role='dialog'] .divide-x.rounded.border {
+	overflow: hidden;
+}
+[role='dialog'] .divide-x.rounded.border > * {
+	border-radius: 0;
+}
+
+.has-sticky-action {
+	padding-bottom: calc(68px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 900px) {
+	.has-sticky-action {
+		padding-bottom: 0;
+	}
+}
+
+/** Same hatch, half the ink — for structural fills that must not compete with
+    content sitting next to them. */
 .bg-stripes-muted {
-	background-image: linear-gradient(
+	background-image: repeating-linear-gradient(
 		135deg,
-		color-mix(in oklch, var(--foreground) 5%, transparent) 14.29%,
-		color-mix(in oklch, var(--background) 5%, transparent) 14.29%,
-		color-mix(in oklch, var(--background) 5%, transparent) 50%,
-		color-mix(in oklch, var(--foreground) 5%, transparent) 50%,
-		color-mix(in oklch, var(--foreground) 5%, transparent) 64.29%,
-		color-mix(in oklch, var(--background) 5%, transparent) 64.29%,
-		color-mix(in oklch, var(--background) 5%, transparent) 100%
+		color-mix(in oklch, var(--foreground) 4%, transparent) 0 6px,
+		transparent 6px 12px
 	);
-	background-size: 5px 5px;
+}
+
+/* Hairline-grid containers (DESIGN rule 2) carry `bg-border` for the `gap-px`
+   lines AND `border-border` for the outer frame. Both are the SAME translucent
+   colour, and a border paints on top of its own element's background — so every
+   outer edge composited .08 over .08 ≈ .15 and the frame came out twice as
+   bright as the gaps inside it and as every section divider on the page.
+
+   Clipping the background to the padding box stops it painting under the
+   border. The gaps live inside that box so they are unaffected, and the frame
+   is then the border alone, at the one weight everything else uses.
+
+   Stated once here rather than as `bg-clip-padding` on ~20 call sites: it is
+   never wrong for a `bg-border` element (background-clip only does anything
+   where there IS a border), and leaving it to callers is how the mismatch got
+   in. Unlayered so it wins against the utility. */
+.bg-border {
+	background-clip: padding-box;
 }
 
 /* Painted corner wash for section headers.
@@ -693,5 +917,275 @@ li.task-list-item {
 		to {
 			--scroll-fade-bottom: 0px;
 		}
+	}
+}
+
+/* ============================================================
+   ARTICLE PROSE
+   Transcribed from `AI Hero Courses Redesign/aihero.css` (§ long-form
+   prose + bulleted feature list + inline code), which is normative.
+
+   The MDX components map (`src/utils/compile-mdx.tsx`) hangs these on
+   p / strong / em / ul / ol / code / blockquote / hr. They live here as
+   plain UNLAYERED rules on purpose. @tailwindcss/typography still owns
+   what it is good at inside the same `prose` wrapper (code blocks,
+   tables), and its `.prose :where(p)` selector scores exactly as high as
+   a utility class — so a `className` alone would win or lose depending
+   on stylesheet order, which is not a thing to leave to chance. An
+   unlayered rule beats every layer, every time.
+   ============================================================ */
+
+/* The spec's `--ah-mono`. Tailwind's `--font-mono` is a theme entry rather
+   than a variable that survives on the element, so a `::marker` can't reach
+   it. Declared on `body`, not `:root`, because that is where next/font puts
+   `--font-geist-mono`: resolved one level up it is invalid at computed-value
+   time and the whole declaration is thrown away. */
+body {
+	--ah-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo,
+		Monaco, monospace;
+}
+
+.ah-prose-p {
+	margin: 0 0 20px;
+	font-size: 17.5px;
+	line-height: 1.68;
+	color: var(--ah-fg-body);
+	text-wrap: pretty;
+}
+
+/* Links in running text. The two themes do this differently on purpose, and
+   the spec is explicit about both: in dark a link is the gold accent with no
+   underline, because gold on near-black is already unmistakable. In light the
+   accent goes ink (DESIGN rule 7 — a darkened yellow reads as brown on paper),
+   which leaves the link the same colour as the sentence around it, so an
+   underline has to carry the affordance instead. It is a hairline at .35 that
+   goes full ink on hover, not the browser's default slab. */
+.ah-prose-a {
+	color: var(--primary);
+	text-decoration: none;
+}
+
+:root .ah-prose-a {
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+	text-decoration-color: rgba(20, 22, 26, 0.35);
+}
+
+:root .ah-prose-a:hover {
+	text-decoration-color: var(--foreground);
+}
+
+.dark .ah-prose-a,
+.dark .ah-prose-a:hover {
+	text-decoration: none;
+}
+
+.dark .ah-prose-a:hover {
+	color: var(--accent-fill-hover);
+}
+
+/* Body ink sits at .72 alpha, so 700 alone does not separate a strong run
+   from the sentence around it. Full-strength ink is what does the work;
+   the weight only seconds it. */
+.ah-prose-strong {
+	font-weight: 700;
+	color: var(--foreground);
+}
+
+.ah-prose-em {
+	font-style: italic;
+}
+
+/* Lists. Native markers are replaced, but the items stay in normal flow
+   (absolute marker, not a flex row) so a nested list inside an item still
+   stacks under its parent instead of sitting beside it. */
+.ah-bullets,
+.ah-numbers {
+	margin: 0 0 20px;
+	padding: 0;
+}
+
+.ah-bullets > li,
+.ah-numbers > li {
+	position: relative;
+	margin: 0;
+	font-size: 17.5px;
+	line-height: 1.68;
+	color: var(--ah-fg-body);
+	text-wrap: pretty;
+}
+
+.ah-bullets > li + li,
+.ah-numbers > li + li {
+	margin-top: 11px;
+}
+
+/* A loose markdown list wraps each item in a `p`, which would otherwise add
+   a 20px gap on top of the list's own row gap. */
+.ah-bullets > li > .ah-prose-p:last-child,
+.ah-numbers > li > .ah-prose-p:last-child {
+	margin-bottom: 0;
+}
+
+.ah-bullets,
+.ah-bullets > li {
+	list-style: none;
+}
+
+.ah-bullets > li {
+	padding-left: 17px; /* 5px dot + the spec's 12px gap */
+}
+
+.ah-bullets > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	/* Centred on the first line, derived rather than eyeballed: the line box is
+	   `1.68em` tall, so half the leftover after the 5px dot centres it. A fixed
+	   px offset was 2px high here and silently drifts the moment the list's
+	   size or leading changes — which it just did. */
+	top: calc((1.68em - 5px) / 2);
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	/* `--primary` is the accent that already knows about themes: gold on
+	   dark, ink on light, which is exactly the swap the spec makes by hand
+	   for `.ah-bullet::before`. */
+	background: var(--primary);
+	opacity: 0.7;
+}
+
+/* Checkbox lists bring their own marker. */
+.ah-bullets.contains-task-list > li {
+	padding-left: 0;
+}
+
+.ah-bullets.contains-task-list > li::before {
+	content: none;
+}
+
+/* The ordered numeral lands in the same slot as the dot. A `::marker` rather
+   than a counter and a pseudo-element: the browser already baseline-aligns a
+   marker against the first line, and nested lists keep numbering themselves. */
+.ah-numbers,
+.ah-numbers > li {
+	list-style: decimal;
+}
+
+.ah-numbers > li {
+	margin-left: 22px;
+	padding-left: 5px;
+}
+
+.ah-numbers > li::marker {
+	font-family: var(--ah-mono);
+	font-size: 0.78em;
+	color: var(--ah-fg-faint);
+}
+
+.ah-code-inline {
+	font-family: var(--ah-mono);
+	font-size: 0.9em;
+	color: var(--foreground);
+	background: var(--ah-hover);
+	border: 1px solid var(--ah-line);
+	border-radius: 4px;
+	padding: 1px 5px;
+}
+
+/* Tailwind Typography wraps inline code in backticks by default. */
+.ah-code-inline::before,
+.ah-code-inline::after {
+	content: none;
+}
+
+/* A code block that reached the plain-markdown fallback path renders as
+   `pre > code`; the chip treatment must not follow it in there. */
+pre .ah-code-inline {
+	font-size: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+}
+
+/* Pull quote. A raw blockquote carries no author metadata, so the frame and
+   the type are the whole design; anything after the first paragraph is
+   read as the attribution, which is the shape markdown authors already
+   write. `<Quote author= role= />` is the version with real fields.
+
+   The spec's `.ah-quote` is purely typographic — 20px, 700, italic — because
+   in the mock it always sits inside a testimonial card that supplies the
+   boundary. In prose there is no card, so the quote needs a frame of its own.
+   That frame is a pair of hairlines, which is the device the rest of this
+   design already uses to separate things (rules 1 and 2), rather than a
+   coloured bar down one side: a 3px accent tab is a card-component mannerism,
+   and it reads as one wherever it lands. Colourless also means it can't
+   collide with the accent's different jobs across the two themes. */
+.ah-prose-quote {
+	margin: 32px 0;
+	padding: 24px 0;
+	border-top: 1px solid var(--border);
+	border-bottom: 1px solid var(--border);
+	font-size: 20px;
+	line-height: 1.4;
+	letter-spacing: -0.018em;
+	font-style: italic;
+	font-weight: 700;
+	color: var(--foreground);
+	text-wrap: pretty;
+}
+
+.ah-prose-quote > .ah-prose-p {
+	font: inherit;
+	letter-spacing: inherit;
+	color: inherit;
+}
+
+.ah-prose-quote > .ah-prose-p ~ .ah-prose-p {
+	margin-top: 12px;
+	font-family: var(--ah-mono);
+	font-size: 12.5px;
+	line-height: 1.5;
+	font-style: normal;
+	font-weight: 400;
+	letter-spacing: 0;
+	color: var(--ah-fg-subtle);
+}
+
+.ah-prose-quote > .ah-prose-p:last-child {
+	margin-bottom: 0;
+}
+
+/* The `<Testimonial>` component's paragraphs.
+ *
+ * Its own classes live in `page-builder-mdx-components.tsx`, but its children
+ * are compiled by the same MDX map as the rest of the body, so every paragraph
+ * inside it arrives carrying `.ah-prose-p`. That class is UNLAYERED and every
+ * Tailwind utility is layered, so it won every conflict regardless of what the
+ * component asked for: the quote rendered at 17.5px body size instead of the
+ * `quoteProse` token, at 72% instead of full contrast, and with a 20px margin
+ * under the last line that the flex `gap` then stacked on top of. Same shape
+ * of fix as `.ah-prose-quote` above, for the same reason. */
+.ah-testimonial > .ah-prose-p {
+	font: inherit;
+	letter-spacing: inherit;
+	color: inherit;
+	margin: 0;
+	text-wrap: pretty;
+}
+
+.ah-prose-hr {
+	margin: 44px 0;
+	border: 0;
+	border-top: 1px solid var(--ah-line);
+}
+
+@media (min-width: 640px) {
+	.ah-prose-p,
+	.ah-bullets > li,
+	.ah-numbers > li {
+		font-size: 17.5px;
 	}
 }

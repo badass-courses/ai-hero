@@ -4,6 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createAppAbility } from '@/ability'
+import { TYPE } from '@/components/landing/type'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { ChevronRightIcon } from 'lucide-react'
@@ -15,6 +16,11 @@ import { cn } from '@coursebuilder/utils/cn'
 import { ThemeToggle } from './theme-toggle'
 import { useNavLinks } from './use-nav-links'
 
+/**
+ * Machine-readable entry points. Every one of these resolves through
+ * `markdown-route-config.mjs` (`/skills.md` rewrites to `/md/skills`), so all
+ * four are live routes rather than aspirational ones.
+ */
 const agentLinks = [
 	{ href: '/sitemap.md', label: 'sitemap.md' },
 	{ href: '/llms.txt', label: 'llms.txt' },
@@ -44,12 +50,50 @@ function trackFooterClick(resource: string | undefined, type: FooterLinkType) {
 	})
 }
 
-const linkClass =
-	'dark:text-muted-foreground text-foreground/80 hover:text-foreground dark:hover:text-white inline-block py-1 text-sm transition'
-const headingClass =
-	'text-foreground text-xs font-medium uppercase tracking-wider'
+const focusRing =
+	'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background'
+
+/**
+ * Column links: 14px, muted ink. The row rhythm is `py-[5px]` on the link
+ * rather than a gap on the list, so neighbouring hit areas touch — see
+ * `linkListClass`.
+ */
+const linkClass = cn(
+	TYPE.meta,
+	focusRing,
+	'inline-block py-[5px] text-[color:var(--ah-fg-muted)] hover:text-foreground transition-colors',
+)
+
+/** The Agents column is data, so it is mono (rule 10). */
+const monoLinkClass = cn(
+	TYPE.metaMono,
+	focusRing,
+	'inline-block py-[5px] text-[color:var(--ah-fg-muted)] hover:text-foreground transition-colors',
+)
+
+const listClass = 'flex flex-col items-start gap-2.5'
+
+/**
+ * Link lists carry no gap. `dimSiblingsOnHover` keys off `:has(a:hover)`, so a
+ * dead gap between rows unhovers everything mid-travel and the whole column
+ * flashes back to full opacity between one link and the next. The 10px rhythm
+ * comes from `py-[5px]` on the links instead, which makes the hit areas tile:
+ * the pointer is always over some link, and the spotlight never drops. The
+ * negative margin gives back the 5px added above the first row and below the
+ * last so the column's outer spacing is unchanged.
+ */
+const linkListClass = '-my-[5px] flex flex-col items-start'
+
 const dimSiblingsOnHover =
 	'[&:has(a:hover,button:hover)_a:not(:hover)]:opacity-60 [&:has(a:hover,button:hover)_button:not(:hover)]:opacity-60'
+
+function Eyebrow({ children }: { children: React.ReactNode }) {
+	return (
+		<h3 className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
+			{children}
+		</h3>
+	)
+}
 
 function LearnColumn() {
 	const navData = useNavLinks()
@@ -64,9 +108,9 @@ function LearnColumn() {
 	}
 
 	return (
-		<>
-			<h3 className={headingClass}>Learn</h3>
-			<ul className={cn('flex flex-col', dimSiblingsOnHover)}>
+		<div>
+			<Eyebrow>Learn</Eyebrow>
+			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				{courses.map((course) => (
 					<li key={course.href}>
 						<Link
@@ -90,23 +134,35 @@ function LearnColumn() {
 					</li>
 				))}
 			</ul>
-		</>
+		</div>
 	)
 }
 
-function LiveColumn() {
+/**
+ * Every cohort that has run, current one first.
+ *
+ * Was "Live", listing only the current cohort and any scheduled event. That
+ * gave someone who bought an earlier cohort no route back to it from any page
+ * — the footer is the one piece of navigation on every screen, and it was
+ * showing them a single cohort that is probably not theirs. `pastCohorts` was
+ * already in `useNavLinks`; nothing rendered it.
+ *
+ * Listing all of them also makes the current/past split in that data harmless
+ * here. It is hand-maintained, so a finished cohort sits in `cohorts` until
+ * someone moves it (June's is there now); a footer column of titles does not
+ * claim either way, so the drift stops mattering.
+ */
+function CohortsColumn() {
 	const navData = useNavLinks()
-	const cohorts = navData.live.cohorts
-	const events = navData.live.events
-	const isEmpty = cohorts.length === 0 && events.length === 0
+	const cohorts = [...navData.live.cohorts, ...navData.live.pastCohorts]
 
 	return (
-		<>
-			<h3 className={headingClass}>Live</h3>
-			{isEmpty ? (
-				<div className="flex flex-col gap-2">
-					<p className="dark:text-muted-foreground text-foreground/80 text-sm">
-						No live events scheduled atm.
+		<div>
+			<Eyebrow>Cohorts</Eyebrow>
+			{cohorts.length === 0 ? (
+				<div className={listClass}>
+					<p className={cn(TYPE.metaProse, 'text-[color:var(--ah-fg-muted)]')}>
+						No cohorts scheduled atm.
 					</p>
 					<Link
 						href="/newsletter"
@@ -120,7 +176,7 @@ function LiveColumn() {
 					</Link>
 				</div>
 			) : (
-				<ul className={cn('flex flex-col', dimSiblingsOnHover)}>
+				<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 					{cohorts.map((cohort) => (
 						<li key={cohort.href}>
 							<Link
@@ -132,20 +188,9 @@ function LiveColumn() {
 							</Link>
 						</li>
 					))}
-					{events.map((event) => (
-						<li key={event.href}>
-							<Link
-								href={event.href}
-								className={linkClass}
-								onClick={() => trackFooterClick(event.title, 'event')}
-							>
-								{event.title}
-							</Link>
-						</li>
-					))}
 				</ul>
 			)}
-		</>
+		</div>
 	)
 }
 
@@ -161,25 +206,21 @@ function AccountColumn() {
 		setMounted(true)
 	}, [])
 
-	const heading = <h3 className={headingClass}>Account</h3>
-
 	if (!mounted || sessionStatus === 'loading') {
 		return (
-			<>
-				{heading}
-				<div className="flex flex-col gap-2 py-1">
-					<div className="bg-foreground/10 h-3 w-20 rounded" />
-				</div>
-			</>
+			<div>
+				<Eyebrow>Account</Eyebrow>
+				<div className="bg-foreground/10 h-3 w-24 rounded-sm" />
+			</div>
 		)
 	}
 
 	const isAuthed = Boolean(sessionData?.user?.email)
 
 	return (
-		<>
-			{heading}
-			<ul className={cn('flex flex-col gap-1', dimSiblingsOnHover)}>
+		<div>
+			<Eyebrow>Account</Eyebrow>
+			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				{!isAuthed && (
 					<li>
 						<Link
@@ -228,20 +269,20 @@ function AccountColumn() {
 					</>
 				)}
 			</ul>
-		</>
+		</div>
 	)
 }
 
-function WranglerColumn() {
+function AgentsColumn() {
 	return (
-		<>
-			<h3 className={headingClass}>Agents</h3>
-			<ul className={cn('flex flex-col gap-1', dimSiblingsOnHover)}>
+		<div>
+			<Eyebrow>Agents</Eyebrow>
+			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
 				{agentLinks.map((link) => (
 					<li key={link.href}>
 						<Link
 							href={link.href}
-							className={linkClass}
+							className={monoLinkClass}
 							target="_blank"
 							rel="noopener"
 							onClick={() => trackFooterClick(link.href, 'wrangler')}
@@ -251,7 +292,7 @@ function WranglerColumn() {
 					</li>
 				))}
 			</ul>
-		</>
+		</div>
 	)
 }
 
@@ -264,60 +305,71 @@ type UtilityLink = {
 function UtilityRow() {
 	const navData = useNavLinks()
 
+	// Skills and the free course lead, ahead of the Dictionary: they are the
+	// two things this row is actually for, and the free course is the site's
+	// primary ask — the nav's gold CTA points at the same page. "Skills
+	// Newsletter" undersold it as a mailing list rather than the course you
+	// get for signing up, which is how every other surface names it. The
+	// analytics `type` stays `skills_newsletter` so the label change does not
+	// break the series.
 	const utilityLinks: UtilityLink[] = [
 		{ href: navData.browseAll.href, label: 'Browse All', type: 'browse_all' },
-		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/skills', label: 'Skills', type: 'skills' },
 		{
 			href: '/skills/subscribe',
-			label: 'Skills Newsletter',
+			label: 'Free course',
 			type: 'skills_newsletter',
 		},
+		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
 		{ href: '/privacy', label: 'Terms', type: 'legal' },
 	]
 
 	return (
-		<div className="text-foreground/80 mx-auto flex w-full max-w-7xl flex-col items-center justify-between gap-5 text-xs sm:flex-row sm:text-sm">
+		<div className="flex flex-col items-start gap-5 px-[18px] pb-8 pt-5 sm:flex-row sm:items-center lg:px-11 lg:pb-[34px] lg:pt-[22px]">
 			<nav
 				aria-label="Footer"
 				className={cn(
-					'flex flex-wrap items-center gap-x-3 gap-y-1.5',
+					// Same reasoning as `linkListClass`: the 20px/8px rhythm lives in
+					// the links' padding so the row's hit areas touch and the
+					// spotlight survives the trip between them.
+					'-mx-2.5 -my-1 flex flex-wrap items-center',
 					dimSiblingsOnHover,
 				)}
 			>
-				{utilityLinks.map((link, index) => (
-					<React.Fragment key={link.href}>
-						{index > 0 ? (
-							<span
-								aria-hidden
-								className="text-muted-foreground/40 select-none"
-							>
-								·
-							</span>
-						) : null}
-						<Link
-							href={link.href}
-							className="hover:text-foreground transition"
-							onClick={() => trackFooterClick(link.href, link.type)}
-						>
-							{link.label}
-						</Link>
-					</React.Fragment>
+				{utilityLinks.map((link) => (
+					<Link
+						key={link.href}
+						href={link.href}
+						className={cn(
+							TYPE.metaSm,
+							focusRing,
+							// The 20px/8px rhythm this row used to get from `gap-x-5
+							// gap-y-2`, moved into the links so their hit areas tile and
+							// the hover spotlight survives the trip between them. The
+							// container cancels the outer edge with `-mx-2.5 -my-1`.
+							'inline-block px-2.5 py-1 text-[color:var(--ah-fg-subtle)] hover:text-foreground transition-colors',
+						)}
+						onClick={() => trackFooterClick(link.href, link.type)}
+					>
+						{link.label}
+					</Link>
 				))}
 			</nav>
-			<ThemeToggle className="hover:bg-card mt-5 sm:mt-0" />
-			{/* <div className="flex items-center justify-between gap-4 border-t">
-				<span className="text-foreground/80 dark:text-muted-foreground">
-					© AIHero.dev
-				</span>
-			</div> */}
+			{/* The prototype's bordered "System Theme" pill — the app's existing
+			    ThemeToggle, restyled rather than duplicated. */}
+			<ThemeToggle
+				className={cn(
+					TYPE.metaSm,
+					'sm:ml-auto',
+					'h-auto gap-2 rounded-[9px] border-input px-[13px] py-2',
+					'text-[color:var(--ah-fg-subtle)] hover:text-foreground bg-transparent shadow-none dark:bg-transparent',
+					'hover:bg-muted dark:hover:bg-muted sm:aspect-auto',
+				)}
+			/>
 		</div>
 	)
 }
-
-const columnClass =
-	'flex flex-col gap-6 lg:row-span-2 lg:grid lg:grid-rows-subgrid lg:gap-5'
 
 export default function Footer() {
 	const pathname = usePathname()
@@ -329,27 +381,13 @@ export default function Footer() {
 
 	return (
 		<footer className="border-border w-full border-t print:hidden">
-			<div className="mx-auto w-full max-w-7xl px-10 pb-12 pt-16 lg:px-0 lg:pb-0 lg:pt-0">
-				{/* First column is pinned to 320px so its divider lines up with the
-				    hub sidebar's right border (STICKY_SIDEBAR_CLASSES, w-[320px]). */}
-				<div className="divide-border grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-[320px_3fr_2fr_2fr] lg:grid-rows-[auto_1fr] lg:gap-x-0 lg:gap-y-6 lg:divide-x">
-					<div className={cn(columnClass, 'lg:pb-12 lg:pl-8 lg:pr-8 lg:pt-10')}>
-						<LearnColumn />
-					</div>
-					<div className={cn(columnClass, 'lg:px-8 lg:pb-12 lg:pt-10')}>
-						<LiveColumn />
-					</div>
-					<div className={cn(columnClass, 'lg:px-8 lg:pb-12 lg:pt-10')}>
-						<AccountColumn />
-					</div>
-					<div className={cn(columnClass, 'lg:pb-12 lg:pl-8 lg:pt-10')}>
-						<WranglerColumn />
-					</div>
-				</div>
+			<div className="grid grid-cols-1 gap-9 border-b border-border px-[18px] pb-8 pt-10 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))] lg:px-11 lg:pb-[26px] lg:pt-[52px]">
+				<LearnColumn />
+				<CohortsColumn />
+				<AccountColumn />
+				<AgentsColumn />
 			</div>
-			<div className="border-border w-full border-t px-5 py-4 lg:px-8">
-				<UtilityRow />
-			</div>
+			<UtilityRow />
 		</footer>
 	)
 }

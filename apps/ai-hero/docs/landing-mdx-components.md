@@ -26,6 +26,15 @@ Top-of-page header. Stacks left-side text against a right-side video or image.
 | `h1`              | `string` | Supports `**bold**` and inline HTML (`<br />`).                                          |
 | `h2`              | `string` | Subtitle. Same markdown support.                                                         |
 | `videoResourceId` | `string` | Post slug, post id, or videoResource id. Falls back to `/landing/hero@2x.png` if absent. |
+| `variant`         | `'home' \| 'page'` | `home` (default) is the full masthead: eyebrow, two actions, and the stat trio. `page` is words only, for pages that make their own offer immediately below — `/courses` passes it. |
+| `eyebrow`         | `string` | The mono label above the `h1`. Defaults to "Real AI Engineering · by Matt Pocock". `home` only. |
+| `ctaLabel` / `ctaHref` | `string` | The gold action. Defaults to the free 7-day course at `/skills/subscribe`. |
+| `secondaryCtaLabel` / `secondaryCtaHref` | `string` | The outline action. Defaults to "Browse the skills" → `/skills`. |
+
+The stat trio is not authored: two of the three numbers are live (list size via
+Kit, published skill count via the CMS), and hardcoding them in the body would
+put a stale figure on the page the week it was typed. The cohort total is
+Matt's and has no query behind it.
 
 ```mdx
 <Hero

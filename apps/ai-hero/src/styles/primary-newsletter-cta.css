@@ -1,25 +1,11 @@
 /* @reference './globals.css'; */
 
-#primary-newsletter-cta [data-sr-convertkit-subscribe-form] {
-	@apply mx-auto flex w-full max-w-[420px] flex-col;
-
-	[data-sr-fieldset] {
-		@apply mb-2;
-	}
-	input {
-		@apply placeholder:text-muted-foreground text-foreground relative flex p-5 text-base placeholder:opacity-75;
-		@apply before:absolute before:left-0 before:top-0 before:h-px before:w-full before:bg-gradient-to-r before:from-transparent before:via-white before:to-transparent;
-	}
-	[data-sr-input-label] {
-		@apply text-foreground mt-3 inline-block pb-2 text-base font-normal;
-	}
-	[data-sr-input-asterisk] {
-		@apply opacity-50;
-	}
-	[data-sr-button] {
-		@apply bg-primary relative mt-4 py-8 text-base font-medium;
-	}
-}
+/* The `#primary-newsletter-cta` block that used to live here (420px column,
+   20px input padding, a `bg-primary` button at `py-8`) was written for the
+   pre-refresh centred pill CTA. `PrimaryNewsletterCta` now carries its own
+   panel styling — 44px controls at 9px radius, `bg-accent-fill` submit — so
+   the stylesheet fought the component. Removed rather than rewritten: an id
+   selector that outranks the component's own classes is how it drifted. */
 
 #video-overlay > [data-sr-convertkit-subscribe-form] {
 	@apply mx-auto flex w-full flex-col;

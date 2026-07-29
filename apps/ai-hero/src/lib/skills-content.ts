@@ -16,9 +16,26 @@ export const SKILLS_HERO = {
 	title: `${SKILLS_TITLE_LEAD} ${SKILLS_TITLE_EMPHASIS}`,
 	tagline:
 		'A practical skill system for engineers who want to use AI without giving up their standards.',
+	/** Second half of the hero lead (`Skills Page.dc.html` § HEAD). */
+	taglineTail: 'Install once, then type a slash command.',
+	/** The third stat's label: the agents the set runs in. */
+	agentsLabel: 'Claude Code, Cursor, Codex…',
 	installCommand: 'npx skills add mattpocock/skills -y -g',
 	repoOwner: 'mattpocock',
 	repoName: 'skills',
+} as const
+
+/**
+ * The free email course, as the HEAD's side panel (`Skills Page.dc.html`
+ * § HEAD). Shorter and more specific than `SkillsCourseCta`'s copy, which is
+ * written for a full-width strip under a post.
+ */
+export const SKILLS_COURSE_PANEL = {
+	eyebrow: 'Free 7-day email course',
+	heading: 'Learn the skills in order',
+	body: 'One lesson a day, on real work, ending with a repeatable agent workflow.',
+	ctaLabel: 'Start the course',
+	href: '/skills/subscribe',
 } as const
 
 export const SKILLS_REPO_URL = `https://github.com/${SKILLS_HERO.repoOwner}/${SKILLS_HERO.repoName}`
@@ -59,26 +76,26 @@ export const SKILLS_GUIDE_ITEMS = [
  * dashes (DESIGN.md ban).
  */
 export const SKILLS_SALES_COPY = {
-	eyebrow: 'What are skills?',
+	eyebrow: 'What is a skill?',
 	lead: 'Skills are small, sharp instructions you hand your coding agent so it works the way a senior engineer would. Install them once, type a slash command, and the agent follows a process you actually trust.',
 	blocks: [
 		{
 			heading: 'The problem',
-			body: 'AI agents are eager and fast, and they will happily write a thousand lines of confident, wrong code. Left alone they skip the boring parts: understanding the problem, questioning your assumptions, writing the test first. That is exactly where the bugs live.',
+			body: 'An agent is only as good as the process you give it. Left to guess, it writes plausible code that quietly rots the codebase.',
 		},
 		{
 			heading: 'The fix',
-			body: 'A skill encodes one good habit. /grill-me interrogates your plan before a line is written. /tdd forces a failing test first. Each one is a guardrail you drop into any project, so the agent moves fast without cutting the corners you care about.',
+			body: 'A skill encodes one good habit (grilling a plan, writing a spec, reviewing a diff), so the agent runs it the same way every time.',
 		},
 		{
-			heading: 'How they fit together',
-			body: 'The skills form a cycle: from a rough idea, to a domain model, to a PRD, to issues, to tested code, and back around for the next feature. Run one on its own or the whole loop. You stay the engineer; the agent does the typing.',
+			heading: 'Why it compounds',
+			body: "Skills form a chain. Each one's output is the next one's input, so the whole workflow gets better as you tune single steps.",
 		},
 	],
 	compatibility: {
 		heading: 'Works in whatever agent you already use',
-		body: 'Skills are plain files, not a lock-in platform. Install them once and they run across every major coding agent.',
-		agents: ['Claude Code', 'Cursor', 'Windsurf', 'Amp', 'Codex', 'and more'],
+		body: 'Skills are plain files, not a lock-in platform.',
+		agents: ['Claude Code', 'Cursor', 'Codex', 'Amp', 'Copilot'],
 	},
 } as const
 

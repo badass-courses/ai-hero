@@ -26,13 +26,40 @@ import { cn } from '@coursebuilder/utils/cn'
  *
  * Renders nothing when the list is missing or empty, so the homepage degrades
  * to the sections around it.
+ *
+ * ## Card order is CMS data, not a constant here
+ *
+ * The prototype leads with "01 The Main Flow"; this renders "01 Getting
+ * Started" because that is the order the CMS stores. The numeral and the
+ * accent are positional — index 0 of `groups` — and `groups` is the list's own
+ * order, so nothing in this file can or should reorder them.
+ *
+ * Verified 2026-07-28 against the database (read-only): the order is
+ * `AI_ContentResourceResource.position` for `resourceOfId = 'list_ppwir'`
+ * (`SKILLS_LIST_ID`), which today reads 0 Getting Started, 1 The Main Flow,
+ * 2 Shaping, 3 Upkeep, 4 Non-Coding Skills, 5 Reference Skills. Phase tags
+ * (`skills-query.ts`, `popularity_order` / `phase-N`) are NOT involved — they
+ * were superseded as the grouping mechanism on 2026-07-14 and are additive
+ * badge metadata only.
+ *
+ * To match the prototype, two CMS edits are needed, both on the skills list:
+ *
+ * 1. Swap positions 0 and 1 so The Main Flow leads. This also reorders
+ *    `/skills`, which reads the same list — that is the point, the two
+ *    surfaces are meant to agree.
+ * 2. Give The Main Flow the prototype's description: "The idea → ship arc, in
+ *    order. If you only take one thing, take this." The second sentence is
+ *    what makes the lead card a recommendation rather than just the first
+ *    item; it is stored on the `section` resource's `fields.description`.
  */
 export async function SkillsShowcase({
+	eyebrow = 'The system · free and open source',
 	heading,
 	intro,
 	ctaHref = '/skills',
-	ctaLabel = 'See all skills',
+	ctaLabel,
 }: {
+	eyebrow?: string
 	heading?: string
 	intro?: string
 	ctaHref?: string
@@ -41,16 +68,27 @@ export async function SkillsShowcase({
 	const groups = await loadShowcaseGroups()
 	if (groups.length === 0) return null
 
+	// Counted, never typed. The prototype's "See all 31 skills" is the shape;
+	// the number has to come from the same list the grid below was built from,
+	// or the page advertises a figure it then fails to show.
+	const skillCount = groups.reduce((n, group) => n + group.skills.length, 0)
+	const resolvedCtaLabel = ctaLabel ?? `See all ${skillCount} skills`
+
 	return (
-		<section aria-label="The skills workflow" className="border-b">
+		<section
+			aria-label="The skills workflow"
+			className="border-b bg-[color:var(--ah-band)]"
+		>
 			{heading || intro ? (
 				<SectionHeader
+					eyebrow={eyebrow}
 					heading={heading}
+					rank="lead"
 					// Sits on the heading's baseline rather than trailing the rows:
 					// the reader learns where the section goes before deciding to
 					// read it, and the page keeps one primary (gold) action.
 					linkHref={ctaHref}
-					linkLabel={ctaLabel}
+					linkLabel={resolvedCtaLabel}
 				>
 					{intro}
 				</SectionHeader>
@@ -62,15 +100,40 @@ export async function SkillsShowcase({
 			    and pinning the CTA with `mt-auto` lands every button on the same
 			    baseline across a row. Six groups fill three columns exactly; the
 			    filler cells keep the trailing line clean if that ever changes
-			    (DESIGN rule 2). */}
-			<ul className="border-border bg-border grid grid-cols-1 gap-px border-t sm:grid-cols-2 lg:grid-cols-3">
-				{groups.map((group) => (
+			    (DESIGN rule 2).
+
+			    Inset in the gutter and given a radius, rather than bled to the
+			    container's edge: this is a panel of six things sitting ON the
+			    band, which is what the band is for. Full-bleed it read as six
+			    more page sections stacked sideways. */}
+			<div className="px-[18px] pb-14 sm:px-11 sm:pb-20 md:pt-[12px]">
+			<ul className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-3">
+				{groups.map((group, index) => (
 					<li
 						key={group.id}
-						className="bg-background flex flex-col gap-5 px-8 py-8 sm:px-10"
+						className="bg-background flex flex-col px-6 pb-[22px] pt-[26px]"
 					>
-						<div className="flex flex-col gap-1.5">
-							<h3 className={cn(TYPE.subhead, 'text-balance')}>
+						<div className="mb-[18px] flex flex-col gap-2">
+							{/* The numeral says these groups are a sequence rather than a
+							    menu, and that the first one is where the sequence starts —
+							    the only cell in the grid that earns the accent. */}
+							<h3
+								className={cn(
+									TYPE.subhead,
+									'flex items-baseline gap-2.5 text-balance',
+								)}
+							>
+								<span
+									aria-hidden
+									className={cn(
+										TYPE.command,
+										index === 0
+											? 'text-primary'
+											: 'text-[color:var(--ah-fg-faint)]',
+									)}
+								>
+									{String(index + 1).padStart(2, '0')}
+								</span>
 								{group.title}
 							</h3>
 							{group.description ? (
@@ -80,17 +143,18 @@ export async function SkillsShowcase({
 							) : null}
 						</div>
 
-						{/* Pills, not bare mono text: these are the only links in the
+						{/* Chips, not bare mono text: these are the only links in the
 						    block and the entire point of it. */}
-						<ul className="flex flex-wrap gap-2">
+						<ul className="mb-5 flex flex-wrap gap-1.5">
 							{group.skills.map((skill) => (
 								<li key={skill.slug}>
 									<Link
 										href={`/${skill.slug}`}
-										// A link's affordance rather than a chip's: full contrast
-										// text, a visible edge, and an unambiguous invert on
-										// hover/focus (the site's badge treatment).
-										className={cn(TYPE.command, 'border-foreground/20 bg-muted text-foreground hover:border-foreground hover:bg-foreground hover:text-background focus-visible:ring-ring inline-flex items-center rounded-full border px-3.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
+										// `.cmd` in the prototype: 12px mono on a 5.5%-ink wash,
+										// a 9%-ink edge, 6px radius, 6×9 padding. Quiet at rest
+										// because a card can carry six of them; the invert on
+										// hover/focus is what makes them read as links.
+										className={cn(TYPE.command, 'border-border bg-foreground/[0.055] text-[color:var(--ah-fg-body)] hover:border-foreground hover:bg-foreground hover:text-background focus-visible:ring-ring inline-flex items-center whitespace-nowrap rounded-sm border px-[9px] py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
 									>
 										{skill.command}
 									</Link>
@@ -108,20 +172,29 @@ export async function SkillsShowcase({
 						    (`/improve-codebase-architecture`) wrapping to two lines while
 						    its neighbours sit on one.
 
-						    Neutral, not brand-coloured. Six of these land in one grid,
-						    and colouring all six made the block shout louder than the
-						    section header above it — which is the one link here that
-						    actually is a destination rather than a starting point. */}
+						    Neutral in five of six cells. Colouring all six made the block
+						    shout louder than the section header above it; colouring none
+						    left six equal doors and no recommendation. The first group is
+						    the main flow, so it alone carries the accent. */}
 						{group.skills[0] ? (
 							<Link
 								href={`/${group.skills[0].slug}`}
-								className={cn(TYPE.meta, 'border-border text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-3 rounded-full border px-4 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2')}
+								className={cn(
+									TYPE.command,
+									'focus-visible:ring-ring group mt-auto flex w-full items-center justify-between gap-2.5 rounded-[8px] border px-[13px] py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+									index === 0
+										? // The one entry point the section actually recommends.
+											'border-primary/35 bg-primary/[0.07] text-primary hover:bg-primary/15'
+										: 'border-border text-[color:var(--ah-fg-body)] hover:bg-muted hover:text-foreground',
+								)}
 							>
+								{/* Mono all the way through, label included. The prototype
+								    sets the whole row in `.cmd`'s family, and mixing sans
+								    "Start with" against a mono command made the command look
+								    like an inline code span dropped into a sentence rather
+								    than the button's subject. */}
 								<span className="truncate">
-									Start with{' '}
-									<span className={TYPE.command}>
-										{group.skills[0].command}
-									</span>
+									Start with {group.skills[0].command}
 								</span>
 								<ArrowRight
 									aria-hidden
@@ -139,7 +212,7 @@ export async function SkillsShowcase({
 					/>
 				))}
 			</ul>
-
+			</div>
 		</section>
 	)
 }

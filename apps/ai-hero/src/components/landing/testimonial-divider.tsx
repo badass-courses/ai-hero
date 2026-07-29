@@ -65,7 +65,7 @@ export function TestimonialDivider({
 			<figure
 				className={cn(
 					'mx-auto flex flex-col items-center gap-4 text-center',
-					compact ? 'max-w-md px-8 py-10' : 'max-w-3xl px-8 py-10 sm:px-16',
+					compact ? 'max-w-md px-[18px] py-10' : 'max-w-3xl px-[18px] py-10 sm:px-11',
 				)}
 			>
 				<span
@@ -83,7 +83,8 @@ export function TestimonialDivider({
 				<blockquote
 					className={cn(
 						compact ? TYPE.bodyTight : TYPE.subhead,
-						'text-balance italic',
+						// Serif roman rather than sans italic, matching `TYPE.quote`.
+						'text-balance font-serif font-normal',
 					)}
 				>
 					{children}

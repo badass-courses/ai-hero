@@ -10,6 +10,7 @@ import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
+import { PROSE_MEASURE } from '@/components/mdx/prose'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { Share } from '@/components/share'
@@ -58,7 +59,7 @@ export default async function SkillChangelogEntryPage({ params }: Props) {
 ${entry.fields?.body ?? ''}`
 
 	return (
-		<LayoutClient withContainer>
+		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<main className="bg-card w-full dark:bg-transparent">
 					<ArticleStructuredData
@@ -181,7 +182,12 @@ async function SkillChangelogBody({
 
 	return (
 		<div className="px-5 md:px-10 lg:px-14">
-			<article className="prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl mt-10 max-w-none">
+			<article
+				className={cn(
+					'prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mt-10',
+					PROSE_MEASURE,
+				)}
+			>
 				<MdxErrorBoundary>{content}</MdxErrorBoundary>
 				{ctaKind ? <OrganicOpportunityCta kind={ctaKind} /> : null}
 			</article>

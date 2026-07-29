@@ -3,6 +3,8 @@ import { contentResource } from '@/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 
 export type UpcomingCohortSummary = {
+	/** Resource id — lets callers ask whether this viewer already owns it. */
+	id: string
 	title: string
 	slug: string
 	/** ISO datetime when the cohort starts, when set on the resource. */
@@ -65,12 +67,84 @@ export async function getUpcomingCohort(): Promise<UpcomingCohortSummary | null>
 	if (!winner) return null
 
 	return {
+		id: winner.id,
 		title: readString(winner.fields, 'title') ?? 'Upcoming cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
 	}
+}
+
+/**
+ * Published+public cohorts that have FINISHED, newest first.
+ *
+ * For the /courses catalog: someone who bought a cohort has no route back to
+ * it from this site once its enrollment window shuts — the hero shows only
+ * the current or next one, and /cohorts is effectively unused.
+ *
+ * "Past" is `endsAt`, the cohort's own end date, which every cohort carries.
+ * The test matters because the caller badges these rows "Cohort ended": with
+ * only `id !== excludeId` the set was "every cohort the hero isn't showing",
+ * so the moment a second cohort is scheduled — one purchasable in the hero,
+ * one announced behind it — the announced one would be advertised as over.
+ * That reads as correct today only because every cohort in the data has in
+ * fact ended.
+ *
+ * `startsAt` is the fallback for a cohort authored without an end date, on
+ * the grounds that a cohort which has begun is at least not upcoming. One
+ * with neither date is unscheduled, not past, and is left out entirely.
+ *
+ * `excludeId` still earns its place: `getLatestCohort` hands the hero the
+ * newest cohort regardless of its window, so between cohorts the hero is
+ * itself showing a finished one, and it would otherwise appear twice.
+ *
+ * Deliberately NOT filtered by ownership. The rows are navigation for people
+ * who bought, but gating them on a purchase would make this page personal and
+ * cost it its cache, and a closed cohort is public information anyway — it is
+ * how a reader sees the thing has run before.
+ */
+export async function getPastCohorts(
+	excludeId?: string,
+): Promise<UpcomingCohortSummary[]> {
+	const now = new Date().toISOString()
+
+	const cohorts = await db.query.contentResource.findMany({
+		where: and(
+			eq(contentResource.type, 'cohort'),
+			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`, 'published'),
+			eq(
+				sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+				'public',
+			),
+		),
+	})
+
+	return cohorts
+		.filter((cohort) => {
+			if (cohort.id === excludeId) return false
+			const ended =
+				readString(cohort.fields, 'endsAt') ??
+				readString(cohort.fields, 'startsAt')
+			// Lexicographic on ISO-8601 UTC, the same comparison
+			// `getUpcomingCohort` makes on the enrollment window above.
+			return ended !== undefined && ended < now
+		})
+		.sort((a, b) => {
+			const aStart =
+				readString(a.fields, 'startsAt') ?? a.createdAt?.toISOString() ?? ''
+			const bStart =
+				readString(b.fields, 'startsAt') ?? b.createdAt?.toISOString() ?? ''
+			return bStart.localeCompare(aStart)
+		})
+		.map((cohort) => ({
+			id: cohort.id,
+			title: (readString(cohort.fields, 'title') ?? 'Cohort').trim(),
+			slug: readString(cohort.fields, 'slug') ?? cohort.id,
+			startsAt: readString(cohort.fields, 'startsAt'),
+			image: readString(cohort.fields, 'image'),
+			description: readString(cohort.fields, 'description'),
+		}))
 }
 
 /**
@@ -102,6 +176,7 @@ export async function getLatestCohort(): Promise<UpcomingCohortSummary | null> {
 
 	const winner = sorted[0]!
 	return {
+		id: winner.id,
 		title: readString(winner.fields, 'title') ?? 'The next cohort',
 		slug: readString(winner.fields, 'slug') ?? winner.id,
 		startsAt: readString(winner.fields, 'startsAt'),

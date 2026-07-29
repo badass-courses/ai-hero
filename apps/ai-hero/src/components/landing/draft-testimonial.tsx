@@ -35,13 +35,19 @@ export function DraftTestimonial({
 	const { name, title } = splitAttribution(authorName, authorTitle)
 
 	return (
-		<section className="border-border flex flex-col items-center gap-8 border-t-0! px-8 py-20 sm:px-16">
+		<section className="border-border flex flex-col items-center gap-8 border-t-0! px-[18px] py-20 sm:px-11">
 			<div aria-hidden className="flex items-center gap-1 text-[#ffcf77]">
 				{Array.from({ length: 5 }).map((_, i) => (
 					<Star key={i} className="h-5 w-5 fill-[#ffcf77]" />
 				))}
 			</div>
-			<blockquote className={cn(TYPE.subhead, 'text-balance text-center font-sans italic')}>
+			<blockquote
+				className={cn(
+					TYPE.subhead,
+					// Serif roman rather than sans italic, matching `TYPE.quote`.
+					'text-balance text-center font-serif font-normal',
+				)}
+			>
 				{children}
 			</blockquote>
 			<div className="flex items-center gap-3">
