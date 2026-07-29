@@ -4,7 +4,6 @@ import { filterSectionedResources } from '@/lib/list-sections'
 import { getListWithSections } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
-import { getModuleProgressForUser } from '@/lib/progress'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
@@ -244,17 +243,14 @@ async function SkillsEntrySection({
 		if (!hasItems) {
 			return <SidebarNavLink href={href}>{label}</SidebarNavLink>
 		}
-		// Per-user, per-request (NOT in the shared cache): the ✓ marks must show
-		// on every hub page, not just inside the [post] layout's ProgressProvider.
-		const progress = await getModuleProgressForUser(SKILLS_LIST_ID)
-		return (
-			<SkillsNavEntry
-				href={href}
-				label={label}
-				groups={groups}
-				completedLessons={progress?.completedLessons}
-			/>
-		)
+		// No progress fetch here, deliberately. It is per-user and per-request,
+		// so awaiting it put an uncacheable query inside this Suspense boundary:
+		// every navigation re-suspended the entry, and the fallback is the plain
+		// collapsed row, so a logged-in reader watched the tree close and reopen
+		// on the way to the page it was already open on. Only the cached groups
+		// are awaited now — the ✓ marks arrive client-side in `SkillsNavEntry`,
+		// where they can be late without taking the structure with them.
+		return <SkillsNavEntry href={href} label={label} groups={groups} />
 	} catch (error) {
 		void log.error('hub-sidebar.skills-entry.error', {
 			error: error instanceof Error ? error.message : String(error),

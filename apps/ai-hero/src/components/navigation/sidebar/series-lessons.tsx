@@ -109,12 +109,20 @@ export function SeriesLessons({
 	resources,
 	completedLessons,
 	overviewHref,
+	forceOverviewActive = false,
 	className,
 }: {
 	resources: { resource?: ContentResource }[] | undefined
 	completedLessons?: ModuleProgress['completedLessons']
 	/** When set, an "Overview" row (the list landing page) leads the lessons. */
 	overviewHref?: string
+	/**
+	 * Treat the Overview row as current even though `pathname` does not say so
+	 * yet. For the moment between clicking a list's own row and the navigation
+	 * committing — the highlight belongs to the row the reader just chose, not
+	 * to whatever the URL still says.
+	 */
+	forceOverviewActive?: boolean
 	className?: string
 }) {
 	const pathname = usePathname()
@@ -132,7 +140,8 @@ export function SeriesLessons({
 			.filter((id): id is string => typeof id === 'string'),
 	)
 	const overviewActive =
-		overviewHref !== undefined && norm(overviewHref) === currentSlug
+		overviewHref !== undefined &&
+		(forceOverviewActive || norm(overviewHref) === currentSlug)
 
 	return (
 		<SidebarMenu className={cn('gap-px', className)}>

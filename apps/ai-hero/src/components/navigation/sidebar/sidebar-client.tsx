@@ -6,6 +6,8 @@ import { usePathname } from 'next/navigation'
 import { useList } from '@/app/(content)/[post]/_components/list-provider'
 import { useProgress } from '@/app/(content)/[post]/_components/progress-provider'
 import { listHomeHref } from '@/lib/list-home'
+import { SKILLS_LIST_ID } from '@/lib/skills-content'
+import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { ArrowRight, ChevronRight } from 'lucide-react'
 
@@ -50,6 +52,7 @@ export function SidebarNavLink({
 	muted = false,
 	ariaLabel,
 	series,
+	onClick,
 }: {
 	href: string
 	children: React.ReactNode
@@ -64,6 +67,8 @@ export function SidebarNavLink({
 	 * knows its own item slugs without a `ListProvider`).
 	 */
 	series?: React.ReactNode
+	/** Runs alongside the analytics call, before navigation. */
+	onClick?: () => void
 }) {
 	const pathname = usePathname()
 	const depth = useSidebarDepth()
@@ -126,14 +131,15 @@ export function SidebarNavLink({
 					// here" on a different row than the visible one.
 					aria-current={isActive && !isCurrentList ? 'page' : undefined}
 					aria-label={ariaLabel}
-					onClick={() =>
+					onClick={() => {
+						onClick?.()
 						track('nav_link_clicked', {
 							label:
 								ariaLabel ?? (typeof children === 'string' ? children : href),
 							href,
 							category: 'hub_sidebar',
 						})
-					}
+					}}
 				>
 					{Icon ? <Icon active={isActive} className="size-4 shrink-0" /> : null}
 					<span>{children}</span>
@@ -190,7 +196,6 @@ export function SkillsNavEntry({
 	href,
 	label,
 	groups,
-	completedLessons,
 }: {
 	href: string
 	label: React.ReactNode
@@ -199,28 +204,68 @@ export function SkillsNavEntry({
 		title: string | null
 		items: { id: string; slug: string; title: string }[]
 	}[]
-	completedLessons?: ModuleProgress['completedLessons']
 }) {
 	const pathname = usePathname()
+	// Client-side so the ✓ marks can be late without the tree waiting on them.
+	// Long `staleTime` + no refetching: progress only changes when this reader
+	// completes something, and React Query keeps the answer across navigations,
+	// so the marks do not flicker either.
+	const { data: progress } = api.progress.moduleProgress.useQuery(
+		{ moduleIdOrSlug: SKILLS_LIST_ID },
+		{
+			staleTime: 1000 * 60 * 5,
+			gcTime: 1000 * 60 * 30,
+			refetchOnMount: false,
+			refetchOnWindowFocus: false,
+			refetchOnReconnect: false,
+		},
+	)
+	const completedLessons = progress?.completedLessons
 	const current = normalizePath(pathname ?? '/')
-	const isInside =
+	const pathInside =
 		normalizePath(href) === current ||
 		groups.some((group) =>
 			group.items.some((item) => normalizePath(`/${item.slug}`) === current),
 		)
 
-	if (!isInside) {
-		return <SidebarNavLink href={href}>{label}</SidebarNavLink>
+	// Expand on the CLICK rather than on the navigation.
+	//
+	// `pathname` does not change until the RSC navigation commits — measured at
+	// 850ms to 2.9s for /skills on this machine. Deriving the expanded state
+	// from it alone means the reader clicks "Skills", nothing happens for most
+	// of a second, and then the whole tree and its highlight appear at once.
+	// That is the "closed first, then it opens" they see, and no amount of
+	// animation or shape work touches it: the state simply is not allowed to
+	// change yet.
+	//
+	// The click is unambiguous, so it does not need the server's permission.
+	// Cleared on any pathname change, which covers both landing here (where
+	// `pathInside` takes over) and going somewhere else instead.
+	const [pending, setPending] = React.useState(false)
+	React.useEffect(() => {
+		setPending(false)
+	}, [pathname])
+
+	if (!pathInside && !pending) {
+		return (
+			<SidebarNavLink href={href} onClick={() => setPending(true)}>
+				{label}
+			</SidebarNavLink>
+		)
 	}
 
 	return (
 		<SidebarNavLink
 			href={href}
+			onClick={() => setPending(true)}
 			series={
 				<ListSectionLessons
 					groups={groups}
 					overviewHref={href}
 					completedLessons={completedLessons}
+					// While pending, the URL still names the old page, so the Overview
+					// row cannot work out that it is the one being navigated to.
+					forceOverviewActive={pending && !pathInside}
 				/>
 			}
 		>
@@ -249,6 +294,7 @@ export function ListSectionLessons({
 	groups,
 	overviewHref,
 	completedLessons,
+	forceOverviewActive,
 }: {
 	groups: {
 		id: string
@@ -257,6 +303,7 @@ export function ListSectionLessons({
 	}[]
 	overviewHref?: string
 	completedLessons?: ModuleProgress['completedLessons']
+	forceOverviewActive?: boolean
 }) {
 	const resources = React.useMemo(
 		() =>
@@ -288,6 +335,7 @@ export function ListSectionLessons({
 			resources={resources}
 			completedLessons={completedLessons}
 			overviewHref={overviewHref}
+			forceOverviewActive={forceOverviewActive}
 		/>
 	)
 }

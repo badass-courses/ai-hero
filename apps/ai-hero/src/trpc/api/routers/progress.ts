@@ -1,7 +1,11 @@
 import { cookies } from 'next/headers'
 import { courseBuilderAdapter } from '@/db'
 import { getLesson } from '@/lib/lessons-query'
-import { addProgress, sendInngestProgressEvent } from '@/lib/progress'
+import {
+	addProgress,
+	getModuleProgressForUser,
+	sendInngestProgressEvent,
+} from '@/lib/progress'
 import { getNextResource } from '@/lib/resources/get-next-resource'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
@@ -12,6 +16,24 @@ import { z } from 'zod'
 import { ModuleProgress } from '@coursebuilder/core/schemas'
 
 export const progressRouter = createTRPCRouter({
+	/**
+	 * A module's completed lessons for the current user.
+	 *
+	 * Exists so a surface can render its structure from cached data and let the
+	 * ✓ marks arrive separately. The hub sidebar's Skills entry used to await
+	 * this on the server, which put a per-user, per-request query inside its
+	 * Suspense boundary: every navigation re-suspended the whole entry and its
+	 * fallback collapsed the tree, so a logged-in reader watched it close and
+	 * reopen on the way to a page it was already open on.
+	 *
+	 * Returns null rather than throwing when signed out — a logged-out reader
+	 * has no progress, which is not an error.
+	 */
+	moduleProgress: publicProcedure
+		.input(z.object({ moduleIdOrSlug: z.string() }))
+		.query(async ({ input }) => {
+			return getModuleProgressForUser(input.moduleIdOrSlug)
+		}),
 	add: publicProcedure
 		.input(
 			z.object({
