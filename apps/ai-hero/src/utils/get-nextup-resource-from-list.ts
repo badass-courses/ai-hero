@@ -68,9 +68,30 @@ export function getListNeighborsFromList(
 		}
 	}
 
+	// Step OUTWARD until something renderable turns up, rather than looking at
+	// the one adjacent slot. `toNeighbor` rejects a resource that is unpublished
+	// or has no slug — both are ordinary states for a list still being written —
+	// and checking only `index ± 1` meant a single draft parked between two
+	// published lessons removed "Up next" from the lesson before it. The reader
+	// hit what looked like the end of the list in the middle of it.
+	const findNeighbor = (
+		startIndex: number,
+		step: -1 | 1,
+	): ListNeighbor | null => {
+		for (
+			let index = startIndex;
+			index >= 0 && index < flattened.length;
+			index += step
+		) {
+			const neighbor = toNeighbor(index)
+			if (neighbor) return neighbor
+		}
+		return null
+	}
+
 	return {
-		prev: toNeighbor(currentIndex - 1),
-		next: toNeighbor(currentIndex + 1),
+		prev: findNeighbor(currentIndex - 1, -1),
+		next: findNeighbor(currentIndex + 1, 1),
 		total: flattened.length,
 	}
 }

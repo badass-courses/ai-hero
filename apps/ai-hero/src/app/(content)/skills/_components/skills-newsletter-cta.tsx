@@ -107,7 +107,7 @@ export function SkillsNewsletterCta({
 				fields={{ ...SKILLS_INTEREST_FIELDS, source: 'mdx_inline_skills' }}
 				actionLabel="Stay up to date"
 				onSuccess={handleOnSuccess}
-				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-medium [&_button]:leading-snug [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:hidden"
+				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-medium [&_button]:leading-snug [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:sr-only"
 			/>
 			<p className={CARD_FOOTNOTE}>
 				<ShieldCheckIcon className="h-3.5 w-3.5 shrink-0" />

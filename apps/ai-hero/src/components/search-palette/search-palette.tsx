@@ -195,10 +195,14 @@ export function SearchPalette({
 		// carries a waitlist CTA, but the palette's promo is a date-led
 		// announcement — "starts soon" is the whole point of it.
 		if (cohortOffer?.kind === 'enroll') {
+			// `timeZone` is not optional here: without it this renders in the
+			// VIEWER's zone while the cohort's own page renders in the cohort's,
+			// and the same cohort advertises two different start dates on one site.
 			const starts = cohortOffer.startsAt
 				? ` — starts ${new Intl.DateTimeFormat('en-US', {
 						month: 'long',
 						day: 'numeric',
+						timeZone: cohortOffer.timezone || 'America/Los_Angeles',
 					}).format(new Date(cohortOffer.startsAt))}`
 				: ''
 			return {

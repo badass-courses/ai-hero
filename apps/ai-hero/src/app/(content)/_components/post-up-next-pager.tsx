@@ -59,18 +59,25 @@ export function PostUpNextPager({
 		(lesson) => lesson.resourceId === postId,
 	)
 
-	// `addLessonProgress` marks the lesson done client-side straight away, and
-	// the link navigates without waiting on the write. The action already
-	// swallows and logs server-side failures, but a transport failure (offline,
-	// a 500 from the action endpoint) still rejects — and nothing awaits this
-	// handler, so that would surface as an unhandled rejection. Roll the
-	// optimistic tick back instead, so we never leave a completion showing that
-	// the server never recorded.
+	// `addLessonProgress` marks the lesson done client-side straight away and the
+	// link navigates without waiting on the write, so a failed write would
+	// otherwise leave a tick the server never recorded.
+	//
+	// The write can fail two different ways and both have to roll back:
+	// `setProgressForResource` is `'use server'`, so its own try/catch runs on
+	// the SERVER — a database failure there is logged and returns `null`, which
+	// resolves normally and no catch would ever see. A transport failure
+	// (offline, a 500 from the action endpoint) rejects out here instead, in the
+	// client-side proxy, where nothing awaits this handler.
 	const onContinue = async () => {
 		if (isCompleted) return
 		addLessonProgress(postId)
 		try {
-			await setProgressForResource({ resourceId: postId, isCompleted: true })
+			const saved = await setProgressForResource({
+				resourceId: postId,
+				isCompleted: true,
+			})
+			if (!saved) removeLessonProgress(postId)
 		} catch {
 			removeLessonProgress(postId)
 		}

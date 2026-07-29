@@ -675,8 +675,8 @@ export async function compileMDX(
 	// cache key (source + lessonId) must route around it.
 	//
 	// `calloutLineAutoInsert` depends on the active cohort, so sharing an entry
-	// keyed on source alone would let two posts serve each other's auto-inserted
-	// line (W1 §2.4).
+	// keyed on source + lessonId would let one post serve a line resolved for a
+	// different cohort than the one live when it is read (W1 §2.4).
 	//
 	// `dictionaryAutoLink` belongs in the same test and was missing from it: a
 	// post passing only the dictionary entries (no callout line) took the cached

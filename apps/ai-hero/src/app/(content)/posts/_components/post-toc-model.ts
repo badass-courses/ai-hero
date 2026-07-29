@@ -19,7 +19,7 @@ export interface TocSection {
  * of slugs and headings regardless of how long the article is.
  *
  * `owners` is a plain array rather than a `Map` so the shape stays obviously
- * serializable; the client rebuilds the map once, memoized.
+ * serializable; the client scans the document-ordered pairs directly.
  */
 export interface TocModel {
 	/** The h2s, in document order. The rail lists these and nothing else. */

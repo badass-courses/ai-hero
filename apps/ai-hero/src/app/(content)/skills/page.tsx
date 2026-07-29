@@ -75,7 +75,14 @@ export default async function SkillsPage({ searchParams }: Props) {
 	// Floored, not just clamped: `?page=1.05` would otherwise reach the query as
 	// a fractional OFFSET, which the driver rejects — a hand-typed URL should
 	// land on a page, not a 500.
-	const currentPage = Math.max(Math.floor(Number(pageParam ?? '1')) || 1, 1)
+	// `?page=Infinity` and `?page=1e309` both survive `Math.floor` and a
+	// `|| 1` guard (Infinity is truthy), reaching the query as a non-finite
+	// OFFSET. Anything that is not a plain in-range integer falls back to 1.
+	const requestedPage = Math.floor(Number(pageParam ?? '1'))
+	const currentPage =
+		Number.isSafeInteger(requestedPage) && requestedPage >= 1
+			? requestedPage
+			: 1
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
 	const [entries, totalEntries, skillsList, stars, latestEntry] =
 		await Promise.all([

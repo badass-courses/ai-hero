@@ -23,6 +23,13 @@ export type CohortOffer = {
 	 * same cohort over the network.
 	 */
 	startsAt?: string
+	/**
+	 * The cohort's IANA zone, travelling WITH `startsAt` — an instant is not a
+	 * date until you say where. Without it the palette formatted the start in
+	 * the viewer's own zone while every cohort page formatted it in the
+	 * cohort's, so the two disagreed by a day either side of midnight.
+	 */
+	timezone?: string
 }
 
 /**
@@ -43,6 +50,7 @@ export const getCohortOffer = unstable_cache(
 				href: `/cohorts/${upcoming.slug}`,
 				label: 'Join the cohort',
 				startsAt: upcoming.startsAt,
+				timezone: upcoming.timezone,
 			}
 		}
 
@@ -58,6 +66,7 @@ export const getCohortOffer = unstable_cache(
 				// cohorts the next one is what the reader is actually after.
 				label: 'Join next cohort',
 				startsAt: latest.startsAt,
+				timezone: latest.timezone,
 			}
 		}
 

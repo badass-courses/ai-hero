@@ -28,9 +28,14 @@ export async function GET(
 	return new NextResponse(`# ${post.fields.title}\n\n${post.fields.body}`, {
 		headers: {
 			'Content-Type': 'text/markdown; charset=utf-8',
-			// Per-viewer by construction (drafts differ by ability), so this is a
-			// browser-only cache and never a shared one.
-			'Cache-Control': 'private, max-age=60',
+			// `no-store`, not `private, max-age`. `private` only rules out SHARED
+			// caches; it still lets the browser keep the body on disk, and the
+			// browser cache outlives the session that was allowed to read it. An
+			// editor copying a draft, logging out, and a second person clicking
+			// Copy on the same URL inside the window would be served the draft
+			// from cache. The button is pressed rarely enough that there is
+			// nothing to win here anyway.
+			'Cache-Control': 'no-store',
 		},
 	})
 }
