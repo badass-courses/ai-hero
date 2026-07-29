@@ -356,6 +356,16 @@ export function SidebarSection({
 										? 'page'
 										: undefined
 								}
+								// Open on the CLICK, not on the navigation. Auto-open keys
+								// off `activeInside`, which keys off `pathname`, which does
+								// not change until the RSC navigation commits — measured at
+								// ~800ms here. For that whole time the reader is still
+								// looking at the previous page's sidebar with this section
+								// shut, so clicking "Skills" looked like nothing happened
+								// and then the tree appeared. Its own label is the one
+								// click where the intent is unambiguous, so it does not
+								// need to wait for the server to agree.
+								onClick={() => handleOpenChange(true)}
 								className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-[9px] rounded-[6px] focus-visible:outline-none focus-visible:ring-2"
 							>
 								{IconFor(iconHref)}
