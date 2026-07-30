@@ -6,10 +6,27 @@
  * via `getRepoStarCount`.
  */
 export type OpenSourceProject = {
-	/** GitHub owner, also used for the star lookup. */
-	repoOwner: string
+	/**
+	 * Stable identity for the row. Optional: an entry backed by a repo is
+	 * identified by its slug, and this only has to be set for the ones that are
+	 * not — the channel has no `owner/name` to be keyed on.
+	 */
+	id?: string
+	/**
+	 * GitHub owner, also used for the star lookup.
+	 *
+	 * Optional because not every row on this page is a repository. Anything
+	 * derived from it — the star lookup, the mono line above the heading — is
+	 * skipped when it is absent rather than rendered empty or faked.
+	 */
+	repoOwner?: string
 	/** GitHub repo name, also used for the star lookup. */
-	repoName: string
+	repoName?: string
+	/**
+	 * The mono line above the heading. Defaults to `owner/repo`, which is what
+	 * every repo row wants; set it when the row is identified by something else.
+	 */
+	meta?: string
 	/** Display name for the row heading. */
 	name: string
 	description: string
@@ -35,6 +52,15 @@ export type OpenSourceProject = {
 	 * keyboard-reachable route to it.
 	 */
 	logoHref?: string
+	/**
+	 * Artwork slot treatment for a row with no README wordmark to show.
+	 *
+	 * DESIGN.md rule 6: a missing image inside content is the hatched
+	 * placeholder, never a flat box — so the slot stays the same size and the
+	 * row keeps the two-column rhythm of the ones around it instead of
+	 * collapsing and breaking the list's alignment.
+	 */
+	glyph?: 'youtube'
 }
 
 /** All project artwork lives on the shared Total TypeScript Cloudinary. */
@@ -44,7 +70,7 @@ export const OPEN_SOURCE_HERO = {
 	eyebrow: 'Open source',
 	title: 'Built in the open',
 	description:
-		'The tools I build for my own work, published as I go. Skills I run every day, a sandbox orchestrator, and a dictionary for the jargon.',
+		'The tools I build for my own work, published as I go. Skills I run every day, a sandbox orchestrator, a dictionary for the jargon — and the channel where the work gets explained.',
 } as const
 
 export const OPEN_SOURCE_PROJECTS: OpenSourceProject[] = [
@@ -95,5 +121,22 @@ export const OPEN_SOURCE_PROJECTS: OpenSourceProject[] = [
 			light: `${CLOUDINARY}/v1782821584/dictionary-light.png`,
 			dark: `${CLOUDINARY}/v1782821584/dictionary-dark.png`,
 		},
+	},
+	{
+		// Last, and the only row that is not a repository. It earns a place
+		// because the page's promise is "built in the open" rather than "licensed
+		// under MIT" — the channel is where the tools above get shown working, and
+		// it was reachable from exactly one fallback link on the whole site.
+		//
+		// No `repoOwner`/`repoName`, so no star count and no `owner/repo` line: it
+		// is identified by its handle instead, which is the thing people actually
+		// search for.
+		id: 'youtube',
+		meta: 'youtube.com/@mattpocockuk',
+		name: 'YouTube',
+		description:
+			'The work above, explained on video — TypeScript, AI engineering, and the tools I actually use.',
+		href: 'https://www.youtube.com/@mattpocockuk',
+		glyph: 'youtube',
 	},
 ]

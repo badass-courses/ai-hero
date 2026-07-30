@@ -10,7 +10,7 @@ import {
 	OPEN_SOURCE_PROJECTS,
 	type OpenSourceProject,
 } from '@/lib/open-source-content'
-import { ArrowUpRight, Star } from 'lucide-react'
+import { ArrowUpRight, Star, Youtube } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -28,14 +28,19 @@ export const metadata: Metadata = {
  * `SkillsHero` uses, so a repo is looked up once per render.
  */
 export default async function OpenSourcePage() {
-	const starTargets = OPEN_SOURCE_PROJECTS.filter((p) => p.showStars)
+	// `repoOwner`/`repoName` are optional now — a row without them is not a
+	// repository and has nothing to count — so the guard is on the pair being
+	// present, not on `showStars` alone.
+	const starTargets = OPEN_SOURCE_PROJECTS.filter(
+		(p): p is OpenSourceProject & { repoOwner: string; repoName: string } =>
+			Boolean(p.showStars && p.repoOwner && p.repoName),
+	)
 	const starEntries = await Promise.all(
 		starTargets.map(
-			async (p) =>
-				[
-					`${p.repoOwner}/${p.repoName}`,
-					await getRepoStarCount(p.repoOwner, p.repoName),
-				] as const,
+			async (p): Promise<[string, Awaited<ReturnType<typeof getRepoStarCount>>]> => [
+				`${p.repoOwner}/${p.repoName}`,
+				await getRepoStarCount(p.repoOwner, p.repoName),
+			],
 		),
 	)
 	const stars = new Map(starEntries)
@@ -68,20 +73,23 @@ export default async function OpenSourcePage() {
 					    footer rule. */}
 					<section aria-label="Open source projects">
 						<ul className="bg-border flex flex-col gap-px">
-							{OPEN_SOURCE_PROJECTS.map((project) => (
-								<li
-									key={`${project.repoOwner}/${project.repoName}`}
-									className="bg-background"
-								>
-									<ProjectRow
-										project={project}
-										stars={
-											stars.get(`${project.repoOwner}/${project.repoName}`) ??
-											null
-										}
-									/>
-								</li>
-							))}
+							{OPEN_SOURCE_PROJECTS.map((project) => {
+								const repoSlug =
+									project.repoOwner && project.repoName
+										? `${project.repoOwner}/${project.repoName}`
+										: null
+								return (
+									<li
+										key={project.id ?? repoSlug ?? project.href}
+										className="bg-background"
+									>
+										<ProjectRow
+											project={project}
+											stars={repoSlug ? (stars.get(repoSlug) ?? null) : null}
+										/>
+									</li>
+								)
+							})}
 						</ul>
 					</section>
 				</main>
@@ -97,7 +105,13 @@ function ProjectRow({
 	project: OpenSourceProject
 	stars: number | null
 }) {
-	const repoSlug = `${project.repoOwner}/${project.repoName}`
+	const repoSlug =
+		project.repoOwner && project.repoName
+			? `${project.repoOwner}/${project.repoName}`
+			: null
+	// The handle for a row that has one, the repo slug otherwise. Never both, and
+	// never an empty mono line holding space above the heading.
+	const metaLine = project.meta ?? repoSlug
 	const isExternal = project.href.startsWith('http')
 	const logoHref = project.logoHref ?? project.href
 	const logoIsExternal = logoHref.startsWith('http')
@@ -140,13 +154,44 @@ function ProjectRow({
 						className="hidden object-contain object-left dark:block md:object-right"
 					/>
 				</Link>
+			) : project.glyph ? (
+				// No README wordmark to show, so the slot takes the hatched
+				// placeholder (DESIGN.md rule 6) rather than collapsing — a row with
+				// an empty right column would break the alignment of the three above
+				// it. Decorative and out of the tab order for the same reason the
+				// wordmark is: the heading beside it already names and links the
+				// destination.
+				<Link
+					href={project.href}
+					aria-hidden
+					tabIndex={-1}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="bg-stripes border-border relative flex h-20 w-full max-w-[300px] items-center justify-center rounded-md border transition-opacity hover:opacity-80 sm:h-24 md:col-start-2 md:row-start-1 md:h-36 md:max-w-none"
+				>
+					<Youtube
+						aria-hidden
+						className="text-[color:var(--ah-fg-subtle)] size-10 md:size-14"
+						strokeWidth={1.25}
+					/>
+				</Link>
 			) : null}
 
 			<div className="flex flex-col gap-4 md:col-start-1 md:row-start-1">
 				<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-					<p className="text-muted-foreground font-mono text-[11px] font-medium uppercase tracking-wider">
-						{repoSlug}
-					</p>
+					{metaLine ? (
+						// Not uppercased when it is a handle: `YOUTUBE.COM/@MATTPOCOCKUK`
+						// is a different string from the one on the channel, and this line
+						// exists to be recognised.
+						<p
+							className={cn(
+								'text-muted-foreground font-mono text-[11px] font-medium tracking-wider',
+								repoSlug && !project.meta && 'uppercase',
+							)}
+						>
+							{metaLine}
+						</p>
+					) : null}
 					{stars !== null ? (
 						<p className="text-muted-foreground inline-flex items-center gap-1.5 font-mono text-[11px] font-medium tabular-nums">
 							<Star aria-hidden className="text-primary size-3 fill-current" />
