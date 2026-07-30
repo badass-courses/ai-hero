@@ -42,7 +42,7 @@ export type ResolvedPostCta =
 const defaultCourseCopy: CourseCtaCopy = {
 	headline: 'You have the skill. Now build the workflow around it.',
 	subtitle:
-		'The free seven-day AI Skills for Real Engineers course covers clarifying work, prototypes, handoffs, specs, safer agent runs, and code review, one practical lesson per day.',
+		'One command installs all 22 skills. The free course is the order to use them in: seven lessons, from clarifying the work to reviewing the diff. Go as fast as you want.',
 }
 
 /**
