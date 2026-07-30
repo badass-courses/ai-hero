@@ -4,17 +4,16 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { createAppAbility } from '@/ability'
+import { TYPE } from '@/components/landing/type'
 import { api } from '@/trpc/react'
-import {
-	ArrowRightEndOnRectangleIcon,
-	UserIcon,
-} from '@heroicons/react/24/outline'
-import { ChevronDownIcon } from 'lucide-react'
+import { track } from '@/utils/analytics'
+import { ChevronDownIcon, LogOut } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 
 import {
 	DropdownMenu,
 	DropdownMenuContent,
+	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
@@ -26,6 +25,52 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { NavLinkItem } from './nav-link-item'
 import { navTextLink } from './nav-pill'
+
+/**
+ * One row of the account menu.
+ *
+ * `TYPE.nav` is the size a navigation row wears (13.5px, no weight of its own),
+ * which is what these are — the menu is an extension of the bar it hangs from,
+ * not a dialog. It used to come through `NavLinkItem`'s `menu` variant at
+ * `text-xl sm:text-sm`, a range that exists because that variant is shared with
+ * the full-screen mobile sheet, where 20px is right and here it never was.
+ *
+ * The wash is `foreground/[0.06]`, matching the trigger above and every pill in
+ * the bar, rather than the primitive's `bg-accent`. Same reason `NavPill` gives:
+ * in dark mode the muted surfaces sit two points off the page, so a highlight
+ * drawn from them disappears at exactly the moment it has a job to do.
+ */
+const accountMenuRow = cn(
+	TYPE.nav,
+	'text-[color:var(--ah-fg-muted)] focus:bg-foreground/[0.06] focus:text-foreground cursor-pointer rounded-sm px-2.5 py-2 transition-colors duration-200',
+)
+
+/**
+ * A navigating row of the account menu.
+ *
+ * `DropdownMenuItem asChild` rather than a `Button` in a `<ul>`, which is what
+ * this was. The panel is `role="menu"`, and a menu's children have to be
+ * `menuitem`s for the arrow keys to reach them — the old markup put list items
+ * inside it, so the menu opened focus-trapped with nothing to step through, and
+ * every row drew its own hover out of the shared `Button` (which rule 12 notes
+ * hardcodes `rounded-none`, hence the square highlights).
+ *
+ * Keeps `NavLinkItem`'s `nav_link_clicked` event so the change is invisible in
+ * analytics.
+ */
+function AccountMenuLink({ href, label }: { href: string; label: string }) {
+	return (
+		<DropdownMenuItem asChild className={accountMenuRow}>
+			<Link
+				href={href}
+				prefetch
+				onClick={() => track('nav_link_clicked', { label, href })}
+			>
+				{label}
+			</Link>
+		</DropdownMenuItem>
+	)
+}
 
 /**
  * Skeleton placeholder to ensure consistent tree structure during hydration.
@@ -106,53 +151,77 @@ export const UserMenu = () => {
 					<DropdownMenuTrigger className="group/nav-item focus-visible:ring-ring flex items-center rounded-[7px] focus-visible:outline-none focus-visible:ring-2">
 						<span className="group-hover/nav-item:bg-foreground/[0.06] group-data-[state=open]/nav-item:bg-foreground/[0.06] inline-flex items-center gap-2 rounded-[7px] p-1 pr-2.5 transition-colors duration-200">
 							{userAvatar}
-							<span className="inline-flex items-center gap-0.5 text-[13px] leading-none text-[color:var(--ah-fg-muted)]">
+							{/* 13px, the size of `Search · Newsletter` beside it (`navTextLink`),
+							    so the account control reads as one more item in that cluster
+							    rather than as its own thing. */}
+							<span
+								className={cn(
+									TYPE.metaSm,
+									'inline-flex items-center gap-1 text-[color:var(--ah-fg-muted)] group-hover/nav-item:text-foreground group-data-[state=open]/nav-item:text-foreground transition-colors duration-200',
+								)}
+							>
 								<span className="truncate sm:max-w-[8rem] lg:max-w-[11rem] xl:max-w-none">
 									{sessionData.user.name?.split(' ')[0] || 'Account'}
 								</span>
-								<ChevronDownIcon className="w-2" />
+								{/* Was `w-2` — 8px, which rendered as a smudge rather than a
+								    glyph. 12px matches the icon size the menu rows use, and it
+								    turns over when the menu opens so the control says which
+								    way it is pointing. */}
+								<ChevronDownIcon
+									aria-hidden
+									className="size-3 shrink-0 transition-transform duration-200 group-data-[state=open]/nav-item:rotate-180"
+								/>
 							</span>
 						</span>
 					</DropdownMenuTrigger>
+					{/* No radius override. The panel takes the shared popover radius
+					    (`rounded-md`, 11px — rule 12's "card") like every other menu on
+					    the site; it used to set `rounded-none`, which read as a torn-off
+					    corner of the page rather than an object resting on it. The
+					    `-translate-y-1` went with it: it was fighting the primitive's own
+					    `sideOffset`, so the gap under the bar is set there instead. */}
 					<DropdownMenuContent
 						side="bottom"
 						align="end"
-						className="-translate-y-1 rounded-none shadow-lg"
+						sideOffset={8}
+						className="w-56 p-1.5 shadow-lg"
 					>
-						<DropdownMenuLabel>
+						{/* The account you are in — identification, not an action. Set one
+						    step down from the rows and in the subtle ink so the things you
+						    can actually press are what the eye lands on. It was `text-sm
+						    font-semibold`, which made the email the loudest thing here. */}
+						<DropdownMenuLabel
+							className={cn(
+								TYPE.metaSm,
+								'truncate px-2.5 py-1.5 font-normal text-[color:var(--ah-fg-subtle)]',
+							)}
+						>
 							{sessionData.user.email || 'Account'}
 						</DropdownMenuLabel>
-						<DropdownMenuSeparator className="bg-foreground/10" />
-						<ul className="flex flex-col">
-							{canViewInvoice && (
-								<NavLinkItem variant="menu" href="/invoices" label="Invoices" />
-							)}
-							<NavLinkItem variant="menu" href="/profile" label="Profile" />
-
-							{canCreateContent && (
-								<NavLinkItem
-									variant="menu"
-									href="/admin/dashboard"
-									label="Admin"
-								/>
-							)}
-							{sessionStatus === 'authenticated' && (
-								<NavLinkItem
-									variant="menu"
-									href="#"
-									label="Feedback"
-									onClick={() => setIsFeedbackDialogOpen(true)}
-								/>
-							)}
-							<DropdownMenuSeparator className="bg-foreground/10" />
-							<NavLinkItem
-								variant="menu"
-								href="#"
-								label="Log out"
-								onClick={() => signOut()}
-								icon={<ArrowRightEndOnRectangleIcon className="mr-2 h-4 w-4" />}
-							/>
-						</ul>
+						<DropdownMenuSeparator className="-mx-1.5 my-1.5 bg-[color:var(--ah-line-soft)]" />
+						{canViewInvoice && (
+							<AccountMenuLink href="/invoices" label="Invoices" />
+						)}
+						<AccountMenuLink href="/profile" label="Profile" />
+						{canCreateContent && (
+							<AccountMenuLink href="/admin/dashboard" label="Admin" />
+						)}
+						{sessionStatus === 'authenticated' && (
+							<DropdownMenuItem
+								className={accountMenuRow}
+								onSelect={() => setIsFeedbackDialogOpen(true)}
+							>
+								Feedback
+							</DropdownMenuItem>
+						)}
+						<DropdownMenuSeparator className="-mx-1.5 my-1.5 bg-[color:var(--ah-line-soft)]" />
+						<DropdownMenuItem
+							className={accountMenuRow}
+							onSelect={() => signOut()}
+						>
+							<LogOut aria-hidden className="size-3.5 shrink-0" />
+							Log out
+						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</li>
