@@ -20,6 +20,7 @@ import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
+import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { CldImageProps } from 'next-cloudinary'
@@ -515,6 +516,10 @@ async function compileMDXInternal(
 								rehypeExternalLinks,
 								{ target: '_blank', rel: ['noopener', 'noreferrer'] },
 							],
+							// Not in the plain-markdown fallback path: that path renders
+							// with an empty components map, where a minted TableWrapper
+							// element would fail to resolve.
+							rehypeAutoTableWrap,
 						],
 						recmaPlugins: [[recmaCodeHike, { components: { code: 'Code' } }]],
 					},
