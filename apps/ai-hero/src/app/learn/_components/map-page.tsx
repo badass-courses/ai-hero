@@ -13,6 +13,7 @@ import type { ResolvedItem } from '@/lib/goal-sections-query'
 
 import { SkillCard } from '@/components/skills/skill-card'
 
+import { MapSkillsNext } from './map-skills-next'
 import { MoreWaysLink } from './more-ways-link'
 
 /**
@@ -244,6 +245,11 @@ export function MapPage({ goalSections, whatsNew, tocItems }: MapPageProps) {
 					/>
 				</div>
 			</section>
+
+			{/* Last thing on the page: the way onward. The newsletter is an ask the
+			    reader can decline, and declining it should not be the note the Map
+			    ends on. */}
+			<MapSkillsNext />
 		</div>
 	)
 }

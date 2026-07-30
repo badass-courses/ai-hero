@@ -113,8 +113,17 @@ export async function SkillsHero({
 
 			{/* The ask. Stripes are the spec's structural fill (DESIGN rule 5), so
 			    the panel reads as an object sitting on the page rather than as a
-			    third column of copy. */}
-			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-[34px] sm:py-9 lg:border-l lg:border-t-0">
+			    third column of copy.
+
+			    `lg:items-start`: the cell is a stretched grid track, so centring
+			    the panel in it parked the ask against the middle of a column whose
+			    height is set by the copy beside it — it drifted down as the left
+			    column grew. Pinned to the top it starts level with the eyebrow it
+			    is answering.
+
+			    Only from `lg`, which is where the two-up grid exists at all. Below
+			    that the panel IS the row and there is nothing to align to. */}
+			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-[34px] sm:py-9 lg:items-start lg:border-l lg:border-t-0">
 				<CoursePanel />
 			</div>
 		</header>
@@ -145,10 +154,17 @@ function Fact({
  * same offer, but a 400px rail is not a row: the icon, the headline and the
  * button cannot sit on one line, and that copy is written for a full-width
  * strip.
+ *
+ * Sticky from `lg`, offset past the site header the same way the article ToC
+ * rail is. The travel is bounded by the header cell it lives in — sticky cannot
+ * escape its containing block — so it holds the ask in view for the length of
+ * the hero and then scrolls away with it, rather than following the reader down
+ * the whole skill list. That is the intent: the panel answers the hero, and the
+ * page has its own course CTAs further down.
  */
 function CoursePanel() {
 	return (
-		<div className="rounded-lg border border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-panel)] px-6 pb-[26px] pt-6">
+		<div className="rounded-lg border border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-panel)] px-6 pb-[26px] pt-6 lg:sticky lg:top-[calc(var(--nav-height)+1.5rem)]">
 			<p className={cn(TYPE.micro, 'text-primary mb-3')}>
 				{SKILLS_COURSE_PANEL.eyebrow}
 			</p>
