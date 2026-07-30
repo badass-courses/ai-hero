@@ -43,7 +43,7 @@ This site is for engineers who want to learn to build that — and stop pretendi
 	<Resource slugOrId="ways-ai-coding-has-rewired-my-brain" variant="card" />
 </ResourceGrid>
 
-<NewsletterSection heading="Get the next one in your inbox" subTitle="Join over 70,000 Developers Becoming AI Heroes"><NewsletterCta /></NewsletterSection>
+<NewsletterSection heading="One command installs all 22 skills" subTitle="Seven free lessons that put them in order, from clarifying the work to reviewing the diff. Join over 98,000 developers becoming AI heroes."><NewsletterCta /></NewsletterSection>
 
 <Testimonial authorName="Guillermo Rauch — Vercel CEO" authorAvatar="http://res.cloudinary.com/total-typescript/image/upload/v1737463838/workshops/page-6z2ir/qxwhr72flnhn571y4cvg.jpg">
 
