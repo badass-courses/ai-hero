@@ -1,8 +1,12 @@
 import { db } from '@/db'
+import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { SKILLS_NEWSLETTER_SUBSCRIBED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
-import { enterSkillsNewsletterSubscriber } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
+import {
+	enterSkillsNewsletterSubscriber,
+	SHADOW_NEWSLETTER_KIT_SEQUENCE,
+} from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
@@ -25,7 +29,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			hasAttribution: Boolean(event.data.optInAttribution),
 			hasClickId: Boolean(event.data.optInAttribution?.gclid || event.data.optInAttribution?.gbraid || event.data.optInAttribution?.wbraid),
 		})
-		return step.run('authorize-capture-and-plan-email-zero', async () => {
+		const entryResult = await step.run('authorize-capture-and-plan-email-zero', async () => {
 			// Read authorization in the same retryable step as the write so a kill
 			// switch or mode change cannot leave a stale authorization snapshot.
 			const allowlistDecision = await readActiveGateDRuntimeAllowlist({ redis })
@@ -79,5 +83,41 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			}
 			return result
 		})
+
+		// A blocked entry never became a course subscriber, so it must not be added
+		// to the newsletter either. Gate D is the only authorization gate here.
+		// The authorization-blocked branch above returns a narrower shape with no
+		// contactId, so test for that rather than the status string.
+		if (!entryResult || !('contactId' in entryResult)) {
+			return entryResult
+		}
+		if (entryResult.status === 'blocked') {
+			return entryResult
+		}
+
+		// Separate step on purpose: course entry above is already durable, and a Kit
+		// outage here retries on its own without replanning email zero.
+		await step.run('subscribe-to-shadow-newsletter', async () => {
+			await emailListProvider.subscribeToList({
+				listId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
+				listType: 'sequence',
+				user: {
+					email: event.data.email,
+					name: event.data.name,
+				} as Parameters<
+					typeof emailListProvider.subscribeToList
+				>[0]['user'],
+				fields: {},
+			})
+			await log.info('subscriber_funnel.shadow_newsletter_subscribed', {
+				funnel: 'skills-newsletter',
+				eventId: event.id,
+				kitSequenceId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
+				contactId: entryResult.contactId,
+			})
+			return { status: 'subscribed' as const }
+		})
+
+		return entryResult
 	},
 )
