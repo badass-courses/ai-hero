@@ -1,3 +1,5 @@
+import type { ResolvedPostCta } from './post-cta'
+
 export const BODY_CTA_COMPONENTS = [
 	'SkillsNewsletterCta',
 	'SkillsCta',
@@ -14,22 +16,28 @@ export type BodyAuthoredCta = {
 	subscriberConditional: boolean
 }
 
-export type DeclaredCtaKind = 'course' | 'none'
-
-export type DeclaredCtaCopy = {
-	headline?: string
-	subtitle?: string
+export type EmailAsk = {
+	component: string
+	source: 'body' | 'template'
+	line?: number
 }
 
-export type ResolvedCta = {
-	kind: DeclaredCtaKind
-	copy: DeclaredCtaCopy
-	source: 'fields.cta' | 'postType'
-	recognized: boolean
-	rawKind: string | null
+export type TemplateCta = {
+	component: string
+	source: string
+	capturesEmailOnPage: boolean
+	rendersForCurrentRoute: boolean
 }
 
-type Fields = Record<string, unknown> | null | undefined
+export type AskInventory = {
+	currentTemplateCtas: TemplateCta[]
+	anonymousReaderEmailAsks: EmailAsk[]
+	totalAnonymousReaderEmailAsks: number
+	subscriberConditionalAsks: {
+		component: string
+		reason: string
+	}[]
+}
 
 const bodyCtaPattern = new RegExp(
 	`<\\s*(${BODY_CTA_COMPONENTS.join('|')})\\b`,
@@ -102,81 +110,140 @@ export function scanBodyAuthoredCtas(body: string): BodyAuthoredCta[] {
 	return matches
 }
 
-function optionalString(value: unknown) {
-	return typeof value === 'string' && value.trim() ? value : undefined
-}
-
-function parseDeclaredCta(value: unknown): {
-	kind: string | null
-	copy: DeclaredCtaCopy
-	isSet: boolean
-} {
-	if (value === undefined || value === null || value === '') {
-		return { kind: null, copy: {}, isSet: false }
-	}
-
-	if (typeof value === 'string') {
-		return { kind: value, copy: {}, isSet: true }
-	}
-
-	if (typeof value === 'object' && !Array.isArray(value)) {
-		const declaration = value as Record<string, unknown>
-		return {
-			kind: optionalString(declaration.kind) ?? null,
-			copy: {
-				headline: optionalString(declaration.headline),
-				subtitle: optionalString(declaration.subtitle),
-			},
-			isSet: true,
-		}
-	}
-
-	return { kind: String(value), copy: {}, isSet: true }
-}
-
 /**
- * Mirrors the accepted declaration rule until the placement branch provides a
- * shared resolver: fields.cta wins, then postType=skill defaults to course.
+ * Models both the merged CTA route and the production route before placement.
+ *
+ * The merged route renders body CTAs, then the resolved course CTA, then the
+ * mapped organic CTA. A resolved course suppresses PrimaryNewsletterCta.
  */
-export function resolveCtaDeclaration(fields: Fields): ResolvedCta | null {
-	const declaration = parseDeclaredCta(fields?.cta)
-	const postType = optionalString(fields?.postType) ?? 'article'
-	const fallback =
-		postType === 'skill'
-			? ({
-					kind: 'course',
-					copy: {},
-					source: 'postType',
-					recognized: true,
-					rawKind: null,
-				} satisfies ResolvedCta)
-			: null
+export function buildPostAskInventories({
+	bodyAuthoredCtas,
+	hasVideo,
+	organicCtaKind,
+	resolvedCta,
+}: {
+	bodyAuthoredCtas: BodyAuthoredCta[]
+	hasVideo: boolean
+	organicCtaKind: string | undefined
+	resolvedCta: ResolvedPostCta
+}): { merged: AskInventory; productionBeforeMerge: AskInventory } {
+	const bodyEmailAsks: EmailAsk[] = bodyAuthoredCtas
+		.filter((cta) => cta.capturesEmailForAnonymousReader)
+		.map((cta) => ({
+			component: cta.component,
+			source: 'body',
+			line: cta.line,
+		}))
+	const bodySubscriberConditionalAsks = bodyAuthoredCtas
+		.filter((cta) => cta.subscriberConditional)
+		.map((cta) => ({
+			component: `${cta.component} at body line ${cta.line}`,
+			reason: 'state varies with the Kit interest=skills field',
+		}))
+	const baseSubscriberConditionalAsks = [
+		{
+			component: 'PostSubscribeDialogButton',
+			reason:
+				'hidden before client mount, while subscriber state is pending, and for existing subscribers',
+		},
+		...bodySubscriberConditionalAsks,
+	]
 
-	if (!declaration.isSet) return fallback
+	const productionTemplateCtas: TemplateCta[] = []
+	const productionEmailAsks = [...bodyEmailAsks]
+	const productionSubscriberConditionalAsks = [
+		...baseSubscriberConditionalAsks,
+	]
 
-	if (declaration.kind === 'course' || declaration.kind === 'none') {
-		return {
-			kind: declaration.kind,
-			copy: declaration.copy,
-			source: 'fields.cta',
-			recognized: true,
-			rawKind: declaration.kind,
-		}
+	if (organicCtaKind) {
+		productionTemplateCtas.push({
+			component: 'OrganicOpportunityCta',
+			source: `organicOpportunityCtaBySlug:${organicCtaKind}`,
+			capturesEmailOnPage: false,
+			rendersForCurrentRoute: true,
+		})
 	}
 
-	return fallback
-		? {
-				...fallback,
-				recognized: false,
-				rawKind: declaration.kind,
-			}
-		: {
-				kind: 'none',
-				copy: {},
-				source: 'postType',
-				recognized: false,
-				rawKind: declaration.kind,
-			}
+	if (!hasVideo) {
+		productionTemplateCtas.push({
+			component: 'PrimaryNewsletterCta',
+			source: '!hasVideo route rule',
+			capturesEmailOnPage: true,
+			rendersForCurrentRoute: true,
+		})
+		productionEmailAsks.push({
+			component: 'PrimaryNewsletterCta',
+			source: 'template',
+		})
+		productionSubscriberConditionalAsks.push({
+			component: 'PrimaryNewsletterCta',
+			reason: 'hidden for an existing subscriber',
+		})
+	}
+
+	const mergedTemplateCtas: TemplateCta[] = []
+	const mergedEmailAsks = [...bodyEmailAsks]
+	const mergedSubscriberConditionalAsks = [
+		...baseSubscriberConditionalAsks,
+	]
+
+	if (resolvedCta.kind === 'course') {
+		mergedTemplateCtas.push({
+			component: 'SkillsCourseCta',
+			source: `resolvePostCta:${resolvedCta.source}`,
+			capturesEmailOnPage: true,
+			rendersForCurrentRoute: true,
+		})
+		mergedEmailAsks.push({
+			component: 'SkillsCourseCta',
+			source: 'template',
+		})
+		mergedSubscriberConditionalAsks.push({
+			component: 'SkillsCourseCta',
+			reason: 'state varies with the Kit interest=skills field',
+		})
+	}
+
+	if (organicCtaKind) {
+		mergedTemplateCtas.push({
+			component: 'OrganicOpportunityCta',
+			source: `organicOpportunityCtaBySlug:${organicCtaKind}`,
+			capturesEmailOnPage: false,
+			rendersForCurrentRoute: true,
+		})
+	}
+
+	if (resolvedCta.kind !== 'course' && !hasVideo) {
+		mergedTemplateCtas.push({
+			component: 'PrimaryNewsletterCta',
+			source: '!hasVideo route rule, allowed when resolved CTA is not course',
+			capturesEmailOnPage: true,
+			rendersForCurrentRoute: true,
+		})
+		mergedEmailAsks.push({
+			component: 'PrimaryNewsletterCta',
+			source: 'template',
+		})
+		mergedSubscriberConditionalAsks.push({
+			component: 'PrimaryNewsletterCta',
+			reason: 'hidden for an existing subscriber',
+		})
+	}
+
+	return {
+		merged: {
+			currentTemplateCtas: mergedTemplateCtas,
+			anonymousReaderEmailAsks: mergedEmailAsks,
+			totalAnonymousReaderEmailAsks: mergedEmailAsks.length,
+			subscriberConditionalAsks: mergedSubscriberConditionalAsks,
+		},
+		productionBeforeMerge: {
+			currentTemplateCtas: productionTemplateCtas,
+			anonymousReaderEmailAsks: productionEmailAsks,
+			totalAnonymousReaderEmailAsks: productionEmailAsks.length,
+			subscriberConditionalAsks: productionSubscriberConditionalAsks,
+		},
+	}
 }
 
 export type TopOrganicTarget = {

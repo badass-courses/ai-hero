@@ -3,13 +3,17 @@ import { dirname, resolve } from 'node:path'
 import * as schema from '@/db/schema'
 import { contentResource } from '@/db/schema'
 import {
+	buildPostAskInventories,
 	EXPECTED_BODY_CTA_DEFECTS,
-	resolveCtaDeclaration,
 	scanBodyAuthoredCtas,
 	TOP_ORGANIC_TARGETS,
+	type AskInventory,
+	type EmailAsk,
+	type TemplateCta,
 	type TopOrganicTarget,
 	ZERO_ASK_VIDEO_DEFECT_SLUGS,
 } from '@/lib/cta-report'
+import { resolvePostCta } from '@/lib/post-cta'
 import { Client } from '@planetscale/database'
 import { and, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/planetscale-serverless'
@@ -34,17 +38,8 @@ type ResourceRecord = {
 		| null
 }
 
-type EmailAsk = {
-	component: string
-	source: 'body' | 'template'
-	line?: number
-}
-
-type TemplateCta = {
-	component: string
-	source: string
-	capturesEmailOnPage: boolean
-	rendersForCurrentRoute: boolean
+type AskModel = AskInventory & {
+	humanReviewFlags: string[]
 }
 
 type ReportRow = {
@@ -64,17 +59,10 @@ type ReportRow = {
 		headline?: string
 		subtitle?: string
 	} | null
-	resolvedDeclaration: ReturnType<typeof resolveCtaDeclaration>
+	resolvedDeclaration: ReturnType<typeof resolvePostCta> | null
 	bodyAuthoredCtas: ReturnType<typeof scanBodyAuthoredCtas>
-	currentTemplateCtas: TemplateCta[]
-	anonymousReaderEmailAsks: EmailAsk[]
-	totalAnonymousReaderEmailAsks: number
-	subscriberConditionalAsks: {
-		component: string
-		reason: string
-	}[]
-	humanReviewFlags: string[]
-}
+	productionBeforeMerge: AskModel
+} & AskModel
 
 function readArg(name: string) {
 	const index = process.argv.indexOf(name)
@@ -133,6 +121,7 @@ function toPostRow(
 ): ReportRow {
 	const fields = resource.fields
 	const slug = fieldString(fields, 'slug') ?? resource.id
+	const postType = fieldString(fields, 'postType') ?? 'article'
 	const hasVideo = Boolean(
 		resource.resources?.some(({ resource: child }) => {
 			return child.type === 'videoResource'
@@ -141,83 +130,41 @@ function toPostRow(
 	const bodyAuthoredCtas = scanBodyAuthoredCtas(
 		typeof fields?.body === 'string' ? fields.body : '',
 	)
-	const resolvedDeclaration = resolveCtaDeclaration(fields)
+	const resolvedDeclaration = resolvePostCta({
+		postType,
+		cta: fields?.cta,
+	})
 	const organicCta = organicOpportunityCtaBySlug[slug]
-	const currentTemplateCtas: TemplateCta[] = []
-	const anonymousReaderEmailAsks: EmailAsk[] = bodyAuthoredCtas
-		.filter((cta) => cta.capturesEmailForAnonymousReader)
-		.map((cta) => ({
-			component: cta.component,
-			source: 'body',
-			line: cta.line,
-		}))
-	const subscriberConditionalAsks = [
-		{
-			component: 'PostSubscribeDialogButton',
-			reason:
-				'hidden before client mount, while subscriber state is pending, and for existing subscribers',
-		},
-	]
-
-	if (!hasVideo) {
-		currentTemplateCtas.push({
-			component: 'PrimaryNewsletterCta',
-			source: '!hasVideo route rule',
-			capturesEmailOnPage: true,
-			rendersForCurrentRoute: true,
-		})
-		anonymousReaderEmailAsks.push({
-			component: 'PrimaryNewsletterCta',
-			source: 'template',
-		})
-		subscriberConditionalAsks.push({
-			component: 'PrimaryNewsletterCta',
-			reason: 'hidden for an existing subscriber',
-		})
-	}
-
-	if (organicCta) {
-		currentTemplateCtas.push({
-			component: 'OrganicOpportunityCta',
-			source: `organicOpportunityCtaBySlug:${organicCta}`,
-			capturesEmailOnPage: false,
-			rendersForCurrentRoute: true,
-		})
-	}
-
-	if (resolvedDeclaration?.kind === 'course') {
-		currentTemplateCtas.push({
-			component: 'course',
-			source: `${resolvedDeclaration.source} (accepted rule, placement branch not landed)`,
-			capturesEmailOnPage: true,
-			rendersForCurrentRoute: false,
-		})
-	}
-
-	for (const cta of bodyAuthoredCtas) {
-		if (cta.subscriberConditional) {
-			subscriberConditionalAsks.push({
-				component: `${cta.component} at body line ${cta.line}`,
-				reason: 'state varies with the Kit interest=skills field',
-			})
-		}
-	}
+	const { merged, productionBeforeMerge } = buildPostAskInventories({
+		bodyAuthoredCtas,
+		hasVideo,
+		organicCtaKind: organicCta,
+		resolvedCta: resolvedDeclaration,
+	})
 
 	const flags: string[] = []
-	if (anonymousReaderEmailAsks.length > 1) {
+	if (merged.totalAnonymousReaderEmailAsks > 1) {
 		flags.push('multiple-anonymous-email-asks')
 	}
-	if (options.clicks && anonymousReaderEmailAsks.length === 0) {
+	if (options.clicks && merged.totalAnonymousReaderEmailAsks === 0) {
 		flags.push('zero-email-asks-on-organic-page')
 	}
 	if (hasFieldDeclaration(fields) && bodyAuthoredCtas.length > 0) {
 		flags.push('declared-and-body-authored-cta')
 	}
-	if (resolvedDeclaration && !resolvedDeclaration.recognized) {
+	if (resolvedDeclaration.warning) {
 		flags.push('unknown-declared-cta')
 	}
-	if (resolvedDeclaration?.kind === 'course') {
-		flags.push('resolved-declaration-not-rendered-on-this-branch')
+
+	const productionFlags: string[] = []
+	if (productionBeforeMerge.totalAnonymousReaderEmailAsks > 1) {
+		productionFlags.push('multiple-anonymous-email-asks')
+	}
+	if (
+		options.clicks &&
+		productionBeforeMerge.totalAnonymousReaderEmailAsks === 0
+	) {
+		productionFlags.push('zero-email-asks-on-organic-page')
 	}
 
 	return {
@@ -229,18 +176,19 @@ function toPostRow(
 		title: fieldString(fields, 'title'),
 		state: fieldString(fields, 'state'),
 		visibility: fieldString(fields, 'visibility'),
-		postType: fieldString(fields, 'postType') ?? 'article',
+		postType,
 		hasVideo,
 		hasVideoSource:
 			'AI_ContentResourceResource child relation where child type=videoResource',
 		declaredCta: sanitizeDeclaredCta(fields),
 		resolvedDeclaration,
 		bodyAuthoredCtas,
-		currentTemplateCtas,
-		anonymousReaderEmailAsks,
-		totalAnonymousReaderEmailAsks: anonymousReaderEmailAsks.length,
-		subscriberConditionalAsks,
+		...merged,
 		humanReviewFlags: flags,
+		productionBeforeMerge: {
+			...productionBeforeMerge,
+			humanReviewFlags: productionFlags,
+		},
 	}
 }
 
@@ -252,6 +200,16 @@ function toListRow(
 	const slug = fieldString(fields, 'slug') ?? resource.id
 	const isDeadOrganicMapEntry = Boolean(organicOpportunityCtaBySlug[slug])
 	const flags = []
+	const currentTemplateCtas: TemplateCta[] = isDeadOrganicMapEntry
+		? [
+				{
+					component: 'OrganicOpportunityCta',
+					source: `organicOpportunityCtaBySlug:${organicOpportunityCtaBySlug[slug]}`,
+					capturesEmailOnPage: false,
+					rendersForCurrentRoute: false,
+				},
+			]
+		: []
 
 	if (options.clicks) flags.push('zero-email-asks-on-organic-page')
 	if (isDeadOrganicMapEntry) flags.push('dead-organic-map-entry')
@@ -273,20 +231,18 @@ function toListRow(
 		bodyAuthoredCtas: scanBodyAuthoredCtas(
 			typeof fields?.body === 'string' ? fields.body : '',
 		),
-		currentTemplateCtas: isDeadOrganicMapEntry
-			? [
-					{
-						component: 'OrganicOpportunityCta',
-						source: `organicOpportunityCtaBySlug:${organicOpportunityCtaBySlug[slug]}`,
-						capturesEmailOnPage: false,
-						rendersForCurrentRoute: false,
-					},
-				]
-			: [],
+		currentTemplateCtas,
 		anonymousReaderEmailAsks: [],
 		totalAnonymousReaderEmailAsks: 0,
 		subscriberConditionalAsks: [],
 		humanReviewFlags: flags,
+		productionBeforeMerge: {
+			currentTemplateCtas,
+			anonymousReaderEmailAsks: [],
+			totalAnonymousReaderEmailAsks: 0,
+			subscriberConditionalAsks: [],
+			humanReviewFlags: flags,
+		},
 	}
 }
 
@@ -326,6 +282,8 @@ function staticRow(target: TopOrganicTarget): ReportRow {
 				},
 			]
 		: []
+	const humanReviewFlags =
+		asks.length === 0 ? ['zero-email-asks-on-organic-page'] : []
 
 	return {
 		path: target.path,
@@ -346,8 +304,14 @@ function staticRow(target: TopOrganicTarget): ReportRow {
 		anonymousReaderEmailAsks: asks,
 		totalAnonymousReaderEmailAsks: asks.length,
 		subscriberConditionalAsks: [],
-		humanReviewFlags:
-			asks.length === 0 ? ['zero-email-asks-on-organic-page'] : [],
+		humanReviewFlags,
+		productionBeforeMerge: {
+			currentTemplateCtas: templateCtas,
+			anonymousReaderEmailAsks: asks,
+			totalAnonymousReaderEmailAsks: asks.length,
+			subscriberConditionalAsks: [],
+			humanReviewFlags,
+		},
 	}
 }
 
@@ -356,6 +320,28 @@ function cohortRow(
 	resource: ResourceRecord | undefined,
 ): ReportRow {
 	const fields = resource?.fields
+	const currentTemplateCtas: TemplateCta[] = [
+		{
+			component: 'CohortPricingWidgetContainer',
+			source: 'cohort route, paid enrollment or waitlist variant',
+			capturesEmailOnPage: true,
+			rendersForCurrentRoute: true,
+		},
+	]
+	const anonymousReaderEmailAsks: EmailAsk[] = [
+		{
+			component: 'CohortPricingWidgetContainer',
+			source: 'template',
+		},
+	]
+	const subscriberConditionalAsks = [
+		{
+			component: 'CohortPricingWidgetContainer',
+			reason: 'variant depends on purchase and enrollment state',
+		},
+	]
+	const humanReviewFlags = resource ? [] : ['missing-production-resource']
+
 	return {
 		path: target.path,
 		clicks: target.clicks,
@@ -377,28 +363,18 @@ function cohortRow(
 		bodyAuthoredCtas: scanBodyAuthoredCtas(
 			typeof fields?.body === 'string' ? fields.body : '',
 		),
-		currentTemplateCtas: [
-			{
-				component: 'CohortPricingWidgetContainer',
-				source: 'cohort route, paid enrollment or waitlist variant',
-				capturesEmailOnPage: true,
-				rendersForCurrentRoute: true,
-			},
-		],
-		anonymousReaderEmailAsks: [
-			{
-				component: 'CohortPricingWidgetContainer',
-				source: 'template',
-			},
-		],
+		currentTemplateCtas,
+		anonymousReaderEmailAsks,
 		totalAnonymousReaderEmailAsks: 1,
-		subscriberConditionalAsks: [
-			{
-				component: 'CohortPricingWidgetContainer',
-				reason: 'variant depends on purchase and enrollment state',
-			},
-		],
-		humanReviewFlags: resource ? [] : ['missing-production-resource'],
+		subscriberConditionalAsks,
+		humanReviewFlags,
+		productionBeforeMerge: {
+			currentTemplateCtas,
+			anonymousReaderEmailAsks,
+			totalAnonymousReaderEmailAsks: 1,
+			subscriberConditionalAsks,
+			humanReviewFlags,
+		},
 	}
 }
 
@@ -425,6 +401,13 @@ function missingResourceRow(target: TopOrganicTarget): ReportRow {
 		totalAnonymousReaderEmailAsks: 0,
 		subscriberConditionalAsks: [],
 		humanReviewFlags: ['missing-production-resource'],
+		productionBeforeMerge: {
+			currentTemplateCtas: [],
+			anonymousReaderEmailAsks: [],
+			totalAnonymousReaderEmailAsks: 0,
+			subscriberConditionalAsks: [],
+			humanReviewFlags: ['missing-production-resource'],
+		},
 	}
 }
 
@@ -444,11 +427,13 @@ function verifyKnownDefects(rows: ReportRow[]) {
 
 	const checks = {
 		gettingStartedWithRalphHasTwoAnonymousEmailAsks:
-			ralph?.totalAnonymousReaderEmailAsks === 2,
+			ralph?.productionBeforeMerge.totalAnonymousReaderEmailAsks === 2,
 		sixKnownVideoPagesHaveZeroAnonymousEmailAsks:
 			videoPages.length === 6 &&
 			videoPages.every(
-				(row) => row?.hasVideo && row.totalAnonymousReaderEmailAsks === 0,
+				(row) =>
+					row?.hasVideo &&
+					row.productionBeforeMerge.totalAnonymousReaderEmailAsks === 0,
 			),
 		threeBodyAuthoredSkillsNewsletterCtasHaveExpectedLines: bodyCtas.every(
 			(result) => result.found,
@@ -461,6 +446,91 @@ function verifyKnownDefects(rows: ReportRow[]) {
 	return {
 		checks,
 		bodyCtas,
+		allPassed: Object.values(checks).every(Boolean),
+	}
+}
+
+function verifyMergedDeclarationModel(rows: ReportRow[], scope: Scope) {
+	const publishedPublicSkillPosts = rows.filter(
+		(row) =>
+			row.resourceType === 'post' &&
+			row.postType === 'skill' &&
+			row.state === 'published' &&
+			row.visibility === 'public',
+	)
+	const skillPostsWithoutVideo = publishedPublicSkillPosts.filter(
+		(row) => row.hasVideo === false,
+	)
+	const skillPostsWithVideo = publishedPublicSkillPosts.filter(
+		(row) => row.hasVideo === true,
+	)
+	const pagesRegressedToZero = rows
+		.filter(
+			(row) =>
+				row.resourceType === 'post' &&
+				row.productionBeforeMerge.totalAnonymousReaderEmailAsks > 0 &&
+				row.totalAnonymousReaderEmailAsks === 0,
+		)
+		.map((row) => row.slug)
+
+	const counts = {
+		publishedPublicSkillPosts: publishedPublicSkillPosts.length,
+		skillPostsWithoutVideo: skillPostsWithoutVideo.length,
+		skillPostsWithVideo: skillPostsWithVideo.length,
+		pagesRegressedToZero: pagesRegressedToZero.length,
+	}
+
+	if (scope !== 'all') {
+		return {
+			applicable: false,
+			reason: 'Run with --scope all to verify every published public skill post.',
+			counts,
+			pagesRegressedToZero,
+			checks: {},
+			allPassed: true,
+		}
+	}
+
+	const checks = {
+		all23PublishedPublicSkillPostsHaveOneAnonymousEmailAsk:
+			publishedPublicSkillPosts.length === 23 &&
+			publishedPublicSkillPosts.every(
+				(row) => row.totalAnonymousReaderEmailAsks === 1,
+			),
+		twentySkillPostsWithoutVideoSwapPrimaryForCourse:
+			skillPostsWithoutVideo.length === 20 &&
+			skillPostsWithoutVideo.every(
+				(row) =>
+					row.productionBeforeMerge.currentTemplateCtas.some(
+						(cta) => cta.component === 'PrimaryNewsletterCta',
+					) &&
+					!row.currentTemplateCtas.some(
+						(cta) => cta.component === 'PrimaryNewsletterCta',
+					) &&
+					row.currentTemplateCtas.some(
+						(cta) => cta.component === 'SkillsCourseCta',
+					) &&
+					row.totalAnonymousReaderEmailAsks === 1,
+			),
+		threeSkillPostsWithVideoGoFromZeroToOne:
+			skillPostsWithVideo.length === 3 &&
+			skillPostsWithVideo.every(
+				(row) =>
+					row.productionBeforeMerge.totalAnonymousReaderEmailAsks === 0 &&
+					row.totalAnonymousReaderEmailAsks === 1 &&
+					row.currentTemplateCtas.some(
+						(cta) => cta.component === 'SkillsCourseCta',
+					),
+			),
+		noPageRegressesFromOneOrMoreEmailAsksToZero:
+			pagesRegressedToZero.length === 0,
+	}
+
+	return {
+		applicable: true,
+		counts,
+		pagesRegressedToZero,
+		checks,
 		allPassed: Object.values(checks).every(Boolean),
 	}
 }
@@ -547,13 +617,21 @@ function buildAllRows(resources: ResourceRecord[]) {
 
 function printSummary(report: ReturnType<typeof makeReport>) {
 	console.log(
-		`CTA report: ${report.summary.rowCount} rows, ${report.summary.flaggedRowCount} flagged, ${report.summary.anonymousEmailAskCount} current anonymous email asks.`,
+		`CTA report: ${report.summary.rowCount} rows, ${report.summary.flaggedRowCount} flagged, ${report.summary.anonymousEmailAskCount} merged-model anonymous email asks (${report.summary.productionBeforeMergeAnonymousEmailAskCount} before merge).`,
 	)
 
 	for (const [name, passed] of Object.entries(
 		report.knownDefectVerification.checks,
 	)) {
-		console.log(`${passed ? 'PASS' : 'FAIL'} ${name}`)
+		console.log(`${passed ? 'PASS' : 'FAIL'} production-before-merge:${name}`)
+	}
+
+	if (report.mergedDeclarationVerification.applicable) {
+		for (const [name, passed] of Object.entries(
+			report.mergedDeclarationVerification.checks,
+		)) {
+			console.log(`${passed ? 'PASS' : 'FAIL'} merged-declaration:${name}`)
+		}
 	}
 
 	if (process.env.GITHUB_ACTIONS === 'true' && report.mode === 'scheduled') {
@@ -569,14 +647,18 @@ function printSummary(report: ReturnType<typeof makeReport>) {
 
 function makeReport(mode: Mode, scope: Scope, rows: ReportRow[]) {
 	const knownDefectVerification = verifyKnownDefects(rows)
+	const mergedDeclarationVerification = verifyMergedDeclarationModel(rows, scope)
 	const flaggedRows = rows.filter((row) => row.humanReviewFlags.length > 0)
+	const verified =
+		knownDefectVerification.allPassed &&
+		mergedDeclarationVerification.allPassed
 
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		generatedAt: new Date().toISOString(),
 		mode,
 		scope,
-		status: knownDefectVerification.allPassed ? 'verified' : 'failed-verification',
+		status: verified ? 'verified' : 'failed-verification',
 		source: {
 			content: 'AI_ContentResource.fields',
 			video:
@@ -586,12 +668,15 @@ function makeReport(mode: Mode, scope: Scope, rows: ReportRow[]) {
 			readOnly: true,
 		},
 		implementation: {
-			declarationRule:
-				'fields.cta wins; otherwise postType=skill resolves to course; otherwise none',
-			declarationResolver:
-				'duplicated-pending-shared-resolver-from-feat/cta-placement',
-			currentRouteCount:
-				'resolved declarations are reported but not counted until the placement route renders them',
+			declarationResolver: '@/lib/post-cta resolvePostCta',
+			mergedRouteModel: [
+				'post body',
+				'SkillsCourseCta when resolvePostCta returns course',
+				'OrganicOpportunityCta when the slug is mapped',
+				'PrimaryNewsletterCta only when !hasVideo and resolved CTA is not course',
+			],
+			productionBeforeMerge:
+				'each row preserves the production route before CTA placement for historical acceptance checks',
 			buildPolicy: 'report flagged rows; do not fail a build for content flags',
 		},
 		subscriberStateLimit:
@@ -601,6 +686,12 @@ function makeReport(mode: Mode, scope: Scope, rows: ReportRow[]) {
 			flaggedRowCount: flaggedRows.length,
 			anonymousEmailAskCount: rows.reduce(
 				(total, row) => total + row.totalAnonymousReaderEmailAsks,
+				0,
+			),
+			productionBeforeMergeAnonymousEmailAskCount: rows.reduce(
+				(total, row) =>
+					total +
+					row.productionBeforeMerge.totalAnonymousReaderEmailAsks,
 				0,
 			),
 			flags: Object.fromEntries(
@@ -616,6 +707,7 @@ function makeReport(mode: Mode, scope: Scope, rows: ReportRow[]) {
 			),
 		},
 		knownDefectVerification,
+		mergedDeclarationVerification,
 		rows,
 	}
 }
@@ -641,7 +733,7 @@ async function main() {
 
 	printSummary(report)
 
-	if (!report.knownDefectVerification.allPassed && mode !== 'build') {
+	if (report.status !== 'verified' && mode !== 'build') {
 		process.exitCode = 1
 	}
 }
