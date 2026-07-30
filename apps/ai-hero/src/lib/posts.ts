@@ -140,6 +140,8 @@ export const PostUpdateSchema = z.object({
 	fields: z.object({
 		postType: PostTypeSchema.default('article'),
 		cta: PostCtaFieldSchema.optional(),
+		suppressCourseCta: z.boolean().optional(),
+		relatedPostsVariant: z.enum(['section', 'suggested']).optional(),
 		title: z.string().min(2).max(90),
 		body: z.string().optional().nullable(),
 		slug: z.string(),

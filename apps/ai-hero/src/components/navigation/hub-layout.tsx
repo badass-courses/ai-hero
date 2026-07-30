@@ -147,7 +147,10 @@ export async function HubLayout({
 			defaultOpen
 			className="min-h-0 has-data-[variant=inset]:bg-background"
 		>
-			<HubSidebarShell defaultCollapsed={sidebarDefaultCollapsed}>
+			<HubSidebarShell
+				key={sidebarDefaultCollapsed ? 'collapsed' : 'expanded'}
+				defaultCollapsed={sidebarDefaultCollapsed}
+			>
 				{!listInSidebar ? <PinnedSeriesNav /> : null}
 				{sidebarContent}
 				{sidebarFooter ? <div className="mt-6 px-1">{sidebarFooter}</div> : null}

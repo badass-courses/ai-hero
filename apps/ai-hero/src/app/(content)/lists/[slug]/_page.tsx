@@ -279,6 +279,12 @@ export default async function ListPage(props: {
 									/>
 								</DialogContent>
 							</Dialog>
+							<React.Suspense fallback={null}>
+								<ListActionBar
+									list={list}
+									className="rounded-[9px] px-4"
+								/>
+							</React.Suspense>
 						</div>
 						<div className="border-border mt-8 flex items-center gap-3 border-t pt-8">
 							<Contributor imageSize={32} className={TYPE.meta} />

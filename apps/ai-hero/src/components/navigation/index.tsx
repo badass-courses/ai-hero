@@ -415,6 +415,7 @@ const Navigation = () => {
 				<MobileMenuPanel
 					isOpen={isMobileMenuOpen}
 					onClose={() => setIsMobileMenuOpen(false)}
+					mode={mode}
 				/>
 			)}
 			{showSearch && hasOpenedSearch && (
