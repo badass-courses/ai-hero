@@ -230,8 +230,8 @@ Horizontal band wrapping the slim subscribe form.
 
 ```mdx
 <NewsletterSection
-	heading="Get the next one in your inbox"
-	subTitle={<>Join over <SubscriberCount /> developers becoming AI Heroes</>}
+	heading="One command installs all 22 skills"
+	subTitle={<>Seven free lessons that put them in order, from clarifying the work to reviewing the diff. Join over <SubscriberCount /> developers becoming AI Heroes</>}
 >
 	<NewsletterCta />
 </NewsletterSection>

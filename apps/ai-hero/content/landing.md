@@ -163,11 +163,16 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
   NEWSLETTER). The mid-page block and the slim end-of-page strip are both
   gone: they made the same ask twice, at two volumes, neither of them next to
   the person making it.
+
+  main added a course-pointed block in this slot (`point homepage signup at
+  skills course`). Not reinstated: that change was about WHICH offer the
+  homepage asks for, and the block below already asks for the course. Putting
+  it back would restore the double ask this section removed.
 */}
 
 <AboutMatt
 	headline="Hi, I'm Matt Pocock"
-	newsletter={<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Start with the free 7-day email course: one lesson a day, tied to real work, with a repeatable agent workflow at the end."><CourseCta /></NewsletterSection>}
+	newsletter={<NewsletterSection heading={<>Join <SubscriberCount /> developers learning to code with AI</>} subTitle="Start with the free email course: seven lessons, tied to real work, with a repeatable agent workflow at the end."><CourseCta /></NewsletterSection>}
 >
 
 Before creating AI Hero, I created Total TypeScript, the industry standard course for learning TS. I was a member of the XState core team, and a developer advocate at Vercel.

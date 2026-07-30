@@ -13,6 +13,16 @@ export const SKILLS_WORKFLOW_EMAIL_ZERO =
 	'ai-hero-skills-workflow.email-0' as const
 export const SKILLS_WORKFLOW_EMAIL_ZERO_KIT_SEQUENCE = '2757199' as const
 
+/**
+ * Matt's weekly newsletter, Thursdays 11:00 America/Los_Angeles, 13 emails.
+ *
+ * Course signups were never landing here: measured 2026-07-30, only 17 of the 500
+ * newest form-9376133 subscribers appeared in this sequence, against 429 of 500 for
+ * the general form. Course entry and the newsletter are separate destinations, so
+ * finishing the course used to mean falling off the list entirely.
+ */
+export const SHADOW_NEWSLETTER_KIT_SEQUENCE = '2625552' as const
+
 export type SkillsNewsletterPathEntryInput = {
 	kitSubscriberId: string
 	email: string
