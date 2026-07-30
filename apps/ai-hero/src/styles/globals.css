@@ -759,6 +759,21 @@ li.task-list-item {
 	}
 }
 
+/** Clearance for the lesson bar (`MobileListResourceNavigation`). Separate from
+    `.has-sticky-action` because the two bars are different heights and stop at
+    different widths: this one hands over to the hub sidebar at `md`, where the
+    skill page's install bar runs to 900px. A page that somehow had both would
+    add both paddings, which is the right answer for two stacked bars. */
+.has-list-bar {
+	padding-bottom: calc(60px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+	.has-list-bar {
+		padding-bottom: 0;
+	}
+}
+
 /** Same hatch, half the ink — for structural fills that must not compete with
     content sitting next to them. */
 .bg-stripes-muted {

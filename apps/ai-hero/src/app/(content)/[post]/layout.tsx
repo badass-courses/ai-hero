@@ -58,10 +58,8 @@ export default async function Layout(props: {
 				r.resource.type === 'videoResource',
 		),
 	)
-	const mobileListLabel =
-		post.type === 'post' && post.fields?.postType === 'skill'
-			? 'Pages'
-			: 'Lessons'
+	const isSkillPost = post.type === 'post' && post.fields?.postType === 'skill'
+	const mobileListLabel = isSkillPost ? 'Pages' : 'Lessons'
 
 	// Every post gets the global hub sidebar (Amy's call — keep the breadth).
 	// Series posts additionally pin an "In this series" group at the top of that
@@ -80,7 +78,12 @@ export default async function Layout(props: {
 						>
 							{props.children}
 						</HubLayout>
-						<MobileListResourceNavigation label={mobileListLabel} />
+						{/* A skill page pins its install action to the bottom edge, so the
+					    list stays a floating trigger there rather than a second bar. */}
+					<MobileListResourceNavigation
+						label={mobileListLabel}
+						variant={isSkillPost ? 'floating' : 'bar'}
+					/>
 					</LayoutClient>
 				</ActiveHeadingProvider>
 			</ProgressProvider>
