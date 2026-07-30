@@ -88,4 +88,17 @@ describe('SkillsNewsletterCta course variant', () => {
 		)
 		expect(mocks.push).toHaveBeenCalledWith('/course-confirmed')
 	})
+
+	it('keeps the course card shape for an existing subscriber', () => {
+		const markup = renderToStaticMarkup(
+			<SkillsNewsletterCta
+				variant="course"
+				source="skill_page_course:never-run-claude-init"
+				forceState="tag-me"
+			/>,
+		)
+
+		expect(markup).toContain('rounded-xl')
+		expect(markup).toContain('Start the free course')
+	})
 })

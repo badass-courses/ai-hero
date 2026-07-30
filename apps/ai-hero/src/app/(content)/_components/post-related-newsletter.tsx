@@ -121,23 +121,23 @@ export function PostRelatedNewsletter({
 				</div>
 			)}
 			{showNewsletter && (
-			<div className="flex flex-col bg-[color:var(--ah-band)] px-[18px] py-10 sm:px-11">
-				<p className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
-					Keep learning
-				</p>
-				<h2 className={cn(TYPE.panelTitle, 'mb-2 text-balance')}>
-					Join <SubscriberCount /> developers
-				</h2>
-				<p
-					className={cn(
-						TYPE.metaProse,
-						'mb-[18px] max-w-[44ch] text-pretty text-[color:var(--ah-fg-muted)]',
-					)}
-				>
-					New skills and Matt's AI coding letters, the day they land.
-				</p>
-				<PostNewsletterForm trackParams={trackParams} />
-			</div>
+				<div className="flex flex-col bg-[color:var(--ah-band)] px-[18px] py-10 sm:px-11">
+					<p className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
+						Keep learning
+					</p>
+					<h2 className={cn(TYPE.panelTitle, 'mb-2 text-balance')}>
+						Join <SubscriberCount /> developers
+					</h2>
+					<p
+						className={cn(
+							TYPE.metaProse,
+							'mb-[18px] max-w-[44ch] text-pretty text-[color:var(--ah-fg-muted)]',
+						)}
+					>
+						New skills and Matt's AI coding letters, the day they land.
+					</p>
+					<PostNewsletterForm trackParams={trackParams} />
+				</div>
 			)}
 		</section>
 	)

@@ -51,6 +51,31 @@ describe('PostBodyCtaPlacement', () => {
 		)
 	})
 
+	it.each([
+		'my-grill-me-skill-has-gone-viral',
+		'grill-with-docs',
+		'learn-anything-with-my-teach-skill',
+		'skills-handoff',
+		'never-run-claude-init',
+		'things-people-get-wrong-with-grill-me-and-grill-with-docs',
+	])('preserves the declared course CTA on organic article %s', (slug) => {
+		const markup = renderToStaticMarkup(
+			<PostBodyCtaPlacement
+				resolvedCta={resolvePostCta({
+					postType: 'article',
+					cta: 'course',
+				})}
+				slug={slug}
+				cohortCta={<aside data-cohort-cta>Join the next cohort</aside>}
+			>
+				<p>Post body</p>
+			</PostBodyCtaPlacement>,
+		)
+
+		expect(markup).toContain(`skill_page_course:${slug}`)
+		expect(markup).not.toContain('data-cohort-cta')
+	})
+
 	it('keeps the mapped CTA on the Claude Code status-line article', () => {
 		const markup = renderToStaticMarkup(
 			<PostBodyCtaPlacement

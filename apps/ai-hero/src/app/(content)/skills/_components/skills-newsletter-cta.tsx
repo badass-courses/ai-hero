@@ -227,10 +227,7 @@ function SkillsCtaTagMe({
 					? 'Join the free AI Skills course'
 					: 'Add me to the skills list'
 			}
-			className={cn(
-				'not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 border p-6 sm:p-8',
-				variant !== 'course' && 'rounded-xl',
-			)}
+			className="not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 rounded-xl border p-6 sm:p-8"
 		>
 			<div className="flex flex-col gap-2">
 				<span className={CARD_EYEBROW}>{cardEyebrow(variant)}</span>
