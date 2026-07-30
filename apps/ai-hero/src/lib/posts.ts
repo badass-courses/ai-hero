@@ -8,6 +8,7 @@ import {
 	PostType,
 	PostTypeSchema,
 } from './resource-types'
+import { PostCtaFieldSchema } from './post-cta'
 import { TagSchema } from './tags'
 
 export const PostActionSchema = z.union([
@@ -85,6 +86,7 @@ export const PostSchema = ContentResourceSchema.merge(
 	z.object({
 		fields: z.object({
 			postType: PostTypeSchema.default('article'),
+			cta: PostCtaFieldSchema.optional(),
 			body: z.string().nullable().optional(),
 			yDoc: z.string().nullable().optional(),
 			title: z.string(),
@@ -137,6 +139,7 @@ export const PostUpdateSchema = z.object({
 	id: z.string(),
 	fields: z.object({
 		postType: PostTypeSchema.default('article'),
+		cta: PostCtaFieldSchema.optional(),
 		title: z.string().min(2).max(90),
 		body: z.string().optional().nullable(),
 		slug: z.string(),

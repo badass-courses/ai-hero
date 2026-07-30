@@ -26,12 +26,15 @@ export type PostRelatedItem = {
  * reader's two options — read another one, or hear about the next one — sit
  * side by side, the left cell on the page surface and the right on the band.
  *
- * With no related items the newsletter cell simply spans the row.
+ * With no related items the newsletter cell simply spans the row, and with no
+ * newsletter the related cell does — either way the grid never renders a cell
+ * that is only there to balance the other one.
  */
 export function PostRelatedNewsletter({
 	items,
 	heading = 'Related reading',
 	trackParams,
+	showNewsletter = true,
 	id,
 	className,
 }: {
@@ -39,16 +42,25 @@ export function PostRelatedNewsletter({
 	heading?: string
 	/** Merged into the `subscribed` track call, e.g. `{ post, location }`. */
 	trackParams?: Record<string, string>
+	/**
+	 * False when the body already carries an email ask, so the page does not
+	 * close by asking for the same address a second time in different words.
+	 */
+	showNewsletter?: boolean
 	/** Scroll target, so the ToC rail can list this block. */
 	id?: string
 	className?: string
 }) {
 	const hasRelated = items.length > 0
 
+	if (!hasRelated && !showNewsletter) return null
+
 	return (
 		<section
 			id={id}
-			aria-label="Related reading and newsletter"
+			aria-label={
+				showNewsletter ? 'Related reading and newsletter' : 'Related reading'
+			}
 			// No border of its own: the article container draws the rule above every
 			// section (see the note on `<article>` in `[post]/page.tsx`), so a local
 			// one would double up against it.
@@ -56,7 +68,9 @@ export function PostRelatedNewsletter({
 				'border-border bg-border grid grid-cols-1 gap-px',
 				// See the pager: a jump target has to clear the sticky header.
 				id && 'scroll-mt-(--nav-height)',
-				hasRelated && 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
+				hasRelated &&
+					showNewsletter &&
+					'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
 				className,
 			)}
 		>
@@ -106,6 +120,7 @@ export function PostRelatedNewsletter({
 					</ul>
 				</div>
 			)}
+			{showNewsletter && (
 			<div className="flex flex-col bg-[color:var(--ah-band)] px-[18px] py-10 sm:px-11">
 				<p className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
 					Keep learning
@@ -123,6 +138,7 @@ export function PostRelatedNewsletter({
 				</p>
 				<PostNewsletterForm trackParams={trackParams} />
 			</div>
+			)}
 		</section>
 	)
 }

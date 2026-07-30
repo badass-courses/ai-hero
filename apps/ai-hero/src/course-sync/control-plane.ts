@@ -42,7 +42,7 @@ export function sha256(value: string | Uint8Array): string {
 
 export function targetResourceId(
 	bindingId: string,
-	kind: 'section' | 'lesson' | 'question',
+	kind: 'section' | 'lesson' | 'question' | 'video',
 	sourceId: string,
 ): string {
 	return `sync_${kind}_${sha256(`${bindingId}:${kind}:${sourceId}`).slice(0, 24)}`
@@ -55,19 +55,6 @@ function slug(sourceId: string, title: string): string {
 		.replace(/^-|-$/g, '')
 		.slice(0, 60)
 	return `${readable || 'course-content'}-${sha256(sourceId).slice(0, 8)}`
-}
-
-async function hashStream(stream: ReadableStream<Uint8Array>) {
-	const hash = createHash('sha256')
-	let bytes = 0
-	const reader = stream.getReader()
-	for (;;) {
-		const chunk = await reader.read()
-		if (chunk.done) break
-		hash.update(chunk.value)
-		bytes += chunk.value.byteLength
-	}
-	return { sha256: hash.digest('hex'), bytes }
 }
 
 function assertManifestScope(
@@ -197,6 +184,7 @@ function publicRun(run: SyncRunRecord, noOp = false): CourseSyncRunSummary {
 function sourceResourceFields(
 	binding: CourseSyncBinding,
 	manifest: CourseJsonDocumentV3,
+	frozenAssets: ReadonlyArray<FrozenSourceAsset>,
 ): Array<
 	Omit<
 		ResourcePlanItem,
@@ -206,6 +194,9 @@ function sourceResourceFields(
 		| 'previousPosition'
 	>
 > {
+	const frozenByVideo = new Map(
+		frozenAssets.map((asset) => [asset.sourceVideoId, asset] as const),
+	)
 	return manifest.sections.flatMap((section, sectionIndex) => {
 		const sectionId = targetResourceId(binding.bindingId, 'section', section.id)
 		const sectionItem = {
@@ -276,6 +267,50 @@ function sourceResourceFields(
 					},
 				},
 			}
+			const videoItems = videos.map((video, videoIndex) => {
+				const asset = frozenByVideo.get(video.id)
+				if (
+					!asset?.muxAssetId ||
+					!asset.muxPlaybackId ||
+					asset.duration === null
+				) {
+					throw new CourseSyncError(
+						'FROZEN_MUX_ASSET_MISSING',
+						`Frozen Mux asset is missing for video ${video.id}.`,
+					)
+				}
+				return {
+					sourceKind: 'video' as const,
+					sourceId: video.id,
+					targetResourceId: targetResourceId(
+						binding.bindingId,
+						'video',
+						video.id,
+					),
+					parentResourceId: lessonId,
+					position: videoIndex,
+					detached: false,
+					previousDetached: false,
+					fields: {
+						title: videos.length === 1 ? lesson.title : `${lesson.title} ${videoIndex + 1}`,
+						state: 'ready',
+						visibility: 'unlisted',
+						duration: asset.duration,
+						muxAssetId: asset.muxAssetId,
+						muxPlaybackId: asset.muxPlaybackId,
+						chapters: video.chapters,
+						courseSync: {
+							bindingId: binding.bindingId,
+							sourceCourseId: manifest.courseId,
+							sourceSectionId: section.id,
+							sourceLessonId: lesson.id,
+							sourceVideoId: video.id,
+							producerSha256: video.sha256,
+							providerRevision: asset.providerRevision,
+						},
+					},
+				}
+			})
 			const questionItems = extractQuizQuestions(primary.body, lesson.id).map(
 				(question) => ({
 					sourceKind: 'question' as const,
@@ -303,7 +338,7 @@ function sourceResourceFields(
 					},
 				}),
 			)
-			return [lessonItem, ...questionItems]
+			return [lessonItem, ...videoItems, ...questionItems]
 		})
 		return [sectionItem, ...lessonItems]
 	})
@@ -337,6 +372,234 @@ export function createCourseSyncControlPlane(
 		return binding
 	}
 
+	const decodeManifest = (
+		binding: CourseSyncBinding,
+		input: unknown,
+	): CourseJsonDocumentV3 => {
+		let manifest: CourseJsonDocumentV3
+		try {
+			manifest = decodeCourseJsonDocumentV3(input)
+		} catch (error) {
+			throw new CourseSyncError(
+				'INVALID_V3_MANIFEST',
+				error instanceof Error ? error.message : 'Manifest validation failed.',
+			)
+		}
+		assertManifestScope(binding, manifest)
+		return manifest
+	}
+
+	const freezeVideo = async (
+		binding: CourseSyncBinding,
+		manifest: CourseJsonDocumentV3,
+		video: ReturnType<typeof courseJsonVideos>[number],
+	): Promise<FrozenSourceAsset> => {
+		const reusable = await persistence.findFrozenAsset(
+			binding.bindingId,
+			video.sha256,
+			video.bytes,
+		)
+		if (reusable?.muxAssetId) {
+			const existingMuxAsset = await dependencies.muxClient.getAsset(
+				reusable.muxAssetId,
+			)
+			if (
+				existingMuxAsset?.status === 'ready' &&
+				existingMuxAsset.playbackId &&
+				existingMuxAsset.duration !== null
+			) {
+				return {
+					...reusable,
+					sourceVideoId: video.id,
+					relativePath: video.relativePath,
+					producerSha256: video.sha256,
+					bytes: video.bytes,
+					muxPlaybackId: existingMuxAsset.playbackId,
+					duration: existingMuxAsset.duration,
+				}
+			}
+		}
+
+		const source = await dependencies.muxSourceResolver.resolve({
+			bindingId: binding.bindingId,
+			courseVersionId: manifest.courseVersionId,
+			sourceVideoId: video.id,
+			relativePath: video.relativePath,
+		})
+		if (source.bytes !== video.bytes) {
+			throw new CourseSyncError(
+				'VIDEO_BYTE_COUNT_MISMATCH',
+				`Dropbox byte count did not match the producer receipt for video ${video.id}.`,
+			)
+		}
+		const passthrough = JSON.stringify({
+			b: binding.bindingId,
+			c: manifest.courseVersionId,
+			v: video.id,
+			s: video.sha256,
+		})
+		if (passthrough.length > 255) {
+			throw new CourseSyncError(
+				'MUX_PASSTHROUGH_TOO_LONG',
+				`Mux passthrough metadata exceeded 255 characters for video ${video.id}.`,
+			)
+		}
+		const created = await dependencies.muxClient.createAsset({
+			url: source.url,
+			passthrough,
+		})
+		const ready =
+			created.status === 'ready'
+				? created
+				: await dependencies.muxClient.waitForReady(created.id)
+		if (!ready.playbackId || ready.duration === null) {
+			throw new CourseSyncError(
+				'MUX_READY_ASSET_INCOMPLETE',
+				`Mux asset ${ready.id} is ready without playback metadata.`,
+				502,
+			)
+		}
+		return {
+			sourceVideoId: video.id,
+			relativePath: video.relativePath,
+			providerRevision: source.providerRevision,
+			providerContentHash: source.providerContentHash,
+			producerSha256: video.sha256,
+			bytes: video.bytes,
+			snapshotUri: null,
+			muxAssetId: ready.id,
+			muxPlaybackId: ready.playbackId,
+			duration: ready.duration,
+		}
+	}
+
+	const stageRevision = async (input: {
+		bindingId: string
+		idempotencyKey: string
+		manifest: unknown
+		providerRevision?: string
+		frozenAssets?: ReadonlyArray<FrozenSourceAsset>
+	}) => {
+		if (!input.idempotencyKey.trim()) {
+			throw new CourseSyncError(
+				'IDEMPOTENCY_KEY_REQUIRED',
+				'Idempotency-Key is required.',
+			)
+		}
+		const binding = await requireBinding(input.bindingId)
+		const manifest = decodeManifest(binding, input.manifest)
+		const manifestBytes = new TextEncoder().encode(stableJson(manifest))
+		const manifestSha256 = sha256(manifestBytes)
+		const stageFingerprint = sha256(
+			stableJson({ bindingId: binding.bindingId, manifestSha256 }),
+		)
+
+		const keyedRun = await persistence.findRunByStageKey(
+			binding.bindingId,
+			input.idempotencyKey,
+		)
+		if (keyedRun) {
+			if (keyedRun.stageFingerprint !== stageFingerprint) {
+				throw new CourseSyncError(
+					'IDEMPOTENCY_CONFLICT',
+					'The idempotency key was already used for different stage input.',
+					409,
+				)
+			}
+			return publicRun(keyedRun, true)
+		}
+
+		const applied = await persistence.findAppliedRunByRevision(
+			binding.bindingId,
+			manifest.courseVersionId,
+		)
+		if (applied) {
+			if (applied.stageFingerprint !== stageFingerprint) {
+				throw new CourseSyncError(
+					'IMMUTABLE_REVISION_CONFLICT',
+					'The courseVersionId was already applied with different bytes.',
+					409,
+				)
+			}
+			return publicRun(applied, true)
+		}
+
+		const videos = courseJsonVideos(manifest)
+		const frozenAssets = input.frozenAssets
+			? [...input.frozenAssets]
+			: await Promise.all(
+					videos.map((video) => freezeVideo(binding, manifest, video)),
+				)
+		if (frozenAssets.length !== videos.length) {
+			throw new CourseSyncError(
+				'FROZEN_ASSET_SET_INCOMPLETE',
+				'Pre-frozen assets do not cover every manifest video.',
+			)
+		}
+		const frozenByVideo = new Map(
+			frozenAssets.map((asset) => [asset.sourceVideoId, asset] as const),
+		)
+		if (frozenByVideo.size !== frozenAssets.length) {
+			throw new CourseSyncError(
+				'DUPLICATE_FROZEN_ASSET',
+				'Pre-frozen assets contain duplicate video IDs.',
+			)
+		}
+		for (const video of videos) {
+			const asset = frozenByVideo.get(video.id)
+			if (
+				!asset ||
+				asset.relativePath !== video.relativePath ||
+				asset.producerSha256 !== video.sha256 ||
+				asset.bytes !== video.bytes ||
+				!asset.providerRevision ||
+				!asset.muxAssetId ||
+				!asset.muxPlaybackId ||
+				asset.duration === null
+			) {
+				throw new CourseSyncError(
+					'FROZEN_ASSET_RECEIPT_MISMATCH',
+					`Pre-frozen asset receipt does not match video ${video.id}.`,
+				)
+			}
+		}
+
+		const sourceRevisionId = makeId('csr')
+		const runId = makeId('csr_run')
+		const now = clock()
+		const revision: SourceRevisionRecord = {
+			sourceRevisionId,
+			bindingId: binding.bindingId,
+			courseVersionId: manifest.courseVersionId,
+			providerRevision:
+				input.providerRevision?.trim() || manifest.courseVersionId,
+			manifestSha256,
+			manifestSnapshotUri: null,
+			manifest,
+			assets: frozenAssets,
+			stagedAt: now,
+		}
+		const run: SyncRunRecord = {
+			runId,
+			bindingId: binding.bindingId,
+			sourceRevisionId,
+			courseVersionId: manifest.courseVersionId,
+			state: 'staged',
+			stageIdempotencyKey: input.idempotencyKey,
+			stageFingerprint,
+			applyIdempotencyKey: null,
+			rollbackOfRunId: null,
+			compensatingRunId: null,
+			plan: null,
+			planSha256: null,
+			failureCode: null,
+			failureReason: null,
+			createdAt: now,
+			updatedAt: now,
+		}
+		return publicRun(await persistence.createStaged({ revision, run }))
+	}
+
 	return {
 		async getBinding(bindingId: string) {
 			return publicBinding(await requireBinding(bindingId))
@@ -350,152 +613,43 @@ export function createCourseSyncControlPlane(
 			return publicRun(run)
 		},
 
-		async stage(input: {
+		async freezeAsset(input: {
+			bindingId: string
+			manifest: unknown
+			sourceVideoId: string
+		}) {
+			const binding = await requireBinding(input.bindingId)
+			const manifest = decodeManifest(binding, input.manifest)
+			const video = courseJsonVideos(manifest).find(
+				(candidate) => candidate.id === input.sourceVideoId,
+			)
+			if (!video) {
+				throw new CourseSyncError(
+					'SOURCE_VIDEO_NOT_FOUND',
+					`Manifest video ${input.sourceVideoId} was not found.`,
+					404,
+				)
+			}
+			return freezeVideo(binding, manifest, video)
+		},
+
+		stage(input: {
 			bindingId: string
 			idempotencyKey: string
 			manifest: unknown
 			providerRevision?: string
 		}) {
-			if (!input.idempotencyKey.trim()) {
-				throw new CourseSyncError(
-					'IDEMPOTENCY_KEY_REQUIRED',
-					'Idempotency-Key is required.',
-				)
-			}
-			const binding = await requireBinding(input.bindingId)
+			return stageRevision(input)
+		},
 
-			let manifest: CourseJsonDocumentV3
-			try {
-				manifest = decodeCourseJsonDocumentV3(input.manifest)
-			} catch (error) {
-				throw new CourseSyncError(
-					'INVALID_V3_MANIFEST',
-					error instanceof Error
-						? error.message
-						: 'Manifest validation failed.',
-				)
-			}
-			assertManifestScope(binding, manifest)
-			const manifestBytes = new TextEncoder().encode(stableJson(manifest))
-			const manifestSha256 = sha256(manifestBytes)
-			const stageFingerprint = sha256(
-				stableJson({ bindingId: binding.bindingId, manifestSha256 }),
-			)
-
-			const keyedRun = await persistence.findRunByStageKey(
-				binding.bindingId,
-				input.idempotencyKey,
-			)
-			if (keyedRun) {
-				if (keyedRun.stageFingerprint !== stageFingerprint) {
-					throw new CourseSyncError(
-						'IDEMPOTENCY_CONFLICT',
-						'The idempotency key was already used for different stage input.',
-						409,
-					)
-				}
-				return publicRun(keyedRun, true)
-			}
-
-			const applied = await persistence.findAppliedRunByRevision(
-				binding.bindingId,
-				manifest.courseVersionId,
-			)
-			if (applied) {
-				if (applied.stageFingerprint !== stageFingerprint) {
-					throw new CourseSyncError(
-						'IMMUTABLE_REVISION_CONFLICT',
-						'The courseVersionId was already applied with different bytes.',
-						409,
-					)
-				}
-				return publicRun(applied, true)
-			}
-
-			const sourceRevisionId = makeId('csr')
-			const runId = makeId('csr_run')
-			const manifestSnapshotUri = await dependencies.snapshotStore.putManifest({
-				key: `${binding.bindingId}/${manifest.courseVersionId}/course.json`,
-				bytes: manifestBytes,
-				sha256: manifestSha256,
-			})
-			const frozenAssets: FrozenSourceAsset[] = []
-			for (const video of courseJsonVideos(manifest)) {
-				const resolved = await dependencies.assetReader.read(video.relativePath)
-				if (!resolved.providerRevision) {
-					throw new CourseSyncError(
-						'DROPBOX_REVISION_MISSING',
-						`Dropbox did not return a revision for video ${video.id}.`,
-					)
-				}
-				if (resolved.bytes !== video.bytes) {
-					throw new CourseSyncError(
-						'VIDEO_BYTE_COUNT_MISMATCH',
-						`Dropbox byte count did not match the producer receipt for video ${video.id}.`,
-					)
-				}
-				const [hashBranch, snapshotBranch] = resolved.stream.tee()
-				const snapshotPromise = dependencies.snapshotStore.putAsset({
-					key: `${binding.bindingId}/${manifest.courseVersionId}/${video.id}/${resolved.providerRevision}.mp4`,
-					stream: snapshotBranch,
-					bytes: video.bytes,
-					sha256: video.sha256,
-				})
-				const [observed, snapshotUri] = await Promise.all([
-					hashStream(hashBranch),
-					snapshotPromise,
-				])
-				if (
-					observed.bytes !== video.bytes ||
-					observed.sha256 !== video.sha256
-				) {
-					throw new CourseSyncError(
-						'VIDEO_SHA256_MISMATCH',
-						`Streamed Dropbox bytes did not match the producer receipt for video ${video.id}.`,
-					)
-				}
-				frozenAssets.push({
-					sourceVideoId: video.id,
-					relativePath: video.relativePath,
-					providerRevision: resolved.providerRevision,
-					producerSha256: video.sha256,
-					bytes: video.bytes,
-					snapshotUri,
-				})
-			}
-
-			const now = clock()
-			const revision: SourceRevisionRecord = {
-				sourceRevisionId,
-				bindingId: binding.bindingId,
-				courseVersionId: manifest.courseVersionId,
-				providerRevision:
-					input.providerRevision?.trim() || manifest.courseVersionId,
-				manifestSha256,
-				manifestSnapshotUri,
-				manifest,
-				assets: frozenAssets,
-				stagedAt: now,
-			}
-			const run: SyncRunRecord = {
-				runId,
-				bindingId: binding.bindingId,
-				sourceRevisionId,
-				courseVersionId: manifest.courseVersionId,
-				state: 'staged',
-				stageIdempotencyKey: input.idempotencyKey,
-				stageFingerprint,
-				applyIdempotencyKey: null,
-				rollbackOfRunId: null,
-				compensatingRunId: null,
-				plan: null,
-				planSha256: null,
-				failureCode: null,
-				failureReason: null,
-				createdAt: now,
-				updatedAt: now,
-			}
-			return publicRun(await persistence.createStaged({ revision, run }))
+		stageFrozen(input: {
+			bindingId: string
+			idempotencyKey: string
+			manifest: unknown
+			providerRevision?: string
+			frozenAssets: ReadonlyArray<FrozenSourceAsset>
+		}) {
+			return stageRevision(input)
 		},
 
 		async preview(runId: string) {
@@ -526,7 +680,11 @@ export function createCourseSyncControlPlane(
 					item,
 				]),
 			)
-			const desired = sourceResourceFields(binding, revision.manifest)
+			const desired = sourceResourceFields(
+				binding,
+				revision.manifest,
+				revision.assets,
+			)
 			const desiredIds = new Set(
 				desired.map((item) => item.targetResourceId),
 			)
@@ -576,6 +734,12 @@ export function createCourseSyncControlPlane(
 			)
 			const media = revision.assets.map((asset) => {
 				const previous = previousAssets.get(asset.sourceVideoId)
+				if (!asset.muxAssetId || !asset.muxPlaybackId || asset.duration === null) {
+					throw new CourseSyncError(
+						'FROZEN_MUX_ASSET_MISSING',
+						`Frozen Mux asset is missing for video ${asset.sourceVideoId}.`,
+					)
+				}
 				return {
 					sourceVideoId: asset.sourceVideoId,
 					providerRevision: asset.providerRevision,
@@ -586,7 +750,9 @@ export function createCourseSyncControlPlane(
 						previous.providerRevision === asset.providerRevision
 							? ('retain' as const)
 							: ('update' as const),
-					snapshotUri: asset.snapshotUri,
+					muxAssetId: asset.muxAssetId,
+					muxPlaybackId: asset.muxPlaybackId,
+					duration: asset.duration,
 				}
 			})
 			const planInput = {

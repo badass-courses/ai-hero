@@ -8,8 +8,9 @@ import { InMemoryCourseSyncPersistence } from './in-memory-persistence'
 import { courseSyncRunMachine } from './run-machine'
 import {
 	AI_HERO_DRAFT_SYNC_BINDING,
-	type CourseSyncAssetReader,
-	type CourseSyncSnapshotStore,
+	type CourseSyncMuxAsset,
+	type CourseSyncMuxClient,
+	type CourseSyncMuxSourceResolver,
 } from './types'
 
 function bytesFor(videoNumber: number, revision = 'v1') {
@@ -101,17 +102,6 @@ function fixture060(): CourseJsonDocumentV3 {
 	}
 }
 
-function stream(bytes: Uint8Array) {
-	return new ReadableStream<Uint8Array>({
-		start(controller) {
-			const split = Math.max(1, Math.floor(bytes.byteLength / 2))
-			controller.enqueue(bytes.slice(0, split))
-			controller.enqueue(bytes.slice(split))
-			controller.close()
-		},
-	})
-}
-
 function harness(
 	options: {
 		changedVideo?: number
@@ -122,8 +112,8 @@ function harness(
 	const persistence = new InMemoryCourseSyncPersistence()
 	persistence.targetValid = options.targetValid ?? true
 	let reads = 0
-	const assetReader: CourseSyncAssetReader = {
-		async read(relativePath) {
+	const muxSourceResolver: CourseSyncMuxSourceResolver = {
+		async resolve({ relativePath }) {
 			reads += 1
 			const match = /video-(\d+)\.mp4$/.exec(relativePath)
 			if (!match) throw new Error('bad fixture path')
@@ -131,35 +121,42 @@ function harness(
 			const revision = number === options.changedVideo ? 'v2' : 'v1'
 			const bytes = bytesFor(number, revision)
 			return {
+				url: `https://dropbox.test/${relativePath}`,
 				providerRevision: `dropbox-rev-${number}-${revision}`,
+				providerContentHash: `content-${number}-${revision}`,
 				bytes: bytes.byteLength,
-				stream: stream(bytes),
 			}
 		},
 	}
 	const snapshots: Array<{ key: string; bytes: number }> = []
-	const snapshotStore: CourseSyncSnapshotStore = {
-		async putManifest({ key, bytes }) {
-			snapshots.push({ key, bytes: bytes.byteLength })
-			return `memory://${key}`
+	const muxAssets = new Map<string, CourseSyncMuxAsset>()
+	const muxClient: CourseSyncMuxClient = {
+		async getAsset(assetId) {
+			return muxAssets.get(assetId) ?? null
 		},
-		async putAsset({ key, stream: body }) {
-			const reader = body.getReader()
-			let count = 0
-			for (;;) {
-				const chunk = await reader.read()
-				if (chunk.done) break
-				count += chunk.value.byteLength
+		async createAsset({ passthrough }) {
+			const sourceVideoId = JSON.parse(passthrough).v as string
+			const asset = {
+				id: `mux-${sourceVideoId}`,
+				status: 'ready' as const,
+				playbackId: `playback-${sourceVideoId}`,
+				duration: 60,
 			}
-			snapshots.push({ key, bytes: count })
-			return `memory://${key}`
+			muxAssets.set(asset.id, asset)
+			snapshots.push({ key: asset.id, bytes: 0 })
+			return asset
+		},
+		async waitForReady(assetId) {
+			const asset = muxAssets.get(assetId)
+			if (!asset) throw new Error('missing mux asset')
+			return asset
 		},
 	}
 	let id = options.idStart ?? 0
 	const controlPlane = createCourseSyncControlPlane({
 		persistence,
-		assetReader,
-		snapshotStore,
+		muxSourceResolver,
+		muxClient,
 		createdById: 'test-worker',
 		makeId: (prefix) => `${prefix}_${++id}`,
 		clock: () => new Date(`2026-07-17T00:00:0${id}.000Z`),
@@ -215,10 +212,10 @@ describe('draft course sync control plane', () => {
 		const { staged, previewed } = await stagedAndPreviewed(testHarness)
 		expect(staged.state).toBe('staged')
 		expect(testHarness.reads()).toBe(16)
-		expect(testHarness.snapshots).toHaveLength(17)
+		expect(testHarness.snapshots).toHaveLength(16)
 		expect(previewed).toMatchObject({
 			state: 'previewed',
-			resourceCounts: { create: 18, update: 0, retain: 0 },
+			resourceCounts: { create: 34, update: 0, retain: 0 },
 		})
 		const run = testHarness.persistence.runs.get(staged.runId)
 		const sections = run?.plan?.resources.filter(
@@ -239,6 +236,30 @@ describe('draft course sync control plane', () => {
 		)
 	})
 
+	it('reuses a ready binding-scoped Mux asset without resolving Dropbox again', async () => {
+		const testHarness = harness()
+		await testHarness.controlPlane.stage({
+			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			idempotencyKey: 'stage-v1',
+			manifest: fixture('course-version-v1'),
+		})
+		expect(testHarness.reads()).toBe(16)
+
+		const next = fixture('course-version-v2')
+		const frozen = await testHarness.controlPlane.freezeAsset({
+			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			manifest: next,
+			sourceVideoId: 'video-1',
+		})
+		expect(frozen).toMatchObject({
+			muxAssetId: 'mux-video-1',
+			muxPlaybackId: 'playback-video-1',
+			duration: 60,
+		})
+		expect(testHarness.reads()).toBe(16)
+		expect(testHarness.snapshots).toHaveLength(16)
+	})
+
 	it('accepts a 0.6.0-shaped three-section revision and maps sections by manifest order', async () => {
 		const testHarness = harness()
 		const { staged, previewed } = await stagedAndPreviewed(
@@ -247,9 +268,9 @@ describe('draft course sync control plane', () => {
 			'stage-0.6.0',
 		)
 		expect(testHarness.reads()).toBe(34)
-		expect(testHarness.snapshots).toHaveLength(35)
+		expect(testHarness.snapshots).toHaveLength(34)
 		expect(previewed.resourceCounts).toEqual({
-			create: 32,
+			create: 66,
 			update: 0,
 			retain: 0,
 		})
@@ -289,13 +310,28 @@ describe('draft course sync control plane', () => {
 			idempotencyKey: 'apply-key',
 		})
 		expect(applied.state).toBe('applied')
-		expect(testHarness.persistence.resources.size).toBe(18)
+		expect(testHarness.persistence.resources.size).toBe(34)
 		expect(
 			[...testHarness.persistence.resources.values()].every(
 				(resource) => resource.currentVersionId !== null,
 			),
 		).toBe(true)
-		expect(testHarness.persistence.receipts).toHaveLength(18)
+		expect(testHarness.persistence.receipts).toHaveLength(34)
+		const videoResources = [...testHarness.persistence.resources.values()].filter(
+			(resource) => resource.type === 'videoResource',
+		)
+		expect(videoResources).toHaveLength(16)
+		expect(videoResources[0]?.fields).toMatchObject({
+			state: 'ready',
+			visibility: 'unlisted',
+			muxAssetId: expect.stringMatching(/^mux-video-/),
+			muxPlaybackId: expect.stringMatching(/^playback-video-/),
+		})
+		expect(
+			[...testHarness.persistence.relations.values()].filter((relation) =>
+				videoResources.some((video) => video.resourceId === relation.childId),
+			),
+		).toHaveLength(16)
 
 		const replay = await testHarness.controlPlane.stage({
 			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
@@ -304,19 +340,21 @@ describe('draft course sync control plane', () => {
 		})
 		expect(replay).toMatchObject({ state: 'applied', noOp: true })
 		expect(testHarness.reads()).toBe(16)
-		expect(testHarness.persistence.versions.size).toBe(18)
+		expect(testHarness.persistence.versions.size).toBe(34)
 
 		const rollback = await testHarness.controlPlane.rollback({
 			runId: staged.runId,
 			idempotencyKey: 'rollback-key',
 		})
 		expect(rollback.state).toBe('rolled_back')
-		expect(testHarness.persistence.resources.size).toBe(18)
-		expect(testHarness.persistence.versions.size).toBe(36)
+		expect(testHarness.persistence.resources.size).toBe(34)
+		expect(testHarness.persistence.versions.size).toBe(68)
 		expect(
 			[...testHarness.persistence.resources.values()].every(
 				(resource) =>
-					resource.fields.state === 'draft' &&
+					(resource.type === 'videoResource'
+						? resource.fields.state === 'deleted'
+						: resource.fields.state === 'draft') &&
 					resource.fields.visibility === 'unlisted',
 			),
 		).toBe(true)
@@ -397,19 +435,19 @@ describe('draft course sync control plane', () => {
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(retried).toMatchObject({ state: 'applied', noOp: false })
-		expect(testHarness.persistence.resources.size).toBe(18)
-		expect(testHarness.persistence.versions.size).toBe(18)
-		expect(testHarness.persistence.receipts).toHaveLength(18)
+		expect(testHarness.persistence.resources.size).toBe(34)
+		expect(testHarness.persistence.versions.size).toBe(34)
+		expect(testHarness.persistence.receipts).toHaveLength(34)
 
 		const replay = await testHarness.controlPlane.apply({
 			runId: staged.runId,
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(replay).toMatchObject({ state: 'applied', noOp: true })
-		expect(testHarness.persistence.resources.size).toBe(18)
-		expect(testHarness.persistence.versions.size).toBe(18)
-		expect(testHarness.persistence.relations.size).toBe(18)
-		expect(testHarness.persistence.receipts).toHaveLength(18)
+		expect(testHarness.persistence.resources.size).toBe(34)
+		expect(testHarness.persistence.versions.size).toBe(34)
+		expect(testHarness.persistence.relations.size).toBe(34)
+		expect(testHarness.persistence.receipts).toHaveLength(34)
 	})
 
 	it('extracts questions, replays without churn, and detaches removed questions', async () => {
@@ -440,7 +478,7 @@ describe('draft course sync control plane', () => {
 			'stage-quiz-v1',
 		)
 		expect(first.previewed.resourceCounts).toEqual({
-			create: 20,
+			create: 36,
 			update: 0,
 			retain: 0,
 		})
@@ -472,7 +510,7 @@ describe('draft course sync control plane', () => {
 			manifest,
 		})
 		expect(replay).toMatchObject({ state: 'applied', noOp: true })
-		expect(testHarness.persistence.resources.size).toBe(20)
+		expect(testHarness.persistence.resources.size).toBe(36)
 		expect(testHarness.persistence.versions.size).toBe(versionCount)
 
 		const removed = structuredClone(manifest)
@@ -493,7 +531,7 @@ describe('draft course sync control plane', () => {
 		expect(second.previewed.resourceCounts).toEqual({
 			create: 0,
 			update: 2,
-			retain: 18,
+			retain: 34,
 		})
 		await testHarness.controlPlane.apply({
 			runId: second.staged.runId,
@@ -534,7 +572,7 @@ describe('draft course sync control plane', () => {
 			runId: third.staged.runId,
 			idempotencyKey: 'apply-quiz-v3',
 		})
-		expect(testHarness.persistence.resources.size).toBe(20)
+		expect(testHarness.persistence.resources.size).toBe(36)
 		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
 			false,
 		)
@@ -610,8 +648,8 @@ describe('draft course sync control plane', () => {
 		)
 		expect(second.previewed.resourceCounts).toEqual({
 			create: 0,
-			update: 1,
-			retain: 17,
+			update: 2,
+			retain: 32,
 		})
 		const plan = changedReaderHarness.persistence.runs.get(
 			second.staged.runId,

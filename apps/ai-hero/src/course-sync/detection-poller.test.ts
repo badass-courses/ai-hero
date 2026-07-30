@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	buildCourseSyncNotificationPayload,
 	createCourseSyncDetectionPoller,
+	recordCourseSyncPollFailure,
 	type CourseSyncDetectionPollerDependencies,
 	type CourseSyncNotification,
 	type CourseSyncPollLogInput,
@@ -15,9 +16,49 @@ import {
 } from './detection-poller'
 
 const manifest = {
+	$schema: 'course.schema.json',
 	schemaVersion: 3,
+	courseId: '50385098-a712-486f-b777-1f76ef31e9e5',
 	courseVersionId: 'version-2',
+	archiveTTL: '90d',
+	courseName: 'Fixture Course',
+	sections: [
+		{
+			id: 'section-1',
+			title: 'Section 1',
+			lessons: [
+				{
+					type: 'explainer',
+					id: 'lesson-1',
+					title: 'Lesson 1',
+					explainer: {
+						id: 'video-1',
+						relativePath: 'video-1.mp4',
+						sha256: 'a'.repeat(64),
+						bytes: 10,
+						body: 'Body',
+						description: 'Description',
+						hash: 'render-1',
+						chapters: [],
+					},
+				},
+			],
+		},
+	],
 } as CourseJsonDocumentV3
+
+const frozenAsset = {
+	sourceVideoId: 'video-1',
+	relativePath: 'video-1.mp4',
+	providerRevision: 'asset-rev-1',
+	providerContentHash: null,
+	producerSha256: 'a'.repeat(64),
+	bytes: 10,
+	snapshotUri: null,
+	muxAssetId: 'mux-1',
+	muxPlaybackId: 'playback-1',
+	duration: 60,
+}
 
 function run(
 	state: CourseSyncRunSummary['state'],
@@ -64,23 +105,21 @@ function harness(input?: {
 	let state = input?.state ?? null
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
-	const stage = vi.fn(
-		input?.stage ?? (async () => run('staged')),
-	)
+	const stage = vi.fn(input?.stage ?? (async () => run('staged')))
 	const preview = vi.fn(async () => run('previewed'))
-	const apply = vi.fn(
-		input?.apply ?? (async () => run('applied')),
-	)
+	const apply = vi.fn(input?.apply ?? (async () => run('applied')))
+	const freezeAsset = vi.fn(async () => frozenAsset)
 	const dependencies: CourseSyncDetectionPollerDependencies = {
 		readManifest: async () => ({
 			manifest,
 			summary: {
 				courseVersionId: 'version-2',
-				manifest: { rev: 'dropbox-rev-2' },
+				manifest: { rev: 'dropbox-rev-2', sha256: 'b'.repeat(64) },
 			},
 		}),
 		getRevisionHead: async () => input?.head ?? null,
 		getPollState: async () => state,
+		freezeAsset,
 		savePollState: async (next) => {
 			state = next
 		},
@@ -97,6 +136,7 @@ function harness(input?: {
 	}
 	return {
 		poll: createCourseSyncDetectionPoller(dependencies),
+		freezeAsset,
 		stage,
 		preview,
 		apply,
@@ -145,10 +185,16 @@ describe('course sync detection poller', () => {
 			outcome: 'applied',
 			controlPlaneRunId: 'sync-run-2',
 		})
+		expect(test.freezeAsset).toHaveBeenCalledWith({
+			bindingId: 'csb_ai_coding_crash_course',
+			manifest,
+			sourceVideoId: 'video-1',
+		})
 		expect(test.stage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				providerRevision: 'dropbox-rev-2',
 				idempotencyKey: 'course-sync-poll:version-2:dropbox-rev-2',
+				frozenAssets: [frozenAsset],
 			}),
 		)
 		expect(test.preview).toHaveBeenCalledWith('sync-run-2')
@@ -201,35 +247,135 @@ describe('course sync detection poller', () => {
 		)
 	})
 
-	it('builds the required success and failure notification payloads', () => {
-		const success = buildCourseSyncNotificationPayload({
-			kind: 'success',
+	it('skips a queued tick while a fresh staging marker exists', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'staging',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+		})
+
+		await expect(test.poll('poll-queued')).resolves.toEqual({
+			outcome: 'in-progress',
+			courseVersionId: 'version-2',
+			runId: 'poll-queued',
+		})
+		expect(test.freezeAsset).not.toHaveBeenCalled()
+		expect(test.stage).not.toHaveBeenCalled()
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stage: 'stage',
+					outcome: 'skipped',
+					metadata: { reason: 'freeze-sweep-in-progress' },
+				}),
+			]),
+		)
+	})
+
+	it('accounts for silent poll death and holds on the second strike', async () => {
+		let state: CourseSyncPollState = {
+			bindingId: 'csb_ai_coding_crash_course',
 			courseVersionId: 'version-2',
 			providerRevision: 'dropbox-rev-2',
+			status: 'staging',
+			consecutiveFailures: 0,
+			controlPlaneRunId: null,
+			failureClass: null,
+			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
+		}
+		const logs: CourseSyncPollLogInput[] = []
+		const notifications: CourseSyncNotification[] = []
+		const dependencies = {
+			getPollState: async () => state,
+			savePollState: async (next: CourseSyncPollState) => {
+				state = next
+			},
+			appendLog: async (entry: CourseSyncPollLogInput) => {
+				logs.push(entry)
+			},
+			notify: async (notification: CourseSyncNotification) => {
+				notifications.push(notification)
+			},
+		}
+
+		await recordCourseSyncPollFailure(dependencies, {
+			runId: 'killed-1',
+			occurredAt: new Date('2026-07-24T18:01:00.000Z'),
+		})
+		await recordCourseSyncPollFailure(dependencies, {
+			runId: 'killed-2',
+			occurredAt: new Date('2026-07-24T18:02:00.000Z'),
+		})
+
+		expect(state).toMatchObject({
+			status: 'held',
+			consecutiveFailures: 2,
+			failureClass: 'POLL_RUN_KILLED',
+		})
+		expect(logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ stage: 'hold', outcome: 'held' }),
+			]),
+		)
+		expect(notifications).toHaveLength(2)
+	})
+
+	it('builds human success and failure notification payloads with permalinks', () => {
+		const courseVersionId = '98479f85-7dc8-4053-83da-7f4d2df1a195'
+		const manifestSha256 = 'b'.repeat(64)
+		const success = buildCourseSyncNotificationPayload({
+			kind: 'success',
+			courseVersionId,
+			courseName: 'AI Coding Crash Course',
+			providerRevision: 'dropbox-rev-2',
+			manifestSha256,
 			runId: 'poll-2',
 			controlPlaneRunId: 'sync-run-2',
 			resourceCounts: { create: 3, update: 2, retain: 1 },
+			structureCounts: { sections: 4, lessons: 39, videos: 47 },
+			durationSeconds: 31 * 60,
 			mediaCount: 4,
 			workshopEditUrl:
 				'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
 		})
 		const failure = buildCourseSyncNotificationPayload({
 			kind: 'failure',
-			courseVersionId: 'version-2',
+			courseVersionId,
+			courseName: 'AI Coding Crash Course',
 			providerRevision: 'dropbox-rev-2',
+			manifestSha256,
 			runId: 'poll-failure',
 			controlPlaneRunId: 'sync-run-2',
+			stage: 'apply',
 			failureClass: 'PLANETSCALE_TRANSACTION_TIMEOUT',
+			reason: 'The database transaction timed out.',
 		})
 
+		expect(success.text).toBe(
+			'Synced AI Coding Crash Course (98479f85) into the draft workshop: 4 sections, 39 lessons, 47 videos, 31 min. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
+		)
 		expect(success.attachments[0]?.text).toContain(
 			'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
 		)
 		expect(success.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([
+				expect.objectContaining({
+					title: 'Manifest SHA',
+					value: 'bbbbbbbbbbbb',
+				}),
 				expect.objectContaining({ title: 'Created', value: '3' }),
 				expect.objectContaining({ title: 'Media updated', value: '4' }),
 			]),
+		)
+		expect(failure.text).toBe(
+			'Course sync failed while apply AI Coding Crash Course (98479f85): The database transaction timed out. It will retry once, then hold for a human. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
 		)
 		expect(failure.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([

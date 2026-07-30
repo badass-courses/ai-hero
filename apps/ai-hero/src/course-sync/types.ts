@@ -36,9 +36,13 @@ export type FrozenSourceAsset = {
 	sourceVideoId: string
 	relativePath: string
 	providerRevision: string
+	providerContentHash: string | null
 	producerSha256: string
 	bytes: number
-	snapshotUri: string
+	snapshotUri: string | null
+	muxAssetId: string | null
+	muxPlaybackId: string | null
+	duration: number | null
 }
 
 export type SourceRevisionRecord = {
@@ -47,14 +51,14 @@ export type SourceRevisionRecord = {
 	courseVersionId: string
 	providerRevision: string
 	manifestSha256: string
-	manifestSnapshotUri: string
+	manifestSnapshotUri: string | null
 	manifest: CourseJsonDocumentV3
 	assets: ReadonlyArray<FrozenSourceAsset>
 	stagedAt: Date
 }
 
 export type ResourcePlanItem = {
-	sourceKind: 'section' | 'lesson' | 'question'
+	sourceKind: 'section' | 'lesson' | 'question' | 'video'
 	sourceId: string
 	targetResourceId: string
 	parentResourceId: string
@@ -74,7 +78,9 @@ export type MediaPlanItem = {
 	sha256: string
 	bytes: number
 	action: 'update' | 'retain'
-	snapshotUri: string
+	muxAssetId: string
+	muxPlaybackId: string
+	duration: number
 }
 
 export type SyncPlan = {
@@ -135,6 +141,40 @@ export interface CourseSyncSnapshotStore {
 	}): Promise<string>
 }
 
+export type CourseSyncMuxAsset = {
+	id: string
+	status: 'preparing' | 'ready' | 'errored'
+	playbackId: string | null
+	duration: number | null
+}
+
+export type CourseSyncMuxInput = {
+	url: string
+	passthrough: string
+}
+
+export interface CourseSyncMuxClient {
+	getAsset(assetId: string): Promise<CourseSyncMuxAsset | null>
+	createAsset(input: CourseSyncMuxInput): Promise<CourseSyncMuxAsset>
+	waitForReady(assetId: string): Promise<CourseSyncMuxAsset>
+}
+
+export type DropboxMuxSource = {
+	url: string
+	providerRevision: string
+	providerContentHash: string | null
+	bytes: number
+}
+
+export interface CourseSyncMuxSourceResolver {
+	resolve(input: {
+		bindingId: string
+		courseVersionId: string
+		sourceVideoId: string
+		relativePath: string
+	}): Promise<DropboxMuxSource>
+}
+
 export interface CourseSyncPersistence {
 	ensureBinding(binding: CourseSyncBinding): Promise<CourseSyncBinding>
 	getBinding(bindingId: string): Promise<CourseSyncBinding | null>
@@ -147,6 +187,11 @@ export interface CourseSyncPersistence {
 		bindingId: string,
 		courseVersionId: string,
 	): Promise<SyncRunRecord | null>
+	findFrozenAsset(
+		bindingId: string,
+		producerSha256: string,
+		bytes: number,
+	): Promise<FrozenSourceAsset | null>
 	createStaged(input: {
 		revision: SourceRevisionRecord
 		run: SyncRunRecord
@@ -180,8 +225,8 @@ export interface CourseSyncPersistence {
 
 export type CourseSyncControlPlaneDependencies = {
 	persistence: CourseSyncPersistence
-	assetReader: CourseSyncAssetReader
-	snapshotStore: CourseSyncSnapshotStore
+	muxSourceResolver: CourseSyncMuxSourceResolver
+	muxClient: CourseSyncMuxClient
 	clock?: () => Date
 	makeId?: (prefix: string) => string
 	createdById: string

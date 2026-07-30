@@ -30,7 +30,7 @@ export function SkillsCourseCta({
 			</span>
 			<div className="flex flex-1 flex-col gap-2">
 				<span className="text-primary font-mono text-[11px] font-medium uppercase tracking-wider">
-					Free 7-day email course
+					Free 7-lesson course
 				</span>
 				<h2
 					className={cn(

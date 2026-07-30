@@ -4,10 +4,6 @@ import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CourseCta } from '@/app/(content)/_components/course-cta'
-import {
-	OrganicOpportunityCta,
-	organicOpportunityCtaBySlug,
-} from '@/app/(content)/_components/organic-opportunity-cta'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { TYPE } from '@/components/landing/type'
 import type { CalloutIntent } from '@/components/mdx/callout'
@@ -21,9 +17,11 @@ import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
+import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
 import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
 import { getServerAuthSession } from '@/server/auth'
+import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
 	flattenListResources,
@@ -67,6 +65,7 @@ import {
 	PostShareDialogButton,
 	PostSubscribeDialogButton,
 } from './_components/post-header-dialog-buttons'
+import { PostBodyCtaPlacement } from './_components/post-body-cta-placement'
 import { PostNextLessonButton } from './_components/post-next-lesson-button'
 
 type Props = {
@@ -94,6 +93,21 @@ export default async function PostPage(props: {
 	}
 
 	const isSkillPost = post.type === 'post' && post.fields?.postType === 'skill'
+
+	// What this post asks for below the body: the email course, when the `cta`
+	// field says so or the post is a skill. Resolved here rather than inside the
+	// body because the page ending depends on it too — see `showNewsletter`.
+	const resolvedCta = resolvePostCta({
+		postType: post.fields.postType,
+		cta: post.fields.cta,
+	})
+	if (resolvedCta.warning) {
+		void log.warn('post.cta.unrecognised', {
+			postId: post.id,
+			postType: post.fields.postType,
+			slug: post.fields.slug,
+		})
+	}
 
 	// W1 §5 — only plain articles get the cross-promo layers; podcast / tip /
 	// skill-changelog / list keep their existing below-body behavior untouched.
@@ -185,7 +199,7 @@ export default async function PostPage(props: {
                 232px sticky rail. The rail drops below `md`, where
                 PostToCDisclosure above stands in for it. */}
 						<div className="md:grid md:grid-cols-[minmax(0,1fr)_232px]">
-							<PostBody post={post} />
+							<PostBody post={post} resolvedCta={resolvedCta} />
 							{post?.fields?.body && (
 								<PostToCRail
 									model={tocModel}
@@ -245,6 +259,12 @@ export default async function PostPage(props: {
 									post: post.fields.slug,
 									location: 'post',
 								}}
+								// The body already ended on an email ask when the post
+								// declares the course, so the closing grid drops its own
+								// form and keeps related reading. Two forms for the same
+								// address, three hundred pixels apart, is how the page
+								// used to read.
+								showNewsletter={resolvedCta.kind !== 'course'}
 							/>
 						)}
 					</article>
@@ -316,7 +336,13 @@ async function resolvePostRelatedItems({
 	}))
 }
 
-async function PostBody({ post }: { post: Post | null }) {
+async function PostBody({
+	post,
+	resolvedCta,
+}: {
+	post: Post | null
+	resolvedCta: ReturnType<typeof resolvePostCta>
+}) {
 	if (!post) {
 		return null
 	}
@@ -327,10 +353,16 @@ async function PostBody({ post }: { post: Post | null }) {
 
 	const dictionary = await getAiCodingDictionary()
 	const slug = String(post.fields?.slug ?? '')
-	const ctaKind = organicOpportunityCtaBySlug[slug]
-
 	const isEligibleForCrossPromo =
 		post.type === 'post' && post.fields?.postType === 'article'
+
+	// A page that asks for the email course does not also get a cohort line
+	// spliced into its prose. The two asks compete for the same click, and on
+	// these pages — search traffic for a skill the reader already installed —
+	// the course is the one that converts. `resolvedCta` decides; the cohort
+	// cross-promo stands down.
+	const wantsCohortCrossPromo =
+		isEligibleForCrossPromo && resolvedCta.kind !== 'course'
 
 	// W1 §2.3(b) / Q1 — the auto-inserted callout line is ALWAYS the 'course'
 	// variant. Resolve the copy BEFORE compile (the remark plugin does no
@@ -340,7 +372,7 @@ async function PostBody({ post }: { post: Post | null }) {
 	let calloutLineAutoInsert:
 		| { variant: CalloutIntent; label: string; href: string; linkText: string }
 		| undefined
-	if (isEligibleForCrossPromo) {
+	if (wantsCohortCrossPromo) {
 		const cohort = await getUpcomingCohort()
 		if (cohort) {
 			calloutLineAutoInsert = {
@@ -381,18 +413,24 @@ async function PostBody({ post }: { post: Post | null }) {
 			<article
 				className={`prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto ${PROSE_MEASURE}`}
 			>
-				<MdxErrorBoundary>{content}</MdxErrorBoundary>
-				{/* Q4 — never double up: keep OrganicOpportunityCta for the slugs it
-				    already covers (any post type, existing behavior); otherwise render
-				    the generalized CourseCta only for eligible articles. */}
-				{ctaKind ? (
-					<OrganicOpportunityCta kind={ctaKind} />
-				) : isEligibleForCrossPromo ? (
-					<CourseCta
-						postId={post.id}
-						suppress={post.fields?.suppressCourseCta}
-					/>
-				) : null}
+				{/* Never double up. Which of the three asks below the body wins is
+				    `PostBodyCtaPlacement`'s decision, not this file's — the cohort CTA
+				    is handed over unrendered so its cohort query only runs if it is
+				    the one that gets the slot. */}
+				<PostBodyCtaPlacement
+					resolvedCta={resolvedCta}
+					slug={slug}
+					cohortCta={
+						isEligibleForCrossPromo ? (
+							<CourseCta
+								postId={post.id}
+								suppress={post.fields?.suppressCourseCta}
+							/>
+						) : null
+					}
+				>
+					<MdxErrorBoundary>{content}</MdxErrorBoundary>
+				</PostBodyCtaPlacement>
 			</article>
 		</div>
 	)

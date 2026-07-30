@@ -5,9 +5,9 @@ import LayoutClient from '@/components/layout-client'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 
 export const metadata: Metadata = {
-	title: 'AI Skills for Real Engineers — Free 7-Day Email Course',
+	title: 'AI Skills for Real Engineers — Free 7-Lesson Course',
 	description:
-		'A free seven-day email course for engineers building repeatable workflows with coding agents.',
+		'A free seven-lesson course for engineers building repeatable workflows with coding agents. Go as fast as you want.',
 	robots: {
 		index: false,
 		follow: false,

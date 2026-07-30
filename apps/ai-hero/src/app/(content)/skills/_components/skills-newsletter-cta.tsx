@@ -21,6 +21,7 @@ import {
 } from './skills-newsletter-config'
 
 export type SkillsNewsletterCtaState = 'fresh' | 'tag-me' | 'subscribed'
+type SkillsNewsletterCtaVariant = 'updates' | 'course'
 
 /**
  * The card's own type, from the scale rather than from inline sizes.
@@ -36,6 +37,11 @@ export type SkillsNewsletterCtaState = 'fresh' | 'tag-me' | 'subscribed'
  * is exactly what this is.
  */
 const CARD_EYEBROW = cn(TYPE.micro, 'text-primary')
+/** Which offer the card is making, in the eyebrow. */
+const cardEyebrow = (variant: SkillsNewsletterCtaVariant) =>
+	variant === 'course'
+		? 'AI Hero · Free email course'
+		: 'AI Hero · Skill System'
 const CARD_HEADING = cn(TYPE.panelTitle, 'text-foreground text-balance')
 const CARD_LEAD = cn(TYPE.lead, 'text-foreground/80 text-balance')
 const CARD_FOOTNOTE = cn(
@@ -51,13 +57,19 @@ const CARD_BUTTON = cn(
 export function SkillsNewsletterCta({
 	heading = 'Get the next skill update in your inbox',
 	subtitle = 'New skill posts and changelog notes from Matt, on the agentic dev workflow.',
+	source = 'mdx_inline_skills',
+	variant = 'updates',
 	forceState,
 }: {
 	heading?: string
 	subtitle?: string
+	source?: string
+	variant?: SkillsNewsletterCtaVariant
 	forceState?: SkillsNewsletterCtaState
 }) {
 	const router = useRouter()
+	const isCourse = variant === 'course'
+	const eyebrow = cardEyebrow(variant)
 	const { data: subscriber } =
 		api.ability.getCurrentSubscriberFromCookie.useQuery(undefined, {
 			enabled: !forceState,
@@ -77,8 +89,14 @@ export function SkillsNewsletterCta({
 			window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
 			return
 		}
-		track('subscribed', { location: 'mdx_inline_skills' })
-		router.push(redirectUrlBuilder(subscriber, '/confirm'))
+		track('subscribed', { location: source })
+		router.push(
+			redirectUrlBuilder(
+				subscriber,
+				'/confirm',
+				isCourse ? { flow: 'course' } : undefined,
+			),
+		)
 	}
 
 	if (state === 'subscribed') {
@@ -86,16 +104,28 @@ export function SkillsNewsletterCta({
 	}
 
 	if (state === 'tag-me') {
-		return <SkillsCtaTagMe heading={heading} subtitle={subtitle} />
+		return (
+			<SkillsCtaTagMe
+				heading={heading}
+				subtitle={subtitle}
+				source={source}
+				variant={variant}
+			/>
+		)
 	}
 
 	return (
 		<aside
-			aria-label="Subscribe for skill updates"
+			aria-label={
+				isCourse ? 'Start the free AI Skills course' : 'Subscribe for skill updates'
+			}
+			// `rounded-xl` for both offers: the course variant shipped square, so a
+			// reader scrolling from a skill page to an article met the same card in
+			// two different shapes.
 			className="not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 rounded-xl border p-6 sm:p-8"
 		>
 			<div className="flex flex-col gap-2">
-				<span className={CARD_EYEBROW}>AI Hero · Skill System</span>
+				<span className={CARD_EYEBROW}>{eyebrow}</span>
 				{/* `font-sans` is load-bearing: the global `h1..h6` rule sets
 				    `--font-heading`, and this card's title is UI type, not a
 				    document heading. */}
@@ -104,9 +134,14 @@ export function SkillsNewsletterCta({
 			</div>
 			<SubscribeToConvertkitForm
 				formId={SKILLS_FORM_ID}
-				fields={{ ...SKILLS_INTEREST_FIELDS, source: 'mdx_inline_skills' }}
-				actionLabel="Stay up to date"
+				fields={{ ...SKILLS_INTEREST_FIELDS, source }}
+				actionLabel={isCourse ? 'Start the free course' : 'Stay up to date'}
 				onSuccess={handleOnSuccess}
+				// One form treatment for both offers. The course variant used to render
+				// square with a `bg-primary` semibold button while the updates variant
+				// was rounded and gold — the same form, two shapes and two weights,
+				// depending on which copy it carried. 9px and `accent-fill` are the
+				// documented control, so both use it.
 				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-medium [&_button]:leading-snug [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:sr-only"
 			/>
 			<p className={CARD_FOOTNOTE}>
@@ -120,9 +155,13 @@ export function SkillsNewsletterCta({
 function SkillsCtaTagMe({
 	heading,
 	subtitle,
+	source,
+	variant,
 }: {
 	heading: string
 	subtitle: string
+	source: string
+	variant: SkillsNewsletterCtaVariant
 }) {
 	const [isPending, startTransition] = React.useTransition()
 	const [error, setError] = React.useState<string | null>(null)
@@ -131,9 +170,9 @@ function SkillsCtaTagMe({
 	const handleClick = () => {
 		setError(null)
 		startTransition(async () => {
-			const result = await tagSubscriberAsSkills()
+			const result = await tagSubscriberAsSkills(source)
 			if (result.success) {
-				track('subscribed', { location: 'mdx_inline_skills', method: 'tag-me' })
+				track('subscribed', { location: source, method: 'tag-me' })
 				setDone(true)
 			} else if (result.reason === 'confirmation-required') {
 				window.location.assign(result.confirmationUrl)
@@ -148,25 +187,34 @@ function SkillsCtaTagMe({
 	}
 
 	if (done) {
+		const isCourse = variant === 'course'
 		return (
 			<aside
-				aria-label="Skills updates"
+				aria-label={isCourse ? 'Course enrolment' : 'Skills updates'}
 				// Same box as the two states above it — `rounded-xl` is the shared
 				// shape for every inline MDX card (`PromoCard`, `SkillsCta`,
 				// `SkillsCourseCta`). This one was square, so confirming the
 				// subscription visibly changed the card's shape under the reader.
 				className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-3 rounded-xl border p-6 sm:p-8"
 			>
-				<span className={cn(TYPE.micro, 'opacity-60')}>You're on the list</span>
+				<span className={cn(TYPE.micro, 'opacity-60')}>
+					{isCourse ? "You're in" : "You're on the list"}
+				</span>
 				<p className={cn(TYPE.lead, 'opacity-80')}>
-					Skill updates will land in your inbox.{' '}
-					<Link
-						href="/skills"
-						className="text-foreground inline-flex items-center gap-1 underline underline-offset-4 hover:no-underline"
-					>
-						Browse the skill set
-						<ArrowUpRight className="size-3.5" />
-					</Link>
+					{isCourse ? (
+						'Lesson one is on the way.'
+					) : (
+						<>
+							Skill updates will land in your inbox.{' '}
+							<Link
+								href="/skills"
+								className="text-foreground inline-flex items-center gap-1 underline underline-offset-4 hover:no-underline"
+							>
+								Browse the skill set
+								<ArrowUpRight className="size-3.5" />
+							</Link>
+						</>
+					)}
 				</p>
 			</aside>
 		)
@@ -174,11 +222,18 @@ function SkillsCtaTagMe({
 
 	return (
 		<aside
-			aria-label="Add me to the skills list"
-			className="not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 rounded-xl border p-6 sm:p-8"
+			aria-label={
+				variant === 'course'
+					? 'Join the free AI Skills course'
+					: 'Add me to the skills list'
+			}
+			className={cn(
+				'not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 border p-6 sm:p-8',
+				variant !== 'course' && 'rounded-xl',
+			)}
 		>
 			<div className="flex flex-col gap-2">
-				<span className={CARD_EYEBROW}>AI Hero · Skill System</span>
+				<span className={CARD_EYEBROW}>{cardEyebrow(variant)}</span>
 				<h3 className={cn(CARD_HEADING, 'font-sans')}>{heading}</h3>
 				<p className={CARD_LEAD}>{subtitle}</p>
 			</div>
@@ -201,7 +256,13 @@ function SkillsCtaTagMe({
 					'min-w-[196px] cursor-pointer select-none self-start disabled:cursor-not-allowed disabled:opacity-60',
 				)}
 			>
-				{isPending ? <Spinner className="h-4 w-4" /> : 'Send me skill updates'}
+				{isPending ? (
+					<Spinner className="h-4 w-4" />
+				) : variant === 'course' ? (
+					'Start the free course'
+				) : (
+					'Send me skill updates'
+				)}
 			</button>
 			{error ? (
 				<p className={cn(TYPE.metaSm, 'text-destructive')}>{error}</p>
@@ -209,10 +270,34 @@ function SkillsCtaTagMe({
 				<p className={CARD_FOOTNOTE}>
 					<ShieldCheckIcon className="h-3.5 w-3.5 shrink-0" />
 					<span>
-						You're already subscribed — one click to get on the skills list.
+						{variant === 'course'
+							? "You're already subscribed. One click starts the course."
+							: "You're already subscribed — one click to get on the skills list."}
 					</span>
 				</p>
 			)}
 		</aside>
+	)
+}
+
+export function SkillsCourseCta({
+	headline,
+	subtitle,
+	source,
+	forceState,
+}: {
+	headline: string
+	subtitle: string
+	source: string
+	forceState?: SkillsNewsletterCtaState
+}) {
+	return (
+		<SkillsNewsletterCta
+			heading={headline}
+			subtitle={subtitle}
+			source={source}
+			variant="course"
+			forceState={forceState}
+		/>
 	)
 }

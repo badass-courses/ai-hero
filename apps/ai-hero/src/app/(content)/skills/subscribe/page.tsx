@@ -9,9 +9,9 @@ import { SkillsSubscribeFrontDoor } from './_components/skills-subscribe-page'
 import { SubscriberUrlParam } from './subscriber-url-param'
 
 export const metadata: Metadata = {
-	title: 'AI Skills for Real Engineers — Free 7-Day Email Course',
+	title: 'AI Skills for Real Engineers — Free 7-Lesson Course',
 	description:
-		'A free seven-day email course for engineers building repeatable workflows with coding agents.',
+		'A free seven-lesson course for engineers building repeatable workflows with coding agents. Go as fast as you want.',
 	alternates: {
 		canonical: '/skills/subscribe',
 	},

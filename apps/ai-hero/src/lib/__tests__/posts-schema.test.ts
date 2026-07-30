@@ -61,6 +61,40 @@ describe('PostSchema artwork fields', () => {
 	})
 })
 
+describe('PostSchema CTA field', () => {
+	it('preserves a typed course CTA with optional copy', () => {
+		const result = PostSchema.parse({
+			...baseResource,
+			fields: {
+				...baseFields,
+				cta: {
+					kind: 'course',
+					headline: 'Page-specific headline',
+					subtitle: 'Page-specific subtitle',
+				},
+			},
+		})
+
+		expect(result.fields.cta).toEqual({
+			kind: 'course',
+			headline: 'Page-specific headline',
+			subtitle: 'Page-specific subtitle',
+		})
+	})
+
+	it('normalises an unrecognised CTA without rejecting the post', () => {
+		const result = PostSchema.parse({
+			...baseResource,
+			fields: {
+				...baseFields,
+				cta: 'surprise',
+			},
+		})
+
+		expect(result.fields.cta).toEqual({ kind: 'unrecognised' })
+	})
+})
+
 describe('PostUpdateSchema artwork fields', () => {
 	it('accepts coverImage on update', () => {
 		const result = PostUpdateSchema.parse({
