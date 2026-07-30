@@ -127,8 +127,25 @@ function Hero({
 	status: SkillsNewsletterStatus
 	location: string
 }) {
+	// Someone who arrived ALREADY enrolled has nothing to do in the panel, so
+	// there is no panel: the copy column takes the full width and the page
+	// simply stops asking. The panel used to stay and say "check your inbox for
+	// the first lesson" — 520px of hero holding one sentence the reader could
+	// not act on, on a page they had already converted from.
+	//
+	// This is the SERVER-resolved status only. A reader who enrols in this
+	// session flips to `subscribed` through `StatusView` further down, and there
+	// the panel must remain: that confirmation answers a click they just made,
+	// and an action with no visible result reads as an action that failed.
+	const arrivedEnrolled = status === 'subscribed'
+
 	return (
-		<section className="border-border grid border-b lg:grid-cols-[minmax(0,1fr)_520px]">
+		<section
+			className={cn(
+				'border-border grid border-b',
+				!arrivedEnrolled && 'lg:grid-cols-[minmax(0,1fr)_520px]',
+			)}
+		>
 			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px]">
 				<p className={cn(TYPE.micro, 'text-primary mb-[22px]')}>
 					Free 7-day email course
@@ -174,6 +191,7 @@ function Hero({
 			    are the same offer, one page apart, so they take the same ground.
 			    The card stays `bg-card` (opaque) — a translucent surface lets the
 			    diagonals read straight through and the panel becomes a hole. */}
+			{arrivedEnrolled ? null : (
 			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
 				<SkillsNewsletter.Root status={status} location={location}>
 					<div className="border-input bg-card w-full rounded-lg border p-[30px] pb-8">
@@ -217,6 +235,7 @@ function Hero({
 					</div>
 				</SkillsNewsletter.Root>
 			</div>
+			)}
 		</section>
 	)
 }
@@ -414,6 +433,14 @@ function ClosingCta({
 	status: SkillsNewsletterStatus
 	location: string
 }) {
+	// The page's second ask for the same address. It exists for a reader who
+	// scrolled the whole page before deciding — which a reader who arrived
+	// already enrolled has, by definition, nothing left to decide about. The
+	// hero above has already dropped its panel for them; this section goes
+	// entirely, headline included, because the headline IS the ask ("Lesson one
+	// lands the moment you sign up").
+	if (status === 'subscribed') return null
+
 	return (
 		<section className="border-border grid gap-8 border-b px-[18px] py-14 sm:px-11 sm:pb-16 sm:pt-[60px] lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:gap-12">
 			<div>

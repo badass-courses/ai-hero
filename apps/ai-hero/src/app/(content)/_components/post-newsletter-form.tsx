@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { type Subscriber } from '@/schemas/subscriber'
-import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
 import { cn } from '@coursebuilder/utils/cn'
@@ -23,6 +22,14 @@ import { cn } from '@coursebuilder/utils/cn'
  * The prototype's row is one email field; this keeps the first-name field the
  * rest of the site collects, so the row is three cells wide on desktop and
  * stacks below `sm`.
+ *
+ * It does NOT check for an existing subscriber, on purpose. Whether the ask
+ * appears at all is decided one level up by `PostRelatedNewsletter`, on the
+ * server, because that decision changes the closing GRID — a subscriber gets
+ * related reading across the full row rather than a half-width cell holding a
+ * form. This component used to make the call itself and could only swap the
+ * form for "You're subscribed, thanks.", which left the cell, its heading and
+ * its "Join 98,000+ developers" promise sitting there with nothing to accept.
  */
 export function PostNewsletterForm({
 	trackParams,
@@ -30,25 +37,11 @@ export function PostNewsletterForm({
 	trackParams?: Record<string, string>
 }) {
 	const router = useRouter()
-	const { data: subscriber } = api.ability.getCurrentSubscriberFromCookie.useQuery()
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (!subscriber) return
 		track('subscribed', trackParams)
 		router.push(redirectUrlBuilder(subscriber, '/confirm'))
-	}
-
-	if (subscriber) {
-		return (
-			<p
-				className={cn(
-					TYPE.metaProse,
-					'text-[color:var(--ah-fg-muted)]',
-				)}
-			>
-				You're subscribed, thanks. The next one lands in your inbox.
-			</p>
-		)
 	}
 
 	return (

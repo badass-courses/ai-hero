@@ -1,10 +1,10 @@
 'use client'
 
 import * as React from 'react'
-import type { CohortOffer } from '@/lib/nav-cta'
+import type { NextOffer } from '@/lib/next-offer'
 
 /**
- * Carries the server-resolved {@link CohortOffer} down to `Navigation`.
+ * Carries the server-resolved {@link NextOffer} down to `Navigation`.
  *
  * Context rather than a prop because `Navigation` is rendered inside
  * `LayoutClient`, itself a client component with ~80 call sites — threading a
@@ -18,13 +18,13 @@ import type { CohortOffer } from '@/lib/nav-cta'
  * lets the shell stream immediately; the two components that actually want the
  * offer unwrap it with `use()` behind their own `Suspense`.
  *
- * `getCohortOfferSafe` catches its own failures and resolves to `null`, so this
+ * `getNextOfferSafe` catches its own failures and resolves to `null`, so this
  * promise never rejects and no error boundary is needed for it.
  *
- * `null` is a real answer ("no cohort exists"), so the default is `undefined`
+ * `null` is a real answer ("nothing left to offer"), so the default is `undefined`
  * to keep "provider missing" distinguishable.
  */
-type CohortOfferPromise = Promise<CohortOffer | null>
+type CohortOfferPromise = Promise<NextOffer | null>
 
 const NavCtaContext = React.createContext<CohortOfferPromise | undefined>(
 	undefined,
@@ -45,7 +45,7 @@ export function NavCtaProvider({
  * boundary whose fallback is acceptable for the length of one cached DB read —
  * in practice `null`, since both call sites are optional chrome.
  */
-export function useCohortOffer(): CohortOffer | null {
+export function useCohortOffer(): NextOffer | null {
 	const promise = React.useContext(NavCtaContext)
 	return promise ? React.use(promise) : null
 }

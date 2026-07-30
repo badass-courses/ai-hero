@@ -1,6 +1,7 @@
 // Used for root route /[post]
 
 import * as React from 'react'
+import { Suspense } from 'react'
 import { type Metadata, type ResolvingMetadata } from 'next'
 import Link from 'next/link'
 import { Contributor } from '@/components/contributor'
@@ -28,7 +29,10 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { ListNewsletterForm } from './_components/list-newsletter-form'
+import {
+	ListClosingNewsletter,
+	ListNewsletterCellSkeleton,
+} from './_components/list-closing-newsletter'
 import { splitListBody } from './_components/split-list-body'
 
 type Props = {
@@ -201,7 +205,7 @@ export default async function ListPage(props: {
 							'min-[1120px]:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]',
 					)}
 				>
-					<div className="bg-background flex flex-col px-[18px] py-16 sm:px-11 md:py-20">
+					<div className="bg-background flex flex-col px-[18px] py-16 sm:px-11 md:py-10">
 						<div className="mb-5 flex flex-wrap items-center gap-3">
 							{list.fields.type !== 'workshop' && (
 								<span
@@ -316,7 +320,7 @@ export default async function ListPage(props: {
 				<section className="border-b">
 					<div
 						className={cn(
-							'grid grid-cols-1 gap-6 px-[18px] py-16 sm:px-11 md:py-20 lg:gap-16',
+							'grid grid-cols-1 gap-6 px-[18px] py-16 sm:px-11 md:py-10 lg:gap-16',
 							body && 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]',
 						)}
 					>
@@ -435,8 +439,20 @@ export default async function ListPage(props: {
 				</section>
 			)}
 
-			{/* NEXT — one step forward and one way to stay, side by side. */}
-			<section className="border-border bg-border grid grid-cols-1 gap-px border-b lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+			{/* NEXT — one step forward and one way to stay, side by side.
+
+			    "One way to stay" is not an option for someone already staying, so
+			    for a subscriber the second cell is gone and the first takes the
+			    whole row rather than sitting in half of it beside a form that
+			    would only tell them what they already did. */}
+			<section
+				// `auto-fit`, not a fixed two-up: the newsletter cell is resolved per
+				// reader behind the boundary below and may turn out to be nothing, so
+				// the column count cannot be written down here. auto-fit collapses the
+				// empty track on its own and "Put it to work with the skills" takes
+				// the whole row.
+				className="border-border bg-border grid grid-cols-1 gap-px border-b lg:grid-cols-[repeat(auto-fit,minmax(360px,1fr))]"
+			>
 				<div className="bg-background flex flex-col items-start gap-4 px-[18px] py-16 sm:px-11 md:py-20">
 					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
 						After this series
@@ -467,15 +483,12 @@ export default async function ListPage(props: {
 						/>
 					</Link>
 				</div>
-				<div className="bg-muted flex flex-col gap-4 px-[18px] py-16 sm:px-11 md:py-20">
-					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-						Keep learning
-					</p>
-					<h2 className={cn(TYPE.subhead, 'text-balance')}>
-						New lessons the day they land
-					</h2>
-					<ListNewsletterForm />
-				</div>
+				{/* Suspended so this route keeps its static shell. Reading the
+				    subscriber cookie in the page body instead opted every list page
+				    out of prerendering for the sake of this one cell. */}
+				<Suspense fallback={<ListNewsletterCellSkeleton />}>
+					<ListClosingNewsletter />
+				</Suspense>
 			</section>
 		</main>
 	)

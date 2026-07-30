@@ -1,14 +1,12 @@
 'use client'
 
 import * as React from 'react'
-import { TYPE } from '@/components/landing/type'
-import { api } from '@/trpc/react'
-import { CheckCircle } from 'lucide-react'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { hasWorkshopInterest } from '@/lib/cta-gating'
 
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { workshopInterestFieldKey } from './workshop-interest-config'
 
 /**
  * The house primary button (`aihero.css` § `.ah-btn--primary`): 46px tall, 9px
@@ -37,25 +35,15 @@ export const WorkshopNotifyButton = ({
 	className?: string
 	children?: React.ReactNode
 }) => {
-	const { data: subscriber } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	const { subscriber } = useCtaGate()
 
-	const alreadyInterested = workshopSlug
-		? Boolean(subscriber?.fields?.[workshopInterestFieldKey(workshopSlug)])
-		: false
-
-	if (alreadyInterested) {
-		return (
-			<p
-				className={cn(
-					TYPE.meta,
-					'text-primary inline-flex items-center gap-2 text-balance',
-				)}
-			>
-				<CheckCircle className="h-4 w-4" /> You&rsquo;re on the list. We&rsquo;ll
-				email you the moment it&rsquo;s live.
-			</p>
-		)
+	// Already on this workshop's list, so there is nothing to press. This used
+	// to render a line of confirmation copy in the button's place — mid-body,
+	// where the reader is looking for what to do next and finds a sentence
+	// telling them about a decision they already made. The sidebar's capture
+	// card hides itself for the same reader; this is the in-body half of that.
+	if (hasWorkshopInterest(subscriber, workshopSlug)) {
+		return null
 	}
 
 	const handleClick = () => {

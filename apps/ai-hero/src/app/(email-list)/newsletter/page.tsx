@@ -69,6 +69,12 @@ export default async function NewsletterPage() {
 					<PrimaryNewsletterCta
 						title={<PrimaryNewsletterTitle />}
 						titleElement="h1"
+						// The one place that keeps the confirmation. Everywhere else the
+						// newsletter is an aside and a subscriber should simply not see
+						// it, which is now the default — but this route is nothing BUT
+						// the ask, and hiding it would answer someone who deliberately
+						// navigated to /newsletter with an empty page.
+						isHiddenForSubscribers={false}
 						trackProps={{
 							event: 'subscribed',
 							params: {

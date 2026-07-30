@@ -5,6 +5,10 @@ import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useParams, usePathname, useRouter } from 'next/navigation'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { hasJoinedOfferWaitlist, isOnEmailList } from '@/lib/cta-gating'
+import type { Subscriber } from '@/schemas/subscriber'
+import type { CtaGatingSubscriber } from '@/lib/cta-gating'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { useSession } from 'next-auth/react'
@@ -54,7 +58,7 @@ const SessionDependentNavItems = ({
 	setIsFeedbackDialogOpen,
 }: {
 	sessionStatus: 'loading' | 'authenticated' | 'unauthenticated'
-	subscriber: unknown
+	subscriber: CtaGatingSubscriber | null | undefined
 	setIsFeedbackDialogOpen: (open: boolean) => void
 }) => {
 	const [mounted, setMounted] = React.useState(false)
@@ -80,12 +84,16 @@ const SessionDependentNavItems = ({
 				</li>
 			)}
 			{/* No mount gate. `subscriber` is `undefined` on the server AND on the
-			    first client render (the tRPC query has not resolved), so `!subscriber`
-			    agrees across hydration and this is safe to SSR. Behind the gate it
+			    first client render (the tRPC query has not resolved), so this test
+			    agrees across hydration and is safe to SSR. Behind the gate it
 			    appeared only after mount and shoved the whole cluster 78px left on
 			    every page load. Now the only movement is for people who turn out to
-			    be subscribed, once, when the query lands. */}
-			{!subscriber && (
+			    be subscribed, once, when the query lands.
+
+			    `isOnEmailList` rather than a truthy record, matching the gold CTA
+			    below and every other ask on the site: an unconfirmed subscriber is
+			    someone the newsletter link should still reach. */}
+			{!isOnEmailList(subscriber) && (
 				<li className="hidden items-center lg:flex">
 					<Link
 						prefetch
@@ -147,48 +155,131 @@ const PrimaryEntryLink = ({
  * 1. **Not on the free course** → "Get the free course". This outranks
  *    everything. The 7-day course is the front door, and someone who has not
  *    walked through it should not be asked for a paid cohort first.
- * 2. **On the free course** → the cohort: "Join the cohort" when one is
- *    purchasable, "Join the waitlist" between cohorts.
+ * 2. **On the free course** → whatever `getNextOffer` says is the best ask
+ *    right now: a live sale on anything ("Save 30%"), else a purchasable
+ *    cohort, else the unreleased workshop's waitlist, else the next cohort's.
+ *    The bar used to know only about cohorts, so a sale on a standalone
+ *    workshop — or the workshop itself — could not appear here at all.
  * 3. **Nothing left to offer** → nothing. Never sell someone what they have.
  *
- * The cohort half comes from {@link getCohortOffer} via context — the same
- * selector `CourseCta` uses at the foot of an article, so the bar and the
- * article can never disagree about whether enrollment is open. It is resolved
- * on the server and is therefore correct in the first paint.
+ * Step 3 used to be reachable only by running out of cohorts, which meant the
+ * two people with the strongest claim to it never got there: someone who
+ * bought the cohort was still told to join it, and someone who signed up for
+ * the waitlist was still asked to sign up for the waitlist, on every page,
+ * indefinitely. Both are now rungs the ladder can pass.
  *
- * `state === 'active'` is the same test `/skills/subscribe` uses to choose
- * between its "subscribed" and "show-form" views, off the same
- * `getSubscriberFromCookie`. Anything looser (a truthy subscriber record) would
- * also promote unconfirmed and cancelled subscribers past the free course.
+ * The offer comes from `getNextOffer` via context — the same selector
+ * `CourseCta` uses at the foot of an article, so the bar and the article can
+ * never disagree about what is being sold today. It is resolved on the server
+ * and is therefore correct in the first paint.
+ *
+ * The subscriber tests are the shared predicates in `lib/cta-gating`, the same
+ * ones every other ask on the site is gated on, so the bar and the page under
+ * it can never disagree about who has already done what. `isOnEmailList` in
+ * particular is `state === 'active'`: anything looser would promote unconfirmed
+ * and cancelled subscribers past the free course they never actually started.
  */
 const FreeCourseCta = ({
 	pathname,
 	subscriber,
+	subscriberResolved,
 }: {
 	pathname: string
-	subscriber: unknown
+	subscriber: CtaGatingSubscriber | null | undefined
+	/** False while the gate query is still in flight — see the hold below. */
+	subscriberResolved: boolean
 }) => {
 	const cohortOffer = useCohortOffer()
 
-	// `undefined` while the query is in flight. Treated as "not subscribed" so
-	// the free course renders from the first paint — the common case, and the
-	// step that takes precedence anyway, so nothing swaps for most visitors.
-	const isSubscribed =
-		Boolean(subscriber) &&
-		typeof subscriber === 'object' &&
-		subscriber !== null &&
-		'state' in subscriber &&
-		subscriber.state === 'active'
+	const isSubscribed = isOnEmailList(subscriber)
+
+	const { status: sessionStatus } = useSession()
+
+	// Does this reader already own what the ladder is about to offer them?
+	//
+	// `!== 'unauthenticated'` rather than `=== 'authenticated'`. The root
+	// `SessionProvider` is not seeded from the server — it cannot be, without an
+	// `auth()` call in the root layout making all hundred prerendered routes
+	// dynamic — so `sessionStatus` is `loading` on first render. Waiting for
+	// `authenticated` therefore delays this query behind the session request and
+	// gives the bar a THIRD state to settle through. Firing while the session is
+	// still unknown costs a query that occasionally turns out to be unnecessary;
+	// waiting costs every signed-in reader a visible flicker.
+	//
+	// Signed-out readers are excluded once we know that, which is the case worth
+	// excluding: they are most of the traffic and they own nothing.
+	//
+	// It is NOT gated on `isSubscribed`, which would be the obvious saving —
+	// that waits on the gate query, so it would put this behind a request that
+	// has to land first and give the bar yet another state to settle through.
+	const ownershipAsked =
+		Boolean(cohortOffer?.id) && sessionStatus !== 'unauthenticated'
+
+	const { data: ownership, isPending: ownershipPending } =
+		api.ability.ownsResource.useQuery(
+			{ resourceId: cohortOffer?.id ?? '' },
+			{
+				enabled: ownershipAsked,
+				staleTime: 5 * 60 * 1000,
+				refetchOnWindowFocus: false,
+				// One retry, not react-query's default three. A failed ownership
+				// check falls back to showing the offer, which is the safe direction
+				// — and three retries with exponential backoff meant a flaky
+				// response re-rendered this button four times over several seconds,
+				// long after the page had otherwise settled.
+				retry: 1,
+			},
+		)
+
+	// A waitlist is the one thing on this ladder you can be finished with
+	// without buying anything, and the offer says which waitlist it is — the
+	// next cohort's, or the unreleased workshop's. The field comes off the same
+	// subscriber record the rung above reads, so this costs nothing extra.
+	const alreadyWaiting = hasJoinedOfferWaitlist(subscriber, cohortOffer?.waitlist)
 
 	// The free course is the front door and outranks everything: someone who has
 	// not taken it is asked for that, cohort or no cohort. Only once they are on
 	// the list does the bar move them up the ladder to the cohort — enroll when
-	// one is purchasable, waitlist between cohorts.
+	// one is purchasable, waitlist between cohorts — and past that too, once
+	// they own the cohort or are already waiting for it.
+	const cohortSettled = ownership?.owned === true || alreadyWaiting
 	const offer = !isSubscribed
 		? { label: 'Get the free course', href: '/skills/subscribe' }
-		: cohortOffer
+		: cohortOffer && !cohortSettled
 			? { label: cohortOffer.label, href: cohortOffer.href }
 			: null
+
+	// Hold the slot rather than guess at it.
+	//
+	// This used to render "Get the free course" while the subscriber query was
+	// in flight, on the reasoning that most visitors are not subscribed so most
+	// of the time the guess is right. But the bar's one gold button is the most
+	// looked-at thing in the header, and for everyone it was wrong about — every
+	// subscriber, on every page — it announced the wrong offer and then swapped
+	// it out from under them. A button whose text changes after you have started
+	// reading it is worse than a button that arrives a moment late.
+	//
+	// `min-w` already pinned the geometry, so this costs no layout shift; it is
+	// the same box, held blank until it can be honest. Ownership is waited on
+	// too, but only when it was actually asked for — a disabled query reports
+	// `isPending` forever, which would leave a signed-out visitor staring at a
+	// placeholder that never resolves.
+
+	if (!subscriberResolved || (ownershipAsked && ownershipPending)) {
+		return (
+			<li className="hidden items-center lg:flex">
+				<span
+					aria-hidden
+					className="bg-foreground/[0.06] inline-flex min-w-[152px] items-center justify-center rounded-[8px] px-3.5 py-2 text-[13px] font-bold leading-none"
+				>
+					{/* A non-breaking space, not an empty box: it gives the placeholder
+					    the same line box as the label it stands in for, so the two are
+					    the same height without that height being written down twice. */}
+					&nbsp;
+				</span>
+			</li>
+		)
+	}
 
 	if (!offer) return null
 	// Never sell the page you are standing on.
@@ -239,8 +330,11 @@ const Navigation = () => {
 	}, [pathname])
 
 	const { data: sessionData, status: sessionStatus } = useSession()
-	const { data: subscriber } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	// The gating read, not the full one. This runs in the root layout on every
+	// page in the site, and the full read re-fetches the subscriber from Kit
+	// whenever the cookie is partial — a third-party round-trip per navigation
+	// to decide which label a single button carries.
+	const { subscriber, isResolved: subscriberResolved } = useCtaGate()
 
 	// Center destinations by mode. `minimal` (editors/admin/auth) shows none.
 	const showSearch = mode === 'full' || mode === 'hub'
@@ -395,7 +489,11 @@ const Navigation = () => {
 							// absent gold button reads better for one beat than a skeleton
 							// of one.
 							<React.Suspense fallback={null}>
-								<FreeCourseCta pathname={pathname} subscriber={subscriber} />
+								<FreeCourseCta
+								pathname={pathname}
+								subscriber={subscriber}
+								subscriberResolved={subscriberResolved}
+							/>
 							</React.Suspense>
 						)}
 					</ul>

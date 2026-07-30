@@ -39,6 +39,7 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { CopyPageButton } from '../_components/copy-page-button'
 import {
+	PostNewsletterCellSkeleton,
 	PostRelatedNewsletter,
 	type PostRelatedItem,
 } from '../_components/post-related-newsletter'
@@ -66,6 +67,7 @@ import {
 	PostSubscribeDialogButton,
 } from './_components/post-header-dialog-buttons'
 import { PostBodyCtaPlacement } from './_components/post-body-cta-placement'
+import { PostClosingNewsletter } from './_components/post-closing-newsletter'
 import { PostNextLessonButton } from './_components/post-next-lesson-button'
 
 type Props = {
@@ -144,19 +146,18 @@ export default async function PostPage(props: {
 				sectionTitle: list?.fields?.title,
 			})
 	// The rail lists the page's non-heading endings alongside the article's own
-	// h2s. Only what actually renders, in document order, and labelled for what
-	// the reader will find rather than for the component: the related grid is
-	// "Related reading" when it HAS related rows and "Newsletter" when the
-	// newsletter is the only cell in it.
+	// h2s. Only what actually renders, in document order.
+	//
+	// Related rows are the test, not the newsletter. Whether the closing grid
+	// carries an email ask is now a fact about the READER, resolved inside the
+	// Suspense boundary below so this route can still be prerendered — so it is
+	// not knowable here, and a rail entry labelled "Newsletter" pointing at a
+	// grid a subscriber never receives is worse than no entry. With related rows
+	// the grid always renders and the landmark is always true.
 	const tocLandmarks = [
 		...(showLessonPager ? [{ id: 'up-next', label: 'Up next' }] : []),
-		...(showRelatedNewsletter
-			? [
-					{
-						id: 'related-reading',
-						label: relatedItems.length > 0 ? 'Related reading' : 'Newsletter',
-					},
-				]
+		...(showRelatedNewsletter && relatedItems.length > 0
+			? [{ id: 'related-reading', label: 'Related reading' }]
 			: []),
 	]
 
@@ -252,19 +253,35 @@ export default async function PostPage(props: {
                 pager above is the whole ending, same as the prototype's lesson
                 page. */}
 						{showRelatedNewsletter && (
+							// Suspended so this route can still be PRERENDERED.
+							//
+							// Whether the newsletter cell renders depends on the reader's
+							// subscriber cookie, and awaiting that in the page body opts the
+							// whole route out of static generation — which took fifteen
+							// article and list pages off the prerender list for the sake of
+							// one cell at the very bottom of them. Behind a boundary the
+							// shell is still built ahead of time and only this grid is
+							// resolved per request.
+							//
+							// `fallback={null}` rather than a skeleton: it is the last thing
+							// on the page, below the fold, and a placeholder for a section
+							// that may correctly turn out to be one cell wide would reserve
+							// the wrong shape anyway. Same treatment as `PostActionBar`.
 							<PostRelatedNewsletter
 								id="related-reading"
 								items={relatedItems}
-								trackParams={{
-									post: post.fields.slug,
-									location: 'post',
-								}}
-								// The body already ended on an email ask when the post
-								// declares the course, so the closing grid drops its own
-								// form and keeps related reading. Two forms for the same
-								// address, three hundred pixels apart, is how the page
-								// used to read.
-								showNewsletter={resolvedCta.kind !== 'course'}
+								newsletter={
+									// The body already ended on an email ask when the post
+									// declares the course, so the closing grid drops its own
+									// form and keeps related reading. Two forms for the same
+									// address, three hundred pixels apart, is how the page
+									// used to read.
+									resolvedCta.kind === 'course' ? null : (
+										<Suspense fallback={<PostNewsletterCellSkeleton />}>
+											<PostClosingNewsletter postSlug={post.fields.slug} />
+										</Suspense>
+									)
+								}
 							/>
 						)}
 					</article>

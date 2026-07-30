@@ -3,8 +3,9 @@
 import * as React from 'react'
 import { Share } from '@/components/share'
 import { SubscribeToConvertkitForm } from '@/convertkit'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { isOnEmailList } from '@/lib/cta-gating'
 import type { Subscriber } from '@/schemas/subscriber'
-import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { MailPlus, Share2 } from 'lucide-react'
 
@@ -62,15 +63,14 @@ export function PostSubscribeDialogButton({
 	className?: string
 }) {
 	const [subscribed, setSubscribed] = React.useState(false)
-	const [mounted, setMounted] = React.useState(false)
-	const { data: subscriber, status } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	const { subscriber } = useCtaGate()
 
-	React.useEffect(() => {
-		setMounted(true)
-	}, [])
-
-	if (!mounted || status === 'pending' || subscriber || subscribed) {
+	// The resolved answer, and nothing else. Waiting for a mount effect and for
+	// the query to settle meant this button was absent from the head action row
+	// on first paint and inserted itself into it a moment later — shifting Copy
+	// page, Share and Source Code sideways under the reader's cursor, on every
+	// article, for everyone who was not already subscribed.
+	if (subscribed || isOnEmailList(subscriber)) {
 		return null
 	}
 

@@ -1,5 +1,9 @@
 import Link from 'next/link'
-import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
+import { hasJoinedOfferWaitlist } from '@/lib/cta-gating'
+import { hasEntitlementForResource } from '@/lib/entitlements-query'
+import { getSubscriberForGating } from '@/lib/subscriber-gate'
+import { getNextOffer } from '@/lib/next-offer'
+import { getServerAuthSession } from '@/server/auth'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import { cn } from '@coursebuilder/utils/cn'
 import { ArrowRight } from 'lucide-react'
@@ -13,15 +17,22 @@ export type CourseCtaProps = {
 }
 
 /**
- * High-weight, bottom-of-article course CTA. Renders on every eligible article
- * by default (unless `suppress`), pulling the actual next purchasable cohort via
- * the shared {@link getUpcomingCohort} selector rather than hand-authored copy.
+ * High-weight, bottom-of-article CTA. Renders on every eligible article by
+ * default (unless `suppress`), carrying whatever {@link getNextOffer} says is
+ * the best ask right now rather than hand-authored copy — one shell, one rung
+ * of the ladder in it:
  *
- * - Active cohort → cohort title + "next cohort starts {date}" + "Learn more →"
- *   linking to `/cohorts/{slug}`.
- * - No purchasable cohort (between cohorts) → waitlist state, same shell, CTA
- *   links to the LATEST cohort's own page (the /cohorts index is unused —
- *   Vojta, 2026-07-14).
+ * - Live sale → the discounted product, with the saving in the copy.
+ * - Purchasable cohort → title + "next cohort starts {date}" + "Learn more →".
+ * - Unreleased workshop → its waitlist.
+ * - Between cohorts → the LATEST cohort's waitlist, linking to its own page
+ *   (the /cohorts index is unused — Vojta, 2026-07-14).
+ * - Already on that waitlist, or already entitled to the thing → nothing.
+ *
+ * The `postId` prop is untouched by this: which reader sees the card is a fact
+ * about the reader, not about the article, so it is resolved the same way on
+ * every page the card appears on. Which OFFER they see is not per-article
+ * either — see the note on Typesense-matched offers, which this does not do.
  *
  * Generalizes `OrganicOpportunityCta`'s slug-gated hardcoded map; shares its
  * shell treatment (`border-primary/30 bg-primary/5`) as the high-weight baseline,
@@ -33,33 +44,72 @@ export async function CourseCta({
 }: CourseCtaProps): Promise<JSX.Element | null> {
 	if (suppress === true) return null
 
-	const cohort = await getUpcomingCohort()
-	const latest = cohort ? null : await getLatestCohort()
-	const target = cohort ?? latest
-	if (!target) return null
+	// The SAME ladder the nav bar climbs, so the bottom of an article and the
+	// top of the page cannot disagree about what is being sold today. It used to
+	// resolve cohorts itself, which meant a live sale on a standalone workshop
+	// was advertised in the bar and invisible here.
+	const offer = await getNextOffer()
+	if (!offer) return null
 
-	const eyebrow = 'Ready to go deeper?'
+	// Two exits, both of them "they already did this".
+	//
+	// Between cohorts this card IS the waitlist ask, and it was being made of
+	// people who joined that waitlist weeks ago — at the end of every article
+	// they read, with a button that would only add them again. And while a
+	// cohort is purchasable it asks people to enroll, including the ones who
+	// already did and are reading the articles because they bought it.
+	const [subscriber, auth] = await Promise.all([
+		getSubscriberForGating(),
+		getServerAuthSession(),
+	])
 
-	const title = target.title
+	if (hasJoinedOfferWaitlist(subscriber, offer.waitlist)) return null
 
-	const startsLabel = cohort?.startsAt
-		? formatCohortDateRange(cohort.startsAt, null, cohort.timezone).dateString
+	// Only for signed-in readers, and only then does it cost a query — a logged
+	// out visitor owns nothing and the check is skipped entirely.
+	const userId = auth?.session?.user?.id
+	if (userId && (await hasEntitlementForResource(userId, offer.id))) {
+		return null
+	}
+
+	const isEnrolling = offer.kind === 'cohort-enroll'
+	const isSale = offer.kind === 'sale'
+
+	const eyebrow = isSale ? 'On sale now' : 'Ready to go deeper?'
+
+	const title = offer.title
+
+	const startsLabel = offer.startsAt
+		? formatCohortDateRange(offer.startsAt, null, offer.timezone).dateString
 		: null
 
-	const description = cohort
-		? startsLabel
-			? `Next cohort starts ${startsLabel}.`
-			: 'Join the next cohort and build these habits alongside other engineers.'
-		: 'Enrollment is closed between cohorts. Join the waitlist to hear when the next one opens.'
+	// One sentence per rung, and the sale's says the number. A discount the
+	// reader has to click through to discover is not an offer, it is a surprise.
+	const description = isSale
+		? `${offer.discount?.formatted} off, for a limited time.`
+		: isEnrolling
+			? startsLabel
+				? `Next cohort starts ${startsLabel}.`
+				: 'Join the next cohort and build these habits alongside other engineers.'
+			: offer.kind === 'workshop-waitlist'
+				? 'Not out yet. Join the waitlist and you hear the moment it ships.'
+				: 'Enrollment is closed between cohorts. Join the waitlist to hear when the next one opens.'
 
-	const href = `/cohorts/${target.slug}`
+	const href = offer.href
 
-	const label = cohort ? 'Learn more' : 'Join the waitlist'
+	// The card's button is an ACTION, which is not always the offer's own label.
+	// "Upcoming course" is right in a nav pill, where the pill is an
+	// announcement; on a button under three lines of copy it names a noun and
+	// asks for nothing. Every rung with a page behind it says "Learn more" —
+	// including the draft workshop, whose page is where its signup lives. Only
+	// the cohort waitlist keeps its own words, because "Join next cohort" IS the
+	// action there.
+	const label = offer.kind === 'cohort-waitlist' ? offer.label : 'Learn more'
 
 	// The rail says what the CTA does, which is not always what its button says:
 	// "Learn more" is fine under three lines of cohort copy and says nothing in a
 	// list of destinations.
-	const tocLabel = cohort ? 'Join the cohort' : 'Join the waitlist'
+	const tocLabel = isSale ? `Save ${offer.discount?.formatted}` : offer.label
 
 	return (
 		<aside

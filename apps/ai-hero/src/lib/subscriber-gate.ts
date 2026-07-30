@@ -1,0 +1,127 @@
+import 'server-only'
+
+import { cache } from 'react'
+import { cookies } from 'next/headers'
+import { getSubscriberFromCookie } from '@/lib/convertkit'
+import type { CtaGatingSubscriber } from '@/lib/cta-gating'
+import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
+
+/**
+ * The subscriber, for deciding whether to render an ask — without paying a Kit
+ * round-trip to find out.
+ *
+ * {@link getSubscriberFromCookie} is the right call when you need a CURRENT,
+ * complete record: it re-fetches from Kit whenever the cookie is partial. That
+ * is a third-party HTTP call, and CTA gating happens in the render path of
+ * dynamic routes, so using it here would put api.kit.com in front of TTFB on
+ * the homepage, every cohort page and every article — to decide whether to draw
+ * a form.
+ *
+ * It does not need to. `setSubscriberCookie` stores the whole subscriber, so
+ * `state` and the full `fields` record — `interest`, every `waitlist_*`, every
+ * `interest_*` — are already sitting in the request. Reading them costs a JSON
+ * parse.
+ *
+ * The one case the cookie cannot answer is a reader arriving from a broadcast
+ * link, where the middleware has set `ck_subscriber_id` from the URL but no
+ * `ck_subscriber` exists yet. That genuinely needs the fetch, so it falls
+ * through to `getSubscriberFromCookie` — which also populates the full cookie,
+ * making it a once-per-reader cost rather than a per-request one.
+ *
+ * `cache()`d per request: several CTAs can sit on one page and they must not
+ * each parse (or worse, each fetch) their own copy.
+ */
+export const getSubscriberForGating = cache(
+	async (): Promise<Subscriber | null> => {
+		const cookieStore = await cookies()
+		if (!cookieStore) return null
+
+		const cookie = cookieStore.get('ck_subscriber')?.value
+
+		if (cookie && cookie !== 'undefined') {
+			try {
+				const parsed = SubscriberSchema.parse(JSON.parse(cookie))
+				// `email_address` missing means the record was written from a partial
+				// source. Gating reads `state` and `fields`, neither of which the
+				// address affects, so a partial record is still a usable answer —
+				// this deliberately does NOT re-fetch the way the full read does.
+				return parsed
+			} catch {
+				// A cookie we cannot parse is not evidence of a subscriber. Fall
+				// through rather than returning null outright: the id cookie below
+				// may still identify them.
+			}
+		}
+
+		const subscriberIdCookie = cookieStore.get('ck_subscriber_id')?.value
+		if (!subscriberIdCookie) return null
+
+		try {
+			return await getSubscriberFromCookie()
+		} catch {
+			// Kit being down must not take a page with it. A missing subscriber
+			// shows the ask, which is what every visitor sees anyway.
+			return null
+		}
+	},
+)
+
+/**
+ * The gating answer, and NOTHING else, for surfaces that can be asked by anyone.
+ *
+ * {@link getSubscriberForGating} is fine on the server, where it answers about
+ * whoever's request it is. Exposed over tRPC it is not, for two reasons:
+ *
+ * 1. `ck_subscriber_id` is a plain cookie, and the middleware sets it from a
+ *    query parameter on broadcast links — so it is CALLER-CONTROLLED. Letting an
+ *    unauthenticated request drive the Kit fallback turns the endpoint into
+ *    "fetch me the record for any subscriber id I name". This deliberately does
+ *    not fall through to Kit: an id-only visitor gets `null`, and `null` means
+ *    "show the ask", which is the safe direction and what every visitor sees.
+ * 2. The full record carries `email_address`, `id` and name. Gating reads
+ *    `state` and a handful of interest flags, so that is all that leaves the
+ *    server.
+ *
+ * `fields` is filtered rather than passed through because the keys are dynamic
+ * (`waitlist_<product>`, `interest_<slug>`), and an allowlist of exact names
+ * would have to be updated every time a product ships. Matching the shapes
+ * gating actually reads keeps new products working without widening the payload
+ * to whatever else Kit happens to be storing on a person.
+ */
+export const getCtaGatingPayload = cache(
+	async (): Promise<CtaGatingSubscriber | null> => {
+		const cookieStore = await cookies()
+		if (!cookieStore) return null
+
+		const cookie = cookieStore.get('ck_subscriber')?.value
+		if (!cookie || cookie === 'undefined') return null
+
+		try {
+			const parsed = SubscriberSchema.parse(JSON.parse(cookie))
+			return {
+				state: parsed.state ?? null,
+				fields: pickGatingFields(parsed.fields),
+			}
+		} catch {
+			return null
+		}
+	},
+)
+
+function pickGatingFields(
+	fields: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+	if (!fields) return {}
+	const picked: Record<string, string> = {}
+	for (const [key, value] of Object.entries(fields)) {
+		if (typeof value !== 'string') continue
+		if (
+			key === 'interest' ||
+			key.startsWith('waitlist_') ||
+			key.startsWith('interest_')
+		) {
+			picked[key] = value
+		}
+	}
+	return picked
+}

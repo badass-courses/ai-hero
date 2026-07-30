@@ -4,8 +4,9 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { isOnEmailList } from '@/lib/cta-gating'
 import { Subscriber } from '@/schemas/subscriber'
-import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { useSession } from 'next-auth/react'
 
@@ -42,6 +43,18 @@ type PrimaryNewsletterCtaProps = {
 	}
 	formId?: number
 	fields?: Record<string, string>
+	/**
+	 * Defaults to TRUE: a subscriber gets nothing rather than a panel.
+	 *
+	 * It used to default to false, so unless a call site opted in, someone
+	 * already on the list met the full bordered card — eyebrow, "Join 98,000+
+	 * developers", byline — with "You're subscribed, thanks." where the form had
+	 * been. That is a conversion surface spending its whole footprint telling a
+	 * reader something they cannot act on.
+	 *
+	 * Pass `false` only where the ask IS the page and hiding it would leave a
+	 * blank one — `/newsletter` is the case this exists for.
+	 */
 	isHiddenForSubscribers?: boolean
 	reserveSpaceWhenHidden?: boolean
 }
@@ -72,15 +85,14 @@ export const PrimaryNewsletterCta: React.FC<
 	actionLabel = common['primary-newsletter-button-cta-label'],
 	titleElement = 'h2',
 	trackProps = { event: 'subscribed', params: {} },
-	isHiddenForSubscribers = false,
+	isHiddenForSubscribers = true,
 	reserveSpaceWhenHidden = false,
 	formId,
 	fields,
 	onSuccess,
 }) => {
 	const router = useRouter()
-	const { data: subscriber } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	const { subscriber } = useCtaGate()
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (subscriber) {
@@ -91,7 +103,11 @@ export const PrimaryNewsletterCta: React.FC<
 	}
 	const { data: session } = useSession()
 
-	const shouldHideForSubscriber = isHiddenForSubscribers && subscriber
+	// `isOnEmailList`, not a truthy record: an unconfirmed or cancelled Kit
+	// subscriber is exactly who this ask still needs to reach, and hiding it
+	// from them was hiding it from the people closest to saying yes.
+	const isSubscribed = isOnEmailList(subscriber)
+	const shouldHideForSubscriber = isHiddenForSubscribers && isSubscribed
 
 	const Title = titleElement
 
@@ -144,7 +160,7 @@ export const PrimaryNewsletterCta: React.FC<
 				)}
 
 				<div className="not-prose mt-5">
-					{subscriber ? (
+					{isSubscribed ? (
 						<p
 							className={cn(
 								TYPE.metaProse,

@@ -24,8 +24,21 @@ export const CohortPricingWidgetContainer: React.FC<
 		className?: string
 		searchParams?: ParsedUrlQuery
 		enrollmentOpenDateString?: string | null
+		/**
+		 * Resolved on the server from the subscriber's `waitlist_<product>` field.
+		 * Passed in rather than read here so the sidebar is correct in the first
+		 * paint — this widget is above the fold on a page someone re-visits
+		 * specifically to check on a cohort they are waiting for.
+		 */
+		isOnWaitlist?: boolean
 	}
-> = ({ className, searchParams, enrollmentOpenDateString, ...props }) => {
+> = ({
+	className,
+	searchParams,
+	enrollmentOpenDateString,
+	isOnWaitlist = false,
+	...props
+}) => {
 	const {
 		cohort,
 		mdx,
@@ -226,16 +239,31 @@ export const CohortPricingWidgetContainer: React.FC<
 					<p className="opacit-50 -mb-3 flex w-full items-center justify-center pt-5 text-center text-sm">
 						{eventDateString}
 					</p>
+					{/* The status stays; the ask goes.
+
+					    Every subtitle in `getEnrollmentState` ends in "join the
+					    waitlist", and under it sat the form to do exactly that — which
+					    is the right sidebar for a first-time visitor and the wrong one
+					    for the person most likely to be looking at it, someone who
+					    joined weeks ago and came back to see whether the dates are set.
+					    They kept being asked, and the page gave no sign it had heard
+					    them.
+
+					    What is left is the fact they came for — closed, or opening on
+					    a date — with nothing to act on, because there is nothing left
+					    for them to do. */}
 					<div className="p-5">
 						<div className="flex flex-col items-center justify-center gap-2 text-center">
 							<p className="text-balance text-lg font-semibold">
 								{enrollmentState.title}
 							</p>
-							<p className="text-foreground/80 text-balance text-sm">
-								{enrollmentState.subtitle}
-							</p>
+							{isOnWaitlist ? null : (
+								<p className="text-foreground/80 text-balance text-sm">
+									{enrollmentState.subtitle}
+								</p>
+							)}
 						</div>
-						{renderWaitlistForm()}
+						{isOnWaitlist ? null : renderWaitlistForm()}
 					</div>
 				</>
 			)}

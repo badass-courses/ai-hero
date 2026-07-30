@@ -4,8 +4,9 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { hasWorkshopInterest } from '@/lib/cta-gating'
 import { type Subscriber } from '@/schemas/subscriber'
-import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { CheckCircle } from 'lucide-react'
 
@@ -38,8 +39,7 @@ export const WorkshopInterestCta = ({
 	className?: string
 }) => {
 	const router = useRouter()
-	const { data: subscriber, status } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	const { subscriber, isResolved } = useCtaGate()
 	const [isPending, startTransition] = React.useTransition()
 	const [done, setDone] = React.useState(false)
 	const [error, setError] = React.useState(false)
@@ -48,7 +48,17 @@ export const WorkshopInterestCta = ({
 	const today = new Date().toISOString().slice(0, 10)
 
 	// They already expressed interest in this specific workshop on a prior visit.
-	const alreadyInterested = Boolean(subscriber?.fields?.[fieldKey])
+	const alreadyInterested = hasWorkshopInterest(subscriber, workshopSlug)
+
+	// …in which case there is nothing here for them. The card used to stay put
+	// and swap its form for "You're on the list", which is a panel-sized way of
+	// saying nothing: it asks for no decision, offers no link, and takes the
+	// same space in the sidebar on every visit until the workshop ships.
+	//
+	// `done` is different and deliberately still renders. That is a confirmation
+	// of a click made a second ago, and an action that produces no visible
+	// result reads as an action that failed.
+	if (alreadyInterested && !done) return null
 
 	const handleFormSuccess = (sub?: Subscriber) => {
 		if (sub) {
@@ -108,7 +118,7 @@ export const WorkshopInterestCta = ({
 				</p>
 			</div>
 
-			{done || alreadyInterested ? (
+			{done ? (
 				<p
 					className={cn(
 						TYPE.meta,
@@ -118,7 +128,7 @@ export const WorkshopInterestCta = ({
 					<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" /> You&rsquo;re on the
 					list. We&rsquo;ll email you the moment it&rsquo;s live.
 				</p>
-			) : status === 'pending' ? (
+			) : !isResolved ? (
 				<div className="flex flex-col gap-2.5">
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />

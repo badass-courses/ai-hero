@@ -181,38 +181,6 @@ export function SearchPalette({
 	// `AskAIHeroBot` draws the same distinction; the two search surfaces should
 	// fail the same way.
 	const [hasError, setHasError] = React.useState(false)
-	// The promo row, resolved with no network call at all.
-	//
-	// It used to `fetch('/api/palette-promo')` on every open — a round-trip, and
-	// a visible swap from the static fallback to the real row — for a cohort the
-	// ROOT LAYOUT has already resolved and put in `NavCtaContext`. Same
-	// `getUpcomingCohort` underneath, so the answer is identical; it is simply
-	// already here, correct in the first paint.
-	const cohortOffer = useCohortOffer()
-	const promo = React.useMemo<Promo | null>(() => {
-		if (FEATURED_PROMO) return FEATURED_PROMO
-		// Only a purchasable cohort earns the row. Between cohorts the nav still
-		// carries a waitlist CTA, but the palette's promo is a date-led
-		// announcement — "starts soon" is the whole point of it.
-		if (cohortOffer?.kind === 'enroll') {
-			// `timeZone` is not optional here: without it this renders in the
-			// VIEWER's zone while the cohort's own page renders in the cohort's,
-			// and the same cohort advertises two different start dates on one site.
-			const starts = cohortOffer.startsAt
-				? ` — starts ${new Intl.DateTimeFormat('en-US', {
-						month: 'long',
-						day: 'numeric',
-						timeZone: cohortOffer.timezone || 'America/Los_Angeles',
-					}).format(new Date(cohortOffer.startsAt))}`
-				: ''
-			return {
-				label: 'Cohort',
-				message: `${cohortOffer.title}${starts}`,
-				href: cohortOffer.href,
-			}
-		}
-		return PALETTE_PROMO
-	}, [cohortOffer])
 	// Set on a row's pointerdown, cleared by any keydown in the palette (see the
 	// row's `onSelect`). Cleared on keydown rather than after the click so a
 	// press that drags off the row and never becomes a click can't leave the
@@ -417,48 +385,23 @@ export function SearchPalette({
 							})}
 						</CommandList>
 						{/* Fixed footer: the promo persists while typing — results
-						    scroll above it, they never push it out. */}
-						{promo && (
-							<Link
-								href={promo.href}
-								onClick={() =>
-									trackAndClose(
-										{
-											title: promo.message,
-											href: promo.href,
-											type: 'cohort',
-										},
-										'promo',
-									)
-								}
-								// The same object as `PromoBar`, the site's other announcement
-								// surface: raised ground, gold chip, one line of copy. It used
-								// to be built from raw `emerald-*` palette classes, which
-								// DESIGN.md forbids outright — and being the one green thing
-								// on a monochrome-plus-gold site, it read as a system notice
-								// rather than as the offer it is. `text-emerald-800` on a 10%
-								// tint was also the palette's worst contrast in light mode.
-								className="group focus-visible:ring-ring bg-muted/40 hover:bg-muted/70 flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-							>
-								{promo.label && (
-									<span
-										className={cn(
-											TYPE.micro,
-											'bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-1.5 py-1 leading-none',
-										)}
-									>
-										{promo.label}
-									</span>
-								)}
-								<span className={cn(TYPE.meta, 'text-foreground truncate')}>
-									{promo.message}
-								</span>
-								<ArrowRight
-									aria-hidden
-									className="ml-auto size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5"
-								/>
-							</Link>
-						)}
+						    scroll above it, they never push it out.
+
+						    Its own boundary, because `PalettePromoRow` reads the offer
+						    with `use()` and therefore SUSPENDS. The root layout builds a
+						    fresh promise on every render, so an open palette can be made
+						    to suspend again by a navigation underneath it — and React
+						    answers a re-suspension by hiding the subtree with
+						    `display: none` WITHOUT running effect cleanups. Hoisted to
+						    the boundary around the whole palette, that hides the dialog
+						    while leaving Radix's `DismissableLayer` mounted: the body
+						    keeps `pointer-events: none`, the layer stays on the stack,
+						    and the page is dead to the pointer with nothing on screen to
+						    explain it. Contained here, the worst case is one missing
+						    row. */}
+						<React.Suspense fallback={null}>
+							<PalettePromoRow onSelect={trackAndClose} />
+						</React.Suspense>
 						<div className="text-muted-foreground hidden items-center gap-4 border-t px-4 py-2 text-xs sm:flex">
 							<span className="flex items-center gap-1.5">
 								<Key>↑</Key>
@@ -478,5 +421,107 @@ export function SearchPalette({
 				</DialogPrimitive.Content>
 			</DialogPortal>
 		</DialogPrimitive.Root>
+	)
+}
+
+/**
+ * The palette's footer promo, and the only part of it that suspends.
+ *
+ * Split out of `SearchPalette` deliberately. The offer arrives as a promise from
+ * the root layout and is unwrapped with `use()`, which means whichever component
+ * reads it can suspend — and a component that can suspend must not be the one
+ * rendering an open modal, because React resolves a re-suspension by HIDING the
+ * subtree rather than unmounting it. Radix's dismissal machinery would survive
+ * that hiding: body pointer-events stay off, the layer stays on the stack, and
+ * every click on the page goes nowhere with no dialog visible to explain why.
+ *
+ * Reading it here keeps the blast radius at one row.
+ *
+ * Resolved with no network call at all: it used to `fetch('/api/palette-promo')`
+ * on every open — a round-trip, and a visible swap from the static fallback to
+ * the real row — for an offer the root layout has already resolved into
+ * `NavCtaContext`.
+ */
+function PalettePromoRow({
+	onSelect,
+}: {
+	onSelect: (
+		item: Pick<PaletteResult, 'title' | 'href' | 'type'>,
+		via: 'result' | 'promo',
+	) => void
+}) {
+	const cohortOffer = useCohortOffer()
+	const promo = React.useMemo<Promo | null>(() => {
+		if (FEATURED_PROMO) return FEATURED_PROMO
+		// A live sale earns the row outright: it is the most time-bounded thing
+		// on the site and the palette is where someone goes when they already
+		// know what they want.
+		if (cohortOffer?.kind === 'sale') {
+			return {
+				label: 'Sale',
+				message: `${cohortOffer.title} — save ${cohortOffer.discount?.formatted}`,
+				href: cohortOffer.href,
+			}
+		}
+		// Otherwise only a purchasable cohort earns it. Between cohorts the nav
+		// still carries a waitlist CTA, but the palette's promo is a date-led
+		// announcement — "starts soon" is the whole point of it.
+		if (cohortOffer?.kind === 'cohort-enroll') {
+			// `timeZone` is not optional here: without it this renders in the
+			// VIEWER's zone while the cohort's own page renders in the cohort's,
+			// and the same cohort advertises two different start dates on one site.
+			const starts = cohortOffer.startsAt
+				? ` — starts ${new Intl.DateTimeFormat('en-US', {
+						month: 'long',
+						day: 'numeric',
+						timeZone: cohortOffer.timezone || 'America/Los_Angeles',
+					}).format(new Date(cohortOffer.startsAt))}`
+				: ''
+			return {
+				label: 'Cohort',
+				message: `${cohortOffer.title}${starts}`,
+				href: cohortOffer.href,
+			}
+		}
+		return PALETTE_PROMO
+	}, [cohortOffer])
+
+	if (!promo) return null
+
+	return (
+		<Link
+			href={promo.href}
+			onClick={() =>
+				onSelect(
+					{ title: promo.message, href: promo.href, type: 'cohort' },
+					'promo',
+				)
+			}
+			// The same object as `PromoBar`, the site's other announcement surface:
+			// raised ground, gold chip, one line of copy. It used to be built from raw
+			// `emerald-*` palette classes, which DESIGN.md forbids outright — and
+			// being the one green thing on a monochrome-plus-gold site, it read as a
+			// system notice rather than as the offer it is. `text-emerald-800` on a
+			// 10% tint was also the palette's worst contrast in light mode.
+			className="group focus-visible:ring-ring bg-muted/40 hover:bg-muted/70 flex w-full items-center gap-2.5 border-t px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+		>
+			{promo.label && (
+				<span
+					className={cn(
+						TYPE.micro,
+						'bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-1.5 py-1 leading-none',
+					)}
+				>
+					{promo.label}
+				</span>
+			)}
+			<span className={cn(TYPE.meta, 'text-foreground truncate')}>
+				{promo.message}
+			</span>
+			<ArrowRight
+				aria-hidden
+				className="ml-auto size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5"
+			/>
+		</Link>
 	)
 }

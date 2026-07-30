@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { Subscriber } from '@/schemas/subscriber'
+import type { CtaGatingSubscriber } from '@/lib/cta-gating'
 import { track } from '@/utils/analytics'
 import { Menu, Search, X } from 'lucide-react'
 
@@ -10,7 +11,7 @@ type MobileNavigationProps = {
 	isMobileMenuOpen: boolean
 	setIsMobileMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
 	onSearchOpen: () => void
-	subscriber?: Subscriber | null
+	subscriber?: CtaGatingSubscriber | null
 	/**
 	 * Whether this route mounts the search palette at all. The desktop bar
 	 * already hides its Search link on `minimal` routes; without this the mobile

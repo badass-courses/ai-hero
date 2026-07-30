@@ -20,6 +20,16 @@ export type UpcomingCohortSummary = {
 	/** Cohort artwork. Every cohort has one; the homepage leads with it. */
 	image?: string
 	description?: string
+	/**
+	 * The attached product's NAME, which is what the cohort waitlist field is
+	 * keyed on (`waitlist_<snake_cased_product_name>`) — not the cohort title,
+	 * and not the slug. Carried so a CTA can ask "is this viewer already on
+	 * this cohort's waitlist?" without re-resolving the product itself.
+	 *
+	 * Undefined when the cohort has no product attached, which is the same
+	 * condition under which there is no waitlist to be on.
+	 */
+	productName?: string
 }
 
 function readString(obj: unknown, key: string): string | undefined {
@@ -90,6 +100,7 @@ async function getUpcomingCohortUncached(): Promise<UpcomingCohortSummary | null
 		timezone: readString(winner.fields, 'timezone'),
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
+		productName: winner.resourceProducts?.[0]?.product?.name ?? undefined,
 	}
 }
 
@@ -187,6 +198,12 @@ async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> 
 				'public',
 			),
 		),
+		// Joined for `productName` alone. This is the cohort every "join the
+		// waitlist" CTA points at between cohorts, so it is the one whose
+		// waitlist field decides whether that CTA should be shown at all.
+		with: {
+			resourceProducts: { with: { product: true } },
+		},
 	})
 	if (cohorts.length === 0) return null
 
@@ -207,6 +224,7 @@ async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> 
 		timezone: readString(winner.fields, 'timezone'),
 		image: readString(winner.fields, 'image'),
 		description: readString(winner.fields, 'description'),
+		productName: winner.resourceProducts?.[0]?.product?.name ?? undefined,
 	}
 }
 
@@ -215,13 +233,13 @@ async function getLatestCohortUncached(): Promise<UpcomingCohortSummary | null> 
  *
  * Which cohort is running is the same fact for every visitor and changes on a
  * human timescale, but these were being re-queried per call: the root layout
- * resolves `getCohortOffer`, then `PostBody` and `CourseCta` each ran the same
+ * resolves `getNextOffer`, then `PostBody` and `CourseCta` each ran the same
  * selector again — several `contentResource.findMany` calls with a
  * `resourceProducts`/`product` join per article render, all to reach a value
  * already computed higher in the same tree.
  *
  * Caching at the SOURCE fixes every caller at once, including the ones that
- * were already wrapping these in their own cache (`getCohortOffer`, the palette
+ * were already wrapping these in their own cache (`getNextOffer`, the palette
  * promo route) — nested `unstable_cache` is fine, the inner entry is simply
  * shared.
  *

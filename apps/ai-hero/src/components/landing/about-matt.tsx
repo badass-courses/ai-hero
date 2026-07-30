@@ -93,7 +93,13 @@ export function AboutMatt({
 						{children}
 					</div>
 				</div>
-				{newsletter ? <div className="mt-[34px]">{newsletter}</div> : null}
+				{/* `empty:mt-0` because the slot is always a truthy ELEMENT even when
+				    it renders nothing — the newsletter panel removes itself for a
+				    reader who is already on the list, and without this the bio
+				    column kept 34px of margin above a box that was not there. */}
+				{newsletter ? (
+					<div className="mt-[34px] empty:mt-0">{newsletter}</div>
+				) : null}
 			</div>
 			</div>
 		</section>

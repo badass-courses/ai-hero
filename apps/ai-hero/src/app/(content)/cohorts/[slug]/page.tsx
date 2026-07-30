@@ -22,6 +22,8 @@ import {
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
 import { getCachedCohort, loadCohortPageData } from '@/lib/cohorts-query'
+import { isOnCohortWaitlist } from '@/lib/cta-gating'
+import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import {
 	CourseStructuredData,
 	ProductStructuredData,
@@ -135,6 +137,15 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		workshops,
 		workshopProgressMap,
 	} = pageData
+
+	// Already on this cohort's waitlist. Resolved here, on the server, because
+	// the sidebar's closed-enrollment state IS the waitlist form: someone who
+	// joined last month and came back to check on the dates was being asked to
+	// join again, with no sign the site had heard them the first time.
+	const isOnWaitlist = isOnCohortWaitlist(
+		await getSubscriberForGating(),
+		product?.name,
+	)
 
 	const cohortProps: CohortPageProps = {
 		cohort,
@@ -548,6 +559,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								{...cohortProps}
 								searchParams={searchParams}
 								enrollmentOpenDateString={enrollmentOpenDateString}
+								isOnWaitlist={isOnWaitlist}
 							/>
 						) : null}
 						{/* Last in the rail in every state: waitlist, pricing and

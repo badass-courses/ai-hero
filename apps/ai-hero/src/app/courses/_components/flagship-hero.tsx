@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { formatStartsAt } from '@/components/landing/format'
 import { TYPE } from '@/components/landing/type'
 import { getCachedCohort } from '@/lib/cohorts-query'
+import { isOnCohortWaitlist } from '@/lib/cta-gating'
+import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import {
 	FLAGSHIP_ENROLLING,
 	FLAGSHIP_HERO,
@@ -67,11 +69,22 @@ export async function FlagshipHero({
 	// else on this page reads off this one boolean.
 	const isOpen = isPurchasable && Boolean(flagship)
 
+	// Already on this cohort's waitlist. Between cohorts the right-hand rail IS
+	// the waitlist form, so for these readers the whole rail is a request to do
+	// something they did — asked for again on the page they land on when they
+	// come back to check. The hero drops the rail and the pitch takes the row.
+	const alreadyWaiting =
+		!isOpen &&
+		isOnCohortWaitlist(await getSubscriberForGating(), flagship?.productName)
+
 	return (
 		<section
 			id={FLAGSHIP_WAITLIST.anchorId}
 			aria-labelledby="flagship-heading"
-			className="border-border bg-border grid scroll-mt-24 grid-cols-1 gap-px border-b lg:grid-cols-[minmax(0,1fr)_400px]"
+			className={cn(
+				'border-border bg-border grid scroll-mt-24 grid-cols-1 gap-px border-b',
+				!alreadyWaiting && 'lg:grid-cols-[minmax(0,1fr)_400px]',
+			)}
 		>
 			<div className="bg-background flex flex-col justify-center px-[18px] py-16 sm:px-11 md:py-20">
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -165,6 +178,7 @@ export async function FlagshipHero({
 			</div>
 
 			{/* The ask, on the raised surface the spec reserves for it. */}
+			{alreadyWaiting ? null : (
 			<div className="bg-muted flex flex-col justify-center px-8 py-12 sm:px-10 lg:py-16">
 				<h2 className={TYPE.subhead}>
 					{isOpen ? FLAGSHIP_ENROLLING.heading : FLAGSHIP_WAITLIST.heading}
@@ -211,6 +225,7 @@ export async function FlagshipHero({
 					</p>
 				)}
 			</div>
+			)}
 		</section>
 	)
 }

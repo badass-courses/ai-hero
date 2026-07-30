@@ -13,7 +13,7 @@ import config from '@/config'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { getProduct } from '@/lib/products-query'
-import { getCohortOfferSafe } from '@/lib/nav-cta'
+import { getNextOfferSafe } from '@/lib/next-offer'
 import { SiteStructuredData } from '@/lib/structured-data'
 import { NavCtaProvider } from '@/components/navigation/nav-cta-context'
 import { PromoBar } from '@/components/navigation/promo-bar'
@@ -105,19 +105,19 @@ export default async function RootLayout({
 	// `…Safe` because a rejection here lands above every error boundary and would
 	// replace the whole site with the global error page rather than dropping one
 	// CTA; it resolves to `null` instead. See `nav-cta.ts`.
-	const cohortOffer = getCohortOfferSafe()
+	const cohortOffer = getNextOfferSafe()
 
 	return (
 		<Providers>
 			<html lang="en" suppressHydrationWarning>
 				<head>
-					{process.env.NODE_ENV === 'development' && (
+					{/* {process.env.NODE_ENV === 'development' && (
 						<Script
 							src="//unpkg.com/react-grab/dist/index.global.js"
 							crossOrigin="anonymous"
 							strategy="beforeInteractive"
 						/>
-					)}
+					)} */}
 				</head>
 				<AxiomWebVitals />
 				<body
