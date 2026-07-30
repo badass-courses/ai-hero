@@ -58,6 +58,10 @@ export default async function Layout(props: {
 				r.resource.type === 'videoResource',
 		),
 	)
+	const mobileListLabel =
+		post.type === 'post' && post.fields?.postType === 'skill'
+			? 'Pages'
+			: 'Lessons'
 
 	// Every post gets the global hub sidebar (Amy's call — keep the breadth).
 	// Series posts additionally pin an "In this series" group at the top of that
@@ -76,7 +80,7 @@ export default async function Layout(props: {
 						>
 							{props.children}
 						</HubLayout>
-						<MobileListResourceNavigation />
+						<MobileListResourceNavigation label={mobileListLabel} />
 					</LayoutClient>
 				</ActiveHeadingProvider>
 			</ProgressProvider>

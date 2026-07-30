@@ -72,7 +72,11 @@ export default function ListResourceNavigation({
 	)
 }
 
-export function MobileListResourceNavigation() {
+export function MobileListResourceNavigation({
+	label = 'Lessons',
+}: {
+	label?: 'Lessons' | 'Pages'
+}) {
 	const { list } = useList()
 
 	if (!list) return null
@@ -80,7 +84,7 @@ export function MobileListResourceNavigation() {
 	return (
 		<Sheet>
 			<SheetTrigger className="bg-card/90 border-foreground/10 fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded border px-3 py-2 shadow-lg backdrop-blur-md xl:hidden dark:bg-gray-800/80">
-				<MenuIcon className="size-4" /> Lessons
+				<MenuIcon className="size-4" /> {label}
 			</SheetTrigger>
 			<SheetContent side="left" className="overflow-y-auto px-0 pt-0">
 				<SheetHeader>
