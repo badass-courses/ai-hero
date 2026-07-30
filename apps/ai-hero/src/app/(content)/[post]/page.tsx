@@ -411,7 +411,12 @@ async function PostBody({
 	return (
 		<div className="px-[18px] pb-16 pt-10 sm:px-11 md:pb-20 md:pt-14">
 			<article
-				className={`prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto ${PROSE_MEASURE}`}
+				// `[&>*:last-child]:mb-0` — the column already pads its own bottom
+				// (`pb-16 md:pb-20`), so whatever ends the article was adding its
+				// margin on top of that padding. Ending on the cohort CTA, whose
+				// `my-12` is sized to separate it from body copy, put 128px between
+				// the card and the section rule below it and read as a hole.
+				className={`prose prose-hr:border-border dark:prose-invert prose-a:text-primary sm:prose-lg lg:prose-lg mx-auto [&>*:last-child]:mb-0 ${PROSE_MEASURE}`}
 			>
 				{/* Never double up. Which of the three asks below the body wins is
 				    `PostBodyCtaPlacement`'s decision, not this file's — the cohort CTA

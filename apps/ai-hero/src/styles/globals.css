@@ -1051,6 +1051,16 @@ body {
 	margin-bottom: 0;
 }
 
+/** A callout's copy is vertically centred against its icon rail, so the 20px
+    that `.ah-prose-p` leaves under the last line has to go — it counts toward
+    the centred box and pushes a one-line callout's text above the glyph it is
+    aligned to. Declared here rather than as a utility on the element for the
+    same reason `.ah-testimonial` is: `.ah-prose-p` is unlayered and outranks
+    every Tailwind class, `prose-p:my-0` included. */
+.ah-callout-body > .ah-prose-p:last-child {
+	margin-bottom: 0;
+}
+
 .ah-bullets,
 .ah-bullets > li {
 	list-style: none;

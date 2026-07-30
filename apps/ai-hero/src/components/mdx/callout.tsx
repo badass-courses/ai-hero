@@ -1,6 +1,6 @@
 import React from 'react'
 import { TYPE } from '@/components/landing/type'
-import { GraduationCap, Wrench, BookOpen } from 'lucide-react'
+import { Asterisk } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -13,30 +13,26 @@ import { cn } from '@coursebuilder/ui/utils/cn'
  */
 export type CalloutIntent = 'skill' | 'course' | 'resource'
 
-/** Per-intent default icon — shape-differentiated (not color-only), keeps the
- * existing `text-primary` icon treatment (no new hues per DESIGN.md). */
-const intentIcon: Record<CalloutIntent, React.ReactNode> = {
-	skill: <Wrench className="size-4 shrink-0" />,
-	course: <GraduationCap className="size-4 shrink-0" />,
-	resource: <BookOpen className="size-4 shrink-0" />,
-}
-
-function CalloutIcon({ className }: { className?: string }) {
-	return (
-		<svg
-			className={className}
-			xmlns="http://www.w3.org/2000/svg"
-			fill="none"
-			viewBox="0 0 24 24"
-		>
-			<path
-				stroke="currentColor"
-				strokeLinecap="round"
-				strokeWidth="1.5"
-				d="M12.31 3h-.62c-2.436 0-3.654 0-4.65.553-.997.552-1.588 1.555-2.771 3.562l-.59 1C2.56 10.014 2 10.963 2 12s.56 1.986 1.68 3.885l.589 1c1.183 2.007 1.774 3.01 2.77 3.563.997.552 2.215.552 4.65.552h.622c2.435 0 3.653 0 4.65-.552.996-.553 1.587-1.556 2.77-3.563l.59-1C21.44 13.986 22 13.037 22 12s-.56-1.986-1.68-3.885l-.589-1c-1.183-2.007-1.774-3.01-2.77-3.562C15.963 3 14.745 3 12.31 3Z"
-			/>
-		</svg>
-	)
+/**
+ * One mark for every callout: an asterisk.
+ *
+ * It replaces a literal-object set — wrench for a skill, mortarboard for a
+ * course, open book for a resource — which drew three different pictures for
+ * what is always the same gesture: the page stopping to point sideways. The
+ * asterisk is the typographic mark for exactly that, so it says "aside" without
+ * illustrating the destination, and it does not date the way a mortarboard does.
+ *
+ * NOTE: this deliberately gives up the per-intent shape differentiation DESIGN
+ * asks for. That rule is about not encoding meaning in colour alone, and here
+ * nothing is encoded at all — every callout reads as an aside, and the copy
+ * names the destination. No `intent` is used anywhere in `src`; the three
+ * shapes were distinguishing cases the reader never saw side by side.
+ *
+ * `strokeWidth` is eased off because an asterisk at 20px is six strokes meeting
+ * at a point, and at lucide's default weight that junction fills in.
+ */
+function CalloutMark() {
+	return <Asterisk className="size-5 shrink-0" strokeWidth={1.75} />
 }
 
 /**
@@ -106,18 +102,19 @@ export function Callout({
 				>
 					{eyebrow ?? kindEyebrow[kind]}
 				</p>
-				<div className="prose prose-sm sm:prose-base dark:prose-invert prose-p:my-0 prose-p:text-foreground text-foreground text-pretty text-base leading-[1.55]">
+				{/* Same `.ah-prose-p` override as the icon-rail variant below — its
+				    trailing 20px landed inside the padded box and read as the notice
+				    being bottom-heavy. */}
+				<div className="ah-callout-body prose prose-sm sm:prose-base dark:prose-invert prose-p:text-foreground text-foreground text-pretty text-base leading-[1.55]">
 					{children}
 				</div>
 			</div>
 		)
 	}
 
-	// Explicit `icon` prop wins; otherwise the intent default; otherwise the
-	// generic informational glyph (bare `<Callout>` contract unchanged).
-	const resolvedIcon =
-		icon ??
-		(intent ? intentIcon[intent] : <CalloutIcon className="size-4 shrink-0" />)
+	// Explicit `icon` prop still wins — a caller that wants its own glyph keeps
+	// it. Everything else gets the asterisk, intent or not.
+	const resolvedIcon = icon ?? <CalloutMark />
 
 	return (
 		<div
@@ -131,7 +128,11 @@ export function Callout({
 				? { 'data-toc-cta': 'callout', 'data-toc-label': intentTocLabel[intent] }
 				: {})}
 			className={cn(
-				'not-prose bg-card shadow-md/3 my-3 flex items-stretch gap-4 rounded-xl border',
+				// `my-6`, matching the `kind` variant. At `my-3` the callout cleared
+				// its neighbours by 12px while the paragraphs around it are 20px
+				// apart, so a block that is meant to interrupt the read sat tighter
+				// to the body than the body sits to itself.
+				'not-prose bg-card shadow-md/3 my-6 flex items-stretch gap-4 rounded-xl border',
 				className,
 			)}
 		>
@@ -141,8 +142,15 @@ export function Callout({
 			{/* Centred in its own stretched cell. The row is `items-stretch` so the
 			    striped icon rail runs the full height; without this the copy then
 			    sits hard against the top of that box whenever the rail is the taller
-			    of the two, which reads as misaligned against a centred glyph. */}
-			<div className="prose prose-sm sm:prose-base dark:prose-invert prose-p:my-0 flex flex-col justify-center py-4 pr-5">
+			    of the two, which reads as misaligned against a centred glyph.
+
+			    `ah-callout-body` is not decoration, same as `ah-testimonial`: MDX
+			    paragraphs arrive wearing the UNLAYERED `.ah-prose-p`
+			    (compile-mdx.tsx), whose `margin: 0 0 20px` beats every Tailwind
+			    utility regardless of specificity, `prose-p:my-0` included. That
+			    trailing 20px sat inside the centred box, so a one-line callout put
+			    its text 10px above the glyph it is aligned to. */}
+			<div className="ah-callout-body prose prose-sm sm:prose-base dark:prose-invert flex flex-col justify-center py-4 pr-5">
 				{children}
 			</div>
 		</div>
