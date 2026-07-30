@@ -11,7 +11,18 @@ type KitTag = {
 
 type KitSubscriber = {
 	state?: string
-	tags?: KitTag[]
+	tags?: KitTag[] | { tags?: KitTag[] }
+}
+
+function getKitTags(subscriber: KitSubscriber | null | undefined): KitTag[] {
+	const tags = subscriber?.tags
+	if (tags == null) return []
+	if (Array.isArray(tags)) return tags
+	if (Array.isArray(tags.tags)) return tags.tags
+
+	throw new TypeError(
+		'Kit subscriber tags response has an unsupported shape',
+	)
 }
 
 export async function reconcileAiHeroEmailOptIn(args: {
@@ -25,7 +36,7 @@ export async function reconcileAiHeroEmailOptIn(args: {
 	}
 
 	const before = await args.getSubscriberByEmail(args.email)
-	const hasUnsubscribeTag = before?.tags?.some(
+	const hasUnsubscribeTag = getKitTags(before).some(
 		(tag) => String(tag.id) === AI_HERO_UNSUBSCRIBED_TAG_ID,
 	)
 	if (!hasUnsubscribeTag) {
@@ -35,7 +46,7 @@ export async function reconcileAiHeroEmailOptIn(args: {
 	await args.removeUnsubscribeTag(args.email)
 	const after = await args.getSubscriberByEmail(args.email)
 	if (
-		after?.tags?.some(
+		getKitTags(after).some(
 			(tag) => String(tag.id) === AI_HERO_UNSUBSCRIBED_TAG_ID,
 		)
 	) {
