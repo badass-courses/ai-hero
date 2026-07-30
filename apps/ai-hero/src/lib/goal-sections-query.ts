@@ -1,6 +1,10 @@
 import { unstable_cache } from 'next/cache'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
+import {
+	contentDurationLabel,
+	resolveContentDuration,
+} from '@/lib/content-duration'
 import { log } from '@/server/logger'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 
@@ -96,21 +100,6 @@ function youtubeThumbnailUrl(url: string): string | null {
 	return `https://res.cloudinary.com/${cloud}/image/fetch/c_fill,w_720,h_405,q_auto,f_auto/${youtubeThumb}`
 }
 
-function buildDurationLabel(
-	fields: unknown,
-	isVideo: boolean,
-): string | undefined {
-	const duration = readNumber(fields, 'duration')
-	const timeToRead = readNumber(fields, 'timeToRead')
-	if (isVideo && duration && duration > 0) {
-		return `${Math.max(1, Math.round(duration / 60))} min`
-	}
-	if (timeToRead && timeToRead > 0) {
-		return `${Math.max(1, Math.round(timeToRead / 60))} min read`
-	}
-	return undefined
-}
-
 /** Row shape from the resolution query — mirror of resolveReference's join. */
 type ResolvedRow = {
 	id: string
@@ -146,7 +135,8 @@ function toResolvedItem(resource: ResolvedRow): ResolvedItem | null {
 	const youtubeSource =
 		readString(resource.fields, 'youtubeUrl') ||
 		readString(resource.fields, 'youtube')
-	const isVideo = Boolean(muxPlaybackId) || Boolean(youtubeSource)
+	const timing = resolveContentDuration(resource.fields, resource.resources)
+	const isVideo = timing.isVideo
 
 	const thumbnailTime = readNumber(resource.fields, 'thumbnailTime')
 	let image =
@@ -178,7 +168,7 @@ function toResolvedItem(resource: ResolvedRow): ResolvedItem | null {
 		href: `/${slug}`,
 		thumbnailUrl: image ?? null,
 		isVideo,
-		durationLabel: buildDurationLabel(resource.fields, isVideo),
+		durationLabel: contentDurationLabel(timing),
 		publishedAt,
 	}
 }
@@ -248,7 +238,7 @@ function reviveDates(obj: any): any {
 
 const _getCachedGoalSectionItems = unstable_cache(
 	async (slugs: string[]) => resolveItemsBySlugs(slugs),
-	['goal-section-items-v1'],
+	['goal-section-items-v2'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
@@ -286,7 +276,7 @@ export async function getCachedGoalSectionItems(
 
 const _getCachedFeaturedWhatsNew = unstable_cache(
 	async (limit: number) => resolveFeaturedWhatsNew(limit),
-	['featured-whats-new-v1'],
+	['featured-whats-new-v2'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
 

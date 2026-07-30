@@ -2,6 +2,7 @@ import * as React from 'react'
 import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
+import { contentDurationLabel } from '@/lib/content-duration'
 import { getPricingData } from '@/lib/pricing-query'
 import { log } from '@/server/logger'
 import { eq, or, sql } from 'drizzle-orm'
@@ -388,8 +389,8 @@ function buildFormatLabel(
 	durationSeconds?: number,
 ): string {
 	if (!isVideo) return 'Article'
-	if (!durationSeconds || durationSeconds <= 0) return 'Video'
-	return `Video · ${Math.max(1, Math.round(durationSeconds / 60))} min`
+	const durationLabel = contentDurationLabel({ isVideo, durationSeconds })
+	return durationLabel ? `Video · ${durationLabel}` : 'Video'
 }
 
 function buildTypeLabel(resolved: ResolvedFields): string {

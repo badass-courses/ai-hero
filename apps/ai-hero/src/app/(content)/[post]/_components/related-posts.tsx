@@ -1,5 +1,9 @@
 import { getCachedListForPost } from '@/lib/lists-query'
 import { getCachedPost } from '@/lib/posts-query'
+import {
+	contentDurationLabel,
+	resolveContentDuration,
+} from '@/lib/content-duration'
 import { getNearestNeighbour } from '@/lib/typesense-query'
 import readingTime from 'reading-time'
 
@@ -37,7 +41,8 @@ export type RelatedPostItem = {
 	slug: string
 	/** derived from post.fields.postType, e.g. "Skill post", "Article" */
 	typeLabel: string
-	readTimeMinutes?: number
+	/** Real video runtime or article reading time, already formatted. */
+	durationLabel?: string
 	/**
 	 * Child resource count for collection-shaped posts (tutorials, courses,
 	 * playlists). When present it REPLACES read time in the eyebrow: "6 lessons"
@@ -83,10 +88,14 @@ function typeLabelForPostType(postType?: string | null): string {
 	}
 }
 
-function computeReadMinutes(body?: string | null): number | undefined {
-	if (!body) return undefined
-	const minutes = Math.round(readingTime(body).minutes)
-	return minutes > 0 ? minutes : 1
+function contentTiming(post: Awaited<ReturnType<typeof getCachedPost>>) {
+	const timing = resolveContentDuration(post?.fields, post?.resources)
+	return {
+		...timing,
+		timeToReadSeconds: post?.fields?.body
+			? readingTime(post.fields.body).time / 1000
+			: timing.timeToReadSeconds,
+	}
 }
 
 /**
@@ -169,14 +178,17 @@ async function resolveSection(
 			// The list query strips the body, so fetch the full post to compute
 			// read time; capped at 2 items, and getCachedPost is cache-backed.
 			const full = await getCachedPost(slug).catch(() => null)
+			const timing = contentTiming(full)
 			return {
 				id: resource.id,
 				title: fields.title ?? full?.fields?.title ?? 'Untitled',
 				slug,
-				typeLabel: typeLabelForPostType(
-					fields.postType ?? full?.fields?.postType,
-				),
-				readTimeMinutes: computeReadMinutes(full?.fields?.body),
+				typeLabel: timing.isVideo
+					? 'Video'
+					: typeLabelForPostType(
+							fields.postType ?? full?.fields?.postType,
+						),
+				durationLabel: contentDurationLabel(timing),
 				lessonCount: computeLessonCount(full?.resources),
 			}
 		}),
@@ -212,15 +224,24 @@ async function resolveSuggested(
 		// the real post to count its lessons. Capped at MAX_ITEMS and
 		// cache-backed, same as the sibling path.
 		const full = await getCachedPost(doc.slug).catch(() => null)
+		const timing = contentTiming(full)
 
 		items.push({
 			id: doc.id,
 			title: doc.title,
 			slug: doc.slug,
-			typeLabel: typeLabelForPostType(doc.type),
+			typeLabel: timing.isVideo ? 'Video' : typeLabelForPostType(doc.type),
 			// Typesense stores the post body in `description` (see
-			// upsertPostToTypeSense), so read time needs no DB hit of its own.
-			readTimeMinutes: computeReadMinutes(doc.description),
+			// upsertPostToTypeSense), so it remains a fallback when the cached
+			// post lookup misses. It is never used for a detected video.
+			durationLabel: contentDurationLabel({
+				...timing,
+				timeToReadSeconds:
+					timing.timeToReadSeconds ??
+					(doc.description
+						? readingTime(doc.description).time / 1000
+						: undefined),
+			}),
 			lessonCount: computeLessonCount(full?.resources),
 		})
 		skip.add(doc.id)
@@ -238,7 +259,7 @@ function metaSuffix(item: RelatedPostItem): string {
 	if (item.lessonCount) {
 		return ` · ${item.lessonCount} ${item.lessonCount === 1 ? 'lesson' : 'lessons'}`
 	}
-	return item.readTimeMinutes ? ` · ${item.readTimeMinutes} min read` : ''
+	return item.durationLabel ? ` · ${item.durationLabel}` : ''
 }
 
 /**

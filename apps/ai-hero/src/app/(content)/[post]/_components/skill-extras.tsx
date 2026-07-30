@@ -24,8 +24,12 @@
  */
 
 import * as React from 'react'
+import {
+	contentDurationLabel,
+	resolveContentDuration,
+} from '@/lib/content-duration'
 import { type Post } from '@/lib/posts'
-import { getCachedPostsByTag } from '@/lib/posts-query'
+import { getCachedPost, getCachedPostsByTag } from '@/lib/posts-query'
 import { getSkillEntries, isSkillPhaseTag } from '@/lib/skills-query'
 import { SkillActions, getSkillNeighbors } from '@/components/skills'
 import readingTime from 'reading-time'
@@ -80,12 +84,13 @@ export async function getRelatedSkillPosts(
 			if (seen.has(related.id)) continue
 			const relatedSlug = related.fields?.slug
 			if (typeof relatedSlug !== 'string') continue
+			const full = await getCachedPost(relatedSlug).catch(() => null)
 			seen.add(related.id)
 			collected.push({
 				id: related.id,
 				title: String(related.fields?.title ?? 'Untitled'),
 				slug: relatedSlug,
-				meta: relatedMeta(related),
+				meta: relatedMeta(full ?? related),
 			})
 		}
 	}
@@ -94,14 +99,23 @@ export async function getRelatedSkillPosts(
 }
 
 /**
- * "Skill · 2 min read". The type label always renders; the duration only when
- * the post actually carries a body to measure, so a stub never claims a
- * reading time it does not have.
+ * "Skill · 2 min read" for text, "Video · 8 min" when there is a real runtime,
+ * or a bare "Video" when there is not. Transcript length never stands in for
+ * video length.
  */
 function relatedMeta(post: Post): string {
-	const label = post.fields?.postType === 'skill' ? 'Skill' : 'Article'
+	const timing = resolveContentDuration(post.fields, post.resources)
+	const label = timing.isVideo
+		? 'Video'
+		: post.fields?.postType === 'skill'
+			? 'Skill'
+			: 'Article'
 	const body = post.fields?.body
-	if (!body) return label
-	const minutes = Math.max(1, Math.round(readingTime(body).minutes))
-	return `${label} · ${minutes} min read`
+	const durationLabel = contentDurationLabel({
+		...timing,
+		timeToReadSeconds: body
+			? readingTime(body).time / 1000
+			: timing.timeToReadSeconds,
+	})
+	return durationLabel ? `${label} · ${durationLabel}` : label
 }
