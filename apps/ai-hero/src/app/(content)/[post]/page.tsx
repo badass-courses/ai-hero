@@ -621,6 +621,7 @@ async function PostHead({
 							/>
 							<PostNextLessonButton
 								postId={post.id}
+								label={isSkillPost ? 'Next page' : 'Next lesson'}
 								className="rounded-[9px]"
 							/>
 						</div>

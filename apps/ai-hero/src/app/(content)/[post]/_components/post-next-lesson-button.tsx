@@ -12,9 +12,11 @@ import { useList } from './list-provider'
 export function PostNextLessonButton({
 	postId,
 	className,
+	label = 'Next lesson',
 }: {
 	postId: string
 	className?: string
+	label?: 'Next lesson' | 'Next page'
 }) {
 	const { list } = useList()
 	const nextUp = list ? getNextUpResourceFromList(list, postId) : null
@@ -29,7 +31,7 @@ export function PostNextLessonButton({
 			className={cn('rounded-full border', className)}
 		>
 			<Link href={`/${nextUp.resource.fields.slug}`} prefetch>
-				Next lesson
+				{label}
 				<ArrowRight className="text-muted-foreground ml-2 h-4 w-4" />
 			</Link>
 		</Button>
