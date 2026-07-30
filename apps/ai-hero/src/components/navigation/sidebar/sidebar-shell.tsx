@@ -6,9 +6,12 @@ import { usePathname } from 'next/navigation'
 import { track } from '@/utils/analytics'
 import {
 	BookA,
+	BookOpenText,
+	Layers3,
 	Newspaper,
 	PanelLeftClose,
 	PanelLeftOpen,
+	Route,
 	type LucideIcon,
 } from 'lucide-react'
 
@@ -26,6 +29,7 @@ import {
 
 import { NAV_ICONS, type NavIconProps } from './nav-icons'
 import { normalizePath } from './sidebar-client'
+import type { CollapsedSidebarSection } from './sidebar-rail'
 
 /** Adapt a lucide glyph to the `NavIconProps` shape (drops `active`). */
 function lucideIcon(Icon: LucideIcon) {
@@ -34,33 +38,17 @@ function lucideIcon(Icon: LucideIcon) {
 	}
 }
 
-/**
- * Icon-rail shortcuts shown while the sidebar is collapsed. Static by design:
- * the rail is chrome, not curation — the MDX-driven content only shows in the
- * expanded state. Every href is a real, existing route. Destinations that
- * have a custom `NAV_ICONS` glyph use THAT glyph, so the rail matches the
- * expanded sidebar's Explore rows icon-for-icon; lucide fills in only where
- * no custom icon exists (Posts, Dictionary).
- */
-const ICON_RAIL_LINKS: {
-	label: string
-	href: string
-	icon: React.ComponentType<NavIconProps>
-}[] = [
-	{ label: 'Map', href: '/learn', icon: NAV_ICONS['/learn']! },
-	{ label: 'Posts', href: '/posts', icon: lucideIcon(Newspaper) },
-	{
-		label: 'AI Coding Dictionary',
-		href: '/ai-coding-dictionary',
-		icon: lucideIcon(BookA),
-	},
-	{ label: 'Skills', href: '/skills', icon: NAV_ICONS['/skills']! },
-	{
-		label: 'Open source',
-		href: '/open-source',
-		icon: NAV_ICONS['/open-source']!,
-	},
-]
+/** Visual vocabulary only. Grouping and order come from the sidebar MDX. */
+const RAIL_ICONS: Record<string, React.ComponentType<NavIconProps>> = {
+	'/learn': NAV_ICONS['/learn']!,
+	'/principles': NAV_ICONS['/principles']!,
+	'/skills': NAV_ICONS['/skills']!,
+	'/open-source': NAV_ICONS['/open-source']!,
+	'/llm-fundamentals': lucideIcon(BookOpenText),
+	'/ai-engineer-roadmap': lucideIcon(Route),
+	'/ai-coding-dictionary': lucideIcon(BookA),
+	'/posts': lucideIcon(Newspaper),
+}
 
 // `bg-sidebar`, not `bg-background`: the rail sits on the raised surface so it
 // separates from the content (the spec's `--ah-bg-raised`). Hardcoding the page
@@ -87,9 +75,11 @@ const STICKY_SIDEBAR_CLASSES =
 export function HubSidebarShell({
 	children,
 	defaultCollapsed = false,
+	collapsedSections = [],
 }: {
 	children: React.ReactNode
 	defaultCollapsed?: boolean
+	collapsedSections?: CollapsedSidebarSection[]
 }) {
 	const [collapsed, setCollapsed] = React.useState(defaultCollapsed)
 	const pathname = usePathname()
@@ -122,7 +112,6 @@ export function HubSidebarShell({
 				>
 					<PanelLeftOpen className="size-4" />
 				</button>
-				<div aria-hidden="true" className="bg-border my-1 h-px w-6 shrink-0" />
 				{/* Real tooltips rather than the native `title`. Collapsed to a 48px
 				    rail these links are icons and nothing else, so the label is the
 				    only thing identifying them — and `title` takes about a second to
@@ -134,41 +123,82 @@ export function HubSidebarShell({
 				    the rail's own 48px box the moment it opens. The portal is what
 				    makes "visible" true rather than hoped for. */}
 				<TooltipProvider delayDuration={150}>
-					<nav className="flex flex-col items-center gap-1">
-						{ICON_RAIL_LINKS.map((item) => {
-							const isActive = normalizePath(item.href) === current
-							return (
-								<Tooltip key={item.href}>
-									<TooltipTrigger asChild>
-										<Link
-											href={item.href}
-											aria-current={isActive ? 'page' : undefined}
-											onClick={() =>
-												track('nav_link_clicked', {
-													label: item.label,
-													href: item.href,
-													category: 'hub_sidebar_rail',
-												})
-											}
-											className={cn(
-												'focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2',
-												isActive
-													? 'bg-accent text-accent-foreground'
-													: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-											)}
-										>
-											<item.icon active={isActive} className="size-4" />
-											<span className="sr-only">{item.label}</span>
-										</Link>
-									</TooltipTrigger>
-									<TooltipPrimitive.Portal>
-										<TooltipContent side="right" sideOffset={8}>
-											{item.label}
-										</TooltipContent>
-									</TooltipPrimitive.Portal>
-								</Tooltip>
-							)
-						})}
+					<nav
+						aria-label="Learning navigation shortcuts"
+						className="flex min-h-0 flex-col items-center overflow-y-auto"
+					>
+						{collapsedSections.map((section, sectionIndex) => (
+							<React.Fragment key={`${section.title}-${sectionIndex}`}>
+								{sectionIndex > 0 ? (
+									<div
+										aria-hidden="true"
+										className="bg-border my-1 h-px w-6 shrink-0"
+									/>
+								) : null}
+								<div
+									role="group"
+									aria-label={section.title}
+									className="flex flex-col items-center gap-1"
+								>
+									{section.links.map((item) => {
+										const isActive = normalizePath(item.href) === current
+										const Icon = RAIL_ICONS[normalizePath(item.href)]
+										if (!Icon) return null
+
+										return (
+											<Tooltip key={item.href}>
+												<TooltipTrigger asChild>
+													<Link
+														href={item.href}
+														aria-current={isActive ? 'page' : undefined}
+														onClick={() =>
+															track('nav_link_clicked', {
+																label: item.label,
+																href: item.href,
+																category: 'hub_sidebar_rail',
+															})
+														}
+														className={cn(
+															'focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2',
+															isActive
+																? 'bg-accent text-accent-foreground'
+																: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+														)}
+													>
+														<Icon active={isActive} className="size-4" />
+														<span className="sr-only">{item.label}</span>
+													</Link>
+												</TooltipTrigger>
+												<TooltipPrimitive.Portal>
+													<TooltipContent side="right" sideOffset={8}>
+														{section.title} · {item.label}
+													</TooltipContent>
+												</TooltipPrimitive.Portal>
+											</Tooltip>
+										)
+									})}
+									{section.expandOnly ? (
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<button
+													type="button"
+													onClick={toggle}
+													aria-label={`Open ${section.title}`}
+													className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2"
+												>
+													<Layers3 className="size-4" />
+												</button>
+											</TooltipTrigger>
+											<TooltipPrimitive.Portal>
+												<TooltipContent side="right" sideOffset={8}>
+													{section.title} · Open group
+												</TooltipContent>
+											</TooltipPrimitive.Portal>
+										</Tooltip>
+									) : null}
+								</div>
+							</React.Fragment>
+						))}
 					</nav>
 				</TooltipProvider>
 			</aside>

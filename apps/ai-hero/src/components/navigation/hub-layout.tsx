@@ -11,6 +11,7 @@ import { SidebarMinimalFallback } from './hub-sidebar'
 import { PinnedSeriesNav } from './sidebar/pinned-series-nav'
 import { SidebarErrorBoundary } from './sidebar/sidebar-client'
 import { compileHubSidebarMdx } from './sidebar/sidebar-mdx'
+import { buildCollapsedSidebarSections } from './sidebar/sidebar-rail'
 import { HubSidebarShell } from './sidebar/sidebar-shell'
 
 /**
@@ -130,6 +131,9 @@ export async function HubLayout({
 		hideWhatsNew,
 		sidebarInsert,
 	)
+	const collapsedSections = sidebarDefaultCollapsed
+		? buildCollapsedSidebarSections(body)
+		: []
 
 	// Hybrid series nav: if the current list has its own link in the sidebar IA
 	// (e.g. a tentpole, or its home-override — /skills for the skills list), it
@@ -150,6 +154,7 @@ export async function HubLayout({
 			<HubSidebarShell
 				key={sidebarDefaultCollapsed ? 'collapsed' : 'expanded'}
 				defaultCollapsed={sidebarDefaultCollapsed}
+				collapsedSections={collapsedSections}
 			>
 				{!listInSidebar ? <PinnedSeriesNav /> : null}
 				{sidebarContent}
