@@ -7,15 +7,15 @@ import { Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { InstallCommand } from './install-command'
+import { SkillsInstallOptions } from './skills-install-options'
 
 /**
  * GET THE SKILLS (`Skills Page.dc.html` § GET THE SKILLS).
  *
- * The page's closing ask: the same command as the head, restated where a
- * reader who has just finished the catalog is standing, with the repo under
- * it. Two equal columns, because the sentence and the command are peers here
- * (DESIGN rule 4 covers editorial splits; this is a claim and its control).
+ * The page's closing ask: the same installation choice as the head, restated
+ * where a reader who has just finished the catalog is standing, with the repo
+ * under it. Two equal columns, because the sentence and the controls are peers
+ * here (DESIGN rule 4 covers editorial splits; this is a claim and its control).
  *
  * The previous version spent a full section on the star count set at 60px,
  * which is the hero-metric template DESIGN bans. The number now appears once
@@ -49,7 +49,7 @@ export async function SkillsGitHubSection({
 						id="skills-install-heading"
 						className={cn(TYPE.heading, 'mb-3 mt-3.5 text-balance')}
 					>
-						One command, then get to work
+						Install the skills and get to work
 					</h2>
 					<p
 						className={cn(
@@ -57,15 +57,12 @@ export async function SkillsGitHubSection({
 							'max-w-[46ch] text-pretty text-[color:var(--ah-fg-muted)]',
 						)}
 					>
-						Run it once, then type a slash command in your coding agent.
-						Everything is MIT licensed and lives in one repo.
+						Install the skills you want into the agents you use. Everything is
+						MIT licensed and lives in one repo.
 					</p>
 				</div>
 				<div className="min-w-0">
-					<InstallCommand
-						command={SKILLS_HERO.installCommand}
-						className="mb-3"
-					/>
+					<SkillsInstallOptions className="mb-3" />
 					<Link
 						href={SKILLS_REPO_URL}
 						target="_blank"

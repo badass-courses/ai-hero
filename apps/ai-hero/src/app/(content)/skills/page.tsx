@@ -84,16 +84,12 @@ export default async function SkillsPage({ searchParams }: Props) {
 			? requestedPage
 			: 1
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, skillsList, stars, latestEntry] =
-		await Promise.all([
-			getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
-			getSkillChangelogCount(),
-			getListWithSections(SKILLS_LIST_ID),
-			getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
-			// The head's "latest release" stat. Page 2 shows older entries, so the
-			// newest one is fetched separately rather than read off `entries`.
-			getSkillChangelogEntries({ limit: 1, offset: 0 }),
-		])
+	const [entries, totalEntries, skillsList, stars] = await Promise.all([
+		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
+		getSkillChangelogCount(),
+		getListWithSections(SKILLS_LIST_ID),
+		getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
+	])
 
 	const skillGroups = toSkillGroups(skillsList?.resources)
 	const skillCount = skillGroups.reduce(
@@ -102,19 +98,11 @@ export default async function SkillsPage({ searchParams }: Props) {
 	)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
-	const latestVersion = latestEntry[0]
-		? toChangelogItem(latestEntry[0]).version
-		: null
-
 	return (
 		<LayoutClient withContainer withFooter={false}>
 			<HubLayout>
 				<main className="bg-background text-foreground">
-					<SkillsHero
-						stars={stars}
-						skillCount={skillCount}
-						latestVersion={latestVersion}
-					/>
+					<SkillsHero stars={stars} skillCount={skillCount} />
 
 					<SkillsSalesCopy />
 

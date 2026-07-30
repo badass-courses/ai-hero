@@ -2,12 +2,17 @@ import * as React from 'react'
 import Link from 'next/link'
 import { TYPE } from '@/components/landing/type'
 import { getRepoStarCount } from '@/lib/github-stars-query'
-import { SKILLS_COURSE_PANEL, SKILLS_HERO } from '@/lib/skills-content'
+import {
+	SKILLS_COURSE_PANEL,
+	SKILLS_HERO,
+	SKILLS_SH_BADGE_URL,
+	SKILLS_SH_URL,
+} from '@/lib/skills-content'
 import { ArrowRight, Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { InstallCommand } from './install-command'
+import { SkillsInstallOptions } from './skills-install-options'
 
 /**
  * The page's HEAD (`Skills Page.dc.html` § HEAD).
@@ -17,15 +22,13 @@ import { InstallCommand } from './install-command'
  * makes one argument and takes one ask, and the ask does not get wider just
  * because the window did (`minmax(0,1fr) 400px`).
  *
- * Everything numeric here is live. The eyebrow's skill count and the version
- * come from the CMS (the list's members, and the newest changelog entry's
- * `vX.Y` prefix); the star count comes from GitHub. A missing value drops its
- * stat rather than printing a placeholder.
+ * Everything numeric here is live. The eyebrow's skill count comes from the
+ * CMS, the star count from GitHub, and the total-install badge from Skills.sh.
+ * A missing GitHub value drops its stat rather than printing a placeholder.
  */
 export async function SkillsHero({
 	stars: starsProp,
 	skillCount,
-	latestVersion,
 }: {
 	/**
 	 * GitHub star count, consolidated at the page level (spec §7). When omitted
@@ -34,8 +37,6 @@ export async function SkillsHero({
 	stars?: number | null
 	/** Live count of published skills in the CMS list. */
 	skillCount?: number
-	/** e.g. "v1.1", parsed off the newest changelog entry. Null drops the stat. */
-	latestVersion?: string | null
 } = {}) {
 	const stars =
 		starsProp !== undefined
@@ -66,13 +67,11 @@ export async function SkillsHero({
 				>
 					{SKILLS_HERO.tagline} {SKILLS_HERO.taglineTail}
 				</p>
-				<InstallCommand
-					command={SKILLS_HERO.installCommand}
-					className="max-w-[560px]"
-				/>
+				<SkillsInstallOptions className="max-w-[720px]" />
 				{/* The three facts a reader checks before running anything: how many
-				    other people trust it, how current it is, and whether it works
-				    where they already are. On a hairline, not in boxes. */}
+				    other people trust it, how broadly it has been installed, and
+				    whether it works where they already are. On a hairline, not in
+				    boxes. */}
 				<dl className="border-border mt-[26px] flex flex-wrap gap-x-[26px] gap-y-6 border-t pt-[22px]">
 					{stars !== null ? (
 						<Fact label="GitHub stars">
@@ -87,13 +86,27 @@ export async function SkillsHero({
 							</span>
 						</Fact>
 					) : null}
-					{latestVersion ? (
-						<Fact label="Latest release">
-							<span className={TYPE.statSm}>{latestVersion}</span>
-						</Fact>
-					) : null}
+					<Fact label="Total skill installs">
+						<Link
+							href={SKILLS_SH_URL}
+							target="_blank"
+							rel="noreferrer"
+							className="focus-visible:ring-ring inline-flex focus-visible:outline-none focus-visible:ring-2"
+						>
+							{/* This is Skills.sh's live, five-minute-cached aggregate
+							    badge. A normal img is deliberate: Next image optimization
+							    would cache a second copy and make the number less live. */}
+							{/* eslint-disable-next-line @next/next/no-img-element */}
+							<img
+								src={SKILLS_SH_BADGE_URL}
+								alt="Live Skills.sh install count"
+								width={101}
+								height={20}
+							/>
+						</Link>
+					</Fact>
 					<Fact label={SKILLS_HERO.agentsLabel}>
-						<span className={TYPE.subhead}>Any agent</span>
+						<span className={cn(TYPE.subhead, 'leading-none')}>Any agent</span>
 					</Fact>
 				</dl>
 			</div>
@@ -117,7 +130,7 @@ function Fact({
 }) {
 	return (
 		<div>
-			<dd className="flex items-center">{children}</dd>
+			<dd className="flex h-7 items-center">{children}</dd>
 			<dt className={cn(TYPE.micro, 'mt-1.5 text-[color:var(--ah-fg-label)]')}>
 				{label}
 			</dt>

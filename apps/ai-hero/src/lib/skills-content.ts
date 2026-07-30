@@ -10,6 +10,44 @@ export const SKILLS_PAGE_SIZE = 10
 const SKILLS_TITLE_LEAD = 'AI Skills for'
 const SKILLS_TITLE_EMPHASIS = 'Real Engineers'
 
+/**
+ * Distribution channels for Matt's skills. The page renders this collection
+ * directly, so adding another managed marketplace is a data change rather than
+ * another installation-card redesign.
+ */
+export const SKILLS_INSTALL_CHANNELS = [
+	{
+		id: 'skills-sh',
+		label: 'Install the skills',
+		mode: 'Recommended',
+		variant: 'primary',
+		command: 'npx skills@latest add mattpocock/skills',
+		description:
+			'Pick the skills you want and the coding agents you use. The installer puts editable files in your project.',
+		updateLabel: 'Update later with',
+		updateCommand: 'npx skills update',
+		href: 'https://www.skills.sh/mattpocock/skills',
+		linkLabel: 'View on Skills.sh',
+	},
+	{
+		id: 'claude-code',
+		label: 'Using Claude Code?',
+		mode: 'Plugin',
+		variant: 'secondary',
+		command: 'claude plugins install mattpocock-skills',
+		description:
+			'Install the complete set as a managed, read-only plugin from the official marketplace.',
+		updateLabel: 'Updates automatically',
+		href: 'https://code.claude.com/docs/en/plugins',
+		linkLabel: 'Claude Code plugin docs',
+	},
+] as const
+
+export const SKILLS_PORTABLE_INSTALL_COMMAND =
+	SKILLS_INSTALL_CHANNELS[0].command
+export const SKILLS_SH_URL = SKILLS_INSTALL_CHANNELS[0].href
+export const SKILLS_SH_BADGE_URL = 'https://www.skills.sh/b/mattpocock/skills'
+
 export const SKILLS_HERO = {
 	titleLead: SKILLS_TITLE_LEAD,
 	titleEmphasis: SKILLS_TITLE_EMPHASIS,
@@ -17,10 +55,9 @@ export const SKILLS_HERO = {
 	tagline:
 		'A practical skill system for engineers who want to use AI without giving up their standards.',
 	/** Second half of the hero lead (`Skills Page.dc.html` § HEAD). */
-	taglineTail: 'Install once, then type a slash command.',
+	taglineTail: 'Install the ones you want, then type a slash command.',
 	/** The third stat's label: the agents the set runs in. */
 	agentsLabel: 'Claude Code, Cursor, Codex…',
-	installCommand: 'npx skills add mattpocock/skills -y -g',
 	repoOwner: 'mattpocock',
 	repoName: 'skills',
 } as const
@@ -77,7 +114,7 @@ export const SKILLS_GUIDE_ITEMS = [
  */
 export const SKILLS_SALES_COPY = {
 	eyebrow: 'What is a skill?',
-	lead: 'Skills are small, sharp instructions you hand your coding agent so it works the way a senior engineer would. Install them once, type a slash command, and the agent follows a process you actually trust.',
+	lead: 'Skills are small, sharp instructions you hand your coding agent so it works the way a senior engineer would. Install the ones you want, type a slash command, and the agent follows a process you actually trust.',
 	blocks: [
 		{
 			heading: 'The problem',
