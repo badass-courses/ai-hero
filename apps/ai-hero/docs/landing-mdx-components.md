@@ -209,8 +209,8 @@ Horizontal band wrapping the slim subscribe form.
 
 ```mdx
 <NewsletterSection
-	heading="Get the next one in your inbox"
-	subTitle="Join over 54,000 Developers Becoming AI Heroes"
+	heading="One command installs all 22 skills"
+	subTitle="Seven free lessons that put them in order, from clarifying the work to reviewing the diff. Join over 98,000 developers becoming AI heroes."
 >
 	<NewsletterCta />
 </NewsletterSection>
