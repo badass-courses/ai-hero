@@ -67,6 +67,67 @@ describe('reconcileAiHeroEmailOptIn', () => {
 		expect(removeUnsubscribeTag).toHaveBeenCalledWith('person@example.com')
 	})
 
+	it('accepts the nested Kit tags response shape without throwing', async () => {
+		const getSubscriberByEmail = vi.fn().mockResolvedValue({
+			state: 'active',
+			tags: { tags: [] },
+		})
+		const removeUnsubscribeTag = vi.fn()
+
+		await expect(
+			reconcileAiHeroEmailOptIn({
+				email: 'person@example.com',
+				subscriberState: 'active',
+				getSubscriberByEmail,
+				removeUnsubscribeTag,
+			}),
+		).resolves.toEqual({
+			status: 'active',
+			removedUnsubscribeTag: false,
+		})
+		expect(removeUnsubscribeTag).not.toHaveBeenCalled()
+	})
+
+	it('removes a stale unsubscribe tag reported through the nested shape', async () => {
+		const getSubscriberByEmail = vi
+			.fn()
+			.mockResolvedValueOnce({
+				state: 'active',
+				tags: { tags: [{ id: AI_HERO_UNSUBSCRIBED_TAG_ID }] },
+			})
+			.mockResolvedValueOnce({ state: 'active', tags: { tags: [] } })
+		const removeUnsubscribeTag = vi.fn().mockResolvedValue(undefined)
+
+		await expect(
+			reconcileAiHeroEmailOptIn({
+				email: 'person@example.com',
+				subscriberState: 'active',
+				getSubscriberByEmail,
+				removeUnsubscribeTag,
+			}),
+		).resolves.toEqual({
+			status: 'active',
+			removedUnsubscribeTag: true,
+		})
+		expect(removeUnsubscribeTag).toHaveBeenCalledWith('person@example.com')
+	})
+
+	it('rejects an unsupported tags shape loudly', async () => {
+		const getSubscriberByEmail = vi.fn().mockResolvedValue({
+			state: 'active',
+			tags: 'not-a-tags-shape',
+		})
+
+		await expect(
+			reconcileAiHeroEmailOptIn({
+				email: 'person@example.com',
+				subscriberState: 'active',
+				getSubscriberByEmail,
+				removeUnsubscribeTag: vi.fn(),
+			}),
+		).rejects.toThrow('Kit subscriber tags response has an unsupported shape')
+	})
+
 	it('fails when Kit still reports the unsubscribe tag after removal', async () => {
 		const subscriber = {
 			state: 'active',
