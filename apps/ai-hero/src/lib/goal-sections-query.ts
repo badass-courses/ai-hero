@@ -3,6 +3,7 @@ import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import {
 	contentDurationLabel,
+	PUBLIC_LISTING_RESOURCE_TYPES,
 	resolveContentDuration,
 } from '@/lib/content-duration'
 import { log } from '@/server/logger'
@@ -194,6 +195,7 @@ async function resolveItemsBySlugs(slugs: string[]): Promise<ResolvedItem[]> {
 				inArray(sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`, slugs),
 				inArray(contentResource.id, slugs),
 			),
+			inArray(contentResource.type, [...PUBLIC_LISTING_RESOURCE_TYPES]),
 			publishedPublic(),
 		),
 		with: { resources: { with: { resource: true } } },
@@ -238,7 +240,7 @@ function reviveDates(obj: any): any {
 
 const _getCachedGoalSectionItems = unstable_cache(
 	async (slugs: string[]) => resolveItemsBySlugs(slugs),
-	['goal-section-items-v2'],
+	['goal-section-items-v4'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
@@ -276,7 +278,7 @@ export async function getCachedGoalSectionItems(
 
 const _getCachedFeaturedWhatsNew = unstable_cache(
 	async (limit: number) => resolveFeaturedWhatsNew(limit),
-	['featured-whats-new-v2'],
+	['featured-whats-new-v4'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
 

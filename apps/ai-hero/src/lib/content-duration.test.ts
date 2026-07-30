@@ -15,14 +15,14 @@ describe('contentDurationLabel', () => {
 		).toBeUndefined()
 	})
 
-	it('uses runtime for videos and reading time for articles', () => {
+	it('omits runtime for videos and uses reading time for articles', () => {
 		expect(
 			contentDurationLabel({
 				isVideo: true,
 				durationSeconds: 8 * 60,
 				timeToReadSeconds: 60,
 			}),
-		).toBe('8 min')
+		).toBeUndefined()
 		expect(
 			contentDurationLabel({
 				isVideo: false,

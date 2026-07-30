@@ -7,11 +7,7 @@ export function contentDurationLabel({
 	durationSeconds?: number | null
 	timeToReadSeconds?: number | null
 }): string | undefined {
-	if (isVideo) {
-		return durationSeconds && durationSeconds > 0
-			? `${Math.max(1, Math.round(durationSeconds / 60))} min`
-			: undefined
-	}
+	if (isVideo) return undefined
 	if (timeToReadSeconds && timeToReadSeconds > 0) {
 		return `${Math.max(1, Math.round(timeToReadSeconds / 60))} min read`
 	}
@@ -36,6 +32,8 @@ type ResourceJoin = {
 		fields?: unknown
 	} | null
 }
+
+export const PUBLIC_LISTING_RESOURCE_TYPES = ['post', 'article', 'list'] as const
 
 /**
  * Resolve the structural video signal and its real runtime. A post-level
