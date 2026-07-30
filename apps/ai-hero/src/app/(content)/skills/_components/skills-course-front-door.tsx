@@ -50,7 +50,7 @@ export function SkillsCourseFrontDoor({
 			<section className="border-border grid border-b lg:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
 				<div className="flex flex-col justify-center gap-6 px-8 py-16 sm:px-16 sm:py-24 lg:py-28">
 					<p className="text-primary font-mono text-xs font-medium uppercase tracking-wider">
-						Free 7-day email course
+						Free 7-lesson course
 					</p>
 					<h1 className="max-w-3xl text-balance font-sans text-5xl font-medium leading-[0.98] tracking-tight sm:text-6xl lg:text-7xl">
 						AI Skills for Real Engineers
@@ -60,8 +60,8 @@ export function SkillsCourseFrontDoor({
 						giving up your engineering standards.
 					</p>
 					<p className="text-foreground/70 max-w-xl text-base leading-relaxed sm:text-lg">
-						One practical lesson each day. Learn the skills, try them on real
-						work, and finish with a workflow you can reuse.
+						Seven lessons, as fast as you want them. Learn the skills, try them
+						on real work, and finish with a workflow you can reuse.
 					</p>
 				</div>
 
@@ -106,7 +106,7 @@ export function SkillsCourseFrontDoor({
 			>
 				<div className="mx-auto max-w-5xl">
 					<p className="text-primary mb-3 font-mono text-xs font-medium uppercase tracking-wider">
-						The 7-day curriculum
+						The seven lessons
 					</p>
 					<h2
 						id="curriculum-heading"
