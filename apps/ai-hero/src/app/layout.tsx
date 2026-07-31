@@ -122,7 +122,7 @@ export default async function RootLayout({
 				<AxiomWebVitals />
 				<body
 					id="layout"
-					className={`bg-page-background relative overflow-x-hidden ${geist.variable} ${geistMono.variable} ${sourceSerif.variable} antialised font-sans`}
+					className={`bg-page-background relative overflow-x-hidden ${geist.variable} ${geistMono.variable} ${sourceSerif.variable} antialiased font-sans`}
 				>
 					<SiteStructuredData />
 					<React.Suspense fallback={null}>

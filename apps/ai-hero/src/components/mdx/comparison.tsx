@@ -83,9 +83,12 @@ export function Comparison({
 				</div>
 			</div>
 
-			{rows.map((row) => (
+			{/* Index in the key, because `row.key` is author-supplied from MDX and
+			    nothing stops two rows sharing one. React would then treat them as
+			    the same node and reuse the wrong cell's DOM on a re-render. */}
+			{rows.map((row, index) => (
 				<div
-					key={row.key}
+					key={`${index}-${row.key}`}
 					className={cn(
 						'overflow-hidden rounded-md border border-input',
 						'min-[900px]:grid min-[900px]:grid-cols-[112px_minmax(0,1fr)_minmax(0,1fr)] min-[900px]:rounded-none',
@@ -136,10 +139,15 @@ function Side({
 }) {
 	return (
 		<div className={cn('px-3.5 py-3 min-[900px]:px-4 min-[900px]:py-3.5', className)}>
+			{/* `sr-only` above 900px, not `hidden`. The column headers that replace
+			    this label are in a separate row, so a reader moving through the
+			    table cell by cell has nothing tying a value to its side once this
+			    is gone — `hidden` takes it out of the accessibility tree entirely.
+			    `sr-only` keeps the association and still occupies no layout. */}
 			<div
 				className={cn(
 					TYPE.groupLabel,
-					'mb-1.5 min-[900px]:hidden',
+					'mb-1.5 min-[900px]:sr-only',
 					highlighted && 'text-primary',
 				)}
 			>

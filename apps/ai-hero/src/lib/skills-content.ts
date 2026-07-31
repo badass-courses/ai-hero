@@ -95,9 +95,9 @@ export const SKILLS_COURSE_PANEL = {
 	 */
 	body: {
 		/** ≥1080px of hero container: the full argument. */
-		full: 'A free email course on the practices these skills came out of — the judgement calls that keep the output at your standard, not just the commands.',
+		full: 'A free email course on the practices these skills came out of: the judgement calls that keep the output at your standard, not just the commands.',
 		/** 940–1080px: the contrast survives, the setup goes. */
-		mid: 'A free email course on the practices these skills came out of — the judgement calls, not just the commands.',
+		mid: 'A free email course on the practices these skills came out of: the judgement calls, not just the commands.',
 		/** Under 940px, including mobile: the claim alone. */
 		short:
 			'A free email course on the practices these skills came out of.',

@@ -318,10 +318,10 @@ Other typography rules:
 
 ## Shape, motion, interactivity
 
-### 12. Four radii, and edges stay sharp
+### 12. Five radii, and edges stay sharp
 
 **Updated 2026-07-28, superseding the sharp-plus-pill rule.** The redesign
-spec defines four radius steps, and pills are not one of them. A `rounded-full`
+spec defines five radius steps, and pills are not one of them. A `rounded-full`
 button was a house style; these values are the design's.
 
 | Step | Value | Utility | Used for |
