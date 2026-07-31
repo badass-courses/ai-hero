@@ -41,21 +41,25 @@ export function ConversionIntentButton({
 				onClick={() => {
 					setError(null)
 					startTransition(async () => {
-						const result = await completeKnownConversionIntent({
-							intent,
-							surface,
-						})
-						if (result.success) {
-							onSuccess?.({
-								confirmationRequired: result.confirmationRequired,
+						try {
+							const result = await completeKnownConversionIntent({
+								intent,
+								surface,
 							})
-							return
+							if (result.success) {
+								onSuccess?.({
+									confirmationRequired: result.confirmationRequired,
+								})
+								return
+							}
+							if (result.reason === 'not-identified') {
+								onNotIdentified?.()
+								return
+							}
+							setError('Something went wrong. Please try again.')
+						} catch {
+							setError('Something went wrong. Please try again.')
 						}
-						if (result.reason === 'not-identified') {
-							onNotIdentified?.()
-							return
-						}
-						setError('Something went wrong. Please try again.')
 					})
 				}}
 			>

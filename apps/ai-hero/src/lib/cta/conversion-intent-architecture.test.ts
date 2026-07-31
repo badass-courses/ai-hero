@@ -10,17 +10,26 @@ const migratedSurfaces = [
 	'src/app/(content)/workshops/_components/workshop-interest-cta.tsx',
 ]
 
+const legacyConvertKitImport =
+	/import\s*{[^}]*\bSubscribeToConvertkitForm\b[^}]*}\s*from\s*['"]@\/convertkit['"]/s
+
 describe('conversion intent architecture', () => {
 	it('prevents migrated surfaces from bypassing the intent-aware form', () => {
 		for (const path of migratedSurfaces) {
 			const source = readFileSync(resolve(process.cwd(), path), 'utf8')
 			expect(source, path).not.toContain('<SubscribeToConvertkitForm')
-			expect(source, path).not.toMatch(
-				/import[^\n]*SubscribeToConvertkitForm[^\n]*from ['"]@\/convertkit['"]/,
-			)
+			expect(source, path).not.toMatch(legacyConvertKitImport)
 			expect(source, path).toContain('ConversionIntentForm')
 			expect(source, path).not.toMatch(/\bformId=/)
 			expect(source, path).not.toMatch(/\bfields=/)
 		}
+	})
+
+	it('detects the legacy form when its named import spans lines', () => {
+		expect(`
+			import {
+				SubscribeToConvertkitForm,
+			} from '@/convertkit'
+		`).toMatch(legacyConvertKitImport)
 	})
 })
