@@ -156,12 +156,19 @@ export function SkillsNewsletterCta({
 	if (state === 'subscribed') {
 		if (!isCourse) return null
 		return (
-			<aside className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-4 rounded-xl border p-6 sm:p-8">
+			<aside
+				aria-label="AI Skills for Real Engineers course recovery"
+				className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-4 rounded-xl border p-6 sm:p-8"
+			>
 				<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-flex w-fit')}>
-					Already enrolled
+					Free 7-lesson email course
 				</span>
+				<h3 className={cn(CARD_HEADING, 'font-sans')}>
+					AI Skills for Real Engineers
+				</h3>
 				<p className={cn(TYPE.lead, 'opacity-80')}>
-					Need lesson one again? Resend it without entering your email.
+					You&rsquo;re already enrolled. Need lesson one again? Resend it
+					without entering your email.
 				</p>
 				<SkillsCourseRestartButton source={`${source}:restart`} />
 			</aside>
