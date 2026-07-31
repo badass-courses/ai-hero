@@ -51,6 +51,31 @@ describe('PostBodyCtaPlacement', () => {
 		)
 	})
 
+	it.each([
+		'my-grill-me-skill-has-gone-viral',
+		'grill-with-docs',
+		'learn-anything-with-my-teach-skill',
+		'skills-handoff',
+		'never-run-claude-init',
+		'things-people-get-wrong-with-grill-me-and-grill-with-docs',
+	])('preserves the declared course CTA on organic article %s', (slug) => {
+		const markup = renderToStaticMarkup(
+			<PostBodyCtaPlacement
+				resolvedCta={resolvePostCta({
+					postType: 'article',
+					cta: 'course',
+				})}
+				slug={slug}
+				cohortCta={<aside data-cohort-cta>Join the next cohort</aside>}
+			>
+				<p>Post body</p>
+			</PostBodyCtaPlacement>,
+		)
+
+		expect(markup).toContain(`skill_page_course:${slug}`)
+		expect(markup).not.toContain('data-cohort-cta')
+	})
+
 	it('keeps the mapped CTA on the Claude Code status-line article', () => {
 		const markup = renderToStaticMarkup(
 			<PostBodyCtaPlacement
@@ -85,5 +110,68 @@ describe('PostBodyCtaPlacement', () => {
 		)
 
 		expect(markup).toBe('<p>Paid ask</p>')
+	})
+
+	describe('precedence against the cohort CTA', () => {
+		const cohortCta = <aside data-cohort-cta>Join the next cohort</aside>
+
+		it('yields the slot to the course ask on a skill page', () => {
+			const markup = renderToStaticMarkup(
+				<PostBodyCtaPlacement
+					resolvedCta={resolvePostCta({ postType: 'skill', cta: undefined })}
+					slug="skills-grill-me"
+					cohortCta={cohortCta}
+				>
+					<p>Post body</p>
+				</PostBodyCtaPlacement>,
+			)
+
+			expect(markup).toContain('data-course-source')
+			expect(markup).not.toContain('data-cohort-cta')
+		})
+
+		it('yields the slot to a mapped organic CTA', () => {
+			const markup = renderToStaticMarkup(
+				<PostBodyCtaPlacement
+					resolvedCta={resolvePostCta({ postType: 'article', cta: undefined })}
+					slug="creating-the-perfect-claude-code-status-line"
+					cohortCta={cohortCta}
+				>
+					<p>Post body</p>
+				</PostBodyCtaPlacement>,
+			)
+
+			expect(markup).toContain('Get practical AI coding workflow notes')
+			expect(markup).not.toContain('data-cohort-cta')
+		})
+
+		it('takes the slot when nothing else claims it', () => {
+			const markup = renderToStaticMarkup(
+				<PostBodyCtaPlacement
+					resolvedCta={resolvePostCta({ postType: 'article', cta: undefined })}
+					slug="an-article-with-no-declared-cta"
+					cohortCta={cohortCta}
+				>
+					<p>Post body</p>
+				</PostBodyCtaPlacement>,
+			)
+
+			expect(markup).toContain('data-cohort-cta')
+			expect(markup).not.toContain('data-course-source')
+		})
+
+		it('renders the body alone when there is no cohort to offer', () => {
+			const markup = renderToStaticMarkup(
+				<PostBodyCtaPlacement
+					resolvedCta={resolvePostCta({ postType: 'article', cta: 'none' })}
+					slug="an-article-with-no-declared-cta"
+					cohortCta={null}
+				>
+					<p>Post body</p>
+				</PostBodyCtaPlacement>,
+			)
+
+			expect(markup).toBe('<p>Post body</p>')
+		})
 	})
 })

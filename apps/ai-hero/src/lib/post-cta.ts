@@ -42,7 +42,7 @@ export type ResolvedPostCta =
 const defaultCourseCopy: CourseCtaCopy = {
 	headline: 'You have the skill. Now build the workflow around it.',
 	subtitle:
-		'One command installs all 22 skills. The free course is the order to use them in: seven lessons, from clarifying the work to reviewing the diff. Go as fast as you want.',
+		'Install the skills you want, then use the free course to put them in order: seven lessons, from clarifying the work to reviewing the diff. Go as fast as you want.',
 }
 
 /**

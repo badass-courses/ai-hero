@@ -1,7 +1,16 @@
 # Landing MDX Components
 
-Reference for all components available in `content/landing.md`. Edit the
-markdown file, save, refresh — the page recompiles on every request.
+Reference for all components available in the homepage MDX body.
+
+> **Where the homepage body actually lives.** `src/app/page.tsx` loads it from
+> the CMS at runtime, currently from the page with slug **`landing-page-v2`**
+> (id `page-w4v2a`, published + unlisted) — the W4 revision. The older
+> `landing-page` row (id `page-wfvgc`) is kept untouched as the rollback.
+> `content/landing.md` is a LOCAL MIRROR for diffing and review, not the source
+> of truth: editing it changes nothing until the body is PUT to the CMS.
+>
+> Editing a live row takes effect on the next render, before any code deploys.
+> That is why a revision gets its own row rather than an edit in place.
 
 The MDX is compiled by `src/utils/compile-mdx.tsx`; the landing-specific
 component map lives in `src/app/page.tsx`.
@@ -17,6 +26,15 @@ Top-of-page header. Stacks left-side text against a right-side video or image.
 | `h1`              | `string` | Supports `**bold**` and inline HTML (`<br />`).                                          |
 | `h2`              | `string` | Subtitle. Same markdown support.                                                         |
 | `videoResourceId` | `string` | Post slug, post id, or videoResource id. Falls back to `/landing/hero@2x.png` if absent. |
+| `variant`         | `'home' \| 'page'` | `home` (default) is the full masthead: eyebrow, two actions, and the stat trio. `page` is words only, for pages that make their own offer immediately below — `/courses` passes it. |
+| `eyebrow`         | `string` | The mono label above the `h1`. Defaults to "Real AI Engineering · by Matt Pocock". `home` only. |
+| `ctaLabel` / `ctaHref` | `string` | The gold action. Defaults to the free 7-day course at `/skills/subscribe`. |
+| `secondaryCtaLabel` / `secondaryCtaHref` | `string` | The outline action. Defaults to "Browse the skills" → `/skills`. |
+
+The stat trio is not authored: two of the three numbers are live (list size via
+Kit, published skill count via the CMS), and hardcoding them in the body would
+put a stale figure on the page the week it was typed. The cohort total is
+Matt's and has no query behind it.
 
 ```mdx
 <Hero
@@ -49,11 +67,14 @@ cohort, workshop, tutorial, post, or external link and renders accordingly.
 
 ```mdx
 <Resource
-	title='"Software Fundamentals Matter More Than Ever" — Matt Pocock'
-	href="https://www.youtube.com/watch?v=v4F1gFy-hqg"
+	title="A talk worth watching"
+	href="/some-on-site-page"
 	variant="card"
 />
 ```
+
+> **No homepage card links straight to YouTube** (wireframe rule). Send readers
+> to an on-site page that embeds or writes up the video instead.
 
 ### Props
 
@@ -65,7 +86,7 @@ cohort, workshop, tutorial, post, or external link and renders accordingly.
 | `href`        | `string`            | Required when no `slugOrId`. External `https://…` opens in a new tab.                                                                             |
 | `image`       | `string`            | URL. Override the resolved cover image.                                                                                                           |
 | `badge`       | `string`            | Editorial pill that wins over auto-defaults (discount badge, etc.). Use sparingly — `"Start here"`, `"New"`, `"Featured"`.                        |
-| `variant`     | `'row'` \| `'card'` | `'row'` (default) is the image-on-side row used in main sections. `'card'` is the vertical card used inside `<ResourceGrid>` for the latest grid. |
+| `variant`     | `'row'` \| `'card'` \| `'list'` \| `'ladder'` | `'row'` (default) is the image-on-side row used in main sections. `'card'` is the vertical card used inside `<ResourceGrid>`. `'list'` is the dense title-plus-meta line, no artwork, used inside `<TopicsGridColumn>`. `'ladder'` is its sibling for `<ActivityRung>`: format label, title, persistent arrow. |
 
 ### What renders for which type
 
@@ -201,22 +222,157 @@ Quote with attributed author and avatar.
 
 Horizontal band wrapping the slim subscribe form.
 
-| Prop       | Type     | Notes                                 |
-| ---------- | -------- | ------------------------------------- |
-| `heading`  | `string` | Optional headline above the form.     |
-| `subTitle` | `string` | Optional subhead under the headline.  |
-| children   |          | Should always be `<NewsletterCta />`. |
+| Prop       | Type        | Notes                                          |
+| ---------- | ----------- | ---------------------------------------------- |
+| `heading`  | `string`    | Optional headline above the form.              |
+| `subTitle` | `ReactNode` | Optional subhead. Accepts elements, not just a string. |
+| children   |             | Should always be `<NewsletterCta />`.          |
 
 ```mdx
 <NewsletterSection
 	heading="One command installs all 22 skills"
-	subTitle="Seven free lessons that put them in order, from clarifying the work to reviewing the diff. Join over 98,000 developers becoming AI heroes."
+	subTitle={<>Seven free lessons that put them in order, from clarifying the work to reviewing the diff. Join over <SubscriberCount /> developers becoming AI Heroes</>}
 >
 	<NewsletterCta />
 </NewsletterSection>
 ```
 
 `<NewsletterCta />` takes no props — it renders the slim email-signup form.
+
+**Never hardcode a subscriber number.** `subTitle` takes a `ReactNode` so
+`<SubscriberCount />` can render the live figure from Kit, cached 30 minutes,
+with a fallback when the API is unavailable. A number typed into the copy is
+stale the week it is written.
+
+---
+
+## `<TopicsGrid>` / `<TopicsGridColumn>`
+
+Homepage topic columns: a heading, a few hand-picked resources, and a link to
+the full topic. Built for 3 columns, tolerant of 2 to 4 (a fourth wraps rather
+than squeezing the row).
+
+| Prop (`TopicsGridColumn`) | Type     | Notes                                        |
+| ------------------------- | -------- | -------------------------------------------- |
+| `heading`                 | `string` | Column label, rendered as a mono micro-label. |
+| `moreHref`                | `string` | Optional link to the full topic.             |
+| `moreLabel`               | `string` | Defaults to `All {heading}`.                 |
+
+```mdx
+<TopicsGrid>
+	<TopicsGridColumn heading="Learn how LLMs think" moreHref="/topics/learn-how-llms-think">
+		<Resource slugOrId="what-is-an-llm" variant="list" />
+		<Resource slugOrId="what-are-tokens" variant="list" />
+		<Resource slugOrId="what-is-the-context-window" variant="list" />
+	</TopicsGridColumn>
+	…
+</TopicsGrid>
+```
+
+Use `variant="list"` for the children. The `row` and `card` variants each carry
+artwork and a description, which is far too heavy at three-per-column inside a
+three-column grid. Unresolvable slugs silently render nothing and log
+`draft.resource.missing`, so a bad slug thins a column instead of breaking the
+page.
+
+---
+
+## `<ActivityLadder>` / `<ActivityRung>`
+
+The homepage's "what do you want to do?" block. Each rung names an audience,
+asks their question, lists a few resources, and links to the topic page holding
+the rest.
+
+| Prop (`ActivityLadder`) | Type     | Notes                                          |
+| ----------------------- | -------- | ---------------------------------------------- |
+| `heading`               | `string` | Section title, left of the header link.        |
+| `intro`                 | `string` | One or two sentences under the heading.        |
+| `ctaHref` / `ctaLabel`  | `string` | Optional "see everything" link, right-aligned. |
+
+| Prop (`ActivityRung`)  | Type     | Notes                                                       |
+| ---------------------- | -------- | ----------------------------------------------------------- |
+| `audience`             | `string` | Who the rung is for, as a mono micro-label.                 |
+| `question`             | `string` | The rung's heading, phrased as the visitor's own question.  |
+| `moreHref` / `moreLabel` | `string` | Optional topic page holding the rest.                     |
+
+```mdx
+<ActivityLadder heading="What do you want to do?" ctaHref="/learn" ctaLabel="See the full map">
+	<ActivityRung
+		audience="If you have never written code"
+		question="How do I get started?"
+		moreHref="/topics/learn-how-llms-think"
+		moreLabel="More fundamentals"
+	>
+		<Resource slugOrId="what-is-an-llm" variant="ladder" />
+	</ActivityRung>
+	…
+</ActivityLadder>
+```
+
+Use `variant="ladder"` for the children.
+
+Two editorial rules worth keeping when you retune this:
+
+- **Keep the questions in step with `GOAL_SECTIONS`** (`src/components/navigation/goal-sections-data.ts`),
+  which drives the same three buckets on `/learn`. Nothing in code enforces it;
+  the point of the correspondence is that clicking "See the full map" shows the
+  shape the visitor just scanned.
+- **Write `audience` as a plain phrase, not a difficulty badge.** "Beginner"
+  invites people to rule themselves out, and the fundamentals rung is the one
+  experienced developers most often turn out to need. "If you can already code"
+  lets a reader locate themselves while the rung above stays just as readable —
+  which is also why this is not tabs or an accordion.
+
+---
+
+## `<TestimonialDivider>`
+
+Slim quote break between sections. Same props as `<Testimonial>` so there is
+one API to learn, but no stars, smaller type, and half the vertical padding: it
+punctuates a scroll rather than stopping it. Use `<Testimonial>` for the
+full-weight quote.
+
+| Prop           | Type     | Notes                                    |
+| -------------- | -------- | ---------------------------------------- |
+| `authorName`   | `string` | Required.                                |
+| `authorAvatar` | `string` | Optional Cloudinary URL. Omitted renders no avatar. |
+| children       |          | The quote.                               |
+
+```mdx
+<TestimonialDivider authorName="Jane Dev" authorAvatar="https://res.cloudinary.com/…">
+
+A short line that earns its place between two sections.
+
+</TestimonialDivider>
+```
+
+---
+
+## `<SkillCycleSection />`
+
+The skills cycle diagram, homepage density. Server wrapper around the W2
+`SkillCycle`: it fetches the CMS-owned skill entries and pins `size="homepage"`.
+
+| Prop       | Type     | Notes                                       |
+| ---------- | -------- | ------------------------------------------- |
+| `ctaHref`  | `string` | Trailing CTA target. Defaults to `/skills`. |
+| `ctaLabel` | `string` | Defaults to `See all skills`.               |
+
+```mdx
+<SkillCycleSection ctaHref="/skills" ctaLabel="See all skills" />
+```
+
+The diagram renders its OWN trailing CTA from these props. Do not add a second
+"See all skills" link beside it. Renders nothing when the skill catalog is
+empty.
+
+---
+
+## `<SubscriberCount />`
+
+The live newsletter subscriber count, server-fetched from Kit and cached 30
+minutes. Takes `fallback` (default `90,000+`) and `format`. Use it anywhere a
+subscriber number would otherwise be typed by hand.
 
 ---
 

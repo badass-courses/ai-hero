@@ -1,0 +1,251 @@
+/**
+ * Server queries for skill entries — the joined, CMS-owned skill data model
+ * (decided 2026-07-06, see specs/w2-skills-pages.md §2.2). Joins three CMS
+ * sources:
+ *
+ * 1. the SKILLS_LIST_ID list (`list_ppwir`): membership + position = cycle
+ *    order, and its `section` resources = catalog grouping (decided
+ *    2026-07-14 — sections drive the /skills catalog, superseding the
+ *    phase-tag core/utility split)
+ * 2. phase tags (tags whose `fields.contexts` includes 'skill-phase') attached
+ *    to each skill post — additive badge metadata, NEVER a membership gate
+ * 3. taglines: each post's GitHub-synced `fields.description`
+ *
+ * No static config: everything is editable in the CMS without a deploy.
+ */
+
+import { unstable_cache } from 'next/cache'
+import { db } from '@/db'
+import { contentResourceTag as contentResourceTagTable } from '@/db/schema'
+import { log } from '@/server/logger'
+import { asc, inArray } from 'drizzle-orm'
+
+import { getListWithSections } from './lists-query'
+import { SKILLS_LIST_ID } from './skills-content'
+import { TagSchema, type Tag } from './tags'
+
+// Client-safe types + pure constants live in `skills-shared.ts` (this module
+// imports `db`/`server/logger` and must never reach the client bundle).
+// Imported for internal use AND re-exported so existing server call sites keep
+// their import path.
+import {
+	isSkillPhaseTag,
+	SKILL_PHASE_TAG_CONTEXT,
+	SKILL_PHASE_UTILITY_NUMBER,
+	skillPhaseFromTag,
+	type SkillEntry,
+	type SkillPhase,
+} from './skills-shared'
+
+export {
+	isSkillPhaseTag,
+	skillPhaseFromTag,
+	SKILL_PHASE_TAG_CONTEXT,
+	SKILL_PHASE_UTILITY_NUMBER,
+} from './skills-shared'
+export type { SkillEntry, SkillPhase } from './skills-shared'
+
+/**
+ * Internal grouping used by the sectioned list walk: a `section` resource's
+ * members (titled) or a run of loose members (title null). Only the flattened
+ * `SkillEntry[]` is exported — /skills renders the list's sections directly
+ * via `getListWithSections`, so nothing consumes the grouped shape publicly.
+ */
+type SkillCatalogGroup = {
+	id: string
+	title: string | null
+	description?: string
+	skills: SkillEntry[]
+}
+
+/** Membership gate: published, public skill posts only. */
+function isSkillMember(resource: any): boolean {
+	return (
+		resource?.type === 'post' &&
+		resource?.fields?.postType === 'skill' &&
+		resource?.fields?.state === 'published' &&
+		resource?.fields?.visibility === 'public' &&
+		typeof resource?.fields?.slug === 'string' &&
+		typeof resource?.fields?.title === 'string'
+	)
+}
+
+/**
+ * Walk the deep (section-aware) skills list into catalog groups: a `section`
+ * resource becomes a titled group of its member skills; consecutive loose
+ * skills between/outside sections collapse into untitled runs. A section's own
+ * state/visibility is ignored (sections are structural, created
+ * draft+unlisted); empty groups are dropped. Positions run continuously across
+ * the whole walk — that IS the cycle order.
+ */
+async function loadSkillCatalogGroups(): Promise<SkillCatalogGroup[]> {
+	const list = await getListWithSections(SKILLS_LIST_ID)
+	if (!list) {
+		void log.error('skills.entries.list.missing', { listId: SKILLS_LIST_ID })
+		return []
+	}
+
+	type PendingSkill = Omit<SkillEntry, 'phase'> & { phase: SkillPhase | null }
+	const groups: Array<
+		Omit<SkillCatalogGroup, 'skills'> & { skills: PendingSkill[] }
+	> = []
+	let position = 0
+	let looseRun: (typeof groups)[number] | null = null
+
+	const toPending = (resource: any): PendingSkill => ({
+		id: resource.id as string,
+		slug: resource.fields.slug as string,
+		title: resource.fields.title as string,
+		tagline:
+			typeof resource.fields.description === 'string'
+				? resource.fields.description
+				: '',
+		phase: null,
+		position: position++,
+	})
+
+	for (const row of list.resources ?? []) {
+		const resource = (row as any)?.resource
+		if (!resource) continue
+
+		if (resource.type === 'section') {
+			const skills = (resource.resources ?? [])
+				.map((child: any) => child?.resource)
+				.filter(isSkillMember)
+				.map(toPending)
+			if (skills.length === 0) continue
+			looseRun = null
+			groups.push({
+				id: resource.id as string,
+				title:
+					typeof resource.fields?.title === 'string'
+						? resource.fields.title
+						: 'Skills',
+				description:
+					typeof resource.fields?.description === 'string' &&
+					resource.fields.description
+						? resource.fields.description
+						: undefined,
+				skills,
+			})
+			continue
+		}
+
+		if (!isSkillMember(resource)) continue
+		if (!looseRun) {
+			looseRun = { id: `loose-${groups.length}`, title: null, skills: [] }
+			groups.push(looseRun)
+		}
+		looseRun.skills.push(toPending(resource))
+	}
+
+	const allSkills = groups.flatMap((group) => group.skills)
+	if (allSkills.length === 0) return []
+
+	// Batch-load every member's tags in one query, then pick each post's
+	// skill-phase tag (if any) — additive badge metadata only.
+	const memberIds = allSkills.map((skill) => skill.id)
+	// Ordered, because the loop below keeps the FIRST phase tag it sees for a
+	// post and a post may legitimately carry more than one. An unordered
+	// findMany lets MySQL return them in whatever order it likes, so the same
+	// skill could badge Phase 2 on one revalidation and Phase 4 on the next.
+	// `position` is the same authored order `lists-query` reads tags in; `tagId`
+	// only breaks the tie, since position defaults to 0 for every row.
+	const tagRows = await db.query.contentResourceTag.findMany({
+		where: inArray(contentResourceTagTable.contentResourceId, memberIds),
+		with: { tag: true },
+		orderBy: [
+			asc(contentResourceTagTable.position),
+			asc(contentResourceTagTable.tagId),
+		],
+	})
+
+	const phaseByPostId = new Map<string, SkillPhase>()
+	for (const tagRow of tagRows) {
+		if (phaseByPostId.has(tagRow.contentResourceId)) continue
+		const parsed = TagSchema.safeParse(tagRow.tag)
+		if (!parsed.success || !isSkillPhaseTag(parsed.data)) continue
+		const phase = skillPhaseFromTag(parsed.data)
+		if (phase) phaseByPostId.set(tagRow.contentResourceId, phase)
+	}
+
+	for (const skill of allSkills) {
+		skill.phase = phaseByPostId.get(skill.id) ?? null
+	}
+
+	return groups
+}
+
+/**
+ * Cached FLAT skill entries in cycle order — the sectioned walk flattened, so
+ * consumers (hub sidebar skills group, SkillExtras) get a simple ordered list
+ * even now that skills sit inside `section` resources in the list.
+ * Revalidates via the shared 'posts'/'tags'/'lists' tags (skill posts, phase
+ * tags, and list membership/sections are each edited through those surfaces).
+ */
+export const getSkillEntries = unstable_cache(
+	async (): Promise<SkillEntry[]> =>
+		(await loadSkillCatalogGroups()).flatMap((group) => group.skills),
+	['skill-entries-v2'],
+	{ revalidate: 3600, tags: ['posts', 'tags', 'lists'] },
+)
+
+/** One titled section of the skills list, for the "Where this fits" rail. */
+export type SkillSection = {
+	id: string
+	title: string
+	/** How many skills the section holds — the "of 6" in "2 of 6". */
+	count: number
+	/**
+	 * The section's first skill — its entry point, and what the rail's rung
+	 * links to. Null only if a titled section somehow holds nothing, which the
+	 * catalog loader already filters out.
+	 */
+	firstSlug: string | null
+}
+
+export type SkillSectionMap = {
+	/** Titled sections in list order. Loose members are not a section. */
+	sections: SkillSection[]
+	/** slug → where that skill sits. Absent for unlisted or loose skills. */
+	placement: Record<string, { sectionId: string; position: number }>
+}
+
+/**
+ * Where each skill sits in the list's sections — the source for the rail.
+ *
+ * SECTIONS, not phase tags. The sections are the live taxonomy (2026-07-14:
+ * sections drive the catalog, superseding the phase-tag split) and they are
+ * complete: every listed skill sits in one. The `skill-phase` tags cover 6 of
+ * 21 listed skills, and the Phase 2 tag is attached to an unlisted
+ * `grill-with-docs` rather than the listed `skills-grill-with-docs` — so a
+ * phase-derived ladder either skipped numbers or, once read from the tag
+ * vocabulary, lit nothing at all for two thirds of the skills. Sections answer
+ * "where does this fit" for every skill with no content backfill.
+ */
+export const getSkillSectionMap = unstable_cache(
+	async (): Promise<SkillSectionMap> => {
+		const groups = await loadSkillCatalogGroups()
+		const sections: SkillSection[] = []
+		const placement: SkillSectionMap['placement'] = {}
+
+		for (const group of groups) {
+			// A loose run has no title — it is not a place, so it gets no rung and
+			// its members render an unmarked ladder rather than a wrong one.
+			if (!group.title) continue
+			sections.push({
+				id: group.id,
+				title: group.title,
+				count: group.skills.length,
+				firstSlug: group.skills[0]?.slug ?? null,
+			})
+			group.skills.forEach((skill, index) => {
+				placement[skill.slug] = { sectionId: group.id, position: index + 1 }
+			})
+		}
+
+		return { sections, placement }
+	},
+	['skill-section-map-v2'],
+	{ revalidate: 3600, tags: ['posts', 'lists'] },
+)

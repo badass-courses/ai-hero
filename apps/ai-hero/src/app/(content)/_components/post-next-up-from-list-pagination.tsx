@@ -11,6 +11,15 @@ import { useProgress } from '../[post]/_components/progress-provider'
 import Recommendations from '../[post]/_components/recommendations'
 import { PostUpNextCard } from './post-up-next-card'
 
+/**
+ * The centred "Up Next" card shown INSIDE the video overlay when a lesson
+ * finishes (`post-player.tsx`).
+ *
+ * The post page itself no longer uses this: its ending is the two-cell hairline
+ * pager (`post-up-next-pager.tsx`, § UP NEXT). An overlay floating over a paused
+ * video is the one place a centred card is still the right object, so this one
+ * stays as it was.
+ */
 export default function PostNextUpFromListPagination({
 	postId,
 	className,

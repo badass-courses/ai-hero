@@ -3,9 +3,10 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { isOnEmailList } from '@/lib/cta-gating'
 import { Subscriber } from '@/schemas/subscriber'
 import common from '@/text/common'
-import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
 import { cn } from '@coursebuilder/utils/cn'
@@ -36,8 +37,7 @@ export const PostNewsletterCta: React.FC<
 	onSuccess,
 }) => {
 	const router = useRouter()
-	const { data: subscriber, status } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	const { subscriber } = useCtaGate()
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (subscriber) {
@@ -47,21 +47,17 @@ export const PostNewsletterCta: React.FC<
 		}
 	}
 
-	const [mounted, setMounted] = React.useState(false)
-
-	React.useEffect(() => {
-		setMounted(true)
-	}, [])
-
-	if (!mounted) {
-		return null
-	}
-
-	if (status === 'pending') {
-		return null
-	}
-
-	if (subscriber) {
+	// Only the resolved answer suppresses this. It used to wait for a mount
+	// effect AND for the query, rendering nothing in between — so the ask
+	// appeared a beat after the page settled, shoving the content under it
+	// down. That cost was paid by everyone the ask is FOR (non-subscribers,
+	// the overwhelming majority) to spare a group who could simply be given
+	// nothing once we know who they are.
+	//
+	// Rendering it first and removing it on resolve is the better trade: the
+	// only movement left belongs to people who turn out to be subscribed, and
+	// it happens once.
+	if (isOnEmailList(subscriber)) {
 		return null
 	}
 

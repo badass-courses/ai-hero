@@ -51,7 +51,7 @@ export function DictionaryShellFallback({
 						</span>
 					</div>
 					<nav aria-label="Dictionary sections" className="flex flex-col">
-						<p className="text-muted-foreground border-border border-b px-6 py-3 font-mono text-[10px] font-medium uppercase tracking-wider">
+						<p className="text-muted-foreground border-border border-b px-6 py-3 font-mono text-[11px] font-medium uppercase tracking-wider">
 							Sections
 						</p>
 						<ul className="flex flex-col">
@@ -71,7 +71,7 @@ export function DictionaryShellFallback({
 													{section.title}
 												</span>
 											</span>
-											<span className="text-muted-foreground/70 font-mono text-[10px] tabular-nums">
+											<span className="text-muted-foreground/70 font-mono text-[11px] tabular-nums">
 												{section.entries.length}
 											</span>
 										</a>

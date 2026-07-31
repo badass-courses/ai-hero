@@ -32,7 +32,7 @@ export default function WorkshopSidebarItem({
 					strokeWidth={2}
 				/>
 				<span
-					className="text-muted-foreground/60 shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums tracking-wider"
+					className="text-muted-foreground/60 shrink-0 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 					aria-hidden="true"
 				>
 					{String(index).padStart(2, '0')}
@@ -49,7 +49,7 @@ export default function WorkshopSidebarItem({
 				</h3>
 				{totalCount > 0 && (
 					<span
-						className="text-muted-foreground/70 shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums tracking-wider"
+						className="text-muted-foreground/70 shrink-0 font-mono text-[11px] font-medium uppercase tabular-nums tracking-wider"
 						aria-label={`${completedCount} of ${totalCount} lessons completed`}
 					>
 						{completedCount}/{totalCount}

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import { TYPE } from './type'
+
 import { cn } from '@coursebuilder/utils/cn'
 
 type CompanyLogo = {
@@ -315,29 +317,103 @@ const companyLogos: CompanyLogo[] = [
 	},
 ]
 
+/**
+ * The proof band of company marks.
+ *
+ * Two placements, one list. `grid` is the standalone band the marketing pages
+ * (`/skills`, `/courses`, `/newsletter`) put near their CTA: a centred label
+ * over a six-across hairline grid. `row` is the homepage's, where the band is
+ * not a section of its own but the last line of the PROOF block
+ * (`Home Page.dc.html` § PROOF) — an "Engineers from" label with the marks
+ * running beside it on one wrapping line.
+ *
+ * The row cannot reuse the grid's `transform: scale()` optical sizing: a
+ * scaled element still occupies its unscaled box, which is invisible inside a
+ * roomy grid cell and overlaps its neighbours the moment the marks sit on one
+ * flowing line. It applies the same per-logo factor to the *height* instead,
+ * so the layout box and the drawn mark are the same size.
+ */
 export function CompanyLogoGrid({
 	className,
 	eyebrow = 'Trusted by engineers from',
+	variant = 'grid',
 }: {
 	className?: string
 	eyebrow?: string
+	variant?: 'grid' | 'row'
 }) {
+	if (variant === 'row') {
+		return (
+			<section
+				aria-labelledby="company-logo-grid-heading"
+				className={cn(
+					'flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-8',
+					className,
+				)}
+			>
+				{/* An eyebrow labelling the row, not a section heading — `aria-labelledby`
+				    still points here, so the landmark keeps its name without
+				    injecting a 9.5px <h2> into the document outline. */}
+				<p
+					id="company-logo-grid-heading"
+					className={cn(
+						TYPE.groupLabel,
+						'sm:max-w-[120px] sm:flex-none',
+					)}
+				>
+					{eyebrow}
+				</p>
+				{/* A 6-column grid, not `flex-wrap`. Wrapping decides the split from
+				    whatever happens to fit, which gave a full first row and a stranded
+				    second one, and put nothing above anything. Twelve marks over six
+				    columns is 6 + 6 by construction, each centred in its own track, so
+				    the two rows line up with each other at every width. Three columns
+				    on mobile, for the same reason. */}
+				<ul className="grid w-full grid-cols-3 place-items-center gap-x-8 gap-y-7 text-[color:var(--ah-fg-subtle)] sm:grid-cols-6">
+					{companyLogos.map((company) => (
+						<li key={company.name} className="flex items-center">
+							{/* `company.scale` is per-logo optical sizing: these SVGs fill
+							    their viewBoxes by wildly different amounts, so a uniform
+							    height renders Vercel twice the size of Adobe. The factor is
+							    what makes them read as equals. Base is the row's, not the
+							    grid's — the row wants bigger marks. */}
+							<div
+								aria-label={company.name}
+								style={{ height: `${34 * (company.scale ?? 1)}px` }}
+								className="flex items-center justify-center [&_svg]:h-full [&_svg]:w-auto"
+							>
+								{company.logo}
+							</div>
+						</li>
+					))}
+				</ul>
+			</section>
+		)
+	}
+
 	return (
 		<section
 			aria-labelledby="company-logo-grid-heading"
 			className={cn('mx-auto w-full', className)}
 		>
-			<h2
+			{/* Eyebrow, not a heading — same reasoning as the row variant above. */}
+			<p
 				id="company-logo-grid-heading"
-				className="text-muted-foreground text-center text-xs font-medium uppercase tracking-wider"
+				className={cn(TYPE.groupLabel, 'text-center')}
 			>
 				{eyebrow}
-			</h2>
+			</p>
 			<ul className="border-border bg-border mt-6 grid grid-cols-2 gap-px border-t sm:grid-cols-3 lg:grid-cols-6">
-				{companyLogos.map((company) => (
+				{companyLogos.map((company, index) => (
 					<li
 						key={company.name}
-						className="bg-background text-foreground/70 hover:text-foreground flex min-h-28 items-center justify-center px-5 py-6 transition-colors"
+						// Eight marks on a phone, twelve above it. A proof band is
+						// scanned, not read: past two columns of four, the remaining
+						// rows are scroll rather than evidence.
+						className={cn(
+							'bg-background text-foreground/70 hover:text-foreground flex min-h-28 items-center justify-center px-5 py-6 transition-colors',
+							index >= 8 && 'hidden sm:flex',
+						)}
 					>
 						<div
 							aria-label={company.name}

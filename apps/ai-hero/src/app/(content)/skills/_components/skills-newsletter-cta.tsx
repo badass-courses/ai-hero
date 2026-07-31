@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
@@ -22,6 +23,49 @@ import {
 export type SkillsNewsletterCtaState = 'fresh' | 'tag-me' | 'subscribed'
 type SkillsNewsletterCtaVariant = 'updates' | 'course'
 
+/**
+ * The card's own type, from the scale rather than from inline sizes.
+ *
+ * Every line in here used to name its own size and weight — `text-2xl
+ * font-semibold` on the heading, `text-base` on the lead, `text-sm
+ * font-semibold` on the button, `text-[11px] tracking-wider` on the eyebrow.
+ * None of those are steps in `TYPE`, so the card was set in four sizes the rest
+ * of the site does not use.
+ *
+ * The button keeps a weight of its own on top of `TYPE.meta` — see
+ * `CARD_BUTTON`. The scale sets type; what a gold fill weighs is a property of
+ * the control, and every other one on the site is 700.
+ *
+ * `panelTitle` is the documented step for "a bordered panel's own title", which
+ * is exactly what this is.
+ */
+// A group label, not an eyebrow: it names the offer in the panel under it,
+// and the card already carries a surface of its own.
+const CARD_EYEBROW = cn(TYPE.groupLabel, 'text-primary')
+/** Which offer the card is making, in the eyebrow. */
+const cardEyebrow = (variant: SkillsNewsletterCtaVariant) =>
+	variant === 'course'
+		? 'AI Hero · Free email course'
+		: 'AI Hero · Skill System'
+const CARD_HEADING = cn(TYPE.panelTitle, 'text-foreground text-balance')
+const CARD_LEAD = cn(TYPE.lead, 'text-foreground/80 text-balance')
+const CARD_FOOTNOTE = cn(
+	TYPE.metaSm,
+	'text-foreground/60 inline-flex items-center gap-2',
+)
+/**
+ * 48px gold control, 9px radius, sized by its label. Shared by both states.
+ *
+ * `font-bold`, which is what every other gold fill on the site is set in — the
+ * hero CTAs, the cohort asks, the skills course form. `TYPE.meta` ships 500 and
+ * this used to inherit it, so the one control in the card came out two steps
+ * lighter than the identical-looking button a page away.
+ */
+const CARD_BUTTON = cn(
+	TYPE.meta,
+	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-12 items-center justify-center rounded-[9px] px-7 font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+)
+
 export function SkillsNewsletterCta({
 	heading = 'Get the next skill update in your inbox',
 	subtitle = 'New skill posts and changelog notes from Matt, on the agentic dev workflow.',
@@ -37,6 +81,7 @@ export function SkillsNewsletterCta({
 }) {
 	const router = useRouter()
 	const isCourse = variant === 'course'
+	const eyebrow = cardEyebrow(variant)
 	const { data: subscriber } =
 		api.ability.getCurrentSubscriberFromCookie.useQuery(undefined, {
 			enabled: !forceState,
@@ -86,36 +131,33 @@ export function SkillsNewsletterCta({
 			aria-label={
 				isCourse ? 'Start the free AI Skills course' : 'Subscribe for skill updates'
 			}
-			className={cn(
-				'not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 border p-6 sm:p-8',
-				!isCourse && 'rounded-xl',
-			)}
+			// `rounded-xl` for both offers: the course variant shipped square, so a
+			// reader scrolling from a skill page to an article met the same card in
+			// two different shapes.
+			className="not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 rounded-xl border p-6 sm:p-8"
 		>
 			<div className="flex flex-col gap-2">
-				<span className="text-primary font-mono text-[11px] font-medium uppercase tracking-wider">
-					{isCourse ? 'AI Hero · Free email course' : 'AI Hero · Skill System'}
-				</span>
-				<h3 className="text-foreground text-balance font-sans text-2xl font-semibold leading-tight tracking-tight sm:text-[1.625rem]">
-					{heading}
-				</h3>
-				<p className="text-foreground/80 text-balance text-base leading-relaxed">
-					{subtitle}
-				</p>
+				<span className={CARD_EYEBROW}>{eyebrow}</span>
+				{/* `font-sans` is load-bearing: the global `h1..h6` rule sets
+				    `--font-heading`, and this card's title is UI type, not a
+				    document heading. */}
+				<h3 className={cn(CARD_HEADING, 'font-sans')}>{heading}</h3>
+				<p className={CARD_LEAD}>{subtitle}</p>
 			</div>
 			<SubscribeToConvertkitForm
 				formId={SKILLS_FORM_ID}
 				fields={{ ...SKILLS_INTEREST_FIELDS, source }}
 				actionLabel={isCourse ? 'Start the free course' : 'Stay up to date'}
 				onSuccess={handleOnSuccess}
-				className={cn(
-					'[&_button]:bg-primary [&_button]:text-primary-foreground [&_button]:hover:bg-primary/90 [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] [&_button]:h-12 [&_button]:border-0 [&_button]:px-6 [&_button]:text-sm [&_button]:font-semibold [&_button]:transition [&_input]:h-12 [&_input]:border [&_input]:px-4 [&_input]:text-sm [&_label]:hidden',
-					isCourse
-						? '[&_button]:rounded-none [&_input]:rounded-none'
-						: '[&_button]:rounded-lg [&_input]:rounded-lg',
-				)}
+				// One form treatment for both offers. The course variant used to render
+				// square with a `bg-primary` semibold button while the updates variant
+				// was rounded and gold — the same form, two shapes and two weights,
+				// depending on which copy it carried. 9px and `accent-fill` are the
+				// documented control, so both use it.
+				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-bold [&_button]:leading-snug [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:sr-only"
 			/>
-			<p className="text-foreground/60 inline-flex items-center gap-2 text-xs">
-				<ShieldCheckIcon className="h-3.5 w-3.5" />
+			<p className={CARD_FOOTNOTE}>
+				<ShieldCheckIcon className="h-3.5 w-3.5 shrink-0" />
 				<span>I respect your privacy. Unsubscribe at any time.</span>
 			</p>
 		</aside>
@@ -161,12 +203,16 @@ function SkillsCtaTagMe({
 		return (
 			<aside
 				aria-label={isCourse ? 'Course enrolment' : 'Skills updates'}
-				className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-3 border p-6 sm:p-8"
+				// Same box as the two states above it — `rounded-xl` is the shared
+				// shape for every inline MDX card (`PromoCard`, `SkillsCta`,
+				// `SkillsCourseCta`). This one was square, so confirming the
+				// subscription visibly changed the card's shape under the reader.
+				className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-3 rounded-xl border p-6 sm:p-8"
 			>
-				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+				<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-flex w-fit')}>
 					{isCourse ? "You're in" : "You're on the list"}
 				</span>
-				<p className="text-base leading-relaxed opacity-80">
+				<p className={cn(TYPE.lead, 'opacity-80')}>
 					{isCourse ? (
 						'Lesson one is on the way.'
 					) : (
@@ -193,29 +239,31 @@ function SkillsCtaTagMe({
 					? 'Join the free AI Skills course'
 					: 'Add me to the skills list'
 			}
-			className={cn(
-				'not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 border p-6 sm:p-8',
-				variant !== 'course' && 'rounded-xl',
-			)}
+			className="not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 rounded-xl border p-6 sm:p-8"
 		>
 			<div className="flex flex-col gap-2">
-				<span className="text-primary font-mono text-[11px] font-medium uppercase tracking-wider">
-					{variant === 'course'
-						? 'AI Hero · Free email course'
-						: 'AI Hero · Skill System'}
-				</span>
-				<h3 className="text-foreground text-balance font-sans text-2xl font-semibold leading-tight tracking-tight sm:text-[1.625rem]">
-					{heading}
-				</h3>
-				<p className="text-foreground/80 text-balance text-base leading-relaxed">
-					{subtitle}
-				</p>
+				<span className={CARD_EYEBROW}>{cardEyebrow(variant)}</span>
+				<h3 className={cn(CARD_HEADING, 'font-sans')}>{heading}</h3>
+				<p className={CARD_LEAD}>{subtitle}</p>
 			</div>
+			{/* The same object as the subscribe form's submit in the `fresh` state
+			    above — same gold fill, same 48px height, same 9px radius, same
+			    padding. It is the one action in the card either way; which of the
+			    two cards the reader gets is not something the button should
+			    announce.
+
+			    `self-start` because the card is a `flex-col`: a bare `flex` here
+			    stretched the button across the whole panel, so a one-word action
+			    read as a banner. `inline-flex` keeps it sized by its label, and the
+			    `min-w` holds the box steady when the label swaps for the spinner. */}
 			<button
 				type="button"
 				onClick={handleClick}
 				disabled={isPending}
-				className="bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring flex h-12 cursor-pointer items-center justify-center px-6 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+				className={cn(
+					CARD_BUTTON,
+					'min-w-[196px] cursor-pointer select-none self-start disabled:cursor-not-allowed disabled:opacity-60',
+				)}
 			>
 				{isPending ? (
 					<Spinner className="h-4 w-4" />
@@ -226,10 +274,10 @@ function SkillsCtaTagMe({
 				)}
 			</button>
 			{error ? (
-				<p className="text-destructive text-xs">{error}</p>
+				<p className={cn(TYPE.metaSm, 'text-destructive')}>{error}</p>
 			) : (
-				<p className="text-foreground/60 inline-flex items-center gap-2 text-xs">
-					<ShieldCheckIcon className="h-3.5 w-3.5" />
+				<p className={CARD_FOOTNOTE}>
+					<ShieldCheckIcon className="h-3.5 w-3.5 shrink-0" />
 					<span>
 						{variant === 'course'
 							? "You're already subscribed. One click starts the course."

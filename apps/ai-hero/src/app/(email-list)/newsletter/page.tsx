@@ -4,6 +4,7 @@ import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { HeroShader } from '@/components/landing/hero-shader'
 import LayoutClient from '@/components/layout-client'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
+import { PrimaryNewsletterTitle } from '@/components/subscriber-count'
 
 const newsletterThumbnail =
 	'https://res.cloudinary.com/total-typescript/image/upload/v1768313403/ai-newsletter-thumbnail_2x.jpg'
@@ -66,7 +67,14 @@ export default async function NewsletterPage() {
 				</div>
 				<div className="relative z-10 flex flex-1 items-center justify-center">
 					<PrimaryNewsletterCta
+						title={<PrimaryNewsletterTitle />}
 						titleElement="h1"
+						// The one place that keeps the confirmation. Everywhere else the
+						// newsletter is an aside and a subscriber should simply not see
+						// it, which is now the default — but this route is nothing BUT
+						// the ask, and hiding it would answer someone who deliberately
+						// navigated to /newsletter with an empty page.
+						isHiddenForSubscribers={false}
 						trackProps={{
 							event: 'subscribed',
 							params: {

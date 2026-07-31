@@ -196,9 +196,19 @@ export async function getModuleProgressForUser(
 				}
 			}
 
-			const parsedSubscriber = SubscriberSchema.safeParse(
-				JSON.parse(subscriberCookie.value),
-			)
+			// `safeParse` guards the SHAPE, but `JSON.parse` still throws on a
+			// malformed cookie — and `ck_subscriber` is set on the client, so any
+			// visitor can hand this function a string that is not JSON. That threw
+			// out of a public tRPC query instead of taking the empty-progress path
+			// two lines down that already exists for exactly this case.
+			let subscriberJson: unknown
+			try {
+				subscriberJson = JSON.parse(subscriberCookie.value)
+			} catch {
+				subscriberJson = null
+			}
+
+			const parsedSubscriber = SubscriberSchema.safeParse(subscriberJson)
 
 			if (!parsedSubscriber.success) {
 				void log.error('progress.subscriber.parse.error', {

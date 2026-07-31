@@ -1,61 +1,62 @@
 import * as React from 'react'
-import { db } from '@/db'
-import { contentResource } from '@/db/schema'
+import { CohortHero } from '@/components/cohort-hero'
+import {
+	formatAlumniCount,
+	getCachedCohortAlumniCount,
+} from '@/lib/cohort-stats'
+import { getCoursesHeroState } from '@/lib/courses-hero-state'
+import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
 import { log } from '@/server/logger'
-import { and, eq, sql } from 'drizzle-orm'
 
-import { Resource } from './resource'
-
-function readString(obj: unknown, key: string): string | undefined {
-	if (!obj || typeof obj !== 'object') return undefined
-	const v = (obj as Record<string, unknown>)[key]
-	return typeof v === 'string' && v.length > 0 ? v : undefined
-}
-
+/**
+ * The cohort section on the homepage (wireframe § ⑨) — the same block `/courses`
+ * leads with, not a second design of it.
+ *
+ * This file used to be a whole parallel composition: its own badges, its own
+ * two-fact strip, its own copy for the between-cohorts state, and the cohort's
+ * `description` rendered as plain text where `/courses` renders the same field
+ * as markdown in accent ink. Every one of Amy's 2026-07-30 annotations on this
+ * block was answered here AND again in the hero, twice, by hand.
+ *
+ * So there is one component now (`components/cohort-hero.tsx`) and this is the
+ * homepage's data fetch for it. The only difference on the page is the heading
+ * level: the cohort's name is an `h2` here because the homepage is about more
+ * than the cohort, and the `h1` on `/courses` because that page is not.
+ *
+ * The reads are the same three `/courses` makes, and for the same reasons:
+ * a purchasable cohort wins, the latest published cohort is the waitlist target
+ * between cohorts (never the `/cohorts` index — standing rule), and the sale is
+ * resolved server-side and guarded to this cohort's own resource id.
+ *
+ * Renders nothing when no cohort resolves at all, so the page degrades to the
+ * sections around it.
+ */
 export async function UpcomingCohort() {
-	const now = new Date().toISOString()
+	const [purchasable, latest, alumniCount] = await Promise.all([
+		getUpcomingCohort(),
+		getLatestCohort(),
+		getCachedCohortAlumniCount().catch(() => 0),
+	])
 
-	const cohorts = await db.query.contentResource.findMany({
-		where: and(
-			eq(contentResource.type, 'cohort'),
-			eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`, 'published'),
-			eq(
-				sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
-				'public',
-			),
-		),
-		with: {
-			resourceProducts: { with: { product: true } },
-		},
-	})
+	const flagship = purchasable ?? latest
 
-	const purchasable = cohorts.filter((cohort) => {
-		const product = cohort.resourceProducts?.[0]?.product
-		if (!product) return false
-		if (product.status !== 1) return false
-		const productState = readString(product.fields, 'state')
-		if (productState && productState !== 'published') return false
-		const openEnrollment = readString(product.fields, 'openEnrollment')
-		const closeEnrollment = readString(product.fields, 'closeEnrollment')
-		if (openEnrollment && openEnrollment > now) return false
-		if (closeEnrollment && closeEnrollment < now) return false
-		return true
-	})
-
-	purchasable.sort((a, b) => {
-		const aStart = readString(a.fields, 'startsAt') ?? ''
-		const bStart = readString(b.fields, 'startsAt') ?? ''
-		return aStart.localeCompare(bStart)
-	})
-
-	const winner = purchasable[0]
-	if (!winner) {
-		await log.info('landing.upcomingCohort.noMatch', {
-			candidateCount: cohorts.length,
-		})
+	if (!flagship) {
+		await log.info('landing.upcomingCohort.noMatch', {})
 		return null
 	}
 
-	const slug = readString(winner.fields, 'slug') ?? winner.id
-	return <Resource slugOrId={slug} />
+	// Depends on the flagship (the sale is guarded to its resource id), so it
+	// cannot join the batch above.
+	const { sale } = await getCoursesHeroState(flagship)
+
+	return (
+		<CohortHero
+			flagship={flagship}
+			isPurchasable={Boolean(purchasable)}
+			alumniLabel={formatAlumniCount(alumniCount)}
+			sale={sale}
+			headingLevel="h2"
+			headingId="cohort-heading"
+		/>
+	)
 }

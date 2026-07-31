@@ -1,5 +1,24 @@
 import * as React from 'react'
 
+import { TYPE } from './type'
+
+import { cn } from '@coursebuilder/utils/cn'
+
+/**
+ * The page's argument, set as a claim against its reasoning.
+ *
+ * Two columns, no rule between them (`Home Page.dc.html` § MANIFESTO): a
+ * hairline here read as a table of two equal things, and this is one statement
+ * with its case beside it, not a comparison.
+ *
+ * Both columns start at the same top edge. The body used to be pushed down by
+ * a gutter to mark it as subordinate, which left a band of empty space next to
+ * the headline and made the two halves look mis-set rather than related.
+ *
+ * The closing paragraph is set in full ink at medium weight. It is the only
+ * sentence in the section a reader has to leave with, and at body opacity it
+ * disappeared into the two paragraphs of setup above it.
+ */
 export function Manifesto({
 	headline,
 	children,
@@ -8,12 +27,31 @@ export function Manifesto({
 	children: React.ReactNode
 }) {
 	return (
-		<section className="border-border grid grid-cols-1 gap-8 border-b px-8 py-12 sm:px-16 sm:py-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16">
-			<h2 className="flex text-balance font-sans text-3xl font-semibold leading-tight tracking-tight sm:-mt-3 sm:py-16 sm:text-4xl md:py-24">
-				{headline}
-			</h2>
-			<div className="flex flex-col gap-6 py-0 pl-0 text-base leading-relaxed opacity-80 sm:border-l sm:py-16 sm:pl-16 sm:text-lg md:py-24 md:pl-20">
-				{children}
+		<section className="border-border border-b">
+			{/* The gutter lives on this inner grid, not on the section (DESIGN
+			    rule 1): the section is the divider, and a section that pads itself
+			    is the shape the rule names as wrong even where — as here — the
+			    hairline happens to survive it. */}
+			<div className="grid grid-cols-1 gap-8 px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px] md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] md:gap-16">
+				<div className="flex flex-col gap-5">
+					{/* No eyebrow. "The argument" named a mood, not a fact: cover it and
+					    the headline loses nothing. */}
+					<h2 className={cn(TYPE.sectionClaim, 'text-balance font-sans')}>
+						{headline}
+					</h2>
+				</div>
+				<div
+					className={cn(
+						TYPE.body,
+						'flex max-w-[62ch] flex-col gap-5 text-pretty text-[color:var(--ah-fg-body)]',
+						// The MDX pipeline gives every `p` a bottom margin of its own,
+						// which doubled with the flex gap. The gap is the spacing here.
+						'[&>p]:m-0!',
+						'[&>p:last-child]:text-foreground [&>p:last-child]:font-medium',
+					)}
+				>
+					{children}
+				</div>
 			</div>
 		</section>
 	)

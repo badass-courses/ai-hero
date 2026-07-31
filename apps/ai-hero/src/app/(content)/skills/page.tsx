@@ -1,8 +1,10 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
-import { Resource } from '@/components/landing/resource'
-import { SectionHeading } from '@/components/landing/section-heading'
+import { TYPE } from '@/components/landing/type'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
+import { getRepoStarCount } from '@/lib/github-stars-query'
 import { getListWithSections } from '@/lib/lists-query'
 import {
 	getSkillChangelogCount,
@@ -10,20 +12,27 @@ import {
 	type SkillChangelogEntry,
 } from '@/lib/skill-changelog-query'
 import {
-	SKILLS_GUIDE_ITEMS,
 	SKILLS_HERO,
 	SKILLS_LIST_ID,
 	SKILLS_PAGE_SIZE,
+	SKILLS_REPO_URL,
 } from '@/lib/skills-content'
 import { RssIcon } from 'lucide-react'
 
+import { cn } from '@coursebuilder/utils/cn'
+
 import { ChangelogList, type ChangelogItem } from './_components/changelog-list'
 import { ChangelogPagination } from './_components/changelog-pagination'
-import { GuideGrid } from './_components/guide-grid'
+import { SkillSet, type SkillSetGroup } from './_components/skill-set'
 import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
+import { SkillsSalesCopy } from './_components/skills-sales-copy'
 
-export const dynamic = 'force-dynamic'
+// No `force-dynamic`. It was carried over with a comment about cohort
+// enrollment windows, but this page never reads a cohort — every reader on it
+// is cached and tag-invalidated. Reading `searchParams` for the changelog
+// pager already opts the route out of static rendering where it matters, and
+// dropping the flag lets the cached readers actually be cached.
 
 export const metadata: Metadata = {
 	title: SKILLS_HERO.title,
@@ -49,86 +58,119 @@ type Props = {
 	searchParams: Promise<{ page?: string }>
 }
 
+/**
+ * /skills — the skill system's own page (`Skills Page.dc.html`).
+ *
+ * The order is the argument: what you get and how to install it (HEAD), the
+ * catalog (THE SKILL SET), what a skill even is (WHAT A SKILL IS), what changed
+ * (CHANGELOG), and the ask restated at the bottom (GET THE SKILLS).
+ *
+ * The catalog leads the definition, not the other way round: someone on this
+ * page is deciding whether the set is worth installing, and the list is what
+ * answers that. The definition then lands as the answer to a question the list
+ * has already raised rather than as a preamble to it.
+ *
+ * Every count, group, order and description on the page is CMS or GitHub data.
+ * The list (`SKILLS_LIST_ID`) owns the grouping AND the order of the groups —
+ * to lead with "The Main Flow" rather than "Getting Started", move the section
+ * in the list, not in this file.
+ */
 export default async function SkillsPage({ searchParams }: Props) {
 	const { page: pageParam } = await searchParams
-	const currentPage = Math.max(Number(pageParam ?? '1') || 1, 1)
+	// Floored, not just clamped: `?page=1.05` would otherwise reach the query as
+	// a fractional OFFSET, which the driver rejects — a hand-typed URL should
+	// land on a page, not a 500.
+	// `?page=Infinity` and `?page=1e309` both survive `Math.floor` and a
+	// `|| 1` guard (Infinity is truthy), reaching the query as a non-finite
+	// OFFSET. Anything that is not a plain in-range integer falls back to 1.
+	const requestedPage = Math.floor(Number(pageParam ?? '1'))
+	const currentPage =
+		Number.isSafeInteger(requestedPage) && requestedPage >= 1
+			? requestedPage
+			: 1
 	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, skillsList] = await Promise.all([
+	const [entries, totalEntries, skillsList, stars] = await Promise.all([
 		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
 		getSkillChangelogCount(),
 		getListWithSections(SKILLS_LIST_ID),
+		getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
 	])
+
 	const skillGroups = toSkillGroups(skillsList?.resources)
+	const skillCount = skillGroups.reduce(
+		(total, group) => total + group.skills.length,
+		0,
+	)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
 	return (
-		<LayoutClient withContainer>
-			<main className="bg-background text-foreground">
-				<SkillsHero />
+		<LayoutClient withContainer withFooter={false}>
+			<HubLayout>
+				<main className="bg-background text-foreground">
+					<SkillsHero stars={stars} skillCount={skillCount} />
 
-				<section aria-labelledby="skill-set-heading" className="border-b">
-					<SectionHeading>
-						<span id="skill-set-heading">The skill set</span>
-					</SectionHeading>
-					<div>
-						{skillGroups.map((group) =>
-							group.kind === 'section' ? (
-								<div key={group.id}>
-									<div className="px-8 pt-10 pb-4">
-										<h3 className="text-foreground text-3xl sm:text-4xl font-semibold">
-											{group.title}
-										</h3>
-										{group.description ? (
-											<p className="text-foreground/60 mt-2 max-w-2xl text-balance lg:text-lg sm:text-base text-sm leading-relaxed">
-												{group.description}
-											</p>
-										) : null}
-									</div>
-									{group.slugs.map((slug) => (
-										<Resource key={slug} slugOrId={slug} variant="row" />
-									))}
+					{/* The catalog first, the definition after it. A reader arriving
+					    here has installed something or is deciding whether to — they
+					    want to see what the set actually contains before they want an
+					    essay on what a skill is. The definition reads better as the
+					    answer to a question the list has already raised. */}
+					<SkillSet groups={skillGroups} />
+
+					<SkillsSalesCopy />
+
+					<section aria-labelledby="changelog-heading" className="border-b">
+						<div className="px-[18px] pb-[50px] pt-12 sm:px-11">
+							<div className="mb-[26px] flex flex-col gap-4 md:flex-row md:items-end">
+								<div>
+									<p className={TYPE.groupLabel}>Changelog</p>
+									<h2
+										id="changelog-heading"
+										className={cn(TYPE.heading, 'mt-3.5 text-balance')}
+									>
+										What changed recently
+									</h2>
 								</div>
-							) : (
-								<Resource
-									key={group.slug}
-									slugOrId={group.slug}
-									variant="row"
-								/>
-							),
-						)}
-					</div>
-				</section>
+								<div className="flex items-center gap-5 md:ml-auto md:shrink-0">
+									<Link
+										href="/skills/rss.xml"
+										className={cn(
+											TYPE.meta,
+											'hover:text-foreground inline-flex items-center gap-1.5 text-[color:var(--ah-fg-subtle)] transition-colors',
+										)}
+									>
+										<RssIcon className="size-3.5" aria-hidden />
+										RSS
+									</Link>
+									<Link
+										href={`${SKILLS_REPO_URL}/releases`}
+										target="_blank"
+										rel="noopener noreferrer"
+										className={cn(
+											TYPE.meta,
+											'hover:text-foreground text-[color:var(--ah-fg-subtle)] transition-colors',
+										)}
+									>
+										Full history on GitHub →
+									</Link>
+								</div>
+							</div>
+							<ChangelogList items={changelogItems} />
+							<ChangelogPagination
+								currentPage={currentPage}
+								totalPages={totalPages}
+							/>
+						</div>
+					</section>
 
-				<section aria-labelledby="get-oriented-heading" className="border-b">
-					<SectionHeading>
-						<span id="get-oriented-heading">Get oriented</span>
-					</SectionHeading>
-					<GuideGrid items={[...SKILLS_GUIDE_ITEMS]} />
-				</section>
+					<SkillsGitHubSection stars={stars} skillCount={skillCount} />
 
-				<section aria-labelledby="changelog-heading" className="border-b">
-					<SectionHeading>
-						<span className="inline-flex items-center justify-center gap-3">
-							<span id="changelog-heading">Changelog</span>
-							<a
-								href="/skills/rss.xml"
-								className="border-primary/40 text-primary hover:bg-primary hover:text-primary-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium tracking-tight transition"
-							>
-								<RssIcon className="h-4 w-4" aria-hidden />
-								RSS
-							</a>
-						</span>
-					</SectionHeading>
-					<ChangelogList items={changelogItems} />
-					<ChangelogPagination
-						currentPage={currentPage}
-						totalPages={totalPages}
+					<CompanyLogoGrid
+						variant="row"
+						eyebrow="Engineers from"
+						className="border-border border-b px-[18px] py-[22px] sm:px-11"
 					/>
-				</section>
-
-				<SkillsGitHubSection />
-				<CompanyLogoGrid className="border-t pt-6" />
-			</main>
+				</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }
@@ -142,65 +184,80 @@ type ListItem = {
 	} | null
 }
 
-type SkillGroup =
-	| { kind: 'skill'; slug: string }
-	| {
-			kind: 'section'
-			id: string
-			title: string
-			description?: string
-			slugs: string[]
-	  }
-
 function isPublicPublished(fields?: Record<string, unknown> | null) {
 	return fields?.state === 'published' && fields?.visibility === 'public'
 }
 
-function slugOf(item: ListItem): string | undefined {
-	const slug = item.resource?.fields?.slug
-	return typeof slug === 'string' && slug ? slug : undefined
+function stringField(
+	fields: Record<string, unknown> | null | undefined,
+	key: string,
+): string | undefined {
+	const value = fields?.[key]
+	return typeof value === 'string' && value ? value : undefined
+}
+
+function toSkillItem(item: ListItem) {
+	const fields = item.resource?.fields
+	const slug = stringField(fields, 'slug')
+	if (!slug) return null
+	return {
+		slug,
+		title: stringField(fields, 'title') ?? slug,
+		description: stringField(fields, 'description'),
+	}
 }
 
 // Walk the /skills list into ordered render groups. A `section` resource
-// becomes a titled sub-group of its published/public child skills; anything
-// else renders as a loose skill row. Empty sections are dropped so an
-// unpopulated (or fully-unpublished) section leaves no orphan heading.
-function toSkillGroups(resources?: ListItem[] | null): SkillGroup[] {
-	const groups: SkillGroup[] = []
+// becomes a titled group of its published/public child skills; anything else
+// collapses into an untitled run of loose skills. Empty sections are dropped so
+// an unpopulated (or fully-unpublished) section leaves no orphan heading.
+function toSkillGroups(resources?: ListItem[] | null): SkillSetGroup[] {
+	const groups: SkillSetGroup[] = []
+	let looseRun: SkillSetGroup | null = null
+
 	for (const item of resources ?? []) {
 		if (item.resource?.type === 'section') {
 			// Sections are purely structural — their own state/visibility is
 			// ignored (they're created draft+unlisted with no publish UI). Their
 			// published/public children drive whether the section shows at all.
-			const slugs =
-				item.resource.resources
-					?.filter((child) => isPublicPublished(child.resource?.fields))
-					.map(slugOf)
-					.filter((slug): slug is string => Boolean(slug)) ?? []
-			if (slugs.length === 0) continue
-			const title = item.resource.fields?.title
-			const description = item.resource.fields?.description
+			const skills = (item.resource.resources ?? [])
+				.filter((child) => isPublicPublished(child.resource?.fields))
+				.map(toSkillItem)
+				.filter((skill): skill is NonNullable<typeof skill> => Boolean(skill))
+			if (skills.length === 0) continue
+			looseRun = null
 			groups.push({
-				kind: 'section',
-				id: item.resource.id ?? slugs[0]!,
-				title: typeof title === 'string' ? title : 'Skills',
-				description:
-					typeof description === 'string' && description
-						? description
-						: undefined,
-				slugs,
+				id: item.resource.id ?? skills[0]!.slug,
+				title: stringField(item.resource.fields, 'title') ?? 'Skills',
+				description: stringField(item.resource.fields, 'description'),
+				skills,
 			})
 			continue
 		}
 		if (!isPublicPublished(item.resource?.fields)) continue
-		const slug = slugOf(item)
-		if (slug) groups.push({ kind: 'skill', slug })
+		const skill = toSkillItem(item)
+		if (!skill) continue
+		if (!looseRun) {
+			looseRun = { id: `loose-${groups.length}`, title: null, skills: [] }
+			groups.push(looseRun)
+		}
+		looseRun.skills.push(skill)
 	}
+
 	return groups
 }
 
+/**
+ * Entries are authored as "v1.1: /wayfinder, /to-spec …", so the release
+ * number is already in the title. Splitting it out is what lets the changelog
+ * set version and date in their own column without a new CMS field; a title
+ * without the prefix simply renders without a version.
+ */
+const VERSION_PREFIX = /^(v\d+(?:\.\d+)*)\s*:\s*(.+)$/
+
 function toChangelogItem(entry: SkillChangelogEntry): ChangelogItem {
-	const title = String(entry.fields?.title ?? 'Untitled skill update')
+	const rawTitle = String(entry.fields?.title ?? 'Untitled skill update')
+	const match = rawTitle.match(VERSION_PREFIX)
 	const description = entry.fields?.description || entry.fields?.summary
 	const slug = String(entry.fields?.slug ?? entry.id)
 	const publishedAt = entry.createdAt
@@ -214,7 +271,8 @@ function toChangelogItem(entry: SkillChangelogEntry): ChangelogItem {
 	return {
 		id: entry.id,
 		href: `/skills/${slug}`,
-		title,
+		title: match?.[2] ?? rawTitle,
+		version: match?.[1] ?? null,
 		description: description ? String(description) : undefined,
 		publishedAt,
 	}

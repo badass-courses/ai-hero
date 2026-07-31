@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { HubLayout } from '@/components/navigation/hub-layout'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { Share } from '@/components/share'
 import {
@@ -49,88 +50,85 @@ export default async function DictionaryEntryPage({ params }: Props) {
 	const markdownToCopy = `# ${entry.title}\n\n${entry.rawBody}`
 
 	return (
-		<LayoutClient withContainer>
-			<ContentReadTracker
-				contentId={`ai-coding-dictionary:${entry.slug}`}
-				contentType="dictionary-entry"
-				contentSlug={entry.slug}
-				parentSlug="ai-coding-dictionary"
-			/>
-			<main className="bg-background text-foreground">
-				<DictionaryEntryStructuredData entry={entry} dictionary={dictionary} />
-
-				<div className="border-border flex items-center border-b px-8 py-4 sm:px-16">
-					<Link
-						href="/ai-coding-dictionary"
-						className="text-muted-foreground hover:text-foreground group inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-wider transition-colors"
-					>
-						<ArrowLeft
-							aria-hidden
-							className="size-3.5 transition-transform duration-200 ease-out group-hover:-translate-x-0.5"
-						/>
-						AI Coding Dictionary
-					</Link>
-				</div>
-
-				<header className="border-border border-b">
-					<div className="flex flex-col gap-5 px-8 py-12 sm:px-16 sm:py-16">
-						<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-							{entry.sectionTitle}
-						</p>
-						<h1 className="text-balance font-sans text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
-							{entry.title}
-						</h1>
-						{entry.description ? (
-							<p className="text-muted-foreground max-w-3xl text-balance text-xl font-light leading-tight tracking-tight sm:text-2xl">
-								{entry.description}
-							</p>
-						) : null}
-						<div className="mt-2 flex flex-wrap items-center gap-5">
-							<Contributor className="flex [&_img]:w-8" />
-							<CopyPageButton markdown={markdownToCopy} />
-						</div>
-					</div>
-				</header>
-
-				<DictionaryEntryBody body={entry.body} />
-
-				<DictionaryEntryNav previous={previousEntry} next={nextEntry} />
-
-				<PrimaryNewsletterCta
-					id="dictionary-entry-newsletter-cta"
-					isHiddenForSubscribers
-					className="not-prose border-t py-16 [&_button]:w-full"
-					actionLabel="Get AI Hero updates"
-					fields={{
-						interest: 'dictionary',
-						source: 'aihero_dictionary_entry',
-					}}
-					trackProps={{
-						event: 'subscribed',
-						params: { location: 'dictionary-entry', post: entry.slug },
-					}}
-				>
-					<div className="relative z-10 flex max-w-3xl flex-col items-center justify-center px-5 pb-5 pt-10 text-center sm:pb-10">
-						<h2 className="font-sans text-2xl font-medium leading-tight tracking-tight sm:text-3xl">
-							Want more than vocabulary?
-						</h2>
-						<p className="text-muted-foreground mt-3 max-w-2xl text-base leading-7">
-							Join AI Hero for practical skills, thinking on AI engineering, and
-							resources that keep you ahead of the curve.
-						</p>
-					</div>
-				</PrimaryNewsletterCta>
-
-				<div className="border-border flex flex-wrap items-center justify-center gap-5 border-t px-8 sm:px-16">
-					<strong className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-						Share
-					</strong>
-					<Share
-						className="inline-flex rounded-none border-y-0"
-						title={entry.title}
+		<LayoutClient withContainer withFooter={false}>
+			<HubLayout>
+				<ContentReadTracker
+					contentId={`ai-coding-dictionary:${entry.slug}`}
+					contentType="dictionary-entry"
+					contentSlug={entry.slug}
+					parentSlug="ai-coding-dictionary"
+				/>
+				<main className="bg-background text-foreground">
+					<DictionaryEntryStructuredData
+						entry={entry}
+						dictionary={dictionary}
 					/>
-				</div>
-			</main>
+
+					<div className="border-border flex items-center border-b px-[18px] py-4 sm:px-11">
+						<Link
+							href="/ai-coding-dictionary"
+							className="text-muted-foreground hover:text-foreground group inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-wider transition-colors"
+						>
+							<ArrowLeft
+								aria-hidden
+								className="size-3.5 transition-transform duration-200 ease-out group-hover:-translate-x-0.5"
+							/>
+							AI Coding Dictionary
+						</Link>
+					</div>
+
+					<header className="border-border border-b">
+						<div className="flex flex-col gap-5 px-[18px] py-12 sm:px-11 sm:py-16">
+							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+								{entry.sectionTitle}
+							</p>
+							<h1 className="text-balance font-sans text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+								{entry.title}
+							</h1>
+							{entry.description ? (
+								<p className="text-muted-foreground max-w-3xl text-balance text-xl font-light leading-tight tracking-tight sm:text-2xl">
+									{entry.description}
+								</p>
+							) : null}
+							<div className="mt-2 flex flex-wrap items-center gap-5">
+								<Contributor className="flex [&_img]:w-8" />
+								<CopyPageButton markdown={markdownToCopy} />
+							</div>
+						</div>
+					</header>
+
+					<DictionaryEntryBody body={entry.body} />
+
+					<DictionaryEntryNav previous={previousEntry} next={nextEntry} />
+
+					<PrimaryNewsletterCta
+						title="Want more than vocabulary?"
+						byline="Join AI Hero for practical skills, thinking on AI engineering, and resources that keep you ahead of the curve."
+						id="dictionary-entry-newsletter-cta"
+						isHiddenForSubscribers
+						className="not-prose border-t py-16"
+						actionLabel="Get AI Hero updates"
+						fields={{
+							interest: 'dictionary',
+							source: 'aihero_dictionary_entry',
+						}}
+						trackProps={{
+							event: 'subscribed',
+							params: { location: 'dictionary-entry', post: entry.slug },
+						}}
+					/>
+
+					<div className="border-border flex flex-wrap items-center justify-center gap-5 border-t px-[18px] sm:px-11">
+						<strong className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+							Share
+						</strong>
+						<Share
+							className="inline-flex rounded-none border-y-0"
+							title={entry.title}
+						/>
+					</div>
+				</main>
+			</HubLayout>
 		</LayoutClient>
 	)
 }
@@ -139,7 +137,7 @@ async function DictionaryEntryBody({ body }: { body: string }) {
 	const { content } = await compileMDX(body, {}, {})
 
 	return (
-		<div className="border-border border-b px-8 py-12 sm:px-16 sm:py-16">
+		<div className="border-border border-b px-[18px] py-12 sm:px-11 sm:py-16">
 			<article className="prose prose-hr:border-border dark:prose-invert dark:prose-a:text-primary prose-a:text-blue-600 sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none">
 				{content}
 			</article>

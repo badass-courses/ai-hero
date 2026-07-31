@@ -15,6 +15,9 @@ import { CheckCircle } from 'lucide-react'
 import type { PricingOptions } from '@coursebuilder/core/types'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { isOnCohortWaitlist } from '@/lib/cta-gating'
+
 import type { EventPageProps } from './event-page-props'
 import { LoggedInWaitlistButton } from './logged-in-waitlist-button'
 
@@ -132,6 +135,12 @@ export const EventPricingWidgetContainer: React.FC<
 			.toISOString()
 			.slice(0, 10),
 	}
+
+	// Read off the same field the line above writes. This widget is a client
+	// component reached from several event surfaces, so the check lives here
+	// rather than being threaded in as a prop from each of them.
+	const { subscriber } = useCtaGate()
+	const alreadyOnWaitlist = isOnCohortWaitlist(subscriber, product?.name)
 
 	const isSoldOut = props.isSoldOut
 
@@ -311,16 +320,23 @@ export const EventPricingWidgetContainer: React.FC<
 								: eventDateString}
 						</div>
 					)}
+					{/* Same rule as the cohort sidebar: the status is information
+					    this reader came back for, the waitlist ask is a request they
+					    already answered. Keep the first, drop the second — every
+					    subtitle here ends in "join the waitlist", so it goes with the
+					    form rather than standing over an empty space. */}
 					<div className="p-5">
 						<div className="flex flex-col items-center justify-center gap-2 text-center">
 							<p className="text-balance text-lg font-semibold">
 								{enrollmentState.title}
 							</p>
-							<p className="text-foreground/80 text-balance text-sm">
-								{enrollmentState.subtitle}
-							</p>
+							{alreadyOnWaitlist ? null : (
+								<p className="text-foreground/80 text-balance text-sm">
+									{enrollmentState.subtitle}
+								</p>
+							)}
 						</div>
-						{renderWaitlistForm()}
+						{alreadyOnWaitlist ? null : renderWaitlistForm()}
 					</div>
 				</>
 			)}

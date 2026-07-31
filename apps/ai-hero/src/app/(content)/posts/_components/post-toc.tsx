@@ -118,7 +118,7 @@ function getActiveRange(
 	}
 }
 
-function TocText({ children }: { children: string }) {
+export function TocText({ children }: { children: string }) {
 	return (
 		<ReactMarkdown
 			components={{

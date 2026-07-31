@@ -24,11 +24,11 @@ export async function DictionaryHero({
 			id="dictionary-hero"
 			className="border-border relative grid w-full grid-cols-1 items-stretch border-b md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"
 		>
-			<div className="flex flex-col justify-center gap-4 px-8 py-16 sm:px-16 sm:py-20">
+			<div className="flex flex-col justify-center gap-4 px-[18px] py-16 sm:px-11 sm:py-20">
 				<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					AI Hero · Dictionary
 				</p>
-				<h1 className="text-balance font-sans text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+				<h1 className="text-balance font-sans text-3xl font-normal leading-[1.05] tracking-tight sm:text-4xl lg:text-5xl">
 					The vocabulary of AI coding,
 					<br className="hidden sm:block" />{' '}
 					<span className="text-primary">in plain English</span>.

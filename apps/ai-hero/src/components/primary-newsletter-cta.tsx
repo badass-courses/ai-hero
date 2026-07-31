@@ -1,27 +1,29 @@
 'use client'
 
 import * as React from 'react'
-import Image from 'next/image'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShinyText } from '@/app/admin/pages/_components/page-builder-mdx-components'
+import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { useCtaGate } from '@/hooks/use-cta-gate'
+import { isOnEmailList } from '@/lib/cta-gating'
 import { Subscriber } from '@/schemas/subscriber'
-import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
-import { LockIcon, ShieldCheckIcon } from 'lucide-react'
 import { useSession } from 'next-auth/react'
-import { twMerge } from 'tailwind-merge'
 
 import { cn } from '@coursebuilder/utils/cn'
 
 import common from '../text/common'
-import { CldImage } from './cld-image'
 
 type PrimaryNewsletterCtaProps = {
 	onSuccess?: () => void
-	title?: string
-	byline?: string
+	/**
+	 * Accepts a ReactNode so SERVER call sites can pass the live-count title
+	 * (`title={<PrimaryNewsletterTitle />}` from subscriber-count.tsx). The
+	 * string default below is a static fallback only — this is a client
+	 * component and can't fetch the Kit count itself.
+	 */
+	title?: React.ReactNode
+	byline?: React.ReactNode
 	actionLabel?: string
 	/**
 	 * Heading element used for the CTA title. Defaults to `h2`; use `h1` when the CTA supplies the page's primary heading.
@@ -39,14 +41,34 @@ type PrimaryNewsletterCtaProps = {
 	}
 	formId?: number
 	fields?: Record<string, string>
+	/**
+	 * Defaults to TRUE: a subscriber gets nothing rather than a panel.
+	 *
+	 * It used to default to false, so unless a call site opted in, someone
+	 * already on the list met the full bordered card — eyebrow, "Join 98,000+
+	 * developers", byline — with "You're subscribed, thanks." where the form had
+	 * been. That is a conversion surface spending its whole footprint telling a
+	 * reader something they cannot act on.
+	 *
+	 * Pass `false` only where the ask IS the page and hiding it would leave a
+	 * blank one — `/newsletter` is the case this exists for.
+	 */
 	isHiddenForSubscribers?: boolean
 	reserveSpaceWhenHidden?: boolean
 }
 
 /**
- * Primary ConvertKit newsletter CTA component.
+ * The site's primary Kit (ConvertKit) newsletter ask.
  *
- * Uses `titleElement` to keep page heading semantics correct while reusing the same visual CTA.
+ * It is a PANEL, not a band: a bordered card on `--ah-band` carrying a mono
+ * eyebrow, a `panelTitle` headline, one line of byline, the 44px control row
+ * and a mono privacy note. Same shape as `NewsletterSection` on the landing
+ * page and `PostNewsletterForm` in an article's "Keep learning" cell, so the
+ * one offer reads the same wherever it appears.
+ *
+ * `children` replaces the eyebrow/title/byline stack only — the form, the
+ * subscriber branch and the panel chrome stay put, so a call site can supply
+ * its own pitch without re-deriving the panel.
  */
 export const PrimaryNewsletterCta: React.FC<
 	React.PropsWithChildren<PrimaryNewsletterCtaProps>
@@ -60,15 +82,14 @@ export const PrimaryNewsletterCta: React.FC<
 	actionLabel = common['primary-newsletter-button-cta-label'],
 	titleElement = 'h2',
 	trackProps = { event: 'subscribed', params: {} },
-	isHiddenForSubscribers = false,
+	isHiddenForSubscribers = true,
 	reserveSpaceWhenHidden = false,
 	formId,
 	fields,
 	onSuccess,
 }) => {
 	const router = useRouter()
-	const { data: subscriber, status } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery()
+	const { subscriber } = useCtaGate()
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (subscriber) {
@@ -79,7 +100,12 @@ export const PrimaryNewsletterCta: React.FC<
 	}
 	const { data: session } = useSession()
 
-	const shouldHideForSubscriber = isHiddenForSubscribers && subscriber
+	// `isOnEmailList`, not a truthy record: an unconfirmed or cancelled Kit
+	// subscriber is exactly who this ask still needs to reach, and hiding it
+	// from them was hiding it from the people closest to saying yes.
+	const isSubscribed = isOnEmailList(subscriber)
+	const shouldHideForSubscriber = isHiddenForSubscribers && isSubscribed
+
 	const Title = titleElement
 
 	if (shouldHideForSubscriber && !reserveSpaceWhenHidden) {
@@ -88,77 +114,80 @@ export const PrimaryNewsletterCta: React.FC<
 
 	return (
 		<section
-			// data-theme="elysium"
 			id={id}
 			aria-label="Newsletter sign-up"
 			aria-hidden={shouldHideForSubscriber ? true : undefined}
 			className={cn(
-				'flex flex-col items-center justify-center px-5',
+				'flex flex-col items-center px-5',
 				{
 					'pointer-events-none invisible select-none': shouldHideForSubscriber,
 				},
 				className,
 			)}
 		>
-			{children ? (
-				children
-			) : (
-				<div className="relative z-10 flex max-w-3xl flex-col items-center justify-center pb-5 sm:pb-10">
-					{/* <CldImage
-						loading="lazy"
-						src="https://res.cloudinary.com/total-typescript/image/upload/v1741008166/aihero.dev/assets/textured-logo-mark_2x_ecauns.png"
-						alt=""
-						aria-hidden="true"
-						width={130}
-						height={130}
-						className="mb-8 rotate-12"
-					/> */}
-					<Title className="text-center text-3xl font-semibold tracking-tight sm:text-3xl lg:text-4xl dark:text-white">
-						{title}
-					</Title>
-					<h3 className="dark:text-primary pt-3 text-center font-sans text-base font-normal tracking-tight sm:pt-5 sm:text-lg lg:text-xl dark:brightness-110 dark:sm:font-light [&_strong]:font-bold">
-						{byline}
-					</h3>
-				</div>
-			)}
-
-			<div className="not-prose relative flex w-full items-center justify-center">
-				{subscriber && (
-					<div className="absolute z-10 flex -translate-y-8 flex-col text-center">
-						<ShinyText className="text-lg font-semibold sm:text-lg lg:text-xl">
-							You're subscribed, thanks!
-						</ShinyText>
-						<p className="pt-3 text-center font-sans text-lg font-normal opacity-90 sm:text-base lg:text-lg">
-							{session?.user
-								? common['newsletter-subscribed-logged-in']({
-										resource,
-									})
-								: common['newsletter-subscribed-logged-out']({
-										resource,
-									})}
-						</p>
-					</div>
+			<div className="border-border w-full max-w-[720px] rounded-lg border bg-[color:var(--ah-band)] px-6 py-6 sm:px-8 sm:py-[30px]">
+				{children ? (
+					children
+				) : (
+					<>
+						{/* No eyebrow. "Newsletter" over an email field and a subscribe
+						    button restated what the panel already is, on every route this
+						    CTA appears on — which is most of them. */}
+						<Title className={cn(TYPE.panelTitle, 'text-balance font-sans')}>
+							{title}
+						</Title>
+						{byline && (
+							<p
+								className={cn(
+									TYPE.metaProse,
+									'mt-2 max-w-[56ch] text-pretty text-[color:var(--ah-fg-muted)]',
+								)}
+							>
+								{byline}
+							</p>
+						)}
+					</>
 				)}
-				<div
-					className={cn('flex w-full flex-col items-center justify-center', {
-						'blur-xs pointer-events-none select-none opacity-75 transition ease-in-out':
-							subscriber,
-					})}
-				>
-					<SubscribeToConvertkitForm
-						onSuccess={onSuccess ? onSuccess : handleOnSuccess}
-						actionLabel={actionLabel}
-						formId={formId}
-						fields={fields}
-						className="[&_input]:ring-foreground/20 [&_input]:bg-background/30 relative z-10 [&_button]:mt-3 [&_button]:h-16 [&_button]:sm:text-lg [&_input]:h-16 [&_input]:border-none [&_input]:bg-blend-hard-light [&_input]:ring-1 [&_input]:backdrop-blur-xl"
-					/>
-					<p
-						data-nospam=""
-						className="text-foreground/80 inline-flex items-center pt-8 text-xs sm:text-sm"
-					>
-						<ShieldCheckIcon className="mr-2 h-4 w-4" /> I respect your privacy.
-						Unsubscribe at any time.
-					</p>
+
+				<div className="not-prose mt-5">
+					{isSubscribed ? (
+						<p
+							className={cn(
+								TYPE.metaProse,
+								'text-[color:var(--ah-fg-muted)]',
+							)}
+						>
+							You&rsquo;re subscribed, thanks.{' '}
+							{session?.user
+								? common['newsletter-subscribed-logged-in']({ resource })
+								: common['newsletter-subscribed-logged-out']({ resource })}
+						</p>
+					) : (
+						<>
+							<SubscribeToConvertkitForm
+								onSuccess={onSuccess ? onSuccess : handleOnSuccess}
+								actionLabel={actionLabel}
+								formId={formId}
+								fields={fields}
+								// The row is placeholder-led by design, so the ConvertKit
+								// labels are hidden — but `sr-only`, not `hidden`.
+								// `display: none` takes them out of the accessibility tree
+								// as well, and a placeholder is only a last-resort
+								// accessible name: screen readers were left announcing two
+								// unnamed text fields on the site's main conversion surface.
+								className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 desk:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_auto] [&_button]:h-[50px] desk:[&_button]:h-11 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-12 desk:[&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_label]:sr-only"
+							/>
+							<p
+								data-nospam=""
+								className={cn(
+									TYPE.command,
+									'mt-3 text-[color:var(--ah-fg-faint)]',
+								)}
+							>
+								No spam. Unsubscribe anytime.
+							</p>
+						</>
+					)}
 				</div>
 			</div>
 		</section>

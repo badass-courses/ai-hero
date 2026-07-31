@@ -105,6 +105,14 @@ export const PostSchema = ContentResourceSchema.merge(
 			githubSourceSha: z.string().nullish(),
 			gitpod: z.string().nullish(),
 			thumbnailTime: z.number().nullish(),
+			// W1 cross-promo (additive, both optional):
+			// suppress the bottom-of-article course CTA for this post.
+			suppressCourseCta: z.boolean().optional(),
+			// which related-posts strategy renders below the body; defaults to
+			// 'section' at the call site with automatic fallback to 'suggested'.
+			relatedPostsVariant: z
+				.union([z.literal('section'), z.literal('suggested')])
+				.optional(),
 			featured: FeaturedSchema.optional(),
 			// The editor's Cover Image input holds '' when empty, and clearing
 			// the image persists `coverImage: null` — accept both (optional field).
@@ -132,6 +140,8 @@ export const PostUpdateSchema = z.object({
 	fields: z.object({
 		postType: PostTypeSchema.default('article'),
 		cta: PostCtaFieldSchema.optional(),
+		suppressCourseCta: z.boolean().optional(),
+		relatedPostsVariant: z.enum(['section', 'suggested']).optional(),
 		title: z.string().min(2).max(90),
 		body: z.string().optional().nullable(),
 		slug: z.string(),

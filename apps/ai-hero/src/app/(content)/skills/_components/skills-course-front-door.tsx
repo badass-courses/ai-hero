@@ -48,7 +48,7 @@ export function SkillsCourseFrontDoor({
 	return (
 		<main className="bg-background text-foreground">
 			<section className="border-border grid border-b lg:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
-				<div className="flex flex-col justify-center gap-6 px-8 py-16 sm:px-16 sm:py-24 lg:py-28">
+				<div className="flex flex-col justify-center gap-6 px-[18px] py-16 sm:px-11 sm:py-24 lg:py-28">
 					<p className="text-primary font-mono text-xs font-medium uppercase tracking-wider">
 						Free 7-lesson course
 					</p>
@@ -102,7 +102,7 @@ export function SkillsCourseFrontDoor({
 
 			<section
 				aria-labelledby="curriculum-heading"
-				className="border-border border-b px-8 py-16 sm:px-16 sm:py-24"
+				className="border-border border-b px-[18px] py-16 sm:px-11 sm:py-24"
 			>
 				<div className="mx-auto max-w-5xl">
 					<p className="text-primary mb-3 font-mono text-xs font-medium uppercase tracking-wider">
@@ -135,7 +135,7 @@ export function SkillsCourseFrontDoor({
 				</div>
 			</section>
 
-			<section className="px-8 py-14 sm:px-16 sm:py-20">
+			<section className="px-[18px] py-14 sm:px-11 sm:py-20">
 				<div className="mx-auto flex max-w-4xl flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-6">
 					<span className="bg-primary/10 text-primary flex size-12 shrink-0 items-center justify-center rounded-full">
 						<Check className="size-6" aria-hidden />

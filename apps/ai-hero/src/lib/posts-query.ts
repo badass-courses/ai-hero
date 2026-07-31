@@ -1,6 +1,7 @@
 'use server'
 
 import crypto from 'node:crypto'
+import { cache } from 'react'
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { courseBuilderAdapter, db } from '@/db'
@@ -11,6 +12,7 @@ import {
 	contentResourceTag as contentResourceTagTable,
 	contentResourceVersion as contentResourceVersionTable,
 	contributionTypes,
+	tag as tagTable,
 } from '@/db/schema'
 import { RESOURCE_CREATED_EVENT } from '@/inngest/events/resource-management'
 import { inngest } from '@/inngest/inngest.server'
@@ -142,6 +144,114 @@ export async function getPostTags(postId: string): Promise<Tag[]> {
 	})
 
 	return z.array(TagSchema).parse(tags.map((tag) => tag.tag))
+}
+
+/**
+ * Published, public posts carrying the tag with `fields.slug === tagSlug`,
+ * newest first. Shared primitive for the sidebar topic tree, `/topics/[slug]`,
+ * W2 per-skill related posts, and W1's tag-based related-posts fallback
+ * (see specs/w1-article-cross-promo.md §3).
+ *
+ * NOTE: this query is tag-agnostic — it happily resolves `skill-phase`-context
+ * tags too (W2 needs that). Topic-facing consumers (the `/topics/[slug]` page,
+ * topic tree) must exclude phase tags themselves; see `getTopicTag` in
+ * `src/lib/topics-query.ts`.
+ */
+export async function getPostsByTag(
+	tagSlug: string,
+	options?: { excludePostIds?: string[]; limit?: number },
+): Promise<Post[]> {
+	try {
+		const tagRow = await db.query.tag.findFirst({
+			where: eq(sql`JSON_EXTRACT (${tagTable.fields}, "$.slug")`, tagSlug),
+		})
+
+		if (!tagRow) return []
+
+		const taggedRows = await db.query.contentResourceTag.findMany({
+			where: eq(contentResourceTagTable.tagId, tagRow.id),
+			columns: { contentResourceId: true },
+		})
+
+		const postIds = taggedRows.map((row) => row.contentResourceId)
+		if (postIds.length === 0) return []
+
+		const posts = await db.query.contentResource.findMany({
+			where: and(
+				inArray(contentResource.id, postIds),
+				eq(contentResource.type, 'post'),
+				eq(
+					sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`,
+					'published',
+				),
+				eq(
+					sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+					'public',
+				),
+			),
+			orderBy: desc(contentResource.createdAt),
+			with: {
+				tags: {
+					with: {
+						tag: true,
+					},
+					orderBy: asc(contentResourceTagTable.position),
+				},
+			},
+		})
+
+		const postsParsed = z.array(PostSchema).safeParse(posts)
+		if (!postsParsed.success) {
+			await log.error('post.parse.error', {
+				scope: 'by-tag',
+				tagSlug,
+				error: postsParsed.error.message,
+			})
+			return []
+		}
+
+		const excludeIds = new Set(options?.excludePostIds ?? [])
+		const filtered = postsParsed.data.filter((post) => !excludeIds.has(post.id))
+
+		return typeof options?.limit === 'number'
+			? filtered.slice(0, options.limit)
+			: filtered
+	} catch (error) {
+		await log.error('post.query.error', {
+			scope: 'by-tag',
+			tagSlug,
+			error: getErrorMessage(error),
+			stack: getErrorStack(error),
+		})
+		return []
+	}
+}
+
+const _getCachedPostsByTag = unstable_cache(
+	async (tagSlug: string) => getPostsByTag(tagSlug),
+	['posts-by-tag-v1'],
+	{ revalidate: 3600, tags: ['posts', 'tags'] },
+)
+
+/**
+ * Cached `getPostsByTag`. Cached per tag slug (the full list), with
+ * exclude/limit applied after the cache read so every consumer shares one
+ * cache entry per tag. Dates are revived after the cache boundary, matching
+ * `getCachedAllPosts`.
+ */
+export async function getCachedPostsByTag(
+	tagSlug: string,
+	options?: { excludePostIds?: string[]; limit?: number },
+): Promise<Post[]> {
+	const result = await _getCachedPostsByTag(tagSlug)
+	const posts: Post[] = reviveDates(result)
+
+	const excludeIds = new Set(options?.excludePostIds ?? [])
+	const filtered = posts.filter((post) => !excludeIds.has(post.id))
+
+	return typeof options?.limit === 'number'
+		? filtered.slice(0, options.limit)
+		: filtered
 }
 
 export async function getPostLists(postId: string): Promise<List[]> {
@@ -489,33 +599,85 @@ export async function updatePost(
 	}
 }
 
-const _getCachedPost = unstable_cache(
-	async (slug: string) => getPost(slug),
+/**
+ * The cached read is the PUBLIC view only, and the editor check happens outside
+ * it (`getCachedPost`).
+ *
+ * Two reasons, one of which was a live bug:
+ *
+ * 1. `getPost` calls `getServerAuthSession()`, which reads `headers()`. Doing
+ *    that inside `unstable_cache` is unsupported and throws
+ *    "used `headers()` inside a function cached with `unstable_cache()`".
+ *    It only threw SOMETIMES because `getServerAuthSession` is request-memoised:
+ *    whenever something else on the page happened to read the session first,
+ *    the memoised value was reused here and no dynamic access occurred. Which
+ *    call ran first depended on the route and, during `next build`, on the
+ *    prerender worker — so the same commit built green one run and failed the
+ *    next.
+ * 2. The cache key was the slug alone while the RESULT varied by ability, so an
+ *    editor's read (drafts, private, archived) could be stored under the same
+ *    key the public then read back.
+ *
+ * The public view is also the RIGHT view for the one thing this reads: the
+ * related-reading rows at the end of a post. Those are links offered to a
+ * reader, and an editor should not be shown a draft there — following it would
+ * take them somewhere no reader can go. So this resolves no session at all,
+ * which additionally keeps `/[post]` statically prerenderable. An editor who
+ * needs the elevated view calls `getPost` directly, as the edit routes do.
+ */
+const _getCachedPublicPost = unstable_cache(
+	async (slug: string) => getPostWithAccess(slug, false),
 	['posts-v3'],
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
 export async function getCachedPost(slug: string) {
-	const result = await _getCachedPost(slug)
+	const result = await _getCachedPublicPost(slug)
 	return result ? reviveDates(result) : null
 }
 
+/**
+ * The exported entry point. It ALWAYS resolves the session itself — the access
+ * level is never a parameter.
+ *
+ * That is not a style preference. This module is `'use server'` (line 1), so
+ * every EXPORTED function is a Server Action with a public endpoint as soon as
+ * the module is reachable from the client graph — and it is: the post editor
+ * (`edit-post-client.tsx`, a client component) imports `@/lib/cms/post-bindings`,
+ * which imports `updatePost`/`addTagToPost`/`removeTagFromPost` from here. An
+ * exported `getPost(slug, { canEditContent })` therefore let ANY caller — an
+ * unauthenticated one POSTing the action id straight from the browser — pass
+ * `{ canEditContent: true }` and read drafts, archived posts, and private
+ * posts. Every in-app call site omitted the flag, so nothing in the UI showed
+ * the hole; only the exposed endpoint did.
+ *
+ * Callers that have already resolved the session and want to skip re-resolving
+ * it use the module-private `getPostWithAccess` below. Not exporting it is what
+ * keeps it off the action manifest.
+ */
 export async function getPost(slugOrId: string) {
 	const { ability } = await getServerAuthSession()
+	return getPostWithAccess(slugOrId, ability.can('update', 'Content'))
+}
 
-	const visibility: ('public' | 'private' | 'unlisted')[] = ability.can(
-		'update',
-		'Content',
-	)
+/**
+ * Module-private, and must STAY module-private — see `getPost` above.
+ *
+ * `canEditContent` is passed rather than resolved so the cached public wrapper
+ * can stay free of dynamic data: reading the session inside `unstable_cache`
+ * throws "used `headers()` inside a function cached with `unstable_cache()`",
+ * and it only threw sometimes, because `getServerAuthSession` is
+ * request-memoised and whichever call ran first decided whether a dynamic
+ * access occurred.
+ */
+async function getPostWithAccess(slugOrId: string, canEditContent: boolean) {
+	const visibility: ('public' | 'private' | 'unlisted')[] = canEditContent
 		? ['public', 'private', 'unlisted']
 		: ['public', 'unlisted']
 	// Editors also see archived posts — otherwise archiving is a one-way door
 	// (the edit route itself would 404, leaving no way to restore). The public
 	// "archived 404s for everyone" rule is enforced by the view routes.
-	const states: ('draft' | 'published' | 'archived')[] = ability.can(
-		'update',
-		'Content',
-	)
+	const states: ('draft' | 'published' | 'archived')[] = canEditContent
 		? ['draft', 'published', 'archived']
 		: ['published']
 
@@ -599,10 +761,27 @@ export async function deletePost(id: string) {
 }
 
 export async function addTagToPost(postId: string, tagId: string) {
+	// Attaching a tag twice is the same request twice, not two attachments. The
+	// bare insert made a retry — a double-click, a client retry, the CLI running
+	// the same command again — produce a SECOND join row, and every read that
+	// joins through this table then listed the tag twice on the post.
+	// `contentResourceId` + `tagId` is the natural key, but there is no unique
+	// constraint behind it, so the no-op is expressed here.
+	const existing = await db.query.contentResourceTag.findFirst({
+		where: and(
+			eq(contentResourceTagTable.contentResourceId, postId),
+			eq(contentResourceTagTable.tagId, tagId),
+		),
+	})
+	if (existing) return
+
 	await db.insert(contentResourceTagTable).values({
 		contentResourceId: postId,
 		tagId,
 	})
+
+	revalidateTag('posts', 'max')
+	revalidateTag('tags', 'max')
 }
 
 export async function updatePostTags(postId: string, tags: Tag[]) {
@@ -618,6 +797,9 @@ export async function updatePostTags(postId: string, tags: Tag[]) {
 			})),
 		)
 	})
+
+	revalidateTag('posts', 'max')
+	revalidateTag('tags', 'max')
 }
 
 export async function removeTagFromPost(postId: string, tagId: string) {
@@ -629,6 +811,9 @@ export async function removeTagFromPost(postId: string, tagId: string) {
 				eq(contentResourceTagTable.tagId, tagId),
 			),
 		)
+
+	revalidateTag('posts', 'max')
+	revalidateTag('tags', 'max')
 }
 
 export async function writeNewPostToDatabase(
@@ -1247,9 +1432,23 @@ const _getCachedPostOrList = unstable_cache(
 	{ revalidate: 3600, tags: ['posts', 'lists'] },
 )
 
-export async function getCachedPostOrList(slugOrId: string) {
+/**
+ * Request-scoped on top of the cross-request cache.
+ *
+ * `/[post]` resolves the same row TWICE per navigation — once in `layout.tsx`
+ * to build the sidebar's list context, once in `page.tsx` to render it — and
+ * the two cannot see each other. `unstable_cache` turned the second call into a
+ * cache round-trip plus a full `reviveDates` walk of the resource tree; `cache`
+ * makes it a property read. The wrapper is module-private because this file is
+ * `'use server'` and every export becomes a Server Action endpoint.
+ */
+const _dedupedPostOrList = cache(async (slugOrId: string) => {
 	const result = await _getCachedPostOrList(slugOrId)
 	return result ? reviveDates(result) : null
+})
+
+export async function getCachedPostOrList(slugOrId: string) {
+	return _dedupedPostOrList(slugOrId)
 }
 
 export async function getPostOrList(slugOrId: string) {

@@ -20,7 +20,7 @@ export function DictionaryTile({
 			className="bg-background hover:bg-muted/40 group relative flex h-full flex-col gap-3 p-6 transition-colors sm:p-7"
 		>
 			{sectionLabel ? (
-				<span className="font-mono text-[10px] font-medium uppercase tracking-wider opacity-60">
+				<span className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
 					{sectionLabel}
 				</span>
 			) : null}

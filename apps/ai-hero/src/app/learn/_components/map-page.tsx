@@ -1,0 +1,251 @@
+import * as React from 'react'
+import { ResourceRow } from '@/components/landing/resource-row'
+import { TYPE } from '@/components/landing/type'
+import { cn } from '@coursebuilder/utils/cn'
+import type { MapTocItem } from '@/components/navigation/map-toc'
+import { MapQuestionGrid } from '@/components/navigation/map-toc'
+import { AskAIHeroBotCard } from '@/components/navigation/ask-ai-hero-bot-card'
+import type { GoalSection } from '@/components/navigation/goal-sections-data'
+import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
+import { PrimaryNewsletterTitle } from '@/components/subscriber-count'
+import type { ResolvedItem } from '@/lib/goal-sections-query'
+
+import { SkillCard } from '@/components/skills/skill-card'
+
+import { MapSkillsNext } from './map-skills-next'
+import { MoreWaysLink } from './more-ways-link'
+
+/**
+ * MapPage — presentational composition for the `/learn` Map page (W3, spec §3).
+ *
+ * Pure server component: every piece of data (resolved goal-section items,
+ * What's New posts) is fetched up front in `page.tsx` and passed as props. The
+ * only client interactivity lives inside `MapQuestionGrid` (active-section
+ * observer), `AskAIHeroBotCard` and `PrimaryNewsletterCta`.
+ *
+ * NO breadcrumbs (deliberate — the Map is a wayfinding layer, not a hierarchy).
+ * NO section background tints — typography and whitespace differentiate goals.
+ */
+
+/** A goal section with its item refs already resolved to real posts (config order, unresolved dropped). */
+export interface ResolvedGoalSection {
+	section: GoalSection
+	items: ResolvedItem[]
+}
+
+export interface MapPageProps {
+	/** Goal sections with resolved item cards, in config order. */
+	goalSections: ResolvedGoalSection[]
+	/** Most-recent published posts for the What's New featured row. */
+	whatsNew: ResolvedItem[]
+	/** Flat anchor-TOC entries (one per goal section). */
+	tocItems: MapTocItem[]
+}
+
+function capitalize(s: string): string {
+	if (!s) return s
+	return s[0]!.toUpperCase() + s.slice(1)
+}
+
+/**
+ * "Video · 12 min" style meta from a resolved item.
+ *
+ * `isVideo` wins over `type`: a post carrying a video is stored as an article,
+ * and the row used to show a VIDEO badge next to the word ARTICLE, which reads
+ * as a bug rather than as two facts.
+ */
+function metaLabel(item: ResolvedItem): string {
+	const parts: string[] = []
+	if (item.isVideo) parts.push('Video')
+	else if (item.type) parts.push(capitalize(item.type))
+	if (item.durationLabel) parts.push(item.durationLabel)
+	return parts.join(' · ')
+}
+
+/**
+ * One list row for a resolved item — the spec's `.ah-row` card. Hub-sidebar
+ * pages use lists, never multi-column grids: the content column is too narrow
+ * (DESIGN / decisions.md "Hub-sidebar pages use lists, not grids").
+ *
+ * Compact rather than the landing page's full-bleed row: a question here has
+ * up to a dozen answers under it, and at full-bleed height the reader sees
+ * three and stops reading it as a list.
+ */
+function ItemRow({ item, summary }: { item: ResolvedItem; summary?: string }) {
+	return (
+		<ResourceRow
+			compact
+			title={item.title}
+			description={summary ?? item.description ?? undefined}
+			href={item.href}
+			image={item.thumbnailUrl ?? undefined}
+			typeLabel={metaLabel(item) || undefined}
+			fallbackPlaceholder={item.type ? capitalize(item.type) : undefined}
+		/>
+	)
+}
+
+function GoalSectionBlock({ goal }: { goal: ResolvedGoalSection }) {
+	const { section, items } = goal
+	return (
+		<section
+			id={section.id}
+			data-goal-section
+			className="border-b scroll-mt-24"
+		>
+			{/* Text keeps the side padding; the row list bleeds full-width to the
+			    container edges (DESIGN rule 1), like the landing rows. */}
+			<div className="flex flex-col">
+				<div className="flex flex-col gap-3 px-[18px] pb-8 pt-16 sm:px-11">
+					<h2 className={cn(TYPE.heading, 'text-balance')}>
+						{section.question}
+					</h2>
+					<p className={cn(TYPE.lead, 'text-muted-foreground max-w-[64ch]')}>
+						{section.strapline}
+					</p>
+				</div>
+
+				<ul className="flex flex-col gap-2.5 px-[18px] sm:px-11">
+					{items.map((item) => (
+						<li key={item.slug}>
+							<ItemRow item={item} />
+						</li>
+					))}
+				</ul>
+
+				{/* Footer: the signature "open" affordance for the whole topic. The
+				    skill, where one matches, gets a real card rather than a sentence
+				    in a box — the slash command is the token readers recognise.
+				    Side by side from `md`, with the way-out link pinned right: the two
+				    are the section's two exits, and stacking them made a tall column
+				    of trailing affordances between one list and the next heading.
+				    `ml-auto` rather than `justify-between` so the link lands in the
+				    same place whether or not the section has a skill card — the exit
+				    is in one spot down the whole page. */}
+				<div className="flex flex-col gap-6 px-[18px] py-8 sm:px-11 md:flex-row md:items-center md:gap-8">
+					{section.skillCta ? (
+						<SkillCard
+							slug={section.skillCta.href.replace(/^\//, '')}
+							label="Do this with"
+							className="sm:max-w-xl md:min-w-0 md:flex-1"
+						/>
+					) : null}
+					<MoreWaysLink
+						href={section.moreHref}
+						label={section.moreLabel}
+						className="md:ml-auto"
+					/>
+				</div>
+			</div>
+		</section>
+	)
+}
+
+function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
+	if (items.length === 0) return null
+	return (
+		// `data-goal-section` is the hook MapToc's IntersectionObserver watches,
+		// so carrying it here is what lets the TOC highlight this entry on the way
+		// past. The attribute names the observer's contract, not a claim that this
+		// is a goal.
+		<section id="whats-new" data-goal-section className="border-b scroll-mt-24">
+			{/* Same rhythm as GoalSectionBlock: the section itself has no padding,
+          and the head block carries the vertical space. It used to set
+          py-16/md:py-24 on the section AND gaps inside, which stacked into a
+          much taller band than its neighbours. */}
+			<div className="flex flex-col">
+				<div className="flex flex-wrap items-end justify-between gap-4 px-[18px] pb-8 pt-16 sm:px-11">
+					<div className="flex flex-col gap-2">
+						{/* No eyebrow: "What's New" over "Fresh from the blog" said it
+					    twice, and the page's one eyebrow is on the h1. */}
+						<h2 className={TYPE.heading}>Fresh from the blog</h2>
+					</div>
+					{/* The same outlined control the goal sections above use for their
+              way out (`MoreWaysLink`). This was a bare text link trailed by a
+              literal "→", so the one section whose exit is the blog drew it in
+              a different tier — and with a different arrow — from every
+              section above it. */}
+					<MoreWaysLink href="/posts" label="See all posts" />
+				</div>
+
+				{/* Same list treatment as GoalSectionBlock — gutter, 10px gap, real
+            <ul>. This used to be a bare padded <div>, so the What's New rows
+            sat flush to the container edges and stacked with no space between
+            them while every goal section above them was inset and gapped. */}
+				<ul className="flex flex-col gap-2.5 px-[18px] pb-8 sm:px-11">
+					{items.map((item) => (
+						<li key={item.slug}>
+							<ItemRow item={item} summary={item.summary} />
+						</li>
+					))}
+				</ul>
+			</div>
+		</section>
+	)
+}
+
+export function MapPage({ goalSections, whatsNew, tocItems }: MapPageProps) {
+	return (
+		<div>
+			{/* Hero — single column (the hub content column is too narrow for a
+			    two-up split). Newsletter lives at the bookend below. */}
+			<section id="top" className="border-b">
+				{/* `pb-11 pt-12`, same as the /skills hero. This was `py-16 md:py-24`,
+            which put 96px of air above the first thing on the page while the
+            sibling hub page opened at 48px. */}
+				<div className="flex flex-col gap-6 px-[18px] pb-11 pt-12 sm:px-11">
+					<p className={TYPE.eyebrow}>The Map</p>
+					<h1 className={cn(TYPE.title, 'text-balance max-w-[24ch]')}>
+						What would you like to do with AI coding?
+					</h1>
+					<p className={cn(TYPE.lead, 'text-muted-foreground max-w-[64ch]')}>
+						Pick the question that sounds like you. Each one opens onto the
+						articles, videos, and skills that answer it, in the order they make
+						sense.
+					</p>
+
+					{/* The questions themselves are the offer, so they sit in the hero
+				      rather than in a TOC block below it. */}
+					<MapQuestionGrid items={tocItems} className="mt-2" />
+
+					{/* The bot, under the questions and at every width.
+
+              It is also the sidebar's footer card, and stays there — that copy
+              is a persistent utility in the rail. This one is the answer to the
+              question grid directly above it: the reader who none of the four
+              questions fits needs it HERE, not at the bottom of a rail they
+              have to go looking down. It used to be `md:hidden`, so on desktop
+              the one place it was needed was the one place it was missing.
+
+              `wide` because the content column is 1070px and the rail card is
+              drawn for 232px. */}
+					<AskAIHeroBotCard wide className="mt-4" />
+				</div>
+			</section>
+
+			{/* Goal sections */}
+			{goalSections.map((goal) => (
+				<GoalSectionBlock key={goal.section.id} goal={goal} />
+			))}
+
+			{/* What's New featured row */}
+			<WhatsNewSection items={whatsNew} />
+
+			{/* Bookend CTA */}
+			<section>
+				<div className="py-16 md:py-24">
+					<PrimaryNewsletterCta
+						title={<PrimaryNewsletterTitle />}
+						titleElement="h2"
+						trackProps={{ event: 'learn_bookend_newsletter' }}
+					/>
+				</div>
+			</section>
+
+			{/* Last thing on the page: the way onward. The newsletter is an ask the
+			    reader can decline, and declining it should not be the note the Map
+			    ends on. */}
+			<MapSkillsNext />
+		</div>
+	)
+}

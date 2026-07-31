@@ -2,6 +2,7 @@ import * as React from 'react'
 import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
+import { contentDurationLabel } from '@/lib/content-duration'
 import { getPricingData } from '@/lib/pricing-query'
 import { log } from '@/server/logger'
 import { eq, or, sql } from 'drizzle-orm'
@@ -12,9 +13,18 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import { DiscountBadge } from './discount-badge'
 import { formatPriceUSD, formatStartsAt } from './format'
 import { ResourceCard } from './resource-card'
+import { ResourceLadderItem } from './resource-ladder-item'
+import { ResourceListItem } from './resource-list-item'
 import { ResourceRow } from './resource-row'
 
-export type ResourceVariant = 'row' | 'card'
+/**
+ * `list` is the dense variant for `TopicsGrid`: title plus a one-line meta,
+ * no image. `ladder` is its sibling for `ActivityRung` — same "no artwork"
+ * economy, but with a persistent arrow and a format label, because those rows
+ * exist to be clicked. The row and card variants carry artwork and a
+ * description, which is far too heavy at three-per-column.
+ */
+export type ResourceVariant = 'row' | 'card' | 'list' | 'ladder'
 
 type InlineProps = {
 	title: string
@@ -52,6 +62,8 @@ type ResolvedFields = {
 	startsAt?: string
 	timezone?: string
 	lessonCount?: number
+	/** Video runtime in seconds, stamped onto the post by `updatePost`. */
+	durationSeconds?: number
 }
 
 const SHINE_TYPES = new Set(['cohort', 'workshop', 'tutorial'])
@@ -178,6 +190,12 @@ async function resolveReference(
 		let muxPlaybackId: string | undefined
 		const thumbnailTime = readNumber(resource.fields, 'thumbnailTime')
 
+		// `updatePost` stamps the mux runtime onto the post itself
+		// (`posts-query.ts` → `getVideoDuration`), so the post's own field is the
+		// first place to look; the joined videoResource carries it too for rows
+		// written before that stamp existed.
+		let durationSeconds = readNumber(resource.fields, 'duration')
+
 		if (resource.type === 'post') {
 			const videoResource = resource.resources?.find(
 				(r) => r.resource?.type === 'videoResource',
@@ -185,6 +203,9 @@ async function resolveReference(
 			muxPlaybackId = videoResource
 				? readString(videoResource.fields, 'muxPlaybackId')
 				: undefined
+			if (!durationSeconds && videoResource) {
+				durationSeconds = readNumber(videoResource.fields, 'duration')
+			}
 			if (!image && muxPlaybackId) {
 				image = muxThumbnailUrl(muxPlaybackId, thumbnailTime)
 			}
@@ -217,6 +238,7 @@ async function resolveReference(
 			startsAt: readString(resource.fields, 'startsAt'),
 			timezone: readString(resource.fields, 'timezone'),
 			lessonCount,
+			durationSeconds,
 		}
 	} catch (error) {
 		await log.error('draft.resource.lookup.error', {
@@ -247,7 +269,31 @@ export async function Resource(props: ResourceProps) {
 		youtubeThumbnailUrl(href) ??
 		undefined
 
+	if (variant === 'ladder') {
+		return (
+			<ResourceLadderItem
+				title={title}
+				href={href}
+				isVideo={Boolean(resolved?.muxPlaybackId) || Boolean(youtubeThumbnailUrl(href))}
+			/>
+		)
+	}
+
+	if (variant === 'list') {
+		return (
+			<ResourceListItem
+				title={title}
+				href={href}
+				type={resolved?.type}
+				lessonCount={resolved?.lessonCount}
+			/>
+		)
+	}
+
 	if (variant === 'card') {
+		const isVideo = Boolean(
+			resolved?.muxPlaybackId || youtubeThumbnailUrl(href),
+		)
 		return (
 			<ResourceCard
 				title={title}
@@ -255,6 +301,7 @@ export async function Resource(props: ResourceProps) {
 				image={image}
 				muxPlaybackId={resolved?.muxPlaybackId}
 				thumbnailTime={resolved?.thumbnailTime}
+				formatLabel={buildFormatLabel(isVideo, resolved?.durationSeconds)}
 			/>
 		)
 	}
@@ -326,6 +373,26 @@ export async function Resource(props: ResourceProps) {
 	)
 }
 
+/**
+ * A posts-grid card's meta line (`Home Page.dc.html` § POSTS): "Video · 12 min",
+ * "Video · 9 min", "Article".
+ *
+ * The runtime is appended only when the resource actually has one — a video
+ * whose mux duration has not been stamped yet falls back to the bare format
+ * label rather than to a number nobody measured. Articles carry no figure at
+ * all, which is the prototype's own rule: all three of its article cards read
+ * just "Article", and a reading-time estimate next to a real video runtime
+ * claims a precision it does not have.
+ */
+function buildFormatLabel(
+	isVideo: boolean,
+	durationSeconds?: number,
+): string {
+	if (!isVideo) return 'Article'
+	const durationLabel = contentDurationLabel({ isVideo, durationSeconds })
+	return durationLabel ? `Video · ${durationLabel}` : 'Video'
+}
+
 function buildTypeLabel(resolved: ResolvedFields): string {
 	const type = resolved.type
 	if (type === 'cohort') {
@@ -362,7 +429,7 @@ function PriceLine({
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono">
 			<div className="flex items-baseline gap-2">
-				<span className="text-foreground text-base font-semibold sm:text-lg">
+				<span className="text-foreground text-base font-semibold">
 					{formatPriceUSD(Math.floor(calculated))}
 				</span>
 				{isDiscounted && (
@@ -372,7 +439,7 @@ function PriceLine({
 				)}
 			</div>
 			{pppOff > 0 && (
-				<span className="border-foreground/20 text-foreground/70 dark:border-amber-300/40 dark:text-amber-200 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+				<span className="border-foreground/20 text-foreground/70 dark:border-amber-300/40 dark:text-amber-200 inline-flex items-center rounded-[4px] border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider">
 					PPP eligible · save {pppOff}%
 				</span>
 			)}
@@ -382,37 +449,34 @@ function PriceLine({
 
 function EditorialBadge({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider">
+		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-[4px] px-2.5 py-1 font-mono text-xs font-semibold uppercase tracking-wider">
 			{children}
 		</span>
 	)
 }
 
+/**
+ * The posts grid (`Home Page.dc.html` § POSTS).
+ *
+ * Gapped cards, not a hairline grid. Every card here already carries a piece
+ * of artwork with its own hard edge, so cells and rules drew a second frame
+ * around a thing that was already framed — six boxes inside six boxes. The
+ * gap does the separating and the thumbnails do the structure.
+ *
+ * No fillers either: with nothing to draw a line through, a short last row
+ * needs no padding out.
+ *
+ * Opts out of the landing body's automatic separator (`[&>*+*]:border-t` on
+ * the `<article>` in `landing-body.tsx`). That rule assumes every top-level
+ * MDX block is a section, but this grid and the `SectionHeader` above it are
+ * two blocks making ONE section — so the rule drew a hairline between a
+ * heading and the cards it introduces. `!` because the parent's arbitrary
+ * variant outscores a plain utility here.
+ */
 export function ResourceGrid({ children }: { children: React.ReactNode }) {
-	const items = React.Children.toArray(children)
-	const count = items.length
-	const smRemainder = count % 2
-	const smFillers = smRemainder === 0 ? 0 : 2 - smRemainder
-	const lgRemainder = count % 3
-	const lgFillers = lgRemainder === 0 ? 0 : 3 - lgRemainder
-
 	return (
-		<div className="border-border bg-border grid w-full grid-cols-1 gap-px border-y sm:grid-cols-2 lg:grid-cols-3">
-			{items}
-			{Array.from({ length: smFillers }).map((_, i) => (
-				<div
-					key={`sm-${i}`}
-					aria-hidden
-					className="bg-background hidden sm:block lg:hidden"
-				/>
-			))}
-			{Array.from({ length: lgFillers }).map((_, i) => (
-				<div
-					key={`lg-${i}`}
-					aria-hidden
-					className="bg-background hidden lg:block"
-				/>
-			))}
+		<div className="mt-0! grid w-full grid-cols-1 gap-5 border-t-0! px-[18px] pb-14 sm:grid-cols-2 sm:px-11 sm:pb-16 lg:grid-cols-3">
+			{children}
 		</div>
 	)
 }

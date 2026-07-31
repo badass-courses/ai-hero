@@ -251,7 +251,7 @@ export function OfficeHoursSchedule({
 		return (
 			<div
 				className={cn(
-					'text-muted-foreground -mx-5 border-y px-5 py-3 font-mono text-[10px] font-medium uppercase tracking-wider sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10',
+					'text-muted-foreground -mx-5 border-y px-5 py-3 font-mono text-[11px] font-medium uppercase tracking-wider sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10',
 					className,
 				)}
 			>
@@ -276,7 +276,7 @@ export function OfficeHoursSchedule({
 			{groupedSessions.map((group) => (
 				<div key={group.dateKey}>
 					<div className="bg-muted/40 flex flex-col gap-1 border-b px-5 py-3 sm:px-8 lg:px-10">
-						<span className="text-muted-foreground/80 font-mono text-[10px] font-medium uppercase tracking-wider">
+						<span className="text-muted-foreground/80 font-mono text-[11px] font-medium uppercase tracking-wider">
 							{group.label}
 						</span>
 						<span className="text-[14px] font-semibold leading-tight tracking-[-0.005em]">
@@ -307,17 +307,17 @@ export function OfficeHoursSchedule({
 												)}
 											</span>
 											{isLive && (
-												<span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider">
+												<span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wider">
 													Live now
 												</span>
 											)}
 											{isPast && (
-												<span className="text-muted-foreground rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider">
+												<span className="text-muted-foreground rounded-full border px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wider">
 													Past session
 												</span>
 											)}
 										</div>
-										<span className="text-muted-foreground/70 font-mono text-[10px] font-medium uppercase tracking-wider">
+										<span className="text-muted-foreground/70 font-mono text-[11px] font-medium uppercase tracking-wider">
 											{displayTimeZoneLabel}
 										</span>
 									</div>
@@ -367,7 +367,7 @@ export function OfficeHoursSchedule({
 	)
 
 	const timezoneNote = (
-		<p className="text-muted-foreground/70 font-mono text-[10px] font-medium uppercase tracking-wider">
+		<p className="text-muted-foreground/70 font-mono text-[11px] font-medium uppercase tracking-wider">
 			Times shown in {displayTimeZoneLabel}.
 		</p>
 	)
@@ -375,7 +375,7 @@ export function OfficeHoursSchedule({
 		<button
 			type="button"
 			onClick={() => downloadOfficeHoursIcs(sessions)}
-			className="text-muted-foreground hover:text-foreground self-start font-mono text-[10px] font-medium uppercase tracking-wider underline-offset-4 transition-colors hover:underline"
+			className="text-muted-foreground hover:text-foreground self-start font-mono text-[11px] font-medium uppercase tracking-wider underline-offset-4 transition-colors hover:underline"
 		>
 			Download calendar file
 		</button>

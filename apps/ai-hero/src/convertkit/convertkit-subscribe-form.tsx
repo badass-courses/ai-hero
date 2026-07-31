@@ -116,7 +116,11 @@ export const SubscribeToConvertkitForm: React.FC<
 					data-input-with-error={Boolean(
 						touched.first_name && errors.first_name,
 					)}
-					className="h-auto rounded-none"
+					// 48px below 900px, 44px above. Mobile fields are the spec's one
+					// deliberate size increase (Mobile Patterns § 3d): 44px is a fine
+					// pointer target and a poor thumb target, and this form is the
+					// site's main conversion surface.
+					className="h-12 rounded-[9px] desk:h-11"
 					name="first_name"
 					id={id ? `first_name_${id}` : 'first_name'}
 					onChange={handleChange}
@@ -133,7 +137,11 @@ export const SubscribeToConvertkitForm: React.FC<
 				</Label>
 				<Input
 					data-input-with-error={Boolean(touched.email && errors.email)}
-					className="h-auto rounded-none"
+					// 48px below 900px, 44px above. Mobile fields are the spec's one
+					// deliberate size increase (Mobile Patterns § 3d): 44px is a fine
+					// pointer target and a poor thumb target, and this form is the
+					// site's main conversion surface.
+					className="h-12 rounded-[9px] desk:h-11"
 					name="email"
 					id={id ? `email_${id}` : 'email'}
 					onChange={handleChange}
@@ -166,14 +174,25 @@ export const SubscribeToConvertkitForm: React.FC<
 					}
 					type="submit"
 					formNoValidate={Boolean(validationSchema)}
-					className="relative cursor-pointer rounded-none shadow-xl"
+					// House defaults, not `rounded-none`: this is the shared Kit form,
+					// so a caller that does not restyle it (the cohort pricing widget,
+					// for one) should still come out looking like the rest of the site.
+					// Callers that DO restyle still win — they target these through the
+					// form (`[&_input]:…`), which outscores a class on the element.
+					// 50px on mobile, a notch above the 48px fields so the submit still
+					// reads as the heaviest thing in the stack once everything is full
+					// width and the row order is the only hierarchy left.
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover relative h-[50px] cursor-pointer rounded-[9px] px-5 text-[15px] font-bold desk:h-11"
 				>
 					{isSubmitting ? <Spinner className="h-5 w-5" /> : actionLabel}
 					<div
 						style={{
 							backgroundSize: '200% 100%',
 						}}
-						className="animate-shine absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
+						// rounded-[inherit]: the shine overlays the button edge to edge, so
+						// it has to take whatever radius the button was given (squared
+						// here, pill on the skills CTA) or it spills past rounded corners.
+						className="animate-shine absolute inset-0 overflow-hidden rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
 					/>
 				</Button>
 			)}

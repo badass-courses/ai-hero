@@ -1,5 +1,6 @@
 'use server'
 
+import { cache } from 'react'
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import {
@@ -209,8 +210,96 @@ const _getCachedListForPost = unstable_cache(
 	{ revalidate: 3600, tags: ['posts'] },
 )
 
-export async function getCachedListForPost(slugOrId: string) {
+// Request-scoped on top of the cross-request cache — `/[post]`'s layout and
+// page each resolve the post's list independently, and without this the second
+// one pays a cache round-trip plus a full `reviveDates` walk of the list tree.
+const _dedupedListForPost = cache(async (slugOrId: string) => {
 	const result = await _getCachedListForPost(slugOrId)
+	return result ? reviveDates(result) : null
+})
+
+export async function getCachedListForPost(slugOrId: string) {
+	return _dedupedListForPost(slugOrId)
+}
+
+/**
+ * A list loaded section-aware and trimmed to what may render publicly — the
+ * same deep query + `filterSectionedResources` pass `getListForPost` applies,
+ * but keyed on the list itself rather than on one of its posts.
+ *
+ * Exists because a list LANDING page had no such loader. The layout was casting
+ * the shallow `getCachedPostOrList` row (one level deep, no state/visibility
+ * predicate) straight into `ListProvider`, which put draft and unlisted lessons
+ * into the sidebar and the mobile lesson sheet as working links while the page
+ * body beside them correctly hid the same lessons — and, because that shallow
+ * row gives `section` resources no children, made `toSeriesGroups` drop every
+ * section of a sectioned list, so its sidebar rendered empty.
+ */
+const _getCachedFilteredList = unstable_cache(
+	async (listIdOrSlug: string) => {
+		const deep = await getListWithSections(listIdOrSlug)
+		if (!deep) return null
+		// `getListWithSections` matches on slug/id + type only — it is the shared
+		// deep loader, and the cms surfaces that use it MUST see drafts. This
+		// loader is the public one, so the list's OWN state/visibility is gated
+		// here, with the same sets `getPostWithAccess` applies to the public path
+		// (published; public or unlisted). Without it `filterSectionedResources`
+		// trimmed the children of a draft list while the draft list itself still
+		// resolved — the sidebar named an unpublished list and linked its
+		// lessons. Nothing viewer-specific is read, so this stays cacheable.
+		if (
+			deep.fields.state !== 'published' ||
+			!['public', 'unlisted'].includes(deep.fields.visibility)
+		) {
+			return null
+		}
+		return {
+			...deep,
+			resources: filterSectionedResources(
+				deep.resources as ContentResourceResource[],
+			),
+		}
+	},
+	['posts-v3'],
+	{ revalidate: 3600, tags: ['posts'] },
+)
+
+/**
+ * The same view for someone allowed to see unpublished work.
+ *
+ * `getCachedFilteredList` gates on the list's own state/visibility, which is
+ * what stops a draft list reaching the public sidebar — but it also took the
+ * sidebar away from the editor previewing that draft, and a list landing page
+ * with no list context is exactly the state the filtered loader was written to
+ * fix. This restores it for editors only.
+ *
+ * NOT cached, and it must not be: it resolves the session, and a value that
+ * varies by viewer cannot share a cache key with one that does not. It is also
+ * only ever reached on a draft or private list, so the dynamic render it forces
+ * is paid on editor previews and on no published page.
+ *
+ * The ability is resolved HERE rather than passed in, for the reason spelled
+ * out on `getPost` in posts-query.ts: this module is `'use server'`, so every
+ * export is a Server Action endpoint and an access level taken as a parameter
+ * is an access level the caller can choose.
+ */
+export async function getFilteredListForEditor(listIdOrSlug: string) {
+	const { ability } = await getServerAuthSession()
+	if (ability.cannot('update', 'Content')) return null
+
+	const deep = await getListWithSections(listIdOrSlug)
+	if (!deep) return null
+
+	return {
+		...deep,
+		resources: filterSectionedResources(
+			deep.resources as ContentResourceResource[],
+		),
+	}
+}
+
+export async function getCachedFilteredList(listIdOrSlug: string) {
+	const result = await _getCachedFilteredList(listIdOrSlug)
 	return result ? reviveDates(result) : null
 }
 

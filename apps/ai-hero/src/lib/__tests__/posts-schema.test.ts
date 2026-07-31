@@ -131,3 +131,22 @@ describe('PostUpdateSchema artwork fields', () => {
 		expect((result.fields as any)._artwork).toBeUndefined()
 	})
 })
+
+describe('PostUpdateSchema cross-promo fields', () => {
+	it('preserves course suppression and related-post strategy on update', () => {
+		const result = PostUpdateSchema.parse({
+			id: 'post_123',
+			fields: {
+				postType: 'article',
+				title: 'Test Post',
+				slug: 'test-post',
+				suppressCourseCta: true,
+				relatedPostsVariant: 'suggested',
+			},
+			tags: [],
+		})
+
+		expect(result.fields.suppressCourseCta).toBe(true)
+		expect(result.fields.relatedPostsVariant).toBe('suggested')
+	})
+})

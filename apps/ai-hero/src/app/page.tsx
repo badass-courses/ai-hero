@@ -1,47 +1,14 @@
-// import { promises as fs } from 'node:fs'
-// import path from 'node:path'
 import type { Metadata, ResolvingMetadata } from 'next'
-import Link from 'next/link'
-import { AboutMatt } from '@/components/landing/about-matt'
-import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
-import { DraftTestimonial } from '@/components/landing/draft-testimonial'
-import { Hero as LandingHero } from '@/components/landing/hero'
-import { HomepageLiveStreams } from '@/components/landing/homepage-live-streams'
-import { Manifesto } from '@/components/landing/manifesto'
-import { NewsletterSection } from '@/components/landing/newsletter-section'
-import { Prose } from '@/components/landing/prose'
-import { Resource, ResourceGrid } from '@/components/landing/resource'
-import {
-	SectionHeading,
-	YellowStrong,
-} from '@/components/landing/section-heading'
-import { SlimNewsletterForm } from '@/components/landing/slim-newsletter-form'
-import { UpcomingCohort } from '@/components/landing/upcoming-cohort'
 import LayoutClient from '@/components/layout-client'
-import config from '@/config'
 import { courseBuilderAdapter } from '@/db'
 import { getPage } from '@/lib/pages-query'
-import { compileMDX } from '@/utils/compile-mdx'
+
+import { LandingBody } from './_components/landing-body'
 
 import { getCouponForCode } from '@coursebuilder/core/lib/pricing/props-for-commerce'
 
 type Props = {
 	searchParams: Promise<{ [key: string]: string | undefined }>
-}
-
-async function Hero(
-	props: React.ComponentProps<typeof LandingHero> & {
-		previewLiveStreams?: boolean
-	},
-) {
-	const { previewLiveStreams, ...heroProps } = props
-
-	return (
-		<>
-			<LandingHero {...heroProps} />
-			<HomepageLiveStreams preview={previewLiveStreams} />
-		</>
-	)
 }
 
 export async function generateMetadata(
@@ -77,69 +44,34 @@ export async function generateMetadata(
 	}
 }
 
-// async function loadDraftMarkdown() {
-// 	const filePath = path.join(process.cwd(), 'content', 'landing.md')
-// 	return await fs.readFile(filePath, 'utf-8')
-// }
-
 export default async function DraftLandingPage(props: Props) {
 	const searchParams = await props.searchParams
-	const page = await getPage('landing-page') // loadDraftMarkdown()
-	const source = page?.fields.body ?? ''
+	// W4 revision lives in its own CMS row. The homepage body is loaded from the
+	// SHARED PROD DB at runtime, so editing `landing-page` would change the live
+	// site the moment it saved, before this branch deploys. `landing-page-v2` is
+	// published + unlisted; `landing-page` stays untouched as the rollback.
+	//
+	// `content/landing.md` mirrors this body for diffing; `/preview/landing`
+	// renders that file directly in dev.
+	//
+	// Falling back to `landing-page` makes that rollback REAL rather than
+	// theoretical. `getPage` returns null when the row is absent, renamed, or
+	// fails schema parsing, and the v2 row is created out-of-band from this
+	// deploy — so without the fallback, an empty body reached `LandingBody` and
+	// the site root served a completely blank page with HTTP 200: no error, no
+	// signal, nothing to alert on. The old row is the last thing that was known
+	// to render.
+	const page =
+		(await getPage('landing-page-v2')) ?? (await getPage('landing-page'))
 	const previewLiveStreams =
 		process.env.NODE_ENV !== 'production' && searchParams?.livePreview === '1'
 
-	const components = {
-		Hero: (props: React.ComponentProps<typeof LandingHero>) => (
-			<Hero {...props} previewLiveStreams={previewLiveStreams} />
-		),
-		Resource,
-		ResourceGrid,
-		UpcomingCohort,
-		Manifesto,
-		AboutMatt,
-		CompanyLogoGrid,
-		NewsletterSection,
-		NewsletterCta: () => <SlimNewsletterForm />,
-		Testimonial: DraftTestimonial,
-		Prose,
-		h2: SectionHeading,
-		strong: YellowStrong,
-	}
-
-	const compiled = await compileMDX(source, components as any)
-
 	return (
 		<LayoutClient withContainer>
-			<main className="bg-background text-foreground">
-				<article>{compiled.content}</article>
-				<section className="border-border mx-auto w-full border-y pt-7">
-					<CompanyLogoGrid />
-				</section>
-				<section className="border-border mx-auto w-full py-14">
-					<div className="flex flex-col gap-4 px-5 text-center sm:px-8 lg:px-10">
-						<p className="text-muted-foreground text-center text-xs font-medium uppercase tracking-wider">
-							AI Skills for Real Engineers
-						</p>
-						<h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-							Get the practical AI coding workflow notes.
-						</h2>
-						<p className="text-muted-foreground mx-auto max-w-2xl text-balance text-base sm:text-lg">
-							Short updates on skills, handoffs, testing, code review, and the
-							parts of AI-assisted engineering that survive contact with real
-							code.
-						</p>
-						<div className="flex justify-center pt-3">
-							<Link
-								href="/skills/subscribe"
-								className="bg-primary text-primary-foreground hover:bg-primary/90 h-13 inline-flex items-center px-5 text-base font-medium transition"
-							>
-								Subscribe to the Skills newsletter
-							</Link>
-						</div>
-					</div>
-				</section>
-			</main>
+			<LandingBody
+				source={page?.fields.body ?? ''}
+				previewLiveStreams={previewLiveStreams}
+			/>
 		</LayoutClient>
 	)
 }

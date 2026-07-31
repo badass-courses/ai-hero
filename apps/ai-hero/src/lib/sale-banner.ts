@@ -17,6 +17,19 @@ export type SaleBannerData = {
 	productType: string | null
 	productPath: string
 	expires: string | null
+	/**
+	 * The discounted product's own resource id.
+	 *
+	 * Carried so a caller can ask "does this viewer already own the thing on
+	 * sale?" before advertising the discount at them. The query already joins
+	 * `contentResource` to build `productPath`; this is the same row's id, not a
+	 * second read.
+	 */
+	resourceId: string
+	/** The resource's type — 'cohort', 'workshop', 'event'. */
+	resourceType: string
+	/** Slug, for the per-resource waitlist/interest field keys. */
+	resourceSlug: string
 }
 
 /**
@@ -86,6 +99,9 @@ export async function getSaleBannerData(
 			discountFormatted,
 			percentOff, // for backward compatibility
 			expires: coupon.expires ? new Date(coupon.expires).toISOString() : null,
+			resourceId: result.resource.id,
+			resourceType: result.resource.type,
+			resourceSlug: String(result.resource.fields.slug),
 			productName: result.product.name,
 			productType: result.product.type,
 			productPath: getResourcePath(
