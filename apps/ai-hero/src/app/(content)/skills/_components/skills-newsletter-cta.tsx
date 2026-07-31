@@ -158,19 +158,19 @@ export function SkillsNewsletterCta({
 		return (
 			<aside
 				aria-label="AI Skills for Real Engineers course recovery"
-				className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-4 rounded-xl border p-6 sm:p-8"
+				className="not-prose border-border bg-muted/40 my-10 flex flex-col items-start gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
 			>
-				<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-flex w-fit')}>
-					Free 7-lesson email course
-				</span>
-				<h3 className={cn(CARD_HEADING, 'font-sans')}>
-					AI Skills for Real Engineers
-				</h3>
-				<p className={cn(TYPE.lead, 'opacity-80')}>
-					You&rsquo;re already enrolled. Need lesson one again? Resend it
-					without entering your email.
+				<p className="text-foreground/80 text-sm leading-relaxed">
+					Already enrolled in the free 7-lesson{' '}
+					<strong className="text-foreground font-semibold">
+						AI Skills for Real Engineers
+					</strong>{' '}
+					course?
 				</p>
-				<SkillsCourseRestartButton source={`${source}:restart`} />
+				<SkillsCourseRestartButton
+					source={`${source}:restart`}
+					className="h-9 min-w-0 shrink-0 rounded-md px-3 text-xs"
+				/>
 			</aside>
 		)
 	}
