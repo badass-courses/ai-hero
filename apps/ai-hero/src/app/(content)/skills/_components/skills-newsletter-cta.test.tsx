@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
 	formProps: null as Record<string, any> | null,
 	push: vi.fn(),
 	redirectUrlBuilder: vi.fn(() => '/course-confirmed'),
+	setCtaState: vi.fn(),
+	invalidateCtaState: vi.fn(),
 }))
 
 vi.mock('next/navigation', () => ({
@@ -39,7 +41,10 @@ vi.mock('@/trpc/react', () => ({
 		// updates with it.
 		useUtils: () => ({
 			ability: {
-				getSkillsCourseCtaState: { invalidate: vi.fn() },
+				getSkillsCourseCtaState: {
+					setData: mocks.setCtaState,
+					invalidate: mocks.invalidateCtaState,
+				},
 			},
 		}),
 	},
@@ -107,6 +112,10 @@ describe('SkillsNewsletterCta course variant', () => {
 			{ flow: 'course' },
 		)
 		expect(mocks.push).toHaveBeenCalledWith('/course-confirmed')
+		expect(mocks.setCtaState).toHaveBeenCalledWith(undefined, {
+			state: 'subscribed',
+		})
+		expect(mocks.invalidateCtaState).toHaveBeenCalledOnce()
 	})
 
 	it('keeps the course card shape for an existing subscriber', () => {

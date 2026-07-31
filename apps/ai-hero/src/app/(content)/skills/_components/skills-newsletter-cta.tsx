@@ -93,6 +93,7 @@ export function SkillsNewsletterCta({
 	forceState?: SkillsNewsletterCtaState
 }) {
 	const router = useRouter()
+	const utils = api.useUtils()
 	const isCourse = variant === 'course'
 	const eyebrow = cardEyebrow(variant)
 	// Resolved on the SERVER, from the Kit cookie or the session, because only
@@ -122,6 +123,15 @@ export function SkillsNewsletterCta({
 			return
 		}
 		track('subscribed', { location: source })
+		if (isCourse) {
+			// A client-side confirmation route keeps the query cache alive. Publish
+			// the completed course state before navigating so changelog and nav CTAs
+			// do not keep promoting a course this form just enrolled the reader in.
+			utils.ability.getSkillsCourseCtaState.setData(undefined, {
+				state: 'subscribed',
+			})
+			void utils.ability.getSkillsCourseCtaState.invalidate()
+		}
 		router.push(
 			redirectUrlBuilder(
 				subscriber,

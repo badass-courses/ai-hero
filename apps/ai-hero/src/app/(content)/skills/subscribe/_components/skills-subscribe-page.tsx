@@ -221,7 +221,11 @@ function Hero({
 								: 'Get lesson one in your inbox'}
 						</h2>
 						<SkillsNewsletter.StatusView
-							subscribed={<SkillsCourseConfirmed />}
+								subscribed={
+									<SkillsCourseConfirmed
+										variant={arrivedEnrolled ? 'returning' : 'just-enrolled'}
+									/>
+								}
 							tagMe={
 								<>
 									<SkillsNewsletter.TagMeButton
@@ -472,7 +476,7 @@ function ClosingCta({
 				surface="skills-subscribe"
 			>
 				<SkillsNewsletter.StatusView
-					subscribed={<SkillsCourseConfirmed />}
+					subscribed={<SkillsCourseConfirmed variant="just-enrolled" />}
 					tagMe={
 						<SkillsNewsletter.TagMeButton
 							label="Start the free course"

@@ -8,6 +8,7 @@ import {
 	conversionIntentContract,
 	withConfirmedConversionFields,
 } from '@/lib/cta/conversion-intent'
+import { createSubscriberGateSnapshot } from '@/lib/cta/subscriber-gate-cookie'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
@@ -113,7 +114,14 @@ export async function addWorkshopInterest(workshopSlug: string) {
 
 		revalidatePath(`/workshops/${workshopSlug}`)
 
-		return { success: true as const }
+		const gate = createSubscriberGateSnapshot(subscribed)
+		return {
+			success: true as const,
+			gate: {
+				state: gate.state,
+				fields: gate.fields,
+			},
+		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		await log.error('workshop.interest.failed', {

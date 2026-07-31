@@ -188,7 +188,7 @@ export const CohortPricingWidgetContainer: React.FC<
 					intent={intent}
 					surface="cohort-page"
 					label="Join Waitlist"
-					className="relative z-10 mt-5 h-12 w-full cursor-pointer text-base disabled:pointer-events-none disabled:opacity-60"
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring relative z-10 mt-5 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-[9px] px-5 text-base font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
 					onSuccess={({ confirmationRequired }) => {
 						track('waitlist_joined', {
 							product_name: product.name,

@@ -18,8 +18,18 @@ vi.mock('next-auth/react', () => ({
 }))
 
 vi.mock('@/components/cta/conversion-intent-button', () => ({
-	ConversionIntentButton: ({ label }: { label: string }) => (
-		<button type="button" data-conversion-mode="one-click">
+	ConversionIntentButton: ({
+		label,
+		className,
+	}: {
+		label: string
+		className?: string
+	}) => (
+		<button
+			type="button"
+			data-conversion-mode="one-click"
+			className={className}
+		>
 			{label}
 		</button>
 	),
@@ -53,6 +63,8 @@ describe('WaitlistForm identity variants', () => {
 
 		expect(markup).toContain('data-conversion-mode="one-click"')
 		expect(markup).not.toContain('<input')
+		expect(markup).toContain('w-fit')
+		expect(markup).not.toContain('@[520px]:w-auto')
 	})
 
 	it('renders the email form for an anonymous reader', () => {

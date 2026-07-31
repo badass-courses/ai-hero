@@ -1,12 +1,14 @@
 'use client'
 
 import * as React from 'react'
+import { useSession } from 'next-auth/react'
 import { useCtaGate } from '@/hooks/use-cta-gate'
 import { hasWorkshopInterest } from '@/lib/cta-gating'
 
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { WorkshopInterestButton } from './workshop-interest-button'
 
 /**
  * The house primary button (`aihero.css` § `.ah-btn--primary`): 46px tall, 9px
@@ -35,7 +37,12 @@ export const WorkshopNotifyButton = ({
 	className?: string
 	children?: React.ReactNode
 }) => {
-	const { subscriber } = useCtaGate()
+	const { subscriber, isResolved } = useCtaGate()
+	const { status: sessionStatus } = useSession()
+	const [done, setDone] = React.useState(false)
+	const knowsWhoYouAre = Boolean(subscriber) || sessionStatus === 'authenticated'
+	const identityIsLoading =
+		!subscriber && (!isResolved || sessionStatus === 'loading')
 
 	// Already on this workshop's list, so there is nothing to press. This used
 	// to render a line of confirmation copy in the button's place — mid-body,
@@ -46,12 +53,44 @@ export const WorkshopNotifyButton = ({
 		return null
 	}
 
+	if (done) {
+		return <p className="text-primary text-sm font-medium">You&rsquo;re on the list.</p>
+	}
+
+	// Do not briefly expose the anonymous input-focusing behavior while the two
+	// identity sources are still settling. The sidebar is a skeleton in this
+	// state, so there is no input to focus and an early click would be a no-op.
+	if (identityIsLoading) {
+		return (
+			<Button
+				size="lg"
+				className={cn(WORKSHOP_CTA_BUTTON, className)}
+				disabled
+				aria-busy="true"
+			>
+				{children}
+			</Button>
+		)
+	}
+
+	if (knowsWhoYouAre && workshopSlug) {
+		return (
+			<WorkshopInterestButton
+				workshopSlug={workshopSlug}
+				className={cn(WORKSHOP_CTA_BUTTON, className)}
+				onSuccess={() => setDone(true)}
+			>
+				{children}
+			</WorkshopInterestButton>
+		)
+	}
+
 	const handleClick = () => {
 		const buy = document.getElementById('buy')
-		// On desktop the interest form sits in the sticky sidebar and is already
-		// in view, so don't scroll at all — just focus its first field. On mobile
-		// the form is below the body, so scroll down to it instead (and don't
-		// focus, to avoid popping the keyboard early).
+		// Anonymous readers still need the sidebar form. On desktop it is already
+		// in view, so focus its first field; on mobile scroll down without opening
+		// the keyboard early. Identified readers never take this path: their CTA
+		// performs the same one-click action as the sidebar button above.
 		if (window.matchMedia('(min-width: 768px)').matches) {
 			buy
 				?.querySelector<HTMLInputElement>('input')

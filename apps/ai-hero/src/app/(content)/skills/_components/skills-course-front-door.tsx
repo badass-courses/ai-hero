@@ -48,6 +48,8 @@ export function SkillsCourseFrontDoor({
 	location: string
 	surface: Extract<ConversionSurface, 'skills-subscribe' | 'skills-campaign'>
 }) {
+	const arrivedEnrolled = status === 'subscribed'
+
 	return (
 		<main className="bg-background text-foreground">
 			<section className="border-border grid border-b lg:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
@@ -82,7 +84,11 @@ export function SkillsCourseFrontDoor({
 								Get lesson one in your inbox
 							</h2>
 							<SkillsNewsletter.StatusView
-								subscribed={<SkillsCourseConfirmed />}
+								subscribed={
+									<SkillsCourseConfirmed
+										variant={arrivedEnrolled ? 'returning' : 'just-enrolled'}
+									/>
+								}
 								tagMe={
 									<>
 										<SkillsNewsletter.TagMeButton
