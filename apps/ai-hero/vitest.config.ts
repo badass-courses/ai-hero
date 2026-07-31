@@ -13,6 +13,16 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			'@': '/src',
+			// `server-only` is a build-time guard with no runtime module, so vite
+			// cannot resolve it and any test whose import graph reaches a server
+			// module fails to LOAD — not on an assertion, which makes it look like
+			// the test itself broke.
+			//
+			// Aliased centrally rather than mocked per file: the guard belongs in
+			// the source (it is what keeps a session read out of a client bundle),
+			// and which tests transitively reach one is not something each test
+			// author should have to know.
+			'server-only': '/src/test/server-only-stub.ts',
 		},
 	},
 })

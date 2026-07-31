@@ -6,6 +6,25 @@ vi.mock('@/lib/github-stars-query', () => ({
 	getRepoStarCount: vi.fn(),
 }))
 
+// The hero's course form is a client component that now calls a server action
+// and a tRPC query, so rendering it drags next-auth into this file's import
+// graph — and next-auth cannot resolve `next/server` under vitest, which fails
+// the whole file at LOAD rather than on an assertion. Neither is what this test
+// is about: it checks the hero's fact row.
+vi.mock('@/server/auth', () => ({
+	getServerAuthSession: vi.fn(async () => null),
+}))
+
+vi.mock('@/trpc/react', () => ({
+	api: {
+		ability: {
+			getSkillsCourseCtaState: {
+				useQuery: () => ({ data: undefined, isPending: false }),
+			},
+		},
+	},
+}))
+
 import { SkillsHero } from './skills-hero'
 
 describe('SkillsHero', () => {
