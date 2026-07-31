@@ -70,7 +70,7 @@ export const OPEN_SOURCE_HERO = {
 	eyebrow: 'Open source',
 	title: 'Built in the open',
 	description:
-		'The tools I build for my own work, published as I go. Skills I run every day, a sandbox orchestrator, a dictionary for the jargon — and the channel where the work gets explained.',
+		'The tools I build for my own work, published as I go. Skills I run every day, a sandbox orchestrator, a dictionary for the jargon, and the channel where the work gets explained.',
 } as const
 
 export const OPEN_SOURCE_PROJECTS: OpenSourceProject[] = [
@@ -94,8 +94,18 @@ export const OPEN_SOURCE_PROJECTS: OpenSourceProject[] = [
 		repoName: 'skills',
 		name: 'Skills',
 		description: 'Skills for Real Engineers. Straight from my .claude directory.',
-		href: 'https://github.com/mattpocock/skills',
-		links: [{ label: 'Browse the skills', href: '/skills' }],
+		// The heading points at OUR page, not the repo. This is the one row whose
+		// project has a first-class home on this site: /skills renders the whole
+		// catalog with install commands, and sending the primary link off to a
+		// README made the site's own page the secondary route to its own content.
+		//
+		// The repo keeps a chip below, so nothing is lost. The mono line above the
+		// heading still reads `mattpocock/skills`, and the star count beside it is
+		// still the repo's, so what the row is about is not in doubt.
+		href: '/skills',
+		links: [
+			{ label: 'View the repo', href: 'https://github.com/mattpocock/skills' },
+		],
 		showStars: true,
 		// Note the asset names differ: "skill-repo-light" vs "skills-repo-dark".
 		logo: {
@@ -134,8 +144,13 @@ export const OPEN_SOURCE_PROJECTS: OpenSourceProject[] = [
 		id: 'youtube',
 		meta: 'youtube.com/@mattpocockuk',
 		name: 'YouTube',
+		// The channel's own description, cut to the two-sentence rhythm every
+		// other row on this page uses. Not a paraphrase: the line that shipped
+		// here was written from the outside ("the work above, explained on
+		// video") and led on TypeScript, which is Total TypeScript's subject,
+		// not this channel's.
 		description:
-			'The work above, explained on video — TypeScript, AI engineering, and the tools I actually use.',
+			'Tips, tricks and tutorials. No vibe coding: this is for real engineers solving real problems.',
 		href: 'https://www.youtube.com/@mattpocockuk',
 		glyph: 'youtube',
 	},

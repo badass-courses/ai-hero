@@ -96,6 +96,25 @@ export default async function OpenSourcePage() {
 	)
 }
 
+/**
+ * The artwork slot, shared by every row so the four cannot drift apart.
+ *
+ * It used to be two copies of the same class string, one per branch, and a
+ * FIXED HEIGHT (`h-20 sm:h-24 md:h-36`) with no width bound. Every one of these
+ * assets is a README header card, not a transparent wordmark, and their aspect
+ * ratios differ — 1.86 (Sandcastle), 1.90 (Skills), 1.60 (the dictionary). In a
+ * height-bound box `object-contain` gives them all the same height and
+ * different widths, so the dictionary's 1.60 card rendered ~45px narrower than
+ * its neighbours and read as the small one.
+ *
+ * A fixed aspect with a width cap inverts that: the cards land on a common
+ * width, which is how a reader judges "same size" for a rectangle in a column.
+ * `object-contain`, never `cover` — the dictionary card carries its URL chip in
+ * the bottom-left corner, and cover would crop it off.
+ */
+const ARTWORK_SLOT =
+	'relative aspect-[16/9] w-full max-w-[300px] transition-opacity hover:opacity-80 md:col-start-2 md:row-start-1 md:ml-auto md:max-w-[380px]'
+
 function ProjectRow({
 	project,
 	stars,
@@ -132,7 +151,7 @@ function ProjectRow({
 					{...(logoIsExternal
 						? { target: '_blank', rel: 'noopener noreferrer' }
 						: null)}
-					className="relative h-20 w-full max-w-[300px] transition-opacity hover:opacity-80 sm:h-24 md:col-start-2 md:row-start-1 md:h-36 md:max-w-none"
+					className={ARTWORK_SLOT}
 				>
 					{/* Both variants render and CSS picks one: the theme here is
 					    class-driven, so the READMEs' prefers-color-scheme swap would
@@ -141,14 +160,14 @@ function ProjectRow({
 						src={project.logo.light}
 						alt=""
 						fill
-						sizes="(min-width: 768px) 520px, 300px"
+						sizes="(min-width: 768px) 380px, 300px"
 						className="object-contain object-left dark:hidden md:object-right"
 					/>
 					<Image
 						src={project.logo.dark}
 						alt=""
 						fill
-						sizes="(min-width: 768px) 520px, 300px"
+						sizes="(min-width: 768px) 380px, 300px"
 						className="hidden object-contain object-left dark:block md:object-right"
 					/>
 				</Link>
@@ -165,11 +184,18 @@ function ProjectRow({
 					tabIndex={-1}
 					target="_blank"
 					rel="noopener noreferrer"
-					className="bg-stripes border-border relative flex h-20 w-full max-w-[300px] items-center justify-center rounded-md border transition-opacity hover:opacity-80 sm:h-24 md:col-start-2 md:row-start-1 md:h-36 md:max-w-none"
+					className={cn(
+						ARTWORK_SLOT,
+						'bg-stripes border-border flex items-center justify-center rounded-md border',
+					)}
 				>
+					{/* Sized against the cards beside it, not against its own box. The
+					    three rows above fill their slot edge to edge, so a 40px glyph
+					    floating in the same rectangle read as a smaller item in the
+					    list rather than as a different kind of one. */}
 					<Youtube
 						aria-hidden
-						className="text-[color:var(--ah-fg-subtle)] size-10 md:size-14"
+						className="text-[color:var(--ah-fg-subtle)] size-14 md:size-20"
 						strokeWidth={1.25}
 					/>
 				</Link>
