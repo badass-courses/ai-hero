@@ -135,9 +135,8 @@ export async function CohortHero({
 	// Already on this cohort's waitlist. The ask would otherwise be a request to
 	// do something they did, on the page they land on when they come back to
 	// check. The hero keeps its shape and drops the ask.
-	const alreadyWaiting =
-		!isOpen &&
-		isOnCohortWaitlist(await getSubscriberForGating(), flagship?.productName)
+	const subscriber = !isOpen ? await getSubscriberForGating() : null
+	const alreadyWaiting = isOnCohortWaitlist(subscriber, flagship?.productName)
 
 	return (
 		<section
@@ -200,7 +199,16 @@ export async function CohortHero({
 					    description sits under it, this was a third block of prose making
 					    the argument a second time before the reader reached the ask. */}
 					{alreadyWaiting ? null : (
-						<Ask isOpen={isOpen} href={href} sale={sale} />
+						<Ask
+							isOpen={isOpen}
+							href={href}
+							sale={sale}
+							productName={flagship?.productName ?? title}
+							knownIdentity={Boolean(subscriber)}
+							surface={
+								headingLevel === 'h1' ? 'courses-cohort' : 'homepage-cohort'
+							}
+						/>
 					)}
 				</div>
 
@@ -269,10 +277,16 @@ function Ask({
 	isOpen,
 	href,
 	sale,
+	productName,
+	surface,
+	knownIdentity,
 }: {
 	isOpen: boolean
 	href: string
 	sale: CoursesHeroState['sale']
+	productName: string
+	surface: 'homepage-cohort' | 'courses-cohort'
+	knownIdentity: boolean
 }) {
 	return (
 		// No rule above it. A hairline is this design's section divider, so one
@@ -339,7 +353,12 @@ function Ask({
 					</Link>
 				) : (
 					<>
-						<WaitlistForm actionLabel={FLAGSHIP_WAITLIST.actionLabel} />
+						<WaitlistForm
+							actionLabel={FLAGSHIP_WAITLIST.actionLabel}
+							productName={productName}
+							surface={surface}
+							knownIdentity={knownIdentity}
+						/>
 						{/* Sans, not mono: this is a sentence, not data. */}
 						<p
 							className={cn(

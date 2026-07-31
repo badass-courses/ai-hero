@@ -3,8 +3,10 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { ThemeImage } from '@/components/cld-image'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import Spinner from '@/components/spinner'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { redirectUrlBuilder } from '@/convertkit'
+import type { ConversionSurface } from '@/lib/cta/conversion-intent'
 import { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
@@ -13,11 +15,7 @@ import { ShieldCheckIcon } from 'lucide-react'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
-import {
-	SKILLS_FORM_ID,
-	SKILLS_HOSTED_RESUBSCRIBE_URL,
-	SKILLS_INTEREST_FIELDS,
-} from './skills-newsletter-config'
+import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
 
 export const SKILLS_NEWSLETTER_IMAGE = {
 	dark: 'https://res.cloudinary.com/total-typescript/image/upload/v1777381174/skills-newsletter-dark.png',
@@ -102,7 +100,9 @@ export function Root({
 				return
 			}
 			track('subscribed', { location })
-			router.push(redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }))
+			router.push(
+				redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }),
+			)
 		},
 		[location, router],
 	)
@@ -117,7 +117,15 @@ export function Root({
 			actions: { tagMe, handleFormSuccess },
 			meta: { location },
 		}),
-		[status, enrolledLocally, isPending, error, tagMe, handleFormSuccess, location],
+		[
+			status,
+			enrolledLocally,
+			isPending,
+			error,
+			tagMe,
+			handleFormSuccess,
+			location,
+		],
 	)
 
 	return (
@@ -170,15 +178,20 @@ export function Image({ className }: { className?: string }) {
 export function Form({
 	label = 'Stay Up To Date',
 	className,
+	surface = 'skills-subscribe',
 }: {
 	label?: string
 	className?: string
+	surface?: Extract<
+		ConversionSurface,
+		'skills-subscribe' | 'homepage-course' | 'skills-post'
+	>
 }) {
 	const { actions } = useSkillsNewsletter()
 	return (
-		<SubscribeToConvertkitForm
-			formId={SKILLS_FORM_ID}
-			fields={SKILLS_INTEREST_FIELDS}
+		<ConversionIntentForm
+			intent={{ kind: 'skills-course' }}
+			surface={surface}
 			actionLabel={label}
 			onSuccess={actions.handleFormSuccess}
 			className={cn(

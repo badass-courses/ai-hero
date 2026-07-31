@@ -4,6 +4,11 @@ import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import type { CtaGatingSubscriber } from '@/lib/cta-gating'
+import {
+	createSubscriberGateSnapshot,
+	parseSubscriberGateSnapshot,
+	SUBSCRIBER_GATE_COOKIE,
+} from '@/lib/cta/subscriber-gate-cookie'
 import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
 
 /**
@@ -17,10 +22,11 @@ import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
  * the homepage, every cohort page and every article — to decide whether to draw
  * a form.
  *
- * It does not need to. `setSubscriberCookie` stores the whole subscriber, so
- * `state` and the full `fields` record — `interest`, every `waitlist_*`, every
- * `interest_*` — are already sitting in the request. Reading them costs a JSON
- * parse.
+ * It does not need to. `setSubscriberCookie` stores the tiny completion facts
+ * in `ck_subscriber_gate`. The separate snapshot matters because a long-time
+ * Kit subscriber can exceed the browser's cookie-size limit; the browser
+ * rejects that full-cookie update and otherwise leaves CTA gating stuck on an
+ * older answer.
  *
  * The one case the cookie cannot answer is a reader arriving from a broadcast
  * link, where the middleware has set `ck_subscriber_id` from the URL but no
@@ -35,6 +41,10 @@ export const getSubscriberForGating = cache(
 	async (): Promise<Subscriber | null> => {
 		const cookieStore = await cookies()
 		if (!cookieStore) return null
+		const gate = parseSubscriberGateSnapshot(
+			cookieStore.get(SUBSCRIBER_GATE_COOKIE)?.value,
+		)
+		if (gate) return SubscriberSchema.parse(gate)
 
 		const cookie = cookieStore.get('ck_subscriber')?.value
 
@@ -93,35 +103,20 @@ export const getCtaGatingPayload = cache(
 		const cookieStore = await cookies()
 		if (!cookieStore) return null
 
+		const gate = parseSubscriberGateSnapshot(
+			cookieStore.get(SUBSCRIBER_GATE_COOKIE)?.value,
+		)
+		if (gate) return { state: gate.state, fields: gate.fields }
+
 		const cookie = cookieStore.get('ck_subscriber')?.value
 		if (!cookie || cookie === 'undefined') return null
 
 		try {
 			const parsed = SubscriberSchema.parse(JSON.parse(cookie))
-			return {
-				state: parsed.state ?? null,
-				fields: pickGatingFields(parsed.fields),
-			}
+			const snapshot = createSubscriberGateSnapshot(parsed)
+			return { state: snapshot.state, fields: snapshot.fields }
 		} catch {
 			return null
 		}
 	},
 )
-
-function pickGatingFields(
-	fields: Record<string, unknown> | null | undefined,
-): Record<string, string> {
-	if (!fields) return {}
-	const picked: Record<string, string> = {}
-	for (const [key, value] of Object.entries(fields)) {
-		if (typeof value !== 'string') continue
-		if (
-			key === 'interest' ||
-			key.startsWith('waitlist_') ||
-			key.startsWith('interest_')
-		) {
-			picked[key] = value
-		}
-	}
-	return picked
-}

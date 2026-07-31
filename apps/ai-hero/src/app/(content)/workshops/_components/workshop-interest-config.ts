@@ -1,3 +1,5 @@
+import { normalizeMarketingKey } from '@/lib/cta/conversion-intent'
+
 /**
  * ConvertKit custom field key for "interested in this workshop" capture.
  *
@@ -10,7 +12,7 @@
  * existing-subscriber server action must produce the same key.
  */
 export function workshopInterestFieldKey(workshopSlug: string) {
-	return `interest_${workshopSlug.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+	return `interest_${normalizeMarketingKey(workshopSlug)}`
 }
 
 /**
@@ -21,5 +23,5 @@ export function workshopInterestFieldKey(workshopSlug: string) {
  * orphan every existing subscriber's tag). Identical string today by intent.
  */
 export function workshopInterestTagName(workshopSlug: string) {
-	return `interest_${workshopSlug.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+	return workshopInterestFieldKey(workshopSlug)
 }

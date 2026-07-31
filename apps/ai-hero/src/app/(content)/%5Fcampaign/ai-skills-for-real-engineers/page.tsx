@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { SkillsCourseFrontDoor } from '@/app/(content)/skills/_components/skills-course-front-door'
 import { type SkillsNewsletterStatus } from '@/app/(content)/skills/_components/skills-newsletter'
 import LayoutClient from '@/components/layout-client'
+import { hasStartedFreeCourse } from '@/lib/cta-gating'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 
 export const metadata: Metadata = {
@@ -18,7 +19,7 @@ export default async function AiSkillsCampaignPage() {
 	const subscriber = await getSubscriberFromCookie()
 	const status: SkillsNewsletterStatus = !subscriber
 		? 'show-form'
-		: subscriber.fields?.interest === 'skills'
+		: hasStartedFreeCourse(subscriber)
 			? 'subscribed'
 			: 'tag-me'
 

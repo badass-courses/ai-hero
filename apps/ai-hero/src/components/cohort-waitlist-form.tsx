@@ -2,8 +2,12 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { useSession } from 'next-auth/react'
+import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { redirectUrlBuilder } from '@/convertkit'
+import type { ConversionSurface } from '@/lib/cta/conversion-intent'
 import type { Subscriber } from '@/schemas/subscriber'
 import { track } from '@/utils/analytics'
 
@@ -29,8 +33,38 @@ import { cn } from '@coursebuilder/utils/cn'
  * Labels are `sr-only` rather than hidden: the placeholders carry the visual
  * label, and a hidden `<label>` would take the accessible name with it.
  */
-export function WaitlistForm({ actionLabel }: { actionLabel: string }) {
+export function WaitlistForm({
+	actionLabel,
+	productName,
+	surface,
+	knownIdentity = false,
+}: {
+	actionLabel: string
+	productName: string
+	surface: Extract<ConversionSurface, 'homepage-cohort' | 'courses-cohort'>
+	knownIdentity?: boolean
+}) {
 	const router = useRouter()
+	const { status: sessionStatus } = useSession()
+	const [completed, setCompleted] = React.useState<
+		'joined' | 'confirmation-required' | null
+	>(null)
+	const isKnown = knownIdentity || sessionStatus === 'authenticated'
+	const intent = { kind: 'cohort-waitlist', productName } as const
+
+	if (completed) {
+		return (
+			<p className={cn(TYPE.meta, 'text-primary')}>
+				{completed === 'joined'
+					? "You're on the waitlist."
+					: 'Check your inbox to confirm your subscription.'}
+			</p>
+		)
+	}
+
+	if (!knownIdentity && sessionStatus === 'loading') {
+		return <div className="bg-muted h-12 w-full animate-pulse rounded-[9px]" />
+	}
 
 	return (
 		// `@container` on the wrapper, so the form reflows on ITS OWN width rather
@@ -38,30 +72,55 @@ export function WaitlistForm({ actionLabel }: { actionLabel: string }) {
 		// the /courses hero body, ~420px in the homepage cohort block — and a
 		// viewport breakpoint would get one of them wrong at every size.
 		<div className="@container w-full min-w-0">
-			<SubscribeToConvertkitForm
-				id="courses-waitlist"
-				actionLabel={actionLabel}
-				onSuccess={(subscriber) => {
-					if (!subscriber) return
-					track('courses_waitlist_subscribed')
-					router.push(redirectUrlBuilder(subscriber as Subscriber, '/confirm'))
-				}}
-				className={cn(
-					TYPE.meta,
-					// A grid, not a flex row. Each field arrives wrapped in a
-					// `data-sr-fieldset` div carrying `w-full` from the shared
-					// component, which in a flex row means every field claims the whole
-					// line and `flex-1` cannot beat an explicit width. In a grid
-					// `w-full` means "fill my track", which is what was wanted all
-					// along — and it needs no `!important` on a component we do not own.
-					'grid w-full min-w-0 grid-cols-1 gap-2.5',
-					// Name capped, email takes the slack, button sized by its label.
-					'@[520px]:grid-cols-[minmax(0,140px)_minmax(0,1fr)_auto] @[520px]:items-start',
-					'[&_label]:sr-only',
-					'[&_input]:border-border [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_input]:focus-visible:ring-ring [&_input]:box-border [&_input]:w-full [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm',
-					'[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-5 [&_button]:text-sm [&_button]:font-bold [&_button]:shadow-none',
-				)}
-			/>
+			{isKnown ? (
+				<ConversionIntentButton
+					intent={intent}
+					surface={surface}
+					label={actionLabel}
+					className={cn(
+						TYPE.meta,
+						'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-[50px] w-full cursor-pointer items-center justify-center rounded-[9px] px-5 font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 desk:h-11 @[520px]:w-auto',
+					)}
+					onSuccess={({ confirmationRequired }) => {
+						track('courses_waitlist_subscribed', {
+							method: 'one-click',
+							surface,
+						})
+						setCompleted(
+							confirmationRequired ? 'confirmation-required' : 'joined',
+						)
+					}}
+				/>
+			) : (
+				<ConversionIntentForm
+					intent={intent}
+					surface={surface}
+					id="courses-waitlist"
+					actionLabel={actionLabel}
+					onSuccess={(subscriber) => {
+						if (!subscriber) return
+						track('courses_waitlist_subscribed', { method: 'form', surface })
+						router.push(
+							redirectUrlBuilder(subscriber as Subscriber, '/confirm'),
+						)
+					}}
+					className={cn(
+						TYPE.meta,
+						// A grid, not a flex row. Each field arrives wrapped in a
+						// `data-sr-fieldset` div carrying `w-full` from the shared
+						// component, which in a flex row means every field claims the whole
+						// line and `flex-1` cannot beat an explicit width. In a grid
+						// `w-full` means "fill my track", which is what was wanted all
+						// along — and it needs no `!important` on a component we do not own.
+						'grid w-full min-w-0 grid-cols-1 gap-2.5',
+						// Name capped, email takes the slack, button sized by its label.
+						'@[520px]:grid-cols-[minmax(0,140px)_minmax(0,1fr)_auto] @[520px]:items-start',
+						'[&_label]:sr-only',
+						'[&_input]:border-border [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_input]:focus-visible:ring-ring [&_input]:box-border [&_input]:w-full [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm',
+						'[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-5 [&_button]:text-sm [&_button]:font-bold [&_button]:shadow-none',
+					)}
+				/>
+			)}
 		</div>
 	)
 }

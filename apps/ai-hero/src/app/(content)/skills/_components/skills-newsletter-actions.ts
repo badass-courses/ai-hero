@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { setSubscriberCookie } from '@/lib/convertkit'
+import { withConfirmedConversionFields } from '@/lib/cta/conversion-intent'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
@@ -57,7 +58,10 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 			return { success: false, reason: 'request-failed' as const }
 		}
 
-		const subscribed = SubscriberSchema.parse(updated ?? subscriber)
+		const confirmedFields = { ...SKILLS_INTEREST_FIELDS, source }
+		const subscribed = SubscriberSchema.parse(
+			withConfirmedConversionFields(updated ?? subscriber!, confirmedFields),
+		)
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
 			email: subscribed.email_address!,
 			subscriberState: subscribed.state,
@@ -69,9 +73,7 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 				confirmationUrl: SKILLS_HOSTED_RESUBSCRIBE_URL,
 			}
 		}
-		if (updated) {
-			await setSubscriberCookie(subscribed)
-		}
+		await setSubscriberCookie(subscribed)
 		await sendSkillsNewsletterPathEntry(subscribed, source)
 
 		// From the PARSED record, not the cookie: on the session path there may be
@@ -97,10 +99,7 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	}
 }
 
-async function sendSkillsNewsletterPathEntry(
-	input: unknown,
-	source: string,
-) {
+async function sendSkillsNewsletterPathEntry(input: unknown, source: string) {
 	const subscriber = SubscriberSchema.parse(input)
 	if (!subscriber.email_address) {
 		throw new Error('Skills newsletter subscriber is missing an email address')

@@ -14,7 +14,7 @@ export function useConvertkitForm({
 }: {
 	submitUrl?: string
 	formId?: number
-	onSuccess: (subscriber: Subscriber, email?: string) => void
+	onSuccess: (subscriber: Subscriber, email?: string) => void | Promise<void>
 	onError: (error?: any) => void
 	fields?: any
 	validationSchema?: Yup.ObjectSchema<any>
@@ -45,26 +45,21 @@ export function useConvertkitForm({
 			validateOnChange: validateOnChange,
 			enableReinitialize: true,
 			onSubmit: async ({ email, first_name }, { setStatus }) => {
-				return axios
-					.post(submitUrl, {
+				try {
+					const response = await axios.post(submitUrl, {
 						email,
 						name: first_name,
 						...(formId > 0 ? { listId: formId } : {}),
 						fields,
 					})
-					.then((response: any) => {
-						const subscriber: Subscriber = response.data
-						onSuccess(subscriber, email)
-						setStatus('success')
-						if (!subscriber) {
-							setStatus('error')
-						}
-					})
-					.catch((error: Error) => {
-						onError(error)
-						setStatus('error')
-						console.log(error)
-					})
+					const subscriber: Subscriber = response.data
+					await onSuccess(subscriber, email)
+					setStatus(subscriber ? 'success' : 'error')
+				} catch (error) {
+					onError(error)
+					setStatus('error')
+					console.log(error)
+				}
 			},
 		})
 

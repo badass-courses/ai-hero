@@ -3,6 +3,12 @@
 import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
+import {
+	createSubscriberGateSnapshot,
+	mergeSubscriberGateSnapshot,
+	parseSubscriberGateSnapshot,
+	SUBSCRIBER_GATE_COOKIE,
+} from '@/lib/cta/subscriber-gate-cookie'
 import { SubscriberSchema } from '@/schemas/subscriber'
 
 /**
@@ -29,6 +35,23 @@ export async function setSubscriberCookie(subscriber: {
 		sameSite: 'lax',
 		maxAge: 31556952, // 1 year
 	})
+
+	const subscriberId = Number(subscriber.id)
+	if (Number.isFinite(subscriberId)) {
+		cookieStore.set(
+			SUBSCRIBER_GATE_COOKIE,
+			JSON.stringify(
+				createSubscriberGateSnapshot({ ...subscriber, id: subscriberId }),
+			),
+			{
+				secure: process.env.NODE_ENV === 'production',
+				path: '/',
+				httpOnly: true,
+				sameSite: 'lax',
+				maxAge: 31556952,
+			},
+		)
+	}
 }
 
 /**
@@ -58,18 +81,27 @@ export const getSubscriberFromCookie = cache(async () => {
 
 	const cookie = cookieStore.get('ck_subscriber')?.value
 	const subscriberIdCookie = cookieStore.get('ck_subscriber_id')?.value
+	const gate = parseSubscriberGateSnapshot(
+		cookieStore.get(SUBSCRIBER_GATE_COOKIE)?.value,
+	)
 
 	// If we have the full subscriber cookie, use that
 	if (cookie && cookie !== 'undefined') {
 		try {
 			const subscriber = JSON.parse(cookie)
 			if (subscriber?.id && !subscriber.email_address) {
+				const fetched = await emailListProvider.getSubscriber(
+					subscriber.id.toString(),
+				)
+				if (!fetched) return null
 				return SubscriberSchema.parse(
-					await emailListProvider.getSubscriber(subscriber.id.toString()),
+					mergeSubscriberGateSnapshot(fetched, gate),
 				)
 			}
 			if (!subscriber?.id) throw new Error('no subscriber id')
-			return SubscriberSchema.parse(subscriber)
+			return SubscriberSchema.parse(
+				mergeSubscriberGateSnapshot(subscriber, gate),
+			)
 		} catch (e) {
 			return null
 		}
@@ -87,7 +119,9 @@ export const getSubscriberFromCookie = cache(async () => {
 					// an RSC render this throws, and the subscriber must still resolve.
 					await setSubscriberCookie(subscriber)
 				} catch {}
-				return SubscriberSchema.parse(subscriber)
+				return SubscriberSchema.parse(
+					mergeSubscriberGateSnapshot(subscriber, gate),
+				)
 			}
 		} catch (e) {
 			return null

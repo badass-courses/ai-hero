@@ -2,8 +2,9 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { redirectUrlBuilder } from '@/convertkit'
 import { SKILLS_COURSE_PANEL } from '@/lib/skills-content'
 import type { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
@@ -116,10 +117,7 @@ export function SkillsCourseForm() {
 					{isEnrolling ? 'Starting…' : SKILLS_COURSE_PANEL.ctaLabel}
 				</button>
 				<p
-					className={cn(
-						TYPE.metaSm,
-						'mt-2.5 text-[color:var(--ah-fg-subtle)]',
-					)}
+					className={cn(TYPE.metaSm, 'mt-2.5 text-[color:var(--ah-fg-subtle)]')}
 				>
 					{/* Only the list state may claim prior subscription; an `account`
 					    reader may be on no list at all. */}
@@ -144,7 +142,9 @@ export function SkillsCourseForm() {
 		// Above 1080px the grid track already bounds it, so the cap costs nothing
 		// there and one value covers both states.
 		<div className="max-w-[600px]">
-			<SubscribeToConvertkitForm
+			<ConversionIntentForm
+				intent={{ kind: 'skills-course' }}
+				surface="skills-hero"
 				id="skills-course-hero"
 				actionLabel={SKILLS_COURSE_PANEL.ctaLabel}
 				onSuccess={(subscriber) => {

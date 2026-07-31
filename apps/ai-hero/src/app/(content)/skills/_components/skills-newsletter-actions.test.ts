@@ -158,5 +158,13 @@ describe('tagSubscriberAsSkills', () => {
 				}),
 			}),
 		)
+		expect(mocks.setSubscriberCookie).toHaveBeenCalledWith(
+			expect.objectContaining({
+				fields: expect.objectContaining({
+					interest: 'skills',
+					source: 'skill_page_course:skills-handoff',
+				}),
+			}),
+		)
 	})
 })
