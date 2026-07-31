@@ -20,7 +20,16 @@ import {
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
-export type SkillsNewsletterCtaState = 'fresh' | 'tag-me' | 'subscribed'
+/**
+ * `tag-me`  — on the AI Hero list, not yet on the skills course.
+ * `account` — signed in, so the address is known, but not on the list at all.
+ * Both are one click; only `tag-me` may claim they are already subscribed.
+ */
+export type SkillsNewsletterCtaState =
+	| 'fresh'
+	| 'tag-me'
+	| 'account'
+	| 'subscribed'
 type SkillsNewsletterCtaVariant = 'updates' | 'course'
 
 /**
@@ -82,18 +91,15 @@ export function SkillsNewsletterCta({
 	const router = useRouter()
 	const isCourse = variant === 'course'
 	const eyebrow = cardEyebrow(variant)
-	const { data: subscriber } =
-		api.ability.getCurrentSubscriberFromCookie.useQuery(undefined, {
-			enabled: !forceState,
-		})
+	// Resolved on the SERVER, from the Kit cookie or the session, because only
+	// the server can see the session — the old client-side derivation from the
+	// cookie alone is what sent signed-in readers to the form.
+	const { data: ctaState } = api.ability.getSkillsCourseCtaState.useQuery(
+		undefined,
+		{ enabled: !forceState },
+	)
 
-	const state: SkillsNewsletterCtaState =
-		forceState ??
-		(!subscriber || subscriber.state !== 'active'
-			? 'fresh'
-			: subscriber.fields?.interest === 'skills'
-				? 'subscribed'
-				: 'tag-me')
+	const state: SkillsNewsletterCtaState = forceState ?? ctaState?.state ?? 'fresh'
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (!subscriber) return
@@ -115,13 +121,16 @@ export function SkillsNewsletterCta({
 		return null
 	}
 
-	if (state === 'tag-me') {
+	// Both are one-click: the reader is identified, so there is nothing to type.
+	// They differ only in what the footnote can honestly claim — see `knownVia`.
+	if (state === 'tag-me' || state === 'account') {
 		return (
 			<SkillsCtaTagMe
 				heading={heading}
 				subtitle={subtitle}
 				source={source}
 				variant={variant}
+				knownVia={state === 'account' ? 'account' : 'list'}
 			/>
 		)
 	}
@@ -169,11 +178,18 @@ function SkillsCtaTagMe({
 	subtitle,
 	source,
 	variant,
+	knownVia = 'list',
 }: {
 	heading: string
 	subtitle: string
 	source: string
 	variant: SkillsNewsletterCtaVariant
+	/**
+	 * How we know this reader, which is the only thing the footnote may assert.
+	 * `list` — already an AI Hero subscriber. `account` — signed in, and not
+	 * necessarily subscribed to anything, so it must not say they are.
+	 */
+	knownVia?: 'list' | 'account'
 }) {
 	const [isPending, startTransition] = React.useTransition()
 	const [error, setError] = React.useState<string | null>(null)
@@ -278,10 +294,17 @@ function SkillsCtaTagMe({
 			) : (
 				<p className={CARD_FOOTNOTE}>
 					<ShieldCheckIcon className="h-3.5 w-3.5 shrink-0" />
+					{/* Only `list` may say "already subscribed". An `account` reader is
+					    signed in and may be on no list at all, so it says what is
+					    actually true — we have their address and will not ask for it. */}
 					<span>
-						{variant === 'course'
-							? "You're already subscribed. One click starts the course."
-							: "You're already subscribed — one click to get on the skills list."}
+						{knownVia === 'account'
+							? variant === 'course'
+								? "We'll use your account email. One click starts the course."
+								: "We'll use your account email — one click to get skill updates."
+							: variant === 'course'
+								? "You're already subscribed. One click starts the course."
+								: "You're already subscribed — one click to get on the skills list."}
 					</span>
 				</p>
 			)}

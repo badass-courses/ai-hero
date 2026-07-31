@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
+import { getServerAuthSession } from '@/server/auth'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -20,13 +21,47 @@ import {
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
+/**
+ * The signed-in reader's own address, when there is one.
+ *
+ * Never takes an address from the caller: the email comes off the server-side
+ * session, so this cannot be used to enrol somebody else.
+ */
+async function sessionIdentity() {
+	const auth = await getServerAuthSession().catch(() => null)
+	const email = auth?.session?.user?.email
+	if (!email) return null
+	return {
+		email,
+		name: auth?.session?.user?.name ?? undefined,
+		via: 'session' as const,
+	}
+}
+
 export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	const subscriber = await getSubscriberFromCookie()
 
-	if (!subscriber?.id || !subscriber.email_address) {
+	// A SIGNED-IN reader is identified, cookie or no cookie. They logged in from
+	// a link sent to this address, which is stronger evidence than an address
+	// typed into a form — so requiring them to type it anyway was asking a known
+	// person to prove something they had already proved.
+	//
+	// The Kit cookie still wins when it exists: it carries the Kit subscriber
+	// record, and enroling against a stale session address for someone who has
+	// since changed their Kit email would split them into two subscribers.
+	const identity = subscriber?.email_address
+		? {
+				email: subscriber.email_address,
+				name: subscriber.first_name ?? undefined,
+				via: 'cookie' as const,
+			}
+		: await sessionIdentity()
+
+	if (!identity) {
 		await log.warn('skills.tagme.no.subscriber', {
 			hasSubscriber: Boolean(subscriber),
 			hasEmail: Boolean(subscriber?.email_address),
+			hasSession: false,
 		})
 		return { success: false, reason: 'not-subscribed' as const }
 	}
@@ -36,11 +71,22 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 			listId: SKILLS_FORM_ID,
 			listType: 'form',
 			user: {
-				email: subscriber.email_address,
-				name: subscriber.first_name ?? undefined,
+				email: identity.email,
+				name: identity.name,
 			} as any,
 			fields: { ...SKILLS_INTEREST_FIELDS, source },
 		})
+
+		// `?? subscriber` no longer holds for the session path: there may be no
+		// cookie record to fall back to, and parsing `undefined` would throw
+		// inside the try and report a failure over a Kit call that succeeded.
+		if (!updated && !subscriber) {
+			await log.error('skills.tagme.no.subscriber.returned', {
+				formId: SKILLS_FORM_ID,
+				via: identity.via,
+			})
+			return { success: false, reason: 'request-failed' as const }
+		}
 
 		const subscribed = SubscriberSchema.parse(updated ?? subscriber)
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
@@ -59,9 +105,12 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 		}
 		await sendSkillsNewsletterPathEntry(subscribed, source)
 
+		// From the PARSED record, not the cookie: on the session path there may be
+		// no cookie record at all, and this is the id we actually enrolled.
 		await log.info('skills.tagme.success', {
-			subscriberId: subscriber.id,
+			subscriberId: subscribed.id,
 			formId: SKILLS_FORM_ID,
+			via: identity.via,
 		})
 
 		revalidatePath('/skills')
@@ -70,8 +119,9 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		await log.error('skills.tagme.failed', {
-			subscriberId: subscriber.id,
+			subscriberId: subscriber?.id,
 			formId: SKILLS_FORM_ID,
+			via: identity.via,
 			error: message,
 		})
 		return { success: false, reason: 'request-failed' as const }

@@ -27,7 +27,10 @@ vi.mock('@/convertkit', () => ({
 vi.mock('@/trpc/react', () => ({
 	api: {
 		ability: {
-			getCurrentSubscriberFromCookie: {
+			// The CTA now asks the SERVER which ask to draw, because only the
+			// server can see the session. `undefined` is the pre-resolution state
+			// and falls back to `fresh`, which is what these cases exercise.
+			getSkillsCourseCtaState: {
 				useQuery: () => ({ data: undefined }),
 			},
 		},
