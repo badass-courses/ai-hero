@@ -26,6 +26,7 @@ import {
 	CollapsibleTrigger,
 } from '../../ui/collapsible'
 import { NAV_ICONS } from './nav-icons'
+import { TruncatedRowLabel } from './truncated-row-label'
 import {
 	rowIndent,
 	SIDEBAR_ROW_CLASS,
@@ -170,7 +171,14 @@ export function SidebarNavLink({
 					}}
 				>
 					{Icon ? <Icon active={isActive} className="size-4 shrink-0" /> : null}
-					<span>{children}</span>
+					{/* Only a plain-text label can have a sensible tooltip body, and
+					    only a plain-text label is what the truncation is cutting. A
+					    node stays a bare span and keeps the primitive's own truncate. */}
+					{typeof children === 'string' ? (
+						<TruncatedRowLabel>{children}</TruncatedRowLabel>
+					) : (
+						<span>{children}</span>
+					)}
 					{/* A series header reads as a group header — disclosure chevron on
 					    the RIGHT, pointing down when open and right when closed. */}
 					{hasDisclosure || isCurrentList ? (
