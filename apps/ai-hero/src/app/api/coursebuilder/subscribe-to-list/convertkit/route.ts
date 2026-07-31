@@ -126,11 +126,28 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 					await inngest.send(event)
 				}
 			} catch (error) {
+				// DO NOT RETHROW. Everything in this block is post-processing: we are
+				// already inside `response.status === 200`, so Kit has accepted the
+				// signup and the reader IS subscribed. Rethrowing turned that into a
+				// 500, the browser's axios call rejected, and the form rendered its
+				// default "Something went wrong." — telling someone who had just
+				// subscribed that they had not. The obvious next move is to submit
+				// again, which fails the same way.
+				//
+				// Nothing here is load-bearing enough to justify that. Path entry is
+				// guaranteed out-of-band by `skills-newsletter-confirmation-reconciler`
+				// on `17 * * * *`, which is the same guarantee the subscribe page's own
+				// copy leans on ("Kit confirmation is enrollment. The hourly reconciler
+				// guarantees path entry"). A missed enqueue costs at most an hour; a
+				// false failure costs the subscriber.
 				await log.error('skills.newsletter.path-entry.enqueue.failed', {
 					formId: 9376133,
 					error: error instanceof Error ? error.message : String(error),
+					// Which STAGE failed, so the reconciler-vs-parse distinction is
+					// visible in Axiom without reproducing it. The message alone did not
+					// say whether Kit's body failed to parse or a downstream call threw.
+					stage: error instanceof Error ? error.name : 'unknown',
 				})
-				throw error
 			}
 		}
 

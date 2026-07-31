@@ -266,4 +266,69 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		})
 	})
 
+	// The regression that sent readers "Something went wrong." AFTER Kit had
+	// accepted them. Everything in the Skills branch is post-processing, so a
+	// throw there used to surface as a 500 and the form rendered its default
+	// error over a subscription that had in fact succeeded.
+	//
+	// One test per stage that can throw, because they fail for different reasons
+	// and only the enqueue one has a reconciler behind it.
+	it.each([
+		[
+			'reconcile throws',
+			() => mocks.reconcile.mockRejectedValue(new Error('kit unreachable')),
+		],
+		[
+			'inngest send throws',
+			() => {
+				mocks.reconcile.mockResolvedValue({ status: 'active' })
+				mocks.inngestSend.mockRejectedValue(new Error('inngest down'))
+			},
+		],
+	])(
+		'still returns 200 to a subscribed reader when %s',
+		async (_label, arrange) => {
+			mocks.courseBuilderPOST.mockResolvedValue(
+				subscriberResponse({
+					id: 99,
+					email_address: 'skills@example.com',
+					state: 'active',
+					fields: {},
+				}),
+			)
+			arrange()
+
+			const response = await POST(
+				request({
+					email: 'skills@example.com',
+					listId: 9376133,
+					fields: { source: 'aihero_skills_page' },
+				}),
+			)
+
+			expect(response.status).toBe(200)
+			expect(mocks.log.error).toHaveBeenCalledWith(
+				'skills.newsletter.path-entry.enqueue.failed',
+				expect.objectContaining({ formId: 9376133 }),
+			)
+		},
+	)
+
+	// Kit's body not matching `SubscriberSchema` is the other way in, and the one
+	// that best fits a reader carrying a stale cookie from another account.
+	it('still returns 200 when the Kit response body will not parse', async () => {
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({ unexpected: 'shape' }),
+		)
+
+		const response = await POST(
+			request({
+				email: 'skills@example.com',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(response.status).toBe(200)
+	})
 })
