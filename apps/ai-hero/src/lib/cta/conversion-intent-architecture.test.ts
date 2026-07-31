@@ -19,6 +19,8 @@ describe('conversion intent architecture', () => {
 				/import[^\n]*SubscribeToConvertkitForm[^\n]*from ['"]@\/convertkit['"]/,
 			)
 			expect(source, path).toContain('ConversionIntentForm')
+			expect(source, path).not.toMatch(/\bformId=/)
+			expect(source, path).not.toMatch(/\bfields=/)
 		}
 	})
 })
