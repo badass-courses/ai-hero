@@ -3,6 +3,7 @@ import { SkillsCourseFrontDoor } from '@/app/(content)/skills/_components/skills
 import { type SkillsNewsletterStatus } from '@/app/(content)/skills/_components/skills-newsletter'
 import LayoutClient from '@/components/layout-client'
 import { resolveSkillsCtaState } from '@/lib/skills-cta-state'
+import { getServerAuthSession } from '@/server/auth'
 
 export const metadata: Metadata = {
 	title: 'AI Skills for Real Engineers — Free 7-Lesson Course',
@@ -18,7 +19,8 @@ export default async function AiSkillsCampaignPage() {
 	// Unlike ordinary render-time gating, this front door must refresh Kit: the
 	// learner-flow worker writes `aih_course_started_at` after the signup cookie
 	// is saved. The shared resolver owns that asynchronous transition.
-	const ctaState = await resolveSkillsCtaState()
+	const auth = await getServerAuthSession().catch(() => null)
+	const ctaState = await resolveSkillsCtaState(auth?.session?.user?.email)
 	const status: SkillsNewsletterStatus =
 		ctaState === 'subscribed'
 			? 'subscribed'
