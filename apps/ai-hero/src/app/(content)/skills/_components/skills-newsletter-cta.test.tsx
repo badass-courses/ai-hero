@@ -28,12 +28,20 @@ vi.mock('@/trpc/react', () => ({
 	api: {
 		ability: {
 			// The CTA now asks the SERVER which ask to draw, because only the
-			// server can see the session. `undefined` is the pre-resolution state
-			// and falls back to `fresh`, which is what these cases exercise.
+			// server can see the session. `isPending: false` with no data is the
+			// settled-but-unknown case, which falls back to `fresh` — what these
+			// cases exercise. Leaving `isPending` out would hold the card instead.
 			getSkillsCourseCtaState: {
-				useQuery: () => ({ data: undefined }),
+				useQuery: () => ({ data: undefined, isPending: false }),
 			},
 		},
+		// The one-click card invalidates this on success so the nav bar's offer
+		// updates with it.
+		useUtils: () => ({
+			ability: {
+				getSkillsCourseCtaState: { invalidate: vi.fn() },
+			},
+		}),
 	},
 }))
 

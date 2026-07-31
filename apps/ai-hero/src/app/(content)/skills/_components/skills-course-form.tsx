@@ -49,6 +49,7 @@ export function SkillsCourseForm() {
 	// `resolveSkillsCtaState`.
 	const { data: ctaState, isPending: ctaPending } =
 		api.ability.getSkillsCourseCtaState.useQuery()
+	const utils = api.useUtils()
 	const [isEnrolling, startEnrolling] = React.useTransition()
 	const [enrolled, setEnrolled] = React.useState(false)
 	const [error, setError] = React.useState<string | null>(null)
@@ -65,6 +66,9 @@ export function SkillsCourseForm() {
 					method: 'one-click',
 				})
 				setEnrolled(true)
+				// The nav bar reads this same query — without the invalidation it
+				// keeps offering a course this panel has just confirmed.
+				void utils.ability.getSkillsCourseCtaState.invalidate()
 			} else if (result.reason === 'confirmation-required') {
 				window.location.assign(result.confirmationUrl)
 			} else {

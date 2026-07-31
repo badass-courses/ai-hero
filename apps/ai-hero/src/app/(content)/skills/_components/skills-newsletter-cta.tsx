@@ -94,10 +94,19 @@ export function SkillsNewsletterCta({
 	// Resolved on the SERVER, from the Kit cookie or the session, because only
 	// the server can see the session — the old client-side derivation from the
 	// cookie alone is what sent signed-in readers to the form.
-	const { data: ctaState } = api.ability.getSkillsCourseCtaState.useQuery(
-		undefined,
-		{ enabled: !forceState },
-	)
+	const { data: ctaState, isPending: ctaPending } =
+		api.ability.getSkillsCourseCtaState.useQuery(undefined, {
+			enabled: !forceState,
+		})
+
+	// In flight, and no `forceState` to answer from. Treating that as `fresh`
+	// drew the full name-and-email form at an identified reader and then swapped
+	// it for their one-click card — the exact flash this state was added to
+	// remove, reintroduced by the fallback rather than by the resolution.
+	//
+	// A disabled query reports `isPending` forever, so `forceState` has to be
+	// checked too or a server-resolved card would never render at all.
+	const awaitingState = !forceState && ctaPending
 
 	const state: SkillsNewsletterCtaState = forceState ?? ctaState?.state ?? 'fresh'
 
@@ -114,6 +123,31 @@ export function SkillsNewsletterCta({
 				'/confirm',
 				isCourse ? { flow: 'course' } : undefined,
 			),
+		)
+	}
+
+	// Hold the card's shape, not its contents. The box, the eyebrow and the
+	// heading are known before the reader is; only the control below them
+	// depends on the answer, so that is the only part that waits. Rendering
+	// nothing at all would collapse the card and shift the article around it.
+	if (awaitingState) {
+		return (
+			<aside
+				aria-busy
+				aria-label={
+					isCourse
+						? 'Start the free AI Skills course'
+						: 'Subscribe for skill updates'
+				}
+				className="not-prose border-primary/30 bg-primary/5 my-10 flex flex-col gap-5 rounded-xl border p-6 sm:p-8"
+			>
+				<div className="flex flex-col gap-2">
+					<span className={CARD_EYEBROW}>{eyebrow}</span>
+					<h3 className={cn(CARD_HEADING, 'font-sans')}>{heading}</h3>
+					<p className={CARD_LEAD}>{subtitle}</p>
+				</div>
+				<div className="bg-foreground/[0.06] h-12 w-full animate-pulse rounded-[9px]" />
+			</aside>
 		)
 	}
 
@@ -194,6 +228,7 @@ function SkillsCtaTagMe({
 	const [isPending, startTransition] = React.useTransition()
 	const [error, setError] = React.useState<string | null>(null)
 	const [done, setDone] = React.useState(false)
+	const utils = api.useUtils()
 
 	const handleClick = () => {
 		setError(null)
@@ -202,6 +237,11 @@ function SkillsCtaTagMe({
 			if (result.success) {
 				track('subscribed', { location: source, method: 'tag-me' })
 				setDone(true)
+				// The nav bar's gold button reads the same query. Without this it
+				// keeps offering the free course to someone who just started it,
+				// until a reload — this card confirms an enrolment the rest of the
+				// page then denies.
+				void utils.ability.getSkillsCourseCtaState.invalidate()
 			} else if (result.reason === 'confirmation-required') {
 				window.location.assign(result.confirmationUrl)
 			} else {
