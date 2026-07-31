@@ -32,4 +32,18 @@ describe('conversion intent architecture', () => {
 			} from '@/convertkit'
 		`).toMatch(legacyConvertKitImport)
 	})
+
+	it('keeps the cohort-page one-click waitlist action visibly primary', () => {
+		const source = readFileSync(
+			resolve(
+				process.cwd(),
+				'src/app/(content)/cohorts/[slug]/_components/cohort-pricing-widget-container.tsx',
+			),
+			'utf8',
+		)
+
+		expect(source).toContain(
+			'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover',
+		)
+	})
 })
