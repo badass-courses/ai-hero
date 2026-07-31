@@ -1,14 +1,18 @@
 import * as React from 'react'
 import Link from 'next/link'
-import { InstallCommand } from '@/app/(content)/skills/_components/install-command'
 import { TYPE } from '@/components/landing/type'
-import { SKILLS_FREE_LESSON } from '@/lib/skills-content'
+import {
+	SKILLS_FREE_LESSON,
+	SKILLS_SH_BADGE_URL,
+	SKILLS_SH_URL,
+} from '@/lib/skills-content'
 import { type SkillEntry } from '@/lib/skills-shared'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { SKILLS_INSTALL_ALL_COMMAND, invocationName } from './skill-meta'
+import { SkillInstallTabs } from './skill-install-tabs'
+import { invocationName } from './skill-meta'
 
 /**
  * "Skill actions" — the band between a skill's body and its related reading
@@ -19,6 +23,12 @@ import { SKILLS_INSTALL_ALL_COMMAND, invocationName } from './skill-meta'
  * The head panel installs THIS skill; this one installs the set. Both lines are
  * on the page on purpose — a reader who has just read one skill is the reader
  * most likely to want the rest.
+ *
+ * The set is offered as TABS rather than as one command, mirroring what
+ * `/skills` now shows: the portable installer that works with any agent, and
+ * the Claude Code plugin. Stacked they are a wall inside an article; tabbed,
+ * the default is true for everyone and the plugin is one click away for the
+ * readers it applies to. See `SkillInstallTabs`.
  */
 export function SkillActions({
 	slug,
@@ -54,28 +64,42 @@ export function SkillActions({
 				{/* Hairline grid: the 1px gaps ARE the dividers (DESIGN rule 2). */}
 				<div className="border-border bg-border grid gap-px overflow-hidden rounded-lg border min-[901px]:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
 					<div className="bg-background px-6 py-6 sm:py-7">
-						<h2 className={cn(TYPE.subhead, 'mb-3.5')}>Add this skill</h2>
-						<InstallCommand
-							command={SKILLS_INSTALL_ALL_COMMAND}
-							label="Install command for every skill"
-						/>
-						<p
-							className={cn(
-								TYPE.metaProse,
-								'mt-3 text-[color:var(--ah-fg-muted)]',
-							)}
-						>
-							Installs the whole set. Then type{' '}
-							<code
-								className={cn(
-									TYPE.command,
-									'text-foreground bg-foreground/[0.055] border-border/70 rounded-[4px] border px-1.5 py-0.5',
-								)}
+						{/* Heading left, live proof right, on one baseline. The count
+						    belongs beside the ask rather than above or below it: a
+						    reader deciding whether to run the command is the only
+						    reader it is an argument for, and on its own line it read as
+						    a stray graphic. */}
+						<div className="mb-3.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+							{/* "Add this skill" was the old heading, and it was wrong
+							    twice over: this command installs the whole set, and
+							    installing THIS skill is what the head panel at the top of
+							    the page already offers.
+
+							    "Install the skills" is the same phrase `/skills` uses
+							    over the same two commands, which is the point — a reader
+							    meeting this band after an article should recognise it,
+							    not read it as a third thing to do. */}
+							<h2 className={TYPE.subhead}>Install the skills</h2>
+							<Link
+								href={SKILLS_SH_URL}
+								target="_blank"
+								rel="noreferrer"
+								className="focus-visible:ring-ring inline-flex flex-none rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 							>
-								/{command}
-							</code>{' '}
-							in your coding agent.
-						</p>
+								{/* Skills.sh's own live, five-minute-cached aggregate badge.
+								    A plain img is deliberate, same as the hero: Next's image
+								    optimization would cache a second copy and make the
+								    number less live, which is the only reason it is here. */}
+								{/* eslint-disable-next-line @next/next/no-img-element */}
+								<img
+									src={SKILLS_SH_BADGE_URL}
+									alt="Live Skills.sh install count"
+									width={101}
+									height={20}
+								/>
+							</Link>
+						</div>
+						<SkillInstallTabs command={command} />
 					</div>
 
 					<div className="bg-card flex flex-col px-6 py-6 sm:py-7">

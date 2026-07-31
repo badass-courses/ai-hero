@@ -117,8 +117,13 @@ export function PostRelatedNewsletter({
 										>
 											{item.meta}
 										</span>
+										{/* `cardTitle` (700), not `bodyTight` (500). These rows are
+										    bordered cards and the title is the only thing in one a
+										    reader is choosing between, so it should carry the same
+										    weight as every other card title on the site — at 500 it
+										    sat level with the prose it was competing against. */}
 										<span
-											className={cn(TYPE.bodyTight, 'block text-pretty')}
+											className={cn(TYPE.cardTitle, 'block text-pretty')}
 										>
 											{item.title}
 										</span>

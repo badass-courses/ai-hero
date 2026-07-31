@@ -52,6 +52,7 @@ export function SidebarNavLink({
 	muted = false,
 	ariaLabel,
 	series,
+	expanded = true,
 	onClick,
 }: {
 	href: string
@@ -67,8 +68,21 @@ export function SidebarNavLink({
 	 * knows its own item slugs without a `ListProvider`).
 	 */
 	series?: React.ReactNode
-	/** Runs alongside the analytics call, before navigation. */
-	onClick?: () => void
+	/**
+	 * Whether the `series` rows are showing. Only meaningful with `series`.
+	 *
+	 * Split from "has a series" so the row can be the current list's header AND
+	 * closed: the chevron still has to be there to reopen it, and while it is
+	 * closed the row itself is the only thing pointing at this page, so it takes
+	 * the active fill its "Overview" child would normally carry.
+	 */
+	expanded?: boolean
+	/**
+	 * Runs alongside the analytics call, before navigation. Receives the event,
+	 * so a caller can `preventDefault()` and treat the click as a toggle instead
+	 * of a navigation.
+	 */
+	onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void
 }) {
 	const pathname = usePathname()
 	const depth = useSidebarDepth()
@@ -88,10 +102,18 @@ export function SidebarNavLink({
 	// in place to show the list's lessons (instead of a pinned block at the
 	// top). Only fires inside the [post] layout, where the list context is
 	// present. See lat.md/decisions.md "Series posts keep the hub sidebar".
+	//
+	// A CLOSED series header is deliberately not "current list": with its rows
+	// hidden there is no "Overview" child to hold the highlight, so the header
+	// takes it back and reads as the page you are on, which it is.
 	const isCurrentList =
-		series !== undefined ||
+		(series !== undefined && expanded) ||
 		(Boolean(list) &&
 			normalizePath(href) === normalizePath(listHomeHref(list!.fields.slug)))
+	// The chevron is about "this row discloses something", which stays true
+	// while it is closed. Keyed off `series` rather than `isCurrentList` so the
+	// way back open does not vanish the moment the reader collapses it.
+	const hasDisclosure = series !== undefined
 
 	return (
 		<>
@@ -136,8 +158,9 @@ export function SidebarNavLink({
 					// here" on a different row than the visible one.
 					aria-current={isActive && !isCurrentList ? 'page' : undefined}
 					aria-label={ariaLabel}
-					onClick={() => {
-						onClick?.()
+					aria-expanded={hasDisclosure ? expanded : undefined}
+					onClick={(event) => {
+						onClick?.(event)
 						track('nav_link_clicked', {
 							label:
 								ariaLabel ?? (typeof children === 'string' ? children : href),
@@ -148,10 +171,15 @@ export function SidebarNavLink({
 				>
 					{Icon ? <Icon active={isActive} className="size-4 shrink-0" /> : null}
 					<span>{children}</span>
-					{/* Expanded current-list link reads as a group header — disclosure
-					    chevron on the RIGHT (pointing down = expanded). */}
-					{isCurrentList ? (
-						<ChevronRight className="ml-auto size-3.5 shrink-0 rotate-90 text-[color:var(--ah-fg-faint)]" />
+					{/* A series header reads as a group header — disclosure chevron on
+					    the RIGHT, pointing down when open and right when closed. */}
+					{hasDisclosure || isCurrentList ? (
+						<ChevronRight
+							className={cn(
+								'ml-auto size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform duration-200 motion-reduce:transition-none',
+								expanded && 'rotate-90',
+							)}
+						/>
 					) : null}
 					{muted && !isCurrentList ? (
 						/* "All →" style link: an inline arrow, a small child action. */
@@ -160,7 +188,9 @@ export function SidebarNavLink({
 				</Link>
 			</SidebarMenuButton>
 			{series !== undefined ? (
-				<SidebarDepth>{series}</SidebarDepth>
+				expanded ? (
+					<SidebarDepth>{series}</SidebarDepth>
+				) : null
 			) : isCurrentList ? (
 				<SidebarDepth>
 					<SeriesLessons
@@ -247,8 +277,16 @@ export function SkillsNavEntry({
 	// Cleared on any pathname change, which covers both landing here (where
 	// `pathInside` takes over) and going somewhere else instead.
 	const [pending, setPending] = React.useState(false)
+	// Closed by the reader's own click, and only while they are standing on the
+	// page the row points at.
+	//
+	// Both reset on any pathname change: arriving anywhere new should show the
+	// catalog again, so a collapse never becomes a preference the reader has to
+	// undo later on a page they did not close it on.
+	const [collapsed, setCollapsed] = React.useState(false)
 	React.useEffect(() => {
 		setPending(false)
+		setCollapsed(false)
 	}, [pathname])
 
 	if (!pathInside && !pending) {
@@ -259,10 +297,24 @@ export function SkillsNavEntry({
 		)
 	}
 
+	// The row is already the page you are on, so its click has no navigation
+	// left to do — spending it on the disclosure is free. From a child skill
+	// page the same click still goes to the overview, which is the useful thing
+	// there and the reason this is not simply a toggle everywhere.
+	const isOwnPage = normalizePath(href) === current
+
 	return (
 		<SidebarNavLink
 			href={href}
-			onClick={() => setPending(true)}
+			expanded={!collapsed}
+			onClick={(event) => {
+				if (isOwnPage) {
+					event.preventDefault()
+					setCollapsed((value) => !value)
+					return
+				}
+				setPending(true)
+			}}
 			series={
 				<ListSectionLessons
 					groups={groups}

@@ -42,15 +42,20 @@ export type SkillNeighbors = {
 
 /**
  * Cycle neighbours for a slug, wrapping around the ring (last → first). Returns
- * null when the post is not a list member or the list has fewer than two
+ * null when the post is not a list member or the list has fewer than THREE
  * entries: a fabricated "next" is worse than no pager.
+ *
+ * Three, not two. On a ring of two the wrap makes `prev` and `next` the same
+ * entry — index 0 looks back to index 1 and forward to index 1 — so the pager
+ * offered the one other skill twice, as if they were different destinations.
+ * Three is the smallest ring where "previous" and "next" name different things.
  */
 export function getSkillNeighbors(
 	entries: SkillEntry[],
 	slug: string,
 ): SkillNeighbors {
 	const index = entries.findIndex((entry) => entry.slug === slug)
-	if (index === -1 || entries.length < 2) return null
+	if (index === -1 || entries.length < 3) return null
 
 	const total = entries.length
 	const current = entries[index]

@@ -47,6 +47,13 @@ import { ThemeToggle } from './theme-toggle'
  * Widths step down the list instead of being uniform: equal bars read as a
  * table, and the thing being loaded is a list of titles of differing length.
  * Deterministic per index — a random width would change on every re-render.
+ *
+ * The bars use `.ah-skeleton` (globals.css), NOT `bg-muted` + `animate-pulse`.
+ * In dark mode `--muted` is #0d0d0c against a #0b0b0b page, so the whole
+ * skeleton was invisible and the drawer read as empty for the second or more
+ * the tree takes to arrive. `.ah-skeleton` is an ink alpha with a travelling
+ * sweep: visible in both themes, and it says "still working" rather than
+ * "idle".
  */
 const SKELETON_GROUPS = [
 	{ label: 'w-[72px]', rows: ['w-[62%]', 'w-[48%]', 'w-[70%]', 'w-[41%]'] },
@@ -56,7 +63,7 @@ const SKELETON_GROUPS = [
 
 function NavSkeleton() {
 	return (
-		<section aria-hidden className="animate-pulse pb-2">
+		<section aria-hidden className="pb-2">
 			{SKELETON_GROUPS.map((group, groupIndex) => (
 				<div
 					key={group.label}
@@ -64,7 +71,10 @@ function NavSkeleton() {
 				>
 					<div className="px-5 pb-1 pt-4">
 						<span
-							className={cn('bg-muted block h-[9px] rounded-sm', group.label)}
+							className={cn(
+								'ah-skeleton block h-[9px] rounded-sm',
+								group.label,
+							)}
 						/>
 					</div>
 					{group.rows.map((row, rowIndex) => (
@@ -72,8 +82,8 @@ function NavSkeleton() {
 							key={rowIndex}
 							className="flex min-h-10 items-center gap-2.5 px-5 py-[9px]"
 						>
-							<span className="bg-muted size-4 shrink-0 rounded-[4px]" />
-							<span className={cn('bg-muted h-[11px] rounded-sm', row)} />
+							<span className="ah-skeleton size-4 shrink-0 rounded-[4px]" />
+							<span className={cn('ah-skeleton h-[11px] rounded-sm', row)} />
 						</div>
 					))}
 				</div>
@@ -81,6 +91,22 @@ function NavSkeleton() {
 		</section>
 	)
 }
+
+/**
+ * One row in the drawer, hub links and account links alike.
+ *
+ * Module-level and shared on purpose. It used to be inline inside `rowClass`,
+ * which every hub link went through — but "Send Feedback" is a `button` rather
+ * than a `Link`, so it could not call `rowClass(href)` without inventing an
+ * href, and it had drifted to its own `py-2.5 text-base`: a 16px label in a
+ * 14px list, two pixels taller than every row above it, at the bottom of the
+ * sheet where the difference is easiest to see.
+ *
+ * `rowClass` now adds only the active state on top of this, so a row's shape
+ * has exactly one definition and a non-link row can use it directly.
+ */
+const ACCOUNT_ROW =
+	'focus-visible:ring-ring flex min-h-10 items-center px-5 py-[9px] text-[14px] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset'
 
 /** What the drawer's focus trap counts as a stop. */
 const FOCUSABLE_SELECTOR = [
@@ -298,7 +324,7 @@ export function MobileMenuPanel({
 	// keeps the app's own gutter, and nested rows indent from it.
 	const rowClass = (href: string) =>
 		cn(
-			'focus-visible:ring-ring flex min-h-10 items-center px-5 py-[9px] text-[14px] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+			ACCOUNT_ROW,
 			isActive(href) && 'bg-muted font-medium',
 		)
 
@@ -578,47 +604,58 @@ export function MobileMenuPanel({
 						</>
 					)}
 
-				{/* Account */}
+				{/* Account.
+				    Dressed as a hub group, because to a reader it is one: a rule
+				    above it and a small-caps label, the same two things that separate
+				    every category in the tree. It used to be a bare `py-2` list
+				    abutting the last hub row, so "Invoices" read as one more entry in
+				    whatever section happened to end above it. */}
 				{isAuthed && (
-					<ul className="flex flex-col py-2">
-						{canViewInvoice && (
+					<div className="border-border border-t">
+						<div className={categoryLabelClass}>Account</div>
+						<ul className="flex flex-col pb-2">
+							{canViewInvoice && (
+								<li>
+									<Link href="/invoices" className={rowClass('/invoices')}>
+										Invoices
+									</Link>
+								</li>
+							)}
+							{canViewTeam && !isAdmin && (
+								<li>
+									<Link href="/team" className={rowClass('/team')}>
+										Invite Team
+									</Link>
+								</li>
+							)}
+							{canCreateContent && (
+								<li>
+									<Link
+										href="/admin/pages"
+										className={rowClass('/admin/pages')}
+									>
+										Admin
+									</Link>
+								</li>
+							)}
 							<li>
-								<Link href="/invoices" className={rowClass('/invoices')}>
-									Invoices
-								</Link>
+								<button
+									type="button"
+									// The only row that does not leave by navigating, so it is
+									// the only one that has to close the sheet itself —
+									// otherwise the fixed `z-50` drawer stays over the page
+									// with the feedback dialog behind it.
+									onClick={() => {
+										onClose?.()
+										setIsFeedbackDialogOpen(true)
+									}}
+									className={cn(ACCOUNT_ROW, 'w-full text-left')}
+								>
+									Send Feedback
+								</button>
 							</li>
-						)}
-						{canViewTeam && !isAdmin && (
-							<li>
-								<Link href="/team" className={rowClass('/team')}>
-									Invite Team
-								</Link>
-							</li>
-						)}
-						{canCreateContent && (
-							<li>
-								<Link href="/admin/pages" className={rowClass('/admin/pages')}>
-									Admin
-								</Link>
-							</li>
-						)}
-						<li>
-							<button
-								type="button"
-								// The only row that does not leave by navigating, so it is
-							// the only one that has to close the sheet itself —
-							// otherwise the fixed `z-50` drawer stays over the page
-							// with the feedback dialog behind it.
-							onClick={() => {
-								onClose?.()
-								setIsFeedbackDialogOpen(true)
-							}}
-								className="hover:bg-muted focus-visible:ring-ring flex w-full items-center px-5 py-2.5 text-left text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-							>
-								Send Feedback
-							</button>
-						</li>
-					</ul>
+						</ul>
+					</div>
 				)}
 
 				{/* Footer: session action + theme */}
@@ -641,7 +678,12 @@ export function MobileMenuPanel({
 							<ChevronRight className="size-3.5" />
 						</Link>
 					)}
-						<ThemeToggle className="text-sm [&_svg]:size-5" />
+						{/* No `[&_svg]:size-5`. The 20px override made the sun and moon
+						    the largest glyphs in the drawer, on the one control there
+						    that is not a destination. The component's own 14px is what
+						    the footer uses and it is the right weight for a preference
+						    toggle sitting beside "Log out". */}
+						<ThemeToggle className="text-sm" />
 					</div>
 				</nav>
 			</div>

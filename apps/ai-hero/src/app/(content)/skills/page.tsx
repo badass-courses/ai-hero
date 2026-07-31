@@ -164,9 +164,13 @@ export default async function SkillsPage({ searchParams }: Props) {
 
 					<SkillsGitHubSection stars={stars} skillCount={skillCount} />
 
+					{/* No `eyebrow` override. The component's default is already
+					    "Trusted by engineers from", which is what the homepage proof
+					    block and the subscribe page both show. This route had been
+					    shortened to "Engineers from", which names the group without
+					    making the claim. */}
 					<CompanyLogoGrid
 						variant="row"
-						eyebrow="Engineers from"
 						className="border-border border-b px-[18px] py-[22px] sm:px-11"
 					/>
 				</main>

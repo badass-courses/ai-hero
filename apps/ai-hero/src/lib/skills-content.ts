@@ -20,6 +20,12 @@ export const SKILLS_INSTALL_CHANNELS = [
 		id: 'skills-sh',
 		label: 'Install the skills',
 		/**
+		 * Short form for the tab strip on a skill page, where the two channels sit
+		 * side by side and the label has to say what distinguishes them rather
+		 * than what they do. "Install the skills" is true of both.
+		 */
+		tabLabel: 'All agents',
+		/**
 		 * Cycles the whole set: this channel installs into whichever agent you
 		 * name, so no single mark would be true.
 		 */
@@ -37,6 +43,8 @@ export const SKILLS_INSTALL_CHANNELS = [
 	{
 		id: 'claude-code',
 		label: 'Claude Code',
+		/** Already short, and already the distinguishing fact. */
+		tabLabel: 'Claude Code',
 		/** One agent, one mark — this installs a Claude Code plugin. */
 		mark: 'Claude Code',
 		mode: 'Plugin',
@@ -95,9 +103,9 @@ export const SKILLS_COURSE_PANEL = {
 	 */
 	body: {
 		/** ≥1080px of hero container: the full argument. */
-		full: 'A free email course on the practices these skills came out of — the judgement calls that keep the output at your standard, not just the commands.',
+		full: 'A free email course on the practices these skills came out of: the judgement calls that keep the output at your standard, not just the commands.',
 		/** 940–1080px: the contrast survives, the setup goes. */
-		mid: 'A free email course on the practices these skills came out of — the judgement calls, not just the commands.',
+		mid: 'A free email course on the practices these skills came out of: the judgement calls, not just the commands.',
 		/** Under 940px, including mobile: the claim alone. */
 		short:
 			'A free email course on the practices these skills came out of.',

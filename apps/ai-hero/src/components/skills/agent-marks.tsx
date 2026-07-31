@@ -97,9 +97,15 @@ const MARK_GLYPH = 'size-[15px]'
  * at the exact spot where a reader decides whether the command below applies to
  * them.
  *
- * Pure CSS: five stacked absolute spans on one `@keyframes`, each offset by
- * 1.5s over a 7.5s loop. No JS, no layout shift, nothing to hydrate. Five is
- * the cap — a sixth turns a glance into a wait.
+ * Pure CSS: one stacked absolute span per entry in `CYCLE_MARKS`, all on one
+ * `@keyframes`, each offset by `CYCLE_STEP_SECONDS` over a
+ * `CYCLE_MARKS.length * CYCLE_STEP_SECONDS` loop. Four marks at 1.5s is a 6s
+ * cycle today. No JS, no layout shift, nothing to hydrate.
+ *
+ * FOUR is the cap, and it is a hard one: `ah-agent-cycle` cuts its hold and
+ * fade at literal percentages, so the keyframes only fit `CYCLE_SLICES` marks.
+ * Adding a fifth without recutting them shows a blink where a mark should be.
+ * The dev-mode assert beside `CYCLE_SLICES` is there to catch exactly that.
  *
  * `aria-hidden`, because it is decoration: the "Works with any agent" line at
  * the foot of the rail is the accessible version of the same fact. Under
