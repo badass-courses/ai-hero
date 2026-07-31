@@ -1,7 +1,17 @@
-export function SkillsCourseConfirmed() {
+import { SkillsCourseRestartButton } from './skills-course-restart-button'
+
+export function SkillsCourseConfirmed({
+	source = 'skills_course_confirmed',
+}: {
+	source?: string
+}) {
 	return (
-		<p className="bg-primary/10 text-primary border-primary/20 border p-4 text-sm font-medium">
-			Check your inbox for the first lesson.
-		</p>
+		<div className="bg-primary/10 border-primary/20 flex flex-col items-start gap-3 border p-4">
+			<p className="text-primary text-sm font-medium">
+				Check your inbox for the first lesson. If it never arrived, send that
+				lesson again.
+			</p>
+			<SkillsCourseRestartButton source={source} />
+		</div>
 	)
 }

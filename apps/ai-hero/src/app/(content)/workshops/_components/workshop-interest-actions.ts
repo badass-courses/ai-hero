@@ -4,6 +4,10 @@ import { revalidatePath } from 'next/cache'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
+import {
+	conversionIntentContract,
+	withConfirmedConversionFields,
+} from '@/lib/cta/conversion-intent'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
@@ -45,8 +49,8 @@ async function applyWorkshopInterestTag({
  * One-click interest for visitors already on the list: set the per-workshop
  * custom field (today's date) and apply the interest_<slug> tag.
  *
- * New visitors go through the regular ConvertKit subscribe form (which carries
- * the same field); they get tagged via `tagWorkshopInterestByEmail` on success.
+ * New visitors go through the intent-aware ConvertKit form, which writes the
+ * same field and applies the same derived tag through the shared finalizer.
  */
 export async function addWorkshopInterest(workshopSlug: string) {
 	// Cookie OR session — a signed-in reader is identified, so the waitlist does
@@ -65,7 +69,10 @@ export async function addWorkshopInterest(workshopSlug: string) {
 	}
 
 	const fieldKey = workshopInterestFieldKey(workshopSlug)
-	const today = new Date().toISOString().slice(0, 10)
+	const contract = conversionIntentContract({
+		intent: { kind: 'workshop-interest', workshopSlug },
+		surface: 'workshop-page',
+	})
 
 	try {
 		// The field write and the tag apply are independent; run them concurrently
@@ -80,7 +87,7 @@ export async function addWorkshopInterest(workshopSlug: string) {
 					email: identity.email,
 					name: identity.name,
 				} as any,
-				fields: { [fieldKey]: today },
+				fields: contract.fields,
 			}),
 			applyWorkshopInterestTag({
 				email: identity.email,
@@ -88,13 +95,18 @@ export async function addWorkshopInterest(workshopSlug: string) {
 			}),
 		])
 
-		if (updated) {
-			await setSubscriberCookie(SubscriberSchema.parse(updated))
+		if (!updated && !subscriber) {
+			throw new Error('Kit did not return a subscriber')
 		}
+
+		const subscribed = SubscriberSchema.parse(
+			withConfirmedConversionFields(updated ?? subscriber!, contract.fields),
+		)
+		await setSubscriberCookie(subscribed)
 
 		await log.info('workshop.interest.success', {
 			workshopSlug,
-			subscriberId: subscriber?.id,
+			subscriberId: subscribed.id,
 			via: identity.via,
 			fieldKey,
 		})
@@ -113,20 +125,4 @@ export async function addWorkshopInterest(workshopSlug: string) {
 		})
 		return { success: false, reason: 'request-failed' as const }
 	}
-}
-
-/**
- * Apply the interest_<slug> tag to a subscriber by email. Used by the
- * new-subscriber form path: the ConvertKit subscribe form sets the per-workshop
- * custom field but can't apply a tag, so both signup paths tag consistently.
- */
-export async function tagWorkshopInterestByEmail(
-	email: string,
-	workshopSlug: string,
-) {
-	if (!email) {
-		return { success: false, reason: 'no-email' as const }
-	}
-	await applyWorkshopInterestTag({ email, workshopSlug })
-	return { success: true as const }
 }

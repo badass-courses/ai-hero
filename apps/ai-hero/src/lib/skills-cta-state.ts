@@ -2,6 +2,9 @@ import 'server-only'
 
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { hasCompletedConversionIntent } from '@/lib/cta/conversion-intent'
+
+const KIT_LOOKUP_TIMEOUT_MS = 1_500
 
 /**
  * Which skills-course ask a reader should see. ONE resolver, because the two
@@ -32,7 +35,9 @@ function fromRecord(
 	record: { state?: string | null; fields?: any } | null | undefined,
 ): SkillsCtaState | null {
 	if (record?.state !== 'active') return null
-	return record.fields?.interest === 'skills' ? 'subscribed' : 'tag-me'
+	return hasCompletedConversionIntent({ kind: 'skills-course' }, record)
+		? 'subscribed'
+		: 'tag-me'
 }
 
 /**
@@ -42,26 +47,45 @@ function fromRecord(
 export async function resolveSkillsCtaState(
 	sessionEmail?: string | null,
 ): Promise<SkillsCtaState> {
-	// Cookie first. It already holds the full record, so it costs a parse rather
-	// than a Kit round trip, and it is the identity the enrolment action prefers
-	// for the same reason.
-	const fromCookie = fromRecord(
-		await getSubscriberFromCookie().catch(() => null),
-	)
-	if (fromCookie) return fromCookie
+	// A completed cookie answer is sufficient. An incomplete answer is refreshed
+	// below because learner-flow completion happens after the signup request.
+	const cookieRecord = await getSubscriberFromCookie().catch(() => null)
+	const cookieState = fromRecord(cookieRecord)
+	if (cookieState === 'subscribed') return cookieState
 
-	if (!sessionEmail) return 'fresh'
+	// Course entry is completed asynchronously by the learner-flow executor,
+	// which writes `aih_course_started_at` after the browser's cookie was saved.
+	// A local `tag-me` answer is therefore not final: refresh it from Kit using
+	// whichever trusted identity we have. This also repairs legacy/oversized
+	// subscriber cookies without exposing the address to the client.
+	const email = cookieRecord?.email_address ?? sessionEmail
+	if (!email) return cookieState ?? 'fresh'
 
 	// Signed in with no usable cookie: ask Kit who they are rather than falling
 	// through to a form. This is the case that left an enrolled reader being
 	// nagged to sign up for a course they were already taking.
 	const fromKit = fromRecord(
-		(await emailListProvider
-			.getSubscriberByEmail(sessionEmail)
-			.catch(() => null)) as any,
+		(await withTimeout(
+			emailListProvider.getSubscriberByEmail(email),
+			KIT_LOOKUP_TIMEOUT_MS,
+		).catch(() => null)) as any,
 	)
 	if (fromKit) return fromKit
 
 	// Known by account, on no list. Still one click — we have their address.
-	return 'account'
+	return cookieState ?? (sessionEmail ? 'account' : 'fresh')
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+	let timeout: ReturnType<typeof setTimeout> | undefined
+	try {
+		return await Promise.race<T | null>([
+			promise,
+			new Promise<null>((resolve) => {
+				timeout = setTimeout(() => resolve(null), timeoutMs)
+			}),
+		])
+	} finally {
+		if (timeout) clearTimeout(timeout)
+	}
 }

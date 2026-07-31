@@ -67,7 +67,8 @@ const CURRICULUM: { title: React.ReactNode; description: string }[] = [
 	},
 	{
 		title: 'Run safer AFK agents with Sandcastle',
-		description: 'Scoped tasks, isolation, visible logs, and reviewable commits.',
+		description:
+			'Scoped tasks, isolation, visible logs, and reviewable commits.',
 	},
 	{
 		title: (
@@ -75,7 +76,8 @@ const CURRICULUM: { title: React.ReactNode; description: string }[] = [
 				Review the result with <Cmd>/code-review</Cmd>
 			</>
 		),
-		description: 'Find avoidable mistakes and improve the system around the diff.',
+		description:
+			'Find avoidable mistakes and improve the system around the diff.',
 	},
 	{
 		title: 'Put the full workflow together',
@@ -201,17 +203,16 @@ function Hero({
 			    The card stays `bg-card` (opaque) — a translucent surface lets the
 			    diagonals read straight through and the panel becomes a hole. */}
 			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
-				<SkillsNewsletter.Root status={status} location={location}>
+				<SkillsNewsletter.Root
+					status={status}
+					location={location}
+					surface="skills-subscribe"
+				>
 					<div className="border-input bg-card w-full rounded-lg border p-[30px] pb-8">
 						{/* The panel names what it is FOR, which is not the same thing
 						    once the reader already has it: "Start the course" over a
 						    confirmation reads as an offer that failed to appear. */}
-						<p
-							className={cn(
-								TYPE.groupLabel,
-								'mb-3.5',
-							)}
-						>
+						<p className={cn(TYPE.groupLabel, 'mb-3.5')}>
 							{arrivedEnrolled ? "You're enrolled" : 'Start the course'}
 						</p>
 						<h2 className={cn(TYPE.panelTitle, 'mb-[22px] text-balance')}>
@@ -465,7 +466,11 @@ function ClosingCta({
 					coding letters. Leave any time.
 				</p>
 			</div>
-			<SkillsNewsletter.Root status={status} location={location}>
+			<SkillsNewsletter.Root
+				status={status}
+				location={location}
+				surface="skills-subscribe"
+			>
 				<SkillsNewsletter.StatusView
 					subscribed={<SkillsCourseConfirmed />}
 					tagMe={

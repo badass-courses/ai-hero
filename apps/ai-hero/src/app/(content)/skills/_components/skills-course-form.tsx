@@ -2,18 +2,16 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { redirectUrlBuilder } from '@/convertkit'
 import { SKILLS_COURSE_PANEL } from '@/lib/skills-content'
-import {
-	SKILLS_FORM_ID,
-	SKILLS_INTEREST_FIELDS,
-} from './skills-newsletter-config'
 import type { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
+import { SkillsCourseRecoveryBar } from './skills-course-restart-button'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -63,7 +61,7 @@ export function SkillsCourseForm() {
 	const handleOneClick = () => {
 		setError(null)
 		startEnrolling(async () => {
-			const result = await tagSubscriberAsSkills('skills_hero_course')
+			const result = await tagSubscriberAsSkills('skills-hero')
 			if (result.success) {
 				track('skills_course_subscribed', {
 					location: 'skills-hero',
@@ -94,13 +92,11 @@ export function SkillsCourseForm() {
 
 	if (enrolled || state === 'subscribed') {
 		return (
-			<div className="max-w-[600px]">
-				<p className={cn(TYPE.meta, 'text-primary')}>
-					{enrolled
-						? "You're in. Check your inbox for the first lesson."
-						: "You're already taking this course."}
-				</p>
-			</div>
+			<SkillsCourseRecoveryBar
+				source="skills_hero_course_restart"
+				justEnrolled={enrolled}
+				className="max-w-[600px]"
+			/>
 		)
 	}
 
@@ -119,12 +115,7 @@ export function SkillsCourseForm() {
 				>
 					{isEnrolling ? 'Starting…' : SKILLS_COURSE_PANEL.ctaLabel}
 				</button>
-				<p
-					className={cn(
-						TYPE.metaSm,
-						'mt-2.5 text-[color:var(--ah-fg-subtle)]',
-					)}
-				>
+				<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-2.5')}>
 					{/* Only the list state may claim prior subscription; an `account`
 					    reader may be on no list at all. */}
 					{state === 'account'
@@ -148,19 +139,10 @@ export function SkillsCourseForm() {
 		// Above 1080px the grid track already bounds it, so the cap costs nothing
 		// there and one value covers both states.
 		<div className="max-w-[600px]">
-			<SubscribeToConvertkitForm
+			<ConversionIntentForm
+				intent={{ kind: 'skills-course' }}
+				surface="skills-hero"
 				id="skills-course-hero"
-				// `formId` is optional on the shared component and falls back to
-				// NEXT_PUBLIC_CONVERTKIT_SIGNUP_FORM, the general newsletter form.
-				// Course enrolment is hard-gated on `Number(body.listId) === 9376133`
-				// in the convertkit subscribe route, so without this the hero on the
-				// course front door subscribed people to the newsletter and enrolled
-				// nobody — while still firing `skills_course_subscribed` and
-				// redirecting to `/confirm`, so it looked like it worked. Measured
-				// 2026-07-31: /skills pages were sending 43-90 signups a day to the
-				// default form. Same defect the homepage had; same fix.
-				formId={SKILLS_FORM_ID}
-				fields={{ ...SKILLS_INTEREST_FIELDS, source: 'skills_course_hero' }}
 				actionLabel={SKILLS_COURSE_PANEL.ctaLabel}
 				onSuccess={(subscriber) => {
 					if (!subscriber) return

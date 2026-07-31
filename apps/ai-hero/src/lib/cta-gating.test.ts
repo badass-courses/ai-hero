@@ -38,23 +38,28 @@ describe('isOnEmailList', () => {
 })
 
 describe('hasStartedFreeCourse', () => {
-	it('is true when the skills interest field is set', () => {
+	it('is true only when learner-flow enrollment wrote its start receipt', () => {
 		expect(
-			hasStartedFreeCourse(subscriber({ fields: { interest: 'skills' } })),
+			hasStartedFreeCourse(
+				subscriber({ fields: { aih_course_started_at: '2026-07-31' } }),
+			),
 		).toBe(true)
 	})
 
-	it('is false for a list subscriber who never took the course', () => {
+	it('does not mistake the legacy Skills newsletter field for course entry', () => {
 		expect(hasStartedFreeCourse(subscriber())).toBe(false)
 		expect(
-			hasStartedFreeCourse(subscriber({ fields: { interest: 'dictionary' } })),
+			hasStartedFreeCourse(subscriber({ fields: { interest: 'skills' } })),
 		).toBe(false)
 	})
 
 	it('is false for an unconfirmed subscriber even with the field set', () => {
 		expect(
 			hasStartedFreeCourse(
-				subscriber({ state: 'inactive', fields: { interest: 'skills' } }),
+				subscriber({
+					state: 'inactive',
+					fields: { aih_course_started_at: '2026-07-31' },
+				}),
 			),
 		).toBe(false)
 	})

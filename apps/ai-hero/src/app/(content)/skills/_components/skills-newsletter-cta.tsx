@@ -15,6 +15,10 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import {
+	SkillsCourseRecoveryBar,
+	SkillsCourseRestartButton,
+} from './skills-course-restart-button'
+import {
 	SKILLS_FORM_ID,
 	SKILLS_HOSTED_RESUBSCRIBE_URL,
 	SKILLS_INTEREST_FIELDS,
@@ -108,7 +112,8 @@ export function SkillsNewsletterCta({
 	// checked too or a server-resolved card would never render at all.
 	const awaitingState = !forceState && ctaPending
 
-	const state: SkillsNewsletterCtaState = forceState ?? ctaState?.state ?? 'fresh'
+	const state: SkillsNewsletterCtaState =
+		forceState ?? ctaState?.state ?? 'fresh'
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (!subscriber) return
@@ -152,7 +157,13 @@ export function SkillsNewsletterCta({
 	}
 
 	if (state === 'subscribed') {
-		return null
+		if (!isCourse) return null
+		return (
+			<SkillsCourseRecoveryBar
+				source={`${source}:restart`}
+				className="not-prose my-10"
+			/>
+		)
 	}
 
 	// Both are one-click: the reader is identified, so there is nothing to type.
@@ -172,7 +183,9 @@ export function SkillsNewsletterCta({
 	return (
 		<aside
 			aria-label={
-				isCourse ? 'Start the free AI Skills course' : 'Subscribe for skill updates'
+				isCourse
+					? 'Start the free AI Skills course'
+					: 'Subscribe for skill updates'
 			}
 			// `rounded-xl` for both offers: the course variant shipped square, so a
 			// reader scrolling from a skill page to an article met the same card in
@@ -233,7 +246,7 @@ function SkillsCtaTagMe({
 	const handleClick = () => {
 		setError(null)
 		startTransition(async () => {
-			const result = await tagSubscriberAsSkills(source)
+			const result = await tagSubscriberAsSkills('skills-post')
 			if (result.success) {
 				track('subscribed', { location: source, method: 'tag-me' })
 				setDone(true)

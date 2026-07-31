@@ -3,8 +3,9 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { redirectUrlBuilder } from '@/convertkit'
 import { useCtaGate } from '@/hooks/use-cta-gate'
 import { hasWorkshopInterest } from '@/lib/cta-gating'
 import { type Subscriber } from '@/schemas/subscriber'
@@ -13,11 +14,7 @@ import { CheckCircle } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import {
-	addWorkshopInterest,
-	tagWorkshopInterestByEmail,
-} from './workshop-interest-actions'
-import { workshopInterestFieldKey } from './workshop-interest-config'
+import { addWorkshopInterest } from './workshop-interest-actions'
 
 /**
  * Pre-launch interest capture shown in the workshop sidebar while a workshop is
@@ -51,9 +48,6 @@ export const WorkshopInterestCta = ({
 	const [done, setDone] = React.useState(false)
 	const [error, setError] = React.useState(false)
 
-	const fieldKey = workshopInterestFieldKey(workshopSlug)
-	const today = new Date().toISOString().slice(0, 10)
-
 	// They already expressed interest in this specific workshop on a prior visit.
 	const alreadyInterested = hasWorkshopInterest(subscriber, workshopSlug)
 
@@ -73,14 +67,6 @@ export const WorkshopInterestCta = ({
 				location: 'workshop_interest',
 				workshop: workshopSlug,
 			})
-			// The form sets the per-workshop field but can't apply a tag, so tag
-			// the new subscriber for parity with the one-click path. Fire-and-forget
-			// (best-effort) so the redirect isn't blocked on the Kit round-trips.
-			if (sub.email_address) {
-				void tagWorkshopInterestByEmail(sub.email_address, workshopSlug).catch(
-					() => {},
-				)
-			}
 			router.push(redirectUrlBuilder(sub, '/confirm'))
 		}
 	}
@@ -142,8 +128,8 @@ export const WorkshopInterestCta = ({
 						'text-primary flex items-start gap-2 text-balance',
 					)}
 				>
-					<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" /> You&rsquo;re on the
-					list. We&rsquo;ll email you the moment it&rsquo;s live.
+					<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" /> You&rsquo;re on
+					the list. We&rsquo;ll email you the moment it&rsquo;s live.
 				</p>
 			) : !isResolved || sessionStatus === 'loading' ? (
 				<div className="flex flex-col gap-2.5">
@@ -169,9 +155,10 @@ export const WorkshopInterestCta = ({
 				</div>
 			) : (
 				<div>
-					<SubscribeToConvertkitForm
+					<ConversionIntentForm
+						intent={{ kind: 'workshop-interest', workshopSlug }}
+						surface="workshop-page"
 						actionLabel="Notify me"
-						fields={{ [fieldKey]: today }}
 						onSuccess={handleFormSuccess}
 						className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 [&_button]:h-[50px] desk:[&_button]:h-11 [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-12 desk:[&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_label]:hidden"
 					/>

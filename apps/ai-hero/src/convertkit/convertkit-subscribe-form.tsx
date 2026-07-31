@@ -18,7 +18,7 @@ export type SubscribeFormProps = {
 		children?: React.ReactNode
 	}>
 	onError?: (error?: any) => void
-	onSuccess?: (subscriber?: Subscriber, email?: string) => void
+	onSuccess?: (subscriber?: Subscriber, email?: string) => void | Promise<void>
 	formId?: number
 	subscribeApiURL?: string
 	id?: string

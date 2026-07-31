@@ -2,11 +2,13 @@
 
 import type { ParsedUrlQuery } from 'querystring'
 import * as React from 'react'
+import { useSession } from 'next-auth/react'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { CldImage } from '@/components/cld-image'
 import { CheckoutSurveyBuyButton } from '@/components/commerce/checkout-survey-buy-button'
 import type { ProductPricingFeature } from '@/components/commerce/product-pricing-features'
-import { SubscribeToConvertkitForm } from '@/convertkit'
+import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { env } from '@/env.mjs'
 import type { CohortPageProps } from '@/lib/cohort'
 import { track } from '@/utils/analytics'
@@ -15,9 +17,6 @@ import { formatInTimeZone } from 'date-fns-tz'
 import { CheckCircle, Sparkles } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
-
-import { tagCohortWaitlistByEmail } from './cohort-interest-actions'
-import { cohortWaitlistFieldKey } from './cohort-interest-config'
 
 export const CohortPricingWidgetContainer: React.FC<
 	CohortPageProps & {
@@ -30,15 +29,23 @@ export const CohortPricingWidgetContainer: React.FC<
 		 * paint — this widget is above the fold on a page someone re-visits
 		 * specifically to check on a cohort they are waiting for.
 		 */
-		isOnWaitlist?: boolean
+		isOnWaitlist: boolean
+		/** Cookie- or session-resolved identity; known readers get one button. */
+		knownIdentity: boolean
 	}
 > = ({
 	className,
 	searchParams,
 	enrollmentOpenDateString,
-	isOnWaitlist = false,
+	isOnWaitlist,
+	knownIdentity,
 	...props
 }) => {
+	const { status: sessionStatus } = useSession()
+	const [waitlistResult, setWaitlistResult] = React.useState<
+		'joined' | 'confirmation-required' | null
+	>(null)
+	const [requiresIdentityForm, setRequiresIdentityForm] = React.useState(false)
 	const {
 		cohort,
 		mdx,
@@ -55,7 +62,8 @@ export const CohortPricingWidgetContainer: React.FC<
 	const { fields } = cohort
 	const { startsAt, endsAt, timezone } = fields
 	const product = products && products[0]
-	const { openEnrollment, closeEnrollment } = product?.fields || {}
+	if (!product || product.status !== 1) return null
+	const { openEnrollment, closeEnrollment } = product.fields || {}
 	const { allowPurchase } = searchParams || {}
 
 	// Properly handle timezone comparison - get current time in PT to compare with PT stored date
@@ -99,13 +107,6 @@ export const CohortPricingWidgetContainer: React.FC<
 			},
 		]
 	}, [product?.fields?.slug, product?.type])
-	const waitlistCkFields = {
-		// example: waitlist_mcp_workshop_ticket: "2025-04-17"
-		[cohortWaitlistFieldKey(product?.name || '')]: new Date()
-			.toISOString()
-			.slice(0, 10),
-	}
-
 	const { dateString: eventDateString, timeString: eventTimeString } =
 		formatCohortDateRange(startsAt, endsAt, timezone)
 
@@ -157,43 +158,77 @@ export const CohortPricingWidgetContainer: React.FC<
 		)
 	}
 
-	const renderWaitlistForm = () => (
-		<SubscribeToConvertkitForm
-			fields={waitlistCkFields}
-			actionLabel="Join Waitlist"
-			className="w-full relative z-10 mt-5 flex flex-col items-center justify-center gap-2 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_button]:text-base [&_input]:h-12 [&_input]:text-lg"
-			successMessage={
+	const renderWaitlistForm = () => {
+		if (waitlistResult) {
+			return (
 				<p className="inline-flex items-center text-center text-lg font-medium">
-					<CheckCircle className="text-primary mr-2 size-5" /> You are on the
-					waitlist
+					<CheckCircle className="text-primary mr-2 size-5" />
+					{waitlistResult === 'joined'
+						? 'You are on the waitlist'
+						: 'Check your inbox to confirm'}
 				</p>
-			}
-			onSuccess={(subscriber, email) => {
-				const handleOnSuccess = (subscriber: any) => {
-					if (subscriber && product) {
+			)
+		}
+
+		if (!knownIdentity && sessionStatus === 'loading') {
+			return <div className="bg-muted mt-5 h-12 w-full animate-pulse" />
+		}
+
+		const intent = {
+			kind: 'cohort-waitlist' as const,
+			productName: product.name,
+		}
+		const isKnown =
+			(knownIdentity || sessionStatus === 'authenticated') &&
+			!requiresIdentityForm
+
+		if (isKnown) {
+			return (
+				<ConversionIntentButton
+					intent={intent}
+					surface="cohort-page"
+					label="Join Waitlist"
+					className="relative z-10 mt-5 h-12 w-full cursor-pointer text-base disabled:pointer-events-none disabled:opacity-60"
+					onSuccess={({ confirmationRequired }) => {
 						track('waitlist_joined', {
 							product_name: product.name,
 							product_id: product.id,
-							email: email,
+							method: 'one-click',
 						})
+						setWaitlistResult(
+							confirmationRequired ? 'confirmation-required' : 'joined',
+						)
+					}}
+					onNotIdentified={() => setRequiresIdentityForm(true)}
+				/>
+			)
+		}
 
-						// The form sets the waitlist field but can't apply a tag, so tag
-						// the subscriber for parity. Fire-and-forget (best-effort) so the
-						// success state isn't blocked on the Kit round-trips.
-						if (email) {
-							void tagCohortWaitlistByEmail(email, product.name).catch(() => {})
-						}
-
-						return subscriber
-					}
+		return (
+			<ConversionIntentForm
+				intent={intent}
+				surface="cohort-page"
+				actionLabel="Join Waitlist"
+				className="w-full relative z-10 mt-5 flex flex-col items-center justify-center gap-2 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_button]:text-base [&_input]:h-12 [&_input]:text-lg"
+				successMessage={
+					<p className="inline-flex items-center text-center text-lg font-medium">
+						<CheckCircle className="text-primary mr-2 size-5" /> You are on the
+						waitlist
+					</p>
 				}
-				handleOnSuccess(subscriber)
-			}}
-		/>
-	)
-
-	if (!product || product.status !== 1) {
-		return null
+				onSuccess={(subscriber) => {
+					if (!subscriber) return
+					track('waitlist_joined', {
+						product_name: product.name,
+						product_id: product.id,
+						method: 'form',
+					})
+					setWaitlistResult(
+						subscriber.state === 'active' ? 'joined' : 'confirmation-required',
+					)
+				}}
+			/>
+		)
 	}
 
 	return (

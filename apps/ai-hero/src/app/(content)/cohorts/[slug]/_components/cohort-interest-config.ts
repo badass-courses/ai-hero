@@ -1,4 +1,4 @@
-import { toSnakeCase } from 'drizzle-orm/casing'
+import { normalizeMarketingKey } from '@/lib/cta/conversion-intent'
 
 /**
  * ConvertKit custom field key for a cohort waitlist signup, e.g.
@@ -6,7 +6,7 @@ import { toSnakeCase } from 'drizzle-orm/casing'
  * joined the waitlist. Set by the subscribe form on the cohort pricing widget.
  */
 export function cohortWaitlistFieldKey(productName: string) {
-	return `waitlist_${toSnakeCase(productName)}`
+	return `waitlist_${normalizeMarketingKey(productName)}`
 }
 
 /**
@@ -17,5 +17,5 @@ export function cohortWaitlistFieldKey(productName: string) {
  * orphan every existing subscriber's tag).
  */
 export function cohortWaitlistTagName(productName: string) {
-	return `waitlist_${toSnakeCase(productName)}`
+	return cohortWaitlistFieldKey(productName)
 }

@@ -1,6 +1,7 @@
 import { cohortWaitlistFieldKey } from '@/app/(content)/cohorts/[slug]/_components/cohort-interest-config'
 import { workshopInterestFieldKey } from '@/app/(content)/workshops/_components/workshop-interest-config'
 import type { OfferWaitlist } from '@/lib/next-offer'
+import { hasCompletedConversionIntent } from '@/lib/cta/conversion-intent'
 import type { Subscriber } from '@/schemas/subscriber'
 
 /**
@@ -63,9 +64,7 @@ export function isOnEmailList(subscriber: MaybeSubscriber): boolean {
  * "tag me" and rendering nothing.
  */
 export function hasStartedFreeCourse(subscriber: MaybeSubscriber): boolean {
-	return (
-		isOnEmailList(subscriber) && subscriber?.fields?.interest === 'skills'
-	)
+	return hasCompletedConversionIntent({ kind: 'skills-course' }, subscriber)
 }
 
 /**
@@ -119,10 +118,7 @@ export function hasWorkshopInterest(
  * written through `deepOmitNull`, so a field can arrive as `null`, as absent,
  * or — when a form posted an empty value — as `''`. All three mean "not set".
  */
-function hasNonEmptyField(
-	subscriber: MaybeSubscriber,
-	key: string,
-): boolean {
+function hasNonEmptyField(subscriber: MaybeSubscriber, key: string): boolean {
 	const value = subscriber?.fields?.[key]
 	return typeof value === 'string' && value.trim().length > 0
 }

@@ -142,9 +142,10 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	// the sidebar's closed-enrollment state IS the waitlist form: someone who
 	// joined last month and came back to check on the dates was being asked to
 	// join again, with no sign the site had heard them the first time.
-	const isOnWaitlist = isOnCohortWaitlist(
-		await getSubscriberForGating(),
-		product?.name,
+	const gatingSubscriber = await getSubscriberForGating()
+	const isOnWaitlist = isOnCohortWaitlist(gatingSubscriber, product?.name)
+	const hasKnownWaitlistIdentity = Boolean(
+		gatingSubscriber?.email_address || session?.user?.email,
 	)
 
 	const cohortProps: CohortPageProps = {
@@ -560,6 +561,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 								searchParams={searchParams}
 								enrollmentOpenDateString={enrollmentOpenDateString}
 								isOnWaitlist={isOnWaitlist}
+								knownIdentity={hasKnownWaitlistIdentity}
 							/>
 						) : null}
 						{/* Last in the rail in every state: waitlist, pricing and

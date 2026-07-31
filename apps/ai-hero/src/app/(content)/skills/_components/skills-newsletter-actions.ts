@@ -4,6 +4,11 @@ import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { setSubscriberCookie } from '@/lib/convertkit'
+import {
+	conversionIntentContract,
+	type ConversionSurface,
+	withConfirmedConversionFields,
+} from '@/lib/cta/conversion-intent'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
@@ -18,10 +23,18 @@ import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-a
 import {
 	SKILLS_FORM_ID,
 	SKILLS_HOSTED_RESUBSCRIBE_URL,
-	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
-export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
+type SkillsCourseSurface = Extract<
+	ConversionSurface,
+	| 'skills-hero'
+	| 'skills-subscribe'
+	| 'skills-campaign'
+	| 'homepage-course'
+	| 'skills-post'
+>
+
+export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 	// Cookie OR session — see `resolveEnrolmentIdentity` for why a signed-in
 	// reader must not be asked to retype an address the server already has.
 	const { identity, subscriber } = await resolveEnrolmentIdentity()
@@ -36,6 +49,12 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	}
 
 	try {
+		const contract = conversionIntentContract({
+			intent: { kind: 'skills-course' },
+			surface,
+		})
+		const source = contract.fields.source
+		if (!source) throw new Error('Skills course source is missing')
 		const updated = await emailListProvider.subscribeToList({
 			listId: SKILLS_FORM_ID,
 			listType: 'form',
@@ -43,7 +62,7 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 				email: identity.email,
 				name: identity.name,
 			} as any,
-			fields: { ...SKILLS_INTEREST_FIELDS, source },
+			fields: contract.fields,
 		})
 
 		// `?? subscriber` no longer holds for the session path: there may be no
@@ -57,7 +76,9 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 			return { success: false, reason: 'request-failed' as const }
 		}
 
-		const subscribed = SubscriberSchema.parse(updated ?? subscriber)
+		const subscribed = SubscriberSchema.parse(
+			withConfirmedConversionFields(updated ?? subscriber!, contract.fields),
+		)
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
 			email: subscribed.email_address!,
 			subscriberState: subscribed.state,
@@ -69,9 +90,7 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 				confirmationUrl: SKILLS_HOSTED_RESUBSCRIBE_URL,
 			}
 		}
-		if (updated) {
-			await setSubscriberCookie(subscribed)
-		}
+		await setSubscriberCookie(subscribed)
 		await sendSkillsNewsletterPathEntry(subscribed, source)
 
 		// From the PARSED record, not the cookie: on the session path there may be
@@ -97,10 +116,7 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	}
 }
 
-async function sendSkillsNewsletterPathEntry(
-	input: unknown,
-	source: string,
-) {
+async function sendSkillsNewsletterPathEntry(input: unknown, source: string) {
 	const subscriber = SubscriberSchema.parse(input)
 	if (!subscriber.email_address) {
 		throw new Error('Skills newsletter subscriber is missing an email address')
