@@ -38,7 +38,7 @@ export function SkillsCourseRestartButton({
 				onClick={resend}
 				disabled={isPending || result === 'sent'}
 				className={cn(
-					'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-11 min-w-[184px] cursor-pointer items-center justify-center rounded-[9px] px-5 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
+					'border-primary text-primary hover:bg-primary/10 focus-visible:ring-ring inline-flex h-11 min-w-[184px] cursor-pointer items-center justify-center rounded-[9px] border bg-transparent px-5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
 					className,
 				)}
 			>
