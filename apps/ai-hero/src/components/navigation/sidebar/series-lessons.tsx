@@ -29,6 +29,7 @@ import {
 	SidebarDepth,
 	useSidebarDepth,
 } from './sidebar-indent'
+import { TruncatedRowLabel } from './truncated-row-label'
 
 /** Local path normalizer — kept here to avoid a cycle with sidebar-client. */
 function norm(path: string): string {
@@ -278,7 +279,7 @@ function SeriesSectionGroup({
 						>
 							{n}
 						</span>
-						<span className="min-w-0 truncate">{title}</span>
+						<TruncatedRowLabel>{title}</TruncatedRowLabel>
 						{/* self-center is gone with items-start: the chevron holds the
 						    first line, like the numeral opposite it. */}
 						<ChevronRight className="ml-auto mt-0.5 size-3.5 shrink-0 text-[color:var(--ah-fg-faint)] transition-transform group-data-[state=open]/series-section:rotate-90" />
@@ -362,9 +363,13 @@ function LessonRow({
 					>
 						{isDone ? <Check className="size-3.5" strokeWidth={2.4} /> : n}
 					</span>
-					<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-						{lesson.fields?.title}
-					</span>
+					{/* The primitive truncates a button's last span
+					    (`[&>span:last-child]:truncate`), so `overflow-wrap` never got
+					    to do anything here and the title was being cut off — which is
+					    exactly the row from the report. */}
+					<TruncatedRowLabel>
+						{String(lesson.fields?.title ?? '')}
+					</TruncatedRowLabel>
 				</Link>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
