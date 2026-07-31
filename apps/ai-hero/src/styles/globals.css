@@ -1299,3 +1299,45 @@ pre .ah-code-inline {
 		opacity: 1;
 	}
 }
+
+/**
+ * Loading skeleton fill.
+ *
+ * `bg-muted` is NOT usable for this, and that is the bug this replaces: in dark
+ * mode `--muted` is #0d0d0c against a #0b0b0b page — a two-step difference — so
+ * a panel full of skeleton bars rendered as an empty panel, and `animate-pulse`
+ * pulsed something nobody could see. This is an ink alpha instead, so one
+ * declaration reads in both themes.
+ *
+ * The sweep, rather than a pulse: the hub tree can take a second or more to
+ * arrive, and a fade in and out says "idle" where a travelling highlight says
+ * "still working". All bars share the timing, so the panel sweeps as one
+ * surface rather than as a field of independently blinking rows.
+ */
+.ah-skeleton {
+	background-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+	background-image: linear-gradient(
+		90deg,
+		transparent 0%,
+		color-mix(in srgb, var(--foreground) 8%, transparent) 50%,
+		transparent 100%
+	);
+	background-size: 220% 100%;
+	background-repeat: no-repeat;
+	animation: ah-skeleton-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes ah-skeleton-sweep {
+	from {
+		background-position: -110% 0;
+	}
+	to {
+		background-position: 210% 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ah-skeleton {
+		animation: none;
+	}
+}

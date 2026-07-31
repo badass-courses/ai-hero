@@ -20,6 +20,12 @@ export const SKILLS_INSTALL_CHANNELS = [
 		id: 'skills-sh',
 		label: 'Install the skills',
 		/**
+		 * Short form for the tab strip on a skill page, where the two channels sit
+		 * side by side and the label has to say what distinguishes them rather
+		 * than what they do. "Install the skills" is true of both.
+		 */
+		tabLabel: 'All agents',
+		/**
 		 * Cycles the whole set: this channel installs into whichever agent you
 		 * name, so no single mark would be true.
 		 */
@@ -37,6 +43,8 @@ export const SKILLS_INSTALL_CHANNELS = [
 	{
 		id: 'claude-code',
 		label: 'Claude Code',
+		/** Already short, and already the distinguishing fact. */
+		tabLabel: 'Claude Code',
 		/** One agent, one mark — this installs a Claude Code plugin. */
 		mark: 'Claude Code',
 		mode: 'Plugin',
