@@ -101,7 +101,7 @@ describe('tagSubscriberAsSkills', () => {
 			session: { user: { email: 'signed-in@example.com', name: 'Vojta' } },
 		})
 
-		const result = await tagSubscriberAsSkills('skill_page_course:handoff')
+		const result = await tagSubscriberAsSkills('skills-post')
 
 		expect(result).toEqual({ success: true })
 		expect(mocks.subscribeToList).toHaveBeenCalledWith(
@@ -119,7 +119,7 @@ describe('tagSubscriberAsSkills', () => {
 			session: { user: { email: 'signed-in@example.com' } },
 		})
 
-		await tagSubscriberAsSkills('skill_page_course:handoff')
+		await tagSubscriberAsSkills('skills-post')
 
 		expect(mocks.subscribeToList).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -131,29 +131,27 @@ describe('tagSubscriberAsSkills', () => {
 	it('still reports not-subscribed with neither cookie nor session', async () => {
 		mocks.getSubscriberFromCookie.mockResolvedValue(null)
 
-		const result = await tagSubscriberAsSkills('skill_page_course:handoff')
+		const result = await tagSubscriberAsSkills('skills-post')
 
 		expect(result).toEqual({ success: false, reason: 'not-subscribed' })
 		expect(mocks.subscribeToList).not.toHaveBeenCalled()
 	})
 
 	it('emits course entry with the placement source when ft_attr is absent', async () => {
-		const result = await tagSubscriberAsSkills(
-			'skill_page_course:skills-handoff',
-		)
+		const result = await tagSubscriberAsSkills('skills-post')
 
 		expect(result).toEqual({ success: true })
 		expect(mocks.subscribeToList).toHaveBeenCalledWith(
 			expect.objectContaining({
 				fields: expect.objectContaining({
-					source: 'skill_page_course:skills-handoff',
+					source: 'aihero_skills_post',
 				}),
 			}),
 		)
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
 				data: expect.objectContaining({
-					source: 'skill_page_course:skills-handoff',
+					source: 'aihero_skills_post',
 					optInAttribution: undefined,
 				}),
 			}),
@@ -162,7 +160,7 @@ describe('tagSubscriberAsSkills', () => {
 			expect.objectContaining({
 				fields: expect.objectContaining({
 					interest: 'skills',
-					source: 'skill_page_course:skills-handoff',
+					source: 'aihero_skills_post',
 				}),
 			}),
 		)

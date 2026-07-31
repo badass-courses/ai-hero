@@ -45,6 +45,7 @@ export const CohortPricingWidgetContainer: React.FC<
 	const [waitlistResult, setWaitlistResult] = React.useState<
 		'joined' | 'confirmation-required' | null
 	>(null)
+	const [requiresIdentityForm, setRequiresIdentityForm] = React.useState(false)
 	const {
 		cohort,
 		mdx,
@@ -61,7 +62,8 @@ export const CohortPricingWidgetContainer: React.FC<
 	const { fields } = cohort
 	const { startsAt, endsAt, timezone } = fields
 	const product = products && products[0]
-	const { openEnrollment, closeEnrollment } = product?.fields || {}
+	if (!product || product.status !== 1) return null
+	const { openEnrollment, closeEnrollment } = product.fields || {}
 	const { allowPurchase } = searchParams || {}
 
 	// Properly handle timezone comparison - get current time in PT to compare with PT stored date
@@ -174,9 +176,11 @@ export const CohortPricingWidgetContainer: React.FC<
 
 		const intent = {
 			kind: 'cohort-waitlist' as const,
-			productName: product?.name ?? '',
+			productName: product.name,
 		}
-		const isKnown = knownIdentity || sessionStatus === 'authenticated'
+		const isKnown =
+			(knownIdentity || sessionStatus === 'authenticated') &&
+			!requiresIdentityForm
 
 		if (isKnown) {
 			return (
@@ -187,21 +191,22 @@ export const CohortPricingWidgetContainer: React.FC<
 					className="relative z-10 mt-5 h-12 w-full cursor-pointer text-base disabled:pointer-events-none disabled:opacity-60"
 					onSuccess={({ confirmationRequired }) => {
 						track('waitlist_joined', {
-							product_name: product?.name,
-							product_id: product?.id,
+							product_name: product.name,
+							product_id: product.id,
 							method: 'one-click',
 						})
 						setWaitlistResult(
 							confirmationRequired ? 'confirmation-required' : 'joined',
 						)
 					}}
+					onNotIdentified={() => setRequiresIdentityForm(true)}
 				/>
 			)
 		}
 
 		return (
 			<ConversionIntentForm
-				intent={{ kind: 'cohort-waitlist', productName: product?.name ?? '' }}
+				intent={intent}
 				surface="cohort-page"
 				actionLabel="Join Waitlist"
 				className="w-full relative z-10 mt-5 flex flex-col items-center justify-center gap-2 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_button]:text-base [&_input]:h-12 [&_input]:text-lg"
@@ -211,25 +216,19 @@ export const CohortPricingWidgetContainer: React.FC<
 						waitlist
 					</p>
 				}
-				onSuccess={(subscriber, email) => {
-					const handleOnSuccess = (subscriber: any) => {
-						if (subscriber && product) {
-							track('waitlist_joined', {
-								product_name: product.name,
-								product_id: product.id,
-								email: email,
-							})
-							return subscriber
-						}
-					}
-					handleOnSuccess(subscriber)
+				onSuccess={(subscriber) => {
+					if (!subscriber) return
+					track('waitlist_joined', {
+						product_name: product.name,
+						product_id: product.id,
+						method: 'form',
+					})
+					setWaitlistResult(
+						subscriber.state === 'active' ? 'joined' : 'confirmation-required',
+					)
 				}}
 			/>
 		)
-	}
-
-	if (!product || product.status !== 1) {
-		return null
 	}
 
 	return (

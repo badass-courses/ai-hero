@@ -53,12 +53,17 @@ export function useConvertkitForm({
 						fields,
 					})
 					const subscriber: Subscriber = response.data
-					await onSuccess(subscriber, email)
 					setStatus(subscriber ? 'success' : 'error')
+					try {
+						await onSuccess(subscriber, email)
+					} catch (callbackError) {
+						// Kit already accepted the request. Preserve the successful form
+						// state even when navigation or analytics fails afterwards.
+						onError(callbackError)
+					}
 				} catch (error) {
 					onError(error)
 					setStatus('error')
-					console.log(error)
 				}
 			},
 		})

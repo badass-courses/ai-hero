@@ -15,6 +15,7 @@ import { ShieldCheckIcon } from 'lucide-react'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
+import { SkillsCourseRestartButton } from './skills-course-restart-button'
 import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
 
 export const SKILLS_NEWSLETTER_IMAGE = {
@@ -56,10 +57,12 @@ export function useSkillsNewsletter() {
 export function Root({
 	status,
 	location,
+	surface,
 	children,
 }: {
 	status: SkillsNewsletterStatus
 	location: string
+	surface: Extract<ConversionSurface, 'skills-subscribe' | 'homepage-course'>
 	children: React.ReactNode
 }) {
 	const router = useRouter()
@@ -73,7 +76,7 @@ export function Root({
 	const tagMe = React.useCallback(() => {
 		setError(null)
 		startTransition(async () => {
-			const result = await tagSubscriberAsSkills()
+			const result = await tagSubscriberAsSkills(surface)
 			if (result.success) {
 				setEnrolledLocally(true)
 				track('subscribed', { location, method: 'tag-me' })
@@ -90,7 +93,7 @@ export function Root({
 				)
 			}
 		})
-	}, [location])
+	}, [location, surface])
 
 	const handleFormSuccess = React.useCallback(
 		(subscriber: Subscriber | undefined) => {
@@ -222,6 +225,17 @@ export function TagMeButton({
 		>
 			{state.isPending ? <Spinner className="h-5 w-5" /> : label}
 		</button>
+	)
+}
+
+export function RestartCourse({ source }: { source: string }) {
+	return (
+		<div className="flex flex-col items-start gap-3">
+			<p className="text-muted-foreground text-sm">
+				Already enrolled? Send lesson one again without re-entering your email.
+			</p>
+			<SkillsCourseRestartButton source={source} />
+		</div>
 	)
 }
 

@@ -44,9 +44,25 @@ export const getSubscriberForGating = cache(
 		const gate = parseSubscriberGateSnapshot(
 			cookieStore.get(SUBSCRIBER_GATE_COOKIE)?.value,
 		)
-		if (gate) return SubscriberSchema.parse(gate)
-
 		const cookie = cookieStore.get('ck_subscriber')?.value
+		if (gate) {
+			if (gate.email_address) return SubscriberSchema.parse(gate)
+			// Gate cookies written before email identity was added can borrow it
+			// from the matching full cookie without a Kit round-trip. If that full
+			// cookie was rejected for size, the caller correctly renders a form.
+			if (cookie && cookie !== 'undefined') {
+				try {
+					const full = SubscriberSchema.parse(JSON.parse(cookie))
+					if (full.id === gate.id && full.email_address) {
+						return SubscriberSchema.parse({
+							...gate,
+							email_address: full.email_address,
+						})
+					}
+				} catch {}
+			}
+			return SubscriberSchema.parse(gate)
+		}
 
 		if (cookie && cookie !== 'undefined') {
 			try {

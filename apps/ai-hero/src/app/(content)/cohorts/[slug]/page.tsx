@@ -145,7 +145,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	const gatingSubscriber = await getSubscriberForGating()
 	const isOnWaitlist = isOnCohortWaitlist(gatingSubscriber, product?.name)
 	const hasKnownWaitlistIdentity = Boolean(
-		gatingSubscriber || session?.user?.email,
+		gatingSubscriber?.email_address || session?.user?.email,
 	)
 
 	const cohortProps: CohortPageProps = {

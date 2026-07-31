@@ -99,15 +99,14 @@ export async function addWorkshopInterest(workshopSlug: string) {
 			throw new Error('Kit did not return a subscriber')
 		}
 
-		await setSubscriberCookie(
-			SubscriberSchema.parse(
-				withConfirmedConversionFields(updated ?? subscriber!, contract.fields),
-			),
+		const subscribed = SubscriberSchema.parse(
+			withConfirmedConversionFields(updated ?? subscriber!, contract.fields),
 		)
+		await setSubscriberCookie(subscribed)
 
 		await log.info('workshop.interest.success', {
 			workshopSlug,
-			subscriberId: subscriber?.id,
+			subscriberId: subscribed.id,
 			via: identity.via,
 			fieldKey,
 		})

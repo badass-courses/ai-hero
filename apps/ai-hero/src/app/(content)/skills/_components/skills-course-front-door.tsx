@@ -66,7 +66,11 @@ export function SkillsCourseFrontDoor({
 				</div>
 
 				<div className="bg-stripes border-border flex items-center border-t p-6 sm:p-10 lg:border-l lg:border-t-0">
-					<SkillsNewsletter.Root status={status} location={location}>
+					<SkillsNewsletter.Root
+						status={status}
+						location={location}
+						surface="skills-subscribe"
+					>
 						<div className="bg-background border-border mx-auto flex w-full max-w-md flex-col gap-5 border p-6 shadow-sm sm:p-8">
 							<p className="font-mono text-xs font-medium uppercase tracking-wider opacity-60">
 								Start the course

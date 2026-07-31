@@ -14,6 +14,7 @@ import { ArrowUpRight, ShieldCheckIcon } from 'lucide-react'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
+import { SkillsCourseRestartButton } from './skills-course-restart-button'
 import {
 	SKILLS_FORM_ID,
 	SKILLS_HOSTED_RESUBSCRIBE_URL,
@@ -108,7 +109,8 @@ export function SkillsNewsletterCta({
 	// checked too or a server-resolved card would never render at all.
 	const awaitingState = !forceState && ctaPending
 
-	const state: SkillsNewsletterCtaState = forceState ?? ctaState?.state ?? 'fresh'
+	const state: SkillsNewsletterCtaState =
+		forceState ?? ctaState?.state ?? 'fresh'
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (!subscriber) return
@@ -152,7 +154,18 @@ export function SkillsNewsletterCta({
 	}
 
 	if (state === 'subscribed') {
-		return null
+		if (!isCourse) return null
+		return (
+			<aside className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-4 rounded-xl border p-6 sm:p-8">
+				<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-flex w-fit')}>
+					Already enrolled
+				</span>
+				<p className={cn(TYPE.lead, 'opacity-80')}>
+					Need lesson one again? Resend it without entering your email.
+				</p>
+				<SkillsCourseRestartButton source={`${source}:restart`} />
+			</aside>
+		)
 	}
 
 	// Both are one-click: the reader is identified, so there is nothing to type.
@@ -172,7 +185,9 @@ export function SkillsNewsletterCta({
 	return (
 		<aside
 			aria-label={
-				isCourse ? 'Start the free AI Skills course' : 'Subscribe for skill updates'
+				isCourse
+					? 'Start the free AI Skills course'
+					: 'Subscribe for skill updates'
 			}
 			// `rounded-xl` for both offers: the course variant shipped square, so a
 			// reader scrolling from a skill page to an article met the same card in
@@ -233,7 +248,7 @@ function SkillsCtaTagMe({
 	const handleClick = () => {
 		setError(null)
 		startTransition(async () => {
-			const result = await tagSubscriberAsSkills(source)
+			const result = await tagSubscriberAsSkills('skills-post')
 			if (result.success) {
 				track('subscribed', { location: source, method: 'tag-me' })
 				setDone(true)

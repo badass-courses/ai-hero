@@ -11,6 +11,7 @@ import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
+import { SkillsCourseRestartButton } from './skills-course-restart-button'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -60,7 +61,7 @@ export function SkillsCourseForm() {
 	const handleOneClick = () => {
 		setError(null)
 		startEnrolling(async () => {
-			const result = await tagSubscriberAsSkills('skills_hero_course')
+			const result = await tagSubscriberAsSkills('skills-hero')
 			if (result.success) {
 				track('skills_course_subscribed', {
 					location: 'skills-hero',
@@ -91,12 +92,13 @@ export function SkillsCourseForm() {
 
 	if (enrolled || state === 'subscribed') {
 		return (
-			<div className="max-w-[600px]">
+			<div className="flex max-w-[600px] flex-col items-start gap-3">
 				<p className={cn(TYPE.meta, 'text-primary')}>
 					{enrolled
 						? "You're in. Check your inbox for the first lesson."
 						: "You're already taking this course."}
 				</p>
+				<SkillsCourseRestartButton source="skills_hero_course_restart" />
 			</div>
 		)
 	}
@@ -116,9 +118,7 @@ export function SkillsCourseForm() {
 				>
 					{isEnrolling ? 'Starting…' : SKILLS_COURSE_PANEL.ctaLabel}
 				</button>
-				<p
-					className={cn(TYPE.metaSm, 'mt-2.5 text-[color:var(--ah-fg-subtle)]')}
-				>
+				<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-2.5')}>
 					{/* Only the list state may claim prior subscription; an `account`
 					    reader may be on no list at all. */}
 					{state === 'account'

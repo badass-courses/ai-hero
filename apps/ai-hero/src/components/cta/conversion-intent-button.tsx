@@ -7,6 +7,11 @@ import type {
 	GenericKnownConversionIntent,
 } from '@/lib/cta/conversion-intent'
 
+/**
+ * One-click conversion control for a reader whose identity is already known.
+ * Falls back through `onNotIdentified` when stale client identity cannot be
+ * resolved on the server, so callers can render the ordinary email form.
+ */
 export function ConversionIntentButton({
 	intent,
 	surface,
@@ -14,6 +19,7 @@ export function ConversionIntentButton({
 	pendingLabel = 'Adding you…',
 	className,
 	onSuccess,
+	onNotIdentified,
 }: {
 	intent: GenericKnownConversionIntent
 	surface: ConversionSurface
@@ -21,6 +27,7 @@ export function ConversionIntentButton({
 	pendingLabel?: string
 	className?: string
 	onSuccess?: (result: { confirmationRequired: boolean }) => void
+	onNotIdentified?: () => void
 }) {
 	const [isPending, startTransition] = React.useTransition()
 	const [error, setError] = React.useState<string | null>(null)
@@ -42,6 +49,10 @@ export function ConversionIntentButton({
 							onSuccess?.({
 								confirmationRequired: result.confirmationRequired,
 							})
+							return
+						}
+						if (result.reason === 'not-identified') {
+							onNotIdentified?.()
 							return
 						}
 						setError('Something went wrong. Please try again.')

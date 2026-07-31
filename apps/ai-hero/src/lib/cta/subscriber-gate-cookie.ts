@@ -2,6 +2,7 @@ export const SUBSCRIBER_GATE_COOKIE = 'ck_subscriber_gate'
 
 export type SubscriberGateSnapshot = {
 	id: number
+	email_address?: string
 	state: string | null
 	fields: Record<string, string>
 }
@@ -14,11 +15,15 @@ export type SubscriberGateSnapshot = {
  */
 export function createSubscriberGateSnapshot(subscriber: {
 	id: number | string
+	email_address?: string | null
 	state?: string | null
 	fields?: Record<string, unknown> | null
 }): SubscriberGateSnapshot {
 	return {
 		id: Number(subscriber.id),
+		...(subscriber.email_address
+			? { email_address: subscriber.email_address }
+			: {}),
 		state: subscriber.state ?? null,
 		fields: pickSubscriberGateFields(subscriber.fields),
 	}
@@ -32,10 +37,16 @@ export function parseSubscriberGateSnapshot(
 		const parsed = JSON.parse(value) as Partial<SubscriberGateSnapshot>
 		if (typeof parsed.id !== 'number' || !Number.isFinite(parsed.id))
 			return null
+		if (
+			parsed.email_address !== undefined &&
+			typeof parsed.email_address !== 'string'
+		)
+			return null
 		if (parsed.state !== null && typeof parsed.state !== 'string') return null
 		if (!parsed.fields || typeof parsed.fields !== 'object') return null
 		return createSubscriberGateSnapshot({
 			id: parsed.id,
+			email_address: parsed.email_address,
 			state: parsed.state,
 			fields: parsed.fields,
 		})

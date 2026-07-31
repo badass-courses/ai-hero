@@ -20,6 +20,7 @@ import { resolveSkillsCtaState } from './skills-cta-state'
 describe('resolveSkillsCtaState', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.useRealTimers()
 	})
 
 	it('refreshes an incomplete cookie after the async course-start update', async () => {
@@ -60,5 +61,21 @@ describe('resolveSkillsCtaState', () => {
 		})
 
 		await expect(resolveSkillsCtaState()).resolves.toBe('tag-me')
+	})
+
+	it('falls back to the cookie state when Kit exceeds the render deadline', async () => {
+		vi.useFakeTimers()
+		mocks.getSubscriberFromCookie.mockResolvedValue({
+			id: 42,
+			email_address: 'learner@example.com',
+			state: 'active',
+			fields: { interest: 'skills' },
+		})
+		mocks.getSubscriberByEmail.mockReturnValue(new Promise(() => {}))
+
+		const result = resolveSkillsCtaState()
+		await vi.advanceTimersByTimeAsync(1_500)
+
+		await expect(result).resolves.toBe('tag-me')
 	})
 })

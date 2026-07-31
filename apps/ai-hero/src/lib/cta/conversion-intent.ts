@@ -43,6 +43,11 @@ export type ConversionPlan =
 	| { mode: 'form' }
 	| { mode: 'one-click' }
 
+type FieldBackedConversionIntent = Exclude<
+	ConversionIntent,
+	{ kind: 'skills-course' }
+>
+
 /**
  * Make the browser's subscriber snapshot reflect a write Kit accepted.
  *
@@ -99,7 +104,7 @@ export function conversionIntentContract({
 
 	if (intent.kind === 'cohort-waitlist') {
 		const marketingKey = normalizeMarketingKey(intent.productName)
-		const waitlistKey = `waitlist_${marketingKey}`
+		const waitlistKey = conversionFieldKey(intent)
 		return {
 			key: `waitlist:cohort:${marketingKey}`,
 			formId: undefined,
@@ -112,7 +117,7 @@ export function conversionIntentContract({
 	}
 
 	const marketingKey = normalizeMarketingKey(intent.workshopSlug)
-	const interestKey = `interest_${marketingKey}`
+	const interestKey = conversionFieldKey(intent)
 	return {
 		key: `interest:workshop:${marketingKey}`,
 		formId: undefined,
@@ -138,10 +143,7 @@ export function hasCompletedConversionIntent(
 		return typeof startedAt === 'string' && startedAt.trim().length > 0
 	}
 
-	const key =
-		intent.kind === 'cohort-waitlist'
-			? `waitlist_${normalizeMarketingKey(intent.productName)}`
-			: `interest_${normalizeMarketingKey(intent.workshopSlug)}`
+	const key = conversionFieldKey(intent)
 	const value = subscriber.fields?.[key]
 	return typeof value === 'string' && value.trim().length > 0
 }
@@ -168,6 +170,12 @@ export function normalizeMarketingKey(value: string): string {
 		.replace(/[^a-zA-Z0-9]+/g, '_')
 		.replace(/^_+|_+$/g, '')
 		.toLowerCase()
+}
+
+function conversionFieldKey(intent: FieldBackedConversionIntent): string {
+	return intent.kind === 'cohort-waitlist'
+		? `waitlist_${normalizeMarketingKey(intent.productName)}`
+		: `interest_${normalizeMarketingKey(intent.workshopSlug)}`
 }
 
 function isoDate(now: Date): string {

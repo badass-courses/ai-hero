@@ -42,13 +42,12 @@ export function SkillsCourseCta({
 }: {
 	status?: SkillsNewsletterStatus
 } = {}) {
-	// Nothing left to ask for. The panel around this removes itself too — see
-	// `LandingBody` — so this is the belt to that braces: any other placement of
-	// the course ask also stops asking once the course has been taken.
-	if (status === 'subscribed') return null
-
 	return (
-		<SkillsNewsletter.Root status={status} location="landing_hero_course">
+		<SkillsNewsletter.Root
+			status={status}
+			location="landing_hero_course"
+			surface="homepage-course"
+		>
 			<div className="flex w-full flex-col items-start gap-0">
 				{/* Field row per `Home Page.dc.html` § MATT + NEWSLETTER: a short
 				    name field (130px), the email taking the slack, the button
@@ -59,15 +58,8 @@ export function SkillsCourseCta({
 				    already have is a form they cannot pass. One gold control in the
 				    same slot instead, sized to match the submit it replaces. */}
 				<SkillsNewsletter.StatusView
-					// Only reachable by enrolling in THIS session — a reader who
-					// arrived already enrolled never gets as far as `Root` (see the
-					// early return above). So this is a confirmation of something that
-					// just happened under the reader's cursor, not a standing message
-					// telling people what they already know.
 					subscribed={
-						<p className="text-[color:var(--ah-fg-muted)] text-sm">
-							You&rsquo;re in — lesson one is on its way.
-						</p>
+						<SkillsNewsletter.RestartCourse source="landing_hero_course_restart" />
 					}
 					tagMe={
 						<SkillsNewsletter.TagMeButton

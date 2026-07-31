@@ -53,6 +53,10 @@ vi.mock('./skills-newsletter-actions', () => ({
 	tagSubscriberAsSkills: vi.fn(),
 }))
 
+vi.mock('./skills-course-restart-actions', () => ({
+	resendSkillsCourseLessonOne: vi.fn(),
+}))
+
 import { SkillsNewsletterCta } from './skills-newsletter-cta'
 
 describe('SkillsNewsletterCta course variant', () => {
@@ -76,9 +80,14 @@ describe('SkillsNewsletterCta course variant', () => {
 		expect(markup).toContain('Course subtitle')
 		expect(markup).toContain('Start the free course')
 		expect(markup).toContain('I respect your privacy. Unsubscribe at any time.')
-		expect(markup).toContain(
-			'data-source="skill_page_course:skills-grill-me"',
-		)
+		expect(markup).toContain('data-source="skill_page_course:skills-grill-me"')
+		expect(mocks.formProps).toMatchObject({
+			formId: 9376133,
+			fields: {
+				interest: 'skills',
+				source: 'skill_page_course:skills-grill-me',
+			},
+		})
 	})
 
 	it('sends an active course signup to the course confirmation flow', () => {
@@ -111,5 +120,19 @@ describe('SkillsNewsletterCta course variant', () => {
 
 		expect(markup).toContain('rounded-xl')
 		expect(markup).toContain('Start the free course')
+	})
+
+	it('offers already-enrolled readers a one-click restart', () => {
+		const markup = renderToStaticMarkup(
+			<SkillsNewsletterCta
+				variant="course"
+				source="skill_page_course:skills-handoff"
+				forceState="subscribed"
+			/>,
+		)
+
+		expect(markup).toContain('Already enrolled')
+		expect(markup).toContain('Send lesson one again')
+		expect(markup).not.toContain('name="email_address"')
 	})
 })

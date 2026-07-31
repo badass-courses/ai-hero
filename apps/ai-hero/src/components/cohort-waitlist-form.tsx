@@ -32,6 +32,11 @@ import { cn } from '@coursebuilder/utils/cn'
  *
  * Labels are `sr-only` rather than hidden: the placeholders carry the visual
  * label, and a hidden `<label>` would take the accessible name with it.
+ *
+ * @param actionLabel Label for the button or form submit control.
+ * @param productName Cohort product name used to derive the waitlist field.
+ * @param surface Attribution surface for the conversion.
+ * @param knownIdentity Whether the server resolved a usable email identity.
  */
 export function WaitlistForm({
 	actionLabel,
@@ -49,7 +54,10 @@ export function WaitlistForm({
 	const [completed, setCompleted] = React.useState<
 		'joined' | 'confirmation-required' | null
 	>(null)
-	const isKnown = knownIdentity || sessionStatus === 'authenticated'
+	const [requiresIdentityForm, setRequiresIdentityForm] = React.useState(false)
+	const isKnown =
+		(knownIdentity || sessionStatus === 'authenticated') &&
+		!requiresIdentityForm
 	const intent = { kind: 'cohort-waitlist', productName } as const
 
 	if (completed) {
@@ -90,6 +98,7 @@ export function WaitlistForm({
 							confirmationRequired ? 'confirmation-required' : 'joined',
 						)
 					}}
+					onNotIdentified={() => setRequiresIdentityForm(true)}
 				/>
 			) : (
 				<ConversionIntentForm

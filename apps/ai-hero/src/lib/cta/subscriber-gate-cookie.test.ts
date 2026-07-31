@@ -10,6 +10,7 @@ describe('subscriber gate cookie', () => {
 	it('keeps only completion facts and stays independent of a large Kit record', () => {
 		const snapshot = createSubscriberGateSnapshot({
 			id: 42,
+			email_address: 'reader@example.com',
 			state: 'active',
 			fields: {
 				interest: 'skills',
@@ -23,6 +24,7 @@ describe('subscriber gate cookie', () => {
 
 		expect(snapshot).toEqual({
 			id: 42,
+			email_address: 'reader@example.com',
 			state: 'active',
 			fields: {
 				interest: 'skills',

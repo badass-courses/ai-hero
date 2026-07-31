@@ -204,7 +204,7 @@ export async function CohortHero({
 							href={href}
 							sale={sale}
 							productName={flagship?.productName ?? title}
-							knownIdentity={Boolean(subscriber)}
+							knownIdentity={Boolean(subscriber?.email_address)}
 							surface={
 								headingLevel === 'h1' ? 'courses-cohort' : 'homepage-cohort'
 							}

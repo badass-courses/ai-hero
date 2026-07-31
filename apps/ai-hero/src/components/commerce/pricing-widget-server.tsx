@@ -47,7 +47,9 @@ export async function PricingWidgetServer({
 	const gatingSubscriber =
 		product.type === 'cohort' ? await getSubscriberForGating() : null
 	const isOnWaitlist = isOnCohortWaitlist(gatingSubscriber, product.name)
-	const knownWaitlistIdentity = Boolean(gatingSubscriber || user?.email)
+	const knownWaitlistIdentity = Boolean(
+		gatingSubscriber?.email_address || user?.email,
+	)
 
 	const pricingDataLoader = getPricingData({ productId: product?.id })
 	let productProps: any

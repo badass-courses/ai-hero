@@ -4,6 +4,8 @@ import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { hasCompletedConversionIntent } from '@/lib/cta/conversion-intent'
 
+const KIT_LOOKUP_TIMEOUT_MS = 1_500
+
 /**
  * Which skills-course ask a reader should see. ONE resolver, because the two
  * surfaces that make this offer used to answer it differently:
@@ -63,12 +65,27 @@ export async function resolveSkillsCtaState(
 	// through to a form. This is the case that left an enrolled reader being
 	// nagged to sign up for a course they were already taking.
 	const fromKit = fromRecord(
-		(await emailListProvider
-			.getSubscriberByEmail(email)
-			.catch(() => null)) as any,
+		(await withTimeout(
+			emailListProvider.getSubscriberByEmail(email),
+			KIT_LOOKUP_TIMEOUT_MS,
+		).catch(() => null)) as any,
 	)
 	if (fromKit) return fromKit
 
 	// Known by account, on no list. Still one click — we have their address.
 	return cookieState ?? (sessionEmail ? 'account' : 'fresh')
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+	let timeout: ReturnType<typeof setTimeout> | undefined
+	try {
+		return await Promise.race<T | null>([
+			promise,
+			new Promise<null>((resolve) => {
+				timeout = setTimeout(() => resolve(null), timeoutMs)
+			}),
+		])
+	} finally {
+		if (timeout) clearTimeout(timeout)
+	}
 }
