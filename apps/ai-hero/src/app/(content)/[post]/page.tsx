@@ -279,7 +279,16 @@ export default async function PostPage(props: {
 							// Same rule the closing newsletter follows below: when the
 							// body already carried the course ask, this band does not
 							// repeat it.
-							showFreeLesson={resolvedCta.kind !== 'course'}
+							//
+							// "Carried", not "was configured to carry". `PostBody` returns
+							// null for a post with no body, taking the CTA with it, so a
+							// bodyless skill post would suppress this cell against an ask
+							// that never rendered and offer the course nowhere at all.
+							// Dropping a duplicate is the point; dropping the last one is
+							// not.
+							showFreeLesson={
+								resolvedCta.kind !== 'course' || !post.fields?.body
+							}
 						/>
 					)}
 						{/* {listSlugFromParam && (
