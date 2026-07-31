@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { usePathname } from 'next/navigation'
 import { sendFeedbackFromUser } from '@/components/feedback-widget/feedback-actions'
+import { FeedbackDialog } from '@/components/feedback-widget/feedback-dialog'
 import { MuxPlayerProvider } from '@/hooks/use-mux-player'
 import { MDXProvider } from '@mdx-js/react'
 import { SessionProvider } from 'next-auth/react'
@@ -20,6 +21,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 					<FeedbackProvider
 						sendFeedback={sendFeedbackFromUser}
 						currentUrl={currentUrl}
+						feedbackComponent={<FeedbackDialog />}
 					>
 						{children}
 					</FeedbackProvider>

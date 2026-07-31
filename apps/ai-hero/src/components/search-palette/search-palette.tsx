@@ -273,7 +273,7 @@ export function SearchPalette({
 	return (
 		<DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
 			<DialogPortal>
-				<DialogOverlay className="bg-black/60" />
+				<DialogOverlay className="bg-black/60 overscroll-contain" />
 				<DialogPrimitive.Content
 					className={cn(
 						'bg-background fixed z-50 flex flex-col overflow-hidden border shadow-lg outline-none',
@@ -288,8 +288,8 @@ export function SearchPalette({
 						// the dialog doesn't jump vertically as result counts change.
 						'sm:left-1/2 sm:top-[18%] sm:w-full sm:max-w-[540px] sm:-translate-x-1/2',
 						// Mobile: full-screen overlay.
-						'max-sm:inset-0',
-						'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-150',
+						'max-sm:inset-x-0 max-sm:top-0 max-sm:h-dvh max-sm:w-screen',
+						'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-150 motion-reduce:animate-none',
 					)}
 				>
 					<DialogPrimitive.Title className="sr-only">
@@ -302,12 +302,17 @@ export function SearchPalette({
 							pointerSelectRef.current = false
 						}}
 					>
-						<div className="flex items-center">
+						<div className="flex items-center pt-[env(safe-area-inset-top)] sm:pt-0">
 							<div className="min-w-0 flex-1">
 								<CommandInput
 									value={query}
 									onValueChange={setQuery}
 									placeholder="Search posts, skills, courses…"
+									inputMode="search"
+									aria-label="Search AI Hero"
+									autoComplete="off"
+									spellCheck={false}
+									className="text-base sm:text-sm"
 									autoFocus
 								/>
 							</div>
@@ -315,12 +320,12 @@ export function SearchPalette({
 							<button
 								type="button"
 								onClick={() => onOpenChange(false)}
-								className="text-muted-foreground hover:text-foreground border-b px-4 py-3 text-sm sm:hidden"
+								className="text-muted-foreground hover:text-foreground min-h-11 touch-manipulation border-b px-4 py-3 text-sm sm:hidden"
 							>
 								Cancel
 							</button>
 						</div>
-						<CommandList className="max-h-none flex-1 p-1 sm:max-h-[320px]">
+						<CommandList className="max-h-none min-h-0 flex-1 overscroll-contain p-1 sm:max-h-[320px]">
 							<CommandEmpty>
 								{hasError
 									? 'Search is unavailable right now. Try again in a moment.'
