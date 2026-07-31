@@ -11,7 +11,7 @@ import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
-import { SkillsCourseRestartButton } from './skills-course-restart-button'
+import { SkillsCourseRecoveryBar } from './skills-course-restart-button'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -92,14 +92,11 @@ export function SkillsCourseForm() {
 
 	if (enrolled || state === 'subscribed') {
 		return (
-			<div className="flex max-w-[600px] flex-col items-start gap-3">
-				<p className={cn(TYPE.meta, 'text-primary')}>
-					{enrolled
-						? "You're in. Check your inbox for the first lesson."
-						: "You're already taking this course."}
-				</p>
-				<SkillsCourseRestartButton source="skills_hero_course_restart" />
-			</div>
+			<SkillsCourseRecoveryBar
+				source="skills_hero_course_restart"
+				justEnrolled={enrolled}
+				className="max-w-[600px]"
+			/>
 		)
 	}
 

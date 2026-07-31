@@ -14,7 +14,10 @@ import { ArrowUpRight, ShieldCheckIcon } from 'lucide-react'
 import { cn } from '@coursebuilder/utils/cn'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
-import { SkillsCourseRestartButton } from './skills-course-restart-button'
+import {
+	SkillsCourseRecoveryBar,
+	SkillsCourseRestartButton,
+} from './skills-course-restart-button'
 import {
 	SKILLS_FORM_ID,
 	SKILLS_HOSTED_RESUBSCRIBE_URL,
@@ -156,22 +159,10 @@ export function SkillsNewsletterCta({
 	if (state === 'subscribed') {
 		if (!isCourse) return null
 		return (
-			<aside
-				aria-label="AI Skills for Real Engineers course recovery"
-				className="not-prose border-border bg-muted/40 my-10 flex flex-col items-start gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-			>
-				<p className="text-foreground/80 text-sm leading-relaxed">
-					Already enrolled in the free 7-lesson{' '}
-					<strong className="text-foreground font-semibold">
-						AI Skills for Real Engineers
-					</strong>{' '}
-					course?
-				</p>
-				<SkillsCourseRestartButton
-					source={`${source}:restart`}
-					className="h-9 min-w-0 shrink-0 rounded-md px-3 text-xs"
-				/>
-			</aside>
+			<SkillsCourseRecoveryBar
+				source={`${source}:restart`}
+				className="not-prose my-10"
+			/>
 		)
 	}
 

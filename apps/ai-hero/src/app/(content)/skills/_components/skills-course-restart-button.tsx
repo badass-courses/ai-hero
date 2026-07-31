@@ -62,3 +62,36 @@ export function SkillsCourseRestartButton({
 		</div>
 	)
 }
+
+/** Compact completed-state bar shared by course CTA placements. */
+export function SkillsCourseRecoveryBar({
+	source,
+	justEnrolled = false,
+	className,
+}: {
+	source: string
+	justEnrolled?: boolean
+	className?: string
+}) {
+	return (
+		<aside
+			aria-label="AI Skills for Real Engineers course recovery"
+			className={cn(
+				'border-border bg-muted/40 flex w-full flex-col items-start gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between',
+				className,
+			)}
+		>
+			<p className="text-foreground/80 text-sm leading-relaxed">
+				{justEnrolled ? 'You’re' : 'Already'} enrolled in{' '}
+				<strong className="text-foreground font-semibold">
+					AI Skills for Real Engineers
+				</strong>
+				{justEnrolled ? '.' : '?'}
+			</p>
+			<SkillsCourseRestartButton
+				source={source}
+				className="h-9 min-w-0 shrink-0 rounded-md px-3 text-xs"
+			/>
+		</aside>
+	)
+}

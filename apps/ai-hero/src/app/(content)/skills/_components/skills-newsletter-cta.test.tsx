@@ -131,7 +131,7 @@ describe('SkillsNewsletterCta course variant', () => {
 			/>,
 		)
 
-		expect(markup).toContain('Already enrolled in the free 7-lesson')
+		expect(markup).toContain('Already enrolled in')
 		expect(markup).toContain('AI Skills for Real Engineers')
 		expect(markup).toContain('Send lesson one again')
 		expect(markup).not.toContain('name="email_address"')
