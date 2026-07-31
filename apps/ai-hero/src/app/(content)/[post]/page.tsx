@@ -273,7 +273,15 @@ export default async function PostPage(props: {
 						{/* W2 — skill posts render the normal post template (video,
 						    body, newsletter, next-up all intact); these are the only
 						    skill-specific additions, appended below the body. */}
-						{isSkillPost && <SkillExtras post={post} />}
+						{isSkillPost && (
+						<SkillExtras
+							post={post}
+							// Same rule the closing newsletter follows below: when the
+							// body already carried the course ask, this band does not
+							// repeat it.
+							showFreeLesson={resolvedCta.kind !== 'course'}
+						/>
+					)}
 						{/* {listSlugFromParam && (
 									<PostProgressToggle
 										className="flex w-full items-center justify-center"
