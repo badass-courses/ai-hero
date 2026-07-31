@@ -14,7 +14,7 @@ import { CheckCircle } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { addWorkshopInterest } from './workshop-interest-actions'
+import { WorkshopInterestButton } from './workshop-interest-button'
 
 /**
  * Pre-launch interest capture shown in the workshop sidebar while a workshop is
@@ -44,9 +44,7 @@ export const WorkshopInterestCta = ({
 	const { status: sessionStatus } = useSession()
 	const isSignedIn = sessionStatus === 'authenticated'
 	const knowsWhoYouAre = Boolean(subscriber) || isSignedIn
-	const [isPending, startTransition] = React.useTransition()
 	const [done, setDone] = React.useState(false)
-	const [error, setError] = React.useState(false)
 
 	// They already expressed interest in this specific workshop on a prior visit.
 	const alreadyInterested = hasWorkshopInterest(subscriber, workshopSlug)
@@ -69,22 +67,6 @@ export const WorkshopInterestCta = ({
 			})
 			router.push(redirectUrlBuilder(sub, '/confirm'))
 		}
-	}
-
-	const handleKnownSubscriberClick = () => {
-		setError(false)
-		startTransition(async () => {
-			const result = await addWorkshopInterest(workshopSlug)
-			if (result.success) {
-				track('subscribed', {
-					location: 'workshop_interest_existing',
-					workshop: workshopSlug,
-				})
-				setDone(true)
-			} else {
-				setError(true)
-			}
-		})
 	}
 
 	return (
@@ -138,21 +120,12 @@ export const WorkshopInterestCta = ({
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 				</div>
 			) : knowsWhoYouAre ? (
-				<div className="flex flex-col gap-2">
-					<button
-						type="button"
-						onClick={handleKnownSubscriberClick}
-						disabled={isPending}
-						className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-[9px] px-[18px] text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-					>
-						{isPending ? 'Adding you…' : 'Keep me posted'}
-					</button>
-					{error && (
-						<p className={cn(TYPE.meta, 'text-destructive')}>
-							Something went wrong. Please try again.
-						</p>
-					)}
-				</div>
+				<WorkshopInterestButton
+					workshopSlug={workshopSlug}
+					containerClassName="w-full"
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-[9px] px-[18px] text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+					onSuccess={() => setDone(true)}
+				/>
 			) : (
 				<div>
 					<ConversionIntentForm
