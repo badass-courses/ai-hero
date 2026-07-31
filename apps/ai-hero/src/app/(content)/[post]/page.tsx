@@ -132,6 +132,39 @@ export default async function PostPage(props: {
 	// under § UP NEXT). Everywhere else the page closes on the paired grid.
 	const showRelatedNewsletter = !showLessonPager || !neighbors.next
 
+	// The reader is standing on the last lesson of a list they were walking.
+	// `prev` without `next` is what that looks like: they came through the list
+	// and there is nothing after this.
+	//
+	// This matters because "More in {series}" is the wrong offer here, and this
+	// is the ONLY place it was ever made. Mid-list the pager suppresses the whole
+	// related grid (`showRelatedNewsletter` above), so the sibling strategy could
+	// only ever fire at the end — at the one moment the siblings are the posts
+	// the reader has just finished. It recommended the series backwards.
+	//
+	// Not skills. A skill post is a list member, but the list is a catalog rather
+	// than a path: its own pager WRAPS (last → first), so no skill is an ending
+	// and finishing one implies nothing about the other twenty. Treating the last
+	// row of the catalog as a finale would cut a skill page off from the other
+	// skills for no reason a reader would recognise.
+	const isListFinale =
+		!isSkillPost && Boolean(neighbors.prev) && !neighbors.next
+
+	// Everything in the list, AND the list itself, so discovery can be told to
+	// avoid the whole thing. Flipping the variant alone would not have fixed
+	// anything: for a lesson in a series the nearest neighbours by topic ARE its
+	// siblings, so Typesense would hand back the same just-read posts.
+	//
+	// The list's own id belongs here for the same reason its lessons do, and it
+	// is the easier one to miss. Lists are indexed alongside posts, so with only
+	// the members excluded the top recommendation under the last lesson of the
+	// MCP tutorial was the MCP tutorial: the reader is offered the front door of
+	// the room they are standing at the back of.
+	const listMemberIds =
+		isListFinale && list
+			? [list.id, ...flattenListResources(list).map((e) => e.resource.id)]
+			: undefined
+
 	// Related rows come from whichever source the shape has: a skill's own topic
 	// tags first, then the article / discovery resolver. A skill with no topic
 	// tags still gets rows rather than a half-empty grid.
@@ -140,10 +173,12 @@ export default async function PostPage(props: {
 		: await resolvePostRelatedItems({
 				post,
 				isSkillPost,
-				variant: isEligibleForCrossPromo
-					? (post.fields?.relatedPostsVariant ?? 'section')
-					: 'suggested',
+				variant:
+					isEligibleForCrossPromo && !isListFinale
+						? (post.fields?.relatedPostsVariant ?? 'section')
+						: 'suggested',
 				sectionTitle: list?.fields?.title,
+				documentIdsToSkip: listMemberIds,
 			})
 	// The rail lists the page's non-heading endings alongside the article's own
 	// h2s. Only what actually renders, in document order.
@@ -326,11 +361,14 @@ async function resolvePostRelatedItems({
 	isSkillPost,
 	variant,
 	sectionTitle,
+	documentIdsToSkip,
 }: {
 	post: Post
 	isSkillPost: boolean
 	variant: 'section' | 'suggested'
 	sectionTitle?: string
+	/** Content the reader is done with — the finished list, at a list's end. */
+	documentIdsToSkip?: string[]
 }): Promise<PostRelatedItem[]> {
 	if (isSkillPost) {
 		const fromTags = await getRelatedSkillPosts(post)
@@ -341,6 +379,7 @@ async function resolvePostRelatedItems({
 		postId: post.id,
 		variant,
 		sectionTitle,
+		documentIdsToSkip,
 	})
 
 	return items.map((item) => ({

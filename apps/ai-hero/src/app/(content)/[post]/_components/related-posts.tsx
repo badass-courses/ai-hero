@@ -212,9 +212,15 @@ async function resolveSuggested(
 	const skip = new Set(skipIds)
 
 	for (let i = 0; i < MAX_ITEMS; i++) {
+		// The neighbourhood grows with what we are excluding. A fixed k:5 was fine
+		// when the skip list held an id or two, but the end of a list now excludes
+		// the whole list — and a lesson's five nearest neighbours by topic are
+		// mostly its own siblings, so a fixed radius could return nothing at all
+		// once they were filtered out. Widening by the skip count keeps the same
+		// number of real candidates in view.
 		const doc = await getNearestNeighbour(
 			postId,
-			5,
+			5 + skip.size,
 			1,
 			Array.from(skip),
 		).catch(() => null)
