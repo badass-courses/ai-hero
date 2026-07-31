@@ -37,10 +37,12 @@ export const WorkshopNotifyButton = ({
 	className?: string
 	children?: React.ReactNode
 }) => {
-	const { subscriber } = useCtaGate()
+	const { subscriber, isResolved } = useCtaGate()
 	const { status: sessionStatus } = useSession()
 	const [done, setDone] = React.useState(false)
 	const knowsWhoYouAre = Boolean(subscriber) || sessionStatus === 'authenticated'
+	const identityIsLoading =
+		!subscriber && (!isResolved || sessionStatus === 'loading')
 
 	// Already on this workshop's list, so there is nothing to press. This used
 	// to render a line of confirmation copy in the button's place — mid-body,
@@ -53,6 +55,22 @@ export const WorkshopNotifyButton = ({
 
 	if (done) {
 		return <p className="text-primary text-sm font-medium">You&rsquo;re on the list.</p>
+	}
+
+	// Do not briefly expose the anonymous input-focusing behavior while the two
+	// identity sources are still settling. The sidebar is a skeleton in this
+	// state, so there is no input to focus and an early click would be a no-op.
+	if (identityIsLoading) {
+		return (
+			<Button
+				size="lg"
+				className={cn(WORKSHOP_CTA_BUTTON, className)}
+				disabled
+				aria-busy="true"
+			>
+				{children}
+			</Button>
+		)
 	}
 
 	if (knowsWhoYouAre && workshopSlug) {
