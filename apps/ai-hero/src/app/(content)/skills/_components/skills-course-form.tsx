@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { SKILLS_COURSE_PANEL } from '@/lib/skills-content'
+import {
+	SKILLS_FORM_ID,
+	SKILLS_INTEREST_FIELDS,
+} from './skills-newsletter-config'
 import type { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
@@ -146,6 +150,17 @@ export function SkillsCourseForm() {
 		<div className="max-w-[600px]">
 			<SubscribeToConvertkitForm
 				id="skills-course-hero"
+				// `formId` is optional on the shared component and falls back to
+				// NEXT_PUBLIC_CONVERTKIT_SIGNUP_FORM, the general newsletter form.
+				// Course enrolment is hard-gated on `Number(body.listId) === 9376133`
+				// in the convertkit subscribe route, so without this the hero on the
+				// course front door subscribed people to the newsletter and enrolled
+				// nobody — while still firing `skills_course_subscribed` and
+				// redirecting to `/confirm`, so it looked like it worked. Measured
+				// 2026-07-31: /skills pages were sending 43-90 signups a day to the
+				// default form. Same defect the homepage had; same fix.
+				formId={SKILLS_FORM_ID}
+				fields={{ ...SKILLS_INTEREST_FIELDS, source: 'skills_course_hero' }}
 				actionLabel={SKILLS_COURSE_PANEL.ctaLabel}
 				onSuccess={(subscriber) => {
 					if (!subscriber) return
