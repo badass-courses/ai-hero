@@ -36,7 +36,19 @@ import readingTime from 'reading-time'
 
 import { type PostRelatedItem } from '../../_components/post-related-newsletter'
 
-export async function SkillExtras({ post }: { post: Post }) {
+export async function SkillExtras({
+	post,
+	showFreeLesson = true,
+}: {
+	post: Post
+	/**
+	 * False when the body already asked for the email course — see the prop of
+	 * the same name on `SkillActions`. Passed down from `PostPage`, which is
+	 * where the page's CTA is resolved, rather than re-derived here: two places
+	 * deciding the same thing is how the page ended up asking twice.
+	 */
+	showFreeLesson?: boolean
+}) {
 	const slug = String(post.fields?.slug ?? '')
 
 	// CMS-owned skill data. When this post isn't a list member, `neighbors` is
@@ -50,6 +62,7 @@ export async function SkillExtras({ post }: { post: Post }) {
 			prev={neighbors?.prev}
 			current={neighbors?.current}
 			next={neighbors?.next}
+			showFreeLesson={showFreeLesson}
 		/>
 	)
 }

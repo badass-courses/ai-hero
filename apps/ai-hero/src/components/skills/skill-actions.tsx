@@ -35,6 +35,7 @@ export function SkillActions({
 	prev,
 	current,
 	next,
+	showFreeLesson = true,
 	className,
 }: {
 	/** The skill post's flat root slug. */
@@ -43,6 +44,24 @@ export function SkillActions({
 	prev?: SkillEntry | null
 	current?: SkillEntry | null
 	next?: SkillEntry | null
+	/**
+	 * Whether to offer the free email course here.
+	 *
+	 * False when the BODY already asked for it, which on a skill post is the
+	 * default: `resolvePostCta` gives every skill `kind: 'course'` unless the CMS
+	 * says otherwise. The page was making the same offer twice, a screen apart —
+	 * "Start the free course" above, "Take the free lesson" below, both landing
+	 * on /skills/subscribe. The same rule already suppresses the closing
+	 * newsletter for the same reason; this cell was simply never brought under
+	 * it.
+	 *
+	 * Deduping HERE rather than gating on the reader is deliberate. The body CTA
+	 * is the better of the two — it knows who is reading and says "you're already
+	 * subscribed, one click starts the course" — so the fix is to stop competing
+	 * with it, not to hide this cell from subscribers and leave two asks for
+	 * everyone else.
+	 */
+	showFreeLesson?: boolean
 	className?: string
 }) {
 	const command = invocationName(slug)
@@ -61,8 +80,12 @@ export function SkillActions({
 					Skill actions
 				</p>
 
-				{/* Hairline grid: the 1px gaps ARE the dividers (DESIGN rule 2). */}
-				<div className="border-border bg-border grid gap-px overflow-hidden rounded-lg border min-[901px]:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+				{/* Hairline grid: the 1px gaps ARE the dividers (DESIGN rule 2).
+				    `auto-fit` rather than a written-down two-column track, because
+				    the free-lesson cell may not be here: with a fixed template the
+				    install cell kept its 1.25fr and left the rest of the band empty.
+				    auto-fit collapses the unused track, so one cell takes the row. */}
+				<div className="border-border bg-border grid gap-px overflow-hidden rounded-lg border min-[901px]:grid-cols-[repeat(auto-fit,minmax(320px,1fr))]">
 					<div className="bg-background px-6 py-6 sm:py-7">
 						{/* Heading left, live proof right, on one baseline. The count
 						    belongs beside the ask rather than above or below it: a
@@ -102,6 +125,7 @@ export function SkillActions({
 						<SkillInstallTabs command={command} />
 					</div>
 
+					{showFreeLesson ? (
 					<div className="bg-card flex flex-col px-6 py-6 sm:py-7">
 						<h2 className={cn(TYPE.subhead, 'mb-2')}>
 							See it on a real project
@@ -128,6 +152,7 @@ export function SkillActions({
 							/>
 						</Link>
 					</div>
+					) : null}
 				</div>
 
 				{hasPager ? (

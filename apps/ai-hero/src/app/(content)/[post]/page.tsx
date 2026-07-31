@@ -273,7 +273,24 @@ export default async function PostPage(props: {
 						{/* W2 — skill posts render the normal post template (video,
 						    body, newsletter, next-up all intact); these are the only
 						    skill-specific additions, appended below the body. */}
-						{isSkillPost && <SkillExtras post={post} />}
+						{isSkillPost && (
+						<SkillExtras
+							post={post}
+							// Same rule the closing newsletter follows below: when the
+							// body already carried the course ask, this band does not
+							// repeat it.
+							//
+							// "Carried", not "was configured to carry". `PostBody` returns
+							// null for a post with no body, taking the CTA with it, so a
+							// bodyless skill post would suppress this cell against an ask
+							// that never rendered and offer the course nowhere at all.
+							// Dropping a duplicate is the point; dropping the last one is
+							// not.
+							showFreeLesson={
+								resolvedCta.kind !== 'course' || !post.fields?.body
+							}
+						/>
+					)}
 						{/* {listSlugFromParam && (
 									<PostProgressToggle
 										className="flex w-full items-center justify-center"
