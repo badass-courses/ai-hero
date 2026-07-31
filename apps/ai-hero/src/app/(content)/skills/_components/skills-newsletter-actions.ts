@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
-import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
+import { setSubscriberCookie } from '@/lib/convertkit'
+import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -21,12 +22,15 @@ import {
 } from './skills-newsletter-config'
 
 export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
-	const subscriber = await getSubscriberFromCookie()
+	// Cookie OR session — see `resolveEnrolmentIdentity` for why a signed-in
+	// reader must not be asked to retype an address the server already has.
+	const { identity, subscriber } = await resolveEnrolmentIdentity()
 
-	if (!subscriber?.id || !subscriber.email_address) {
+	if (!identity) {
 		await log.warn('skills.tagme.no.subscriber', {
 			hasSubscriber: Boolean(subscriber),
 			hasEmail: Boolean(subscriber?.email_address),
+			hasSession: false,
 		})
 		return { success: false, reason: 'not-subscribed' as const }
 	}
@@ -36,11 +40,22 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 			listId: SKILLS_FORM_ID,
 			listType: 'form',
 			user: {
-				email: subscriber.email_address,
-				name: subscriber.first_name ?? undefined,
+				email: identity.email,
+				name: identity.name,
 			} as any,
 			fields: { ...SKILLS_INTEREST_FIELDS, source },
 		})
+
+		// `?? subscriber` no longer holds for the session path: there may be no
+		// cookie record to fall back to, and parsing `undefined` would throw
+		// inside the try and report a failure over a Kit call that succeeded.
+		if (!updated && !subscriber) {
+			await log.error('skills.tagme.no.subscriber.returned', {
+				formId: SKILLS_FORM_ID,
+				via: identity.via,
+			})
+			return { success: false, reason: 'request-failed' as const }
+		}
 
 		const subscribed = SubscriberSchema.parse(updated ?? subscriber)
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
@@ -59,9 +74,12 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 		}
 		await sendSkillsNewsletterPathEntry(subscribed, source)
 
+		// From the PARSED record, not the cookie: on the session path there may be
+		// no cookie record at all, and this is the id we actually enrolled.
 		await log.info('skills.tagme.success', {
-			subscriberId: subscriber.id,
+			subscriberId: subscribed.id,
 			formId: SKILLS_FORM_ID,
+			via: identity.via,
 		})
 
 		revalidatePath('/skills')
@@ -70,8 +88,9 @@ export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		await log.error('skills.tagme.failed', {
-			subscriberId: subscriber.id,
+			subscriberId: subscriber?.id,
 			formId: SKILLS_FORM_ID,
+			via: identity.via,
 			error: message,
 		})
 		return { success: false, reason: 'request-failed' as const }

@@ -6,7 +6,10 @@ import { TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { SKILLS_COURSE_PANEL } from '@/lib/skills-content'
 import type { Subscriber } from '@/schemas/subscriber'
+import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
+
+import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -40,6 +43,96 @@ import { cn } from '@coursebuilder/utils/cn'
  */
 export function SkillsCourseForm() {
 	const router = useRouter()
+
+	// Who is reading, from the one resolver the bar and `/skills/subscribe` also
+	// use. A reader we can name must not be shown two empty fields — see
+	// `resolveSkillsCtaState`.
+	const { data: ctaState, isPending: ctaPending } =
+		api.ability.getSkillsCourseCtaState.useQuery()
+	const utils = api.useUtils()
+	const [isEnrolling, startEnrolling] = React.useTransition()
+	const [enrolled, setEnrolled] = React.useState(false)
+	const [error, setError] = React.useState<string | null>(null)
+
+	const state = ctaState?.state
+
+	const handleOneClick = () => {
+		setError(null)
+		startEnrolling(async () => {
+			const result = await tagSubscriberAsSkills('skills_hero_course')
+			if (result.success) {
+				track('skills_course_subscribed', {
+					location: 'skills-hero',
+					method: 'one-click',
+				})
+				setEnrolled(true)
+				// The nav bar reads this same query — without the invalidation it
+				// keeps offering a course this panel has just confirmed.
+				void utils.ability.getSkillsCourseCtaState.invalidate()
+			} else if (result.reason === 'confirmation-required') {
+				window.location.assign(result.confirmationUrl)
+			} else {
+				setError('Something went wrong. Please try again.')
+			}
+		})
+	}
+
+	// Hold the block rather than guess. Rendering the form first and swapping it
+	// for a button once the query lands moves the thing under the reader's
+	// cursor — the same reason the nav bar holds its slot.
+	if (ctaPending) {
+		return (
+			<div className="max-w-[600px]">
+				<div className="bg-muted h-12 w-full animate-pulse rounded-[9px] desk:h-11" />
+			</div>
+		)
+	}
+
+	if (enrolled || state === 'subscribed') {
+		return (
+			<div className="max-w-[600px]">
+				<p className={cn(TYPE.meta, 'text-primary')}>
+					{enrolled
+						? "You're in. Check your inbox for the first lesson."
+						: "You're already taking this course."}
+				</p>
+			</div>
+		)
+	}
+
+	// Known by list or by account: one button, no fields.
+	if (state === 'tag-me' || state === 'account') {
+		return (
+			<div className="max-w-[600px]">
+				<button
+					type="button"
+					onClick={handleOneClick}
+					disabled={isEnrolling}
+					className={cn(
+						TYPE.meta,
+						'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-[9px] px-5 font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 desk:h-11 @[640px]:w-auto',
+					)}
+				>
+					{isEnrolling ? 'Starting…' : SKILLS_COURSE_PANEL.ctaLabel}
+				</button>
+				<p
+					className={cn(
+						TYPE.metaSm,
+						'mt-2.5 text-[color:var(--ah-fg-subtle)]',
+					)}
+				>
+					{/* Only the list state may claim prior subscription; an `account`
+					    reader may be on no list at all. */}
+					{state === 'account'
+						? "We'll use your account email."
+						: "You're already subscribed. One click starts the course."}
+				</p>
+				{error ? (
+					<p className={cn(TYPE.metaSm, 'text-destructive mt-2')}>{error}</p>
+				) : null}
+			</div>
+		)
+	}
 
 	return (
 		// Capped, because the single-column state is the real layout. Without the

@@ -191,7 +191,19 @@ const FreeCourseCta = ({
 }) => {
 	const cohortOffer = useCohortOffer()
 
-	const isSubscribed = isOnEmailList(subscriber)
+	// The SAME answer `/skills/subscribe` and the inline CTA use, so the bar
+	// cannot advertise a course the page then refuses to offer.
+	//
+	// This was `isOnEmailList(subscriber)`, which is wrong twice. It reads
+	// `state === 'active'` — being on the AI HERO LIST, which this codebase
+	// states plainly is not being on the course (see `hasStartedFreeCourse`), so
+	// a subscriber who had never joined was never asked. And it read a
+	// cookie-only payload while the subscribe page also falls back to Kit, so
+	// the bar could say "not subscribed" over a page that had already concluded
+	// the opposite: the button offered a course and led to a page with no form.
+	const { data: courseCta, isPending: courseCtaPending } =
+		api.ability.getSkillsCourseCtaState.useQuery()
+	const isSubscribed = courseCta?.state === 'subscribed'
 
 	const { status: sessionStatus } = useSession()
 
@@ -265,7 +277,15 @@ const FreeCourseCta = ({
 	// `isPending` forever, which would leave a signed-out visitor staring at a
 	// placeholder that never resolves.
 
-	if (!subscriberResolved || (ownershipAsked && ownershipPending)) {
+	// `courseCtaPending` joins the hold for the reason above it: the label is now
+	// decided by that query, so rendering before it lands would put "Get the free
+	// course" in front of someone already taking it and then swap it — the exact
+	// flicker this hold exists to prevent.
+	if (
+		!subscriberResolved ||
+		courseCtaPending ||
+		(ownershipAsked && ownershipPending)
+	) {
 		return (
 			<li className="hidden items-center lg:flex">
 				<span

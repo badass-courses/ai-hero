@@ -6,6 +6,7 @@ import { ThemeImage } from '@/components/cld-image'
 import Spinner from '@/components/spinner'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
+import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 import { ShieldCheckIcon } from 'lucide-react'
 
@@ -69,6 +70,7 @@ export function Root({
 	// The server prop only changes on a fresh render; a successful one-click
 	// enrollment must confirm immediately without waiting for revalidation.
 	const [enrolledLocally, setEnrolledLocally] = React.useState(false)
+	const utils = api.useUtils()
 
 	const tagMe = React.useCallback(() => {
 		setError(null)
@@ -77,6 +79,9 @@ export function Root({
 			if (result.success) {
 				setEnrolledLocally(true)
 				track('subscribed', { location, method: 'tag-me' })
+				// Same query the nav bar's offer reads. See the note in
+				// `skills-newsletter-cta`.
+				void utils.ability.getSkillsCourseCtaState.invalidate()
 			} else if (result.reason === 'confirmation-required') {
 				window.location.assign(result.confirmationUrl)
 			} else {

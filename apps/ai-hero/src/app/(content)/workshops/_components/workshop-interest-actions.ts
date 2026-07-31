@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
+import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
@@ -48,13 +49,17 @@ async function applyWorkshopInterestTag({
  * the same field); they get tagged via `tagWorkshopInterestByEmail` on success.
  */
 export async function addWorkshopInterest(workshopSlug: string) {
-	const subscriber = await getSubscriberFromCookie()
+	// Cookie OR session — a signed-in reader is identified, so the waitlist does
+	// not need to ask for an address the server already has. See
+	// `resolveEnrolmentIdentity`.
+	const { identity, subscriber } = await resolveEnrolmentIdentity()
 
-	if (!subscriber?.id || !subscriber.email_address) {
+	if (!identity) {
 		await log.warn('workshop.interest.no.subscriber', {
 			workshopSlug,
 			hasSubscriber: Boolean(subscriber),
 			hasEmail: Boolean(subscriber?.email_address),
+			hasSession: false,
 		})
 		return { success: false, reason: 'not-subscribed' as const }
 	}
@@ -72,13 +77,13 @@ export async function addWorkshopInterest(workshopSlug: string) {
 				listId: env.CONVERTKIT_SIGNUP_FORM,
 				listType: 'form',
 				user: {
-					email: subscriber.email_address,
-					name: subscriber.first_name ?? undefined,
+					email: identity.email,
+					name: identity.name,
 				} as any,
 				fields: { [fieldKey]: today },
 			}),
 			applyWorkshopInterestTag({
-				email: subscriber.email_address,
+				email: identity.email,
 				workshopSlug,
 			}),
 		])
@@ -89,7 +94,8 @@ export async function addWorkshopInterest(workshopSlug: string) {
 
 		await log.info('workshop.interest.success', {
 			workshopSlug,
-			subscriberId: subscriber.id,
+			subscriberId: subscriber?.id,
+			via: identity.via,
 			fieldKey,
 		})
 
@@ -100,7 +106,8 @@ export async function addWorkshopInterest(workshopSlug: string) {
 		const message = error instanceof Error ? error.message : String(error)
 		await log.error('workshop.interest.failed', {
 			workshopSlug,
-			subscriberId: subscriber.id,
+			subscriberId: subscriber?.id,
+			via: identity.via,
 			fieldKey,
 			error: message,
 		})

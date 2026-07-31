@@ -137,15 +137,23 @@ function Hero({
 	// session flips to `subscribed` through `StatusView` further down, and there
 	// the panel must remain: that confirmation answers a click they just made,
 	// and an action with no visible result reads as an action that failed.
+	// Reversing an earlier call, deliberately. The panel used to be REMOVED for a
+	// reader who arrived enrolled, on the reasoning that 520px of hero holding
+	// one unactionable sentence was worse than no panel.
+	//
+	// That reasoning holds only if nothing sends an enrolled reader here — and
+	// something did: the bar's gold button advertised "Get the free course" off
+	// a cookie-only check, landing people on a page that answered by removing
+	// its own offer. Arriving from a button that promised a course and finding
+	// an empty column reads as broken, not as finished.
+	//
+	// The bar no longer does that (see `navigation/index.tsx`), but this page is
+	// linkable, bookmarkable and mailable, so it still has to say something when
+	// the answer is "you already have this".
 	const arrivedEnrolled = status === 'subscribed'
 
 	return (
-		<section
-			className={cn(
-				'border-border grid border-b',
-				!arrivedEnrolled && 'lg:grid-cols-[minmax(0,1fr)_520px]',
-			)}
-		>
+		<section className="border-border grid border-b lg:grid-cols-[minmax(0,1fr)_520px]">
 			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px]">
 				{/* This route's one eyebrow: a scope and a price the headline does not
 				    carry. In full ink rather than accent — a rare mark that still
@@ -192,20 +200,24 @@ function Hero({
 			    are the same offer, one page apart, so they take the same ground.
 			    The card stays `bg-card` (opaque) — a translucent surface lets the
 			    diagonals read straight through and the panel becomes a hole. */}
-			{arrivedEnrolled ? null : (
 			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
 				<SkillsNewsletter.Root status={status} location={location}>
 					<div className="border-input bg-card w-full rounded-lg border p-[30px] pb-8">
+						{/* The panel names what it is FOR, which is not the same thing
+						    once the reader already has it: "Start the course" over a
+						    confirmation reads as an offer that failed to appear. */}
 						<p
 							className={cn(
 								TYPE.groupLabel,
 								'mb-3.5',
 							)}
 						>
-							Start the course
+							{arrivedEnrolled ? "You're enrolled" : 'Start the course'}
 						</p>
 						<h2 className={cn(TYPE.panelTitle, 'mb-[22px] text-balance')}>
-							Get lesson one in your inbox
+							{arrivedEnrolled
+								? 'You already have this course'
+								: 'Get lesson one in your inbox'}
 						</h2>
 						<SkillsNewsletter.StatusView
 							subscribed={<SkillsCourseConfirmed />}
@@ -236,7 +248,6 @@ function Hero({
 					</div>
 				</SkillsNewsletter.Root>
 			</div>
-			)}
 		</section>
 	)
 }
