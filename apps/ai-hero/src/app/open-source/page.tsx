@@ -55,9 +55,7 @@ export default async function OpenSourcePage() {
 						    sizes. Tokens now, per DESIGN rule 10. `pb-11 pt-12` matches
 						    the /skills hero instead of `py-16 md:py-24`. */}
 						<div className="flex flex-col gap-6 px-[18px] pb-11 pt-12 sm:px-11">
-							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-								{OPEN_SOURCE_HERO.eyebrow}
-							</p>
+							<p className={TYPE.eyebrow}>{OPEN_SOURCE_HERO.eyebrow}</p>
 							<h1 className={cn(TYPE.title, 'text-balance')}>
 								{OPEN_SOURCE_HERO.title}
 							</h1>

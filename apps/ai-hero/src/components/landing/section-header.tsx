@@ -2,7 +2,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 
-import { TYPE } from './type'
+import { BADGE_OUTLINE, TYPE } from './type'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -50,6 +50,7 @@ const RANK_TYPE: Record<SectionHeaderRank, string> = {
 
 export function SectionHeader({
 	eyebrow,
+	badge,
 	heading,
 	rank = 'quiet',
 	linkHref,
@@ -62,6 +63,14 @@ export function SectionHeader({
 	 * scrolling past a wall of 34px headings which one they are looking at.
 	 */
 	eyebrow?: string
+	/**
+	 * A property of the thing this section is about — "Open source", "Free" —
+	 * rendered BELOW the heading, never above it. This is where a fact goes when
+	 * it fails the eyebrow's solitude test but is still worth stating: a badge
+	 * attaches to itself via its container, so it can repeat across a page
+	 * without becoming texture the way a floating mark does.
+	 */
+	badge?: string
 	heading?: string
 	/** Size rank of the `h2`. See `SectionHeaderRank`. */
 	rank?: SectionHeaderRank
@@ -85,25 +94,46 @@ export function SectionHeader({
 					? 'pb-9 sm:pt-[68px] md:pb-[30px]'
 					: 'pb-10 sm:pt-[76px] md:pb-[38px]',
 			)}>
-			<div className="flex flex-col gap-4 md:max-w-2xl">
-				{eyebrow ? (
-					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-						{eyebrow}
-					</p>
-				) : null}
-				{heading ? (
-					<h2 className={cn(RANK_TYPE[rank], 'text-balance')}>{heading}</h2>
-				) : null}
-				{children ? (
-					<p
-						className={cn(
-							TYPE.body,
-							'max-w-[62ch] text-pretty text-[color:var(--ah-fg-muted)]',
-						)}
-					>
-						{children}
-					</p>
-				) : null}
+			<div className="md:max-w-2xl">
+				{/* Outside the `gap-4` stack on purpose: `TYPE.eyebrow` ships its own
+				    `mb-3`, and the whole point of that is that the eyebrow-to-heading
+				    distance stops being a per-call-site decision. Inside the stack the
+				    gap would add to the margin and the mark would float again. */}
+				{eyebrow ? <p className={TYPE.eyebrow}>{eyebrow}</p> : null}
+				<div className="flex flex-col gap-4">
+					{heading ? (
+						<h2 className={cn(RANK_TYPE[rank], 'text-balance')}>{heading}</h2>
+					) : null}
+					{badge ? (
+						<p>
+							<span
+								className={cn(
+									TYPE.badge,
+									BADGE_OUTLINE,
+									'inline-flex w-fit border-[color:var(--ah-accent-line)] text-primary',
+								)}
+							>
+								{badge}
+							</span>
+						</p>
+					) : null}
+					{children ? (
+						// `text-balance`, not `text-pretty`. Pretty only protects the last
+						// line from going orphan; the heading above is balanced, so an
+						// intro with a long first line and a short third read as ragged
+						// against it. These are two or three lines, well inside the four
+						// to six a browser will balance, so the whole block settles into
+						// even measures.
+						<p
+							className={cn(
+								TYPE.body,
+								'max-w-[62ch] text-balance text-[color:var(--ah-fg-muted)]',
+							)}
+						>
+							{children}
+						</p>
+					) : null}
+				</div>
 			</div>
 			{linkHref ? (
 				<Link

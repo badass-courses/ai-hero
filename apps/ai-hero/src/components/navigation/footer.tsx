@@ -89,7 +89,7 @@ const dimSiblingsOnHover =
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
 	return (
-		<h3 className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
+		<h3 className={cn(TYPE.groupLabel, 'mb-4')}>
 			{children}
 		</h3>
 	)

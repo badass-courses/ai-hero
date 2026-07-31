@@ -6,12 +6,10 @@ import { TYPE } from './type'
 import { cn } from '@coursebuilder/utils/cn'
 
 export function AboutMatt({
-	eyebrow = "Who's teaching",
 	headline = "Hi, I'm Matt Pocock",
 	newsletter,
 	children,
 }: {
-	eyebrow?: string
 	headline?: string
 	/**
 	 * The newsletter panel, rendered under the bio in the same column
@@ -74,9 +72,8 @@ export function AboutMatt({
 			</div>
 			<div className="px-[18px] pb-14 pt-8 sm:px-11 lg:py-16">
 				<div className="flex flex-col gap-[18px]">
-					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-						{eyebrow}
-					</p>
+					{/* No eyebrow. "Who's teaching" over "Hi, I'm Matt Pocock" restates
+					    the heading in caps. */}
 					<h2 className={cn(TYPE.sectionByline, 'max-w-[54ch] font-sans')}>
 						{headline}
 					</h2>

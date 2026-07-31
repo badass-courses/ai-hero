@@ -1,6 +1,8 @@
 import * as React from 'react'
+import Link from 'next/link'
 import { TYPE } from '@/components/landing/type'
 import { SKILLS_SALES_COPY } from '@/lib/skills-content'
+import { ArrowDown } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -24,7 +26,7 @@ export function SkillsSalesCopy() {
 			<div className="px-[18px] pb-10 pt-11 sm:px-11">
 				<p
 					id="skills-sales-heading"
-					className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}
+					className={TYPE.eyebrow}
 				>
 					{eyebrow}
 				</p>
@@ -46,7 +48,7 @@ export function SkillsSalesCopy() {
 							key={block.heading}
 							className="bg-background px-[22px] pb-6 pt-[22px]"
 						>
-							<h3 className={cn(TYPE.micro, 'text-primary mb-[11px]')}>
+							<h3 className={cn(TYPE.groupLabel, 'text-primary mb-[11px]')}>
 								{block.heading}
 							</h3>
 							<p
@@ -85,6 +87,23 @@ export function SkillsSalesCopy() {
 							</li>
 						))}
 					</ul>
+					{/* Styled off the agent chips beside it so it reads as part of that
+					    row, then lifted with the accent line and wash — the row states a
+					    fact and this is the thing to do about it. Not a filled button:
+					    the page's gold fill belongs to the course CTA. */}
+					<Link
+						href="#install"
+						className={cn(
+							TYPE.command,
+							'border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-wash)] text-primary hover:bg-[color:var(--ah-accent-panel)] focus-visible:ring-ring group inline-flex items-center gap-1.5 rounded-sm border px-[9px] py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+						)}
+					>
+						Install
+						<ArrowDown
+							aria-hidden
+							className="ease-out-quart size-3 shrink-0 transition-transform duration-300 group-hover:translate-y-0.5 motion-reduce:transform-none motion-reduce:transition-none"
+						/>
+					</Link>
 				</div>
 			</div>
 		</section>

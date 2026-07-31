@@ -7,21 +7,22 @@ import { cn } from '@coursebuilder/utils/cn'
 /**
  * The page's argument, set as a claim against its reasoning.
  *
- * Two columns, no rule between them (`Home Page.dc.html` § MANIFESTO). The
- * body column is offset down by the gutter instead: a hairline here read as a
- * table of two equal things, and this is one statement with its case
- * underneath, not a comparison.
+ * Two columns, no rule between them (`Home Page.dc.html` § MANIFESTO): a
+ * hairline here read as a table of two equal things, and this is one statement
+ * with its case beside it, not a comparison.
+ *
+ * Both columns start at the same top edge. The body used to be pushed down by
+ * a gutter to mark it as subordinate, which left a band of empty space next to
+ * the headline and made the two halves look mis-set rather than related.
  *
  * The closing paragraph is set in full ink at medium weight. It is the only
  * sentence in the section a reader has to leave with, and at body opacity it
  * disappeared into the two paragraphs of setup above it.
  */
 export function Manifesto({
-	eyebrow = 'The argument',
 	headline,
 	children,
 }: {
-	eyebrow?: string
 	headline: string
 	children: React.ReactNode
 }) {
@@ -33,11 +34,8 @@ export function Manifesto({
 			    hairline happens to survive it. */}
 			<div className="grid grid-cols-1 gap-8 px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px] md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] md:gap-16">
 				<div className="flex flex-col gap-5">
-					{eyebrow ? (
-						<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-							{eyebrow}
-						</p>
-					) : null}
+					{/* No eyebrow. "The argument" named a mood, not a fact: cover it and
+					    the headline loses nothing. */}
 					<h2 className={cn(TYPE.sectionClaim, 'text-balance font-sans')}>
 						{headline}
 					</h2>
@@ -45,7 +43,7 @@ export function Manifesto({
 				<div
 					className={cn(
 						TYPE.body,
-						'flex max-w-[62ch] flex-col gap-5 text-pretty text-[color:var(--ah-fg-body)] md:pt-11',
+						'flex max-w-[62ch] flex-col gap-5 text-pretty text-[color:var(--ah-fg-body)]',
 						// The MDX pipeline gives every `p` a bottom margin of its own,
 						// which doubled with the flex gap. The gap is the spacing here.
 						'[&>p]:m-0!',

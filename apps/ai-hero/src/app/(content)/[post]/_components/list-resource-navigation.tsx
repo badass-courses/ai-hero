@@ -153,8 +153,8 @@ export function MobileListResourceNavigation({
 						<span className="min-w-0 flex-1">
 							<span
 								className={cn(
-									TYPE.micro,
-									'block truncate text-[color:var(--ah-fg-label)]',
+									TYPE.groupLabel,
+									'block truncate',
 								)}
 							>
 								{list.fields.title}
@@ -172,8 +172,8 @@ export function MobileListResourceNavigation({
 						{position ? (
 							<span
 								className={cn(
-									TYPE.micro,
-									'flex-none text-[color:var(--ah-fg-label)]',
+									TYPE.metaMark,
+									'flex-none',
 								)}
 							>
 								{position}

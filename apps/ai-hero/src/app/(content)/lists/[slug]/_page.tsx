@@ -210,18 +210,14 @@ export default async function ListPage(props: {
 							{list.fields.type !== 'workshop' && (
 								<span
 									className={cn(
-										TYPE.micro,
-										'bg-accent-fill text-accent-fill-foreground rounded-[4px] px-1.5 py-1',
+										TYPE.badge,
+										'bg-accent-fill text-accent-fill-foreground inline-flex w-fit rounded-[4px] px-[7px] py-[5px]',
 									)}
 								>
 									Free
 								</span>
 							)}
-							<p
-								className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}
-							>
-								{metaBits.join(' · ')}
-							</p>
+							<p className={TYPE.metaMark}>{metaBits.join(' · ')}</p>
 						</div>
 						<h1 className={cn(TYPE.title, 'text-balance')}>
 							{list.fields.title}
@@ -299,9 +295,7 @@ export default async function ListPage(props: {
 							{/* The player owns its own aspect ratio and radius; this cell
 							    only positions it. */}
 							<div className="[&_video]:rounded-md">{introVideo}</div>
-							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-								Watch the intro
-							</p>
+							<p className={TYPE.metaMark}>Watch the intro</p>
 						</div>
 					)}
 				</div>
@@ -325,9 +319,8 @@ export default async function ListPage(props: {
 						)}
 					>
 						<div className="flex flex-col gap-4">
-							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-								Why this matters
-							</p>
+							{/* No eyebrow: "Why this matters" named a mood, and the headline
+							    beneath it says the matter. */}
 							{parts.headline && (
 								<h2 className={cn(TYPE.heading, 'text-balance')}>
 									{parts.headline}
@@ -348,9 +341,7 @@ export default async function ListPage(props: {
 			{parts.outcomes.length > 0 && (
 				<section className="bg-muted border-b">
 					<div className="flex flex-col gap-6 px-[18px] py-16 sm:px-11 md:py-20">
-						<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-							What you'll learn
-						</p>
+						<p className={TYPE.groupLabel}>What you&apos;ll learn</p>
 						<ol className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-3">
 							{parts.outcomes.map((outcome, i) => (
 								<li
@@ -387,9 +378,7 @@ export default async function ListPage(props: {
 				<section className="border-b">
 					<div className="flex flex-col gap-6 px-[18px] py-16 sm:px-11 md:py-20">
 						<div className="flex flex-col gap-3">
-							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-								In this series
-							</p>
+							{/* No eyebrow: the heading under it already counts the lessons. */}
 							<h2 className={cn(TYPE.heading, 'text-balance')}>
 								{lessonNumber} {lessonNumber === 1 ? 'lesson' : 'lessons'}, in
 								order
@@ -401,8 +390,7 @@ export default async function ListPage(props: {
 									<li key={row.key} className="pt-4 first:pt-0">
 										<p
 											className={cn(
-												TYPE.micro,
-												'text-[color:var(--ah-fg-label)]',
+												TYPE.groupLabel,
 											)}
 										>
 											{row.title}
@@ -454,9 +442,7 @@ export default async function ListPage(props: {
 				className="border-border bg-border grid grid-cols-1 gap-px border-b lg:grid-cols-[repeat(auto-fit,minmax(360px,1fr))]"
 			>
 				<div className="bg-background flex flex-col items-start gap-4 px-[18px] py-16 sm:px-11 md:py-20">
-					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-						After this series
-					</p>
+					<p className={TYPE.groupLabel}>After this series</p>
 					<h2 className={cn(TYPE.subhead, 'text-balance')}>
 						Put it to work with the skills
 					</h2>

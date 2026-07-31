@@ -109,14 +109,13 @@ async function HeroStats() {
 			{stats.map((stat) => (
 				<div
 					key={stat.label}
-					className="flex min-w-0 flex-col gap-[7px] sm:flex-1 sm:basis-0"
+					// No gap: `TYPE.statLabel` carries its own `mt-1.5`, so the caption
+					// owns its distance from the numeral above it everywhere it appears.
+					className="flex min-w-0 flex-col sm:flex-1 sm:basis-0"
 				>
 					<dt className="sr-only">{stat.label}</dt>
 					<dd className={TYPE.stat}>{stat.value}</dd>
-					<p
-						className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}
-						aria-hidden
-					>
+					<p className={TYPE.statLabel} aria-hidden>
 						{stat.label}
 					</p>
 				</div>
@@ -169,16 +168,11 @@ export async function Hero({
 			    down the middle cuts the fade in half. */}
 			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[88px]">
 				<div>
-					{isHome && eyebrow && (
-						<p
-							className={cn(
-								TYPE.micro,
-								'mb-[22px] text-[color:var(--ah-fg-label)]',
-							)}
-						>
-							{eyebrow}
-						</p>
-					)}
+					{/* The homepage's one eyebrow, and the site's clearest earner: it
+					    carries a scope and a byline the headline does not, and it is
+					    alone on the route now that the section marks below it have
+					    become badges, group labels, or nothing. */}
+					{isHome && eyebrow && <p className={TYPE.eyebrow}>{eyebrow}</p>}
 					{h1 && (
 						<h1
 							className={cn(TYPE.display, 'mb-[22px] text-balance font-sans')}

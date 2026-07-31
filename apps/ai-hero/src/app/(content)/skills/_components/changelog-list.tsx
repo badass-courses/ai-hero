@@ -29,8 +29,8 @@ export function ChangelogList({ items }: { items: ChangelogItem[] }) {
 		return (
 			<p
 				className={cn(
-					TYPE.micro,
-					'border-border border-t py-10 text-[color:var(--ah-fg-label)]',
+					TYPE.metaMark,
+					'border-border border-t py-10',
 				)}
 			>
 				No skill changelog entries have been published yet.

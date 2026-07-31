@@ -84,7 +84,7 @@ function Column({
 }) {
 	return (
 		<div className={cn('px-5 pb-6 pt-5 sm:px-[22px]', className)}>
-			<div className={cn(TYPE.micro, 'mb-4', headingClassName)}>{heading}</div>
+			<div className={cn(TYPE.groupLabel, 'mb-4', headingClassName)}>{heading}</div>
 			<ul className="flex flex-col gap-3">
 				{items.map((item) => (
 					<li

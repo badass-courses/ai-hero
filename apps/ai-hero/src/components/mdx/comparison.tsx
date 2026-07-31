@@ -65,22 +65,18 @@ export function Comparison({
 				<div className="px-4 py-3.5" />
 				<div
 					className={cn(
-						TYPE.micro,
+						TYPE.groupLabel,
 						'px-4 py-3.5',
-						highlight === 'left'
-							? 'text-primary'
-							: 'text-[color:var(--ah-fg-label)]',
+						highlight === 'left' && 'text-primary',
 					)}
 				>
 					{left}
 				</div>
 				<div
 					className={cn(
-						TYPE.micro,
+						TYPE.groupLabel,
 						'px-4 py-3.5',
-						highlight === 'right'
-							? 'text-primary'
-							: 'text-[color:var(--ah-fg-label)]',
+						highlight === 'right' && 'text-primary',
 					)}
 				>
 					{right}
@@ -142,9 +138,9 @@ function Side({
 		<div className={cn('px-3.5 py-3 min-[900px]:px-4 min-[900px]:py-3.5', className)}>
 			<div
 				className={cn(
-					TYPE.micro,
+					TYPE.groupLabel,
 					'mb-1.5 min-[900px]:hidden',
-					highlighted ? 'text-primary' : 'text-[color:var(--ah-fg-label)]',
+					highlighted && 'text-primary',
 				)}
 			>
 				{label}

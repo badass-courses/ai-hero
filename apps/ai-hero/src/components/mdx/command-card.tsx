@@ -46,8 +46,8 @@ export function CommandCard({
 			{label ? (
 				<span
 					className={cn(
-						TYPE.micro,
-						'flex-none text-[color:var(--ah-fg-label)] dark:text-primary/75',
+						TYPE.metaMark,
+						'flex-none dark:text-primary/75',
 					)}
 				>
 					{label}

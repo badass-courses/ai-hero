@@ -1148,26 +1148,44 @@ pre .ah-code-inline {
    read as the attribution, which is the shape markdown authors already
    write. `<Quote author= role= />` is the version with real fields.
 
-   The spec's `.ah-quote` is purely typographic — 20px, 700, italic — because
-   in the mock it always sits inside a testimonial card that supplies the
-   boundary. In prose there is no card, so the quote needs a frame of its own.
-   That frame is a pair of hairlines, which is the device the rest of this
-   design already uses to separate things (rules 1 and 2), rather than a
-   coloured bar down one side: a 3px accent tab is a card-component mannerism,
-   and it reads as one wherever it lands. Colourless also means it can't
-   collide with the accent's different jobs across the two themes. */
+   The spec's `.ah-quote` is purely typographic because in the mock it always
+   sits inside a testimonial card that supplies the boundary. In prose there is
+   no card, so the quote needs a frame of its own.
+
+   That frame is the 2px `--primary` left rail, which is DESIGN's ONE named
+   exception to the side-stripe ban and exists for precisely this element: a
+   pull quote in running prose has no surface of its own, and a serif alone does
+   not mark the change of speaker inside a column of sans. The rail is the
+   quotation mark.
+
+   It replaced a pair of full-bleed hairlines. Those were chosen to avoid a
+   coloured bar, but top-and-bottom rules in a column of prose read as a section
+   divider — the same device every other hairline on the site means — so a quote
+   wearing them looked like the article had ended and restarted. They also left
+   the text flush to the measure with nothing setting it in.
+
+   The type is the serif, matching `TYPE.quoteProse` and every other quote on
+   the site. It used to be bold italic sans, which predates the serif decision:
+   two typographic shouts doing the job a change of voice should do quietly. */
 .ah-prose-quote {
-	margin: 32px 0;
-	padding: 24px 0;
-	border-top: 1px solid var(--border);
-	border-bottom: 1px solid var(--border);
-	font-size: 20px;
-	line-height: 1.4;
-	letter-spacing: -0.018em;
-	font-style: italic;
-	font-weight: 700;
+	margin: 36px 0;
+	padding: 2px 0 2px 24px;
+	border-left: 2px solid var(--primary);
+	font-family: var(--font-serif, ui-serif, Georgia, serif);
+	font-size: 21px;
+	line-height: 1.45;
+	letter-spacing: -0.005em;
+	font-style: normal;
+	font-weight: 400;
 	color: var(--foreground);
 	text-wrap: pretty;
+}
+
+@media (min-width: 640px) {
+	.ah-prose-quote {
+		padding-left: 28px;
+		font-size: 24px;
+	}
 }
 
 .ah-prose-quote > .ah-prose-p {
@@ -1220,5 +1238,64 @@ pre .ah-code-inline {
 	.ah-bullets > li,
 	.ah-numbers > li {
 		font-size: 17.5px;
+	}
+}
+
+/**
+ * The rotating agent mark beside "Install the skills"
+ * (`components/skills/agent-marks.tsx`).
+ *
+ * Stacked marks on one keyframe, each offset by an inline `animation-delay`,
+ * with the loop length set inline too so it always equals
+ * `marks x step`. Exactly one mark is visible at a time and the set closes the
+ * loop where it opened it.
+ *
+ * **The percentages below assume FOUR marks**, i.e. a 25% slice each. They are
+ * the one thing here that cannot be derived — CSS keyframes take literal
+ * percentages, not a variable — so `agent-marks.tsx` asserts the set size in
+ * development rather than letting the mismatch ship as a silent blink between
+ * marks (too few) or an overlap (too many).
+ *
+ * The 4%/21% hold is what makes it read as a cross-fade rather than a flicker:
+ * each mark is solid for most of its slice, with a short overlap either side
+ * and no dead frame between them.
+ *
+ * The 2px slide is the whole of the motion. Anything larger reads as a carousel
+ * and starts competing with the command row underneath it.
+ *
+ * Lives here rather than inline because of the reduced-motion branch: the
+ * animation drops entirely and the FIRST mark holds, which cannot be expressed
+ * in a style attribute.
+ */
+@keyframes ah-agent-cycle {
+	0% {
+		opacity: 0;
+		transform: translateY(2px);
+	}
+	4%,
+	21% {
+		opacity: 1;
+		transform: none;
+	}
+	25%,
+	100% {
+		opacity: 0;
+		transform: translateY(-2px);
+	}
+}
+
+.ah-agent-cycle > svg {
+	opacity: 0;
+	animation-name: ah-agent-cycle;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ah-agent-cycle > svg {
+		animation: none;
+	}
+	.ah-agent-cycle > svg:first-child {
+		opacity: 1;
 	}
 }

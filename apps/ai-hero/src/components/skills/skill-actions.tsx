@@ -47,7 +47,7 @@ export function SkillActions({
 			className={cn('bg-muted scroll-mt-(--nav-height)', className)}
 		>
 			<div className="px-5 py-10 sm:px-11 sm:py-11">
-				<p className={cn(TYPE.micro, 'mb-5 text-[color:var(--ah-fg-label)]')}>
+				<p className={cn(TYPE.groupLabel, 'mb-5')}>
 					Skill actions
 				</p>
 
@@ -181,7 +181,7 @@ function PagerCard({
 				aria-current="page"
 				className="hidden rounded-md border border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-wash)] px-[18px] py-4 min-[901px]:block"
 			>
-				<p className={cn(TYPE.micro, 'text-primary mb-2.5')}>{role}</p>
+				<p className={cn(TYPE.groupLabel, 'text-primary mb-2.5')}>{role}</p>
 				<p className={cn(TYPE.cardTitle, 'text-foreground')}>{label}</p>
 			</div>
 		)
@@ -192,9 +192,7 @@ function PagerCard({
 			href={`/${entry.slug}`}
 			className="border-border bg-background hover:border-foreground/30 focus-visible:ring-ring group min-w-0 flex-1 rounded-md border px-[18px] py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 		>
-			<p className={cn(TYPE.micro, 'mb-2.5 text-[color:var(--ah-fg-label)]')}>
-				{role}
-			</p>
+			<p className={cn(TYPE.groupLabel, 'mb-2.5')}>{role}</p>
 			<p
 				className={cn(
 					TYPE.cardTitle,

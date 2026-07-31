@@ -147,9 +147,10 @@ function Hero({
 			)}
 		>
 			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[76px]">
-				<p className={cn(TYPE.micro, 'text-primary mb-[22px]')}>
-					Free 7-day email course
-				</p>
+				{/* This route's one eyebrow: a scope and a price the headline does not
+				    carry. In full ink rather than accent — a rare mark that still
+				    whispers fails as text while occupying the slot. */}
+				<p className={TYPE.eyebrow}>Free 7-day email course</p>
 				<h1
 					className={cn(
 						TYPE.displayLanding,
@@ -197,8 +198,8 @@ function Hero({
 					<div className="border-input bg-card w-full rounded-lg border p-[30px] pb-8">
 						<p
 							className={cn(
-								TYPE.micro,
-								'mb-3.5 text-[color:var(--ah-fg-label)]',
+								TYPE.groupLabel,
+								'mb-3.5',
 							)}
 						>
 							Start the course
@@ -279,10 +280,7 @@ function HeroStats() {
 				>
 					<dt className="sr-only">{stat.label}</dt>
 					<dd className={TYPE.stat}>{stat.value}</dd>
-					<p
-						className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}
-						aria-hidden
-					>
+					<p className={TYPE.statLabel} aria-hidden>
 						{stat.label}
 					</p>
 				</div>
@@ -303,9 +301,8 @@ function Curriculum() {
 			aria-labelledby="curriculum-heading"
 			className="border-border border-b px-[18px] py-14 sm:px-11 sm:pb-[76px] sm:pt-[72px]"
 		>
-			<p className={cn(TYPE.micro, 'text-primary mb-5')}>
-				The 7-day curriculum
-			</p>
+			{/* No second eyebrow on the route: the heading under it already names
+			    the curriculum, and the hero's mark is the page's one. */}
 			<h2
 				id="curriculum-heading"
 				className={cn(TYPE.section, 'mb-3.5 max-w-[26ch] text-balance')}
@@ -360,7 +357,7 @@ function Curriculum() {
 				{/* The eighth cell is the payoff, not a lesson: it sits on the band
 				    surface so the grid closes on a different note than it ran. */}
 				<li className="flex flex-col justify-center bg-[color:var(--ah-band)] px-6 pb-[26px] pt-6">
-					<p className={cn(TYPE.micro, 'text-primary mb-[11px]')}>
+					<p className={cn(TYPE.groupLabel, 'text-primary mb-[11px]')}>
 						Day 7, what you'll have
 					</p>
 					<p

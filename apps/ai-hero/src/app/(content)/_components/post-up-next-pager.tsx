@@ -104,8 +104,8 @@ export function PostUpNextPager({
 					>
 						<span
 							className={cn(
-								TYPE.micro,
-								'mb-2.5 text-[color:var(--ah-fg-label)]',
+								TYPE.groupLabel,
+								'mb-2.5',
 							)}
 						>
 							Previous
@@ -135,7 +135,7 @@ export function PostUpNextPager({
 					>
 						<span className="min-w-0">
 							<span
-								className={cn(TYPE.micro, 'text-primary mb-2.5 block')}
+								className={cn(TYPE.groupLabel, 'text-primary mb-2.5 block')}
 							>
 								Up next · lesson {String(next.position).padStart(2, '0')}
 							</span>

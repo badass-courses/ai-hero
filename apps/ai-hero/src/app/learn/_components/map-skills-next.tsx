@@ -34,7 +34,7 @@ export function MapSkillsNext() {
 				className="focus-visible:ring-ring group flex items-center gap-5 bg-[color:var(--ah-band)] px-[18px] py-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
 			>
 				<span className="min-w-0">
-					<span className={cn(TYPE.micro, 'text-primary mb-2.5 block')}>
+					<span className={cn(TYPE.groupLabel, 'text-primary mb-2.5 block')}>
 						Next · The Skill System
 					</span>
 					<span className={cn(TYPE.panelTitle, 'mb-2 block text-pretty')}>

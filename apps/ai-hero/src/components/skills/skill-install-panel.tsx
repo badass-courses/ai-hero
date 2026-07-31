@@ -38,7 +38,7 @@ export function SkillInstallPanel({
 				className,
 			)}
 		>
-			<p className={cn(TYPE.micro, 'mb-3.5 text-[color:var(--ah-fg-label)]')}>
+			<p className={cn(TYPE.groupLabel, 'mb-3.5')}>
 				Install this skill
 			</p>
 			<InstallCommand
@@ -65,16 +65,12 @@ export function SkillInstallPanel({
 			<dl className="border-border mt-5 flex flex-wrap gap-x-6 gap-y-4 border-t pt-5">
 				{phase ? (
 					<div>
-						<dt className={cn(TYPE.micro, 'mb-1.5 text-[color:var(--ah-fg-label)]')}>
-							Phase
-						</dt>
+						<dt className={cn(TYPE.groupLabel, 'mb-1.5')}>Phase</dt>
 						<dd className={cn(TYPE.meta, 'text-foreground')}>{phase.name}</dd>
 					</div>
 				) : null}
 				<div>
-					<dt className={cn(TYPE.micro, 'mb-1.5 text-[color:var(--ah-fg-label)]')}>
-						Source
-					</dt>
+					<dt className={cn(TYPE.groupLabel, 'mb-1.5')}>Source</dt>
 					<dd className={TYPE.meta}>
 						<Link
 							href={SKILL_SOURCE.href}

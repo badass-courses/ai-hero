@@ -86,11 +86,18 @@ export async function PromoBar() {
 			className="relative mx-auto w-full max-w-[1456px] px-2 print:hidden"
 		>
 			<div className="bg-muted/40 border-border flex h-[34px] items-center justify-center gap-2.5 border-x border-b px-4 text-center text-[12.5px] leading-none">
-				{/* Gold in both themes: `--primary` goes ink on paper, and an
-				    ink-filled "NEW" chip reads as a disabled state rather than as
-				    the one new thing on the site. */}
+				{/* Outlined, not filled. A solid `bg-accent-fill` chip is the same
+				    object as the newsletter button in the nav directly below it, so
+				    the loudest thing in the viewport was a 9px label nobody clicks —
+				    and the message beside it, which IS the link, read as the quieter
+				    of the two.
+
+				    Gold survives as the line and the type: `text-primary` on
+				    `--ah-accent-line`, the same pair the sale badge uses on
+				    `/courses`. It still says "new" at a glance without competing with
+				    the one action on screen. */}
 				{promo.label && (
-					<span className="bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-1.5 py-1 font-mono text-[9px] font-medium uppercase leading-none tracking-[0.1em]">
+					<span className="text-primary inline-flex shrink-0 items-center rounded-[4px] border border-[color:var(--ah-accent-line)] px-1.5 py-1 font-mono text-[9px] font-medium uppercase leading-none tracking-[0.1em]">
 						{promo.label}
 					</span>
 				)}
@@ -98,7 +105,17 @@ export async function PromoBar() {
 					href={promo.href}
 					className="group focus-visible:ring-ring inline-flex min-w-0 items-center gap-1.5 font-medium tracking-tight underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
-					<span className="truncate">{promo.message}</span>
+					{/* `leading-[1.4]`, overriding the row's `leading-none`.
+					    `truncate` is `overflow: hidden`, and at `line-height: 1` the line
+					    box is exactly the font size — so every descender (g, y, p, j)
+					    fell outside it and got clipped, on every message, not just the
+					    ones long enough to truncate.
+
+					    The row keeps its 34px from `h-[34px]` + `items-center`, so a
+					    taller line box costs no height: 12.5px × 1.4 is 17.5px, well
+					    inside it. The `leading-none` on the parent stays for the "NEW"
+					    chip, which is uppercase mono and has no descenders to lose. */}
+					<span className="truncate leading-[1.4]">{promo.message}</span>
 					<ArrowRight
 						aria-hidden
 						className="size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5"

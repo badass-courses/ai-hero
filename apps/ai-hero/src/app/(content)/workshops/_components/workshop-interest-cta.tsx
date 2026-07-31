@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
-import { TYPE } from '@/components/landing/type'
+import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { useCtaGate } from '@/hooks/use-cta-gate'
 import { hasWorkshopInterest } from '@/lib/cta-gating'
@@ -102,8 +102,12 @@ export const WorkshopInterestCta = ({
 			)}
 		>
 			<div className="flex flex-col gap-1.5">
-				<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-					Waitlist open
+				{/* A status badge, in its own neutral treatment: the yellow belongs to the
+				    site's one primary action, and a status wearing it competes. */}
+				<p>
+					<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-block')}>
+						Waitlist open
+					</span>
 				</p>
 				<h3 className={cn(TYPE.panelTitle, 'text-balance font-sans')}>
 					Be first in line

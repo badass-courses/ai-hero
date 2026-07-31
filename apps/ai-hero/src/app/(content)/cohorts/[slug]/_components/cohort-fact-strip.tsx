@@ -106,16 +106,12 @@ export const CohortFactStrip: React.FC<{
 			{facts.map((fact) => (
 				<div
 					key={fact.label}
-					className="bg-background flex flex-col gap-1.5 px-4 py-3.5 text-left"
+					// `flex-col-reverse`: a `<dl>` wants `<dt>` before `<dd>` in the DOM,
+					// and `TYPE.statLabel` is a caption that always sits BELOW the value
+					// it names. Reversing the visual order satisfies both.
+					className="bg-background flex flex-col-reverse px-4 py-3.5 text-left"
 				>
-					<dt
-						className={cn(
-							TYPE.micro,
-							'text-[color:var(--ah-fg-label)]',
-						)}
-					>
-						{fact.label}
-					</dt>
+					<dt className={TYPE.statLabel}>{fact.label}</dt>
 					<dd
 						className={cn(
 							TYPE.bodyTight,

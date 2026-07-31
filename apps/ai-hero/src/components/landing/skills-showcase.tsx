@@ -53,13 +53,11 @@ import { cn } from '@coursebuilder/utils/cn'
  *    item; it is stored on the `section` resource's `fields.description`.
  */
 export async function SkillsShowcase({
-	eyebrow = 'The system · free and open source',
 	heading,
 	intro,
 	ctaHref = '/skills',
 	ctaLabel,
 }: {
-	eyebrow?: string
 	heading?: string
 	intro?: string
 	ctaHref?: string
@@ -79,9 +77,18 @@ export async function SkillsShowcase({
 			aria-label="The skills workflow"
 			className="border-b bg-[color:var(--ah-band)]"
 		>
+			{/* Amy, on "THE SYSTEM · FREE AND OPEN SOURCE": "let's only use these
+			    mini headlines when they make sense. here, 'the system' is redundant.
+			    let's add an 'open source' badge below the headline instead. and let
+			    the headline be the first thing."
+
+			    The eyebrow is gone and the headline leads. The badge is gone too: the
+			    intro's first six words are "Every skill here is free", so the badge
+			    was the same fact said twice, a line apart, and the second telling was
+			    the one wearing accent ink. The mark it replaced is what Amy wanted
+			    removed; the sentence had already absorbed the fact. */}
 			{heading || intro ? (
 				<SectionHeader
-					eyebrow={eyebrow}
 					heading={heading}
 					rank="lead"
 					// Sits on the heading's baseline rather than trailing the rows:

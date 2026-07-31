@@ -2,7 +2,7 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
-import { TYPE } from '@/components/landing/type'
+import { BADGE_SOLID, TYPE } from '@/components/landing/type'
 import {
 	COURSES_CATALOG,
 	COURSES_COMING_NEXT,
@@ -11,18 +11,70 @@ import {
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
 	FLAGSHIP_FACTS,
+	FLAGSHIP_RUNNING,
 	FLAGSHIP_TEAM,
 } from '@/lib/courses-content'
+import type { CoursesHeroState } from '@/lib/courses-hero-state'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import { getResourcePath } from '@/utils/resource-paths'
 import { ArrowRight, Star, Users } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { FlagshipHero } from './flagship-hero'
+import { CohortHero } from '@/components/cohort-hero'
 
-/** The landing page's eyebrow, at the landing page's size (DESIGN rule 11). */
-const MONO_LABEL = cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')
+/**
+ * "This is currently on — we're in the window, learning with Matt."
+ *
+ * Above the hero, not inside it, because it is not an offer: a buyer arriving
+ * mid-cohort is looking for the door, and the hero's job (selling the cohort to
+ * someone who does not have it) is the wrong answer to that. Links to
+ * `/cohorts/{slug}`, which is where the content actually lives — never the
+ * `/cohorts` index, which is unbuilt.
+ */
+function RunningStrip({
+	running,
+}: {
+	running: NonNullable<CoursesHeroState['running']>
+}) {
+	return (
+		<Link
+			href={`/cohorts/${running.slug}`}
+			className="border-border focus-visible:ring-ring group flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-[color:var(--ah-accent-wash)] px-[18px] py-3.5 transition-colors hover:bg-[color:var(--ah-accent-panel)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
+		>
+			<span className={cn(TYPE.badge, BADGE_SOLID, 'inline-flex w-fit')}>
+				{FLAGSHIP_RUNNING.label}
+			</span>
+			<span className={cn(TYPE.meta, 'text-foreground')}>
+				{FLAGSHIP_RUNNING.heading}
+			</span>
+			<span className={TYPE.metaMark}>{FLAGSHIP_RUNNING.body}</span>
+			<span
+				className={cn(
+					TYPE.meta,
+					'text-foreground ml-auto inline-flex items-center gap-1.5',
+				)}
+			>
+				{FLAGSHIP_RUNNING.ctaLabel}
+				<ArrowRight
+					aria-hidden
+					className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
+				/>
+			</span>
+		</Link>
+	)
+}
+
+/**
+ * The label over each of the page's sections.
+ *
+ * A group label, not an eyebrow. Four of these appear on this route and each
+ * one names the list directly beneath it — a detail grid, a run of quotes, a
+ * catalog, a shelf of past cohorts. Four marks floating above four headings is
+ * the texture the eyebrow budget exists to stop; four labels attached to four
+ * lists is just labelling.
+ */
+const MONO_LABEL = TYPE.groupLabel
 
 /**
  * "Heath, 15 years in industry" → name + role, so the attribution can be set
@@ -87,6 +139,8 @@ export function CoursesPage({
 	alumniLabel,
 	comingNext,
 	pastCohorts,
+	sale,
+	running,
 }: {
 	flagship: UpcomingCohortSummary | null
 	isPurchasable: boolean
@@ -96,6 +150,10 @@ export function CoursesPage({
 	comingNext: { image?: string } | null
 	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
 	pastCohorts: UpcomingCohortSummary[]
+	/** A live discount on the flagship. Never carries a price. */
+	sale: CoursesHeroState['sale']
+	/** Set when the viewer owns the flagship AND it is inside its window now. */
+	running: CoursesHeroState['running']
 }) {
 	// The crash course leads the catalog when it exists: it is the closest
 	// thing to the cohort, and the waitlist it feeds is the same ask the hero
@@ -118,11 +176,21 @@ export function CoursesPage({
 
 	return (
 		<main className="bg-background text-foreground">
-			{/* 1. The flagship IS the hero. See flagship-hero.tsx. */}
-			<FlagshipHero
+			{/* 0. Not a sales state. A buyer who lands here mid-cohort should see
+			    that the thing they bought is ON before they see anything selling it
+			    to them again. */}
+			{running ? <RunningStrip running={running} /> : null}
+
+			{/* 1. The flagship IS the hero — the same component the homepage's
+			    cohort section renders, so the two surfaces cannot drift. Here the
+			    cohort's name is the page's h1. See `components/cohort-hero.tsx`. */}
+			<CohortHero
 				flagship={flagship}
 				isPurchasable={isPurchasable}
 				alumniLabel={alumniLabel}
+				sale={sale}
+				headingLevel="h1"
+				headingId="flagship-heading"
 			/>
 
 			{/* 2 + 3. The practical detail, then the team ask.
@@ -140,11 +208,17 @@ export function CoursesPage({
 							{FLAGSHIP_FACTS.map((fact) => (
 								<div
 									key={fact.label}
-									className="bg-background flex flex-col gap-2.5 p-6"
+									className="bg-background flex flex-col gap-2 p-6"
 								>
-									<h3 className={cn(TYPE.micro, 'text-primary')}>
-										{fact.label}
-									</h3>
+									{/* A heading, not a label. These were mono caps under the old
+									    `TYPE.micro`, and the eyebrow migration carried that
+									    forward as a `groupLabel` — but a `groupLabel` names a
+									    LIST beneath it, and each of these names a paragraph it
+									    is the title of. Amy on the same pattern: "this text style
+									    elsewhere is sort of 'accessory info' but here it is
+									    crucial." So it takes a heading step, in sans, at full
+									    ink — four accent titles in one row would be shouting. */}
+									<h3 className={TYPE.subhead}>{fact.label}</h3>
 									<p
 										className={cn(
 											TYPE.metaProse,
@@ -276,7 +350,10 @@ export function CoursesPage({
 							{COURSES_CATALOG.note}
 						</p>
 					</div>
-					<div className={CATALOG_GRID}>
+					{/* `mt-6`, the same step the past-cohorts grid below uses. The
+					    label and the grid were flush against each other, which read as
+					    the label belonging to the first card rather than to the run. */}
+					<div className={cn(CATALOG_GRID, 'mt-6')}>
 						{catalog.map((item) => (
 							<CatalogCard key={item.href} {...item} />
 						))}
@@ -360,8 +437,8 @@ function CatalogCard({
 			<div className="flex flex-col items-start gap-2.5 p-5">
 				<span
 					className={cn(
-						TYPE.micro,
-						'inline-flex items-center rounded-[4px] border px-2 py-1',
+						TYPE.badge,
+						'inline-flex w-fit items-center rounded-[4px] border px-[7px] py-[5px]',
 						badgeTone === 'accent'
 							? 'text-primary border-[color:var(--ah-accent-line)]'
 							: 'border-border text-[color:var(--ah-fg-muted)]',

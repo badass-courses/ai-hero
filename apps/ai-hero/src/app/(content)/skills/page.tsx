@@ -61,9 +61,14 @@ type Props = {
 /**
  * /skills — the skill system's own page (`Skills Page.dc.html`).
  *
- * The order is the argument: what you get and how to install it (HEAD), what
- * a skill even is (WHAT A SKILL IS), the catalog (THE SKILL SET), what changed
+ * The order is the argument: what you get and how to install it (HEAD), the
+ * catalog (THE SKILL SET), what a skill even is (WHAT A SKILL IS), what changed
  * (CHANGELOG), and the ask restated at the bottom (GET THE SKILLS).
+ *
+ * The catalog leads the definition, not the other way round: someone on this
+ * page is deciding whether the set is worth installing, and the list is what
+ * answers that. The definition then lands as the answer to a question the list
+ * has already raised rather than as a preamble to it.
  *
  * Every count, group, order and description on the page is CMS or GitHub data.
  * The list (`SKILLS_LIST_ID`) owns the grouping AND the order of the groups —
@@ -104,22 +109,20 @@ export default async function SkillsPage({ searchParams }: Props) {
 				<main className="bg-background text-foreground">
 					<SkillsHero stars={stars} skillCount={skillCount} />
 
-					<SkillsSalesCopy />
+					{/* The catalog first, the definition after it. A reader arriving
+					    here has installed something or is deciding whether to — they
+					    want to see what the set actually contains before they want an
+					    essay on what a skill is. The definition reads better as the
+					    answer to a question the list has already raised. */}
+					<SkillSet groups={skillGroups} />
 
-					<SkillSet groups={skillGroups} skillCount={skillCount} />
+					<SkillsSalesCopy />
 
 					<section aria-labelledby="changelog-heading" className="border-b">
 						<div className="px-[18px] pb-[50px] pt-12 sm:px-11">
 							<div className="mb-[26px] flex flex-col gap-4 md:flex-row md:items-end">
 								<div>
-									<p
-										className={cn(
-											TYPE.micro,
-											'text-[color:var(--ah-fg-label)]',
-										)}
-									>
-										Changelog
-									</p>
+									<p className={TYPE.groupLabel}>Changelog</p>
 									<h2
 										id="changelog-heading"
 										className={cn(TYPE.heading, 'mt-3.5 text-balance')}
@@ -159,7 +162,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 						</div>
 					</section>
 
-					<SkillsGitHubSection stars={stars} />
+					<SkillsGitHubSection stars={stars} skillCount={skillCount} />
 
 					<CompanyLogoGrid
 						variant="row"

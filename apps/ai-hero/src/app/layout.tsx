@@ -111,13 +111,13 @@ export default async function RootLayout({
 		<Providers>
 			<html lang="en" suppressHydrationWarning>
 				<head>
-					{/* {process.env.NODE_ENV === 'development' && (
+					{process.env.NODE_ENV === 'development' && (
 						<Script
 							src="//unpkg.com/react-grab/dist/index.global.js"
 							crossOrigin="anonymous"
 							strategy="beforeInteractive"
 						/>
-					)} */}
+					)}
 				</head>
 				<AxiomWebVitals />
 				<body

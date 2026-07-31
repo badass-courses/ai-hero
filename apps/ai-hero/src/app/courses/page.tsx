@@ -5,6 +5,7 @@ import {
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
 import { COURSES_COMING_NEXT } from '@/lib/courses-content'
+import { getCoursesHeroState } from '@/lib/courses-hero-state'
 import {
 	getLatestCohort,
 	getPastCohorts,
@@ -46,6 +47,10 @@ export default async function CoursesRoute() {
 		])
 
 	const flagship = upcoming ?? latest
+
+	// Depends on the flagship (the sale is guarded to its resource id, and the
+	// running window is read off its cohort), so it cannot join the batch above.
+	const { sale, running } = await getCoursesHeroState(flagship)
 	// Excluding whatever the hero shows, so the page never lists a cohort twice.
 	const pastCohorts = flagship
 		? allPastCohorts.filter((cohort) => cohort.id !== flagship.id)
@@ -58,6 +63,8 @@ export default async function CoursesRoute() {
 				isPurchasable={Boolean(upcoming)}
 				alumniLabel={formatAlumniCount(alumniCount)}
 				pastCohorts={pastCohorts}
+				sale={sale}
+				running={running}
 				comingNext={
 					comingNextWorkshop
 						? { image: comingNextWorkshop.fields?.coverImage?.url }

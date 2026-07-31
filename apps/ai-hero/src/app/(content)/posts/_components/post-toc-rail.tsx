@@ -12,7 +12,8 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { TocText } from './post-toc'
 import { isTocModelEmpty, type TocModel } from './post-toc-model'
 
-const EYEBROW = cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')
+// A group label: it names the list of headings under it.
+const EYEBROW = TYPE.groupLabel
 
 /**
  * The rail lists h2s only, but the `Heading` component registers every heading

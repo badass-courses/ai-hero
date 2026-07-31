@@ -97,7 +97,7 @@ export function PostRelatedNewsletter({
 			{hasRelated && (
 				<div className="bg-background px-[18px] py-10 sm:px-11">
 					<h2
-						className={cn(TYPE.micro, 'mb-5 text-[color:var(--ah-fg-label)]')}
+						className={cn(TYPE.groupLabel, 'mb-5')}
 					>
 						{heading}
 					</h2>
@@ -111,8 +111,8 @@ export function PostRelatedNewsletter({
 									<span className="min-w-0">
 										<span
 											className={cn(
-												TYPE.micro,
-												'mb-1.5 block text-[color:var(--ah-fg-label)]',
+												TYPE.metaMark,
+												'mb-1.5 block',
 											)}
 										>
 											{item.meta}
@@ -169,9 +169,8 @@ export function PostNewsletterCell({
 }) {
 	return (
 		<NewsletterCell>
-			<p className={cn(TYPE.micro, 'mb-4 text-[color:var(--ah-fg-label)]')}>
-				Keep learning
-			</p>
+			{/* No eyebrow. "Keep learning" over "Join N developers" carried no fact
+			    the heading does not already have. */}
 			<h2 className={cn(TYPE.panelTitle, 'mb-2 text-balance')}>
 				Join <SubscriberCount /> developers
 			</h2>

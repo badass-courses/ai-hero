@@ -1,5 +1,4 @@
 import * as React from 'react'
-import Link from 'next/link'
 import { ResourceRow } from '@/components/landing/resource-row'
 import { TYPE } from '@/components/landing/type'
 import { cn } from '@coursebuilder/utils/cn'
@@ -157,9 +156,8 @@ function WhatsNewSection({ items }: { items: ResolvedItem[] }) {
 			<div className="flex flex-col">
 				<div className="flex flex-wrap items-end justify-between gap-4 px-[18px] pb-8 pt-16 sm:px-11">
 					<div className="flex flex-col gap-2">
-						<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-							What&rsquo;s New
-						</p>
+						{/* No eyebrow: "What's New" over "Fresh from the blog" said it
+					    twice, and the page's one eyebrow is on the h1. */}
 						<h2 className={TYPE.heading}>Fresh from the blog</h2>
 					</div>
 					{/* The same outlined control the goal sections above use for their
@@ -196,9 +194,7 @@ export function MapPage({ goalSections, whatsNew, tocItems }: MapPageProps) {
             which put 96px of air above the first thing on the page while the
             sibling hub page opened at 48px. */}
 				<div className="flex flex-col gap-6 px-[18px] pb-11 pt-12 sm:px-11">
-					<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-						The Map
-					</p>
+					<p className={TYPE.eyebrow}>The Map</p>
 					<h1 className={cn(TYPE.title, 'text-balance max-w-[24ch]')}>
 						What would you like to do with AI coding?
 					</h1>

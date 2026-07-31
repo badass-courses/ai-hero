@@ -4,7 +4,7 @@ import { ArrowRight } from 'lucide-react'
 
 import { SectionHeader } from './section-header'
 
-import { TYPE } from './type'
+import { BADGE_NEUTRAL, TYPE } from './type'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -43,14 +43,12 @@ import { cn } from '@coursebuilder/utils/cn'
  * on the way. Self-location without self-exclusion.
  */
 export function ActivityLadder({
-	eyebrow = 'Start where you are',
 	heading,
 	intro,
 	ctaHref,
 	ctaLabel,
 	children,
 }: {
-	eyebrow?: string
 	heading?: string
 	intro?: string
 	/** Optional "see everything" destination for the section header. */
@@ -60,9 +58,10 @@ export function ActivityLadder({
 }) {
 	return (
 		<section aria-label={heading ?? 'Where to start'} className="border-b">
+			{/* No eyebrow on the section head. "Start where you are" was a mood,
+			    and the hero already carries the homepage's one eyebrow. */}
 			{heading || intro ? (
 				<SectionHeader
-					eyebrow={eyebrow}
 					heading={heading}
 					rank="lead"
 					linkHref={ctaHref}
@@ -119,10 +118,15 @@ export function ActivityRung({
 	return (
 		<li className="border-border grid grid-cols-1 gap-x-12 gap-y-5 border-b py-[30px] md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
 			<div className="flex flex-col gap-3">
-				{/* Accent, alone among the page's eyebrows: four of these carry the
-				    section's whole structure, and in muted ink the rungs read as one
-				    undifferentiated list of links. */}
-				<p className={cn(TYPE.micro, 'text-primary')}>{audience}</p>
+				{/* A badge, not an eyebrow. Four of these carry the section's whole
+				    structure, and who a rung is for is a property of the rung — the
+				    container is what separates the rungs now, so the mark no longer
+				    needs the accent to avoid reading as one undifferentiated list. */}
+				<p>
+					<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-block')}>
+						{audience}
+					</span>
+				</p>
 				<h3 className={cn(TYPE.rungQuestion, 'text-balance')}>{question}</h3>
 				{moreHref ? (
 					<Link

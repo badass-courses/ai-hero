@@ -7,7 +7,7 @@ import { EyeIcon } from '@heroicons/react/24/outline'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { TYPE } from './type'
+import { BADGE_OUTLINE, TYPE } from './type'
 import { VideoThumbnailPreview } from './video-thumbnail-preview'
 
 export function ResourceCard({
@@ -63,11 +63,9 @@ export function ResourceCard({
 					</span>
 				)}
 			</div>
-			<div className="flex flex-col gap-[7px] pt-[13px]">
+			<div className="flex flex-col items-start gap-[9px] pt-[13px]">
 				{formatLabel ? (
-					<span
-						className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}
-					>
+					<span className={cn(TYPE.badge, BADGE_OUTLINE, 'inline-flex w-fit')}>
 						{formatLabel}
 					</span>
 				) : null}

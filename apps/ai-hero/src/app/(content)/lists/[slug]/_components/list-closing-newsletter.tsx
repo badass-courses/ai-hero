@@ -44,9 +44,7 @@ export async function ListClosingNewsletter() {
 
 	return (
 		<Cell>
-			<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-				Keep learning
-			</p>
+			{/* No eyebrow: "Keep learning" restated the heading below it. */}
 			<h2 className={cn(TYPE.subhead, 'text-balance')}>
 				New lessons the day they land
 			</h2>

@@ -1,30 +1,59 @@
 import * as React from 'react'
 import Link from 'next/link'
-import { TYPE } from '@/components/landing/type'
+import { Icon } from '@/components/brand/icons'
+import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { getRepoStarCount } from '@/lib/github-stars-query'
 import {
 	SKILLS_COURSE_PANEL,
 	SKILLS_HERO,
+	SKILLS_REPO_URL,
 	SKILLS_SH_BADGE_URL,
 	SKILLS_SH_URL,
 } from '@/lib/skills-content'
-import { ArrowRight, Star } from 'lucide-react'
+import { Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { CourseMark } from './course-mark'
+import { SkillsCourseForm } from './skills-course-form'
 import { SkillsInstallOptions } from './skills-install-options'
 
 /**
- * The page's HEAD (`Skills Page.dc.html` § HEAD).
+ * The page's HEAD (`Skills Page.dc.html` § HEAD), rebuilt from Amy's review
+ * (2026-07-30) and the design return that answered it.
  *
- * Pitch left, the free course right, one hairline between them — the same
- * shape as the flagship hero on /courses, and for the same reason: the page
- * makes one argument and takes one ask, and the ask does not get wider just
- * because the window did (`minmax(0,1fr) 400px`).
+ * ## Single column is the layout; the rail is the wide-screen bonus
  *
- * Everything numeric here is live. The eyebrow's skill count comes from the
- * CMS, the star count from GitHub, and the total-install badge from Skills.sh.
- * A missing GitHub value drops its stat rather than printing a placeholder.
+ * The previous version was `minmax(0,1fr) 400px` with the free-course CTA in
+ * the right cell. Amy: *"this CTA on the side will get ignored… the signup
+ * should be in the main body of the hero. OR, if we want to keep this sidebar,
+ * make it a list of the skills."* Both halves are taken: **the ask moves into
+ * the body, and the rail gets the install block** — something a reader acts on
+ * rather than a second ask they skip.
+ *
+ * The split is a **container query, not a media query**. `/skills` renders
+ * inside `HubLayout`, so the hero's width is the page minus the hub sidebar,
+ * and a media query would be answering a question about the viewport that
+ * nobody asked. On a container query the sidebar's width stops being the hero's
+ * problem, and the 900–1200px band where a fixed rail against a narrowed column
+ * becomes "two columns arguing" is never entered: the split is conditional on
+ * fit.
+ *
+ * ## The rail width is arithmetic, not taste
+ *
+ * JetBrains Mono's advance is exactly `0.6em`, so a 40-character command at
+ * 12px is 288px of glyphs. Plus 32 padding, a 30px copy button and its gap, the
+ * minimum row is **358px**; **440px** is that with breathing room. The left
+ * column never goes under 544px (`34rem`), which is where the 52px `h1` stops
+ * setting badly.
+ *
+ * ## Order
+ *
+ * Headline → lead → stats → signup → install → proof. The stats moved UP from
+ * the foot of the hero: they are the credibility line, and the star count is
+ * the most persuasive number on the page. They are a flex row rather than a
+ * three-cell hairline grid because a grid breaks when a stat is absent, and a
+ * missing value here drops its item rather than printing a placeholder.
  */
 export async function SkillsHero({
 	stars: starsProp,
@@ -46,152 +75,198 @@ export async function SkillsHero({
 	return (
 		<header
 			id="skills-hero"
-			className="border-border grid grid-cols-1 items-stretch border-b lg:grid-cols-[minmax(0,1fr)_400px]"
+			// `container-type: inline-size` is what makes the grid below query the
+			// hero's own width rather than the window's.
+			className="border-border @container border-b"
 		>
-			<div className="px-[18px] pb-11 pt-12 sm:px-11">
-				<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-					{['Free', 'open source', skillCount ? `${skillCount} skills` : null]
-						.filter(Boolean)
-						.join(' · ')}
-				</p>
-				<h1
-					className={cn(TYPE.title, 'mb-4 mt-[18px] max-w-[22ch] text-balance')}
-				>
-					{SKILLS_HERO.title}
-				</h1>
-				<p
-					className={cn(
-						TYPE.lead,
-						'mb-[26px] max-w-[52ch] text-pretty text-[color:var(--ah-fg-muted)]',
-					)}
-				>
-					{SKILLS_HERO.tagline} {SKILLS_HERO.taglineTail}
-				</p>
-				<SkillsInstallOptions className="max-w-[720px]" />
-				{/* The three facts a reader checks before running anything: how many
-				    other people trust it, how broadly it has been installed, and
-				    whether it works where they already are. On a hairline, not in
-				    boxes. */}
-				<dl className="border-border mt-[26px] flex flex-wrap gap-x-[26px] gap-y-6 border-t pt-[22px]">
-					{stars !== null ? (
-						<Fact label="GitHub stars">
-							<span className="flex items-center gap-[7px]">
-								<Star
-									aria-hidden
-									className="text-primary size-4 shrink-0 fill-current"
-								/>
-								<span className={TYPE.statSm}>
-									{stars.toLocaleString('en-US')}
-								</span>
-							</span>
-						</Fact>
-					) : null}
-					<Fact label="Total skill installs">
-						<Link
-							href={SKILLS_SH_URL}
-							target="_blank"
-							rel="noreferrer"
-							className="focus-visible:ring-ring inline-flex focus-visible:outline-none focus-visible:ring-2"
-						>
-							{/* This is Skills.sh's live, five-minute-cached aggregate
-							    badge. A normal img is deliberate: Next image optimization
-							    would cache a second copy and make the number less live. */}
-							{/* eslint-disable-next-line @next/next/no-img-element */}
-							<img
-								src={SKILLS_SH_BADGE_URL}
-								alt="Live Skills.sh install count"
-								width={101}
-								height={20}
-							/>
-						</Link>
-					</Fact>
-					<Fact label={SKILLS_HERO.agentsLabel}>
-						<span className={cn(TYPE.subhead, 'leading-none')}>Any agent</span>
-					</Fact>
-				</dl>
-			</div>
+			<div className="grid grid-cols-1 gap-y-10 px-[18px] pb-11 pt-12 sm:px-11 @[1080px]:grid-cols-[minmax(34rem,1fr)_440px] @[1080px]:gap-x-10">
+				<div className="min-w-0">
+					{/* No eyebrow, and nothing in its place. "Free · open source · 21
+					    skills" failed gate 1 on "the system"; the surviving facts are in
+					    the stat row and the rail foot, which is where the mockup puts
+					    them. The hero opens on the headline. */}
+					<h1 className={cn(TYPE.title, 'mb-4 max-w-[22ch] text-balance')}>
+						{SKILLS_HERO.title}
+					</h1>
+					<p
+						className={cn(
+							TYPE.lead,
+							'mb-[26px] max-w-[52ch] text-pretty text-[color:var(--ah-fg-muted)]',
+						)}
+					>
+						{SKILLS_HERO.tagline} {SKILLS_HERO.taglineTail}
+					</p>
 
-			{/* The ask. Stripes are the spec's structural fill (DESIGN rule 5), so
-			    the panel reads as an object sitting on the page rather than as a
-			    third column of copy.
+					<Stats stars={stars} />
 
-			    `lg:items-start`: the cell is a stretched grid track, so centring
-			    the panel in it parked the ask against the middle of a column whose
-			    height is set by the copy beside it — it drifted down as the left
-			    column grew. Pinned to the top it starts level with the eyebrow it
-			    is answering.
+					{/* The ask, in the body of the hero. No panel, no stripes, no box:
+					    a de-emphasized container is exactly what Amy said gets ignored. */}
+					<CourseCta />
+				</div>
 
-			    Only from `lg`, which is where the two-up grid exists at all. Below
-			    that the panel IS the row and there is nothing to align to. */}
-			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-[34px] sm:py-9 lg:items-start lg:border-l lg:border-t-0">
-				<CoursePanel />
+				{/* The rail holds something a reader acts on. Below 1080px of hero
+				    container it is simply the next block down the single column, which
+				    is the layout the page actually ships on most laptops.
+
+				    And in that state it needs a rule above it. Side by side, the gap
+				    between the columns is what separates the ask from the install
+				    block; stacked, they run into each other and the reader gets two
+				    unrelated things with nothing between them. The rule only exists
+				    where the columns do not. */}
+				<SkillsInstallOptions
+					className="border-border min-w-0 border-t pt-10 @[1080px]:border-t-0 @[1080px]:pt-0"
+					skillCount={skillCount}
+				/>
 			</div>
 		</header>
 	)
 }
 
-function Fact({
-	label,
-	children,
-}: {
-	label: string
-	children: React.ReactNode
-}) {
+/**
+ * The credibility line, directly under the lead.
+ *
+ * Flex with a gap rather than a three-cell hairline grid: a grid with a fixed
+ * column count breaks when a stat is absent, and both the GitHub count and the
+ * Skills.sh badge can be. Here a missing value drops its item and the row
+ * closes up.
+ *
+ * Two items, not three, and they are different kinds of thing. The star count
+ * is a stat and gets the caption treatment. The Skills.sh badge is a live
+ * remote image with its own baked-in label, so captioning it would be saying
+ * "installs" twice; it pairs with the GitHub link instead — **the number is the
+ * claim, the link is the receipt**. Both sit at the badge's fixed 20px height
+ * so neither reads as a button competing with the ask below.
+ */
+function Stats({ stars }: { stars: number | null }) {
 	return (
-		<div>
-			<dd className="flex h-7 items-center">{children}</dd>
-			<dt className={cn(TYPE.micro, 'mt-1.5 text-[color:var(--ah-fg-label)]')}>
-				{label}
-			</dt>
-		</div>
+		<dl className="mb-4 flex flex-wrap items-end gap-x-[30px] gap-y-5">
+			{stars !== null ? (
+				<div className="flex items-center gap-[11px]">
+					<Star
+						aria-hidden
+						className="text-primary size-[22px] shrink-0 fill-current"
+					/>
+					{/* `flex-col-reverse`: a `<dl>` wants `<dt>` before `<dd>` in the
+					    DOM, and `TYPE.statLabel` is a caption that sits BELOW its
+					    number. Above it, it is another eyebrow. */}
+					<div className="flex flex-col-reverse">
+						{/* `mt-0.5`, overriding the constant's `mt-1.5`. `TYPE.stat` sets
+						    `leading-none`, so the numeral's box already sits tight to its
+						    baseline and the caption's default 6px reads as a gap rather
+						    than as a caption. */}
+						<dt className={cn(TYPE.statLabel, 'mt-0.5')}>GitHub stars</dt>
+						{/* A step down at every width (was 22 / 26 / 31). The number is the
+						    hero's credibility line, not its headline — at 31px it was
+						    within a hair of the `h1` above it and read as a second title. */}
+						<dd className={cn(TYPE.stat, 'text-[20px] @[560px]:text-[23px] @[1080px]:text-[27px]')}>
+							{stars.toLocaleString('en-US')}
+						</dd>
+					</div>
+				</div>
+			) : null}
+			{/* Stacked, not side by side. Two 20px chips in a row read as a pair of
+			    buttons offering the same kind of thing, and these are not: one is a
+			    live number, the other is where the code lives. Down the column they
+			    read as two lines of one credential block.
+
+			    The `dl` is `items-end`, so the taller stack sets the row's baseline
+			    and the star count beside it still sits on it. */}
+			<div className="flex flex-col items-start gap-2.5">
+				<dt className="sr-only">Total skill installs</dt>
+				<dd className="flex flex-col items-start gap-2.5">
+					<Link
+						href={SKILLS_SH_URL}
+						target="_blank"
+						rel="noreferrer"
+						className="focus-visible:ring-ring inline-flex focus-visible:outline-none focus-visible:ring-2"
+					>
+						{/* This is Skills.sh's live, five-minute-cached aggregate badge. A
+						    normal img is deliberate: Next image optimization would cache a
+						    second copy and make the number less live. */}
+						{/* eslint-disable-next-line @next/next/no-img-element */}
+						<img
+							src={SKILLS_SH_BADGE_URL}
+							alt="Live Skills.sh install count"
+							width={101}
+							height={20}
+						/>
+					</Link>
+					<Link
+						href={SKILLS_REPO_URL}
+						target="_blank"
+						rel="noreferrer"
+						className={cn(
+							TYPE.badge,
+							BADGE_OUTLINE,
+							'hover:border-foreground/40 focus-visible:ring-ring inline-flex h-5 items-center gap-1.5 py-0 transition-colors focus-visible:outline-none focus-visible:ring-2',
+						)}
+					>
+						{/* The mark instead of the generic external arrow. It names the
+						    destination, which the arrow only implied, and it matches the
+						    Skills.sh badge above it — both lines now lead with the logo of
+						    the place they point at. `size-3` on the class beats the
+						    component's own width/height attributes. */}
+						<Icon name="Github" className="size-3 shrink-0" />
+						GitHub
+					</Link>
+				</dd>
+			</div>
+		</dl>
 	)
 }
 
 /**
- * The free email course, as a panel rather than a band.
+ * The free email course, inline under the stats.
  *
- * `SkillsCourseCta` (the wide version used under a changelog entry) makes the
- * same offer, but a 400px rail is not a row: the icon, the headline and the
- * button cannot sit on one line, and that copy is written for a full-width
- * strip.
+ * The fields are here, not behind a button. A gold link to `/skills/subscribe`
+ * was a click spent to reach the same two inputs, and the whole reason the CTA
+ * left the rail was that the ask should BE the thing you do.
  *
- * Sticky from `lg`, offset past the site header the same way the article ToC
- * rail is. The travel is bounded by the header cell it lives in — sticky cannot
- * escape its containing block — so it holds the ask in view for the length of
- * the hero and then scrolls away with it, rather than following the reader down
- * the whole skill list. That is the intent: the panel answers the hero, and the
- * page has its own course CTAs further down.
+ * The body ships as three constants swapped at the same container steps as the
+ * layout, rather than being truncated at runtime — see `SKILLS_COURSE_PANEL`.
+ * Exactly one of the three is visible at any width; the other two are
+ * `hidden`, so the sentence a reader gets is a sentence someone wrote.
  */
-function CoursePanel() {
+function CourseCta() {
 	return (
-		<div className="rounded-lg border border-[color:var(--ah-accent-line)] bg-[color:var(--ah-accent-panel)] px-6 pb-[26px] pt-6 lg:sticky lg:top-[calc(var(--nav-height)+1.5rem)]">
-			<p className={cn(TYPE.micro, 'text-primary mb-3')}>
-				{SKILLS_COURSE_PANEL.eyebrow}
-			</p>
-			<h2 className={cn(TYPE.panelTitle, 'mb-2 text-balance')}>
-				{SKILLS_COURSE_PANEL.heading}
-			</h2>
-			<p
-				className={cn(
-					TYPE.metaProse,
-					'mb-[18px] text-[color:var(--ah-fg-muted)]',
-				)}
-			>
-				{SKILLS_COURSE_PANEL.body}
-			</p>
-			<Link
-				href={SKILLS_COURSE_PANEL.href}
-				className={cn(
-					TYPE.meta,
-					'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring group inline-flex items-center gap-2 rounded-[9px] px-[17px] py-[11px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-				)}
-			>
-				{SKILLS_COURSE_PANEL.ctaLabel}
-				<ArrowRight
-					aria-hidden
-					className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
-				/>
-			</Link>
+		// A rule above it, not a box around it. The hero is one column of copy and
+		// this is where it turns into an ask; a hairline says that without giving
+		// the ask a de-emphasized container to sit in.
+		<div className="border-border mt-3 border-t pt-[22px]">
+			<div className="mb-[18px] flex items-start gap-6">
+				{/* The slot a spot illustration will take — 96 / 84 / 60px in the
+				    design return. Until that art exists the tile keeps its glyph, which
+				    is the return's own placeholder, not an invention. */}
+				<CourseMark className="size-[60px] flex-none @[560px]:size-[84px] @[1080px]:size-24" />
+				<div>
+					{/* No eyebrow, and no panel. The heading carries the offer, the body
+					    says it is free, and the button says what it starts. */}
+					{/* No measure cap and no `text-balance`: this line is short enough
+					    to sit on one at most widths, and balancing it broke a one-liner
+					    into two even rows for no reason a reader benefits from. Balance
+					    is for headings that WILL wrap. */}
+					<h2 className={cn(TYPE.subhead, 'mb-2')}>
+						{SKILLS_COURSE_PANEL.heading}
+					</h2>
+					<p
+						className={cn(
+							TYPE.metaProse,
+							'max-w-[46ch] text-pretty text-[color:var(--ah-fg-muted)]',
+						)}
+					>
+						<span className="@[1080px]:inline hidden">
+							{SKILLS_COURSE_PANEL.body.full}
+						</span>
+						<span className="@[940px]:inline @[1080px]:hidden hidden">
+							{SKILLS_COURSE_PANEL.body.mid}
+						</span>
+						<span className="@[940px]:hidden">
+							{SKILLS_COURSE_PANEL.body.short}
+						</span>
+					</p>
+				</div>
+			</div>
+			<SkillsCourseForm />
 		</div>
 	)
 }

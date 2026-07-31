@@ -118,6 +118,16 @@ If you can design codebases agents love, you can reap the rewards of this new er
 </ActivityLadder>
 
 {/*
+  The cohort sits ABOVE the proof, not after it. It is the one thing on this
+  page a reader can buy, and behind the ladder + three testimonials it was the
+  ninth block down. The quotes now do what quotes are for: they back up the
+  offer the reader has just been made, rather than arriving before there is an
+  offer to back.
+*/}
+
+<UpcomingCohort />
+
+{/*
   The shadcn quote is DELIBERATELY CLIPPED, and confirmed. The full tweet
   frames Matt as tracking every model release, which Alex flagged and Matt
   agreed was not how he sees himself ("[aih] Banger testimonial from high-trust
@@ -145,9 +155,7 @@ Matt Pocock is a true educator and I admire how he brings structure to this mess
 
 </ProofGrid>
 
-<UpcomingCohort />
-
-<SectionHeader eyebrow="Published recently" heading="Latest posts and videos" linkHref="/posts" linkLabel="See more in the blog" />
+<SectionHeader heading="Latest posts and videos" linkHref="/posts" linkLabel="See more in the blog" />
 
 <ResourceGrid>
 	<Resource slugOrId="skills-changelog-ubiquitous-language-grill-with-docs" variant="card" />

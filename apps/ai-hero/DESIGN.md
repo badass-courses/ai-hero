@@ -243,9 +243,53 @@ page's argument that section carries, and collapsing them to a single step —
 which an earlier pass did — makes the whole page read flatter than the mock.
 Off the home page, `TYPE.heading` is still the only section size.
 
-Plus four mono constants, because mono is a category rather than a size:
-`TYPE.micro` (the 11px uppercase eyebrow), `TYPE.command` (slash commands and
-durations), `TYPE.metaMono` (13px data links), and `TYPE.stat` (26px numerals).
+Plus the mono constants, because mono is a category rather than a size:
+`TYPE.command` (slash commands), `TYPE.metaMono` (13px data links), `TYPE.stat`
+(26px numerals) — and the five that replaced `TYPE.micro`.
+
+**`TYPE.micro` is gone, split five ways by what the mark attaches to.** It was
+used 87 times across 46 files and read as texture. Raising its size (9.5 → 11px,
+2026-07-29) made the texture *bigger*, because texture is a function of **count
+and attachment**, not size. A mark floating above a heading, a kind marker on a
+card, a label over a list, a caption under a numeral and a duration in a row are
+five jobs; one constant made them one visual event repeated 87 times.
+
+| Constant | Attaches to | Use for |
+|---|---|---|
+| `TYPE.eyebrow` | nothing — it floats | The rare framing mark above a heading. **Rationed.** |
+| `TYPE.badge` | itself, via a `BADGE_*` container | Kind and status markers: `ARTICLE`, `Waitlist open`, `Free`. |
+| `TYPE.groupLabel` | the list beneath it | Section labels, sidebar group heads, ToC and rail labels. No caps, no tracking — deliberate. |
+| `TYPE.statLabel` | the numeral **above** it | Stat captions. Always renders below its value. |
+| `TYPE.metaMark` | its card or row | Durations, counts, dates, bylines. |
+
+A bare `TYPE.badge` is always a mistake: it carries no surface, so pair it with
+`BADGE_SOLID`, `BADGE_NEUTRAL` or `BADGE_OUTLINE` from the same file.
+
+`TYPE.metaMark` sits alongside `TYPE.command`, which is also 12px mono. They
+differ in weight and that is the point: `command` is `font-medium` because a
+slash command is a thing you type; `metaMark` is `font-normal` because a
+duration is a thing you read. Do not merge them.
+
+**Eyebrows are rationed, by judgement rather than by a counter.** An eyebrow
+earns its place when it carries a fact the heading can't hold, that isn't a
+property of a thing already on screen, and it is alone on the screen. Three
+gates, applied in order:
+
+1. **Fact test.** Cover it and read the heading. Did you lose a *fact* — a kind,
+   a scope, a date, a sequence position, a status? Not a mood, not "a sense of
+   section". If no fact is lost: delete it, and do not relocate it.
+2. **Relocation test.** The fact survived; now house it elsewhere. Property of a
+   thing → `badge`. Belongs in the sentence → fold it into the heading or lead.
+   Names a number or a list → `statLabel` / `groupLabel`. The eyebrow is the
+   last resort, never the first reach.
+3. **Solitude test.** Is it the only eyebrow in its viewport, and one of at most
+   two on the route? Two sections both wanting framing is a structure problem,
+   not a labeling problem: pick the one that frames the whole page.
+
+Survivors get MORE ink, not less (`text-foreground/70`, up from micro's ~45%). A
+rare mark that still whispers fails as text while occupying the slot. `mb-3`
+ships inside the constant — call sites choosing their own gap was half of why
+the heading relationship read as loose.
 
 **Weights.** Headings are **700**. The spec has no medium-weight heading: at
 these tracking values a 500 display line reads as a different typeface rather
@@ -256,7 +300,9 @@ reads as a rendering fault rather than as a choice.
 
 **Two families, two accents.** DM Sans and JetBrains Mono (rule 10). Mono
 marks a category: labels, commands, durations, counts, stats. Uppercase appears
-in one place: `micro`. Italic appears in one: pull quotes.
+in three of the five mono label steps — `eyebrow`, `badge` and `statLabel` —
+and pointedly not in `groupLabel` or `metaMark`, which sit next to running text.
+Italic appears in one place: pull quotes.
 
 Exempt, because they are ornaments rather than text: the oversized quotation
 glyph in `TestimonialDivider` and the placeholder word in an empty
@@ -280,7 +326,7 @@ button was a house style; these values are the design's.
 
 | Step | Value | Utility | Used for |
 |------|-------|---------|----------|
-| Badge | 4px | `rounded-[4px]` | Uppercase mono badges — "New", "Free", "Waitlist open". |
+| Badge | 4px | `rounded-[4px]` | Uppercase mono badges — "New", "Free", "Waitlist open". Use a `BADGE_*` container from `type.ts`. |
 | Chip | 6px | `rounded-sm` | Command chips, tag pills, 28px icon buttons. |
 | Control | 9px | `rounded-[9px]` | Buttons, CTA links, inputs. Also `--radius`. |
 | Card | 11px | `rounded-md` | List cards and resource rows that float. |
@@ -362,7 +408,7 @@ Every PR is checked in both themes before merge. The light-mode primary asymmetr
 
 Match-and-refuse list. If you are about to ship one of these, redesign the element.
 
-- **Side-stripe borders.** A colored `border-l` or `border-r` thicker than 1px as a card or alert accent. One exception, and only one: a **pull quote in running prose** may take a 2px `border-primary` left rail (`Testimonial` in `page-builder-mdx-components.tsx`). There the rail is the quotation mark — the block has no surface of its own and the serif alone does not mark the change of speaker inside a column of sans. It stays banned anywhere the element already has a background, and at any width above 2px.
+- **Side-stripe borders.** A colored `border-l` or `border-r` thicker than 1px as a card or alert accent. One exception, and only one: a **pull quote in running prose** may take a 2px `border-primary` left rail — `Testimonial` in `page-builder-mdx-components.tsx`, and `.ah-prose-quote` in `globals.css`, which is the raw markdown blockquote. There the rail is the quotation mark — the block has no surface of its own and the serif alone does not mark the change of speaker inside a column of sans. It stays banned anywhere the element already has a background, and at any width above 2px.
 - **Gradient text.** `background-clip: text` on a gradient is decorative, never meaningful. Use weight or size, or `text-primary` if dark mode.
 - **Glassmorphism as default.** Blurred translucent cards used decoratively. Rare and purposeful, or nothing.
 - **Hero-metric template.** Big number, small label, supporting stats, gradient accent. SaaS cliché.
@@ -384,6 +430,7 @@ Match-and-refuse list. If you are about to ship one of these, redesign the eleme
 - [ ] Two-column grids use the documented ratios in rule 4
 - [ ] Colors come from shadcn tokens; documented exceptions only (rule 9)
 - [ ] Sizes come from `TYPE` (rule 11); headings at 700; mono only for labels, commands, durations, counts and stats
+- [ ] Mono labels use the right one of the five (rule 11): a mark above a heading is an `eyebrow` and is rationed; everything else is a `badge`, `groupLabel`, `statLabel` or `metaMark`
 - [ ] Body columns capped at the spec's 70ch measure
 - [ ] Radius follows rule 12: sharp page structure, 4 / 6 / 9 / 11 / 12 on objects, `rounded-full` only on circles
 - [ ] Gold fills use `bg-accent-fill`, accent type uses `text-primary` (rule 7)

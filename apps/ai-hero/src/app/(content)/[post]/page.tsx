@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CourseCta } from '@/app/(content)/_components/course-cta'
 import { ContentReadTracker } from '@/components/content-read-tracker'
-import { TYPE } from '@/components/landing/type'
+import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import type { CalloutIntent } from '@/components/mdx/callout'
 import { Contributor } from '@/components/contributor'
 import { MdxErrorBoundary } from '@/components/mdx/mdx-error-boundary'
@@ -234,9 +234,7 @@ export default async function PostPage(props: {
                 a different button style and a different gutter from every
                 other section of the page. */}
 						<div className="flex w-full flex-col gap-2.5 px-[18px] py-8 sm:px-11 md:hidden">
-							<p className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-								Share
-							</p>
+							<p className={TYPE.groupLabel}>Share</p>
 							<Share variant="rail" title={post?.fields.title} />
 						</div>
 						{/* § UP NEXT — previous on the page surface, next on the band. */}
@@ -477,7 +475,8 @@ function PostTitle({ post }: { post: Post }) {
 	)
 }
 
-const EYEBROW = cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')
+// Durations, dates and counts on a row — meta, not an eyebrow.
+const EYEBROW = TYPE.metaMark
 
 /** "9 min read" — the same `reading-time` estimate RelatedPosts already shows. */
 function getReadingLabel(body: string | null | undefined) {
@@ -586,7 +585,7 @@ async function PostHead({
 					{(position || metaLine) && (
 						<div className="mb-4 flex flex-wrap items-center gap-x-2.5 gap-y-1">
 							{position && (
-								<span className={cn(TYPE.micro, 'text-primary')}>
+								<span className={cn(TYPE.badge, BADGE_OUTLINE, 'inline-flex w-fit')}>
 									{position}
 								</span>
 							)}

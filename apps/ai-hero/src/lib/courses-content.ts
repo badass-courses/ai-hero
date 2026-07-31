@@ -21,23 +21,56 @@
  */
 
 /**
- * The hero's left cell. `pitchLead` and `pitchTail` bracket the product name
- * so the one place it is emphasised in prose stays live data rather than a
- * string that quietly goes stale when the cohort is renamed.
+ * The hero's copy.
+ *
+ * `pitchLead` / `pitchTail` are gone. They bracketed the product name so it
+ * could be emphasised inside a sentence — which is precisely the invisibility
+ * Amy flagged: *"a reader can finish the page not knowing what it is called."*
+ * The name is the `h1` now and the cohort's own `description` is the line under
+ * it, so a paragraph restating the argument before the ask was the third pass
+ * at one idea.
  */
 export const FLAGSHIP_HERO = {
-	eyebrow: 'The flagship cohort · semi-live',
-	headline: 'Stop babysitting your agent. Start engineering with it.',
-	pitchLead:
-		'You can already code. The gap is getting an agent to write code you would put your name on.',
-	pitchTail:
-		'teaches the workflow Matt uses every day: real engineering with agents, not vibe coding.',
+	/**
+	 * The route's ONE eyebrow, and the only mark on the site that still floats
+	 * above a heading attached to nothing.
+	 *
+	 * It earns it: the headline is the cohort's NAME, so what KIND of thing it
+	 * is — a cohort-based course rather than a video course or a book — is a
+	 * fact the heading cannot hold and would be clumsy folded into the sentence.
+	 * It clears all three gates (`lat.md/decisions#Eyebrows split by
+	 * attachment`), so it ships at 70% ink rather than whispering.
+	 *
+	 * One phrase, not a composed one. It briefly carried the start date too
+	 * ("Cohort · Starts 6 Oct"), which put a fact here that the "Next dates"
+	 * row below already states — and left the no-date branch reading
+	 * "Cohort · Semi-live", which is two labels pretending to be a sentence.
+	 */
+	eyebrow: 'Cohort-based course',
+	/**
+	 * The affordance under the cohort artwork in the hero's rail.
+	 *
+	 * Its own string, not a borrow of `FLAGSHIP_ENROLLING.ctaLabel`. That label
+	 * belongs to the primary button, and the image is not a second CTA — it is
+	 * the way to read more before deciding, which is a different promise and
+	 * should not be dressed as the same one.
+	 */
+	imageLinkLabel: 'More info',
+	/**
+	 * Fallbacks for when no cohort resolves at all — no upcoming one and no
+	 * latest one. Both the headline and the line under it come off the cohort
+	 * normally: the NAME is the headline (Amy: a reader could finish this page
+	 * not knowing what the thing is called) and the cohort's own `description`
+	 * is the line under it, the same field the cohort page sets in `text-primary`
+	 * beneath its title. One product, one sentence, on both pages.
+	 */
+	fallbackTitle: 'AI Coding for Real Engineers',
+	subhead: 'Stop babysitting your agent. Start engineering with it.',
 	/** The hairline fact row under the pitch. */
 	trainedLabel: 'Engineers trained',
 	formatLabel: 'Format',
 	formatValue: 'Async lessons + live office hours',
 	datesLabel: 'Next dates',
-	datesWaitlistValue: 'Announced to the list first',
 	/**
 	 * A cohort can be purchasable without a future start date — no date set
 	 * yet, or one already underway and still open. Neither is a waitlist, so
@@ -51,7 +84,14 @@ export const FLAGSHIP_WAITLIST = {
 	/** Anchor for every "join the list" link on the site. */
 	anchorId: 'join',
 	badge: 'Waitlist open',
-	heading: 'Get the dates first',
+	/**
+	 * Names the thing on offer: a place in the next cohort, ahead of everyone
+	 * else. "Get the dates first" named a calendar — the smallest part of what a
+	 * reader is signing up for, and a promise the description under it already
+	 * makes in full. It also left the block with nothing that said "cohort",
+	 * so the heading was doing no work the badge above it wasn't.
+	 */
+	heading: 'Be first in line for the next cohort',
 	description:
 		'Enrollment closes between cohorts and seats go to the waitlist. Join and you get the dates the moment they are set, plus what you need for budget approval.',
 	actionLabel: 'Join the waitlist',
@@ -59,6 +99,32 @@ export const FLAGSHIP_WAITLIST = {
 } as const
 
 /** The same cell while a cohort is actually purchasable. */
+/**
+ * A live discount, surfaced without a price.
+ *
+ * Deliberately no number beyond the saving: purchasing-power parity makes a
+ * displayed price situation-dependent, so any figure rendered here would be
+ * wrong for most readers. The discount and the deadline are true for everyone.
+ */
+export const FLAGSHIP_SALE = {
+	label: 'Sale',
+	/** Interpolated with the formatted discount, e.g. "30%". */
+	claim: (formatted: string) => `Save ${formatted} on this cohort right now.`,
+	deadlineLabel: 'Offer ends',
+} as const
+
+/**
+ * Not a sales state. A buyer landing on /courses mid-cohort should see, before
+ * anything else, that the thing they bought is currently on — so this is a
+ * strip at the TOP of the page rather than the hero's CTA.
+ */
+export const FLAGSHIP_RUNNING = {
+	label: 'In progress',
+	heading: 'Your cohort is on right now',
+	body: 'We are inside the window, learning with Matt.',
+	ctaLabel: 'Go to the cohort',
+} as const
+
 export const FLAGSHIP_ENROLLING = {
 	badge: 'Enrollment open',
 	heading: 'Seats are open',
@@ -84,7 +150,7 @@ export const FLAGSHIP_FACTS = [
 		body: 'Office hours run in morning and evening slots, and every session is recorded with transcripts. Send questions ahead if you cannot make it live.',
 	},
 	{
-		label: 'Your pace is fine',
+		label: 'Go at your pace',
 		body: 'Most people finish inside the cohort window. Plenty stretch it over 4 to 8 weeks instead. Both work.',
 	},
 	{

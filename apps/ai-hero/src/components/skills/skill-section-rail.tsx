@@ -43,7 +43,7 @@ export function SkillSectionRail({
 			aria-label="Where this fits"
 			className={cn('grid grid-cols-[minmax(0,1fr)]', className)}
 		>
-			<p className={cn(TYPE.micro, 'mb-3 text-[color:var(--ah-fg-label)]')}>
+			<p className={cn(TYPE.groupLabel, 'mb-3')}>
 				Where this fits
 			</p>
 			{/* Below the rail's own breakpoint the list rotates into a horizontal

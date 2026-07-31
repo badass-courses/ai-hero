@@ -2,7 +2,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 
-import { TYPE } from './type'
+import { BADGE_OUTLINE, TYPE } from './type'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -44,20 +44,14 @@ export function ResourceLadderItem({
 			    as six items; in a column the labels line up and the titles start
 			    on one left edge, so the rung scans as a list of three things with
 			    a format each. */}
-			<span
-				className={cn(
-					TYPE.micro,
-					'text-[color:var(--ah-fg-label)] hidden w-16 flex-none sm:block',
-				)}
-			>
-				{isVideo ? 'Video' : 'Article'}
+			<span className="hidden w-[74px] flex-none sm:block">
+				<span className={cn(TYPE.badge, BADGE_OUTLINE, 'inline-flex w-fit')}>
+					{isVideo ? 'Video' : 'Article'}
+				</span>
 			</span>
-			<span className="flex min-w-0 flex-1 flex-col gap-1">
+			<span className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
 				<span
-					className={cn(
-						TYPE.micro,
-						'text-[color:var(--ah-fg-label)] sm:hidden',
-					)}
+					className={cn(TYPE.badge, BADGE_OUTLINE, 'inline-flex w-fit sm:hidden')}
 				>
 					{isVideo ? 'Video' : 'Article'}
 				</span>

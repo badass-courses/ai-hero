@@ -37,13 +37,17 @@
  * | `metaSm`  | 13px    | —                | Attributions, footer links, nested nav rows. |
  * | `metaMono`| 13px    | —                | The mono sibling of `metaSm`.  |
  * | `statSm`  | 20px    | Skills § HEAD    | The mono numeral in a stat strip. |
- * | `micro`   | 11px    | `.ah-label`*     | The mono uppercase eyebrow.    |
+ * | `eyebrow` | 11px    | `.ah-label`*     | The mono uppercase eyebrow. Rare. |
+ * | `badge`   | 10px    | —                | A kind or status marker, in a BADGE_* container. |
+ * | `groupLabel` | 11px | —                | The label over a list. No caps, no tracking. |
+ * | `statLabel` | 11px  | —                | The caption UNDER a numeral.   |
+ * | `metaMark`| 12px    | —                | A duration, count, date or byline on a row. |
  * | `navNum`  | 11px    | `.ah-sidebar__num`* | The mono numeral in a nav row. |
  *
  * Display sizes step down about a third on mobile, per the spec's note.
  *
  * \* The two starred steps are the only places this scale overrides the spec:
- * both are 9.5px there and 11px here. See `micro` for why.
+ * both are 9.5px there and 11px here. See `eyebrow` for why.
  *
  * ## Weights
  *
@@ -229,20 +233,44 @@ export const TYPE = {
 	 */
 	metaMono: 'font-mono text-[13px] leading-[1.35]',
 	/**
-	 * The eyebrow label. Mono, caps, wide tracking.
+	 * The eyebrow, and the four roles that used to hide inside it.
 	 *
-	 * The prototype sets this at 9.5px and the app followed it for a while.
-	 * Overridden to 11px (Vojta, 2026-07-29): the spec's value was measured on
-	 * one label under one heading, but the app puts eyebrows on ~79 surfaces —
-	 * section heads, sidebar categories, ToC and rail labels, card meta — and
-	 * at 9.5px caps with 0.14em tracking they stopped reading as text and
-	 * started reading as texture. Still the smallest step in the scale, and
-	 * still unmistakably a tag rather than a line competing with the heading.
+	 * There used to be one constant here — `micro` — used 87 times across 46
+	 * files. Raising it from 9.5px to 11px (2026-07-29) made the texture bigger
+	 * rather than smaller, because texture is a function of **count and
+	 * attachment**, not size. A mark floating above a heading, a kind marker on
+	 * a card, a label over a list, a caption under a numeral and a duration in a
+	 * row are five different jobs; one constant made them one visual event
+	 * repeated eighty-seven times.
 	 *
-	 * Tracking stays at 0.14em: it is an em value, so it grew with the size.
+	 * Split by what the mark attaches to. Only the first floats.
+	 *
+	 * A mark earns `eyebrow` when it carries a fact the heading can't hold, that
+	 * isn't a property of a thing already on screen, and it is alone on the
+	 * screen. Budget: ≤8 site-wide, roughly one per top-level route.
 	 */
-	micro:
-		'font-mono text-[11px] font-medium uppercase leading-[1.4] tracking-[0.14em]',
+	/** Floats above a heading, attached to nothing. ≤1 per viewport, ≤2 per route. */
+	eyebrow:
+		'font-mono text-[11px] font-medium uppercase leading-[1.4] tracking-[0.16em] text-foreground/70 dark:text-foreground/65 mb-3',
+	/** Attaches to itself, via a container. Pair with a BADGE_* container. */
+	badge:
+		'font-mono text-[10px] font-medium uppercase leading-none tracking-[0.10em]',
+	/** Attaches to the list beneath it. No uppercase, no tracking — deliberate. */
+	groupLabel:
+		'font-mono text-[11px] font-medium leading-[1.4] tracking-normal text-muted-foreground',
+	/** Attaches to the numeral ABOVE it. Caption position, always below the number. */
+	statLabel:
+		'font-mono text-[11px] font-medium uppercase leading-[1.35] tracking-[0.12em] text-muted-foreground mt-1.5',
+	/**
+	 * Attaches to its card or row. Durations, counts, dates, bylines.
+	 *
+	 * Sits alongside `command`, which is also 12px mono. They differ in weight
+	 * and that is the point: `command` is `font-medium` because a slash command
+	 * is a thing you type; `metaMark` is `font-normal` because a duration is a
+	 * thing you read. Do not merge them.
+	 */
+	metaMark:
+		'font-mono text-[12px] font-normal leading-[1.4] tracking-normal text-muted-foreground',
 	/**
 	 * The mono numeral leading a nav row (`.ah-sidebar__num`) — a lesson's
 	 * position, a section's index.
@@ -267,3 +295,18 @@ export const TYPE = {
 	statSm:
 		'font-mono text-[20px] font-medium leading-none tracking-[-0.02em] tabular-nums',
 } as const
+
+/**
+ * The containers a `TYPE.badge` sits in. A badge attaches to itself, and the
+ * container is how it does that — the type constant carries no surface of its
+ * own, so a bare `TYPE.badge` is always a mistake.
+ *
+ * Semantic tokens only, so both themes ride the same declaration. The gold
+ * stays a fill and is never used as text (DESIGN rule 7).
+ */
+export const BADGE_SOLID =
+	'bg-primary text-primary-foreground px-[7px] py-[5px] rounded-[4px]'
+export const BADGE_NEUTRAL =
+	'bg-foreground/10 text-foreground px-[7px] py-[5px] rounded-[4px]'
+export const BADGE_OUTLINE =
+	'border border-border text-foreground px-[7px] py-[5px] rounded-[4px]'

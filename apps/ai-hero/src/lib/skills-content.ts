@@ -19,19 +19,26 @@ export const SKILLS_INSTALL_CHANNELS = [
 	{
 		id: 'skills-sh',
 		label: 'Install the skills',
+		/**
+		 * Cycles the whole set: this channel installs into whichever agent you
+		 * name, so no single mark would be true.
+		 */
+		mark: 'cycle',
 		mode: 'Recommended',
 		variant: 'primary',
 		command: 'npx skills@latest add mattpocock/skills',
 		description:
-			'Pick the skills you want and the coding agents you use. The installer puts editable files in your project.',
-		updateLabel: 'Update later with',
+			'Pick the skills and agents you use. The installer writes editable files into your project.',
+		updateLabel: 'Update with',
 		updateCommand: 'npx skills update',
 		href: 'https://www.skills.sh/mattpocock/skills',
-		linkLabel: 'View on Skills.sh',
+		linkLabel: 'Skills.sh',
 	},
 	{
 		id: 'claude-code',
-		label: 'Using Claude Code?',
+		label: 'Claude Code',
+		/** One agent, one mark — this installs a Claude Code plugin. */
+		mark: 'Claude Code',
 		mode: 'Plugin',
 		variant: 'secondary',
 		command: 'claude plugins install mattpocock-skills',
@@ -39,7 +46,13 @@ export const SKILLS_INSTALL_CHANNELS = [
 			'Install the complete set as a managed, read-only plugin from the official marketplace.',
 		updateLabel: 'Updates automatically',
 		href: 'https://code.claude.com/docs/en/plugins',
-		linkLabel: 'Claude Code plugin docs',
+		linkLabel: 'Plugin docs',
+		/**
+		 * What this channel collapses to on a phone. Two commands stacked on a
+		 * 390px screen is a wall; the one that serves most readers stays inline
+		 * and this points at the other.
+		 */
+		mobileLabel: 'Using Claude Code? Install as a plugin',
 	},
 ] as const
 
@@ -56,8 +69,13 @@ export const SKILLS_HERO = {
 		'A practical skill system for engineers who want to use AI without giving up their standards.',
 	/** Second half of the hero lead (`Skills Page.dc.html` § HEAD). */
 	taglineTail: 'Install the ones you want, then type a slash command.',
-	/** The third stat's label: the agents the set runs in. */
-	agentsLabel: 'Claude Code, Cursor, Codex…',
+	/**
+	 * The relocated half of the old hero eyebrow. "Free · open source · N
+	 * skills" failed the fact test on "the system" and relocated on the second:
+	 * open source is a property of the skills, so it is a badge under the
+	 * headline. The count moved to the rail foot with the agents.
+	 */
+	openSourceBadge: 'Free and open source',
 	repoOwner: 'mattpocock',
 	repoName: 'skills',
 } as const
@@ -68,11 +86,60 @@ export const SKILLS_HERO = {
  * written for a full-width strip under a post.
  */
 export const SKILLS_COURSE_PANEL = {
-	eyebrow: 'Free 7-day email course',
-	heading: 'Learn the skills in order',
-	body: 'One lesson a day, on real work, ending with a repeatable agent workflow.',
-	ctaLabel: 'Start the course',
+	heading: 'Learn how I actually engineer with these',
+	/**
+	 * Three lengths, swapped at the same container steps as the hero's layout
+	 * (`skills-hero.tsx`), never truncated at runtime. A sentence that gets
+	 * shorter because the column did is a different sentence, and picking which
+	 * clause survives is an editorial call — `text-overflow` makes it at random.
+	 */
+	body: {
+		/** ≥1080px of hero container: the full argument. */
+		full: 'A free email course on the practices these skills came out of — the judgement calls that keep the output at your standard, not just the commands.',
+		/** 940–1080px: the contrast survives, the setup goes. */
+		mid: 'A free email course on the practices these skills came out of — the judgement calls, not just the commands.',
+		/** Under 940px, including mobile: the claim alone. */
+		short:
+			'A free email course on the practices these skills came out of.',
+	},
+	ctaLabel: 'Start the email course',
+	note: 'No spam. Unsubscribe any time.',
 	href: '/skills/subscribe',
+} as const
+
+/**
+ * What the install rail closes on, replacing the old "Any agent" stat. It sits
+ * next to the commands it qualifies rather than in a strip of numbers, because
+ * "does this run where I work" is a question about the command, not a metric.
+ */
+export const SKILLS_RAIL_FOOTER = {
+	heading: 'Works with any agent',
+	agents: 'Claude Code · Cursor · Codex · Copilot',
+	licence: 'MIT',
+} as const
+
+/**
+ * THE SKILL SET's own head.
+ *
+ * One word. The section is the catalog on a page whose `h1` already says "AI
+ * Skills for Real Engineers", so the heading's whole job is to mark where the
+ * list starts — a reader scrolling for the skills is looking for the word
+ * "Skills", not for a sentence about them.
+ *
+ * It has been through two worse versions. It opened on the live count ("21
+ * skills, grouped by when you reach for them"), which is the worst available
+ * first word for a section head: least memorable thing in the line, makes the
+ * heading read as inventory, and re-dates the page every time the CMS gains a
+ * skill. Replacing the numeral with the organising idea fixed the number
+ * problem and left a heading still explaining itself.
+ *
+ * So the framing moved to the line beside it, where it belongs: how the list is
+ * ordered, and where to start, are the two questions a reader actually has
+ * here, and neither is the section's name.
+ */
+export const SKILLS_SET_SECTION = {
+	heading: 'Skills',
+	lead: 'Grouped by when you reach for them. Most people start with the main flow.',
 } as const
 
 export const SKILLS_REPO_URL = `https://github.com/${SKILLS_HERO.repoOwner}/${SKILLS_HERO.repoName}`

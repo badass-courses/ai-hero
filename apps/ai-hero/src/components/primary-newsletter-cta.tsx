@@ -24,8 +24,6 @@ type PrimaryNewsletterCtaProps = {
 	 */
 	title?: React.ReactNode
 	byline?: React.ReactNode
-	/** The mono eyebrow above the title. Pass `null` to drop it. */
-	label?: React.ReactNode
 	actionLabel?: string
 	/**
 	 * Heading element used for the CTA title. Defaults to `h2`; use `h1` when the CTA supplies the page's primary heading.
@@ -81,7 +79,6 @@ export const PrimaryNewsletterCta: React.FC<
 	id = 'primary-newsletter-cta',
 	title = common['primary-newsletter-tittle'],
 	byline = common['primary-newsletter-byline'],
-	label = 'Newsletter',
 	actionLabel = common['primary-newsletter-button-cta-label'],
 	titleElement = 'h2',
 	trackProps = { event: 'subscribed', params: {} },
@@ -133,16 +130,9 @@ export const PrimaryNewsletterCta: React.FC<
 					children
 				) : (
 					<>
-						{label && (
-							<p
-								className={cn(
-									TYPE.micro,
-									'mb-3 text-[color:var(--ah-fg-label)]',
-								)}
-							>
-								{label}
-							</p>
-						)}
+						{/* No eyebrow. "Newsletter" over an email field and a subscribe
+						    button restated what the panel already is, on every route this
+						    CTA appears on — which is most of them. */}
 						<Title className={cn(TYPE.panelTitle, 'text-balance font-sans')}>
 							{title}
 						</Title>

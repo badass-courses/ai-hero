@@ -357,8 +357,8 @@ export function CompanyLogoGrid({
 				<p
 					id="company-logo-grid-heading"
 					className={cn(
-						TYPE.micro,
-						'text-[color:var(--ah-fg-label)] sm:max-w-[120px] sm:flex-none',
+						TYPE.groupLabel,
+						'sm:max-w-[120px] sm:flex-none',
 					)}
 				>
 					{eyebrow}
@@ -399,7 +399,7 @@ export function CompanyLogoGrid({
 			{/* Eyebrow, not a heading — same reasoning as the row variant above. */}
 			<p
 				id="company-logo-grid-heading"
-				className={cn(TYPE.micro, 'text-center text-[color:var(--ah-fg-label)]')}
+				className={cn(TYPE.groupLabel, 'text-center')}
 			>
 				{eyebrow}
 			</p>

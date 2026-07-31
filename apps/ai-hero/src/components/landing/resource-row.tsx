@@ -10,7 +10,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { AnimatedArrowCircle } from './animated-arrow-circle'
 
-import { TYPE } from './type'
+import { BADGE_OUTLINE, TYPE } from './type'
 
 const MotionLink = motion.create(Link)
 
@@ -122,7 +122,12 @@ export function ResourceRow({
 							sizes="(min-width: 640px) 240px, 100vw"
 						/>
 					) : fallbackPlaceholder ? (
-						<span className="absolute inset-0 flex items-center justify-center font-mono text-xs font-semibold uppercase tracking-widest opacity-30">
+						<span
+							className={cn(
+								TYPE.badge,
+								'absolute inset-0 flex items-center justify-center tracking-[0.18em] opacity-30',
+							)}
+						>
 							{fallbackPlaceholder}
 						</span>
 					) : null}
@@ -132,7 +137,13 @@ export function ResourceRow({
 						<div className="flex flex-wrap items-center gap-3">
 							{renderedBadge && <span>{renderedBadge}</span>}
 							{typeLabel && (
-								<span className="font-mono text-xs font-medium uppercase tracking-wider z-10 relative">
+								<span
+									className={cn(
+										TYPE.badge,
+										BADGE_OUTLINE,
+										'relative z-10 inline-flex w-fit',
+									)}
+								>
 									{typeLabel}
 								</span>
 							)}
@@ -212,8 +223,8 @@ function CompactResourceRow({
 				) : fallbackPlaceholder ? (
 					<span
 						className={cn(
-							TYPE.micro,
-							'absolute inset-0 flex items-center justify-center opacity-40',
+							TYPE.badge,
+							'absolute inset-0 flex items-center justify-center tracking-[0.18em] opacity-40',
 						)}
 					>
 						{fallbackPlaceholder}
@@ -227,7 +238,9 @@ function CompactResourceRow({
 					<div className="mb-[7px] flex items-center gap-2.5">
 						{renderedBadge}
 						{typeLabel && (
-							<span className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
+							<span
+								className={cn(TYPE.badge, BADGE_OUTLINE, 'inline-flex w-fit')}
+							>
 								{typeLabel}
 							</span>
 						)}
@@ -265,7 +278,12 @@ function CompactResourceRow({
 
 function DefaultBadge({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="bg-foreground text-background inline-flex w-fit items-center rounded-[4px] px-2.5 py-1 font-mono text-xs font-semibold uppercase tracking-wider">
+		<span
+			className={cn(
+				TYPE.badge,
+				'bg-foreground text-background inline-flex w-fit items-center rounded-[4px] px-[7px] py-[5px]',
+			)}
+		>
 			{children}
 		</span>
 	)

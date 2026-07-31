@@ -36,9 +36,9 @@ export function ProofGrid({
 			aria-label={eyebrow}
 			className="border-border border-b bg-[color:var(--ah-band)] px-[18px] pb-8 pt-14 sm:px-11 sm:pb-[30px] sm:pt-16"
 		>
-			<p className={cn(TYPE.micro, 'mb-8 text-[color:var(--ah-fg-label)]')}>
-				{eyebrow}
-			</p>
+			{/* A group label, not an eyebrow: it names the list of quotes directly
+			    beneath it and there is no heading here for it to float above. */}
+			<p className={cn(TYPE.groupLabel, 'mb-8')}>{eyebrow}</p>
 			<ul className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-3">
 				{quotes.map((quote, i) => (
 					<li

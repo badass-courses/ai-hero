@@ -508,8 +508,8 @@ function PalettePromoRow({
 			{promo.label && (
 				<span
 					className={cn(
-						TYPE.micro,
-						'bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-1.5 py-1 leading-none',
+						TYPE.badge,
+						'bg-accent-fill text-accent-fill-foreground inline-flex shrink-0 items-center rounded-[4px] px-[7px] py-[5px]',
 					)}
 				>
 					{promo.label}

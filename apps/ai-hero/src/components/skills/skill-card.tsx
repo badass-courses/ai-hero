@@ -50,9 +50,7 @@ export async function SkillCard({
 		>
 			<span className="flex min-w-0 flex-col gap-1">
 				{label ? (
-					<span className={cn(TYPE.micro, 'text-[color:var(--ah-fg-label)]')}>
-						{label}
-					</span>
+					<span className={TYPE.groupLabel}>{label}</span>
 				) : null}
 				<span className={cn(TYPE.subhead, 'truncate font-mono')}>
 					<span aria-hidden className="text-primary">

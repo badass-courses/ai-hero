@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { TYPE } from '@/components/landing/type'
+import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
@@ -30,13 +30,18 @@ type SkillsNewsletterCtaVariant = 'updates' | 'course'
  * font-semibold` on the heading, `text-base` on the lead, `text-sm
  * font-semibold` on the button, `text-[11px] tracking-wider` on the eyebrow.
  * None of those are steps in `TYPE`, so the card was set in four sizes the rest
- * of the site does not use, and the button in particular came out a weight
- * heavier than every other control (`TYPE.meta` is 500, not 600).
+ * of the site does not use.
+ *
+ * The button keeps a weight of its own on top of `TYPE.meta` — see
+ * `CARD_BUTTON`. The scale sets type; what a gold fill weighs is a property of
+ * the control, and every other one on the site is 700.
  *
  * `panelTitle` is the documented step for "a bordered panel's own title", which
  * is exactly what this is.
  */
-const CARD_EYEBROW = cn(TYPE.micro, 'text-primary')
+// A group label, not an eyebrow: it names the offer in the panel under it,
+// and the card already carries a surface of its own.
+const CARD_EYEBROW = cn(TYPE.groupLabel, 'text-primary')
 /** Which offer the card is making, in the eyebrow. */
 const cardEyebrow = (variant: SkillsNewsletterCtaVariant) =>
 	variant === 'course'
@@ -48,10 +53,17 @@ const CARD_FOOTNOTE = cn(
 	TYPE.metaSm,
 	'text-foreground/60 inline-flex items-center gap-2',
 )
-/** 48px gold control, 9px radius, sized by its label. Shared by both states. */
+/**
+ * 48px gold control, 9px radius, sized by its label. Shared by both states.
+ *
+ * `font-bold`, which is what every other gold fill on the site is set in — the
+ * hero CTAs, the cohort asks, the skills course form. `TYPE.meta` ships 500 and
+ * this used to inherit it, so the one control in the card came out two steps
+ * lighter than the identical-looking button a page away.
+ */
 const CARD_BUTTON = cn(
 	TYPE.meta,
-	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-12 items-center justify-center rounded-[9px] px-7 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring inline-flex h-12 items-center justify-center rounded-[9px] px-7 font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
 )
 
 export function SkillsNewsletterCta({
@@ -142,7 +154,7 @@ export function SkillsNewsletterCta({
 				// was rounded and gold — the same form, two shapes and two weights,
 				// depending on which copy it carried. 9px and `accent-fill` are the
 				// documented control, so both use it.
-				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-medium [&_button]:leading-snug [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:sr-only"
+				className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_input]:border-foreground/15 [&_input]:bg-background [&_input]:text-foreground [&_input]:placeholder:text-foreground/60 grid w-full grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] [&_button]:h-12 [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-7 [&_button]:text-sm [&_button]:font-bold [&_button]:leading-snug [&_button]:transition [&_input]:h-12 [&_input]:rounded-[9px] [&_input]:min-w-0 [&_input]:border [&_input]:px-5 [&_input]:text-sm [&_label]:sr-only"
 			/>
 			<p className={CARD_FOOTNOTE}>
 				<ShieldCheckIcon className="h-3.5 w-3.5 shrink-0" />
@@ -197,7 +209,7 @@ function SkillsCtaTagMe({
 				// subscription visibly changed the card's shape under the reader.
 				className="not-prose border-border bg-muted/40 my-10 flex flex-col gap-3 rounded-xl border p-6 sm:p-8"
 			>
-				<span className={cn(TYPE.micro, 'opacity-60')}>
+				<span className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-flex w-fit')}>
 					{isCourse ? "You're in" : "You're on the list"}
 				</span>
 				<p className={cn(TYPE.lead, 'opacity-80')}>

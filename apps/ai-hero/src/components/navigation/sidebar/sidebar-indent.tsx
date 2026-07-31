@@ -97,6 +97,6 @@ export const SIDEBAR_NUM_CLASS = cn(
  * because the shell's own `pt-6` already opens the column.
  */
 export const SIDEBAR_LABEL_CLASS = cn(
-	TYPE.micro,
-	'h-auto px-2.5 pb-[9px] pt-[26px] text-[color:var(--ah-fg-label)] first:pt-0',
+	TYPE.groupLabel,
+	'h-auto px-2.5 pb-[9px] pt-[26px] first:pt-0',
 )

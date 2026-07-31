@@ -96,9 +96,14 @@ export function Callout({
 				)}
 			>
 				<p
-					// Gold at full strength would out-shout the body it labels; in
-					// light `--primary` is ink, which needs no easing off.
-					className={cn(TYPE.micro, 'text-primary dark:text-primary/85 mb-2')}
+					// A group label, not a badge: the box already carries one surface
+					// (the accent wash and the left rule), and a chip inside it would be
+					// a second. Gold at full strength would out-shout the body it
+					// labels; in light `--primary` is ink, which needs no easing off.
+					className={cn(
+						TYPE.groupLabel,
+						'text-primary dark:text-primary/85 mb-2',
+					)}
 				>
 					{eyebrow ?? kindEyebrow[kind]}
 				</p>
