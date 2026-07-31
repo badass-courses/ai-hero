@@ -60,4 +60,24 @@ describe('subscriber gate cookie', () => {
 			}),
 		).toBe(subscriber)
 	})
+
+	it('lets a fresh Kit record replace stale gate state and cleared fields', () => {
+		const freshSubscriber = {
+			id: 42,
+			state: 'inactive',
+			fields: { interest: 'newsletter' },
+		}
+		const staleGate = {
+			id: 42,
+			state: 'active',
+			fields: {
+				interest: 'skills',
+				aih_course_started_at: '2026-07-31T12:00:00.000Z',
+			},
+		}
+
+		expect(
+			mergeSubscriberGateSnapshot(freshSubscriber, staleGate, 'subscriber'),
+		).toEqual(freshSubscriber)
+	})
 })

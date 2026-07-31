@@ -29,16 +29,16 @@ export const CohortPricingWidgetContainer: React.FC<
 		 * paint — this widget is above the fold on a page someone re-visits
 		 * specifically to check on a cohort they are waiting for.
 		 */
-		isOnWaitlist?: boolean
+		isOnWaitlist: boolean
 		/** Cookie- or session-resolved identity; known readers get one button. */
-		knownIdentity?: boolean
+		knownIdentity: boolean
 	}
 > = ({
 	className,
 	searchParams,
 	enrollmentOpenDateString,
-	isOnWaitlist = false,
-	knownIdentity = false,
+	isOnWaitlist,
+	knownIdentity,
 	...props
 }) => {
 	const { status: sessionStatus } = useSession()

@@ -95,7 +95,7 @@ export const getSubscriberFromCookie = cache(async () => {
 				)
 				if (!fetched) return null
 				return SubscriberSchema.parse(
-					mergeSubscriberGateSnapshot(fetched, gate),
+					mergeSubscriberGateSnapshot(fetched, gate, 'subscriber'),
 				)
 			}
 			if (!subscriber?.id) throw new Error('no subscriber id')
@@ -120,7 +120,7 @@ export const getSubscriberFromCookie = cache(async () => {
 					await setSubscriberCookie(subscriber)
 				} catch {}
 				return SubscriberSchema.parse(
-					mergeSubscriberGateSnapshot(subscriber, gate),
+					mergeSubscriberGateSnapshot(subscriber, gate, 'subscriber'),
 				)
 			}
 		} catch (e) {

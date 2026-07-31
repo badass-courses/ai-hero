@@ -7,8 +7,10 @@ import { courseBuilderAdapter, db } from '@/db'
 import { products, purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { getCohort } from '@/lib/cohorts-query'
+import { isOnCohortWaitlist } from '@/lib/cta-gating'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
+import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import { getWorkshop } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
 import { count, eq } from 'drizzle-orm'
@@ -41,6 +43,11 @@ export async function PricingWidgetServer({
 	}
 
 	if (!product) return null
+
+	const gatingSubscriber =
+		product.type === 'cohort' ? await getSubscriberForGating() : null
+	const isOnWaitlist = isOnCohortWaitlist(gatingSubscriber, product.name)
+	const knownWaitlistIdentity = Boolean(gatingSubscriber || user?.email)
 
 	const pricingDataLoader = getPricingData({ productId: product?.id })
 	let productProps: any
@@ -163,6 +170,8 @@ export async function PricingWidgetServer({
 						withTitle: true,
 						withImage: true,
 					}}
+					isOnWaitlist={isOnWaitlist}
+					knownIdentity={knownWaitlistIdentity}
 				/>
 			)}
 			{product?.type === 'self-paced' && (

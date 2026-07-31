@@ -50,8 +50,22 @@ export function mergeSubscriberGateSnapshot<
 		state?: string | null
 		fields?: Record<string, unknown> | null
 	},
->(subscriber: T, gate: SubscriberGateSnapshot | null): T {
+>(
+	subscriber: T,
+	gate: SubscriberGateSnapshot | null,
+	precedence: 'gate' | 'subscriber' = 'gate',
+): T {
 	if (!gate || gate.id !== Number(subscriber.id)) return subscriber
+	if (precedence === 'subscriber') {
+		return {
+			...subscriber,
+			state: subscriber.state ?? gate.state,
+			// A fetched Kit record is authoritative, including an empty fields
+			// object after a field was cleared. Falling back field-by-field would
+			// resurrect stale completion facts from the year-long gate cookie.
+			fields: subscriber.fields ?? gate.fields,
+		}
+	}
 	return {
 		...subscriber,
 		state: gate.state ?? subscriber.state,
