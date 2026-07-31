@@ -1,4 +1,5 @@
 import { Check } from 'lucide-react'
+import type { ConversionSurface } from '@/lib/cta/conversion-intent'
 
 import { SkillsCourseConfirmed } from './skills-course-confirmed'
 import * as SkillsNewsletter from './skills-newsletter'
@@ -41,9 +42,11 @@ const COURSE_LESSONS = [
 export function SkillsCourseFrontDoor({
 	status,
 	location,
+	surface,
 }: {
 	status: SkillsNewsletterStatus
 	location: string
+	surface: Extract<ConversionSurface, 'skills-subscribe' | 'skills-campaign'>
 }) {
 	return (
 		<main className="bg-background text-foreground">
@@ -69,7 +72,7 @@ export function SkillsCourseFrontDoor({
 					<SkillsNewsletter.Root
 						status={status}
 						location={location}
-						surface="skills-subscribe"
+						surface={surface}
 					>
 						<div className="bg-background border-border mx-auto flex w-full max-w-md flex-col gap-5 border p-6 shadow-sm sm:p-8">
 							<p className="font-mono text-xs font-medium uppercase tracking-wider opacity-60">

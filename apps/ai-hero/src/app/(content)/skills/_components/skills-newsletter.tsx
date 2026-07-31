@@ -62,7 +62,10 @@ export function Root({
 }: {
 	status: SkillsNewsletterStatus
 	location: string
-	surface: Extract<ConversionSurface, 'skills-subscribe' | 'homepage-course'>
+	surface: Extract<
+		ConversionSurface,
+		'skills-subscribe' | 'skills-campaign' | 'homepage-course'
+	>
 	children: React.ReactNode
 }) {
 	const router = useRouter()

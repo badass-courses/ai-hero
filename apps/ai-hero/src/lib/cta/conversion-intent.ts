@@ -15,6 +15,7 @@ export type GenericKnownConversionIntent = Extract<
 export type ConversionSurface =
 	| 'skills-hero'
 	| 'skills-subscribe'
+	| 'skills-campaign'
 	| 'homepage-course'
 	| 'skills-post'
 	| 'homepage-cohort'
@@ -188,6 +189,8 @@ function sourceForSurface(surface: ConversionSurface): string {
 			return 'aihero_skills_hero'
 		case 'skills-subscribe':
 			return 'aihero_skills_page'
+		case 'skills-campaign':
+			return 'aihero_campaign_ai_skills'
 		case 'homepage-course':
 			return 'aihero_homepage'
 		case 'skills-post':

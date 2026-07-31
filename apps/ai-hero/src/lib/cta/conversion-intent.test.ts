@@ -30,6 +30,13 @@ describe('conversionIntentContract', () => {
 				now: new Date('2026-07-31T12:00:00Z'),
 			}).fields.source,
 		).toBe('aihero_homepage')
+
+		expect(
+			conversionIntentContract({
+				intent: { kind: 'skills-course' },
+				surface: 'skills-campaign',
+			}).fields.source,
+		).toBe('aihero_campaign_ai_skills')
 	})
 
 	it('keeps a cohort waitlist field and tag in lockstep', () => {

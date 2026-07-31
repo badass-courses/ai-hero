@@ -28,7 +28,11 @@ export default async function AiSkillsCampaignPage() {
 
 	return (
 		<LayoutClient withContainer withNavigation={false} withFooter={false}>
-			<SkillsCourseFrontDoor status={status} location="campaign_ai_skills" />
+			<SkillsCourseFrontDoor
+				status={status}
+				location="campaign_ai_skills"
+				surface="skills-campaign"
+			/>
 		</LayoutClient>
 	)
 }

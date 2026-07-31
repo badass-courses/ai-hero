@@ -27,7 +27,11 @@ import {
 
 type SkillsCourseSurface = Extract<
 	ConversionSurface,
-	'skills-hero' | 'skills-subscribe' | 'homepage-course' | 'skills-post'
+	| 'skills-hero'
+	| 'skills-subscribe'
+	| 'skills-campaign'
+	| 'homepage-course'
+	| 'skills-post'
 >
 
 export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {

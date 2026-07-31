@@ -43,6 +43,23 @@ describe('getSubscriberForGating identity', () => {
 		})
 	})
 
+	it('normalizes a missing gate state before parsing the subscriber', async () => {
+		mocks.cookies.set(
+			'ck_subscriber_gate',
+			JSON.stringify({
+				id: 42,
+				email_address: 'reader@example.com',
+				state: null,
+				fields: {},
+			}),
+		)
+
+		await expect(getSubscriberForGating()).resolves.toMatchObject({
+			id: 42,
+			email_address: 'reader@example.com',
+		})
+	})
+
 	it('migrates identity from a matching full cookie without calling Kit', async () => {
 		mocks.cookies.set(
 			'ck_subscriber_gate',

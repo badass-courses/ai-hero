@@ -46,7 +46,7 @@ export const getSubscriberForGating = cache(
 		)
 		const cookie = cookieStore.get('ck_subscriber')?.value
 		if (gate) {
-			if (gate.email_address) return SubscriberSchema.parse(gate)
+			if (gate.email_address) return subscriberFromGate(gate)
 			// Gate cookies written before email identity was added can borrow it
 			// from the matching full cookie without a Kit round-trip. If that full
 			// cookie was rejected for size, the caller correctly renders a form.
@@ -54,14 +54,11 @@ export const getSubscriberForGating = cache(
 				try {
 					const full = SubscriberSchema.parse(JSON.parse(cookie))
 					if (full.id === gate.id && full.email_address) {
-						return SubscriberSchema.parse({
-							...gate,
-							email_address: full.email_address,
-						})
+						return subscriberFromGate(gate, full.email_address)
 					}
 				} catch {}
 			}
-			return SubscriberSchema.parse(gate)
+			return subscriberFromGate(gate)
 		}
 
 		if (cookie && cookie !== 'undefined') {
@@ -91,6 +88,17 @@ export const getSubscriberForGating = cache(
 		}
 	},
 )
+
+function subscriberFromGate(
+	gate: NonNullable<ReturnType<typeof parseSubscriberGateSnapshot>>,
+	emailAddress = gate.email_address,
+) {
+	return SubscriberSchema.parse({
+		...gate,
+		state: gate.state ?? undefined,
+		email_address: emailAddress,
+	})
+}
 
 /**
  * The gating answer, and NOTHING else, for surfaces that can be asked by anyone.
