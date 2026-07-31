@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
 import { useCtaGate } from '@/hooks/use-cta-gate'
@@ -40,6 +41,12 @@ export const WorkshopInterestCta = ({
 }) => {
 	const router = useRouter()
 	const { subscriber, isResolved } = useCtaGate()
+	// A signed-in reader is identified, so this panel must not ask for an email.
+	// The server resolves the same way (`resolveEnrolmentIdentity`), so the
+	// button it draws and the action it calls agree about who this is.
+	const { status: sessionStatus } = useSession()
+	const isSignedIn = sessionStatus === 'authenticated'
+	const knowsWhoYouAre = Boolean(subscriber) || isSignedIn
 	const [isPending, startTransition] = React.useTransition()
 	const [done, setDone] = React.useState(false)
 	const [error, setError] = React.useState(false)
@@ -118,7 +125,13 @@ export const WorkshopInterestCta = ({
 						'text-pretty text-[color:var(--ah-fg-muted)]',
 					)}
 				>
-					{`${workshopTitle ?? 'This workshop'} is on the way. Leave your email and we’ll let you know the moment it’s live.`}
+					{/* "Leave your email" is only true when there is a field to leave it
+					    in. For a reader we already know, the panel shows one button and
+					    the sentence has to stop asking for something it is not asking
+					    for. */}
+					{knowsWhoYouAre
+						? `${workshopTitle ?? 'This workshop'} is on the way. One click and we’ll let you know the moment it’s live.`
+						: `${workshopTitle ?? 'This workshop'} is on the way. Leave your email and we’ll let you know the moment it’s live.`}
 				</p>
 			</div>
 
@@ -132,13 +145,13 @@ export const WorkshopInterestCta = ({
 					<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" /> You&rsquo;re on the
 					list. We&rsquo;ll email you the moment it&rsquo;s live.
 				</p>
-			) : !isResolved ? (
+			) : !isResolved || sessionStatus === 'loading' ? (
 				<div className="flex flex-col gap-2.5">
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 				</div>
-			) : subscriber ? (
+			) : knowsWhoYouAre ? (
 				<div className="flex flex-col gap-2">
 					<button
 						type="button"

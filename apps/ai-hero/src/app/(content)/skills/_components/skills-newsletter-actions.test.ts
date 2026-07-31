@@ -43,6 +43,11 @@ vi.mock('@/server/auth', () => ({
 	getServerAuthSession: mocks.getServerAuthSession,
 }))
 
+// `server-only` is a build-time guard with no runtime module, so vitest cannot
+// resolve it. Stubbed rather than removed from the source: the guard is what
+// keeps a session read out of a client bundle.
+vi.mock('server-only', () => ({}))
+
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: {
 		send: mocks.inngestSend,

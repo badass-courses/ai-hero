@@ -3,8 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { cookies } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
-import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
-import { getServerAuthSession } from '@/server/auth'
+import { setSubscriberCookie } from '@/lib/convertkit'
+import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -21,41 +21,10 @@ import {
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
-/**
- * The signed-in reader's own address, when there is one.
- *
- * Never takes an address from the caller: the email comes off the server-side
- * session, so this cannot be used to enrol somebody else.
- */
-async function sessionIdentity() {
-	const auth = await getServerAuthSession().catch(() => null)
-	const email = auth?.session?.user?.email
-	if (!email) return null
-	return {
-		email,
-		name: auth?.session?.user?.name ?? undefined,
-		via: 'session' as const,
-	}
-}
-
 export async function tagSubscriberAsSkills(source = 'skills:tag-me') {
-	const subscriber = await getSubscriberFromCookie()
-
-	// A SIGNED-IN reader is identified, cookie or no cookie. They logged in from
-	// a link sent to this address, which is stronger evidence than an address
-	// typed into a form — so requiring them to type it anyway was asking a known
-	// person to prove something they had already proved.
-	//
-	// The Kit cookie still wins when it exists: it carries the Kit subscriber
-	// record, and enroling against a stale session address for someone who has
-	// since changed their Kit email would split them into two subscribers.
-	const identity = subscriber?.email_address
-		? {
-				email: subscriber.email_address,
-				name: subscriber.first_name ?? undefined,
-				via: 'cookie' as const,
-			}
-		: await sessionIdentity()
+	// Cookie OR session — see `resolveEnrolmentIdentity` for why a signed-in
+	// reader must not be asked to retype an address the server already has.
+	const { identity, subscriber } = await resolveEnrolmentIdentity()
 
 	if (!identity) {
 		await log.warn('skills.tagme.no.subscriber', {
