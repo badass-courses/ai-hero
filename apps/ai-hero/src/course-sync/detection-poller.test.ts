@@ -230,14 +230,28 @@ describe('course sync detection poller', () => {
 			outcome: 'failed',
 			consecutiveFailures: 1,
 		})
+		expect(test.notifications).toHaveLength(0)
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: { reason: 'first-failure-will-retry' },
+				}),
+			]),
+		)
 		await expect(test.poll('poll-failure-2')).resolves.toMatchObject({
 			outcome: 'held',
 			consecutiveFailures: 2,
 		})
+		expect(test.notifications).toEqual([
+			expect.objectContaining({ kind: 'failure' }),
+		])
 		await expect(test.poll('poll-held')).resolves.toMatchObject({
 			outcome: 'held',
 			consecutiveFailures: 2,
 		})
+		expect(test.notifications).toHaveLength(1)
 		expect(apply).toHaveBeenCalledTimes(2)
 		expect(test.logs).toEqual(
 			expect.arrayContaining([
@@ -309,6 +323,7 @@ describe('course sync detection poller', () => {
 			runId: 'killed-1',
 			occurredAt: new Date('2026-07-24T18:01:00.000Z'),
 		})
+		expect(notifications).toHaveLength(0)
 		await recordCourseSyncPollFailure(dependencies, {
 			runId: 'killed-2',
 			occurredAt: new Date('2026-07-24T18:02:00.000Z'),
@@ -322,9 +337,16 @@ describe('course sync detection poller', () => {
 		expect(logs).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ stage: 'hold', outcome: 'held' }),
+				expect.objectContaining({
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: { reason: 'first-failure-will-retry' },
+				}),
 			]),
 		)
-		expect(notifications).toHaveLength(2)
+		expect(notifications).toEqual([
+			expect.objectContaining({ kind: 'failure' }),
+		])
 	})
 
 	it('builds human success and failure notification payloads with permalinks', () => {
@@ -375,7 +397,7 @@ describe('course sync detection poller', () => {
 			]),
 		)
 		expect(failure.text).toBe(
-			'Course sync failed while apply AI Coding Crash Course (98479f85): The database transaction timed out. It will retry once, then hold for a human. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
+			'Course sync failed while apply AI Coding Crash Course (98479f85): The database transaction timed out. It failed twice in a row and is holding for a human. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
 		)
 		expect(failure.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([
