@@ -6,10 +6,11 @@ export type ConversionIntent =
 	| { kind: 'skills-course' }
 	| { kind: 'cohort-waitlist'; productName: string }
 	| { kind: 'workshop-interest'; workshopSlug: string }
+	| { kind: 'newsletter' }
 
 export type GenericKnownConversionIntent = Extract<
 	ConversionIntent,
-	{ kind: 'cohort-waitlist' }
+	{ kind: 'cohort-waitlist' } | { kind: 'newsletter' }
 >
 
 export type ConversionSurface =
@@ -22,6 +23,9 @@ export type ConversionSurface =
 	| 'courses-cohort'
 	| 'cohort-page'
 	| 'workshop-page'
+	| 'post-closing'
+	| 'list-closing'
+	| 'video-block'
 
 export type ConversionIntentContract = {
 	/** Stable identity used in logs, events, idempotency, and tests. */
@@ -46,7 +50,7 @@ export type ConversionPlan =
 
 type FieldBackedConversionIntent = Exclude<
 	ConversionIntent,
-	{ kind: 'skills-course' }
+	{ kind: 'skills-course' } | { kind: 'newsletter' }
 >
 
 /**
@@ -103,6 +107,20 @@ export function conversionIntentContract({
 		}
 	}
 
+	if (intent.kind === 'newsletter') {
+		// The plain email-list ask. No completion field of its own — being on
+		// the list IS the completion, so gating reads `state` alone — and no
+		// tag: the list membership is the whole projection.
+		return {
+			key: 'newsletter',
+			formId: undefined,
+			fields: {
+				source: sourceForSurface(surface),
+			},
+			tagName: null,
+		}
+	}
+
 	if (intent.kind === 'cohort-waitlist') {
 		const marketingKey = normalizeMarketingKey(intent.productName)
 		const waitlistKey = conversionFieldKey(intent)
@@ -143,6 +161,10 @@ export function hasCompletedConversionIntent(
 		const startedAt = subscriber.fields?.[SKILLS_COURSE_STARTED_AT_FIELD]
 		return typeof startedAt === 'string' && startedAt.trim().length > 0
 	}
+
+	// An active subscriber is already on the list; the newsletter ask has no
+	// further fact to check.
+	if (intent.kind === 'newsletter') return true
 
 	const key = conversionFieldKey(intent)
 	const value = subscriber.fields?.[key]
@@ -203,5 +225,11 @@ function sourceForSurface(surface: ConversionSurface): string {
 			return 'aihero_cohort_page'
 		case 'workshop-page':
 			return 'aihero_workshop'
+		case 'post-closing':
+			return 'aihero_post_closing'
+		case 'list-closing':
+			return 'aihero_list_closing'
+		case 'video-block':
+			return 'aihero_video_block'
 	}
 }

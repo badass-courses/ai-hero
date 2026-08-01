@@ -60,6 +60,37 @@ describe('conversionIntentContract', () => {
 		})
 	})
 
+	it('keeps the newsletter ask on the default form with attribution only', () => {
+		expect(
+			conversionIntentContract({
+				intent: { kind: 'newsletter' },
+				surface: 'post-closing',
+				now: new Date('2026-07-31T12:00:00Z'),
+			}),
+		).toEqual({
+			key: 'newsletter',
+			formId: undefined,
+			fields: {
+				source: 'aihero_post_closing',
+			},
+			tagName: null,
+		})
+
+		expect(
+			conversionIntentContract({
+				intent: { kind: 'newsletter' },
+				surface: 'list-closing',
+			}).fields.source,
+		).toBe('aihero_list_closing')
+
+		expect(
+			conversionIntentContract({
+				intent: { kind: 'newsletter' },
+				surface: 'video-block',
+			}).fields.source,
+		).toBe('aihero_video_block')
+	})
+
 	it('keeps a workshop interest field and tag in lockstep', () => {
 		expect(
 			conversionIntentContract({
@@ -146,6 +177,17 @@ describe('planConversionIntent', () => {
 				fields: { aih_course_started_at: '2026-07-31' },
 			}),
 		).toBe(false)
+	})
+
+	it('treats an active subscriber as done with the newsletter ask, and only them', () => {
+		const newsletter = { kind: 'newsletter' } as const
+		expect(
+			hasCompletedConversionIntent(newsletter, { state: 'active' }),
+		).toBe(true)
+		expect(
+			hasCompletedConversionIntent(newsletter, { state: 'inactive' }),
+		).toBe(false)
+		expect(hasCompletedConversionIntent(newsletter, null)).toBe(false)
 	})
 
 	it('does not promote a legacy Skills newsletter subscriber into the course', () => {

@@ -411,6 +411,20 @@ export const SoftBlockOverlay: React.FC<{
 						})
 					}
 				}}
+				onKnownSuccess={async ({ confirmationRequired }) => {
+					if (moduleNavigation && resource) {
+						await revalidateTutorialLesson(
+							moduleNavigation.fields?.slug,
+							resource?.fields?.slug,
+						)
+						dispatchVideoPlayerOverlay({ type: 'LOADING' })
+						toast({
+							title: confirmationRequired
+								? 'Check your email to confirm'
+								: 'You’re in — enjoy the tutorial',
+						})
+					}
+				}}
 			>
 				{moduleNavigation?.fields?.coverImage && (
 					<CldImage

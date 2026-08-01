@@ -1,6 +1,9 @@
 import { PostNewsletterCell } from '@/app/(content)/_components/post-related-newsletter'
 import { isOnEmailList } from '@/lib/cta-gating'
-import { getSubscriberForGating } from '@/lib/subscriber-gate'
+import {
+	getSubscriberForGating,
+	hasKnownReaderIdentity,
+} from '@/lib/subscriber-gate'
 
 /**
  * The reader-dependent half of an article's closing grid.
@@ -41,6 +44,9 @@ export async function PostClosingNewsletter({
 	if (isOnEmailList(subscriber)) return null
 
 	return (
-		<PostNewsletterCell trackParams={{ post: postSlug, location: 'post' }} />
+		<PostNewsletterCell
+			trackParams={{ post: postSlug, location: 'post' }}
+			knownIdentity={await hasKnownReaderIdentity(subscriber)}
+		/>
 	)
 }

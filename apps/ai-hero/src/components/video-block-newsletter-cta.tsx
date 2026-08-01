@@ -2,20 +2,30 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
+import { redirectUrlBuilder } from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
 import { track } from '@/utils/analytics'
 import {
 	InformationCircleIcon,
 	ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
+import { useSession } from 'next-auth/react'
 import ReactMarkdown from 'react-markdown'
 import { twMerge } from 'tailwind-merge'
 
 import common from '../text/common'
 
 type VideoBlockNewsletterCtaProps = {
-	onSuccess?: () => void
+	onSuccess?: (subscriber?: Subscriber) => void
+	/**
+	 * Called when a KNOWN reader subscribes with one click. Separate from
+	 * `onSuccess` because the server action resolves their identity from the
+	 * cookie or session and returns no `Subscriber` record for the browser to
+	 * hand over — the caller reacts to the fact, not the record.
+	 */
+	onKnownSuccess?: (result: { confirmationRequired: boolean }) => void
 	title?: string
 	byline?: string
 	actionLabel?: string
@@ -39,8 +49,16 @@ export const VideoBlockNewsletterCta: React.FC<
 	actionLabel = common['video-block-newsletter-button-cta-label'],
 	trackProps = { event: 'subscribed', params: {} },
 	onSuccess,
+	onKnownSuccess,
 }) => {
 	const router = useRouter()
+	// A signed-in viewer must not be asked to type the address they signed in
+	// with. The session is the client-side signal; the server action re-resolves
+	// identity on its own terms and `onNotIdentified` drops back to the form if
+	// the session turned out stale.
+	const { status: sessionStatus } = useSession()
+	const [requiresIdentityForm, setRequiresIdentityForm] = React.useState(false)
+
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (subscriber) {
 			track(trackProps.event as string, trackProps.params)
@@ -63,10 +81,31 @@ export const VideoBlockNewsletterCta: React.FC<
 				<strong className="text-balance text-center text-xl font-semibold lg:text-2xl">
 					{common['video-block-newsletter-tittle'](moduleTitle)}
 				</strong>
-				<SubscribeToConvertkitForm
-					onSuccess={onSuccess ? onSuccess : handleOnSuccess}
-					actionLabel={actionLabel}
-				/>
+				{sessionStatus === 'authenticated' && !requiresIdentityForm ? (
+					<ConversionIntentButton
+						intent={{ kind: 'newsletter' }}
+						surface="video-block"
+						label={actionLabel}
+						className="bg-primary text-primary-foreground focus-visible:ring-ring inline-flex h-12 w-full max-w-sm cursor-pointer items-center justify-center rounded-md px-6 text-base font-semibold transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+						onSuccess={(result) => {
+							track(trackProps.event as string, {
+								...trackProps.params,
+								method: 'one-click',
+							})
+							onKnownSuccess?.(result)
+						}}
+						onNotIdentified={() => setRequiresIdentityForm(true)}
+					/>
+				) : (
+					<ConversionIntentForm
+						intent={{ kind: 'newsletter' }}
+						surface="video-block"
+						onSuccess={
+							onSuccess ? (subscriber) => onSuccess(subscriber) : handleOnSuccess
+						}
+						actionLabel={actionLabel}
+					/>
+				)}
 				<p
 					data-nospam=""
 					className="inline-flex items-center gap-1 pt-0 text-left text-sm opacity-75"

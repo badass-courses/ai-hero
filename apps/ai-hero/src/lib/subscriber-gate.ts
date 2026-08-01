@@ -2,6 +2,7 @@ import 'server-only'
 
 import { cache } from 'react'
 import { cookies } from 'next/headers'
+import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import type { CtaGatingSubscriber } from '@/lib/cta-gating'
 import {
@@ -77,17 +78,90 @@ export const getSubscriberForGating = cache(
 		}
 
 		const subscriberIdCookie = cookieStore.get('ck_subscriber_id')?.value
-		if (!subscriberIdCookie) return null
-
-		try {
-			return await getSubscriberFromCookie()
-		} catch {
-			// Kit being down must not take a page with it. A missing subscriber
-			// shows the ask, which is what every visitor sees anyway.
-			return null
+		if (subscriberIdCookie) {
+			try {
+				return await getSubscriberFromCookie()
+			} catch {
+				// Kit being down must not take a page with it. A missing subscriber
+				// shows the ask, which is what every visitor sees anyway.
+				return null
+			}
 		}
+
+		return getSubscriberForSession()
 	},
 )
+
+/**
+ * Whether the server can already name this reader, so a surface offers one
+ * click instead of an email form. A cookie record with an address counts —
+ * even an unconfirmed one, since resubscribing them is Kit's job, not the
+ * reader's — and so does a session: they signed in from a link sent to that
+ * address. Takes the already-resolved gating subscriber so callers who just
+ * gated on it do not pay a second lookup.
+ */
+export async function hasKnownReaderIdentity(
+	subscriber: { email_address?: string | null } | null,
+): Promise<boolean> {
+	if (subscriber?.email_address) return true
+	try {
+		const { getServerAuthSession } = await import('@/server/auth')
+		const auth = await getServerAuthSession()
+		return Boolean(auth?.session?.user?.email)
+	} catch {
+		return false
+	}
+}
+
+const SESSION_KIT_LOOKUP_TIMEOUT_MS = 1_500
+
+/**
+ * The last resort: no Kit cookie of any kind, but the reader is signed in.
+ *
+ * A signed-in subscriber on a fresh browser has NO cookie to answer from, and
+ * without this every gated ask on the site treated the person it knew best as
+ * a stranger — closing every article by asking them to subscribe again. Their
+ * session email is server-resolved (never caller input), so looking that
+ * address up in Kit answers correctly.
+ *
+ * This is a third-party HTTP call in a render path, which the cookie paths
+ * above exist to avoid — so it is bounded: it runs only when every cookie is
+ * absent AND a session exists, it shares the request-level `cache()` with the
+ * rest of the lookup, and it gives up after {@link
+ * SESSION_KIT_LOOKUP_TIMEOUT_MS} in favour of showing the ask.
+ */
+async function getSubscriberForSession(): Promise<Subscriber | null> {
+	try {
+		const { getServerAuthSession } = await import('@/server/auth')
+		const auth = await getServerAuthSession().catch(() => null)
+		const email = auth?.session?.user?.email
+		if (!email) return null
+
+		const fromKit = await withTimeout(
+			emailListProvider.getSubscriberByEmail(email),
+			SESSION_KIT_LOOKUP_TIMEOUT_MS,
+		)
+		if (!fromKit) return null
+		return SubscriberSchema.parse(fromKit)
+	} catch {
+		// Same direction as every other uncertain answer here: show the ask.
+		return null
+	}
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+	let timeout: ReturnType<typeof setTimeout> | undefined
+	try {
+		return await Promise.race<T | null>([
+			promise,
+			new Promise<null>((resolve) => {
+				timeout = setTimeout(() => resolve(null), timeoutMs)
+			}),
+		])
+	} finally {
+		if (timeout) clearTimeout(timeout)
+	}
+}
 
 function subscriberFromGate(
 	gate: NonNullable<ReturnType<typeof parseSubscriberGateSnapshot>>,
