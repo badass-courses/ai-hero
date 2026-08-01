@@ -93,7 +93,7 @@ async function HeroStats() {
 			? [{ value: alumniLabel, label: 'Trained in cohorts' }]
 			: []),
 		...(skills.length > 0
-			? [{ value: String(skills.length), label: 'Free skills, open source' }]
+			? [{ value: String(skills.length), label: 'Free skills' }]
 			: []),
 	]
 
@@ -161,12 +161,48 @@ export async function Hero({
 			id="hero"
 			className="border-border relative grid w-full grid-cols-1 items-stretch border-b md:min-h-[520px] md:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]"
 		>
-			{/* 88 / 72 top and bottom, vertically centred: the copy column is the
-			    taller of the two on desktop, so its padding is what sets the
-			    hero's height rather than the portrait beside it. No rule between
-			    the columns — the portrait fades into this ground, and a hairline
-			    down the middle cuts the fade in half. */}
-			<div className="flex flex-col justify-center px-[18px] py-14 sm:px-11 sm:pb-[72px] sm:pt-[88px]">
+			{/* MOBILE ONLY: the animation is the hero's ground, not a panel's — it
+			    spans the whole header behind the copy and fades out on the
+			    VERTICAL, playing in the open air above the headline and gone
+			    quiet by the actions and stats. From `sm` up the hero keeps its
+			    original shape: shader and portrait in the right panel, faded
+			    horizontally into the copy column's ground. The hidden instance
+			    costs nothing — the shader pauses itself off-viewport. */}
+			{!video && (
+				<div
+					aria-hidden
+					className="pointer-events-none absolute inset-0 select-none overflow-hidden sm:hidden"
+				>
+					<HeroShader
+						className="absolute inset-0"
+						speed={0.2}
+						frequency={7.0}
+						displacement={0.018}
+						displacementFreq={4.5}
+						mouseFollow={0.03}
+						mouseInfluence={0.55}
+						flowY={0.2}
+						flowX={0.2}
+						intensity={1.0}
+						saturation={1.25}
+						sharpness={0.7}
+						grain={0.1}
+						grainTexture={0.3}
+						grainScale={0.5}
+						chromaOffset={13.0}
+						vignette={0}
+						mouseHalo={0.15}
+						posterize={0.1}
+						colorDrift={0.05}
+						seed={10}
+					/>
+					<div className="bg-linear-to-b from-transparent via-background/70 to-background absolute inset-0" />
+				</div>
+			)}
+			{/* 88 / 72 top and bottom, vertically centred on desktop. On mobile the
+			    top padding is deliberate open stage: the animation gets the top of
+			    the panel to itself before the copy starts. */}
+			<div className="relative z-10 flex flex-col justify-center px-[18px] pb-14 pt-[140px] sm:px-11 sm:pb-[72px] sm:pt-[88px]">
 				<div>
 					{/* The homepage's one eyebrow, and the site's clearest earner: it
 					    carries a scope and a byline the headline does not, and it is
@@ -234,7 +270,15 @@ export async function Hero({
 				)}
 				{isHome && <HeroStats />}
 			</div>
-			<div className="relative flex min-h-80 w-full items-center justify-center">
+			<div
+				className={cn(
+					'relative w-full items-center justify-center',
+					// Without a video the panel is `sm`-and-up only: on mobile the
+					// animation has the top of the hero instead, and the nav already
+					// carries Matt's face.
+					video ? 'flex min-h-80' : 'hidden min-h-80 sm:flex',
+				)}
+			>
 				{video ? (
 					<div className="relative aspect-video w-full">
 						<HeroVideo playbackId={video.playbackId} title={video.title} />
@@ -243,7 +287,7 @@ export async function Hero({
 					// Full-bleed: the portrait sits in the panel, not in a box inside
 					// it, and the fade carries it into the copy column's ground.
 					<div className="pointer-events-none absolute inset-0 flex select-none items-end justify-center overflow-hidden">
-						<div className="sm:bg-linear-to-l bg-linear-to-t to-background absolute inset-0 z-10 h-full w-full from-transparent via-transparent" />
+						<div className="bg-linear-to-l to-background absolute inset-0 z-10 h-full w-full from-transparent via-transparent" />
 						<HeroShader
 							className="absolute inset-0"
 							speed={0.2}
@@ -267,35 +311,14 @@ export async function Hero({
 							colorDrift={0.05}
 							seed={10}
 						/>
-						{/* <HeroStripes
-							alternateDirection={0.5}
-							stripeWidth={0.12}
-							blocksPerColumn={3.5}
-							emptyBlockChance={0.2}
-							colors={STRIPE_PALETTES.brand}
-							background={[-0.05, -0.05, -0.06]}
-							saturation={1.25}
-							intensity={1.0}
-							grain={0.4}
-							grainTexture={0.35}
-							grainScale={1.0}
-							chromaOffset={1.5}
-							vignette={0.2}
-							mouseFollow={0.035}
-							mouseInfluence={0.4}
-							mouseHalo={0.1}
-							className="absolute inset-0"
-						/> */}
 						<Image
 							priority
 							src="/landing/matt-pocock-left@2x.png"
 							alt="Matt Pocock"
-							// fill
 							width={349}
 							height={374}
 							sizes="(min-width: 768px) 50vw, 100vw"
 							className="relative z-20 h-full max-h-[560px] w-auto translate-y-px object-contain object-bottom"
-							// className="relative object-contain object-bottom"
 						/>
 					</div>
 				)}

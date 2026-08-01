@@ -2,12 +2,13 @@
 
 import * as React from 'react'
 import type { ProductPricingFeature } from '@/components/commerce/product-pricing-features'
-import { SubscribeToConvertkitForm } from '@/convertkit'
+import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
+import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { env } from '@/env.mjs'
 import { track } from '@/utils/analytics'
 import { formatInTimeZone } from 'date-fns-tz'
-import { toSnakeCase } from 'drizzle-orm/casing'
 import { CheckCircle } from 'lucide-react'
+import { useSession } from 'next-auth/react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -47,6 +48,15 @@ export const WorkshopPricingWidgetContainer: React.FC<
 	} = props
 	const couponFromCode = commerceProps?.couponFromCode
 	const { allowPurchase } = searchParams || {}
+	// A signed-in viewer must not be asked to type the address they signed in
+	// with — the waitlist becomes one button, and the server action resolves
+	// their identity itself. `onNotIdentified` drops back to the form when the
+	// session turns out stale on the server.
+	const { status: sessionStatus } = useSession()
+	const [waitlistResult, setWaitlistResult] = React.useState<
+		'joined' | 'confirmation-required' | null
+	>(null)
+	const [requiresIdentityForm, setRequiresIdentityForm] = React.useState(false)
 
 	// Track current availability with polling for live events
 	const [currentQuantityAvailable, setCurrentQuantityAvailable] =
@@ -162,35 +172,83 @@ export const WorkshopPricingWidgetContainer: React.FC<
 
 	const enrollmentState = getEnrollmentState()
 
-	// Waitlist form fields
-	const waitlistCkFields = {
-		[`waitlist_${toSnakeCase(product?.name || '')}`]: new Date()
-			.toISOString()
-			.slice(0, 10),
-	}
+	const renderWaitlistForm = () => {
+		if (!product) return null
 
-	const renderWaitlistForm = () => (
-		<SubscribeToConvertkitForm
-			fields={waitlistCkFields}
-			actionLabel="Join Waitlist"
-			className="relative z-10 mt-5 flex w-full flex-col items-center justify-center gap-2 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_button]:text-base [&_input]:h-12 [&_input]:text-lg"
-			successMessage={
-				<p className="inline-flex items-center text-center text-lg font-medium">
-					<CheckCircle className="text-primary mr-2 size-5" /> You are on the
-					waitlist
+		if (waitlistResult) {
+			return (
+				<p className="mt-5 inline-flex items-center text-center text-lg font-medium">
+					<CheckCircle className="text-primary mr-2 size-5" />
+					{waitlistResult === 'joined'
+						? 'You are on the waitlist'
+						: 'Check your inbox to confirm'}
 				</p>
-			}
-			onSuccess={(subscriber, email) => {
-				if (subscriber && product) {
-					track('waitlist_joined', {
-						product_name: product.name,
-						product_id: product.id,
-						email: email,
-					})
+			)
+		}
+
+		// Hold the control's footprint until the session answers, so a signed-in
+		// visitor never sees the email form flash in before the one-click button.
+		if (sessionStatus === 'loading') {
+			return <div className="bg-muted mt-5 h-12 w-full animate-pulse" />
+		}
+
+		// The intent carries the Kit field, form, source and tag — the same
+		// `waitlist_<product>` contract the cohort widget writes, so gating
+		// recognises either entry point.
+		const intent = {
+			kind: 'cohort-waitlist' as const,
+			productName: product.name,
+		}
+
+		if (
+			sessionStatus === 'authenticated' &&
+			!requiresIdentityForm
+		) {
+			return (
+				<ConversionIntentButton
+					intent={intent}
+					surface="workshop-page"
+					label="Join Waitlist"
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring relative z-10 mt-5 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-[9px] px-5 text-base font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+					onSuccess={({ confirmationRequired }) => {
+						track('waitlist_joined', {
+							product_name: product.name,
+							product_id: product.id,
+							method: 'one-click',
+						})
+						setWaitlistResult(
+							confirmationRequired ? 'confirmation-required' : 'joined',
+						)
+					}}
+					onNotIdentified={() => setRequiresIdentityForm(true)}
+				/>
+			)
+		}
+
+		return (
+			<ConversionIntentForm
+				intent={intent}
+				surface="workshop-page"
+				actionLabel="Join Waitlist"
+				className="relative z-10 mt-5 flex w-full flex-col items-center justify-center gap-2 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_button]:text-base [&_input]:h-12 [&_input]:text-lg"
+				successMessage={
+					<p className="inline-flex items-center text-center text-lg font-medium">
+						<CheckCircle className="text-primary mr-2 size-5" /> You are on the
+						waitlist
+					</p>
 				}
-			}}
-		/>
-	)
+				onSuccess={(subscriber, email) => {
+					if (subscriber && product) {
+						track('waitlist_joined', {
+							product_name: product.name,
+							product_id: product.id,
+							email: email,
+						})
+					}
+				}}
+			/>
+		)
+	}
 
 	if (!product || product.status !== 1) {
 		return null

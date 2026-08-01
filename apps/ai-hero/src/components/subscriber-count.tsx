@@ -7,8 +7,8 @@ export type SubscriberCountProps = {
 	/** Rendered when the live count is unavailable (Kit not configured / API error). */
 	fallback?: string
 	/**
-	 * 'rounded' (default) floors to the nearest thousand and appends '+'
-	 * (72,405 → "72,000+") so copy like "Join over …" stays truthful.
+	 * 'rounded' (default) floors to the nearest hundred and appends '+'
+	 * (72,405 → "72,400+") so copy like "Join over …" stays truthful.
 	 * 'exact' renders the precise localized number (72,405 → "72,405").
 	 */
 	format?: SubscriberCountFormat
@@ -22,8 +22,8 @@ export function formatSubscriberCount(
 	format: SubscriberCountFormat = 'rounded',
 ): string {
 	if (format === 'exact') return total.toLocaleString('en-US')
-	const rounded = Math.floor(total / 1000) * 1000
-	if (rounded < 1000) return total.toLocaleString('en-US')
+	const rounded = Math.floor(total / 100) * 100
+	if (rounded < 100) return total.toLocaleString('en-US')
 	return `${rounded.toLocaleString('en-US')}+`
 }
 

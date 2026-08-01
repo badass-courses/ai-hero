@@ -168,9 +168,13 @@ function NewsletterCell({ children }: { children: React.ReactNode }) {
  */
 export function PostNewsletterCell({
 	trackParams,
+	knownIdentity = false,
 }: {
 	/** Merged into the `subscribed` track call, e.g. `{ post, location }`. */
 	trackParams?: Record<string, string>
+	/** Server-resolved: this reader's address is already known, so the cell
+	 *  offers one click instead of an email form. */
+	knownIdentity?: boolean
 }) {
 	return (
 		<NewsletterCell>
@@ -187,7 +191,10 @@ export function PostNewsletterCell({
 			>
 				New skills and Matt&rsquo;s AI coding letters, the day they land.
 			</p>
-			<PostNewsletterForm trackParams={trackParams} />
+			<PostNewsletterForm
+				trackParams={trackParams}
+				knownIdentity={knownIdentity}
+			/>
 		</NewsletterCell>
 	)
 }

@@ -1,7 +1,10 @@
 import * as React from 'react'
 import { TYPE } from '@/components/landing/type'
 import { isOnEmailList } from '@/lib/cta-gating'
-import { getSubscriberForGating } from '@/lib/subscriber-gate'
+import {
+	getSubscriberForGating,
+	hasKnownReaderIdentity,
+} from '@/lib/subscriber-gate'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -48,7 +51,9 @@ export async function ListClosingNewsletter() {
 			<h2 className={cn(TYPE.subhead, 'text-balance')}>
 				New lessons the day they land
 			</h2>
-			<ListNewsletterForm />
+			<ListNewsletterForm
+				knownIdentity={await hasKnownReaderIdentity(subscriber)}
+			/>
 		</Cell>
 	)
 }

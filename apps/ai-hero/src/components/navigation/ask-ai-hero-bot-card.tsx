@@ -1,13 +1,12 @@
 'use client'
 
 import * as React from 'react'
+import Image from 'next/image'
 import { Sparkles } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
 import { TYPE } from '@/components/landing/type'
-
-import { AiHeroMascot } from '@/components/brand/mascot'
 
 import { AskAIHeroBot } from './ask-ai-hero-bot'
 import { CURATED_SUGGESTIONS, GOAL_SECTIONS } from './goal-sections-data'
@@ -51,22 +50,27 @@ export function AskAIHeroBotCard({
 		<div
 			className={cn(
 				'border-border bg-card flex flex-col gap-1.5 rounded-md border p-4',
-				// `group` so the mascot plays its idle loop on hover — the animation
-				// in `globals.css` is keyed to a hovered `.group` ancestor.
 				wide &&
-					'group desk:flex-row desk:items-center gap-4 rounded-xl p-6 desk:gap-6 sm:p-8',
+					'desk:flex-row desk:items-center gap-4 rounded-xl p-6 desk:gap-6 sm:p-8',
 				className,
 			)}
 		>
 			{wide && (
-				/* The mascot, not a Sparkles glyph. This card is the one place the
-				   site offers a *character* to talk to, and it already ships one —
-				   `AiHeroMascot` was in the tree and rendered nowhere. A generic AI
-				   sparkle says "machine feature"; the mascot says who is answering.
-				   Bare rather than in a tinted tile: it is pixel art with its own
-				   silhouette, and a gold plate behind it just fights the sprite. */
-				<span className="flex size-12 shrink-0 items-center justify-center">
-					<AiHeroMascot size={48} title="" />
+				/* The bot, not a Sparkles glyph. This card is the one place the
+				   site offers a *character* to talk to, so it shows who is
+				   answering — a generic AI sparkle says "machine feature". Bare
+				   rather than in a tinted tile: the render has its own silhouette,
+				   and a gold plate behind it just fights it. */
+				<span className="flex w-16 shrink-0 items-center justify-center">
+					{/* The source render is 400×483 — portrait, not square — so the
+					    intrinsic ratio is kept and only the height is pinned. */}
+					<Image
+						src="https://res.cloudinary.com/total-typescript/image/upload/v1785574229/aihero-bot_2x.png"
+						alt=""
+						width={53}
+						height={64}
+						className="h-16 w-auto"
+					/>
 				</span>
 			)}
 			<div className={cn('flex flex-col gap-1.5', wide && 'flex-1 gap-2')}>

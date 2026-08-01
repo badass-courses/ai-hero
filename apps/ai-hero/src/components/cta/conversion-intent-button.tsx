@@ -26,7 +26,11 @@ export function ConversionIntentButton({
 	label: string
 	pendingLabel?: string
 	className?: string
-	onSuccess?: (result: { confirmationRequired: boolean }) => void
+	/** Awaited inside the transition, so an async caller's rejection lands in
+	 *  the button's error UI instead of becoming an unhandled rejection. */
+	onSuccess?: (result: {
+		confirmationRequired: boolean
+	}) => void | Promise<void>
 	onNotIdentified?: () => void
 }) {
 	const [isPending, startTransition] = React.useTransition()
@@ -47,7 +51,7 @@ export function ConversionIntentButton({
 								surface,
 							})
 							if (result.success) {
-								onSuccess?.({
+								await onSuccess?.({
 									confirmationRequired: result.confirmationRequired,
 								})
 								return
