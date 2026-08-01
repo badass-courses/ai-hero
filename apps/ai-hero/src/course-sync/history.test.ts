@@ -105,6 +105,42 @@ function source(): CourseSyncHistorySource {
 				failureClass: null,
 				occurredAt: new Date('2026-07-24T18:51:00.000Z'),
 			},
+			{
+				id: 'log-idle-detect',
+				bindingId: 'binding-1',
+				courseVersionId: 'version-070',
+				providerRevision: 'dropbox-070',
+				runId: 'poll-idle-1',
+				controlPlaneRunId: 'sync-run-070',
+				stage: 'detect',
+				outcome: 'succeeded',
+				failureClass: null,
+				occurredAt: new Date('2026-07-24T19:20:00.000Z'),
+			},
+			{
+				id: 'log-idle-compare',
+				bindingId: 'binding-1',
+				courseVersionId: 'version-070',
+				providerRevision: 'dropbox-070',
+				runId: 'poll-idle-1',
+				controlPlaneRunId: 'sync-run-070',
+				stage: 'compare',
+				outcome: 'skipped',
+				failureClass: null,
+				occurredAt: new Date('2026-07-24T19:20:05.000Z'),
+			},
+			{
+				id: 'log-idle-notify',
+				bindingId: 'binding-1',
+				courseVersionId: 'version-070',
+				providerRevision: 'dropbox-070',
+				runId: 'poll-idle-1',
+				controlPlaneRunId: 'sync-run-070',
+				stage: 'notify',
+				outcome: 'skipped',
+				failureClass: null,
+				occurredAt: new Date('2026-07-24T19:20:06.000Z'),
+			},
 		]),
 		listPollStates: vi.fn(async () => [
 			{
@@ -160,6 +196,10 @@ describe('course sync history loaders', () => {
 			'held',
 			'applied',
 		])
+		expect(
+			detail?.attempts.map((attempt) => attempt.pollRunId),
+		).not.toContain('poll-idle-1')
+		expect(detail?.idlePollCount).toBe(1)
 		expect(historySource.listRevisions).toHaveBeenCalledWith('version-070')
 		expect(historySource.listPollLogs).toHaveBeenCalledWith('version-070')
 	})

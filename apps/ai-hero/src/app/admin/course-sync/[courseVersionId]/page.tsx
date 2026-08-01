@@ -136,12 +136,21 @@ export default async function CourseSyncHistoryDetailPage({
 						The poll trail in time order, from detection through apply, hold,
 						retry, or skip.
 					</p>
+					{history.idlePollCount > 0 && (
+						<p className="text-muted-foreground mt-2 font-mono text-xs">
+							{history.idlePollCount.toLocaleString()} idle poll{' '}
+							{history.idlePollCount === 1 ? 'cycle' : 'cycles'} (nothing new
+							detected) are counted here but not listed.
+						</p>
+					)}
 				</div>
 
 				{history.attempts.length === 0 ? (
 					<div className="bg-stripes border-y px-8 py-16 text-center">
 						<span className="bg-background font-mono text-xs uppercase tracking-wider">
-							No poll trail recorded
+							{history.idlePollCount > 0
+								? 'Only idle poll cycles recorded'
+								: 'No poll trail recorded'}
 						</span>
 					</div>
 				) : (

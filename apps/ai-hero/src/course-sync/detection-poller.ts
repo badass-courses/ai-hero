@@ -285,7 +285,7 @@ export function buildCourseSyncNotificationPayload(
 	}
 
 	const reason = compactFailureReason(notification.reason)
-	const text = `Course sync failed while ${notification.stage} ${versionLabel}: ${reason}. It will retry once, then hold for a human. ${permalink}`
+	const text = `Course sync failed while ${notification.stage} ${versionLabel}: ${reason}. It failed twice in a row and is holding for a human. ${permalink}`
 	return {
 		username: COURSE_SYNC_SLACK_USERNAME,
 		icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
@@ -376,18 +376,35 @@ export async function recordCourseSyncPollFailure(
 		failureClass: failureKind,
 		updatedAt: occurredAt,
 	})
-	await dependencies.notify({
-		kind: 'failure',
-		courseVersionId,
-		courseName: null,
-		providerRevision,
-		manifestSha256: null,
-		runId: input.runId,
-		controlPlaneRunId: state?.controlPlaneRunId ?? null,
-		stage: 'stage',
-		failureClass: failureKind,
-		reason: 'The polling run stopped before it finished',
-	})
+	// Strike one always retries on its own; only page humans when the run
+	// actually holds for one.
+	if (held) {
+		await dependencies.notify({
+			kind: 'failure',
+			courseVersionId,
+			courseName: null,
+			providerRevision,
+			manifestSha256: null,
+			runId: input.runId,
+			controlPlaneRunId: state?.controlPlaneRunId ?? null,
+			stage: 'stage',
+			failureClass: failureKind,
+			reason: 'The polling run stopped before it finished',
+		})
+	} else {
+		await dependencies.appendLog({
+			bindingId,
+			courseVersionId,
+			providerRevision,
+			runId: input.runId,
+			controlPlaneRunId: state?.controlPlaneRunId ?? null,
+			stage: 'notify',
+			outcome: 'skipped',
+			failureClass: failureKind,
+			metadata: { reason: 'first-failure-will-retry' },
+			occurredAt,
+		})
+	}
 	return { held, consecutiveFailures: strikes }
 }
 
@@ -767,19 +784,46 @@ export function createCourseSyncDetectionPoller(
 				failureClass: kind,
 				updatedAt: clock(),
 			})
-			try {
-				await dependencies.notify({
-					kind: 'failure',
-					courseVersionId,
-					courseName,
-					providerRevision,
-					manifestSha256,
-					runId,
-					controlPlaneRunId,
-					stage: activeStage,
-					failureClass: kind,
-					reason: failure.message,
-				})
+			// Strike one always retries on its own; only page humans when the
+			// run actually holds for one.
+			if (held) {
+				try {
+					await dependencies.notify({
+						kind: 'failure',
+						courseVersionId,
+						courseName,
+						providerRevision,
+						manifestSha256,
+						runId,
+						controlPlaneRunId,
+						stage: activeStage,
+						failureClass: kind,
+						reason: failure.message,
+					})
+					await log({
+						bindingId,
+						courseVersionId,
+						providerRevision,
+						runId,
+						controlPlaneRunId,
+						stage: 'notify',
+						outcome: 'succeeded',
+						failureClass: kind,
+						metadata: { channel: 'slack-default-channel' },
+					})
+				} catch (notificationError) {
+					await log({
+						bindingId,
+						courseVersionId,
+						providerRevision,
+						runId,
+						controlPlaneRunId,
+						stage: 'notify',
+						outcome: 'failed',
+						failureClass: failureClass(notificationError),
+					})
+				}
+			} else {
 				await log({
 					bindingId,
 					courseVersionId,
@@ -787,20 +831,9 @@ export function createCourseSyncDetectionPoller(
 					runId,
 					controlPlaneRunId,
 					stage: 'notify',
-					outcome: 'succeeded',
+					outcome: 'skipped',
 					failureClass: kind,
-					metadata: { channel: 'slack-default-channel' },
-				})
-			} catch (notificationError) {
-				await log({
-					bindingId,
-					courseVersionId,
-					providerRevision,
-					runId,
-					controlPlaneRunId,
-					stage: 'notify',
-					outcome: 'failed',
-					failureClass: failureClass(notificationError),
+					metadata: { reason: 'first-failure-will-retry' },
 				})
 			}
 			return {

@@ -281,6 +281,7 @@ export type CourseSyncHistoryItem = {
 	durationSeconds: number | null
 	runs: RunRow[]
 	attempts: CourseSyncHistoryAttempt[]
+	idlePollCount: number
 	pollState: PollStateRow | null
 	binding: BindingRow | null
 }
@@ -350,6 +351,20 @@ function overallOutcome(input: {
 	}
 
 	return { outcome: 'staging', failureClass: null }
+}
+
+/**
+ * An idle cycle is a poll that woke up, saw the applied revision unchanged,
+ * and went back to sleep. At one poll every 30 minutes they outnumber real
+ * work ~50:1, so the page counts them instead of listing them.
+ */
+function isIdlePollCycle(attempt: CourseSyncHistoryAttempt) {
+	return attempt.events.every(
+		(event) =>
+			event.stage === 'detect' ||
+			(event.stage === 'compare' && event.outcome === 'skipped') ||
+			(event.stage === 'notify' && event.outcome === 'skipped'),
+	)
 }
 
 function buildAttempts(logs: PollLogRow[]): CourseSyncHistoryAttempt[] {
@@ -432,9 +447,13 @@ async function loadHistory(
 			logs: versionLogs,
 			state,
 		})
-		const attempts = buildAttempts(versionLogs)
+		const allAttempts = buildAttempts(versionLogs)
+		const attempts = allAttempts.filter(
+			(attempt) => !isIdlePollCycle(attempt),
+		)
 		const timedAttempt =
-			attempts.find((attempt) => attempt.outcome === 'applied') ?? attempts.at(-1)
+			allAttempts.find((attempt) => attempt.outcome === 'applied') ??
+			allAttempts.at(-1)
 		const dates = [
 			revision?.stagedAt,
 			...versionRuns.flatMap((run) => [run.createdAt, run.updatedAt]),
@@ -469,6 +488,7 @@ async function loadHistory(
 				: null,
 			runs: versionRuns,
 			attempts,
+			idlePollCount: allAttempts.length - attempts.length,
 			pollState: state,
 			binding:
 				bindings.find((binding) => binding.bindingId === bindingId) ?? null,
