@@ -25,7 +25,9 @@ type VideoBlockNewsletterCtaProps = {
 	 * cookie or session and returns no `Subscriber` record for the browser to
 	 * hand over — the caller reacts to the fact, not the record.
 	 */
-	onKnownSuccess?: (result: { confirmationRequired: boolean }) => void
+	onKnownSuccess?: (result: {
+		confirmationRequired: boolean
+	}) => void | Promise<void>
 	title?: string
 	byline?: string
 	actionLabel?: string
@@ -87,12 +89,15 @@ export const VideoBlockNewsletterCta: React.FC<
 						surface="video-block"
 						label={actionLabel}
 						className="bg-primary text-primary-foreground focus-visible:ring-ring inline-flex h-12 w-full max-w-sm cursor-pointer items-center justify-center rounded-md px-6 text-base font-semibold transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
-						onSuccess={(result) => {
+						onSuccess={async (result) => {
 							track(trackProps.event as string, {
 								...trackProps.params,
 								method: 'one-click',
 							})
-							onKnownSuccess?.(result)
+							// Awaited so a rejection from the caller (revalidating the
+							// lesson) surfaces in the button's error UI rather than dying
+							// as an unhandled rejection behind a still-locked overlay.
+							await onKnownSuccess?.(result)
 						}}
 						onNotIdentified={() => setRequiresIdentityForm(true)}
 					/>
