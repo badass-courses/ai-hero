@@ -93,7 +93,7 @@ async function HeroStats() {
 			? [{ value: alumniLabel, label: 'Trained in cohorts' }]
 			: []),
 		...(skills.length > 0
-			? [{ value: String(skills.length), label: 'Free skills, open source' }]
+			? [{ value: String(skills.length), label: 'Free skills' }]
 			: []),
 	]
 
