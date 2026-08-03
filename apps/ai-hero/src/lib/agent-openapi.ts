@@ -908,7 +908,9 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 
 	return {
 		openapi: '3.1.0',
-		jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+		// zod-to-json-schema emits 2019-09 syntax (array-form items for tuples),
+		// so the advertised dialect must match what is actually generated.
+		jsonSchemaDialect: 'https://json-schema.org/draft/2019-09/schema',
 		info: {
 			title: 'AI Hero Agent and Content API',
 			version: '1.1.0',

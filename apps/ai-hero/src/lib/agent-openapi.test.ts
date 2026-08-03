@@ -31,7 +31,7 @@ describe('agent OpenAPI contract', () => {
 		).resolves.toBeTruthy()
 		expect(document.openapi).toBe('3.1.0')
 		expect(document.jsonSchemaDialect).toBe(
-			'https://json-schema.org/draft/2020-12/schema',
+			'https://json-schema.org/draft/2019-09/schema',
 		)
 	})
 

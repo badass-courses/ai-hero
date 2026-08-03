@@ -7,12 +7,7 @@ import { VideoResourceSchema } from '@coursebuilder/core/schemas/video-resource'
 import { LessonActionSchema, LessonSchema, LessonUpdateSchema } from './lessons'
 import { PageSchema, UpdatePageSchema } from './pages'
 import { MintPersonalAccessTokenSchema } from './personal-access-tokens'
-import {
-	NewPostInputSchema,
-	PostActionSchema,
-	PostSchema,
-	PostUpdateSchema,
-} from './posts'
+import { NewPostInputSchema, PostSchema, PostUpdateSchema } from './posts'
 import { ProductCreateApiSchema, ProductUpdateApiSchema } from './products'
 import { SkillChangelogPostSchema } from './skill-changelog'
 import {
@@ -67,10 +62,10 @@ export const NextActionSchema = z.object({
 export const PostCreateRequestSchema = NewPostInputSchema.omit({
 	createdById: true,
 })
-export const PostUpdateRequestSchema = z.union([
-	PostUpdateSchema.extend({ action: PostActionSchema.optional() }),
-	z.object({ action: PostActionSchema }),
-])
+// The posts PUT handler reads `action` from the query string only and passes
+// the body straight to updatePost, so the body schema must not offer an
+// action field.
+export const PostUpdateRequestSchema = PostUpdateSchema
 export const PostResponseSchema = PostSchema
 export const PostReadResponseSchema = z.union([PostSchema, z.array(PostSchema)])
 export const DeleteMessageResponseSchema = z.object({ message: z.string() })
@@ -115,7 +110,7 @@ export const ResourceReadResponseSchema = z.union([
 export const ResourceCreateRequestSchema = z
 	.object({
 		type: z.string().min(1),
-		title: z.string().min(2),
+		title: z.string().trim().min(2),
 		fields: z.record(z.unknown()).optional(),
 	})
 	.passthrough()
