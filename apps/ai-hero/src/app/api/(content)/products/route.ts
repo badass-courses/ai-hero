@@ -4,13 +4,11 @@ import {
 	getProductsWithFullStructure,
 	getProductWithFullStructure,
 } from '@/lib/products-query'
+import { ProductCreateApiSchema, ProductUpdateApiSchema } from '@/lib/products'
 import { sanitizeResourcePayload } from '@/lib/resource-api-sanitizer'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
-import { z } from 'zod'
-
-import { NewProductSchema } from '@coursebuilder/core/schemas'
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
@@ -98,46 +96,6 @@ const getProductsHandler = async (request: NextRequest) => {
 	}
 }
 export const GET = withSkill(getProductsHandler)
-
-const ProductCreateApiSchema = NewProductSchema.extend({
-	slug: z.string().min(2).max(191).optional(),
-})
-
-const ProductUpdateApiSchema = z
-	.object({
-		id: z.string().min(1),
-		name: z.string().min(2).max(90).optional(),
-		price: z.coerce.number().gte(0).optional(),
-		quantityAvailable: z.coerce.number().int().optional(),
-		type: z
-			.enum([
-				'live',
-				'self-paced',
-				'membership',
-				'cohort',
-				'cohort-archive',
-				'source-code-access',
-			])
-			.optional(),
-		state: z.enum(['draft', 'published', 'archived', 'deleted']).optional(),
-		visibility: z.enum(['public', 'private', 'unlisted']).optional(),
-		slug: z.string().min(2).max(191).optional(),
-		fields: z.record(z.any()).optional(),
-	})
-	.refine(
-		(input) =>
-			Boolean(
-				input.name ||
-				input.price !== undefined ||
-				input.quantityAvailable !== undefined ||
-				input.type ||
-				input.state ||
-				input.visibility ||
-				input.slug ||
-				input.fields,
-			),
-		{ message: 'Provide at least one product field to update' },
-	)
 
 const createProductHandler = async (request: NextRequest) => {
 	try {

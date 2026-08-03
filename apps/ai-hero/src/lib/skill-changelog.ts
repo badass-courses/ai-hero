@@ -31,6 +31,24 @@ export const SkillChangelogFieldsSchema = z.object({
 	kitBroadcastExclusionTagIds: z.array(z.number()).nullish(),
 })
 
+export const SkillChangelogPostSchema = z.object({
+	title: z.string().min(2).max(120),
+	slug: z.string().min(2).optional(),
+	description: z.string().optional().nullable(),
+	body: z.string().optional().default(''),
+	newsletterCopy: z.string().optional().default(''),
+	newsletterSubject: z.string().min(2).max(120).optional().nullable(),
+	newsletterPreviewText: z.string().max(200).optional().nullable(),
+	github: z.string().url().optional().nullable(),
+	videoResourceId: z.string().optional().nullable(),
+	thumbnailTime: z.number().optional().nullable(),
+	state: z.enum(['draft', 'published']).optional().default('draft'),
+	visibility: z
+		.enum(['public', 'unlisted', 'private'])
+		.optional()
+		.default('unlisted'),
+})
+
 export const SkillChangelogSchema = ContentResourceSchema.merge(
 	z.object({
 		fields: SkillChangelogFieldsSchema,

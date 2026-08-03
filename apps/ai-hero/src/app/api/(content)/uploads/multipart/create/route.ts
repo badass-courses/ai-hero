@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { withSkill } from '@/server/with-skill'
+import { CreateMultipartUploadSchema } from '@/video-uploader/multipart-contracts'
 import { createMultipartUpload } from '@/video-uploader/multipart-s3'
 import { z } from 'zod'
-
-const CreateSchema = z.object({
-	filename: z.string().min(1),
-})
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
@@ -30,7 +27,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 
 	try {
 		const body = await request.json()
-		const { filename } = CreateSchema.parse(body)
+		const { filename } = CreateMultipartUploadSchema.parse(body)
 		const result = await createMultipartUpload({ filename })
 
 		return NextResponse.json(result, { headers: corsHeaders })

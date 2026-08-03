@@ -4,38 +4,18 @@ import { personalAccessToken } from '@/db/schema'
 import { env } from '@/env.mjs'
 import {
 	createPersonalAccessToken,
-	type PersonalAccessTokenScope,
+	MintPersonalAccessTokenSchema,
 } from '@/lib/personal-access-tokens'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 import { desc, eq } from 'drizzle-orm'
-import { z } from 'zod'
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
 	'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
-
-const personalAccessTokenScopes = [
-	'analytics:read',
-	'analytics:chat',
-	'content:read',
-] as const satisfies readonly PersonalAccessTokenScope[]
-
-const MintPersonalAccessTokenSchema = z.object({
-	name: z.string().trim().min(1).max(100),
-	scopes: z.array(z.enum(personalAccessTokenScopes)).min(1),
-	expiresAt: z
-		.string()
-		.datetime({ offset: true })
-		.transform((value) => new Date(value))
-		.refine((value) => value > new Date(), {
-			message: 'expiresAt must be in the future',
-		})
-		.optional(),
-})
 
 type PublicPersonalAccessToken = {
 	id: string

@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getAllLists } from '@/lib/lists-query'
+import {
+	ResourceCreateRequestSchema,
+	ResourceUpdateRequestSchema,
+} from '@/lib/agent-api-contracts'
 import { sanitizeResourcePayload } from '@/lib/resource-api-sanitizer'
 import {
 	sortByStartTime,
@@ -199,6 +203,22 @@ const updateResourceHandler = async (request: NextRequest) => {
 
 		const body = await request.json()
 
+		// Shape gate shared with the OpenAPI document so the documented request
+		// schema cannot drift from what the handler accepts. The chapter-specific
+		// validation below still owns the detailed error messages.
+		const parsedBody = ResourceUpdateRequestSchema.safeParse(body)
+		if (!parsedBody.success) {
+			await log.warn('api.resources.put.invalid', {
+				userId: user.id,
+				resourceId: id,
+				issues: parsedBody.error.issues,
+			})
+			return NextResponse.json(
+				{ error: 'Invalid resource payload', issues: parsedBody.error.issues },
+				{ status: 400, headers: corsHeaders },
+			)
+		}
+
 		await log.info('api.resources.put.started', {
 			userId: user.id,
 			resourceId: id,
@@ -320,22 +340,16 @@ const createResourceHandler = async (request: NextRequest) => {
 			)
 		}
 
-		const body = await request.json()
-		const { type, title, fields: inputFields } = body
-
-		if (!type || typeof type !== 'string') {
+		const parsedBody = ResourceCreateRequestSchema.safeParse(
+			await request.json(),
+		)
+		if (!parsedBody.success) {
 			return NextResponse.json(
-				{ error: 'Missing or invalid "type" field' },
+				{ error: 'Invalid resource payload', issues: parsedBody.error.issues },
 				{ status: 400, headers: corsHeaders },
 			)
 		}
-
-		if (!title || typeof title !== 'string' || title.trim().length < 2) {
-			return NextResponse.json(
-				{ error: 'Missing or invalid "title" field (min 2 characters)' },
-				{ status: 400, headers: corsHeaders },
-			)
-		}
+		const { type, title, fields: inputFields } = parsedBody.data
 
 		const hash = guid()
 		const newResourceId = slugify(`${type}~${hash}`)
