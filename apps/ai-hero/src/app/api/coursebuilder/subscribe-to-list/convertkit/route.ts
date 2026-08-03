@@ -7,6 +7,7 @@ import {
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
+import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
@@ -41,23 +42,34 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				if (!subscriber.email_address) {
 					throw new Error('Skills subscriber response is missing an email')
 				}
-				const cookieStore = await cookies()
-				const optInAttribution = parseOptInAttributionCookie(
-					cookieStore.get('ft_attr')?.value,
-				)
-				const event: SkillsNewsletterSubscribed = {
-					name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
-					data: {
-						kitSubscriberId: String(subscriber.id),
-						email: subscriber.email_address,
-						name: subscriber.first_name ?? undefined,
+				const optIn = await reconcileAiHeroEmailOptInWithKit({
+					email: subscriber.email_address,
+					subscriberState: subscriber.state,
+				})
+				if (optIn.status === 'confirmation-required') {
+					await log.info('skills.newsletter.confirmation.required', {
 						formId: 9376133,
-						source: body.fields?.source ?? 'aihero_skills_page',
-						subscribedAt: new Date().toISOString(),
-						optInAttribution,
-					},
+						kitSubscriberId: String(subscriber.id),
+					})
+				} else {
+					const cookieStore = await cookies()
+					const optInAttribution = parseOptInAttributionCookie(
+						cookieStore.get('ft_attr')?.value,
+					)
+					const event: SkillsNewsletterSubscribed = {
+						name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+						data: {
+							kitSubscriberId: String(subscriber.id),
+							email: subscriber.email_address,
+							name: subscriber.first_name ?? undefined,
+							formId: 9376133,
+							source: body.fields?.source ?? 'aihero_skills_page',
+							subscribedAt: new Date().toISOString(),
+							optInAttribution,
+						},
+					}
+					await inngest.send(event)
 				}
-				await inngest.send(event)
 			} catch (error) {
 				await log.error('skills.newsletter.path-entry.enqueue.failed', {
 					formId: 9376133,

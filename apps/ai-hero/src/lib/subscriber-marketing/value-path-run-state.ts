@@ -1,3 +1,5 @@
+import { valuePathIntentCompletedAt } from './value-path-completion'
+
 /**
  * Honest run-state resolution for the Gate D value-path status surface.
  *
@@ -31,6 +33,7 @@ export type ValuePathMovement = {
 export function evaluateValuePathMovement(args: {
 	intents: Array<{
 		createdAt: string | Date
+		completedAt?: string | Date | null
 		metadata?: Record<string, unknown> | null
 	}>
 	events: Array<{ eventType: string; occurredAt: string | Date }>
@@ -45,11 +48,8 @@ export function evaluateValuePathMovement(args: {
 	for (const intent of args.intents) {
 		const createdAt = toIso(intent.createdAt)
 		if (createdAt) timestamps.push(createdAt)
-		const completedAt = intent.metadata?.completedAt
-		if (typeof completedAt === 'string' && completedAt.length > 0) {
-			const iso = toIso(completedAt)
-			if (iso) timestamps.push(iso)
-		}
+		const completedAt = valuePathIntentCompletedAt(intent)
+		if (completedAt) timestamps.push(completedAt)
 	}
 	for (const event of args.events) {
 		if (!MOVEMENT_EVENT_TYPES.has(event.eventType)) continue

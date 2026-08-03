@@ -18,6 +18,7 @@ describe('signup conversion candidate query', () => {
 		expect(query).toContain("'$.subscribedAt'")
 		expect(query).toContain("'$.gclid'")
 		expect(query).toContain("<> 'TEST_'")
+		expect(query).toContain('excludeLearnerFlowCanary({ email: contact.email })')
 		expect(query).toContain('args.since.toISOString()')
 		expect(query).toContain('isNull(googleAdsSignupConversionUpload.id)')
 		expect(query).toContain("'validated'")

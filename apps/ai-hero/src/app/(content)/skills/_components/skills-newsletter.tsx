@@ -14,6 +14,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import {
 	SKILLS_FORM_ID,
+	SKILLS_HOSTED_RESUBSCRIBE_URL,
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
@@ -76,6 +77,8 @@ export function Root({
 			if (result.success) {
 				setEnrolledLocally(true)
 				track('subscribed', { location, method: 'tag-me' })
+			} else if (result.reason === 'confirmation-required') {
+				window.location.assign(result.confirmationUrl)
 			} else {
 				setError(
 					result.reason === 'not-subscribed'
@@ -88,10 +91,13 @@ export function Root({
 
 	const handleFormSuccess = React.useCallback(
 		(subscriber: Subscriber | undefined) => {
-			if (subscriber) {
-				track('subscribed', { location })
-				router.push(redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }))
+			if (!subscriber) return
+			if (subscriber.state !== 'active') {
+				window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
+				return
 			}
+			track('subscribed', { location })
+			router.push(redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }))
 		},
 		[location, router],
 	)

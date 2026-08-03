@@ -1,5 +1,9 @@
 import { isDueRetryableValuePathEmailIntent } from './value-path-email-executor'
 import { isCleanedLearnerFlowFixtureIntent } from './learner-flow-fixture'
+import {
+	isValuePathIntentCompleted,
+	valuePathIntentCompletedAt,
+} from './value-path-completion'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -97,7 +101,10 @@ export function classifyLearnerFlowContact(
 		}
 	}
 
-	const blocked = pathIntents.find((intent) => intent.status === 'blocked')
+	const blocked = pathIntents.find(
+		(intent) =>
+			!isValuePathIntentCompleted(intent) && intent.status === 'blocked',
+	)
 	if (blocked) {
 		return stuck({
 			stage: emailResourceId(blocked) ?? stage,
@@ -109,7 +116,10 @@ export function classifyLearnerFlowContact(
 		})
 	}
 
-	const failed = pathIntents.find((intent) => intent.status === 'failed')
+	const failed = pathIntents.find(
+		(intent) =>
+			!isValuePathIntentCompleted(intent) && intent.status === 'failed',
+	)
 	if (failed) {
 		if (isDueRetryableValuePathEmailIntent(failed, input.now)) {
 			return stuck({
@@ -241,11 +251,14 @@ function unstickCommand(cause: LearnerFlowStuckCause, contactId: string) {
 }
 
 function isCompletedTerminalIntent(intent: SideEffectIntent) {
-	return intent.status === 'completed' && isTerminalEmailResourceId(emailResourceId(intent))
+	return (
+		isValuePathIntentCompleted(intent) &&
+		isTerminalEmailResourceId(emailResourceId(intent))
+	)
 }
 
 function mostAdvancedCompletedIntent(intents: SideEffectIntent[]) {
-	return mostAdvancedIntent(intents.filter((intent) => intent.status === 'completed'))
+	return mostAdvancedIntent(intents.filter(isValuePathIntentCompleted))
 }
 
 function mostAdvancedIntent(intents: SideEffectIntent[]) {
@@ -326,9 +339,8 @@ function latestActivityAt(intents: SideEffectIntent[]) {
 }
 
 function activityAt(intent: SideEffectIntent) {
-	const completedAt = intent.metadata.completedAt
-	if (typeof completedAt === 'string' && validDate(completedAt)) return completedAt
-	return validDate(intent.createdAt) ? intent.createdAt : ''
+	return valuePathIntentCompletedAt(intent) ??
+		(validDate(intent.createdAt) ? intent.createdAt : '')
 }
 
 function hasSignal(intent: SideEffectIntent, signal: string) {
@@ -354,7 +366,7 @@ function isScheduledRetry(intent: SideEffectIntent, now: string) {
 function hasRecentCourseProgress(intents: SideEffectIntent[], now: string) {
 	return intents.some(
 		(intent) =>
-			(intent.status === 'pending' || intent.status === 'completed') &&
+			(intent.status === 'pending' || isValuePathIntentCompleted(intent)) &&
 			!exceedsMovementTolerance(intent, now),
 	)
 }

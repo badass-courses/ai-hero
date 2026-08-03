@@ -97,7 +97,10 @@ import {
 } from '../value-path-gate-d-allowlist'
 import { previewValuePathGateDCandidates } from '../value-path-gate-d-candidates'
 import { startValuePathGateDActivation } from '../value-path-gate-d-start'
-import { selectCompletedValuePathIntentFrontier } from '../value-path-intent-scan'
+import {
+	scanCompletedValuePathIntentFrontier,
+	selectCompletedValuePathIntentFrontier,
+} from '../value-path-intent-scan'
 import { previewValuePath, SELLABLE_OFFERS } from '../value-path-planner'
 import { previewSkillsWorkflowValuePathQa } from '../value-path-qa-preview'
 import {
@@ -139,39 +142,58 @@ describe('subscriber marketing signup gap recovery', () => {
 					email: 'Real.Person@Example.com',
 					firstName: 'Real',
 					createdAt: '2026-07-15T05:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-synthetic',
 					email: 'joel+aih-warmup-synth-1@example.com',
 					createdAt: '2026-07-15T06:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-contact-known',
 					email: 'known@example.com',
 					createdAt: '2026-07-15T07:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-provider-known',
 					email: 'provider@example.com',
 					createdAt: '2026-07-15T08:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-unconfirmed',
+					email: 'unconfirmed@example.com',
+					createdAt: '2026-07-15T09:00:00.000Z',
+					state: 'inactive',
 				},
 				{
 					kitSubscriberId: 'kit-at-end',
 					email: 'end@example.com',
 					createdAt: '2026-07-15T15:00:00.000Z',
+					state: 'active',
 				},
 			],
 		})
 
 		expect(preview.counts).toEqual({
-			kitFormSubscribersFetched: 5,
-			inWindow: 4,
+			kitFormSubscribersFetched: 6,
+			inWindow: 5,
 			withExistingContact: 1,
 			withExistingProviderIdentity: 1,
 			withExistingIdentity: 2,
 			gapCandidates: 2,
 			excludedSynthetic: 1,
+			unconfirmed: 1,
 			replayable: 1,
+			stateBreakdown: {
+				active: 4,
+				inactiveUnconfirmed: 1,
+				cancelled: 0,
+				bounced: 0,
+				complained: 0,
+			},
 		})
 		expect(preview.candidates).toEqual([
 			expect.objectContaining({
@@ -207,16 +229,19 @@ describe('subscriber marketing signup gap recovery', () => {
 					email: 'replay@example.com',
 					firstName: 'Replay',
 					createdAt: '2026-07-15T06:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-now-known',
 					email: 'known-later@example.com',
 					createdAt: '2026-07-15T07:00:00.000Z',
+					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-synthetic',
 					email: 'joel+aih-synth-2@example.com',
 					createdAt: '2026-07-15T08:00:00.000Z',
+					state: 'active',
 				},
 			],
 		})
@@ -241,6 +266,11 @@ describe('subscriber marketing signup gap recovery', () => {
 					formId: 12345,
 					source: 'operator-recovery',
 					subscribedAt: '2026-07-15T06:00:00.000Z',
+					signupGapLiveness: expect.objectContaining({
+						workSeen: 2,
+						workDone: 2,
+						oldestUnservedAt: null,
+					}),
 				},
 			},
 		])
@@ -249,6 +279,13 @@ describe('subscriber marketing signup gap recovery', () => {
 			excludedSynthetic: 1,
 			skippedExisting: 1,
 			emitted: 1,
+		})
+		expect(receipt).toMatchObject({
+			generatedAt: preview.generatedAt,
+			workSeen: 2,
+			workDone: 2,
+			oldestUnservedAgeHours: null,
+			oldestUnservedAt: null,
 		})
 		expect(receipt.note).toContain('real email-0 send')
 		expect(JSON.stringify(receipt)).not.toContain('replay@example.com')
@@ -1100,9 +1137,22 @@ describe('subscriber marketing Gate D allowlist', () => {
 			createdAt: '2026-05-15T12:10:00.000Z',
 		})
 
+		const answerClickLogs: Array<{
+			level: 'info' | 'warn'
+			event: string
+			data: Record<string, unknown>
+		}> = []
 		const result = await progressValuePathDrips({
 			repository,
 			allowWrite: true,
+			logger: {
+				info: async (event, data) => {
+					answerClickLogs.push({ level: 'info', event, data: data ?? {} })
+				},
+				warn: async (event, data) => {
+					answerClickLogs.push({ level: 'warn', event, data: data ?? {} })
+				},
+			},
 			allowlist: {
 				activationId: 'rig-test-2026-05-15-a',
 				status: 'active',
@@ -1131,6 +1181,23 @@ describe('subscriber marketing Gate D allowlist', () => {
 		expect(result.results[0]?.advisoryReasons).toContain(
 			'answer-click-undelivered-drip-fallback',
 		)
+		expect(answerClickLogs).toEqual([
+			expect.objectContaining({
+				level: 'info',
+				event: 'value-path.ask.answer_click_verification',
+				data: expect.objectContaining({
+					completedIntentId: 'intent_email_0',
+					verdict: 'verified',
+				}),
+			}),
+			expect.objectContaining({
+				level: 'warn',
+				event: 'value-path.ask.answer_click_undelivered_drip_fallback',
+				data: expect.objectContaining({
+					advisory: 'answer-click-undelivered-drip-fallback',
+				}),
+			}),
+		])
 		expect(
 			Array.from(repository.sideEffectIntents.values()).find(
 				(intent) =>
@@ -1325,7 +1392,7 @@ describe('subscriber marketing value path completed-intent scan', () => {
 		expect(result.map((intent) => intent.id)).toEqual(['b_email_0', 'a_email_1'])
 	})
 
-	it('still honors maxCompletedAt for the minimum drip age', () => {
+	it('honors maxCompletedAt without rewinding to an older completed step', () => {
 		const result = selectCompletedValuePathIntentFrontier({
 			intents: [
 				completedIntent({
@@ -1344,7 +1411,91 @@ describe('subscriber marketing value path completed-intent scan', () => {
 			limit: 200,
 			maxCompletedAt: '2026-05-15T00:00:00.000Z',
 		})
-		expect(result.map((intent) => intent.id)).toEqual(['old_enough'])
+		expect(result).toEqual([])
+	})
+
+	it('applies rolling learner scope before the frontier limit', () => {
+		const intents = [
+			completedIntent({
+				id: 'static-oldest',
+				contactId: 'static-contact',
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				completedAt: '2026-05-01T00:00:00.000Z',
+			}),
+			completedIntent({
+				id: 'rolling-starved',
+				contactId: 'rolling-contact',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-05-02T00:00:00.000Z',
+			}),
+		]
+		const scan = scanCompletedValuePathIntentFrontier({
+			intents,
+			limit: 1,
+			contactIds: ['rolling-contact'],
+			now: '2026-05-03T00:00:00.000Z',
+		})
+		expect(scan.intents.map((intent) => intent.id)).toEqual([
+			'rolling-starved',
+		])
+		expect(scan.diagnostics).toMatchObject({
+			scanned: 2,
+			eligible: 1,
+			frontierSize: 1,
+			returned: 1,
+			excludedByScope: 1,
+			oldestFrontierAgeHours: 24,
+		})
+	})
+
+	it('does not let terminal and already-progressed frontiers consume the rolling limit', () => {
+		const terminal = Array.from({ length: 205 }, (_, index) =>
+			completedIntent({
+				id: `terminal-${index}`,
+				contactId: `terminal-contact-${index}`,
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				completedAt: `2026-05-01T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+			}),
+		)
+		const alreadyProgressed = completedIntent({
+			id: 'already-progressed-email-0',
+			contactId: 'already-progressed',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			completedAt: '2026-05-01T04:00:00.000Z',
+		})
+		const pendingNextFixture = completedIntent({
+			id: 'already-progressed-email-1',
+			contactId: 'already-progressed',
+			emailResourceId: 'ai-hero-skills-workflow.email-1',
+			completedAt: '2026-05-01T04:01:00.000Z',
+		})
+		const pendingNext = {
+			...pendingNextFixture,
+			status: 'pending' as const,
+			metadata: {
+				...pendingNextFixture.metadata,
+				completedAt: undefined,
+			},
+		}
+		const starved = completedIntent({
+			id: 'rolling-starved-after-terminal-history',
+			contactId: 'rolling-starved',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			completedAt: '2026-05-02T00:00:00.000Z',
+		})
+		const scan = scanCompletedValuePathIntentFrontier({
+			intents: [...terminal, alreadyProgressed, pendingNext, starved],
+			limit: 1,
+		})
+		expect(scan.intents.map((intent) => intent.id)).toEqual([
+			'rolling-starved-after-terminal-history',
+		])
+		expect(scan.diagnostics).toMatchObject({
+			excludedTerminal: 205,
+			excludedExistingNextIntent: 1,
+			actionableFrontierSize: 1,
+			truncated: 0,
+		})
 	})
 
 	it('reaches a starved contact frontier even when history exceeds the scan limit', async () => {
@@ -5028,7 +5179,11 @@ describe('Skills Newsletter Path Entry', () => {
 		const second = await enterSkillsNewsletterSubscriber({
 			repository,
 			allowlist: rollingAllowlist,
-			input,
+			input: {
+				...input,
+				source: 'kit-confirmation-reconciler',
+				subscribedAt: '2026-07-14T12:05:00.000Z',
+			},
 			allowWrite: true,
 		})
 

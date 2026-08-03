@@ -49,7 +49,7 @@ The first AI Hero consumer can still produce the familiar import actions from Co
 
 ## Effect version
 
-This package targets Effect v4 beta APIs from `Effect-TS/effect-smol`, currently `effect@4.0.0-beta.84`. The main AI Hero app and CVM currently use Effect v3, so consumers should treat this package as a schema boundary until the import/export CLI boundary is settled.
+This package targets Effect v4 beta APIs from the canonical `Effect-TS/effect` repository's `main` branch, currently `effect@4.0.0-beta.99`. The main AI Hero app and CVM currently use Effect v3, so consumers should treat this package as a schema boundary until the import/export CLI boundary is settled.
 
 ## Development
 

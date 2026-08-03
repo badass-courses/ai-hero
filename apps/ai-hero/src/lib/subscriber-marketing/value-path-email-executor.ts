@@ -1,6 +1,7 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
+import { isValuePathIntentCompleted } from './value-path-completion'
 import { buildValuePathAnswerLinks } from './value-path-answer-links'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import {
@@ -32,7 +33,7 @@ export type ValuePathEmailExecutorRepository = {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	): Promise<SideEffectIntent> | SideEffectIntent
 }
 
@@ -44,6 +45,7 @@ export type ValuePathEmailListProvider = Pick<
 export type ValuePathEmailExecutorConfig = {
 	mode?: ValuePathSendGateMode
 	limit?: number
+	allowWrite?: boolean
 	baseUrl?: string
 	pathTokenSecret?: string
 	answerPages?: ValuePathAnswerPageResource[]
@@ -62,7 +64,7 @@ export type ValuePathEmailExecutorConfig = {
 
 export type ValuePathEmailExecutionResult =
 	| {
-			status: 'completed'
+			status: 'completed' | 'planned'
 			intentId: string
 			kitSequenceId: string
 			email: string
@@ -128,6 +130,13 @@ export async function executeValuePathEmailIntent(args: {
 			reviewReasons: ['intent-not-value-path-kit-send'],
 		}
 	}
+	if (isValuePathIntentCompleted(intent)) {
+		return {
+			status: 'skipped',
+			intentId: intent.id,
+			reviewReasons: ['intent-already-completed'],
+		}
+	}
 	if (!isExecutableValuePathEmailIntent(intent, args.now)) {
 		return {
 			status: 'skipped',
@@ -184,16 +193,18 @@ export async function executeValuePathEmailIntent(args: {
 		...decision.reviewReasons,
 	])
 	if (reviewReasons.length > 0 || !decision.passed) {
-		await args.repository.updateSideEffectIntent(intent.id, {
-			status: 'blocked',
-			gates: decision.gates,
-			reviewReasons,
-			metadata: {
-				...intent.metadata,
-				providerResult: null,
-				blockedAt: args.now ?? new Date().toISOString(),
-			},
-		})
+		if (args.config?.allowWrite !== false) {
+			await args.repository.updateSideEffectIntent(intent.id, {
+				status: 'blocked',
+				gates: decision.gates,
+				reviewReasons,
+				metadata: {
+					...intent.metadata,
+					providerResult: null,
+					blockedAt: args.now ?? new Date().toISOString(),
+				},
+			})
+		}
 		return { status: 'blocked', intentId: intent.id, reviewReasons }
 	}
 
@@ -208,20 +219,31 @@ export async function executeValuePathEmailIntent(args: {
 			pathTokenSecret: args.config?.pathTokenSecret,
 		})
 		if (!personalization.passed) {
-			await args.repository.updateSideEffectIntent(intent.id, {
-				status: 'blocked',
-				gates: decision.gates,
-				reviewReasons: personalization.reviewReasons,
-				metadata: {
-					...intent.metadata,
-					providerResult: null,
-					blockedAt: args.now ?? new Date().toISOString(),
-				},
-			})
+			if (args.config?.allowWrite !== false) {
+				await args.repository.updateSideEffectIntent(intent.id, {
+					status: 'blocked',
+					gates: decision.gates,
+					reviewReasons: personalization.reviewReasons,
+					metadata: {
+						...intent.metadata,
+						providerResult: null,
+						blockedAt: args.now ?? new Date().toISOString(),
+					},
+				})
+			}
 			return {
 				status: 'blocked',
 				intentId: intent.id,
 				reviewReasons: personalization.reviewReasons,
+			}
+		}
+
+		if (args.config?.allowWrite === false) {
+			return {
+				status: 'planned',
+				intentId: intent.id,
+				kitSequenceId: metadata.kitSequenceId!,
+				email: email!,
 			}
 		}
 
@@ -234,14 +256,16 @@ export async function executeValuePathEmailIntent(args: {
 			} as Parameters<EmailListConfig['subscribeToList']>[0]['user'],
 			fields: personalization.fields,
 		})
+		const completedAt = args.now ?? new Date().toISOString()
 		await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'completed',
+			completedAt,
 			gates: decision.gates,
 			reviewReasons: [],
 			metadata: {
 				...intent.metadata,
 				providerResult: summarizeProviderResult(providerResult),
-				completedAt: args.now ?? new Date().toISOString(),
+				completedAt,
 			},
 		})
 		return {

@@ -19,8 +19,14 @@ import type {
 	StateTransition,
 } from './types'
 import {
+	canonicalCompletionForWrite,
+	isValuePathIntentCompleted,
+} from './value-path-completion'
+import {
+	scanCompletedValuePathIntentFrontier,
 	selectCompletedValuePathIntentFrontier,
 	sortValuePathIntentsByCreatedAt,
+	type CompletedValuePathIntentScanArgs,
 } from './value-path-intent-scan'
 
 export type MarketingRepository = IdentityRepository & {
@@ -53,7 +59,7 @@ export type MarketingRepository = IdentityRepository & {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	): SideEffectIntent
 }
 
@@ -167,8 +173,12 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		)
 	}
 	createSideEffectIntent(input: SideEffectIntent) {
-		this.sideEffectIntents.set(input.id, input)
-		return input
+		const record = {
+			...input,
+			completedAt: canonicalCompletionForWrite(input),
+		}
+		this.sideEffectIntents.set(record.id, record)
+		return record
 	}
 	findPendingValuePathEmailSideEffectIntents(args: { limit: number }) {
 		const now = new Date().toISOString()
@@ -176,25 +186,39 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 			(intent) =>
 				intent.provider === 'kit' &&
 				intent.type === 'send-value-path-email' &&
+				!isValuePathIntentCompleted(intent) &&
 				(intent.status === 'pending' || isDueRetryableIntent(intent, now)),
 		)
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
-	findCompletedValuePathEmailSideEffectIntents(args: {
-		limit: number
-		maxCompletedAt?: string
-	}) {
-		const completed = Array.from(this.sideEffectIntents.values()).filter(
+	findCompletedValuePathEmailSideEffectIntentScan(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return scanCompletedValuePathIntentFrontier({
+			...args,
+			intents: this.findValuePathEmailSideEffectIntentsForScan(),
+		})
+	}
+	findCompletedValuePathEmailSideEffectIntents(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return selectCompletedValuePathIntentFrontier({
+			...args,
+			intents: this.findValuePathEmailSideEffectIntentsForScan(),
+		})
+	}
+	findValuePathEmailSideEffectIntentsForScan() {
+		return Array.from(this.sideEffectIntents.values()).filter(
 			(intent) =>
 				intent.provider === 'kit' &&
-				intent.type === 'send-value-path-email' &&
-				intent.status === 'completed',
+				intent.type === 'send-value-path-email',
 		)
-		return selectCompletedValuePathIntentFrontier({
-			intents: completed,
-			limit: args.limit,
-			maxCompletedAt: args.maxCompletedAt,
-		})
+	}
+	findCompletedValuePathEmailSideEffectIntentsForRepair() {
+		return this.findValuePathEmailSideEffectIntentsForScan().filter(
+			(intent) =>
+				intent.status === 'completed' || isValuePathIntentCompleted(intent),
+		)
 	}
 	findValuePathEmailSideEffectIntentsByContact(contactId: string) {
 		const intents = Array.from(this.sideEffectIntents.values()).filter(
@@ -210,11 +234,15 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	) {
 		const existing = this.sideEffectIntents.get(id)
 		if (!existing) throw new Error(`Missing side effect intent ${id}`)
-		const updated = { ...existing, ...patch }
+		const updated = {
+			...existing,
+			...patch,
+			completedAt: canonicalCompletionForWrite(patch),
+		}
 		this.sideEffectIntents.set(id, updated)
 		return updated
 	}

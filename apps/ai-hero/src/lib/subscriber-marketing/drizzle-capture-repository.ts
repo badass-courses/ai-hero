@@ -12,6 +12,11 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { guid } from '@coursebuilder/utils/guid'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
+import {
+	canonicalCompletionForWrite,
+	isValuePathIntentCompleted,
+} from './value-path-completion'
 import {
 	COURSE_VALUE_PATH_SLUGS,
 	isCourseValuePathIntent,
@@ -26,8 +31,9 @@ import type {
 	StateTransition,
 } from './types'
 import {
-	selectCompletedValuePathIntentFrontier,
+	scanCompletedValuePathIntentFrontier,
 	sortValuePathIntentsByCreatedAt,
+	type CompletedValuePathIntentScanArgs,
 } from './value-path-intent-scan'
 
 type AiHeroWriteDatabase = any
@@ -227,11 +233,14 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async createSideEffectIntent(input: SideEffectIntent) {
+		const completedAt = canonicalCompletionForWrite(input)
+		const record = { ...input, completedAt }
 		await this.database.insert(sideEffectIntent).values({
-			...input,
+			...record,
+			completedAt: completedAt ? new Date(completedAt) : null,
 			createdAt: new Date(input.createdAt),
 		})
-		return input
+		return record
 	}
 
 	async findPendingValuePathEmailSideEffectIntents(args: {
@@ -255,16 +264,31 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			.map(toSideEffectIntentRecord)
 			.filter(
 				(intent: SideEffectIntent) =>
+					!isValuePathIntentCompleted(intent) &&
 					(intent.status === 'pending' || isDueRetryableIntent(intent, now)) &&
 					(!requestedIntentIds || requestedIntentIds.has(intent.id)),
 			)
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
-	async findCompletedValuePathEmailSideEffectIntents(args: {
-		limit: number
-		maxCompletedAt?: string
-	}) {
+	async findCompletedValuePathEmailSideEffectIntentScan(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		const records = await this.findValuePathEmailSideEffectIntentsForScan()
+		// Reduce to each contact/path frontier after applying the authorization
+		// and asset scope, then apply the limit. Scope-after-limit starved rolling
+		// enrollments on 2026-07-17 when the original activation cohort crowded
+		// out the live public cohort.
+		return scanCompletedValuePathIntentFrontier({ ...args, intents: records })
+	}
+
+	async findCompletedValuePathEmailSideEffectIntents(
+		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+	) {
+		return (await this.findCompletedValuePathEmailSideEffectIntentScan(args)).intents
+	}
+
+	async findValuePathEmailSideEffectIntentsForScan() {
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -272,18 +296,16 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				and(
 					eq(sideEffectIntent.provider, 'kit'),
 					eq(sideEffectIntent.type, 'send-value-path-email'),
-					eq(sideEffectIntent.status, 'completed'),
 				),
 			)
-		const records: SideEffectIntent[] = rows.map(toSideEffectIntentRecord)
-		// Reduce to each contact/path frontier before applying the limit so a
-		// saturated completed-intent history can never starve the drip scan
-		// (2026-07 cohort stall regression: no ORDER BY + slice(0, 200)).
-		return selectCompletedValuePathIntentFrontier({
-			intents: records,
-			limit: args.limit,
-			maxCompletedAt: args.maxCompletedAt,
-		})
+		return rows.map(toSideEffectIntentRecord)
+	}
+
+	async findCompletedValuePathEmailSideEffectIntentsForRepair() {
+		return (await this.findValuePathEmailSideEffectIntentsForScan()).filter(
+			(intent: SideEffectIntent) =>
+				intent.status === 'completed' || isValuePathIntentCompleted(intent),
+		)
 	}
 
 	async findValuePathEmailSideEffectIntentsByContact(contactId: string) {
@@ -312,6 +334,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					and(
 						eq(sideEffectIntent.provider, 'kit'),
 						eq(sideEffectIntent.type, 'send-value-path-email'),
+						excludeLearnerFlowCanary({
+							contactId: sideEffectIntent.contactId,
+						}),
 					),
 				),
 			this.database
@@ -324,6 +349,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 							contactEvent.providerReference,
 							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
 						),
+						excludeLearnerFlowCanary({
+							contactId: contactEvent.contactId,
+						}),
 					),
 				),
 		])
@@ -388,11 +416,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		>,
+		> & Pick<SideEffectIntent, 'completedAt'>,
 	) {
+		const completedAt = canonicalCompletionForWrite(patch)
 		await this.database
 			.update(sideEffectIntent)
-			.set(patch)
+			.set({
+				...patch,
+				completedAt: completedAt ? new Date(completedAt) : null,
+			})
 			.where(eq(sideEffectIntent.id, id))
 		const rows = await this.database
 			.select()
@@ -476,6 +508,7 @@ function toSideEffectIntentRecord(row: any): SideEffectIntent {
 		provider: row.provider,
 		type: row.type,
 		status: row.status,
+		completedAt: row.completedAt ? toIso(row.completedAt) : null,
 		idempotencyKey: row.idempotencyKey,
 		gates: row.gates,
 		reviewReasons: row.reviewReasons,

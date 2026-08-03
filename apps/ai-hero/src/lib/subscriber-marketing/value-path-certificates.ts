@@ -2,6 +2,8 @@ import { db } from '@/db'
 import { contact, providerIdentity, sideEffectIntent } from '@/db/schema'
 import { and, eq } from 'drizzle-orm'
 
+import { valuePathIntentCompletedAt } from './value-path-completion'
+
 export const SKILLS_WORKFLOW_CERTIFICATE_RESOURCE =
 	'value-path:ai-hero-skills-workflow'
 
@@ -29,20 +31,21 @@ export async function checkSkillsWorkflowValuePathCertificateEligibility(input: 
 		}
 	}
 
-	// Drizzle's typed query API is awkward for portable nested JSON matching here.
-	// This is bounded to one contact and completed value-path email intents.
-	const completedIntents = await db.query.sideEffectIntent.findMany({
+	// This is bounded to one contact. Completion is decided by the canonical
+	// fact helper, with the legacy metadata fallback only for the cutover window.
+	const pathIntents = await db.query.sideEffectIntent.findMany({
 		where: and(
 			eq(sideEffectIntent.contactId, resolvedContact.id),
 			eq(sideEffectIntent.type, 'send-value-path-email'),
-			eq(sideEffectIntent.status, 'completed'),
 		),
 	})
-	const completedTerminalIntent = completedIntents.find(
+	const completedTerminalIntent = pathIntents.find(
 		(intent) =>
-			intent.metadata?.emailResourceId === 'ai-hero-skills-workflow.email-6' ||
-			intent.metadata?.emailResourceId ===
-				'ai-hero-skills-team-workflow.team-email-6',
+			valuePathIntentCompletedAt(intent) &&
+			(intent.metadata?.emailResourceId ===
+				'ai-hero-skills-workflow.email-6' ||
+				intent.metadata?.emailResourceId ===
+					'ai-hero-skills-team-workflow.team-email-6'),
 	)
 
 	if (!completedTerminalIntent) {
@@ -62,7 +65,7 @@ export async function checkSkillsWorkflowValuePathCertificateEligibility(input: 
 		contactId: resolvedContact.id,
 		learnerName: resolvedContact.name,
 		learnerEmail: resolvedContact.email,
-		completedAt: completedTerminalIntent.createdAt,
+		completedAt: new Date(valuePathIntentCompletedAt(completedTerminalIntent)!),
 	}
 }
 

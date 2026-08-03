@@ -4,6 +4,7 @@ import {
 	cleanupLearnerFlowStuckFixture,
 	createLearnerFlowStuckFixture,
 	isCleanedLearnerFlowFixtureIntent,
+	isLearnerFlowCanaryEmail,
 	isLearnerFlowFixtureEmail,
 	learnerFlowFixtureEmail,
 	type LearnerFlowFixtureRepository,
@@ -67,6 +68,22 @@ class FixtureRepository implements LearnerFlowFixtureRepository {
 const now = '2026-07-16T16:30:00.000Z'
 
 describe('learner-flow stuck fixture', () => {
+	it('matches only the canonical canary namespace', () => {
+		expect(
+			isLearnerFlowCanaryEmail(
+				'joel+aih-synth-canary-learner-v1-20260717t220000z@badass.dev',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowCanaryEmail(
+				'JOEL+AIH-SYNTH-CANARY-LEARNER-V1-20260717T220000Z@BADASS.DEV',
+			),
+		).toBe(true)
+		expect(
+			isLearnerFlowCanaryEmail('joel+aih-synth-fixture-1@badass.dev'),
+		).toBe(false)
+	})
+
 	it('plans without writing unless --allow-write is represented', async () => {
 		const repository = new FixtureRepository()
 		const result = await createLearnerFlowStuckFixture({

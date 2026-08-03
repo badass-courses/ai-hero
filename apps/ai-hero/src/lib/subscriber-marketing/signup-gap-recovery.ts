@@ -3,11 +3,19 @@ import {
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 
+export type SignupGapKitSubscriberState =
+	| 'active'
+	| 'inactive'
+	| 'cancelled'
+	| 'bounced'
+	| 'complained'
+
 export type SignupGapKitSubscriber = {
 	kitSubscriberId: string
 	email: string
 	firstName?: string
 	createdAt: string
+	state: SignupGapKitSubscriberState
 	fields?: Record<string, unknown>
 }
 
@@ -42,8 +50,20 @@ export type SignupGapPreview = {
 		withExistingIdentity: number
 		gapCandidates: number
 		excludedSynthetic: number
+		unconfirmed: number
 		replayable: number
+		stateBreakdown: {
+			active: number
+			inactiveUnconfirmed: number
+			cancelled: number
+			bounced: number
+			complained: number
+		}
 	}
+	workSeen: number
+	workDone: number
+	oldestUnservedAgeHours: number | null
+	oldestUnservedAt: string | null
 	candidates: SignupGapPreviewCandidate[]
 }
 
@@ -56,10 +76,30 @@ export type SignupGapPreviewOutput = Omit<SignupGapPreview, 'candidates'> & {
 	>
 }
 
-export type SignupGapReplayReceipt = {
-	mode: 'signup-gap-replay'
+export type SignupConfirmationReconciliationPlan = {
+	mode: 'signup-confirmation-reconciliation-plan'
+	generatedAt: string
 	formId: number
 	window: SignupGapPreview['window']
+	counts: {
+		replayable: number
+		unconfirmed: number
+		excludedSynthetic: number
+		planned: number
+		deferred: number
+	}
+	events: Array<SkillsNewsletterSubscribed & { id: string }>
+}
+
+export type SignupGapReplayReceipt = {
+	mode: 'signup-gap-replay'
+	generatedAt: string
+	formId: number
+	window: SignupGapPreview['window']
+	workSeen: number
+	workDone: number
+	oldestUnservedAgeHours: number | null
+	oldestUnservedAt: string | null
 	counts: {
 		previewed: number
 		excludedSynthetic: number
@@ -145,12 +185,25 @@ export function buildSignupGapPreview(args: {
 		return createdAt >= window.fromMs && createdAt < window.toMs
 	})
 
+	const stateBreakdown = {
+		active: inWindow.filter((subscriber) => subscriber.state === 'active').length,
+		inactiveUnconfirmed: inWindow.filter(
+			(subscriber) => subscriber.state === 'inactive',
+		).length,
+		cancelled: inWindow.filter((subscriber) => subscriber.state === 'cancelled')
+			.length,
+		bounced: inWindow.filter((subscriber) => subscriber.state === 'bounced')
+			.length,
+		complained: inWindow.filter((subscriber) => subscriber.state === 'complained')
+			.length,
+	}
 	let withExistingContact = 0
 	let withExistingProviderIdentity = 0
 	let withExistingIdentity = 0
 	const candidates: SignupGapPreviewCandidate[] = []
 
 	for (const subscriber of inWindow) {
+		if (subscriber.state !== 'active') continue
 		const email = normalizeSignupGapEmail(subscriber.email)
 		if (!email) {
 			throw new Error(
@@ -185,9 +238,13 @@ export function buildSignupGapPreview(args: {
 	const excludedSynthetic = candidates.filter(
 		(candidate) => candidate.excludedSynthetic,
 	).length
+	const generatedAt = new Date(
+		args.now ?? new Date().toISOString(),
+	).toISOString()
+	const liveness = signupGapLiveness(candidates, generatedAt)
 	return {
 		mode: 'signup-gap-preview',
-		generatedAt: new Date(args.now ?? new Date().toISOString()).toISOString(),
+		generatedAt,
 		formId: args.formId,
 		window: { from: window.from, to: window.to },
 		counts: {
@@ -198,8 +255,11 @@ export function buildSignupGapPreview(args: {
 			withExistingIdentity,
 			gapCandidates: candidates.length,
 			excludedSynthetic,
+			unconfirmed: stateBreakdown.inactiveUnconfirmed,
 			replayable: candidates.length - excludedSynthetic,
+			stateBreakdown,
 		},
+		...liveness,
 		candidates,
 	}
 }
@@ -220,6 +280,45 @@ export function signupGapPreviewForOutput(
 	}
 }
 
+export function buildSignupConfirmationReconciliationPlan(args: {
+	preview: SignupGapPreview
+	limit: number
+	source?: string
+}): SignupConfirmationReconciliationPlan {
+	if (!Number.isInteger(args.limit) || args.limit < 1) {
+		throw new Error('Confirmation reconciliation limit must be a positive integer')
+	}
+	const replayable = args.preview.candidates.filter(
+		(candidate) => !candidate.excludedSynthetic,
+	)
+	const planned = replayable.slice(0, args.limit)
+	return {
+		mode: 'signup-confirmation-reconciliation-plan',
+		generatedAt: args.preview.generatedAt,
+		formId: args.preview.formId,
+		window: args.preview.window,
+		counts: {
+			replayable: replayable.length,
+			unconfirmed: args.preview.counts.unconfirmed,
+			excludedSynthetic: args.preview.counts.excludedSynthetic,
+			planned: planned.length,
+			deferred: Math.max(0, replayable.length - planned.length),
+		},
+		events: planned.map((candidate) => ({
+			id: `skills-confirmed:${args.preview.formId}:${candidate.kitSubscriberId}`,
+			name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+			data: {
+				kitSubscriberId: candidate.kitSubscriberId,
+				email: candidate.email,
+				name: candidate.firstName,
+				formId: args.preview.formId,
+				source: args.source ?? 'kit-confirmation-reconciler',
+				subscribedAt: candidate.createdAt,
+			},
+		})),
+	}
+}
+
 export async function replaySignupGap(args: {
 	preview: SignupGapPreview
 	source?: string
@@ -229,6 +328,7 @@ export async function replaySignupGap(args: {
 	let excludedSynthetic = 0
 	let skippedExisting = 0
 	let emitted = 0
+	const candidatesToEmit: SignupGapPreviewCandidate[] = []
 
 	for (const candidate of args.preview.candidates) {
 		if (candidate.excludedSynthetic) {
@@ -239,6 +339,15 @@ export async function replaySignupGap(args: {
 			skippedExisting += 1
 			continue
 		}
+		candidatesToEmit.push(candidate)
+	}
+
+	const workSeen = args.preview.workSeen
+	for (const [index, candidate] of candidatesToEmit.entries()) {
+		const remaining = signupGapLiveness(
+			candidatesToEmit.slice(index + 1),
+			args.preview.generatedAt,
+		)
 		await args.emit({
 			name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 			data: {
@@ -248,6 +357,12 @@ export async function replaySignupGap(args: {
 				formId: args.preview.formId,
 				source: args.source ?? 'signup-gap-replay',
 				subscribedAt: candidate.createdAt,
+				signupGapLiveness: {
+					workSeen,
+					workDone: skippedExisting + emitted + 1,
+					oldestUnservedAgeHours: remaining.oldestUnservedAgeHours,
+					oldestUnservedAt: remaining.oldestUnservedAt,
+				},
 			},
 		})
 		emitted += 1
@@ -255,8 +370,13 @@ export async function replaySignupGap(args: {
 
 	return {
 		mode: 'signup-gap-replay',
+		generatedAt: args.preview.generatedAt,
 		formId: args.preview.formId,
 		window: args.preview.window,
+		workSeen,
+		workDone: skippedExisting + emitted,
+		oldestUnservedAgeHours: null,
+		oldestUnservedAt: null,
 		counts: {
 			previewed: args.preview.counts.gapCandidates,
 			excludedSynthetic,
@@ -265,6 +385,29 @@ export async function replaySignupGap(args: {
 		},
 		note:
 			'Each emitted replay enters the live drip and leads to a real email-0 send.',
+	}
+}
+
+function signupGapLiveness(
+	candidates: readonly SignupGapPreviewCandidate[],
+	generatedAt: string,
+) {
+	const replayable = candidates.filter((candidate) => !candidate.excludedSynthetic)
+	const oldestUnservedAt = replayable
+		.map((candidate) => candidate.createdAt)
+		.sort()[0] ?? null
+	return {
+		workSeen: replayable.length,
+		workDone: 0,
+		oldestUnservedAgeHours:
+			oldestUnservedAt === null
+				? null
+				: Math.max(
+						0,
+						(Date.parse(generatedAt) - Date.parse(oldestUnservedAt)) /
+							(60 * 60 * 1000),
+					),
+		oldestUnservedAt,
 	}
 }
 

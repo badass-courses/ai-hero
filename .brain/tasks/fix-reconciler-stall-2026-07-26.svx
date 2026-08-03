@@ -1,0 +1,39 @@
+---
+title: "URGENT: 8 confirmed learners unenrolled, reconciler missed 6 sweeps"
+type: "task"
+date: "2026-07-26"
+privacy: "private"
+---
+
+# Confirmed learners are not being enrolled
+
+**Customer-facing. Real people confirmed their email and are not in the course.** Fix this first, before anything tidy.
+
+## Facts (steering, 2026-07-26T18:15Z)
+
+`signup-gap-preview --form-id 9376133 --from 2026-07-26T00:00:00Z`:
+
+- `replayable: 8`
+- `oldestUnservedAgeHours: 5.38`, `oldestUnservedAt: 2026-07-26T12:53:17Z`
+- Newer candidates at 17:34, 17:52, 17:54, 18:02, 18:04Z
+
+The hourly reconciler `skills-newsletter-confirmation-reconciler` is `{ cron: '17 * * * *' }`. The 12:53Z candidate should have been swept at 13:17, 14:17, 15:17, 16:17, 17:17 and 18:17Z. **Six consecutive misses.** This is not reconciliation lag; the loop is not routing.
+
+Beware the trap that burned steering on 07-24: a candidate list that only contains post-:17 arrivals is healthy. This one is NOT that — the oldest predates six sweeps.
+
+## Task
+
+1. **Prove whether the function is running at all.** Check Inngest Cloud runs for `skills-newsletter-confirmation-reconciler` over the last 8 hours. Runs, not registration — a successful registration PUT proves nothing (07-24: PUT returned `modified:false` while three crons were stone dead).
+2. **If it is not running**: find why. Candidate causes — dead binding after a deploy (check deploys since 2026-07-24; note the CI sync workflow was fixed in `aec266a` to sync the immutable deployment URL, so verify that workflow actually ran and succeeded on each production deploy since); function removed/renamed; cron paused; Inngest Cloud incident.
+3. **If it IS running but skipping candidates**: find the criteria mismatch. Compare the reconciler's candidate query against `buildSignupGapPreview`. Check for a cap, a window bound, or a state filter that excludes these 8.
+4. **Fix the root cause.** Then state clearly whether the 8 stuck learners self-heal on the next :17 sweep or need a one-time replay. **Do NOT run any replay** — steering brings that to Joel.
+5. **Report** the 8 candidates masked, with confirmation timestamps, and the blast radius: how many learners have been affected since the loop stopped routing.
+
+## Constraints
+
+- Do NOT commit, push, or deploy. Steering commits; Joel controls deploys.
+- Do NOT run `signup-gap-replay --allow-write` or any customer email send. Read-only against providers.
+- Masked/aggregate customer data only. Never print raw emails, tokens, or secrets.
+- The checkout may sit on a foreign branch with other sessions' work — `git status` first, touch only your own files, and if you must change code, work on a clean worktree from `origin/main`.
+- If a command is BLOCKED by dcg, stop and report it.
+- Print a DONE summary: is it running, root cause, fix, do the 8 self-heal, blast radius.

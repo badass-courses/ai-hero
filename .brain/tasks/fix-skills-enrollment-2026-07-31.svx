@@ -1,0 +1,104 @@
+---
+title: "Worker task: fix skills course enrollment for existing subscribers"
+type: "task"
+created_at: "2026-07-31"
+privacy: "private"
+---
+
+# Fix: existing subscribers never get enrolled in the skills email course
+
+Repo: `/Users/joel/Code/badass-courses/ai-hero`, app `apps/ai-hero`. Work on a
+branch off `main` named `fix/skills-enrollment-existing-subscribers`. Write
+code and tests. Do NOT commit, push, or merge. Steering reviews and ships.
+
+## The bug (diagnosed, confirmed in prod)
+
+Existing active Kit subscribers who open `/skills/subscribe` see the
+"subscribed" state: a static "Check your inbox for the first lesson." box.
+Nothing enrolls them. No form-add, no `skills-newsletter/subscribed` event.
+The page comment claims the hourly reconciler guarantees path entry. It does
+not, for two reasons:
+
+1. They never POST, so they never join Kit form 9376133, and the reconciler
+   only scans form members.
+2. `buildSignupGapPreview` in
+   `src/lib/subscriber-marketing/signup-gap-recovery.ts` (~line 185) filters
+   `inWindow` on the subscriber ACCOUNT `createdAt >= 2026-07-15`. The Kit
+   fetch in `signup-confirmation-reconciler.server.ts` already filters by form
+   `added_after=2026-07-15` at the API level. The in-memory re-check on
+   account age wrongly drops anyone whose Kit account predates 2026-07-15,
+   which is most of the list. The record already carries `addedAt`; the window
+   check must use `addedAt`, not `createdAt`.
+3. Same function (~line 219): any subscriber with an existing `contact` row or
+   `providerIdentity` is skipped. "Known contact" is not "entered the course".
+   Replace this with a check for an actual course entry (see
+   `DrizzleCaptureMarketingRepository` and how
+   `enterSkillsNewsletterSubscriber` records entries; find the table that
+   records path entry and query that instead).
+
+## Required changes
+
+### 1. Page: `src/app/(content)/skills/subscribe/page.tsx`
+
+When the resolved subscriber is active, actually enroll them instead of only
+reassuring. Requirements:
+
+- Add them to Kit form 9376133 (`emailListProvider.subscribeToList`, same as
+  `tagSubscriberAsSkills` in
+  `src/app/(content)/skills/_components/skills-newsletter-actions.ts`) and
+  send the `skills-newsletter/subscribed` event with
+  `source: 'skills-subscribe-page-recognized'`.
+- Use a DETERMINISTIC Inngest event id per subscriber, for example
+  `skills-page-entry:9376133:<kitSubscriberId>`, so repeat page views can
+  never double-enroll. Entry is also idempotent downstream
+  (`idempotentNoop`), this is belt and braces.
+- Do not block page render on the Kit/Inngest calls failing; log failures
+  with `log.error` and still render the reassurance UI.
+- Keep the reassurance copy. No third click. A recognized active subscriber
+  landing on this page IS the intent signal (Joel's confirmation-equals-
+  enrollment ruling, 2026-07-21).
+
+### 2. Reconciler window: `signup-gap-recovery.ts`
+
+- `buildSignupGapPreview` window filter uses `addedAt` (form join time), not
+  `createdAt` (account age). The type already threads `addedAt` through from
+  `signup-confirmation-reconciler.server.ts`; if the preview type lacks it,
+  add it.
+- HARD GUARDRAIL: the standing ~25k historical form backlog (form joins
+  BEFORE 2026-07-15) must stay excluded. The API-level
+  `added_after=2026-07-15` param plus the corrected `addedAt` window keeps
+  that true. Never widen the window start. Add a test asserting a subscriber
+  with `addedAt` before 2026-07-15 is NOT a candidate even with a fresh
+  account.
+
+### 3. Identity skip: `signup-gap-recovery.ts` + reconciler server
+
+- Replace the `hasContact || hasProviderIdentity` skip with an "already has a
+  course path entry" check. A past purchaser or newsletter contact who newly
+  joined the form after 2026-07-15 MUST become a candidate.
+- Keep the synthetic-address exclusion and the 200-per-run limit exactly as
+  they are. The limit is the flood brake.
+
+## Tests
+
+Extend the existing test files for these modules (they exist, follow their
+patterns). Must cover at least:
+
+- old account + form `addedAt` after 2026-07-15 + no entry → candidate
+- any account + form `addedAt` before 2026-07-15 → never a candidate
+- contact row exists but no course entry → candidate
+- course entry exists → skipped
+- page: active subscriber render sends form-add + event with deterministic
+  id; inactive subscriber gets the form, no event
+- page: Kit/Inngest failure logs and still renders
+
+Run the relevant test suites plus typecheck and report results honestly. If
+you cannot make a test pass, say so; do not weaken assertions.
+
+## Constraints
+
+- No commits, no pushes, no shitrat. Leave the branch dirty for review.
+- Do not touch the Kit API `added_after` param, the 200 limit, or anything
+  under `value-path-*` beyond what the entry-check requires.
+- No em dashes in any copy. No customer emails in code, comments, or tests.
+- When done, print `DONE FIX` plus a file list and test results summary.
