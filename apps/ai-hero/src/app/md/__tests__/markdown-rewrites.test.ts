@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	beforeFilesMarkdownRewrites,
+	homepageDiscoveryHeaders,
+	homepageDiscoveryLinkHeader,
 	markdownLikeAcceptHeaderPattern,
 	negotiatedMarkdownRewrites,
 } from '../../../../markdown-route-config.mjs'
@@ -21,6 +23,24 @@ describe('markdown rewrite configuration', () => {
 				expect.objectContaining({
 					source: '/workshops/:module/:lesson.md',
 					destination: '/md/workshops/:module/:lesson',
+				}),
+			]),
+		)
+	})
+
+	it('negotiates homepage markdown through the dedicated projection', () => {
+		expect(beforeFilesMarkdownRewrites).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					source: '/',
+					destination: '/md/home',
+					has: [
+						expect.objectContaining({
+							type: 'header',
+							key: 'accept',
+							value: markdownLikeAcceptHeaderPattern,
+						}),
+					],
 				}),
 			]),
 		)
@@ -100,6 +120,10 @@ describe('markdown rewrite configuration', () => {
 		expect(beforeFilesMarkdownRewrites).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
+					source: '/.well-known/:path*',
+					destination: '/.well-known/:path*',
+				}),
+				expect.objectContaining({
 					source: '/api/:path*',
 					destination: '/api/:path*',
 				}),
@@ -124,6 +148,24 @@ describe('markdown rewrite configuration', () => {
 					destination: '/sitemap.md',
 				}),
 			]),
+		)
+	})
+
+	it('adds agent-useful Link headers to the homepage', () => {
+		expect(homepageDiscoveryHeaders).toEqual([
+			{
+				source: '/',
+				headers: [
+					{ key: 'Link', value: homepageDiscoveryLinkHeader },
+					{ key: 'Vary', value: 'Accept' },
+				],
+			},
+		])
+		expect(homepageDiscoveryLinkHeader).toContain(
+			'</api/openapi.json>; rel="service-desc"',
+		)
+		expect(homepageDiscoveryLinkHeader).toContain(
+			'</llms.txt>; rel="service-doc"',
 		)
 	})
 })

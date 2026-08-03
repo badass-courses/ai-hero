@@ -18,7 +18,9 @@ const DISCOVERY_FORMATS = {
 
 const DISCOVERY_SURFACES = {
 	api: '/api',
+	apiCatalog: '/.well-known/api-catalog',
 	openapi: '/api/openapi.json',
+	courseSyncOpenapi: '/v1/course-sync/openapi.json',
 	sitemap: '/sitemap.xml',
 	sitemapMarkdown: '/sitemap.md',
 	llms: '/llms.txt',
@@ -45,6 +47,10 @@ interface ApiDiscoveryResourceFamily {
 }
 
 const DISCOVERY_SURFACE_HINTS = [
+	{
+		path: DISCOVERY_SURFACES.apiCatalog,
+		description: 'standard API catalog linkset',
+	},
 	{
 		path: DISCOVERY_SURFACES.api,
 		description: 'stable public JSON discovery document',
@@ -128,6 +134,10 @@ const PUBLIC_JSON_API_HINTS = [
 			'OpenAPI 3.1 contract with bearer auth, scope requirements, and token-management schemas',
 	},
 	{
+		path: DISCOVERY_SURFACES.courseSyncOpenapi,
+		description: 'OpenAPI contract for the course-sync control plane',
+	},
+	{
 		path: '/api/search?q=<query>',
 		description: 'public search entry point for public content',
 	},
@@ -194,6 +204,11 @@ const API_DISCOVERY_RESOURCE_FAMILIES = [
 	{
 		name: 'ai-coding-dictionary-entries',
 		htmlPattern: '/ai-coding-dictionary/:slug',
+		visibility: 'public',
+	},
+	{
+		name: 'course-sync-openapi',
+		api: DISCOVERY_SURFACES.courseSyncOpenapi,
 		visibility: 'public',
 	},
 	{
@@ -456,6 +471,48 @@ function formatPublicDiscoveryResources(resources: PublicDiscoveryResource[]) {
 		: '- No public discovery resources are available right now.'
 }
 
+/**
+ * Builds the RFC 9727 api-catalog linkset served at
+ * `/.well-known/api-catalog`: one anchor for the site with service-desc
+ * links to both OpenAPI documents and a service-doc link to llms.txt.
+ */
+export function buildApiCatalogDocument(baseUrl = getDiscoveryBaseUrl()) {
+	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
+
+	return {
+		linkset: [
+			{
+				anchor: `${normalizedBaseUrl}/`,
+				'service-desc': [
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.openapi,
+						),
+						type: 'application/openapi+json',
+					},
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.courseSyncOpenapi,
+						),
+						type: 'application/openapi+json',
+					},
+				],
+				'service-doc': [
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.llms,
+						),
+						type: 'text/plain',
+					},
+				],
+			},
+		],
+	}
+}
+
 export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
 
@@ -478,6 +535,33 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 		agentTokens: buildAgentTokenDiscovery(normalizedBaseUrl),
 		nextActions: [...DISCOVERY_NEXT_ACTIONS],
 	}
+}
+
+/**
+ * Builds the Markdown representation of the homepage served to agents at
+ * `/md/home` (and via content negotiation on `/`): a short orientation
+ * document that links every machine-readable discovery surface.
+ */
+export function buildHomepageMarkdownDocument(baseUrl = getDiscoveryBaseUrl()) {
+	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
+
+	return `# AI Hero
+
+AI Hero teaches engineers to build with AI through courses, cohorts, events, and free tutorials.
+
+## Agent discovery
+
+- [API catalog](${normalizedBaseUrl}${DISCOVERY_SURFACES.apiCatalog})
+- [Public API discovery](${normalizedBaseUrl}${DISCOVERY_SURFACES.api})
+- [Agent and content OpenAPI](${normalizedBaseUrl}${DISCOVERY_SURFACES.openapi})
+- [Course-sync OpenAPI](${normalizedBaseUrl}${DISCOVERY_SURFACES.courseSyncOpenapi})
+- [LLM orientation](${normalizedBaseUrl}${DISCOVERY_SURFACES.llms})
+- [Markdown sitemap](${normalizedBaseUrl}${DISCOVERY_SURFACES.sitemapMarkdown})
+
+## Content formats
+
+HTML is the default. Supported public content also has explicit \`.md\` twins. Use the JSON discovery document for route families and API details.
+`
 }
 
 export function buildLlmsTxtDocument(baseUrl = getDiscoveryBaseUrl()) {

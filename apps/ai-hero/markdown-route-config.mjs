@@ -11,6 +11,10 @@ const markdownAcceptHeader = [
 
 export const discoveryRouteBypassRewrites = [
 	{
+		source: '/.well-known/:path*',
+		destination: '/.well-known/:path*',
+	},
+	{
 		source: '/api/:path*',
 		destination: '/api/:path*',
 	},
@@ -69,6 +73,11 @@ export const explicitMarkdownRewrites = [
 
 export const negotiatedMarkdownRewrites = [
 	{
+		source: '/',
+		destination: '/md/home',
+		has: markdownAcceptHeader,
+	},
+	{
 		source: '/workshops/:module/:lesson',
 		destination: '/md/workshops/:module/:lesson',
 		has: markdownAcceptHeader,
@@ -90,4 +99,25 @@ export const beforeFilesMarkdownRewrites = [
 	...discoveryRouteBypassRewrites,
 	...explicitMarkdownRewrites,
 	...negotiatedMarkdownRewrites,
+]
+
+export const homepageDiscoveryLinkHeader = [
+	'</api/openapi.json>; rel="service-desc"; type="application/openapi+json"',
+	'</llms.txt>; rel="service-doc"; type="text/plain"',
+].join(', ')
+
+export const homepageDiscoveryHeaders = [
+	{
+		source: '/',
+		headers: [
+			{
+				key: 'Link',
+				value: homepageDiscoveryLinkHeader,
+			},
+			{
+				key: 'Vary',
+				value: 'Accept',
+			},
+		],
+	},
 ]

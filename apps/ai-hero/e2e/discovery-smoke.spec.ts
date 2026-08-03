@@ -79,15 +79,49 @@ test('discovery surfaces stay public and hide excluded paths', async ({
 	expect(apiPayload.discovery).toEqual(
 		expect.objectContaining({
 			api: '/api',
+			apiCatalog: '/.well-known/api-catalog',
+			courseSyncOpenapi: '/v1/course-sync/openapi.json',
 			sitemapMarkdown: '/sitemap.md',
 			llms: '/llms.txt',
 		}),
 	)
 
+	const apiCatalogResponse = await request.get(
+		toAbsoluteUrl(testInfo, '/.well-known/api-catalog'),
+	)
+	expect(apiCatalogResponse.ok()).toBeTruthy()
+	expect(apiCatalogResponse.headers()['content-type']).toContain(
+		'application/linkset+json',
+	)
+	const apiCatalog = await apiCatalogResponse.json()
+	expect(JSON.stringify(apiCatalog)).toContain('/api/openapi.json')
+	expect(JSON.stringify(apiCatalog)).toContain('/llms.txt')
+	expect(JSON.stringify(apiCatalog)).toContain('/v1/course-sync/openapi.json')
+
+	const homepageHtmlResponse = await request.get(toAbsoluteUrl(testInfo, '/'))
+	expect(homepageHtmlResponse.ok()).toBeTruthy()
+	expect(homepageHtmlResponse.headers()['link']).toContain(
+		'</api/openapi.json>; rel="service-desc"',
+	)
+	expect(homepageHtmlResponse.headers()['link']).toContain(
+		'</llms.txt>; rel="service-doc"',
+	)
+
+	const homepageMarkdownResponse = await request.get(
+		toAbsoluteUrl(testInfo, '/'),
+		{ headers: { accept: 'text/markdown' } },
+	)
+	expect(homepageMarkdownResponse.ok()).toBeTruthy()
+	expect(homepageMarkdownResponse.headers()['content-type']).toContain(
+		'text/markdown',
+	)
+	expect(await homepageMarkdownResponse.text()).toContain('# AI Hero')
+
 	const llmsResponse = await request.get(toAbsoluteUrl(testInfo, '/llms.txt'))
 	expect(llmsResponse.ok()).toBeTruthy()
 	expect(llmsResponse.headers()['content-type']).toContain('text/plain')
 	const llmsBody = await llmsResponse.text()
+	expect(llmsBody).toContain('/v1/course-sync/openapi.json')
 
 	const sitemapMarkdownResponse = await request.get(
 		toAbsoluteUrl(testInfo, '/sitemap.md'),
@@ -113,6 +147,9 @@ test('discovery surfaces stay public and hide excluded paths', async ({
 	expect(robotsBody).toMatch(/User-agent: \*/i)
 	expect(robotsBody).toMatch(/User-agent: GPTBot/i)
 	expect(robotsBody).toMatch(/User-agent: ClaudeBot/i)
+	expect(robotsBody).toMatch(
+		/Content-Signal: search=yes, ai-input=yes, ai-train=yes/i,
+	)
 	expect(robotsBody).toMatch(/Disallow: \/login/i)
 	expect(robotsBody).toMatch(/Sitemap: .*\/sitemap\.xml/i)
 	expect(robotsBody).toMatch(/Sitemap: .*\/sitemap\.md/i)
