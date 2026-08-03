@@ -8,7 +8,7 @@ import {
 } from '@/db/schema'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
-import { asc, eq, or, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import { productSchema } from '@coursebuilder/core/schemas'
 
@@ -18,6 +18,11 @@ import {
 	type Level2ResourceWrapper,
 	type ResourceNavigation,
 } from './content-navigation'
+import {
+	buildNavigationTree,
+	cleanNavigationFields,
+	groupNavigationRows,
+} from './content-navigation-tree'
 
 /**
  * Fields that should be preserved in navigation (excludes heavy content like body)
@@ -66,9 +71,88 @@ function stripHeavyFieldsFromResource(resource: any): any {
 }
 
 /**
+ * The nav projection of a resource's `fields`, computed IN the select: only
+ * these keys ever leave the database. The old shape of this loader fetched
+ * every `fields` blob in the tree — every lesson body — and stripped them in
+ * JS afterwards, which is why it held the workshop sidebar's query at p50
+ * 213 ms / p99 1.19 s on the database (Insights, 2026-08-03).
+ */
+const navigationFieldsProjection = sql<
+	string | Record<string, any>
+>`JSON_OBJECT(
+	'slug', JSON_EXTRACT(${contentResource.fields}, '$.slug'),
+	'title', JSON_EXTRACT(${contentResource.fields}, '$.title'),
+	'visibility', JSON_EXTRACT(${contentResource.fields}, '$.visibility'),
+	'state', JSON_EXTRACT(${contentResource.fields}, '$.state')
+)`
+
+/**
+ * Columns of a nav tree node: every `AI_ContentResource` column EXCEPT the
+ * raw `fields` blob, which the projection above replaces. The full set
+ * matters — `ContentResourceSchema` requires keys like `organizationId` and
+ * `createdByOrganizationMembershipId` even when null, and a first cut of this
+ * select without them failed the parse and blanked the cohort sidebar.
+ */
+const navigationResourceColumns = {
+	id: contentResource.id,
+	organizationId: contentResource.organizationId,
+	createdByOrganizationMembershipId:
+		contentResource.createdByOrganizationMembershipId,
+	type: contentResource.type,
+	createdById: contentResource.createdById,
+	slug: contentResource.slug,
+	currentVersionId: contentResource.currentVersionId,
+	createdAt: contentResource.createdAt,
+	updatedAt: contentResource.updatedAt,
+	deletedAt: contentResource.deletedAt,
+	fields: navigationFieldsProjection,
+}
+
+/** One level of the tree: join rows + their resources, nav columns only. */
+async function selectNavigationChildren(parentIds: string[]) {
+	if (parentIds.length === 0) return []
+	return db
+		.select({
+			resourceId: contentResourceResource.resourceId,
+			resourceOfId: contentResourceResource.resourceOfId,
+			position: contentResourceResource.position,
+			metadata: contentResourceResource.metadata,
+			createdAt: contentResourceResource.createdAt,
+			updatedAt: contentResourceResource.updatedAt,
+			deletedAt: contentResourceResource.deletedAt,
+			resource: navigationResourceColumns,
+		})
+		.from(contentResourceResource)
+		.innerJoin(
+			contentResource,
+			eq(contentResource.id, contentResourceResource.resourceId),
+		)
+		.where(
+			and(
+				inArray(contentResourceResource.resourceOfId, parentIds),
+				// No soft-deleted link rows or resources in nav. Currently moot
+				// (production has zero soft-deleted rows) but it is the standing
+				// convention of the other resource queries.
+				isNull(contentResourceResource.deletedAt),
+				isNull(contentResource.deletedAt),
+			),
+		)
+		.orderBy(
+			asc(contentResourceResource.resourceOfId),
+			asc(contentResourceResource.position),
+		)
+}
+
+/**
  * Fetches content navigation
  * Returns ContentResource with nested resources and optional parents (products)
- * Optimized to exclude heavy fields like body content for better performance
+ *
+ * Loads the tree as one flat, indexed query PER LEVEL (root, then children,
+ * grandchildren, great-grandchildren — three levels below the root, so a
+ * lesson's solutions are included) and nests them in JS. The previous single
+ * relational query expressed the same tree as correlated `json_arrayagg`
+ * subqueries that MySQL executed per row while dragging every body along —
+ * see `navigationFieldsProjection`.
  */
 export async function getContentNavigation(slugOrId: string) {
 	return measureIfSlow({
@@ -77,42 +161,46 @@ export async function getContentNavigation(slugOrId: string) {
 		thresholdMs: 120,
 		data: { slugOrId },
 		operation: async () => {
-			// Fetch main resource with all nested resources (3 levels deep to include solutions)
-			const resource = await db.query.contentResource.findFirst({
-				where: or(
-					eq(sql`JSON_EXTRACT(${contentResource.fields}, "$.slug")`, slugOrId),
-					eq(contentResource.id, slugOrId),
-				),
-				with: {
-					resources: {
-						with: {
-							resource: {
-								with: {
-									resources: {
-										with: {
-											resource: {
-												with: {
-													resources: {
-														with: {
-															resource: true,
-														},
-														orderBy: asc(contentResourceResource.position),
-													},
-												},
-											},
-										},
-										orderBy: asc(contentResourceResource.position),
-									},
-								},
-							},
-						},
-						orderBy: asc(contentResourceResource.position),
-					},
-				},
-			})
+			const rootRows = await db
+				.select(navigationResourceColumns)
+				.from(contentResource)
+				.where(
+					and(
+						or(
+							eq(
+								sql`JSON_EXTRACT(${contentResource.fields}, "$.slug")`,
+								slugOrId,
+							),
+							eq(contentResource.id, slugOrId),
+						),
+						isNull(contentResource.deletedAt),
+					),
+				)
+				.limit(1)
+			const root = rootRows[0]
 
-			if (!resource) {
+			if (!root) {
 				return null
+			}
+
+			const levelOne = await selectNavigationChildren([root.id])
+			const levelTwo = await selectNavigationChildren(
+				levelOne.map((row) => row.resourceId),
+			)
+			const levelThree = await selectNavigationChildren(
+				levelTwo.map((row) => row.resourceId),
+			)
+
+			const byParent = groupNavigationRows([
+				...levelOne,
+				...levelTwo,
+				...levelThree,
+			])
+
+			const resource = {
+				...root,
+				fields: cleanNavigationFields(root.fields),
+				resources: buildNavigationTree(byParent, root.id, 3),
 			}
 
 			const directProductRelations =
@@ -164,7 +252,9 @@ export async function getContentNavigation(slugOrId: string) {
 				...parentProductRelations,
 			]
 
-			const strippedResource = stripHeavyFieldsFromResource(resource)
+			// The tree is already minimal — its fields were projected in SQL. Only
+			// the product payloads still arrive full and need the strip pass.
+			const strippedResource = resource
 			const strippedProductRelations = productRelations.map((rel) => ({
 				...rel,
 				product: rel.product
