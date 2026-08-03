@@ -373,6 +373,16 @@ export function buildValuePathEmailPersonalization(args: {
 	) {
 		reviewReasons.push('answer-pages-missing')
 	}
+	if (answerPages.length > 1) {
+		// Without explicit positions the link builder falls back to id order,
+		// which silently mismatches the template's fixed button order.
+		const positions = answerPages.map((page) => page.fields.position)
+		if (positions.some((position) => position === undefined)) {
+			reviewReasons.push('answer-page-position-missing')
+		} else if (new Set(positions).size !== positions.length) {
+			reviewReasons.push('answer-page-position-duplicate')
+		}
+	}
 	if (
 		(answerPages.length > 0 ||
 			isTerminalSkillsWorkflowEmailResourceId(args.emailResourceId)) &&
