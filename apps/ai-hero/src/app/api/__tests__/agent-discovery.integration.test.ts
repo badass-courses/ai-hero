@@ -178,9 +178,11 @@ describe('AI Hero discovery surfaces', () => {
 		})
 		expect(document.paths['/api/posts'].post).toMatchObject({
 			security: [{ bearerAuth: [] }],
-			'x-required-scopes': [],
+			'x-required-scopes': ['content:write', 'content:relations'],
+			'x-scope-requirements': expect.stringContaining(
+				'content:write is required',
+			),
 			'x-required-ability': 'create Content',
-			'x-agent-token-policy': expect.stringContaining('Scoped aih_pat_*'),
 		})
 		expect(document.paths['/api/search'].get.security).toEqual([
 			{},
@@ -198,8 +200,9 @@ describe('AI Hero discovery surfaces', () => {
 			'/api/products/{productId}/enrollment',
 		)
 		expect(document.paths['/api/shortlinks'].get).toMatchObject({
+			'x-required-scopes': ['shortlinks:manage'],
 			'x-required-ability': 'manage all',
-			'x-agent-token-policy': expect.stringContaining('Scoped aih_pat_*'),
+			'x-agent-token-policy': expect.stringContaining('shortlinks:manage'),
 		})
 		expect(document.paths['/api/tags'].get.security).toEqual([])
 		expect(
@@ -214,6 +217,13 @@ describe('AI Hero discovery surfaces', () => {
 		expect(
 			document.components.schemas.SkillChangelogSuccessResponse.allOf[0],
 		).toEqual({ $ref: '#/components/schemas/CommandSuccessEnvelope' })
+		expect(
+			document.components.schemas.SkillChangelogSuccessResponse.allOf[1]
+				.properties,
+		).toMatchObject({
+			id: { type: 'string', deprecated: true },
+			slug: { type: 'string', deprecated: true },
+		})
 
 		const tokenCollection = document.paths['/api/personal-access-tokens']
 		expect(

@@ -39,7 +39,7 @@ import {
 	ResourceUpdateRequestSchema,
 	SearchResultSchema,
 	ShortlinkReadResponseSchema,
-	ShortlinkSchema,
+	ShortlinkResponseSchema,
 	SignedUploadUrlResponseSchema,
 	SkillChangelogPostSchema,
 	SkillChangelogResultSchema,
@@ -75,7 +75,7 @@ const authErrorResponses = {
 		schemaRef('ErrorResponse'),
 	),
 	'403': response(
-		'The bearer credential is valid but lacks the required PAT scope or role-derived device-token ability. Do not retry a write with content:read.',
+		'The bearer credential is valid, but the PAT lacks a required write scope, the requested mutation exceeds that scope (for example, content:write against published content), or the role-derived device token lacks the named ability. content:read never authorizes writes.',
 		schemaRef('ErrorResponse'),
 	),
 }
@@ -105,6 +105,9 @@ type ContentOperationOptions = {
 	access: ContentAccess
 	responseSchema: string
 	requiredAbility?: string
+	requiredScopes?: string[]
+	scopeRequirements?: string
+	agentTokenPolicy?: string
 	requestSchema?: string
 	parameters?: Array<Record<string, unknown>>
 	successStatus?: 200 | 201
@@ -118,6 +121,9 @@ function contentOperation({
 	access,
 	responseSchema,
 	requiredAbility,
+	requiredScopes,
+	scopeRequirements,
+	agentTokenPolicy,
 	requestSchema,
 	parameters,
 	successStatus = 200,
@@ -132,6 +138,7 @@ function contentOperation({
 	const isContentRead =
 		access === 'content-read' || access === 'optional-content-read'
 	const isDeviceToken = access === 'device-token'
+	const acceptsWritePat = isDeviceToken && Boolean(requiredScopes?.length)
 	const authErrors =
 		access === 'public' || access === 'optional-content-read'
 			? {}
@@ -143,7 +150,12 @@ function contentOperation({
 		summary,
 		description,
 		security,
-		'x-required-scopes': isContentRead ? ['content:read'] : [],
+		'x-required-scopes': isContentRead
+			? ['content:read']
+			: (requiredScopes ?? []),
+		...(scopeRequirements && {
+			'x-scope-requirements': scopeRequirements,
+		}),
 		...(isDeviceToken && {
 			'x-required-ability': requiredAbility,
 		}),
@@ -151,9 +163,11 @@ function contentOperation({
 			? access === 'optional-content-read'
 				? 'Anonymous callers receive public results. content:read also permits privileged content.'
 				: 'A scoped aih_pat_* token with content:read is accepted.'
-			: isDeviceToken
-				? `Scoped aih_pat_* tokens are excluded. Use a role-derived device token with ${requiredAbility}.`
-				: 'Public. A bearer token grants no extra privilege.',
+			: acceptsWritePat
+				? agentTokenPolicy || scopeRequirements
+				: isDeviceToken
+					? `Scoped aih_pat_* tokens are excluded. Use a role-derived device token with ${requiredAbility}.`
+					: 'Public. A bearer token grants no extra privilege.',
 		...(parameters?.length ? { parameters } : {}),
 		...(requestSchema && {
 			requestBody: {
@@ -276,11 +290,14 @@ const contentPaths = {
 		}),
 		put: contentOperation({
 			operationId: 'updateLesson',
-			summary: 'Update a lesson',
+			summary: 'Update or publish a lesson',
 			description:
-				'Use ?id=<lesson-id>. A body with only action performs publish, unpublish, archive, or save; a save body uses the full lesson update schema.',
+				'Use ?id=<lesson-id>. For PATs, action=save requires content:write and only updates an existing draft; action=publish requires content:publish. Saving tags also requires content:relations. PATs cannot unpublish or archive lessons.',
 			access: 'device-token',
 			requiredAbility: 'update Content and manage the target lesson',
+			requiredScopes: ['content:write', 'content:publish', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write for action=save, content:publish for action=publish, and content:relations in addition to content:write when the save body contains tags.',
 			parameters: [queryParameter('id', 'Lesson id.', undefined, true)],
 			requestSchema: 'LessonUpdateRequest',
 			responseSchema: 'LessonResponse',
@@ -302,9 +319,13 @@ const contentPaths = {
 		post: contentOperation({
 			operationId: 'createPost',
 			summary: 'Create a post',
-			description: 'Creates a draft post. The server supplies createdById.',
+			description:
+				'Creates a draft post. The server supplies createdById. PATs also need content:relations when videoResourceId or parentLessonId is present.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['content:write', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write is required. content:relations is additionally required when videoResourceId or parentLessonId is present.',
 			requestSchema: 'PostCreateRequest',
 			responseSchema: 'PostResponse',
 			successStatus: 201,
@@ -314,9 +335,12 @@ const contentPaths = {
 			operationId: 'updatePost',
 			summary: 'Update or publish a post',
 			description:
-				'Use ?id=<post-id>&action=<publish|unpublish|archive|save>. Save validates the complete post update body.',
+				'Use ?id=<post-id>&action=<publish|save>. For PATs, save requires content:write and only updates an existing draft; publish requires content:publish. Saving tags or videoResourceId also requires content:relations. PATs cannot unpublish, archive, or change fields.state.',
 			access: 'device-token',
 			requiredAbility: 'update Content and manage the target post',
+			requiredScopes: ['content:write', 'content:publish', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write for action=save or no action, content:publish for action=publish, and content:relations in addition when the body contains tags or videoResourceId.',
 			parameters: [
 				queryParameter('id', 'Post id.', undefined, true),
 				queryParameter('action', 'State transition or save action.', {
@@ -468,9 +492,12 @@ const contentPaths = {
 			operationId: 'createSkillsChangelog',
 			summary: 'Create a Skills Changelog entry',
 			description:
-				'Creates a draft or published Skills Changelog resource and optionally attaches a video.',
+				'Creates a draft or published Skills Changelog resource and optionally attaches a video. The canonical success shape is {ok, command, result, next_actions}; deprecated top-level id and slug mirror the nested result for compatibility.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['content:write', 'content:publish', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write is required. content:publish is additionally required when state=published. content:relations is additionally required when videoResourceId is present.',
 			requestSchema: 'SkillChangelogRequest',
 			responseSchema: 'SkillChangelogSuccessResponse',
 			successStatus: 201,
@@ -489,6 +516,8 @@ const contentPaths = {
 				'Starts an S3 multipart upload and returns its id, key, and public URL.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload'],
+			scopeRequirements: 'PAT: media:upload is required.',
 			requestSchema: 'CreateMultipartUploadRequest',
 			responseSchema: 'CreateMultipartUploadResponse',
 			extraResponses: commonErrorResponses,
@@ -503,6 +532,8 @@ const contentPaths = {
 				'Returns a one-hour signed URL that grants direct storage write access.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload'],
+			scopeRequirements: 'PAT: media:upload is required.',
 			parameters: [
 				queryParameter('key', 'Multipart object key.', undefined, true),
 				queryParameter('uploadId', 'Multipart upload id.', undefined, true),
@@ -529,6 +560,8 @@ const contentPaths = {
 				'Completes an S3 multipart upload from uploaded part numbers and ETags.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload'],
+			scopeRequirements: 'PAT: media:upload is required.',
 			requestSchema: 'CompleteMultipartUploadRequest',
 			responseSchema: 'CompleteMultipartUploadResponse',
 			extraResponses: commonErrorResponses,
@@ -540,9 +573,12 @@ const contentPaths = {
 			operationId: 'createUpload',
 			summary: 'Start video processing',
 			description:
-				'Queues video processing for an uploaded file and parent content resource. The route currently returns no job id.',
+				'Queues video processing for an uploaded file and parent content resource. PATs may target only post, lesson, or skill-changelog parents. The route currently returns no job id.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload', 'content:relations'],
+			scopeRequirements:
+				'PAT: media:upload and content:relations are both required.',
 			requestSchema: 'UploadRequest',
 			responseSchema: 'UploadStartedResponse',
 			extraResponses: commonErrorResponses,
@@ -569,9 +605,11 @@ const contentPaths = {
 			operationId: 'getShortlinks',
 			summary: 'List, search, or read short links',
 			description:
-				'Admin-only. Use ?id= for one link or ?search= to filter. Analytics modes are intentionally outside this content contract.',
+				'Use ?id= for one link or ?search= to filter. shortlinks:manage PAT responses omit click counts and cannot use analytics modes; role-derived admin device tokens retain analytics access.',
 			access: 'device-token',
 			requiredAbility: 'manage all',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
 			parameters: [
 				queryParameter('id', 'Optional short-link id.'),
 				queryParameter('search', 'Optional slug, URL, or description search.'),
@@ -583,9 +621,11 @@ const contentPaths = {
 			operationId: 'createShortlink',
 			summary: 'Create a short link',
 			description:
-				'Creates a short link. The server generates a slug when omitted.',
+				'Creates a short link. The server generates a slug when omitted. PAT responses omit click counts.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
 			requestSchema: 'CreateShortlinkRequest',
 			responseSchema: 'ShortlinkResponse',
 			successStatus: 201,
@@ -597,9 +637,12 @@ const contentPaths = {
 		patch: contentOperation({
 			operationId: 'updateShortlink',
 			summary: 'Update a short link',
-			description: 'Updates the selected short-link fields.',
+			description:
+				'Updates the selected short-link fields. PAT responses omit click counts.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
 			requestSchema: 'UpdateShortlinkRequest',
 			responseSchema: 'ShortlinkResponse',
 			extraResponses: {
@@ -613,6 +656,8 @@ const contentPaths = {
 			description: 'Use ?id=<short-link-id>.',
 			access: 'device-token',
 			requiredAbility: 'delete Content',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
 			parameters: [queryParameter('id', 'Short-link id.', undefined, true)],
 			responseSchema: 'DeleteMessageResponse',
 			extraResponses: commonErrorResponses,
@@ -636,6 +681,8 @@ const contentPaths = {
 				'Creates a topic tag. id and timestamps are generated when omitted. Duplicate ids, names, or slugs return 409.',
 			access: 'device-token',
 			requiredAbility: 'create Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
 			requestSchema: 'CreateTagRequest',
 			responseSchema: 'TagResponse',
 			successStatus: 201,
@@ -650,9 +697,12 @@ const contentPaths = {
 		post: contentOperation({
 			operationId: 'attachTag',
 			summary: 'Attach a tag to a post',
-			description: 'Both the post and tag must already exist.',
+			description:
+				'Both the post and tag must already exist. PATs cannot attach tags to another resource type.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
 			requestSchema: 'PostTagInput',
 			responseSchema: 'PostTagMutationResponse',
 			extraResponses: commonErrorResponses,
@@ -660,9 +710,12 @@ const contentPaths = {
 		delete: contentOperation({
 			operationId: 'detachTag',
 			summary: 'Detach a tag from a post',
-			description: 'Both the post and tag must already exist.',
+			description:
+				'Both the post and tag must already exist. PATs cannot detach tags from another resource type.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
 			requestSchema: 'PostTagInput',
 			responseSchema: 'PostTagMutationResponse',
 			extraResponses: commonErrorResponses,
@@ -683,11 +736,14 @@ const contentPaths = {
 		}),
 		put: contentOperation({
 			operationId: 'updatePage',
-			summary: 'Update a page',
+			summary: 'Update or publish a page',
 			description:
-				'Use ?id=<page-id>. Fields are merged. A title change does not regenerate the slug.',
+				'Use ?id=<page-id>. Fields are merged. For PATs, content:write only updates an existing draft; publishing requires content:publish. Updating fields and publishing in one request requires both scopes. PATs cannot unpublish, archive, or delete pages. A title change does not regenerate the slug.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
+			requiredScopes: ['content:write', 'content:publish'],
+			scopeRequirements:
+				'PAT: content:write for draft field changes, content:publish when fields.state=published, and both when publishing together with other field changes.',
 			parameters: [queryParameter('id', 'Page id.', undefined, true)],
 			requestSchema: 'UpdatePageRequest',
 			responseSchema: 'PageResponse',
@@ -816,7 +872,7 @@ const zodSchemas = {
 	SignedUploadUrlResponse: SignedUploadUrlResponseSchema,
 	CreateShortlinkRequest: CreateShortlinkSchema,
 	UpdateShortlinkRequest: UpdateShortlinkSchema,
-	ShortlinkResponse: ShortlinkSchema,
+	ShortlinkResponse: ShortlinkResponseSchema,
 	ShortlinkReadResponse: ShortlinkReadResponseSchema,
 	CreateTagRequest: CreateTagRequestSchema,
 	TagResponse: TagResponseSchema,
@@ -871,7 +927,6 @@ function buildComponentSchemas(): Record<string, any> {
 					items: schemaRef('NextAction'),
 				},
 			},
-			additionalProperties: false,
 		},
 		CommandPreflightSuccessResponse: {
 			allOf: [
@@ -881,6 +936,7 @@ function buildComponentSchemas(): Record<string, any> {
 					properties: { result: schemaRef('CommandPreflightResult') },
 				},
 			],
+			unevaluatedProperties: false,
 		},
 		SearchSuccessResponse: {
 			allOf: [
@@ -890,15 +946,34 @@ function buildComponentSchemas(): Record<string, any> {
 					properties: { result: schemaRef('SearchResult') },
 				},
 			],
+			unevaluatedProperties: false,
 		},
 		SkillChangelogSuccessResponse: {
+			description:
+				'The canonical command envelope plus deprecated top-level id and slug compatibility fields. New clients should read result.resource.id and result.resource.fields.slug, or result.resourceId and result.slug in the defensive parse-failure result.',
 			allOf: [
 				schemaRef('CommandSuccessEnvelope'),
 				{
 					type: 'object',
-					properties: { result: schemaRef('SkillChangelogResult') },
+					required: ['id', 'slug'],
+					properties: {
+						result: schemaRef('SkillChangelogResult'),
+						id: {
+							type: 'string',
+							deprecated: true,
+							description:
+								'Deprecated compatibility mirror of result.resource.id or result.resourceId.',
+						},
+						slug: {
+							type: 'string',
+							deprecated: true,
+							description:
+								'Deprecated compatibility mirror of result.resource.fields.slug or result.slug.',
+						},
+					},
 				},
 			],
+			unevaluatedProperties: false,
 		},
 	}
 }
@@ -915,7 +990,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			title: 'AI Hero Agent and Content API',
 			version: '1.1.0',
 			description:
-				'Start at /api. Scoped aih_pat_* tokens currently grant only content:read. Every documented write requires a role-derived device token with the named ability. Customer data, purchases, surveys, survey responses, and support memory are outside this contract.',
+				'Start at /api. Scoped aih_pat_* tokens may use content:read plus the narrow write scopes content:write, content:publish, content:relations, media:upload, and shortlinks:manage. On scoped write operations, x-required-scopes lists every PAT scope that can gate the operation and x-scope-requirements states the exact required combination or payload condition. Role-derived device tokens use x-required-ability instead. Customer data, purchases, surveys, survey responses, support memory, and agent-token administration remain outside PAT write access.',
 		},
 		servers: [{ url: normalizedBaseUrl }],
 		tags: [
@@ -926,7 +1001,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			{
 				name: 'Content API',
 				description:
-					'Public reads, PAT-backed content reads, and role-derived device-token operations.',
+					'Public reads, PAT-backed reads and narrow writes, and role-derived device-token operations.',
 			},
 		],
 		paths: {

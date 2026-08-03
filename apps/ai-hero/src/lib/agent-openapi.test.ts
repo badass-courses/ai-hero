@@ -35,6 +35,90 @@ describe('agent OpenAPI contract', () => {
 		)
 	})
 
+	it('documents the exact PAT write-scope gates', () => {
+		const document = buildAgentOpenApiDocument('http://localhost:3000')
+		const operationScopes = [
+			[
+				document.paths['/api/lessons'].put,
+				['content:write', 'content:publish', 'content:relations'],
+			],
+			[
+				document.paths['/api/posts'].post,
+				['content:write', 'content:relations'],
+			],
+			[
+				document.paths['/api/posts'].put,
+				['content:write', 'content:publish', 'content:relations'],
+			],
+			[
+				document.paths['/api/skills/changelog'].post,
+				['content:write', 'content:publish', 'content:relations'],
+			],
+			[document.paths['/api/uploads/multipart/create'].post, ['media:upload']],
+			[document.paths['/api/uploads/multipart/part-url'].get, ['media:upload']],
+			[
+				document.paths['/api/uploads/multipart/complete'].post,
+				['media:upload'],
+			],
+			[
+				document.paths['/api/uploads/new'].post,
+				['media:upload', 'content:relations'],
+			],
+			[document.paths['/api/shortlinks'].get, ['shortlinks:manage']],
+			[document.paths['/api/shortlinks'].post, ['shortlinks:manage']],
+			[document.paths['/api/shortlinks'].patch, ['shortlinks:manage']],
+			[document.paths['/api/shortlinks'].delete, ['shortlinks:manage']],
+			[document.paths['/api/tags'].post, ['content:relations']],
+			[document.paths['/api/tags/attach'].post, ['content:relations']],
+			[document.paths['/api/tags/attach'].delete, ['content:relations']],
+			[document.paths['/api/pages'].put, ['content:write', 'content:publish']],
+		] as const
+
+		for (const [operation, scopes] of operationScopes) {
+			expect(operation['x-required-scopes']).toEqual(scopes)
+			expect(operation['x-scope-requirements']).toContain('PAT:')
+			expect(operation['x-agent-token-policy']).not.toContain('are excluded')
+		}
+
+		expect(document.info.description).toContain('content:write')
+		expect(document.info.description).toContain('x-scope-requirements')
+		expect(document.paths['/api/posts'].put.description).toContain(
+			'only updates an existing draft',
+		)
+		expect(
+			document.paths['/api/uploads/new'].post['x-scope-requirements'],
+		).toContain('both required')
+		expect(document.paths['/api/uploads/signed-url'].get).toMatchObject({
+			'x-required-scopes': [],
+			'x-agent-token-policy': expect.stringContaining('are excluded'),
+		})
+		const writeResponses = document.paths['/api/posts'].post
+			.responses as Record<string, { description: string }>
+		expect(writeResponses['403']?.description).toContain(
+			'content:write against published content',
+		)
+		expect(writeResponses['403']?.description).toContain(
+			'content:read never authorizes writes',
+		)
+	})
+
+	it('documents changelog compatibility fields as deprecated', () => {
+		const document = buildAgentOpenApiDocument('http://localhost:3000')
+		const schema = document.components.schemas.SkillChangelogSuccessResponse
+		const compatibilityShape = schema.allOf[1]
+
+		expect(schema.description).toContain('canonical command envelope')
+		expect(compatibilityShape.required).toEqual(['id', 'slug'])
+		expect(compatibilityShape.properties.id).toMatchObject({
+			type: 'string',
+			deprecated: true,
+		})
+		expect(compatibilityShape.properties.slug).toMatchObject({
+			type: 'string',
+			deprecated: true,
+		})
+	})
+
 	it('matches the documented tag-list schema with a real route response', async () => {
 		mocks.getTags.mockResolvedValue([
 			{
