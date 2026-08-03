@@ -31,12 +31,15 @@ export function CompleteOnNavigateLink({
 	className?: string
 	children: React.ReactNode
 }) {
-	const { progress, addLessonProgress, removeLessonProgress } = useProgress()
+	const { progress, addLessonProgress, rollbackLessonProgress } = useProgress()
 
 	// Same shape as `PostUpNextPager`'s onContinue: optimistic tick first, the
 	// link navigates without waiting on the write, and both failure modes roll
 	// back — `setProgressForResource` resolves `null` when its own server-side
 	// catch swallowed a DB failure, and rejects out here on transport failure.
+	// ROLLBACK, not removal: a failed-looking write may still have landed, so
+	// the tick is retracted without recording an un-completion that would mask
+	// the server's answer for the rest of the session.
 	const markComplete = async () => {
 		if (!completesResourceId) return
 		const isCompleted = progress?.completedLessons.some(
@@ -49,9 +52,9 @@ export function CompleteOnNavigateLink({
 				resourceId: completesResourceId,
 				isCompleted: true,
 			})
-			if (!saved) removeLessonProgress(completesResourceId)
+			if (!saved) rollbackLessonProgress(completesResourceId)
 		} catch {
-			removeLessonProgress(completesResourceId)
+			rollbackLessonProgress(completesResourceId)
 		}
 	}
 

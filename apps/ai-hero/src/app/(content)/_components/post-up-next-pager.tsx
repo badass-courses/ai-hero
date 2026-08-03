@@ -46,7 +46,7 @@ export function PostUpNextPager({
 	className?: string
 }) {
 	const router = useRouter()
-	const { progress, addLessonProgress, removeLessonProgress } = useProgress()
+	const { progress, addLessonProgress, rollbackLessonProgress } = useProgress()
 	const { data: session } = useSession()
 
 	React.useEffect(() => {
@@ -69,6 +69,10 @@ export function PostUpNextPager({
 	// resolves normally and no catch would ever see. A transport failure
 	// (offline, a 500 from the action endpoint) rejects out here instead, in the
 	// client-side proxy, where nothing awaits this handler.
+	//
+	// ROLLBACK, not removal: a failed-looking write may still have landed, so
+	// the tick is retracted without recording an un-completion that would mask
+	// the server's answer for the rest of the session.
 	const onContinue = async () => {
 		if (isCompleted) return
 		addLessonProgress(postId)
@@ -77,9 +81,9 @@ export function PostUpNextPager({
 				resourceId: postId,
 				isCompleted: true,
 			})
-			if (!saved) removeLessonProgress(postId)
+			if (!saved) rollbackLessonProgress(postId)
 		} catch {
-			removeLessonProgress(postId)
+			rollbackLessonProgress(postId)
 		}
 	}
 

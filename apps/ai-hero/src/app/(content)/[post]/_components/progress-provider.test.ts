@@ -61,6 +61,16 @@ describe('createCompletionOverlay', () => {
 		overlay.remove('lesson-1')
 		expect(notified).toBe(2)
 	})
+
+	it('retract undoes an add without asserting un-completion', () => {
+		// A rollback cannot tell a failed write from a succeeded write behind a
+		// transport error — a `removed` mask here would hide a genuinely-landed
+		// completion for the rest of the session.
+		const overlay = createCompletionOverlay()
+		overlay.add('lesson-1')
+		overlay.retract('lesson-1')
+		expect(overlay.getSnapshot()).toEqual({ added: [], removed: [] })
+	})
 })
 
 describe('applyCompletionOverlay', () => {
@@ -111,5 +121,15 @@ describe('applyCompletionOverlay', () => {
 		expect(
 			result?.completedLessons.map((lesson) => lesson.resourceId),
 		).toEqual(['lesson-3'])
+	})
+
+	it('applies without membership filtering on a standalone post (null memberIds)', () => {
+		const result = applyCompletionOverlay(null, null, {
+			added: ['standalone-post'],
+			removed: [],
+		})
+		expect(
+			result?.completedLessons.map((lesson) => lesson.resourceId),
+		).toEqual(['standalone-post'])
 	})
 })

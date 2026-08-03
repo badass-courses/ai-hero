@@ -12,12 +12,15 @@ type ProgressContextType = {
 	progress: ModuleProgress | null
 	removeLessonProgress: (lessonId: string) => void
 	addLessonProgress: (lessonId: string) => void
+	/** Undo a failed optimistic add — see the overlay's `retract`. */
+	rollbackLessonProgress: (lessonId: string) => void
 }
 
 const ProgressContext = React.createContext<ProgressContextType>({
 	progress: null,
 	removeLessonProgress: () => {},
 	addLessonProgress: () => {},
+	rollbackLessonProgress: () => {},
 })
 
 type CompletionOverlaySnapshot = {
@@ -60,11 +63,21 @@ export function createCompletionOverlay() {
 			added.add(id)
 			emit()
 		},
-		/** Optimistically un-complete: also rolls back a pending optimistic add. */
+		/** Optimistically un-complete: masks the id even if the server reports it. */
 		remove(id: string) {
 			added.delete(id)
 			removed.add(id)
 			emit()
+		},
+		/**
+		 * Roll back a failed optimistic add WITHOUT asserting un-completion.
+		 * A rollback records no `removed` mask: the client cannot tell a failed
+		 * write from a succeeded write behind a transport error, and a mask
+		 * would hide a genuinely-landed completion for the rest of the session.
+		 * Retracting only the add lets the next server fetch tell the truth.
+		 */
+		retract(id: string) {
+			if (added.delete(id)) emit()
 		},
 		subscribe(listener: () => void) {
 			listeners.add(listener)
@@ -110,21 +123,23 @@ const emptyProgress = () =>
  * `memberIds` scopes it to the current list: the overlay is global to the
  * browser session, and an id completed in some other module must not inflate
  * this one's counts (it becomes visible where it belongs, on that module's
- * own pages).
+ * own pages). `null` means no membership to scope by — a standalone post's
+ * progress module is the post itself, and filtering against an empty set
+ * there silently dropped the reader's own optimistic tick.
  */
 export function applyCompletionOverlay(
 	progress: ModuleProgress | null,
-	memberIds: ReadonlySet<string>,
+	memberIds: ReadonlySet<string> | null,
 	{ added, removed }: CompletionOverlaySnapshot,
 ): ModuleProgress | null {
 	const addedHere = added.filter(
 		(id) =>
-			memberIds.has(id) &&
+			(memberIds?.has(id) ?? true) &&
 			!progress?.completedLessons.some((l) => l.resourceId === id),
 	)
 	const removedHere = removed.filter(
 		(id) =>
-			memberIds.has(id) &&
+			(memberIds?.has(id) ?? true) &&
 			progress?.completedLessons.some((l) => l.resourceId === id),
 	)
 	if (addedHere.length === 0 && removedHere.length === 0) return progress
@@ -175,13 +190,18 @@ export function ProgressProvider({
 	const { list } = useList()
 	const overlay = useCompletionOverlay()
 
+	// `null`, not an empty set, when there is no list: a standalone post's
+	// progress module is the post itself, and an empty membership would filter
+	// the reader's own optimistic tick out of it.
 	const memberIds = React.useMemo(
 		() =>
-			new Set(
-				flattenListResources(list)
-					.map((wrapper) => wrapper.resource?.id)
-					.filter((id): id is string => typeof id === 'string'),
-			),
+			list
+				? new Set(
+						flattenListResources(list)
+							.map((wrapper) => wrapper.resource?.id)
+							.filter((id): id is string => typeof id === 'string'),
+					)
+				: null,
 		[list],
 	)
 
@@ -196,6 +216,9 @@ export function ProgressProvider({
 	const removeLessonProgress = React.useCallback((lessonId: string) => {
 		completionOverlay.remove(lessonId)
 	}, [])
+	const rollbackLessonProgress = React.useCallback((lessonId: string) => {
+		completionOverlay.retract(lessonId)
+	}, [])
 
 	return (
 		<ProgressContext.Provider
@@ -203,6 +226,7 @@ export function ProgressProvider({
 				progress,
 				removeLessonProgress,
 				addLessonProgress,
+				rollbackLessonProgress,
 			}}
 		>
 			{children}
