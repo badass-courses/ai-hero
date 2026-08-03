@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { getPage } from '@/lib/pages-query'
-import { PageSchema } from '@/lib/pages'
+import { PageSchema, UpdatePageSchema } from '@/lib/pages'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { canPublishContent, canUpdateContentDraft } from '@/server/pat-scopes'
@@ -20,32 +20,6 @@ const corsHeaders = {
 export async function OPTIONS() {
 	return NextResponse.json({}, { headers: corsHeaders })
 }
-
-const UpdatePageSchema = z.object({
-	fields: z
-		.object({
-			title: z.string().min(2).max(90).optional(),
-			body: z.string().nullable().optional(),
-			description: z.string().optional(),
-			slug: z.string().optional(),
-			state: z
-				.union([
-					z.literal('draft'),
-					z.literal('published'),
-					z.literal('archived'),
-					z.literal('deleted'),
-				])
-				.optional(),
-			visibility: z
-				.union([
-					z.literal('public'),
-					z.literal('private'),
-					z.literal('unlisted'),
-				])
-				.optional(),
-		})
-		.partial(),
-})
 
 const getPagesHandler = async (request: NextRequest) => {
 	const { searchParams } = new URL(request.url)

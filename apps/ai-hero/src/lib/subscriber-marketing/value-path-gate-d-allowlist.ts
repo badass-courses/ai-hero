@@ -70,6 +70,8 @@ export const DEFAULT_GATE_D_STOP_REASONS = [
 	'emotional-signal',
 	'restricted-payload',
 	'answer-pages-missing',
+	'answer-page-position-missing',
+	'answer-page-position-duplicate',
 	'value-path-base-url-missing',
 	'path-token-secret-missing',
 	'kit-sequence-enrollment-failed',

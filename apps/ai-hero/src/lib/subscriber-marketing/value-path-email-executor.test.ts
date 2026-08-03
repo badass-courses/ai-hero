@@ -180,6 +180,129 @@ describe('value path email executor', () => {
 		})
 	})
 
+	it('holds personalization when any of several answer pages lacks a position', () => {
+		const result = buildValuePathEmailPersonalization({
+			contactId: 'contact-1',
+			kitSubscriberId: 'kit-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-2',
+			baseUrl: 'https://www.aihero.dev',
+			pathTokenSecret: 'test-secret',
+			answerPages: [
+				{
+					id: 'answer-2-a',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-2-quiz-a',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-2',
+						optionValue: 'option-a',
+						position: 1,
+					},
+				},
+				{
+					id: 'answer-2-b',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-2-quiz-b',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-2',
+						optionValue: 'option-b',
+					},
+				},
+			],
+		})
+		expect(result.passed).toBe(false)
+		expect(result.reviewReasons).toContain('answer-page-position-missing')
+	})
+
+	it('holds personalization when answer pages share a position', () => {
+		const result = buildValuePathEmailPersonalization({
+			contactId: 'contact-1',
+			kitSubscriberId: 'kit-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-2',
+			baseUrl: 'https://www.aihero.dev',
+			pathTokenSecret: 'test-secret',
+			answerPages: [
+				{
+					id: 'answer-2-a',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-2-quiz-a',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-2',
+						optionValue: 'option-a',
+						position: 1,
+					},
+				},
+				{
+					id: 'answer-2-b',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-2-quiz-b',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-2',
+						optionValue: 'option-b',
+						position: 1,
+					},
+				},
+			],
+		})
+		expect(result.passed).toBe(false)
+		expect(result.reviewReasons).toContain('answer-page-position-duplicate')
+	})
+
+	it('orders answer links by explicit position, not by id', () => {
+		const result = buildValuePathEmailPersonalization({
+			contactId: 'contact-1',
+			kitSubscriberId: 'kit-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-2',
+			baseUrl: 'https://www.aihero.dev',
+			pathTokenSecret: 'test-secret',
+			answerPages: [
+				{
+					id: 'answer-2-alpha-first',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-2-quiz-alpha-first',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-2',
+						optionValue: 'option-b',
+						position: 2,
+					},
+				},
+				{
+					id: 'answer-2-zeta-last',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'email-2-quiz-zeta-last',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-2',
+						optionValue: 'option-a',
+						position: 1,
+					},
+				},
+			],
+		})
+		expect(result.passed).toBe(true)
+		expect(result.fields).toMatchObject({
+			aih_value_path_answer_1_url: expect.stringContaining(
+				'email-2-quiz-zeta-last',
+			),
+			aih_value_path_answer_2_url: expect.stringContaining(
+				'email-2-quiz-alpha-first',
+			),
+		})
+	})
+
 	it('blocks a real email-7 send until copy approval explicitly opens the gate', async () => {
 		const updateSideEffectIntent = vi.fn()
 		const subscribeToList = vi.fn()
