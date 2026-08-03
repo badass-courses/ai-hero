@@ -111,13 +111,19 @@ export const ResourceCreateRequestSchema = z
 	.object({
 		type: z.string().min(1),
 		title: z.string().trim().min(2),
-		fields: z.record(z.unknown()).optional(),
+		// slug is typed so a number/object/whitespace value cannot become the
+		// persisted resource slug; other resource-specific fields pass through.
+		fields: z
+			.object({ slug: z.string().trim().min(1).optional() })
+			.passthrough()
+			.optional(),
 	})
 	.passthrough()
 export const ResourceUpdateRequestSchema = z
 	.object({
 		fields: z
-			.object({ chapters: z.array(VideoChapterSchema).optional() })
+			// null clears chapters in the handler, so the contract must allow it
+			.object({ chapters: z.array(VideoChapterSchema).nullable().optional() })
 			.passthrough()
 			.optional(),
 	})
