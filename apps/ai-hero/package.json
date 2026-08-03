@@ -50,10 +50,10 @@
 		"cohort-004:repair-entitlements": "tsx -r dotenv/config scripts/repair-cohort-004-entitlements.mts"
 	},
 	"dependencies": {
+		"@ai-hero/course-sync-schema": "workspace:*",
 		"@ai-sdk/gateway": "^3.0.77",
 		"@ai-sdk/openai": "^3.0.0",
 		"@ai-sdk/react": "^3.0.0",
-		"@ai-hero/course-sync-schema": "workspace:*",
 		"@anthropic-ai/sdk": "^0.17.1",
 		"@atlaskit/button": "^17.7.2",
 		"@atlaskit/form": "^9.1.0",
@@ -186,6 +186,7 @@
 		"js-cookie": "^3.0.5",
 		"json-schema": "^0.4.0",
 		"liquidjs": "^10.16.3",
+		"lru-cache": "^10.4.3",
 		"lucide-react": "^0.288.0",
 		"marked": "^15.0.12",
 		"memoize-one": "^6.0.0",

@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto'
 import * as React from 'react'
+import { LRUCache } from 'lru-cache'
 import { compileMDX } from 'next-mdx-remote/rsc'
 
 import {
@@ -91,6 +93,26 @@ const sidebarMdxComponents = {
 	TopicSection,
 }
 
+// Module-level like `sidebarMdxComponents` itself: the `hideWhatsNew` variant
+// is one of exactly two stable maps, so a cached compile never captures a
+// per-call closure.
+const sidebarMdxComponentsWithoutWhatsNew = {
+	...sidebarMdxComponents,
+	WhatsNew: () => null,
+}
+
+/**
+ * Compiled-sidebar cache, shared across requests for the lifetime of the
+ * server instance. The sidebar body compiles on EVERY hub page render (twice,
+ * when `HubLayout` splits it around the Topics heading), and the output is a
+ * pure function of (source, hideWhatsNew) — the key. A CMS edit to the
+ * sidebar page is a new source, hence a new key; nothing to revalidate.
+ * The article pipeline in `src/utils/compile-mdx.tsx` caches the same way.
+ */
+const compiledSidebarCache = new LRUCache<string, Promise<React.ReactNode>>({
+	max: 20,
+})
+
 /**
  * Compile the hub-sidebar page body with the sidebar-scoped map. Throws on
  * malformed MDX — the caller (`HubLayout`) catches and falls back to the
@@ -104,13 +126,23 @@ export async function compileHubSidebarMdx(
 	source: string,
 	{ hideWhatsNew = false }: { hideWhatsNew?: boolean } = {},
 ): Promise<React.ReactNode> {
-	const components = hideWhatsNew
-		? { ...sidebarMdxComponents, WhatsNew: () => null }
-		: sidebarMdxComponents
-	const { content } = await compileMDX({
+	const key = `${hideWhatsNew ? 'no-whats-new' : 'full'}:${createHash('sha256')
+		.update(source)
+		.digest('base64')}`
+	const cached = compiledSidebarCache.get(key)
+	if (cached) return cached
+
+	const pending = compileMDX({
 		source,
-		components,
+		components: hideWhatsNew
+			? sidebarMdxComponentsWithoutWhatsNew
+			: sidebarMdxComponents,
 		options: { parseFrontmatter: true },
-	})
-	return content
+	}).then(({ content }) => content)
+	// The promise is cached so concurrent renders share one compile; a
+	// rejection evicts itself and still throws to the caller, whose fallback
+	// layering (static body, error boundary) is the error path.
+	compiledSidebarCache.set(key, pending)
+	pending.catch(() => compiledSidebarCache.delete(key))
+	return pending
 }
