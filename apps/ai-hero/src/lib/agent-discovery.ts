@@ -471,6 +471,11 @@ function formatPublicDiscoveryResources(resources: PublicDiscoveryResource[]) {
 		: '- No public discovery resources are available right now.'
 }
 
+/**
+ * Builds the RFC 9727 api-catalog linkset served at
+ * `/.well-known/api-catalog`: one anchor for the site with service-desc
+ * links to both OpenAPI documents and a service-doc link to llms.txt.
+ */
 export function buildApiCatalogDocument(baseUrl = getDiscoveryBaseUrl()) {
 	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
 
@@ -532,6 +537,11 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 	}
 }
 
+/**
+ * Builds the Markdown representation of the homepage served to agents at
+ * `/md/home` (and via content negotiation on `/`): a short orientation
+ * document that links every machine-readable discovery surface.
+ */
 export function buildHomepageMarkdownDocument(baseUrl = getDiscoveryBaseUrl()) {
 	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
 

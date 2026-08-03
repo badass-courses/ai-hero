@@ -1,10 +1,10 @@
+import { GET } from '@/app/robots.txt/route'
 import {
 	AI_DISCOVERY_USER_AGENTS,
 	buildRobotsTxt,
 	CONTENT_SIGNALS,
 	EXCLUDED_ROBOTS_PATHS,
-	GET,
-} from '@/app/robots.txt/route'
+} from '@/lib/robots-config'
 import { describe, expect, it } from 'vitest'
 
 function getGroup(body: string, userAgent: string) {
