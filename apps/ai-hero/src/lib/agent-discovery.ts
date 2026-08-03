@@ -254,6 +254,32 @@ const AGENT_API_CAPABILITIES = [
 			},
 		],
 	},
+	{
+		name: 'list-membership',
+		auth: 'device token (Authorization: Bearer) with `update` on Content',
+		description:
+			"Edit what a list holds — addressed by the list's slug OR id. Sections are ordinary resources: create one with POST /api/resources (type: section), add it here, then nest items under it with parentId. Editing a section's own title or description is PUT /api/resources?id=<sectionId>.",
+		endpoints: [
+			{
+				method: 'POST',
+				path: '/api/lists/<listIdOrSlug>/resources',
+				description:
+					'Add a resource to the list ({ resourceId, parentId?, metadata? }); parentId nests it under that section. Appends after the last sibling. 409 if it is already there.',
+			},
+			{
+				method: 'PUT',
+				path: '/api/lists/<listIdOrSlug>/resources',
+				description:
+					'Reorder and/or move items in one transaction ({ items: [{ resourceId, parentId?, position }] }). Omit parentId to reorder in place; pass the list id to pull an item out of a section.',
+			},
+			{
+				method: 'DELETE',
+				path: '/api/lists/<listIdOrSlug>/resources?resourceId=',
+				description:
+					'Remove a resource from the list, wherever in the tree it sits. 404 if the list does not hold it.',
+			},
+		],
+	},
 ] as const satisfies readonly ApiDiscoveryAuthedCapability[]
 
 const AGENT_TOKEN_SCOPES = [

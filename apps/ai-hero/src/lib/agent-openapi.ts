@@ -307,6 +307,40 @@ const contentPaths = {
 			successStatus: 201,
 		}),
 	},
+	'/api/lists/{listId}/resources': {
+		parameters: [
+			{
+				name: 'listId',
+				in: 'path',
+				required: true,
+				schema: { type: 'string' },
+				description: "The list's id or its slug.",
+			},
+		],
+		options: preflight('preflightListResources'),
+		post: contentOperation({
+			operationId: 'addResourceToList',
+			summary: 'Add a resource to a list or one of its sections',
+			description:
+				'Body { resourceId, parentId?, metadata? }; omit parentId to add at the top level, pass a section id to nest. Appends after the last sibling. A CMS write — content:read receives 403.',
+			access: 'admin-device-token',
+			successStatus: 201,
+		}),
+		put: contentOperation({
+			operationId: 'moveListResources',
+			summary: 'Reorder list items or move them between sections',
+			description:
+				'Body { items: [{ resourceId, parentId?, position }] }, applied in one transaction. Omit parentId to reorder in place; pass the list id to pull an item out of a section. A CMS write — content:read receives 403.',
+			access: 'admin-device-token',
+		}),
+		delete: contentOperation({
+			operationId: 'removeResourceFromList',
+			summary: 'Remove a resource from a list',
+			description:
+				'Takes ?resourceId=, and removes the item wherever in the tree it sits. A CMS write — content:read receives 403.',
+			access: 'admin-device-token',
+		}),
+	},
 	'/api/search': {
 		options: preflight('preflightSearch'),
 		get: contentOperation({

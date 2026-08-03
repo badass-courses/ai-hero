@@ -162,7 +162,12 @@ describe('AI Hero discovery surfaces', () => {
 					['get', 'post', 'put', 'patch', 'delete', 'options'].includes(key),
 				),
 			).length
-		expect(contentOperationCount).toBe(50)
+		expect(contentOperationCount).toBe(54)
+		// List membership is a CMS write: an agent token holding only
+		// content:read must read it as excluded rather than attempt it.
+		expect(document.paths['/api/lists/{listId}/resources'].post).toMatchObject({
+			security: [{ bearerAuth: [] }],
+		})
 		expect(document.paths['/api/posts'].get).toMatchObject({
 			security: [{ bearerAuth: [] }],
 			'x-required-scopes': ['content:read'],
