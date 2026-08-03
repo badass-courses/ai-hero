@@ -3,8 +3,44 @@ import 'server-only'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { hasCompletedConversionIntent } from '@/lib/cta/conversion-intent'
+import { LRUCache } from 'lru-cache'
 
 const KIT_LOOKUP_TIMEOUT_MS = 1_500
+
+/**
+ * Kit lookups by email, remembered briefly per instance. This lookup rides in
+ * the per-navigation tRPC batch of every skill page for any signed-in reader
+ * whose cookie is not already conclusive — a live external HTTP call that set
+ * the whole batch's floor.
+ *
+ * TIERED memory, because the states differ in what staleness costs:
+ * `subscribed` is terminal (nothing un-starts the course) and keeps five
+ * minutes. `tag-me`/none are TRANSITIONAL — the learner-flow executor writes
+ * `aih_course_started_at` to Kit asynchronously after signup, and this very
+ * refresh is what repairs the cookie's stale answer — so they keep only a
+ * minute: enough to absorb a navigation burst, shorter than the async lag it
+ * must not mask. Only DEFINITIVE answers are cached — a timeout or Kit
+ * outage is retried on the next request rather than pinned for the TTL.
+ */
+const KIT_MEMO_TERMINAL_MS = 5 * 60 * 1000
+const KIT_MEMO_TRANSITIONAL_MS = 60 * 1000
+const kitLookupCache = new LRUCache<string, SkillsCtaState | 'none'>({
+	max: 2000,
+	ttl: KIT_MEMO_TERMINAL_MS,
+})
+
+/** Test hook — the memo would otherwise leak state between cases. */
+export function clearSkillsCtaKitLookupCache() {
+	kitLookupCache.clear()
+}
+
+/**
+ * Test probe for the tiered TTLs: fake timers cannot reach the clock the LRU
+ * captured at module load, so tests assert the remaining TTL instead.
+ */
+export function kitLookupRemainingTtlForTests(email: string) {
+	return kitLookupCache.getRemainingTTL(email)
+}
 
 /**
  * Which skills-course ask a reader should see. ONE resolver, because the two
@@ -57,32 +93,58 @@ export async function resolveSkillsCtaState(
 	// which writes `aih_course_started_at` after the browser's cookie was saved.
 	// A local `tag-me` answer is therefore not final: refresh it from Kit using
 	// whichever trusted identity we have. This also repairs legacy/oversized
-	// subscriber cookies without exposing the address to the client.
-	const email = cookieRecord?.email_address ?? sessionEmail
+	// subscriber cookies without exposing the address to the client. Lowercased:
+	// Kit matches addresses case-insensitively, and the memo key must too, or
+	// the same reader occupies two slots and hits Kit twice.
+	const email = (cookieRecord?.email_address ?? sessionEmail)
+		?.trim()
+		.toLowerCase()
 	if (!email) return cookieState ?? 'fresh'
 
 	// Signed in with no usable cookie: ask Kit who they are rather than falling
 	// through to a form. This is the case that left an enrolled reader being
 	// nagged to sign up for a course they were already taking.
-	const fromKit = fromRecord(
-		(await withTimeout(
-			emailListProvider.getSubscriberByEmail(email),
-			KIT_LOOKUP_TIMEOUT_MS,
-		).catch(() => null)) as any,
-	)
+	let fromKit: SkillsCtaState | null
+	const remembered = kitLookupCache.get(email)
+	if (remembered !== undefined) {
+		fromKit = remembered === 'none' ? null : remembered
+	} else {
+		try {
+			const record = await withTimeout(
+				emailListProvider.getSubscriberByEmail(email),
+				KIT_LOOKUP_TIMEOUT_MS,
+			)
+			fromKit = fromRecord(record as any)
+			kitLookupCache.set(email, fromKit ?? 'none', {
+				ttl:
+					fromKit === 'subscribed'
+						? KIT_MEMO_TERMINAL_MS
+						: KIT_MEMO_TRANSITIONAL_MS,
+			})
+		} catch {
+			fromKit = null
+		}
+	}
 	if (fromKit) return fromKit
 
 	// Known by account, on no list. Still one click — we have their address.
 	return cookieState ?? (sessionEmail ? 'account' : 'fresh')
 }
 
+/**
+ * Rejects on timeout — it must land in the caller's catch, not resolve to a
+ * value `fromRecord` would read as "not subscribed" and the memo would pin.
+ */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
 	let timeout: ReturnType<typeof setTimeout> | undefined
 	try {
-		return await Promise.race<T | null>([
+		return await Promise.race<T>([
 			promise,
-			new Promise<null>((resolve) => {
-				timeout = setTimeout(() => resolve(null), timeoutMs)
+			new Promise<never>((_, reject) => {
+				timeout = setTimeout(
+					() => reject(new Error('kit lookup timed out')),
+					timeoutMs,
+				)
 			}),
 		])
 	} finally {
