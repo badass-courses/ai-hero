@@ -88,8 +88,12 @@ export const negotiatedMarkdownRewrites = [
 		has: markdownAcceptHeader,
 	},
 	{
+		// `md/` is excluded so this rewrite cannot re-match its own destination:
+		// Vercel's routing layer re-checks routes after a rewrite with the
+		// original Accept header, so without it `/` -> `/md/home` -> `/md/md/home`
+		// and every negotiated request 404s in production.
 		source:
-			'/:slug((?!api/|api$|llms\\.txt$|robots\\.txt$|rss\\.xml$|sitemap\\.md$|sitemap\\.xml$).+)',
+			'/:slug((?!api/|api$|md/|md$|llms\\.txt$|robots\\.txt$|rss\\.xml$|sitemap\\.md$|sitemap\\.xml$).+)',
 		destination: '/md/:slug',
 		has: markdownAcceptHeader,
 	},

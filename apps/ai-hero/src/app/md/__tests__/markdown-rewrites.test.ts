@@ -51,7 +51,7 @@ describe('markdown rewrite configuration', () => {
 			expect.arrayContaining([
 				expect.objectContaining({
 					source:
-						'/:slug((?!api/|api$|llms\\.txt$|robots\\.txt$|rss\\.xml$|sitemap\\.md$|sitemap\\.xml$).+)',
+						'/:slug((?!api/|api$|md/|md$|llms\\.txt$|robots\\.txt$|rss\\.xml$|sitemap\\.md$|sitemap\\.xml$).+)',
 					destination: '/md/:slug',
 					has: [
 						expect.objectContaining({
@@ -114,6 +114,24 @@ describe('markdown rewrite configuration', () => {
 		// Must still match content paths
 		expect(regex.test('some-blog-post')).toBe(true)
 		expect(regex.test('getting-started-with-ai')).toBe(true)
+	})
+
+	it('catch-all rewrite regex cannot re-match its own /md destination', () => {
+		const catchAll = negotiatedMarkdownRewrites.find((r) =>
+			r.source.includes(':slug'),
+		)
+		const regexStr = catchAll?.source.match(/:slug\((.+)\)/)?.[1]
+		const regex = new RegExp(`^(?:${regexStr})$`)
+
+		// Vercel's routing layer re-checks rewrites against the rewritten path
+		// with the original Accept header, so matching md/* would loop
+		// `/` -> `/md/home` -> `/md/md/home` and 404 every negotiated request.
+		expect(regex.test('md')).toBe(false)
+		expect(regex.test('md/home')).toBe(false)
+		expect(regex.test('md/workshops/module/lesson')).toBe(false)
+
+		// Paths that merely start with "md" but are not under /md still match
+		expect(regex.test('mdx-for-beginners')).toBe(true)
 	})
 
 	it('keeps discovery documents ahead of broad markdown rewrites', () => {
