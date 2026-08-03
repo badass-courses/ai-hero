@@ -8,7 +8,7 @@ import {
 } from '@/db/schema'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
-import { asc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import { productSchema } from '@coursebuilder/core/schemas'
 
@@ -127,7 +127,16 @@ async function selectNavigationChildren(parentIds: string[]) {
 			contentResource,
 			eq(contentResource.id, contentResourceResource.resourceId),
 		)
-		.where(inArray(contentResourceResource.resourceOfId, parentIds))
+		.where(
+			and(
+				inArray(contentResourceResource.resourceOfId, parentIds),
+				// No soft-deleted link rows or resources in nav. Currently moot
+				// (production has zero soft-deleted rows) but it is the standing
+				// convention of the other resource queries.
+				isNull(contentResourceResource.deletedAt),
+				isNull(contentResource.deletedAt),
+			),
+		)
 		.orderBy(
 			asc(contentResourceResource.resourceOfId),
 			asc(contentResourceResource.position),
@@ -156,12 +165,15 @@ export async function getContentNavigation(slugOrId: string) {
 				.select(navigationResourceColumns)
 				.from(contentResource)
 				.where(
-					or(
-						eq(
-							sql`JSON_EXTRACT(${contentResource.fields}, "$.slug")`,
-							slugOrId,
+					and(
+						or(
+							eq(
+								sql`JSON_EXTRACT(${contentResource.fields}, "$.slug")`,
+								slugOrId,
+							),
+							eq(contentResource.id, slugOrId),
 						),
-						eq(contentResource.id, slugOrId),
+						isNull(contentResource.deletedAt),
 					),
 				)
 				.limit(1)
