@@ -341,6 +341,15 @@ export default async function PostPage(props: {
 							<PostRelatedNewsletter
 								id="related-reading"
 								items={relatedItems}
+								// A positioned member's exit IS its completion gesture: at a
+								// list finale (and on every skill, whose pager wraps) this
+								// grid is the closing navigation, and the lesson pager that
+								// normally carries the write is absent or behind the reader.
+								// A post that merely hangs off a list gets no tick for
+								// leaving — same distinction `isListFinale` draws above.
+								completesResourceId={
+									isPositionedInList ? post.id : undefined
+								}
 								newsletter={
 									// The body already ended on an email ask when the post
 									// declares the course, so the closing grid drops its own
