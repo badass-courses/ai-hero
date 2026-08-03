@@ -77,6 +77,7 @@ import {
 	SKILLS_WORKFLOW_KIT_SEQUENCE_IDS,
 	SKILLS_WORKFLOW_PATH_SLUGS,
 } from '@/lib/subscriber-marketing/skills-workflow-path'
+import { SKILLS_WORKFLOW_VALUE_PATH } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 import { syncSeenContentKitFieldsForContactSnapshot } from '@/lib/subscriber-marketing/seen-content-kit-sync'
 import { previewShadowFieldCandidates } from '@/lib/subscriber-marketing/shadow-field-candidates'
 import { previewShadowFieldsForContactSnapshot } from '@/lib/subscriber-marketing/shadow-field-planner'
@@ -350,20 +351,12 @@ if (command === 'lookup') {
 	console.error(
 		'WARNING: each emitted replay enters the live drip and leads to a real email-0 send.',
 	)
-	const repository = await createCaptureRepository()
 	const { inngest } = await import('@/inngest/inngest.server')
 	const result = await replaySignupGap({
 		preview,
 		source: readFlag(args, '--source') ?? 'signup-gap-replay',
-		hasExistingIdentity: async (candidate) => {
-			if (await repository.findContactByEmail(candidate.email)) return true
-			return Boolean(
-				await repository.findProviderIdentity(
-					'kit',
-					candidate.kitSubscriberId,
-				),
-			)
-		},
+		hasExistingCourseEntry: (candidate) =>
+			hasSignupGapCourseEntry(candidate.kitSubscriberId),
 		emit: (event) => inngest.send(event),
 	})
 	console.log(JSON.stringify(result, null, 2))
@@ -1279,14 +1272,8 @@ async function buildLearnerFlowUnstick(args: {
 			? await replaySignupGap({
 					preview: signupGapPreview,
 					source: 'learner-flow-unstick',
-					hasExistingIdentity: async (candidate) =>
-						Boolean(
-							(await repository.findContactByEmail(candidate.email)) ??
-								(await repository.findProviderIdentity(
-									'kit',
-									candidate.kitSubscriberId,
-								)),
-						),
+					hasExistingCourseEntry: (candidate) =>
+						hasSignupGapCourseEntry(candidate.kitSubscriberId),
 					emit: async (event) =>
 					(await import('@/inngest/inngest.server')).inngest.send(event),
 				})
@@ -2253,6 +2240,7 @@ async function buildSignupGapOperatorPreview(args: {
 			email: subscriber.email,
 			firstName: subscriber.firstName,
 			createdAt: subscriber.createdAt,
+			addedAt: subscriber.addedAt,
 			state: subscriber.state,
 			fields: subscriber.fields,
 		}
@@ -2281,6 +2269,7 @@ async function fetchSignupGapIdentityMatches(
 	)
 	const contactEmails = new Set<string>()
 	const matchedKitSubscriberIds = new Set<string>()
+	const courseEntryKitSubscriberIds = new Set<string>()
 
 	for (const emailChunk of chunk(emails, 500)) {
 		const rows = await db
@@ -2293,7 +2282,7 @@ async function fetchSignupGapIdentityMatches(
 		}
 	}
 	for (const idChunk of chunk(kitSubscriberIds, 500)) {
-		const rows = await db
+		const identityRows = await db
 			.select({ externalId: providerIdentity.externalId })
 			.from(providerIdentity)
 			.where(
@@ -2302,13 +2291,59 @@ async function fetchSignupGapIdentityMatches(
 					inArray(providerIdentity.externalId, idChunk),
 				),
 			)
-		for (const row of rows) matchedKitSubscriberIds.add(row.externalId)
+		for (const row of identityRows) matchedKitSubscriberIds.add(row.externalId)
+
+		const entryRows = await db
+			.select({ externalId: providerIdentity.externalId })
+			.from(providerIdentity)
+			.innerJoin(
+				contactEvent,
+				eq(contactEvent.contactId, providerIdentity.contactId),
+			)
+			.where(
+				and(
+					eq(providerIdentity.provider, 'kit'),
+					inArray(providerIdentity.externalId, idChunk),
+					eq(contactEvent.eventType, 'value-path.entered'),
+					eq(
+						contactEvent.providerReference,
+						`value-path:${SKILLS_WORKFLOW_VALUE_PATH}`,
+					),
+				),
+			)
+		for (const row of entryRows) {
+			courseEntryKitSubscriberIds.add(row.externalId)
+		}
 	}
 
 	return {
 		contactEmails,
 		kitSubscriberIds: matchedKitSubscriberIds,
+		courseEntryKitSubscriberIds,
 	}
+}
+
+async function hasSignupGapCourseEntry(kitSubscriberId: string) {
+	const rows = await db
+		.select({ externalId: providerIdentity.externalId })
+		.from(providerIdentity)
+		.innerJoin(
+			contactEvent,
+			eq(contactEvent.contactId, providerIdentity.contactId),
+		)
+		.where(
+			and(
+				eq(providerIdentity.provider, 'kit'),
+				eq(providerIdentity.externalId, kitSubscriberId),
+				eq(contactEvent.eventType, 'value-path.entered'),
+				eq(
+					contactEvent.providerReference,
+					`value-path:${SKILLS_WORKFLOW_VALUE_PATH}`,
+				),
+			),
+		)
+		.limit(1)
+	return rows.length > 0
 }
 
 async function fetchContactMatchesForSkillsSubscribers(

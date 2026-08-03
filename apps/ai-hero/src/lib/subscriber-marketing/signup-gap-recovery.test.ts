@@ -15,8 +15,7 @@ describe('signup-gap Kit source resilience', () => {
 			.mockResolvedValueOnce(new Response('{}', { status: 500 }))
 			.mockResolvedValueOnce(new Response('{}', { status: 502 }))
 			.mockResolvedValueOnce(new Response('{}', { status: 200 }))
-		const sleep = vi.fn<[number], Promise<void>>()
-			.mockResolvedValue(undefined)
+		const sleep = vi.fn<[number], Promise<void>>().mockResolvedValue(undefined)
 
 		const response = await fetchKitSignupGapPageWithRetry({
 			request,
@@ -28,8 +27,7 @@ describe('signup-gap Kit source resilience', () => {
 		expect(request).toHaveBeenCalledTimes(3)
 		expect(request.mock.calls.map(([attempt]) => attempt)).toEqual([1, 2, 3])
 		expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
-			10,
-			20,
+			10, 20,
 		])
 	})
 
@@ -54,6 +52,67 @@ describe('signup-gap Kit source resilience', () => {
 })
 
 describe('confirmed signup reconciliation', () => {
+	it('uses the form join time and skips only subscribers with a course entry', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-08-01T00:00:00.000Z',
+			now: '2026-07-31T12:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(['known-contact@example.test']),
+				kitSubscriberIds: new Set(['kit-known-contact', 'kit-course-entry']),
+				courseEntryKitSubscriberIds: new Set(['kit-course-entry']),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-old-account',
+					email: 'old-account@example.test',
+					createdAt: '2020-01-01T00:00:00.000Z',
+					addedAt: '2026-07-30T09:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-before-window',
+					email: 'before-window@example.test',
+					createdAt: '2026-07-30T10:00:00.000Z',
+					addedAt: '2026-07-14T23:59:59.999Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-known-contact',
+					email: 'known-contact@example.test',
+					createdAt: '2021-01-01T00:00:00.000Z',
+					addedAt: '2026-07-30T10:00:00.000Z',
+					state: 'active',
+				},
+				{
+					kitSubscriberId: 'kit-course-entry',
+					email: 'course-entry@example.test',
+					createdAt: '2022-01-01T00:00:00.000Z',
+					addedAt: '2026-07-30T11:00:00.000Z',
+					state: 'active',
+				},
+			],
+		})
+
+		expect(
+			preview.candidates.map((candidate) => candidate.kitSubscriberId),
+		).toEqual(['kit-old-account', 'kit-known-contact'])
+		expect(preview.counts).toMatchObject({
+			inWindow: 3,
+			withExistingContact: 1,
+			withExistingProviderIdentity: 2,
+			withExistingCourseEntry: 1,
+			gapCandidates: 2,
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 200,
+		})
+		expect(plan.events[0]?.data.subscribedAt).toBe('2026-07-30T09:00:00.000Z')
+	})
+
 	it('enqueues only confirmed active subscribers with stable event ids', () => {
 		const preview = buildSignupGapPreview({
 			formId: 9376133,
@@ -63,18 +122,21 @@ describe('confirmed signup reconciliation', () => {
 			identityMatches: {
 				contactEmails: new Set(),
 				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
 			},
 			subscribers: [
 				{
 					kitSubscriberId: 'kit-active',
 					email: 'active@example.com',
 					createdAt: '2026-07-20T12:00:00.000Z',
+					addedAt: '2026-07-20T12:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-unconfirmed',
 					email: 'unconfirmed@example.com',
 					createdAt: '2026-07-20T12:01:00.000Z',
+					addedAt: '2026-07-20T12:01:00.000Z',
 					state: 'inactive',
 				},
 			],
@@ -113,12 +175,14 @@ describe('confirmed signup reconciliation', () => {
 			identityMatches: {
 				contactEmails: new Set(),
 				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
 			},
 			subscribers: [
 				{
 					kitSubscriberId: 'kit-paid',
 					email: 'paid@example.com',
 					createdAt: '2026-07-24T09:00:00.000Z',
+					addedAt: '2026-07-24T09:00:00.000Z',
 					state: 'active',
 					fields: {
 						aih_optin_attribution: JSON.stringify({
@@ -133,6 +197,7 @@ describe('confirmed signup reconciliation', () => {
 					kitSubscriberId: 'kit-organic',
 					email: 'organic@example.com',
 					createdAt: '2026-07-24T09:01:00.000Z',
+					addedAt: '2026-07-24T09:01:00.000Z',
 					state: 'active',
 					fields: { aih_optin_attribution: 'not-json' },
 				},
@@ -168,11 +233,13 @@ describe('confirmed signup reconciliation', () => {
 			identityMatches: {
 				contactEmails: new Set(),
 				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
 			},
 			subscribers: Array.from({ length: 3 }, (_, index) => ({
 				kitSubscriberId: `kit-${index}`,
 				email: `active-${index}@example.com`,
 				createdAt: `2026-07-20T12:0${index}:00.000Z`,
+				addedAt: `2026-07-20T12:0${index}:00.000Z`,
 				state: 'active' as const,
 			})),
 		})
@@ -197,18 +264,21 @@ describe('signup-gap liveness metrics', () => {
 			identityMatches: {
 				contactEmails: new Set(),
 				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
 			},
 			subscribers: [
 				{
 					kitSubscriberId: 'kit-oldest',
 					email: 'oldest@example.com',
 					createdAt: '2026-07-17T08:00:00.000Z',
+					addedAt: '2026-07-17T08:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-known-later',
 					email: 'known@example.com',
 					createdAt: '2026-07-17T10:00:00.000Z',
+					addedAt: '2026-07-17T10:00:00.000Z',
 					state: 'active',
 				},
 			],
@@ -217,7 +287,7 @@ describe('signup-gap liveness metrics', () => {
 
 		const receipt = await replaySignupGap({
 			preview,
-			hasExistingIdentity: async (candidate) =>
+			hasExistingCourseEntry: async (candidate) =>
 				candidate.kitSubscriberId === 'kit-known-later',
 			emit: async (event) => {
 				emitted.push(event)
