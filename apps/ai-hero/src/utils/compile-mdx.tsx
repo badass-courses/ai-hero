@@ -27,6 +27,7 @@ import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
+import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { CldImageProps } from 'next-cloudinary'
@@ -303,7 +304,6 @@ async function compileMDXInternal(
 	options: MDXRemoteProps['options'] = {},
 	context?: CompileMDXContext,
 ) {
-	let checkboxIndex = 0
 	const dictionaryAutoLinkPlugin = context?.dictionaryAutoLink
 		? createDictionaryAutoLinkRemarkPlugin(context.dictionaryAutoLink)
 		: null
@@ -343,13 +343,24 @@ async function compileMDXInternal(
 						},
 					}),
 					input: (props: React.InputHTMLAttributes<HTMLInputElement>) => {
-						if (props.type === 'checkbox' && context?.lessonId) {
-							const currentIndex = checkboxIndex++
+						// The index is BAKED INTO the compiled tree by
+						// `rehypeNumberCheckboxes`, never counted here: this closure is
+						// part of the cross-request `compiledMdxCache` entry, so a counter
+						// in it would keep incrementing across renders of the cached tree
+						// and `MDXCheckbox` persistence would key on drifting indices.
+						const index = Number(
+							(props as Record<string, unknown>)['data-checkbox-index'],
+						)
+						if (
+							props.type === 'checkbox' &&
+							context?.lessonId &&
+							Number.isInteger(index)
+						) {
 							return (
 								<DynamicMDXCheckbox
 									{...props}
 									lessonId={context.lessonId}
-									index={currentIndex}
+									index={index}
 								/>
 							)
 						}
@@ -610,6 +621,10 @@ async function compileMDXInternal(
 							// with an empty components map, where a minted TableWrapper
 							// element would fail to resolve.
 							rehypeAutoTableWrap,
+							// Compile-time checkbox numbering; the `input` entry in the
+							// components map reads it back. See that entry for why the
+							// index cannot be counted at render time.
+							rehypeNumberCheckboxes,
 						],
 						recmaPlugins: [[recmaCodeHike, { components: { code: 'Code' } }]],
 					},
