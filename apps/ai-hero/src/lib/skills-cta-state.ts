@@ -11,21 +11,35 @@ const KIT_LOOKUP_TIMEOUT_MS = 1_500
  * Kit lookups by email, remembered briefly per instance. This lookup rides in
  * the per-navigation tRPC batch of every skill page for any signed-in reader
  * whose cookie is not already conclusive — a live external HTTP call that set
- * the whole batch's floor. The answer moves at human speed, and the flows
- * that CHANGE it (subscribing, starting the course) write cookies that
- * short-circuit this function entirely, so a five-minute memory cannot
- * misdraw the ask for the person who just acted. Only DEFINITIVE answers are
- * cached — a timeout or Kit outage is retried on the next request rather
- * than pinned as "unknown" for the TTL.
+ * the whole batch's floor.
+ *
+ * TIERED memory, because the states differ in what staleness costs:
+ * `subscribed` is terminal (nothing un-starts the course) and keeps five
+ * minutes. `tag-me`/none are TRANSITIONAL — the learner-flow executor writes
+ * `aih_course_started_at` to Kit asynchronously after signup, and this very
+ * refresh is what repairs the cookie's stale answer — so they keep only a
+ * minute: enough to absorb a navigation burst, shorter than the async lag it
+ * must not mask. Only DEFINITIVE answers are cached — a timeout or Kit
+ * outage is retried on the next request rather than pinned for the TTL.
  */
+const KIT_MEMO_TERMINAL_MS = 5 * 60 * 1000
+const KIT_MEMO_TRANSITIONAL_MS = 60 * 1000
 const kitLookupCache = new LRUCache<string, SkillsCtaState | 'none'>({
 	max: 2000,
-	ttl: 5 * 60 * 1000,
+	ttl: KIT_MEMO_TERMINAL_MS,
 })
 
 /** Test hook — the memo would otherwise leak state between cases. */
 export function clearSkillsCtaKitLookupCache() {
 	kitLookupCache.clear()
+}
+
+/**
+ * Test probe for the tiered TTLs: fake timers cannot reach the clock the LRU
+ * captured at module load, so tests assert the remaining TTL instead.
+ */
+export function kitLookupRemainingTtlForTests(email: string) {
+	return kitLookupCache.getRemainingTTL(email)
 }
 
 /**
@@ -97,7 +111,12 @@ export async function resolveSkillsCtaState(
 				KIT_LOOKUP_TIMEOUT_MS,
 			)
 			fromKit = fromRecord(record as any)
-			kitLookupCache.set(email, fromKit ?? 'none')
+			kitLookupCache.set(email, fromKit ?? 'none', {
+				ttl:
+					fromKit === 'subscribed'
+						? KIT_MEMO_TERMINAL_MS
+						: KIT_MEMO_TRANSITIONAL_MS,
+			})
 		} catch {
 			fromKit = null
 		}

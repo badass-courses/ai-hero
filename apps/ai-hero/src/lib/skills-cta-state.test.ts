@@ -97,6 +97,42 @@ describe('resolveSkillsCtaState', () => {
 		expect(mocks.getSubscriberByEmail).toHaveBeenCalledTimes(1)
 	})
 
+	it('remembers a transitional answer briefly and a terminal one longer', async () => {
+		// The async course-start case from the resolver's own comment: the
+		// learner-flow executor writes aih_course_started_at AFTER signup, and
+		// this refresh is what repairs the cookie's stale answer — so tag-me
+		// must not outlive that lag in the memo, while subscribed (nothing
+		// un-starts a course) may.
+		const { kitLookupRemainingTtlForTests } = await import(
+			'./skills-cta-state'
+		)
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			state: 'active',
+			fields: { interest: 'skills' },
+		})
+		await expect(resolveSkillsCtaState('c@example.com')).resolves.toBe(
+			'tag-me',
+		)
+		// ≤ a minute-and-change (perf-clock float fuzz), far below the terminal
+		// tier — the tiers are what the assertion pins, not the exact millisecond.
+		expect(kitLookupRemainingTtlForTests('c@example.com')).toBeLessThan(65_000)
+
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			state: 'active',
+			fields: {
+				interest: 'skills',
+				aih_course_started_at: '2026-08-03T12:00:00.000Z',
+			},
+		})
+		await expect(resolveSkillsCtaState('d@example.com')).resolves.toBe(
+			'subscribed',
+		)
+		expect(kitLookupRemainingTtlForTests('d@example.com')).toBeGreaterThan(
+			65_000,
+		)
+	})
+
 	it('does not remember a failed lookup', async () => {
 		// A Kit outage answered "account" for this request — pinning that for
 		// the TTL would misdraw the ask for a genuinely subscribed reader.

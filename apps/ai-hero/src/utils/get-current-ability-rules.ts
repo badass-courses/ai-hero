@@ -21,13 +21,16 @@ import { getWorkshopResourceIds } from './get-workshop-resource-ids'
 /**
  * The entitlement-type CATALOG (not anyone's entitlements): a tiny table that
  * changes when a new type ships, i.e. with deploys, not with traffic. It was
- * read fresh inside every ability resolution. Dates in the rows survive the
- * cache as strings; the rules only read type names, never those dates.
+ * read fresh inside every ability resolution. `defineRulesForPurchases`
+ * consumes only `{id, name}` from these rows, so cache serialization cannot
+ * distort anything the rules read. Five minutes, not longer: a NEW type is
+ * invisible to warm instances until the entry expires, and that window must
+ * stay shorter than any launch it could gate.
  */
 const getCachedEntitlementTypes = unstable_cache(
 	async () => db.query.entitlementTypes.findMany(),
 	['entitlement-types'],
-	{ revalidate: 3600, tags: ['entitlements'] },
+	{ revalidate: 300, tags: ['entitlements'] },
 )
 
 const getCurrentAbilityRulesCached = cache(
