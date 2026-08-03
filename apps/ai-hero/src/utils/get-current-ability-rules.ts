@@ -1,5 +1,6 @@
 // App-specific implementation for coursebuilder
 import { cache } from 'react'
+import { unstable_cache } from 'next/cache'
 import { headers } from 'next/headers'
 import { createAppAbility, defineRulesForPurchases } from '@/ability'
 import { courseBuilderAdapter, db } from '@/db'
@@ -16,6 +17,18 @@ import { type AbilityForResource } from '@coursebuilder/utils/current-ability-ru
 
 import { getResourceSection } from './get-resource-section'
 import { getWorkshopResourceIds } from './get-workshop-resource-ids'
+
+/**
+ * The entitlement-type CATALOG (not anyone's entitlements): a tiny table that
+ * changes when a new type ships, i.e. with deploys, not with traffic. It was
+ * read fresh inside every ability resolution. Dates in the rows survive the
+ * cache as strings; the rules only read type names, never those dates.
+ */
+const getCachedEntitlementTypes = unstable_cache(
+	async () => db.query.entitlementTypes.findMany(),
+	['entitlement-types'],
+	{ revalidate: 3600, tags: ['entitlements'] },
+)
 
 const getCurrentAbilityRulesCached = cache(
 	async (lessonId?: string, moduleId?: string, orgId?: string) => {
@@ -34,28 +47,41 @@ const getCurrentAbilityRulesCached = cache(
 					process.env.DEFAULT_COUNTRY ||
 					'US'
 
-				const convertkitSubscriber = await getSubscriberFromCookie()
-				const { session } = await getServerAuthSession()
-				const lessonResource = lessonId ? await getCachedLesson(lessonId) : null
-				const moduleResource = moduleId ? await getWorkshop(moduleId) : null
+				// Two waves, not a chain. This resolution ran as eight sequential
+				// awaits, and with every query fast (functions sit beside the DB)
+				// the sum of the chain WAS the cost — telemetry had it at p50
+				// 574 ms per request (perf.ability.rules.slow, 2026-08-03), gating
+				// the per-user tRPC batch after every navigation. Wave one is the
+				// lookups that depend only on the arguments; wave two is what needs
+				// the session or the wave-one rows. Critical path: the workshop
+				// load, not the sum.
+				const [
+					convertkitSubscriber,
+					{ session },
+					lessonResource,
+					moduleResource,
+					entitlementTypes,
+				] = await Promise.all([
+					getSubscriberFromCookie(),
+					getServerAuthSession(),
+					lessonId ? getCachedLesson(lessonId) : null,
+					moduleId ? getWorkshop(moduleId) : null,
+					getCachedEntitlementTypes(),
+				])
 
-				const sectionResource =
-					lessonResource &&
-					moduleResource &&
-					(await getResourceSection(lessonResource.id, moduleResource))
-
-				const purchases = await courseBuilderAdapter.getPurchasesForUser(
-					session?.user?.id,
-				)
+				const [sectionResource, purchases, activeEntitlements] =
+					await Promise.all([
+						lessonResource && moduleResource
+							? getResourceSection(lessonResource.id, moduleResource)
+							: null,
+						courseBuilderAdapter.getPurchasesForUser(session?.user?.id),
+						session?.user?.id
+							? getAllUserEntitlements(session.user.id)
+							: ([] as Awaited<ReturnType<typeof getAllUserEntitlements>>),
+					])
 
 				const allModuleResourceIds = moduleResource
 					? getWorkshopResourceIds(moduleResource)
-					: []
-
-				const entitlementTypes = await db.query.entitlementTypes.findMany()
-
-				const activeEntitlements = session?.user?.id
-					? await getAllUserEntitlements(session.user.id)
 					: []
 
 				return defineRulesForPurchases({
@@ -100,9 +126,13 @@ export async function getCurrentAbilityRules({
 
 const getAbilityForResourceCached = cache(
 	async (lessonId: string | undefined, moduleId: string) => {
-		const abilityRules = await getCurrentAbilityRulesCached(lessonId, moduleId)
-		const workshop = await getCachedMinimalWorkshop(moduleId)
-		const lesson = lessonId ? await getLesson(lessonId) : null
+		// Independent of each other — same two-wave reasoning as the rules
+		// resolution above.
+		const [abilityRules, workshop, lesson] = await Promise.all([
+			getCurrentAbilityRulesCached(lessonId, moduleId),
+			getCachedMinimalWorkshop(moduleId),
+			lessonId ? getLesson(lessonId) : null,
+		])
 
 		const ability = createAppAbility(abilityRules || [])
 
