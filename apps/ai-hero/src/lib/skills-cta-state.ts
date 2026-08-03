@@ -3,8 +3,30 @@ import 'server-only'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { hasCompletedConversionIntent } from '@/lib/cta/conversion-intent'
+import { LRUCache } from 'lru-cache'
 
 const KIT_LOOKUP_TIMEOUT_MS = 1_500
+
+/**
+ * Kit lookups by email, remembered briefly per instance. This lookup rides in
+ * the per-navigation tRPC batch of every skill page for any signed-in reader
+ * whose cookie is not already conclusive — a live external HTTP call that set
+ * the whole batch's floor. The answer moves at human speed, and the flows
+ * that CHANGE it (subscribing, starting the course) write cookies that
+ * short-circuit this function entirely, so a five-minute memory cannot
+ * misdraw the ask for the person who just acted. Only DEFINITIVE answers are
+ * cached — a timeout or Kit outage is retried on the next request rather
+ * than pinned as "unknown" for the TTL.
+ */
+const kitLookupCache = new LRUCache<string, SkillsCtaState | 'none'>({
+	max: 2000,
+	ttl: 5 * 60 * 1000,
+})
+
+/** Test hook — the memo would otherwise leak state between cases. */
+export function clearSkillsCtaKitLookupCache() {
+	kitLookupCache.clear()
+}
 
 /**
  * Which skills-course ask a reader should see. ONE resolver, because the two
@@ -64,12 +86,22 @@ export async function resolveSkillsCtaState(
 	// Signed in with no usable cookie: ask Kit who they are rather than falling
 	// through to a form. This is the case that left an enrolled reader being
 	// nagged to sign up for a course they were already taking.
-	const fromKit = fromRecord(
-		(await withTimeout(
-			emailListProvider.getSubscriberByEmail(email),
-			KIT_LOOKUP_TIMEOUT_MS,
-		).catch(() => null)) as any,
-	)
+	let fromKit: SkillsCtaState | null
+	const remembered = kitLookupCache.get(email)
+	if (remembered !== undefined) {
+		fromKit = remembered === 'none' ? null : remembered
+	} else {
+		try {
+			const record = await withTimeout(
+				emailListProvider.getSubscriberByEmail(email),
+				KIT_LOOKUP_TIMEOUT_MS,
+			)
+			fromKit = fromRecord(record as any)
+			kitLookupCache.set(email, fromKit ?? 'none')
+		} catch {
+			fromKit = null
+		}
+	}
 	if (fromKit) return fromKit
 
 	// Known by account, on no list. Still one click — we have their address.

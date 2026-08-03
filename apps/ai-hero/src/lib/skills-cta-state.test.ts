@@ -18,9 +18,11 @@ vi.mock('@/coursebuilder/email-list-provider', () => ({
 import { resolveSkillsCtaState } from './skills-cta-state'
 
 describe('resolveSkillsCtaState', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks()
 		vi.useRealTimers()
+		const { clearSkillsCtaKitLookupCache } = await import('./skills-cta-state')
+		clearSkillsCtaKitLookupCache()
 	})
 
 	it('refreshes an incomplete cookie after the async course-start update', async () => {
@@ -77,5 +79,41 @@ describe('resolveSkillsCtaState', () => {
 		await vi.advanceTimersByTimeAsync(1_500)
 
 		await expect(result).resolves.toBe('tag-me')
+	})
+
+	it('remembers a definitive Kit answer and asks only once', async () => {
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			state: 'active',
+			fields: {},
+		})
+
+		await expect(resolveSkillsCtaState('a@example.com')).resolves.toBe(
+			'tag-me',
+		)
+		await expect(resolveSkillsCtaState('a@example.com')).resolves.toBe(
+			'tag-me',
+		)
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not remember a failed lookup', async () => {
+		// A Kit outage answered "account" for this request — pinning that for
+		// the TTL would misdraw the ask for a genuinely subscribed reader.
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getSubscriberByEmail.mockRejectedValueOnce(new Error('kit down'))
+
+		await expect(resolveSkillsCtaState('b@example.com')).resolves.toBe(
+			'account',
+		)
+
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			state: 'active',
+			fields: {},
+		})
+		await expect(resolveSkillsCtaState('b@example.com')).resolves.toBe(
+			'tag-me',
+		)
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledTimes(2)
 	})
 })
