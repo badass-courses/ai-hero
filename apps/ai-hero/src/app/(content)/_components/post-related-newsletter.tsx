@@ -1,5 +1,5 @@
 import * as React from 'react'
-import Link from 'next/link'
+import { CompleteOnNavigateLink } from '@/components/complete-on-navigate-link'
 import { TYPE } from '@/components/landing/type'
 import { SubscriberCount } from '@/components/subscriber-count'
 import { ArrowRight } from 'lucide-react'
@@ -36,9 +36,18 @@ export function PostRelatedNewsletter({
 	newsletter = null,
 	id,
 	className,
+	completesResourceId,
 }: {
 	items: PostRelatedItem[]
 	heading?: string
+	/**
+	 * When set, leaving through a related row marks this resource (the current
+	 * post) complete. The caller sets it for posts that hold a POSITION in a
+	 * list: at a list's finale this grid IS the closing navigation — there is no
+	 * "next" pager to carry the write — so without it the last lesson stayed
+	 * permanently unticked.
+	 */
+	completesResourceId?: string
 	/**
 	 * The newsletter cell, or null when the page has already asked for an email
 	 * in the body.
@@ -104,8 +113,9 @@ export function PostRelatedNewsletter({
 					<ul className="flex flex-col gap-2.5">
 						{items.map((item) => (
 							<li key={item.id}>
-								<Link
+								<CompleteOnNavigateLink
 									href={`/${item.slug}`}
+									completesResourceId={completesResourceId}
 									className="border-input hover:border-foreground/25 focus-visible:ring-ring group flex items-center gap-4 rounded-md border px-4 py-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2"
 								>
 									<span className="min-w-0">
@@ -139,7 +149,7 @@ export function PostRelatedNewsletter({
 										aria-hidden
 										className="ease-out-quart text-foreground ml-auto size-4 flex-none opacity-[0.35] transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none dark:opacity-30"
 									/>
-								</Link>
+								</CompleteOnNavigateLink>
 							</li>
 						))}
 					</ul>

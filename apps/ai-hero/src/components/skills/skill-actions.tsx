@@ -11,6 +11,8 @@ import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { CompleteOnNavigateLink } from '@/components/complete-on-navigate-link'
+
 import { SkillInstallTabs } from './skill-install-tabs'
 import { invocationName } from './skill-meta'
 
@@ -186,7 +188,16 @@ function SkillPager({
 		>
 			<PagerCard entry={prev} role="Previous skill" direction="prev" />
 			<PagerCard entry={current} role="You are here" isCurrent />
-			<PagerCard entry={next} role="Next skill" direction="next" />
+			{/* Next carries the completion write: this pager REPLACES the lesson
+			    pager on skill pages, and stepping forward is the page's one "done
+			    here" gesture. Previous does not — going back says nothing about
+			    having finished. */}
+			<PagerCard
+				entry={next}
+				role="Next skill"
+				direction="next"
+				completesResourceId={current.id}
+			/>
 		</nav>
 	)
 }
@@ -196,11 +207,14 @@ function PagerCard({
 	role,
 	isCurrent = false,
 	direction,
+	completesResourceId,
 }: {
 	entry: SkillEntry
 	role: string
 	isCurrent?: boolean
 	direction?: 'prev' | 'next'
+	/** Navigating this card marks the given resource (the current post) complete. */
+	completesResourceId?: string
 }) {
 	// Lucide, not `←`/`→`: the characters render at the title's own weight and
 	// metrics, so they sat heavier and lower than every other arrow on the page.
@@ -237,8 +251,9 @@ function PagerCard({
 	}
 
 	return (
-		<Link
+		<CompleteOnNavigateLink
 			href={`/${entry.slug}`}
+			completesResourceId={completesResourceId}
 			className="border-border bg-background hover:border-foreground/30 focus-visible:ring-ring group min-w-0 flex-1 rounded-md border px-[18px] py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 		>
 			<p className={cn(TYPE.groupLabel, 'mb-2.5')}>{role}</p>
@@ -250,6 +265,6 @@ function PagerCard({
 			>
 				{label}
 			</p>
-		</Link>
+		</CompleteOnNavigateLink>
 	)
 }

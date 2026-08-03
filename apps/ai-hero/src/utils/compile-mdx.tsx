@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { cache } from 'react'
 import dynamic from 'next/dynamic'
 import { unstable_rethrow } from 'next/navigation'
@@ -26,6 +27,7 @@ import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
+import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
 import type { CldImageProps } from 'next-cloudinary'
@@ -35,6 +37,8 @@ import {
 } from 'next-mdx-remote/rsc'
 import rehypeExternalLinks from 'rehype-external-links'
 import remarkGfm from 'remark-gfm'
+
+import { LRUCache } from 'lru-cache'
 
 import { remarkMermaid } from '@coursebuilder/mdx-mermaid'
 import { Button } from '@coursebuilder/ui'
@@ -178,9 +182,9 @@ type CompileMDXContext = {
 	 * Resolved cross-promo callout line to auto-insert before the 2nd h2 (W1
 	 * §2.4). The caller (`PostBody`) decides the variant/copy BEFORE compile and
 	 * passes it as a static payload; the remark plugin does zero data fetching.
-	 * Its presence also forces the bypass of `compileDefaultMDX`'s `cache()`
-	 * (keyed only on source+lessonId), because this line depends on external
-	 * state (the active cohort) that is not part of that cache key.
+	 * Because this line depends on external state (the active cohort), it is
+	 * part of `compiledMdxCache`'s key — a changed cohort line is a different
+	 * entry, never a stale hit.
 	 */
 	calloutLineAutoInsert?: {
 		variant: CalloutIntent
@@ -300,7 +304,6 @@ async function compileMDXInternal(
 	options: MDXRemoteProps['options'] = {},
 	context?: CompileMDXContext,
 ) {
-	let checkboxIndex = 0
 	const dictionaryAutoLinkPlugin = context?.dictionaryAutoLink
 		? createDictionaryAutoLinkRemarkPlugin(context.dictionaryAutoLink)
 		: null
@@ -340,13 +343,24 @@ async function compileMDXInternal(
 						},
 					}),
 					input: (props: React.InputHTMLAttributes<HTMLInputElement>) => {
-						if (props.type === 'checkbox' && context?.lessonId) {
-							const currentIndex = checkboxIndex++
+						// The index is BAKED INTO the compiled tree by
+						// `rehypeNumberCheckboxes`, never counted here: this closure is
+						// part of the cross-request `compiledMdxCache` entry, so a counter
+						// in it would keep incrementing across renders of the cached tree
+						// and `MDXCheckbox` persistence would key on drifting indices.
+						const index = Number(
+							(props as Record<string, unknown>)['data-checkbox-index'],
+						)
+						if (
+							props.type === 'checkbox' &&
+							context?.lessonId &&
+							Number.isInteger(index)
+						) {
 							return (
 								<DynamicMDXCheckbox
 									{...props}
 									lessonId={context.lessonId}
-									index={currentIndex}
+									index={index}
 								/>
 							)
 						}
@@ -607,6 +621,10 @@ async function compileMDXInternal(
 							// with an empty components map, where a minted TableWrapper
 							// element would fail to resolve.
 							rehypeAutoTableWrap,
+							// Compile-time checkbox numbering; the `input` entry in the
+							// components map reads it back. See that entry for why the
+							// index cannot be counted at render time.
+							rehypeNumberCheckboxes,
 						],
 						recmaPlugins: [[recmaCodeHike, { components: { code: 'Code' } }]],
 					},
@@ -654,16 +672,46 @@ async function compileMDXInternal(
 	}
 }
 
-const compileDefaultMDX = cache(async (source: string, lessonId?: string) => {
-	return compileMDXInternal(source, {}, {}, { lessonId })
-})
+/**
+ * Compiled-MDX cache, shared ACROSS requests for the lifetime of the server
+ * instance. The compile (mdx parse + CodeHike/shiki highlighting) is the
+ * dominant per-request cost of an article render — heavy code-block pages
+ * measured over a second of it — and its output is a pure function of the
+ * cache key, so re-running it per request bought nothing.
+ *
+ * Freshness is BY CONSTRUCTION, not by revalidation: the key hashes the full
+ * source plus every piece of context that changes the output (dictionary
+ * entries, the resolved cohort callout line, the lesson id that QuizQuestion
+ * captures). An edited body — or a changed dictionary or cohort line — is a
+ * different key and compiles fresh; the superseded entry simply ages out.
+ * This is also what fixes the old request-scoped cache's hazard of serving a
+ * callout line resolved for a dead cohort (W1 §2.4): that context now keys
+ * the entry instead of bypassing the cache.
+ *
+ * Reuse across users is safe because nothing per-user exists at compile time:
+ * the cached value is an immutable element tree whose components (including
+ * data-fetching ones like `SubscriberCount`) are module-level references that
+ * React still renders per request.
+ */
+const compiledMdxCache = new LRUCache<
+	string,
+	ReturnType<typeof compileMDXInternal>
+>({ max: 200 })
+
+function compiledMdxCacheKey(source: string, context?: CompileMDXContext) {
+	return createHash('sha256')
+		.update(source)
+		.update(' ')
+		.update(JSON.stringify(context ?? {}))
+		.digest('base64')
+}
 
 /**
  * Compiles MDX content with support for CodeHike and Mermaid diagrams.
  *
- * The default compile path is request-scoped cached, which is the safest form
- * of MDX caching for this app: it avoids cross-user reuse while deduplicating
- * repeated compiles within a single render tree.
+ * Compiles are cached across requests (see `compiledMdxCache`) except when the
+ * caller passes custom components or options — functions cannot participate in
+ * a serialized cache key, so those calls always compile.
  */
 export async function compileMDX(
 	source: string,
@@ -676,34 +724,31 @@ export async function compileMDX(
 	const hasCustomComponents = Object.keys(resolvedComponents).length > 0
 	const hasCustomOptions = Object.keys(resolvedOptions).length > 0
 
-	// Any context that changes the OUTPUT but is not in `compileDefaultMDX`'s
-	// cache key (source + lessonId) must route around it.
-	//
-	// `calloutLineAutoInsert` depends on the active cohort, so sharing an entry
-	// keyed on source + lessonId would let one post serve a line resolved for a
-	// different cohort than the one live when it is read (W1 §2.4).
-	//
-	// `dictionaryAutoLink` belongs in the same test and was missing from it: a
-	// post passing only the dictionary entries (no callout line) took the cached
-	// path, which builds its plugin list from an empty context and therefore
-	// silently DROPPED the auto-linking. That is every article on the site — the
-	// feature was configured and not running. The cache here is React's
-	// request-scoped `cache()`, so the only cost of the wider test is losing
-	// dedup between two compiles of the same body inside one render, which does
-	// not happen on any current route.
-	if (
-		!hasCustomComponents &&
-		!hasCustomOptions &&
-		!context?.calloutLineAutoInsert &&
-		!context?.dictionaryAutoLink
-	) {
-		return compileDefaultMDX(source, context?.lessonId)
+	if (hasCustomComponents || hasCustomOptions) {
+		return compileMDXInternal(
+			source,
+			resolvedComponents,
+			resolvedOptions,
+			context,
+		)
 	}
 
-	return compileMDXInternal(
-		source,
-		resolvedComponents,
-		resolvedOptions,
-		context,
-	)
+	const key = compiledMdxCacheKey(source, context)
+	const cached = compiledMdxCache.get(key)
+	if (cached) return cached
+
+	const pending = compileMDXInternal(source, {}, {}, context)
+	// The PROMISE is cached, not the settled value, so concurrent renders of
+	// the same body share one in-flight compile. A rejection evicts itself —
+	// anything thrown past the compiler's own fallbacks (Next control-flow
+	// errors, which `compileMDXInternal` deliberately rethrows) must not be
+	// replayed to later requests. Identity-guarded (`peek`, which does not
+	// touch recency): if this entry was LRU-evicted and the key repopulated
+	// while the compile was in flight, deleting by key alone would remove the
+	// healthy replacement.
+	compiledMdxCache.set(key, pending)
+	pending.catch(() => {
+		if (compiledMdxCache.peek(key) === pending) compiledMdxCache.delete(key)
+	})
+	return pending
 }

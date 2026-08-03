@@ -1,6 +1,7 @@
 import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
+import { toListNavData } from '@/lib/list-nav-data'
 import type { List } from '@/lib/lists'
 import {
 	getCachedFilteredList,
@@ -8,6 +9,7 @@ import {
 	getFilteredListForEditor,
 } from '@/lib/lists-query'
 import { getModuleProgressForUser } from '@/lib/progress'
+import { log } from '@/server/logger'
 
 import { getCachedPostOrList } from '../../../lib/posts-query'
 import { ListProvider } from './_components/list-provider'
@@ -48,9 +50,22 @@ export default async function Layout(props: {
 			list = await getFilteredListForEditor(params.post)
 		}
 	}
-	const initialProgress = await getModuleProgressForUser(
+	// NOT awaited. Progress is the only per-user data in this layout, and
+	// awaiting it here held the entire route — sidebar, article, everything —
+	// behind an auth-session read and a per-user DB query. The promise is handed
+	// to the client provider, which unwraps it with `React.use()`, so the query
+	// runs concurrently with the rest of the render and the page streams as soon
+	// as it is ready. Progress is also a nicety: a failure to load it should
+	// degrade to "nothing completed", not 500 the article.
+	const progressLoader = getModuleProgressForUser(
 		list ? list.id : params.post,
-	)
+	).catch((error) => {
+		void log.error('post.layout.progress.error', {
+			slug: params.post,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return null
+	})
 
 	const currentPostHasVideo = Boolean(
 		post?.resources?.find(
@@ -68,8 +83,14 @@ export default async function Layout(props: {
 	// articles (post.type === 'post'); list landing pages keep it. Mobile keeps
 	// its dedicated lessons sheet since the desktop sidebar is hidden there.
 	return (
-		<ListProvider initialList={list} currentPostHasVideo={currentPostHasVideo}>
-			<ProgressProvider initialProgress={initialProgress}>
+		<ListProvider
+			// Projected, not the loaded list: everything given to the client
+			// provider is serialized into the page, and the full list carries the
+			// raw body of every member — see `toListNavData`.
+			initialList={toListNavData(list)}
+			currentPostHasVideo={currentPostHasVideo}
+		>
+			<ProgressProvider progressLoader={progressLoader}>
 				<ActiveHeadingProvider>
 					<LayoutClient withContainer withFooter={false}>
 						<HubLayout

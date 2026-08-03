@@ -4,7 +4,11 @@ import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useList } from '@/app/(content)/[post]/_components/list-provider'
-import { useProgress } from '@/app/(content)/[post]/_components/progress-provider'
+import {
+	applyCompletionOverlay,
+	useCompletionOverlay,
+	useProgress,
+} from '@/app/(content)/[post]/_components/progress-provider'
 import { listHomeHref } from '@/lib/list-home'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { api } from '@/trpc/react'
@@ -250,9 +254,12 @@ export function SkillsNavEntry({
 }) {
 	const pathname = usePathname()
 	// Client-side so the ✓ marks can be late without the tree waiting on them.
-	// Long `staleTime` + no refetching: progress only changes when this reader
-	// completes something, and React Query keeps the answer across navigations,
-	// so the marks do not flicker either.
+	// Long `staleTime` + no refetching: React Query keeps the answer across
+	// navigations, so the marks do not flicker. When the reader completes a
+	// skill from these very pages — "Next skill", a related row — the query is
+	// stale by design, and the completion OVERLAY is what carries the new tick
+	// until a fresh load confirms it. Without the merge below, a tick earned by
+	// the pager sat invisible behind the staleTime until a refresh.
 	const { data: progress } = api.progress.moduleProgress.useQuery(
 		{ moduleIdOrSlug: SKILLS_LIST_ID },
 		{
@@ -263,7 +270,14 @@ export function SkillsNavEntry({
 			refetchOnReconnect: false,
 		},
 	)
-	const completedLessons = progress?.completedLessons
+	const overlay = useCompletionOverlay()
+	const completedLessons = React.useMemo(() => {
+		const memberIds = new Set(
+			groups.flatMap((group) => group.items.map((item) => item.id)),
+		)
+		return applyCompletionOverlay(progress ?? null, memberIds, overlay)
+			?.completedLessons
+	}, [progress, groups, overlay])
 	const current = normalizePath(pathname ?? '/')
 	const pathInside =
 		normalizePath(href) === current ||
