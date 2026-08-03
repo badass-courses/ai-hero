@@ -127,7 +127,7 @@ describe('AI Hero discovery surfaces', () => {
 		expect(payload.agentTokens.privilegedRead.excludes).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ capability: 'Raw video and Mux payloads' }),
-				expect.objectContaining({ capability: 'Uploads and signed URLs' }),
+				expect.objectContaining({ capability: 'Legacy signed upload URLs' }),
 			]),
 		)
 		expect(payload.agentTokens.errors['401']).toContain('expired')

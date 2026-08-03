@@ -32,6 +32,11 @@ type ScopeAbility = {
  * PAT rules from opening unrelated routes that happen to require create/update
  * Content, such as surveys, products, support memory, or token administration.
  * Analytics scopes remain dormant until their own coverage matrix is approved.
+ *
+ * Write scopes are deliberately workspace-wide, not owner-scoped: minting
+ * requires manage-all (admin), and the intended holders are admins working
+ * across all content from external harnesses. Do not add createdById
+ * conditions here without a product decision to per-user PATs.
  */
 export const personalAccessTokenScopeRegistry = {
 	'analytics:read': () => undefined,

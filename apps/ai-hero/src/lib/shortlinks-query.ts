@@ -164,6 +164,18 @@ export async function getShortlinksWithAttributions(
 	return links
 }
 
+// Post-write read-backs must not re-run authorization: create/update already
+// passed their own checks, which accept content-scoped abilities that the
+// guarded getShortlinkById (manage Shortlink) would reject after the write
+// committed.
+async function getShortlinkByIdInternal(id: string): Promise<Shortlink | null> {
+	const link = await db.query.shortlink.findFirst({
+		where: eq(shortlink.id, id),
+	})
+
+	return link ?? null
+}
+
 /**
  * Get a single shortlink by ID
  */
@@ -176,11 +188,7 @@ export async function getShortlinkById(
 		throw new Error('Unauthorized')
 	}
 
-	const link = await db.query.shortlink.findFirst({
-		where: eq(shortlink.id, id),
-	})
-
-	return link ?? null
+	return getShortlinkByIdInternal(id)
 }
 
 /**
@@ -318,7 +326,7 @@ export async function createShortlink(
 
 	await log.info('shortlink.created', { slug, url: parsed.url })
 
-	const link = await getShortlinkById(insertedId, auth)
+	const link = await getShortlinkByIdInternal(insertedId)
 	if (!link) {
 		throw new Error('Failed to create shortlink')
 	}
@@ -437,7 +445,7 @@ export async function updateShortlink(
 
 	revalidateTag('shortlinks', 'max')
 
-	const updated = await getShortlinkById(parsed.id, auth)
+	const updated = await getShortlinkByIdInternal(parsed.id)
 	if (!updated) {
 		throw new Error('Failed to update shortlink')
 	}

@@ -84,6 +84,22 @@ const scopedShortlinkAuth = {
 	ability: buildPersonalAccessTokenAbility(['shortlinks:manage']),
 	userId: 'user_1',
 }
+// Abilities that pass the mutation check but NOT canManageShortlinks — the
+// post-write read-back must not re-run authorization against them.
+const createContentOnlyAuth = {
+	ability: {
+		can: (action: string, subj: unknown) =>
+			action === 'create' && subj === 'Content',
+	} as any,
+	userId: 'user_1',
+}
+const updateContentOnlyAuth = {
+	ability: {
+		can: (action: string, subj: unknown) =>
+			action === 'update' && subj === 'Content',
+	} as any,
+	userId: 'user_1',
+}
 
 const metadataV1 = {
 	schemaVersion: 1,
@@ -209,6 +225,56 @@ describe('shortlink metadata persistence', () => {
 		expect(mocks.updateSet).toHaveBeenCalledWith(
 			expect.objectContaining({ metadata: valuePathMetadata }),
 		)
+	})
+
+	it('returns the created shortlink to a create-Content-only ability', async () => {
+		const created = {
+			id: 'shortlink_123',
+			slug: 'content-scoped',
+			url: 'https://www.aihero.dev/content-scoped',
+			description: null,
+			metadata: null,
+		}
+		mocks.findFirst.mockResolvedValueOnce(undefined).mockResolvedValueOnce(created)
+		mocks.insertValues.mockReturnValueOnce({
+			$returningId: vi.fn().mockResolvedValue([{ id: 'shortlink_123' }]),
+		})
+
+		await expect(
+			createShortlink(
+				{
+					slug: 'content-scoped',
+					url: 'https://www.aihero.dev/content-scoped',
+				},
+				createContentOnlyAuth,
+			),
+		).resolves.toEqual(created)
+	})
+
+	it('returns the updated shortlink to an update-Content-only ability', async () => {
+		const updated = {
+			id: 'shortlink_123',
+			slug: 'cc004-warmup-01',
+			url: 'https://www.aihero.dev/new',
+			description: 'old',
+			metadata: metadataV1,
+		}
+		mocks.findFirst
+			.mockResolvedValueOnce({
+				id: 'shortlink_123',
+				slug: 'cc004-warmup-01',
+				url: 'https://www.aihero.dev/old',
+				description: 'old',
+				metadata: metadataV1,
+			})
+			.mockResolvedValueOnce(updated)
+
+		await expect(
+			updateShortlink(
+				{ id: 'shortlink_123', url: 'https://www.aihero.dev/new' },
+				updateContentOnlyAuth,
+			),
+		).resolves.toEqual(updated)
 	})
 
 	it('clears existing metadata when update input passes null metadata', async () => {

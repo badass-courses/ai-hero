@@ -332,8 +332,8 @@ const AGENT_TOKEN_EXCLUSIONS = [
 		why: 'They expose playable identifiers and media internals. Use the sanitized content projections instead.',
 	},
 	{
-		capability: 'Uploads and signed URLs',
-		why: 'They grant storage or processing capabilities, even when the route uses HTTP GET.',
+		capability: 'Legacy signed upload URLs',
+		why: 'The legacy signed-URL route stays excluded. Multipart upload and processing routes are granted by the media:upload scope.',
 	},
 	{
 		capability: 'Support memory',
