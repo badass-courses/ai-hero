@@ -13,7 +13,10 @@ import {
 } from '@/hooks/use-mux-player-prefs'
 import { setProgressForResource } from '@/lib/progress'
 import { track } from '@/utils/analytics'
-import { getNextUpResourceFromList } from '@/utils/get-nextup-resource-from-list'
+import {
+	flattenListResources,
+	getNextUpResourceFromList,
+} from '@/utils/get-nextup-resource-from-list'
 import MuxPlayer, {
 	type MuxPlayerProps,
 	type MuxPlayerRefAttributes,
@@ -156,7 +159,25 @@ export function PostPlayer({
 					<PostNextUpFromListPagination
 						postId={postId}
 						className="text-white! mt-0 border-0 bg-transparent px-0 py-0 dark:bg-transparent"
-						documentIdsToSkip={list?.resources.map((resource) => resource.id)}
+						// The list AND its members (sections descended), same as the
+						// finale case in `[post]/page.tsx`: this overlay shows when the
+						// reader finished the list's last video, so its own lessons —
+						// and its own front door — are the recommendations to exclude.
+						// The wrapper rows this used to map have `resourceId`, not `id`,
+						// so it excluded nothing (an array of undefined) and skipped
+						// section children besides.
+						documentIdsToSkip={
+							list
+								? [
+										list.id,
+										...flattenListResources(list)
+											.map((wrapper) => wrapper.resource?.id)
+											.filter(
+												(id): id is string => typeof id === 'string',
+											),
+									]
+								: undefined
+						}
 					/>
 				</div>
 			)}
