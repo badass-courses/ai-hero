@@ -86,11 +86,21 @@ const navigationFieldsProjection = sql<
 	'state', JSON_EXTRACT(${contentResource.fields}, '$.state')
 )`
 
-/** Columns of a nav tree node — everything `ContentResourceSchema` needs. */
+/**
+ * Columns of a nav tree node: every `AI_ContentResource` column EXCEPT the
+ * raw `fields` blob, which the projection above replaces. The full set
+ * matters — `ContentResourceSchema` requires keys like `organizationId` and
+ * `createdByOrganizationMembershipId` even when null, and a first cut of this
+ * select without them failed the parse and blanked the cohort sidebar.
+ */
 const navigationResourceColumns = {
 	id: contentResource.id,
+	organizationId: contentResource.organizationId,
+	createdByOrganizationMembershipId:
+		contentResource.createdByOrganizationMembershipId,
 	type: contentResource.type,
 	createdById: contentResource.createdById,
+	slug: contentResource.slug,
 	currentVersionId: contentResource.currentVersionId,
 	createdAt: contentResource.createdAt,
 	updatedAt: contentResource.updatedAt,
