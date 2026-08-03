@@ -152,6 +152,9 @@ function GroupRung({
 						Start with{' '}
 						<Link
 							href={`/${startWith.slug}`}
+							// Same as `SkillRow` below — a dynamic render per viewport
+							// entry that a click never reuses.
+							prefetch={false}
 							className="text-foreground focus-visible:ring-ring underline decoration-[color:var(--ah-line-strong)] underline-offset-[3px] transition-colors hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 						>
 							/{invocationName(startWith.slug)}
