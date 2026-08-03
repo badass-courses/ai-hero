@@ -88,6 +88,10 @@ type Subjects =
 	| 'PendingOpenAccess'
 	| 'Team'
 	| 'Content'
+	| 'ContentDraft'
+	| 'ContentRelation'
+	| 'MediaUpload'
+	| 'Shortlink'
 	| 'User'
 	| ContentResource
 	| User
@@ -150,7 +154,9 @@ export function getAbilityRules(options: GetAbilityOptions = {}) {
 		if (options.user.organizationRoles) {
 			options.user.organizationRoles.forEach(({ organizationId, name }) => {
 				// Base permissions for all roles
-				can('read', 'Organization', { organizationId: { $eq: organizationId } })
+				can('read', 'Organization', {
+					organizationId: { $eq: organizationId },
+				})
 
 				if (name === 'owner' || name === BILLING_ADMIN_ROLE) {
 					can('read', 'Team')

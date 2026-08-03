@@ -176,6 +176,10 @@ export const SkillChangelogSuccessResponseSchema = z.object({
 	command: z.string(),
 	result: SkillChangelogResultSchema,
 	next_actions: z.array(NextActionSchema),
+	/** @deprecated Read the canonical nested result instead. */
+	id: z.string(),
+	/** @deprecated Read the canonical nested result instead. */
+	slug: z.string(),
 })
 export const CommandPreflightResultSchema = z.object({
 	methods: z.array(z.string()),
@@ -218,9 +222,16 @@ export const ShortlinkSchema = z.object({
 	createdAt: z.coerce.date(),
 	updatedAt: z.coerce.date(),
 })
+export const ScopedShortlinkSchema = ShortlinkSchema.omit({ clicks: true })
+export const ShortlinkResponseSchema = z.union([
+	ShortlinkSchema,
+	ScopedShortlinkSchema,
+])
 export const ShortlinkReadResponseSchema = z.union([
 	ShortlinkSchema,
+	ScopedShortlinkSchema,
 	z.array(ShortlinkSchema),
+	z.array(ScopedShortlinkSchema),
 ])
 export { CreateShortlinkSchema, UpdateShortlinkSchema }
 

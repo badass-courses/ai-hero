@@ -14,6 +14,12 @@ import {
 } from '@/lib/shortlinks-types'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import {
+	canCreateShortlink,
+	canDeleteShortlink,
+	canManageShortlinks,
+	canUpdateShortlink,
+} from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 
 const corsHeaders = {
@@ -26,6 +32,11 @@ export async function OPTIONS() {
 	return NextResponse.json({}, { headers: corsHeaders })
 }
 
+function withoutClickAnalytics(value: Record<string, unknown>) {
+	const { clicks: _clicks, ...safe } = value
+	return safe
+}
+
 /**
  * GET /api/shortlinks - List all shortlinks (admin) or get single by ID
  */
@@ -36,7 +47,8 @@ const getShortlinksHandler = async (request: NextRequest) => {
 	const analytics = searchParams.get('analytics')
 
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user) {
 			return NextResponse.json(
@@ -45,9 +57,16 @@ const getShortlinksHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (!ability.can('manage', 'all')) {
+		if (!canManageShortlinks(ability)) {
 			return NextResponse.json(
 				{ error: 'Forbidden: Admin access required' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
+
+		if (authMethod === 'personal-access-token' && analytics) {
+			return NextResponse.json(
+				{ error: 'Forbidden: Shortlink analytics require admin access' },
 				{ status: 403, headers: corsHeaders },
 			)
 		}
@@ -81,7 +100,12 @@ const getShortlinksHandler = async (request: NextRequest) => {
 					{ status: 404, headers: corsHeaders },
 				)
 			}
-			return NextResponse.json(link, { headers: corsHeaders })
+			return NextResponse.json(
+				authMethod === 'personal-access-token'
+					? withoutClickAnalytics(link)
+					: link,
+				{ headers: corsHeaders },
+			)
 		}
 
 		// List all shortlinks
@@ -89,7 +113,12 @@ const getShortlinksHandler = async (request: NextRequest) => {
 			ability,
 			userId: user.id,
 		})
-		return NextResponse.json(links, { headers: corsHeaders })
+		return NextResponse.json(
+			authMethod === 'personal-access-token'
+				? links.map(withoutClickAnalytics)
+				: links,
+			{ headers: corsHeaders },
+		)
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error'
 
@@ -117,7 +146,8 @@ export const GET = withSkill(getShortlinksHandler)
  */
 const createShortlinkHandler = async (request: NextRequest) => {
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user) {
 			await log.warn('api.shortlinks.post.unauthorized', {})
@@ -127,7 +157,7 @@ const createShortlinkHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (!ability.can('create', 'Content')) {
+		if (!canCreateShortlink(ability)) {
 			await log.warn('api.shortlinks.post.forbidden', { userId: user.id })
 			return NextResponse.json(
 				{ error: 'Forbidden: Insufficient permissions' },
@@ -160,7 +190,12 @@ const createShortlinkHandler = async (request: NextRequest) => {
 			slug: link.slug,
 		})
 
-		return NextResponse.json(link, { status: 201, headers: corsHeaders })
+		return NextResponse.json(
+			authMethod === 'personal-access-token'
+				? withoutClickAnalytics(link)
+				: link,
+			{ status: 201, headers: corsHeaders },
+		)
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error'
 
@@ -189,7 +224,8 @@ export const POST = withSkill(createShortlinkHandler)
  */
 const updateShortlinkHandler = async (request: NextRequest) => {
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user) {
 			return NextResponse.json(
@@ -198,7 +234,7 @@ const updateShortlinkHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (!ability.can('update', 'Content')) {
+		if (!canUpdateShortlink(ability)) {
 			await log.warn('api.shortlinks.patch.forbidden', { userId: user.id })
 			return NextResponse.json(
 				{ error: 'Forbidden: Insufficient permissions' },
@@ -231,7 +267,12 @@ const updateShortlinkHandler = async (request: NextRequest) => {
 			slug: link.slug,
 		})
 
-		return NextResponse.json(link, { headers: corsHeaders })
+		return NextResponse.json(
+			authMethod === 'personal-access-token'
+				? withoutClickAnalytics(link)
+				: link,
+			{ headers: corsHeaders },
+		)
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error'
 
@@ -279,7 +320,7 @@ const deleteShortlinkHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (!ability.can('delete', 'Content')) {
+		if (!canDeleteShortlink(ability)) {
 			await log.warn('api.shortlinks.delete.forbidden', { userId: user.id })
 			return NextResponse.json(
 				{ error: 'Forbidden: Insufficient permissions' },

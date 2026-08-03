@@ -12,6 +12,11 @@ import {
 import { upsertPostToTypeSense } from '@/lib/typesense-query'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import {
+	canCreateContentDraft,
+	canCreateContentRelation,
+	canPublishContent,
+} from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 import { guid } from '@coursebuilder/utils/guid'
 import slugify from '@sindresorhus/slugify'
@@ -46,6 +51,7 @@ function jsonSuccess(
 	result: Record<string, unknown>,
 	status = 200,
 	nextActions: NextAction[] = [],
+	compat?: { id: string; slug: string },
 ) {
 	return NextResponse.json(
 		{
@@ -53,6 +59,7 @@ function jsonSuccess(
 			command: COMMAND,
 			result,
 			next_actions: nextActions,
+			...compat,
 		},
 		{ status, headers: corsHeaders },
 	)
@@ -157,7 +164,8 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 	const operation = 'create_skill_changelog'
 
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user) {
 			await log.warn('api.skills.changelog.post.unauthorized', {
@@ -174,7 +182,7 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 			})
 		}
 
-		if (!ability.can('create', 'Content')) {
+		if (!canCreateContentDraft(ability)) {
 			await log.warn('api.skills.changelog.post.forbidden', {
 				requestId,
 				operation,
@@ -215,6 +223,31 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 		}
 
 		const input = payload.data
+		if (
+			authMethod === 'personal-access-token' &&
+			input.state === 'published' &&
+			!canPublishContent(ability)
+		) {
+			return jsonError({
+				message: 'Forbidden',
+				code: 'FORBIDDEN',
+				fix: 'Add content:publish to create a published changelog entry.',
+				status: 403,
+			})
+		}
+		if (
+			authMethod === 'personal-access-token' &&
+			input.videoResourceId &&
+			!canCreateContentRelation(ability)
+		) {
+			return jsonError({
+				message: 'Forbidden',
+				code: 'FORBIDDEN',
+				fix: 'Add content:relations to attach a video resource.',
+				status: 403,
+			})
+		}
+
 		const hash = guid()
 		const resourceId = slugify(`${SKILL_CHANGELOG_RESOURCE_TYPE}~${hash}`)
 		const baseSlug = input.slug || slugify(input.title)
@@ -321,6 +354,7 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 				},
 				201,
 				createNextActions(slug, resourceId),
+				{ id: resourceId, slug },
 			)
 		}
 
@@ -365,6 +399,7 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 			},
 			201,
 			createNextActions(slug, resourceId),
+			{ id: resourceId, slug },
 		)
 	} catch (error) {
 		await log.error('api.skills.changelog.post.failed', {

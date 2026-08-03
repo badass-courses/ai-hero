@@ -279,6 +279,36 @@ const AGENT_TOKEN_SCOPES = [
 			'Privileged read of approved CMS content, including draft, unpublished, private, and unlisted content.',
 	},
 	{
+		name: 'content:write',
+		status: 'active',
+		grants:
+			'Create draft posts and Skills Changelog entries, and update existing draft posts, lessons, and pages. It cannot publish or change relations.',
+	},
+	{
+		name: 'content:publish',
+		status: 'active',
+		grants:
+			'Publish posts, lessons, and pages, and create published Skills Changelog entries. Pair with content:write for create-and-publish jobs.',
+	},
+	{
+		name: 'content:relations',
+		status: 'active',
+		grants:
+			'Create tags, attach or detach tags, and attach media relations during supported content writes.',
+	},
+	{
+		name: 'media:upload',
+		status: 'active',
+		grants:
+			'Create and complete multipart uploads, mint multipart part URLs, and trigger media processing.',
+	},
+	{
+		name: 'shortlinks:manage',
+		status: 'active',
+		grants:
+			'List and manage shortlinks. Shortlink attribution and click analytics remain admin-only.',
+	},
+	{
 		name: 'analytics:read',
 		status: 'reserved',
 		grants:
@@ -294,16 +324,16 @@ const AGENT_TOKEN_SCOPES = [
 
 const AGENT_TOKEN_EXCLUSIONS = [
 	{
-		capability: 'CMS writes',
-		why: 'content:read is read-only; create, update, delete, and processing operations mutate state.',
+		capability: 'Unscoped CMS and administrative writes',
+		why: 'Write PATs grant only named draft, publish, relation, media, and shortlink operations. Products, surveys, users, purchases, and token administration stay excluded.',
 	},
 	{
 		capability: 'Raw video and Mux payloads',
 		why: 'They expose playable identifiers and media internals. Use the sanitized content projections instead.',
 	},
 	{
-		capability: 'Uploads and signed URLs',
-		why: 'They grant storage or processing capabilities, even when the route uses HTTP GET.',
+		capability: 'Legacy signed upload URLs',
+		why: 'The legacy signed-URL route stays excluded. Multipart upload and processing routes are granted by the media:upload scope.',
 	},
 	{
 		capability: 'Support memory',
@@ -400,7 +430,7 @@ function buildAgentTokenDiscovery(baseUrl: string) {
 			{
 				kind: 'scoped agent token',
 				shape: 'aih_pat_*',
-				use: 'Approved scope-derived reads. A content:read token cannot mint, list, or revoke tokens and cannot write content.',
+				use: 'Approved scope-derived reads and narrow writes. No PAT can mint, list, or revoke PATs.',
 			},
 			{
 				kind: 'admin device token',
@@ -453,7 +483,7 @@ function buildAgentTokenDiscovery(baseUrl: string) {
 			'401':
 				'The bearer credential is missing, malformed, invalid, expired, or revoked. Some legacy content-read handlers also use 401 when a valid token lacks Content read ability; if the token is known-valid, inspect its scopes before retrying.',
 			'403':
-				'The credential is valid but its scopes or abilities exclude this operation. content:read never grants writes, Mux payloads, signed URLs, memory, or analytics. Do not retry without a different authorized credential.',
+				'The credential is valid but its scopes or abilities exclude this operation. Add only the specific scope named by the route contract; PATs never gain user, purchase, survey-response, support-memory, or PAT-administration access.',
 			docsField:
 				'Auth-related error bodies point back to /api when their existing envelope permits it.',
 		},
@@ -598,9 +628,12 @@ Agent tokens:
 - Scoped agent tokens start with aih_pat_. Admin device tokens are separate opaque bearer credentials.
 - Admin device tokens can POST/GET ${normalizedBaseUrl}/api/personal-access-tokens and DELETE ${normalizedBaseUrl}/api/personal-access-tokens/TOKEN_ID.
 - Mint returns the complete agent token once. Optional expiresAt defaults to no automatic expiry; revocation is the kill switch.
-- Active scope: content:read. It includes approved draft, unpublished, private, and unlisted CMS reads.
+- Active scopes: content:read, content:write, content:publish, content:relations, media:upload, and shortlinks:manage.
+- content:read includes approved draft, unpublished, private, and unlisted CMS reads.
+- Combine scopes for a job. For example, upload, attach, and publish a video-backed entry with media:upload, content:relations, content:write, and content:publish.
+- media:upload covers multipart upload and processing routes; raw Mux/video payloads and the legacy signed URL route remain excluded.
 - Reserved scopes analytics:read and analytics:chat currently grant no endpoint access.
-- content:read excludes every write, raw Mux/video payloads, uploads and signed URLs, support memory, survey analytics, and enrollment analytics.
+- Every PAT excludes user administration, purchases, survey responses, support memory, PAT administration, and unrelated CMS/admin routes.
 - 401 usually means the credential is missing, invalid, expired, or revoked; legacy content reads may also use 401 when a valid token lacks Content read ability. 403 means the credential is valid but excluded from that operation. Read the docs field and ${normalizedBaseUrl}/api before retrying.
 
 Mint example (placeholder credential):
