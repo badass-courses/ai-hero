@@ -160,6 +160,15 @@ export function applyCompletionOverlay(
 		...base,
 		completedLessons,
 		completedLessonsCount: completedLessons.length,
+		// Derived values must follow the merged count — a progress bar or the
+		// `=== 100` certificate unlock reading the same object would otherwise
+		// disagree with the ticks. Math.ceil to match the server adapter (and
+		// `module-progress-provider`, which keeps the same invariant); with no
+		// known total the server's value is the only honest one.
+		percentCompleted:
+			base.totalLessonsCount > 0
+				? Math.ceil((completedLessons.length / base.totalLessonsCount) * 100)
+				: base.percentCompleted,
 	}
 }
 

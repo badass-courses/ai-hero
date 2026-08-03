@@ -141,8 +141,14 @@ export async function compileHubSidebarMdx(
 	}).then(({ content }) => content)
 	// The promise is cached so concurrent renders share one compile; a
 	// rejection evicts itself and still throws to the caller, whose fallback
-	// layering (static body, error boundary) is the error path.
+	// layering (static body, error boundary) is the error path. Identity-
+	// guarded (`peek` — no recency bump) so an entry that was evicted and
+	// repopulated mid-flight cannot have its healthy replacement deleted.
 	compiledSidebarCache.set(key, pending)
-	pending.catch(() => compiledSidebarCache.delete(key))
+	pending.catch(() => {
+		if (compiledSidebarCache.peek(key) === pending) {
+			compiledSidebarCache.delete(key)
+		}
+	})
 	return pending
 }

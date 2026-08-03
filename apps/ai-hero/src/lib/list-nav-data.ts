@@ -28,7 +28,13 @@ export function toListNavData(list: List | null): List | null {
 			state: list.fields.state,
 			visibility: list.fields.visibility,
 		},
-		resources: (list.resources ?? []).map(slimWrapper),
+		// A wrapper with no loaded resource is dropped outright rather than
+		// projected as `resource: undefined`: `flattenListResources` reads
+		// `wrapper.resource.type` unguarded, and a row that renders nothing has
+		// no business in nav data anyway.
+		resources: (list.resources ?? [])
+			.filter((wrapper: any) => wrapper?.resource)
+			.map(slimWrapper),
 		// Tag rows carry their own full CMS fields and nothing in the nav reads
 		// them.
 		tags: [],
@@ -38,9 +44,9 @@ export function toListNavData(list: List | null): List | null {
 /** A `contentResourceResource` join row: ordering plus the resource itself. */
 function slimWrapper(wrapper: any): any {
 	return {
-		resourceId: wrapper?.resourceId,
-		position: wrapper?.position,
-		resource: wrapper?.resource ? slimResource(wrapper.resource) : undefined,
+		resourceId: wrapper.resourceId,
+		position: wrapper.position,
+		resource: slimResource(wrapper.resource),
 	}
 }
 
@@ -58,7 +64,11 @@ function slimResource(resource: any): any {
 			state: resource.fields?.state,
 		},
 		...(Array.isArray(resource.resources)
-			? { resources: resource.resources.map(slimWrapper) }
+			? {
+					resources: resource.resources
+						.filter((wrapper: any) => wrapper?.resource)
+						.map(slimWrapper),
+				}
 			: {}),
 	}
 }

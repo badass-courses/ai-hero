@@ -40,8 +40,20 @@ export function CompleteOnNavigateLink({
 	// ROLLBACK, not removal: a failed-looking write may still have landed, so
 	// the tick is retracted without recording an un-completion that would mask
 	// the server's answer for the rest of the session.
-	const markComplete = async () => {
+	const markComplete = async (event: React.MouseEvent) => {
 		if (!completesResourceId) return
+		// A modified click (Cmd/Ctrl/Shift/Alt, middle button) opens the target
+		// in a new tab or window — the reader STAYS on the current resource, so
+		// leaving-means-done does not apply.
+		if (
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey ||
+			event.button !== 0
+		) {
+			return
+		}
 		const isCompleted = progress?.completedLessons.some(
 			(lesson) => lesson.resourceId === completesResourceId,
 		)

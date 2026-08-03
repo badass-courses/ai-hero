@@ -742,8 +742,13 @@ export async function compileMDX(
 	// the same body share one in-flight compile. A rejection evicts itself —
 	// anything thrown past the compiler's own fallbacks (Next control-flow
 	// errors, which `compileMDXInternal` deliberately rethrows) must not be
-	// replayed to later requests.
+	// replayed to later requests. Identity-guarded (`peek`, which does not
+	// touch recency): if this entry was LRU-evicted and the key repopulated
+	// while the compile was in flight, deleting by key alone would remove the
+	// healthy replacement.
 	compiledMdxCache.set(key, pending)
-	pending.catch(() => compiledMdxCache.delete(key))
+	pending.catch(() => {
+		if (compiledMdxCache.peek(key) === pending) compiledMdxCache.delete(key)
+	})
 	return pending
 }
