@@ -130,7 +130,7 @@ class InMemoryRedis {
 }
 
 describe('subscriber marketing signup gap recovery', () => {
-	it('previews only missing identities in a half-open window and flags synthetic addresses', () => {
+	it('previews only missing course entries in a half-open window and flags synthetic addresses', () => {
 		const preview = buildSignupGapPreview({
 			formId: 9376133,
 			from: '2026-07-15T05:00:00.000Z',
@@ -139,6 +139,10 @@ describe('subscriber marketing signup gap recovery', () => {
 			identityMatches: {
 				contactEmails: new Set(['known@example.com']),
 				kitSubscriberIds: new Set(['kit-provider-known']),
+				courseEntryKitSubscriberIds: new Set([
+					'kit-contact-known',
+					'kit-provider-known',
+				]),
 			},
 			subscribers: [
 				{
@@ -146,36 +150,42 @@ describe('subscriber marketing signup gap recovery', () => {
 					email: 'Real.Person@Example.com',
 					firstName: 'Real',
 					createdAt: '2026-07-15T05:00:00.000Z',
+					addedAt: '2026-07-15T05:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-synthetic',
 					email: 'joel+aih-warmup-synth-1@example.com',
 					createdAt: '2026-07-15T06:00:00.000Z',
+					addedAt: '2026-07-15T06:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-contact-known',
 					email: 'known@example.com',
 					createdAt: '2026-07-15T07:00:00.000Z',
+					addedAt: '2026-07-15T07:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-provider-known',
 					email: 'provider@example.com',
 					createdAt: '2026-07-15T08:00:00.000Z',
+					addedAt: '2026-07-15T08:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-unconfirmed',
 					email: 'unconfirmed@example.com',
 					createdAt: '2026-07-15T09:00:00.000Z',
+					addedAt: '2026-07-15T09:00:00.000Z',
 					state: 'inactive',
 				},
 				{
 					kitSubscriberId: 'kit-at-end',
 					email: 'end@example.com',
 					createdAt: '2026-07-15T15:00:00.000Z',
+					addedAt: '2026-07-15T15:00:00.000Z',
 					state: 'active',
 				},
 			],
@@ -187,6 +197,7 @@ describe('subscriber marketing signup gap recovery', () => {
 			withExistingContact: 1,
 			withExistingProviderIdentity: 1,
 			withExistingIdentity: 2,
+			withExistingCourseEntry: 2,
 			gapCandidates: 2,
 			excludedSynthetic: 1,
 			unconfirmed: 1,
@@ -226,6 +237,7 @@ describe('subscriber marketing signup gap recovery', () => {
 			identityMatches: {
 				contactEmails: new Set(),
 				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
 			},
 			subscribers: [
 				{
@@ -233,18 +245,21 @@ describe('subscriber marketing signup gap recovery', () => {
 					email: 'replay@example.com',
 					firstName: 'Replay',
 					createdAt: '2026-07-15T06:00:00.000Z',
+					addedAt: '2026-07-15T06:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-now-known',
 					email: 'known-later@example.com',
 					createdAt: '2026-07-15T07:00:00.000Z',
+					addedAt: '2026-07-15T07:00:00.000Z',
 					state: 'active',
 				},
 				{
 					kitSubscriberId: 'kit-synthetic',
 					email: 'joel+aih-synth-2@example.com',
 					createdAt: '2026-07-15T08:00:00.000Z',
+					addedAt: '2026-07-15T08:00:00.000Z',
 					state: 'active',
 				},
 			],
@@ -253,7 +268,7 @@ describe('subscriber marketing signup gap recovery', () => {
 		const receipt = await replaySignupGap({
 			preview,
 			source: 'operator-recovery',
-			hasExistingIdentity: async (candidate) =>
+			hasExistingCourseEntry: async (candidate) =>
 				candidate.kitSubscriberId === 'kit-now-known',
 			emit: async (event) => {
 				emitted.push(event)
@@ -304,6 +319,7 @@ describe('subscriber marketing signup gap recovery', () => {
 				identityMatches: {
 					contactEmails: new Set(),
 					kitSubscriberIds: new Set(),
+					courseEntryKitSubscriberIds: new Set(),
 				},
 				subscribers: [],
 			}),
@@ -1393,7 +1409,10 @@ describe('subscriber marketing value path completed-intent scan', () => {
 			intents,
 			limit: 200,
 		})
-		expect(result.map((intent) => intent.id)).toEqual(['b_email_0', 'a_email_1'])
+		expect(result.map((intent) => intent.id)).toEqual([
+			'b_email_0',
+			'a_email_1',
+		])
 	})
 
 	it('honors maxCompletedAt without rewinding to an older completed step', () => {
@@ -1439,9 +1458,7 @@ describe('subscriber marketing value path completed-intent scan', () => {
 			contactIds: ['rolling-contact'],
 			now: '2026-05-03T00:00:00.000Z',
 		})
-		expect(scan.intents.map((intent) => intent.id)).toEqual([
-			'rolling-starved',
-		])
+		expect(scan.intents.map((intent) => intent.id)).toEqual(['rolling-starved'])
 		expect(scan.diagnostics).toMatchObject({
 			scanned: 2,
 			eligible: 1,
@@ -1680,7 +1697,10 @@ describe('subscriber marketing value path run state', () => {
 })
 
 describe('subscriber marketing answer click verification', () => {
-	const clickEvent = (summary: string, occurredAt = '2026-05-15T12:07:00.000Z') => ({
+	const clickEvent = (
+		summary: string,
+		occurredAt = '2026-05-15T12:07:00.000Z',
+	) => ({
 		occurredAt,
 		payloadSummary: {
 			summary,
@@ -1948,7 +1968,9 @@ describe('subscriber marketing value path click progression', () => {
 			now: '2026-07-18T11:05:00.000Z',
 		}
 		const first = recordValuePathAnswerProgression(progression)
-		await vi.waitFor(() => expect(updateSubscriberFields).toHaveBeenCalledTimes(1))
+		await vi.waitFor(() =>
+			expect(updateSubscriberFields).toHaveBeenCalledTimes(1),
+		)
 		const duplicate = await recordValuePathAnswerProgression(progression)
 		expect(duplicate).toMatchObject({
 			status: 'idempotent-noop',
@@ -1997,18 +2019,21 @@ describe('subscriber marketing value path click progression', () => {
 			now: '2026-07-18T11:05:00.000Z',
 		}
 
-		await expect(recordValuePathAnswerProgression(progression)).resolves.toMatchObject(
-			{
-				status: 'recorded',
-				finisherCapture: 'failed',
-				reviewReasons: ['kit-finisher-field-write-failed'],
-			},
-		)
+		await expect(
+			recordValuePathAnswerProgression(progression),
+		).resolves.toMatchObject({
+			status: 'recorded',
+			finisherCapture: 'failed',
+			reviewReasons: ['kit-finisher-field-write-failed'],
+		})
 		const retry = await recordValuePathAnswerProgression({
 			...progression,
 			now: '2026-07-18T11:10:00.000Z',
 		})
-		expect(retry).toMatchObject({ status: 'recorded', finisherCapture: 'written' })
+		expect(retry).toMatchObject({
+			status: 'recorded',
+			finisherCapture: 'written',
+		})
 		expect(updateSubscriberFields).toHaveBeenLastCalledWith(
 			expect.objectContaining({
 				fields: expect.objectContaining({
@@ -2440,8 +2465,7 @@ describe('subscriber marketing value path foundation', () => {
 				page.optionValue === 'other',
 		)
 		expect(email).toMatchObject({
-			body:
-				'You did it. Seven lessons, start to finish. Most people never finish things like this. You did.',
+			body: 'You did it. Seven lessons, start to finish. Most people never finish things like this. You did.',
 			certificateLink: undefined,
 			waitlistLine:
 				"Click your answer and your certificate is on the other side. When the next crash course opens, you'll be the first to know.",
@@ -2462,7 +2486,9 @@ describe('subscriber marketing value path foundation', () => {
 			captureFieldKey: 'aih_finisher_segment',
 			captureDateFieldKey: 'aih_next_course_waitlist_at',
 		})
-		expect(preview.warnings).not.toContain(`duplicate-page-slug:${certificateSlug}`)
+		expect(preview.warnings).not.toContain(
+			`duplicate-page-slug:${certificateSlug}`,
+		)
 		const qa = previewSkillsWorkflowValuePathQa({
 			preview,
 			individualSequenceMdx: individualSequence,
@@ -2504,12 +2530,9 @@ describe('subscriber marketing value path foundation', () => {
 		expect(roundTrippedVariants.map((page) => page!.fields.position)).toEqual([
 			3, 4, 5, 6,
 		])
-		expect(roundTrippedVariants.map((page) => page!.fields.optionValue)).toEqual([
-			'shipping',
-			'day-job',
-			'exploring',
-			'other',
-		])
+		expect(
+			roundTrippedVariants.map((page) => page!.fields.optionValue),
+		).toEqual(['shipping', 'day-job', 'exploring', 'other'])
 
 		const duplicateVariant = `<AnswerPage id="email-7-finisher-segment.duplicate" slug="${certificateSlug}" emailId="email-7" surveyId="email-7-finisher-segment" optionValue="shipping" captureFieldKey="aih_finisher_segment" captureDateFieldKey="aih_next_course_waitlist_at"><Headline>Wrong duplicate.</Headline></AnswerPage>`
 		const duplicatePreview = previewValuePathContentImport({
@@ -5595,7 +5618,9 @@ describe('Skills Newsletter Path Entry', () => {
 			gclid: 'TEST_email_course_signup',
 			utmCampaign: 'email-course-warmup',
 		})
-		expect(repository.contacts.get(first.contactId)?.optInAttribution).toMatchObject({
+		expect(
+			repository.contacts.get(first.contactId)?.optInAttribution,
+		).toMatchObject({
 			gclid: 'TEST_email_course_signup',
 		})
 		const shadow = previewShadowFields({
@@ -5620,10 +5645,37 @@ describe('Skills Newsletter Path Entry', () => {
 
 	it('adds first attribution to an existing Kit Contact and ContactState', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
-		await captureNormalizedContactEvent({ repository, event: normalizeContactEvent({ provider: 'kit', providerEventId: 'older-event', eventType: 'kit.imported', occurredAt: '2026-07-13T12:00:00.000Z', email: input.email, externalId: input.kitSubscriberId, message: 'existing subscriber' }) })
-		const result = await enterSkillsNewsletterSubscriber({ repository, allowlist: rollingAllowlist, input, allowWrite: false })
-		expect(repository.contacts.get(result.contactId)?.optInAttribution).toMatchObject({ gclid: 'TEST_email_course_signup', subscribedAt: input.subscribedAt })
-		expect((await repository.findCurrentContactState(result.contactId))?.optInAttribution).toMatchObject({ gclid: 'TEST_email_course_signup', subscribedAt: input.subscribedAt })
+		await captureNormalizedContactEvent({
+			repository,
+			event: normalizeContactEvent({
+				provider: 'kit',
+				providerEventId: 'older-event',
+				eventType: 'kit.imported',
+				occurredAt: '2026-07-13T12:00:00.000Z',
+				email: input.email,
+				externalId: input.kitSubscriberId,
+				message: 'existing subscriber',
+			}),
+		})
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: false,
+		})
+		expect(
+			repository.contacts.get(result.contactId)?.optInAttribution,
+		).toMatchObject({
+			gclid: 'TEST_email_course_signup',
+			subscribedAt: input.subscribedAt,
+		})
+		expect(
+			(await repository.findCurrentContactState(result.contactId))
+				?.optInAttribution,
+		).toMatchObject({
+			gclid: 'TEST_email_course_signup',
+			subscribedAt: input.subscribedAt,
+		})
 	})
 
 	it('captures the signup but blocks path entry unless rolling authorization is active', async () => {

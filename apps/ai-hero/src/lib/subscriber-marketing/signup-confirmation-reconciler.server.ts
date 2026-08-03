@@ -1,5 +1,5 @@
 import { db } from '@/db'
-import { contact, providerIdentity } from '@/db/schema'
+import { contact, contactEvent, providerIdentity } from '@/db/schema'
 import {
 	buildSignupConfirmationReconciliationPlan,
 	buildSignupGapPreview,
@@ -9,6 +9,7 @@ import {
 	type SignupGapKitSubscriber,
 	type SignupGapKitSubscriberState,
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
+import { SKILLS_WORKFLOW_VALUE_PATH } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 import { and, eq, inArray } from 'drizzle-orm'
 
 export const SKILLS_NEWSLETTER_FORM_ID = 9376133
@@ -65,6 +66,7 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 	)
 	const contactEmails = new Set<string>()
 	const matchedSubscriberIds = new Set<string>()
+	const courseEntryKitSubscriberIds = new Set<string>()
 
 	for (const emailChunk of chunk(emails, 500)) {
 		const rows = await db
@@ -77,7 +79,7 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 		}
 	}
 	for (const idChunk of chunk(subscriberIds, 500)) {
-		const rows = await db
+		const identityRows = await db
 			.select({ externalId: providerIdentity.externalId })
 			.from(providerIdentity)
 			.where(
@@ -86,12 +88,35 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 					inArray(providerIdentity.externalId, idChunk),
 				),
 			)
-		for (const row of rows) matchedSubscriberIds.add(row.externalId)
+		for (const row of identityRows) matchedSubscriberIds.add(row.externalId)
+
+		const entryRows = await db
+			.select({ externalId: providerIdentity.externalId })
+			.from(providerIdentity)
+			.innerJoin(
+				contactEvent,
+				eq(contactEvent.contactId, providerIdentity.contactId),
+			)
+			.where(
+				and(
+					eq(providerIdentity.provider, 'kit'),
+					inArray(providerIdentity.externalId, idChunk),
+					eq(contactEvent.eventType, 'value-path.entered'),
+					eq(
+						contactEvent.providerReference,
+						`value-path:${SKILLS_WORKFLOW_VALUE_PATH}`,
+					),
+				),
+			)
+		for (const row of entryRows) {
+			courseEntryKitSubscriberIds.add(row.externalId)
+		}
 	}
 
 	return {
 		contactEmails,
 		kitSubscriberIds: matchedSubscriberIds,
+		courseEntryKitSubscriberIds,
 	}
 }
 
@@ -179,7 +204,13 @@ function parseKitFormSubscribers(payload: unknown): KitFormSubscriberRecord[] {
 			stringField(subscriber?.subscribed_at) ??
 			stringField(asRecord(subscriber?.subscription)?.created_at) ??
 			createdAt
-		if (!id || !email || !createdAt || !addedAt || !isKitSubscriberState(state)) {
+		if (
+			!id ||
+			!email ||
+			!createdAt ||
+			!addedAt ||
+			!isKitSubscriberState(state)
+		) {
 			return []
 		}
 		return [

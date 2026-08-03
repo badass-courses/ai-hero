@@ -17,6 +17,7 @@ export type SignupGapKitSubscriber = {
 	email: string
 	firstName?: string
 	createdAt: string
+	addedAt: string
 	state: SignupGapKitSubscriberState
 	fields?: Record<string, unknown>
 }
@@ -24,6 +25,7 @@ export type SignupGapKitSubscriber = {
 export type SignupGapIdentityMatches = {
 	contactEmails: ReadonlySet<string>
 	kitSubscriberIds: ReadonlySet<string>
+	courseEntryKitSubscriberIds: ReadonlySet<string>
 }
 
 export type SignupGapPreviewCandidate = {
@@ -31,6 +33,7 @@ export type SignupGapPreviewCandidate = {
 	email: string
 	firstName?: string
 	createdAt: string
+	addedAt: string
 	maskedEmail: string
 	excludedSynthetic: boolean
 	exclusionReason?: 'synthetic-address'
@@ -51,6 +54,7 @@ export type SignupGapPreview = {
 		withExistingContact: number
 		withExistingProviderIdentity: number
 		withExistingIdentity: number
+		withExistingCourseEntry: number
 		gapCandidates: number
 		excludedSynthetic: number
 		unconfirmed: number
@@ -188,17 +192,18 @@ export function buildSignupGapPreview(args: {
 }): SignupGapPreview {
 	const window = parseSignupGapWindow(args.from, args.to)
 	const inWindow = args.subscribers.filter((subscriber) => {
-		const createdAt = Date.parse(subscriber.createdAt)
-		if (Number.isNaN(createdAt)) {
+		const addedAt = Date.parse(subscriber.addedAt)
+		if (Number.isNaN(addedAt)) {
 			throw new Error(
-				`Kit subscriber ${subscriber.kitSubscriberId} has an invalid created_at timestamp`,
+				`Kit subscriber ${subscriber.kitSubscriberId} has an invalid added_at timestamp`,
 			)
 		}
-		return createdAt >= window.fromMs && createdAt < window.toMs
+		return addedAt >= window.fromMs && addedAt < window.toMs
 	})
 
 	const stateBreakdown = {
-		active: inWindow.filter((subscriber) => subscriber.state === 'active').length,
+		active: inWindow.filter((subscriber) => subscriber.state === 'active')
+			.length,
 		inactiveUnconfirmed: inWindow.filter(
 			(subscriber) => subscriber.state === 'inactive',
 		).length,
@@ -206,12 +211,14 @@ export function buildSignupGapPreview(args: {
 			.length,
 		bounced: inWindow.filter((subscriber) => subscriber.state === 'bounced')
 			.length,
-		complained: inWindow.filter((subscriber) => subscriber.state === 'complained')
-			.length,
+		complained: inWindow.filter(
+			(subscriber) => subscriber.state === 'complained',
+		).length,
 	}
 	let withExistingContact = 0
 	let withExistingProviderIdentity = 0
 	let withExistingIdentity = 0
+	let withExistingCourseEntry = 0
 	const candidates: SignupGapPreviewCandidate[] = []
 
 	for (const subscriber of inWindow) {
@@ -228,8 +235,13 @@ export function buildSignupGapPreview(args: {
 		)
 		if (hasContact) withExistingContact += 1
 		if (hasProviderIdentity) withExistingProviderIdentity += 1
-		if (hasContact || hasProviderIdentity) {
-			withExistingIdentity += 1
+		if (hasContact || hasProviderIdentity) withExistingIdentity += 1
+		if (
+			args.identityMatches.courseEntryKitSubscriberIds.has(
+				subscriber.kitSubscriberId,
+			)
+		) {
+			withExistingCourseEntry += 1
 			continue
 		}
 
@@ -240,6 +252,7 @@ export function buildSignupGapPreview(args: {
 			email,
 			firstName: subscriber.firstName,
 			createdAt: new Date(subscriber.createdAt).toISOString(),
+			addedAt: new Date(subscriber.addedAt).toISOString(),
 			maskedEmail: maskSignupGapEmail(email),
 			excludedSynthetic,
 			...(excludedSynthetic
@@ -267,6 +280,7 @@ export function buildSignupGapPreview(args: {
 			withExistingContact,
 			withExistingProviderIdentity,
 			withExistingIdentity,
+			withExistingCourseEntry,
 			gapCandidates: candidates.length,
 			excludedSynthetic,
 			unconfirmed: stateBreakdown.inactiveUnconfirmed,
@@ -300,7 +314,9 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 	source?: string
 }): SignupConfirmationReconciliationPlan {
 	if (!Number.isInteger(args.limit) || args.limit < 1) {
-		throw new Error('Confirmation reconciliation limit must be a positive integer')
+		throw new Error(
+			'Confirmation reconciliation limit must be a positive integer',
+		)
 	}
 	const replayable = args.preview.candidates.filter(
 		(candidate) => !candidate.excludedSynthetic,
@@ -327,7 +343,7 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 				name: candidate.firstName,
 				formId: args.preview.formId,
 				source: args.source ?? 'kit-confirmation-reconciler',
-				subscribedAt: candidate.createdAt,
+				subscribedAt: candidate.addedAt,
 				...(candidate.optInAttribution
 					? { optInAttribution: candidate.optInAttribution }
 					: {}),
@@ -339,7 +355,9 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 export async function replaySignupGap(args: {
 	preview: SignupGapPreview
 	source?: string
-	hasExistingIdentity: (candidate: SignupGapPreviewCandidate) => Promise<boolean>
+	hasExistingCourseEntry: (
+		candidate: SignupGapPreviewCandidate,
+	) => Promise<boolean>
 	emit: (event: SkillsNewsletterSubscribed) => Promise<unknown>
 }): Promise<SignupGapReplayReceipt> {
 	let excludedSynthetic = 0
@@ -352,7 +370,7 @@ export async function replaySignupGap(args: {
 			excludedSynthetic += 1
 			continue
 		}
-		if (await args.hasExistingIdentity(candidate)) {
+		if (await args.hasExistingCourseEntry(candidate)) {
 			skippedExisting += 1
 			continue
 		}
@@ -373,7 +391,7 @@ export async function replaySignupGap(args: {
 				name: candidate.firstName,
 				formId: args.preview.formId,
 				source: args.source ?? 'signup-gap-replay',
-				subscribedAt: candidate.createdAt,
+				subscribedAt: candidate.addedAt,
 				...(candidate.optInAttribution
 					? { optInAttribution: candidate.optInAttribution }
 					: {}),
@@ -403,8 +421,7 @@ export async function replaySignupGap(args: {
 			skippedExisting,
 			emitted,
 		},
-		note:
-			'Each emitted replay enters the live drip and leads to a real email-0 send.',
+		note: 'Each emitted replay enters the live drip and leads to a real email-0 send.',
 	}
 }
 
@@ -412,10 +429,11 @@ function signupGapLiveness(
 	candidates: readonly SignupGapPreviewCandidate[],
 	generatedAt: string,
 ) {
-	const replayable = candidates.filter((candidate) => !candidate.excludedSynthetic)
-	const oldestCandidateSubscriberCreatedAt = replayable
-		.map((candidate) => candidate.createdAt)
-		.sort()[0] ?? null
+	const replayable = candidates.filter(
+		(candidate) => !candidate.excludedSynthetic,
+	)
+	const oldestCandidateSubscriberCreatedAt =
+		replayable.map((candidate) => candidate.createdAt).sort()[0] ?? null
 	return {
 		workSeen: replayable.length,
 		workDone: 0,
@@ -441,7 +459,8 @@ function signupGapLiveness(
 export function isSyntheticSignupGapEmail(email: string) {
 	const local = normalizeSignupGapEmail(email)?.split('@')[0]
 	return Boolean(
-		local && SYNTHETIC_LOCAL_PREFIXES.some((prefix) => local.startsWith(prefix)),
+		local &&
+		SYNTHETIC_LOCAL_PREFIXES.some((prefix) => local.startsWith(prefix)),
 	)
 }
 
@@ -468,7 +487,9 @@ function parseSignupGapWindow(from: string, to: string) {
 	const fromMs = Date.parse(from)
 	const toMs = Date.parse(to)
 	if (Number.isNaN(fromMs) || Number.isNaN(toMs) || fromMs >= toMs) {
-		throw new Error('--from and --to must be valid timestamps with --from before --to')
+		throw new Error(
+			'--from and --to must be valid timestamps with --from before --to',
+		)
 	}
 	return {
 		from: new Date(fromMs).toISOString(),
