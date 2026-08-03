@@ -27,3 +27,8 @@ export const TagSchema = z.object({
 })
 
 export type Tag = z.infer<typeof TagSchema>
+
+export const PostTagInputSchema = z.object({
+	postId: z.string(),
+	tagId: z.string(),
+})

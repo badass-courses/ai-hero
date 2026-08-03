@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { withSkill } from '@/server/with-skill'
+import { CompleteMultipartUploadSchema } from '@/video-uploader/multipart-contracts'
 import { completeMultipartUpload } from '@/video-uploader/multipart-s3'
 import { z } from 'zod'
-
-const CompleteSchema = z.object({
-	key: z.string().min(1),
-	uploadId: z.string().min(1),
-	parts: z.array(
-		z.object({
-			partNumber: z.number().int().positive(),
-			etag: z.string().min(1),
-		}),
-	),
-})
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
@@ -37,7 +27,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 
 	try {
 		const body = await request.json()
-		const validated = CompleteSchema.parse(body)
+		const validated = CompleteMultipartUploadSchema.parse(body)
 		const result = await completeMultipartUpload(validated)
 
 		return NextResponse.json(result, { headers: corsHeaders })

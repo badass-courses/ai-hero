@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { getPage } from '@/lib/pages-query'
-import { PageSchema } from '@/lib/pages'
+import { PageSchema, UpdatePageSchema } from '@/lib/pages'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -19,32 +19,6 @@ const corsHeaders = {
 export async function OPTIONS() {
 	return NextResponse.json({}, { headers: corsHeaders })
 }
-
-const UpdatePageSchema = z.object({
-	fields: z
-		.object({
-			title: z.string().min(2).max(90).optional(),
-			body: z.string().nullable().optional(),
-			description: z.string().optional(),
-			slug: z.string().optional(),
-			state: z
-				.union([
-					z.literal('draft'),
-					z.literal('published'),
-					z.literal('archived'),
-					z.literal('deleted'),
-				])
-				.optional(),
-			visibility: z
-				.union([
-					z.literal('public'),
-					z.literal('private'),
-					z.literal('unlisted'),
-				])
-				.optional(),
-		})
-		.partial(),
-})
 
 const getPagesHandler = async (request: NextRequest) => {
 	const { searchParams } = new URL(request.url)
@@ -127,7 +101,10 @@ const updatePageHandler = async (request: NextRequest) => {
 		}
 
 		if (ability.cannot('update', 'Content')) {
-			await log.warn('api.pages.put.forbidden', { userId: user.id, pageId: id })
+			await log.warn('api.pages.put.forbidden', {
+				userId: user.id,
+				pageId: id,
+			})
 			return NextResponse.json(
 				{ error: 'Forbidden: Insufficient permissions' },
 				{ status: 403, headers: corsHeaders },

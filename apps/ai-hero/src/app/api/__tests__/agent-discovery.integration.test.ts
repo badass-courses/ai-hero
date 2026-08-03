@@ -153,7 +153,7 @@ describe('AI Hero discovery surfaces', () => {
 		).toContain('aih_pat_*')
 		expect(
 			document.components.securitySchemes.bearerAuth.description,
-		).toContain('admin device tokens')
+		).toContain('role-derived device tokens')
 
 		const contentOperationCount = Object.entries(document.paths)
 			.filter(([path]) => !path.startsWith('/api/personal-access-tokens'))
@@ -162,7 +162,7 @@ describe('AI Hero discovery surfaces', () => {
 					['get', 'post', 'put', 'patch', 'delete', 'options'].includes(key),
 				),
 			).length
-		expect(contentOperationCount).toBe(50)
+		expect(contentOperationCount).toBe(52)
 		expect(document.paths['/api/posts'].get).toMatchObject({
 			security: [{ bearerAuth: [] }],
 			'x-required-scopes': ['content:read'],
@@ -170,7 +170,8 @@ describe('AI Hero discovery surfaces', () => {
 		expect(document.paths['/api/posts'].post).toMatchObject({
 			security: [{ bearerAuth: [] }],
 			'x-required-scopes': [],
-			'x-agent-token-policy': expect.stringContaining('403'),
+			'x-required-ability': 'create Content',
+			'x-agent-token-policy': expect.stringContaining('Scoped aih_pat_*'),
 		})
 		expect(document.paths['/api/search'].get.security).toEqual([
 			{},
@@ -182,10 +183,28 @@ describe('AI Hero discovery surfaces', () => {
 		expect(document.paths['/api/search'].get.responses).not.toHaveProperty(
 			'403',
 		)
-		expect(document.paths['/api/memory'].get.responses).not.toHaveProperty(
-			'401',
+		expect(document.paths).not.toHaveProperty('/api/memory')
+		expect(document.paths).not.toHaveProperty('/api/surveys')
+		expect(document.paths).not.toHaveProperty(
+			'/api/products/{productId}/enrollment',
 		)
-		expect(document.paths['/api/memory'].get.responses).toHaveProperty('403')
+		expect(document.paths['/api/shortlinks'].get).toMatchObject({
+			'x-required-ability': 'manage all',
+			'x-agent-token-policy': expect.stringContaining('Scoped aih_pat_*'),
+		})
+		expect(document.paths['/api/tags'].get.security).toEqual([])
+		expect(
+			document.paths['/api/pages'].put.requestBody.content['application/json']
+				.schema,
+		).toEqual({ $ref: '#/components/schemas/UpdatePageRequest' })
+		expect(
+			document.paths['/api/skills/changelog'].post.responses['201'].content[
+				'application/json'
+			].schema,
+		).toEqual({ $ref: '#/components/schemas/SkillChangelogSuccessResponse' })
+		expect(
+			document.components.schemas.SkillChangelogSuccessResponse.allOf[0],
+		).toEqual({ $ref: '#/components/schemas/CommandSuccessEnvelope' })
 
 		const tokenCollection = document.paths['/api/personal-access-tokens']
 		expect(
@@ -201,7 +220,9 @@ describe('AI Hero discovery surfaces', () => {
 			additionalProperties: false,
 			required: expect.arrayContaining(['token', 'id', 'scopes']),
 			properties: {
-				token: expect.objectContaining({ pattern: '^aih_pat_' }),
+				token: expect.objectContaining({
+					pattern: expect.stringContaining('aih'),
+				}),
 			},
 		})
 		expect(mintResponseSchema).not.toHaveProperty('allOf')

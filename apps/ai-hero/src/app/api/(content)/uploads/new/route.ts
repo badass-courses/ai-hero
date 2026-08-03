@@ -1,22 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { inngest } from '@/inngest/inngest.server'
+import { UploadBodySchema } from '@/lib/upload-contracts'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log, serializeError } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
-import { z } from 'zod'
-
 import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/inngest/video-processing/events/event-video-uploaded'
-
-// Zod schema for the request body
-const UploadBodySchema = z.object({
-	file: z.object({
-		url: z.string().url(),
-		name: z.string().optional(),
-	}),
-	metadata: z.object({
-		parentResourceId: z.string(),
-	}),
-})
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
