@@ -4,7 +4,7 @@ import { personalAccessToken } from '@/db/schema'
 import { env } from '@/env.mjs'
 import {
 	createPersonalAccessToken,
-	type PersonalAccessTokenScope,
+	PERSONAL_ACCESS_TOKEN_SCOPES,
 } from '@/lib/personal-access-tokens'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
@@ -18,15 +18,9 @@ const corsHeaders = {
 	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
-const personalAccessTokenScopes = [
-	'analytics:read',
-	'analytics:chat',
-	'content:read',
-] as const satisfies readonly PersonalAccessTokenScope[]
-
 const MintPersonalAccessTokenSchema = z.object({
 	name: z.string().trim().min(1).max(100),
-	scopes: z.array(z.enum(personalAccessTokenScopes)).min(1),
+	scopes: z.array(z.enum(PERSONAL_ACCESS_TOKEN_SCOPES)).min(1),
 	expiresAt: z
 		.string()
 		.datetime({ offset: true })

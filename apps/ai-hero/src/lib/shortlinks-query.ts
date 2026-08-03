@@ -7,6 +7,12 @@ import { db } from '@/db'
 import { shortlink, shortlinkAttribution, shortlinkClick } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import {
+	canCreateShortlink,
+	canDeleteShortlink,
+	canManageShortlinks,
+	canUpdateShortlink,
+} from '@/server/pat-scopes'
 import { redis } from '@/server/redis-client'
 import { and, count, desc, eq, like, or, sql } from 'drizzle-orm'
 import { customAlphabet } from 'nanoid'
@@ -76,7 +82,7 @@ export async function getShortlinks(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink[]> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('manage', 'all')) {
+	if (!canManageShortlinks(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -166,7 +172,7 @@ export async function getShortlinkById(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink | null> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('manage', 'all')) {
+	if (!canManageShortlinks(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -264,7 +270,7 @@ export async function createShortlink(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink> {
 	const { ability, userId } = await resolveShortlinkAuth(auth)
-	if (!ability.can('create', 'Content')) {
+	if (!canCreateShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -339,7 +345,7 @@ export async function getOrCreateShortlinkForPage(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('create', 'Content')) {
+	if (!canCreateShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -369,7 +375,7 @@ export async function updateShortlink(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('update', 'Content')) {
+	if (!canUpdateShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -450,7 +456,7 @@ export async function deleteShortlink(
 	auth?: ShortlinkAuthContext,
 ): Promise<void> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('delete', 'Content')) {
+	if (!canDeleteShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 

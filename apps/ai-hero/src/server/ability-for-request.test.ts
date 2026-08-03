@@ -129,6 +129,30 @@ describe('getUserAbilityForRequest', () => {
 		)
 	})
 
+	it('accepts a write-only PAT without inheriting the owner admin role', async () => {
+		const created = createPersonalAccessToken({
+			id: 'pat_write',
+			userId: user.id,
+			name: 'Content writer',
+			scopes: ['content:write'],
+			hashSecret,
+			publicId: 'writepublic123',
+			secret: 'writesecret456',
+		})
+		mocks.personalAccessTokenFindFirst.mockResolvedValue({
+			...created.record,
+			user,
+		})
+
+		const auth = await getUserAbilityForRequest(request(created.rawToken))
+
+		expect(auth.authMethod).toBe('personal-access-token')
+		expect(auth.ability.can('create', 'ContentDraft')).toBe(true)
+		expect(auth.ability.can('update', 'ContentDraft')).toBe(true)
+		expect(auth.ability.cannot('create', 'Content')).toBe(true)
+		expect(auth.ability.cannot('manage', 'all')).toBe(true)
+	})
+
 	it('requires the Bearer scheme for PATs without changing device-token parsing', async () => {
 		const fixture = personalAccessTokenFixture()
 
@@ -181,11 +205,7 @@ describe('getUserAbilityForRequest', () => {
 			{ expiresAt: new Date('2020-07-17T12:00:00.000Z') },
 			'denied:expired',
 		],
-		[
-			'missing content scope',
-			{ scopes: ['analytics:read'] },
-			'denied:missing-scope',
-		],
+		['missing recognized scope', { scopes: [] }, 'denied:missing-scope'],
 	] as const)('denies and logs %s PATs', async (_label, overrides, outcome) => {
 		const fixture = personalAccessTokenFixture()
 		mocks.personalAccessTokenFindFirst.mockResolvedValue({

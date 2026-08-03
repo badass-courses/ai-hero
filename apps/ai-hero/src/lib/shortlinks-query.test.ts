@@ -6,6 +6,8 @@ import {
 	recordClick,
 	updateShortlink,
 } from './shortlinks-query'
+import { buildPersonalAccessTokenAbility } from '@/server/pat-scopes'
+
 import { ShortlinkMetadataSchema } from './shortlinks-types'
 
 const mocks = vi.hoisted(() => {
@@ -77,6 +79,10 @@ const allowedAuth = {
 	ability: {
 		can: () => true,
 	} as any,
+}
+const scopedShortlinkAuth = {
+	ability: buildPersonalAccessTokenAbility(['shortlinks:manage']),
+	userId: 'user_1',
 }
 
 const metadataV1 = {
@@ -170,7 +176,7 @@ describe('shortlink metadata persistence', () => {
 				description: 'Skills share',
 				metadata: valuePathMetadata,
 			},
-			allowedAuth,
+			scopedShortlinkAuth,
 		)
 
 		expect(mocks.insertValues).toHaveBeenCalledWith(
@@ -197,7 +203,7 @@ describe('shortlink metadata persistence', () => {
 
 		await updateShortlink(
 			{ id: 'shortlink_123', metadata: valuePathMetadata },
-			allowedAuth,
+			scopedShortlinkAuth,
 		)
 
 		expect(mocks.updateSet).toHaveBeenCalledWith(

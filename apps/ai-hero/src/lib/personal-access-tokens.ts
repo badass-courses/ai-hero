@@ -9,11 +9,19 @@ import { guid } from '@coursebuilder/utils/guid'
 
 export const PERSONAL_ACCESS_TOKEN_PREFIX = 'aih_pat' as const
 export const ANALYTICS_READ_SCOPE = 'analytics:read' as const
+export const PERSONAL_ACCESS_TOKEN_SCOPES = [
+	ANALYTICS_READ_SCOPE,
+	'analytics:chat',
+	'content:read',
+	'content:write',
+	'content:publish',
+	'content:relations',
+	'media:upload',
+	'shortlinks:manage',
+] as const
 
 export type PersonalAccessTokenScope =
-	| typeof ANALYTICS_READ_SCOPE
-	| 'analytics:chat'
-	| 'content:read'
+	(typeof PERSONAL_ACCESS_TOKEN_SCOPES)[number]
 
 export type PersonalAccessTokenRecord = {
 	id: string

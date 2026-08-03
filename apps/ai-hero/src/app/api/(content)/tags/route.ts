@@ -3,6 +3,7 @@ import { TagSchema } from '@/lib/tags'
 import { createTag, getTags } from '@/lib/tags-query'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import { canCreateContentRelation } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 import { revalidateTag } from 'next/cache'
 
@@ -63,7 +64,7 @@ const createTagHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (!ability.can('create', 'Content')) {
+		if (!canCreateContentRelation(ability)) {
 			await log.warn('api.tags.post.forbidden', { userId: user.id })
 			return NextResponse.json(
 				{ error: 'Forbidden' },
