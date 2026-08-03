@@ -189,7 +189,11 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 	},
 
 	async findAppliedRunByRevision(bindingId, courseVersionId) {
-		const row = await db.query.courseSyncRun.findFirst({
+		// Sorting full rows drags the multi-hundred-KB `plan` JSON through
+		// MySQL's 256KB sort buffer (errno 1038); sort a slim projection and
+		// fetch the winner by primary key instead.
+		const pointer = await db.query.courseSyncRun.findFirst({
+			columns: { runId: true },
 			where: and(
 				eq(courseSyncRun.bindingId, bindingId),
 				eq(courseSyncRun.courseVersionId, courseVersionId),
@@ -198,7 +202,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			),
 			orderBy: desc(courseSyncRun.updatedAt),
 		})
-		return row ? runFromRow(row) : null
+		return pointer ? readRun(pointer.runId) : null
 	},
 
 	async findFrozenAsset(bindingId, producerSha256, bytes) {
@@ -288,7 +292,10 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 	},
 
 	async getLastAppliedRun(bindingId) {
-		const row = await db.query.courseSyncRun.findFirst({
+		// Same sort-buffer hazard as findAppliedRunByRevision: never ORDER BY
+		// over rows that carry the `plan` JSON.
+		const pointer = await db.query.courseSyncRun.findFirst({
+			columns: { runId: true },
 			where: and(
 				eq(courseSyncRun.bindingId, bindingId),
 				eq(courseSyncRun.state, 'applied'),
@@ -296,7 +303,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			),
 			orderBy: desc(courseSyncRun.updatedAt),
 		})
-		return row ? runFromRow(row) : null
+		return pointer ? readRun(pointer.runId) : null
 	},
 
 	async getTargetResources(resourceIds) {
@@ -758,16 +765,18 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						rollbackOfRunId: runId,
 					},
 				}
-				const latest = await trx.query.contentResourceVersion.findFirst({
-					where: eq(contentResourceVersion.resourceId, receipt.resourceId),
-					orderBy: desc(contentResourceVersion.versionNumber),
-				})
+				// Version rows carry large `fields` JSON; aggregate instead of
+				// sorting them through the MySQL sort buffer.
+				const [latest] = await trx
+					.select({ versionNumber: max(contentResourceVersion.versionNumber) })
+					.from(contentResourceVersion)
+					.where(eq(contentResourceVersion.resourceId, receipt.resourceId))
 				const versionId = `version~${sha256(stableJson({ compensatingRunId, resourceId: receipt.resourceId, fields }))}`
 				await trx.insert(contentResourceVersion).values({
 					id: versionId,
 					resourceId: receipt.resourceId,
 					parentVersionId: current.currentVersionId,
-					versionNumber: (latest?.versionNumber ?? 0) + 1,
+					versionNumber: Number(latest?.versionNumber ?? 0) + 1,
 					fields,
 					createdById,
 				})
