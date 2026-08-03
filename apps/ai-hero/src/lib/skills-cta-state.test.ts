@@ -133,6 +133,47 @@ describe('resolveSkillsCtaState', () => {
 		)
 	})
 
+	it('does not remember a timed-out lookup', async () => {
+		// A timeout must land in the same no-cache path as a rejection — the
+		// earlier shape resolved to null on timeout, which read as "not
+		// subscribed" and got pinned for the TTL.
+		vi.useFakeTimers()
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getSubscriberByEmail.mockReturnValueOnce(new Promise(() => {}))
+
+		const timedOut = resolveSkillsCtaState('slow@example.com')
+		await vi.advanceTimersByTimeAsync(1_500)
+		await expect(timedOut).resolves.toBe('account')
+
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			state: 'active',
+			fields: {},
+		})
+		await expect(resolveSkillsCtaState('slow@example.com')).resolves.toBe(
+			'tag-me',
+		)
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledTimes(2)
+	})
+
+	it('shares one memo slot across casings of the same address', async () => {
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			state: 'active',
+			fields: {},
+		})
+
+		await expect(resolveSkillsCtaState('Reader@Example.com')).resolves.toBe(
+			'tag-me',
+		)
+		await expect(resolveSkillsCtaState('reader@example.com')).resolves.toBe(
+			'tag-me',
+		)
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledTimes(1)
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledWith(
+			'reader@example.com',
+		)
+	})
+
 	it('does not remember a failed lookup', async () => {
 		// A Kit outage answered "account" for this request — pinning that for
 		// the TTL would misdraw the ask for a genuinely subscribed reader.

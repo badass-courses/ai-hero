@@ -93,8 +93,12 @@ export async function resolveSkillsCtaState(
 	// which writes `aih_course_started_at` after the browser's cookie was saved.
 	// A local `tag-me` answer is therefore not final: refresh it from Kit using
 	// whichever trusted identity we have. This also repairs legacy/oversized
-	// subscriber cookies without exposing the address to the client.
-	const email = cookieRecord?.email_address ?? sessionEmail
+	// subscriber cookies without exposing the address to the client. Lowercased:
+	// Kit matches addresses case-insensitively, and the memo key must too, or
+	// the same reader occupies two slots and hits Kit twice.
+	const email = (cookieRecord?.email_address ?? sessionEmail)
+		?.trim()
+		.toLowerCase()
 	if (!email) return cookieState ?? 'fresh'
 
 	// Signed in with no usable cookie: ask Kit who they are rather than falling
@@ -127,13 +131,20 @@ export async function resolveSkillsCtaState(
 	return cookieState ?? (sessionEmail ? 'account' : 'fresh')
 }
 
+/**
+ * Rejects on timeout — it must land in the caller's catch, not resolve to a
+ * value `fromRecord` would read as "not subscribed" and the memo would pin.
+ */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
 	let timeout: ReturnType<typeof setTimeout> | undefined
 	try {
-		return await Promise.race<T | null>([
+		return await Promise.race<T>([
 			promise,
-			new Promise<null>((resolve) => {
-				timeout = setTimeout(() => resolve(null), timeoutMs)
+			new Promise<never>((_, reject) => {
+				timeout = setTimeout(
+					() => reject(new Error('kit lookup timed out')),
+					timeoutMs,
+				)
 			}),
 		])
 	} finally {
