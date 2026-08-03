@@ -177,6 +177,10 @@ function SkillRow({ slug, title, description }: SkillSetItem) {
 	return (
 		<Link
 			href={`/${slug}`}
+			// The catalog puts ~22 of these rows in the viewport at once, and each
+			// viewport prefetch was a full dynamic render Next never reuses on
+			// click — see `SidebarNavLink`, same 2026-08-03 measurement.
+			prefetch={false}
 			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			<span className="flex min-w-0 flex-1 flex-col gap-0.5">

@@ -156,6 +156,10 @@ export function SeriesLessons({
 					>
 						<Link
 							href={overviewHref}
+							// Same rule as `SidebarNavLink`: dozens of these rows render
+							// per hub page, viewport prefetch was a dynamic render per row
+							// that Next never reuses on click.
+							prefetch={false}
 							// This row, not the group header above it, is the one that
 							// points at the list's own page and shows the active fill.
 							aria-current={overviewActive ? 'page' : undefined}
@@ -339,6 +343,8 @@ function LessonRow({
 			>
 				<Link
 					href={`/${slug}`}
+					// See the Overview row above — no viewport prefetch for nav rows.
+					prefetch={false}
 					aria-current={isActive ? 'page' : undefined}
 					onClick={() =>
 						track('nav_link_clicked', {

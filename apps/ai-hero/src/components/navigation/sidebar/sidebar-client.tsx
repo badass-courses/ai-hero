@@ -157,6 +157,12 @@ export function SidebarNavLink({
 			>
 				<Link
 					href={href}
+					// The sidebar renders on every hub page with dozens of rows, and
+					// viewport prefetch fired a full dynamic RSC render per row — ~59
+					// requests per page view, some 503ing under the burst — for
+					// payloads Next never reuses on click (dynamic staleTime is 0).
+					// Measured 2026-08-03 while chasing matt's slow-sidebar report.
+					prefetch={false}
 					// Not when this row is an expanded series header: its "Overview"
 					// child is the row that points at this page and carries the
 					// highlight, so claiming it here put the accessible "you are
