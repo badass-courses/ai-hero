@@ -88,6 +88,9 @@ describe('toListNavData', () => {
 	it('drops every body, description and tag from the payload', () => {
 		const serialized = JSON.stringify(toListNavData(list))
 
+		// The KEY, not just this fixture's sample values: an empty-string body
+		// would sail past a value assertion.
+		expect(serialized).not.toContain('"body"')
 		expect(serialized).not.toContain('markdown body')
 		expect(serialized).not.toContain('the list landing body')
 		expect(serialized).not.toContain('description')
