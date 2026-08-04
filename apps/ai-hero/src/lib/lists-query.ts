@@ -204,10 +204,13 @@ export async function getListWithSections(listIdOrSlug: string) {
 	return listParsed.data
 }
 
+// Tagged 'posts' AND 'lists': the payload is a list tree, so it must refresh
+// both when a member post changes (title, publish state) and when the list
+// itself is edited — membership writes bust 'lists', not the whole post graph.
 const _getCachedListForPost = unstable_cache(
 	async (slugOrId: string) => getListForPost(slugOrId),
 	['posts-v3'],
-	{ revalidate: 3600, tags: ['posts'] },
+	{ revalidate: 3600, tags: ['posts', 'lists'] },
 )
 
 // Request-scoped on top of the cross-request cache — `/[post]`'s layout and
@@ -261,7 +264,9 @@ const _getCachedFilteredList = unstable_cache(
 		}
 	},
 	['posts-v3'],
-	{ revalidate: 3600, tags: ['posts'] },
+	// 'lists' beside 'posts' for the same reason as _getCachedListForPost: this
+	// caches a list tree, and list writes revalidate 'lists'.
+	{ revalidate: 3600, tags: ['posts', 'lists'] },
 )
 
 /**
@@ -473,6 +478,8 @@ export async function addPostToList({
 		metadata,
 	})
 
+	revalidateTag('lists', 'max')
+
 	return db.query.contentResourceResource.findFirst({
 		where: and(
 			eq(contentResourceResource.resourceOfId, listId),
@@ -549,6 +556,8 @@ export async function removePostFromList({
 				),
 			)
 	}
+
+	revalidateTag('lists', 'max')
 }
 
 export async function updateList(

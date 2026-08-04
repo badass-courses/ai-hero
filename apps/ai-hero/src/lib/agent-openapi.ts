@@ -2,6 +2,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 import type { ZodTypeAny } from 'zod'
 
 import {
+	AddListItemRequestSchema,
 	CommandPreflightResultSchema,
 	CompleteMultipartUploadResponseSchema,
 	CompleteMultipartUploadSchema,
@@ -15,8 +16,12 @@ import {
 	LessonReadResponseSchema,
 	LessonResponseSchema,
 	LessonUpdateRequestSchema,
+	ListItemLocationSchema,
+	ListItemRowSchema,
 	MintPersonalAccessTokenResponseSchema,
 	MintPersonalAccessTokenSchema,
+	MoveListItemsRequestSchema,
+	MoveListItemsResultSchema,
 	MultipartPartUrlResponseSchema,
 	NextActionSchema,
 	PageReadResponseSchema,
@@ -416,7 +421,7 @@ const contentPaths = {
 			operationId: 'getResources',
 			summary: 'Read sanitized content resources',
 			description:
-				'Return one resource by ?slugOrId= and optional ?type=. List-all is allowed only for ?type=list. Mux capability fields are removed recursively.',
+				'Return one resource by ?slugOrId= and optional ?type=. Carries two levels of children in position order, so a sectioned list shows what each section holds. List-all is allowed only for ?type=list. Mux capability fields are removed recursively.',
 			access: 'content-read',
 			parameters: [
 				queryParameter('slugOrId', 'Resource id or slug.'),
@@ -447,6 +452,62 @@ const contentPaths = {
 			requestSchema: 'ResourceCreateRequest',
 			responseSchema: 'ResourceResponse',
 			successStatus: 201,
+			extraResponses: commonErrorResponses,
+		}),
+	},
+	'/api/lists/{listId}/resources': {
+		parameters: [pathParameter('listId', "The list's id or its slug.")],
+		options: preflight('preflightListResources'),
+		post: contentOperation({
+			operationId: 'addResourceToList',
+			summary: 'Add a resource to a list or one of its sections',
+			description:
+				'Omit parentId to add at the top level; pass a SECTION id to nest under it (only sections parent, and never each other). Appends after the last sibling. 409 when the parent already holds the resource.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'AddListItemRequest',
+			responseSchema: 'ListItemRow',
+			successStatus: 201,
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response(
+					'The parent already holds this resource.',
+					schemaRef('ErrorResponse'),
+				),
+			},
+		}),
+		put: contentOperation({
+			operationId: 'moveListResources',
+			summary: 'Reorder list items or move them between sections',
+			description:
+				'Applies the whole batch in one transaction, then renumbers every touched parent densely — positions stay unique and gap free regardless of the positions sent, and the response lists every applied write, sibling renumbering included. Each resourceId may appear once. Omit parentId to reorder an item in place; pass the list id to pull it out of a section. Any invalid item fails the batch before anything is written.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'MoveListItemsRequest',
+			responseSchema: 'MoveListItemsResult',
+			extraResponses: commonErrorResponses,
+		}),
+		delete: contentOperation({
+			operationId: 'removeResourceFromList',
+			summary: 'Remove a resource from a list',
+			description:
+				'Removes one placement and answers with where it sat. When the resource sits in more than one place, parentId selects the placement; omitted, the top-level placement wins. 404 when the list does not hold it.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			parameters: [
+				queryParameter('resourceId', 'The resource to remove.', undefined, true),
+				queryParameter(
+					'parentId',
+					'Placement selector: the section id (or the list id) to remove from.',
+				),
+			],
+			responseSchema: 'ListItemLocation',
 			extraResponses: commonErrorResponses,
 		}),
 	},
@@ -879,6 +940,11 @@ const zodSchemas = {
 	TagListResponse: TagListResponseSchema,
 	PostTagInput: PostTagInputSchema,
 	PostTagMutationResponse: PostTagMutationResponseSchema,
+	AddListItemRequest: AddListItemRequestSchema,
+	MoveListItemsRequest: MoveListItemsRequestSchema,
+	ListItemRow: ListItemRowSchema,
+	ListItemLocation: ListItemLocationSchema,
+	MoveListItemsResult: MoveListItemsResultSchema,
 	UpdatePageRequest: UpdatePageSchema,
 	PageResponse: PageResponseSchema,
 	PageReadResponse: PageReadResponseSchema,

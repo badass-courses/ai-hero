@@ -1,94 +1,6 @@
-# Skill Recordings Course Builder POC
+# AI Hero
 
-This is an application that is primarily meant to be ran locally (for now)
-as a way to explore and experiment with gpt-4 prompt chaining as a "tool for
-thought"""
-
-Current State: https://www.loom.com/share/651287e8136a46429f46e6541e3dd0c2
-
-## TODO
-
-It's got a lot of moving parts 😅:
-
-- A database to store our data
-- An ORM to interact with our database
-- Authentication
-- Serverless Queueing
-- Email sending
-- Websockets
-- CMS
-
-![diagram of the stack](./public/stack.png)
-
-As a basis we used [T3 Stack](https://create.t3.gg/) to bootstrap the
-project using the NextAuth.js, Tailwind, tRPC, and Drizzle options.
-
-Drizzle is going to use Planetscale as the database, which will allow us to
-leverage edge functions.
-
-We are using the Next.js app router. We also need email so we will use
-Resend and react-email.
-
-Additionally, we are going to use Sanity.io for our CMS. This will allow us
-to create a simple CMS for defining dynamic chaining workflows and other things.
-
-This is kind of a chore, but it's not too bad. We need to set up accounts
-with:
-
-- [Planetscale](https://planetscale.com/)
-- [Stripe](https://stripe.com/)
-- [Resend](https://resend.io/)
-- [Sanity](https://sanity.io/)
-
-## Getting Started
-
-The primary goal of the app is to demonstrate how to use Inngest to generate
-chained conversations with GPT-4. This approach is useful for creating
-higher quality generated text that is acceptable to use for customer
-communications. It's also interesting for processing text and general
-exploration in the gpt-4 space.
-
-Here's an example from a production application that's using this approach:
-
-![flow chart of generated email workflows](./public/epic-web-flows.png)
-
-Various events in the application trigger async workflows that occur in
-queued serverless background jobs.
-
-- an event is received
-- steps/actions are performed
-- we can sleep or wait for other events within the workflow
-- we can send events that trigger other workflows
-
-## Event-Driven Workflows
-
-The application is built around the concept of event-driven workflows. There
-are several kinds of events. The primary events are external to the workflow
-and are emitted from users interacting with the application. The user has
-requested work and provided input. When these are received, the workflow
-kicks into gear and begins processing the request.
-
-There are also external events that are generally received via webhooks when
-some service provider has completed some work. For example, [when a video is
-uploaded to Mux, they send a series of webhooks](https://docs.mux.com/guides/system/listen-for-webhooks) at various staging in the
-video processing to let us know when the asset is available.
-
-The receiving URL is configured within the Mux dashboard (not, for local
-development we use [ngrok](https://ngrok.com/) to expose our local server.
-
-Another example is ordering transcripts from Deepgram. When the video is
-uploaded we send the URL to Deepgram for transcription and include a
-callback url for Deepgram to contact when the transcript is ready.
-
-The last kind of event is internal to the workflow. These are events that
-are triggered by the workflow itself.
-
-![diagram of events](./public/event-diagram.png)
-
-- `VIDEO_UPLOADED_EVENT`: triggered when a new video has been uploaded and
-  is available via a URL.
-
-_[more to come]_
+The Next.js app behind [aihero.dev](https://www.aihero.dev) — courses, skills, and posts on AI engineering by Matt Pocock. Built on the Course Builder stack: Next.js App Router, tRPC, Drizzle on PlanetScale, NextAuth, Inngest for background workflows, and Mux for video.
 
 ## Local Setup
 
@@ -98,7 +10,7 @@ This app can be run locally. It requires API keys for many 3rd-party services. Y
 
 For those with access to the project in Vercel, here is how to grab those env vars. 
 
-**NOTE: you'll want to make sure you've `cd`'d into `<project-root>/apps/course-builder-web` for this**:
+**NOTE: you'll want to make sure you've `cd`'d into `<project-root>/apps/ai-hero` for this**:
 
 - 1. Make sure you are signed in to the Vercel CLI
   - `vercel login`
@@ -110,7 +22,7 @@ For those with access to the project in Vercel, here is how to grab those env va
     - "Set up `path/to/your/project`?" **Yes**
     - "Which scope should contain your project?" **Skill Recordings**
     - "Link to existing project?" **Yes** (note, default is No here)
-    - "What's the name of your existing project?" **course-builder-poc** (check in the Vercel dashboard for the exact name of whatever project it is)
+    - "What's the name of your existing project?" **ai-hero** (check in the Vercel dashboard for the exact name of whatever project it is)
 - 4. Pull the environment variables from Vercel
   - `vercel env pull`
   - At this point, the vercel CLI will have created a `.env.local` file with all of the `development` environment variables.
@@ -206,6 +118,13 @@ $ pnpm db:push
 ## API Documentation
 
 AI-Hero exposes several REST APIs for external integrations. All endpoints require proper authentication using OAuth 2.0 device flow.
+
+The machine-readable contract is self-describing and always current:
+
+- **OpenAPI 3.1 document**: [https://www.aihero.dev/api/openapi.json](https://www.aihero.dev/api/openapi.json) — every operation with request/response schemas, required scopes, and token policies
+- **Discovery document**: [https://www.aihero.dev/api](https://www.aihero.dev/api) — route families, agent-token capabilities, and next actions in plain JSON
+
+Prefer these over the prose below when they disagree — they're generated from the same code that serves the routes.
 
 ### Authentication
 

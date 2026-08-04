@@ -98,13 +98,26 @@ const getResourceHandler = async (request: NextRequest) => {
 			conditions.push(eq(contentResource.type, type))
 		}
 
+		// Two levels of children, both in position order. One level hid
+		// everything a section holds: a caller editing a sectioned list could
+		// see the section shells but nothing inside them.
 		const resource = await db.query.contentResource.findFirst({
 			where: and(...conditions),
 			with: {
 				resources: {
 					with: {
-						resource: true,
+						resource: {
+							with: {
+								resources: {
+									with: {
+										resource: true,
+									},
+									orderBy: asc(contentResourceResource.position),
+								},
+							},
+						},
 					},
+					orderBy: asc(contentResourceResource.position),
 				},
 				resourceProducts: {
 					with: {
@@ -287,6 +300,14 @@ const updateResourceHandler = async (request: NextRequest) => {
 			incomingFields.chapters !== undefined
 		) {
 			revalidateTag(`video-resource:${id}`, 'max')
+		}
+
+		// A section's title/description and a list's own fields render through
+		// the list caches (sidebars, list landing), and neither type has any
+		// other write route that would bust them — without this an edit here
+		// stays invisible on those surfaces for the full hour TTL.
+		if (currentResource.type === 'section' || currentResource.type === 'list') {
+			revalidateTag('lists', 'max')
 		}
 
 		await log.info('api.resources.put.success', {

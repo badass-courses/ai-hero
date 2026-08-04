@@ -5,6 +5,13 @@ import { productSchema, VideoChapterSchema } from '@coursebuilder/core/schemas'
 import { VideoResourceSchema } from '@coursebuilder/core/schemas/video-resource'
 
 import { LessonActionSchema, LessonSchema, LessonUpdateSchema } from './lessons'
+import {
+	AddListItemInputSchema,
+	ListItemLocationResponseSchema,
+	ListItemRowResponseSchema,
+	MoveListItemsInputSchema,
+	MoveListItemsResponseSchema,
+} from './lists/list-membership-contracts'
 import { PageSchema, UpdatePageSchema } from './pages'
 import { MintPersonalAccessTokenSchema } from './personal-access-tokens'
 import { NewPostInputSchema, PostSchema, PostUpdateSchema } from './posts'
@@ -245,6 +252,12 @@ export const CreateTagRequestSchema = z.object({
 export const TagResponseSchema = TagSchema
 export const TagListResponseSchema = z.array(TagSchema)
 export { PostTagInputSchema }
+export const AddListItemRequestSchema = AddListItemInputSchema
+export const MoveListItemsRequestSchema = MoveListItemsInputSchema
+export const ListItemRowSchema = ListItemRowResponseSchema
+export const ListItemLocationSchema = ListItemLocationResponseSchema
+export const MoveListItemsResultSchema = MoveListItemsResponseSchema
+
 export const PostTagMutationResponseSchema = z.object({
 	success: z.literal(true),
 	action: z.enum(['attach', 'remove']),
