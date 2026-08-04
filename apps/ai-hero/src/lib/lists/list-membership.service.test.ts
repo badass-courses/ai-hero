@@ -121,8 +121,8 @@ describe('planMoves', () => {
 	}
 
 	it('renumbers every touched parent densely, siblings included', () => {
-		// Moving skill-a to the front of section-1 must also push skill-b's
-		// position — the batch never named skill-b, but the write does.
+		// Moving skill-b to the front of section-1 must also push skill-a's
+		// position — the batch never named skill-a, but the write does.
 		const writes = planMoves(LIST_ID, tree(), [
 			{ resourceId: 'skill-b', position: 0 },
 		])

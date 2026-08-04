@@ -372,12 +372,25 @@ export async function addItemToList({
 		)
 	}
 
-	await db.insert(contentResourceResource).values({
-		resourceOfId: parentId,
-		resourceId: input.resourceId,
-		position: nextPosition(siblings),
-		metadata: input.metadata,
-	})
+	try {
+		await db.insert(contentResourceResource).values({
+			resourceOfId: parentId,
+			resourceId: input.resourceId,
+			position: nextPosition(siblings),
+			metadata: input.metadata,
+		})
+	} catch (error) {
+		// Two concurrent adds can both pass the pre-check above; the membership
+		// key then rejects the loser. Same answer as losing the pre-check.
+		if (/duplicate entry/i.test(error instanceof Error ? error.message : '')) {
+			throw new ListMembershipError(
+				'Resource is already in this list',
+				409,
+				'RESOURCE_ALREADY_IN_LIST',
+			)
+		}
+		throw error
+	}
 
 	revalidateList(list.id)
 

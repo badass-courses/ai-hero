@@ -207,6 +207,13 @@ $ pnpm db:push
 
 AI-Hero exposes several REST APIs for external integrations. All endpoints require proper authentication using OAuth 2.0 device flow.
 
+The machine-readable contract is self-describing and always current:
+
+- **OpenAPI 3.1 document**: [https://www.aihero.dev/api/openapi.json](https://www.aihero.dev/api/openapi.json) — every operation with request/response schemas, required scopes, and token policies
+- **Discovery document**: [https://www.aihero.dev/api](https://www.aihero.dev/api) — route families, agent-token capabilities, and next actions in plain JSON
+
+Prefer these over the prose below when they disagree — they're generated from the same code that serves the routes.
+
 ### Authentication
 
 The platform implements OAuth 2.0 device flow (RFC 8628) for secure authentication. Here's a working Node.js example using `openid-client`:
