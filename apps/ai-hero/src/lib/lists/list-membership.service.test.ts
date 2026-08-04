@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import { MoveListItemsInputSchema } from './list-membership-contracts'
 import {
+	ListMembershipError,
 	locateItem,
 	nextPosition,
+	planMoves,
 	siblingsOf,
 	type MembershipRow,
 } from './list-membership.service'
@@ -97,5 +100,169 @@ describe('nextPosition', () => {
 
 	it('starts at 0 for an empty parent', () => {
 		expect(nextPosition([])).toBe(0)
+	})
+})
+
+describe('planMoves', () => {
+	const tree = (): MembershipRow[] => [
+		row('skill-loose', 0),
+		row('section-1', 1, 'section', [row('skill-a', 0), row('skill-b', 1)]),
+		row('section-2', 2, 'section', [row('skill-c', 0)]),
+	]
+
+	const errorCode = (fn: () => unknown) => {
+		try {
+			fn()
+		} catch (error) {
+			if (error instanceof ListMembershipError) return error.code
+			throw error
+		}
+		return null
+	}
+
+	it('renumbers every touched parent densely, siblings included', () => {
+		// Moving skill-a to the front of section-1 must also push skill-b's
+		// position — the batch never named skill-b, but the write does.
+		const writes = planMoves(LIST_ID, tree(), [
+			{ resourceId: 'skill-b', position: 0 },
+		])
+		expect(writes).toEqual([
+			{
+				resourceId: 'skill-b',
+				fromParentId: 'section-1',
+				toParentId: 'section-1',
+				position: 0,
+			},
+			{
+				resourceId: 'skill-a',
+				fromParentId: 'section-1',
+				toParentId: 'section-1',
+				position: 1,
+			},
+		])
+	})
+
+	it('compacts sparse positions instead of preserving the gaps', () => {
+		// Removes never renumbered, so stored positions drift sparse. Any move
+		// through this planner leaves the touched parents dense again.
+		const sparse: MembershipRow[] = [
+			row('section-1', 0, 'section', [row('skill-a', 3), row('skill-b', 9)]),
+		]
+		const writes = planMoves(LIST_ID, sparse, [
+			{ resourceId: 'skill-b', position: 0 },
+		])
+		expect(writes).toEqual([
+			expect.objectContaining({ resourceId: 'skill-b', position: 0 }),
+			expect.objectContaining({ resourceId: 'skill-a', position: 1 }),
+		])
+	})
+
+	it('clamps a position past the end to an append', () => {
+		const writes = planMoves(LIST_ID, tree(), [
+			{ resourceId: 'skill-loose', parentId: 'section-1', position: 99 },
+		])
+		expect(writes).toContainEqual({
+			resourceId: 'skill-loose',
+			fromParentId: LIST_ID,
+			toParentId: 'section-1',
+			position: 2,
+		})
+	})
+
+	it('moves between sections and renumbers both sides', () => {
+		const writes = planMoves(LIST_ID, tree(), [
+			{ resourceId: 'skill-a', parentId: 'section-2', position: 0 },
+		])
+		expect(writes).toContainEqual(
+			expect.objectContaining({
+				resourceId: 'skill-a',
+				toParentId: 'section-2',
+				position: 0,
+			}),
+		)
+		// skill-b closes the gap skill-a left; skill-c yields the front slot.
+		expect(writes).toContainEqual(
+			expect.objectContaining({ resourceId: 'skill-b', position: 0 }),
+		)
+		expect(writes).toContainEqual(
+			expect.objectContaining({ resourceId: 'skill-c', position: 1 }),
+		)
+	})
+
+	it('rejects a parent that is not a section', () => {
+		expect(
+			errorCode(() =>
+				planMoves(LIST_ID, tree(), [
+					{ resourceId: 'skill-a', parentId: 'skill-loose', position: 0 },
+				]),
+			),
+		).toBe('PARENT_NOT_A_SECTION')
+	})
+
+	it('rejects nesting a section inside a section, and thereby itself', () => {
+		expect(
+			errorCode(() =>
+				planMoves(LIST_ID, tree(), [
+					{ resourceId: 'section-1', parentId: 'section-2', position: 0 },
+				]),
+			),
+		).toBe('SECTION_NESTING')
+		// Self-parenting is the same shape: the moved row would have to be a
+		// section (only sections parent), and sections never nest.
+		expect(
+			errorCode(() =>
+				planMoves(LIST_ID, tree(), [
+					{ resourceId: 'section-1', parentId: 'section-1', position: 0 },
+				]),
+			),
+		).toBe('SECTION_NESTING')
+	})
+
+	it('rejects a destination that already holds the resource', () => {
+		// Legal duplicate placement: skill-c sits at top level AND in
+		// section-2. Moving the top-level copy into section-2 would collide
+		// with the membership key.
+		const withDuplicate: MembershipRow[] = [
+			row('skill-c', 0),
+			row('section-2', 1, 'section', [row('skill-c', 0)]),
+		]
+		expect(
+			errorCode(() =>
+				planMoves(LIST_ID, withDuplicate, [
+					{ resourceId: 'skill-c', parentId: 'section-2', position: 1 },
+				]),
+			),
+		).toBe('RESOURCE_ALREADY_IN_LIST')
+	})
+
+	it('rejects a resource the list does not hold', () => {
+		expect(
+			errorCode(() =>
+				planMoves(LIST_ID, tree(), [
+					{ resourceId: 'skill-elsewhere', position: 0 },
+				]),
+			),
+		).toBe('RESOURCE_NOT_IN_LIST')
+	})
+
+	it('emits nothing when the batch changes nothing', () => {
+		// skill-a is already at position 0 of section-1 in a dense parent.
+		expect(
+			planMoves(LIST_ID, tree(), [{ resourceId: 'skill-a', position: 0 }]),
+		).toEqual([])
+	})
+})
+
+describe('MoveListItemsInputSchema', () => {
+	it('rejects the same resourceId twice in one batch', () => {
+		// The second entry would be planned against row state the first already
+		// changed, and the response would report a move that never happened.
+		const parsed = MoveListItemsInputSchema.safeParse({
+			items: [
+				{ resourceId: 'skill-a', position: 0 },
+				{ resourceId: 'skill-a', position: 2 },
+			],
+		})
+		expect(parsed.success).toBe(false)
 	})
 })

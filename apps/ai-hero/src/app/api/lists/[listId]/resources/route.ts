@@ -145,14 +145,17 @@ const moveHandler = async (request: NextRequest, context: RouteContext) => {
 }
 
 /**
- * DELETE /api/lists/<listIdOrSlug>/resources?resourceId=<id>
+ * DELETE /api/lists/<listIdOrSlug>/resources?resourceId=<id>&parentId=<id>
  *
- * Remove a resource from a list, wherever in the tree it sits.
+ * Remove a resource from a list. `parentId` names the placement when the
+ * resource sits in more than one; omitted, the top-level placement wins.
  * Requires 'update Content'.
  */
 const removeHandler = async (request: NextRequest, context: RouteContext) => {
 	const listId = await listIdFrom(context)
-	const resourceId = new URL(request.url).searchParams.get('resourceId')
+	const searchParams = new URL(request.url).searchParams
+	const resourceId = searchParams.get('resourceId')
+	const parentId = searchParams.get('parentId')
 
 	try {
 		const { ability, user } = await getUserAbilityForRequest(request)
@@ -183,6 +186,7 @@ const removeHandler = async (request: NextRequest, context: RouteContext) => {
 		const result = await removeItemFromList({
 			listIdOrSlug: listId,
 			resourceId,
+			parentId: parentId ?? undefined,
 			ability,
 		})
 

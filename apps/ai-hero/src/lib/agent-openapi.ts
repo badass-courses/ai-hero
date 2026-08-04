@@ -462,7 +462,7 @@ const contentPaths = {
 			operationId: 'addResourceToList',
 			summary: 'Add a resource to a list or one of its sections',
 			description:
-				'Omit parentId to add at the top level; pass a section id to nest under it. Appends after the last sibling. 409 when the parent already holds the resource.',
+				'Omit parentId to add at the top level; pass a SECTION id to nest under it (only sections parent, and never each other). Appends after the last sibling. 409 when the parent already holds the resource.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
 			requiredScopes: ['content:relations'],
@@ -482,7 +482,7 @@ const contentPaths = {
 			operationId: 'moveListResources',
 			summary: 'Reorder list items or move them between sections',
 			description:
-				'Applies the whole batch in one transaction. Omit parentId to reorder an item in place; pass the list id to pull it out of a section. Any item the list does not hold fails the batch before anything is written.',
+				'Applies the whole batch in one transaction, then renumbers every touched parent densely — positions stay unique and gap free regardless of the positions sent, and the response lists every applied write, sibling renumbering included. Each resourceId may appear once. Omit parentId to reorder an item in place; pass the list id to pull it out of a section. Any invalid item fails the batch before anything is written.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
 			requiredScopes: ['content:relations'],
@@ -495,13 +495,17 @@ const contentPaths = {
 			operationId: 'removeResourceFromList',
 			summary: 'Remove a resource from a list',
 			description:
-				'Removes the item wherever in the tree it sits and answers with where it sat. 404 when the list does not hold it.',
+				'Removes one placement and answers with where it sat. When the resource sits in more than one place, parentId selects the placement; omitted, the top-level placement wins. 404 when the list does not hold it.',
 			access: 'device-token',
 			requiredAbility: 'update Content',
 			requiredScopes: ['content:relations'],
 			scopeRequirements: 'PAT: content:relations is required.',
 			parameters: [
 				queryParameter('resourceId', 'The resource to remove.', undefined, true),
+				queryParameter(
+					'parentId',
+					'Placement selector: the section id (or the list id) to remove from.',
+				),
 			],
 			responseSchema: 'ListItemLocation',
 			extraResponses: commonErrorResponses,

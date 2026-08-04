@@ -6,6 +6,11 @@
  * work. Shaped after `lists.service.ts` in epic-product-engineer, with the
  * nesting ai-hero lists actually have — an item may hang off the list itself
  * or off one of its sections, and that is where the old code got subtle.
+ *
+ * The tree is strictly two levels: sections sit directly under the list, and
+ * only non-sections sit under a section. Every write path enforces that, so a
+ * request cannot express a self-parent, a section inside a section, or a
+ * parent the renderers would never reach.
  */
 import { revalidateTag } from 'next/cache'
 import { type AppAbility } from '@/ability'
@@ -91,9 +96,158 @@ export function nextPosition(siblings: MembershipRow[]): number {
 	return siblings.reduce((max, row) => Math.max(max, row.position + 1), 0)
 }
 
+export type PlannedWrite = {
+	resourceId: string
+	fromParentId: string
+	toParentId: string
+	position: number
+}
+
+type SimRow = {
+	resourceId: string
+	fromParentId: string
+	fromPosition: number
+}
+
+/**
+ * Resolve a move batch against the loaded tree into the exact row updates to
+ * apply — pure, so the tricky part is unit-testable. The batch is SIMULATED in
+ * order on in-memory sibling arrays, then every touched parent is renumbered
+ * densely from the final arrangement. Positions therefore stay unique and gap
+ * free no matter what the caller sends: a duplicate target position is an
+ * insertion order, not a collision, and a position past the end appends. The
+ * returned writes include the sibling renumbering, not just the named items.
+ */
+export function planMoves(
+	listId: string,
+	rows: MembershipRow[],
+	moves: { resourceId: string; parentId?: string; position: number }[],
+): PlannedWrite[] {
+	// Sibling arrays per parent, in loaded (position) order.
+	const byParent = new Map<string, SimRow[]>()
+	const simRow = (row: MembershipRow, fromParentId: string): SimRow => ({
+		resourceId: row.resourceId,
+		fromParentId,
+		fromPosition: row.position,
+	})
+	byParent.set(
+		listId,
+		rows.map((row) => simRow(row, listId)),
+	)
+	const typeOf = new Map<string, string>()
+	for (const row of rows) {
+		if (row.resource?.type) typeOf.set(row.resourceId, row.resource.type)
+		if (row.resource?.type === 'section') {
+			byParent.set(
+				row.resourceId,
+				(row.resource.resources ?? []).map((child) =>
+					simRow(child, row.resourceId),
+				),
+			)
+			for (const child of row.resource.resources ?? []) {
+				if (child.resource?.type && !typeOf.has(child.resourceId)) {
+					typeOf.set(child.resourceId, child.resource.type)
+				}
+			}
+		}
+	}
+
+	const locate = (resourceId: string) => {
+		// Same preference as locateItem: the top-level placement wins when a
+		// resource sits in more than one place.
+		for (const [parentId, siblings] of [
+			[listId, byParent.get(listId)!] as const,
+			...[...byParent.entries()].filter(([parentId]) => parentId !== listId),
+		]) {
+			const index = siblings.findIndex((row) => row.resourceId === resourceId)
+			if (index !== -1) return { parentId, index }
+		}
+		return null
+	}
+
+	for (const move of moves) {
+		const current = locate(move.resourceId)
+		if (!current) {
+			throw new ListMembershipError(
+				`Resource ${move.resourceId} is not in this list`,
+				404,
+				'RESOURCE_NOT_IN_LIST',
+			)
+		}
+
+		const toParentId = move.parentId ?? current.parentId
+
+		if (toParentId !== listId) {
+			const parentPlacement = byParent
+				.get(listId)!
+				.find((row) => row.resourceId === toParentId)
+			if (!parentPlacement) {
+				throw new ListMembershipError(
+					`Parent ${toParentId} is not a section of this list`,
+					404,
+					'PARENT_NOT_IN_LIST',
+				)
+			}
+			if (typeOf.get(toParentId) !== 'section') {
+				throw new ListMembershipError(
+					`Parent ${toParentId} is not a section`,
+					400,
+					'PARENT_NOT_A_SECTION',
+				)
+			}
+			// The tree is two levels: a section holds leaves, never another
+			// section — which also makes a self-parent inexpressible.
+			if (typeOf.get(move.resourceId) === 'section') {
+				throw new ListMembershipError(
+					'A section cannot nest inside a section',
+					400,
+					'SECTION_NESTING',
+				)
+			}
+			if (
+				toParentId !== current.parentId &&
+				byParent
+					.get(toParentId)!
+					.some((row) => row.resourceId === move.resourceId)
+			) {
+				throw new ListMembershipError(
+					`Parent ${toParentId} already holds ${move.resourceId}`,
+					409,
+					'RESOURCE_ALREADY_IN_LIST',
+				)
+			}
+		}
+
+		const [row] = byParent.get(current.parentId)!.splice(current.index, 1)
+		const target = byParent.get(toParentId)!
+		target.splice(Math.max(0, Math.min(move.position, target.length)), 0, row!)
+	}
+
+	// Dense renumbering from the final arrangement. A row is written when its
+	// parent or its position changed — including siblings the batch never
+	// named, and rows whose stored positions had gone sparse.
+	const writes: PlannedWrite[] = []
+	for (const [parentId, siblings] of byParent) {
+		siblings.forEach((row, index) => {
+			if (row.fromParentId !== parentId || row.fromPosition !== index) {
+				writes.push({
+					resourceId: row.resourceId,
+					fromParentId: row.fromParentId,
+					toParentId: parentId,
+					position: index,
+				})
+			}
+		})
+	}
+	return writes
+}
+
 /** The list plus two levels — enough to see sections and what they hold. */
-async function loadListTree(listIdOrSlug: string) {
-	return db.query.contentResource.findFirst({
+async function loadListTree(
+	listIdOrSlug: string,
+	executor: Pick<typeof db, 'query'> = db,
+) {
+	return executor.query.contentResource.findFirst({
 		where: and(
 			eq(contentResource.type, 'list'),
 			sql`(${contentResource.id} = ${listIdOrSlug} OR JSON_EXTRACT(${contentResource.fields}, "$.slug") = ${listIdOrSlug})`,
@@ -183,12 +337,30 @@ export async function addItemToList({
 	const rows = list.resources as MembershipRow[]
 	const parentId = input.parentId ?? list.id
 
-	if (parentId !== list.id && !rows.some((row) => row.resourceId === parentId)) {
-		throw new ListMembershipError(
-			'Parent section is not in this list',
-			404,
-			'PARENT_NOT_IN_LIST',
-		)
+	if (parentId !== list.id) {
+		const parentRow = rows.find((row) => row.resourceId === parentId)
+		if (!parentRow) {
+			throw new ListMembershipError(
+				'Parent section is not in this list',
+				404,
+				'PARENT_NOT_IN_LIST',
+			)
+		}
+		// Two levels, strictly: only sections parent, and never each other.
+		if (parentRow.resource?.type !== 'section') {
+			throw new ListMembershipError(
+				`Parent ${parentId} is not a section`,
+				400,
+				'PARENT_NOT_A_SECTION',
+			)
+		}
+		if (resource.type === 'section') {
+			throw new ListMembershipError(
+				'A section cannot nest inside a section',
+				400,
+				'SECTION_NESTING',
+			)
+		}
 	}
 
 	const siblings = siblingsOf(list.id, rows, parentId)
@@ -218,24 +390,35 @@ export async function addItemToList({
 	})
 }
 
-/** Take a resource out of a list, wherever in the tree it sits. */
+/**
+ * Take a resource out of a list. When it sits in more than one place,
+ * `parentId` names the placement; omitted, the top-level placement wins (the
+ * same preference the editor shows).
+ */
 export async function removeItemFromList({
 	listIdOrSlug,
 	resourceId,
+	parentId,
 	ability,
 }: {
 	listIdOrSlug: string
 	resourceId: string
+	parentId?: string
 	ability: AppAbility
 }) {
 	assertCanUpdate(ability)
 	const list = await requireList(listIdOrSlug)
+	const rows = list.resources as MembershipRow[]
 
-	const location = locateItem(
-		list.id,
-		list.resources as MembershipRow[],
-		resourceId,
-	)
+	let location: ItemLocation | null
+	if (parentId) {
+		const row = siblingsOf(list.id, rows, parentId).find(
+			(sibling) => sibling.resourceId === resourceId,
+		)
+		location = row ? { parentId, position: row.position } : null
+	} else {
+		location = locateItem(list.id, rows, resourceId)
+	}
 	if (!location) {
 		throw new ListMembershipError(
 			'Resource is not in this list',
@@ -259,9 +442,10 @@ export async function removeItemFromList({
 }
 
 /**
- * Reorder items and move them between sections in one transaction. Every move
- * is resolved against the current tree first, so a batch naming an item the
- * list doesn't hold fails before anything is written.
+ * Reorder items and move them between sections in one transaction. The tree is
+ * read inside the same transaction the writes run in, so the plan cannot go
+ * stale against a concurrent edit, and the applied writes come back — sibling
+ * renumbering included — so the caller sees exactly what changed.
  */
 export async function moveListItems({
 	listIdOrSlug,
@@ -274,54 +458,32 @@ export async function moveListItems({
 }) {
 	assertCanUpdate(ability)
 	const input = parseOrThrow(MoveListItemsInputSchema, data)
-	const list = await requireList(listIdOrSlug)
-	const rows = list.resources as MembershipRow[]
 
-	const planned = input.items.map((item) => {
-		const current = locateItem(list.id, rows, item.resourceId)
-		if (!current) {
-			throw new ListMembershipError(
-				`Resource ${item.resourceId} is not in this list`,
-				404,
-				'RESOURCE_NOT_IN_LIST',
-			)
+	const applied = await db.transaction(async (trx) => {
+		const list = await loadListTree(listIdOrSlug, trx)
+		if (!list) {
+			throw new ListMembershipError('List not found', 404, 'LIST_NOT_FOUND')
 		}
-
-		const toParentId = item.parentId ?? current.parentId
-		if (
-			toParentId !== list.id &&
-			!rows.some((row) => row.resourceId === toParentId)
-		) {
-			throw new ListMembershipError(
-				`Parent ${toParentId} is not a section of this list`,
-				404,
-				'PARENT_NOT_IN_LIST',
-			)
-		}
-
-		return {
-			resourceId: item.resourceId,
-			fromParentId: current.parentId,
-			toParentId,
-			position: item.position,
-		}
-	})
-
-	await db.transaction(async (trx) => {
-		for (const move of planned) {
+		const writes = planMoves(
+			list.id,
+			list.resources as MembershipRow[],
+			input.items,
+		)
+		for (const write of writes) {
 			await trx
 				.update(contentResourceResource)
-				.set({ resourceOfId: move.toParentId, position: move.position })
+				.set({ resourceOfId: write.toParentId, position: write.position })
 				.where(
 					and(
-						eq(contentResourceResource.resourceOfId, move.fromParentId),
-						eq(contentResourceResource.resourceId, move.resourceId),
+						eq(contentResourceResource.resourceOfId, write.fromParentId),
+						eq(contentResourceResource.resourceId, write.resourceId),
 					),
 				)
 		}
+		return { listId: list.id, writes }
 	})
 
-	revalidateList(list.id)
+	revalidateList(applied.listId)
 
-	return planned
+	return applied.writes
 }

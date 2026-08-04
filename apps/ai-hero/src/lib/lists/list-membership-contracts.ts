@@ -6,6 +6,8 @@
  */
 import { z } from 'zod'
 
+import { ContentResourceSchema } from '@coursebuilder/core/schemas/content-resource-schema'
+
 export const AddListItemInputSchema = z.object({
 	resourceId: z.string().min(1),
 	/** A section id to nest under. Omit to add at the top level of the list. */
@@ -26,7 +28,22 @@ export const MoveListItemsInputSchema = z.object({
 				position: z.number().int().min(0),
 			}),
 		)
-		.min(1),
+		.min(1)
+		// One entry per resource: a second entry would be planned against row
+		// state the first entry already changed, and the response would report
+		// a move that never happened.
+		.superRefine((items, ctx) => {
+			const seen = new Set<string>()
+			for (const item of items) {
+				if (seen.has(item.resourceId)) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `resourceId ${item.resourceId} appears more than once`,
+					})
+				}
+				seen.add(item.resourceId)
+			}
+		}),
 })
 
 /** The join row the add answers with, its resource included. */
@@ -36,6 +53,7 @@ export const ListItemRowResponseSchema = z
 		resourceId: z.string(),
 		position: z.number(),
 		metadata: z.record(z.string(), z.any()).nullish(),
+		resource: ContentResourceSchema.nullish(),
 	})
 	.passthrough()
 

@@ -99,9 +99,8 @@ const getResourceHandler = async (request: NextRequest) => {
 		}
 
 		// Two levels of children, both in position order. One level hid
-		// everything a section holds — list_ppwir is six sections over
-		// twenty-one skills, and a caller editing membership could see the
-		// section shells but nothing inside them.
+		// everything a section holds: a caller editing a sectioned list could
+		// see the section shells but nothing inside them.
 		const resource = await db.query.contentResource.findFirst({
 			where: and(...conditions),
 			with: {
