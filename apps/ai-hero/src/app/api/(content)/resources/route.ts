@@ -98,13 +98,27 @@ const getResourceHandler = async (request: NextRequest) => {
 			conditions.push(eq(contentResource.type, type))
 		}
 
+		// Two levels of children, both in position order. One level hid
+		// everything a section holds — list_ppwir is six sections over
+		// twenty-one skills, and a caller editing membership could see the
+		// section shells but nothing inside them.
 		const resource = await db.query.contentResource.findFirst({
 			where: and(...conditions),
 			with: {
 				resources: {
 					with: {
-						resource: true,
+						resource: {
+							with: {
+								resources: {
+									with: {
+										resource: true,
+									},
+									orderBy: asc(contentResourceResource.position),
+								},
+							},
+						},
 					},
+					orderBy: asc(contentResourceResource.position),
 				},
 				resourceProducts: {
 					with: {

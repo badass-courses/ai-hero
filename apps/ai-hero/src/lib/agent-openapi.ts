@@ -421,7 +421,7 @@ const contentPaths = {
 			operationId: 'getResources',
 			summary: 'Read sanitized content resources',
 			description:
-				'Return one resource by ?slugOrId= and optional ?type=. List-all is allowed only for ?type=list. Mux capability fields are removed recursively.',
+				'Return one resource by ?slugOrId= and optional ?type=. Carries two levels of children in position order, so a sectioned list shows what each section holds. List-all is allowed only for ?type=list. Mux capability fields are removed recursively.',
 			access: 'content-read',
 			parameters: [
 				queryParameter('slugOrId', 'Resource id or slug.'),
