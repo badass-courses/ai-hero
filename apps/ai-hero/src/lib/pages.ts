@@ -10,6 +10,17 @@ export const NewPageSchema = z.object({
 })
 export type NewPage = z.infer<typeof NewPageSchema>
 
+export const UpdatePageSchema = z.object({
+	fields: NewPageSchema.shape.fields
+		.extend({
+			description: z.string().optional(),
+			slug: z.string().optional(),
+			state: z.enum(['draft', 'published', 'archived', 'deleted']).optional(),
+			visibility: z.enum(['public', 'private', 'unlisted']).optional(),
+		})
+		.partial(),
+})
+
 export const PageStateSchema = z.union([
 	z.literal('draft'),
 	z.literal('published'),

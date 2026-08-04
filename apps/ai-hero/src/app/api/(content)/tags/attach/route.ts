@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PostTagInputSchema } from '@/lib/tags'
 import { addTagToPost, removeTagFromPost } from '@/lib/posts-query'
 import { getTags } from '@/lib/tags-query'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import { canUpdateContentRelation } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 import { courseBuilderAdapter } from '@/db'
-import { z } from 'zod'
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
@@ -16,11 +17,6 @@ const corsHeaders = {
 export async function OPTIONS() {
 	return NextResponse.json({}, { headers: corsHeaders })
 }
-
-const PostTagInputSchema = z.object({
-	postId: z.string(),
-	tagId: z.string(),
-})
 
 /**
  * Shared plumbing for attach (POST) and detach (DELETE): Bearer-aware auth via
@@ -44,7 +40,7 @@ const handleTagAttachment = async (
 			)
 		}
 
-		if (!ability.can('update', 'Content')) {
+		if (!canUpdateContentRelation(ability)) {
 			await log.warn(`api.tags.${action}.forbidden`, { userId: user.id })
 			return NextResponse.json(
 				{ error: 'Forbidden' },
@@ -63,7 +59,7 @@ const handleTagAttachment = async (
 		const { postId, tagId } = parsed.data
 
 		const post = await courseBuilderAdapter.getContentResource(postId)
-		if (!post) {
+		if (!post || post.type !== 'post') {
 			return NextResponse.json(
 				{ error: `Post not found: ${postId}` },
 				{ status: 404, headers: corsHeaders },

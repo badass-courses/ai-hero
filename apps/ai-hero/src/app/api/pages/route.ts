@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { getPage } from '@/lib/pages-query'
-import { PageSchema } from '@/lib/pages'
+import { PageSchema, UpdatePageSchema } from '@/lib/pages'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import { canPublishContent, canUpdateContentDraft } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 import { and, desc, eq } from 'drizzle-orm'
 import { revalidateTag } from 'next/cache'
@@ -19,32 +20,6 @@ const corsHeaders = {
 export async function OPTIONS() {
 	return NextResponse.json({}, { headers: corsHeaders })
 }
-
-const UpdatePageSchema = z.object({
-	fields: z
-		.object({
-			title: z.string().min(2).max(90).optional(),
-			body: z.string().nullable().optional(),
-			description: z.string().optional(),
-			slug: z.string().optional(),
-			state: z
-				.union([
-					z.literal('draft'),
-					z.literal('published'),
-					z.literal('archived'),
-					z.literal('deleted'),
-				])
-				.optional(),
-			visibility: z
-				.union([
-					z.literal('public'),
-					z.literal('private'),
-					z.literal('unlisted'),
-				])
-				.optional(),
-		})
-		.partial(),
-})
 
 const getPagesHandler = async (request: NextRequest) => {
 	const { searchParams } = new URL(request.url)
@@ -116,7 +91,8 @@ const updatePageHandler = async (request: NextRequest) => {
 	const id = searchParams.get('id')
 
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user) {
 			await log.warn('api.pages.put.unauthorized', { pageId: id })
@@ -126,8 +102,14 @@ const updatePageHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (ability.cannot('update', 'Content')) {
-			await log.warn('api.pages.put.forbidden', { userId: user.id, pageId: id })
+		if (
+			authMethod !== 'personal-access-token' &&
+			ability.cannot('update', 'Content')
+		) {
+			await log.warn('api.pages.put.forbidden', {
+				userId: user.id,
+				pageId: id,
+			})
 			return NextResponse.json(
 				{ error: 'Forbidden: Insufficient permissions' },
 				{ status: 403, headers: corsHeaders },
@@ -156,6 +138,29 @@ const updatePageHandler = async (request: NextRequest) => {
 				{ error: 'Page not found' },
 				{ status: 404, headers: corsHeaders },
 			)
+		}
+
+		if (authMethod === 'personal-access-token') {
+			const { state, ...draftFields } = parsed.data.fields
+			const hasDraftMutation =
+				Object.keys(draftFields).length > 0 || state !== 'published'
+			const allowed =
+				state !== 'archived' &&
+				state !== 'deleted' &&
+				(!hasDraftMutation ||
+					(currentPage.fields.state === 'draft' &&
+						canUpdateContentDraft(ability))) &&
+				(state !== 'published' || canPublishContent(ability))
+			if (!allowed) {
+				await log.warn('api.pages.put.forbidden', {
+					userId: user.id,
+					pageId: id,
+				})
+				return NextResponse.json(
+					{ error: 'Forbidden: Insufficient PAT scopes', docs: '/api' },
+					{ status: 403, headers: corsHeaders },
+				)
+			}
 		}
 
 		const incoming = parsed.data.fields

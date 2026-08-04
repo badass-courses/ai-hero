@@ -1,22 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { courseBuilderAdapter } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
+import { UploadBodySchema } from '@/lib/upload-contracts'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log, serializeError } from '@/server/logger'
+import { canCreateContentRelation, canUploadMedia } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
-import { z } from 'zod'
-
 import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/inngest/video-processing/events/event-video-uploaded'
-
-// Zod schema for the request body
-const UploadBodySchema = z.object({
-	file: z.object({
-		url: z.string().url(),
-		name: z.string().optional(),
-	}),
-	metadata: z.object({
-		parentResourceId: z.string(),
-	}),
-})
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
@@ -29,9 +19,9 @@ export const OPTIONS = async () => {
 }
 
 export const POST = withSkill(async (request: NextRequest) => {
-	const { user, ability } = await getUserAbilityForRequest(request)
+	const { user, ability, authMethod } = await getUserAbilityForRequest(request)
 
-	if (ability.cannot('create', 'Content')) {
+	if (!canUploadMedia(ability) || !canCreateContentRelation(ability)) {
 		return NextResponse.json(
 			{ error: user ? 'Forbidden' : 'Unauthorized', docs: '/api' },
 			{ status: user ? 403 : 401, headers: corsHeaders },
@@ -84,6 +74,21 @@ export const POST = withSkill(async (request: NextRequest) => {
 	}
 
 	try {
+		if (authMethod === 'personal-access-token') {
+			const parent = await courseBuilderAdapter.getContentResource(
+				parsed.data.metadata.parentResourceId,
+			)
+			if (
+				!parent ||
+				!['post', 'lesson', 'skill-changelog'].includes(parent.type)
+			) {
+				return NextResponse.json(
+					{ error: 'Forbidden: Unsupported media parent', docs: '/api' },
+					{ status: 403, headers: corsHeaders },
+				)
+			}
+		}
+
 		await inngest.send({
 			name: VIDEO_UPLOADED_EVENT,
 			data: {

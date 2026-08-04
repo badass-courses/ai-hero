@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
+import { canUploadMedia } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 import { getMultipartPartUrl } from '@/video-uploader/multipart-s3'
 
@@ -16,7 +17,7 @@ export const OPTIONS = async () => {
 export const GET = withSkill(async (request: NextRequest) => {
 	const { ability, user } = await getUserAbilityForRequest(request)
 
-	if (ability.cannot('create', 'Content')) {
+	if (!canUploadMedia(ability)) {
 		return NextResponse.json(
 			{ error: user ? 'Forbidden' : 'Unauthorized', docs: '/api' },
 			{ status: user ? 403 : 401, headers: corsHeaders },

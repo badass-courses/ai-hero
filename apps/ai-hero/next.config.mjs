@@ -5,7 +5,10 @@
 import createMDX from '@next/mdx'
 import { withAxiom } from 'next-axiom'
 
-import { beforeFilesMarkdownRewrites } from './markdown-route-config.mjs'
+import {
+	beforeFilesMarkdownRewrites,
+	homepageDiscoveryHeaders,
+} from './markdown-route-config.mjs'
 import { env } from './src/env.mjs'
 
 await import('./src/env.mjs')
@@ -130,6 +133,9 @@ const config = {
 		return {
 			beforeFiles: beforeFilesMarkdownRewrites,
 		}
+	},
+	async headers() {
+		return homepageDiscoveryHeaders
 	},
 }
 

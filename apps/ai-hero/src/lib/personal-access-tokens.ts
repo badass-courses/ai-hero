@@ -6,14 +6,37 @@ import {
 } from 'node:crypto'
 
 import { guid } from '@coursebuilder/utils/guid'
+import { z } from 'zod'
 
 export const PERSONAL_ACCESS_TOKEN_PREFIX = 'aih_pat' as const
 export const ANALYTICS_READ_SCOPE = 'analytics:read' as const
+export const PERSONAL_ACCESS_TOKEN_SCOPES = [
+	ANALYTICS_READ_SCOPE,
+	'analytics:chat',
+	'content:read',
+	'content:write',
+	'content:publish',
+	'content:relations',
+	'media:upload',
+	'shortlinks:manage',
+] as const
 
 export type PersonalAccessTokenScope =
-	| typeof ANALYTICS_READ_SCOPE
-	| 'analytics:chat'
-	| 'content:read'
+	(typeof PERSONAL_ACCESS_TOKEN_SCOPES)[number]
+
+
+export const MintPersonalAccessTokenSchema = z.object({
+	name: z.string().trim().min(1).max(100),
+	scopes: z.array(z.enum(PERSONAL_ACCESS_TOKEN_SCOPES)).min(1),
+	expiresAt: z
+		.string()
+		.datetime({ offset: true })
+		.transform((value) => new Date(value))
+		.refine((value) => value > new Date(), {
+			message: 'expiresAt must be in the future',
+		})
+		.optional(),
+})
 
 export type PersonalAccessTokenRecord = {
 	id: string

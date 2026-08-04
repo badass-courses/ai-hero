@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { buildAgentOpenApiDocument } from '@/lib/agent-openapi'
+import { buildPersonalAccessTokenAbility } from '@/server/pat-scopes'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -128,15 +129,64 @@ describe('personal access token API', () => {
 		expect(JSON.stringify(persisted)).not.toContain(body.token)
 	})
 
+	it('accepts the narrow write scopes at mint time', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(auth(true))
+		const scopes = [
+			'content:write',
+			'content:publish',
+			'content:relations',
+			'media:upload',
+			'shortlinks:manage',
+		]
+
+		const response = await POST(postRequest({ name: 'Content worker', scopes }))
+
+		expect(response.status).toBe(201)
+		expect(mocks.insertValues).toHaveBeenCalledWith(
+			expect.objectContaining({ scopes }),
+		)
+	})
+
 	it('rejects unknown scopes', async () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue(auth(true))
 
 		const response = await POST(
-			postRequest({ name: 'Bad scope', scopes: ['content:write'] }),
+			postRequest({ name: 'Bad scope', scopes: ['content:root'] }),
 		)
 
 		expect(response.status).toBe(400)
 		expect(mocks.insertValues).not.toHaveBeenCalled()
+	})
+
+	it('never lets write-scoped PATs mint, list, or revoke PATs', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: adminUser,
+			ability: buildPersonalAccessTokenAbility([
+				'content:write',
+				'content:publish',
+				'content:relations',
+				'media:upload',
+				'shortlinks:manage',
+			]),
+			authMethod: 'personal-access-token',
+		})
+
+		const mintResponse = await POST(
+			postRequest({ name: 'Escalation', scopes: ['content:read'] }),
+		)
+		const listResponse = await GET(new NextRequest(baseUrl))
+		const revokeResponse = await DELETE(
+			new NextRequest(`${baseUrl}/pat_1`, { method: 'DELETE' }),
+			{ params: Promise.resolve({ id: 'pat_1' }) },
+		)
+
+		expect([
+			mintResponse.status,
+			listResponse.status,
+			revokeResponse.status,
+		]).toEqual([403, 403, 403])
+		expect(mocks.insertValues).not.toHaveBeenCalled()
+		expect(mocks.updateWhere).not.toHaveBeenCalled()
 	})
 
 	it('rejects authenticated non-admin callers', async () => {

@@ -16,6 +16,11 @@ import {
 } from '@/lib/posts'
 import { getContentReadFilters } from '@/lib/content-read-policy'
 import { log } from '@/server/logger'
+import {
+	canCreateContentDraft,
+	canMutateContentDraft,
+	canPublishContent,
+} from '@/server/pat-scopes'
 import { Ability, subject } from '@casl/ability'
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 
@@ -145,7 +150,7 @@ export async function createPost({
 	userId: string
 	ability: Ability
 }) {
-	if (ability.cannot('create', 'Content')) {
+	if (!canCreateContentDraft(ability)) {
 		throw new PostError('Forbidden', 403)
 	}
 
@@ -278,13 +283,29 @@ export async function updatePost({
 		action: actionResult.data,
 		userId,
 	})
-	if (ability.cannot('manage', subject('Content', originalPost))) {
+	const canApplyAction =
+		actionResult.data === 'publish'
+			? canPublishContent(ability, originalPost)
+			: actionResult.data === 'save'
+				? canMutateContentDraft(ability, originalPost)
+				: ability.can('manage', subject('Content', originalPost))
+	if (!canApplyAction) {
 		void log.warn('post.permission-denied', {
 			userId,
 			postId: id,
 			action: actionResult.data,
 		})
 		throw new PostError('Forbidden', 403)
+	}
+
+	if (
+		actionResult.data === 'save' &&
+		ability.can('update', 'ContentDraft') &&
+		ability.cannot('manage', subject('Content', originalPost)) &&
+		(data as { fields?: { state?: unknown } } | null)?.fields?.state !==
+			undefined
+	) {
+		throw new PostError('Forbidden: use content:publish for state changes', 403)
 	}
 
 	// Handle state transitions for all actions

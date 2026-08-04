@@ -1761,6 +1761,8 @@ async function buildValuePathGateDStatus() {
 		'path-token-secret-missing',
 		'value-path-base-url-missing',
 		'answer-pages-missing',
+		'answer-page-position-missing',
+		'answer-page-position-duplicate',
 		'email-resource-missing',
 		'kit-sequence-missing',
 		'value-path-step-missing',

@@ -11,8 +11,14 @@ import { revalidateTag } from 'next/cache'
 import { type AppAbility } from '@/ability'
 import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
+import { canUpdateContentRelation } from '@/server/pat-scopes'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+
+import {
+	AddListItemInputSchema,
+	MoveListItemsInputSchema,
+} from './list-membership-contracts'
 
 export class ListMembershipError extends Error {
 	constructor(
@@ -25,29 +31,6 @@ export class ListMembershipError extends Error {
 		this.name = 'ListMembershipError'
 	}
 }
-
-export const AddItemInputSchema = z.object({
-	resourceId: z.string().min(1),
-	/** A section id to nest under. Omit to add at the top level of the list. */
-	parentId: z.string().min(1).optional(),
-	metadata: z
-		.object({ tier: z.string().optional() })
-		.passthrough()
-		.optional(),
-})
-
-export const MoveItemsInputSchema = z.object({
-	items: z
-		.array(
-			z.object({
-				resourceId: z.string().min(1),
-				/** Omit to reorder in place; pass the list id to pull out of a section. */
-				parentId: z.string().min(1).optional(),
-				position: z.number().int().min(0),
-			}),
-		)
-		.min(1),
-})
 
 /** A `contentResourceResource` row joined to the resource it points at. */
 export type MembershipRow = {
@@ -134,12 +117,14 @@ async function loadListTree(listIdOrSlug: string) {
 }
 
 /**
- * 403, not 401: the route has already established there IS a credential, so a
- * refusal here means a valid token without the ability — the same distinction
- * `/api/resources` draws, and the one that tells an agent not to retry.
+ * List membership rows are content relations, so beside broad `update
+ * Content` (device tokens) this accepts the `content:relations` PAT scope —
+ * the same gate the tag attach/detach routes use. 403, not 401: the route has
+ * already established there IS a credential, so a refusal here means a valid
+ * token without the ability, and an agent shouldn't retry.
  */
 function assertCanUpdate(ability: AppAbility) {
-	if (ability.cannot('update', 'Content')) {
+	if (!canUpdateContentRelation(ability)) {
 		throw new ListMembershipError('Forbidden', 403, 'FORBIDDEN')
 	}
 }
@@ -185,7 +170,7 @@ export async function addItemToList({
 	ability: AppAbility
 }) {
 	assertCanUpdate(ability)
-	const input = parseOrThrow(AddItemInputSchema, data)
+	const input = parseOrThrow(AddListItemInputSchema, data)
 	const list = await requireList(listIdOrSlug)
 
 	const resource = await db.query.contentResource.findFirst({
@@ -288,7 +273,7 @@ export async function moveListItems({
 	ability: AppAbility
 }) {
 	assertCanUpdate(ability)
-	const input = parseOrThrow(MoveItemsInputSchema, data)
+	const input = parseOrThrow(MoveListItemsInputSchema, data)
 	const list = await requireList(listIdOrSlug)
 	const rows = list.resources as MembershipRow[]
 

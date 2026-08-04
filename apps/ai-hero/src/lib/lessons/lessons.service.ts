@@ -14,6 +14,11 @@ import {
 	type LessonAction,
 } from '@/lib/lessons'
 import { log } from '@/server/logger'
+import {
+	canCreateContentDraft,
+	canMutateContentDraft,
+	canPublishContent,
+} from '@/server/pat-scopes'
 import { Ability, subject } from '@casl/ability'
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 
@@ -164,7 +169,7 @@ export async function createLesson({
 	userId: string
 	ability: Ability
 }) {
-	if (ability.cannot('create', 'Content')) {
+	if (!canCreateContentDraft(ability)) {
 		throw new LessonError('Forbidden', 403)
 	}
 
@@ -306,13 +311,32 @@ export async function updateLesson({
 		action: actionResult.data,
 		userId,
 	})
-	if (ability.cannot('manage', subject('Content', originalLesson))) {
+	const canApplyAction =
+		actionResult.data === 'publish'
+			? canPublishContent(ability, originalLesson)
+			: actionResult.data === 'save'
+				? canMutateContentDraft(ability, originalLesson)
+				: ability.can('manage', subject('Content', originalLesson))
+	if (!canApplyAction) {
 		void log.warn('lesson.permission-denied', {
 			userId,
 			lessonId: id,
 			action: actionResult.data,
 		})
 		throw new LessonError('Forbidden', 403)
+	}
+
+	if (
+		actionResult.data === 'save' &&
+		ability.can('update', 'ContentDraft') &&
+		ability.cannot('manage', subject('Content', originalLesson)) &&
+		(data as { fields?: { state?: unknown } } | null)?.fields?.state !==
+			undefined
+	) {
+		throw new LessonError(
+			'Forbidden: use content:publish for state changes',
+			403,
+		)
 	}
 
 	// Handle state transitions for all actions

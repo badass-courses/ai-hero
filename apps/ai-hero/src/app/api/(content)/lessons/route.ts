@@ -6,6 +6,11 @@ import {
 } from '@/lib/lessons/lessons.service'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import {
+	canPublishContent,
+	canUpdateContentDraft,
+	canUpdateContentRelation,
+} from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 
 const corsHeaders = {
@@ -86,7 +91,8 @@ const updateLessonHandler = async (request: NextRequest) => {
 	const id = searchParams.get('id')
 
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 		await log.debug('api.lessons.auth-check', {
 			userId: user?.id,
 			lessonId: id,
@@ -101,7 +107,20 @@ const updateLessonHandler = async (request: NextRequest) => {
 				{ status: 401, headers: corsHeaders },
 			)
 		}
-		if (ability.cannot('update', 'Content')) {
+		if (
+			authMethod !== 'personal-access-token' &&
+			ability.cannot('update', 'Content')
+		) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
+		if (
+			authMethod === 'personal-access-token' &&
+			!canUpdateContentDraft(ability) &&
+			!canPublishContent(ability)
+		) {
 			return NextResponse.json(
 				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
@@ -120,6 +139,42 @@ const updateLessonHandler = async (request: NextRequest) => {
 		}
 
 		const body = await request.json()
+		const action = typeof body?.action === 'string' ? body.action : 'save'
+		if (
+			authMethod === 'personal-access-token' &&
+			!(
+				(action === 'publish' && canPublishContent(ability)) ||
+				(action === 'save' && canUpdateContentDraft(ability))
+			)
+		) {
+			return NextResponse.json(
+				{ error: 'Forbidden', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
+		if (
+			authMethod === 'personal-access-token' &&
+			action === 'save' &&
+			body?.fields?.state !== undefined
+		) {
+			return NextResponse.json(
+				{
+					error: 'Forbidden: use content:publish for state changes',
+					docs: '/api',
+				},
+				{ status: 403, headers: corsHeaders },
+			)
+		}
+		if (
+			authMethod === 'personal-access-token' &&
+			Array.isArray(body?.tags) &&
+			!canUpdateContentRelation(ability)
+		) {
+			return NextResponse.json(
+				{ error: 'Forbidden: content:relations scope required', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 		await log.info('api.lessons.put.started', {
 			userId: user.id,
 			lessonId: id,

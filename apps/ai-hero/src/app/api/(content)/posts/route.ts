@@ -9,6 +9,13 @@ import {
 } from '@/lib/posts/posts.service'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import {
+	canCreateContentDraft,
+	canCreateContentRelation,
+	canPublishContent,
+	canUpdateContentDraft,
+	canUpdateContentRelation,
+} from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 
 const corsHeaders = {
@@ -39,7 +46,11 @@ const getPostsHandler = async (request: NextRequest) => {
 			)
 		}
 
-		const result = await getPosts({ userId: user?.id, ability, slug: slugOrId })
+		const result = await getPosts({
+			userId: user?.id,
+			ability,
+			slug: slugOrId,
+		})
 
 		await log.info('api.posts.get.success', {
 			userId: user?.id,
@@ -82,7 +93,8 @@ export const GET = withSkill(getPostsHandler)
 
 const createPostHandler = async (request: NextRequest) => {
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 		if (!user) {
 			await log.warn('api.posts.post.unauthorized')
 			return NextResponse.json(
@@ -90,7 +102,7 @@ const createPostHandler = async (request: NextRequest) => {
 				{ status: 401, headers: corsHeaders },
 			)
 		}
-		if (ability.cannot('create', 'Content')) {
+		if (!canCreateContentDraft(ability)) {
 			return NextResponse.json(
 				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
@@ -98,6 +110,16 @@ const createPostHandler = async (request: NextRequest) => {
 		}
 
 		const body = await request.json()
+		if (
+			authMethod === 'personal-access-token' &&
+			(body.videoResourceId || body.parentLessonId) &&
+			!canCreateContentRelation(ability)
+		) {
+			return NextResponse.json(
+				{ error: 'Forbidden: content:relations scope required', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 		await log.info('api.posts.post.started', {
 			userId: user.id,
 			title: body.title,
@@ -148,7 +170,8 @@ const updatePostHandler = async (request: NextRequest) => {
 	const id = searchParams.get('id')
 
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 		if (!user) {
 			await log.warn('api.posts.put.unauthorized', {
 				postId: id,
@@ -158,7 +181,15 @@ const updatePostHandler = async (request: NextRequest) => {
 				{ status: 401, headers: corsHeaders },
 			)
 		}
-		if (ability.cannot('update', 'Content')) {
+		const canApplyAction =
+			authMethod === 'personal-access-token'
+				? action === 'publish'
+					? canPublishContent(ability)
+					: action === null || action === 'save'
+						? canUpdateContentDraft(ability)
+						: false
+				: ability.can('update', 'Content')
+		if (!canApplyAction) {
 			return NextResponse.json(
 				{ error: 'Forbidden', docs: '/api' },
 				{ status: 403, headers: corsHeaders },
@@ -177,6 +208,29 @@ const updatePostHandler = async (request: NextRequest) => {
 		}
 
 		const body = await request.json()
+		if (
+			authMethod === 'personal-access-token' &&
+			(action === null || action === 'save') &&
+			body?.fields?.state !== undefined
+		) {
+			return NextResponse.json(
+				{
+					error: 'Forbidden: use content:publish for state changes',
+					docs: '/api',
+				},
+				{ status: 403, headers: corsHeaders },
+			)
+		}
+		if (
+			authMethod === 'personal-access-token' &&
+			(Array.isArray(body?.tags) || body?.videoResourceId) &&
+			!canUpdateContentRelation(ability)
+		) {
+			return NextResponse.json(
+				{ error: 'Forbidden: content:relations scope required', docs: '/api' },
+				{ status: 403, headers: corsHeaders },
+			)
+		}
 		await log.info('api.posts.put.started', {
 			userId: user.id,
 			postId: id,

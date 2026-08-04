@@ -1,3 +1,65 @@
+import { zodToJsonSchema } from 'zod-to-json-schema'
+import type { ZodTypeAny } from 'zod'
+
+import {
+	AddListItemRequestSchema,
+	CommandPreflightResultSchema,
+	CompleteMultipartUploadResponseSchema,
+	CompleteMultipartUploadSchema,
+	CreateMultipartUploadResponseSchema,
+	CreateMultipartUploadSchema,
+	CreateShortlinkSchema,
+	CreateTagRequestSchema,
+	DeleteMessageResponseSchema,
+	EmptyObjectResponseSchema,
+	ErrorResponseSchema,
+	LessonReadResponseSchema,
+	LessonResponseSchema,
+	LessonUpdateRequestSchema,
+	ListItemLocationSchema,
+	ListItemRowSchema,
+	MintPersonalAccessTokenResponseSchema,
+	MintPersonalAccessTokenSchema,
+	MoveListItemsRequestSchema,
+	MoveListItemsResultSchema,
+	MultipartPartUrlResponseSchema,
+	NextActionSchema,
+	PageReadResponseSchema,
+	PageResponseSchema,
+	PersonalAccessTokenResponseSchema,
+	PostCreateRequestSchema,
+	PostReadResponseSchema,
+	PostResponseSchema,
+	PostTagInputSchema,
+	PostTagMutationResponseSchema,
+	PostUpdateRequestSchema,
+	ProductAvailabilityResponseSchema,
+	ProductCreateApiSchema,
+	ProductReadResponseSchema,
+	ProductResponseSchema,
+	ProductUpdateApiSchema,
+	ResourceCreateRequestSchema,
+	ResourceReadResponseSchema,
+	ResourceResponseSchema,
+	ResourceUpdateRequestSchema,
+	SearchResultSchema,
+	ShortlinkReadResponseSchema,
+	ShortlinkResponseSchema,
+	SignedUploadUrlResponseSchema,
+	SkillChangelogPostSchema,
+	SkillChangelogResultSchema,
+	SolutionCreateRequestSchema,
+	SolutionResponseSchema,
+	SolutionUpdateRequestSchema,
+	TagListResponseSchema,
+	TagResponseSchema,
+	UpdatePageSchema,
+	UpdateShortlinkSchema,
+	UploadBodySchema,
+	UploadStartedResponseSchema,
+	VideoResourceResponseSchema,
+} from './agent-api-contracts'
+
 const BEARER_SECURITY = [{ bearerAuth: [] }]
 const OPTIONAL_BEARER_SECURITY = [{}, ...BEARER_SECURITY]
 
@@ -14,19 +76,30 @@ const schemaRef = (name: string) => ({ $ref: `#/components/schemas/${name}` })
 
 const authErrorResponses = {
 	'401': response(
-		'Missing, invalid, expired, or revoked bearer credential. Some legacy content reads also use 401 when a valid bearer lacks Content read ability. Read the docs field and inspect token scopes before retrying.',
+		'Missing, malformed, expired, or revoked bearer credential. Use /api to discover the accepted bearer formats before retrying.',
 		schemaRef('ErrorResponse'),
 	),
 	'403': response(
-		'The bearer credential is valid but lacks the required scope or ability. Read the docs field and do not retry the same operation with content:read.',
+		'The bearer credential is valid, but the PAT lacks a required write scope, the requested mutation exceeds that scope (for example, content:write against published content), or the role-derived device token lacks the named ability. content:read never authorizes writes.',
 		schemaRef('ErrorResponse'),
 	),
 }
 
+const commonErrorResponses = {
+	'400': response(
+		'Invalid request parameters or body.',
+		schemaRef('ErrorResponse'),
+	),
+	'404': response(
+		'The requested resource does not exist.',
+		schemaRef('ErrorResponse'),
+	),
+	'500': response('Internal server error.', schemaRef('ErrorResponse')),
+}
+
 type ContentAccess =
-	| 'admin-device-token'
 	| 'content-read'
-	| 'optional-admin-device-token'
+	| 'device-token'
 	| 'optional-content-read'
 	| 'public'
 
@@ -35,7 +108,15 @@ type ContentOperationOptions = {
 	summary: string
 	description: string
 	access: ContentAccess
+	responseSchema: string
+	requiredAbility?: string
+	requiredScopes?: string[]
+	scopeRequirements?: string
+	agentTokenPolicy?: string
+	requestSchema?: string
+	parameters?: Array<Record<string, unknown>>
 	successStatus?: 200 | 201
+	extraResponses?: Record<string, unknown>
 }
 
 function contentOperation({
@@ -43,25 +124,30 @@ function contentOperation({
 	summary,
 	description,
 	access,
+	responseSchema,
+	requiredAbility,
+	requiredScopes,
+	scopeRequirements,
+	agentTokenPolicy,
+	requestSchema,
+	parameters,
 	successStatus = 200,
+	extraResponses,
 }: ContentOperationOptions) {
 	const security =
 		access === 'public'
 			? []
-			: access === 'optional-content-read' ||
-				  access === 'optional-admin-device-token'
+			: access === 'optional-content-read'
 				? OPTIONAL_BEARER_SECURITY
 				: BEARER_SECURITY
 	const isContentRead =
 		access === 'content-read' || access === 'optional-content-read'
-	const isAdminOnly =
-		access === 'admin-device-token' || access === 'optional-admin-device-token'
+	const isDeviceToken = access === 'device-token'
+	const acceptsWritePat = isDeviceToken && Boolean(requiredScopes?.length)
 	const authErrors =
-		access === 'optional-content-read' || access === 'public'
+		access === 'public' || access === 'optional-content-read'
 			? {}
-			: access === 'optional-admin-device-token'
-				? { '403': authErrorResponses['403'] }
-				: authErrorResponses
+			: authErrorResponses
 
 	return {
 		tags: ['Content API'],
@@ -69,31 +155,46 @@ function contentOperation({
 		summary,
 		description,
 		security,
-		'x-required-scopes': isContentRead ? ['content:read'] : [],
-		...(isAdminOnly && {
-			'x-required-ability':
-				access === 'optional-admin-device-token'
-					? 'Anonymous legacy access remains available. When a bearer is used, scoped aih_pat_* agent tokens are excluded; an authorized device token retains access.'
-					: 'The current operation requires an admin device token with the named Content ability. Scoped aih_pat_* agent tokens are excluded.',
+		'x-required-scopes': isContentRead
+			? ['content:read']
+			: (requiredScopes ?? []),
+		...(scopeRequirements && {
+			'x-scope-requirements': scopeRequirements,
+		}),
+		...(isDeviceToken && {
+			'x-required-ability': requiredAbility,
 		}),
 		'x-agent-token-policy': isContentRead
-			? 'content:read grants this read, including draft and private content where applicable.'
-			: isAdminOnly
-				? 'Excluded from scoped agent tokens. A content:read token receives 403.'
-				: access === 'public'
-					? 'Public. A bearer token grants no additional privilege.'
-					: 'Public results are available anonymously; content:read expands results to privileged content.',
+			? access === 'optional-content-read'
+				? 'Anonymous callers receive public results. content:read also permits privileged content.'
+				: 'A scoped aih_pat_* token with content:read is accepted.'
+			: acceptsWritePat
+				? agentTokenPolicy || scopeRequirements
+				: isDeviceToken
+					? `Scoped aih_pat_* tokens are excluded. Use a role-derived device token with ${requiredAbility}.`
+					: 'Public. A bearer token grants no extra privilege.',
+		...(parameters?.length ? { parameters } : {}),
+		...(requestSchema && {
+			requestBody: {
+				required: true,
+				content: jsonContent(schemaRef(requestSchema)),
+			},
+		}),
 		responses: {
 			[String(successStatus)]: response(
 				successStatus === 201 ? 'Created.' : 'Successful response.',
-				{},
+				schemaRef(responseSchema),
 			),
 			...authErrors,
+			...extraResponses,
 		},
 	}
 }
 
-function preflight(operationId: string) {
+function preflight(
+	operationId: string,
+	responseSchema = 'EmptyObjectResponse',
+) {
 	return {
 		tags: ['Content API'],
 		operationId,
@@ -103,39 +204,43 @@ function preflight(operationId: string) {
 		'x-required-scopes': [],
 		'x-agent-token-policy': 'Public preflight only.',
 		responses: {
-			'200': response('Preflight response.', {}),
+			'200': response('Preflight response.', schemaRef(responseSchema)),
 		},
 	}
 }
 
+const queryParameter = (
+	name: string,
+	description: string,
+	schema: Record<string, unknown> = { type: 'string' },
+	required = false,
+) => ({ name, in: 'query', required, description, schema })
+
+const pathParameter = (name: string, description: string) => ({
+	name,
+	in: 'path',
+	required: true,
+	description,
+	schema: { type: 'string' },
+})
+
 const contentPaths = {
 	'/api/{videoResourceId}': {
-		parameters: [
-			{
-				name: 'videoResourceId',
-				in: 'path',
-				required: true,
-				schema: { type: 'string' },
-			},
-		],
+		parameters: [pathParameter('videoResourceId', 'Video resource id.')],
 		options: preflight('preflightVideoResource'),
 		get: contentOperation({
 			operationId: 'getVideoResource',
 			summary: 'Get a raw video resource',
 			description:
-				'Excluded because the payload contains playable Mux identifiers, transcript data, and media internals. content:read receives 403.',
-			access: 'admin-device-token',
+				'Returns media internals, including playable Mux identifiers and transcript data. This route is not available to scoped PATs.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			responseSchema: 'VideoResourceResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/lessons/{lessonId}/solution': {
-		parameters: [
-			{
-				name: 'lessonId',
-				in: 'path',
-				required: true,
-				schema: { type: 'string' },
-			},
-		],
+		parameters: [pathParameter('lessonId', 'Parent lesson id or slug.')],
 		options: preflight('preflightLessonSolution'),
 		get: contentOperation({
 			operationId: 'getLessonSolution',
@@ -143,24 +248,37 @@ const contentPaths = {
 			description:
 				'content:read includes solutions for readable draft, private, unlisted, and published lessons.',
 			access: 'content-read',
+			responseSchema: 'SolutionResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		put: contentOperation({
 			operationId: 'updateLessonSolution',
 			summary: 'Update a lesson solution',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			description: 'Updates the existing solution attached to the lesson.',
+			access: 'device-token',
+			requiredAbility: 'manage the target lesson Content subject',
+			requestSchema: 'SolutionUpdateRequest',
+			responseSchema: 'SolutionResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		post: contentOperation({
 			operationId: 'createLessonSolution',
 			summary: 'Create a lesson solution',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			description: 'Creates one solution attached to the lesson.',
+			access: 'device-token',
+			requiredAbility: 'manage the target lesson Content subject',
+			requestSchema: 'SolutionCreateRequest',
+			responseSchema: 'SolutionResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		delete: contentOperation({
 			operationId: 'deleteLessonSolution',
 			summary: 'Delete a lesson solution',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			description: 'Deletes the solution attached to the lesson.',
+			access: 'device-token',
+			requiredAbility: 'manage the target lesson Content subject',
+			responseSchema: 'DeleteMessageResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/lessons': {
@@ -169,31 +287,26 @@ const contentPaths = {
 			operationId: 'getLessons',
 			summary: 'Read lessons',
 			description:
-				'content:read returns one or all lessons, including draft, private, unlisted, and published lessons.',
+				'Return one lesson with ?slugOrId= or all readable lessons when omitted.',
 			access: 'content-read',
+			parameters: [queryParameter('slugOrId', 'Optional lesson id or slug.')],
+			responseSchema: 'LessonReadResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		put: contentOperation({
 			operationId: 'updateLesson',
-			summary: 'Update a lesson',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
-		}),
-	},
-	'/api/memory': {
-		options: preflight('preflightMemory'),
-		get: contentOperation({
-			operationId: 'recallMemory',
-			summary: 'Recall support memory',
+			summary: 'Update or publish a lesson',
 			description:
-				'Excluded because support memory is not CMS content and may contain customer context. Anonymous legacy access remains unchanged; a scoped agent token receives 403.',
-			access: 'optional-admin-device-token',
-		}),
-		post: contentOperation({
-			operationId: 'storeMemory',
-			summary: 'Store support memory',
-			description:
-				'Excluded because this mutates support memory, a separate data domain. content:read receives 403.',
-			access: 'admin-device-token',
+				'Use ?id=<lesson-id>. For PATs, action=save requires content:write and only updates an existing draft; action=publish requires content:publish. Saving tags also requires content:relations. PATs cannot unpublish or archive lessons.',
+			access: 'device-token',
+			requiredAbility: 'update Content and manage the target lesson',
+			requiredScopes: ['content:write', 'content:publish', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write for action=save, content:publish for action=publish, and content:relations in addition to content:write when the save body contains tags.',
+			parameters: [queryParameter('id', 'Lesson id.', undefined, true)],
+			requestSchema: 'LessonUpdateRequest',
+			responseSchema: 'LessonResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/posts': {
@@ -202,63 +315,70 @@ const contentPaths = {
 			operationId: 'getPosts',
 			summary: 'Read posts',
 			description:
-				'content:read returns one or all posts, including draft, private, unlisted, and published posts.',
+				'Return one post with ?slugOrId= or all readable posts when omitted.',
 			access: 'content-read',
+			parameters: [queryParameter('slugOrId', 'Optional post id or slug.')],
+			responseSchema: 'PostReadResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		post: contentOperation({
 			operationId: 'createPost',
 			summary: 'Create a post',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			description:
+				'Creates a draft post. The server supplies createdById. PATs also need content:relations when videoResourceId or parentLessonId is present.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['content:write', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write is required. content:relations is additionally required when videoResourceId or parentLessonId is present.',
+			requestSchema: 'PostCreateRequest',
+			responseSchema: 'PostResponse',
 			successStatus: 201,
+			extraResponses: commonErrorResponses,
 		}),
 		put: contentOperation({
 			operationId: 'updatePost',
-			summary: 'Update a post',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			summary: 'Update or publish a post',
+			description:
+				'Use ?id=<post-id>&action=<publish|save>. For PATs, save requires content:write and only updates an existing draft; publish requires content:publish. Saving tags or videoResourceId also requires content:relations. PATs cannot unpublish, archive, or change fields.state.',
+			access: 'device-token',
+			requiredAbility: 'update Content and manage the target post',
+			requiredScopes: ['content:write', 'content:publish', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write for action=save or no action, content:publish for action=publish, and content:relations in addition when the body contains tags or videoResourceId.',
+			parameters: [
+				queryParameter('id', 'Post id.', undefined, true),
+				queryParameter('action', 'State transition or save action.', {
+					type: 'string',
+					enum: ['publish', 'unpublish', 'archive', 'save'],
+				}),
+			],
+			requestSchema: 'PostUpdateRequest',
+			responseSchema: 'PostResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		delete: contentOperation({
 			operationId: 'deletePost',
 			summary: 'Delete a post',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			description: 'Use ?id=<post-id>.',
+			access: 'device-token',
+			requiredAbility: 'delete the target Content subject',
+			parameters: [queryParameter('id', 'Post id.', undefined, true)],
+			responseSchema: 'DeleteMessageResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/products/{productId}/availability': {
-		parameters: [
-			{
-				name: 'productId',
-				in: 'path',
-				required: true,
-				schema: { type: 'string' },
-			},
-		],
+		parameters: [pathParameter('productId', 'Product id.')],
 		options: preflight('preflightProductAvailability'),
 		get: contentOperation({
 			operationId: 'getProductAvailability',
 			summary: 'Read public product availability',
 			description:
-				'Public commerce availability. A content token adds no fields or draft visibility.',
+				'Returns remaining quantity and whether capacity is unlimited.',
 			access: 'public',
-		}),
-	},
-	'/api/products/{productId}/enrollment': {
-		parameters: [
-			{
-				name: 'productId',
-				in: 'path',
-				required: true,
-				schema: { type: 'string' },
-			},
-		],
-		options: preflight('preflightProductEnrollment'),
-		get: contentOperation({
-			operationId: 'getProductEnrollment',
-			summary: 'Read product enrollment analytics',
-			description:
-				'Excluded because purchase, status, and seat aggregates are commerce analytics rather than CMS content. content:read receives 403.',
-			access: 'admin-device-token',
+			responseSchema: 'ProductAvailabilityResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/products': {
@@ -267,21 +387,32 @@ const contentPaths = {
 			operationId: 'getProducts',
 			summary: 'Read product structure',
 			description:
-				'content:read includes nested draft and private course structure plus product and price metadata, but never purchases or customers.',
+				'Return one product with ?slugOrId= or all products. Nested course structure is included; purchases and customers are not.',
 			access: 'content-read',
+			parameters: [queryParameter('slugOrId', 'Optional product id or slug.')],
+			responseSchema: 'ProductReadResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		post: contentOperation({
 			operationId: 'createProduct',
 			summary: 'Create a product',
-			description: 'A CMS and commerce write. content:read receives 403.',
-			access: 'admin-device-token',
+			description: 'Creates the product and optional explicit slug.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requestSchema: 'ProductCreateRequest',
+			responseSchema: 'ProductResponse',
 			successStatus: 201,
+			extraResponses: commonErrorResponses,
 		}),
 		put: contentOperation({
 			operationId: 'updateProduct',
 			summary: 'Update a product',
-			description: 'A CMS and commerce write. content:read receives 403.',
-			access: 'admin-device-token',
+			description: 'Updates one or more product fields.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requestSchema: 'ProductUpdateRequest',
+			responseSchema: 'ProductResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/resources': {
@@ -290,55 +421,90 @@ const contentPaths = {
 			operationId: 'getResources',
 			summary: 'Read sanitized content resources',
 			description:
-				'content:read includes draft and private CMS resources through a safe projection. Playable Mux identifiers and other capability-bearing media fields stay excluded.',
+				'Return one resource by ?slugOrId= and optional ?type=. List-all is allowed only for ?type=list. Mux capability fields are removed recursively.',
 			access: 'content-read',
+			parameters: [
+				queryParameter('slugOrId', 'Resource id or slug.'),
+				queryParameter('type', 'Optional resource type filter.'),
+			],
+			responseSchema: 'ResourceReadResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		put: contentOperation({
 			operationId: 'updateResource',
-			summary: 'Update a resource',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			summary: 'Merge resource fields',
+			description:
+				'Use ?id=<resource-id>. fields are merged, not replaced. Video chapters use the real chapter validator, are sorted by start time, and must fit the video duration.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			parameters: [queryParameter('id', 'Resource id.', undefined, true)],
+			requestSchema: 'ResourceUpdateRequest',
+			responseSchema: 'ResourceResponse',
+			extraResponses: commonErrorResponses,
 		}),
 		post: contentOperation({
 			operationId: 'createResource',
-			summary: 'Create a resource',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			summary: 'Create a generic resource',
+			description:
+				'Creates a draft, unlisted resource. The server generates id and slug unless fields.slug is supplied.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requestSchema: 'ResourceCreateRequest',
+			responseSchema: 'ResourceResponse',
 			successStatus: 201,
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/lists/{listId}/resources': {
-		parameters: [
-			{
-				name: 'listId',
-				in: 'path',
-				required: true,
-				schema: { type: 'string' },
-				description: "The list's id or its slug.",
-			},
-		],
+		parameters: [pathParameter('listId', "The list's id or its slug.")],
 		options: preflight('preflightListResources'),
 		post: contentOperation({
 			operationId: 'addResourceToList',
 			summary: 'Add a resource to a list or one of its sections',
 			description:
-				'Body { resourceId, parentId?, metadata? }; omit parentId to add at the top level, pass a section id to nest. Appends after the last sibling. A CMS write — content:read receives 403.',
-			access: 'admin-device-token',
+				'Omit parentId to add at the top level; pass a section id to nest under it. Appends after the last sibling. 409 when the parent already holds the resource.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'AddListItemRequest',
+			responseSchema: 'ListItemRow',
 			successStatus: 201,
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response(
+					'The parent already holds this resource.',
+					schemaRef('ErrorResponse'),
+				),
+			},
 		}),
 		put: contentOperation({
 			operationId: 'moveListResources',
 			summary: 'Reorder list items or move them between sections',
 			description:
-				'Body { items: [{ resourceId, parentId?, position }] }, applied in one transaction. Omit parentId to reorder in place; pass the list id to pull an item out of a section. A CMS write — content:read receives 403.',
-			access: 'admin-device-token',
+				'Applies the whole batch in one transaction. Omit parentId to reorder an item in place; pass the list id to pull it out of a section. Any item the list does not hold fails the batch before anything is written.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'MoveListItemsRequest',
+			responseSchema: 'MoveListItemsResult',
+			extraResponses: commonErrorResponses,
 		}),
 		delete: contentOperation({
 			operationId: 'removeResourceFromList',
 			summary: 'Remove a resource from a list',
 			description:
-				'Takes ?resourceId=, and removes the item wherever in the tree it sits. A CMS write — content:read receives 403.',
-			access: 'admin-device-token',
+				'Removes the item wherever in the tree it sits and answers with where it sat. 404 when the list does not hold it.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			parameters: [
+				queryParameter('resourceId', 'The resource to remove.', undefined, true),
+			],
+			responseSchema: 'ListItemLocation',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/search': {
@@ -347,67 +513,55 @@ const contentPaths = {
 			operationId: 'searchContent',
 			summary: 'Search content',
 			description:
-				'Anonymous callers see public published hits. content:read also sees draft and private hits through the existing safe field allowlist; embeddings and full descriptions stay excluded.',
+				'Anonymous callers see public published hits. content:read also sees privileged hits through the safe field allowlist.',
 			access: 'optional-content-read',
+			parameters: [
+				queryParameter('q', 'Search query.', undefined, true),
+				queryParameter('type', 'Optional content type filter.'),
+				queryParameter('per_page', 'Result count, capped at 20.', {
+					type: 'integer',
+					minimum: 1,
+					maximum: 20,
+					default: 5,
+				}),
+				queryParameter('semantic', 'Enable hybrid semantic search.', {
+					type: 'boolean',
+					default: false,
+				}),
+			],
+			responseSchema: 'SearchSuccessResponse',
+			extraResponses: {
+				'400': commonErrorResponses['400'],
+				'500': commonErrorResponses['500'],
+				'503': response(
+					'Search is not configured.',
+					schemaRef('ErrorResponse'),
+				),
+			},
 		}),
 	},
 	'/api/skills/changelog': {
-		options: preflight('preflightSkillsChangelog'),
+		options: preflight(
+			'preflightSkillsChangelog',
+			'CommandPreflightSuccessResponse',
+		),
 		post: contentOperation({
 			operationId: 'createSkillsChangelog',
-			summary: 'Create a skills changelog entry',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
+			summary: 'Create a Skills Changelog entry',
+			description:
+				'Creates a draft or published Skills Changelog resource and optionally attaches a video. The canonical success shape is {ok, command, result, next_actions}; deprecated top-level id and slug mirror the nested result for compatibility.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['content:write', 'content:publish', 'content:relations'],
+			scopeRequirements:
+				'PAT: content:write is required. content:publish is additionally required when state=published. content:relations is additionally required when videoResourceId is present.',
+			requestSchema: 'SkillChangelogRequest',
+			responseSchema: 'SkillChangelogSuccessResponse',
 			successStatus: 201,
-		}),
-	},
-	'/api/surveys/analytics': {
-		options: preflight('preflightSurveyAnalytics'),
-		get: contentOperation({
-			operationId: 'getSurveyAnalytics',
-			summary: 'Read survey analytics',
-			description:
-				'Excluded because the payload contains survey answers and personally identifying fields. content:read receives 403.',
-			access: 'admin-device-token',
-		}),
-	},
-	'/api/surveys': {
-		options: preflight('preflightSurveys'),
-		get: contentOperation({
-			operationId: 'getSurveys',
-			summary: 'Read survey definitions',
-			description:
-				'content:read includes draft and private survey definitions and questions, but never responses or analytics.',
-			access: 'content-read',
-		}),
-		post: contentOperation({
-			operationId: 'createSurvey',
-			summary: 'Create a survey',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
-			successStatus: 201,
-		}),
-		patch: contentOperation({
-			operationId: 'updateSurvey',
-			summary: 'Update a survey',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
-		}),
-		delete: contentOperation({
-			operationId: 'deleteSurvey',
-			summary: 'Delete a survey',
-			description: 'A CMS write. content:read receives 403.',
-			access: 'admin-device-token',
-		}),
-	},
-	'/api/uploads/multipart/complete': {
-		options: preflight('preflightCompleteMultipartUpload'),
-		post: contentOperation({
-			operationId: 'completeMultipartUpload',
-			summary: 'Complete a multipart upload',
-			description:
-				'Excluded because upload control mutates storage. content:read receives 403.',
-			access: 'admin-device-token',
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response('The slug already exists.', schemaRef('ErrorResponse')),
+			},
 		}),
 	},
 	'/api/uploads/multipart/create': {
@@ -416,8 +570,14 @@ const contentPaths = {
 			operationId: 'createMultipartUpload',
 			summary: 'Create a multipart upload',
 			description:
-				'Excluded because upload control grants a storage write capability. content:read receives 403.',
-			access: 'admin-device-token',
+				'Starts an S3 multipart upload and returns its id, key, and public URL.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload'],
+			scopeRequirements: 'PAT: media:upload is required.',
+			requestSchema: 'CreateMultipartUploadRequest',
+			responseSchema: 'CreateMultipartUploadResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/uploads/multipart/part-url': {
@@ -426,8 +586,42 @@ const contentPaths = {
 			operationId: 'getMultipartPartUrl',
 			summary: 'Get a multipart upload part URL',
 			description:
-				'Excluded because the signed URL grants storage write capability despite using HTTP GET. content:read receives 403.',
-			access: 'admin-device-token',
+				'Returns a one-hour signed URL that grants direct storage write access.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload'],
+			scopeRequirements: 'PAT: media:upload is required.',
+			parameters: [
+				queryParameter('key', 'Multipart object key.', undefined, true),
+				queryParameter('uploadId', 'Multipart upload id.', undefined, true),
+				queryParameter(
+					'partNumber',
+					'Positive part number.',
+					{
+						type: 'integer',
+						minimum: 1,
+					},
+					true,
+				),
+			],
+			responseSchema: 'MultipartPartUrlResponse',
+			extraResponses: commonErrorResponses,
+		}),
+	},
+	'/api/uploads/multipart/complete': {
+		options: preflight('preflightCompleteMultipartUpload'),
+		post: contentOperation({
+			operationId: 'completeMultipartUpload',
+			summary: 'Complete a multipart upload',
+			description:
+				'Completes an S3 multipart upload from uploaded part numbers and ETags.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload'],
+			scopeRequirements: 'PAT: media:upload is required.',
+			requestSchema: 'CompleteMultipartUploadRequest',
+			responseSchema: 'CompleteMultipartUploadResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/uploads/new': {
@@ -436,8 +630,15 @@ const contentPaths = {
 			operationId: 'createUpload',
 			summary: 'Start video processing',
 			description:
-				'Excluded because this starts processing and writes media state. content:read receives 403.',
-			access: 'admin-device-token',
+				'Queues video processing for an uploaded file and parent content resource. PATs may target only post, lesson, or skill-changelog parents. The route currently returns no job id.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['media:upload', 'content:relations'],
+			scopeRequirements:
+				'PAT: media:upload and content:relations are both required.',
+			requestSchema: 'UploadRequest',
+			responseSchema: 'UploadStartedResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 	'/api/uploads/signed-url': {
@@ -445,30 +646,190 @@ const contentPaths = {
 			operationId: 'getUploadSignedUrl',
 			summary: 'Get a signed storage URL',
 			description:
-				'Excluded because a signed URL is a capability that grants direct storage access. content:read receives 403.',
-			access: 'admin-device-token',
+				'Returns a one-hour signed PUT URL and its resulting public URL.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			parameters: [
+				queryParameter('objectName', 'Original file name.', undefined, true),
+			],
+			responseSchema: 'SignedUploadUrlResponse',
+			extraResponses: commonErrorResponses,
+		}),
+	},
+	'/api/shortlinks': {
+		options: preflight('preflightShortlinks'),
+		get: contentOperation({
+			operationId: 'getShortlinks',
+			summary: 'List, search, or read short links',
+			description:
+				'Use ?id= for one link or ?search= to filter. shortlinks:manage PAT responses omit click counts and cannot use analytics modes; role-derived admin device tokens retain analytics access.',
+			access: 'device-token',
+			requiredAbility: 'manage all',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
+			parameters: [
+				queryParameter('id', 'Optional short-link id.'),
+				queryParameter('search', 'Optional slug, URL, or description search.'),
+			],
+			responseSchema: 'ShortlinkReadResponse',
+			extraResponses: commonErrorResponses,
+		}),
+		post: contentOperation({
+			operationId: 'createShortlink',
+			summary: 'Create a short link',
+			description:
+				'Creates a short link. The server generates a slug when omitted. PAT responses omit click counts.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
+			requestSchema: 'CreateShortlinkRequest',
+			responseSchema: 'ShortlinkResponse',
+			successStatus: 201,
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response('The slug already exists.', schemaRef('ErrorResponse')),
+			},
+		}),
+		patch: contentOperation({
+			operationId: 'updateShortlink',
+			summary: 'Update a short link',
+			description:
+				'Updates the selected short-link fields. PAT responses omit click counts.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
+			requestSchema: 'UpdateShortlinkRequest',
+			responseSchema: 'ShortlinkResponse',
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response('The slug already exists.', schemaRef('ErrorResponse')),
+			},
+		}),
+		delete: contentOperation({
+			operationId: 'deleteShortlink',
+			summary: 'Delete a short link',
+			description: 'Use ?id=<short-link-id>.',
+			access: 'device-token',
+			requiredAbility: 'delete Content',
+			requiredScopes: ['shortlinks:manage'],
+			scopeRequirements: 'PAT: shortlinks:manage is required.',
+			parameters: [queryParameter('id', 'Short-link id.', undefined, true)],
+			responseSchema: 'DeleteMessageResponse',
+			extraResponses: commonErrorResponses,
+		}),
+	},
+	'/api/tags': {
+		options: preflight('preflightTags'),
+		get: contentOperation({
+			operationId: 'getTags',
+			summary: 'List tags',
+			description:
+				'Public tag definition list. No customer or response data is returned.',
+			access: 'public',
+			responseSchema: 'TagListResponse',
+			extraResponses: { '500': commonErrorResponses['500'] },
+		}),
+		post: contentOperation({
+			operationId: 'createTag',
+			summary: 'Create a tag',
+			description:
+				'Creates a topic tag. id and timestamps are generated when omitted. Duplicate ids, names, or slugs return 409.',
+			access: 'device-token',
+			requiredAbility: 'create Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'CreateTagRequest',
+			responseSchema: 'TagResponse',
+			successStatus: 201,
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response('The tag already exists.', schemaRef('ErrorResponse')),
+			},
+		}),
+	},
+	'/api/tags/attach': {
+		options: preflight('preflightTagAttachment'),
+		post: contentOperation({
+			operationId: 'attachTag',
+			summary: 'Attach a tag to a post',
+			description:
+				'Both the post and tag must already exist. PATs cannot attach tags to another resource type.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'PostTagInput',
+			responseSchema: 'PostTagMutationResponse',
+			extraResponses: commonErrorResponses,
+		}),
+		delete: contentOperation({
+			operationId: 'detachTag',
+			summary: 'Detach a tag from a post',
+			description:
+				'Both the post and tag must already exist. PATs cannot detach tags from another resource type.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:relations'],
+			scopeRequirements: 'PAT: content:relations is required.',
+			requestSchema: 'PostTagInput',
+			responseSchema: 'PostTagMutationResponse',
+			extraResponses: commonErrorResponses,
+		}),
+	},
+	'/api/pages': {
+		options: preflight('preflightPages'),
+		get: contentOperation({
+			operationId: 'getPages',
+			summary: 'List or read pages',
+			description:
+				'Admin-only. Use ?slugOrId= for one page or omit it for all pages.',
+			access: 'device-token',
+			requiredAbility: 'manage all',
+			parameters: [queryParameter('slugOrId', 'Optional page id or slug.')],
+			responseSchema: 'PageReadResponse',
+			extraResponses: commonErrorResponses,
+		}),
+		put: contentOperation({
+			operationId: 'updatePage',
+			summary: 'Update or publish a page',
+			description:
+				'Use ?id=<page-id>. Fields are merged. For PATs, content:write only updates an existing draft; publishing requires content:publish. Updating fields and publishing in one request requires both scopes. PATs cannot unpublish, archive, or delete pages. A title change does not regenerate the slug.',
+			access: 'device-token',
+			requiredAbility: 'update Content',
+			requiredScopes: ['content:write', 'content:publish'],
+			scopeRequirements:
+				'PAT: content:write for draft field changes, content:publish when fields.state=published, and both when publishing together with other field changes.',
+			parameters: [queryParameter('id', 'Page id.', undefined, true)],
+			requestSchema: 'UpdatePageRequest',
+			responseSchema: 'PageResponse',
+			extraResponses: commonErrorResponses,
 		}),
 	},
 }
 
 const personalAccessTokenPaths = {
 	'/api/personal-access-tokens': {
+		options: preflight('preflightPersonalAccessTokens'),
 		get: {
 			tags: ['Agent tokens'],
 			operationId: 'listPersonalAccessTokens',
 			summary: 'List the caller’s agent tokens',
 			description:
-				'Admin-only. Use an admin device token. Returns safe metadata for tokens owned by the caller and never returns raw tokens or token hashes.',
+				'Admin-only. Returns safe metadata for tokens owned by the caller and never returns raw tokens or token hashes.',
 			security: BEARER_SECURITY,
 			'x-required-scopes': [],
 			'x-required-ability': 'manage all',
+			'x-agent-token-policy':
+				'Scoped aih_pat_* tokens are excluded. Use an admin role-derived device token.',
 			responses: {
 				'200': response('Owned agent-token metadata.', {
 					type: 'array',
 					items: schemaRef('PersonalAccessToken'),
 				}),
 				...authErrorResponses,
-				'500': response('Internal server error.', schemaRef('ErrorResponse')),
+				'500': commonErrorResponses['500'],
 			},
 		},
 		post: {
@@ -476,10 +837,12 @@ const personalAccessTokenPaths = {
 			operationId: 'mintPersonalAccessToken',
 			summary: 'Mint a scoped agent token',
 			description:
-				'Admin-only and mint-for-self. Use an admin device token. A 201 response returns the complete aih_pat_* token exactly once; store it immediately because list responses never return it.',
+				'Admin-only and mint-for-self. The complete aih_pat_* token is returned exactly once.',
 			security: BEARER_SECURITY,
 			'x-required-scopes': [],
 			'x-required-ability': 'manage all',
+			'x-agent-token-policy':
+				'Scoped aih_pat_* tokens are excluded. Use an admin role-derived device token.',
 			requestBody: {
 				required: true,
 				content: jsonContent(schemaRef('MintPersonalAccessTokenRequest')),
@@ -489,52 +852,192 @@ const personalAccessTokenPaths = {
 					'Created. The token field is returned once and cannot be recovered later.',
 					schemaRef('MintPersonalAccessTokenResponse'),
 				),
-				'400': response(
-					'Invalid name, scope, or expiresAt.',
-					schemaRef('ErrorResponse'),
-				),
+				'400': commonErrorResponses['400'],
 				...authErrorResponses,
 				'503': response(
 					'Personal access token hashing is not configured.',
 					schemaRef('ErrorResponse'),
 				),
-				'500': response('Internal server error.', schemaRef('ErrorResponse')),
+				'500': commonErrorResponses['500'],
 			},
 		},
 	},
 	'/api/personal-access-tokens/{id}': {
 		parameters: [
-			{
-				name: 'id',
-				in: 'path',
-				required: true,
-				description: 'Owned personal access token id from the list operation.',
-				schema: { type: 'string' },
-			},
+			pathParameter('id', 'Owned token id from the list operation.'),
 		],
 		delete: {
 			tags: ['Agent tokens'],
 			operationId: 'revokePersonalAccessToken',
 			summary: 'Revoke an owned agent token',
 			description:
-				'Admin-only, owned-token-only, and idempotent. Use an admin device token. Revocation is the immediate kill switch; the revoked token subsequently receives 401.',
+				'Admin-only, owned-token-only, and idempotent. Revocation is the immediate kill switch.',
 			security: BEARER_SECURITY,
 			'x-required-scopes': [],
 			'x-required-ability': 'manage all',
+			'x-agent-token-policy':
+				'Scoped aih_pat_* tokens are excluded. Use an admin role-derived device token.',
 			responses: {
 				'200': response(
 					'Current token metadata with revokedAt set.',
 					schemaRef('PersonalAccessToken'),
 				),
 				...authErrorResponses,
-				'404': response(
-					'No owned token exists with this id.',
-					schemaRef('ErrorResponse'),
-				),
-				'500': response('Internal server error.', schemaRef('ErrorResponse')),
+				'404': commonErrorResponses['404'],
+				'500': commonErrorResponses['500'],
 			},
 		},
 	},
+}
+
+const zodSchemas = {
+	EmptyObjectResponse: EmptyObjectResponseSchema,
+	ErrorResponse: ErrorResponseSchema,
+	NextAction: NextActionSchema,
+	CommandPreflightResult: CommandPreflightResultSchema,
+	VideoResourceResponse: VideoResourceResponseSchema,
+	SolutionCreateRequest: SolutionCreateRequestSchema,
+	SolutionUpdateRequest: SolutionUpdateRequestSchema,
+	SolutionResponse: SolutionResponseSchema,
+	LessonUpdateRequest: LessonUpdateRequestSchema,
+	LessonReadResponse: LessonReadResponseSchema,
+	LessonResponse: LessonResponseSchema,
+	PostCreateRequest: PostCreateRequestSchema,
+	PostUpdateRequest: PostUpdateRequestSchema,
+	PostReadResponse: PostReadResponseSchema,
+	PostResponse: PostResponseSchema,
+	DeleteMessageResponse: DeleteMessageResponseSchema,
+	ProductCreateRequest: ProductCreateApiSchema,
+	ProductUpdateRequest: ProductUpdateApiSchema,
+	ProductReadResponse: ProductReadResponseSchema,
+	ProductResponse: ProductResponseSchema,
+	ProductAvailabilityResponse: ProductAvailabilityResponseSchema,
+	ResourceCreateRequest: ResourceCreateRequestSchema,
+	ResourceUpdateRequest: ResourceUpdateRequestSchema,
+	ResourceReadResponse: ResourceReadResponseSchema,
+	ResourceResponse: ResourceResponseSchema,
+	SearchResult: SearchResultSchema,
+	SkillChangelogRequest: SkillChangelogPostSchema,
+	SkillChangelogResult: SkillChangelogResultSchema,
+	CreateMultipartUploadRequest: CreateMultipartUploadSchema,
+	CreateMultipartUploadResponse: CreateMultipartUploadResponseSchema,
+	MultipartPartUrlResponse: MultipartPartUrlResponseSchema,
+	CompleteMultipartUploadRequest: CompleteMultipartUploadSchema,
+	CompleteMultipartUploadResponse: CompleteMultipartUploadResponseSchema,
+	UploadRequest: UploadBodySchema,
+	UploadStartedResponse: UploadStartedResponseSchema,
+	SignedUploadUrlResponse: SignedUploadUrlResponseSchema,
+	CreateShortlinkRequest: CreateShortlinkSchema,
+	UpdateShortlinkRequest: UpdateShortlinkSchema,
+	ShortlinkResponse: ShortlinkResponseSchema,
+	ShortlinkReadResponse: ShortlinkReadResponseSchema,
+	CreateTagRequest: CreateTagRequestSchema,
+	TagResponse: TagResponseSchema,
+	TagListResponse: TagListResponseSchema,
+	PostTagInput: PostTagInputSchema,
+	PostTagMutationResponse: PostTagMutationResponseSchema,
+	AddListItemRequest: AddListItemRequestSchema,
+	MoveListItemsRequest: MoveListItemsRequestSchema,
+	ListItemRow: ListItemRowSchema,
+	ListItemLocation: ListItemLocationSchema,
+	MoveListItemsResult: MoveListItemsResultSchema,
+	UpdatePageRequest: UpdatePageSchema,
+	PageResponse: PageResponseSchema,
+	PageReadResponse: PageReadResponseSchema,
+	MintPersonalAccessTokenRequest: MintPersonalAccessTokenSchema,
+	PersonalAccessToken: PersonalAccessTokenResponseSchema,
+	MintPersonalAccessTokenResponse: MintPersonalAccessTokenResponseSchema,
+} satisfies Record<string, ZodTypeAny>
+
+function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
+	const converted = zodToJsonSchema(schema, {
+		target: 'jsonSchema2019-09',
+		$refStrategy: 'none',
+		dateStrategy: 'format:date-time',
+	}) as Record<string, unknown>
+	delete converted.$schema
+	return converted
+}
+
+function buildComponentSchemas(): Record<string, any> {
+	const generated = Object.fromEntries(
+		Object.entries(zodSchemas).map(([name, schema]) => [
+			name,
+			toOpenApiSchema(schema),
+		]),
+	)
+
+	return {
+		...generated,
+		CommandSuccessEnvelope: {
+			type: 'object',
+			description:
+				'Shared success envelope for agent-oriented commands. result is operation-specific; next_actions contains executable discovery hints rather than hidden control flow.',
+			required: ['ok', 'command', 'result', 'next_actions'],
+			properties: {
+				ok: { const: true },
+				command: { type: 'string' },
+				result: {
+					oneOf: [
+						schemaRef('SearchResult'),
+						schemaRef('SkillChangelogResult'),
+						schemaRef('CommandPreflightResult'),
+					],
+				},
+				next_actions: {
+					type: 'array',
+					items: schemaRef('NextAction'),
+				},
+			},
+		},
+		CommandPreflightSuccessResponse: {
+			allOf: [
+				schemaRef('CommandSuccessEnvelope'),
+				{
+					type: 'object',
+					properties: { result: schemaRef('CommandPreflightResult') },
+				},
+			],
+			unevaluatedProperties: false,
+		},
+		SearchSuccessResponse: {
+			allOf: [
+				schemaRef('CommandSuccessEnvelope'),
+				{
+					type: 'object',
+					properties: { result: schemaRef('SearchResult') },
+				},
+			],
+			unevaluatedProperties: false,
+		},
+		SkillChangelogSuccessResponse: {
+			description:
+				'The canonical command envelope plus deprecated top-level id and slug compatibility fields. New clients should read result.resource.id and result.resource.fields.slug, or result.resourceId and result.slug in the defensive parse-failure result.',
+			allOf: [
+				schemaRef('CommandSuccessEnvelope'),
+				{
+					type: 'object',
+					required: ['id', 'slug'],
+					properties: {
+						result: schemaRef('SkillChangelogResult'),
+						id: {
+							type: 'string',
+							deprecated: true,
+							description:
+								'Deprecated compatibility mirror of result.resource.id or result.resourceId.',
+						},
+						slug: {
+							type: 'string',
+							deprecated: true,
+							description:
+								'Deprecated compatibility mirror of result.resource.fields.slug or result.slug.',
+						},
+					},
+				},
+			],
+			unevaluatedProperties: false,
+		},
+	}
 }
 
 export function buildAgentOpenApiDocument(baseUrl: string) {
@@ -542,11 +1045,14 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 
 	return {
 		openapi: '3.1.0',
+		// zod-to-json-schema emits 2019-09 syntax (array-form items for tuples),
+		// so the advertised dialect must match what is actually generated.
+		jsonSchemaDialect: 'https://json-schema.org/draft/2019-09/schema',
 		info: {
 			title: 'AI Hero Agent and Content API',
-			version: '1.0.0',
+			version: '1.1.0',
 			description:
-				'Start at /api for the self-onboarding agent-token guide. Scoped aih_pat_* tokens use content:read for privileged CMS reads; admin device tokens retain administrative abilities.',
+				'Start at /api. Scoped aih_pat_* tokens may use content:read plus the narrow write scopes content:write, content:publish, content:relations, media:upload, and shortlinks:manage. On scoped write operations, x-required-scopes lists every PAT scope that can gate the operation and x-scope-requirements states the exact required combination or payload condition. Role-derived device tokens use x-required-ability instead. Customer data, purchases, surveys, survey responses, support memory, and agent-token administration remain outside PAT write access.',
 		},
 		servers: [{ url: normalizedBaseUrl }],
 		tags: [
@@ -556,7 +1062,8 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			},
 			{
 				name: 'Content API',
-				description: 'The approved content-token coverage matrix.',
+				description:
+					'Public reads, PAT-backed reads and narrow writes, and role-derived device-token operations.',
 			},
 		],
 		paths: {
@@ -569,115 +1076,10 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 					type: 'http',
 					scheme: 'bearer',
 					description:
-						'Send Authorization: Bearer <token>. Two bearer kinds are accepted: scoped aih_pat_* agent tokens, whose ability comes only from their scopes, and admin device tokens, whose user abilities can administer tokens and CMS writes. Never put either token in a query string.',
+						'Send Authorization: Bearer <token>. Scoped aih_pat_* tokens receive only scope-derived abilities; role-derived device tokens receive the current abilities of their user. Never put either token in a query string.',
 				},
 			},
-			schemas: {
-				ErrorResponse: {
-					type: 'object',
-					required: ['error'],
-					properties: {
-						error: {
-							oneOf: [
-								{ type: 'string' },
-								{
-									type: 'object',
-									required: ['message', 'code'],
-									properties: {
-										message: { type: 'string' },
-										code: { type: 'string' },
-									},
-								},
-							],
-						},
-						details: {},
-						docs: {
-							type: 'string',
-							description:
-								'Discovery URL for correcting authentication or authorization failures.',
-							example: '/api',
-						},
-					},
-					additionalProperties: true,
-				},
-				MintPersonalAccessTokenRequest: {
-					type: 'object',
-					required: ['name', 'scopes'],
-					properties: {
-						name: { type: 'string', minLength: 1, maxLength: 100 },
-						scopes: {
-							type: 'array',
-							minItems: 1,
-							items: {
-								type: 'string',
-								enum: ['content:read', 'analytics:read', 'analytics:chat'],
-							},
-						},
-						expiresAt: {
-							type: 'string',
-							format: 'date-time',
-							description:
-								'Optional future expiry. Omit for no automatic expiry.',
-						},
-					},
-					additionalProperties: false,
-				},
-				PersonalAccessToken: {
-					type: 'object',
-					required: [
-						'id',
-						'name',
-						'tokenPrefix',
-						'scopes',
-						'createdAt',
-						'lastUsedAt',
-						'expiresAt',
-						'revokedAt',
-					],
-					properties: {
-						id: { type: 'string' },
-						name: { type: 'string' },
-						tokenPrefix: { type: 'string', example: 'aih_pat_abcd1234' },
-						scopes: { type: 'array', items: { type: 'string' } },
-						createdAt: { type: ['string', 'null'], format: 'date-time' },
-						lastUsedAt: { type: ['string', 'null'], format: 'date-time' },
-						expiresAt: { type: ['string', 'null'], format: 'date-time' },
-						revokedAt: { type: ['string', 'null'], format: 'date-time' },
-					},
-					additionalProperties: false,
-				},
-				MintPersonalAccessTokenResponse: {
-					type: 'object',
-					required: [
-						'token',
-						'id',
-						'name',
-						'tokenPrefix',
-						'scopes',
-						'createdAt',
-						'lastUsedAt',
-						'expiresAt',
-						'revokedAt',
-					],
-					properties: {
-						token: {
-							type: 'string',
-							pattern: '^aih_pat_',
-							description:
-								'Returned only in the 201 mint response. Store it now.',
-						},
-						id: { type: 'string' },
-						name: { type: 'string' },
-						tokenPrefix: { type: 'string', example: 'aih_pat_abcd1234' },
-						scopes: { type: 'array', items: { type: 'string' } },
-						createdAt: { type: ['string', 'null'], format: 'date-time' },
-						lastUsedAt: { type: ['string', 'null'], format: 'date-time' },
-						expiresAt: { type: ['string', 'null'], format: 'date-time' },
-						revokedAt: { type: ['string', 'null'], format: 'date-time' },
-					},
-					additionalProperties: false,
-				},
-			},
+			schemas: buildComponentSchemas(),
 		},
 	}
 }

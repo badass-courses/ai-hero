@@ -7,6 +7,12 @@ import { db } from '@/db'
 import { shortlink, shortlinkAttribution, shortlinkClick } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import {
+	canCreateShortlink,
+	canDeleteShortlink,
+	canManageShortlinks,
+	canUpdateShortlink,
+} from '@/server/pat-scopes'
 import { redis } from '@/server/redis-client'
 import { and, count, desc, eq, like, or, sql } from 'drizzle-orm'
 import { customAlphabet } from 'nanoid'
@@ -76,7 +82,7 @@ export async function getShortlinks(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink[]> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('manage', 'all')) {
+	if (!canManageShortlinks(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -158,6 +164,18 @@ export async function getShortlinksWithAttributions(
 	return links
 }
 
+// Post-write read-backs must not re-run authorization: create/update already
+// passed their own checks, which accept content-scoped abilities that the
+// guarded getShortlinkById (manage Shortlink) would reject after the write
+// committed.
+async function getShortlinkByIdInternal(id: string): Promise<Shortlink | null> {
+	const link = await db.query.shortlink.findFirst({
+		where: eq(shortlink.id, id),
+	})
+
+	return link ?? null
+}
+
 /**
  * Get a single shortlink by ID
  */
@@ -166,15 +184,11 @@ export async function getShortlinkById(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink | null> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('manage', 'all')) {
+	if (!canManageShortlinks(ability)) {
 		throw new Error('Unauthorized')
 	}
 
-	const link = await db.query.shortlink.findFirst({
-		where: eq(shortlink.id, id),
-	})
-
-	return link ?? null
+	return getShortlinkByIdInternal(id)
 }
 
 /**
@@ -264,7 +278,7 @@ export async function createShortlink(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink> {
 	const { ability, userId } = await resolveShortlinkAuth(auth)
-	if (!ability.can('create', 'Content')) {
+	if (!canCreateShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -312,7 +326,7 @@ export async function createShortlink(
 
 	await log.info('shortlink.created', { slug, url: parsed.url })
 
-	const link = await getShortlinkById(insertedId, auth)
+	const link = await getShortlinkByIdInternal(insertedId)
 	if (!link) {
 		throw new Error('Failed to create shortlink')
 	}
@@ -339,7 +353,7 @@ export async function getOrCreateShortlinkForPage(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('create', 'Content')) {
+	if (!canCreateShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -369,7 +383,7 @@ export async function updateShortlink(
 	auth?: ShortlinkAuthContext,
 ): Promise<Shortlink> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('update', 'Content')) {
+	if (!canUpdateShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 
@@ -431,7 +445,7 @@ export async function updateShortlink(
 
 	revalidateTag('shortlinks', 'max')
 
-	const updated = await getShortlinkById(parsed.id, auth)
+	const updated = await getShortlinkByIdInternal(parsed.id)
 	if (!updated) {
 		throw new Error('Failed to update shortlink')
 	}
@@ -450,7 +464,7 @@ export async function deleteShortlink(
 	auth?: ShortlinkAuthContext,
 ): Promise<void> {
 	const { ability } = await resolveShortlinkAuth(auth)
-	if (!ability.can('delete', 'Content')) {
+	if (!canDeleteShortlink(ability)) {
 		throw new Error('Unauthorized')
 	}
 

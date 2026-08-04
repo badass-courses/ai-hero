@@ -18,7 +18,9 @@ const DISCOVERY_FORMATS = {
 
 const DISCOVERY_SURFACES = {
 	api: '/api',
+	apiCatalog: '/.well-known/api-catalog',
 	openapi: '/api/openapi.json',
+	courseSyncOpenapi: '/v1/course-sync/openapi.json',
 	sitemap: '/sitemap.xml',
 	sitemapMarkdown: '/sitemap.md',
 	llms: '/llms.txt',
@@ -45,6 +47,10 @@ interface ApiDiscoveryResourceFamily {
 }
 
 const DISCOVERY_SURFACE_HINTS = [
+	{
+		path: DISCOVERY_SURFACES.apiCatalog,
+		description: 'standard API catalog linkset',
+	},
 	{
 		path: DISCOVERY_SURFACES.api,
 		description: 'stable public JSON discovery document',
@@ -128,6 +134,10 @@ const PUBLIC_JSON_API_HINTS = [
 			'OpenAPI 3.1 contract with bearer auth, scope requirements, and token-management schemas',
 	},
 	{
+		path: DISCOVERY_SURFACES.courseSyncOpenapi,
+		description: 'OpenAPI contract for the course-sync control plane',
+	},
+	{
 		path: '/api/search?q=<query>',
 		description: 'public search entry point for public content',
 	},
@@ -197,6 +207,11 @@ const API_DISCOVERY_RESOURCE_FAMILIES = [
 		visibility: 'public',
 	},
 	{
+		name: 'course-sync-openapi',
+		api: DISCOVERY_SURFACES.courseSyncOpenapi,
+		visibility: 'public',
+	},
+	{
 		name: 'search',
 		api: '/api/search?q=:query',
 		visibility: 'public',
@@ -256,7 +271,7 @@ const AGENT_API_CAPABILITIES = [
 	},
 	{
 		name: 'list-membership',
-		auth: 'device token (Authorization: Bearer) with `update` on Content',
+		auth: 'bearer with `update` on Content, or an aih_pat_* token with content:relations',
 		description:
 			"Edit what a list holds — addressed by the list's slug OR id. Sections are ordinary resources: create one with POST /api/resources (type: section), add it here, then nest items under it with parentId. Editing a section's own title or description is PUT /api/resources?id=<sectionId>.",
 		endpoints: [
@@ -290,6 +305,36 @@ const AGENT_TOKEN_SCOPES = [
 			'Privileged read of approved CMS content, including draft, unpublished, private, and unlisted content.',
 	},
 	{
+		name: 'content:write',
+		status: 'active',
+		grants:
+			'Create draft posts and Skills Changelog entries, and update existing draft posts, lessons, and pages. It cannot publish or change relations.',
+	},
+	{
+		name: 'content:publish',
+		status: 'active',
+		grants:
+			'Publish posts, lessons, and pages, and create published Skills Changelog entries. Pair with content:write for create-and-publish jobs.',
+	},
+	{
+		name: 'content:relations',
+		status: 'active',
+		grants:
+			'Create tags, attach or detach tags, and attach media relations during supported content writes.',
+	},
+	{
+		name: 'media:upload',
+		status: 'active',
+		grants:
+			'Create and complete multipart uploads, mint multipart part URLs, and trigger media processing.',
+	},
+	{
+		name: 'shortlinks:manage',
+		status: 'active',
+		grants:
+			'List and manage shortlinks. Shortlink attribution and click analytics remain admin-only.',
+	},
+	{
 		name: 'analytics:read',
 		status: 'reserved',
 		grants:
@@ -305,16 +350,16 @@ const AGENT_TOKEN_SCOPES = [
 
 const AGENT_TOKEN_EXCLUSIONS = [
 	{
-		capability: 'CMS writes',
-		why: 'content:read is read-only; create, update, delete, and processing operations mutate state.',
+		capability: 'Unscoped CMS and administrative writes',
+		why: 'Write PATs grant only named draft, publish, relation, media, and shortlink operations. Products, surveys, users, purchases, and token administration stay excluded.',
 	},
 	{
 		capability: 'Raw video and Mux payloads',
 		why: 'They expose playable identifiers and media internals. Use the sanitized content projections instead.',
 	},
 	{
-		capability: 'Uploads and signed URLs',
-		why: 'They grant storage or processing capabilities, even when the route uses HTTP GET.',
+		capability: 'Legacy signed upload URLs',
+		why: 'The legacy signed-URL route stays excluded. Multipart upload and processing routes are granted by the media:upload scope.',
 	},
 	{
 		capability: 'Support memory',
@@ -411,7 +456,7 @@ function buildAgentTokenDiscovery(baseUrl: string) {
 			{
 				kind: 'scoped agent token',
 				shape: 'aih_pat_*',
-				use: 'Approved scope-derived reads. A content:read token cannot mint, list, or revoke tokens and cannot write content.',
+				use: 'Approved scope-derived reads and narrow writes. No PAT can mint, list, or revoke PATs.',
 			},
 			{
 				kind: 'admin device token',
@@ -464,7 +509,7 @@ function buildAgentTokenDiscovery(baseUrl: string) {
 			'401':
 				'The bearer credential is missing, malformed, invalid, expired, or revoked. Some legacy content-read handlers also use 401 when a valid token lacks Content read ability; if the token is known-valid, inspect its scopes before retrying.',
 			'403':
-				'The credential is valid but its scopes or abilities exclude this operation. content:read never grants writes, Mux payloads, signed URLs, memory, or analytics. Do not retry without a different authorized credential.',
+				'The credential is valid but its scopes or abilities exclude this operation. Add only the specific scope named by the route contract; PATs never gain user, purchase, survey-response, support-memory, or PAT-administration access.',
 			docsField:
 				'Auth-related error bodies point back to /api when their existing envelope permits it.',
 		},
@@ -480,6 +525,48 @@ function formatPublicDiscoveryResources(resources: PublicDiscoveryResource[]) {
 				)
 				.join('\n')
 		: '- No public discovery resources are available right now.'
+}
+
+/**
+ * Builds the RFC 9727 api-catalog linkset served at
+ * `/.well-known/api-catalog`: one anchor for the site with service-desc
+ * links to both OpenAPI documents and a service-doc link to llms.txt.
+ */
+export function buildApiCatalogDocument(baseUrl = getDiscoveryBaseUrl()) {
+	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
+
+	return {
+		linkset: [
+			{
+				anchor: `${normalizedBaseUrl}/`,
+				'service-desc': [
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.openapi,
+						),
+						type: 'application/openapi+json',
+					},
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.courseSyncOpenapi,
+						),
+						type: 'application/openapi+json',
+					},
+				],
+				'service-doc': [
+					{
+						href: toAbsoluteDiscoveryPath(
+							normalizedBaseUrl,
+							DISCOVERY_SURFACES.llms,
+						),
+						type: 'text/plain',
+					},
+				],
+			},
+		],
+	}
 }
 
 export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
@@ -504,6 +591,33 @@ export function buildApiDiscoveryDocument(baseUrl = getDiscoveryBaseUrl()) {
 		agentTokens: buildAgentTokenDiscovery(normalizedBaseUrl),
 		nextActions: [...DISCOVERY_NEXT_ACTIONS],
 	}
+}
+
+/**
+ * Builds the Markdown representation of the homepage served to agents at
+ * `/md/home` (and via content negotiation on `/`): a short orientation
+ * document that links every machine-readable discovery surface.
+ */
+export function buildHomepageMarkdownDocument(baseUrl = getDiscoveryBaseUrl()) {
+	const normalizedBaseUrl = normalizeDiscoveryBaseUrl(baseUrl)
+
+	return `# AI Hero
+
+AI Hero teaches engineers to build with AI through courses, cohorts, events, and free tutorials.
+
+## Agent discovery
+
+- [API catalog](${normalizedBaseUrl}${DISCOVERY_SURFACES.apiCatalog})
+- [Public API discovery](${normalizedBaseUrl}${DISCOVERY_SURFACES.api})
+- [Agent and content OpenAPI](${normalizedBaseUrl}${DISCOVERY_SURFACES.openapi})
+- [Course-sync OpenAPI](${normalizedBaseUrl}${DISCOVERY_SURFACES.courseSyncOpenapi})
+- [LLM orientation](${normalizedBaseUrl}${DISCOVERY_SURFACES.llms})
+- [Markdown sitemap](${normalizedBaseUrl}${DISCOVERY_SURFACES.sitemapMarkdown})
+
+## Content formats
+
+HTML is the default. Supported public content also has explicit \`.md\` twins. Use the JSON discovery document for route families and API details.
+`
 }
 
 export function buildLlmsTxtDocument(baseUrl = getDiscoveryBaseUrl()) {
@@ -540,9 +654,12 @@ Agent tokens:
 - Scoped agent tokens start with aih_pat_. Admin device tokens are separate opaque bearer credentials.
 - Admin device tokens can POST/GET ${normalizedBaseUrl}/api/personal-access-tokens and DELETE ${normalizedBaseUrl}/api/personal-access-tokens/TOKEN_ID.
 - Mint returns the complete agent token once. Optional expiresAt defaults to no automatic expiry; revocation is the kill switch.
-- Active scope: content:read. It includes approved draft, unpublished, private, and unlisted CMS reads.
+- Active scopes: content:read, content:write, content:publish, content:relations, media:upload, and shortlinks:manage.
+- content:read includes approved draft, unpublished, private, and unlisted CMS reads.
+- Combine scopes for a job. For example, upload, attach, and publish a video-backed entry with media:upload, content:relations, content:write, and content:publish.
+- media:upload covers multipart upload and processing routes; raw Mux/video payloads and the legacy signed URL route remain excluded.
 - Reserved scopes analytics:read and analytics:chat currently grant no endpoint access.
-- content:read excludes every write, raw Mux/video payloads, uploads and signed URLs, support memory, survey analytics, and enrollment analytics.
+- Every PAT excludes user administration, purchases, survey responses, support memory, PAT administration, and unrelated CMS/admin routes.
 - 401 usually means the credential is missing, invalid, expired, or revoked; legacy content reads may also use 401 when a valid token lacks Content read ability. 403 means the credential is valid but excluded from that operation. Read the docs field and ${normalizedBaseUrl}/api before retrying.
 
 Mint example (placeholder credential):

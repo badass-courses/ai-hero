@@ -3,6 +3,7 @@ import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { SKILL_CHANGELOG_PUBLISHED_EVENT } from '@/inngest/events/skill-changelog'
 import { inngest } from '@/inngest/inngest.server'
+import { SkillChangelogPostSchema } from '@/lib/skill-changelog'
 import {
 	getSkillChangelogForEdit,
 	SKILL_CHANGELOG_RESOURCE_TYPE,
@@ -11,11 +12,15 @@ import {
 import { upsertPostToTypeSense } from '@/lib/typesense-query'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
+import {
+	canCreateContentDraft,
+	canCreateContentRelation,
+	canPublishContent,
+} from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
 import { guid } from '@coursebuilder/utils/guid'
 import slugify from '@sindresorhus/slugify'
 import { asc, eq } from 'drizzle-orm'
-import { z } from 'zod'
 
 import { ContentResourceSchema } from '@coursebuilder/core/schemas/content-resource-schema'
 
@@ -26,24 +31,6 @@ const corsHeaders = {
 	'Access-Control-Allow-Methods': 'POST, OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
-
-const SkillChangelogPostSchema = z.object({
-	title: z.string().min(2).max(120),
-	slug: z.string().min(2).optional(),
-	description: z.string().optional().nullable(),
-	body: z.string().optional().default(''),
-	newsletterCopy: z.string().optional().default(''),
-	newsletterSubject: z.string().min(2).max(120).optional().nullable(),
-	newsletterPreviewText: z.string().max(200).optional().nullable(),
-	github: z.string().url().optional().nullable(),
-	videoResourceId: z.string().optional().nullable(),
-	thumbnailTime: z.number().optional().nullable(),
-	state: z.enum(['draft', 'published']).optional().default('draft'),
-	visibility: z
-		.enum(['public', 'unlisted', 'private'])
-		.optional()
-		.default('unlisted'),
-})
 
 type NextAction = {
 	command: string
@@ -64,6 +51,7 @@ function jsonSuccess(
 	result: Record<string, unknown>,
 	status = 200,
 	nextActions: NextAction[] = [],
+	compat?: { id: string; slug: string },
 ) {
 	return NextResponse.json(
 		{
@@ -71,6 +59,7 @@ function jsonSuccess(
 			command: COMMAND,
 			result,
 			next_actions: nextActions,
+			...compat,
 		},
 		{ status, headers: corsHeaders },
 	)
@@ -175,7 +164,8 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 	const operation = 'create_skill_changelog'
 
 	try {
-		const { ability, user } = await getUserAbilityForRequest(request)
+		const { ability, authMethod, user } =
+			await getUserAbilityForRequest(request)
 
 		if (!user) {
 			await log.warn('api.skills.changelog.post.unauthorized', {
@@ -192,7 +182,7 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 			})
 		}
 
-		if (!ability.can('create', 'Content')) {
+		if (!canCreateContentDraft(ability)) {
 			await log.warn('api.skills.changelog.post.forbidden', {
 				requestId,
 				operation,
@@ -233,6 +223,31 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 		}
 
 		const input = payload.data
+		if (
+			authMethod === 'personal-access-token' &&
+			input.state === 'published' &&
+			!canPublishContent(ability)
+		) {
+			return jsonError({
+				message: 'Forbidden',
+				code: 'FORBIDDEN',
+				fix: 'Add content:publish to create a published changelog entry.',
+				status: 403,
+			})
+		}
+		if (
+			authMethod === 'personal-access-token' &&
+			input.videoResourceId &&
+			!canCreateContentRelation(ability)
+		) {
+			return jsonError({
+				message: 'Forbidden',
+				code: 'FORBIDDEN',
+				fix: 'Add content:relations to attach a video resource.',
+				status: 403,
+			})
+		}
+
 		const hash = guid()
 		const resourceId = slugify(`${SKILL_CHANGELOG_RESOURCE_TYPE}~${hash}`)
 		const baseSlug = input.slug || slugify(input.title)
@@ -339,6 +354,7 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 				},
 				201,
 				createNextActions(slug, resourceId),
+				{ id: resourceId, slug },
 			)
 		}
 
@@ -383,6 +399,7 @@ const createSkillChangelogHandler = async (request: NextRequest) => {
 			},
 			201,
 			createNextActions(slug, resourceId),
+			{ id: resourceId, slug },
 		)
 	} catch (error) {
 		await log.error('api.skills.changelog.post.failed', {

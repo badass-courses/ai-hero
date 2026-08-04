@@ -11,7 +11,7 @@ import {
 import { log } from '@/server/logger'
 import {
 	buildPersonalAccessTokenAbility,
-	CONTENT_READ_SCOPE,
+	isPersonalAccessTokenScope,
 } from '@/server/pat-scopes'
 import { eq } from 'drizzle-orm'
 
@@ -151,10 +151,29 @@ async function authenticatePersonalAccessToken(
 		return anonymousAuth()
 	}
 
+	if (!token) {
+		await logPersonalAccessTokenVerification({
+			publicIdPrefix,
+			scopes,
+			outcome: 'denied:malformed',
+		})
+		return anonymousAuth()
+	}
+
+	const verifiableScope = scopes.find(isPersonalAccessTokenScope)
+	if (!verifiableScope) {
+		await logPersonalAccessTokenVerification({
+			publicIdPrefix,
+			scopes,
+			outcome: 'denied:missing-scope',
+		})
+		return anonymousAuth()
+	}
+
 	const verification = verifyPersonalAccessToken({
 		rawToken,
 		record: token,
-		requiredScope: CONTENT_READ_SCOPE,
+		requiredScope: verifiableScope,
 		hashSecret,
 	})
 

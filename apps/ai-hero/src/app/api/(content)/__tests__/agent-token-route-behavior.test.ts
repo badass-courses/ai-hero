@@ -82,8 +82,13 @@ vi.mock('@/lib/lessons/lessons.service', () => {
 		}
 		return []
 	})
-	mocks.updateLesson.mockImplementation(({ ability }) => {
-		if (ability.cannot('update', 'Content')) {
+	mocks.updateLesson.mockImplementation(({ ability, action }) => {
+		const allowed =
+			action === 'publish'
+				? ability.can('publish', 'Content') || ability.can('update', 'Content')
+				: ability.can('update', 'ContentDraft') ||
+					ability.can('update', 'Content')
+		if (!allowed) {
 			throw new LessonError('Forbidden', 403)
 		}
 		return { id: 'lesson_1' }
@@ -112,13 +117,21 @@ vi.mock('@/lib/posts/posts.service', () => {
 		return []
 	})
 	mocks.createPost.mockImplementation(({ ability }) => {
-		if (ability.cannot('create', 'Content')) {
+		if (
+			ability.cannot('create', 'Content') &&
+			ability.cannot('create', 'ContentDraft')
+		) {
 			throw new PostError('Forbidden', 403)
 		}
 		return { id: 'post_1', fields: { title: 'Post' } }
 	})
-	mocks.updatePost.mockImplementation(({ ability }) => {
-		if (ability.cannot('update', 'Content')) {
+	mocks.updatePost.mockImplementation(({ ability, action }) => {
+		const allowed =
+			action === 'publish'
+				? ability.can('publish', 'Content') || ability.can('update', 'Content')
+				: ability.can('update', 'ContentDraft') ||
+					ability.can('update', 'Content')
+		if (!allowed) {
 			throw new PostError('Forbidden', 403)
 		}
 		return { id: 'post_1' }
@@ -306,6 +319,37 @@ const reservedScopePersonalAccessTokenAuth = {
 	ability: buildPersonalAccessTokenAbility(['analytics:read']),
 	authMethod: 'personal-access-token' as const,
 }
+const contentWritePersonalAccessTokenAuth = {
+	user,
+	ability: buildPersonalAccessTokenAbility(['content:write']),
+	authMethod: 'personal-access-token' as const,
+}
+const contentPublishPersonalAccessTokenAuth = {
+	user,
+	ability: buildPersonalAccessTokenAbility(['content:publish']),
+	authMethod: 'personal-access-token' as const,
+}
+const mediaUploadPersonalAccessTokenAuth = {
+	user,
+	ability: buildPersonalAccessTokenAbility(['media:upload']),
+	authMethod: 'personal-access-token' as const,
+}
+const allWriteScopesPersonalAccessTokenAuth = {
+	user,
+	ability: buildPersonalAccessTokenAbility([
+		'content:write',
+		'content:publish',
+		'content:relations',
+		'media:upload',
+		'shortlinks:manage',
+	]),
+	authMethod: 'personal-access-token' as const,
+}
+const noScopePersonalAccessTokenAuth = {
+	user,
+	ability: buildPersonalAccessTokenAbility([]),
+	authMethod: 'personal-access-token' as const,
+}
 const adminAuth = {
 	user,
 	ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
@@ -417,6 +461,218 @@ describe('agent token route behavior', () => {
 				}),
 			}
 		})
+	})
+
+	it('lets content:write create a draft post but not publish it', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			contentWritePersonalAccessTokenAuth,
+		)
+
+		const createResponse = await createPost(
+			new NextRequest('http://localhost:3000/api/posts', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: 'Scoped post', postType: 'article' }),
+			}),
+		)
+		const publishResponse = await updatePost(
+			new NextRequest(
+				'http://localhost:3000/api/posts?id=post_1&action=publish',
+				{
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({}),
+				},
+			),
+		)
+
+		expect(createResponse.status).toBe(201)
+		expect(publishResponse.status).toBe(403)
+	})
+
+	it('lets content:publish run only the post publish transition', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			contentPublishPersonalAccessTokenAuth,
+		)
+
+		const publishResponse = await updatePost(
+			new NextRequest(
+				'http://localhost:3000/api/posts?id=post_1&action=publish',
+				{
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({}),
+				},
+			),
+		)
+		const saveResponse = await updatePost(
+			new NextRequest('http://localhost:3000/api/posts?id=post_1&action=save', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({}),
+			}),
+		)
+
+		expect(publishResponse.status).toBe(200)
+		expect(saveResponse.status).toBe(403)
+	})
+
+	it('lets media:upload use multipart upload but not legacy signed URLs', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			mediaUploadPersonalAccessTokenAuth,
+		)
+
+		const createResponse = await createMultipartUpload(
+			new NextRequest('http://localhost:3000/api/uploads/multipart/create', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ filename: 'video.mp4' }),
+			}),
+		)
+		const signedUrlResponse = await getSignedUrl(
+			new NextRequest(
+				'http://localhost:3000/api/uploads/signed-url?objectName=video.mp4',
+			),
+		)
+
+		expect(createResponse.status).toBe(200)
+		expect(signedUrlResponse.status).toBe(403)
+	})
+
+	it('requires content:relations when media processing attaches to a parent', async () => {
+		const request = () =>
+			new NextRequest('http://localhost:3000/api/uploads/new', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					file: { url: 'https://example.com/video.mp4', name: 'video.mp4' },
+					metadata: { parentResourceId: 'post_1' },
+				}),
+			})
+
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			mediaUploadPersonalAccessTokenAuth,
+		)
+		const denied = await createUpload(request())
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			allWriteScopesPersonalAccessTokenAuth,
+		)
+		const allowed = await createUpload(request())
+
+		expect(denied.status).toBe(403)
+		expect(allowed.status).toBe(200)
+	})
+
+	it('keeps media processing away from hard-excluded parent types', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			allWriteScopesPersonalAccessTokenAuth,
+		)
+		mocks.adapterGetContentResource.mockResolvedValue({
+			id: 'survey_1',
+			type: 'survey',
+			fields: {},
+		})
+
+		const response = await createUpload(
+			new NextRequest('http://localhost:3000/api/uploads/new', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					file: { url: 'https://example.com/video.mp4', name: 'video.mp4' },
+					metadata: { parentResourceId: 'survey_1' },
+				}),
+			}),
+		)
+
+		expect(response.status).toBe(403)
+	})
+
+	it('keeps draft changelog envelope and adds top-level compat fields', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			contentWritePersonalAccessTokenAuth,
+		)
+
+		const response = await createSkillChangelog(
+			new NextRequest('http://localhost:3000/api/skills/changelog', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: 'Scoped changelog' }),
+			}),
+		)
+		const body = await response.json()
+
+		expect(response.status).toBe(201)
+		expect(body).toMatchObject({
+			ok: true,
+			command: 'POST /api/skills/changelog',
+			result: expect.any(Object),
+			next_actions: expect.any(Array),
+			id: expect.any(String),
+			slug: expect.any(String),
+		})
+		expect(body.id).toBe(body.result.resource?.id ?? body.result.resourceId)
+		expect(body.slug).toBe(
+			body.result.resource?.fields?.slug ?? body.result.slug,
+		)
+	})
+
+	it('requires content:publish for a published changelog entry', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			contentWritePersonalAccessTokenAuth,
+		)
+
+		const response = await createSkillChangelog(
+			new NextRequest('http://localhost:3000/api/skills/changelog', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: 'Published changelog',
+					state: 'published',
+				}),
+			}),
+		)
+
+		expect(response.status).toBe(403)
+	})
+
+	it('keeps hard-excluded routes closed with every write scope', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			allWriteScopesPersonalAccessTokenAuth,
+		)
+
+		const surveyResponse = await createSurvey(
+			new NextRequest('http://localhost:3000/api/surveys', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({}),
+			}),
+		)
+		const memoryResponse = await storeMemory(
+			new NextRequest('http://localhost:3000/api/memory', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ observation: 'nope', category: 'process' }),
+			}),
+		)
+
+		expect(surveyResponse.status).toBe(403)
+		expect(memoryResponse.status).toBe(403)
+	})
+
+	it('keeps a stored scopeless PAT unable to write', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue(
+			noScopePersonalAccessTokenAuth,
+		)
+
+		const response = await createPost(
+			new NextRequest('http://localhost:3000/api/posts', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: 'No scope', postType: 'article' }),
+			}),
+		)
+
+		expect(response.status).toBe(403)
 	})
 
 	it.each([
