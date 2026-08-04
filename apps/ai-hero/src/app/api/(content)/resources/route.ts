@@ -303,6 +303,14 @@ const updateResourceHandler = async (request: NextRequest) => {
 			revalidateTag(`video-resource:${id}`, 'max')
 		}
 
+		// A section's title/description and a list's own fields render through
+		// the list caches (sidebars, list landing), and neither type has any
+		// other write route that would bust them — without this an edit here
+		// stays invisible on those surfaces for the full hour TTL.
+		if (currentResource.type === 'section' || currentResource.type === 'list') {
+			revalidateTag('lists', 'max')
+		}
+
 		await log.info('api.resources.put.success', {
 			userId: user.id,
 			resourceId: id,
