@@ -1124,7 +1124,12 @@ body {
 
 .ah-code-inline {
 	font-family: var(--ah-mono);
-	font-size: 0.9em;
+	/* 0.85em, under the handoff spec's 0.9em. Matching sizes by the number
+	   does not match them by eye here: JetBrains Mono carries a taller
+	   x-height and wider advance than DM Sans, so a chip set to the same em
+	   as the sentence it interrupts reads a step larger than the sentence.
+	   This is the optical match, not the arithmetic one. */
+	font-size: 0.85em;
 	/* Tailwind Typography ships `code { font-weight: 600 }`, which is what made
 	   every inline chip in an article read as bold. The chip already separates
 	   itself from the prose three other ways — mono face, tinted fill, hairline
