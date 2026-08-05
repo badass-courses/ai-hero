@@ -39,12 +39,12 @@ import { cn } from '@coursebuilder/utils/cn'
 import { AutoPlayToggle } from './autoplay-toggle'
 
 /**
- * The module that follows this one, pinned under the lesson list.
+ * The module that follows this one, rendered as the last row of the list.
  *
- * Without it the last row of the list is the last thing in the world as far as
- * the sidebar is concerned — which is exactly how a cohort's second workshop
- * read to a learner who knew there were six more. `locked` covers a module
- * that exists but has not been released yet: it still shows, because knowing
+ * Without it the last lesson is the last thing in the world as far as the
+ * sidebar is concerned — which is exactly how a cohort's second workshop read
+ * to a learner who knew there were six more. `locked` covers a module that
+ * exists but has not been released yet: it still shows, because knowing
  * something is coming on the 12th is worth more than an empty space.
  */
 export type NextModuleLink = {
@@ -350,13 +350,12 @@ export function ResourceListView({
 									})}
 							</ol>
 						</Accordion>
+						{/*
+						 * Last row of the list, in flow — the next module reads as what
+						 * follows the lessons, not as a fixture of the sidebar.
+						 */}
+						{nextModule && <NextModuleRow nextModule={nextModule} />}
 					</ScrollArea>
-					{/*
-					 * Outside the ScrollArea on purpose: it is the answer to "is this
-					 * the end?", and a learner who has to scroll to find it has already
-					 * concluded that it is.
-					 */}
-					{nextModule && <NextModuleRow nextModule={nextModule} />}
 				</div>
 			</TooltipProvider>
 		</nav>
@@ -380,33 +379,31 @@ function NextModuleRow({ nextModule }: { nextModule: NextModuleLink }) {
 		</>
 	)
 
+	// No `border-t`: the lesson rows above already end on a `border-b`, and
+	// stacking the two makes a doubled hairline (DESIGN rule 2).
 	// Locked modules render the same row without a link rather than a disabled
 	// one — same choice `WorkshopLessonItem` makes for a locked lesson.
 	if (nextModule.locked) {
 		return (
-			<div className="bg-background text-muted-foreground shrink-0 border-t">
-				<div className="flex w-full items-start gap-2.5 px-4 py-3">
-					<Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-					<div className="flex min-w-0 flex-1 flex-col gap-1">{label}</div>
-				</div>
+			<div className="bg-background text-muted-foreground flex w-full items-start gap-2.5 border-b px-4 py-3">
+				<Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+				<div className="flex min-w-0 flex-1 flex-col gap-1">{label}</div>
 			</div>
 		)
 	}
 
 	return (
-		<div className="bg-background shrink-0 border-t">
-			<Link
-				href={nextModule.href}
-				className="hover:bg-card group flex w-full items-start gap-2.5 px-4 py-3 transition-colors"
-			>
-				<ChevronRight
-					className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
-					aria-hidden="true"
-					strokeWidth={2}
-				/>
-				<div className="flex min-w-0 flex-1 flex-col gap-1">{label}</div>
-			</Link>
-		</div>
+		<Link
+			href={nextModule.href}
+			className="hover:bg-card bg-background flex w-full items-start gap-2.5 border-b px-4 py-3 transition-colors"
+		>
+			<ChevronRight
+				className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
+				aria-hidden="true"
+				strokeWidth={2}
+			/>
+			<div className="flex min-w-0 flex-1 flex-col gap-1">{label}</div>
+		</Link>
 	)
 }
 
