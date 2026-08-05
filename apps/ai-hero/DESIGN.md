@@ -396,7 +396,11 @@ The rail goes first because the tree is the more load-bearing of the two. `lg:` 
 
 A `fixed` bottom bar cannot be cleared by a spacer the page renders: the footer comes from `HubLayout`, above the page in the tree, so the spacer lands before it. Pad the document (`.has-sticky-action`) instead.
 
-Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, the phase list rotating to a horizontal scroller, and prose stepping back to 16.5px.
+Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, and the phase list rotating to a horizontal scroller.
+
+**Prose stepping back on mobile is now built**, and was half-built for a while in a way worth knowing about: `globals.css` carried a `@media (min-width: 640px)` block raising `.ah-prose-p` and list items to 17.5px, but the base rules declared 17.5px as well, so the media query had nothing to override and every phone got the desktop measure. Article prose is now **15.5px** below `sm`, 17.5px from `sm` up. If you add a new prose element with its own size, give it both halves or neither.
+
+**That 15.5px is deliberately below `TYPE.body`'s 16.5px mobile step, and the two should not be merged.** `TYPE.body` sets short body text in cards and rows, where a line runs a few words; article prose sets a 70ch column a reader goes down for several minutes, and on a 390px screen that column wants the smaller step. Same reasoning that took the mobile gutter to 18px: on a phone the measure is the constraint.
 
 ## Accessibility
 

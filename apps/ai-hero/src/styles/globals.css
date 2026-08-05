@@ -979,9 +979,23 @@ body {
 		Monaco, monospace;
 }
 
+/* 15.5px here and 17.5px from 640px up, via the media query at the end of this
+   block.
+
+   That media query has been here all along; these base rules just declared the
+   desktop value too, so it had nothing to override and phones got the full
+   17.5px measure. This is DESIGN.md rule 19's "prose stepping back", which was
+   listed as unbuilt because in practice it was.
+
+   The mobile value is deliberately BELOW `TYPE.body`'s 16.5px step, so these
+   two no longer match and should not be "corrected" into each other.
+   `TYPE.body` sets short body text in cards and rows, where a line is a few
+   words; this sets a 70ch column a reader goes down for several minutes, and
+   on a 390px screen that column wants the smaller step. Same reasoning the
+   gutter went to 18px: on a phone the measure is the constraint. */
 .ah-prose-p {
 	margin: 0 0 20px;
-	font-size: 17.5px;
+	font-size: 15.5px;
 	line-height: 1.68;
 	color: var(--ah-fg-body);
 	text-wrap: pretty;
@@ -1044,7 +1058,9 @@ body {
 .ah-numbers > li {
 	position: relative;
 	margin: 0;
-	font-size: 17.5px;
+	/* Steps with `.ah-prose-p` — a list that stayed at the desktop size while
+	   the paragraph around it stepped down would read as emphasis. */
+	font-size: 15.5px;
 	line-height: 1.68;
 	color: var(--ah-fg-body);
 	text-wrap: pretty;
