@@ -10,6 +10,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { isWorkshopAvailable } from './cohort-navigation'
 import {
 	ctaFor,
+	overviewHrefFor,
 	pickCurrentWorkshop,
 	statusFor,
 	type LibraryEntry,
@@ -231,11 +232,16 @@ async function buildCohortEntry(
 	}
 }
 
-/** Something owned that we can't compute progress for — still worth listing. */
+/**
+ * Something owned whose progress we can't compute — an unsupported resource
+ * type, or a cohort whose navigation would not load.
+ *
+ * It is still listed. Dropping a row means someone who paid cannot see what
+ * they bought, which is the failure this page exists to fix; a row that only
+ * links to the overview is worth far more than no row.
+ */
 function buildPlainEntry(purchase: PurchasedResource): LibraryEntry {
-	const href = purchase.resourceSlug
-		? `/${purchase.resourceSlug}`
-		: '/workshops'
+	const href = overviewHrefFor(purchase.resourceType, purchase.resourceSlug)
 
 	return {
 		key: purchase.key,
@@ -266,7 +272,13 @@ export async function getLibraryEntries(
 	const entries = await Promise.all(
 		purchased.map(async (purchase) => {
 			if (purchase.resourceType === 'cohort' && purchase.resourceId) {
-				return buildCohortEntry(purchase, purchase.resourceId)
+				// Falls back rather than dropping the row: `buildCohortEntry` returns
+				// null when the cohort's navigation will not load, and a purchase
+				// silently vanishing from "your courses" is the worst outcome here.
+				return (
+					(await buildCohortEntry(purchase, purchase.resourceId)) ??
+					buildPlainEntry(purchase)
+				)
 			}
 
 			if (
@@ -284,8 +296,9 @@ export async function getLibraryEntries(
 		}),
 	)
 
+	// No filter: every branch above now yields an entry, so a purchase can no
+	// longer disappear between the query and the page.
 	return entries
-		.filter((entry): entry is LibraryEntry => entry !== null)
 		.sort((a, b) => {
 			const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
 			if (byStatus !== 0) return byStatus

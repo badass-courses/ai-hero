@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { ctaFor, pickCurrentWorkshop, statusFor } from './library-entry'
+import {
+	ctaFor,
+	overviewHrefFor,
+	pickCurrentWorkshop,
+	statusFor,
+} from './library-entry'
 
 function entry(
 	slug: string,
@@ -36,6 +41,28 @@ describe('statusFor', () => {
 
 	it('is not complete when there are no lessons to complete', () => {
 		expect(statusFor(0, 0)).toBe('not-started')
+	})
+})
+
+describe('overviewHrefFor', () => {
+	/**
+	 * This is what a purchase falls back to when its progress can't be computed,
+	 * so getting it wrong turns the safety net into a 404.
+	 */
+	it('routes each resource type to the page that serves it', () => {
+		expect(overviewHrefFor('cohort', 'ai-coding')).toBe('/cohorts/ai-coding')
+		expect(overviewHrefFor('workshop', 'claude-code~p9j8f')).toBe(
+			'/workshops/claude-code~p9j8f',
+		)
+		expect(overviewHrefFor('tutorial', 'some-tutorial')).toBe(
+			'/workshops/some-tutorial',
+		)
+		expect(overviewHrefFor('post', 'a-post')).toBe('/a-post')
+	})
+
+	it('falls back to the index when there is no slug', () => {
+		expect(overviewHrefFor('cohort', null)).toBe('/workshops')
+		expect(overviewHrefFor(null, null)).toBe('/workshops')
 	})
 })
 

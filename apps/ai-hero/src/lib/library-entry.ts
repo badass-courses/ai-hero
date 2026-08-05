@@ -27,6 +27,41 @@ export type LibraryEntry = {
 	purchasedAt: Date | null
 }
 
+/**
+ * The overview page for a purchased resource.
+ *
+ * `/{slug}` is only right for a post — a cohort or workshop sent there 404s, so
+ * the fallback entry this builds would be its own dead end.
+ *
+ * @param resourceType - The content resource's type, or null when unknown.
+ * @param slug - The resource's routing slug, or null when it has none.
+ * @returns A path, defaulting to the workshops index when there is no slug.
+ */
+export function overviewHrefFor(
+	resourceType: string | null,
+	slug: string | null,
+): string {
+	if (!slug) return '/workshops'
+	if (resourceType === 'cohort') return `/cohorts/${slug}`
+	if (resourceType === 'workshop' || resourceType === 'tutorial') {
+		return `/workshops/${slug}`
+	}
+	return `/${slug}`
+}
+
+/**
+ * How far through a course someone is, from lesson counts alone.
+ *
+ * Counts rather than a percentage, because the progress adapter rounds its
+ * `percentCompleted` up — see `pickCurrentWorkshop`.
+ *
+ * @param completed - Lessons with recorded progress.
+ * @param total - Lessons in the course. Zero for something with no lessons yet,
+ *   which reads as `not-started` rather than `complete`: nothing has been
+ *   finished, there is simply nothing to finish.
+ * @returns `complete` once every lesson is done, `in-progress` after the first,
+ *   `not-started` otherwise.
+ */
 export function statusFor(
 	completed: number,
 	total: number,
