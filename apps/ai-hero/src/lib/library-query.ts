@@ -8,10 +8,18 @@ import {
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
 import { isWorkshopAvailable } from './cohort-navigation'
+import {
+	ctaFor,
+	pickCurrentWorkshop,
+	statusFor,
+	type LibraryEntry,
+} from './library-entry'
 import { getCachedCohortNavigation } from './cohort-navigation-query'
 import { flattenNavigationResources } from './content-navigation'
 import { getModuleProgressForUser } from './progress'
 import { getCachedWorkshopNavigation } from './workshops-query'
+
+export type { LibraryEntry } from './library-entry'
 
 /**
  * What someone owns, and where they left off in it.
@@ -24,22 +32,6 @@ import { getCachedWorkshopNavigation } from './workshops-query'
  */
 
 const LIBRARY_PURCHASE_STATUSES = ['Valid', 'Restricted'] as const
-
-export type LibraryEntry = {
-	key: string
-	title: string
-	/** The cohort a workshop sits in, when the entry is one workshop of one. */
-	contextLabel: string | null
-	/** The overview: the cohort or workshop page. */
-	href: string
-	/** Where the learner actually wants to go. Null when there is nothing to play. */
-	cta: { label: string; href: string } | null
-	completedLessons: number
-	totalLessons: number
-	percent: number
-	status: 'not-started' | 'in-progress' | 'complete'
-	purchasedAt: Date | null
-}
 
 type PurchasedResource = {
 	key: string
@@ -142,31 +134,6 @@ async function getResourceTitle(
 	return resource?.fields?.title ?? null
 }
 
-function statusFor(
-	completed: number,
-	total: number,
-): LibraryEntry['status'] {
-	if (total > 0 && completed >= total) return 'complete'
-	return completed > 0 ? 'in-progress' : 'not-started'
-}
-
-/** "Continue: Permissions" beats "Continue" — name the thing you get. */
-function ctaFor(
-	status: LibraryEntry['status'],
-	lessonTitle: string | null,
-	lessonHref: string | null,
-	overviewHref: string,
-): LibraryEntry['cta'] {
-	if (status === 'complete') return { label: 'Review', href: overviewHref }
-	if (!lessonHref) return null
-
-	const verb = status === 'not-started' ? 'Start' : 'Continue'
-	return {
-		label: lessonTitle ? `${verb}: ${lessonTitle}` : verb,
-		href: lessonHref,
-	}
-}
-
 async function buildWorkshopEntry(
 	purchase: PurchasedResource,
 	options: { contextLabel?: string | null; workshopSlug: string; title: string },
@@ -233,15 +200,7 @@ async function buildCohortEntry(
 	)
 	const status = statusFor(completed, total)
 
-	// The workshop in play: the first released one that isn't finished. Skipping
-	// unreleased workshops matters — their progress is 0/0, so without the check
-	// a cohort mid-drop would always point at the workshop that hasn't landed.
-	const current = progressByWorkshop.find(
-		({ workshop, progress }) =>
-			isWorkshopAvailable(workshop) &&
-			(progress?.totalLessonsCount ?? 0) > 0 &&
-			(progress?.percentCompleted ?? 0) < 100,
-	)
+	const current = pickCurrentWorkshop(progressByWorkshop, isWorkshopAvailable)
 
 	const nextSlug = current?.progress?.nextResource?.fields?.slug ?? null
 	const nextTitle = current
@@ -283,8 +242,6 @@ function buildPlainEntry(purchase: PurchasedResource): LibraryEntry {
 		title: purchase.title,
 		contextLabel: null,
 		href,
-		// No progress to report, but a card with no action at all reads as a
-		// dead entry — the one thing this page is meant to stop doing.
 		cta: { label: 'Open', href },
 		completedLessons: 0,
 		totalLessons: 0,

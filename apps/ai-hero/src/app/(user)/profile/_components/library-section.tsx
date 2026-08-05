@@ -1,7 +1,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { TYPE } from '@/components/landing/type'
-import type { LibraryEntry } from '@/lib/library-query'
+import type { LibraryEntry } from '@/lib/library-entry'
 import { ArrowRight, Check } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
@@ -100,22 +100,20 @@ function LibraryCard({ entry }: { entry: LibraryEntry }) {
 				</div>
 			)}
 
-			{entry.cta && (
-				<Link
-					href={entry.cta.href}
-					className={cn(
-						TYPE.meta,
-						isComplete
-							? 'text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 self-start underline underline-offset-4 transition-colors'
-							: 'bg-accent-fill text-accent-fill-foreground inline-flex items-center gap-2 self-start rounded-[6px] px-3.5 py-2 transition hover:opacity-90',
-					)}
-				>
-					<span className="truncate">{entry.cta.label}</span>
-					{!isComplete && (
-						<ArrowRight className="size-4 shrink-0" aria-hidden="true" />
-					)}
-				</Link>
-			)}
+			<Link
+				href={entry.cta.href}
+				className={cn(
+					TYPE.meta,
+					isComplete
+						? 'text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 self-start underline underline-offset-4 transition-colors'
+						: 'bg-accent-fill text-accent-fill-foreground inline-flex items-center gap-2 self-start rounded-[6px] px-3.5 py-2 transition hover:opacity-90',
+				)}
+			>
+				<span className="truncate">{entry.cta.label}</span>
+				{!isComplete && (
+					<ArrowRight className="size-4 shrink-0" aria-hidden="true" />
+				)}
+			</Link>
 		</div>
 	)
 }
