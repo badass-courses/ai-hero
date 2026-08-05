@@ -4,6 +4,7 @@ import { filterSectionedResources } from '@/lib/list-sections'
 import { getListWithSections } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
+import { skillNavLabel } from '@/lib/skill-nav-label'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
@@ -137,7 +138,7 @@ async function SkillsNavSection({ title = 'Skills' }: { title?: string }) {
 						{entries.map((entry) => (
 							<SidebarMenuItem key={entry.id}>
 								<SidebarNavLink href={`/${entry.slug}`}>
-									{entry.title}
+									{skillNavLabel(entry.title)}
 								</SidebarNavLink>
 							</SidebarMenuItem>
 						))}
@@ -192,7 +193,12 @@ const getCachedSkillsSidebarGroups = unstable_cache(
 			const slug = resource?.fields?.slug
 			const title = resource?.fields?.title
 			return typeof slug === 'string' && typeof title === 'string'
-				? { id: resource.id as string, slug, title }
+				? // The row shows the command, not the page's sentence-shaped title
+					// — see `skillNavLabel`. Applied here, at the one place the sidebar
+					// builds its items, rather than at `getSkillEntries`, which
+					// `SkillExtras` and the /skills catalog also read and where the
+					// full title is the right string.
+					{ id: resource.id as string, slug, title: skillNavLabel(title) }
 				: null
 		}
 		const groups: SidebarSkillGroup[] = []

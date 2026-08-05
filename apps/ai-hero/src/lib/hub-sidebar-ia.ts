@@ -4,6 +4,7 @@ import { unstable_cache } from 'next/cache'
 import { getPage } from '@/lib/pages-query'
 import { type Post } from '@/lib/posts'
 import { getCachedAllPosts, getCachedPostsByTag } from '@/lib/posts-query'
+import { skillNavLabel } from '@/lib/skill-nav-label'
 import { getSkillEntries } from '@/lib/skills-query'
 import { getCachedTopicTag } from '@/lib/topics-query'
 import { log } from '@/server/logger'
@@ -139,8 +140,11 @@ async function resolveBlocks(blocks: ParsedBlock[]): Promise<HubNavSection[]> {
 				sections.push({
 					title: block.title,
 					variant: 'group',
+					// Same unwrapping the desktop rail does in `sidebar-sections.tsx`;
+					// the two have to agree or a reader who resizes past `lg:` watches
+					// every skill row rename itself.
 					links: entries.map((e) => ({
-						label: e.title,
+						label: skillNavLabel(e.title),
 						href: `/${e.slug}`,
 					})),
 					moreHref: '/skills',
