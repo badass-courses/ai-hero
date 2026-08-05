@@ -137,11 +137,11 @@ export function MobileListResourceNavigation({
 	return (
 		<Sheet>
 			{variant === 'floating' ? (
-				<SheetTrigger className="bg-card/90 border-foreground/10 fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-[9px] border px-3 py-2 shadow-lg backdrop-blur-md md:hidden dark:bg-gray-800/80">
+				<SheetTrigger className="bg-card/90 border-foreground/10 fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-[9px] border px-3 py-2 shadow-lg backdrop-blur-md lg:hidden dark:bg-gray-800/80">
 					<MenuIcon className="size-4" /> {label}
 				</SheetTrigger>
 			) : (
-				<div className="bg-background/95 border-border fixed inset-x-0 bottom-0 z-40 border-t pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden print:hidden">
+				<div className="bg-background/95 border-border fixed inset-x-0 bottom-0 z-40 border-t pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden print:hidden">
 					<SheetTrigger
 						aria-label={`${label} in ${list.fields.title}`}
 						className="focus-visible:ring-ring flex w-full items-center gap-3 px-[18px] py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"

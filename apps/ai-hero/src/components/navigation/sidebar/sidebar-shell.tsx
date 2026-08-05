@@ -53,8 +53,14 @@ const RAIL_ICONS: Record<string, React.ComponentType<NavIconProps>> = {
 // `bg-sidebar`, not `bg-background`: the rail sits on the raised surface so it
 // separates from the content (the spec's `--ah-bg-raised`). Hardcoding the page
 // background here defeated the `--sidebar` token.
+//
+// `lg:` (1024px), not `md:` (768px). Two reasons, and the second is a bug:
+// 264px of sidebar plus the article's 44px gutters leaves a 460px column at
+// 768, which is below the prose measure; and `MobileMenuPanel` hides itself at
+// `lg:`, so between 768 and 1024 the page rendered BOTH the desktop sidebar and
+// the hamburger that opens the same tree in a drawer.
 const STICKY_SIDEBAR_CLASSES =
-	'bg-sidebar top-(--nav-height) w-[264px] sticky hidden h-[calc(100svh-var(--nav-height))] self-start border-r md:flex'
+	'bg-sidebar top-(--nav-height) w-[264px] sticky hidden h-[calc(100svh-var(--nav-height))] self-start border-r lg:flex'
 
 /**
  * Client shell around the hub sidebar content. Two modes:

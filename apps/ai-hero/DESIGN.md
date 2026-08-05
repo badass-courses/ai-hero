@@ -384,6 +384,16 @@ Six cases need a decision rather than a stack (`AI Hero Courses Redesign/Mobile 
 | Rows | 44px minimum tap height | `rowClass` in the same file |
 | Inline forms | Wrap to full-width fields. **Fields 48px, submit 50px** — the one deliberate size increase, because 44px is a fine pointer target and a poor thumb target | `SubscribeToConvertkitForm` and its callers |
 
+**The one documented exception: the three-column article shell.** `desk:` is the line between a phone layout and a desktop one, and it holds for everything that is one column becoming two. The `[post]` shell is one column becoming *three* — 264px sidebar + 232px ToC rail is 496px of chrome — so a single line cannot serve it: at 900px it would leave a 360px measure, and the case that actually broke was a window at half of a 1080p screen (960px), which is above `desk:` and still far too narrow. The two side columns therefore retire one at a time, and neither is `desk:`:
+
+| Width | Layout | Where |
+| --- | --- | --- |
+| `xl:` (1280+) | sidebar + prose + ToC rail | `PostToCRail`, the grid in `[post]/page.tsx` |
+| `lg:` (1024–1279) | sidebar + prose; ToC folds into `PostToCDisclosure` under the head, share moves to its own row | same files |
+| below `lg:` | prose only; the tree becomes the left drawer | `HubSidebarShell`, `MobileMenuPanel` |
+
+The rail goes first because the tree is the more load-bearing of the two. `lg:` is not a new line: `MobileMenuPanel` and the hamburger were already there, and the sidebar sitting at `md:` meant every width from 768 to 1024 rendered the desktop sidebar and the drawer trigger for the same tree at once. Anything that stands in for the sidebar on small screens (`ListResourceNavigation`'s bottom bar) hides at `lg:` with it; anything standing in for the rail (the ToC disclosure, the mobile share row) hides at `xl:`.
+
 A `fixed` bottom bar cannot be cleared by a spacer the page renders: the footer comes from `HubLayout`, above the page in the tree, so the spacer lands before it. Pad the document (`.has-sticky-action`) instead.
 
 Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, the phase list rotating to a horizontal scroller, and prose stepping back to 16.5px.
