@@ -304,31 +304,37 @@ const TableWrapper = ({ children }: { children: React.ReactNode }) => {
 				</div>
 				{/* <div className="from-background pointer-events-none absolute inset-y-0 left-0 z-20 w-4 bg-gradient-to-r to-transparent" /> */}
 				<div className="from-background pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l to-transparent" />
-			</div>
-			<Dialog>
-				<DialogTrigger asChild>
-					<Button
-						size="icon"
-						variant="outline"
-						className="absolute -top-5 right-0 z-20"
-					>
-						<ZoomIn />
-						<span className="sr-only">View Table</span>
-					</Button>
-				</DialogTrigger>
-				<DialogContent className="max-w-none sm:max-w-[90%]">
-					<div className="relative w-full overflow-x-auto pb-5">
-						{/* Same treatment, one step up in body size — the dialog exists to
-						    make a cramped table readable. The four hardcoded
-						    `[&_thead_th:nth-child(n)]:w-[…]` column widths that used to
-						    live here were sized for one specific four-column table and
-						    silently mangled the shape of every other one. */}
-						<div className={cn(TABLE_CELL_CLASSES, '[&_td]:text-base')}>
-							{children}
+				{/* Inside the frame, in the header band. It used to hang off the
+				    wrapper at `-top-5 right-0`, which straddled the corner — fine
+				    when the table had no outline to straddle, wrong now that it
+				    does. Sized to sit within the header row's 44px, and given its
+				    own translucent fill so the column heading it may overlap on a
+				    dense table still reads underneath. */}
+				<Dialog>
+					<DialogTrigger asChild>
+						<Button
+							size="icon"
+							variant="outline"
+							className="bg-background/80 absolute right-2 top-2 z-20 size-8 backdrop-blur-sm"
+						>
+							<ZoomIn />
+							<span className="sr-only">View Table</span>
+						</Button>
+					</DialogTrigger>
+					<DialogContent className="max-w-none sm:max-w-[90%]">
+						<div className="relative w-full overflow-x-auto pb-5">
+							{/* Same treatment, one step up in body size — the dialog exists
+							    to make a cramped table readable. The four hardcoded
+							    `[&_thead_th:nth-child(n)]:w-[…]` column widths that used to
+							    live here were sized for one specific four-column table and
+							    silently mangled the shape of every other one. */}
+							<div className={cn(TABLE_CELL_CLASSES, '[&_td]:text-base')}>
+								{children}
+							</div>
 						</div>
-					</div>
-				</DialogContent>
-			</Dialog>
+					</DialogContent>
+				</Dialog>
+			</div>
 		</div>
 	)
 }
