@@ -36,7 +36,12 @@
 	   768 and 900, so a tablet held in portrait gets the desktop structure at
 	   `md` and it does not fit. Use `desk:` for those structural switches. The
 	   existing sm/md/lg utilities stay as they are; this does not replace them,
-	   it names the one line the spec actually draws. */
+	   it names the one line the spec actually draws.
+
+	   One documented exception (DESIGN.md rule 19): the `[post]` article shell
+	   is one column becoming THREE, and 496px of sidebar + ToC rail does not
+	   fit in the 900px this line draws. It retires its side columns at `xl:`
+	   then `lg:` instead. */
 	--breakpoint-desk: 900px;
 
 	/* Container */
@@ -1120,11 +1125,25 @@ body {
 .ah-code-inline {
 	font-family: var(--ah-mono);
 	font-size: 0.9em;
+	/* Tailwind Typography ships `code { font-weight: 600 }`, which is what made
+	   every inline chip in an article read as bold. The chip already separates
+	   itself from the prose three other ways — mono face, tinted fill, hairline
+	   border — so the weight was a fourth signal doing the same job, and at
+	   JetBrains Mono's 600 it out-shouted the sentence around it. The handoff
+	   spec for this chip lists face, size, fill, border, radius and padding and
+	   no weight at all; 400 is DESIGN.md rule 11's weight for prose-level text. */
+	font-weight: 400;
 	color: var(--foreground);
 	background: var(--ah-hover);
 	border: 1px solid var(--ah-line);
 	border-radius: 4px;
 	padding: 1px 5px;
+}
+
+/* …except inside a heading, where the chip is part of a line that is bold by
+   design and a 400 span in the middle of a 700 h2 reads as a rendering fault. */
+:where(h1, h2, h3, h4, h5, h6) .ah-code-inline {
+	font-weight: inherit;
 }
 
 /* Tailwind Typography wraps inline code in backticks by default. */
@@ -1137,6 +1156,7 @@ body {
    `pre > code`; the chip treatment must not follow it in there. */
 pre .ah-code-inline {
 	font-size: inherit;
+	font-weight: inherit;
 	color: inherit;
 	background: none;
 	border: 0;
