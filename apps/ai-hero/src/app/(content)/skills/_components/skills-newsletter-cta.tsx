@@ -13,6 +13,7 @@ import { ArrowUpRight, ShieldCheckIcon } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
+import { completeSkillsCourseSignup } from './skills-course-signup'
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import {
 	SkillsCourseRecoveryBar,
@@ -118,27 +119,26 @@ export function SkillsNewsletterCta({
 
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (!subscriber) return
+		if (isCourse) {
+			completeSkillsCourseSignup(subscriber, router, () => {
+				track('subscribed', { location: source })
+				// A client-side confirmation route keeps the query cache alive.
+				// Publish the completed course state before navigating so changelog
+				// and nav CTAs do not keep promoting a course this form just enrolled
+				// the reader in.
+				utils.ability.getSkillsCourseCtaState.setData(undefined, {
+					state: 'subscribed',
+				})
+				void utils.ability.getSkillsCourseCtaState.invalidate()
+			})
+			return
+		}
 		if (subscriber.state !== 'active') {
 			window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
 			return
 		}
 		track('subscribed', { location: source })
-		if (isCourse) {
-			// A client-side confirmation route keeps the query cache alive. Publish
-			// the completed course state before navigating so changelog and nav CTAs
-			// do not keep promoting a course this form just enrolled the reader in.
-			utils.ability.getSkillsCourseCtaState.setData(undefined, {
-				state: 'subscribed',
-			})
-			void utils.ability.getSkillsCourseCtaState.invalidate()
-		}
-		router.push(
-			redirectUrlBuilder(
-				subscriber,
-				'/confirm',
-				isCourse ? { flow: 'course' } : undefined,
-			),
-		)
+		router.push(redirectUrlBuilder(subscriber, '/confirm'))
 	}
 
 	// Hold the card's shape, not its contents. The box, the eyebrow and the

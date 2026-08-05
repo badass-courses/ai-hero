@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { ThemeImage } from '@/components/cld-image'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import Spinner from '@/components/spinner'
-import { redirectUrlBuilder } from '@/convertkit'
 import type { ConversionSurface } from '@/lib/cta/conversion-intent'
 import { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
@@ -16,7 +15,7 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import { SkillsCourseRestartButton } from './skills-course-restart-button'
-import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
+import { completeSkillsCourseSignup } from './skills-course-signup'
 
 export const SKILLS_NEWSLETTER_IMAGE = {
 	dark: 'https://res.cloudinary.com/total-typescript/image/upload/v1777381174/skills-newsletter-dark.png',
@@ -100,14 +99,8 @@ export function Root({
 
 	const handleFormSuccess = React.useCallback(
 		(subscriber: Subscriber | undefined) => {
-			if (!subscriber) return
-			if (subscriber.state !== 'active') {
-				window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
-				return
-			}
-			track('subscribed', { location })
-			router.push(
-				redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }),
+			completeSkillsCourseSignup(subscriber, router, () =>
+				track('subscribed', { location }),
 			)
 		},
 		[location, router],
