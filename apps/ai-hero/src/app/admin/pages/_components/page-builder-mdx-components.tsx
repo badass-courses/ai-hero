@@ -261,10 +261,12 @@ const Testimonial = ({
  *   column table hugging the left half of the measure with a ragged gutter
  *   beside it, which is what read as "weird". Wide tables still scroll: the
  *   `min-w-[36rem]` floor is what the parent's `overflow-x-auto` acts on.
- * - **The head row gets a surface and a rule.** `bg-card` plus a
- *   `border-border` hairline under the header, and row separators drop to
- *   `--ah-line-soft` (DESIGN.md rule 2: dividers *inside* an object are the
- *   soft step, not the same weight as the object's own edge).
+ * - **The head row gets a rule, not a fill.** The spec's `.ah-table` tints
+ *   the head row, but the table now carries its own outline and radius (see
+ *   `TableWrapper`) and a second surface inside that frame is one treatment
+ *   too many — the `border-border` rule and the weight already say "header".
+ *   Row separators drop to `--ah-line-soft` (DESIGN.md rule 2: dividers
+ *   *inside* an object are the soft step, not the object's own edge).
  *
  * Cell padding and size are the spec's 14px/16px and 14.5px/1.45. Markdown
  * column alignment (`:---:`) survives: it lands as an inline `style`, which
@@ -272,19 +274,27 @@ const Testimonial = ({
  */
 const TABLE_CELL_CLASSES =
 	'min-w-0 [&_table]:w-full [&_table]:min-w-[36rem] [&_table]:border-separate [&_table]:border-spacing-0 ' +
-	// `bg-muted`, not `bg-card`: card is #ffffff in light against a #fbfbfc
-	// page, so a card-coloured header row is invisible on paper and the rule
-	// under it is doing the whole job. Muted is DESIGN.md rule 7's raised band,
-	// which is what a header row is.
-	'[&_th]:bg-muted [&_th]:border-border [&_th]:border-b [&_th]:px-4 [&_th]:py-3 [&_th]:text-left [&_th]:align-bottom [&_th]:text-sm [&_th]:font-semibold ' +
+	'[&_th]:border-border [&_th]:border-b [&_th]:px-4 [&_th]:py-3 [&_th]:text-left [&_th]:align-bottom [&_th]:text-sm [&_th]:font-semibold ' +
 	'[&_td]:border-[color:var(--ah-line-soft)] [&_td]:px-4 [&_td]:py-3.5 [&_td]:align-top [&_td]:text-sm [&_td]:leading-[1.45] ' +
 	'[&_tr:not(:last-child)_td]:border-b ' +
 	'[&_code]:text-[0.85em] [&_td_code]:whitespace-normal [&_td_code]:break-words [&_th_code]:whitespace-normal [&_th_code]:break-words'
 
 const TableWrapper = ({ children }: { children: React.ReactNode }) => {
 	return (
-		<div className="not-prose relative -mx-4 px-4 md:mx-0 md:px-0">
-			<div className="bg-background relative">
+		<div className="not-prose relative mb-8 -mx-4 px-4 md:mx-0 md:px-0">
+			{/* The table is an object sitting ON the page, so it takes the panel
+			    radius and a card outline (DESIGN.md rule 12 / rule 2) rather than
+			    bleeding into the prose. `not-prose` also killed the margin
+			    Typography puts under a table, which is why the paragraph after one
+			    was landing 15px below it while the paragraph above sat 36px clear;
+			    `mb-8` on the wrapper puts that rhythm back.
+
+			    `overflow-hidden` here, `overflow-x-auto` on the child: the radius
+			    has to clip a table that is wider than the frame, and a single
+			    element cannot both scroll horizontally and clip its own corners
+			    cleanly. It also keeps the scroll fade inside the border rather
+			    than painted over it. */}
+			<div className="bg-background border-input relative overflow-hidden rounded-lg border">
 				{/* No right padding: the table is `w-full` now, so reserving 40px for
 				    the scroll fade just held its right edge short of the prose measure
 				    it sits in. The fade still draws over that edge when there IS
