@@ -410,8 +410,18 @@ export default function PostToC({
 			)}
 			aria-label="On this page"
 		>
-			<div className="px-10">
-				<div className="mx-auto flex w-full max-w-4xl items-center">
+			{/*
+			 * This bar is bled full-width by its caller's negative margins
+			 * (`-mx-5 md:-mx-10 lg:-mx-14` on the lesson page) and has to pay the
+			 * inset back itself, so the ladder here mirrors that one exactly. A
+			 * flat `px-10` only lined up at `md`.
+			 *
+			 * No `max-w-4xl` either: the lesson's `h1` and prose run the full
+			 * width of the container, so capping and centering the bar's contents
+			 * pushed them right of every other line on the page.
+			 */}
+			<div className="px-5 md:px-10 lg:px-14">
+				<div className="flex w-full min-w-0 items-center">
 					<button
 						type="button"
 						onClick={() => setIsOpen((current) => !current)}
@@ -438,10 +448,8 @@ export default function PostToC({
 				</div>
 			</div>
 			{isOpen && (
-				<div className="dark:bg-background bg-card absolute left-0 top-10 max-h-[55vh] w-full overflow-y-auto border-b px-10 pb-5">
-					<div className="mx-auto w-full max-w-4xl">
-						<TocRail items={items} onSelect={() => setIsOpen(false)} />
-					</div>
+				<div className="dark:bg-background bg-card absolute left-0 top-10 max-h-[55vh] w-full overflow-y-auto border-b px-5 pb-5 md:px-10 lg:px-14">
+					<TocRail items={items} onSelect={() => setIsOpen(false)} />
 				</div>
 			)}
 		</nav>
