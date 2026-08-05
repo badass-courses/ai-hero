@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { type AppAbility } from '@/ability'
+import { TYPE } from '@/components/landing/type'
 import { useScrollToActive } from '@/hooks/use-scroll-to-active'
 import { subject } from '@casl/ability'
 import {
@@ -37,10 +38,30 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { AutoPlayToggle } from './autoplay-toggle'
 
+/**
+ * The module that follows this one, pinned under the lesson list.
+ *
+ * Without it the last row of the list is the last thing in the world as far as
+ * the sidebar is concerned — which is exactly how a cohort's second workshop
+ * read to a learner who knew there were six more. `locked` covers a module
+ * that exists but has not been released yet: it still shows, because knowing
+ * something is coming on the 12th is worth more than an empty space.
+ */
+export type NextModuleLink = {
+	title: string
+	href: string
+	locked?: boolean
+	/** Formatted date, e.g. "June 1, 2026". Only meaningful when locked. */
+	unlocksAt?: string | null
+}
+
 export type ResourceListViewProps = {
 	title: string
 	titleHref: string
 	breadcrumb?: { label: string; href: string }
+	/** e.g. "Workshop 2 of 8" — where this module sits in its parent. */
+	positionLabel?: string
+	nextModule?: NextModuleLink
 
 	moduleId: string
 	resources?: ContentResourceResource[]
@@ -73,6 +94,8 @@ export function ResourceListView({
 	title,
 	titleHref,
 	breadcrumb,
+	positionLabel,
+	nextModule,
 	moduleId,
 	resources,
 	defaultOpenSectionId,
@@ -180,6 +203,11 @@ export function ResourceListView({
 									>
 										{title}
 									</Link>
+									{positionLabel && (
+										<span className={cn(TYPE.metaMark, 'mt-0.5')}>
+											{positionLabel}
+										</span>
+									)}
 									{showAutoplay && (
 										<div className="mt-3">
 											<AutoPlayToggle className="text-muted-foreground hover:[&_label]:text-foreground gap-2 text-[12px] transition [&>label]:font-normal [&_button]:scale-90" />
@@ -323,9 +351,62 @@ export function ResourceListView({
 							</ol>
 						</Accordion>
 					</ScrollArea>
+					{/*
+					 * Outside the ScrollArea on purpose: it is the answer to "is this
+					 * the end?", and a learner who has to scroll to find it has already
+					 * concluded that it is.
+					 */}
+					{nextModule && <NextModuleRow nextModule={nextModule} />}
 				</div>
 			</TooltipProvider>
 		</nav>
+	)
+}
+
+function NextModuleRow({ nextModule }: { nextModule: NextModuleLink }) {
+	const label = (
+		<>
+			<span className={cn(TYPE.metaMark, 'leading-none')}>Next workshop</span>
+			<span className="truncate text-[14px] font-medium leading-tight tracking-[-0.005em]">
+				{nextModule.title}
+			</span>
+			{nextModule.locked && (
+				<span className={cn(TYPE.metaMark, 'leading-none')}>
+					{nextModule.unlocksAt
+						? `Unlocks ${nextModule.unlocksAt}`
+						: 'Not released yet'}
+				</span>
+			)}
+		</>
+	)
+
+	// Locked modules render the same row without a link rather than a disabled
+	// one — same choice `WorkshopLessonItem` makes for a locked lesson.
+	if (nextModule.locked) {
+		return (
+			<div className="bg-background text-muted-foreground shrink-0 border-t">
+				<div className="flex w-full items-start gap-2.5 px-4 py-3">
+					<Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+					<div className="flex min-w-0 flex-1 flex-col gap-1">{label}</div>
+				</div>
+			</div>
+		)
+	}
+
+	return (
+		<div className="bg-background shrink-0 border-t">
+			<Link
+				href={nextModule.href}
+				className="hover:bg-card group flex w-full items-start gap-2.5 px-4 py-3 transition-colors"
+			>
+				<ChevronRight
+					className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
+					aria-hidden="true"
+					strokeWidth={2}
+				/>
+				<div className="flex min-w-0 flex-1 flex-col gap-1">{label}</div>
+			</Link>
+		</div>
 	)
 }
 
