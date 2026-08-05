@@ -4,12 +4,11 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder } from '@/convertkit'
 import { SKILLS_COURSE_PANEL } from '@/lib/skills-content'
-import type { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
+import { completeSkillsCourseSignup } from './skills-course-signup'
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 import { SkillsCourseRecoveryBar } from './skills-course-restart-button'
 
@@ -40,8 +39,9 @@ import { cn } from '@coursebuilder/utils/cn'
  * layout uses, so the form reflows when its own column gets narrow rather than
  * when the window does.
  *
- * Submitting redirects to `/confirm` like every other Kit form on the site, so
- * `/skills/subscribe` stays the page for people arriving from elsewhere.
+ * Submitting goes through `completeSkillsCourseSignup` like every other course
+ * CTA, so `/skills/subscribe` stays the page for people arriving from
+ * elsewhere.
  */
 export function SkillsCourseForm() {
 	const router = useRouter()
@@ -145,9 +145,9 @@ export function SkillsCourseForm() {
 				id="skills-course-hero"
 				actionLabel={SKILLS_COURSE_PANEL.ctaLabel}
 				onSuccess={(subscriber) => {
-					if (!subscriber) return
-					track('skills_course_subscribed', { location: 'skills-hero' })
-					router.push(redirectUrlBuilder(subscriber as Subscriber, '/confirm'))
+					completeSkillsCourseSignup(subscriber, router, () =>
+						track('skills_course_subscribed', { location: 'skills-hero' }),
+					)
 				}}
 				className={cn(
 					TYPE.meta,
