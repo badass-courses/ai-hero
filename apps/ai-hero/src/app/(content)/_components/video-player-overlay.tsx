@@ -4,10 +4,15 @@ import React, { use } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { revalidateTutorialLesson } from '@/app/(content)/tutorials/actions'
+import { useCohortNavigation } from '@/app/(content)/workshops/_components/cohort-navigation-provider'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
 import { CldImage } from '@/components/cld-image'
 import Spinner from '@/components/spinner'
 import { VideoBlockNewsletterCta } from '@/components/video-block-newsletter-cta'
+import {
+	getNextCohortWorkshop,
+	isWorkshopAvailable,
+} from '@/lib/cohort-navigation'
 import { findParentLessonForSolution } from '@/lib/content-navigation'
 import { setProgressForResource } from '@/lib/progress'
 import { MinimalWorkshop } from '@/lib/workshops'
@@ -37,6 +42,7 @@ import { Button, Progress, useToast } from '@coursebuilder/ui'
 import { useVideoPlayerOverlay } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import type { CompletedAction } from '@coursebuilder/ui/hooks/use-video-player-overlay'
 import { cn } from '@coursebuilder/ui/utils/cn'
+import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { revalidateModuleLesson } from '../actions'
 import { CopyProblemPromptButton } from '../workshops/_components/copy-problem-prompt-button'
@@ -224,23 +230,27 @@ export const CompletedModuleOverlay: React.FC<{
 		})
 	}, []) // Empty deps array to only run once on mount
 
-	const cohortProduct = moduleNavigation?.parents?.find((parent) =>
-		parent?.resources?.some(({ resource }) => resource.type === 'cohort'),
+	// Reads the cohort from context rather than its own tRPC round trip. This
+	// used to call `getNextWorkshopInCohort`, which was a second, subtly
+	// different answer to "what comes next": it linked to the next workshop's
+	// LANDING page (the "do I need to go to some overview and navigate again?"
+	// complaint) and it ignored release state, so it could offer a workshop
+	// that had not dropped yet. One source now, shared with the sidebar and the
+	// end-of-workshop card.
+	const cohortNavigation = useCohortNavigation()
+	const nextWorkshop = getNextCohortWorkshop(
+		cohortNavigation,
+		moduleNavigation?.id,
 	)
-	const cohortResource = cohortProduct?.resources?.find(
-		({ resource }) => resource.type === 'cohort',
-	)?.resource
-
-	const { data: nextWorkshop } =
-		api.contentResources.getNextWorkshopInCohort.useQuery(
-			{
-				cohortId: cohortResource?.id ?? '',
-				currentWorkshopId: moduleNavigation?.id ?? '',
-			},
-			{
-				enabled: Boolean(cohortResource?.id && moduleNavigation?.id),
-			},
-		)
+	const nextWorkshopHref =
+		nextWorkshop && isWorkshopAvailable(nextWorkshop)
+			? nextWorkshop.firstLesson
+				? getResourcePath('lesson', nextWorkshop.firstLesson.slug, 'view', {
+						parentType: 'workshop',
+						parentSlug: nextWorkshop.slug,
+					})
+				: getResourcePath('workshop', nextWorkshop.slug, 'view')
+			: null
 
 	return (
 		<div
@@ -266,10 +276,10 @@ export const CompletedModuleOverlay: React.FC<{
 				>
 					Replay
 				</Button>
-				{nextWorkshop && (
+				{nextWorkshop && nextWorkshopHref && (
 					<Button asChild variant="default">
-						<Link href={`/workshops/${nextWorkshop?.fields?.slug}`}>
-							Continue to {nextWorkshop?.fields?.title}
+						<Link href={nextWorkshopHref}>
+							Continue to {nextWorkshop.title}
 						</Link>
 					</Button>
 				)}

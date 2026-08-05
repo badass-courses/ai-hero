@@ -1,4 +1,4 @@
-import { isSameDay } from 'date-fns'
+import { isSameDay, isValid } from 'date-fns'
 import { formatInTimeZone } from 'date-fns-tz'
 
 interface CohortDateRange {
@@ -23,10 +23,17 @@ export function formatCohortDateRange(
 	let dateString: string | null = null
 	let timeString: string | null = null
 
-	if (startsAt) {
+	if (startsAt && isValid(new Date(startsAt))) {
 		const startDate = new Date(startsAt)
-		if (endsAt) {
-			const endDate = new Date(endsAt)
+		// An unparseable `endsAt` degrades to the start-only branch rather than
+		// taking the whole call down. `formatInTimeZone` throws `RangeError:
+		// Invalid time value` on an Invalid Date, so every caller that passes a
+		// malformed field straight from `fields.startsAt` — authored freehand in
+		// the CMS — would crash the tree it renders in. Returning nulls matches
+		// what this function already does for absent dates.
+		const validEndsAt = endsAt && isValid(new Date(endsAt)) ? endsAt : null
+		if (validEndsAt) {
+			const endDate = new Date(validEndsAt)
 			if (isSameDay(startDate, endDate)) {
 				// Same day event: "Month Day, Year" | "Start Time - End Time (Timezone)"
 				dateString = formatInTimeZone(startDate, tz, 'MMMM d, yyyy')
