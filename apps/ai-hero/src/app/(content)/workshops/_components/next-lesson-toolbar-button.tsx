@@ -41,7 +41,12 @@ export function NextLessonToolbarButton({
 	// Past the last lesson of a workshop, "next" continues into the cohort's
 	// next workshop rather than disappearing — same rule as the end-of-workshop
 	// card below the player, so the two never disagree about where next is.
-	const nextWorkshop = nextResourceSlug
+	//
+	// Gated on `!nextResource`, NOT on the resolved slug: a resource that exists
+	// but whose slug we could not resolve still means there is more of THIS
+	// workshop to come, and advertising the next workshop there would skip it.
+	// That case renders nothing, exactly as it did before.
+	const nextWorkshop = nextResource
 		? null
 		: getNextCohortWorkshop(cohortNavigation, workshopNavigation?.id)
 
