@@ -1,16 +1,15 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowLeftIcon } from 'lucide-react'
+import { getCohortFromNavigation } from '@/lib/cohort-navigation'
 
-import { Button } from '@coursebuilder/ui'
+import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { useWorkshopNavigation } from './workshop-navigation-provider'
 
 export default function WorkshopBreadcrumb() {
 	const navigation = useWorkshopNavigation()
-	const cohort =
-		navigation?.parents?.[0]?.type === 'cohort' && navigation?.parents?.[0]
+	const cohort = getCohortFromNavigation(navigation)
 
 	if (!cohort) return null
 
@@ -18,9 +17,9 @@ export default function WorkshopBreadcrumb() {
 		<div className="flex items-center gap-2">
 			<Link
 				className="text-primary block min-w-0 max-w-[300px] flex-1 truncate sm:max-w-full"
-				href={`/cohorts/${cohort.resources?.[0]?.resource.fields?.slug}`}
+				href={getResourcePath('cohort', cohort.slug, 'view')}
 			>
-				{cohort?.resources?.[0]?.resource.fields?.title}
+				{cohort.title}
 			</Link>
 			<span className="opacity-50">/</span>
 		</div>
