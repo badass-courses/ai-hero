@@ -73,4 +73,26 @@ describe('ResourceListView position and next-module affordances', () => {
 	it('renders nothing extra for the last module in a parent', () => {
 		expect(render()).not.toContain('Next workshop')
 	})
+
+	it('sits after the lessons, in the list rather than pinned below it', () => {
+		const markup = render({
+			nextModule: availableNext,
+			resources: [
+				{
+					resource: {
+						id: 'lesson-pwt8r',
+						type: 'lesson',
+						fields: { slug: 'permissions~pwt8r', title: 'Permissions' },
+					},
+				},
+			] as any,
+		})
+
+		expect(markup.indexOf('Next workshop')).toBeGreaterThan(
+			markup.indexOf('Permissions'),
+		)
+		// Inside the scroller, so it scrolls with the lessons above it.
+		const scrollerEnd = markup.lastIndexOf('data-slot="scroll-area-viewport"')
+		expect(markup.indexOf('Next workshop')).toBeGreaterThan(scrollerEnd)
+	})
 })
