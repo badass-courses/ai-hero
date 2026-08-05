@@ -766,14 +766,20 @@ li.task-list-item {
 
 /** Clearance for the lesson bar (`MobileListResourceNavigation`). Separate from
     `.has-sticky-action` because the two bars are different heights and stop at
-    different widths: this one hands over to the hub sidebar at `md`, where the
+    different widths: this one hands over to the hub sidebar at `lg`, where the
     skill page's install bar runs to 900px. A page that somehow had both would
     add both paddings, which is the right answer for two stacked bars. */
 .has-list-bar {
 	padding-bottom: calc(60px + env(safe-area-inset-bottom));
 }
 
-@media (min-width: 768px) {
+/* 1024px, matching the `lg:hidden` on the bar itself in
+   `list-resource-navigation.tsx`. These two are one decision expressed in two
+   places: the bar is `fixed`, so the only thing keeping it off the footer's
+   last row is this padding, and a window where the bar renders but the
+   padding has already been cleared puts the bar on top of the content. They
+   have to move together. */
+@media (min-width: 1024px) {
 	.has-list-bar {
 		padding-bottom: 0;
 	}

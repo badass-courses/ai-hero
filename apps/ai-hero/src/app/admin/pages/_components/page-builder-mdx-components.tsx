@@ -295,15 +295,22 @@ const TableWrapper = ({ children }: { children: React.ReactNode }) => {
 			    cleanly. It also keeps the scroll fade inside the border rather
 			    than painted over it. */}
 			<div className="bg-background border-input relative overflow-hidden rounded-lg border">
-				{/* No right padding: the table is `w-full` now, so reserving 40px for
-				    the scroll fade just held its right edge short of the prose measure
-				    it sits in. The fade still draws over that edge when there IS
-				    something to scroll to. */}
+				{/* The right-edge fade is gone rather than re-padded around. It was
+				    rendered unconditionally, so on the common case — a table that
+				    fits — it washed out the last 40px of the rightmost column for no
+				    reason, and the `pr-10` that used to hide that cost the table its
+				    alignment with the prose measure. Both symptoms were the same
+				    thing: a permanent overlay standing in for a conditional signal.
+
+				    Nothing replaces it. The frame's border now bounds the table, so
+				    a row that continues past it is visibly cut rather than faded
+				    into the page, and the zoom dialog is the way out for a table
+				    that genuinely does not fit. If we want the affordance back it
+				    should be the self-hiding `background-attachment: local` scroll
+				    shadow, which paints behind the cells instead of over them. */}
 				<div className="relative z-0 w-full overflow-x-auto">
 					<div className={TABLE_CELL_CLASSES}>{children}</div>
 				</div>
-				{/* <div className="from-background pointer-events-none absolute inset-y-0 left-0 z-20 w-4 bg-gradient-to-r to-transparent" /> */}
-				<div className="from-background pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l to-transparent" />
 				{/* Inside the frame, in the header band. It used to hang off the
 				    wrapper at `-top-5 right-0`, which straddled the corner — fine
 				    when the table had no outline to straddle, wrong now that it
