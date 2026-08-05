@@ -384,9 +384,23 @@ Six cases need a decision rather than a stack (`AI Hero Courses Redesign/Mobile 
 | Rows | 44px minimum tap height | `rowClass` in the same file |
 | Inline forms | Wrap to full-width fields. **Fields 48px, submit 50px** — the one deliberate size increase, because 44px is a fine pointer target and a poor thumb target | `SubscribeToConvertkitForm` and its callers |
 
+**The one documented exception: the three-column article shell.** `desk:` is the line between a phone layout and a desktop one, and it holds for everything that is one column becoming two. The `[post]` shell is one column becoming *three* — 264px sidebar + 232px ToC rail is 496px of chrome — so a single line cannot serve it: at 900px it would leave a 360px measure, and the case that actually broke was a window at half of a 1080p screen (960px), which is above `desk:` and still far too narrow. The two side columns therefore retire one at a time, and neither is `desk:`:
+
+| Width | Layout | Where |
+| --- | --- | --- |
+| `xl:` (1280+) | sidebar + prose + ToC rail | `PostToCRail`, the grid in `[post]/page.tsx` |
+| `lg:` (1024–1279) | sidebar + prose; ToC folds into `PostToCDisclosure` under the head, share moves to its own row | same files |
+| below `lg:` | prose only; the tree becomes the left drawer | `HubSidebarShell`, `MobileMenuPanel` |
+
+The rail goes first because the tree is the more load-bearing of the two. `lg:` is not a new line: `MobileMenuPanel` and the hamburger were already there, and the sidebar sitting at `md:` meant every width from 768 to 1024 rendered the desktop sidebar and the drawer trigger for the same tree at once. Anything that stands in for the sidebar on small screens (`ListResourceNavigation`'s bottom bar) hides at `lg:` with it; anything standing in for the rail (the ToC disclosure, the mobile share row) hides at `xl:`.
+
 A `fixed` bottom bar cannot be cleared by a spacer the page renders: the footer comes from `HubLayout`, above the page in the tree, so the spacer lands before it. Pad the document (`.has-sticky-action`) instead.
 
-Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, the phase list rotating to a horizontal scroller, and prose stepping back to 16.5px.
+Still unbuilt, and listed here so nobody assumes they are done: the comparison table's one-block-per-row form, the 3-up stat row becoming a 2-col hairline grid, the logo wall dropping to two-per-row/eight marks, and the phase list rotating to a horizontal scroller.
+
+**Prose stepping back on mobile is now built**, and was half-built for a while in a way worth knowing about: `globals.css` carried a `@media (min-width: 640px)` block raising `.ah-prose-p` and list items to 17.5px, but the base rules declared 17.5px as well, so the media query had nothing to override and every phone got the desktop measure. Article prose is now **15.5px** below `sm`, 17.5px from `sm` up. If you add a new prose element with its own size, give it both halves or neither.
+
+**That 15.5px is deliberately below `TYPE.body`'s 16.5px mobile step, and the two should not be merged.** `TYPE.body` sets short body text in cards and rows, where a line runs a few words; article prose sets a 70ch column a reader goes down for several minutes, and on a 390px screen that column wants the smaller step. Same reasoning that took the mobile gutter to 18px: on a phone the measure is the constraint.
 
 ## Accessibility
 

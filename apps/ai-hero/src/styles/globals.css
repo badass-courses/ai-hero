@@ -36,7 +36,12 @@
 	   768 and 900, so a tablet held in portrait gets the desktop structure at
 	   `md` and it does not fit. Use `desk:` for those structural switches. The
 	   existing sm/md/lg utilities stay as they are; this does not replace them,
-	   it names the one line the spec actually draws. */
+	   it names the one line the spec actually draws.
+
+	   One documented exception (DESIGN.md rule 19): the `[post]` article shell
+	   is one column becoming THREE, and 496px of sidebar + ToC rail does not
+	   fit in the 900px this line draws. It retires its side columns at `xl:`
+	   then `lg:` instead. */
 	--breakpoint-desk: 900px;
 
 	/* Container */
@@ -761,14 +766,20 @@ li.task-list-item {
 
 /** Clearance for the lesson bar (`MobileListResourceNavigation`). Separate from
     `.has-sticky-action` because the two bars are different heights and stop at
-    different widths: this one hands over to the hub sidebar at `md`, where the
+    different widths: this one hands over to the hub sidebar at `lg`, where the
     skill page's install bar runs to 900px. A page that somehow had both would
     add both paddings, which is the right answer for two stacked bars. */
 .has-list-bar {
 	padding-bottom: calc(60px + env(safe-area-inset-bottom));
 }
 
-@media (min-width: 768px) {
+/* 1024px, matching the `lg:hidden` on the bar itself in
+   `list-resource-navigation.tsx`. These two are one decision expressed in two
+   places: the bar is `fixed`, so the only thing keeping it off the footer's
+   last row is this padding, and a window where the bar renders but the
+   padding has already been cleared puts the bar on top of the content. They
+   have to move together. */
+@media (min-width: 1024px) {
 	.has-list-bar {
 		padding-bottom: 0;
 	}
@@ -968,9 +979,23 @@ body {
 		Monaco, monospace;
 }
 
+/* 15.5px here and 17.5px from 640px up, via the media query at the end of this
+   block.
+
+   That media query has been here all along; these base rules just declared the
+   desktop value too, so it had nothing to override and phones got the full
+   17.5px measure. This is DESIGN.md rule 19's "prose stepping back", which was
+   listed as unbuilt because in practice it was.
+
+   The mobile value is deliberately BELOW `TYPE.body`'s 16.5px step, so these
+   two no longer match and should not be "corrected" into each other.
+   `TYPE.body` sets short body text in cards and rows, where a line is a few
+   words; this sets a 70ch column a reader goes down for several minutes, and
+   on a 390px screen that column wants the smaller step. Same reasoning the
+   gutter went to 18px: on a phone the measure is the constraint. */
 .ah-prose-p {
 	margin: 0 0 20px;
-	font-size: 17.5px;
+	font-size: 15.5px;
 	line-height: 1.68;
 	color: var(--ah-fg-body);
 	text-wrap: pretty;
@@ -1033,7 +1058,9 @@ body {
 .ah-numbers > li {
 	position: relative;
 	margin: 0;
-	font-size: 17.5px;
+	/* Steps with `.ah-prose-p` — a list that stayed at the desktop size while
+	   the paragraph around it stepped down would read as emphasis. */
+	font-size: 15.5px;
 	line-height: 1.68;
 	color: var(--ah-fg-body);
 	text-wrap: pretty;
@@ -1119,12 +1146,31 @@ body {
 
 .ah-code-inline {
 	font-family: var(--ah-mono);
-	font-size: 0.9em;
+	/* 0.85em, under the handoff spec's 0.9em. Matching sizes by the number
+	   does not match them by eye here: JetBrains Mono carries a taller
+	   x-height and wider advance than DM Sans, so a chip set to the same em
+	   as the sentence it interrupts reads a step larger than the sentence.
+	   This is the optical match, not the arithmetic one. */
+	font-size: 0.85em;
+	/* Tailwind Typography ships `code { font-weight: 600 }`, which is what made
+	   every inline chip in an article read as bold. The chip already separates
+	   itself from the prose three other ways — mono face, tinted fill, hairline
+	   border — so the weight was a fourth signal doing the same job, and at
+	   JetBrains Mono's 600 it out-shouted the sentence around it. The handoff
+	   spec for this chip lists face, size, fill, border, radius and padding and
+	   no weight at all; 400 is DESIGN.md rule 11's weight for prose-level text. */
+	font-weight: 400;
 	color: var(--foreground);
 	background: var(--ah-hover);
 	border: 1px solid var(--ah-line);
 	border-radius: 4px;
 	padding: 1px 5px;
+}
+
+/* …except inside a heading, where the chip is part of a line that is bold by
+   design and a 400 span in the middle of a 700 h2 reads as a rendering fault. */
+:where(h1, h2, h3, h4, h5, h6) .ah-code-inline {
+	font-weight: inherit;
 }
 
 /* Tailwind Typography wraps inline code in backticks by default. */
@@ -1137,6 +1183,7 @@ body {
    `pre > code`; the chip treatment must not follow it in there. */
 pre .ah-code-inline {
 	font-size: inherit;
+	font-weight: inherit;
 	color: inherit;
 	background: none;
 	border: 0;

@@ -127,6 +127,11 @@ const config = {
 				destination: '/skills-to-tickets',
 				permanent: true,
 			},
+			{
+				source: '/skills-writing-great-skills',
+				destination: '/skills-writing-for-agents',
+				permanent: true,
+			},
 		]
 	},
 	async rewrites() {

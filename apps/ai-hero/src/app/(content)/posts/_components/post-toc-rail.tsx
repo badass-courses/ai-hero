@@ -319,7 +319,7 @@ export function PostToCRail({
 	const hasSections = !isTocModelEmpty(model, landmarks?.length ?? 0)
 
 	return (
-		<aside className={cn('hidden border-l md:block', className)}>
+		<aside className={cn('hidden border-l xl:block', className)}>
 			{/* Half the body column's top padding (`pt-10` → `pt-5`), on purpose:
 			    the prose is set on a baseline that has to clear the rule above it,
 			    and the rail's first line is a 11px eyebrow. Matching the two put a
@@ -362,7 +362,7 @@ export function PostToCDisclosure({
 	if (isTocModelEmpty(model, landmarks?.length ?? 0)) return null
 
 	return (
-		<details className={cn('group md:hidden', className)}>
+		<details className={cn('group xl:hidden', className)}>
 			<summary className="flex cursor-pointer list-none items-center gap-2.5 px-8 py-3.5 [&::-webkit-details-marker]:hidden">
 				<AlignLeft className="size-4 shrink-0 opacity-60" aria-hidden="true" />
 				<span className={TYPE.meta}>On this page</span>

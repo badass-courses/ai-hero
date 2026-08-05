@@ -253,9 +253,17 @@ export default async function PostPage(props: {
 							<PostToCDisclosure model={tocModel} landmarks={tocLandmarks} />
 						)}
 						{/* The spec's article shell: prose at the 70ch measure plus a
-                232px sticky rail. The rail drops below `md`, where
-                PostToCDisclosure above stands in for it. */}
-						<div className="md:grid md:grid-cols-[minmax(0,1fr)_232px]">
+                232px sticky rail. The rail drops below `xl`, where
+                PostToCDisclosure above stands in for it.
+
+                The two side columns retire one at a time rather than together,
+                because they do not cost the same: 264px of sidebar plus 232px
+                of rail is 496px of chrome, and a window at half of a 1080p
+                screen (960px) has only 960 to spend. Rail first at `xl`
+                (1280), sidebar next at `lg` (1024) — so the half-width window
+                reads one full-measure column, and the in-between widths keep
+                the tree, which is the more load-bearing of the two. */}
+						<div className="xl:grid xl:grid-cols-[minmax(0,1fr)_232px]">
 							<PostBody post={post} resolvedCta={resolvedCta} />
 							{post?.fields?.body && (
 								<PostToCRail
@@ -299,14 +307,14 @@ export default async function PostPage(props: {
 								)} */}
 						{/* Mobile only. On desktop the ToC rail carries share, and the head
                 carries a Share button — three ways to do one thing, where the
-                prototype has one. Below `md` the rail is gone, so this row is
+                prototype has one. Below `xl` the rail is gone, so this row is
                 the only share affordance and stays. */}
 						{/* Literally the rail's own SHARE block, on the article gutter.
                 It used to be the `inline` variant with a bold 18px "Share"
                 heading, centred, and a lone `pl-5` — a different label style,
                 a different button style and a different gutter from every
                 other section of the page. */}
-						<div className="flex w-full flex-col gap-2.5 px-[18px] py-8 sm:px-11 md:hidden">
+						<div className="flex w-full flex-col gap-2.5 px-[18px] py-8 sm:px-11 xl:hidden">
 							<p className={TYPE.groupLabel}>Share</p>
 							<Share variant="rail" title={post?.fields.title} />
 						</div>
