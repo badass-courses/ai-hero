@@ -5,19 +5,25 @@ import { emailProvider } from '@/coursebuilder/email-provider'
 import { courseBuilderAdapter, db } from '@/db'
 import { accounts, entitlements, organizationMemberships } from '@/db/schema'
 import { env } from '@/env.mjs'
-import {
-	getOAuthLinkCookieName,
-	isConnectableOAuthProvider,
-} from '@/lib/oauth-link-cookie'
-import { OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT } from '@/inngest/events/oauth-provider-account-linked'
+import { clearLegacyOAuthLinkCookies } from '@/lib/oauth-link-cookie'
 import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
+import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
 import { log, serializeError } from '@/server/logger'
+import {
+	assertOAuthLinkAccountEventUnreachableDuringContainment,
+	createOAuthContainmentAdapter,
+	createOAuthContainmentSignInCallback,
+	runWithOAuthContainmentRequest,
+} from '@/server/oauth-link-containment'
+import {
+	getDiscordProviderConfig,
+	getGithubProviderConfig,
+} from '@/server/oauth-provider-config'
 import { measureIfSlow } from '@/server/perf'
 import DiscordProvider from '@auth/core/providers/discord'
 import GithubProvider from '@auth/core/providers/github'
-import TwitterProvider from '@auth/core/providers/twitter'
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import NextAuth, { type DefaultSession, type NextAuthConfig } from 'next-auth'
 
@@ -179,6 +185,31 @@ async function refreshDiscordToken(account: {
 	}
 }
 
+const oauthContainmentAdapter =
+	createOAuthContainmentAdapter(courseBuilderAdapter)
+
+const oauthContainmentSignInCallback = createOAuthContainmentSignInCallback({
+	getCookieStore: cookies,
+	findAccountOwner: async (account) =>
+		(await courseBuilderAdapter.getUserByAccount?.(account)) ?? null,
+})
+
+const postSignInInvitationHandler = createPostSignInInvitationHandler({
+	acceptInvitations: acceptBillingAdminInvitations,
+	logAccepted: ({ userId, organizationCount }) => {
+		void log.info('auth.billing-admin-invitations.accepted', {
+			userId,
+			organizationCount,
+		})
+	},
+	logFailed: ({ userId, error }) => {
+		void log.error('auth.billing-admin-invitations.failed', {
+			userId,
+			error,
+		})
+	},
+})
+
 /**
  * Options for NextAuth.js used to configure adapters, providers, callbacks, etc.
  *
@@ -210,161 +241,16 @@ export const authOptions: NextAuthConfig = {
 		createUser: async ({ user }) => {
 			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
 		},
-		linkAccount: async ({ user, account, profile }) => {
-			await inngest.send({
-				name: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
-				data: { account, profile },
-				user,
-			})
-		},
+		linkAccount: assertOAuthLinkAccountEventUnreachableDuringContainment,
+		signIn: postSignInInvitationHandler,
 		signOut: async () => {
 			const cookieStore = await cookies()
 			cookieStore.delete('organizationId')
+			clearLegacyOAuthLinkCookies(cookieStore)
 		},
 	},
 	callbacks: {
-		signIn: async ({ user, account, profile }) => {
-			let effectiveUserId = user.id
-			if (account?.provider && isConnectableOAuthProvider(account.provider)) {
-				const provider = account.provider
-				const cookieStore = await cookies()
-				const linkCookieName = getOAuthLinkCookieName(provider)
-				const linkingUserId = cookieStore.get(linkCookieName)?.value ?? null
-				if (linkingUserId) effectiveUserId = linkingUserId
-
-				void log.info(`auth.${provider}.signin`, {
-					...getOAuthLogData({
-						provider,
-						userId: linkingUserId ?? user.id ?? null,
-						accountId: account.providerAccountId,
-						action: 'attempt',
-					}),
-					email: user?.email ?? null,
-					name: user?.name ?? null,
-					linkingCookiePresent: Boolean(linkingUserId),
-					linkingUserId: linkingUserId ?? null,
-				})
-
-				if (linkingUserId) {
-					try {
-						const existingLink = await courseBuilderAdapter.getUserByAccount?.({
-							provider,
-							providerAccountId: account.providerAccountId,
-						})
-
-						if (existingLink) {
-							if (existingLink.id === linkingUserId) {
-								void log.info(`auth.${provider}.signin`, {
-									...getOAuthLogData({
-										provider,
-										userId: linkingUserId,
-										accountId: account.providerAccountId,
-										action: 'already-linked',
-									}),
-								})
-							} else {
-								void log.warn(`auth.${provider}.signin`, {
-									...getOAuthLogData({
-										provider,
-										userId: linkingUserId,
-										accountId: account.providerAccountId,
-										action: 'relink-from-other-user',
-									}),
-									previousUserId: existingLink.id,
-								})
-								await courseBuilderAdapter.unlinkAccount?.({
-									provider,
-									providerAccountId: account.providerAccountId,
-								})
-								await courseBuilderAdapter.linkAccount?.({
-									...account,
-									type: account.type as 'oauth' | 'oidc' | 'email' | 'webauthn',
-									userId: linkingUserId,
-								})
-								void inngest.send({
-									name: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
-									data: { account, profile: user },
-									user: { ...user, id: linkingUserId },
-								})
-								void log.info(`auth.${provider}.signin`, {
-									...getOAuthLogData({
-										provider,
-										userId: linkingUserId,
-										accountId: account.providerAccountId,
-										action: 'prelink-relink-role-sync-fired',
-									}),
-									event: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
-									email: user?.email ?? null,
-								})
-							}
-						} else {
-							void log.info(`auth.${provider}.signin`, {
-								...getOAuthLogData({
-									provider,
-									userId: linkingUserId,
-									accountId: account.providerAccountId,
-									action: 'prelink-account',
-								}),
-								email: user?.email ?? null,
-							})
-							await courseBuilderAdapter.linkAccount?.({
-								...account,
-								type: account.type as 'oauth' | 'oidc' | 'email' | 'webauthn',
-								userId: linkingUserId,
-							})
-							void inngest.send({
-								name: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
-								data: { account, profile: user },
-								user: { ...user, id: linkingUserId },
-							})
-							void log.info(`auth.${provider}.signin`, {
-								...getOAuthLogData({
-									provider,
-									userId: linkingUserId,
-									accountId: account.providerAccountId,
-									action: 'prelink-role-sync-fired',
-								}),
-								event: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
-								email: user?.email ?? null,
-							})
-						}
-					} catch (error) {
-						void log.error(`auth.${provider}.signin`, {
-							...getOAuthLogData({
-								provider,
-								userId: linkingUserId,
-								accountId: account.providerAccountId,
-								action: 'prelink-failed',
-							}),
-							error: error instanceof Error ? error.message : String(error),
-						})
-					} finally {
-						cookieStore.delete(linkCookieName)
-					}
-				}
-			}
-
-			if (effectiveUserId && user.email) {
-				try {
-					const accepted = await acceptBillingAdminInvitations({
-						userId: effectiveUserId,
-						email: user.email,
-					})
-					if (accepted.acceptedOrganizationIds.length > 0) {
-						void log.info('auth.billing-admin-invitations.accepted', {
-							userId: effectiveUserId,
-							organizationCount: accepted.acceptedOrganizationIds.length,
-						})
-					}
-				} catch (error) {
-					void log.error('auth.billing-admin-invitations.failed', {
-						userId: effectiveUserId,
-						error: error instanceof Error ? error.message : String(error),
-					})
-				}
-			}
-			return true
-		},
+		signIn: oauthContainmentSignInCallback,
 		session: async ({ session, user }) => {
 			const dbUser = await db.query.users.findFirst({
 				where: (users, { eq }) => eq(users.id, user.id),
@@ -521,7 +407,7 @@ export const authOptions: NextAuthConfig = {
 			}
 		},
 	},
-	adapter: courseBuilderAdapter,
+	adapter: oauthContainmentAdapter,
 	providers: [
 		/**
 		 * ...add more providers here.
@@ -534,22 +420,22 @@ export const authOptions: NextAuthConfig = {
 		 */
 		...(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
 			? [
-					GithubProvider({
-						clientId: env.GITHUB_CLIENT_ID,
-						clientSecret: env.GITHUB_CLIENT_SECRET,
-						allowDangerousEmailAccountLinking: true,
-					}),
+					GithubProvider(
+						getGithubProviderConfig({
+							clientId: env.GITHUB_CLIENT_ID,
+							clientSecret: env.GITHUB_CLIENT_SECRET,
+						}),
+					),
 				]
 			: []),
 		...(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET
 			? [
-					DiscordProvider({
-						clientId: env.DISCORD_CLIENT_ID,
-						clientSecret: env.DISCORD_CLIENT_SECRET,
-						allowDangerousEmailAccountLinking: true,
-						authorization:
-							'https://discord.com/api/oauth2/authorize?scope=identify+email+guilds.join+guilds',
-					}),
+					DiscordProvider(
+						getDiscordProviderConfig({
+							clientId: env.DISCORD_CLIENT_ID,
+							clientSecret: env.DISCORD_CLIENT_SECRET,
+						}),
+					),
 				]
 			: []),
 		emailProvider,
@@ -561,11 +447,13 @@ export const authOptions: NextAuthConfig = {
 	},
 }
 
-export const {
-	handlers: { GET, POST },
-	auth,
-	signIn,
-} = NextAuth(authOptions)
+const nextAuth = NextAuth(authOptions)
+
+export const { auth, signIn } = nextAuth
+export const GET = (request: Parameters<typeof nextAuth.handlers.GET>[0]) =>
+	runWithOAuthContainmentRequest(request, () => nextAuth.handlers.GET(request))
+export const POST = (request: Parameters<typeof nextAuth.handlers.POST>[0]) =>
+	runWithOAuthContainmentRequest(request, () => nextAuth.handlers.POST(request))
 
 export const getServerAuthSession = cache(async () => {
 	return measureIfSlow({

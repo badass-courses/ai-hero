@@ -24,7 +24,6 @@ import {
 	getCachedWorkshopNavigation,
 	getCachedWorkshopProduct,
 } from '@/lib/workshops-query'
-import { getProviders } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { generateGridPattern } from '@/utils/generate-grid-pattern'
 import { getAbilityForResource } from '@/utils/get-current-ability-rules'
@@ -44,7 +43,6 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { ConnectToDiscord } from '../_components/connect-to-discord'
 import { InlineBuyButton } from '../_components/inline-mdx-pricing'
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
 import WorkshopImage from '../_components/workshop-image'
@@ -122,8 +120,6 @@ export default async function ModulePage(props: Props) {
 	const navigation = await getCachedWorkshopNavigation(params.module)
 	const hasContent = Boolean(getFirstResourceSlug(navigation))
 
-	const providers = getProviders()
-	const discordProvider = providers?.discord
 	const Links = ({
 		children,
 		className,
@@ -184,12 +180,6 @@ export default async function ModulePage(props: Props) {
 								</DialogContent>
 							</Dialog>
 						</div>
-					</React.Suspense>
-					<React.Suspense fallback={null}>
-						<ConnectToDiscord
-							discordProvider={discordProvider}
-							abilityLoader={abilityLoader}
-						/>
 					</React.Suspense>
 				</div>
 				{children}

@@ -3,9 +3,11 @@ import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import { ContributorImage } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
-import { getProviders, getServerAuthSession } from '@/server/auth'
+import { getDiscordAccount } from '@/lib/discord-query'
+import { getServerAuthSession } from '@/server/auth'
 
-import { DiscordConnectButton } from './discord-connect-button'
+import { DiscordAccessAction } from './discord-access-action'
+import { getDiscordAccessState } from './discord-access'
 
 export const metadata: Metadata = {
 	title: 'Join AI Hero Discord',
@@ -26,11 +28,10 @@ export default async function Discord({
 }) {
 	await headers()
 	const { error } = await searchParams
-
-	const providers = getProviders()
-	const { session } = await getServerAuthSession()
-
-	const discordProvider = providers?.discord
+	const discordAccessState = await getDiscordAccessState({
+		getSession: getServerAuthSession,
+		findDiscordAccount: getDiscordAccount,
+	})
 
 	return (
 		<LayoutClient withContainer>
@@ -47,14 +48,7 @@ export default async function Discord({
 					</div>
 				)}
 
-				<div>
-					{discordProvider ? (
-						<DiscordConnectButton
-							discordProvider={discordProvider}
-							userId={session?.user?.id}
-						/>
-					) : null}
-				</div>
+				<DiscordAccessAction state={discordAccessState} />
 			</main>
 		</LayoutClient>
 	)
