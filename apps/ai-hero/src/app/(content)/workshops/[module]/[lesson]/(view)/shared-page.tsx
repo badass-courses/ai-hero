@@ -18,6 +18,7 @@ import {
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
 import { MinimalWorkshop } from '@/lib/workshops'
+import { getPlaybackPositionForResource } from '@/lib/progress'
 import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
@@ -221,6 +222,7 @@ async function PlayerContainer({
 		? await getLessonVideoPlaybackResource(lesson.id)
 		: null
 	const muxPlaybackId = videoPlaybackResource?.muxPlaybackId ?? null
+	const playbackPositionLoader = getPlaybackPositionForResource(lesson.id)
 	const videoResourceReference = lesson?.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
@@ -285,8 +287,10 @@ async function PlayerContainer({
 						)}
 					</WorkshopPricing>
 					<AuthedVideoPlayer
+						key={lesson.id}
 						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh]"
 						muxPlaybackId={muxPlaybackId}
+						playbackPositionLoader={playbackPositionLoader}
 						// playbackIdLoader={playbackIdLoader}
 						resource={lesson}
 						videoChapters={videoPlaybackResource?.chapters ?? null}
