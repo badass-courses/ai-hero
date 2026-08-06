@@ -115,7 +115,9 @@ export const WorkshopInterestCta = ({
 				</p>
 			) : !isResolved || sessionStatus === 'loading' ? (
 				<div className="flex flex-col gap-2.5">
-					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
+					{/* Two fields and a button, so two bars and a button-height bar.
+					    The third identical bar was reserving space for a control that
+					    never arrives, so the panel visibly resized on every resolve. */}
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 					<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
 				</div>
@@ -133,11 +135,14 @@ export const WorkshopInterestCta = ({
 						surface="workshop-page"
 						actionLabel="Notify me"
 						onSuccess={handleFormSuccess}
-						className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 [&_button]:h-[50px] desk:[&_button]:h-11 [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-12 desk:[&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-faint)] [&_label]:hidden"
+						className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 [&_button]:h-[50px] desk:[&_button]:h-11 [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-12 desk:[&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-subtle)] [&_label]:sr-only"
 					/>
-					<p
-						className={cn(TYPE.command, 'mt-3 text-[color:var(--ah-fg-faint)]')}
-					>
+					{/* `--ah-fg-faint` measured 2.20:1 here. DESIGN rule 7's own
+					    callout scopes that step to marks "a reader never has to make
+					    out", and a spam-policy promise under a form is text a reader
+					    is looking for at the moment they decide whether to type. One
+					    step up the ramp, and off 12px mono: it is a sentence. */}
+					<p className={cn(TYPE.metaSm, 'mt-3 text-[color:var(--ah-fg-subtle)]')}>
 						No spam. Unsubscribe anytime.
 					</p>
 				</div>

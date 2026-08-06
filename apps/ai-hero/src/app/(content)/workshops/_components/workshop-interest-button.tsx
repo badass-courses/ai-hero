@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { type ConversionSurface } from '@/lib/cta/conversion-intent'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
 
@@ -11,6 +12,7 @@ import { syncWorkshopInterestGate } from './workshop-interest-gate'
 
 export function WorkshopInterestButton({
 	workshopSlug,
+	surface = 'workshop-page',
 	className,
 	containerClassName,
 	children = 'Keep me posted',
@@ -18,6 +20,8 @@ export function WorkshopInterestButton({
 	onSuccess,
 }: {
 	workshopSlug: string
+	/** Attribution only. The field and tag written are the same either way. */
+	surface?: ConversionSurface
 	className?: string
 	containerClassName?: string
 	children?: React.ReactNode
@@ -35,7 +39,7 @@ export function WorkshopInterestButton({
 				onClick={() => {
 					setError(false)
 					startTransition(async () => {
-						const result = await addWorkshopInterest(workshopSlug)
+						const result = await addWorkshopInterest(workshopSlug, surface)
 						if (result.success && result.gate) {
 							syncWorkshopInterestGate({
 								gate: result.gate,
