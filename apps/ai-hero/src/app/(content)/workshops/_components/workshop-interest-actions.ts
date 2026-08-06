@@ -7,6 +7,7 @@ import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
 import {
 	conversionIntentContract,
 	withConfirmedConversionFields,
+	type ConversionSurface,
 } from '@/lib/cta/conversion-intent'
 import { createSubscriberGateSnapshot } from '@/lib/cta/subscriber-gate-cookie'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
@@ -53,7 +54,15 @@ async function applyWorkshopInterestTag({
  * New visitors go through the intent-aware ConvertKit form, which writes the
  * same field and applies the same derived tag through the shared finalizer.
  */
-export async function addWorkshopInterest(workshopSlug: string) {
+export async function addWorkshopInterest(
+	workshopSlug: string,
+	/**
+	 * Where the click happened. Changes only the Kit `source` attribution; the
+	 * field and tag are the intent's, so a waitlist signup is the same fact
+	 * whichever page it was made on.
+	 */
+	surface: ConversionSurface = 'workshop-page',
+) {
 	// Cookie OR session — a signed-in reader is identified, so the waitlist does
 	// not need to ask for an address the server already has. See
 	// `resolveEnrolmentIdentity`.
@@ -72,7 +81,7 @@ export async function addWorkshopInterest(workshopSlug: string) {
 	const fieldKey = workshopInterestFieldKey(workshopSlug)
 	const contract = conversionIntentContract({
 		intent: { kind: 'workshop-interest', workshopSlug },
-		surface: 'workshop-page',
+		surface,
 	})
 
 	try {

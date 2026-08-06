@@ -17,6 +17,7 @@ export type ConversionSurface =
 	| 'skills-hero'
 	| 'skills-subscribe'
 	| 'skills-campaign'
+	| 'skills-for-your-team'
 	| 'homepage-course'
 	| 'skills-post'
 	| 'homepage-cohort'
@@ -213,6 +214,12 @@ function sourceForSurface(surface: ConversionSurface): string {
 			return 'aihero_skills_page'
 		case 'skills-campaign':
 			return 'aihero_campaign_ai_skills'
+		// The team page. Same intent and the same Kit field as the workshop's own
+		// waitlist — these are one list — but a distinct source, because "asked
+		// from the page they were sent by a colleague" is the segment the launch
+		// email is written for.
+		case 'skills-for-your-team':
+			return 'aihero_skills_for_your_team'
 		case 'homepage-course':
 			return 'aihero_homepage'
 		case 'skills-post':
