@@ -86,11 +86,14 @@ export async function CrashCourseArt() {
 }
 
 export async function CrashCourseCta({
+	confirmInPlace = false,
 	waitlistBody,
 	buyHeading,
 	buyBody,
 	buyLabel = 'Get the crash course',
 }: {
+	/** Set by the video overlay: confirm without navigating off the page. */
+	confirmInPlace?: boolean
 	waitlistBody?: string
 	buyHeading?: string
 	buyBody?: string
@@ -132,6 +135,7 @@ export async function CrashCourseCta({
 				// Normally undefined: the band's body paragraph already ends on the
 				// ask, and a second paragraph here would say it twice.
 				prompt={waitlistBody}
+				confirmInPlace={confirmInPlace}
 			/>
 		)
 	}

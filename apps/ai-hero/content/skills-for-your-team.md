@@ -8,22 +8,26 @@
   Real Engineering Teams"), set into the page's blocks. Em dashes from the
   outline are commas here (DESIGN.md § Bans).
 
-  TWO THINGS FOR MATT, both editable from /admin/pages without a deploy:
+  ONE THING OUTSTANDING, editable from /admin/pages without a deploy:
 
-  1. THE VIDEO. Upload the deck recording in the editor, then put its resource
-     id in the <Video /> tag inside <TeamHero> and delete the comment around
-     it. Until then the hero draws a striped placeholder, which is a designed
-     state, not a broken one.
-  2. THE SLIDES. Add href="…" to <SlidesCard> once the deck file is uploaded.
-     The download button appears as soon as the href is there.
+  THE SLIDES. Add href="…" to <SlidesCard> once the deck file is uploaded.
+  The download button appears as soon as the href is there; until then the
+  block says which row to add it to.
+
+  The video is in. `ctaHeading` / `ctaBody` on <Video> are the copy for the
+  ask that appears over the player when it finishes.
 */}
 
 <TeamHero
 	h1="Bring Real Engineering to your team, with my AI skills."
 	lead="Pull it up on a screen and watch together, or send it round and watch on your own time. It is the engineering process I use with coding agents, and the free, open source skills that put that process in your codebase."
 >
-
-{/* <Video resourceId="PASTE_VIDEO_RESOURCE_ID_HERE" /> */}
+<Video
+	resourceId="cba35990ec67474096cba7be0d3690c0b1ea05a393ef6e438943de10a6a3a871-B7UXK03p3.mp4"
+	thumbnailTime={2}
+	ctaHeading="Keep learning together"
+	ctaBody="If you want to learn more, faster, and together, you're going to love my upcoming AI Coding Crash Course, out in just a couple of weeks. Drop your info here and I'll email you the moment you can buy it at the best price, with special rates for teams."
+/>
 
 </TeamHero>
 

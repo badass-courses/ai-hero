@@ -44,6 +44,7 @@ export function TeamWaitlist({
 	workshopSlug,
 	surface,
 	prompt,
+	confirmInPlace = false,
 	className,
 }: {
 	className?: string
@@ -59,6 +60,18 @@ export function TeamWaitlist({
 	 * reader finishes by typing.
 	 */
 	prompt?: string
+	/**
+	 * Confirm in place instead of navigating to `/confirm`.
+	 *
+	 * The site's normal form path sends a new subscriber to a confirmation
+	 * route, which is right at the bottom of a page: they have finished reading
+	 * and a full page explaining the opt-in email is the most useful next
+	 * screen. It is wrong on top of a video. Someone who just filled this in
+	 * over a paused player is mid-session with their team, and navigating them
+	 * away closes the thing they were watching to answer an ask they already
+	 * said yes to.
+	 */
+	confirmInPlace?: boolean
 }) {
 	const router = useRouter()
 	const { subscriber, isResolved } = useCtaGate()
@@ -66,6 +79,11 @@ export function TeamWaitlist({
 	const isSignedIn = sessionStatus === 'authenticated'
 	const knowsWhoYouAre = Boolean(subscriber) || isSignedIn
 	const [done, setDone] = React.useState(false)
+	// A brand-new subscriber still has to click Kit's opt-in email, and the
+	// one-click path does not. Confirming in place therefore cannot reuse the
+	// same sentence: "you're on the list" would be a promise we have not kept
+	// yet, and the reader would never learn there is an email waiting for them.
+	const [needsOptIn, setNeedsOptIn] = React.useState(false)
 
 	const alreadyInterested = hasWorkshopInterest(subscriber, workshopSlug)
 
@@ -75,6 +93,11 @@ export function TeamWaitlist({
 			location: 'skills_for_your_team',
 			workshop: workshopSlug,
 		})
+		if (confirmInPlace) {
+			setNeedsOptIn(true)
+			setDone(true)
+			return
+		}
 		router.push(redirectUrlBuilder(sub, '/confirm'))
 	}
 
@@ -105,7 +128,11 @@ export function TeamWaitlist({
 				)}
 			>
 				<CheckCircle className="h-5 w-5 shrink-0" aria-hidden />
-				<span>You&rsquo;re on the list. I&rsquo;ll email you the day it opens.</span>
+				<span>
+					{needsOptIn
+						? 'Almost there. Click the confirmation link in your inbox and you are on the list.'
+						: 'You\u2019re on the list. I\u2019ll email you the day it opens.'}
+				</span>
 			</p>
 		)
 	}
