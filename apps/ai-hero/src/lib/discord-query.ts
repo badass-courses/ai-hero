@@ -1,39 +1,14 @@
-'use server'
+import 'server-only'
 
 import { db } from '@/db'
-import { accounts, users } from '@/db/schema'
+import { accounts } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { getServerAuthSession } from '@/server/auth'
 import { and, eq } from 'drizzle-orm'
-
-import { isEmpty } from '@coursebuilder/nodash'
 
 export async function getDiscordAccount(userId: string) {
 	return db.query.accounts.findFirst({
 		where: and(eq(accounts.userId, userId), eq(accounts.provider, 'discord')),
 	})
-}
-
-export async function disconnectDiscord() {
-	const { session } = await getServerAuthSession()
-	if (!session?.user) return false
-
-	const user = await db.query.users.findFirst({
-		where: eq(users.id, session.user.id),
-		with: {
-			accounts: {
-				where: eq(accounts.provider, 'discord'),
-			},
-		},
-	})
-
-	if (isEmpty(user?.accounts) || !user) return false
-
-	await db
-		.delete(accounts)
-		.where(and(eq(accounts.provider, 'discord'), eq(accounts.userId, user.id)))
-
-	return true
 }
 
 export async function fetchJsonAsDiscordBot<JsonType = unknown>(

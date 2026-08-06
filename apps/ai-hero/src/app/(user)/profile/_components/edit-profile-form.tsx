@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { Icon } from '@/components/brand/icons'
-import { disconnectDiscord } from '@/lib/discord-query'
+import { disconnectDiscord } from '@/lib/discord-disconnect-action'
 import { disconnectGithub } from '@/lib/github-query'
 import { Provider } from '@/server/auth'
 import { api } from '@/trpc/react'

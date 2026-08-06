@@ -442,6 +442,37 @@ describe('Auth.js OAuth containment policy', () => {
 		},
 	)
 
+	it.each<Provider>(['github', 'discord'])(
+		'rejects a %s session for a user other than the authorized owner',
+		async (provider) => {
+			const owner = { id: 'owner', email: 'owner@example.com' }
+			const harness = createLockedAuthHarness({
+				provider,
+				accountOwner: owner,
+			})
+			const callback = createOAuthContainmentSignInCallback({
+				getCookieStore: createCookieStore,
+				findAccountOwner: harness.findAccountOwner,
+			})
+
+			await runWithOAuthContainmentRequest(
+				authCallbackRequest(provider),
+				async () => {
+					await expect(callback({ account: harness.account })).resolves.toBe(true)
+					await expect(
+						harness.adapter.createSession?.({
+							sessionToken: 'wrong-owner-session',
+							userId: 'different-user',
+							expires: new Date('2026-09-01T00:00:00Z'),
+						}),
+					).rejects.toThrow('OAuth containment')
+				},
+			)
+
+			expect(harness.calls.createSession).not.toHaveBeenCalled()
+		},
+	)
+
 	it.each(['email', 'google'])(
 		'bypasses OAuth callback containment for %s',
 		async (provider) => {
