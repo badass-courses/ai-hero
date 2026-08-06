@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createListBindings } from '@/lib/cms/list-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { ListSchema, type List } from '@/lib/lists'
 import type { Tag } from '@/lib/tags'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
@@ -79,6 +80,8 @@ export function EditListClient({
 		return createResourceEditor({
 			manifest: {
 				...listManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(listManifest.media),
 				schema: ListSchema,
 			},
 			bindings: createListBindings({

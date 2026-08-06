@@ -424,6 +424,9 @@ export async function getVideoResourceMediaDetail(videoResourceId: string) {
 				: null,
 		createdAt: video.createdAt ?? null,
 		resolution: jsonString(extras?.resolution),
+		// Seeds the Media tab's chapters editor (`media.videoDetailSlot`) — the
+		// adapter already SELECTs and parses `$.chapters`, so this is free.
+		chapters: video.chapters ?? null,
 	}
 }
 
