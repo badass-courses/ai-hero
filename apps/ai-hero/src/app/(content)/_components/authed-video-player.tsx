@@ -16,7 +16,15 @@ import {
 	getModuleCompletionState,
 	type ResourceNavigation,
 } from '@/lib/content-navigation'
-import { setProgressForResource } from '@/lib/progress'
+import {
+	setPlaybackPositionForResource,
+	setProgressForResource,
+} from '@/lib/progress'
+import {
+	createPlaybackPositionSaveQueue,
+	getPlaybackStartTime,
+	normalizePlaybackPosition,
+} from '@/lib/playback-position'
 import { track } from '@/utils/analytics'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
 import type { AbilityForResource } from '@/utils/get-current-ability-rules'
@@ -47,6 +55,7 @@ export function AuthedVideoPlayer({
 	muxPlaybackId,
 	className,
 	playbackIdLoader,
+	playbackPositionLoader,
 	abilityLoader,
 	resource,
 	videoChapters,
@@ -57,6 +66,7 @@ export function AuthedVideoPlayer({
 	muxPlaybackId?: string
 	title?: string
 	playbackIdLoader?: Promise<string | null | undefined>
+	playbackPositionLoader?: Promise<number | null>
 	className?: string
 	abilityLoader?: Promise<
 		Omit<AbilityForResource, 'canView'> & {
@@ -119,6 +129,44 @@ export function AuthedVideoPlayer({
 
 	const searchParams = useSearchParams()
 	const time = searchParams.get('t')
+	const savedPlaybackPosition = playbackPositionLoader
+		? use(playbackPositionLoader)
+		: null
+	const playbackStartTime = getPlaybackStartTime({
+		queryTime: time,
+		savedTime: savedPlaybackPosition,
+	})
+	const lastSavedAtRef = React.useRef(0)
+	const lastSavedPositionRef = React.useRef(playbackStartTime)
+	const savePlaybackPosition = React.useMemo(
+		() =>
+			createPlaybackPositionSaveQueue((positionSeconds) =>
+				setPlaybackPositionForResource({
+					resourceId: resource.id,
+					positionSeconds,
+				}),
+			),
+		[resource.id],
+	)
+	const persistPlaybackPosition = React.useCallback(
+		(position: unknown, force = false) => {
+			if (!canView) return Promise.resolve(null)
+
+			const normalizedPosition = normalizePlaybackPosition(position)
+			if (normalizedPosition === null) return Promise.resolve(null)
+			if (!force && Date.now() - lastSavedAtRef.current < 15_000) {
+				return Promise.resolve(null)
+			}
+			if (normalizedPosition === lastSavedPositionRef.current) {
+				return Promise.resolve(null)
+			}
+
+			lastSavedAtRef.current = Date.now()
+			lastSavedPositionRef.current = normalizedPosition
+			return savePlaybackPosition(normalizedPosition)
+		},
+		[canView, savePlaybackPosition],
+	)
 	const { moduleProgress, addLessonProgress } = useModuleProgress()
 	const [isPending, startTransition] = React.useTransition()
 
@@ -130,7 +178,7 @@ export function AuthedVideoPlayer({
 		maxResolution: '2160p',
 		minResolution: '540p',
 		accentColor: '#DD9637',
-		currentTime: time ? Number(time) : 0,
+		currentTime: playbackStartTime,
 		playbackRate,
 		onRateChange: (evt: Event) => {
 			const target = evt.target as HTMLVideoElement
@@ -159,6 +207,7 @@ export function AuthedVideoPlayer({
 		},
 		onEnded: () => {
 			startTransition(async () => {
+				await persistPlaybackPosition(0, true)
 				await handleOnVideoEnded({
 					canView,
 					resource,
@@ -181,6 +230,14 @@ export function AuthedVideoPlayer({
 		},
 		onPlay: () => {
 			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
+		},
+		onPause: (evt: Event) => {
+			const target = evt.target as HTMLVideoElement
+			void persistPlaybackPosition(target.currentTime, true)
+		},
+		onTimeUpdate: (evt: Event) => {
+			const target = evt.target as HTMLVideoElement
+			void persistPlaybackPosition(target.currentTime)
 		},
 	} as MuxPlayerProps
 

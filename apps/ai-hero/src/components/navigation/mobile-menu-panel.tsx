@@ -414,8 +414,8 @@ export function MobileMenuPanel({
 									variant="outline"
 									className="h-11 rounded-[9px]"
 								>
-									<Link href={isAuthed ? '/profile' : '/login'}>
-										{isAuthed ? 'Profile' : 'Log in'}
+									<Link href={isAuthed ? '/profile#my-courses' : '/login'}>
+										{isAuthed ? 'My Courses' : 'Log in'}
 									</Link>
 								</Button>
 							</div>

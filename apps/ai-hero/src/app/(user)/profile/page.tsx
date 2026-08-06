@@ -7,8 +7,11 @@ import {
 	contentResourceProduct,
 	products,
 	purchases,
+	resourceProgress,
 	users,
 } from '@/db/schema'
+import { getLatestCourseLesson } from '@/lib/course-resume-navigation'
+import { getContentNavigation } from '@/lib/content-navigation-query'
 import { getProviders, getServerAuthSession } from '@/server/auth'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
@@ -22,6 +25,7 @@ type PurchasedCourse = {
 	title: string
 	productName: string
 	purchasedAt: Date | null
+	actionLabel: 'Continue' | 'Open course'
 }
 
 function getCourseHref(resourceType?: string | null, slug?: string | null) {
@@ -71,8 +75,7 @@ async function getPurchasedCourses(userId: string): Promise<PurchasedCourse[]> {
 		.orderBy(desc(purchases.createdAt), asc(contentResourceProduct.position))
 
 	const seen = new Set<string>()
-
-	return rows.flatMap((row) => {
+	const courses = rows.flatMap((row) => {
 		const key = row.resourceId || row.productId || row.purchaseId
 		if (!key || seen.has(key)) return []
 
@@ -86,8 +89,39 @@ async function getPurchasedCourses(userId: string): Promise<PurchasedCourse[]> {
 					row.resourceTitle?.trim() || row.productName || 'Purchased course',
 				productName: row.productName || 'AI Hero course',
 				purchasedAt: row.purchasedAt ?? null,
+				actionLabel: 'Open course' as const,
+				resourceId: row.resourceId,
 			},
 		]
+	})
+
+	const [progress, navigations] = await Promise.all([
+		db.query.resourceProgress.findMany({
+			where: eq(resourceProgress.userId, userId),
+			columns: {
+				resourceId: true,
+				updatedAt: true,
+				completedAt: true,
+			},
+		}),
+		Promise.all(
+			courses.map((course) =>
+				course.resourceId
+					? getContentNavigation(course.resourceId)
+					: Promise.resolve(null),
+			),
+		),
+	])
+
+	return courses.map(({ resourceId: _resourceId, ...course }, index) => {
+		const navigation = navigations[index]
+		const destination = navigation
+			? getLatestCourseLesson(navigation, progress)
+			: null
+
+		return destination
+			? { ...course, href: destination.href, actionLabel: 'Continue' as const }
+			: course
 	})
 }
 
@@ -138,7 +172,7 @@ export default async function ProfilePage() {
 						</h1>
 					</header>
 					<main className="flex w-full flex-col space-y-10 md:max-w-xl">
-						<section className="rounded-lg border p-5">
+						<section id="my-courses" className="rounded-lg border p-5">
 							<div className="mb-4">
 								<h2 className="font-heading text-lg font-bold">My Courses</h2>
 								<p className="text-muted-foreground text-sm">
@@ -165,7 +199,7 @@ export default async function ProfilePage() {
 												href={course.href}
 												className="bg-primary text-primary-foreground inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium"
 											>
-												Open course
+												{course.actionLabel}
 											</Link>
 										</li>
 									))}

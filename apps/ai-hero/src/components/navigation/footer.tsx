@@ -236,11 +236,13 @@ function AccountColumn() {
 					<>
 						<li>
 							<Link
-								href="/profile"
+								href="/profile#my-courses"
 								className={linkClass}
-								onClick={() => trackFooterClick('/profile', 'account')}
+								onClick={() =>
+									trackFooterClick('/profile#my-courses', 'account')
+								}
 							>
-								Profile
+								My Courses
 							</Link>
 						</li>
 						{canViewInvoice && (

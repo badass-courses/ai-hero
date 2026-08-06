@@ -3,7 +3,10 @@
 import React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { env } from '@/env.mjs'
+import type {
+	CourseLessonDestination,
+	CourseResource,
+} from '@/lib/course-resume-navigation'
 import {
 	findParentLessonForSolution,
 	flattenNavigationResources,
@@ -48,6 +51,7 @@ export default function UpNext({
 	currentResourceId,
 	className,
 	abilityLoader,
+	crossWorkshopNextLoader,
 }: {
 	currentResourceId: string
 	className?: string
@@ -58,11 +62,13 @@ export default function UpNext({
 			isPendingOpenAccess: boolean
 		}
 	>
+	crossWorkshopNextLoader: Promise<CourseLessonDestination | null>
 }) {
 	const navigation = useWorkshopNavigation()
 	const [isPending, startTransition] = React.useTransition()
 	const { data: session } = useSession()
 	const ability = React.use(abilityLoader)
+	const crossWorkshopDestination = React.use(crossWorkshopNextLoader)
 	const canView = ability?.canViewLesson
 	const { moduleProgress, addLessonProgress } = useModuleProgress()
 
@@ -70,10 +76,12 @@ export default function UpNext({
 		return null
 	}
 
-	const { nextResource } = getAdjacentWorkshopResources(
+	const { nextResource: adjacentNextResource } = getAdjacentWorkshopResources(
 		navigation,
 		currentResourceId,
 	)
+	const nextResource =
+		adjacentNextResource ?? crossWorkshopDestination?.lesson ?? null
 
 	// If there's no next resource, don't render anything
 	if (!nextResource) {
@@ -161,7 +169,17 @@ export default function UpNext({
 		nextResource.type === 'solution'
 			? findParentLessonForSolution(navigation, nextResource.id)?.fields
 					?.slug || ''
-			: nextResource.fields?.slug || ''
+			: getStringField(nextResource, 'slug') || ''
+	const nextWorkshopSlug =
+		getStringField(crossWorkshopDestination?.workshop, 'slug') ||
+		navigation.fields?.slug ||
+		''
+	const nextResourceHref =
+		crossWorkshopDestination?.href ||
+		getResourcePath(nextResource.type || '', nextResourceSlug, 'view', {
+			parentType: 'workshop',
+			parentSlug: nextWorkshopSlug,
+		})
 
 	const isCompleted = Boolean(
 		moduleProgress?.completedLessons?.some(
@@ -172,9 +190,11 @@ export default function UpNext({
 		),
 	)
 
-	const upNextText = lessonHasSolution(currentResourceId)
-		? `View ${process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME || 'Instructor'}'s Solution`
-		: 'Up Next'
+	const upNextText = crossWorkshopDestination
+		? 'Continue Course'
+		: lessonHasSolution(currentResourceId)
+			? `View ${process.env.NEXT_PUBLIC_PARTNER_FIRST_NAME || 'Instructor'}'s Solution`
+			: 'Up Next'
 
 	return (
 		<>
@@ -183,7 +203,7 @@ export default function UpNext({
 					type: nextResource.type || '',
 					slug: nextResourceSlug,
 				}}
-				workshopSlug={navigation.fields?.slug || null}
+				workshopSlug={nextWorkshopSlug || null}
 			/>
 			<nav
 				className={cn(
@@ -197,15 +217,7 @@ export default function UpNext({
 					<li className="flex w-full flex-col">
 						<Link
 							className="text-primary flex w-full items-center justify-center gap-2 text-center text-lg hover:underline lg:text-xl"
-							href={getResourcePath(
-								nextResource.type || '',
-								nextResourceSlug,
-								'view',
-								{
-									parentType: 'workshop',
-									parentSlug: navigation.fields?.slug || '',
-								},
-							)}
+							href={nextResourceHref}
 							onClick={async () => {
 								if (
 									!isCompleted &&
@@ -223,7 +235,7 @@ export default function UpNext({
 								}
 							}}
 						>
-							{nextResource.fields?.title || 'Next Resource'}
+							{getStringField(nextResource, 'title') || 'Next Resource'}
 							<ArrowRight className="hidden w-4 sm:block" />
 						</Link>
 						{!session?.user && (
@@ -243,4 +255,12 @@ export default function UpNext({
 			</nav>
 		</>
 	)
+}
+
+function getStringField(
+	resource: CourseResource | null | undefined,
+	field: string,
+): string | null {
+	const value = resource?.fields?.[field]
+	return typeof value === 'string' ? value : null
 }

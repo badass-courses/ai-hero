@@ -12,12 +12,14 @@ import { ContentReadTracker } from '@/components/content-read-tracker'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { env } from '@/env.mjs'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
+import { getCrossWorkshopNextLesson } from '@/lib/course-resume-navigation-query'
 import type { Lesson } from '@/lib/lessons'
 import {
 	getLessonVideoPlaybackResource,
 	getLessonVideoTranscript,
 } from '@/lib/lessons-query'
 import { MinimalWorkshop } from '@/lib/workshops'
+import { getPlaybackPositionForResource } from '@/lib/progress'
 import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
@@ -68,6 +70,12 @@ export async function LessonPage({
 		{},
 		{ lessonId: lesson.id },
 	)
+	const crossWorkshopNextLoader = workshop
+		? getCrossWorkshopNextLesson({
+				currentWorkshopId: workshop.id,
+				currentResourceId: lesson.id,
+			})
+		: Promise.resolve(null)
 
 	return (
 		<main className="w-full">
@@ -157,6 +165,7 @@ export async function LessonPage({
 					className="rounded-none border-x-0 border-b-0 border-t"
 					currentResourceId={lesson?.id}
 					abilityLoader={abilityLoader}
+					crossWorkshopNextLoader={crossWorkshopNextLoader}
 				/>
 			</Suspense>
 		</main>
@@ -221,6 +230,7 @@ async function PlayerContainer({
 		? await getLessonVideoPlaybackResource(lesson.id)
 		: null
 	const muxPlaybackId = videoPlaybackResource?.muxPlaybackId ?? null
+	const playbackPositionLoader = getPlaybackPositionForResource(lesson.id)
 	const videoResourceReference = lesson?.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
@@ -285,8 +295,10 @@ async function PlayerContainer({
 						)}
 					</WorkshopPricing>
 					<AuthedVideoPlayer
+						key={lesson.id}
 						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh]"
 						muxPlaybackId={muxPlaybackId}
+						playbackPositionLoader={playbackPositionLoader}
 						// playbackIdLoader={playbackIdLoader}
 						resource={lesson}
 						videoChapters={videoPlaybackResource?.chapters ?? null}

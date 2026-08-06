@@ -202,7 +202,7 @@ export const UserMenu = () => {
 						{canViewInvoice && (
 							<AccountMenuLink href="/invoices" label="Invoices" />
 						)}
-						<AccountMenuLink href="/profile" label="Profile" />
+						<AccountMenuLink href="/profile#my-courses" label="My Courses" />
 						{canCreateContent && (
 							<AccountMenuLink href="/admin/dashboard" label="Admin" />
 						)}
