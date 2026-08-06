@@ -70,7 +70,11 @@ export default async function SkillsForYourTeamPage() {
 
 	return (
 		<LayoutClient withContainer>
-			<ForYourTeamBody source={page.fields.body} pageId={page.id} />
+			<ForYourTeamBody
+				source={page.fields.body}
+				pageId={page.id}
+				pageTitle={page.fields.title}
+			/>
 		</LayoutClient>
 	)
 }
