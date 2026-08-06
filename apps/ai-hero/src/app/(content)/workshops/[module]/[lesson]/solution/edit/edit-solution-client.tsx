@@ -4,6 +4,7 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createSolutionBindings } from '@/lib/cms/solution-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { SolutionSchema, type Solution } from '@/lib/solution'
 import { updateSolution } from '@/lib/solutions-query'
 import type { UseFormReturn } from 'react-hook-form'
@@ -94,6 +95,8 @@ export function EditSolutionClient({
 		return createResourceEditor({
 			manifest: {
 				...solutionManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(solutionManifest.media),
 				schema: SolutionSchema,
 				// The manifest's `video: true` adds the left-panel Video tab; this
 				// slot fills it with the shared cms wrapper. In CREATE mode

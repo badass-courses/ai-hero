@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createCohortBindings } from '@/lib/cms/cohort-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { CohortSchema, type Cohort } from '@/lib/cohort'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
@@ -65,6 +66,8 @@ export function EditCohortClient({
 		return createResourceEditor({
 			manifest: {
 				...cohortManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(cohortManifest.media),
 				schema: CohortSchema,
 				defaultValues: cohortDefaultValues,
 			},
