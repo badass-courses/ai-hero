@@ -14,3 +14,17 @@ export function isConnectableOAuthProvider(
 export function getOAuthLinkCookieName(provider: ConnectableOAuthProvider) {
 	return `__oauth-link-uid-${provider}`
 }
+
+export const legacyOAuthLinkCookieNames = connectableOAuthProviders.map(
+	getOAuthLinkCookieName,
+)
+
+type CookieDeleter = {
+	delete(name: string): unknown
+}
+
+export function clearLegacyOAuthLinkCookies(cookieStore: CookieDeleter) {
+	for (const cookieName of legacyOAuthLinkCookieNames) {
+		cookieStore.delete(cookieName)
+	}
+}

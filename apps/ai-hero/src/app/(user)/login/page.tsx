@@ -20,7 +20,7 @@ export default async function LoginPage() {
 				csrfToken={csrfToken}
 				providers={providers}
 				title={`Log in to AI Hero`}
-				subtitle={`We’ll create an account for you if you don’t already have one.`}
+				subtitle={`Use email to create an account. GitHub and Discord only sign in to accounts already linked.`}
 			/>
 		</LayoutClient>
 	)

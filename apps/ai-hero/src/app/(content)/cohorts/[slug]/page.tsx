@@ -13,7 +13,7 @@ import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { HasPurchased } from '@/components/pricing/has-purchased'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { db } from '@/db'
-import { products, users } from '@/db/schema'
+import { products } from '@/db/schema'
 import { env } from '@/env.mjs'
 import type { CampaignLanding } from '@/lib/campaign-landings'
 import { CohortPageProps, type Cohort } from '@/lib/cohort'
@@ -29,7 +29,6 @@ import {
 	ProductStructuredData,
 } from '@/lib/structured-data'
 import type { Workshop } from '@/lib/workshops'
-import { getProviders } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -47,7 +46,6 @@ import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
-import ConnectDiscordButton from './_components/connect-discord-button'
 
 export async function generateMetadata(
 	props: {
@@ -210,17 +208,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		}),
 	])
 	const alumniLabel = formatAlumniCount(alumniCount)
-
-	const providers = getProviders()
-	const discordProvider = providers?.discord
-	const userWithAccountsLoader = session?.user
-		? db.query.users.findFirst({
-				where: eq(users.id, session.user.id),
-				with: {
-					accounts: true,
-				},
-			})
-		: null
 
 	// Get product slug to ID map for HasPurchased component
 	const productMap = new Map(allProducts.map((p) => [p.fields?.slug, p.id]))
@@ -426,13 +413,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 							<CheckCircle className="mr-2 size-4 text-emerald-600 dark:text-emerald-300" />{' '}
 							You have purchased a ticket to this cohort.
 						</div>
-						<React.Suspense fallback={null}>
-							<ConnectDiscordButton
-								userWithAccountsLoader={userWithAccountsLoader}
-								discordProvider={discordProvider}
-								userId={session?.user?.id}
-							/>
-						</React.Suspense>
 					</div>
 				) : null}
 

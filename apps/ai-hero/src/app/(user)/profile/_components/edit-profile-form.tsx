@@ -2,14 +2,12 @@
 
 import React from 'react'
 import { Icon } from '@/components/brand/icons'
-import { env } from '@/env.mjs'
 import { disconnectDiscord } from '@/lib/discord-query'
 import { disconnectGithub } from '@/lib/github-query'
-import { setOAuthLinkingCookie } from '@/lib/oauth-link-actions'
 import { Provider } from '@/server/auth'
 import { api } from '@/trpc/react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { signIn, useSession } from 'next-auth/react'
+import { useSession } from 'next-auth/react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
@@ -146,14 +144,10 @@ const EditProfileForm: React.FC<{
 												<Button
 													type="button"
 													size="sm"
-													onClick={async () => {
-														await setOAuthLinkingCookie(user.id, 'github')
-														signIn(githubProvider.id, {
-															callbackUrl: `${env.NEXT_PUBLIC_URL}/profile`,
-														})
-													}}
+													disabled
+													title="Account linking is temporarily unavailable"
 												>
-													Connect
+													Unavailable
 												</Button>
 											)}
 										</div>
@@ -182,14 +176,10 @@ const EditProfileForm: React.FC<{
 												<Button
 													type="button"
 													size="sm"
-													onClick={async () => {
-														await setOAuthLinkingCookie(user.id, 'discord')
-														signIn(discordProvider.id, {
-															callbackUrl: `${env.NEXT_PUBLIC_URL}/profile`,
-														})
-													}}
+													disabled
+													title="Account linking is temporarily unavailable"
 												>
-													Connect
+													Unavailable
 												</Button>
 											)}
 										</div>
