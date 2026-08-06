@@ -3,7 +3,10 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import {
+	signupConfirmationUrlBuilder,
+	SubscribeToConvertkitForm,
+} from '@/convertkit'
 import { useCtaGate } from '@/hooks/use-cta-gate'
 import { isOnEmailList } from '@/lib/cta-gating'
 import { Subscriber } from '@/schemas/subscriber'
@@ -94,7 +97,10 @@ export const PrimaryNewsletterCta: React.FC<
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (subscriber) {
 			track(trackProps.event as string, trackProps.params)
-			const redirectUrl = redirectUrlBuilder(subscriber, '/confirm')
+			const redirectUrl = signupConfirmationUrlBuilder(
+				subscriber,
+				'email-confirmation',
+			)
 			router.push(redirectUrl)
 		}
 	}

@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder } from '@/convertkit'
+import { signupConfirmationUrlBuilder } from '@/convertkit'
 import { SKILLS_COURSE_PANEL } from '@/lib/skills-content'
 import type { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
@@ -40,8 +40,8 @@ import { cn } from '@coursebuilder/utils/cn'
  * layout uses, so the form reflows when its own column gets narrow rather than
  * when the window does.
  *
- * Submitting redirects to `/confirm` like every other Kit form on the site, so
- * `/skills/subscribe` stays the page for people arriving from elsewhere.
+ * Submitting redirects to `/confirm?flow=course`, so `/skills/subscribe` stays
+ * the page for people arriving from elsewhere.
  */
 export function SkillsCourseForm() {
 	const router = useRouter()
@@ -147,7 +147,9 @@ export function SkillsCourseForm() {
 				onSuccess={(subscriber) => {
 					if (!subscriber) return
 					track('skills_course_subscribed', { location: 'skills-hero' })
-					router.push(redirectUrlBuilder(subscriber as Subscriber, '/confirm'))
+					router.push(
+						signupConfirmationUrlBuilder(subscriber as Subscriber, 'course'),
+					)
 				}}
 				className={cn(
 					TYPE.meta,

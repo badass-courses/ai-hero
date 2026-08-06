@@ -5,7 +5,10 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
-import { redirectUrlBuilder, SubscribeToConvertkitForm } from '@/convertkit'
+import {
+	signupConfirmationUrlBuilder,
+	SubscribeToConvertkitForm,
+} from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
 import { track } from '@/utils/analytics'
@@ -133,10 +136,9 @@ export function SkillsNewsletterCta({
 			void utils.ability.getSkillsCourseCtaState.invalidate()
 		}
 		router.push(
-			redirectUrlBuilder(
+			signupConfirmationUrlBuilder(
 				subscriber,
-				'/confirm',
-				isCourse ? { flow: 'course' } : undefined,
+				isCourse ? 'course' : 'email-confirmation',
 			),
 		)
 	}

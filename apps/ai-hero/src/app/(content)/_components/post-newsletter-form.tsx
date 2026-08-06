@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder } from '@/convertkit'
+import { signupConfirmationUrlBuilder } from '@/convertkit'
 import { type Subscriber } from '@/schemas/subscriber'
 import { track } from '@/utils/analytics'
 import { CheckCircle } from 'lucide-react'
@@ -54,7 +54,7 @@ export function PostNewsletterForm({
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (!subscriber) return
 		track('subscribed', trackParams)
-		router.push(redirectUrlBuilder(subscriber, '/confirm'))
+		router.push(signupConfirmationUrlBuilder(subscriber, 'email-confirmation'))
 	}
 
 	if (oneClickResult) {

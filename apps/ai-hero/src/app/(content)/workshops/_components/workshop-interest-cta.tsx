@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder } from '@/convertkit'
+import { signupConfirmationUrlBuilder } from '@/convertkit'
 import { useCtaGate } from '@/hooks/use-cta-gate'
 import { hasWorkshopInterest } from '@/lib/cta-gating'
 import { type Subscriber } from '@/schemas/subscriber'
@@ -65,7 +65,7 @@ export const WorkshopInterestCta = ({
 				location: 'workshop_interest',
 				workshop: workshopSlug,
 			})
-			router.push(redirectUrlBuilder(sub, '/confirm'))
+			router.push(signupConfirmationUrlBuilder(sub, 'email-confirmation'))
 		}
 	}
 

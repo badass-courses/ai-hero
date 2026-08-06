@@ -6,7 +6,7 @@ import { useSession } from 'next-auth/react'
 import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import { TYPE } from '@/components/landing/type'
-import { redirectUrlBuilder } from '@/convertkit'
+import { signupConfirmationUrlBuilder } from '@/convertkit'
 import type { ConversionSurface } from '@/lib/cta/conversion-intent'
 import type { Subscriber } from '@/schemas/subscriber'
 import { track } from '@/utils/analytics'
@@ -110,7 +110,10 @@ export function WaitlistForm({
 						if (!subscriber) return
 						track('courses_waitlist_subscribed', { method: 'form', surface })
 						router.push(
-							redirectUrlBuilder(subscriber as Subscriber, '/confirm'),
+							signupConfirmationUrlBuilder(
+								subscriber as Subscriber,
+								'email-confirmation',
+							),
 						)
 					}}
 					className={cn(

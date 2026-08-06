@@ -214,19 +214,18 @@ export const SubscribeToConvertkitForm: React.FC<
 
 export default SubscribeToConvertkitForm
 
-export const redirectUrlBuilder = (
+export type SignupConfirmationFlow = 'course' | 'email-confirmation'
+
+export const signupConfirmationUrlBuilder = (
 	subscriber: Subscriber,
-	path: string,
-	queryParams?: {
-		[key: string]: string
-	},
+	flow: SignupConfirmationFlow,
 ) => {
 	const url = queryString.stringifyUrl({
-		url: path,
+		url: '/confirm',
 		query: {
 			[CK_SUBSCRIBER_KEY]: subscriber.id,
 			email: subscriber.email_address,
-			...queryParams,
+			...(flow === 'course' ? { flow: 'course' } : {}),
 		},
 	})
 	return url

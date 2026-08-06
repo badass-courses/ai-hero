@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	formProps: null as Record<string, any> | null,
 	push: vi.fn(),
-	redirectUrlBuilder: vi.fn(() => '/course-confirmed'),
+	signupConfirmationUrlBuilder: vi.fn(() => '/course-confirmed'),
 	setCtaState: vi.fn(),
 	invalidateCtaState: vi.fn(),
 }))
@@ -23,7 +23,7 @@ vi.mock('@/convertkit', () => ({
 			props.actionLabel,
 		)
 	},
-	redirectUrlBuilder: mocks.redirectUrlBuilder,
+	signupConfirmationUrlBuilder: mocks.signupConfirmationUrlBuilder,
 }))
 
 vi.mock('@/trpc/react', () => ({
@@ -106,10 +106,9 @@ describe('SkillsNewsletterCta course variant', () => {
 
 		mocks.formProps?.onSuccess({ state: 'active' })
 
-		expect(mocks.redirectUrlBuilder).toHaveBeenCalledWith(
+		expect(mocks.signupConfirmationUrlBuilder).toHaveBeenCalledWith(
 			expect.anything(),
-			'/confirm',
-			{ flow: 'course' },
+			'course',
 		)
 		expect(mocks.push).toHaveBeenCalledWith('/course-confirmed')
 		expect(mocks.setCtaState).toHaveBeenCalledWith(undefined, {

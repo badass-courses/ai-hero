@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
-import { redirectUrlBuilder } from '@/convertkit'
+import { signupConfirmationUrlBuilder } from '@/convertkit'
 import { Subscriber } from '@/schemas/subscriber'
 import { track } from '@/utils/analytics'
 import {
@@ -64,7 +64,10 @@ export const VideoBlockNewsletterCta: React.FC<
 	const handleOnSuccess = (subscriber: Subscriber | undefined) => {
 		if (subscriber) {
 			track(trackProps.event as string, trackProps.params)
-			const redirectUrl = redirectUrlBuilder(subscriber, '/confirm')
+			const redirectUrl = signupConfirmationUrlBuilder(
+				subscriber,
+				'email-confirmation',
+			)
 			router.push(redirectUrl)
 		}
 	}

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ThemeImage } from '@/components/cld-image'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
 import Spinner from '@/components/spinner'
-import { redirectUrlBuilder } from '@/convertkit'
+import { signupConfirmationUrlBuilder } from '@/convertkit'
 import type { ConversionSurface } from '@/lib/cta/conversion-intent'
 import { Subscriber } from '@/schemas/subscriber'
 import { api } from '@/trpc/react'
@@ -106,9 +106,7 @@ export function Root({
 				return
 			}
 			track('subscribed', { location })
-			router.push(
-				redirectUrlBuilder(subscriber, '/confirm', { flow: 'course' }),
-			)
+			router.push(signupConfirmationUrlBuilder(subscriber, 'course'))
 		},
 		[location, router],
 	)
