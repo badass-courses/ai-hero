@@ -16,6 +16,12 @@ import {
 	type ModuleProgress,
 } from '@coursebuilder/core/schemas'
 
+import {
+	mergePlaybackPositionFields,
+	normalizePlaybackPosition,
+	readPlaybackPosition,
+} from './playback-position'
+
 function getErrorMessage(error: unknown) {
 	return error instanceof Error ? error.message : String(error)
 }
@@ -27,32 +33,48 @@ async function setResourceProgressForUser({
 	resourceId: string
 	completedAt: Date | null
 }) {
-	let user = await getUser()
+	const user = await getUser()
 	if (!user) return null
-	// we can safely delete any existing progress
-	await db
-		.delete(resourceProgress)
-		.where(
-			and(
-				eq(resourceProgress.resourceId, resourceId),
-				eq(resourceProgress.userId, user.id),
-			),
-		)
-
-	// immediately return if it isn't complete, no need to write
-	if (!completedAt) return null
-
 	const now = new Date()
+	const existingProgress = await db.query.resourceProgress.findFirst({
+		where: and(
+			eq(resourceProgress.resourceId, resourceId),
+			eq(resourceProgress.userId, user.id),
+		),
+	})
+
+	if (existingProgress) {
+		await db
+			.update(resourceProgress)
+			.set({ completedAt, updatedAt: now })
+			.where(
+				and(
+					eq(resourceProgress.resourceId, resourceId),
+					eq(resourceProgress.userId, user.id),
+				),
+			)
+	} else if (completedAt) {
+		await db.insert(resourceProgress).values({
+			userId: user.id,
+			resourceId,
+			completedAt,
+			updatedAt: now,
+		})
+	} else {
+		return null
+	}
+
 	const progress = {
 		userId: user.id,
-		resourceId: resourceId,
+		resourceId,
 		completedAt,
 		updatedAt: now,
 	}
-	await db.insert(resourceProgress).values(progress)
+
+	if (!completedAt) return null
 
 	await sendInngestProgressEvent({
-		user: user,
+		user,
 		lessonId: resourceId,
 	})
 
@@ -136,6 +158,79 @@ export async function setProgressForResource({
 			resourceId,
 			isCompleted,
 			error: message,
+		})
+		return null
+	}
+}
+
+export async function getPlaybackPositionForResource(
+	resourceId: string,
+): Promise<number | null> {
+	const user = await getUser()
+	if (!user) return null
+
+	const progress = await db.query.resourceProgress.findFirst({
+		where: and(
+			eq(resourceProgress.resourceId, resourceId),
+			eq(resourceProgress.userId, user.id),
+		),
+		columns: { fields: true },
+	})
+
+	return readPlaybackPosition(progress?.fields)
+}
+
+export async function setPlaybackPositionForResource({
+	resourceId,
+	positionSeconds,
+}: {
+	resourceId: string
+	positionSeconds: number
+}): Promise<number | null> {
+	try {
+		const normalizedPosition = normalizePlaybackPosition(positionSeconds)
+		if (normalizedPosition === null) return null
+
+		const user = await getUser()
+		if (!user) return null
+
+		const existingProgress = await db.query.resourceProgress.findFirst({
+			where: and(
+				eq(resourceProgress.resourceId, resourceId),
+				eq(resourceProgress.userId, user.id),
+			),
+		})
+		const now = new Date()
+		const fields = mergePlaybackPositionFields(
+			existingProgress?.fields,
+			normalizedPosition,
+		)
+
+		if (existingProgress) {
+			await db
+				.update(resourceProgress)
+				.set({ fields, updatedAt: now })
+				.where(
+					and(
+						eq(resourceProgress.resourceId, resourceId),
+						eq(resourceProgress.userId, user.id),
+					),
+				)
+		} else {
+			await db.insert(resourceProgress).values({
+				userId: user.id,
+				resourceId,
+				fields,
+				completedAt: null,
+				updatedAt: now,
+			})
+		}
+
+		return normalizedPosition
+	} catch (error) {
+		void log.error('progress.playback-position.set.error', {
+			resourceId,
+			error: getErrorMessage(error),
 		})
 		return null
 	}
