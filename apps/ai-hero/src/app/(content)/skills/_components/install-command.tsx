@@ -21,17 +21,16 @@ const MAX_COMMAND_LENGTH = 44
 /**
  * The spec's `.ah-command` row: `$` prompt, the command, a 30px copy button.
  *
- * The command used to be a readonly `<input>`, for `white-space: nowrap;
- * overflow: auto` — a shell command must never wrap, because a wrapped command
- * reads as two commands. That was right about the wrapping and wrong about the
- * remedy: an input that scrolls makes the fit failure SILENT. A reader who
- * cannot see the whole command does not know there is more of it, and nobody
- * reviewing the page sees the bug either.
+ * A shell command must never wrap, because a wrapped command reads as two
+ * commands. So the `<code>` refuses to wrap and scrolls horizontally within
+ * its own box. It briefly did neither — it overflowed visibly, on the theory
+ * that a bug you can see beats a bug you can't — and on a phone that overflow
+ * widened the DOCUMENT, so every skill page scrolled sideways as a whole and
+ * the header, prose and nav all sat clipped off-screen. The fit failure has to
+ * be contained to this row; `MAX_COMMAND_LENGTH` below is where it gets
+ * reported instead.
  *
- * It is a `<code>` now. It still refuses to wrap, so a command that outgrows
- * its column visibly breaks the row — a bug you can see beats a bug you can't.
- * `select-all` keeps the "click and get the exact string" behaviour the input
- * was carrying.
+ * `select-all` keeps the "click and get the exact string" behaviour.
  *
  * The `$` and the button are `aria-hidden` decoration and are NOT part of what
  * gets copied.
@@ -52,7 +51,7 @@ export function InstallCommand({
 
 	if (process.env.NODE_ENV !== 'production' && command.length > MAX_COMMAND_LENGTH) {
 		console.warn(
-			`[InstallCommand] "${command}" is ${command.length} characters; the row is sized for ${MAX_COMMAND_LENGTH}. Widen the rail or shorten the command — do not let it scroll.`,
+			`[InstallCommand] "${command}" is ${command.length} characters; the row is sized for ${MAX_COMMAND_LENGTH}, so the tail is only reachable by scrolling the row. Widen the rail or shorten the command.`,
 		)
 	}
 
@@ -124,8 +123,15 @@ export function InstallCommand({
 					TYPE.command,
 					// 11.5px under 380px: the last half-pixel that keeps the longest
 					// command on one line on a 320px phone.
-					'text-foreground/90 min-w-0 flex-1 select-all whitespace-nowrap bg-transparent text-[11.5px] sm:text-xs',
+					//
+					// `overflow-x-auto` is the containment, not a fit strategy: a command
+					// that outgrows its column scrolls INSIDE this box instead of pushing
+					// the document wider and dragging the whole page sideways. It is
+					// `tabIndex` 0 because a scrollable region must be reachable by
+					// keyboard.
+					'text-foreground/90 min-w-0 flex-1 select-all overflow-x-auto overscroll-x-contain whitespace-nowrap bg-transparent text-[11.5px] sm:text-xs',
 				)}
+				tabIndex={0}
 			>
 				{command}
 			</code>
