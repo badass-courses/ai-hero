@@ -17,6 +17,21 @@ import { cn } from '@coursebuilder/utils/cn'
 import { WorkshopInterestButton } from '../../../workshops/_components/workshop-interest-button'
 
 /**
+ * The one label, used by both branches of the ask.
+ *
+ * The identified reader gets a button and the cold reader gets a form, and
+ * before this each carried its own hand-written copy of the same words — so a
+ * copy edit could land on one path and miss the other, and the only people who
+ * would see the stale version are the ones in the state nobody re-tests.
+ *
+ * "Tell me when it's ready" rather than "Send me the launch email" (Alex,
+ * 2026-08-07): the old label described what WE would do next, which is the
+ * grammar of a newsletter signup. This one describes what the READER wants, so
+ * what is being promised is the product rather than the message about it.
+ */
+const ACTION_LABEL = 'Tell me when it’s ready'
+
+/**
  * The crash-course waitlist ask, with no chrome of its own.
  *
  * ## Why this is not `WorkshopInterestCta`
@@ -177,14 +192,14 @@ export function TeamWaitlist({
 					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background inline-flex h-12 cursor-pointer items-center justify-center rounded-[9px] px-7 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
 					onSuccess={() => setDone(true)}
 				>
-					Send me the launch email
+					{ACTION_LABEL}
 				</WorkshopInterestButton>
 			) : (
 				<>
 					<ConversionIntentForm
 						intent={{ kind: 'workshop-interest', workshopSlug }}
 						surface={surface}
-						actionLabel="Send me the launch email"
+						actionLabel={ACTION_LABEL}
 						onSuccess={handleFormSuccess}
 						// Labels stay in the accessibility tree (`sr-only`, never
 						// `hidden`): placeholders are not accessible names, and they

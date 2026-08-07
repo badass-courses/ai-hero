@@ -207,6 +207,23 @@ export function LearnItem({ children }: { children: React.ReactNode }) {
  * medium* from the video above it, and a slide glyph says that faster than the
  * heading does.
  *
+ * ## The glyph is beside the heading, not above it
+ *
+ * It used to sit above, in a 48px bordered square, and readers were missing the
+ * block entirely — most of all on mobile, where it lands directly under the
+ * running order's numbered rows (Alex, 2026-08-07). A framed glyph on its own
+ * line is the opening move of a *new* section: it reads as an icon-and-title
+ * unit of the kind that starts a feature grid, so the eye that has just
+ * finished a list treats it as a fresh module and skips ahead looking for
+ * whatever the list was leading to.
+ *
+ * Inline, the heading is the first thing on the line and the glyph is an
+ * ornament on it, so the block reads as the running order's aside — which is
+ * what it is. The border comes off with the box: the frame was what made the
+ * square an object rather than a mark, and this page has already established
+ * (see `TeamClose`, `TeamWaitlist`) that anything fenced reads as an
+ * advertisement.
+ *
  * `href` is a prop so Matt can point it at the deck once it is uploaded,
  * without touching this component.
  *
@@ -242,14 +259,19 @@ export function SlidesCard({
 				'flex flex-col items-start gap-4 desk:sticky desk:top-28',
 			)}
 		>
-			<span
-				aria-hidden
-				className="border-input text-primary flex h-12 w-12 items-center justify-center rounded-sm border"
-			>
-				<Presentation className="h-5 w-5" />
-			</span>
 			<div className="flex flex-col gap-2">
-				<h3 className={cn(TYPE.subhead, 'text-balance font-sans')}>{heading}</h3>
+				{/* Inline-block in the text flow rather than a flex row: this heading
+				    wraps to two lines in the narrow column, and a flex row would
+				    indent BOTH lines past the glyph, leaving the body copy and the
+				    button hanging 30px to their left. In the flow only the first line
+				    is indented, so everything under it keeps one rag. */}
+				<h3 className={cn(TYPE.subhead, 'text-balance font-sans')}>
+					<Presentation
+						aria-hidden
+						className="text-primary mr-2.5 inline-block h-5 w-5 align-[-0.15em]"
+					/>
+					{heading}
+				</h3>
 				{body && (
 					<p className={cn(TYPE.body, 'text-foreground/75 max-w-[42ch]')}>
 						{body}
