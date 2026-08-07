@@ -28,7 +28,7 @@ import { pollVideoResource } from '@/utils/poll-video-resource'
 import type { MuxPlayerRefAttributes } from '@mux/mux-player-react'
 import type { UseFormReturn } from 'react-hook-form'
 
-import type { VideoResource } from '@coursebuilder/core/schemas'
+import type { VideoChapter, VideoResource } from '@coursebuilder/core/schemas'
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -47,6 +47,7 @@ import {
 } from '@coursebuilder/ui'
 import {
 	ResourcePicker,
+	VideoAssetRow,
 	VideoField,
 	VideoPreviewDialog,
 	type VideoFieldStatus,
@@ -145,6 +146,16 @@ export function CmsVideoField({
 			: videoResourceId === initialVideoResource?.id
 				? initialVideoResource
 				: null
+
+	// Mirrors the video's chapters so the asset row's count stays live after a
+	// save (the editor is a dialog; nothing else refetches this view). Re-seeds
+	// when the primary video changes, or when a fresh resource arrives.
+	const [chapters, setChapters] = React.useState<VideoChapter[]>(
+		videoResource?.chapters ?? [],
+	)
+	React.useEffect(() => {
+		setChapters(videoResource?.chapters ?? [])
+	}, [videoResource?.id, videoResource?.chapters])
 
 	const [replacingVideo, setReplacingVideo] = React.useState(false)
 	const [showDetachConfirmation, setShowDetachConfirmation] =
@@ -526,12 +537,31 @@ export function CmsVideoField({
 						: undefined
 				}
 			>
-				{/* chapters stay app-side, composed via the kit's children slot */}
+				{/* Chapters stay app-side (tRPC, Mux chapter tracks) but render as a
+				    peer of the kit's thumbnail/transcript rows via VideoAssetRow, so
+				    the stack reads as one thing. The count lives here rather than in
+				    the editor because the row summary needs it too — hence onSaved. */}
 				{videoResource?.id && ready ? (
-					<VideoChaptersEditor
-						videoResourceId={videoResource.id}
-						initialChapters={videoResource.chapters}
-						videoDuration={videoResource.duration}
+					<VideoAssetRow
+						label="Chapters"
+						summary={
+							chapters.length
+								? `${chapters.length} chapter${chapters.length === 1 ? '' : 's'}`
+								: 'none'
+						}
+						action={
+							<VideoChaptersEditor
+								videoResourceId={videoResource.id}
+								initialChapters={chapters}
+								videoDuration={videoResource.duration}
+								onSaved={setChapters}
+								trigger={
+									<Button variant="outline" size="sm" type="button">
+										{chapters.length ? 'Edit' : 'Add'}
+									</Button>
+								}
+							/>
+						}
 					/>
 				) : null}
 			</VideoField>

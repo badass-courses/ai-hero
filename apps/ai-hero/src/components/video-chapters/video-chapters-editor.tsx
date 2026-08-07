@@ -40,6 +40,18 @@ type VideoChaptersEditorProps = {
 	videoResourceId: string
 	initialChapters?: VideoChapter[] | null
 	videoDuration?: number | null
+	/**
+	 * Replaces the default "Chapters (n)" button. The Video tab passes a plain
+	 * label ("Edit"/"Add") because its `VideoAssetRow` already shows the name
+	 * and the count; the Media tab's preview dialog has no such chrome and
+	 * keeps the default, which must carry both.
+	 */
+	trigger?: React.ReactNode
+	/**
+	 * Fires after a successful save so a host that renders the count outside
+	 * this component (the Video tab's row summary) doesn't go stale.
+	 */
+	onSaved?: (chapters: VideoChapter[]) => void
 }
 
 function chaptersToRows(chapters: VideoChapter[]): RowFields[] {
@@ -77,6 +89,8 @@ export function VideoChaptersEditor({
 	videoResourceId,
 	initialChapters,
 	videoDuration,
+	trigger,
+	onSaved,
 }: VideoChaptersEditorProps) {
 	const initialRows = React.useMemo(
 		() => chaptersToRows(initialChapters ?? []),
@@ -94,9 +108,11 @@ export function VideoChaptersEditor({
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
 			<DialogTrigger asChild>
-				<Button variant="outline" size="sm" type="button">
-					{savedCount > 0 ? `Chapters (${savedCount})` : 'Add Chapters'}
-				</Button>
+				{trigger ?? (
+					<Button variant="outline" size="sm" type="button">
+						{savedCount > 0 ? `Chapters (${savedCount})` : 'Add Chapters'}
+					</Button>
+				)}
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-2xl sm:max-h-[80vh]">
 				<DialogHeader>
@@ -107,8 +123,9 @@ export function VideoChaptersEditor({
 					videoResourceId={videoResourceId}
 					initialRows={initialRows}
 					videoDuration={videoDuration}
-					onSaved={(count) => {
-						setSavedCount(count)
+					onSaved={(saved) => {
+						setSavedCount(saved.length)
+						onSaved?.(saved)
 						setIsOpen(false)
 					}}
 					onCancel={() => setIsOpen(false)}
@@ -128,7 +145,7 @@ function ChaptersForm({
 	videoResourceId: string
 	initialRows: RowFields[]
 	videoDuration?: number | null
-	onSaved: (count: number) => void
+	onSaved: (chapters: VideoChapter[]) => void
 	onCancel: () => void
 }) {
 	const form = useForm<FormFields>({
@@ -223,7 +240,7 @@ function ChaptersForm({
 
 		try {
 			await updateChapters({ videoResourceId, chapters })
-			onSaved(chapters.length)
+			onSaved(chapters)
 		} catch (err) {
 			setSubmitError(
 				err instanceof Error ? err.message : 'Failed to save chapters.',
