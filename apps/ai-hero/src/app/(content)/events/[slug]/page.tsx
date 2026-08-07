@@ -22,7 +22,7 @@ import { CheckCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Event as EventMetaSchema, Ticket } from 'schema-dts'
 
-import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
+import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import { Product, productSchema, Purchase } from '@coursebuilder/core/schemas'
 import { first } from '@coursebuilder/nodash'
 import { Button } from '@coursebuilder/ui'

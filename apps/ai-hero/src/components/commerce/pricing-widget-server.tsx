@@ -17,7 +17,7 @@ import { count, eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
 
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
-import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
+import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import { Purchase } from '@coursebuilder/core/schemas'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'

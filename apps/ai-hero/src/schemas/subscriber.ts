@@ -5,7 +5,7 @@ export const SubscriberSchema = z.object({
 	first_name: z.string().nullish(),
 	email_address: z.string().optional(),
 	state: z.string().optional(),
-	fields: record(z.string().nullable()).default({}),
+	fields: record(z.string(), z.string().nullable()).default({}),
 	created_at: z.string().optional(),
 })
 

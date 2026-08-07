@@ -2,9 +2,9 @@ import { inngest } from '@/inngest/inngest.server'
 import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
 import { ensurePersonalOrganization } from '@/lib/personal-organization-service'
 
-import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-subscription-created'
-import { STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT } from '@coursebuilder/core/inngest/stripe/event-checkout-session-completed'
-import { parseSubscriptionInfoFromCheckoutSession } from '@coursebuilder/core/lib/pricing/stripe-subscription-utils'
+import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
+import { STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT } from '@coursebuilder/core/events/stripe'
+import { parseSubscriptionInfoFromCheckoutSession } from '@coursebuilder/commerce/stripe-subscription-utils'
 import { User } from '@coursebuilder/core/schemas'
 import { checkoutSessionCompletedEvent } from '@coursebuilder/core/schemas/stripe/checkout-session-completed'
 

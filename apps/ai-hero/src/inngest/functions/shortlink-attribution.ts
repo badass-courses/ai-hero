@@ -8,7 +8,7 @@ import { resolvePurchaseGA4ClientId } from '@/lib/ga4-purchase-fields'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { log } from '@/server/logger'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 /**
  * Records shortlink attribution for ALL purchase types.

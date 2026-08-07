@@ -7,7 +7,7 @@ import { log } from '@/server/logger'
 import { format } from 'date-fns'
 import { eq } from 'drizzle-orm'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 export const addPurchasesConvertkit = inngest.createFunction(
 	{

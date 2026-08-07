@@ -8,7 +8,7 @@ import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { log } from '@/server/logger'
 import { and, eq } from 'drizzle-orm'
 
-import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-subscription-created'
+import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 export const addSubscriptionRoleDiscord = inngest.createFunction(
 	{

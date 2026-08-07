@@ -4,13 +4,13 @@ import { purchases } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { eq } from 'drizzle-orm'
 
-import { formatPricesForProduct } from '@coursebuilder/core'
-import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
+import { formatPricesForProduct } from '@coursebuilder/commerce'
+import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import { productSchema, Purchase } from '@coursebuilder/core/schemas'
 import {
 	PricingData,
 	type FormatPricesForProductOptions,
-} from '@coursebuilder/core/types'
+} from '@coursebuilder/commerce/types'
 
 import { getProducts } from './products-query'
 

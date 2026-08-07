@@ -27,12 +27,12 @@ export type { PostType }
 export const NewPostInputSchema = z.object({
 	title: z.string().min(1, 'Title is required'),
 	videoResourceId: z.string().optional(),
-	postType: z.string().refine(
-		(type) => POST_SUBTYPES.includes(type as PostType),
-		(type) => ({
-			message: `Invalid post type: ${type}. Valid types are: ${POST_SUBTYPES.join(', ')}`,
+	postType: z
+		.string()
+		.refine((type) => POST_SUBTYPES.includes(type as PostType), {
+			error: (issue) =>
+				`Invalid post type: ${issue.input}. Valid types are: ${POST_SUBTYPES.join(', ')}`,
 		}),
-	),
 	createdById: z.string(),
 	parentLessonId: z.string().optional(),
 })

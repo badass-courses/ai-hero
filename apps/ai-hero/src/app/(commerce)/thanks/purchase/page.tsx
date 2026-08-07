@@ -24,14 +24,14 @@ import * as PurchaseSummary from '@coursebuilder/commerce-next/post-purchase/pur
 import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
 import * as InviteTeam from '@coursebuilder/commerce-next/team/invite-team'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
-import { checkForPaymentSuccessWithoutPurchase } from '@coursebuilder/core'
+import { checkForPaymentSuccessWithoutPurchase } from '@coursebuilder/commerce'
 import {
 	EXISTING_BULK_COUPON,
 	INDIVIDUAL_TO_BULK_UPGRADE,
 	NEW_BULK_COUPON,
 	NEW_INDIVIDUAL_PURCHASE,
 } from '@coursebuilder/core/schemas/purchase-type'
-import { logger } from '@coursebuilder/core/utils/logger'
+import { logger } from '@coursebuilder/utils/logger'
 
 export const maxDuration = 100
 

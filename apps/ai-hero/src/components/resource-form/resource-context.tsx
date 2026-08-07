@@ -14,7 +14,7 @@ export interface ResourceContextType<
 > {
 	resource: T
 	resourceType: ResourceType
-	form: UseFormReturn<z.infer<Schema>>
+	form: UseFormReturn<any>
 }
 
 // Create context with null as default value and generic type parameter
@@ -34,7 +34,7 @@ export function ResourceProvider<T extends ContentResource>({
 }: React.PropsWithChildren<{
 	resource: T
 	resourceType: ResourceType
-	form: UseFormReturn<z.infer<Schema>>
+	form: UseFormReturn<any>
 }>) {
 	return (
 		<ResourceContext.Provider value={{ resource, resourceType, form }}>

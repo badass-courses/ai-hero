@@ -1,7 +1,7 @@
 import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
 import { log } from '@/server/logger'
 
-import type { CourseBuilderAdapter } from '@coursebuilder/core/adapters'
+import type { OrganizationPort } from '@coursebuilder/core/ports'
 
 /**
  * Result of personal organization operations
@@ -35,7 +35,7 @@ export function getPersonalOrgName(userEmail: string): string {
  */
 export async function getPersonalOrganization(
 	user: PersonalOrgUser,
-	adapter: CourseBuilderAdapter,
+	adapter: OrganizationPort,
 ): Promise<{ organization: any; membership: any } | null> {
 	if (!user.email) {
 		throw new Error('User email is required to find personal organization')
@@ -84,7 +84,7 @@ export async function getPersonalOrganization(
  */
 export async function createPersonalOrganization(
 	user: PersonalOrgUser,
-	adapter: CourseBuilderAdapter,
+	adapter: OrganizationPort,
 ): Promise<{ organization: any; membership: any }> {
 	if (!user.email) {
 		throw new Error('User email is required to create personal organization')
@@ -139,7 +139,7 @@ export async function createPersonalOrganization(
  */
 export async function ensurePersonalOrganization(
 	user: PersonalOrgUser,
-	adapter: CourseBuilderAdapter,
+	adapter: OrganizationPort,
 ): Promise<PersonalOrgResult> {
 	const existing = await getPersonalOrganization(user, adapter)
 
@@ -167,7 +167,7 @@ export async function ensurePersonalOrganization(
  */
 export async function ensurePersonalOrganizationWithLearnerRole(
 	user: PersonalOrgUser,
-	adapter: CourseBuilderAdapter,
+	adapter: OrganizationPort,
 ): Promise<PersonalOrgResult> {
 	const result = await ensurePersonalOrganization(user, adapter)
 

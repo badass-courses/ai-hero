@@ -28,7 +28,7 @@ import { NuqsAdapter } from 'nuqs/adapters/next/app'
 import { extractRouterConfig } from 'uploadthing/server'
 
 import { CouponProvider } from '@coursebuilder/commerce-next/coupons/coupon-context'
-import { getCouponForCode } from '@coursebuilder/core/pricing/props-for-commerce'
+import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
 import { Toaster } from '@coursebuilder/ui/primitives/toaster'
 
 /**

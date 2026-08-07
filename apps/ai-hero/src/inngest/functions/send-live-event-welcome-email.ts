@@ -16,7 +16,7 @@ import { formatInTimeZone } from 'date-fns-tz'
 import { eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 /**
  * Sends a welcome email to users who purchase a "live" product type (events).

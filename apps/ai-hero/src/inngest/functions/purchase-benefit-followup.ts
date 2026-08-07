@@ -8,10 +8,10 @@ import {
 } from '@/lib/purchase-benefit-entitlements'
 import { log } from '@/server/logger'
 
-import {
-	PURCHASE_BENEFITS_ATTACHED_EVENT,
-	TEAM_SEAT_REDEMPTION_CREATED_EVENT,
-} from '@coursebuilder/core/inngest'
+import { PURCHASE_BENEFITS_ATTACHED_EVENT } from '@coursebuilder/server'
+
+
+import { TEAM_SEAT_REDEMPTION_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 export const buyerPurchaseBenefitFollowup = inngest.createFunction(
 	{

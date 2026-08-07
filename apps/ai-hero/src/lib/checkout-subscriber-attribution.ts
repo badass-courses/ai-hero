@@ -1,4 +1,4 @@
-import { ATTRIBUTION_METADATA_MAX_LENGTH } from '@coursebuilder/core/lib/checkout-attribution'
+import { ATTRIBUTION_METADATA_MAX_LENGTH } from '@coursebuilder/commerce/checkout-attribution'
 
 type CheckoutAttribution = {
 	attributionSnapshot?: string

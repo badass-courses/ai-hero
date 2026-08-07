@@ -1,5 +1,4 @@
-import { zodToJsonSchema } from 'zod-to-json-schema'
-import type { ZodTypeAny } from 'zod'
+import { z, type ZodTypeAny } from 'zod'
 
 import {
 	AddListItemRequestSchema,
@@ -953,11 +952,20 @@ const zodSchemas = {
 	MintPersonalAccessTokenResponse: MintPersonalAccessTokenResponseSchema,
 } satisfies Record<string, ZodTypeAny>
 
-function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
-	const converted = zodToJsonSchema(schema, {
-		target: 'jsonSchema2019-09',
-		$refStrategy: 'none',
-		dateStrategy: 'format:date-time',
+export function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
+	const converted = z.toJSONSchema(schema, {
+		target: 'draft-2019-09',
+		// Inline every subschema; the document must not lean on $defs/$ref.
+		reused: 'inline',
+		// Dates have no JSON Schema primitive, so zod refuses to guess. Emit the
+		// date-time string form the API actually serializes.
+		unrepresentable: 'any',
+		override: (ctx) => {
+			if (ctx.zodSchema._zod.def.type === 'date') {
+				ctx.jsonSchema.type = 'string'
+				ctx.jsonSchema.format = 'date-time'
+			}
+		},
 	}) as Record<string, unknown>
 	delete converted.$schema
 	return converted
@@ -1049,7 +1057,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 
 	return {
 		openapi: '3.1.0',
-		// zod-to-json-schema emits 2019-09 syntax (array-form items for tuples),
+		// toOpenApiSchema targets 2019-09 syntax (array-form items for tuples),
 		// so the advertised dialect must match what is actually generated.
 		jsonSchemaDialect: 'https://json-schema.org/draft/2019-09/schema',
 		info: {

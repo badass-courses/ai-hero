@@ -31,7 +31,7 @@ const SlackPayloadSchema = z.object({
 			metadata: z
 				.object({
 					event_type: z.string().optional(),
-					event_payload: z.record(z.any()).optional(),
+					event_payload: z.record(z.string(), z.any()).optional(),
 				})
 				.optional(),
 		})

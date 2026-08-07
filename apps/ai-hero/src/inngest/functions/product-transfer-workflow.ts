@@ -29,7 +29,7 @@ import { guid } from '@coursebuilder/adapter-drizzle/mysql'
 import {
 	PURCHASE_TRANSFERRED_API_EVENT,
 	PURCHASE_TRANSFERRED_EVENT,
-} from '@coursebuilder/core/inngest/purchase-transfer/event-purchase-transferred'
+} from '@coursebuilder/core/events/purchase-transfer'
 
 // Import shared configuration
 import {

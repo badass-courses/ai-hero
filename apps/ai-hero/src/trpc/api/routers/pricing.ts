@@ -7,8 +7,8 @@ import { isAfter } from 'date-fns'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { formatPricesForProduct } from '@coursebuilder/core'
-import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
+import { formatPricesForProduct } from '@coursebuilder/commerce'
+import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import {
 	Coupon,
 	Product,

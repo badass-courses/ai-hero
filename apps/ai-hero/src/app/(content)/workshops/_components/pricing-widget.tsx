@@ -12,7 +12,7 @@ import type {
 	CommerceProps,
 	FormattedPrice,
 	PricingOptions,
-} from '@coursebuilder/core/types'
+} from '@coursebuilder/commerce/types'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 export type PricingData = {

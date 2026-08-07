@@ -10,6 +10,7 @@ import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
+import { createAuthJsAdapter } from '@/server/auth-js-adapter'
 import { log, serializeError } from '@/server/logger'
 import {
 	assertOAuthLinkAccountEventUnreachableDuringContainment,
@@ -185,8 +186,9 @@ async function refreshDiscordToken(account: {
 	}
 }
 
-const oauthContainmentAdapter =
-	createOAuthContainmentAdapter(courseBuilderAdapter)
+const oauthContainmentAdapter = createOAuthContainmentAdapter(
+	createAuthJsAdapter(courseBuilderAdapter),
+)
 
 const oauthContainmentSignInCallback = createOAuthContainmentSignInCallback({
 	getCookieStore: cookies,

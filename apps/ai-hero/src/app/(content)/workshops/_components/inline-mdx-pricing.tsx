@@ -17,14 +17,14 @@ import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
-import type { PropsForCommerce } from '@coursebuilder/core/lib/pricing/props-for-commerce'
+import type { PropsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import { Product, Purchase } from '@coursebuilder/core/schemas'
 import type {
 	CommerceProps,
 	FormattedPrice,
 	PricingOptions,
-} from '@coursebuilder/core/types'
-import { formatUsd } from '@coursebuilder/core/utils/format-usd'
+} from '@coursebuilder/commerce/types'
+import { formatUsd } from '@coursebuilder/commerce/format-usd'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 

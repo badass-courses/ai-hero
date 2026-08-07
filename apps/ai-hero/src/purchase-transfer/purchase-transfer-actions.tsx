@@ -20,8 +20,8 @@ import type { NextAuthConfig } from 'next-auth'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
-import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/inngest/purchase-transfer/event-purchase-transferred'
-import { sendServerEmail } from '@coursebuilder/core/lib/send-server-email'
+import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/events/purchase-transfer'
+import { sendServerEmail } from '@coursebuilder/email/send-server-email'
 import {
 	PurchaseUserTransfer,
 	purchaseUserTransferSchema,

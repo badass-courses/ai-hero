@@ -96,26 +96,26 @@ import { authOptions } from '@/server/auth'
 import { EventSchemas, Inngest } from 'inngest'
 import { UTApi } from 'uploadthing/server'
 
-import { CourseBuilderCoreEvents } from '@coursebuilder/core/inngest'
+import { CourseBuilderCoreEvents } from '@coursebuilder/core'
 import {
 	RESOURCE_CHAT_REQUEST_EVENT,
 	ResourceChat,
-} from '@coursebuilder/core/inngest/co-gardener/resource-chat'
+} from '@coursebuilder/core/events/resource-chat'
 import {
 	NEW_SUBSCRIPTION_CREATED_EVENT,
 	NewSubscriptionCreated,
-} from '@coursebuilder/core/inngest/commerce/event-new-subscription-created'
-import { createInngestMiddleware } from '@coursebuilder/core/inngest/create-inngest-middleware'
+} from '@coursebuilder/core/events/commerce'
+import { createInngestMiddleware } from '@coursebuilder/server/create-inngest-middleware'
 import type {
 	PURCHASE_TRANSFERRED_API_EVENT,
 	PURCHASE_TRANSFERRED_EVENT,
 	PurchaseTransferred,
 	PurchaseTransferredApi,
-} from '@coursebuilder/core/inngest/purchase-transfer/event-purchase-transferred'
+} from '@coursebuilder/core/events/purchase-transfer'
 import {
 	STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT,
 	StripeCheckoutSessionCompleted,
-} from '@coursebuilder/core/inngest/stripe/event-checkout-session-completed'
+} from '@coursebuilder/core/events/stripe'
 import DeepgramProvider from '@coursebuilder/core/providers/deepgram'
 import OpenAIProvider from '@coursebuilder/core/providers/openai'
 import PartykitProvider from '@coursebuilder/core/providers/partykit'

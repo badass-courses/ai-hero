@@ -5,7 +5,7 @@ import { log } from '@/server/logger'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { cloudinary } from '@/utils/cloudinary'
 import { z } from 'zod'
-import { getCertificatePublicId } from '@coursebuilder/core/lib/certificates'
+import { getCertificatePublicId } from '@coursebuilder/core/certificates'
 
 const clResourceSchema = z.object({
 	secure_url: z.string(),
