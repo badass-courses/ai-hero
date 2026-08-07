@@ -5,7 +5,8 @@ import type { SkillSetGroup } from './skill-set'
  *
  * Lives beside the component rather than in `page.tsx` because it is the one
  * part of that route with a decision in it — what counts as a skill — and a
- * page file can only export a page.
+ * decision that shapes four surfaces deserves its own tests rather than a
+ * rendered page to assert through.
  */
 
 type ListItem = {
