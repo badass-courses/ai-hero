@@ -224,10 +224,56 @@ export function escapeMdxUnsafe(source: string): string {
 }
 
 /**
+ * Body-copy anchor. Internal destinations navigate client-side through
+ * `next/link`; external ones — and bare `#anchor` jumps, which `Link` would
+ * route through the router for nothing — stay plain anchors.
+ *
+ * By the time this runs, `rehypeInternalLinks` has already turned our own
+ * absolute URLs into root-relative paths, so "starts with `/`" is the whole
+ * test for "internal".
+ */
+function MdxAnchor({
+	children,
+	href,
+	title,
+	...props
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+	if (typeof href === 'string' && href.startsWith('/')) {
+		return (
+			<Link
+				href={href}
+				title={title}
+				{...props}
+				className={cn('ah-prose-a', props.className)}
+			>
+				{children}
+			</Link>
+		)
+	}
+
+	return (
+		<a
+			href={href}
+			title={title}
+			{...props}
+			className={cn('ah-prose-a', props.className)}
+		>
+			{children}
+		</a>
+	)
+}
+
+/**
  * Degraded render path: escape MDX-hostile tokens and compile the result with a
  * minimal markdown pipeline (no CodeHike/Mermaid/components). Used only when the
  * full MDX compile throws, so non-MDX content (github-sourced docs) still
  * renders readably instead of showing an error box.
+ *
+ * `a` is the one component this path carries. It is exactly the kind of content
+ * that reaches here — a github-sourced SKILL.md, which is where the internal
+ * links live — so plain `<a>` would cost a full document load on the very
+ * articles this change is about. Unlike a minted `TableWrapper`, an anchor
+ * override resolves against markdown the compiler already produces.
  */
 async function compilePlainMarkdownFallback(
 	source: string,
@@ -235,7 +281,7 @@ async function compilePlainMarkdownFallback(
 ) {
 	return _compileMDX({
 		source: escapeMdxUnsafe(sanitizeMdxSource(source)),
-		components: {},
+		components: { a: MdxAnchor },
 		options: {
 			...options,
 			mdxOptions: {
@@ -534,31 +580,10 @@ async function compileMDXInternal(
 							)
 						}
 
-						// Internal destinations navigate client-side and prefetch.
-						// External ones — and bare `#anchor` jumps, which `Link` would
-						// route through the router for nothing — stay plain anchors.
-						if (typeof href === 'string' && href.startsWith('/')) {
-							return (
-								<Link
-									href={href}
-									title={title}
-									{...props}
-									className={cn('ah-prose-a', props.className)}
-								>
-									{children}
-								</Link>
-							)
-						}
-
 						return (
-							<a
-								href={href}
-								title={title}
-								{...props}
-								className={cn('ah-prose-a', props.className)}
-							>
+							<MdxAnchor href={href} title={title} {...props}>
 								{children}
-							</a>
+							</MdxAnchor>
 						)
 					},
 					img: (props) => <MdxImage {...props} />,

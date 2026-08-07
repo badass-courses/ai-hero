@@ -31,6 +31,12 @@ export function toInternalHref(href: string): string | null {
 
 	if (!INTERNAL_HOSTS.has(url.hostname.toLowerCase())) return null
 
+	// A port means a different service, not us — and a root-relative path
+	// cannot carry one, so rewriting would silently redirect to this site's
+	// default port. `URL` already blanks the port when it is the protocol
+	// default, so `https://aihero.dev:443/x` still reads as ours.
+	if (url.port !== '') return null
+
 	return `${url.pathname}${url.search}${url.hash}`
 }
 

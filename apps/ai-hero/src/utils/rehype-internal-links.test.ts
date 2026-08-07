@@ -42,6 +42,15 @@ describe('toInternalHref', () => {
 		expect(toInternalHref('https://aihero.dev')).toBe('/')
 	})
 
+	it('leaves a non-default port alone', () => {
+		// A root-relative path cannot carry a port, so rewriting would send the
+		// reader to this site's default port instead of the service they meant.
+		expect(toInternalHref('https://aihero.dev:8443/docs')).toBeNull()
+		// ...but the protocol's own default port is still just us.
+		expect(toInternalHref('https://aihero.dev:443/docs')).toBe('/docs')
+		expect(toInternalHref('http://aihero.dev:80/docs')).toBe('/docs')
+	})
+
 	it('leaves everything else alone', () => {
 		expect(toInternalHref('https://example.com/skills')).toBeNull()
 		// A lookalike host is not us.
