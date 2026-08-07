@@ -5,11 +5,14 @@ import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	enterSkillsNewsletterSubscriber,
+	SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
 	SHADOW_NEWSLETTER_KIT_SEQUENCE,
 } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
+
+import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
 
 export const skillsNewsletterPathEntry = inngest.createFunction(
 	{
@@ -98,17 +101,38 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		// Separate step on purpose: course entry above is already durable, and a Kit
 		// outage here retries on its own without replanning email zero.
 		await step.run('subscribe-to-shadow-newsletter', async () => {
-			await emailListProvider.subscribeToList({
-				listId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
-				listType: 'sequence',
-				user: {
-					email: event.data.email,
-					name: event.data.name,
-				} as Parameters<
-					typeof emailListProvider.subscribeToList
-				>[0]['user'],
-				fields: {},
-			})
+			const user = {
+				email: event.data.email,
+				name: event.data.name,
+			} as Parameters<
+				typeof emailListProvider.subscribeToList
+			>[0]['user']
+			try {
+				await emailListProvider.subscribeToList({
+					listId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
+					listType: 'sequence',
+					user,
+					fields: {},
+				})
+			} catch (error) {
+				if (!(error instanceof ConvertKitApiError) || error.status !== 400) {
+					throw error
+				}
+				await emailListProvider.subscribeToList({
+					listId: SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
+					listType: 'tag',
+					user,
+					fields: {},
+				})
+				await log.info('subscriber_funnel.shadow_newsletter_deferred', {
+					funnel: 'skills-newsletter',
+					eventId: event.id,
+					contactId: entryResult.contactId,
+					kitSequenceId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
+					kitBackfillTagId: SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
+				})
+				return { status: 'deferred' as const }
+			}
 			await log.info('subscriber_funnel.shadow_newsletter_subscribed', {
 				funnel: 'skills-newsletter',
 				eventId: event.id,
