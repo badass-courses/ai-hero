@@ -5,6 +5,7 @@ import { LessonPlayer } from '@/app/(content)/_components/lesson-player'
 import { NewLessonVideoForm } from '@/app/(content)/_components/new-lesson-video-form'
 import { SimplePostPlayer } from '@/app/(content)/posts/_components/post-player'
 import { reprocessTranscript } from '@/app/(content)/posts/[slug]/edit/actions'
+import { formatSeconds } from '@/components/video-chapters/chapter-utils'
 import { VideoChaptersEditor } from '@/components/video-chapters/video-chapters-editor'
 import { useSocket } from '@/hooks/use-socket'
 import { useTranscript } from '@/hooks/use-transcript'
@@ -533,7 +534,17 @@ export function CmsVideoField({
 				}
 				thumbnail={
 					thumbnailEnabled && ready
-						? { url: thumbnailUrl, onPick: handleThumbnailPick }
+						? {
+								url: thumbnailUrl,
+								onPick: handleThumbnailPick,
+								// "Change" said nothing about HOW: picking captures the
+								// player's CURRENT position, which the app previously only
+								// revealed in a toast after you'd already clicked it wrong.
+								actionLabel: 'Use current frame',
+								summary: thumbTime
+									? `frame at ${formatSeconds(thumbTime)}`
+									: 'first frame',
+							}
 						: undefined
 				}
 			>
