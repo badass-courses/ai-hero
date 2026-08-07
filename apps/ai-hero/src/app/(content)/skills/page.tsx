@@ -23,7 +23,8 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { ChangelogList, type ChangelogItem } from './_components/changelog-list'
 import { ChangelogPagination } from './_components/changelog-pagination'
-import { SkillSet, type SkillSetGroup } from './_components/skill-set'
+import { countSkills, toSkillGroups } from './_components/skill-groups'
+import { SkillSet } from './_components/skill-set'
 import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
 import { SkillsSalesCopy } from './_components/skills-sales-copy'
@@ -97,10 +98,7 @@ export default async function SkillsPage({ searchParams }: Props) {
 	])
 
 	const skillGroups = toSkillGroups(skillsList?.resources)
-	const skillCount = skillGroups.reduce(
-		(total, group) => total + group.skills.length,
-		0,
-	)
+	const skillCount = countSkills(skillGroups)
 	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
 	return (
@@ -177,78 +175,6 @@ export default async function SkillsPage({ searchParams }: Props) {
 			</HubLayout>
 		</LayoutClient>
 	)
-}
-
-type ListItem = {
-	resource?: {
-		id?: string
-		type?: string
-		fields?: Record<string, unknown> | null
-		resources?: ListItem[] | null
-	} | null
-}
-
-function isPublicPublished(fields?: Record<string, unknown> | null) {
-	return fields?.state === 'published' && fields?.visibility === 'public'
-}
-
-function stringField(
-	fields: Record<string, unknown> | null | undefined,
-	key: string,
-): string | undefined {
-	const value = fields?.[key]
-	return typeof value === 'string' && value ? value : undefined
-}
-
-function toSkillItem(item: ListItem) {
-	const fields = item.resource?.fields
-	const slug = stringField(fields, 'slug')
-	if (!slug) return null
-	return {
-		slug,
-		title: stringField(fields, 'title') ?? slug,
-		description: stringField(fields, 'description'),
-	}
-}
-
-// Walk the /skills list into ordered render groups. A `section` resource
-// becomes a titled group of its published/public child skills; anything else
-// collapses into an untitled run of loose skills. Empty sections are dropped so
-// an unpopulated (or fully-unpublished) section leaves no orphan heading.
-function toSkillGroups(resources?: ListItem[] | null): SkillSetGroup[] {
-	const groups: SkillSetGroup[] = []
-	let looseRun: SkillSetGroup | null = null
-
-	for (const item of resources ?? []) {
-		if (item.resource?.type === 'section') {
-			// Sections are purely structural — their own state/visibility is
-			// ignored (they're created draft+unlisted with no publish UI). Their
-			// published/public children drive whether the section shows at all.
-			const skills = (item.resource.resources ?? [])
-				.filter((child) => isPublicPublished(child.resource?.fields))
-				.map(toSkillItem)
-				.filter((skill): skill is NonNullable<typeof skill> => Boolean(skill))
-			if (skills.length === 0) continue
-			looseRun = null
-			groups.push({
-				id: item.resource.id ?? skills[0]!.slug,
-				title: stringField(item.resource.fields, 'title') ?? 'Skills',
-				description: stringField(item.resource.fields, 'description'),
-				skills,
-			})
-			continue
-		}
-		if (!isPublicPublished(item.resource?.fields)) continue
-		const skill = toSkillItem(item)
-		if (!skill) continue
-		if (!looseRun) {
-			looseRun = { id: `loose-${groups.length}`, title: null, skills: [] }
-			groups.push(looseRun)
-		}
-		looseRun.skills.push(skill)
-	}
-
-	return groups
 }
 
 /**

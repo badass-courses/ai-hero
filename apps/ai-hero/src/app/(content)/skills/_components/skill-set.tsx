@@ -1,6 +1,6 @@
 import * as React from 'react'
 import Link from 'next/link'
-import { TYPE } from '@/components/landing/type'
+import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { SKILLS_SET_SECTION } from '@/lib/skills-content'
 import { invocationName } from '@/components/skills/skill-meta'
 import { ArrowRight } from 'lucide-react'
@@ -11,14 +11,20 @@ export type SkillSetItem = {
 	slug: string
 	title: string
 	description?: string
+	/**
+	 * A skill is something you type; an article is something you read. The list
+	 * holds both (a "what these skills are" piece belongs with the skills it
+	 * explains), and only a skill gets a slash command — see `SkillRow`.
+	 */
+	kind: 'skill' | 'article'
 }
 
 export type SkillSetGroup = {
 	id: string
-	/** Null for skills sitting loose in the list, outside any section. */
+	/** Null for members sitting loose in the list, outside any section. */
 	title: string | null
 	description?: string
-	skills: SkillSetItem[]
+	items: SkillSetItem[]
 }
 
 /**
@@ -115,8 +121,11 @@ function GroupRung({
 	number: number | null
 }) {
 	// The list's order IS the recommendation — the first skill in a group is its
-	// intended entry point, which is why nothing here sorts.
-	const startWith = group.skills[0]
+	// intended entry point, which is why nothing here sorts. `find`, not `[0]`:
+	// an article filed at the top of a group is context for the group, not the
+	// thing to start with, and "Start with /what-these-skills-are" would name a
+	// command that does not exist.
+	const startWith = group.items.find((item) => item.kind === 'skill')
 
 	return (
 		<li className="border-border grid grid-cols-1 gap-x-12 gap-y-5 border-b py-[30px] md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -166,9 +175,9 @@ function GroupRung({
 			{/* Dividers come from the rows themselves; the last one drops its rule so
 			    the rung ends on whitespace, the same way the activity ladder does. */}
 			<ul className="flex flex-col [&>li:last-child_a]:border-b-0">
-				{group.skills.map((skill) => (
-					<li key={skill.slug}>
-						<SkillRow {...skill} />
+				{group.items.map((item) => (
+					<li key={item.slug}>
+						<SkillRow {...item} />
 					</li>
 				))}
 			</ul>
@@ -176,7 +185,16 @@ function GroupRung({
 	)
 }
 
-function SkillRow({ slug, title, description }: SkillSetItem) {
+/**
+ * One catalog row.
+ *
+ * A skill leads with its slash command, because the command IS the thing —
+ * you read the row to learn what to type. An article has nothing to type, so
+ * it takes a kind marker in that same slot instead: the column keeps its
+ * left-aligned first line, and the one row you cannot invoke says so before
+ * you read its title rather than after you try.
+ */
+function SkillRow({ slug, title, description, kind }: SkillSetItem) {
 	return (
 		<Link
 			href={`/${slug}`}
@@ -187,11 +205,17 @@ function SkillRow({ slug, title, description }: SkillSetItem) {
 			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
 			<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-				<span
-					className={cn(TYPE.command, 'text-[color:var(--ah-fg-body)] block')}
-				>
-					/{invocationName(slug)}
-				</span>
+				{kind === 'skill' ? (
+					<span
+						className={cn(TYPE.command, 'text-[color:var(--ah-fg-body)] block')}
+					>
+						/{invocationName(slug)}
+					</span>
+				) : (
+					<span className={cn(TYPE.badge, BADGE_OUTLINE, 'mb-1 self-start')}>
+						Article
+					</span>
+				)}
 				<span className={cn(TYPE.bodyTight, 'block text-balance')}>{title}</span>
 				{description ? (
 					<span

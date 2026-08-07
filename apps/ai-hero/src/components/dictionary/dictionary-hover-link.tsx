@@ -69,9 +69,20 @@ export function DictionaryHoverLink({
 					<p className="text-muted-foreground text-sm leading-6">
 						{cardDescription}
 					</p>
-					<span className="text-primary mt-3 inline-flex items-center gap-1 text-sm font-medium">
-						Read definition <ArrowRight className="size-3.5" />
-					</span>
+					{/* A real link, not a decorated span. It reads as an affordance —
+					    accent ink, arrow, "Read definition" — and a reader whose
+					    pointer is already inside the card will aim at it rather than
+					    travel back to the term that opened it. */}
+					<Link
+						href={href}
+						// The trigger points at the same route and has already
+						// prefetched it; a second one per open card buys nothing.
+						prefetch={false}
+						className="text-primary focus-visible:ring-ring group mt-3 inline-flex items-center gap-1 rounded-[4px] text-sm font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+					>
+						Read definition
+						<ArrowRight className="ease-out-quart size-3.5 transition-transform duration-300 group-hover:translate-x-0.5 motion-reduce:transform-none motion-reduce:transition-none" />
+					</Link>
 				</div>
 			</HoverCardContent>
 		</HoverCard>

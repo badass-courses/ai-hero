@@ -258,7 +258,12 @@ async function loadShowcaseGroups(): Promise<{
 	const groups: ShowcaseGroup[] = []
 	let totalSkillCount = 0
 
+	// `postType`, not just publish state: the list may hold a non-skill article
+	// filed with the skills it explains (/skills renders those as article rows).
+	// Every cell here is a slash command and the CTA counts skills, so a row
+	// that cannot be typed has no shape to take in this grid.
 	const isPublicSkill = (child: any) =>
+		child?.fields?.postType === 'skill' &&
 		child?.fields?.state === 'published' &&
 		child?.fields?.visibility === 'public' &&
 		typeof child?.fields?.slug === 'string'
