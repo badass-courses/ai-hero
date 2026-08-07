@@ -41,7 +41,7 @@ import { cn } from '@coursebuilder/utils/cn'
  */
 
 /** The inner pad every block shares. Rule 1 and rule 3, in one place. */
-const INNER = 'px-[18px] py-12 sm:px-11 md:py-[52px]'
+const INNER = 'px-[18px] py-5 sm:px-11 md:py-[52px]'
 
 /**
  * The head and the player: the whole reason the link gets forwarded.
@@ -256,7 +256,7 @@ export function SlidesCard({
 		<div
 			className={cn(
 				bare ? '' : INNER,
-				'flex flex-col items-start gap-4 desk:sticky desk:top-28',
+				'flex flex-col items-start gap-4 desk:sticky desk:top-24',
 			)}
 		>
 			<div className="flex flex-col gap-2">
@@ -266,10 +266,12 @@ export function SlidesCard({
 				    button hanging 30px to their left. In the flow only the first line
 				    is indented, so everything under it keeps one rag. */}
 				<h3 className={cn(TYPE.subhead, 'text-balance font-sans')}>
+					<div className="size-9 transform translate-y-1 inline-flex mr-2.5 items-center justify-center p-1 rounded-full bg-primary/20">
 					<Presentation
 						aria-hidden
-						className="text-primary mr-2.5 inline-block h-5 w-5 align-[-0.15em]"
+						className="text-primary size-5 transform translate-y-0.5"
 					/>
+					</div>
 					{heading}
 				</h3>
 				{body && (
@@ -356,11 +358,23 @@ export function TeamSplit({ children }: { children: React.ReactNode }) {
 			<div
 				className={cn(
 					INNER,
-					'grid grid-cols-1 gap-10 desk:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] desk:items-start desk:gap-16',
+					// No `items-start` here: start-aligned grid items shrink to their own
+					// content height, and a `sticky` child of a box exactly as tall as
+					// itself has nowhere to travel — which is why the aside never stuck.
+					// The default `stretch` gives the aside's cell the full height of the
+					// running order beside it, so its sticky inner block can ride down it.
+					'grid grid-cols-1 gap-10 desk:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] desk:gap-16',
 				)}
 			>
+				{/* Stacked, the aside goes FIRST. Below `desk` the running order is a
+				    long numbered list, and anything under it is past the point where a
+				    reader who has decided "yes, this is what's in it" stops scrolling —
+				    which is exactly how the slides block got missed on mobile. Above
+				    the list it is four lines and a button, read before the list rather
+				    than after it, and the list still ends the section. Side by side the
+				    order is reading order again: substance left, margin note right. */}
+				<div className="desk:order-last order-first">{bare(aside)}</div>
 				<div>{bare(main)}</div>
-				<div>{bare(aside)}</div>
 			</div>
 		</section>
 	)
