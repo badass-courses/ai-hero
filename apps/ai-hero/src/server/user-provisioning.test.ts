@@ -67,7 +67,7 @@ describe('Auth.js createUser provisioning boundary', () => {
 		).rejects.toBe(error)
 
 		expect(enqueueProvisioningRepair).toHaveBeenCalledOnce()
-		expect(enqueueProvisioningRepair).toHaveBeenCalledWith(user.id)
+		expect(enqueueProvisioningRepair).toHaveBeenCalledWith(user.id, error)
 	})
 })
 
@@ -103,20 +103,19 @@ describe('out-of-band find-or-create provisioning boundary', () => {
 
 	it('returns the resolution after enqueueing durable repair for a provisioning failure', async () => {
 		const enqueueProvisioningRepair = vi.fn().mockResolvedValue(undefined)
+		const cause = new Error('database unavailable')
 
 		const result = await handleOutOfBandUserBoundary(
 			async () => ({ user, isNewUser: true }),
 			{
-				provisionPersonalOrganization: vi
-					.fn()
-					.mockRejectedValue(new Error('database unavailable')),
+				provisionPersonalOrganization: vi.fn().mockRejectedValue(cause),
 				enqueueProvisioningRepair,
 			},
 		)
 
 		expect(result).toEqual({ user, isNewUser: true })
 		expect(enqueueProvisioningRepair).toHaveBeenCalledOnce()
-		expect(enqueueProvisioningRepair).toHaveBeenCalledWith(user.id)
+		expect(enqueueProvisioningRepair).toHaveBeenCalledWith(user.id, cause)
 	})
 
 	it('surfaces a repair enqueue failure instead of claiming durability', async () => {

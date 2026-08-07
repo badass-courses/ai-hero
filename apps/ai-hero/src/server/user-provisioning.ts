@@ -5,7 +5,10 @@ export type UserCreatedBoundaryDependencies = {
 		user: PersonalOrganizationUser,
 	) => Promise<unknown>
 	publishUserCreated: () => Promise<unknown>
-	enqueueProvisioningRepair: (userId: string) => Promise<unknown>
+	enqueueProvisioningRepair: (
+		userId: string,
+		cause: unknown,
+	) => Promise<unknown>
 }
 
 /**
@@ -31,7 +34,7 @@ export async function handleUserCreatedBoundary(
 	const [userCreatedResult, provisioningResult] = await Promise.allSettled([
 		dependencies.publishUserCreated(),
 		dependencies.provisionPersonalOrganization(user).catch(async (error) => {
-			await dependencies.enqueueProvisioningRepair(user.id)
+			await dependencies.enqueueProvisioningRepair(user.id, error)
 			throw error
 		}),
 	])
@@ -97,7 +100,8 @@ export async function handleOutOfBandUserBoundary<
 	} catch (error) {
 		// Repair now durably owns the missing organization, so the product flow
 		// that resolved this user proceeds. Only an enqueue failure propagates.
-		await dependencies.enqueueProvisioningRepair(result.user.id)
+		// The cause travels with it so the failure reaches a log sink.
+		await dependencies.enqueueProvisioningRepair(result.user.id, error)
 	}
 
 	return result

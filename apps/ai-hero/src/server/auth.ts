@@ -255,11 +255,16 @@ export const authOptions: NextAuthConfig = {
 						inngest.send({ name: USER_CREATED_EVENT, user, data: {} }),
 					provisionPersonalOrganization: (persistedUser) =>
 						personalOrganizations.ensurePersonalOrganization(persistedUser),
-					enqueueProvisioningRepair: (userId) =>
-						inngest.send({
+					enqueueProvisioningRepair: (userId, cause) => {
+						void log.error('auth.personal-org-provisioning-failed', {
+							userId,
+							error: serializeError(cause),
+						})
+						return inngest.send({
 							name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
 							data: { userId, createIfMissing: true },
-						}),
+						})
+					},
 				},
 			)
 		},

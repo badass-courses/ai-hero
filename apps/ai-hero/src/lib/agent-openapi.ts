@@ -952,6 +952,32 @@ const zodSchemas = {
 	MintPersonalAccessTokenResponse: MintPersonalAccessTokenResponseSchema,
 } satisfies Record<string, ZodTypeAny>
 
+/**
+ * Detects the `z.union([z.string(), z.date()]).transform(v => new Date(v))`
+ * shape this codebase uses for timestamps that arrive as strings.
+ *
+ * Zod models it as a `pipe` whose output is a `transform`, and a transform's
+ * output type is opaque to the JSON Schema converter — under
+ * `unrepresentable: 'any'` the field collapses to `{}`. The values are
+ * serialized as ISO strings, so the pipe is described as a date-time string.
+ *
+ * @param def - The zod internal definition of the node being converted.
+ * @returns True when the node is a transform pipe fed by a date.
+ */
+function isDateProducingPipe(def: any): boolean {
+	if (def?.type !== 'pipe') return false
+	if (def.out?._zod?.def?.type !== 'transform') return false
+
+	const input = def.in?._zod?.def
+	if (input?.type === 'date') return true
+	if (input?.type === 'union') {
+		return (input.options ?? []).some(
+			(option: any) => option?._zod?.def?.type === 'date',
+		)
+	}
+	return false
+}
+
 export function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
 	const converted = z.toJSONSchema(schema, {
 		target: 'draft-2019-09',
@@ -961,7 +987,8 @@ export function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
 		// date-time string form the API actually serializes.
 		unrepresentable: 'any',
 		override: (ctx) => {
-			if (ctx.zodSchema._zod.def.type === 'date') {
+			const def = ctx.zodSchema._zod.def
+			if (def.type === 'date' || isDateProducingPipe(def)) {
 				ctx.jsonSchema.type = 'string'
 				ctx.jsonSchema.format = 'date-time'
 			}

@@ -1,7 +1,7 @@
 import { courseBuilderAdapter } from '@/db'
 import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
 import { inngest } from '@/inngest/inngest.server'
-import { log } from '@/server/logger'
+import { log, serializeError } from '@/server/logger'
 import { personalOrganizations } from '@/server/personal-organizations'
 import { handleOutOfBandUserBoundary } from '@/server/user-provisioning'
 
@@ -36,10 +36,11 @@ export async function findOrCreateUserWithPersonalOrg(
 		{
 			provisionPersonalOrganization: (user) =>
 				personalOrganizations.ensurePersonalOrganization(user),
-			enqueueProvisioningRepair: (userId) => {
+			enqueueProvisioningRepair: (userId, cause) => {
 				void log.error('user.personal-org-provisioning-failed', {
 					userId,
 					email,
+					error: serializeError(cause),
 				})
 				return inngest.send({
 					name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
