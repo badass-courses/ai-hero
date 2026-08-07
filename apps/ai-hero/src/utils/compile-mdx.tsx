@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { cache } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { unstable_rethrow } from 'next/navigation'
 import { SkillsCta } from '@/app/(content)/skills/_components/skills-cta'
 import { SkillsNewsletterCta } from '@/app/(content)/skills/_components/skills-newsletter-cta'
@@ -27,6 +28,7 @@ import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
+import { rehypeInternalLinks } from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
@@ -239,6 +241,7 @@ async function compilePlainMarkdownFallback(
 			mdxOptions: {
 				remarkPlugins: [remarkGfm],
 				rehypePlugins: [
+					rehypeInternalLinks,
 					[
 						rehypeExternalLinks,
 						{ target: '_blank', rel: ['noopener', 'noreferrer'] },
@@ -531,6 +534,22 @@ async function compileMDXInternal(
 							)
 						}
 
+						// Internal destinations navigate client-side and prefetch.
+						// External ones — and bare `#anchor` jumps, which `Link` would
+						// route through the router for nothing — stay plain anchors.
+						if (typeof href === 'string' && href.startsWith('/')) {
+							return (
+								<Link
+									href={href}
+									title={title}
+									{...props}
+									className={cn('ah-prose-a', props.className)}
+								>
+									{children}
+								</Link>
+							)
+						}
+
 						return (
 							<a
 								href={href}
@@ -613,6 +632,9 @@ async function compileMDXInternal(
 							[remarkCodeHike, { components: { code: 'Code' } }],
 						],
 						rehypePlugins: [
+							// Before `rehypeExternalLinks`: an `https://aihero.dev/...`
+							// link is ours, and must not be stamped `target="_blank"`.
+							rehypeInternalLinks,
 							[
 								rehypeExternalLinks,
 								{ target: '_blank', rel: ['noopener', 'noreferrer'] },
