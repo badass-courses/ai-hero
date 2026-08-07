@@ -133,6 +133,9 @@ importers:
       '@coursebuilder/nodash':
         specifier: ^0.0.3
         version: 0.0.3
+      '@coursebuilder/organizations':
+        specifier: ^0.0.2
+        version: 0.0.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
       '@coursebuilder/server':
         specifier: ^0.1.1
         version: 0.1.1(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)
@@ -1658,6 +1661,9 @@ packages:
 
   '@coursebuilder/nodash@0.0.3':
     resolution: {integrity: sha512-AYUM2BMZ0C0+RwUTm5FRg/Zvz9R8hIn91Bwc7EjDL2AEm0wYbWoU1otJXQ67BVUDIZVfYgAEj6hupeJhEZ6OMA==}
+
+  '@coursebuilder/organizations@0.0.2':
+    resolution: {integrity: sha512-JAHb4UZRFFnDwTu+FX4GE/C/kq1VUMMaY1lpIfiU0Y+IITFjMZo2BrBEpGD3kTjSNqNzqZBc2dwAtdL5P3LJ1g==}
 
   '@coursebuilder/server@0.1.1':
     resolution: {integrity: sha512-2rHTI2tdR6B8G5ySe8OsVFvYjg2ea8ukQ6FPOwwcqAbbTmb2PsmE+Tb8NMwHXYEdEZ8AjQNVFHP4FfpdbxZ9LA==}
@@ -15365,6 +15371,24 @@ snapshots:
       - zod
 
   '@coursebuilder/nodash@0.0.3': {}
+
+  '@coursebuilder/organizations@0.0.2(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)':
+    dependencies:
+      '@coursebuilder/core': 3.0.1(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(encoding@0.1.13)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(typescript@5.4.5)
+    transitivePeerDependencies:
+      - '@opentelemetry/core'
+      - '@sveltejs/kit'
+      - '@vercel/node'
+      - aws-lambda
+      - encoding
+      - express
+      - fastify
+      - h3
+      - hono
+      - koa
+      - next
+      - supports-color
+      - typescript
 
   '@coursebuilder/server@0.1.1(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@opentelemetry/api@1.9.1)(@opentelemetry/core@1.30.1(@opentelemetry/api@1.9.1))(@swc/core@1.3.101(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(encoding@0.1.13)(eslint@9.39.4(jiti@2.7.0))(lightningcss@1.32.0)(next@16.2.5(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(postcss@8.5.15)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.4.5)(ws@8.21.0)':
     dependencies:

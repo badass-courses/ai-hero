@@ -90,6 +90,14 @@ vi.mock('@/db', () => ({
 	courseBuilderAdapter: mockAdapter,
 }))
 
+// The provisioning boundary is covered by src/server/user-provisioning.test.ts.
+// Stubbing it here keeps this suite off the Inngest/Auth.js import chain while
+// still exercising the adapter call the integration depends on.
+vi.mock('@/lib/find-or-create-user', () => ({
+	findOrCreateUserWithPersonalOrg: (email: string, name?: string | null) =>
+		mockAdapter.findOrCreateUser(email, name),
+}))
+
 vi.mock('@/db/schema', () => ({
 	purchases: { productId: 'productId', status: 'status' },
 }))

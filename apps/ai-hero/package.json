@@ -87,6 +87,7 @@
 		"@coursebuilder/mdx-mermaid": "^0.1.3",
 		"@coursebuilder/next": "^0.0.37",
 		"@coursebuilder/nodash": "^0.0.3",
+		"@coursebuilder/organizations": "^0.0.2",
 		"@coursebuilder/server": "^0.1.1",
 		"@coursebuilder/survey": "^1.0.16",
 		"@coursebuilder/ui": "^2.5.0",

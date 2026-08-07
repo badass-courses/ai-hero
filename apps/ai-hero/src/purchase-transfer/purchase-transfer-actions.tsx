@@ -11,6 +11,7 @@ import {
 	purchaseUserTransfer as purchaseUserTransferTable,
 } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 import { Theme } from '@auth/core/types'
 import { render } from '@react-email/render'
@@ -267,7 +268,7 @@ const initiateTransfer = async ({
 	toEmail: string
 	nextAuthOptions?: NextAuthConfig
 }) => {
-	const { user: toUser } = await courseBuilderAdapter.findOrCreateUser(
+	const { user: toUser } = await findOrCreateUserWithPersonalOrg(
 		toEmail.toLowerCase(),
 	)
 	const purchaseUserTransfer =

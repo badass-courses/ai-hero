@@ -19,7 +19,6 @@ import {
 import { EntitlementSourceType } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import type { WorkshopAvailability } from '@/lib/get-workshop-availability'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
 import { log } from '@/server/logger'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
@@ -30,6 +29,7 @@ import {
 	ContentResourceSchema,
 	type ContentResource,
 } from '@coursebuilder/core/schemas'
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 
@@ -670,8 +670,14 @@ export const postPurchaseWorkflow = inngest.createFunction(
 							}
 						} else {
 							// No organizationId on purchase - ensure user has personal org
+							const personalOrganizations = createPersonalOrganizationService({
+								organizations: adapter,
+								logger: log,
+							})
 							const personalOrgResult =
-								await ensurePersonalOrganizationWithLearnerRole(user, adapter)
+								await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
+									user,
+								)
 
 							return {
 								organizationId: personalOrgResult.organization.id,

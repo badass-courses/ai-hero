@@ -11,6 +11,9 @@ import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
 import { createAuthJsAdapter } from '@/server/auth-js-adapter'
+import { personalOrganizations } from '@/server/personal-organizations'
+import { handleUserCreatedBoundary } from '@/server/user-provisioning'
+import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
 import { log, serializeError } from '@/server/logger'
 import {
 	assertOAuthLinkAccountEventUnreachableDuringContainment,
@@ -241,7 +244,24 @@ export const authOptions: NextAuthConfig = {
 	},
 	events: {
 		createUser: async ({ user }) => {
-			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
+			if (!user.id || !user.email) {
+				throw new Error('Persisted user identity requires an id and email')
+			}
+
+			await handleUserCreatedBoundary(
+				{ id: user.id, email: user.email },
+				{
+					publishUserCreated: () =>
+						inngest.send({ name: USER_CREATED_EVENT, user, data: {} }),
+					provisionPersonalOrganization: (persistedUser) =>
+						personalOrganizations.ensurePersonalOrganization(persistedUser),
+					enqueueProvisioningRepair: (userId) =>
+						inngest.send({
+							name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
+							data: { userId, createIfMissing: true },
+						}),
+				},
+			)
 		},
 		linkAccount: assertOAuthLinkAccountEventUnreachableDuringContainment,
 		signIn: postSignInInvitationHandler,
