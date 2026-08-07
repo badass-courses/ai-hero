@@ -28,7 +28,10 @@ import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
-import { rehypeInternalLinks } from '@/utils/rehype-internal-links'
+import {
+	isInternalPath,
+	rehypeInternalLinks,
+} from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
@@ -228,9 +231,8 @@ export function escapeMdxUnsafe(source: string): string {
  * `next/link`; external ones — and bare `#anchor` jumps, which `Link` would
  * route through the router for nothing — stay plain anchors.
  *
- * By the time this runs, `rehypeInternalLinks` has already turned our own
- * absolute URLs into root-relative paths, so "starts with `/`" is the whole
- * test for "internal".
+ * `isInternalPath` owns the "is this ours" test — see it for why a leading
+ * slash alone is not enough.
  */
 function MdxAnchor({
 	children,
@@ -238,7 +240,7 @@ function MdxAnchor({
 	title,
 	...props
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-	if (typeof href === 'string' && href.startsWith('/')) {
+	if (typeof href === 'string' && isInternalPath(href)) {
 		return (
 			<Link
 				href={href}

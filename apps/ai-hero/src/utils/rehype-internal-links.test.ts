@@ -6,7 +6,11 @@ import rehypeExternalLinks from 'rehype-external-links'
 import remarkGfm from 'remark-gfm'
 import { describe, expect, it } from 'vitest'
 
-import { rehypeInternalLinks, toInternalHref } from './rehype-internal-links'
+import {
+	isInternalPath,
+	rehypeInternalLinks,
+	toInternalHref,
+} from './rehype-internal-links'
 
 // Mirrors the real pipeline's ordering: internal-link rewriting must run
 // first, or `rehype-external-links` stamps our own links `target="_blank"`.
@@ -58,6 +62,26 @@ describe('toInternalHref', () => {
 		expect(toInternalHref('/skills')).toBeNull()
 		expect(toInternalHref('#install')).toBeNull()
 		expect(toInternalHref('mailto:matt@aihero.dev')).toBeNull()
+	})
+})
+
+describe('isInternalPath', () => {
+	it('accepts root-relative routes', () => {
+		expect(isInternalPath('/skills-grill-me')).toBe(true)
+		expect(isInternalPath('/skills?a=1#install')).toBe(true)
+	})
+
+	it('rejects protocol-relative URLs', () => {
+		// External, despite the leading slash: handing this to `Link` would
+		// collapse the slashes and route to `/example.com/docs`.
+		expect(isInternalPath('//example.com/docs')).toBe(false)
+		expect(isInternalPath('///example.com/docs')).toBe(false)
+	})
+
+	it('rejects anything that is not a path', () => {
+		expect(isInternalPath('https://example.com/docs')).toBe(false)
+		expect(isInternalPath('#install')).toBe(false)
+		expect(isInternalPath('mailto:matt@aihero.dev')).toBe(false)
 	})
 })
 

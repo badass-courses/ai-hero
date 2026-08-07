@@ -40,6 +40,19 @@ export function toInternalHref(href: string): string | null {
 	return `${url.pathname}${url.search}${url.hash}`
 }
 
+/**
+ * Whether an href names a route on this site, and so should navigate through
+ * `next/link` rather than a plain anchor. By the time this is asked, the rehype
+ * pass above has already made our own absolute URLs root-relative.
+ *
+ * `//example.com/docs` is protocol-relative — an EXTERNAL address that merely
+ * begins with a slash. Handing it to `Link` would collapse the double slash and
+ * route to a nonexistent `/example.com/docs`, so it stays a plain anchor.
+ */
+export function isInternalPath(href: string): boolean {
+	return href.startsWith('/') && !href.startsWith('//')
+}
+
 type TreeNode = {
 	type: string
 	tagName?: string
