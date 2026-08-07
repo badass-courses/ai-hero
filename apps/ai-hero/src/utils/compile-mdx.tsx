@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { cache } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { unstable_rethrow } from 'next/navigation'
 import { SkillsCta } from '@/app/(content)/skills/_components/skills-cta'
 import { SkillsNewsletterCta } from '@/app/(content)/skills/_components/skills-newsletter-cta'
@@ -27,6 +28,10 @@ import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
 import { rehypeAutoTableWrap } from '@/utils/rehype-auto-table-wrap'
+import {
+	isInternalPath,
+	rehypeInternalLinks,
+} from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
@@ -222,10 +227,55 @@ export function escapeMdxUnsafe(source: string): string {
 }
 
 /**
+ * Body-copy anchor. Internal destinations navigate client-side through
+ * `next/link`; external ones — and bare `#anchor` jumps, which `Link` would
+ * route through the router for nothing — stay plain anchors.
+ *
+ * `isInternalPath` owns the "is this ours" test — see it for why a leading
+ * slash alone is not enough.
+ */
+function MdxAnchor({
+	children,
+	href,
+	title,
+	...props
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+	if (typeof href === 'string' && isInternalPath(href)) {
+		return (
+			<Link
+				href={href}
+				title={title}
+				{...props}
+				className={cn('ah-prose-a', props.className)}
+			>
+				{children}
+			</Link>
+		)
+	}
+
+	return (
+		<a
+			href={href}
+			title={title}
+			{...props}
+			className={cn('ah-prose-a', props.className)}
+		>
+			{children}
+		</a>
+	)
+}
+
+/**
  * Degraded render path: escape MDX-hostile tokens and compile the result with a
  * minimal markdown pipeline (no CodeHike/Mermaid/components). Used only when the
  * full MDX compile throws, so non-MDX content (github-sourced docs) still
  * renders readably instead of showing an error box.
+ *
+ * `a` is the one component this path carries. It is exactly the kind of content
+ * that reaches here — a github-sourced SKILL.md, which is where the internal
+ * links live — so plain `<a>` would cost a full document load on the very
+ * articles this change is about. Unlike a minted `TableWrapper`, an anchor
+ * override resolves against markdown the compiler already produces.
  */
 async function compilePlainMarkdownFallback(
 	source: string,
@@ -233,12 +283,13 @@ async function compilePlainMarkdownFallback(
 ) {
 	return _compileMDX({
 		source: escapeMdxUnsafe(sanitizeMdxSource(source)),
-		components: {},
+		components: { a: MdxAnchor },
 		options: {
 			...options,
 			mdxOptions: {
 				remarkPlugins: [remarkGfm],
 				rehypePlugins: [
+					rehypeInternalLinks,
 					[
 						rehypeExternalLinks,
 						{ target: '_blank', rel: ['noopener', 'noreferrer'] },
@@ -532,14 +583,9 @@ async function compileMDXInternal(
 						}
 
 						return (
-							<a
-								href={href}
-								title={title}
-								{...props}
-								className={cn('ah-prose-a', props.className)}
-							>
+							<MdxAnchor href={href} title={title} {...props}>
 								{children}
-							</a>
+							</MdxAnchor>
 						)
 					},
 					img: (props) => <MdxImage {...props} />,
@@ -613,6 +659,9 @@ async function compileMDXInternal(
 							[remarkCodeHike, { components: { code: 'Code' } }],
 						],
 						rehypePlugins: [
+							// Before `rehypeExternalLinks`: an `https://aihero.dev/...`
+							// link is ours, and must not be stamped `target="_blank"`.
+							rehypeInternalLinks,
 							[
 								rehypeExternalLinks,
 								{ target: '_blank', rel: ['noopener', 'noreferrer'] },
