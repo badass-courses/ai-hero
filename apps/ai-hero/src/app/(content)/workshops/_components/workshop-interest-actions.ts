@@ -1,9 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
-import { env } from '@/env.mjs'
-import { getSubscriberFromCookie, setSubscriberCookie } from '@/lib/convertkit'
+import {
+	WORKSHOP_INTEREST_REQUESTED_EVENT,
+	type WorkshopInterestRequested,
+} from '@/inngest/events/workshop-interest'
+import { inngest } from '@/inngest/inngest.server'
+import { setSubscriberCookie } from '@/lib/convertkit'
 import {
 	conversionIntentContract,
 	withConfirmedConversionFields,
@@ -14,42 +17,12 @@ import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
-import {
-	workshopInterestFieldKey,
-	workshopInterestTagName,
-} from './workshop-interest-config'
+import { workshopInterestFieldKey } from './workshop-interest-config'
 
 /**
- * Apply the per-workshop Kit tag (interest_<slug>) to a subscriber by email.
- * The tag drives Kit automations/segmentation; the custom field keeps the date
- * value. Best-effort: failures are logged but never thrown, so tagging can't
- * break the field write / signup the visitor just completed.
- */
-async function applyWorkshopInterestTag({
-	email,
-	workshopSlug,
-}: {
-	email: string
-	workshopSlug: string
-}) {
-	const tagName = workshopInterestTagName(workshopSlug)
-	try {
-		// The provider resolves the tag name to an id (creating the tag on first
-		// use) and applies it. tagSubscriber is optional on the interface, but the
-		// ConvertKit provider always defines it.
-		await emailListProvider.tagSubscriber?.({ tag: tagName, email })
-	} catch (error) {
-		await log.error('workshop.interest.tag.failed', {
-			workshopSlug,
-			tagName,
-			error: error instanceof Error ? error.message : String(error),
-		})
-	}
-}
-
-/**
- * One-click interest for visitors already on the list: set the per-workshop
- * custom field (today's date) and apply the interest_<slug> tag.
+ * One-click interest for identified visitors: persist the intent in Inngest,
+ * project it into the subscriber cookie, and return before Kit is touched.
+ * The worker writes the dated field and matching interest_<slug> tag.
  *
  * New visitors go through the intent-aware ConvertKit form, which writes the
  * same field and applies the same derived tag through the shared finalizer.
@@ -78,59 +51,29 @@ export async function addWorkshopInterest(
 		return { success: false, reason: 'not-subscribed' as const }
 	}
 
+	const expressedAt = new Date()
 	const fieldKey = workshopInterestFieldKey(workshopSlug)
 	const contract = conversionIntentContract({
 		intent: { kind: 'workshop-interest', workshopSlug },
 		surface,
+		now: expressedAt,
 	})
 
-	try {
-		// The field write and the tag apply are independent; run them concurrently
-		// so the user's one-click isn't stuck behind two serial CK pipelines.
-		// applyWorkshopInterestTag is best-effort (never throws), so Promise.all
-		// can't reject on a tag failure.
-		const [updated] = await Promise.all([
-			emailListProvider.subscribeToList({
-				listId: env.CONVERTKIT_SIGNUP_FORM,
-				listType: 'form',
-				user: {
-					email: identity.email,
-					name: identity.name,
-				} as any,
-				fields: contract.fields,
-			}),
-			applyWorkshopInterestTag({
-				email: identity.email,
-				workshopSlug,
-			}),
-		])
-
-		if (!updated && !subscriber) {
-			throw new Error('Kit did not return a subscriber')
-		}
-
-		const subscribed = SubscriberSchema.parse(
-			withConfirmedConversionFields(updated ?? subscriber!, contract.fields),
-		)
-		await setSubscriberCookie(subscribed)
-
-		await log.info('workshop.interest.success', {
+	const event: WorkshopInterestRequested = {
+		name: WORKSHOP_INTEREST_REQUESTED_EVENT,
+		data: {
+			email: identity.email,
+			name: identity.name,
 			workshopSlug,
-			subscriberId: subscribed.id,
+			surface,
+			expressedAt: expressedAt.toISOString(),
 			via: identity.via,
-			fieldKey,
-		})
+			subscriberId: subscriber?.id,
+		},
+	}
 
-		revalidatePath(`/workshops/${workshopSlug}`)
-
-		const gate = createSubscriberGateSnapshot(subscribed)
-		return {
-			success: true as const,
-			gate: {
-				state: gate.state,
-				fields: gate.fields,
-			},
-		}
+	try {
+		await inngest.send(event)
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		await log.error('workshop.interest.failed', {
@@ -138,8 +81,56 @@ export async function addWorkshopInterest(
 			subscriberId: subscriber?.id,
 			via: identity.via,
 			fieldKey,
+			phase: 'enqueue',
 			error: message,
 		})
 		return { success: false, reason: 'request-failed' as const }
+	}
+
+	const subscribed = subscriber
+		? SubscriberSchema.parse(
+				withConfirmedConversionFields(subscriber, contract.fields),
+			)
+		: null
+
+	if (subscribed) {
+		try {
+			await setSubscriberCookie(subscribed)
+		} catch (error) {
+			await log.error('workshop.interest.cookie.failed', {
+				workshopSlug,
+				subscriberId: subscribed.id,
+				via: identity.via,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
+	}
+
+	await log.info('workshop.interest.deferred', {
+		workshopSlug,
+		subscriberId: subscribed?.id,
+		via: identity.via,
+		fieldKey,
+		intentKey: contract.key,
+	})
+
+	try {
+		revalidatePath(`/workshops/${workshopSlug}`)
+	} catch (error) {
+		await log.error('workshop.interest.revalidate.failed', {
+			workshopSlug,
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
+
+	const gate = subscribed
+		? createSubscriberGateSnapshot(subscribed)
+		: { state: null, fields: contract.fields }
+	return {
+		success: true as const,
+		gate: {
+			state: gate.state,
+			fields: gate.fields,
+		},
 	}
 }

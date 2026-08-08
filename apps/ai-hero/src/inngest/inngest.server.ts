@@ -66,6 +66,10 @@ import {
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import {
+	WORKSHOP_INTEREST_REQUESTED_EVENT,
+	type WorkshopInterestRequested,
+} from '@/inngest/events/workshop-interest'
+import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
 } from '@/inngest/events/typesense-popularity'
@@ -216,6 +220,7 @@ export type Events = {
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
 	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
+	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested
 	[SLACK_ARTWORK_REGENERATE_REQUESTED_EVENT]: SlackArtworkRegenerateRequested

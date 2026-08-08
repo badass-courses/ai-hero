@@ -294,7 +294,7 @@ describe('learner flow induced-failure drill', () => {
 		expect(repository.contacts.size).toBe(0)
 	})
 
-	it('parses only post-induction reconciler receipts and current Pulse evidence', () => {
+	it('parses post-induction repair and executor receipts with Pulse evidence', () => {
 		const axiom = parseLearnerFlowDrillAxiomOutput(
 			JSON.stringify({
 				matches: [
@@ -306,15 +306,15 @@ describe('learner flow induced-failure drill', () => {
 						_time: '2026-07-18T01:30:00.000Z',
 						data: {
 							payload: {
-								loop: 'reconciler',
-								planned: 0,
-								starved: 3,
+								loop: 'repair',
+								receiptVersion: 2,
+								counts: { intentsCreated: 3 },
 							},
 						},
 					},
 					{
 						_time: '2026-07-18T01:31:00.000Z',
-						payload: { loop: 'executor' },
+						payload: { loop: 'executor', counts: { completed: 3 } },
 					},
 				],
 			}),
@@ -323,7 +323,15 @@ describe('learner flow induced-failure drill', () => {
 		expect(axiom).toEqual([
 			{
 				observedAt: '2026-07-18T01:30:00.000Z',
-				payload: { loop: 'reconciler', planned: 0, starved: 3 },
+				payload: {
+					loop: 'repair',
+					receiptVersion: 2,
+					counts: { intentsCreated: 3 },
+				},
+			},
+			{
+				observedAt: '2026-07-18T01:31:00.000Z',
+				payload: { loop: 'executor', counts: { completed: 3 } },
 			},
 		])
 
@@ -384,9 +392,18 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T02:00:10.000Z',
 						payload: {
-							repairedCompletionFacts: 3,
-							created: 3,
-							served: 3,
+							loop: 'repair',
+							counts: {
+								completionFactsRepaired: 3,
+								intentsCreated: 3,
+							},
+						},
+					},
+					{
+						observedAt: '2026-07-18T02:00:20.000Z',
+						payload: {
+							loop: 'executor',
+							counts: { completed: 3 },
 						},
 					},
 				],
@@ -396,10 +413,8 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T03:00:10.000Z',
 						payload: {
-							zeroPlanWhileStarved: false,
-							planned: 9,
-							served: 9,
-							suppressedFixtureStarved: 3,
+							loop: 'repair',
+							counts: { intentsCreated: 9 },
 						},
 					},
 				],
@@ -424,9 +439,8 @@ describe('learner flow induced-failure drill', () => {
 				].map((observedAt) => ({
 					observedAt,
 					payload: {
-						planned: 9,
-						served: 9,
-						suppressedFixtureStarved: 3,
+						loop: 'repair',
+						counts: { intentsCreated: 9 },
 					},
 				})),
 				pulse: {
@@ -446,8 +460,15 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T09:00:10.000Z',
 						payload: {
-							suppressedFixtureStarved: 0,
-							served: 3,
+							loop: 'repair',
+							counts: { intentsCreated: 3 },
+						},
+					},
+					{
+						observedAt: '2026-07-18T09:00:20.000Z',
+						payload: {
+							loop: 'executor',
+							counts: { completed: 3 },
 						},
 					},
 				],
@@ -542,13 +563,15 @@ describe('learner flow induced-failure drill', () => {
 				ports: {
 					repository,
 					observe: async () => ({
-						runs: [
-							{
-								observedAt: '2026-07-18T02:06:00.000Z',
-								payload: {
-									repairedCompletionFacts: 3,
-									created: 3,
-									served: 3,
+							runs: [
+								{
+									observedAt: '2026-07-18T02:06:00.000Z',
+									payload: {
+										loop: 'repair',
+										counts: {
+											completionFactsRepaired: 3,
+											intentsCreated: 3,
+										},
 								},
 							},
 						],

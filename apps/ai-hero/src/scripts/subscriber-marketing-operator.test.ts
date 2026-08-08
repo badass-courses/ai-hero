@@ -25,16 +25,15 @@ describe('subscriber marketing operator reliability contracts', () => {
 		expect(gateStatus).toContain('byContact')
 	})
 
-	it('runs retry intents through the no-write executor during unstick preview', () => {
+	it('keeps retry sends out of the broad learner-flow unstick command', () => {
 		const unstick = functionSource(
 			'buildLearnerFlowUnstick',
 			'buildValuePathGateDPreview',
 		)
-		expect(unstick).toContain('allowlist && retryableIntentIds.length > 0')
+		expect(unstick).not.toContain('retryIntentIds')
+		expect(unstick).not.toContain('retryableIntentIds')
+		expect(unstick).not.toContain('executePendingValuePathEmailIntents')
 		expect(unstick).toContain('allowWrite: args.allowWrite')
-		expect(unstick).toContain("result.status === 'planned'")
-		expect(unstick).not.toContain(
-			'args.allowWrite && allowlist && retryableIntentIds.length > 0',
-		)
+		expect(source).toContain("command === 'value-path-email-executor'")
 	})
 })

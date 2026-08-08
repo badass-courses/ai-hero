@@ -18,6 +18,8 @@ import {
 	resolveGateDPreAuthorizedReviewReasons,
 } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
 
+import { parseValuePathProviderPacingMs } from './value-path-provider-pacing'
+
 export const valuePathEmailExecutor = inngest.createFunction(
 	{
 		id: 'value-path-email-executor',
@@ -61,6 +63,11 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			verifiedKitSequenceIds: runtimeAllowlist.kitSequenceIds,
 			allowedActions: runtimeAllowlist?.allowedActions,
 			retryPolicy: runtimeAllowlist?.retryPolicy,
+			// This cron is the single sender. Keep Kit writes ten seconds apart by
+			// default so a backlog drain cannot recreate the provider-rate-limit spike.
+			providerPacingMs: parseValuePathProviderPacingMs(
+				process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
+			),
 			email7LiveEnabled: parseEmail7LiveEnabled(
 				process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
 			),
@@ -95,14 +102,35 @@ export const valuePathEmailExecutor = inngest.createFunction(
 				(result) => result.status === 'retryable-failed',
 			).length,
 			skipped: results.filter((result) => result.status === 'skipped').length,
-			emailZeroCompleted: results.filter(
-				(result) =>
-					result.status === 'completed' && result.kitSequenceId === '2757199',
-			).length,
 		}
-		await log[counts.failed > 0 || counts.retryableFailed > 0 ? 'warn' : 'info'](
-			'subscriber_funnel.email_executor_run_completed',
-			{ funnel: 'skills-newsletter', ...counts },
+		const failureReasons = Array.from(
+			new Set(
+				results.flatMap((result) =>
+					'reviewReasons' in result ? result.reviewReasons : [],
+				),
+			),
+		)
+		const receipt = {
+			event: 'subscriber_funnel.email_executor_run_completed' as const,
+			receiptVersion: 2 as const,
+			funnel: 'skills-newsletter' as const,
+			loop: 'executor' as const,
+			status:
+				counts.failed > 0 ||
+				counts.retryableFailed > 0 ||
+				counts.blocked > 0
+					? ('degraded' as const)
+					: ('ok' as const),
+			workSeen: counts.processed,
+			workDone: counts.completed,
+			oldestUnservedAt: null,
+			oldestUnservedAgeHours: null,
+			counts,
+			failureReasons,
+		}
+		await log[receipt.status === 'degraded' ? 'warn' : 'info'](
+			receipt.event,
+			receipt,
 		)
 		return results
 	},

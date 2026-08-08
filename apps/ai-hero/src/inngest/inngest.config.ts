@@ -61,6 +61,7 @@ import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
+import { workshopInterestSync } from './functions/workshop-interest-sync'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
@@ -131,6 +132,7 @@ export const inngestConfig = {
 		syncGithubSourcedPosts,
 		skillChangelogBroadcast,
 		skillsNewsletterPathEntry,
+		workshopInterestSync,
 		skillsNewsletterConfirmationReconciler,
 		notifyOnPostCreated,
 		generateArtwork,
