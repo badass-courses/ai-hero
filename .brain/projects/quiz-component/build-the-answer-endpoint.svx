@@ -87,9 +87,12 @@ What the endpoint has to get right:
   `ck_subscriber_id` cookie IS the subscriber id, so `emailListSubscriberId` is
   set straight from the cookie. Accepted loss: the
   `subscriber.email_address` → `users.findFirst` inference that mapped a
-  logged-out Kit subscriber to a `userId`. `respondentKey` still ties that
-  learner's answers together and `userId` fills in on real login. No replacement
-  lookup, no external calls on the answer path.
+  logged-out Kit subscriber to a `userId`. ~~`respondentKey` still ties that
+  learner's answers together and `userId` fills in on real login.~~
+  **Superseded 2026-07-25 by gate-the-saving:** logged-out answers are not stored,
+  so there is no anonymous identity continuity; every saved row has a `userId`
+  and a `respondentKey` derived from it. No replacement lookup, no external calls
+  on the answer path.
 - **Do not mirror to Kit.** Surveys write answers into Kit subscriber fields
   (`convertkit.ts:157-180`, `surveys-query.ts:587-619`). Whether quizzes should is
   an open latent question on the brief, not a decision for this step. Default to

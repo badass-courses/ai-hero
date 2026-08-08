@@ -71,8 +71,14 @@ sync_question_<sha256(bindingId:question:authoredId).slice(0,24)>
 ```
 
 and stores the authored id at `fields.courseSync.sourceQuestionId` on that
-resource. The endpoint resolves authored id → resource through the lesson join,
-so the same authored id in two different lessons cannot collide.
+resource. The authored id must be unique across every lesson in the same
+course-sync binding: the resource id has no lesson component, and manifest
+validation rejects cross-lesson reuse with `DUPLICATE_QUIZ_QUESTION_ID` before
+sync stages anything. Two lessons therefore never attach or overwrite the same
+question resource; the whole sync fails instead. The endpoint's lesson join
+only verifies that the resolved question is attached to the submitted lesson.
+It does not make authored ids lesson-scoped. Do not reuse an authored question
+id anywhere else in the same course binding.
 
 **The trap:** rewording a question is safe — same `id`, same resource, history
 intact. **Changing the `id` silently forks history.** Sync mints a new resource,

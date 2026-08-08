@@ -83,6 +83,10 @@ export function gradeAnswer(
 }
 ```
 
+> **Correction (2026-08-08):** This snippet predates the review fix. The shipped
+> [`gradeAnswer`](../../../apps/ai-hero/src/lib/quiz/grade-answer.ts) normalizes
+> both arguments to arrays, so `gradeAnswer('a', ['a'])` returns `true`.
+
 The length comparison is the whole fix — it is exactly what
 `packages/survey/src/survey-machine.ts:160-174` omits.
 
