@@ -6,6 +6,7 @@ import {
 	createProductBindings,
 	ProductEditorSchema,
 } from '@/lib/cms/product-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 
 import type { Product } from '@coursebuilder/core/schemas'
 import {
@@ -103,6 +104,8 @@ export function EditProductClient({
 		return createResourceEditor({
 			manifest: {
 				...productManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(productManifest.media),
 				schema: ProductEditorSchema,
 				tabs: tabsWithEffects,
 			},

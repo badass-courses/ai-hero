@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { CmsLessonSolutionsField } from '@/app/(content)/workshops/_components/cms-lesson-solutions-field'
 import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createLessonBindings } from '@/lib/cms/lesson-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { LessonSchema, type Lesson } from '@/lib/lessons'
 import { updateLesson } from '@/lib/lessons-query'
 import type { Tag } from '@/lib/tags'
@@ -71,6 +72,8 @@ export function EditLessonClient({
 		return createResourceEditor({
 			manifest: {
 				...lessonManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(lessonManifest.media),
 				schema: LessonSchema,
 				tabs: lessonManifest.tabs.map((tab) =>
 					tab.label === 'Content'

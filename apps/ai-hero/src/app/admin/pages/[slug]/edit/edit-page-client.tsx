@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createPageBindings } from '@/lib/cms/page-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { PageSchema, type Page } from '@/lib/pages'
 
 import { createResourceEditor, pageManifest } from '@coursebuilder/ui/cms'
@@ -31,6 +32,8 @@ export function EditPageClient({
 		return createResourceEditor({
 			manifest: {
 				...pageManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(pageManifest.media),
 				schema: PageSchema,
 				// Legacy defaultValues parity (edit-pages-form.tsx): coerce
 				// description/slug to '' so inputs stay controlled. socialImage is
