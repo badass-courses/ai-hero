@@ -53,6 +53,13 @@ create. The agent-facing contract Matt authors against is published at
 | `correct`  | yes             | String or array of strings. Each must match a choice `answer`. Array = multi-select, graded exact-set, no partial credit. |
 | `answer`   | yes             | The explanation shown after submitting.                                                                                   |
 
+Two optional controls also pass through (defined on the package's
+`QuestionResourceSchema`): `allowMultiple: true` forces the checkbox
+multi-select UI even when `correct` is a single string (grading stays
+exact-set), and `shuffleChoices: false` preserves the authored choice order
+(`quiz-question-client.tsx` renders `data.choices` directly instead of the
+machine's shuffled copy).
+
 Validation failures render an error card in place of the question and log
 `quiz.authoring.invalid-question-data`. A missing `id` or a duplicated `id`
 within one `Quiz` renders with an "answers will not be saved" warning and logs
@@ -66,7 +73,7 @@ not run it.
 The authored `id` is the durable identity of a question. Sync mints the content
 resource id deterministically (`control-plane.ts`):
 
-```
+```text
 sync_question_<sha256(bindingId:question:authoredId).slice(0,24)>
 ```
 
@@ -153,7 +160,7 @@ Every stage logs under `quiz.answer.*`: `received` → `resolved` → `graded` �
 Authoring problems log under `quiz.authoring.*`. Each mutation carries an
 `answerAttemptId` (also returned to the client). Trace one answer end to end:
 
-```
+```bash
 joelclaw otel search '<answerAttemptId>' -h 1 -n 50
 ```
 
@@ -172,7 +179,8 @@ the same two-step pattern.
 - **Setting `correct` shuffles the choices.** `@coursebuilder/survey`'s
   `loadQuestion` shuffles whenever `correct` is present
   (`survey-machine.ts`, `shuffle(question.choices)`). Do not author choices
-  whose labels depend on order ("both A and B").
+  whose labels depend on order ("both A and B") — or set
+  `shuffleChoices: false` to keep the authored order.
 - **The package's multi-select guard has a subset bug** — it accepts a proper
   subset of the correct answers as correct (no length check in
   `answeredCorrectly`). AI Hero does not hit it: `quizMachine`
