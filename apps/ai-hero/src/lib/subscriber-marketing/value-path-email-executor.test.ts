@@ -48,6 +48,102 @@ describe('value path email executor', () => {
 		})
 	})
 
+	it('discovers a reconciler-created pending intent through the unscoped scan', async () => {
+		const pending = valuePathIntent()
+		const findPendingValuePathEmailSideEffectIntents = vi
+			.fn()
+			.mockResolvedValue([pending])
+		const result = await executePendingValuePathEmailIntents({
+			repository: {
+				findPendingValuePathEmailSideEffectIntents,
+				findContactById: vi.fn().mockResolvedValue({
+					id: 'contact-1',
+					email: 'learner@example.com',
+				}),
+				findCurrentContactState: vi.fn().mockResolvedValue({
+					id: 'state-1',
+					contactId: 'contact-1',
+					lifecycle: 'nurture-ready',
+					reviewSignals: [],
+					humanReview: false,
+				}),
+				updateSideEffectIntent: vi.fn(),
+			},
+			emailListProvider: { subscribeToList: vi.fn() },
+			config: {
+				allowWrite: false,
+				mode: 'scoped-live',
+				allowlistedContactIds: ['contact-1'],
+				allowlistedKitSubscriberIds: ['kit-1'],
+				allowlistedEmails: ['learner@example.com'],
+				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+				verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+				verifiedKitSequenceIds: ['2757205'],
+				allowedActions: ['send-path-emails'],
+			},
+		})
+		expect(findPendingValuePathEmailSideEffectIntents).toHaveBeenCalledWith({
+			limit: 25,
+			intentIds: undefined,
+		})
+		expect(result).toMatchObject([{ status: 'planned', intentId: 'intent-1' }])
+	})
+
+	it('paces only between queued intents', async () => {
+		vi.useFakeTimers()
+		try {
+			const repository = {
+				findPendingValuePathEmailSideEffectIntents: vi
+					.fn()
+					.mockResolvedValue([
+						valuePathIntent({ id: 'intent-1' }),
+						valuePathIntent({ id: 'intent-2' }),
+					]),
+				findContactById: vi.fn().mockResolvedValue({
+					id: 'contact-1',
+					email: 'learner@example.com',
+				}),
+				findCurrentContactState: vi.fn().mockResolvedValue({
+					id: 'state-1',
+					contactId: 'contact-1',
+					lifecycle: 'nurture-ready',
+					reviewSignals: [],
+					humanReview: false,
+				}),
+				updateSideEffectIntent: vi.fn(),
+			}
+			let settled = false
+			const execution = executePendingValuePathEmailIntents({
+				repository,
+				emailListProvider: { subscribeToList: vi.fn() },
+				config: {
+					allowWrite: false,
+					providerPacingMs: 10_000,
+					mode: 'scoped-live',
+					allowlistedContactIds: ['contact-1'],
+					allowlistedKitSubscriberIds: ['kit-1'],
+					allowlistedEmails: ['learner@example.com'],
+					enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+					verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+					verifiedKitSequenceIds: ['2757205'],
+					allowedActions: ['send-path-emails'],
+				},
+			}).then((results) => {
+				settled = true
+				return results
+			})
+
+			await vi.advanceTimersByTimeAsync(0)
+			expect(settled).toBe(false)
+			await vi.advanceTimersByTimeAsync(9_999)
+			expect(settled).toBe(false)
+			await vi.advanceTimersByTimeAsync(1)
+			await expect(execution).resolves.toHaveLength(2)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
 	it('runs the real retry planner in no-write mode without touching Kit or the intent', async () => {
 		const intent = {
 			id: 'retry-intent-1',

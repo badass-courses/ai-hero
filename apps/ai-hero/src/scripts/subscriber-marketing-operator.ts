@@ -1164,9 +1164,6 @@ async function buildLearnerFlowUnstick(args: {
 	const blockedIntentIds = blockedItems.flatMap((item) =>
 		item.intentId ? [item.intentId] : [],
 	)
-	const retryIntentIds = partition.tier1
-		.filter((item) => item.action === 'retry-transient-failure')
-		.flatMap((item) => (item.intentId ? [item.intentId] : []))
 	const dripItems = partition.tier1.filter(
 		(item) => item.action === 'nudge-drip-progression' && item.intentId,
 	)
@@ -1201,7 +1198,7 @@ async function buildLearnerFlowUnstick(args: {
 				now: generatedAt,
 			}),
 	)
-	const requiresGateD = retryIntentIds.length > 0 || dripContactIds.length > 0
+	const requiresGateD = dripContactIds.length > 0
 	// Reading the active authorization is safe and required for an honest
 	// dry-run. The old allow-write guard made every drip recovery preview report
 	// planned: 0 without actually invoking the planner.
@@ -1216,37 +1213,6 @@ async function buildLearnerFlowUnstick(args: {
 			now: generatedAt,
 		})
 		: undefined
-	const retryLimit = allowlist?.maxSendsPerRun ?? 25
-	const retryableIntentIds = retryIntentIds.slice(0, retryLimit)
-	const retryResults =
-		allowlist && retryableIntentIds.length > 0
-			? await executePendingValuePathEmailIntents({
-				repository,
-				emailListProvider: (await import('@/coursebuilder/email-list-provider'))
-					.emailListProvider,
-				now: generatedAt,
-				config: {
-					mode: allowlist.mode,
-					limit: retryableIntentIds.length,
-					allowWrite: args.allowWrite,
-					intentIds: retryableIntentIds,
-					baseUrl:
-						process.env.NEXT_PUBLIC_URL ??
-						process.env.NEXT_PUBLIC_SITE_URL ??
-						'https://www.aihero.dev',
-					pathTokenSecret: process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
-					answerPages: await getValuePathAnswerPages(),
-					allowlistedContactIds: allowlist.contactIds,
-					allowlistedKitSubscriberIds: allowlist.kitSubscriberIds,
-					allowlistedEmails: allowlist.emails,
-					enabledValuePathSlugs: allowlist.pathSlugs,
-					verifiedEmailResourceIds: allowlist.emailResourceIds,
-					verifiedKitSequenceIds: allowlist.kitSequenceIds,
-					allowedActions: allowlist.allowedActions,
-					retryPolicy: allowlist.retryPolicy,
-				},
-			})
-			: []
 	const completedIntents = (
 		await Promise.all(
 			dripContactIds.map((contactId) =>
@@ -1308,11 +1274,9 @@ async function buildLearnerFlowUnstick(args: {
 		writes: {
 			database: Boolean(
 				args.allowWrite &&
-					(replan?.counts.replanned ||
-						retryResults.length ||
-						(drip?.counts.planned ?? 0) > 0),
+					(replan?.counts.replanned || (drip?.counts.planned ?? 0) > 0),
 			),
-			provider: Boolean(args.allowWrite && (retryResults.length || signupGapReplay)),
+			provider: Boolean(args.allowWrite && signupGapReplay),
 		},
 		counts: stuckList.counts,
 		causeCounts: stuckList.causeCounts,
@@ -1320,24 +1284,6 @@ async function buildLearnerFlowUnstick(args: {
 			tier1: {
 				stuckItems: partition.tier1.length,
 				replan: replan?.counts ?? { contacts: 0, blockedIntentsFound: 0, replanned: 0, wouldReplan: 0 },
-				retry: {
-					eligible: retryIntentIds.length,
-					previewed: args.allowWrite ? 0 : retryResults.length,
-					planned: retryResults.filter((result) => result.status === 'planned')
-						.length,
-					executed: args.allowWrite ? retryResults.length : 0,
-					completed: retryResults.filter(
-						(result) => result.status === 'completed',
-					).length,
-					deferred: retryIntentIds.length - retryableIntentIds.length,
-					results: retryResults.map((result) => ({
-						intentId: result.intentId,
-						status: result.status,
-						...('reviewReasons' in result
-							? { reviewReasons: result.reviewReasons }
-							: {}),
-					})),
-				},
 				drip: {
 					contactCount: dripContactIds.length,
 					uniqueContactCount: new Set(dripContactIds).size,
@@ -1383,7 +1329,7 @@ function formatLearnerFlowUnstick(
 		`Learner flow unstick (${result.allowWrite ? 'allow-write' : 'dry-run'})`,
 		`Generated: ${result.generatedAt}`,
 		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
-		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-previewed=${result.tiers.tier1.retry.previewed} retry-planned=${result.tiers.tier1.retry.planned} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
+		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
 		`Tier 2 ask Joel: ${result.tiers.tier2.ask.length}`,
 	]
 	for (const item of result.tiers.tier2.ask) {
@@ -3102,7 +3048,8 @@ async function queryLearnerFlowDrillReconcilerRuns(since: string) {
 	const apl = [
 		"['vercel']",
 		"| where ['vercel.projectName'] == 'ai-hero'",
-		"  and tostring(['message']) contains '\"event\":\"subscriber_funnel.drip_run_completed\"'",
+		"  and (tostring(['message']) contains '\"event\":\"subscriber_funnel.drip_run_completed\"'",
+		"    or tostring(['message']) contains '\"event\":\"subscriber_funnel.email_executor_run_completed\"')",
 		"| extend payload = parse_json(tostring(['message']))",
 		'| project _time, payload',
 		'| sort by _time asc',

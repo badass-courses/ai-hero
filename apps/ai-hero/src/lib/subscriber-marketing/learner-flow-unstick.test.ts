@@ -36,20 +36,22 @@ describe("learner flow unstick action envelope", () => {
         cause: "blocked-intent",
       },
       {
-        contactId: "retry",
-        stage: "email-2",
-        cause: "retryable-failed-overdue",
+		contactId: "exhausted",
+		stage: "email-2",
+		cause: "provider-retries-exhausted",
       },
       { contactId: "drip", stage: "email-3", cause: "drip-starved" },
       { contactId: "ask", stage: "email-4", cause: "human-review-parked" },
     ]);
     expect(partition.tier1.map((item) => item.action)).toEqual([
       "replan-blocked-intent",
-      "retry-transient-failure",
       "nudge-drip-progression",
     ]);
     expect(partition.tier1[0]).toMatchObject({ intentId: "blocked-intent-1" });
-    expect(partition.tier2.map((item) => item.contactId)).toEqual(["ask"]);
+	expect(partition.tier2.map((item) => item.contactId)).toEqual([
+	  "exhausted",
+	  "ask",
+	]);
     expect(partition.tier3).toEqual([]);
   });
 
