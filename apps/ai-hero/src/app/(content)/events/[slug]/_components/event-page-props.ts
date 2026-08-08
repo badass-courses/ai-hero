@@ -9,7 +9,7 @@ import type {
 	CommerceProps,
 	PricingData,
 	PricingOptions,
-} from '@coursebuilder/core/types'
+} from '@coursebuilder/commerce/types'
 
 /**
  * Default coupon type extracted from adapter response.

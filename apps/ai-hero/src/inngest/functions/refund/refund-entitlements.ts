@@ -11,7 +11,7 @@ import {
 } from '@/lib/entitlements'
 import { log } from '@/server/logger'
 
-import { REFUND_PROCESSED_EVENT } from '@coursebuilder/core/inngest/commerce/event-refund-processed'
+import { REFUND_PROCESSED_EVENT } from '@coursebuilder/core/events/commerce'
 
 type CreditRefundResult =
 	| {

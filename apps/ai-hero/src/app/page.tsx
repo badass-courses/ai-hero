@@ -5,7 +5,7 @@ import { getPage } from '@/lib/pages-query'
 
 import { LandingBody } from './_components/landing-body'
 
-import { getCouponForCode } from '@coursebuilder/core/lib/pricing/props-for-commerce'
+import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
 
 type Props = {
 	searchParams: Promise<{ [key: string]: string | undefined }>

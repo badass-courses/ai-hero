@@ -1,7 +1,7 @@
 import { MDXRemoteSerializeResult } from 'next-mdx-remote'
 
 import { Product, Purchase } from '@coursebuilder/core/schemas'
-import { CommerceProps, PricingData } from '@coursebuilder/core/types'
+import { CommerceProps, PricingData } from '@coursebuilder/commerce/types'
 
 export type WorkshopPageProps = {
 	quantityAvailable: number

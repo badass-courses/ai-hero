@@ -12,7 +12,7 @@ import { formatInTimeZone } from 'date-fns-tz'
 import { toSnakeCase } from 'drizzle-orm/casing'
 import { CheckCircle } from 'lucide-react'
 
-import type { PricingOptions } from '@coursebuilder/core/types'
+import type { PricingOptions } from '@coursebuilder/commerce/types'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { useCtaGate } from '@/hooks/use-cta-gate'

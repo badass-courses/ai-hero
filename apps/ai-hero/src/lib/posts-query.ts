@@ -35,7 +35,7 @@ import readingTime from 'reading-time'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
-import { getMuxAsset } from '@coursebuilder/core/lib/mux'
+import { getMuxAsset } from '@coursebuilder/video-processing/mux'
 
 import { ListSchema, type List } from './lists'
 import { DatabaseError, PostCreationError } from './post-errors'

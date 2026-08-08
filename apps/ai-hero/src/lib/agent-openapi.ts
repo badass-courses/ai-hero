@@ -1,5 +1,4 @@
-import { zodToJsonSchema } from 'zod-to-json-schema'
-import type { ZodTypeAny } from 'zod'
+import { z, type ZodTypeAny } from 'zod'
 
 import {
 	AddListItemRequestSchema,
@@ -953,11 +952,47 @@ const zodSchemas = {
 	MintPersonalAccessTokenResponse: MintPersonalAccessTokenResponseSchema,
 } satisfies Record<string, ZodTypeAny>
 
-function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
-	const converted = zodToJsonSchema(schema, {
-		target: 'jsonSchema2019-09',
-		$refStrategy: 'none',
-		dateStrategy: 'format:date-time',
+/**
+ * Detects the `z.union([z.string(), z.date()]).transform(v => new Date(v))`
+ * shape this codebase uses for timestamps that arrive as strings.
+ *
+ * Zod models it as a `pipe` whose output is a `transform`, and a transform's
+ * output type is opaque to the JSON Schema converter — under
+ * `unrepresentable: 'any'` the field collapses to `{}`. The values are
+ * serialized as ISO strings, so the pipe is described as a date-time string.
+ *
+ * @param def - The zod internal definition of the node being converted.
+ * @returns True when the node is a transform pipe fed by a date.
+ */
+function isDateProducingPipe(def: any): boolean {
+	if (def?.type !== 'pipe') return false
+	if (def.out?._zod?.def?.type !== 'transform') return false
+
+	const input = def.in?._zod?.def
+	if (input?.type === 'date') return true
+	if (input?.type === 'union') {
+		return (input.options ?? []).some(
+			(option: any) => option?._zod?.def?.type === 'date',
+		)
+	}
+	return false
+}
+
+export function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
+	const converted = z.toJSONSchema(schema, {
+		target: 'draft-2019-09',
+		// Inline every subschema; the document must not lean on $defs/$ref.
+		reused: 'inline',
+		// Dates have no JSON Schema primitive, so zod refuses to guess. Emit the
+		// date-time string form the API actually serializes.
+		unrepresentable: 'any',
+		override: (ctx) => {
+			const def = ctx.zodSchema._zod.def
+			if (def.type === 'date' || isDateProducingPipe(def)) {
+				ctx.jsonSchema.type = 'string'
+				ctx.jsonSchema.format = 'date-time'
+			}
+		},
 	}) as Record<string, unknown>
 	delete converted.$schema
 	return converted
@@ -1049,7 +1084,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 
 	return {
 		openapi: '3.1.0',
-		// zod-to-json-schema emits 2019-09 syntax (array-form items for tuples),
+		// toOpenApiSchema targets 2019-09 syntax (array-form items for tuples),
 		// so the advertised dialect must match what is actually generated.
 		jsonSchemaDialect: 'https://json-schema.org/draft/2019-09/schema',
 		info: {

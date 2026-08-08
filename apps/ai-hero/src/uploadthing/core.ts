@@ -3,7 +3,7 @@ import { getServerAuthSession } from '@/server/auth'
 import { createUploadthing, type FileRouter } from 'uploadthing/next'
 import { z } from 'zod'
 
-import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/inngest/video-processing/events/event-video-uploaded'
+import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/events/video'
 
 const f = createUploadthing()
 

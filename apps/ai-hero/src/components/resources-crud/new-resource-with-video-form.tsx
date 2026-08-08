@@ -57,12 +57,15 @@ const FormValuesSchema = z.object({
 		.min(2, 'Title must be at least 2 characters')
 		.max(90, 'Title must be less than 90 characters'),
 	videoResourceId: z.string().optional(),
-	postType: z.string().refine(
-		(type) => isTopLevelResourceType(type) || POST_SUBTYPES.includes(type),
-		(type) => ({
-			message: `Invalid type: ${type}. Must be a valid resource type or post subtype.`,
-		}),
-	),
+	postType: z
+		.string()
+		.refine(
+			(type) => isTopLevelResourceType(type) || POST_SUBTYPES.includes(type),
+			{
+				error: (issue) =>
+					`Invalid type: ${issue.input}. Must be a valid resource type or post subtype.`,
+			},
+		),
 })
 
 type FormValues = z.infer<typeof FormValuesSchema>

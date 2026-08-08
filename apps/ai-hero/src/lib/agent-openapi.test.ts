@@ -1,9 +1,8 @@
 import SwaggerParser from '@apidevtools/swagger-parser'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { TagListResponseSchema } from './agent-api-contracts'
-import { buildAgentOpenApiDocument } from './agent-openapi'
+import { buildAgentOpenApiDocument, toOpenApiSchema } from './agent-openapi'
 
 const mocks = vi.hoisted(() => ({
 	getTags: vi.fn(),
@@ -147,12 +146,7 @@ describe('agent OpenAPI contract', () => {
 		const documentedResponse = (
 			document.paths['/api/tags'].get.responses as any
 		)['200'].content['application/json'].schema
-		const generatedSchema = zodToJsonSchema(TagListResponseSchema, {
-			target: 'jsonSchema2019-09',
-			$refStrategy: 'none',
-			dateStrategy: 'format:date-time',
-		}) as Record<string, unknown>
-		delete generatedSchema.$schema
+		const generatedSchema = toOpenApiSchema(TagListResponseSchema)
 
 		expect(routeResponse.status).toBe(200)
 		expect(TagListResponseSchema.safeParse(payload).success).toBe(true)
