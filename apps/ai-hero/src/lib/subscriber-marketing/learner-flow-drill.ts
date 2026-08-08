@@ -8,6 +8,7 @@ import {
 	LEARNER_FLOW_FIXTURE_KIT_SEQUENCE_ID,
 	LEARNER_FLOW_FIXTURE_PATH,
 	type LearnerFlowFixtureRepository,
+	type LearnerFlowSyntheticSubscriberCleanup,
 } from './learner-flow-fixture'
 import type { LearnerFlowCohortRecord } from './learner-flow-cohort'
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
@@ -43,12 +44,12 @@ export type LearnerFlowDrillRepository = LearnerFlowFixtureRepository & {
 	readLearnerFlowFixtureResidue(
 		contactId: string,
 	): Promise<LearnerFlowFixtureResidue>
+	unsubscribeSyntheticKitSubscriber: LearnerFlowSyntheticSubscriberCleanup
 }
 
 export type LearnerFlowDrillFixture = {
 	scenario: Exclude<LearnerFlowDrillScenario, 'both'>
 	fixtureId: string
-	email: string
 	contactId?: string
 	intentId?: string
 	intentShape: {
@@ -216,7 +217,6 @@ export async function createLearnerFlowDrillFixtures(args: {
 		const shape: LearnerFlowDrillFixture = {
 			scenario: args.scenario,
 			fixtureId,
-			email,
 			intentShape: {
 				status: 'completed',
 				completedAt:
@@ -281,9 +281,18 @@ export async function cleanupLearnerFlowDrillFixtures(args: {
 			contactIds: contacts.map((contact) => contact.id),
 			deleted: 0,
 			wouldDelete: before,
+			kitCleanup: { wouldUnsubscribe: contacts.length },
 		}
 	}
+	const kitResults: Awaited<
+		ReturnType<LearnerFlowSyntheticSubscriberCleanup>
+	>[] = []
 	for (const item of contacts) {
+		const email = item.email
+		if (!email) throw new Error('Cleanup refused: drill contact has no email')
+		kitResults.push(
+			await args.repository.unsubscribeSyntheticKitSubscriber(email),
+		)
 		await args.repository.deleteLearnerFlowFixtureContact(item.id)
 	}
 	const postDeleteReadbacks = await Promise.all(
@@ -302,6 +311,13 @@ export async function cleanupLearnerFlowDrillFixtures(args: {
 		contactIds: contacts.map((contact) => contact.id),
 		deleted: contacts.length,
 		before,
+		kitCleanup: {
+			cancelled: kitResults.filter((item) => item.status === 'cancelled').length,
+			alreadyCancelled: kitResults.filter(
+				(item) => item.status === 'already-cancelled',
+			).length,
+			notFound: kitResults.filter((item) => item.status === 'not-found').length,
+		},
 		postDeleteReadbacks,
 	}
 }
@@ -321,6 +337,7 @@ type DrillLifecycleEvent =
 	| { type: 'IDENTICAL_PAYLOAD_DETECTED' }
 	| { type: 'ZOMBIE_HEALED' }
 	| { type: 'CLEANED' }
+	| { type: 'CLEANUP_FAILED'; error: string }
 	| { type: 'FAIL'; error: string }
 
 export const learnerFlowDrillMachine = setup({
@@ -390,8 +407,14 @@ export const learnerFlowDrillMachine = setup({
 				FAIL: { target: 'cleaning', actions: 'recordFailure' },
 			},
 		},
-		cleaning: { on: { CLEANED: 'complete' } },
+		cleaning: {
+			on: {
+				CLEANED: 'complete',
+				CLEANUP_FAILED: { target: 'failed', actions: 'recordFailure' },
+			},
+		},
 		complete: { type: 'final' },
+		failed: { type: 'final' },
 	},
 })
 
