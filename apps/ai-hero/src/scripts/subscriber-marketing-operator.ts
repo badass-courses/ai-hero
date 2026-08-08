@@ -61,6 +61,7 @@ import {
 	type LearnerFlowDrillObservation,
 } from '@/lib/subscriber-marketing/learner-flow-drill-runner'
 import { DrizzleOperatorLookupRepository } from '@/lib/subscriber-marketing/drizzle-operator-lookup-repository'
+import { unsubscribeSyntheticKitSubscriber } from '@/lib/subscriber-marketing/kit-synthetic-subscriber-cleanup'
 import { DrizzlePurchasePreviewRepository } from '@/lib/subscriber-marketing/drizzle-purchase-preview-repository'
 import { previewMatchedPurchaserValuePaths } from '@/lib/subscriber-marketing/matched-purchaser-value-path-preview'
 import {
@@ -369,6 +370,8 @@ if (command === 'lookup') {
 				repository,
 				contactId: requireFlag(args, '--contact-id'),
 				allowWrite,
+				unsubscribeSyntheticKitSubscriber:
+					unsubscribeLearnerFlowSyntheticKitSubscriber,
 			})
 		: await createLearnerFlowStuckFixture({
 				repository,
@@ -2970,6 +2973,17 @@ async function createCaptureRepository() {
 	return new DrizzleCaptureMarketingRepository(db)
 }
 
+function unsubscribeLearnerFlowSyntheticKitSubscriber(email: string) {
+	const apiKey =
+		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
+	if (!apiKey) {
+		throw new Error(
+			'Synthetic Kit subscriber cleanup requires CONVERTKIT_V4_API_KEY or CONVERTKIT_API_KEY',
+		)
+	}
+	return unsubscribeSyntheticKitSubscriber({ email, apiKey })
+}
+
 async function createLearnerFlowDrillRepository(): Promise<
 	DrizzleCaptureMarketingRepository & LearnerFlowDrillRepository
 > {
@@ -3170,6 +3184,8 @@ async function createLearnerFlowCanaryRepository(): Promise<
 > {
 	const repository = await createCaptureRepository()
 	return Object.assign(repository, {
+		unsubscribeSyntheticKitSubscriber:
+			unsubscribeLearnerFlowSyntheticKitSubscriber,
 		findLearnerFlowCanaryContacts: async () => {
 			const rows = await db
 				.select({ id: contact.id })

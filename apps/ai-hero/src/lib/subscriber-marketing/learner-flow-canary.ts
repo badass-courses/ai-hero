@@ -6,6 +6,7 @@ import {
 	learnerFlowFixtureId,
 	LEARNER_FLOW_CANARY_FIXTURE_ID_PREFIX,
 	type LearnerFlowFixtureRepository,
+	type LearnerFlowSyntheticSubscriberCleanup,
 } from './learner-flow-fixture'
 import { isTerminalSkillsWorkflowEmailResourceId } from './skills-workflow-path'
 import type { ContactRecord, SideEffectIntent } from './types'
@@ -37,6 +38,7 @@ export type LearnerFlowCanaryRepository = LearnerFlowFixtureRepository & {
 	deleteLearnerFlowFixtureContact(contactId: string): Promise<void>
 	findLearnerFlowCanaryContacts(): Promise<ContactRecord[]>
 	readLearnerFlowFixtureResidue(contactId: string): Promise<LearnerFlowCanaryResidue>
+	unsubscribeSyntheticKitSubscriber: LearnerFlowSyntheticSubscriberCleanup
 }
 
 export type LearnerFlowCanaryAdvance = (args: {
@@ -172,9 +174,12 @@ export async function tickLearnerFlowCanary(args: {
 	}
 
 	if (lifecycle === 'absent') {
-		if (observation.contactId) {
-			await args.repository.deleteLearnerFlowFixtureContact(observation.contactId)
-		}
+		const kitCleanup = observation.contactId
+			? await unsubscribeAndDeleteCanaryContact(
+					args.repository,
+					observation.contactId,
+				)
+			: undefined
 		const seeded = await seedLearnerFlowCanary({
 			repository: args.repository,
 			allowWrite: true,
@@ -186,12 +191,16 @@ export async function tickLearnerFlowCanary(args: {
 			alarm,
 			operation: 'tick' as const,
 			action: observation.contactId ? 'reseeded-corrupt' : 'seeded',
+			kitCleanup,
 			seeded,
 		}
 	}
 
 	if (lifecycle === 'terminal') {
-		await args.repository.deleteLearnerFlowFixtureContact(observation.contactId!)
+		const kitCleanup = await unsubscribeAndDeleteCanaryContact(
+			args.repository,
+			observation.contactId!,
+		)
 		const postDeleteReadback = await args.repository.readLearnerFlowFixtureResidue(
 			observation.contactId!,
 		)
@@ -207,6 +216,7 @@ export async function tickLearnerFlowCanary(args: {
 			alarm: null,
 			operation: 'tick' as const,
 			action: 'self-reset',
+			kitCleanup,
 			postDeleteReadback,
 			seeded,
 		}
@@ -267,6 +277,11 @@ export async function cleanupLearnerFlowCanary(args: {
 			allowWrite: args.allowWrite,
 			contactIds: [] as string[],
 			deleted: 0,
+			kitCleanup: {
+				cancelled: 0,
+				alreadyCancelled: 0,
+				notFound: 0,
+			},
 			postDeleteReadback: emptyResidue(),
 		}
 	}
@@ -283,10 +298,16 @@ export async function cleanupLearnerFlowCanary(args: {
 			contactIds: contacts.map((contact) => contact.id),
 			deleted: 0,
 			wouldDelete: before,
+			kitCleanup: { wouldUnsubscribe: contacts.length },
 		}
 	}
+	const kitResults: Awaited<
+		ReturnType<LearnerFlowSyntheticSubscriberCleanup>
+	>[] = []
 	for (const contact of contacts) {
-		await args.repository.deleteLearnerFlowFixtureContact(contact.id)
+		kitResults.push(
+			await unsubscribeAndDeleteCanaryContact(args.repository, contact.id),
+		)
 	}
 	const postDeleteReadback = sumResidue(
 		await Promise.all(
@@ -301,8 +322,30 @@ export async function cleanupLearnerFlowCanary(args: {
 		contactIds: contacts.map((contact) => contact.id),
 		deleted: contacts.length,
 		before,
+		kitCleanup: {
+			cancelled: kitResults.filter((item) => item.status === 'cancelled').length,
+			alreadyCancelled: kitResults.filter(
+				(item) => item.status === 'already-cancelled',
+			).length,
+			notFound: kitResults.filter((item) => item.status === 'not-found').length,
+		},
 		postDeleteReadback,
 	}
+}
+
+async function unsubscribeAndDeleteCanaryContact(
+	repository: LearnerFlowCanaryRepository,
+	contactId: string,
+) {
+	const contact = await repository.findContactById(contactId)
+	const email = contact?.email
+	if (!contact || !email || !isLearnerFlowCanaryEmail(email)) {
+		throw new Error('Canary cleanup refused: contact is outside the canary namespace')
+	}
+	const kitCleanup =
+		await repository.unsubscribeSyntheticKitSubscriber(email)
+	await repository.deleteLearnerFlowFixtureContact(contact.id)
+	return kitCleanup
 }
 
 function resolveLifecycle(observation: CanaryObservation) {

@@ -23,6 +23,8 @@ class DrillRepository implements LearnerFlowDrillRepository {
 	contacts = new Map<string, ContactRecord>()
 	states = new Map<string, ContactState>()
 	intents = new Map<string, SideEffectIntent>()
+	kitCleanupEmails: string[] = []
+	kitCleanupError?: Error
 	contactSequence = 0
 
 	async findContactById(id: string) {
@@ -83,6 +85,12 @@ class DrillRepository implements LearnerFlowDrillRepository {
 		return Array.from(this.contacts.values()).filter((contact) =>
 			isLearnerFlowDrillEmail(contact.email),
 		)
+	}
+
+	async unsubscribeSyntheticKitSubscriber(email: string) {
+		if (this.kitCleanupError) throw this.kitCleanupError
+		this.kitCleanupEmails.push(email)
+		return { status: 'cancelled' as const, readbackAttempts: 1 }
 	}
 
 	async deleteLearnerFlowFixtureContact(contactId: string) {
@@ -270,6 +278,12 @@ describe('learner flow induced-failure drill', () => {
 			allowWrite: true,
 		})
 		expect(result.deleted).toBe(6)
+		expect(result.kitCleanup).toEqual({
+			cancelled: 6,
+			alreadyCancelled: 0,
+			notFound: 0,
+		})
+		expect(repository.kitCleanupEmails).toHaveLength(6)
 		if (!result.postDeleteReadbacks) {
 			throw new Error('Cleanup did not return post-delete readbacks')
 		}
@@ -563,6 +577,40 @@ describe('learner flow induced-failure drill', () => {
 		).rejects.toThrow('Timed out waiting for learner-flow drill evidence')
 		expect(phases).toEqual(['drift-induced', 'failed', 'cleanup'])
 		expect(repository.contacts.size).toBe(0)
+	})
+
+	it('preserves the original failure and records cleanup failure', async () => {
+		const repository = new DrillRepository()
+		repository.kitCleanupError = new Error('Kit cleanup unavailable')
+		const phases: string[] = []
+		let clock = Date.parse(now)
+		await expect(
+			runLearnerFlowDrill({
+				ports: {
+					repository,
+					observe: async () => ({ runs: [] }),
+					readFixtureReadbacks: async () => [],
+					writeReceipt: async (phase) => {
+						phases.push(phase)
+						return `/receipts/${phase}.json`
+					},
+					sleep: async (milliseconds) => {
+						clock += milliseconds
+					},
+					now: () => new Date(clock).toISOString(),
+				},
+				runId: 'run-cleanup-failure',
+				scenario: 'drift',
+				pollMilliseconds: 2,
+				observationTimeoutMilliseconds: 1,
+			}),
+		).rejects.toThrow('Timed out waiting for learner-flow drill evidence')
+		expect(phases).toEqual([
+			'drift-induced',
+			'failed',
+			'cleanup-failed',
+		])
+		expect(repository.contacts.size).toBe(3)
 	})
 
 	it('models both scenarios through cleanup as one explicit lifecycle', () => {

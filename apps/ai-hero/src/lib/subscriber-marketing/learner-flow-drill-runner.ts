@@ -64,6 +64,7 @@ export type LearnerFlowDrillReceiptPhase =
 	| 'zombie-identical-payload-detected'
 	| 'zombie-healed'
 	| 'cleanup'
+	| 'cleanup-failed'
 	| 'failed'
 
 export type LearnerFlowDrillRunnerPorts = {
@@ -115,6 +116,7 @@ export async function runLearnerFlowDrill(args: {
 	let driftFixtures: LearnerFlowDrillFixture[] = []
 	let zombieFixtures: LearnerFlowDrillFixture[] = []
 	let failure: unknown
+	let cleanupFailure: unknown
 	const pollMilliseconds = args.pollMilliseconds ?? 60_000
 	// The receipt timestamp, not polling latency, is the one-hour SLA clock.
 	// The extra wait margin only allows Axiom ingestion and the read-only poll.
@@ -372,23 +374,48 @@ export async function runLearnerFlowDrill(args: {
 			}),
 		)
 	} finally {
-		const cleanup = await cleanupLearnerFlowDrillFixtures({
-			repository: args.ports.repository,
-			allowWrite: true,
-		})
-		receipts.push(
-			await args.ports.writeReceipt('cleanup', {
-				mode: 'learner-flow-drill',
-				runId: args.runId,
-				phase: 'cleanup',
-				cleanedAt: args.ports.now(),
-				cleanup,
-			}),
-		)
-		actor.send({ type: 'CLEANED' })
-		actor.stop()
+		try {
+			const cleanup = await cleanupLearnerFlowDrillFixtures({
+				repository: args.ports.repository,
+				allowWrite: true,
+			})
+			receipts.push(
+				await args.ports.writeReceipt('cleanup', {
+					mode: 'learner-flow-drill',
+					runId: args.runId,
+					phase: 'cleanup',
+					cleanedAt: args.ports.now(),
+					cleanup,
+				}),
+			)
+			actor.send({ type: 'CLEANED' })
+		} catch (error) {
+			cleanupFailure = error
+			const cleanupError =
+				error instanceof Error ? error.message : String(error)
+			actor.send({ type: 'CLEANUP_FAILED', error: cleanupError })
+			try {
+				receipts.push(
+					await args.ports.writeReceipt('cleanup-failed', {
+						mode: 'learner-flow-drill',
+						runId: args.runId,
+						phase: 'cleanup-failed',
+						failedAt: args.ports.now(),
+						error: cleanupError,
+					}),
+				)
+			} catch (receiptError) {
+				cleanupFailure = new AggregateError(
+					[error, receiptError],
+					'Learner-flow drill cleanup and cleanup receipt failed',
+				)
+			}
+		} finally {
+			actor.stop()
+		}
 	}
 	if (failure) throw failure
+	if (cleanupFailure) throw cleanupFailure
 	const completedAt = args.ports.now()
 	return {
 		mode: 'learner-flow-drill',
