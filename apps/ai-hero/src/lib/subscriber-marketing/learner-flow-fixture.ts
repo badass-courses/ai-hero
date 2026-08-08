@@ -23,6 +23,15 @@ export const LEARNER_FLOW_FIXTURE_PATH = 'ai-hero-skills-workflow'
 export const LEARNER_FLOW_FIXTURE_EMAIL_RESOURCE = `${LEARNER_FLOW_FIXTURE_PATH}.email-0`
 export const LEARNER_FLOW_FIXTURE_KIT_SEQUENCE_ID = '2757199'
 
+export type LearnerFlowSyntheticSubscriberCleanupResult = {
+	status: 'cancelled' | 'already-cancelled' | 'not-found'
+	readbackAttempts: number
+}
+
+export type LearnerFlowSyntheticSubscriberCleanup = (
+	email: string,
+) => Promise<LearnerFlowSyntheticSubscriberCleanupResult>
+
 export type LearnerFlowFixtureRepository = {
 	findContactById(id: string): Promise<ContactRecord | undefined>
 	findContactByEmail(email: string): Promise<ContactRecord | undefined>
@@ -273,12 +282,14 @@ export async function cleanupLearnerFlowStuckFixture(args: {
 	repository: LearnerFlowFixtureRepository
 	contactId: string
 	allowWrite: boolean
+	unsubscribeSyntheticKitSubscriber: LearnerFlowSyntheticSubscriberCleanup
 	now?: string
 }) {
 	const now = args.now ?? new Date().toISOString()
 	const contact = await args.repository.findContactById(args.contactId)
 	if (!contact) throw new Error(`Missing fixture contact ${args.contactId}`)
-	if (!isLearnerFlowFixtureEmail(contact.email)) {
+	const email = contact.email
+	if (!email || !isLearnerFlowFixtureEmail(email)) {
 		throw new Error('Cleanup refused: contact is not a synthetic fixture address')
 	}
 	const fixtureIntents = (
@@ -293,6 +304,9 @@ export async function cleanupLearnerFlowStuckFixture(args: {
 	const active = fixtureIntents.filter(
 		(intent) => !isCleanedLearnerFlowFixtureIntent(intent),
 	)
+	const kitCleanup = args.allowWrite
+		? await args.unsubscribeSyntheticKitSubscriber(email)
+		: undefined
 	if (args.allowWrite) {
 		for (const intent of active) {
 			await args.repository.updateSideEffectIntent(intent.id, {
@@ -314,6 +328,7 @@ export async function cleanupLearnerFlowStuckFixture(args: {
 		operation: 'cleanup' as const,
 		allowWrite: args.allowWrite,
 		contactId: contact.id,
+		kitCleanup: kitCleanup ?? { status: 'would-unsubscribe' as const },
 		counts: {
 			fixtureIntents: fixtureIntents.length,
 			active: active.length,
