@@ -225,16 +225,16 @@ describe('learner flow reconciler', () => {
 				planned: plan.counts.planned,
 				cohortSize: plan.cohort.contacts,
 			}),
-		).toMatchObject({ status: 'clear', cap: 150 })
+		).toMatchObject({ status: 'clear', cap: 0 })
 	})
 
-	it('does not brake a healthy big day that exceeds the cap (2026-07-18 incident)', () => {
-		// 172 planned for 1,006 learners = 17.1%, under the 25% wall. The cap
-		// slice serves 150 oldest-first and defers 22; braking here stalled 172
-		// real learners for an hour.
+	it('does not brake a healthy big day when inline sending is disabled', () => {
+		// 172 planned for 1,006 learners = 17.1%, under the 25% wall. A zero send
+		// cap changes ownership, not anomaly detection; braking here would still
+		// stall 172 real learners.
 		expect(
 			evaluateLearnerFlowReconcilerBrake({ planned: 172, cohortSize: 1006 }),
-		).toMatchObject({ status: 'clear', cap: 150 })
+		).toMatchObject({ status: 'clear', cap: 0 })
 		expect(
 			evaluateLearnerFlowReconcilerBrake({ planned: 300, cohortSize: 1006 }),
 		).toMatchObject({ status: 'tripped' })
@@ -257,7 +257,7 @@ describe('learner flow reconciler', () => {
 				cohortSize: 1028,
 				candidates,
 			}),
-		).toMatchObject({ status: 'clear', cap: 150 })
+		).toMatchObject({ status: 'clear', cap: 0 })
 	})
 
 	it('brakes the 313 false-stuck wolf before every write', async () => {
@@ -313,7 +313,7 @@ describe('learner flow reconciler', () => {
 		expect(providerWrites).toBe(0)
 	})
 
-	it('repairs a completed drift fixture with both stamps absent, then serves its next step', async () => {
+	it('keeps the dormant inline repair/send path available behind an explicit cap', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const captured = await dryRunSubscriberMarketingFixture({
 			repository,
@@ -406,7 +406,7 @@ describe('learner flow reconciler', () => {
 			},
 			now,
 			config: {
-				sendCap: 150,
+				sendCap: 1,
 				maxPlannedToCohortRatio: 1,
 			},
 		})
@@ -615,7 +615,7 @@ describe('learner flow reconciler', () => {
 		})
 	})
 
-	it('defers one failed learner and continues planning the rest', async () => {
+	it('leaves deferred learner work for the executor instead of sending inline', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const first = await dryRunSubscriberMarketingFixture({
 			repository,
@@ -703,11 +703,15 @@ describe('learner flow reconciler', () => {
 					entryEvents: [],
 				})),
 		})
+		let providerWrites = 0
 		const receipt = await reconcileLearnerFlow({
 			repository: reconcilerRepository,
 			allowlist,
 			emailListProvider: {
-				subscribeToList: async () => ({ success: true }),
+				subscribeToList: async () => {
+					providerWrites += 1
+					return { success: true }
+				},
 			},
 			executorConfig: {},
 			now,
@@ -715,9 +719,11 @@ describe('learner flow reconciler', () => {
 		expect(receipt).toMatchObject({
 			brake: 'clear',
 			deferred: 1,
-			writeFailedDeferred: 1,
+			writeFailedDeferred: 0,
+			executor: { processed: 0 },
 		})
-		expect(receipt.dmLine).toContain('1 deferred (1 write-failed)')
+		expect(receipt.dmLine).toContain('1 deferred (0 write-failed)')
+		expect(providerWrites).toBe(0)
 	})
 
 	it('registers one hourly reconciler and removes the old hourly planner binding', async () => {

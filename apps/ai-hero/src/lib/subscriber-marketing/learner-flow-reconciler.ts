@@ -41,16 +41,18 @@ import {
 import { valuePathIntentCompletedAt } from './value-path-completion'
 
 /**
- * Maintained-after safety config. The send cap bounds one run's blast radius:
- * overflow is served oldest-first up to the cap and the rest DEFERS to the
- * next run (reported, never dropped) — exceeding the cap is normal on a big
- * signup day, not an anomaly. The brake is the anomaly detector: the 25%
- * plan-to-cohort ratio wall sits above the observed 22.8% backlog-drain peak,
- * while the 313 false-stuck incident would hit 37.7% and trip it. The first
- * live brake trip (2026-07-18: 172 planned / 1,006 learners = 17.1%, a
- * healthy big day) proved cap-exceeds must not brake — it stalled 172 real
- * learners for an hour. Change these values only with reconciler receipts
- * beside the change.
+ * Maintained-after safety config. The reconciler no longer sends inline:
+ * sendCap stays zero and the five-minute executor is the single sender.
+ * Pending intents produced by repair/replan flows reach that executor through
+ * its generic pending-intent scan. Keep the dormant inline path until evidence
+ * supports deleting it in PR 2.
+ *
+ * The brake remains the anomaly detector. Its 25% plan-to-cohort ratio wall
+ * sits above the observed 22.8% backlog-drain peak, while the 313 false-stuck
+ * incident would hit 37.7% and trip it. The first live brake trip (2026-07-18:
+ * 172 planned / 1,006 learners = 17.1%, a healthy big day) proved that a large
+ * plan must not brake by itself. Change these values only with reconciler
+ * receipts beside the change.
  */
 export type LearnerFlowReconcilerConfig = {
 	sendCap: number
@@ -58,7 +60,7 @@ export type LearnerFlowReconcilerConfig = {
 }
 
 export const LEARNER_FLOW_RECONCILER_CONFIG: LearnerFlowReconcilerConfig = {
-	sendCap: 150,
+	sendCap: 0,
 	maxPlannedToCohortRatio: 0.25,
 }
 

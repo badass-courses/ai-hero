@@ -61,6 +61,9 @@ export const valuePathEmailExecutor = inngest.createFunction(
 			verifiedKitSequenceIds: runtimeAllowlist.kitSequenceIds,
 			allowedActions: runtimeAllowlist?.allowedActions,
 			retryPolicy: runtimeAllowlist?.retryPolicy,
+			// This cron is the single sender. Keep Kit writes ten seconds apart so a
+			// backlog drain cannot recreate the provider-rate-limit spike.
+			providerPacingMs: 10_000,
 			email7LiveEnabled: parseEmail7LiveEnabled(
 				process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
 			),
