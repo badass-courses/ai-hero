@@ -11,7 +11,12 @@ import { and, eq, inArray } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/utils/guid'
 
-import type { CaptureMarketingRepository } from './capture-contact-event'
+import { createInternalId } from '../internal-id'
+import { withMysqlPrimaryKeyRetry } from '../mysql-primary-key-retry'
+import type {
+	CaptureMarketingRepository,
+	LinkedActionRecords,
+} from './capture-contact-event'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
 	canonicalCompletionForWrite,
@@ -49,8 +54,12 @@ export type LearnerFlowRecord = {
 export class DrizzleCaptureMarketingRepository implements CaptureMarketingRepository {
 	constructor(private readonly database: AiHeroWriteDatabase) {}
 
-	newId(_kind: string) {
-		return guid()
+	newId(kind: string) {
+		return kind === 'next_action' ||
+			kind === 'intent' ||
+			kind === 'side_effect_intent'
+			? createInternalId()
+			: guid()
 	}
 
 	async findProviderIdentity(provider: string, externalId: string) {
@@ -228,11 +237,40 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async createNextAction(input: NextAction) {
-		await this.database.insert(nextAction).values({
-			...input,
-			createdAt: new Date(input.createdAt),
+		return withMysqlPrimaryKeyRetry(async (attempt) => {
+			const record =
+				attempt === 0 ? input : { ...input, id: createInternalId() }
+			await this.database.insert(nextAction).values({
+				...record,
+				createdAt: new Date(record.createdAt),
+			})
+			return record
 		})
-		return input
+	}
+
+	async createNextActionWithSideEffectIntents(
+		createRecords: () => LinkedActionRecords,
+	) {
+		return withMysqlPrimaryKeyRetry(async () => {
+			const records = createRecords()
+			await this.database.transaction(
+				async (transaction: AiHeroWriteDatabase) => {
+					await transaction.insert(nextAction).values({
+						...records.nextAction,
+						createdAt: new Date(records.nextAction.createdAt),
+					})
+					for (const input of records.sideEffectIntents) {
+						const completedAt = canonicalCompletionForWrite(input)
+						await transaction.insert(sideEffectIntent).values({
+							...input,
+							completedAt: completedAt ? new Date(completedAt) : null,
+							createdAt: new Date(input.createdAt),
+						})
+					}
+				},
+			)
+			return records
+		})
 	}
 
 	async findSideEffectIntentByIdempotencyKey(idempotencyKey: string) {
@@ -245,14 +283,18 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async createSideEffectIntent(input: SideEffectIntent) {
-		const completedAt = canonicalCompletionForWrite(input)
-		const record = { ...input, completedAt }
-		await this.database.insert(sideEffectIntent).values({
-			...record,
-			completedAt: completedAt ? new Date(completedAt) : null,
-			createdAt: new Date(input.createdAt),
+		return withMysqlPrimaryKeyRetry(async (attempt) => {
+			const retriedInput =
+				attempt === 0 ? input : { ...input, id: createInternalId() }
+			const completedAt = canonicalCompletionForWrite(retriedInput)
+			const record = { ...retriedInput, completedAt }
+			await this.database.insert(sideEffectIntent).values({
+				...record,
+				completedAt: completedAt ? new Date(completedAt) : null,
+				createdAt: new Date(retriedInput.createdAt),
+			})
+			return record
 		})
-		return record
 	}
 
 	async findPendingValuePathEmailSideEffectIntents(args: {

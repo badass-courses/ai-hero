@@ -1,4 +1,7 @@
-import type { CaptureMarketingRepository } from './capture-contact-event'
+import {
+	createLinkedActionRecords,
+	type CaptureMarketingRepository,
+} from './capture-contact-event'
 import type { ValuePathTokenPayload } from './path-token'
 import { CONTACT_EVENT_SCHEMA_VERSION } from './types'
 import { MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT } from './value-path-answer-click-verification'
@@ -280,52 +283,60 @@ export async function recordValuePathAnswerProgression(args: {
 
 	if (!nextEmailResourceId) {
 		const selectedAt = stringField(existingIntent?.metadata.selectedAt) ?? event.occurredAt
-		const nextAction =
-			existingIntent === undefined
-				? await args.repository.createNextAction({
-						id: args.repository.newId('next_action'),
-						contactId: contact.id,
-						contactStateId: state.id,
-						eventId: event.id,
-						type: 'set-shadow-fields',
-						status: 'planned',
-						gates: captureGate?.gates ?? [],
-						reviewReasons: [],
-						rationale: [
-							`Capture terminal finisher fields after answer page ${args.answerPage.id}.`,
-							...(captureGate?.rationale ?? []),
-						],
-						createdAt: selectedAt,
-					})
-				: undefined
-		const intent =
-			existingIntent ??
-			(await args.repository.createSideEffectIntent({
-				id: args.repository.newId('side_effect_intent'),
-				nextActionId: nextAction!.id,
-				contactId: contact.id,
-				provider: args.mode === 'dry-run' ? 'dry-run' : 'kit',
-				type: 'write-value-path-finisher-fields',
-				status: args.mode === 'dry-run' ? 'dry-run' : 'pending',
-				idempotencyKey: finisherIdempotencyKey!,
-				gates: captureGate?.gates ?? [],
-				reviewReasons: [],
-				metadata: {
-					gate: 'gate-d-value-path-finisher-capture',
-					mode: args.mode ?? 'dry-run',
-					valuePathSlug: args.token.valuePathResourceId,
-					emailResourceId: args.token.emailResourceId,
-					kitSubscriberId: args.token.kitSubscriberId ?? null,
-					answerPageId: args.answerPage.id,
-					surveyId: fields.surveyId,
-					optionValue: fields.optionValue,
-					captureFieldKey: fields.captureFieldKey,
-					captureDateFieldKey: fields.captureDateFieldKey,
-					selectedAt,
-					providerResult: null,
-				},
-				createdAt: selectedAt,
-			}))
+		let nextAction
+		let intent = existingIntent
+		if (!intent) {
+			const linked = await createLinkedActionRecords(args.repository, () => {
+				const nextAction = {
+					id: args.repository.newId('next_action'),
+					contactId: contact.id,
+					contactStateId: state.id,
+					eventId: event.id,
+					type: 'set-shadow-fields' as const,
+					status: 'planned' as const,
+					gates: captureGate?.gates ?? [],
+					reviewReasons: [],
+					rationale: [
+						`Capture terminal finisher fields after answer page ${args.answerPage.id}.`,
+						...(captureGate?.rationale ?? []),
+					],
+					createdAt: selectedAt,
+				}
+				return {
+					nextAction,
+					sideEffectIntents: [
+						{
+							id: args.repository.newId('side_effect_intent'),
+							nextActionId: nextAction.id,
+							contactId: contact.id,
+							provider: args.mode === 'dry-run' ? 'dry-run' : 'kit',
+							type: 'write-value-path-finisher-fields',
+							status: args.mode === 'dry-run' ? 'dry-run' : 'pending',
+							idempotencyKey: finisherIdempotencyKey!,
+							gates: captureGate?.gates ?? [],
+							reviewReasons: [],
+							metadata: {
+								gate: 'gate-d-value-path-finisher-capture',
+								mode: args.mode ?? 'dry-run',
+								valuePathSlug: args.token.valuePathResourceId,
+								emailResourceId: args.token.emailResourceId,
+								kitSubscriberId: args.token.kitSubscriberId ?? null,
+								answerPageId: args.answerPage.id,
+								surveyId: fields.surveyId,
+								optionValue: fields.optionValue,
+								captureFieldKey: fields.captureFieldKey,
+								captureDateFieldKey: fields.captureDateFieldKey,
+								selectedAt,
+								providerResult: null,
+							},
+							createdAt: selectedAt,
+						},
+					],
+				}
+			})
+			nextAction = linked.nextAction
+			intent = linked.sideEffectIntents[0]!
+		}
 		let finisherCapture: ValuePathFinisherCaptureResult
 		try {
 			finisherCapture = await captureValuePathFinisherFields({
@@ -437,55 +448,84 @@ export async function recordValuePathAnswerProgression(args: {
 			requiredActions: ['advance-by-answer-click', 'send-path-emails'],
 		}),
 	])
-	const nextAction = await args.repository.createNextAction({
-		id: args.repository.newId('next_action'),
-		contactId: contact.id,
-		contactStateId: state.id,
-		eventId: event.id,
-		type: 'advance-value-path',
-		status: reviewReasons.length === 0 ? 'planned' : 'blocked',
-		gates: gate.gates,
-		reviewReasons,
-		rationale: [
-			`Advance value path after answer page ${args.answerPage.id}.`,
-			...gate.rationale,
-		],
-		createdAt: now,
-	})
-
-	const intent =
-		existingIntent ??
-		(await args.repository.createSideEffectIntent({
-			id: args.repository.newId('side_effect_intent'),
-			nextActionId: nextAction.id,
+	let nextAction
+	let intent = existingIntent
+	if (intent) {
+		nextAction = await args.repository.createNextAction({
+			id: args.repository.newId('next_action'),
 			contactId: contact.id,
-			provider: 'kit',
-			type: 'send-value-path-email',
-			status:
-				gate.mode === 'dry-run'
-					? 'dry-run'
-					: reviewReasons.length === 0
-						? 'pending'
-						: 'blocked',
-			idempotencyKey: idempotencyKey!,
+			contactStateId: state.id,
+			eventId: event.id,
+			type: 'advance-value-path',
+			status: reviewReasons.length === 0 ? 'planned' : 'blocked',
 			gates: gate.gates,
 			reviewReasons,
-			metadata: {
-				gate: 'send-gate-d-value-path-email',
-				mode: gate.mode,
-				valuePathSlug: nextValuePathSlug,
-				emailResourceId: nextEmailResourceId,
-				kitSubscriberId: args.token.kitSubscriberId ?? null,
-				answerPageId: args.answerPage.id,
-				surveyId: fields.surveyId,
-				optionValue: fields.optionValue,
-				nextEmailId: fields.nextEmailId,
-				nextEmailResourceId,
-				kitSequenceId: stringField(fields.kitSequenceId) ?? null,
-				providerResult: null,
-			},
+			rationale: [
+				`Advance value path after answer page ${args.answerPage.id}.`,
+				...gate.rationale,
+			],
 			createdAt: now,
-		}))
+		})
+	} else {
+		const linked = await createLinkedActionRecords(args.repository, () => {
+			const nextAction = {
+				id: args.repository.newId('next_action'),
+				contactId: contact.id,
+				contactStateId: state.id,
+				eventId: event.id,
+				type: 'advance-value-path' as const,
+				status:
+					reviewReasons.length === 0
+						? ('planned' as const)
+						: ('blocked' as const),
+				gates: gate.gates,
+				reviewReasons,
+				rationale: [
+					`Advance value path after answer page ${args.answerPage.id}.`,
+					...gate.rationale,
+				],
+				createdAt: now,
+			}
+			return {
+				nextAction,
+				sideEffectIntents: [
+					{
+						id: args.repository.newId('side_effect_intent'),
+						nextActionId: nextAction.id,
+						contactId: contact.id,
+						provider: 'kit',
+						type: 'send-value-path-email',
+						status:
+							gate.mode === 'dry-run'
+								? 'dry-run'
+								: reviewReasons.length === 0
+									? 'pending'
+									: 'blocked',
+						idempotencyKey: idempotencyKey!,
+						gates: gate.gates,
+						reviewReasons,
+						metadata: {
+							gate: 'send-gate-d-value-path-email',
+							mode: gate.mode,
+							valuePathSlug: nextValuePathSlug,
+							emailResourceId: nextEmailResourceId,
+							kitSubscriberId: args.token.kitSubscriberId ?? null,
+							answerPageId: args.answerPage.id,
+							surveyId: fields.surveyId,
+							optionValue: fields.optionValue,
+							nextEmailId: fields.nextEmailId,
+							nextEmailResourceId,
+							kitSequenceId: stringField(fields.kitSequenceId) ?? null,
+							providerResult: null,
+						},
+						createdAt: now,
+					},
+				],
+			}
+		})
+		nextAction = linked.nextAction
+		intent = linked.sideEffectIntents[0]!
+	}
 
 	return {
 		status: 'recorded',
