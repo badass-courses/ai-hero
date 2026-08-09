@@ -15,6 +15,11 @@ import type {
 
 type MaybePromise<T> = T | Promise<T>
 
+export type LinkedActionRecords = {
+	nextAction: NextAction
+	sideEffectIntents: SideEffectIntent[]
+}
+
 export type CaptureMarketingRepository = {
 	findProviderIdentity(
 		provider: string,
@@ -57,6 +62,9 @@ export type CaptureMarketingRepository = {
 	createSideEffectIntent(
 		input: SideEffectIntent,
 	): MaybePromise<SideEffectIntent>
+	createNextActionWithSideEffectIntents?(
+		createRecords: () => LinkedActionRecords,
+	): MaybePromise<LinkedActionRecords>
 	findPendingValuePathEmailSideEffectIntents?(args: {
 		limit: number
 	}): MaybePromise<SideEffectIntent[]>
@@ -75,6 +83,30 @@ export type CaptureMarketingRepository = {
 		> & Pick<SideEffectIntent, 'completedAt'>,
 	): MaybePromise<SideEffectIntent>
 	newId(kind: string): string
+}
+
+type LinkedActionRepository = Pick<
+	CaptureMarketingRepository,
+	| 'createNextAction'
+	| 'createSideEffectIntent'
+	| 'createNextActionWithSideEffectIntents'
+>
+
+export async function createLinkedActionRecords(
+	repository: LinkedActionRepository,
+	createRecords: () => LinkedActionRecords,
+) {
+	if (repository.createNextActionWithSideEffectIntents) {
+		return repository.createNextActionWithSideEffectIntents(createRecords)
+	}
+
+	const records = createRecords()
+	const nextAction = await repository.createNextAction(records.nextAction)
+	const sideEffectIntents: SideEffectIntent[] = []
+	for (const intent of records.sideEffectIntents) {
+		sideEffectIntents.push(await repository.createSideEffectIntent(intent))
+	}
+	return { nextAction, sideEffectIntents }
 }
 
 export async function captureNormalizedContactEvent(args: {
@@ -154,17 +186,15 @@ export async function captureNormalizedContactEvent(args: {
 		rationale: classification.rationale,
 		createdAt: now,
 	})
-	const planned = planInternalCaptureIntents({
-		state,
-		event,
-		now,
-		nextActionId: args.repository.newId('next_action'),
-		intentId: args.repository.newId('intent'),
-	})
-	await args.repository.createNextAction(planned.nextAction)
-	for (const intent of planned.sideEffectIntents) {
-		await args.repository.createSideEffectIntent(intent)
-	}
+	const planned = await createLinkedActionRecords(args.repository, () =>
+		planInternalCaptureIntents({
+			state,
+			event,
+			now,
+			nextActionId: args.repository.newId('next_action'),
+			intentId: args.repository.newId('intent'),
+		}),
+	)
 
 	return {
 		mode: 'dry-run',
