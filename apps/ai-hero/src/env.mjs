@@ -122,6 +122,8 @@ export const env = createEnv({
 		DISCORD_PURCHASER_ROLE_ID: z.string().optional(),
 		DISCORD_COHORT_001_ROLE_ID: z.string().optional(),
 		DISCORD_CLIENT_ID: z.string().optional(),
+		AIH_DISCORD_RELINK_USER_ALLOWLIST: z.string().optional(),
+		AIH_DISCORD_RELINK_GLOBAL_ENABLED: z.enum(['true', 'false']).optional(),
 		CLOUDINARY_API_KEY: z.string(),
 		CLOUDINARY_API_SECRET: z.string(),
 		PINECONE_API_KEY: z.string().optional(),
@@ -254,6 +256,10 @@ export const env = createEnv({
 		NEXT_PUBLIC_DISCORD_INVITE_URL: process.env.NEXT_PUBLIC_DISCORD_INVITE_URL,
 		DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID,
 		DISCORD_CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET,
+		AIH_DISCORD_RELINK_USER_ALLOWLIST:
+			process.env.AIH_DISCORD_RELINK_USER_ALLOWLIST,
+		AIH_DISCORD_RELINK_GLOBAL_ENABLED:
+			process.env.AIH_DISCORD_RELINK_GLOBAL_ENABLED,
 		DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
 		DISCORD_GUILD_ID: process.env.DISCORD_GUILD_ID,
 		DISCORD_MEMBER_ROLE_ID: process.env.DISCORD_MEMBER_ROLE_ID,
