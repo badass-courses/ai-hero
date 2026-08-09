@@ -12,6 +12,12 @@ function functionSource(name: string, nextName: string) {
 	return source.slice(start, end)
 }
 
+function commandSource(command: string, nextCommand: string) {
+	const start = source.indexOf(`command === '${command}'`)
+	const end = source.indexOf(`command === '${nextCommand}'`, start)
+	return source.slice(start, end)
+}
+
 describe('subscriber marketing operator reliability contracts', () => {
 	it('reports Gate D from the live learner-flow cohort during rolling enrollment', () => {
 		const gateStatus = functionSource(
@@ -23,6 +29,16 @@ describe('subscriber marketing operator reliability contracts', () => {
 		expect(gateStatus).toContain('source: cohort?.source')
 		expect(gateStatus).toContain('participants: contactIds.length')
 		expect(gateStatus).toContain('byContact')
+	})
+
+	it('emits aggregate-only stuck summaries without customer rows', () => {
+		const stuckList = commandSource(
+			'learner-flow-stuck-list',
+			'learner-flow-unstick',
+		)
+		expect(stuckList).toContain("args.includes('--summary-only')")
+		expect(stuckList).toContain('stuck: _customerRows')
+		expect(stuckList).toContain('JSON.stringify(summary')
 	})
 
 	it('keeps retry sends out of the broad learner-flow unstick command', () => {

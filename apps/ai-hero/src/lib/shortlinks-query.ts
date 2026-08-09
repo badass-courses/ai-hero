@@ -17,8 +17,8 @@ import { redis } from '@/server/redis-client'
 import { and, count, desc, eq, like, or, sql } from 'drizzle-orm'
 import { customAlphabet } from 'nanoid'
 
-import { guid } from '@coursebuilder/utils/guid'
-
+import { createInternalId } from './internal-id'
+import { withMysqlPrimaryKeyRetry } from './mysql-primary-key-retry'
 import { getLegacyShortlinkMetadata } from './shortlinks-legacy-metadata'
 import {
 	CreateShortlinkSchema,
@@ -700,14 +700,16 @@ export async function createShortlinkAttribution(
 			}
 		}
 
-		// Insert attribution record
-		await db.insert(shortlinkAttribution).values({
-			id: guid(),
-			shortlinkId: link.id,
-			userId: data.userId,
-			email: data.email,
-			type: data.type,
-			metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+		// Insert attribution record. Rebuild the local ID for each bounded retry.
+		await withMysqlPrimaryKeyRetry(async () => {
+			await db.insert(shortlinkAttribution).values({
+				id: createInternalId(),
+				shortlinkId: link.id,
+				userId: data.userId,
+				email: data.email,
+				type: data.type,
+				metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+			})
 		})
 
 		await log.info('shortlink.attribution.recorded', {
