@@ -1,6 +1,7 @@
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import { reconcileLearnerFlow } from '@/lib/subscriber-marketing/learner-flow-reconciler'
 import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
 import { log } from '@/server/logger'
@@ -38,12 +39,17 @@ export const learnerFlowReconciler = inngest.createFunction(
 					completionFactsRepaired: 0,
 					intentsReplanned: 0,
 					intentsCreated: 0,
+					noop: 0,
+					blocked: 0,
+					notDue: 0,
+					failed: 0,
 					deferred: 0,
 					writeFailed: 0,
 					retriesExhausted: 0,
 					permanentProviderFailures: 0,
 					tier2: 0,
 				},
+				blockedReasons: {},
 				failureReasons: allowlistDecision.reviewReasons,
 				causeCounts: {},
 				brake: { status: 'clear' as const, reasons: [] as string[] },
@@ -61,6 +67,9 @@ export const learnerFlowReconciler = inngest.createFunction(
 			reconcileLearnerFlow({
 				repository: new DrizzleCaptureMarketingRepository(db),
 				allowlist,
+				email7LiveEnabled: parseEmail7LiveEnabled(
+					process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
+				),
 				now,
 			}),
 		)

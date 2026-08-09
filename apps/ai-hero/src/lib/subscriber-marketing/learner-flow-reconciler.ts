@@ -122,12 +122,17 @@ export type LearnerFlowReconcilerReceipt = {
 		completionFactsRepaired: number
 		intentsReplanned: number
 		intentsCreated: number
+		noop: number
+		blocked: number
+		notDue: number
+		failed: number
 		deferred: number
 		writeFailed: number
 		retriesExhausted: number
 		permanentProviderFailures: number
 		tier2: number
 	}
+	blockedReasons: Record<string, number>
 	failureReasons: string[]
 	causeCounts: Partial<Record<LearnerFlowStuckCause, number>>
 	brake: {
@@ -255,13 +260,16 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 }
 
 export function evaluateLearnerFlowReconcilerBrake(args: {
-	planned: number
 	cohortSize: number
+	candidates: LearnerFlowReconcilerCandidate[]
 	config?: LearnerFlowReconcilerConfig
 }): LearnerFlowReconcilerBrake {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
+	const riskyRepairCount = args.candidates.filter(
+		(candidate) => candidate.action !== 'nudge-drip-progression',
+	).length
 	const repairToCohortRatio =
-		args.cohortSize > 0 ? args.planned / args.cohortSize : 0
+		args.cohortSize > 0 ? riskyRepairCount / args.cohortSize : 0
 	const reasons =
 		args.cohortSize > 0 &&
 		repairToCohortRatio > config.maxRepairToCohortRatio
@@ -281,14 +289,15 @@ export function evaluateLearnerFlowReconcilerBrake(args: {
 export async function reconcileLearnerFlow(args: {
 	repository: LearnerFlowReconcilerRepository
 	allowlist: GateDRuntimeAllowlist
+	email7LiveEnabled: boolean
 	now: string
 	config?: LearnerFlowReconcilerConfig
 }): Promise<LearnerFlowReconcilerReceipt> {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
 	const plan = await buildLearnerFlowReconcilerPlan(args)
 	const brake = evaluateLearnerFlowReconcilerBrake({
-		planned: plan.counts.planned,
 		cohortSize: plan.cohort.contacts,
+		candidates: plan.candidates,
 		config,
 	})
 	if (brake.status === 'tripped') {
@@ -336,6 +345,7 @@ export async function reconcileLearnerFlow(args: {
 				allowlist: args.allowlist,
 				completedIntents: dripIntents,
 				allowWrite: true,
+				email7LiveEnabled: args.email7LiveEnabled,
 				now: args.now,
 			})
 		: emptyDripResult()
@@ -387,16 +397,9 @@ function receiptFor(args: {
 			.filter((result) => result.status === 'deferred')
 			.map((result) => result.contactId),
 	)
-	const deferredCandidates = (
-		args.brake.status === 'tripped'
-			? args.plan.candidates
-			: [
-					...args.plan.candidates.slice(args.config.repairCap),
-					...selected.filter((candidate) =>
-						writeFailedContactIds.has(candidate.contactId),
-					),
-				]
-	).sort(compareCandidateAge)
+	const blockedResults = dripResults.filter(
+		(result) => result.status === 'blocked',
+	)
 	const unserved = (
 		args.brake.status === 'tripped'
 			? args.plan.candidates
@@ -408,6 +411,9 @@ function receiptFor(args: {
 	const oldestUnserved = unserved[0]
 	const tier2Causes = args.plan.tier2.map((item) => item.cause)
 	const writeFailed = writeFailedContactIds.size
+	const blockedReasons = boundedReasonCounts(
+		blockedResults.flatMap((result) => result.reviewReasons),
+	)
 	const failureReasons = unique([
 		...args.brake.reasons,
 		...(writeFailed > 0 ? ['repair-write-failed'] : []),
@@ -416,7 +422,7 @@ function receiptFor(args: {
 	const status =
 		args.brake.status === 'tripped'
 			? 'blocked'
-			: writeFailed > 0 || args.plan.tier2.length > 0
+			: writeFailed > 0 || blockedResults.length > 0 || args.plan.tier2.length > 0
 				? 'degraded'
 				: 'ok'
 
@@ -434,7 +440,13 @@ function receiptFor(args: {
 			completionFactsRepaired: repairResults.length,
 			intentsReplanned: args.replanResult?.counts.replanned ?? 0,
 			intentsCreated: args.dripResult?.counts.planned ?? 0,
-			deferred: deferredCandidates.length,
+			noop:
+				(args.dripResult?.counts.idempotentNoop ?? 0) +
+				(args.dripResult?.counts.terminal ?? 0),
+			blocked: args.dripResult?.counts.blocked ?? 0,
+			notDue: args.dripResult?.counts.notDue ?? 0,
+			failed: args.dripResult?.counts.deferred ?? 0,
+			deferred: unserved.length,
 			writeFailed,
 			retriesExhausted: tier2Causes.filter(
 				(cause) => cause === 'provider-retries-exhausted',
@@ -444,6 +456,7 @@ function receiptFor(args: {
 			).length,
 			tier2: args.plan.tier2.length,
 		},
+		blockedReasons,
 		failureReasons,
 		causeCounts: args.plan.causeCounts,
 		brake: {
@@ -508,6 +521,23 @@ function hoursSince(then: string, now: string) {
 
 function stringField(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+const MAX_RECONCILER_BLOCKED_REASONS = 10
+
+function boundedReasonCounts(reasons: string[]) {
+	const counts = new Map<string, number>()
+	for (const reason of reasons) {
+		counts.set(reason, (counts.get(reason) ?? 0) + 1)
+	}
+	return Object.fromEntries(
+		[...counts.entries()]
+			.sort(
+				([leftReason, leftCount], [rightReason, rightCount]) =>
+					rightCount - leftCount || leftReason.localeCompare(rightReason),
+			)
+			.slice(0, MAX_RECONCILER_BLOCKED_REASONS),
+	)
 }
 
 function unique<T>(values: T[]) {

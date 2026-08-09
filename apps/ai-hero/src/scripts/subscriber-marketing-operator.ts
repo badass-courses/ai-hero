@@ -532,7 +532,10 @@ if (command === 'lookup') {
 	console.log(JSON.stringify({ ...result, receiptPath }, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
 	const result = await buildLearnerFlowStuckList()
-	if (args.includes('--json')) {
+	if (args.includes('--summary-only')) {
+		const { stuck: _customerRows, ...summary } = result
+		console.log(JSON.stringify(summary, null, 2))
+	} else if (args.includes('--json')) {
 		console.log(JSON.stringify(result, null, 2))
 	} else {
 		console.log(formatLearnerFlowStuckList(result))
@@ -3391,7 +3394,7 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --cleanup [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill [--dry-run] [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill --allow-write [--receipt .brain/data/learner-flow/receipts/receipt.json]
-  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json|--summary-only]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick --allow-write [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-email-executor --allow-write --mode allowlisted-test --allowlisted-email joel+test@example.com --limit 1 [--intent-id <id>] [--provider-pacing-ms 1500]
