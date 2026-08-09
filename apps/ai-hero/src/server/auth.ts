@@ -6,17 +6,30 @@ import { courseBuilderAdapter, db } from '@/db'
 import { accounts, entitlements, organizationMemberships } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { clearLegacyOAuthLinkCookies } from '@/lib/oauth-link-cookie'
+import {
+	OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
+	toOAuthProviderAccountReference,
+} from '@/inngest/events/oauth-provider-account-linked'
 import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
+import {
+	getDiscordRefreshFailureKind,
+	getNextAuthErrorLogLevel,
+} from '@/server/auth-log-policy'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
 import { log, serializeError } from '@/server/logger'
 import {
-	assertOAuthLinkAccountEventUnreachableDuringContainment,
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
 	runWithOAuthContainmentRequest,
+	takeVerifiedOAuthLink,
 } from '@/server/oauth-link-containment'
+import { redactOAuthLinkRef } from '@/server/oauth-link-intent'
+import { oauthLinkIntentService } from '@/server/oauth-link-intent-drizzle'
+import { observeOAuthLinkCanary } from '@/server/oauth-link-observability'
+import { isDiscordRelinkEnabledForUser } from '@/server/oauth-link-rollout'
+import { createAuthenticatedOAuthLinkSessionResolver } from '@/server/oauth-link-session'
 import {
 	getDiscordProviderConfig,
 	getGithubProviderConfig,
@@ -159,18 +172,37 @@ async function refreshDiscordToken(account: {
 			requestOptions,
 		)
 
+		const responseBody = (await response.json().catch(() => null)) as {
+			error?: unknown
+			access_token?: unknown
+			expires_in?: unknown
+			refresh_token?: unknown
+		} | null
 		if (!response.ok) {
+			const errorCode =
+				typeof responseBody?.error === 'string' ? responseBody.error : null
+			const failureKind = getDiscordRefreshFailureKind(
+				response.status,
+				errorCode,
+			)
+			if (failureKind === 'user-must-relink') {
+				return { error: failureKind }
+			}
 			throw new Error(`HTTP error! status: ${response.status}`)
 		}
+		if (
+			typeof responseBody?.access_token !== 'string' ||
+			typeof responseBody.expires_in !== 'number'
+		) {
+			throw new Error('Discord refresh response was invalid')
+		}
 
-		const tokensOrError = await response.json()
-
-		if (!response.ok) throw tokensOrError
-
-		return tokensOrError as {
-			access_token: string
-			expires_in: number
-			refresh_token?: string
+		return {
+			access_token: responseBody.access_token,
+			expires_in: responseBody.expires_in,
+			...(typeof responseBody.refresh_token === 'string' && {
+				refresh_token: responseBody.refresh_token,
+			}),
 		}
 	} catch (error) {
 		void log.error('auth.discord.token-refresh', {
@@ -181,18 +213,80 @@ async function refreshDiscordToken(account: {
 			}),
 			error: error instanceof Error ? error.message : String(error),
 		})
-		return { error: 'Failed to refresh session' }
+		return { error: 'refresh-failed' as const }
 	}
 }
 
 const oauthContainmentAdapter =
 	createOAuthContainmentAdapter(courseBuilderAdapter)
 
+const getSessionAndUser =
+	courseBuilderAdapter.getSessionAndUser?.bind(courseBuilderAdapter)
+if (!getSessionAndUser) {
+	throw new Error('OAuth containment requires database sessions')
+}
+const getAuthenticatedOAuthLinkSession =
+	createAuthenticatedOAuthLinkSessionResolver({
+		getCookieStore: cookies,
+		getSessionAndUser,
+	})
+
 const oauthContainmentSignInCallback = createOAuthContainmentSignInCallback({
 	getCookieStore: cookies,
 	findAccountOwner: async (account) =>
 		(await courseBuilderAdapter.getUserByAccount?.(account)) ?? null,
+	getAuthenticatedSession: getAuthenticatedOAuthLinkSession,
+	isUserAllowed: isDiscordRelinkEnabledForUser,
+	consumeLinkIntent: (input) => oauthLinkIntentService.consume(input),
+	observe: observeOAuthLinkCanary,
 })
+
+async function triggerVerifiedOAuthRoleSync({
+	account,
+	targetUserId,
+	flowId,
+}: NonNullable<ReturnType<typeof takeVerifiedOAuthLink>>) {
+	const common = {
+		flowId,
+		provider: account.provider,
+		intentRef: undefined,
+		targetUserRef: redactOAuthLinkRef(targetUserId),
+		accountRef: redactOAuthLinkRef(account.providerAccountId),
+	}
+	await observeOAuthLinkCanary({
+		...common,
+		action: 'role_sync_trigger',
+		result: 'allowed',
+	})
+	try {
+		await inngest.send({
+			name: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
+			data: {
+				account: toOAuthProviderAccountReference(account),
+				flowId,
+			},
+			user: { id: targetUserId },
+		})
+		await observeOAuthLinkCanary({
+			...common,
+			action: 'flow_completed',
+			result: 'linked',
+		})
+	} catch (error) {
+		await log.error('auth.oauth.link-event.failed', {
+			flowId,
+			provider: account.provider,
+			targetUserRef: common.targetUserRef,
+			accountRef: common.accountRef,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		await observeOAuthLinkCanary({
+			...common,
+			action: 'flow_completed',
+			result: 'denied',
+		})
+	}
+}
 
 const postSignInInvitationHandler = createPostSignInInvitationHandler({
 	acceptInvitations: acceptBillingAdminInvitations,
@@ -219,7 +313,7 @@ export const authOptions: NextAuthConfig = {
 	logger: {
 		error: (error) => {
 			const serialized = serializeError(error)
-			void log.error('auth.nextauth.error', {
+			const data = {
 				error: serialized,
 				errorName: serialized.name ?? null,
 				errorMessage: serialized.message,
@@ -229,7 +323,12 @@ export const authOptions: NextAuthConfig = {
 						? serialized.code
 						: null,
 				errorType: typeof serialized.type === 'string' ? serialized.type : null,
-			})
+			}
+			if (getNextAuthErrorLogLevel(serialized) === 'info') {
+				void log.info('auth.nextauth.expected', data)
+				return
+			}
+			void log.error('auth.nextauth.error', data)
 		},
 		warn: (code) => {
 			void log.warn('auth.nextauth.warn', {
@@ -241,8 +340,22 @@ export const authOptions: NextAuthConfig = {
 		createUser: async ({ user }) => {
 			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
 		},
-		linkAccount: assertOAuthLinkAccountEventUnreachableDuringContainment,
-		signIn: postSignInInvitationHandler,
+		linkAccount: async ({ user, account }) => {
+			await inngest.send({
+				name: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT,
+				data: {
+					account: toOAuthProviderAccountReference(account),
+				},
+				user: { id: user.id },
+			})
+		},
+		signIn: async (input) => {
+			const verifiedLink = input.user.id
+				? takeVerifiedOAuthLink(input.user.id)
+				: null
+			if (verifiedLink) await triggerVerifiedOAuthRoleSync(verifiedLink)
+			await postSignInInvitationHandler(input)
+		},
 		signOut: async () => {
 			const cookieStore = await cookies()
 			cookieStore.delete('organizationId')
@@ -317,8 +430,11 @@ export const authOptions: NextAuthConfig = {
 								eq(accounts.userId, user.id),
 							),
 						)
-				} else if ('error' in refreshedToken) {
-					void log.error('auth.discord.token-refresh', {
+				} else if (
+					'error' in refreshedToken &&
+					refreshedToken.error === 'user-must-relink'
+				) {
+					void log.info('auth.discord.token-refresh', {
 						...getDiscordLogData({
 							userId: user.id,
 							accountId: discordAccount.providerAccountId,
@@ -451,9 +567,17 @@ const nextAuth = NextAuth(authOptions)
 
 export const { auth, signIn } = nextAuth
 export const GET = (request: Parameters<typeof nextAuth.handlers.GET>[0]) =>
-	runWithOAuthContainmentRequest(request, () => nextAuth.handlers.GET(request))
+	runWithOAuthContainmentRequest(
+		request,
+		() => nextAuth.handlers.GET(request),
+		observeOAuthLinkCanary,
+	)
 export const POST = (request: Parameters<typeof nextAuth.handlers.POST>[0]) =>
-	runWithOAuthContainmentRequest(request, () => nextAuth.handlers.POST(request))
+	runWithOAuthContainmentRequest(
+		request,
+		() => nextAuth.handlers.POST(request),
+		observeOAuthLinkCanary,
+	)
 
 export const getServerAuthSession = cache(async () => {
 	return measureIfSlow({

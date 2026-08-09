@@ -2,19 +2,22 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+	authSessionCookieNames,
 	clearLegacyOAuthLinkCookies,
 	legacyOAuthLinkCookieNames,
+	oauthLinkIntentCookieNames,
 } from '@/lib/oauth-link-cookie'
+import { getOAuthLinkFlowId } from '@/server/oauth-link-intent'
 
 import type { Adapter } from '@auth/core/adapters'
 
 import { handleLoginOrRegister } from '../../node_modules/@auth/core/lib/actions/callback/handle-login.js'
 import { createPostSignInInvitationHandler } from './auth-post-sign-in'
 import {
-	assertOAuthLinkAccountEventUnreachableDuringContainment,
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
 	runWithOAuthContainmentRequest,
+	takeVerifiedOAuthLink,
 } from './oauth-link-containment'
 import {
 	getDiscordProviderConfig,
@@ -22,6 +25,10 @@ import {
 } from './oauth-provider-config'
 
 const authSource = readFileSync(new URL('./auth.ts', import.meta.url), 'utf8')
+const authCoreCookieSource = readFileSync(
+	new URL('../../node_modules/@auth/core/lib/utils/cookie.js', import.meta.url),
+	'utf8',
+)
 
 type Provider = 'github' | 'discord'
 
@@ -37,11 +44,15 @@ function createLockedAuthHarness({
 	provider,
 	accountOwner,
 	activeUser = null,
+	emailOwner = null,
+	sessionExpires = new Date('2026-09-01T00:00:00Z'),
 	accountType = 'oauth',
 }: {
 	provider: string
 	accountOwner: { id: string; email: string } | null
 	activeUser?: { id: string; email: string } | null
+	emailOwner?: { id: string; email: string } | null
+	sessionExpires?: Date
 	accountType?: 'oauth' | 'email'
 }) {
 	let currentAccountOwner = accountOwner
@@ -59,10 +70,10 @@ function createLockedAuthHarness({
 	}
 	const session = activeUser
 		? {
-			sessionToken: 'active-session',
-			userId: activeUser.id,
-			expires: new Date('2026-09-01T00:00:00Z'),
-		}
+				sessionToken: 'active-session',
+				userId: activeUser.id,
+				expires: sessionExpires,
+			}
 		: null
 	const linkAccount = vi.fn()
 	const createUserEvent = vi.fn()
@@ -78,7 +89,7 @@ function createLockedAuthHarness({
 		updateUser: vi.fn(),
 		getUser: vi.fn(async (id) => (activeUser?.id === id ? activeUser : null)),
 		getUserByAccount,
-		getUserByEmail: vi.fn(async () => null),
+		getUserByEmail: vi.fn(async () => emailOwner),
 		linkAccount,
 		createSession,
 		getSessionAndUser: vi.fn(async () =>
@@ -100,6 +111,7 @@ function createLockedAuthHarness({
 			name: provider,
 			type: accountType,
 			account: providerCall,
+			allowDangerousEmailAccountLinking: true,
 		},
 		session: {
 			strategy: 'database',
@@ -134,11 +146,226 @@ describe('Auth.js OAuth containment policy', () => {
 		vi.clearAllMocks()
 	})
 
+	it('links Discord through a valid session-bound intent before locked Auth.js continues', async () => {
+		const alice = { id: 'alice', email: 'alice@example.com' }
+		const harness = createLockedAuthHarness({
+			provider: 'discord',
+			accountOwner: null,
+			activeUser: alice,
+		})
+		const cookieStore = {
+			delete: vi.fn(),
+			get: vi.fn((name: string) =>
+				oauthLinkIntentCookieNames.some((cookieName) => cookieName === name)
+					? { value: 'opaque-link-token' }
+					: undefined,
+			),
+		}
+		const flowId = getOAuthLinkFlowId('opaque-link-token')
+		const consumeLinkIntent = vi.fn(async () => {
+			harness.setAccountOwner(alice)
+			return {
+				status: 'linked' as const,
+				targetUserId: alice.id,
+				linkKind: 'created' as const,
+				flowId,
+			}
+		})
+		const observe = vi.fn()
+		const callback = createOAuthContainmentSignInCallback({
+			getCookieStore: () => cookieStore,
+			findAccountOwner: harness.findAccountOwner,
+			getAuthenticatedSession: vi.fn(async () => ({
+				userId: alice.id,
+				sessionToken: 'active-session',
+			})),
+			consumeLinkIntent,
+			observe,
+		})
+
+		const result = await runWithOAuthContainmentRequest(
+			authCallbackRequest('discord'),
+			async () => {
+				await expect(
+					harness.adapter.getUserByAccount?.(harness.account),
+				).resolves.toBeNull()
+				await expect(callback({ account: harness.account })).resolves.toBe(true)
+				const authResult = await handleLoginOrRegister(
+					'active-session',
+					harness.profile,
+					harness.account,
+					harness.options as never,
+				)
+				return {
+					authResult,
+					verifiedLink: takeVerifiedOAuthLink(authResult.user.id!),
+				}
+			},
+		)
+
+		expect(result.authResult.user.id).toBe(alice.id)
+		expect(consumeLinkIntent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				rawToken: 'opaque-link-token',
+				provider: 'discord',
+				account: harness.account,
+			}),
+		)
+		expect(result.verifiedLink).toMatchObject({
+			targetUserId: alice.id,
+			flowId,
+			account: expect.objectContaining({ provider: 'discord' }),
+		})
+		expect(observe).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'callback_received', flowId }),
+		)
+		expect(harness.calls.linkAccount).not.toHaveBeenCalled()
+		expect(harness.calls.createUser).not.toHaveBeenCalled()
+		expect(harness.calls.providerCall).not.toHaveBeenCalled()
+		expect(cookieStore.delete.mock.calls).toEqual(
+			expect.arrayContaining(oauthLinkIntentCookieNames.map((name) => [name])),
+		)
+	})
+
+	it('performs no account write or provider-side event for a denied link intent', async () => {
+		const alice = { id: 'alice', email: 'alice@example.com' }
+		const harness = createLockedAuthHarness({
+			provider: 'discord',
+			accountOwner: null,
+			activeUser: alice,
+		})
+		const cookieStore = {
+			delete: vi.fn(),
+			get: vi.fn((name: string) =>
+				oauthLinkIntentCookieNames.some((cookieName) => cookieName === name)
+					? { value: 'denied-link-token' }
+					: undefined,
+			),
+		}
+		const callback = createOAuthContainmentSignInCallback({
+			getCookieStore: () => cookieStore,
+			findAccountOwner: harness.findAccountOwner,
+			getAuthenticatedSession: vi.fn(async () => ({
+				userId: alice.id,
+				sessionToken: 'active-session',
+			})),
+			consumeLinkIntent: vi.fn(async () => ({ status: 'denied' as const })),
+		})
+
+		await expect(
+			runWithOAuthContainmentRequest(authCallbackRequest('discord'), () =>
+				callback({ account: harness.account }),
+			),
+		).resolves.toBe('/discord?link=denied')
+		expect(harness.calls.linkAccount).not.toHaveBeenCalled()
+		expect(harness.calls.createUser).not.toHaveBeenCalled()
+		expect(harness.calls.linkAccountEvent).not.toHaveBeenCalled()
+	})
+
+	it('preserves logged-out Discord email auto-linking without caller identity', async () => {
+		const alice = { id: 'alice', email: 'alice@example.com' }
+		const harness = createLockedAuthHarness({
+			provider: 'discord',
+			accountOwner: null,
+			emailOwner: alice,
+		})
+		const callback = createOAuthContainmentSignInCallback({
+			getCookieStore: createCookieStore,
+			findAccountOwner: harness.findAccountOwner,
+			getAuthenticatedSession: vi.fn(async () => null),
+		})
+
+		const result = await runWithOAuthContainmentRequest(
+			authCallbackRequest('discord'),
+			async () => {
+				await expect(callback({ account: harness.account })).resolves.toBe(true)
+				return handleLoginOrRegister(
+					'',
+					harness.profile,
+					harness.account,
+					harness.options as never,
+				)
+			},
+		)
+
+		expect(result.user.id).toBe(alice.id)
+		expect(harness.calls.linkAccount).toHaveBeenCalledOnce()
+		expect(harness.calls.linkAccount).toHaveBeenCalledWith(
+			expect.objectContaining({ userId: alice.id, provider: 'discord' }),
+		)
+		expect(harness.calls.linkAccountEvent).toHaveBeenCalledOnce()
+		expect(harness.calls.createUser).not.toHaveBeenCalled()
+	})
+
+	it('denies implicit linking from an active session without an intent', async () => {
+		const alice = { id: 'alice', email: 'alice@example.com' }
+		const harness = createLockedAuthHarness({
+			provider: 'discord',
+			accountOwner: null,
+			activeUser: alice,
+		})
+		const callback = createOAuthContainmentSignInCallback({
+			getCookieStore: createCookieStore,
+			findAccountOwner: harness.findAccountOwner,
+			getAuthenticatedSession: vi.fn(async () => ({
+				userId: alice.id,
+				sessionToken: 'active-session',
+			})),
+		})
+
+		await expect(
+			runWithOAuthContainmentRequest(authCallbackRequest('discord'), () =>
+				callback({ account: harness.account }),
+			),
+		).resolves.toBe(false)
+		expect(harness.calls.linkAccount).not.toHaveBeenCalled()
+		expect(harness.calls.linkAccountEvent).not.toHaveBeenCalled()
+	})
+
+	it('does not let an expired database session authorize an implicit link', async () => {
+		const alice = { id: 'alice', email: 'alice@example.com' }
+		const harness = createLockedAuthHarness({
+			provider: 'discord',
+			accountOwner: null,
+			activeUser: alice,
+			sessionExpires: new Date('2020-01-01T00:00:00Z'),
+		})
+		const callback = createOAuthContainmentSignInCallback({
+			getCookieStore: createCookieStore,
+			findAccountOwner: harness.findAccountOwner,
+			getAuthenticatedSession: vi.fn(async () => null),
+		})
+
+		const result = await runWithOAuthContainmentRequest(
+			authCallbackRequest('discord'),
+			async () => {
+				await expect(callback({ account: harness.account })).resolves.toBe(true)
+				return handleLoginOrRegister(
+					'active-session',
+					harness.profile,
+					harness.account,
+					harness.options as never,
+				)
+			},
+		)
+
+		expect(result.user.id).toBe('discord-profile')
+		expect(harness.calls.linkAccount).toHaveBeenCalledWith(
+			expect.objectContaining({ userId: 'discord-profile' }),
+		)
+		expect(harness.calls.linkAccount).not.toHaveBeenCalledWith(
+			expect.objectContaining({ userId: alice.id }),
+		)
+	})
+
 	it.each<Provider>(['github', 'discord'])(
 		'allows an established %s account through locked Auth.js',
 		async (provider) => {
 			const owner = { id: 'owner', email: 'owner@example.com' }
-			const harness = createLockedAuthHarness({ provider, accountOwner: owner })
+			const harness = createLockedAuthHarness({
+				provider,
+				accountOwner: owner,
+			})
 			const callback = createOAuthContainmentSignInCallback({
 				getCookieStore: createCookieStore,
 				findAccountOwner: harness.findAccountOwner,
@@ -150,7 +377,9 @@ describe('Auth.js OAuth containment policy', () => {
 					await expect(
 						harness.adapter.getUserByAccount?.(harness.account),
 					).resolves.toMatchObject({ id: owner.id })
-					await expect(callback({ account: harness.account })).resolves.toBe(true)
+					await expect(callback({ account: harness.account })).resolves.toBe(
+						true,
+					)
 					return handleLoginOrRegister(
 						'',
 						harness.profile,
@@ -165,7 +394,8 @@ describe('Auth.js OAuth containment policy', () => {
 			expect(harness.calls.linkAccount).not.toHaveBeenCalled()
 			expect(harness.calls.linkAccountEvent).not.toHaveBeenCalled()
 			expect(harness.calls.createUser).not.toHaveBeenCalled()
-	})
+		},
+	)
 
 	it.each([
 		{ provider: 'github' as const, sessionToken: 'active-session' },
@@ -267,15 +497,13 @@ describe('Auth.js OAuth containment policy', () => {
 		})
 
 		await expect(
-			runWithOAuthContainmentRequest(
-				authCallbackRequest('github'),
-				() =>
-					callback({
-						account: {
-							provider: 'github',
-							providerAccountId: 'github-account',
-						},
-					}),
+			runWithOAuthContainmentRequest(authCallbackRequest('github'), () =>
+				callback({
+					account: {
+						provider: 'github',
+						providerAccountId: 'github-account',
+					},
+				}),
 			),
 		).resolves.toBe(false)
 	})
@@ -432,9 +660,8 @@ describe('Auth.js OAuth containment policy', () => {
 				}),
 			).rejects.toThrow('OAuth containment')
 			await expect(
-				runWithOAuthContainmentRequest(
-					authCallbackRequest(provider),
-					() => harness.adapter.createUser?.(harness.profile as never),
+				runWithOAuthContainmentRequest(authCallbackRequest(provider), () =>
+					harness.adapter.createUser?.(harness.profile as never),
 				),
 			).rejects.toThrow('OAuth containment')
 			expect(harness.calls.linkAccount).not.toHaveBeenCalled()
@@ -458,7 +685,9 @@ describe('Auth.js OAuth containment policy', () => {
 			await runWithOAuthContainmentRequest(
 				authCallbackRequest(provider),
 				async () => {
-					await expect(callback({ account: harness.account })).resolves.toBe(true)
+					await expect(callback({ account: harness.account })).resolves.toBe(
+						true,
+					)
 					await expect(
 						harness.adapter.createSession?.({
 							sessionToken: 'wrong-owner-session',
@@ -498,15 +727,13 @@ describe('Auth.js OAuth containment policy', () => {
 		})
 
 		await expect(
-			runWithOAuthContainmentRequest(
-				authCallbackRequest('github'),
-				() =>
-					callback({
-						account: {
-							provider: 'discord',
-							providerAccountId: 'discord-account',
-						},
-					}),
+			runWithOAuthContainmentRequest(authCallbackRequest('github'), () =>
+				callback({
+					account: {
+						provider: 'discord',
+						providerAccountId: 'discord-account',
+					},
+				}),
 			),
 		).resolves.toBe(false)
 	})
@@ -519,19 +746,19 @@ describe('Auth.js OAuth containment policy', () => {
 			findAccountOwner,
 		})
 
-		await runWithOAuthContainmentRequest(
-			authCallbackRequest('discord'),
-			() =>
-				callback({
-					account: {
-						provider: 'discord',
-						providerAccountId: 'discord-account',
-					},
-				}),
+		await runWithOAuthContainmentRequest(authCallbackRequest('discord'), () =>
+			callback({
+				account: {
+					provider: 'discord',
+					providerAccountId: 'discord-account',
+				},
+			}),
 		)
 
 		expect(cookieStore.delete.mock.calls).toEqual(
-			legacyOAuthLinkCookieNames.map((name) => [name]),
+			[...legacyOAuthLinkCookieNames, ...oauthLinkIntentCookieNames].map(
+				(name) => [name],
+			),
 		)
 		expect(cookieStore.delete.mock.invocationCallOrder.at(-1)).toBeLessThan(
 			findAccountOwner.mock.invocationCallOrder[0] ?? 0,
@@ -550,14 +777,6 @@ describe('Auth.js OAuth containment policy', () => {
 		expect(deleteCookie.mock.calls).toEqual(
 			legacyOAuthLinkCookieNames.map((name) => [name]),
 		)
-	})
-
-	it('asserts that linkAccount events are unreachable', () => {
-		expect(() =>
-			assertOAuthLinkAccountEventUnreachableDuringContainment({
-				account: { provider: 'discord' },
-			}),
-		).toThrow('linkAccount event reached during OAuth containment')
 	})
 })
 
@@ -595,17 +814,46 @@ describe('post-sign-in invitation wiring', () => {
 })
 
 describe('Auth.js containment wiring guards', () => {
-	it('wires request scope, guarded adapter, and callbacks into Auth.js', () => {
-		expect(authSource).toContain('adapter: oauthContainmentAdapter')
-		expect(authSource).toContain('runWithOAuthContainmentRequest(request')
-		expect(authSource).toContain('signIn: oauthContainmentSignInCallback')
-		expect(authSource).toContain(
-			'linkAccount: assertOAuthLinkAccountEventUnreachableDuringContainment',
+	it('binds session lookup to Auth.js default cookie names and rejects silent overrides', () => {
+		const sessionCookieTemplate = authCoreCookieSource.match(
+			/sessionToken:\s*{\s*name:\s*`\$\{cookiePrefix\}([^`]+)`/,
 		)
-		expect(authSource).toContain('signIn: postSignInInvitationHandler')
+		expect(sessionCookieTemplate?.[1]).toBeTruthy()
+		const defaultName = sessionCookieTemplate?.[1] as string
+		expect(authSessionCookieNames).toEqual([
+			defaultName,
+			`__Secure-${defaultName}`,
+		])
+
+		const authOptionsStart = authSource.indexOf(
+			'export const authOptions: NextAuthConfig = {',
+		)
+		const authOptionsEnd = authSource.indexOf(
+			'const nextAuth = NextAuth(authOptions)',
+			authOptionsStart,
+		)
+		expect(authOptionsStart).toBeGreaterThanOrEqual(0)
+		expect(authOptionsEnd).toBeGreaterThan(authOptionsStart)
+		const authOptionsSource = authSource.slice(authOptionsStart, authOptionsEnd)
+		expect(
+			authOptionsSource,
+			'If authOptions adds a cookies override, update authSessionCookieNames and this guard together.',
+		).not.toMatch(/^\tcookies:/m)
 	})
 
-	it('omits dangerous email linking from provider builders', () => {
+	it('wires request scope, guarded adapter, and callbacks into Auth.js', () => {
+		expect(authSource).toContain('adapter: oauthContainmentAdapter')
+		expect(authSource).toContain('runWithOAuthContainmentRequest(')
+		expect(authSource).toContain('observeOAuthLinkCanary')
+		expect(authSource).toContain('signIn: oauthContainmentSignInCallback')
+		expect(authSource).toContain('name: OAUTH_PROVIDER_ACCOUNT_LINKED_EVENT')
+		expect(authSource).toContain('takeVerifiedOAuthLink')
+		expect(authSource).toContain('triggerVerifiedOAuthRoleSync')
+		expect(authSource).toContain("action: 'role_sync_trigger'")
+		expect(authSource).toContain("action: 'flow_completed'")
+	})
+
+	it('preserves intentional provider email auto-linking', () => {
 		const github = getGithubProviderConfig({
 			clientId: 'github-client',
 			clientSecret: 'github-secret',
@@ -615,13 +863,12 @@ describe('Auth.js containment wiring guards', () => {
 			clientSecret: 'discord-secret',
 		})
 
-		expect(github).not.toHaveProperty('allowDangerousEmailAccountLinking')
-		expect(discord).not.toHaveProperty('allowDangerousEmailAccountLinking')
+		expect(github).toHaveProperty('allowDangerousEmailAccountLinking', true)
+		expect(discord).toHaveProperty('allowDangerousEmailAccountLinking', true)
 	})
 
 	it('keeps known-dangerous symbols and Twitter absent', () => {
 		for (const symbol of [
-			'allowDangerousEmailAccountLinking',
 			'courseBuilderAdapter.linkAccount',
 			'courseBuilderAdapter.unlinkAccount',
 			'TwitterProvider',

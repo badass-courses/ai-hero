@@ -7,7 +7,11 @@ import { inngest } from '@/inngest/inngest.server'
 import { DiscordError, DiscordMember } from '@/lib/discord'
 import { fetchAsDiscordBot, fetchJsonAsDiscordBot } from '@/lib/discord-query'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
+import { redactOAuthLinkRef } from '@/server/oauth-link-intent'
+import { observeOAuthLinkCanary } from '@/server/oauth-link-observability'
 import { and, eq } from 'drizzle-orm'
+
+import { runDiscordProviderBoundary } from './discord-account-linked-boundary'
 
 export const discordAccountLinked = inngest.createFunction(
 	{
@@ -19,13 +23,12 @@ export const discordAccountLinked = inngest.createFunction(
 		if: 'event.data.account.provider == "discord"',
 	},
 	async ({ event, step }) => {
-		const { account, profile } = event.data
+		const { account } = event.data
 
 		const user = await step.run('get user', async () => {
 			return await db.query.users.findFirst({
 				where: eq(users.id, event.user.id),
 				with: {
-					accounts: true,
 					purchases: true,
 				},
 			})
@@ -33,26 +36,79 @@ export const discordAccountLinked = inngest.createFunction(
 
 		if (!user) throw new Error('No user found')
 
-		const discordUser = await step.run('get discord user', async () => {
-			const userUrl = new URL('https://discord.com/api/users/@me')
-			const userRes = await fetch(userUrl.toString(), {
-				headers: {
-					authorization: `Bearer ${account.access_token}`,
-				},
+		const findCurrentAccount = async () => {
+			const current = await db.query.accounts.findFirst({
+				where: and(
+					eq(accounts.userId, event.user.id),
+					eq(accounts.provider, 'discord'),
+					eq(accounts.providerAccountId, account.providerAccountId),
+				),
 			})
-			return await userRes.json()
-		})
+			return current
+				? {
+						userId: current.userId,
+						providerAccountId: current.providerAccountId,
+						accessToken: current.access_token,
+					}
+				: null
+		}
+		const recordOwnershipMoved = async () => {
+			if (event.data.flowId) {
+				await observeOAuthLinkCanary({
+					action: 'ownership_moved',
+					flowId: event.data.flowId,
+					provider: 'discord',
+					critical: true,
+					targetUserRef: redactOAuthLinkRef(event.user.id),
+					accountRef: redactOAuthLinkRef(account.providerAccountId),
+				})
+			}
+		}
 
-		await step.run('add user to discord', async () => {
-			return await fetchAsDiscordBot(
-				`guilds/${env.DISCORD_GUILD_ID}/members/${discordUser.id}`,
-				{
-					method: 'PUT',
-					body: JSON.stringify({ access_token: account.access_token }),
-					headers: { 'Content-Type': 'application/json' },
-				},
-			)
-		})
+		const discordUserBoundary = await step.run(
+			'get discord user with current ownership',
+			async () =>
+				runDiscordProviderBoundary({
+					eventUserId: event.user.id,
+					eventProviderAccountId: account.providerAccountId,
+					findCurrentAccount,
+					onDenied: recordOwnershipMoved,
+					callProvider: async (accessToken) => {
+						const userUrl = new URL('https://discord.com/api/users/@me')
+						const userRes = await fetch(userUrl.toString(), {
+							headers: { authorization: `Bearer ${accessToken}` },
+						})
+						return userRes.json()
+					},
+				}),
+		)
+		if (discordUserBoundary.status === 'denied') {
+			return 'discord ownership changed; role sync skipped'
+		}
+		const discordUser = discordUserBoundary.value
+
+		const addMemberBoundary = await step.run(
+			'add user with current ownership',
+			async () =>
+				runDiscordProviderBoundary({
+					eventUserId: event.user.id,
+					eventProviderAccountId: account.providerAccountId,
+					findCurrentAccount,
+					onDenied: recordOwnershipMoved,
+					callProvider: (accessToken) =>
+						fetchAsDiscordBot(
+							`guilds/${env.DISCORD_GUILD_ID}/members/${discordUser.id}`,
+							{
+								method: 'PUT',
+								body: JSON.stringify({ access_token: accessToken }),
+								headers: { 'Content-Type': 'application/json' },
+							},
+						),
+				}),
+		)
+		if (addMemberBoundary.status === 'denied') {
+			return 'discord ownership changed; role sync skipped'
+		}
 
 		await step.sleep('give discord a moment', '10s')
 
@@ -63,6 +119,7 @@ export const discordAccountLinked = inngest.createFunction(
 					where: and(
 						eq(accounts.userId, user.id),
 						eq(accounts.provider, 'discord'),
+						eq(accounts.providerAccountId, account.providerAccountId),
 					),
 				})
 			},
@@ -103,31 +160,40 @@ export const discordAccountLinked = inngest.createFunction(
 				},
 			)
 
-			await step.run('update basic discord roles for user', async () => {
-				if ('user' in discordMember) {
-					const discordIds = userDiscordEntitlements.map(
-						(entitlement) => entitlement.metadata?.discordRoleId,
-					)
-
-					const roles = Array.from(
-						new Set([...discordMember.roles, ...discordIds]),
-					)
-
-					return await fetchAsDiscordBot(
-						`guilds/${env.DISCORD_GUILD_ID}/members/${discordAccount.providerAccountId}`,
-						{
-							method: 'PATCH',
-							body: JSON.stringify({
-								roles,
-							}),
-							headers: {
-								'Content-Type': 'application/json',
-							},
+			const roleUpdateBoundary = await step.run(
+				'update roles with current ownership',
+				async () =>
+					runDiscordProviderBoundary({
+						eventUserId: event.user.id,
+						eventProviderAccountId: account.providerAccountId,
+						findCurrentAccount,
+						onDenied: recordOwnershipMoved,
+						callProvider: async () => {
+							if ('user' in discordMember) {
+								const discordIds = userDiscordEntitlements.map(
+									(entitlement) => entitlement.metadata?.discordRoleId,
+								)
+								const roles = Array.from(
+									new Set([...discordMember.roles, ...discordIds]),
+								)
+								return fetchAsDiscordBot(
+									`guilds/${env.DISCORD_GUILD_ID}/members/${account.providerAccountId}`,
+									{
+										method: 'PATCH',
+										body: JSON.stringify({ roles }),
+										headers: {
+											'Content-Type': 'application/json',
+										},
+									},
+								)
+							}
+							return null
 						},
-					)
-				}
-				return null
-			})
+					}),
+			)
+			if (roleUpdateBoundary.status === 'denied') {
+				return 'discord ownership changed; role sync skipped'
+			}
 
 			discordMember = await step.run('reload discord member', async () => {
 				return await fetchJsonAsDiscordBot<DiscordMember | DiscordError>(
@@ -137,7 +203,6 @@ export const discordAccountLinked = inngest.createFunction(
 
 			return {
 				account,
-				profile,
 				user: event.user,
 				discordMember,
 			}
