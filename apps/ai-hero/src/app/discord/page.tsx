@@ -4,7 +4,9 @@ import { headers } from 'next/headers'
 import { ContributorImage } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { getDiscordAccount } from '@/lib/discord-query'
+import { requestOAuthAccountLink } from '@/lib/oauth-link-actions'
 import { getServerAuthSession } from '@/server/auth'
+import { isDiscordRelinkEnabledForUser } from '@/server/oauth-link-rollout'
 
 import { DiscordAccessAction } from './discord-access-action'
 import { getDiscordAccessState } from './discord-access'
@@ -24,13 +26,15 @@ export const metadata: Metadata = {
 export default async function Discord({
 	searchParams,
 }: {
-	searchParams: Promise<{ error?: string }>
+	searchParams: Promise<{ error?: string; link?: string }>
 }) {
 	await headers()
-	const { error } = await searchParams
+	const { error, link } = await searchParams
 	const discordAccessState = await getDiscordAccessState({
 		getSession: getServerAuthSession,
 		findDiscordAccount: getDiscordAccount,
+		linkResult: link,
+		canLinkUser: isDiscordRelinkEnabledForUser,
 	})
 
 	return (
@@ -48,7 +52,10 @@ export default async function Discord({
 					</div>
 				)}
 
-				<DiscordAccessAction state={discordAccessState} />
+				<DiscordAccessAction
+					state={discordAccessState}
+					requestLink={requestOAuthAccountLink}
+				/>
 			</main>
 		</LayoutClient>
 	)
