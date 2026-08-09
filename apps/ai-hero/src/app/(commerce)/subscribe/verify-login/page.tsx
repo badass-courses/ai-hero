@@ -1,7 +1,6 @@
 import { ParsedUrlQuery } from 'querystring'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { getCsrf } from '@/app/(user)/login/actions'
 import { Logo } from '@/components/brand/logo'
 import LayoutClient from '@/components/layout-client'
 import { Login } from '@/components/login'
@@ -38,7 +37,6 @@ export default async function VerifyLoginPage({
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
 	const providers = getProviders()
-	const csrfToken = await getCsrf()
 	const product = await getProduct(checkoutParams.productId as string)
 
 	let callbackUrl = `${env.COURSEBUILDER_URL}/subscribe/logged-in`
@@ -117,7 +115,6 @@ export default async function VerifyLoginPage({
 					<Logo className="text-muted-foreground mx-auto mb-5 flex w-full items-center justify-center opacity-90" />
 				}
 				title="Log in to join"
-				csrfToken={csrfToken}
 				providers={providers}
 				subtitle={`We’ll create an account for you if you don’t already have one.`}
 				callbackUrl={`${callbackUrl}?${checkoutSearchParams.toString()}`}
