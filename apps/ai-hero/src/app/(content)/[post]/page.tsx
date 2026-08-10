@@ -74,7 +74,7 @@ import {
 } from './_components/personalized-post-related-newsletter'
 
 export const revalidate = 3600
-export const dynamicParams = false
+export const dynamicParams = true
 export const dynamic = 'force-static'
 
 type Props = {
