@@ -4,6 +4,9 @@ import { Feed } from 'feed'
 
 import sitemap from '../sitemap'
 
+export const revalidate = 3600
+export const dynamic = 'force-static'
+
 async function generateRSS() {
 	const sitemapEntries = await sitemap()
 
@@ -13,7 +16,10 @@ async function generateRSS() {
 		id: env.COURSEBUILDER_URL,
 		link: env.COURSEBUILDER_URL,
 		language: 'en',
-		updated: new Date(),
+		updated: sitemapEntries.reduce((latest, entry) => {
+			const value = new Date(entry.lastModified)
+			return value > latest ? value : latest
+		}, new Date(0)),
 		feedLinks: {
 			rss: `${env.COURSEBUILDER_URL}/rss.xml`,
 		},
@@ -44,7 +50,7 @@ export async function GET() {
 	return new Response(await generateRSS(), {
 		headers: {
 			'Content-Type': 'text/xml; charset=utf-8',
-			'Cache-Control': 's-maxage=1, stale-while-revalidate',
+			'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
 		},
 	})
 }

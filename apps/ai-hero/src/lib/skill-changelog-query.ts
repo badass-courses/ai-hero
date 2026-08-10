@@ -17,6 +17,7 @@ import {
 	SKILL_CHANGELOG_RESOURCE_TYPE,
 	SKILL_CHANGELOG_SLUG_PREFIX,
 } from './skill-changelog-types'
+import { retryTransientDatabaseRead } from './transient-database-read'
 
 export { SKILL_CHANGELOG_RESOURCE_TYPE, SKILL_CHANGELOG_SLUG_PREFIX }
 
@@ -24,6 +25,7 @@ export type SkillChangelogEntry = ContentResource
 
 function reviveDates(obj: any): any {
 	if (obj === null || obj === undefined) return obj
+	if (obj instanceof Date) return obj
 	if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(obj)) {
 		const d = new Date(obj)
 		return isNaN(d.getTime()) ? obj : d
@@ -89,6 +91,27 @@ export async function getSkillChangelogEntries({
 		.map((result) => result.data)
 }
 
+const _getCachedSkillChangelogEntries = unstable_cache(
+	async (limit: number, offset: number) =>
+		retryTransientDatabaseRead(() =>
+			getSkillChangelogEntries({ limit, offset }),
+		),
+	['skill-changelog-entries-v1'],
+	{ revalidate: 3600, tags: ['skill-changelog', 'posts'] },
+)
+
+export async function getCachedSkillChangelogEntries({
+	limit = 10,
+	offset = 0,
+}: {
+	limit?: number
+	offset?: number
+} = {}): Promise<SkillChangelogEntry[]> {
+	return reviveDates(
+		await _getCachedSkillChangelogEntries(limit, offset),
+	) as SkillChangelogEntry[]
+}
+
 export async function getSkillChangelogEntry(
 	slugOrId: string,
 ): Promise<SkillChangelogEntry | null> {
@@ -129,8 +152,19 @@ export async function getSkillChangelogCount(): Promise<number> {
 	return Number(rows[0]?.count ?? 0)
 }
 
+const _getCachedSkillChangelogCount = unstable_cache(
+	async () => retryTransientDatabaseRead(() => getSkillChangelogCount()),
+	['skill-changelog-count-v1'],
+	{ revalidate: 3600, tags: ['skill-changelog', 'posts'] },
+)
+
+export async function getCachedSkillChangelogCount() {
+	return _getCachedSkillChangelogCount()
+}
+
 const _getCachedSkillChangelogEntry = unstable_cache(
-	async (slugOrId: string) => getSkillChangelogEntry(slugOrId),
+	async (slugOrId: string) =>
+		retryTransientDatabaseRead(() => getSkillChangelogEntry(slugOrId)),
 	['skill-changelog-v1'],
 	{ revalidate: 3600, tags: ['skill-changelog', 'posts'] },
 )

@@ -5,6 +5,9 @@ import {
 } from '@/lib/agent-discovery'
 import { buildAgentOpenApiDocument } from '@/lib/agent-openapi'
 
+export const dynamic = 'force-static'
+export const revalidate = 3600
+
 export async function GET() {
 	return NextResponse.json(buildAgentOpenApiDocument(getDiscoveryBaseUrl()), {
 		headers: {

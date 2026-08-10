@@ -3,7 +3,9 @@ import { contentResource, contentResourceResource } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { SKILLS_HERO } from '@/lib/skills-content'
+import { retryTransientDatabaseRead } from '@/lib/transient-database-read'
 import { sql } from 'drizzle-orm'
+import { unstable_cache } from 'next/cache'
 
 export const DISCOVERY_CACHE_CONTROL =
 	'public, s-maxage=3600, stale-while-revalidate=86400'
@@ -751,7 +753,7 @@ curl -H 'Accept: text/markdown' ${normalizedBaseUrl}/some-post-slug
 `
 }
 
-export async function getPublicDiscoveryResources(): Promise<
+async function queryPublicDiscoveryResources(): Promise<
 	PublicDiscoveryResource[]
 > {
 	const baseUrl = getDiscoveryBaseUrl()
@@ -864,4 +866,19 @@ export async function getPublicDiscoveryResources(): Promise<
 	return [...resourcesByUrl.values()].sort((left, right) =>
 		left.url.localeCompare(right.url),
 	)
+}
+
+const _getCachedPublicDiscoveryResources = unstable_cache(
+	async () => retryTransientDatabaseRead(queryPublicDiscoveryResources),
+	['public-discovery-resources-v1'],
+	{
+		revalidate: 3600,
+		tags: ['posts', 'lists', 'ai-coding-dictionary'],
+	},
+)
+
+export async function getPublicDiscoveryResources(): Promise<
+	PublicDiscoveryResource[]
+> {
+	return _getCachedPublicDiscoveryResources()
 }
