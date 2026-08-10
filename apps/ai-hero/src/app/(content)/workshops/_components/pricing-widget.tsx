@@ -6,8 +6,8 @@ import {
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
 import { TYPE } from '@/components/landing/type'
-import { formatInTimeZone } from 'date-fns-tz'
-import { ArrowUpRight, Minus, Plus, ShieldCheck } from 'lucide-react'
+import { formatDeadline } from '@/utils/discount-formatter'
+import { ArrowUpRight, Mail, Minus, Plus, ShieldCheck } from 'lucide-react'
 import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
@@ -109,7 +109,7 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
-					<TeamPurchaseControls letterHref={teamLetterHref} />
+					<TeamPurchaseControls />
 					{buyButton ?? (
 						<Pricing.BuyButton
 							className={cn(
@@ -148,11 +148,48 @@ export const PricingWidget = ({
 			{!hideFeatures && (
 				<ProductPricingFeatures
 					variant="checklist"
-					className="mt-7 px-5 pb-7 sm:px-6"
+					className="mt-7 px-5 sm:px-6"
 					workshops={workshops ?? []}
 					productType={product.type}
 					prependFeatures={prependFeatures}
 				/>
+			)}
+			{teamLetterHref && (
+				<div className="w-full px-5 pb-7 pt-5 sm:px-6">
+					{/* The approval path, after the reader has seen what the money
+					    buys: a ready-made letter to forward to whoever signs off.
+					    Bordered like the card's other side-objects (countdown,
+					    regional pricing) — an offer, not the ask, so no gold. New
+					    tab, so the checkout they were considering stays put. */}
+					<a
+						href={teamLetterHref}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="border-border hover:bg-foreground/[0.04] group flex w-full items-start gap-3 rounded-[9px] border px-4 py-3.5 transition-colors"
+					>
+						<Mail
+							className="text-muted-foreground mt-0.5 size-4 shrink-0"
+							aria-hidden="true"
+						/>
+						<span className="flex min-w-0 flex-col gap-0.5">
+							<span
+								className={cn(
+									TYPE.meta,
+									'text-foreground flex items-center gap-1 font-semibold',
+								)}
+							>
+								Letter for your boss
+								<ArrowUpRight
+									className="size-3.5 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+									aria-hidden="true"
+								/>
+							</span>
+							<span className={cn(TYPE.metaSm, 'text-muted-foreground')}>
+								Need sign-off? Copy-paste the case for expensing this.
+							</span>
+						</span>
+					</a>
+				</div>
 			)}
 		</Pricing.Root>
 	)
@@ -264,7 +301,7 @@ const CardPrice = ({
  * Same context state underneath (`isTeamPurchaseActive`, `quantity`), so the
  * checkout path and PPP gating behave exactly as before.
  */
-const TeamPurchaseControls = ({ letterHref }: { letterHref?: string }) => {
+const TeamPurchaseControls = () => {
 	const {
 		isTeamPurchaseActive,
 		toggleTeamPurchase,
@@ -296,35 +333,16 @@ const TeamPurchaseControls = ({ letterHref }: { letterHref?: string }) => {
 
 	return (
 		<div className="mt-4 flex w-full flex-col items-start gap-3">
-			<div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
-				<label className="flex cursor-pointer items-center gap-2.5">
-					<Checkbox
-						checked={isTeamPurchaseActive}
-						onCheckedChange={() => toggleTeamPurchase()}
-						className="rounded-[4px]"
-					/>
-					<span className={cn(TYPE.meta, 'text-muted-foreground')}>
-						Buying for your team?
-					</span>
-				</label>
-				{/* The approval path, named for what it is: a ready-made letter the
-				    reader forwards to whoever signs off. New tab, so the checkout
-				    they were in the middle of stays put. */}
-				{letterHref && (
-					<a
-						href={letterHref}
-						target="_blank"
-						rel="noopener noreferrer"
-						className={cn(
-							TYPE.metaSm,
-							'text-muted-foreground hover:text-foreground decoration-border hover:decoration-foreground/40 inline-flex items-center gap-1 underline underline-offset-2 transition-colors',
-						)}
-					>
-						Letter for your boss
-						<ArrowUpRight className="size-3 shrink-0" aria-hidden="true" />
-					</a>
-				)}
-			</div>
+			<label className="flex cursor-pointer items-center gap-2.5">
+				<Checkbox
+					checked={isTeamPurchaseActive}
+					onCheckedChange={() => toggleTeamPurchase()}
+					className="rounded-[4px]"
+				/>
+				<span className={cn(TYPE.meta, 'text-muted-foreground')}>
+					Buying for your team?
+				</span>
+			</label>
 			{isTeamPurchaseActive && (
 				<div className="flex items-center gap-2.5">
 					<button
@@ -385,9 +403,8 @@ const SaleCountdownBox = ({
 	if (completed) return null
 
 	const expires = formattedPrice?.defaultCoupon?.expires
-	const endsLabel = expires
-		? `Price goes up ${formatInTimeZone(new Date(expires), 'America/Los_Angeles', 'MMM d')}`
-		: 'Price goes up soon'
+	const deadline = formatDeadline(expires, 'short')
+	const endsLabel = deadline ? `Price goes up ${deadline}` : 'Price goes up soon'
 	const blocks: Array<[number, string]> = [
 		[days, 'days'],
 		[hours, 'hours'],

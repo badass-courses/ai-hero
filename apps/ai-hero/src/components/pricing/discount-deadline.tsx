@@ -1,8 +1,14 @@
 'use client'
 
+import { formatDeadline } from '@/utils/discount-formatter'
+
 /**
  * Display discount deadline date in MDX content
  * Receives coupon expiration date from server
+ *
+ * Renders via `formatDeadline`, so the day is the sale's actual last day in
+ * Pacific time with the zone named — not whatever day the expiry instant
+ * happens to fall on in the reader's locale.
  */
 export function DiscountDeadline({
 	format = 'long',
@@ -11,13 +17,8 @@ export function DiscountDeadline({
 	format?: 'short' | 'long'
 	expires: Date | string | null
 }) {
-	if (!expires) return null
+	const formatted = formatDeadline(expires, format)
+	if (!formatted) return null
 
-	const dateObj = typeof expires === 'string' ? new Date(expires) : expires
-	const options: Intl.DateTimeFormatOptions =
-		format === 'long'
-			? { month: 'long', day: 'numeric', year: 'numeric' }
-			: { month: 'short', day: 'numeric' }
-
-	return <>{dateObj.toLocaleDateString('en-US', options)}</>
+	return <>{formatted}</>
 }
