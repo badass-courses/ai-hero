@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import { unstable_cache } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ContentReadTracker } from '@/components/content-read-tracker'
@@ -19,7 +20,6 @@ import {
 	ArticleStructuredData,
 	BreadcrumbStructuredData,
 } from '@/lib/structured-data'
-import { getServerAuthSession } from '@/server/auth'
 import { compileMDX } from '@/utils/compile-mdx'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { ArrowLeft, Github } from 'lucide-react'
@@ -33,6 +33,11 @@ import { CopyPageButton } from '../../_components/copy-page-button'
 import { PostShareDialogButton } from '../../[post]/_components/post-header-dialog-buttons'
 import { PostPlayer } from '../../posts/_components/post-player'
 import { SkillsCourseCta } from '../_components/skills-course-cta'
+import { SkillChangelogActionBar } from './_components/skill-changelog-action-bar'
+
+export const revalidate = 3600
+export const dynamicParams = true
+export const dynamic = 'force-static'
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -127,7 +132,10 @@ ${entry.fields?.body ?? ''}`
 										</div>
 									</div>
 									<Suspense fallback={null}>
-										<SkillChangelogActionBar entry={entry} />
+										<SkillChangelogActionBar
+											entryId={entry.id}
+											entrySlug={entry.fields?.slug}
+										/>
 									</Suspense>
 								</div>
 							</div>
@@ -200,9 +208,7 @@ async function PlayerContainer({
 	entry: NonNullable<Awaited<ReturnType<typeof getCachedSkillChangelogEntry>>>
 }) {
 	const resource = entry.resources?.[0]?.resource.id
-	const videoResource = resource
-		? await courseBuilderAdapter.getVideoResource(resource)
-		: null
+	const videoResource = resource ? await getCachedVideoResource(resource) : null
 
 	return videoResource ? (
 		<VideoPlayerOverlayProvider>
@@ -233,19 +239,12 @@ async function PlayerContainer({
 	) : null
 }
 
-async function SkillChangelogActionBar({
-	entry,
-}: {
-	entry: NonNullable<Awaited<ReturnType<typeof getCachedSkillChangelogEntry>>>
-}) {
-	const { ability } = await getServerAuthSession()
-
-	return entry && ability.can('update', 'Content') ? (
-		<Button asChild size="sm" className="absolute right-0 top-0 z-50">
-			<Link href={`/skills/${entry.fields?.slug || entry.id}/edit`}>Edit</Link>
-		</Button>
-	) : null
-}
+const getCachedVideoResource = (id: string) =>
+	unstable_cache(
+		async () => courseBuilderAdapter.getVideoResource(id),
+		['skill-changelog-video-resource-v1', id],
+		{ revalidate: 3600, tags: [`video-resource:${id}`] },
+	)()
 
 export async function generateStaticParams() {
 	const entries = await getSkillChangelogEntries({ limit: 100 })

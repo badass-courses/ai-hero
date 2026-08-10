@@ -1,8 +1,7 @@
 import { env } from '@/env.mjs'
-import { getList } from '@/lib/lists-query'
+import { getCachedList } from '@/lib/lists-query'
 import {
-	getSkillChangelogCount,
-	getSkillChangelogEntries,
+	getCachedSkillChangelogEntries,
 	type SkillChangelogEntry,
 } from '@/lib/skill-changelog-query'
 import {
@@ -11,27 +10,20 @@ import {
 	SKILLS_HERO,
 	SKILLS_INSTALL_CHANNELS,
 	SKILLS_LIST_ID,
-	SKILLS_PAGE_SIZE,
 	SKILLS_REPO_URL,
 } from '@/lib/skills-content'
 
 import { createMarkdownResponse } from '../route-utils'
 
-export async function GET(request: Request) {
-	const url = new URL(request.url)
-	const currentPage = Math.max(
-		Number(url.searchParams.get('page') ?? '1') || 1,
-		1,
-	)
-	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
+export const revalidate = 3600
+export const dynamic = 'force-static'
 
-	const [entries, totalEntries, skillsList] = await Promise.all([
-		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
-		getSkillChangelogCount(),
-		getList(SKILLS_LIST_ID),
+export async function GET() {
+	const [entries, skillsList] = await Promise.all([
+		getCachedSkillChangelogEntries({ limit: 1000 }),
+		getCachedList(SKILLS_LIST_ID),
 	])
 
-	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const baseUrl = env.COURSEBUILDER_URL
 
 	const skillCatalogue = (skillsList?.resources ?? [])
@@ -44,9 +36,9 @@ export async function GET(request: Request) {
 		baseUrl,
 		entries,
 		skillCatalogue,
-		currentPage,
-		totalPages,
-		totalEntries,
+		currentPage: 1,
+		totalPages: 1,
+		totalEntries: entries.length,
 	})
 
 	return createMarkdownResponse(markdown)

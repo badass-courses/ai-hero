@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
@@ -5,10 +6,9 @@ import { TYPE } from '@/components/landing/type'
 import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { getRepoStarCount } from '@/lib/github-stars-query'
-import { getListWithSections } from '@/lib/lists-query'
+import { getCachedFilteredList } from '@/lib/lists-query'
 import {
-	getSkillChangelogCount,
-	getSkillChangelogEntries,
+	getCachedSkillChangelogEntries,
 	type SkillChangelogEntry,
 } from '@/lib/skill-changelog-query'
 import {
@@ -21,19 +21,19 @@ import { RssIcon } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { ChangelogList, type ChangelogItem } from './_components/changelog-list'
-import { ChangelogPagination } from './_components/changelog-pagination'
+import type { ChangelogItem } from './_components/changelog-list'
+import {
+	ChangelogPage,
+	PaginatedChangelog,
+} from './_components/paginated-changelog'
 import { countSkills, toSkillGroups } from './_components/skill-groups'
 import { SkillSet } from './_components/skill-set'
 import { SkillsGitHubSection } from './_components/skills-github-section'
 import { SkillsHero } from './_components/skills-hero'
 import { SkillsSalesCopy } from './_components/skills-sales-copy'
 
-// No `force-dynamic`. It was carried over with a comment about cohort
-// enrollment windows, but this page never reads a cohort — every reader on it
-// is cached and tag-invalidated. Reading `searchParams` for the changelog
-// pager already opts the route out of static rendering where it matters, and
-// dropping the flag lets the cached readers actually be cached.
+export const revalidate = 3600
+export const dynamic = 'force-static'
 
 export const metadata: Metadata = {
 	title: SKILLS_HERO.title,
@@ -55,10 +55,6 @@ export const metadata: Metadata = {
 	},
 }
 
-type Props = {
-	searchParams: Promise<{ page?: string }>
-}
-
 /**
  * /skills — the skill system's own page (`Skills Page.dc.html`).
  *
@@ -76,30 +72,15 @@ type Props = {
  * to lead with "The Main Flow" rather than "Getting Started", move the section
  * in the list, not in this file.
  */
-export default async function SkillsPage({ searchParams }: Props) {
-	const { page: pageParam } = await searchParams
-	// Floored, not just clamped: `?page=1.05` would otherwise reach the query as
-	// a fractional OFFSET, which the driver rejects — a hand-typed URL should
-	// land on a page, not a 500.
-	// `?page=Infinity` and `?page=1e309` both survive `Math.floor` and a
-	// `|| 1` guard (Infinity is truthy), reaching the query as a non-finite
-	// OFFSET. Anything that is not a plain in-range integer falls back to 1.
-	const requestedPage = Math.floor(Number(pageParam ?? '1'))
-	const currentPage =
-		Number.isSafeInteger(requestedPage) && requestedPage >= 1
-			? requestedPage
-			: 1
-	const offset = (currentPage - 1) * SKILLS_PAGE_SIZE
-	const [entries, totalEntries, skillsList, stars] = await Promise.all([
-		getSkillChangelogEntries({ limit: SKILLS_PAGE_SIZE, offset }),
-		getSkillChangelogCount(),
-		getListWithSections(SKILLS_LIST_ID),
+export default async function SkillsPage() {
+	const [entries, skillsList, stars] = await Promise.all([
+		getCachedSkillChangelogEntries({ limit: 1000 }),
+		getCachedFilteredList(SKILLS_LIST_ID),
 		getRepoStarCount(SKILLS_HERO.repoOwner, SKILLS_HERO.repoName),
 	])
 
 	const skillGroups = toSkillGroups(skillsList?.resources)
 	const skillCount = countSkills(skillGroups)
-	const totalPages = Math.max(Math.ceil(totalEntries / SKILLS_PAGE_SIZE), 1)
 	const changelogItems = entries.map(toChangelogItem)
 	return (
 		<LayoutClient withContainer withFooter={false}>
@@ -152,11 +133,20 @@ export default async function SkillsPage({ searchParams }: Props) {
 									</Link>
 								</div>
 							</div>
-							<ChangelogList items={changelogItems} />
-							<ChangelogPagination
-								currentPage={currentPage}
-								totalPages={totalPages}
-							/>
+							<Suspense
+								fallback={
+									<ChangelogPage
+										items={changelogItems}
+										currentPage={1}
+										pageSize={SKILLS_PAGE_SIZE}
+									/>
+								}
+							>
+								<PaginatedChangelog
+									items={changelogItems}
+									pageSize={SKILLS_PAGE_SIZE}
+								/>
+							</Suspense>
 						</div>
 					</section>
 

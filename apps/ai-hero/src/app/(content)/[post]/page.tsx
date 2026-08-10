@@ -14,7 +14,7 @@ import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { Share } from '@/components/share'
 import { courseBuilderAdapter } from '@/db'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
-import { getAllLists, getCachedListForPost } from '@/lib/lists-query'
+import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
 import { resolvePostCta } from '@/lib/post-cta'
@@ -811,7 +811,7 @@ const _getCachedVideoResource = (id: string) =>
 
 export async function generateStaticParams() {
 	const posts = await getAllPosts()
-	const lists = await getAllLists()
+	const lists = await getCachedAllLists()
 
 	const resources = [...posts, ...lists]
 

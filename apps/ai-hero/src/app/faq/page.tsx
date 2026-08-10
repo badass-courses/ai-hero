@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
-import { getPage } from '@/lib/pages-query'
+import { getCachedPage } from '@/lib/pages-query'
 import { FaqStructuredData } from '@/lib/structured-data'
 import { formatFaq } from '@/utils/format-faq'
 
@@ -14,8 +14,11 @@ export const metadata: Metadata = {
 	description: 'Frequently Asked Questions',
 }
 
+export const revalidate = 3600
+export const dynamic = 'force-static'
+
 export default async function FaqPage() {
-	const page = await getPage('faq-2ryr6')
+	const page = await getCachedPage('faq-2ryr6')
 	const formattedQuestions = formatFaq(page?.fields?.body || '')
 
 	return (

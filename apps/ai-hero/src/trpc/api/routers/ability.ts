@@ -1,4 +1,6 @@
 import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { getAllLists } from '@/lib/lists-query'
+import { getAllPosts } from '@/lib/posts-query'
 import { resolveSkillsCtaState } from '@/lib/skills-cta-state'
 import { hasEntitlementForResource } from '@/lib/entitlements-query'
 import { getCtaGatingPayload } from '@/lib/subscriber-gate'
@@ -7,6 +9,20 @@ import { getCurrentAbilityRules } from '@/utils/get-current-ability-rules'
 import { z } from 'zod'
 
 export const abilityRouter = createTRPCRouter({
+	getPostActionsData: publicProcedure.query(async ({ ctx }) => {
+		if (
+			ctx.ability.cannot('create', 'Content') ||
+			ctx.ability.cannot('update', 'Content')
+		) {
+			return null
+		}
+
+		const [allPosts, allLists] = await Promise.all([
+			getAllPosts(),
+			getAllLists(),
+		])
+		return { allPosts, allLists }
+	}),
 	getCurrentAbilityRules: publicProcedure
 		.input(
 			z
