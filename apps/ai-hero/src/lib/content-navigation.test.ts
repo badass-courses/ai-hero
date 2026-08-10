@@ -443,6 +443,35 @@ describe('content-navigation', () => {
 			expect(getFirstResourceSlug(navigation)).toBe('lesson-2')
 		})
 
+		it('skips a question ahead of the first lesson, even with a slug', () => {
+			// A slugless question was always passed over via the `|| null`
+			// fallthrough; the type guard is what keeps a question from ever being
+			// the entry point, slug or not.
+			const question = createResource({
+				id: 'question-1',
+				type: 'question',
+				fields: { slug: 'question-1' },
+			})
+			const lesson = createResource({
+				id: 'lesson-1',
+				type: 'lesson',
+				fields: { slug: 'lesson-1', title: 'Lesson 1' },
+			})
+
+			const navigation = createNavigation([
+				createLevel1Wrapper(
+					createResource({
+						id: 'section-1',
+						type: 'section',
+						fields: { slug: 'section-1', title: 'Section 1' },
+					}),
+					[createLevel2Wrapper(question), createLevel2Wrapper(lesson)],
+				),
+			])
+
+			expect(getFirstResourceSlug(navigation)).toBe('lesson-1')
+		})
+
 		it('returns null when all resources have null slugs', () => {
 			const section = createResource({
 				id: 'section-1',
