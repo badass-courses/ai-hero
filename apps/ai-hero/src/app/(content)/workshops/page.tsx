@@ -1,6 +1,10 @@
+import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import { WorkshopsIndexList } from '@/app/(content)/workshops/_components/workshops-index-list'
-import { WorkshopsIndexPricing } from '@/app/(content)/workshops/_components/workshops-index-pricing'
+import {
+	WorkshopsIndexPricing,
+	WorkshopsIndexPricingFallback,
+} from '@/app/(content)/workshops/_components/workshops-index-pricing'
 import LayoutClient from '@/components/layout-client'
 import config from '@/config'
 import { db } from '@/db'
@@ -67,12 +71,24 @@ export default async function Workshops() {
 					</div>
 					<div className="relative w-full">
 						<WorkshopsIndexList initialWorkshops={workshops} />
-						{pricing?.allowPurchase && (
-							<WorkshopsIndexPricing
-								product={pricing.product}
-								initialCommerceProps={pricing.commerceProps}
-								pricingData={pricing.pricingData}
-							/>
+						{pricing && (
+							<Suspense
+								fallback={
+									<WorkshopsIndexPricingFallback
+										product={pricing.product}
+										initialCommerceProps={pricing.commerceProps}
+										pricingData={pricing.pricingData}
+										initialAllowPurchase={pricing.allowPurchase}
+									/>
+								}
+							>
+								<WorkshopsIndexPricing
+									product={pricing.product}
+									initialCommerceProps={pricing.commerceProps}
+									pricingData={pricing.pricingData}
+									initialAllowPurchase={pricing.allowPurchase}
+								/>
+							</Suspense>
 						)}
 					</div>
 				</div>

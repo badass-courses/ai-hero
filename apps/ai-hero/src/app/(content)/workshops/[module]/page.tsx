@@ -3,7 +3,10 @@ import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
 import { EditWorkshopButton } from '@/app/(content)/workshops/_components/edit-workshop-button'
-import { WorkshopAccessBoundary } from '@/app/(content)/workshops/_components/workshop-access-boundary'
+import {
+	WorkshopAccessBoundary,
+	WorkshopSidebarAccessBoundary,
+} from '@/app/(content)/workshops/_components/workshop-access-boundary'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import {
 	ContentTitle,
@@ -43,7 +46,10 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import { InlineBuyButton } from '../_components/inline-mdx-pricing'
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
 import WorkshopImage from '../_components/workshop-image'
-import { WorkshopPricingClient } from '../_components/workshop-pricing'
+import {
+	WorkshopPricingClient,
+	WorkshopPricingFallback,
+} from '../_components/workshop-pricing'
 import { PublicWorkshopPricing } from '../_components/workshop-public-pricing-server'
 import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
 import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
@@ -348,6 +354,21 @@ export default async function ModulePage(props: Props) {
 													</div>
 												</WorkshopSidebar>
 											)
+											const pricingWidget = (
+												<React.Suspense
+													fallback={
+														<WorkshopPricingFallback
+															className="bg-card"
+															{...pricingProps}
+														/>
+													}
+												>
+													<WorkshopPricingClient
+														className="bg-card"
+														{...pricingProps}
+													/>
+												</React.Suspense>
+											)
 											const anonymousSidebar = pricingProps.product ? (
 												<WorkshopSidebar
 													pricingProps={pricingProps}
@@ -359,13 +380,7 @@ export default async function ModulePage(props: Props) {
 													})}
 												>
 													{pricingProps.allowPurchase ? (
-														<>
-															<WorkshopPricingClient
-																className="bg-card"
-																searchParams={Promise.resolve({})}
-																{...pricingProps}
-															/>
-														</>
+														pricingWidget
 													) : showInterestCapture ? (
 														<WorkshopInterestCta
 															workshopSlug={params.module}
@@ -401,12 +416,49 @@ export default async function ModulePage(props: Props) {
 													wrapperClassName="overflow-hidden pb-0"
 												/>
 											)
+											const forcedPurchaseSidebar = pricingProps.product ? (
+												<WorkshopSidebar
+													pricingProps={{
+														...pricingProps,
+														allowPurchase: true,
+													}}
+													workshop={workshop}
+													className="md:-mt-14"
+												>
+													<React.Suspense
+														fallback={
+															<WorkshopPricingFallback
+																className="bg-card"
+																searchParams={{ allowPurchase: 'true' }}
+																{...pricingProps}
+															/>
+														}
+													>
+														<WorkshopPricingClient
+															className="bg-card"
+															{...pricingProps}
+														/>
+													</React.Suspense>
+												</WorkshopSidebar>
+											) : (
+												anonymousSidebar
+											)
 
 											return (
-												<WorkshopAccessBoundary
-													anonymous={anonymousSidebar}
-													member={memberSidebar}
-												/>
+												<React.Suspense
+													fallback={
+														<WorkshopAccessBoundary
+															anonymous={anonymousSidebar}
+															member={memberSidebar}
+														/>
+													}
+												>
+													<WorkshopSidebarAccessBoundary
+														anonymous={anonymousSidebar}
+														member={memberSidebar}
+														forcedPurchase={forcedPurchaseSidebar}
+													/>
+												</React.Suspense>
 											)
 										}}
 									</PublicWorkshopPricing>

@@ -1,5 +1,6 @@
 'use client'
 
+import { useSearchParams } from 'next/navigation'
 import { PricingWidget } from '@/components/commerce/home-pricing-widget'
 import { api } from '@/trpc/react'
 import { useSession } from 'next-auth/react'
@@ -7,27 +8,77 @@ import { useSession } from 'next-auth/react'
 import type { Product } from '@coursebuilder/core/schemas'
 import type { CommerceProps, PricingData } from '@coursebuilder/core/types'
 
+import { readCommerceUrlParams } from './commerce-url-params'
+
+type WorkshopsIndexPricingProps = {
+	product: Product
+	initialCommerceProps: CommerceProps
+	pricingData: PricingData
+	initialAllowPurchase?: boolean
+}
+
 export function WorkshopsIndexPricing({
 	product,
 	initialCommerceProps,
 	pricingData,
-}: {
-	product: Product
-	initialCommerceProps: CommerceProps
-	pricingData: PricingData
-}) {
+	initialAllowPurchase = true,
+}: WorkshopsIndexPricingProps) {
+	const searchParams = useSearchParams()
+	const {
+		params: commerceUrlParams,
+		hasCommerceParams,
+		forceAllowPurchase,
+	} = readCommerceUrlParams(searchParams)
 	const { status: sessionStatus } = useSession()
 	const { data: personalizedCommerceProps } =
 		api.pricing.propsForCommerce.useQuery(
-			{ productId: product.id },
+			{ ...commerceUrlParams, productId: product.id },
 			{
-				enabled: sessionStatus === 'authenticated',
+				enabled: sessionStatus === 'authenticated' || hasCommerceParams,
 				staleTime: 60_000,
 				refetchOnWindowFocus: false,
 				retry: 1,
 			},
 		)
 	const commerceProps = personalizedCommerceProps ?? initialCommerceProps
+
+	if (!initialAllowPurchase && !forceAllowPurchase) return null
+
+	return (
+		<WorkshopsIndexPricingView
+			product={product}
+			pricingData={pricingData}
+			commerceProps={commerceProps}
+		/>
+	)
+}
+
+export function WorkshopsIndexPricingFallback({
+	product,
+	initialCommerceProps,
+	pricingData,
+	initialAllowPurchase = true,
+}: WorkshopsIndexPricingProps) {
+	if (!initialAllowPurchase) return null
+
+	return (
+		<WorkshopsIndexPricingView
+			product={product}
+			pricingData={pricingData}
+			commerceProps={initialCommerceProps}
+		/>
+	)
+}
+
+function WorkshopsIndexPricingView({
+	product,
+	pricingData,
+	commerceProps,
+}: {
+	product: Product
+	pricingData: PricingData
+	commerceProps: CommerceProps
+}) {
 	const hasPurchased = Boolean(
 		commerceProps.purchases?.some(
 			(purchase) => purchase.productId === product.id,

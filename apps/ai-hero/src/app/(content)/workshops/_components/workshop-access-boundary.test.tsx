@@ -6,13 +6,21 @@ const mocks = vi.hoisted(() => ({
 	canCreate: false,
 	canViewWorkshop: false,
 	status: 'pending',
+	search: '',
+}))
+
+vi.mock('next/navigation', () => ({
+	useSearchParams: () => new URLSearchParams(mocks.search),
 }))
 
 vi.mock('./use-workshop-ability', () => ({
 	useWorkshopAbility: () => mocks,
 }))
 
-import { WorkshopAccessBoundary } from './workshop-access-boundary'
+import {
+	WorkshopAccessBoundary,
+	WorkshopSidebarAccessBoundary,
+} from './workshop-access-boundary'
 import { WorkshopDraftBanner } from './workshop-draft-banner'
 
 describe('WorkshopAccessBoundary', () => {
@@ -20,6 +28,7 @@ describe('WorkshopAccessBoundary', () => {
 		mocks.canCreate = false
 		mocks.canViewWorkshop = false
 		mocks.status = 'pending'
+		mocks.search = ''
 	})
 
 	it('renders only the anonymous-safe branch before ability hydration', () => {
@@ -47,6 +56,21 @@ describe('WorkshopAccessBoundary', () => {
 
 		expect(markup).toContain('member content')
 		expect(markup).not.toContain('public shell')
+	})
+
+	it('forces the buy branch only for allowPurchase=true', () => {
+		mocks.search = 'allowPurchase=true'
+
+		const markup = renderToStaticMarkup(
+			<WorkshopSidebarAccessBoundary
+				anonymous={<div>waitlist</div>}
+				member={<div>member content</div>}
+				forcedPurchase={<div>buy widget</div>}
+			/>,
+		)
+
+		expect(markup).toContain('buy widget')
+		expect(markup).not.toContain('waitlist')
 	})
 })
 
