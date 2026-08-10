@@ -628,6 +628,50 @@ describe('content-navigation', () => {
 			expect(flattened[1]?.type).toBe('solution')
 		})
 
+		it('skips quiz questions and videos nested in a lesson', () => {
+			// The shape course sync writes: a lesson owns its video and one
+			// `question` per authored quiz question, none of which have a slug or a
+			// page. Flattening them made "Up Next" link to /question.
+			const lesson1 = createResource({
+				id: 'lesson-1',
+				type: 'lesson',
+				fields: { slug: 'lesson-1', title: 'Lesson 1' },
+			})
+			const lesson2 = createResource({
+				id: 'lesson-2',
+				type: 'lesson',
+				fields: { slug: 'lesson-2', title: 'Lesson 2' },
+			})
+			const question1 = createResource({ id: 'question-1', type: 'question' })
+			const question2 = createResource({ id: 'question-2', type: 'question' })
+			const video = createResource({
+				id: 'video-1',
+				type: 'videoResource',
+				fields: { title: 'Lesson 1' },
+			})
+
+			const navigation = createNavigation([
+				createLevel1Wrapper(
+					createResource({
+						id: 'section-1',
+						type: 'section',
+						fields: { slug: 'section-1', title: 'Section 1' },
+					}),
+					[
+						createLevel2Wrapper(lesson1, [
+							createLevel3Wrapper(question1),
+							createLevel3Wrapper(video),
+							createLevel3Wrapper(question2),
+						]),
+						createLevel2Wrapper(lesson2),
+					],
+				),
+			])
+
+			const flattened = flattenNavigationResources(navigation)
+			expect(flattened.map((r) => r.id)).toEqual(['lesson-1', 'lesson-2'])
+		})
+
 		it('handles mixed structures (sections and top-level lessons)', () => {
 			const section = createResource({
 				id: 'section-1',
