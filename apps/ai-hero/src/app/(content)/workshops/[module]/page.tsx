@@ -60,9 +60,9 @@ export const dynamicParams = true
 export const dynamic = 'force-static'
 
 export async function generateStaticParams() {
-	// Build no workshop inventory here. The first request creates the ISR entry,
-	// and later requests use it for an hour. This avoids a build-time fan-out that
-	// can itself overwhelm the content database during an active crawl.
+	// Build no workshop inventory here. The first request creates the ISR entry.
+	// This avoids a build-time fan-out that can itself overwhelm the content
+	// database during an active crawl.
 	return []
 }
 
