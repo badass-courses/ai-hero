@@ -9,7 +9,6 @@ import { env } from '@/env.mjs'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
-import { useMeasure } from 'react-use'
 
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -38,20 +37,42 @@ export const WorkshopSidebar = ({
 	/** The viewer owns this workshop: the mobile bar offers Continue, not Buy. */
 	purchased?: boolean
 }) => {
-	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
-	const [windowHeight, setWindowHeight] = React.useState(0)
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
 
+	// The bottom fade exists to say "there is more below" — so it has to know
+	// whether that is actually true. Driven by the ScrollArea's own scroll
+	// position: at (or near) the end it goes, including the trivial case where
+	// everything fits and there is no scrolling at all. This replaces the old
+	// window-vs-column height comparison, which could only ever say "the column
+	// overflows" and kept fading out the last rows for a reader who had already
+	// scrolled to them.
+	const scrollRootRef = useRef<HTMLDivElement>(null)
+	const [hasMoreBelow, setHasMoreBelow] = React.useState(false)
+
 	React.useEffect(() => {
-		const handleResize = () => {
-			setWindowHeight(window.innerHeight)
+		const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+			'[data-slot="scroll-area-viewport"]',
+		)
+		if (!viewport) return
+
+		const update = () => {
+			setHasMoreBelow(
+				viewport.scrollTop + viewport.clientHeight <
+					viewport.scrollHeight - 8,
+			)
 		}
-		handleResize()
-		window.addEventListener('resize', handleResize)
+		update()
+		viewport.addEventListener('scroll', update, { passive: true })
+		const observer = new ResizeObserver(update)
+		observer.observe(viewport)
+		// Content grows and shrinks in place (accordion sections, resolving
+		// pricing), so watch the content box too, not just the viewport.
+		if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
 
 		return () => {
-			window.removeEventListener('resize', handleResize)
+			viewport.removeEventListener('scroll', update)
+			observer.disconnect()
 		}
 	}, [])
 
@@ -99,14 +120,14 @@ export const WorkshopSidebar = ({
 				    that most needs to follow the reader — a tall pricing card — was
 				    the one state that scrolled away. The `ScrollArea` below caps the
 				    column at the viewport instead, so it can always stick. */}
-				<div ref={sidebarRef} className="md:top-(--nav-height) md:sticky">
+				<div ref={scrollRootRef} className="md:top-(--nav-height) md:sticky">
 					<ScrollArea className="lg:max-h-[calc(100vh-var(--nav-height))] h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{interestCapture ? (
 							<div className="p-5 empty:hidden sm:p-6">{children}</div>
 						) : (
 							children
 						)}
-						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
+						{!interestCapture && hasMoreBelow && (
 							<div className="from-background bg-linear-to-t pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full to-transparent lg:block" />
 						)}
 					</ScrollArea>

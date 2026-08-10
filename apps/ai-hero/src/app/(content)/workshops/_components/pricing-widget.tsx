@@ -103,7 +103,10 @@ export const PricingWidget = ({
 				<Pricing.Details className="w-full items-stretch px-5 pt-6 text-left sm:px-6">
 					<Pricing.Name className="mt-0 px-0 text-left text-base font-bold tracking-[-0.018em] sm:text-base" />
 					<Pricing.LiveQuantity className="mt-2 self-start" />
-					<Pricing.Price>
+					{/* The primitive's wrapper centers its children by default; this card
+					    is a left-aligned column, and the price skeleton has no width of
+					    its own to disagree with. */}
+					<Pricing.Price className="w-full items-start">
 						<CardPrice
 							isMembership={product.type === 'membership'}
 							billingInterval={product.fields?.billingInterval}
@@ -220,15 +223,22 @@ const CardPrice = ({
 			: 0
 	const { dollars, cents } = formatUsd(finalPrice)
 
-	// First load: no price to show yet, so hold its footprint. `bg-foreground/10`
-	// rather than `bg-muted`, which is invisible against the card's own ground
-	// in dark mode.
+	// First load: no price to show yet, so hold the footprint of the WHOLE
+	// block — the numeral line and the "one-time payment" caption under it,
+	// at their exact heights and margins — so nothing below moves when the
+	// number lands. `bg-foreground/10` rather than `bg-muted`, which is
+	// invisible against the card's own ground in dark mode.
 	if (status === 'pending' && !formattedPrice) {
 		return (
 			<div
-				className="bg-foreground/10 mt-3 h-[42px] w-28 animate-pulse rounded-[6px]"
+				className="flex w-full flex-col items-start"
 				aria-label="Loading price"
-			/>
+			>
+				<div className="bg-foreground/10 mt-3 h-[38px] w-28 animate-pulse rounded-[6px] sm:h-[42px]" />
+				{!isMembership && (
+					<div className="bg-foreground/10 mt-1.5 h-[17px] w-24 animate-pulse rounded-[4px]" />
+				)}
+			</div>
 		)
 	}
 
