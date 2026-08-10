@@ -295,6 +295,12 @@ export const WorkshopPricingWidgetContainer: React.FC<
 
 	const cancelUrl = pathname ? `${env.NEXT_PUBLIC_URL}${pathname}` : ''
 
+	// "/workshops/<slug>" → "/boss/<slug>": the shareable approval letter for
+	// this workshop. The route falls back to the generic letter for slugs
+	// without one of their own, so the link is always safe to offer.
+	const workshopSlug = pathname?.match(/^\/workshops\/([^/]+)$/)?.[1]
+	const teamLetterHref = workshopSlug ? `/boss/${workshopSlug}` : undefined
+
 	return (
 		<>
 			{enrollmentState.type === 'open' || allowPurchase ? (
@@ -309,6 +315,7 @@ export const WorkshopPricingWidgetContainer: React.FC<
 						pricingDataLoader={pricingDataLoader}
 						hasPurchasedCurrentProduct={hasPurchasedCurrentProduct}
 						prependFeatures={prependFeatures}
+						teamLetterHref={teamLetterHref}
 						pricingWidgetOptions={{
 							withImage: false,
 							withGuaranteeBadge: true,

@@ -7,7 +7,7 @@ import {
 } from '@/components/commerce/product-pricing-features'
 import { TYPE } from '@/components/landing/type'
 import { formatInTimeZone } from 'date-fns-tz'
-import { Minus, Plus, ShieldCheck } from 'lucide-react'
+import { ArrowUpRight, Minus, Plus, ShieldCheck } from 'lucide-react'
 import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
@@ -53,6 +53,8 @@ export type PricingWidgetProps = {
 	hideFeatures?: boolean
 	/** Custom buy button element. Rendered inside Pricing.Root so it can use pricing context. */
 	buyButton?: React.ReactNode
+	/** "/boss/<slug>" — a shareable approval letter, offered beside the team checkbox. */
+	teamLetterHref?: string
 }
 
 /**
@@ -78,6 +80,7 @@ export const PricingWidget = ({
 	buyButtonClassName,
 	hideFeatures,
 	buyButton,
+	teamLetterHref,
 }: PricingWidgetProps) => {
 	const couponFromCode = commerceProps?.couponFromCode
 	const { validCoupon } = useCoupon(couponFromCode)
@@ -106,7 +109,7 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
-					<TeamPurchaseControls />
+					<TeamPurchaseControls letterHref={teamLetterHref} />
 					{buyButton ?? (
 						<Pricing.BuyButton
 							className={cn(
@@ -180,10 +183,13 @@ const CardPrice = ({
 			: 0
 	const { dollars, cents } = formatUsd(finalPrice)
 
-	if (status === 'pending') {
+	// First load: no price to show yet, so hold its footprint. `bg-foreground/10`
+	// rather than `bg-muted`, which is invisible against the card's own ground
+	// in dark mode.
+	if (status === 'pending' && !formattedPrice) {
 		return (
 			<div
-				className="bg-muted mt-3 h-[42px] w-28 animate-pulse rounded-[6px]"
+				className="bg-foreground/10 mt-3 h-[42px] w-28 animate-pulse rounded-[6px]"
 				aria-label="Loading price"
 			/>
 		)
@@ -196,9 +202,21 @@ const CardPrice = ({
 		return null
 	}
 
+	// Refetch (team toggle, seat count, coupon): the known price stays put,
+	// dimmed and pulsing, instead of collapsing into a skeleton — the reader
+	// keeps their anchor and still sees that the number is in flight.
+	const isRefetching = status === 'pending'
+
 	return (
 		<div className="flex w-full flex-col items-start">
-			<div aria-live="polite" className="mt-3 flex flex-wrap items-baseline gap-2.5">
+			<div
+				aria-live="polite"
+				aria-busy={isRefetching}
+				className={cn(
+					'mt-3 flex flex-wrap items-baseline gap-2.5 transition-opacity',
+					isRefetching && 'animate-pulse opacity-40',
+				)}
+			>
 				<span className="font-mono text-[38px] font-medium leading-none tracking-[-0.03em] sm:text-[42px]">
 					{dollars}
 					{cents !== '00' && (
@@ -246,7 +264,7 @@ const CardPrice = ({
  * Same context state underneath (`isTeamPurchaseActive`, `quantity`), so the
  * checkout path and PPP gating behave exactly as before.
  */
-const TeamPurchaseControls = () => {
+const TeamPurchaseControls = ({ letterHref }: { letterHref?: string }) => {
 	const {
 		isTeamPurchaseActive,
 		toggleTeamPurchase,
@@ -278,16 +296,35 @@ const TeamPurchaseControls = () => {
 
 	return (
 		<div className="mt-4 flex w-full flex-col items-start gap-3">
-			<label className="flex cursor-pointer items-center gap-2.5">
-				<Checkbox
-					checked={isTeamPurchaseActive}
-					onCheckedChange={() => toggleTeamPurchase()}
-					className="rounded-[4px]"
-				/>
-				<span className={cn(TYPE.meta, 'text-muted-foreground')}>
-					Buying for your team?
-				</span>
-			</label>
+			<div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+				<label className="flex cursor-pointer items-center gap-2.5">
+					<Checkbox
+						checked={isTeamPurchaseActive}
+						onCheckedChange={() => toggleTeamPurchase()}
+						className="rounded-[4px]"
+					/>
+					<span className={cn(TYPE.meta, 'text-muted-foreground')}>
+						Buying for your team?
+					</span>
+				</label>
+				{/* The approval path, named for what it is: a ready-made letter the
+				    reader forwards to whoever signs off. New tab, so the checkout
+				    they were in the middle of stays put. */}
+				{letterHref && (
+					<a
+						href={letterHref}
+						target="_blank"
+						rel="noopener noreferrer"
+						className={cn(
+							TYPE.metaSm,
+							'text-muted-foreground hover:text-foreground decoration-border hover:decoration-foreground/40 inline-flex items-center gap-1 underline underline-offset-2 transition-colors',
+						)}
+					>
+						Letter for your boss
+						<ArrowUpRight className="size-3 shrink-0" aria-hidden="true" />
+					</a>
+				)}
+			</div>
 			{isTeamPurchaseActive && (
 				<div className="flex items-center gap-2.5">
 					<button

@@ -97,15 +97,23 @@ export const ProductPricingFeatures = ({
 	]
 	const features = [
 		// A standalone workshop has no sibling list — "0 Workshops" is not a
-		// feature.
-		...(workshops.length > 0
+		// feature. And a single workshop is named, not counted: "1 Workshop"
+		// tells the buyer nothing the title doesn't.
+		...(workshops.length === 1 && workshops[0]?.title
 			? [
 					{
 						icon: <ListVideo className="h-4 w-4" />,
-						label: `${workshops.length} ${pluralize('Workshop', workshops.length)}`,
+						label: workshops[0].title,
 					},
 				]
-			: []),
+			: workshops.length > 1
+				? [
+						{
+							icon: <ListVideo className="h-4 w-4" />,
+							label: `${workshops.length} ${pluralize('Workshop', workshops.length)}`,
+						},
+					]
+				: []),
 		...prependFeatures,
 		...defaultFeatures,
 	]

@@ -7,6 +7,7 @@ import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { getCachedCohort } from '@/lib/cohorts-query'
 import { getPage } from '@/lib/pages-query'
+import { getCachedWorkshopProduct } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
 import { formatDiscount } from '@/utils/discount-formatter'
 
@@ -20,16 +21,17 @@ async function getPageWithFallback(resourceSlug: string) {
 	return getPage(GENERIC_SLUG)
 }
 
-async function getCohortDiscountData(resourceSlug: string) {
+// The letter's discount facts come from whatever product the slug names — a
+// cohort or a self-paced workshop — so a letter can promise "{discount} off
+// through {date}" and stay honest without editing.
+async function getDiscountData(resourceSlug: string) {
 	const cohort = await getCachedCohort(resourceSlug)
-	if (!cohort) return null
+	const productId = cohort
+		? cohort.resourceProducts?.[0]?.product?.id
+		: (await getCachedWorkshopProduct(resourceSlug))?.id
+	if (!productId) return null
 
-	const rawProduct = cohort.resourceProducts?.[0]?.product
-	if (!rawProduct?.id) return null
-
-	const couponResult = await courseBuilderAdapter.getDefaultCoupon([
-		rawProduct.id,
-	])
+	const couponResult = await courseBuilderAdapter.getDefaultCoupon([productId])
 	return couponResult?.defaultCoupon ?? null
 }
 
@@ -69,7 +71,7 @@ export default async function BossPage(props: {
 		return notFound()
 	}
 
-	const defaultCoupon = await getCohortDiscountData(params.resourceSlug)
+	const defaultCoupon = await getDiscountData(params.resourceSlug)
 
 	const { content } = await compileMDX(
 		page.fields.body || '',
