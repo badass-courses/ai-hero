@@ -30,7 +30,10 @@ import { oauthLinkIntentService } from '@/server/oauth-link-intent-drizzle'
 import { observeOAuthLinkCanary } from '@/server/oauth-link-observability'
 import { isDiscordRelinkEnabledForUser } from '@/server/oauth-link-rollout'
 import { createAuthenticatedOAuthLinkSessionResolver } from '@/server/oauth-link-session'
-import { getCurrentOrganizationId } from '@/server/organization-context'
+import {
+	getCurrentOrganizationId,
+	resolveSessionOrganizationId,
+} from '@/server/organization-context'
 import {
 	getDiscordProviderConfig,
 	getGithubProviderConfig,
@@ -468,7 +471,7 @@ export const authOptions: NextAuthConfig = {
 				},
 			})
 
-			const organizationId = await getCurrentOrganizationId()
+			const requestedOrganizationId = await getCurrentOrganizationId()
 			const role = dbUser?.role || 'user'
 
 			const organizationRoles =
@@ -482,6 +485,10 @@ export const authOptions: NextAuthConfig = {
 							: [],
 					),
 				) || []
+			const organizationId = resolveSessionOrganizationId(
+				requestedOrganizationId,
+				organizationRoles,
+			)
 
 			const currentMembership = organizationId
 				? await db.query.organizationMemberships.findFirst({

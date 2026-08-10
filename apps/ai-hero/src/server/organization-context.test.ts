@@ -8,7 +8,10 @@ vi.mock('next/headers', () => ({
 	cookies: mocks.cookies,
 }))
 
-import { getCurrentOrganizationId } from './organization-context'
+import {
+	getCurrentOrganizationId,
+	resolveSessionOrganizationId,
+} from './organization-context'
 
 describe('getCurrentOrganizationId', () => {
 	beforeEach(() => {
@@ -38,5 +41,48 @@ describe('getCurrentOrganizationId', () => {
 		mocks.cookies.mockResolvedValue({ get: vi.fn(() => undefined) })
 
 		await expect(getCurrentOrganizationId()).resolves.toBeNull()
+	})
+})
+
+describe('resolveSessionOrganizationId', () => {
+	it('keeps an organization selected by the header or cookie', () => {
+		expect(
+			resolveSessionOrganizationId('selected-org', [
+				{
+					active: true,
+					name: 'learner',
+					organizationId: 'learner-org',
+				},
+			]),
+		).toBe('selected-org')
+	})
+
+	it('defaults a fresh browser session to the learner organization', () => {
+		expect(
+			resolveSessionOrganizationId(null, [
+				{
+					active: true,
+					name: 'owner',
+					organizationId: 'owner-org',
+				},
+				{
+					active: true,
+					name: 'learner',
+					organizationId: 'learner-org',
+				},
+			]),
+		).toBe('learner-org')
+	})
+
+	it('leaves the organization empty when no default role exists', () => {
+		expect(resolveSessionOrganizationId(null, [])).toBeNull()
+	})
+
+	it('ignores global roles without an organization', () => {
+		expect(
+			resolveSessionOrganizationId(null, [
+				{ active: true, name: 'admin', organizationId: null },
+			]),
+		).toBeNull()
 	})
 })
