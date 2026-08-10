@@ -337,6 +337,7 @@ export async function recordCourseSyncPollFailure(
 	const failureKind = input.failureClass ?? 'POLL_RUN_KILLED'
 	const strikes = Math.min((state?.consecutiveFailures ?? 0) + 1, 2)
 	const held = strikes >= 2
+	const transitionedToHeld = held && state?.status !== 'held'
 	const occurredAt = input.occurredAt ?? new Date()
 	const courseVersionId = state?.courseVersionId ?? 'unknown'
 	const providerRevision = state?.providerRevision ?? 'unknown'
@@ -378,7 +379,7 @@ export async function recordCourseSyncPollFailure(
 	})
 	// Strike one always retries on its own; only page humans when the run
 	// actually holds for one.
-	if (held) {
+	if (transitionedToHeld) {
 		await dependencies.notify({
 			kind: 'failure',
 			courseVersionId,
@@ -401,7 +402,9 @@ export async function recordCourseSyncPollFailure(
 			stage: 'notify',
 			outcome: 'skipped',
 			failureClass: failureKind,
-			metadata: { reason: 'first-failure-will-retry' },
+			metadata: {
+				reason: held ? 'already-held' : 'first-failure-will-retry',
+			},
 			occurredAt,
 		})
 	}
@@ -747,6 +750,12 @@ export function createCourseSyncDetectionPoller(
 				: 0
 			const strikes = Math.min(priorFailures + 1, 2)
 			const held = strikes >= 2
+			const transitionedToHeld =
+				held &&
+				!(
+					previousState?.status === 'held' &&
+					sameRevision(previousState, courseVersionId, providerRevision)
+				)
 			await log({
 				bindingId,
 				courseVersionId,
@@ -786,7 +795,7 @@ export function createCourseSyncDetectionPoller(
 			})
 			// Strike one always retries on its own; only page humans when the
 			// run actually holds for one.
-			if (held) {
+			if (transitionedToHeld) {
 				try {
 					await dependencies.notify({
 						kind: 'failure',
@@ -833,7 +842,9 @@ export function createCourseSyncDetectionPoller(
 					stage: 'notify',
 					outcome: 'skipped',
 					failureClass: kind,
-					metadata: { reason: 'first-failure-will-retry' },
+					metadata: {
+						reason: held ? 'already-held' : 'first-failure-will-retry',
+					},
 				})
 			}
 			return {
