@@ -101,6 +101,7 @@ function harness(input?: {
 	state?: CourseSyncPollState | null
 	apply?: CourseSyncDetectionPollerDependencies['apply']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
+	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
 }) {
 	let state = input?.state ?? null
 	const logs: CourseSyncPollLogInput[] = []
@@ -125,6 +126,7 @@ function harness(input?: {
 		},
 		appendLog: async (entry) => {
 			logs.push(entry)
+			await input?.appendLog?.(entry)
 		},
 		stage,
 		preview,
@@ -143,6 +145,33 @@ function harness(input?: {
 		logs,
 		notifications,
 		state: () => state,
+	}
+}
+
+function failureHarness(initialState: CourseSyncPollState) {
+	let state = initialState
+	const logs: CourseSyncPollLogInput[] = []
+	const notifications: CourseSyncNotification[] = []
+	const dependencies = {
+		getPollState: async () => state,
+		savePollState: async (next: CourseSyncPollState) => {
+			state = next
+		},
+		appendLog: async (entry: CourseSyncPollLogInput) => {
+			logs.push(entry)
+		},
+		notify: async (notification: CourseSyncNotification) => {
+			notifications.push(notification)
+		},
+	}
+	return {
+		dependencies,
+		logs,
+		notifications,
+		state: () => state,
+		setState: (next: CourseSyncPollState) => {
+			state = next
+		},
 	}
 }
 
@@ -261,6 +290,72 @@ describe('course sync detection poller', () => {
 		)
 	})
 
+	it('does not page again when the main-loop catch sees the same held revision', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'held',
+				consecutiveFailures: 2,
+				controlPlaneRunId: 'sync-run-2',
+				failureClass: 'Error',
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			appendLog: async (entry) => {
+				if (entry.stage === 'compare' && entry.outcome === 'succeeded') {
+					throw new Error('log write failed')
+				}
+			},
+		})
+
+		await expect(test.poll('poll-held-catch')).resolves.toMatchObject({
+			outcome: 'held',
+			consecutiveFailures: 2,
+		})
+		expect(test.notifications).toHaveLength(0)
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: { reason: 'already-held' },
+				}),
+			]),
+		)
+	})
+
+	it('pages when a new revision reaches two main-loop failures', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				status: 'held',
+				consecutiveFailures: 2,
+				controlPlaneRunId: 'sync-run-1',
+				failureClass: 'Error',
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			stage: async () => run('failed'),
+			apply: async () => {
+				throw new Error('database timeout')
+			},
+		})
+
+		await expect(test.poll('new-revision-failure-1')).resolves.toMatchObject({
+			outcome: 'failed',
+			consecutiveFailures: 1,
+		})
+		await expect(test.poll('new-revision-failure-2')).resolves.toMatchObject({
+			outcome: 'held',
+			consecutiveFailures: 2,
+		})
+		expect(test.notifications).toEqual([
+			expect.objectContaining({ kind: 'failure' }),
+		])
+	})
+
 	it('skips a queued tick while a fresh staging marker exists', async () => {
 		const test = harness({
 			state: {
@@ -293,8 +388,8 @@ describe('course sync detection poller', () => {
 		)
 	})
 
-	it('accounts for silent poll death and holds on the second strike', async () => {
-		let state: CourseSyncPollState = {
+	it('pages once when a killed run transitions into held', async () => {
+		const initialState: CourseSyncPollState = {
 			bindingId: 'csb_ai_coding_crash_course',
 			courseVersionId: 'version-2',
 			providerRevision: 'dropbox-rev-2',
@@ -304,37 +399,24 @@ describe('course sync detection poller', () => {
 			failureClass: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
-		const logs: CourseSyncPollLogInput[] = []
-		const notifications: CourseSyncNotification[] = []
-		const dependencies = {
-			getPollState: async () => state,
-			savePollState: async (next: CourseSyncPollState) => {
-				state = next
-			},
-			appendLog: async (entry: CourseSyncPollLogInput) => {
-				logs.push(entry)
-			},
-			notify: async (notification: CourseSyncNotification) => {
-				notifications.push(notification)
-			},
-		}
+		const test = failureHarness(initialState)
 
-		await recordCourseSyncPollFailure(dependencies, {
+		await recordCourseSyncPollFailure(test.dependencies, {
 			runId: 'killed-1',
 			occurredAt: new Date('2026-07-24T18:01:00.000Z'),
 		})
-		expect(notifications).toHaveLength(0)
-		await recordCourseSyncPollFailure(dependencies, {
+		expect(test.notifications).toHaveLength(0)
+		await recordCourseSyncPollFailure(test.dependencies, {
 			runId: 'killed-2',
 			occurredAt: new Date('2026-07-24T18:02:00.000Z'),
 		})
 
-		expect(state).toMatchObject({
+		expect(test.state()).toMatchObject({
 			status: 'held',
 			consecutiveFailures: 2,
 			failureClass: 'POLL_RUN_KILLED',
 		})
-		expect(logs).toEqual(
+		expect(test.logs).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ stage: 'hold', outcome: 'held' }),
 				expect.objectContaining({
@@ -344,7 +426,72 @@ describe('course sync detection poller', () => {
 				}),
 			]),
 		)
-		expect(notifications).toEqual([
+		expect(test.notifications).toEqual([
+			expect.objectContaining({ kind: 'failure' }),
+		])
+	})
+
+	it('skips notification when a killed run is already held', async () => {
+		const test = failureHarness({
+			bindingId: 'csb_ai_coding_crash_course',
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			status: 'held',
+			consecutiveFailures: 2,
+			controlPlaneRunId: null,
+			failureClass: 'POLL_RUN_KILLED',
+			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
+		})
+
+		await recordCourseSyncPollFailure(test.dependencies, {
+			runId: 'killed-while-held',
+			occurredAt: new Date('2026-07-24T18:30:00.000Z'),
+		})
+
+		expect(test.notifications).toHaveLength(0)
+		expect(test.state()).toMatchObject({
+			status: 'held',
+			consecutiveFailures: 2,
+		})
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: { reason: 'already-held' },
+				}),
+			]),
+		)
+	})
+
+	it('pages again after success resets the killed-run strikes', async () => {
+		const heldState: CourseSyncPollState = {
+			bindingId: 'csb_ai_coding_crash_course',
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			status: 'held',
+			consecutiveFailures: 2,
+			controlPlaneRunId: null,
+			failureClass: 'POLL_RUN_KILLED',
+			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
+		}
+		const test = failureHarness(heldState)
+		test.setState({
+			...heldState,
+			status: 'succeeded',
+			consecutiveFailures: 0,
+			failureClass: null,
+		})
+
+		await recordCourseSyncPollFailure(test.dependencies, {
+			runId: 'fresh-kill-1',
+		})
+		expect(test.notifications).toHaveLength(0)
+		await recordCourseSyncPollFailure(test.dependencies, {
+			runId: 'fresh-kill-2',
+		})
+
+		expect(test.notifications).toEqual([
 			expect.objectContaining({ kind: 'failure' }),
 		])
 	})
