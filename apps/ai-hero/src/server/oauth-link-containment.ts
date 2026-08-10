@@ -43,7 +43,6 @@ type OAuthContainmentDependencies = {
 		| AuthenticatedOAuthLinkSession
 		| null
 		| Promise<AuthenticatedOAuthLinkSession | null>
-	isUserAllowed?: (userId: string) => boolean
 	consumeLinkIntent?: (input: {
 		rawToken: string
 		provider: ConnectableOAuthProvider
@@ -281,7 +280,6 @@ export function createOAuthContainmentSignInCallback({
 	getCookieStore,
 	findAccountOwner,
 	getAuthenticatedSession,
-	isUserAllowed,
 	consumeLinkIntent,
 	observe,
 }: OAuthContainmentDependencies) {
@@ -336,20 +334,6 @@ export function createOAuthContainmentSignInCallback({
 					...callbackBase,
 					action: 'validation_denied',
 					reasonClass: 'missing-session',
-					result: 'denied',
-				})
-				await emit?.({
-					...callbackBase,
-					action: 'flow_completed',
-					result: 'denied',
-				})
-				return '/discord?link=denied'
-			}
-			if (isUserAllowed && !isUserAllowed(session.userId)) {
-				await emit?.({
-					...callbackBase,
-					action: 'validation_denied',
-					reasonClass: 'rollout-denied',
 					result: 'denied',
 				})
 				await emit?.({

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { createOAuthAccountLinkRequest } from './oauth-link-action'
 import { hashOAuthLinkSession } from '@/server/oauth-link-intent'
 
-const allowUser = () => true
 
 describe('OAuth account link request', () => {
 	it('derives the target and binding from a fresh authenticated server session', async () => {
@@ -17,7 +16,6 @@ describe('OAuth account link request', () => {
 				userId: 'session-user',
 				sessionToken: 'fresh-session-token',
 			})),
-			isUserAllowed: allowUser,
 			findAccount: vi.fn(async () => null),
 			issueIntent,
 			writeIntentCookie,
@@ -45,7 +43,6 @@ describe('OAuth account link request', () => {
 				userId: 'session-user',
 				sessionToken: 'fresh-session-token',
 			})),
-			isUserAllowed: allowUser,
 			findAccount: vi.fn(async () => null),
 			issueIntent,
 			writeIntentCookie: vi.fn(),
@@ -67,7 +64,6 @@ describe('OAuth account link request', () => {
 		const writeIntentCookie = vi.fn()
 		const request = createOAuthAccountLinkRequest({
 			getAuthenticatedSession: vi.fn(async () => null),
-			isUserAllowed: allowUser,
 			findAccount: vi.fn(),
 			issueIntent,
 			writeIntentCookie,
@@ -78,26 +74,6 @@ describe('OAuth account link request', () => {
 		expect(writeIntentCookie).not.toHaveBeenCalled()
 	})
 
-	it('fails closed when the authenticated user is outside the server allowlist', async () => {
-		const issueIntent = vi.fn()
-		const request = createOAuthAccountLinkRequest({
-			getAuthenticatedSession: vi.fn(async () => ({
-				userId: 'not-allowed',
-				sessionToken: 'fresh-session-token',
-			})),
-			isUserAllowed: () => false,
-			findAccount: vi.fn(),
-			issueIntent,
-			writeIntentCookie: vi.fn(),
-		})
-
-		await expect(request()).resolves.toEqual({
-			status: 'rollout-denied',
-			targetUserId: 'not-allowed',
-		})
-		expect(issueIntent).not.toHaveBeenCalled()
-	})
-
 	it('does not issue another intent for an already linked session', async () => {
 		const issueIntent = vi.fn()
 		const request = createOAuthAccountLinkRequest({
@@ -105,7 +81,6 @@ describe('OAuth account link request', () => {
 				userId: 'session-user',
 				sessionToken: 'fresh-session-token',
 			})),
-			isUserAllowed: allowUser,
 			findAccount: vi.fn(async () => ({ access_token: 'active-token' })),
 			issueIntent,
 			writeIntentCookie: vi.fn(),
@@ -125,7 +100,6 @@ describe('OAuth account link request', () => {
 				userId: 'session-user',
 				sessionToken: 'fresh-session-token',
 			})),
-			isUserAllowed: allowUser,
 			findAccount: vi.fn(async () => ({ access_token: null })),
 			issueIntent,
 			writeIntentCookie: vi.fn(),

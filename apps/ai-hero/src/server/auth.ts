@@ -28,7 +28,6 @@ import {
 import { redactOAuthLinkRef } from '@/server/oauth-link-intent'
 import { oauthLinkIntentService } from '@/server/oauth-link-intent-drizzle'
 import { observeOAuthLinkCanary } from '@/server/oauth-link-observability'
-import { isDiscordRelinkEnabledForUser } from '@/server/oauth-link-rollout'
 import { createAuthenticatedOAuthLinkSessionResolver } from '@/server/oauth-link-session'
 import {
 	getCurrentOrganizationId,
@@ -240,7 +239,6 @@ const oauthContainmentSignInCallback = createOAuthContainmentSignInCallback({
 	findAccountOwner: async (account) =>
 		(await courseBuilderAdapter.getUserByAccount?.(account)) ?? null,
 	getAuthenticatedSession: getAuthenticatedOAuthLinkSession,
-	isUserAllowed: isDiscordRelinkEnabledForUser,
 	consumeLinkIntent: (input) => oauthLinkIntentService.consume(input),
 	observe: observeOAuthLinkCanary,
 })
