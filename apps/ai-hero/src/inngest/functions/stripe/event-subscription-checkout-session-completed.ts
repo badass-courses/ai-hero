@@ -59,6 +59,10 @@ export const stripeSubscriptionCheckoutSessionComplete = inngest.createFunction(
 				if (!subscriptionInfo.email) {
 					throw new Error('subscriptionInfo.email is null')
 				}
+				// Deliberately not findOrCreateUserWithPersonalOrg: the next step owns
+				// organization selection for this subscription (metadata org, sole
+				// membership, or ensurePersonalOrganization for a memberless user), so
+				// provisioning here would race it for no benefit.
 				return await db.findOrCreateUser(subscriptionInfo.email)
 			})
 

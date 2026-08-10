@@ -22,6 +22,13 @@ export type UserCreatedBoundaryDependencies = {
  * provisioning attempt is handed to the durable repair workflow before the
  * original failure is rethrown.
  *
+ * Rethrowing fails the sign-in: Auth.js awaits `events.createUser` before it
+ * creates the session, so the user sees the error page even though repair is
+ * already enqueued. That asymmetry with the out-of-band boundary (which keeps
+ * going) is deliberate — it matches epicdev-ai, and a first sign-in that
+ * cannot provision an organization would only bounce through the
+ * `/organization-list` loop anyway.
+ *
  * @param user - The newly persisted Auth.js user identity.
  * @param dependencies - App-owned provisioning and event boundaries.
  * @returns Nothing after provisioning succeeds.
