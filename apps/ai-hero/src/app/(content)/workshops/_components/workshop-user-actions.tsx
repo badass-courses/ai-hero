@@ -1,6 +1,5 @@
 'use client'
 
-import * as React from 'react'
 import Link from 'next/link'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
 import Spinner from '@/components/spinner'
@@ -12,25 +11,17 @@ import { Github } from 'lucide-react'
 import type { ProductType } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
-import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
 import { useModuleProgress } from '../../_components/module-progress-provider'
+import { useWorkshopAbility } from './use-workshop-ability'
 
 export function StartLearningWorkshopButton({
 	productType,
-	abilityLoader,
 	moduleSlug,
 	className,
 	workshop,
 }: {
 	productType?: ProductType
-	abilityLoader: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
 	moduleSlug: string
 	className?: string
 	workshop: MinimalWorkshop
@@ -45,8 +36,13 @@ export function StartLearningWorkshopButton({
 	const url = isWorkshopInProgress
 		? `/workshops/${moduleSlug}/${moduleProgress?.nextResource?.fields?.slug}`
 		: `/workshops/${moduleSlug}/${firstLessonSlug}`
-	const { canViewWorkshop: canView, isPendingOpenAccess } =
-		React.use(abilityLoader)
+	const {
+		canViewWorkshop: canView,
+		isPendingOpenAccess,
+		status,
+	} = useWorkshopAbility()
+
+	if (status !== 'success') return <StartLearningWorkshopButtonSkeleton />
 
 	if (isPendingOpenAccess && workshop?.fields?.startsAt) {
 		const formattedDate = formatInTimeZone(
@@ -120,20 +116,8 @@ export function StartLearningWorkshopButton({
 	)
 }
 
-export function GetAccessButton({
-	abilityLoader,
-	className,
-}: {
-	abilityLoader: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
-	className?: string
-}) {
-	const { canViewWorkshop: canView } = React.use(abilityLoader)
+export function GetAccessButton({ className }: { className?: string }) {
+	const { canViewWorkshop: canView, status } = useWorkshopAbility()
 	const workshopNavigation = useWorkshopNavigation()
 
 	const cohortProduct =
@@ -143,7 +127,7 @@ export function GetAccessButton({
 	const cohortSlug =
 		cohortProduct && cohortProduct?.resources?.[0]?.resource?.fields?.slug
 
-	if (canView || !cohortSlug) return null
+	if (status !== 'success' || canView || !cohortSlug) return null
 
 	return (
 		<Button
@@ -176,14 +160,7 @@ export function StartLearningWorkshopButtonSkeleton() {
 	)
 }
 
-export function ContentTitle({
-	// abilityLoader,
-}: {
-	// abilityLoader: Promise<AbilityForResource>
-}) {
-	// const { canView } = React.use(abilityLoader)
-	// if (!canView) return null
-
+export function ContentTitle() {
 	return (
 		<div className="col-span-2 hidden h-14 items-center border-l pl-5 text-base font-medium md:flex">
 			Content
@@ -191,22 +168,10 @@ export function ContentTitle({
 	)
 }
 
-export function WorkshopGitHubRepoLink({
-	githubUrl,
-	abilityLoader,
-}: {
-	githubUrl?: string
-	abilityLoader: Promise<
-		Omit<AbilityForResource, 'canView'> & {
-			canViewWorkshop: boolean
-			canViewLesson: boolean
-			isPendingOpenAccess: boolean
-		}
-	>
-}) {
-	const { canViewWorkshop: canView } = React.use(abilityLoader)
+export function WorkshopGitHubRepoLink({ githubUrl }: { githubUrl?: string }) {
+	const { canViewWorkshop: canView, status } = useWorkshopAbility()
 	if (!githubUrl) return null
-	if (!canView) return null
+	if (status !== 'success' || !canView) return null
 	return (
 		<Button
 			asChild
