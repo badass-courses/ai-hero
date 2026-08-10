@@ -1,4 +1,5 @@
 import { headers } from 'next/headers'
+import { unstable_cache } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
@@ -56,6 +57,41 @@ export async function getPricingData(
 		purchaseToUpgrade,
 		quantityAvailable: resolvedQuantityAvailable,
 	}
+}
+
+const getCachedPublicPricingProps = unstable_cache(
+	async () => {
+		const products = await getProducts()
+		const product = products[0]
+		if (!product) return null
+
+		const [pricingData, commerceProps] = await Promise.all([
+			getPricingData({ productId: product.id }),
+			propsForCommerce(
+				{
+					query: {},
+					userId: undefined,
+					products: products as any,
+					countryCode: process.env.DEFAULT_COUNTRY || 'US',
+				},
+				courseBuilderAdapter,
+			),
+		])
+
+		return {
+			allowPurchase: product.fields.visibility === 'public',
+			commerceProps,
+			pricingData,
+			product,
+		}
+	},
+	['public-pricing-props-v1'],
+	{ revalidate: 600, tags: ['products', 'pricing'] },
+)
+
+/** Anonymous-safe pricing state for prerendered pages. */
+export async function getPublicPricingProps() {
+	return getCachedPublicPricingProps()
 }
 
 export async function getPricingProps({

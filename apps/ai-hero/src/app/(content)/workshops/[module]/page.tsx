@@ -3,6 +3,7 @@ import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
 import { EditWorkshopButton } from '@/app/(content)/workshops/_components/edit-workshop-button'
+import { WorkshopAccessBoundary } from '@/app/(content)/workshops/_components/workshop-access-boundary'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import {
 	ContentTitle,
@@ -15,8 +16,6 @@ import { Contributor } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
 import { Share } from '@/components/share'
 import config from '@/config'
-import { db } from '@/db'
-import { contentResource } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
 import {
@@ -26,9 +25,7 @@ import {
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
 import { generateGridPattern } from '@/utils/generate-grid-pattern'
-import { getAbilityForResource } from '@/utils/get-current-ability-rules'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
-import { and, eq } from 'drizzle-orm'
 import { Share2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Course } from 'schema-dts'
@@ -47,7 +44,7 @@ import { InlineBuyButton } from '../_components/inline-mdx-pricing'
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
 import WorkshopImage from '../_components/workshop-image'
 import { WorkshopPricingClient } from '../_components/workshop-pricing'
-import { WorkshopPricing } from '../_components/workshop-pricing-server'
+import { PublicWorkshopPricing } from '../_components/workshop-public-pricing-server'
 import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
 import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
 import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
@@ -56,19 +53,17 @@ import { Certificate } from '../../_components/module-certificate-container'
 
 type Props = {
 	params: Promise<{ module: string }>
-	searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }
 
-export async function generateStaticParams() {
-	const workshops = await db.query.contentResource.findMany({
-		where: and(eq(contentResource.type, 'workshop')),
-	})
+export const revalidate = 3600
+export const dynamicParams = true
+export const dynamic = 'force-static'
 
-	return workshops
-		.filter((workshop) => Boolean(workshop.fields?.slug))
-		.map((workshop) => ({
-			module: workshop.fields?.slug,
-		}))
+export async function generateStaticParams() {
+	// Build no workshop inventory here. The first request creates the ISR entry,
+	// and later requests use it for an hour. This avoids a build-time fan-out that
+	// can itself overwhelm the content database during an active crawl.
+	return []
 }
 
 export async function generateMetadata(
@@ -104,11 +99,8 @@ export async function generateMetadata(
 }
 
 export default async function ModulePage(props: Props) {
-	const searchParams = await props.searchParams
 	const params = await props.params
 	const workshop = await getCachedMinimalWorkshop(params.module)
-
-	const abilityLoader = getAbilityForResource(undefined, params.module)
 
 	if (!workshop) {
 		notFound()
@@ -141,19 +133,15 @@ export default async function ModulePage(props: Props) {
 				<div className="divide-border col-span-4 flex flex-wrap items-center divide-y md:divide-y-0">
 					<div className="bg-stripes border-border hidden h-14 border-r sm:w-8 md:block lg:w-10" />
 					<React.Suspense fallback={<StartLearningWorkshopButtonSkeleton />}>
-						<GetAccessButton abilityLoader={abilityLoader} />
+						<GetAccessButton />
 						<StartLearningWorkshopButton
 							productType={product?.type}
-							abilityLoader={abilityLoader}
 							moduleSlug={params.module}
 							workshop={workshop}
 						/>
 						<div className="divide-border w-full items-center divide-y sm:flex sm:w-auto sm:divide-y-0">
 							{workshop.fields?.github ? (
-								<WorkshopGitHubRepoLink
-									githubUrl={workshop.fields?.github}
-									abilityLoader={abilityLoader}
-								/>
+								<WorkshopGitHubRepoLink githubUrl={workshop.fields?.github} />
 							) : null}
 							<Dialog>
 								<DialogTrigger asChild>
@@ -198,23 +186,27 @@ export default async function ModulePage(props: Props) {
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
 	const { content: body } = await compileMDX(workshop.fields.body || '', {
 		EnrollNow: (props) => (
-			<WorkshopPricing moduleSlug={params.module} searchParams={searchParams}>
+			<PublicWorkshopPricing moduleSlug={params.module}>
 				{(workshopProps) => {
-					if (workshopProps.hasPurchasedCurrentProduct) return null
 					// allowPurchase forces the buy state; a pre-launch workshop instead
 					// points at the sidebar interest-capture form.
 					if (workshopProps.allowPurchase) {
 						return (
-							<InlineBuyButton
-								resource={workshop}
-								pricingDataLoader={workshopProps.pricingDataLoader}
-								pricingProps={workshopProps as any}
-								centered={false}
-								resourceType="workshop"
-								pricingOptions={{
-									withTitle: false,
-									withImage: false,
-								}}
+							<WorkshopAccessBoundary
+								member={null}
+								anonymous={
+									<InlineBuyButton
+										resource={workshop}
+										pricingDataLoader={workshopProps.pricingDataLoader}
+										pricingProps={workshopProps as any}
+										centered={false}
+										resourceType="workshop"
+										pricingOptions={{
+											withTitle: false,
+											withImage: false,
+										}}
+									/>
+								}
 							/>
 						)
 					}
@@ -223,7 +215,7 @@ export default async function ModulePage(props: Props) {
 					}
 					return null
 				}}
-			</WorkshopPricing>
+			</PublicWorkshopPricing>
 		),
 	})
 
@@ -233,7 +225,6 @@ export default async function ModulePage(props: Props) {
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
 						<WorkshopDraftBanner
-							abilityLoader={abilityLoader}
 							state={workshop.fields?.state}
 							type={workshop.type}
 						/>
@@ -272,10 +263,7 @@ export default async function ModulePage(props: Props) {
 						</div>
 						<div className="col-span-2">
 							{workshop.fields?.coverImage?.url && (
-								<WorkshopImage
-									imageUrl={workshop.fields.coverImage.url}
-									abilityLoader={abilityLoader}
-								/>
+								<WorkshopImage imageUrl={workshop.fields.coverImage.url} />
 							)}
 						</div>
 					</div>
@@ -340,67 +328,64 @@ export default async function ModulePage(props: Props) {
 										</div>
 									}
 								>
-									<WorkshopPricing
-										moduleSlug={params.module}
-										searchParams={searchParams}
-									>
+									<PublicWorkshopPricing moduleSlug={params.module}>
 										{(pricingProps) => {
 											// allowPurchase always forces the buy state; otherwise a
 											// pre-launch workshop shows the interest-capture form.
 											const showInterestCapture =
-												isPreLaunch &&
-												!pricingProps.allowPurchase &&
-												!pricingProps.hasPurchasedCurrentProduct
-											return pricingProps.product ? (
-												<>
-													<WorkshopSidebar
-														pricingProps={pricingProps}
-														workshop={workshop}
-														interestCapture={showInterestCapture}
-														className={cn('', {
-															'md:-mt-14':
-																(pricingProps.allowPurchase &&
-																	!pricingProps.hasPurchasedCurrentProduct) ||
-																showInterestCapture,
-														})}
-													>
-														{pricingProps.allowPurchase &&
-														!pricingProps.hasPurchasedCurrentProduct ? (
-															<>
-																<WorkshopPricingClient
-																	className="bg-card"
-																	searchParams={props.searchParams}
-																	{...pricingProps}
-																/>
-															</>
-														) : showInterestCapture ? (
-															<WorkshopInterestCta
-																workshopSlug={params.module}
-																workshopTitle={workshop.fields?.title}
+												isPreLaunch && !pricingProps.allowPurchase
+											const memberSidebar = (
+												<WorkshopSidebar workshop={workshop}>
+													<WorkshopResourceList
+														isCollapsible={false}
+														className="border-r-0! w-full max-w-none"
+														withHeader={false}
+														maxHeight="h-auto"
+														wrapperClassName="overflow-hidden pb-0 hidden md:block"
+													/>
+													<div className="p-3">
+														<Certificate resourceSlugOrId={params.module} />
+													</div>
+												</WorkshopSidebar>
+											)
+											const anonymousSidebar = pricingProps.product ? (
+												<WorkshopSidebar
+													pricingProps={pricingProps}
+													workshop={workshop}
+													interestCapture={showInterestCapture}
+													className={cn('', {
+														'md:-mt-14':
+															pricingProps.allowPurchase || showInterestCapture,
+													})}
+												>
+													{pricingProps.allowPurchase ? (
+														<>
+															<WorkshopPricingClient
+																className="bg-card"
+																searchParams={Promise.resolve({})}
+																{...pricingProps}
 															/>
-														) : (
-															<>
-																<WorkshopResourceList
-																	isCollapsible={false}
-																	className="border-r-0! w-full max-w-none"
-																	withHeader={false}
-																	maxHeight="h-auto"
-																	wrapperClassName="overflow-hidden pb-0 hidden md:block"
-																/>
-																<div className="p-3">
-																	<Certificate
-																		resourceSlugOrId={params.module}
-																	/>
-																</div>
-															</>
-														)}
-													</WorkshopSidebar>
-												</>
+														</>
+													) : showInterestCapture ? (
+														<WorkshopInterestCta
+															workshopSlug={params.module}
+															workshopTitle={workshop.fields?.title}
+														/>
+													) : (
+														<WorkshopResourceList
+															isCollapsible={false}
+															className="border-r-0! w-full max-w-none"
+															withHeader={false}
+															maxHeight="h-auto"
+															wrapperClassName="overflow-hidden pb-0"
+														/>
+													)}
+												</WorkshopSidebar>
 											) : showInterestCapture ? (
 												<WorkshopSidebar
 													workshop={workshop}
 													pricingProps={pricingProps}
-													interestCapture={showInterestCapture}
+													interestCapture
 												>
 													<WorkshopInterestCta
 														workshopSlug={params.module}
@@ -416,8 +401,15 @@ export default async function ModulePage(props: Props) {
 													wrapperClassName="overflow-hidden pb-0"
 												/>
 											)
+
+											return (
+												<WorkshopAccessBoundary
+													anonymous={anonymousSidebar}
+													member={memberSidebar}
+												/>
+											)
 										}}
-									</WorkshopPricing>
+									</PublicWorkshopPricing>
 								</React.Suspense>
 							) : (
 								<WorkshopSidebar workshop={workshop}>

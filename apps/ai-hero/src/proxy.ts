@@ -142,7 +142,6 @@ export const config = {
 		'/products/:path*',
 		'/organization-list',
 		'/settings/:path*',
-		'/workshops/:path*',
 		'/cohorts/:path*',
 		'/events/:path*',
 		'/invoices/:path*',
