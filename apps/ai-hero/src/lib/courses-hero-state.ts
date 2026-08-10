@@ -1,11 +1,11 @@
 import 'server-only'
 
-import { headers } from 'next/headers'
 import { checkCohortAccess, getCachedCohort } from '@/lib/cohorts-query'
 import { getNextOfferSafe, type NextOffer } from '@/lib/next-offer'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import { getCurrentOrganizationId } from '@/server/organization-context'
 
 /**
  * The `/courses` hero has four states, and three of them are about the reader
@@ -101,7 +101,7 @@ async function resolveRunning(
 	if (ability?.can('update', 'Content')) return window
 	if (!user?.id) return null
 
-	const organizationId = (await headers()).get('x-organization-id')
+	const organizationId = await getCurrentOrganizationId()
 	if (!organizationId) return null
 
 	const access = await checkCohortAccess(organizationId, user.id, flagship.slug)

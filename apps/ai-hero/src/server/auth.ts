@@ -1,5 +1,5 @@
 import { cache } from 'react'
-import { cookies, headers } from 'next/headers'
+import { cookies } from 'next/headers'
 import { getAbility, UserSchema } from '@/ability'
 import { emailProvider } from '@/coursebuilder/email-provider'
 import { courseBuilderAdapter, db } from '@/db'
@@ -30,6 +30,10 @@ import { oauthLinkIntentService } from '@/server/oauth-link-intent-drizzle'
 import { observeOAuthLinkCanary } from '@/server/oauth-link-observability'
 import { isDiscordRelinkEnabledForUser } from '@/server/oauth-link-rollout'
 import { createAuthenticatedOAuthLinkSessionResolver } from '@/server/oauth-link-session'
+import {
+	getCurrentOrganizationId,
+	resolveSessionOrganizationId,
+} from '@/server/organization-context'
 import {
 	getDiscordProviderConfig,
 	getGithubProviderConfig,
@@ -467,8 +471,7 @@ export const authOptions: NextAuthConfig = {
 				},
 			})
 
-			const headersList = await headers()
-			const organizationId = headersList.get('x-organization-id')
+			const requestedOrganizationId = await getCurrentOrganizationId()
 			const role = dbUser?.role || 'user'
 
 			const organizationRoles =
@@ -482,6 +485,10 @@ export const authOptions: NextAuthConfig = {
 							: [],
 					),
 				) || []
+			const organizationId = resolveSessionOrganizationId(
+				requestedOrganizationId,
+				organizationRoles,
+			)
 
 			const currentMembership = organizationId
 				? await db.query.organizationMemberships.findFirst({
