@@ -443,6 +443,35 @@ describe('content-navigation', () => {
 			expect(getFirstResourceSlug(navigation)).toBe('lesson-2')
 		})
 
+		it('skips a question ahead of the first lesson, even with a slug', () => {
+			// A slugless question was always passed over via the `|| null`
+			// fallthrough; the type guard is what keeps a question from ever being
+			// the entry point, slug or not.
+			const question = createResource({
+				id: 'question-1',
+				type: 'question',
+				fields: { slug: 'question-1' },
+			})
+			const lesson = createResource({
+				id: 'lesson-1',
+				type: 'lesson',
+				fields: { slug: 'lesson-1', title: 'Lesson 1' },
+			})
+
+			const navigation = createNavigation([
+				createLevel1Wrapper(
+					createResource({
+						id: 'section-1',
+						type: 'section',
+						fields: { slug: 'section-1', title: 'Section 1' },
+					}),
+					[createLevel2Wrapper(question), createLevel2Wrapper(lesson)],
+				),
+			])
+
+			expect(getFirstResourceSlug(navigation)).toBe('lesson-1')
+		})
+
 		it('returns null when all resources have null slugs', () => {
 			const section = createResource({
 				id: 'section-1',
@@ -626,6 +655,50 @@ describe('content-navigation', () => {
 			expect(flattened[0]?.type).toBe('lesson')
 			expect(flattened[1]?.id).toBe('solution-1')
 			expect(flattened[1]?.type).toBe('solution')
+		})
+
+		it('skips quiz questions and videos nested in a lesson', () => {
+			// The shape course sync writes: a lesson owns its video and one
+			// `question` per authored quiz question, none of which have a slug or a
+			// page. Flattening them made "Up Next" link to /question.
+			const lesson1 = createResource({
+				id: 'lesson-1',
+				type: 'lesson',
+				fields: { slug: 'lesson-1', title: 'Lesson 1' },
+			})
+			const lesson2 = createResource({
+				id: 'lesson-2',
+				type: 'lesson',
+				fields: { slug: 'lesson-2', title: 'Lesson 2' },
+			})
+			const question1 = createResource({ id: 'question-1', type: 'question' })
+			const question2 = createResource({ id: 'question-2', type: 'question' })
+			const video = createResource({
+				id: 'video-1',
+				type: 'videoResource',
+				fields: { title: 'Lesson 1' },
+			})
+
+			const navigation = createNavigation([
+				createLevel1Wrapper(
+					createResource({
+						id: 'section-1',
+						type: 'section',
+						fields: { slug: 'section-1', title: 'Section 1' },
+					}),
+					[
+						createLevel2Wrapper(lesson1, [
+							createLevel3Wrapper(question1),
+							createLevel3Wrapper(video),
+							createLevel3Wrapper(question2),
+						]),
+						createLevel2Wrapper(lesson2),
+					],
+				),
+			])
+
+			const flattened = flattenNavigationResources(navigation)
+			expect(flattened.map((r) => r.id)).toEqual(['lesson-1', 'lesson-2'])
 		})
 
 		it('handles mixed structures (sections and top-level lessons)', () => {

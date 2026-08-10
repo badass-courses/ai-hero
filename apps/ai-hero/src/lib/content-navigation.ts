@@ -59,6 +59,16 @@ export function findSectionIdForResourceSlug(
 	return null
 }
 
+/**
+ * Types that sit in the navigation tree but are not places you can go. A
+ * `videoResource` is a lesson's video; a `question` is a synced quiz question,
+ * which renders inline in its lesson's body (docs/quiz.md) and has neither a
+ * slug nor a page of its own. Flattening a question into the lesson sequence is
+ * what pointed every "next" affordance — Up Next, the video overlay, binge
+ * mode, the toolbar button — at `/question`.
+ */
+const nonNavigableResourceTypes = new Set(['videoResource', 'question'])
+
 const resolveFirstSlug = (resource: ContentResource): string | null => {
 	if (resource.type === 'section' && resource.resources) {
 		for (const child of resource.resources) {
@@ -69,8 +79,7 @@ const resolveFirstSlug = (resource: ContentResource): string | null => {
 		return null
 	}
 
-	// Skip video resources
-	if (resource.type === 'videoResource') {
+	if (nonNavigableResourceTypes.has(resource.type)) {
 		return null
 	}
 
@@ -115,8 +124,8 @@ const collectResources = (
 		return
 	}
 
-	// Filter out video resources
-	if (resource.type === 'videoResource') {
+	// Filter out everything that has no page to navigate to
+	if (nonNavigableResourceTypes.has(resource.type)) {
 		return
 	}
 
@@ -124,7 +133,8 @@ const collectResources = (
 	const parsedResource = ContentResourceSchema.parse(resource)
 	accumulator.push(parsedResource)
 
-	// If this is a lesson with nested resources (solutions - Level3ResourceWrapper), include them
+	// If this is a lesson with nested resources (solutions, quiz questions -
+	// Level3ResourceWrapper), include the navigable ones
 	if (resource.type === 'lesson' && resource.resources) {
 		const level3Wrappers = z
 			.array(Level3ResourceWrapperSchema)

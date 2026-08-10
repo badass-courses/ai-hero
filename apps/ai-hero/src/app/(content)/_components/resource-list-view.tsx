@@ -4,6 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { type AppAbility } from '@/ability'
 import { TYPE } from '@/components/landing/type'
+import { useFillViewportHeight } from '@/hooks/use-fill-viewport-height'
 import { useScrollToActive } from '@/hooks/use-scroll-to-active'
 import { subject } from '@casl/ability'
 import {
@@ -117,6 +118,11 @@ export function ResourceListView({
 	stickyTopClassName = 'top-0',
 }: ResourceListViewProps) {
 	const scrollAreaRef = useScrollToActive(currentSlug)
+	// Measured height for the sticky box: the `maxHeight` class alone can't be
+	// right both before and after the non-sticky chrome (promo bar, lesson-page
+	// nav) scrolls away. See the hook's doc comment. `h-auto` callers (list
+	// pages) flow with the page and are left alone.
+	const stickyRef = useFillViewportHeight<HTMLDivElement>(maxHeight !== 'h-auto')
 	const hasSections = resources?.some((r) => r?.resource?.type === 'section')
 
 	return (
@@ -151,6 +157,7 @@ export function ResourceListView({
 					</span>
 				)}
 				<div
+					ref={stickyRef}
 					className={cn(
 						'sticky flex flex-col overflow-hidden',
 						stickyTopClassName,
