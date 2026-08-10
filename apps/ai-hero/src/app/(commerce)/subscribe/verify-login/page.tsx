@@ -16,7 +16,7 @@ import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getProviders, getServerAuthSession } from '@/server/auth'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
-import { CheckoutParamsSchema } from '@coursebuilder/core/types'
+import { CheckoutParamsSchema } from '@coursebuilder/commerce/stripe-checkout'
 
 export const dynamic = 'force-dynamic'
 

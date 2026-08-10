@@ -1,12 +1,13 @@
 import { inngest } from '@/inngest/inngest.server'
 import type { OrganizationMembershipLike } from '@/lib/organization-membership-types'
-import { ensurePersonalOrganization } from '@/lib/personal-organization-service'
+import { log } from '@/server/logger'
 
-import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-subscription-created'
-import { STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT } from '@coursebuilder/core/inngest/stripe/event-checkout-session-completed'
-import { parseSubscriptionInfoFromCheckoutSession } from '@coursebuilder/core/lib/pricing/stripe-subscription-utils'
+import { NEW_SUBSCRIPTION_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
+import { STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT } from '@coursebuilder/core/events/stripe'
+import { parseSubscriptionInfoFromCheckoutSession } from '@coursebuilder/commerce/stripe-subscription-utils'
 import { User } from '@coursebuilder/core/schemas'
 import { checkoutSessionCompletedEvent } from '@coursebuilder/core/schemas/stripe/checkout-session-completed'
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 
 export const stripeSubscriptionCheckoutSessionComplete = inngest.createFunction(
 	{
@@ -58,6 +59,10 @@ export const stripeSubscriptionCheckoutSessionComplete = inngest.createFunction(
 				if (!subscriptionInfo.email) {
 					throw new Error('subscriptionInfo.email is null')
 				}
+				// Deliberately not findOrCreateUserWithPersonalOrg: the next step owns
+				// organization selection for this subscription (metadata org, sole
+				// membership, or ensurePersonalOrganization for a memberless user), so
+				// provisioning here would race it for no benefit.
 				return await db.findOrCreateUser(subscriptionInfo.email)
 			})
 
@@ -87,7 +92,12 @@ export const stripeSubscriptionCheckoutSessionComplete = inngest.createFunction(
 					)
 				}
 
-				const result = await ensurePersonalOrganization(user, db)
+				const personalOrganizations = createPersonalOrganizationService({
+					organizations: db,
+					logger: log,
+				})
+				const result =
+					await personalOrganizations.ensurePersonalOrganization(user)
 				return result.organization
 			})
 

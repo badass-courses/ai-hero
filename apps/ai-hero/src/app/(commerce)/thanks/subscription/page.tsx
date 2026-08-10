@@ -12,7 +12,7 @@ import { Mail } from 'lucide-react'
 import * as LoginLink from '@coursebuilder/commerce-next/post-purchase/login-link'
 import * as PurchaseSummary from '@coursebuilder/commerce-next/post-purchase/purchase-summary'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
-import { logger } from '@coursebuilder/core/utils/logger'
+import { logger } from '@coursebuilder/utils/logger'
 
 const getServerSideProps = async (session_id: string) => {
 	const paymentProvider = stripeProvider

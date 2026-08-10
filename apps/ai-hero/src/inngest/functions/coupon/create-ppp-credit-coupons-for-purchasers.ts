@@ -10,8 +10,8 @@ import {
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import { EntitlementSourceType } from '@/lib/entitlements'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
 import { log } from '@/server/logger'
+import { personalOrganizations } from '@/server/personal-organizations'
 import { guid } from '@coursebuilder/utils/guid'
 import { and, eq, gt, inArray, isNull } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
@@ -473,9 +473,8 @@ export const createPPPCreditCouponsForPurchasers = inngest.createFunction(
 
 						// Ensure personal organization
 						const personalOrgResult =
-							await ensurePersonalOrganizationWithLearnerRole(
+							await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
 								{ id: user.id, email: user.email },
-								courseBuilderAdapter,
 							)
 
 						// Check for existing entitlement

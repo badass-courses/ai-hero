@@ -1,6 +1,5 @@
 import SwaggerParser from '@apidevtools/swagger-parser'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { TagListResponseSchema } from './agent-api-contracts'
 import { buildAgentOpenApiDocument } from './agent-openapi'
@@ -119,6 +118,67 @@ describe('agent OpenAPI contract', () => {
 		})
 	})
 
+	// The literal expected conversion of TagListResponseSchema. Hand-written,
+	// not derived from toOpenApiSchema, so a zod upgrade that changes the
+	// converter's output (or silently stops matching the date override's walk
+	// of zod internals) fails here instead of shipping a wrong document.
+	const expectedTagListJsonSchema = {
+		type: 'array',
+		items: {
+			type: 'object',
+			properties: {
+				id: { type: 'string' },
+				type: { default: 'topic', type: 'string', const: 'topic' },
+				organizationId: {
+					anyOf: [{ type: 'string' }, { type: 'null' }],
+				},
+				fields: {
+					type: 'object',
+					properties: {
+						name: { type: 'string' },
+						label: { type: 'string' },
+						description: {
+							anyOf: [{ type: 'string' }, { type: 'null' }],
+						},
+						slug: { type: 'string' },
+						image_url: {
+							anyOf: [{ type: 'string', format: 'uri' }, { type: 'null' }],
+						},
+						contexts: {
+							anyOf: [
+								{ type: 'array', items: { type: 'string' } },
+								{ type: 'null' },
+							],
+						},
+						url: {
+							anyOf: [{ type: 'string' }, { type: 'null' }],
+						},
+						popularity_order: {
+							anyOf: [{ type: 'number' }, { type: 'null' }],
+						},
+					},
+					required: ['name', 'label', 'slug'],
+					additionalProperties: false,
+				},
+				createdAt: { type: 'string', format: 'date-time' },
+				updatedAt: { type: 'string', format: 'date-time' },
+				deleteAt: {
+					anyOf: [{ type: 'string', format: 'date-time' }, { type: 'null' }],
+				},
+			},
+			required: ['id', 'type', 'fields', 'createdAt', 'updatedAt'],
+			additionalProperties: false,
+		},
+	}
+
+	it('converts the tag-list schema to the expected literal JSON Schema', () => {
+		const document = buildAgentOpenApiDocument('http://localhost:3000')
+
+		expect(document.components.schemas.TagListResponse).toEqual(
+			expectedTagListJsonSchema,
+		)
+	})
+
 	it('matches the documented tag-list schema with a real route response', async () => {
 		mocks.getTags.mockResolvedValue([
 			{
@@ -147,18 +207,11 @@ describe('agent OpenAPI contract', () => {
 		const documentedResponse = (
 			document.paths['/api/tags'].get.responses as any
 		)['200'].content['application/json'].schema
-		const generatedSchema = zodToJsonSchema(TagListResponseSchema, {
-			target: 'jsonSchema2019-09',
-			$refStrategy: 'none',
-			dateStrategy: 'format:date-time',
-		}) as Record<string, unknown>
-		delete generatedSchema.$schema
 
 		expect(routeResponse.status).toBe(200)
 		expect(TagListResponseSchema.safeParse(payload).success).toBe(true)
 		expect(documentedResponse).toEqual({
 			$ref: '#/components/schemas/TagListResponse',
 		})
-		expect(document.components.schemas.TagListResponse).toEqual(generatedSchema)
 	})
 })

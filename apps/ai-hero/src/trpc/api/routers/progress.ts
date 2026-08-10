@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
 import { courseBuilderAdapter } from '@/db'
+import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { getLesson } from '@/lib/lessons-query'
 import {
 	addProgress,
@@ -53,8 +54,7 @@ export const progressRouter = createTRPCRouter({
 			const { session, ability } = await getServerAuthSession()
 			const token = session?.user
 			let userId = token?.id as string | undefined
-			const { findOrCreateUser, toggleLessonProgressForUser } =
-				courseBuilderAdapter
+			const { toggleLessonProgressForUser } = courseBuilderAdapter
 			try {
 				const lesson = await getLesson(input.lessonSlug)
 				if (!lesson) return { error: 'no lesson found' }
@@ -99,7 +99,9 @@ export const progressRouter = createTRPCRouter({
 						return { error: 'no subscriber found' }
 					}
 
-					const { user } = await findOrCreateUser(subscriber.email_address)
+					const { user } = await findOrCreateUserWithPersonalOrg(
+						subscriber.email_address,
+					)
 					userId = user.id
 
 					const progress = await toggleLessonProgressForUser({
@@ -221,7 +223,7 @@ export const progressRouter = createTRPCRouter({
 				return { error: 'no subscriber found' }
 			}
 
-			const { user } = await courseBuilderAdapter.findOrCreateUser(
+			const { user } = await findOrCreateUserWithPersonalOrg(
 				subscriber.email_address,
 			)
 

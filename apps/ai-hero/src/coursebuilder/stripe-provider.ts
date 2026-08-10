@@ -2,7 +2,7 @@ import { env } from '@/env.mjs'
 
 import StripeProvider, {
 	StripePaymentAdapter,
-} from '@coursebuilder/core/providers/stripe'
+} from '@coursebuilder/commerce/stripe-provider'
 
 export const stripeProvider = StripeProvider({
 	errorRedirectUrl: `${env.COURSEBUILDER_URL}`,

@@ -21,7 +21,7 @@ import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
 
-import { courseBuilderCoreFunctions } from '@coursebuilder/core/inngest'
+import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 
 import {
 	calendarSync,

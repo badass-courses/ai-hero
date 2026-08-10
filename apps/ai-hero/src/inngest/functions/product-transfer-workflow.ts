@@ -20,7 +20,6 @@ import {
 	getCreditEntitlementsForSourcePurchase,
 } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
-import { ensurePersonalOrganization } from '@/lib/personal-organization-service'
 import { getWorkshop } from '@/lib/workshops-query'
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
@@ -29,7 +28,8 @@ import { guid } from '@coursebuilder/adapter-drizzle/mysql'
 import {
 	PURCHASE_TRANSFERRED_API_EVENT,
 	PURCHASE_TRANSFERRED_EVENT,
-} from '@coursebuilder/core/inngest/purchase-transfer/event-purchase-transferred'
+} from '@coursebuilder/core/events/purchase-transfer'
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 
 // Import shared configuration
 import {
@@ -550,11 +550,17 @@ async function handleProductTransfer({
 	const isTeamPurchase = Boolean(purchase.bulkCouponId)
 
 	if (!isTeamPurchase && ['Valid', 'Restricted'].includes(purchase.status)) {
+		const personalOrganizations = createPersonalOrganizationService({
+			organizations: adapter,
+			logger: log,
+		})
+
 		// Get target user's personal organization
 		const targetUserOrganization = await step.run(
 			`get target user personal organization`,
 			async () => {
-				const result = await ensurePersonalOrganization(targetUser, adapter)
+				const result =
+					await personalOrganizations.ensurePersonalOrganization(targetUser)
 				return result.organization
 			},
 		)
@@ -577,7 +583,7 @@ async function handleProductTransfer({
 
 		// Ensure source user still has a valid personal organization
 		await step.run(`ensure source user organization integrity`, async () => {
-			await ensurePersonalOrganization(sourceUser, adapter)
+			await personalOrganizations.ensurePersonalOrganization(sourceUser)
 		})
 
 		// Get target user's membership in their personal org

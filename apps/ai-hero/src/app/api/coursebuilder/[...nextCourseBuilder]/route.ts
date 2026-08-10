@@ -7,7 +7,7 @@ import { env } from '@/env.mjs'
 import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shortfall'
 import { inngest } from '@/inngest/inngest.server'
 import { withSkill } from '@/server/with-skill'
-import { StripePaymentAdapter } from '@coursebuilder/core/providers/stripe'
+import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type { NextRequest } from 'next/server'
 
 type CashBalanceEventType =

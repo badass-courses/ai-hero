@@ -19,7 +19,7 @@ const PostmarkWebhookEventSchema = z.discriminatedUnion('RecordType', [
 		SuppressSending: z.boolean(),
 		MessageID: z.string(),
 		MessageStream: z.string(),
-		Metadata: z.record(z.string()),
+		Metadata: z.record(z.string(), z.string()),
 	}),
 	z.object({
 		RecordType: z.literal('Bounce'),
@@ -30,7 +30,7 @@ const PostmarkWebhookEventSchema = z.discriminatedUnion('RecordType', [
 		Description: z.string(),
 		MessageID: z.string(),
 		MessageStream: z.string(),
-		Metadata: z.record(z.string()),
+		Metadata: z.record(z.string(), z.string()),
 	}),
 	z.object({
 		RecordType: z.literal('SpamComplaint'),
@@ -41,7 +41,7 @@ const PostmarkWebhookEventSchema = z.discriminatedUnion('RecordType', [
 		Description: z.string(),
 		MessageID: z.string(),
 		MessageStream: z.string(),
-		Metadata: z.record(z.string()),
+		Metadata: z.record(z.string(), z.string()),
 	}),
 	z.object({
 		RecordType: z.literal('Open'),
@@ -61,7 +61,7 @@ const PostmarkWebhookEventSchema = z.discriminatedUnion('RecordType', [
 		}),
 		MessageID: z.string(),
 		MessageStream: z.string(),
-		Metadata: z.record(z.string()),
+		Metadata: z.record(z.string(), z.string()),
 	}),
 	z.object({
 		RecordType: z.literal('Click'),
@@ -82,7 +82,7 @@ const PostmarkWebhookEventSchema = z.discriminatedUnion('RecordType', [
 		}),
 		MessageID: z.string(),
 		MessageStream: z.string(),
-		Metadata: z.record(z.string()),
+		Metadata: z.record(z.string(), z.string()),
 	}),
 	z.object({
 		RecordType: z.literal('Delivery'),
@@ -90,7 +90,7 @@ const PostmarkWebhookEventSchema = z.discriminatedUnion('RecordType', [
 		Tag: z.string(),
 		MessageID: z.string(),
 		MessageStream: z.string(),
-		Metadata: z.record(z.string()),
+		Metadata: z.record(z.string(), z.string()),
 	}),
 ])
 

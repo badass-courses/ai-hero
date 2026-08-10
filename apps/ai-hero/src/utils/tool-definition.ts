@@ -4,7 +4,7 @@ import { z } from 'zod'
  * Any array of ToolDefinitions.
  */
 export type TAnyToolDefinitionArray = Array<
-	ToolDefinition<string, z.AnyZodObject>
+	ToolDefinition<string, z.ZodObject>
 >
 
 /**
@@ -32,7 +32,7 @@ export type TToolDefinitionMap<
  */
 export interface ToolDefinition<
 	NAME extends string,
-	PARAMETERS extends z.AnyZodObject,
+	PARAMETERS extends z.ZodObject,
 > {
 	/**
 	 * The name of the tool.

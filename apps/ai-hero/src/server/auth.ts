@@ -18,6 +18,10 @@ import {
 	getNextAuthErrorLogLevel,
 } from '@/server/auth-log-policy'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
+import { createAuthJsAdapter } from '@/server/auth-js-adapter'
+import { personalOrganizations } from '@/server/personal-organizations'
+import { handleUserCreatedBoundary } from '@/server/user-provisioning'
+import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
 import { log, serializeError } from '@/server/logger'
 import {
 	createOAuthContainmentAdapter,
@@ -217,8 +221,9 @@ async function refreshDiscordToken(account: {
 	}
 }
 
-const oauthContainmentAdapter =
-	createOAuthContainmentAdapter(courseBuilderAdapter)
+const oauthContainmentAdapter = createOAuthContainmentAdapter(
+	createAuthJsAdapter(courseBuilderAdapter),
+)
 
 const getSessionAndUser =
 	courseBuilderAdapter.getSessionAndUser?.bind(courseBuilderAdapter)
@@ -338,7 +343,29 @@ export const authOptions: NextAuthConfig = {
 	},
 	events: {
 		createUser: async ({ user }) => {
-			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
+			if (!user.id || !user.email) {
+				throw new Error('Persisted user identity requires an id and email')
+			}
+
+			await handleUserCreatedBoundary(
+				{ id: user.id, email: user.email },
+				{
+					publishUserCreated: () =>
+						inngest.send({ name: USER_CREATED_EVENT, user, data: {} }),
+					provisionPersonalOrganization: (persistedUser) =>
+						personalOrganizations.ensurePersonalOrganization(persistedUser),
+					enqueueProvisioningRepair: (userId, cause) => {
+						void log.error('auth.personal-org-provisioning-failed', {
+							userId,
+							error: serializeError(cause),
+						})
+						return inngest.send({
+							name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
+							data: { userId, createIfMissing: true },
+						})
+					},
+				},
+			)
 		},
 		linkAccount: async ({ user, account }) => {
 			await inngest.send({

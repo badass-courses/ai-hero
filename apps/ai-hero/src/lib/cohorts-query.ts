@@ -19,14 +19,14 @@ import { log } from '@/server/logger'
 import { and, asc, count, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
+import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import type { User } from '@coursebuilder/core/schemas'
 import {
 	Product,
 	productSchema,
 	Purchase as PurchaseSchema,
 } from '@coursebuilder/core/schemas'
-import type { PricingData } from '@coursebuilder/core/types'
+import type { PricingData } from '@coursebuilder/commerce/types'
 import { first } from '@coursebuilder/nodash'
 
 import { checkCohortCertificateEligibilityFromWorkshops } from './certificates'

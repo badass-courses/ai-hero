@@ -5,7 +5,7 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
-import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/inngest/video-processing/events/event-video-uploaded'
+import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/events/video'
 import { eq } from 'drizzle-orm'
 import { Console, Effect } from 'effect'
 

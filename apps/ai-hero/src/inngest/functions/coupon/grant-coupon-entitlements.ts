@@ -1,4 +1,4 @@
-import { courseBuilderAdapter, db } from '@/db'
+import { db } from '@/db'
 import {
 	coupon,
 	entitlements,
@@ -9,8 +9,8 @@ import {
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import { EntitlementSourceType } from '@/lib/entitlements'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
 import { log } from '@/server/logger'
+import { personalOrganizations } from '@/server/personal-organizations'
 import { and, eq, gt, inArray, isNull } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
@@ -243,9 +243,8 @@ export const grantCouponEntitlements = inngest.createFunction(
 						}
 
 						const personalOrgResult =
-							await ensurePersonalOrganizationWithLearnerRole(
+							await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
 								{ id: user.id, email: user.email },
-								courseBuilderAdapter,
 							)
 
 						const existingEntitlement = await db.query.entitlements.findFirst({

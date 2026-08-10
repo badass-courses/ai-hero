@@ -11,6 +11,7 @@ import {
 	purchaseUserTransfer as purchaseUserTransferTable,
 } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 import { Theme } from '@auth/core/types'
 import { render } from '@react-email/render'
@@ -20,8 +21,8 @@ import type { NextAuthConfig } from 'next-auth'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
-import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/inngest/purchase-transfer/event-purchase-transferred'
-import { sendServerEmail } from '@coursebuilder/core/lib/send-server-email'
+import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/events/purchase-transfer'
+import { sendServerEmail } from '@coursebuilder/email/send-server-email'
 import {
 	PurchaseUserTransfer,
 	purchaseUserTransferSchema,
@@ -267,7 +268,7 @@ const initiateTransfer = async ({
 	toEmail: string
 	nextAuthOptions?: NextAuthConfig
 }) => {
-	const { user: toUser } = await courseBuilderAdapter.findOrCreateUser(
+	const { user: toUser } = await findOrCreateUserWithPersonalOrg(
 		toEmail.toLowerCase(),
 	)
 	const purchaseUserTransfer =

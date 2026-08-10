@@ -25,7 +25,7 @@ export async function switchOrganization(organizationId: string) {
 		const validationResult = organizationIdSchema.safeParse(organizationId)
 		if (!validationResult.success) {
 			const errorMessage =
-				validationResult.error.errors[0]?.message || 'Invalid organization ID'
+				validationResult.error.issues[0]?.message || 'Invalid organization ID'
 			await log.warn('switch-organization-validation-failed', {
 				organizationId,
 				error: errorMessage,
