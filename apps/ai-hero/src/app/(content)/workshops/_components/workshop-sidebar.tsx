@@ -2,9 +2,11 @@
 
 import React, { useRef } from 'react'
 import Link from 'next/link'
+import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { Contributor } from '@/components/contributor'
 import config from '@/config'
 import { env } from '@/env.mjs'
+import { getFirstResourceSlug } from '@/lib/content-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
 import { useMeasure } from 'react-use'
@@ -16,6 +18,7 @@ import {
 	InlineBuyButton,
 	type PricingComponentProps,
 } from './inline-mdx-pricing'
+import { useWorkshopNavigation } from './workshop-navigation-provider'
 import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
 import type { WorkshopPageProps } from './workshop-page-props'
 
@@ -25,12 +28,15 @@ export const WorkshopSidebar = ({
 	className,
 	pricingProps,
 	interestCapture = false,
+	purchased = false,
 }: {
 	children: React.ReactNode
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
+	/** The viewer owns this workshop: the mobile bar offers Continue, not Buy. */
+	purchased?: boolean
 }) => {
 	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
 	const [windowHeight, setWindowHeight] = React.useState(0)
@@ -113,8 +119,41 @@ export const WorkshopSidebar = ({
 				workshop={workshop}
 				pricingProps={pricingProps}
 				interestCapture={interestCapture}
+				purchased={purchased}
 			/>
 		</>
+	)
+}
+
+/**
+ * Owner's control in the mobile bar: an outline Continue into the next
+ * unfinished lesson (or the first one on a fresh start). Outline, not gold —
+ * the bar's gold is reserved for the two asks (buy, get notified); resuming
+ * your own course is navigation.
+ */
+const ContinueLearningButton = ({ moduleSlug }: { moduleSlug: string }) => {
+	const workshopNavigation = useWorkshopNavigation()
+	const firstLessonSlug = getFirstResourceSlug(workshopNavigation)
+	const { moduleProgress } = useModuleProgress()
+	const isInProgress =
+		moduleProgress?.nextResource?.fields?.slug &&
+		moduleProgress?.completedLessons?.length > 0
+
+	const slug = isInProgress
+		? moduleProgress?.nextResource?.fields?.slug
+		: firstLessonSlug
+	if (!slug) return null
+
+	return (
+		<Button
+			asChild
+			variant="outline"
+			className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
+		>
+			<Link prefetch href={`/workshops/${moduleSlug}/${slug}`}>
+				{isInProgress ? 'Continue' : 'Start'}
+			</Link>
+		</Button>
 	)
 }
 
@@ -123,11 +162,13 @@ export const WorkshopSidebarMobile = ({
 	className,
 	pricingProps,
 	interestCapture = false,
+	purchased = false,
 }: {
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
+	purchased?: boolean
 }) => {
 	const { fields } = workshop ?? {}
 
@@ -149,23 +190,26 @@ export const WorkshopSidebarMobile = ({
 				className,
 			)}
 		>
-			<div className="flex flex-col gap-0.5">
-				<h3 className="font-heading text-sm font-semibold">{fields?.title}</h3>
+			<div className="flex min-w-0 flex-col gap-0.5">
+				<h3 className="font-heading truncate text-sm font-semibold">
+					{fields?.title}
+				</h3>
 				<Contributor className="gap-1 text-sm [&_img]:w-5" />
-				{/* <p className="text-sm opacity-75">{config.author}</p> */}
 			</div>
 			{interestCapture ? (
 				<Button
-					className={cn(WORKSHOP_CTA_BUTTON, 'h-10 gap-2 text-sm')}
+					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
 					onClick={handleScrollToBuy}
 				>
 					Get notified
 				</Button>
+			) : purchased && fields?.slug ? (
+				<ContinueLearningButton moduleSlug={fields.slug} />
 			) : (
 				workshop &&
 				pricingProps && (
 					<InlineBuyButton
-						className="**:data-divider:mx-1 **:data-label:text-sm h-10 gap-2 px-5"
+						className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
 						resource={workshop}
 						pricingDataLoader={pricingProps.pricingDataLoader}
 						pricingProps={pricingProps as any}

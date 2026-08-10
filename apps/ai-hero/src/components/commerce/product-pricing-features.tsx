@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { TYPE } from '@/components/landing/type'
 import {
 	BadgeCheck,
 	Check,
@@ -24,6 +25,12 @@ export type ProductPricingFeature = {
  * Renders a feature list for product pricing sections, allowing callers to
  * prepend custom items ahead of the default feature set.
  *
+ * `variant="checklist"` is the workshop pricing card's treatment (`Workshop
+ * Landing.dc.html`): a mono "Includes" group label, then one hairline-divided
+ * row per feature with a single accent check — the per-feature icons come off,
+ * because six different pictograms in a sidebar card read as six decisions
+ * where one repeated mark reads as a list.
+ *
  * @param props - Feature configuration.
  */
 export const ProductPricingFeatures = ({
@@ -31,6 +38,7 @@ export const ProductPricingFeatures = ({
 	className,
 	productType,
 	prependFeatures = [],
+	variant = 'default',
 }: {
 	workshops: {
 		title: string
@@ -39,6 +47,7 @@ export const ProductPricingFeatures = ({
 	className?: string
 	productType: ProductType
 	prependFeatures?: ProductPricingFeature[]
+	variant?: 'default' | 'checklist'
 }) => {
 	const defaultFeatures: ProductPricingFeature[] = [
 		...(productType === 'cohort'
@@ -87,13 +96,44 @@ export const ProductPricingFeatures = ({
 		},
 	]
 	const features = [
-		{
-			icon: <ListVideo className="h-4 w-4" />,
-			label: `${workshops.length} ${pluralize('Workshop', workshops.length)}`,
-		},
+		// A standalone workshop has no sibling list — "0 Workshops" is not a
+		// feature.
+		...(workshops.length > 0
+			? [
+					{
+						icon: <ListVideo className="h-4 w-4" />,
+						label: `${workshops.length} ${pluralize('Workshop', workshops.length)}`,
+					},
+				]
+			: []),
 		...prependFeatures,
 		...defaultFeatures,
 	]
+
+	if (variant === 'checklist') {
+		return (
+			<div className={cn('not-prose w-full', className)}>
+				<div className={cn(TYPE.groupLabel, 'mb-1')}>Includes</div>
+				<ul className="flex w-full flex-col">
+					{features.map((feature, index) => (
+						<li
+							className="border-border/60 flex items-center gap-2.5 border-b py-2 last:border-b-0"
+							key={`${feature.label}-${index}`}
+						>
+							<Check
+								className="text-primary size-3.5 shrink-0"
+								aria-hidden="true"
+								strokeWidth={2.4}
+							/>
+							<span className={cn(TYPE.metaProse, 'leading-snug')}>
+								{feature.label}
+							</span>
+						</li>
+					))}
+				</ul>
+			</div>
+		)
+	}
 
 	return (
 		<div

@@ -15,6 +15,15 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 import type { AbilityForResource } from '@coursebuilder/utils/current-ability-rules'
 
 import { useModuleProgress } from '../../_components/module-progress-provider'
+import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+
+/**
+ * The actions bar's secondary control: same 46px/9px geometry as the primary
+ * CTA (`WORKSHOP_CTA_BUTTON`), drawn as a hairline outline instead of a fill —
+ * one gold object per bar, everything else recedes (DESIGN rule 7).
+ */
+const ACTIONS_BAR_OUTLINE =
+	'border-border h-[46px] items-center gap-2 rounded-[9px] border bg-transparent px-[18px] text-sm font-medium'
 
 export function StartLearningWorkshopButton({
 	productType,
@@ -56,17 +65,18 @@ export function StartLearningWorkshopButton({
 		)
 
 		return (
-			<Button
-				size="lg"
+			<span
 				className={cn(
-					'text-foreground before:bg-primary-foreground relative h-14 w-full rounded-none text-sm font-medium before:absolute before:-left-1 before:h-2 before:w-2 before:rotate-45 before:content-[""] hover:cursor-not-allowed sm:max-w-[300px]',
+					ACTIONS_BAR_OUTLINE,
+					'text-muted-foreground inline-flex cursor-not-allowed select-none',
 					className,
-					'border-r bg-transparent',
 				)}
-				disabled
 			>
-				Available {formattedDate} (PT)
-			</Button>
+				Available{' '}
+				<span className="text-foreground font-mono text-[13px] font-medium">
+					{formattedDate} (PT)
+				</span>
+			</span>
 		)
 	}
 
@@ -86,37 +96,14 @@ export function StartLearningWorkshopButton({
 	}
 
 	return (
-		<>
-			<Button
-				size="lg"
-				className={cn(
-					'before:bg-primary-foreground relative h-14 w-full rounded-none text-base font-medium before:absolute before:-left-1 before:h-2 before:w-2 before:rotate-45 before:content-[""] sm:max-w-[180px]',
-					className,
-					{
-						'text-foreground hover:bg-secondary border-r bg-transparent before:hidden sm:max-w-[120px]':
-							!canView,
-					},
+		<Button size="lg" className={cn(WORKSHOP_CTA_BUTTON, className)} asChild>
+			<Link prefetch href={url}>
+				{!moduleProgress && 'Loading...'}
+				{moduleProgress && (
+					<>{isWorkshopInProgress ? 'Continue Learning' : 'Start Learning'}</>
 				)}
-				asChild
-			>
-				<Link prefetch href={url}>
-					{canView ? (
-						<>
-							{!moduleProgress && 'Loading...'}
-							{moduleProgress && (
-								<>
-									{isWorkshopInProgress
-										? 'Continue Learning'
-										: 'Start Learning'}
-								</>
-							)}
-						</>
-					) : (
-						'Preview'
-					)}
-				</Link>
-			</Button>
-		</>
+			</Link>
+		</Button>
 	)
 }
 
@@ -146,18 +133,7 @@ export function GetAccessButton({
 	if (canView || !cohortSlug) return null
 
 	return (
-		<Button
-			size="lg"
-			className={cn(
-				'before:bg-primary-foreground relative h-14 w-full rounded-none text-sm font-medium before:absolute before:-left-1 before:h-2 before:w-2 before:rotate-45 before:content-[""] sm:max-w-[180px]',
-				className,
-				{
-					'text-primary-foreground bg-primary hover:bg-primary/80 border-r':
-						!canView,
-				},
-			)}
-			asChild
-		>
+		<Button size="lg" className={cn(WORKSHOP_CTA_BUTTON, className)} asChild>
 			<Link prefetch href={`/cohorts/${cohortSlug}`}>
 				Get Access
 			</Link>
@@ -167,27 +143,15 @@ export function GetAccessButton({
 
 export function StartLearningWorkshopButtonSkeleton() {
 	return (
-		<Button
-			size="lg"
-			className='text-foreground/75 before:bg-primary-foreground relative flex h-14 w-full gap-2 rounded-none border-r bg-transparent text-sm font-medium before:absolute before:-left-1 before:h-2 before:w-2 before:rotate-45 before:content-[""] hover:bg-transparent sm:max-w-[277px]'
+		<span
+			className={cn(
+				ACTIONS_BAR_OUTLINE,
+				'text-muted-foreground inline-flex select-none',
+			)}
+			aria-busy="true"
 		>
 			<Spinner className="w-3" /> Checking your access...
-		</Button>
-	)
-}
-
-export function ContentTitle({
-	// abilityLoader,
-}: {
-	// abilityLoader: Promise<AbilityForResource>
-}) {
-	// const { canView } = React.use(abilityLoader)
-	// if (!canView) return null
-
-	return (
-		<div className="col-span-2 hidden h-14 items-center border-l pl-5 text-base font-medium md:flex">
-			Content
-		</div>
+		</span>
 	)
 }
 
@@ -211,8 +175,8 @@ export function WorkshopGitHubRepoLink({
 		<Button
 			asChild
 			size="lg"
-			variant="ghost"
-			className="flex h-14 items-center gap-2 rounded-none border-r"
+			variant="outline"
+			className={cn(ACTIONS_BAR_OUTLINE, 'text-foreground hover:bg-muted flex')}
 		>
 			<Link href={githubUrl} target="_blank" rel="noopener noreferrer">
 				<Github className="size-4" /> Code

@@ -5,20 +5,25 @@ import { notFound } from 'next/navigation'
 import { EditWorkshopButton } from '@/app/(content)/workshops/_components/edit-workshop-button'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import {
-	ContentTitle,
 	GetAccessButton,
 	StartLearningWorkshopButton,
 	StartLearningWorkshopButtonSkeleton,
 	WorkshopGitHubRepoLink,
 } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
+import { TYPE } from '@/components/landing/type'
 import LayoutClient from '@/components/layout-client'
 import { Share } from '@/components/share'
 import config from '@/config'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { getFirstResourceSlug } from '@/lib/content-navigation'
+import { ModuleProgressProvider } from '@/app/(content)/_components/module-progress-provider'
+import {
+	flattenNavigationResources,
+	getFirstResourceSlug,
+	isCompletionTrackedResource,
+} from '@/lib/content-navigation'
 import {
 	getCachedMinimalWorkshop,
 	getCachedWorkshopNavigation,
@@ -52,6 +57,8 @@ import { WorkshopDraftBanner } from '../_components/workshop-draft-banner'
 import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
 import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
 import { WorkshopSidebar } from '../_components/workshop-sidebar'
+import { WorkshopStatePreviewBar } from '../_components/workshop-state-preview'
+import { parseWorkshopPreviewState } from '../_components/workshop-state-preview-shared'
 import { Certificate } from '../../_components/module-certificate-container'
 
 type Props = {
@@ -120,72 +127,151 @@ export default async function ModulePage(props: Props) {
 	const navigation = await getCachedWorkshopNavigation(params.module)
 	const hasContent = Boolean(getFirstResourceSlug(navigation))
 
-	const Links = ({
-		children,
-		className,
-	}: {
-		children?: React.ReactNode
-		className?: string
-	}) => {
+	// Facts for the sidebar list's header (prototype: "27 lessons · 5 sections").
+	const trackedLessonCount = flattenNavigationResources(navigation).filter(
+		isCompletionTrackedResource,
+	).length
+	const sectionCount =
+		navigation?.resources?.filter((row) => row.resource.type === 'section')
+			.length ?? 0
+
+	// Raised header over the content list when the sidebar IS the content list
+	// (purchased / no-product): names the thing the list belongs to, in the
+	// column the reader is scanning. The list itself is hidden on mobile there,
+	// so the header hides with it.
+	const SidebarListHeader = () => (
+		<div className="bg-card hidden flex-col gap-0.5 border-b px-4 py-3.5 md:flex">
+			<span className={cn(TYPE.meta, 'font-semibold')}>
+				{workshop.fields?.title}
+			</span>
+			<span className={cn(TYPE.metaMark)}>
+				{trackedLessonCount} lessons
+				{sectionCount > 0 ? ` · ${sectionCount} sections` : ''}
+			</span>
+		</div>
+	)
+
+	// ─── DEV-ONLY state preview fixture ──────────────────────────────────────
+	// `?state=waitlist|pricing|purchased|in-progress|completed|no-product`
+	// forces the landing page into that state for local design work. Parses to
+	// undefined outside development; see workshop-state-preview.tsx. Not
+	// production code.
+	const previewState = parseWorkshopPreviewState(searchParams.state)
+	const previewAsVisitor =
+		previewState === 'waitlist' ||
+		previewState === 'pricing' ||
+		previewState === 'no-product'
+	const effectiveAbilityLoader = previewState
+		? Promise.resolve({
+				canViewWorkshop: !previewAsVisitor,
+				canViewLesson: !previewAsVisitor,
+				isPendingOpenAccess: false,
+				canInviteTeam: false,
+				isRegionRestricted: false,
+				canCreate: false,
+			})
+		: abilityLoader
+	const previewProgressLoader = (() => {
+		if (!previewState) return null
+		const lessons = flattenNavigationResources(navigation).filter(
+			isCompletionTrackedResource,
+		)
+		const completedCount =
+			previewState === 'completed'
+				? lessons.length
+				: previewState === 'in-progress'
+					? Math.max(1, Math.floor(lessons.length / 3))
+					: 0
+		return Promise.resolve({
+			completedLessons: lessons.slice(0, completedCount).map((lesson) => ({
+				userId: 'preview',
+				resourceId: lesson.id,
+				completedAt: new Date(),
+			})),
+			nextResource: lessons[completedCount] ?? null,
+			percentCompleted:
+				lessons.length > 0
+					? Math.ceil((completedCount / lessons.length) * 100)
+					: 0,
+			completedLessonsCount: completedCount,
+			totalLessonsCount: lessons.length,
+		})
+	})()
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// The actions bar (`Workshop Landing.dc.html` § "Actions bar"): free-standing
+	// 46px/9px controls in a padded hairline-bounded row, one gold object at a
+	// time. It lives INSIDE the content column so the sidebar's top edge and the
+	// bar's top edge are the same line — the old full-width bar needed the
+	// sidebar to pull itself up over the bar's empty cell with a `-mt-14`.
+	const Links = ({ className }: { className?: string }) => {
 		return (
 			<div
 				className={cn(
-					'relative w-full grid-cols-6 items-center border-y md:grid',
+					'flex w-full flex-wrap items-center gap-2.5 border-b px-5 py-2.5 sm:px-8 lg:px-10',
 					className,
 				)}
 			>
-				<div
-					aria-hidden="true"
-					className="via-foreground/10 to-muted bg-linear-to-r absolute -bottom-px right-0 h-px w-2/3 from-transparent"
-				/>
-				<div className="divide-border col-span-4 flex flex-wrap items-center divide-y md:divide-y-0">
-					<div className="bg-stripes border-border hidden h-14 border-r sm:w-8 md:block lg:w-10" />
-					<React.Suspense fallback={<StartLearningWorkshopButtonSkeleton />}>
-						<GetAccessButton abilityLoader={abilityLoader} />
-						<StartLearningWorkshopButton
-							productType={product?.type}
-							abilityLoader={abilityLoader}
-							moduleSlug={params.module}
-							workshop={workshop}
+				<React.Suspense fallback={<StartLearningWorkshopButtonSkeleton />}>
+					<GetAccessButton
+						className="w-full sm:w-auto"
+						abilityLoader={effectiveAbilityLoader}
+					/>
+					<StartLearningWorkshopButton
+						className="w-full sm:w-auto"
+						productType={product?.type}
+						abilityLoader={effectiveAbilityLoader}
+						moduleSlug={params.module}
+						workshop={workshop}
+					/>
+					{workshop.fields?.github ? (
+						<WorkshopGitHubRepoLink
+							githubUrl={workshop.fields?.github}
+							abilityLoader={effectiveAbilityLoader}
 						/>
-						<div className="divide-border w-full items-center divide-y sm:flex sm:w-auto sm:divide-y-0">
-							{workshop.fields?.github ? (
-								<WorkshopGitHubRepoLink
-									githubUrl={workshop.fields?.github}
-									abilityLoader={abilityLoader}
-								/>
-							) : null}
-							<Dialog>
-								<DialogTrigger asChild>
-									<Button
-										className="h-14 w-full rounded-none px-5 md:w-auto md:border-r"
-										variant="ghost"
-										size="lg"
-									>
-										<Share2 className="mr-1 w-3" /> Share
-									</Button>
-								</DialogTrigger>
-								<DialogContent
-									lockScroll={false}
-									className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-2xl p-0"
-								>
-									<DialogTitle className="border-b px-6 py-5 text-xl">
-										Share
-									</DialogTitle>
-									<Share
-										variant="dialog"
-										title={workshop.fields?.title}
-										className="p-6"
-									/>
-								</DialogContent>
-							</Dialog>
-						</div>
-					</React.Suspense>
-				</div>
-				{children}
+					) : null}
+					<Dialog>
+						<DialogTrigger asChild>
+							<Button
+								className="text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4 text-sm font-medium"
+								variant="ghost"
+								size="lg"
+							>
+								<Share2 className="mr-1 w-3" /> Share
+							</Button>
+						</DialogTrigger>
+						<DialogContent
+							lockScroll={false}
+							className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-2xl p-0"
+						>
+							<DialogTitle className="border-b px-6 py-5 text-xl">
+								Share
+							</DialogTitle>
+							<Share
+								variant="dialog"
+								title={workshop.fields?.title}
+								className="p-6"
+							/>
+						</DialogContent>
+					</Dialog>
+				</React.Suspense>
 			</div>
 		)
 	}
+	// DEV-ONLY: overrides the layout's real module progress for this page's
+	// subtree so the preview can fake start / in-progress / completed.
+	const PreviewProgress = ({ children }: { children: React.ReactNode }) =>
+		previewProgressLoader ? (
+			<ModuleProgressProvider
+				key={previewState}
+				moduleProgressLoader={previewProgressLoader}
+			>
+				{children}
+			</ModuleProgressProvider>
+		) : (
+			<>{children}</>
+		)
+
 	const squareGridPattern = generateGridPattern(
 		workshop.fields?.title || '',
 		1000,
@@ -229,6 +315,7 @@ export default async function ModulePage(props: Props) {
 
 	return (
 		<LayoutClient withContainer>
+			<PreviewProgress>
 			<main className="flex min-h-screen w-full flex-col">
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
@@ -274,7 +361,7 @@ export default async function ModulePage(props: Props) {
 							{workshop.fields?.coverImage?.url && (
 								<WorkshopImage
 									imageUrl={workshop.fields.coverImage.url}
-									abilityLoader={abilityLoader}
+									abilityLoader={effectiveAbilityLoader}
 								/>
 							)}
 						</div>
@@ -306,9 +393,10 @@ export default async function ModulePage(props: Props) {
 				</header>
 
 				<>
-					<Links>{!isPreLaunch && hasContent && <ContentTitle />}</Links>
-					<div className="mx-auto flex w-full grow grid-cols-6 flex-col md:grid">
-						<div className="col-span-4 border-b pt-10 md:border-b-0">
+					<div className="mx-auto flex w-full grow grid-cols-6 flex-col border-t md:grid">
+						<div className="col-span-4 flex flex-col border-b md:border-b-0">
+							<Links />
+							<div className="pt-10">
 							<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
 								{workshop.fields?.body ? body : <p>No description found.</p>}
 							</article>
@@ -327,12 +415,17 @@ export default async function ModulePage(props: Props) {
 									/>
 								</div>
 							)}
+							</div>
 						</div>
 						<div className="bg-background relative z-20 col-span-2 flex h-full flex-col md:border-l">
-							{shouldShowPricingSidebar ? (
+							{(
+								previewState
+									? previewState !== 'no-product'
+									: shouldShowPricingSidebar
+							) ? (
 								<React.Suspense
 									fallback={
-										<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16 md:-mt-14">
+										<div className="bg-background relative z-10 flex w-full flex-col gap-2 p-5 pb-16">
 											<Skeleton className="bg-accent h-10 w-full" />
 											<Skeleton className="bg-accent h-10 w-full" />
 											<Skeleton className="bg-accent h-10 w-full" />
@@ -342,44 +435,75 @@ export default async function ModulePage(props: Props) {
 								>
 									<WorkshopPricing
 										moduleSlug={params.module}
-										searchParams={searchParams}
+										searchParams={
+											// Preview: `allowPurchase` is the commerce chain's own
+											// state-forcing mechanism, so the pricing preview rides it.
+											previewState === 'pricing'
+												? { ...searchParams, allowPurchase: 'true' }
+												: searchParams
+										}
 									>
 										{(pricingProps) => {
 											// allowPurchase always forces the buy state; otherwise a
 											// pre-launch workshop shows the interest-capture form.
-											const showInterestCapture =
-												isPreLaunch &&
-												!pricingProps.allowPurchase &&
-												!pricingProps.hasPurchasedCurrentProduct
+											// A dev preview state overrides both decisions outright.
+											const showInterestCapture = previewState
+												? previewState === 'waitlist'
+												: isPreLaunch &&
+													!pricingProps.allowPurchase &&
+													!pricingProps.hasPurchasedCurrentProduct
+											const showBuy = previewState
+												? previewState === 'pricing'
+												: pricingProps.allowPurchase &&
+													!pricingProps.hasPurchasedCurrentProduct
 											return pricingProps.product ? (
 												<>
 													<WorkshopSidebar
 														pricingProps={pricingProps}
 														workshop={workshop}
 														interestCapture={showInterestCapture}
-														className={cn('', {
-															'md:-mt-14':
-																(pricingProps.allowPurchase &&
-																	!pricingProps.hasPurchasedCurrentProduct) ||
-																showInterestCapture,
-														})}
+														purchased={
+															!showBuy &&
+															!showInterestCapture &&
+															Boolean(
+																previewState ||
+																	pricingProps.hasPurchasedCurrentProduct,
+															)
+														}
 													>
-														{pricingProps.allowPurchase &&
-														!pricingProps.hasPurchasedCurrentProduct ? (
+														{showBuy ? (
 															<>
 																<WorkshopPricingClient
 																	className="bg-card"
-																	searchParams={props.searchParams}
+																	searchParams={
+																		// Preview: the client half of the commerce
+																		// chain re-reads the URL params, so the forced
+																		// `allowPurchase` has to ride here too, not
+																		// only into <WorkshopPricing>.
+																		previewState === 'pricing'
+																			? Promise.resolve({
+																					...searchParams,
+																					allowPurchase: 'true',
+																				})
+																			: props.searchParams
+																	}
 																	{...pricingProps}
+																	hasPurchasedCurrentProduct={
+																		previewState === 'pricing'
+																			? false
+																			: pricingProps.hasPurchasedCurrentProduct
+																	}
 																/>
 															</>
 														) : showInterestCapture ? (
 															<WorkshopInterestCta
 																workshopSlug={params.module}
 																workshopTitle={workshop.fields?.title}
+																forceVisible={previewState === 'waitlist'}
 															/>
 														) : (
 															<>
+																<SidebarListHeader />
 																<WorkshopResourceList
 																	isCollapsible={false}
 																	className="border-r-0! w-full max-w-none"
@@ -405,6 +529,7 @@ export default async function ModulePage(props: Props) {
 													<WorkshopInterestCta
 														workshopSlug={params.module}
 														workshopTitle={workshop.fields?.title}
+														forceVisible={previewState === 'waitlist'}
 													/>
 												</WorkshopSidebar>
 											) : (
@@ -421,6 +546,7 @@ export default async function ModulePage(props: Props) {
 								</React.Suspense>
 							) : (
 								<WorkshopSidebar workshop={workshop}>
+									<SidebarListHeader />
 									<WorkshopResourceList
 										isCollapsible={false}
 										className="border-r-0! w-full max-w-none"
@@ -432,11 +558,25 @@ export default async function ModulePage(props: Props) {
 							)}
 						</div>
 					</div>
+					{/* The bar again at the end of the read — same object, so a reader
+					    who finished the argument doesn't scroll back up to act on it.
+					    The empty sidebar cell keeps the column hairline running. */}
 					{!isPreLaunch && workshop?.fields?.body && (
-						<Links className="border-b-0" />
+						<div className="grid-cols-6 border-t md:grid">
+							<Links className="col-span-4 border-b-0" />
+							<div
+								className="col-span-2 hidden border-l md:block"
+								aria-hidden="true"
+							/>
+						</div>
 					)}
 				</>
+				<WorkshopStatePreviewBar
+					moduleSlug={params.module}
+					current={previewState}
+				/>
 			</main>
+			</PreviewProgress>
 		</LayoutClient>
 	)
 }
