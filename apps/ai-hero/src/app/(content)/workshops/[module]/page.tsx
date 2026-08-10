@@ -282,6 +282,23 @@ export default async function ModulePage(props: Props) {
 	const product = await getCachedWorkshopProduct(params.module)
 	const hasSelfPacedProduct = product?.type === 'self-paced'
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
+
+	// Whether the actions bar would hold any action for THIS viewer — the same
+	// conditions its buttons check client-side, decided here so an empty bar
+	// (a waitlist visitor: no access, nothing pending, no repo) renders as no
+	// bar at all instead of a hairline-bounded row of padding around Share.
+	const ability = await effectiveAbilityLoader
+	const cohortParent =
+		navigation?.parents?.[0]?.type === 'cohort' ? navigation.parents[0] : null
+	const cohortSlug = cohortParent?.resources?.[0]?.resource?.fields?.slug
+	const hasBarActions = Boolean(
+		(ability.isPendingOpenAccess && workshop.fields?.startsAt) ||
+			(ability.canViewWorkshop &&
+				product?.type !== 'cohort' &&
+				hasContent) ||
+			(!ability.canViewWorkshop && cohortSlug) ||
+			(ability.canViewWorkshop && workshop.fields?.github),
+	)
 	const { content: body } = await compileMDX(workshop.fields.body || '', {
 		EnrollNow: (props) => (
 			<WorkshopPricing moduleSlug={params.module} searchParams={searchParams}>
@@ -395,7 +412,7 @@ export default async function ModulePage(props: Props) {
 				<>
 					<div className="mx-auto flex w-full grow grid-cols-6 flex-col border-t md:grid">
 						<div className="col-span-4 flex flex-col border-b md:border-b-0">
-							<Links />
+							{hasBarActions && <Links />}
 							<div className="pt-10">
 							<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
 								{workshop.fields?.body ? body : <p>No description found.</p>}
@@ -561,7 +578,7 @@ export default async function ModulePage(props: Props) {
 					{/* The bar again at the end of the read — same object, so a reader
 					    who finished the argument doesn't scroll back up to act on it.
 					    The empty sidebar cell keeps the column hairline running. */}
-					{!isPreLaunch && workshop?.fields?.body && (
+					{!isPreLaunch && hasBarActions && workshop?.fields?.body && (
 						<div className="grid-cols-6 border-t md:grid">
 							<Links className="col-span-4 border-b-0" />
 							<div
