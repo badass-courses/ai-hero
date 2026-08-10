@@ -135,6 +135,21 @@ export default auth(async function middleware(req) {
 
 export const config = {
 	matcher: [
-		'/((?!_next/static|_next/image|favicon.ico|_axiom/web-vitals|sitemap.xml|robots.txt).*)',
+		'/admin',
+		'/admin/:path*',
+		'/c/:path*',
+		'/subscribe/:path*',
+		'/products/:path*',
+		'/organization-list',
+		'/settings/:path*',
+		'/workshops/:path*',
+		'/cohorts/:path*',
+		'/events/:path*',
+		'/invoices/:path*',
+		'/team/:path*',
+		'/profile/:path*',
+		'/thanks/:path*',
+		'/transfer/:path*',
+		'/welcome/:path*',
 	],
 }
