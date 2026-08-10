@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { api } from '@/trpc/react'
 import { flattenListResources } from '@/utils/get-nextup-resource-from-list'
 
 import type { ModuleProgress } from '@coursebuilder/core/schemas'
@@ -176,26 +177,33 @@ export function applyCompletionOverlay(
  * ProgressProvider exposes the completion state of lessons within the current
  * module/list, blending two sources:
  *
- * - `progressLoader`, a PROMISE of the server-loaded progress. Progress is the
- *   only per-user data on a post page, and the layout awaiting it meant the
- *   whole route rendered behind an auth read and a per-user query; unwrapping
- *   it here with `React.use()` lets that query run concurrently with the rest
- *   of the server render.
+ * - a client query for server-loaded progress. Progress is per-user data, so
+ *   reading it in the post layout also reads the auth headers and opts every
+ *   post out of prerendering. The query starts as soon as this provider
+ *   hydrates and leaves the shared static shell anonymous.
  * - the module-scoped completion overlay (see `createCompletionOverlay`),
  *   which carries optimistic ticks across the per-navigation remount of this
  *   provider and wins any race with the server value.
  *
- * @param progressLoader - Promise of the progress data, started (and error-handled) server-side
+ * @param moduleId - List id, or the post slug for a standalone post.
  * @param children - React child components that will have access to progress context
  */
 export function ProgressProvider({
-	progressLoader,
+	moduleId,
 	children,
 }: {
-	progressLoader: Promise<ModuleProgress | null>
+	moduleId: string
 	children: React.ReactNode
 }) {
-	const initialProgress = React.use(progressLoader)
+	const { data: initialProgress = null } =
+		api.progress.getModuleProgressForUser.useQuery(
+			{ moduleId },
+			{
+				staleTime: 5 * 60 * 1000,
+				refetchOnWindowFocus: false,
+				retry: 1,
+			},
+		)
 	const { list } = useList()
 	const overlay = useCompletionOverlay()
 

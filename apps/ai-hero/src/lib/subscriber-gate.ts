@@ -187,8 +187,8 @@ function subscriberFromGate(
  *    not fall through to Kit: an id-only visitor gets `null`, and `null` means
  *    "show the ask", which is the safe direction and what every visitor sees.
  * 2. The full record carries `email_address`, `id` and name. Gating reads
- *    `state` and a handful of interest flags, so that is all that leaves the
- *    server.
+ *    `state`, a handful of interest flags, and one boolean that says whether
+ *    an identity exists. The identity value never leaves the server.
  *
  * `fields` is filtered rather than passed through because the keys are dynamic
  * (`waitlist_<product>`, `interest_<slug>`), and an allowlist of exact names
@@ -204,7 +204,13 @@ export const getCtaGatingPayload = cache(
 		const gate = parseSubscriberGateSnapshot(
 			cookieStore.get(SUBSCRIBER_GATE_COOKIE)?.value,
 		)
-		if (gate) return { state: gate.state, fields: gate.fields }
+		if (gate) {
+			return {
+				state: gate.state,
+				fields: gate.fields,
+				hasIdentity: Boolean(gate.email_address),
+			}
+		}
 
 		const cookie = cookieStore.get('ck_subscriber')?.value
 		if (!cookie || cookie === 'undefined') return null
@@ -212,7 +218,11 @@ export const getCtaGatingPayload = cache(
 		try {
 			const parsed = SubscriberSchema.parse(JSON.parse(cookie))
 			const snapshot = createSubscriberGateSnapshot(parsed)
-			return { state: snapshot.state, fields: snapshot.fields }
+			return {
+				state: snapshot.state,
+				fields: snapshot.fields,
+				hasIdentity: Boolean(parsed.email_address),
+			}
 		} catch {
 			return null
 		}

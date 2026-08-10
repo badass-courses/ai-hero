@@ -70,21 +70,29 @@ export async function getAllPosts(): Promise<Post[]> {
 			},
 		})
 
-		const postsParsed = z.array(PostSchema).safeParse(posts)
-		if (!postsParsed.success) {
-			await log.error('post.parse.error', {
-				scope: 'all',
-				error: postsParsed.error.message,
-			})
-			return []
+		// A malformed draft must not erase every valid slug from
+		// `generateStaticParams`. Parse each row independently, as the list
+		// loader does, so valid public posts still prerender.
+		const postsParsed: Post[] = []
+		for (const post of posts) {
+			const result = PostSchema.safeParse(post)
+			if (result.success) {
+				postsParsed.push(result.data)
+			} else {
+				void log.error('post.parse.error', {
+					postId: post.id,
+					scope: 'all',
+					error: result.error.message,
+				})
+			}
 		}
 
 		await log.info('post.query.success', {
 			scope: 'all',
-			count: postsParsed.data.length,
+			count: postsParsed.length,
 		})
 
-		return postsParsed.data
+		return postsParsed
 	} catch (error) {
 		await log.error('post.query.error', {
 			scope: 'all',

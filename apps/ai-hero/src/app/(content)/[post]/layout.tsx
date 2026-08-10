@@ -8,8 +8,6 @@ import {
 	getCachedListForPost,
 	getFilteredListForEditor,
 } from '@/lib/lists-query'
-import { getModuleProgressForUser } from '@/lib/progress'
-import { log } from '@/server/logger'
 
 import { getCachedPostOrList } from '../../../lib/posts-query'
 import { ListProvider } from './_components/list-provider'
@@ -50,23 +48,6 @@ export default async function Layout(props: {
 			list = await getFilteredListForEditor(params.post)
 		}
 	}
-	// NOT awaited. Progress is the only per-user data in this layout, and
-	// awaiting it here held the entire route — sidebar, article, everything —
-	// behind an auth-session read and a per-user DB query. The promise is handed
-	// to the client provider, which unwraps it with `React.use()`, so the query
-	// runs concurrently with the rest of the render and the page streams as soon
-	// as it is ready. Progress is also a nicety: a failure to load it should
-	// degrade to "nothing completed", not 500 the article.
-	const progressLoader = getModuleProgressForUser(
-		list ? list.id : params.post,
-	).catch((error) => {
-		void log.error('post.layout.progress.error', {
-			slug: params.post,
-			error: error instanceof Error ? error.message : String(error),
-		})
-		return null
-	})
-
 	const currentPostHasVideo = Boolean(
 		post?.resources?.find(
 			(r: { resource: { type: string } }) =>
@@ -90,7 +71,7 @@ export default async function Layout(props: {
 			initialList={toListNavData(list)}
 			currentPostHasVideo={currentPostHasVideo}
 		>
-			<ProgressProvider progressLoader={progressLoader}>
+			<ProgressProvider moduleId={list ? list.id : params.post}>
 				<ActiveHeadingProvider>
 					<LayoutClient withContainer withFooter={false}>
 						<HubLayout

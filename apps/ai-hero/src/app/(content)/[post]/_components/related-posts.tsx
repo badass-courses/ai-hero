@@ -4,7 +4,10 @@ import {
 	contentDurationLabel,
 	resolveContentDuration,
 } from '@/lib/content-duration'
-import { getNearestNeighbour } from '@/lib/typesense-query'
+import {
+	getNearestNeighbour,
+	getPublicNearestNeighbour,
+} from '@/lib/typesense-query'
 import readingTime from 'reading-time'
 
 /**
@@ -31,6 +34,8 @@ export type RelatedPostsProps = {
 	/** required for 'section' variant to render the header + drive the query */
 	sectionTitle?: string
 	documentIdsToSkip?: string[]
+	/** Resolve against this signed-in reader's completed content. */
+	personalized?: boolean
 	className?: string
 }
 
@@ -207,6 +212,7 @@ async function resolveSection(
 async function resolveSuggested(
 	postId: string,
 	skipIds: Set<string>,
+	personalized: boolean,
 ): Promise<{ heading: string; items: RelatedPostItem[] }> {
 	const items: RelatedPostItem[] = []
 	const skip = new Set(skipIds)
@@ -218,7 +224,10 @@ async function resolveSuggested(
 		// mostly its own siblings, so a fixed radius could return nothing at all
 		// once they were filtered out. Widening by the skip count keeps the same
 		// number of real candidates in view.
-		const doc = await getNearestNeighbour(
+		const findNeighbour = personalized
+			? getNearestNeighbour
+			: getPublicNearestNeighbour
+		const doc = await findNeighbour(
 			postId,
 			5 + skip.size,
 			1,
@@ -290,16 +299,25 @@ export async function resolveRelatedPostItems({
 	variant,
 	sectionTitle,
 	documentIdsToSkip,
+	personalized = false,
 }: RelatedPostsProps): Promise<{
 	heading: string
 	items: RelatedPostItem[]
+	source: RelatedPostsVariant
 }> {
 	const skipIds = new Set([postId, ...(documentIdsToSkip ?? [])])
 
 	if (variant === 'section') {
 		const section = await resolveSection(postId, sectionTitle, skipIds)
-		if (section) return section
+		if (section) return { ...section, source: 'section' }
 	}
 
-	return resolveSuggested(postId, new Set(documentIdsToSkip ?? []))
+	return {
+		...(await resolveSuggested(
+			postId,
+			new Set(documentIdsToSkip ?? []),
+			personalized,
+		)),
+		source: 'suggested',
+	}
 }
