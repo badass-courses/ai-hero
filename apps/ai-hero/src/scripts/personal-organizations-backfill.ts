@@ -27,6 +27,7 @@ import { dirname } from 'node:path'
 
 import { db } from '@/db'
 import { organization, organizationMemberships } from '@/db/schema'
+import { log, serializeError } from '@/server/logger'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, like } from 'drizzle-orm'
 
 import { getPersonalOrganizationName } from '@coursebuilder/organizations'
@@ -89,6 +90,12 @@ function parseArgs(argv: string[]): { mode: Mode; receiptPath: string } {
 	if (!receiptPath || receiptPath.startsWith('--')) {
 		throw new Error('--receipt requires a path')
 	}
+
+	// Fail before any database work when the receipt cannot land — the default
+	// directory is the aihero-support receipts convention (as in
+	// billing-admins-backfill.ts) and only exists on the operator's machine;
+	// pass --receipt anywhere else.
+	mkdirSync(dirname(receiptPath), { recursive: true })
 
 	return { mode, receiptPath }
 }
@@ -155,7 +162,7 @@ async function collectCandidates(
 		const organizations = await db.query.organization.findMany({
 			where: and(
 				isNull(organization.personalOrganizationUserId),
-				like(organization.name, 'Personal (%'),
+				like(organization.name, 'Personal (%)'),
 				cursor ? gt(organization.id, cursor) : undefined,
 			),
 			orderBy: asc(organization.id),
@@ -248,8 +255,10 @@ async function collectCandidates(
 
 /**
  * Picks the one organization allowed to carry the durable id when a user has
- * several unstamped `Personal (…)` organizations: the single one whose name
- * matches the current email, otherwise the oldest.
+ * several unstamped `Personal (…)` organizations: the one whose membership
+ * already carries the durable id (at most one exists — the column is uniquely
+ * indexed), else the single one whose name matches the current email,
+ * otherwise the oldest.
  */
 function chooseCandidate(candidates: Candidate[]): {
 	chosen: Candidate
@@ -261,10 +270,14 @@ function chooseCandidate(candidates: Candidate[]): {
 		if (aTime !== bTime) return aTime - bTime
 		return a.organizationId.localeCompare(b.organizationId)
 	})
+	const membershipStamped = sorted.find(
+		(candidate) => candidate.membershipAlreadyStamped,
+	)
 	const nameMatches = sorted.filter(
 		(candidate) => candidate.nameMatchesCurrentEmail,
 	)
-	const chosen = (nameMatches.length === 1 ? nameMatches[0] : sorted[0]) as Candidate
+	const chosen = (membershipStamped ??
+		(nameMatches.length === 1 ? nameMatches[0] : sorted[0])) as Candidate
 	return {
 		chosen,
 		skipped: sorted.filter((candidate) => candidate !== chosen),
@@ -292,14 +305,25 @@ async function run() {
 	const toStamp: Candidate[] = []
 	let duplicateCandidatesSkipped = 0
 	for (const [userId, userCandidates] of candidatesByUser) {
-		if (
-			stamped.organizationUserIds.has(userId) ||
-			stamped.membershipUserIds.has(userId)
-		) {
+		if (stamped.organizationUserIds.has(userId)) {
 			incrementReason(unresolvedReasons, 'user-already-has-durable-personal-org')
 			continue
 		}
 		const { chosen, skipped } = chooseCandidate(userCandidates)
+		// A stamped membership elsewhere (with this organization still
+		// unstamped) means stamping this candidate's membership would violate
+		// the unique index; a membership stamped on the candidate itself is the
+		// org-row-only repair case and proceeds.
+		if (
+			!chosen.membershipAlreadyStamped &&
+			stamped.membershipUserIds.has(userId)
+		) {
+			incrementReason(
+				unresolvedReasons,
+				'membership-stamped-for-a-different-membership',
+			)
+			continue
+		}
 		duplicateCandidatesSkipped += skipped.length
 		for (const _ of skipped) {
 			incrementReason(unresolvedReasons, 'duplicate-personal-org-candidates')
@@ -315,29 +339,49 @@ async function run() {
 		if (!allowWrite) continue
 
 		try {
-			await db
-				.update(organization)
-				.set({ personalOrganizationUserId: candidate.userId })
-				.where(
-					and(
-						eq(organization.id, candidate.organizationId),
-						isNull(organization.personalOrganizationUserId),
-					),
-				)
-			if (!candidate.membershipAlreadyStamped) {
-				await db
-					.update(organizationMemberships)
+			// One transaction per candidate: a stamped organization with an
+			// unstamped membership would be filtered out of every future run,
+			// so the pair must land together or not at all. Zero affected rows
+			// means the IS NULL guard lost a race — roll back and recount.
+			await db.transaction(async (tx) => {
+				const organizationResult = await tx
+					.update(organization)
 					.set({ personalOrganizationUserId: candidate.userId })
 					.where(
 						and(
-							eq(organizationMemberships.id, candidate.membershipId),
-							isNull(organizationMemberships.personalOrganizationUserId),
+							eq(organization.id, candidate.organizationId),
+							isNull(organization.personalOrganizationUserId),
 						),
 					)
-			}
-		} catch {
+				if ((organizationResult.rowsAffected ?? 0) === 0) {
+					throw new Error('organization-stamp-affected-no-rows')
+				}
+				if (!candidate.membershipAlreadyStamped) {
+					const membershipResult = await tx
+						.update(organizationMemberships)
+						.set({ personalOrganizationUserId: candidate.userId })
+						.where(
+							and(
+								eq(organizationMemberships.id, candidate.membershipId),
+								isNull(organizationMemberships.personalOrganizationUserId),
+							),
+						)
+					if ((membershipResult.rowsAffected ?? 0) === 0) {
+						throw new Error('membership-stamp-affected-no-rows')
+					}
+				}
+			})
+		} catch (error) {
 			writeErrors += 1
 			incrementReason(unresolvedReasons, 'stamp-write-failed')
+			await log.error('personal-org-backfill.stamp-failed', {
+				mode,
+				receiptPath,
+				organizationId: candidate.organizationId,
+				membershipId: candidate.membershipId,
+				userId: candidate.userId,
+				error: serializeError(error),
+			})
 		}
 	}
 
@@ -379,14 +423,16 @@ async function run() {
 		],
 	}
 
-	mkdirSync(dirname(receiptPath), { recursive: true })
 	writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
 	console.log(JSON.stringify({ receiptPath, ...receipt }, null, 2))
 
 	if (unresolvedOrganizations > 0 || writeErrors > 0) process.exitCode = 1
 }
 
-run().catch((error) => {
+run().catch(async (error) => {
+	await log.error('personal-org-backfill.fatal', {
+		error: serializeError(error),
+	})
 	console.error(error instanceof Error ? error.message : String(error))
 	process.exitCode = 1
 })
