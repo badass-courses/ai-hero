@@ -156,14 +156,20 @@ const ContinueLearningButton = ({ moduleSlug }: { moduleSlug: string }) => {
 	const workshopNavigation = useWorkshopNavigation()
 	const firstLessonSlug = getFirstResourceSlug(workshopNavigation)
 	const { moduleProgress } = useModuleProgress()
-	const isInProgress =
-		moduleProgress?.nextResource?.fields?.slug &&
-		moduleProgress?.completedLessons?.length > 0
+	const hasCompletedLessons = (moduleProgress?.completedLessons?.length ?? 0) > 0
+	const nextSlug = moduleProgress?.nextResource?.fields?.slug
 
-	const slug = isInProgress
-		? moduleProgress?.nextResource?.fields?.slug
-		: firstLessonSlug
+	// Three owner states: mid-course (a next lesson exists), done (lessons
+	// completed but nothing left), untouched. The done state must not say
+	// "Start" — that promises a fresh course to someone who finished it.
+	const slug = nextSlug ?? firstLessonSlug
 	if (!slug) return null
+	const label =
+		nextSlug && hasCompletedLessons
+			? 'Continue'
+			: hasCompletedLessons
+				? 'Review'
+				: 'Start'
 
 	return (
 		<Button
@@ -172,7 +178,7 @@ const ContinueLearningButton = ({ moduleSlug }: { moduleSlug: string }) => {
 			className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
 		>
 			<Link prefetch href={`/workshops/${moduleSlug}/${slug}`}>
-				{isInProgress ? 'Continue' : 'Start'}
+				{label}
 			</Link>
 		</Button>
 	)

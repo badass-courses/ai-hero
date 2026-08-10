@@ -26,9 +26,9 @@ async function getPageWithFallback(resourceSlug: string) {
 // through {date}" and stay honest without editing.
 async function getDiscountData(resourceSlug: string) {
 	const cohort = await getCachedCohort(resourceSlug)
-	const productId = cohort
-		? cohort.resourceProducts?.[0]?.product?.id
-		: (await getCachedWorkshopProduct(resourceSlug))?.id
+	const productId =
+		cohort?.resourceProducts?.[0]?.product?.id ??
+		(await getCachedWorkshopProduct(resourceSlug))?.id
 	if (!productId) return null
 
 	const couponResult = await courseBuilderAdapter.getDefaultCoupon([productId])

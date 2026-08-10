@@ -124,7 +124,7 @@ const Buy = ({
 			<span data-divider="" className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px" />
 			<span className="flex items-baseline font-mono text-[13px] font-medium">
 				{status === 'pending' ? (
-					<Spinner className="w-4" />
+					<Spinner className="size-4" />
 				) : (
 					<>
 						<span className="tabular-nums">{formatUsd(finalPrice).dollars}</span>

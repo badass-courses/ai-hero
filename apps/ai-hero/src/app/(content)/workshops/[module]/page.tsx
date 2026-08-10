@@ -566,7 +566,10 @@ export default async function ModulePage(props: Props) {
 									</WorkshopPricing>
 								</React.Suspense>
 							) : (
-								<WorkshopSidebar workshop={workshop}>
+								<WorkshopSidebar
+									workshop={workshop}
+									purchased={ability.canViewWorkshop}
+								>
 									<SidebarListHeader />
 									<WorkshopResourceList
 										isCollapsible={false}

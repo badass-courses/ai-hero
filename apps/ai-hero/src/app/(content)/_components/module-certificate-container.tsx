@@ -29,7 +29,7 @@ export const Certificate = ({
 	const progressReport = (
 		<>
 			<div
-				className="bg-foreground/10 h-[3px] overflow-hidden rounded-[2px]"
+				className="bg-foreground/10 h-[3px] overflow-hidden rounded-[4px]"
 				role="progressbar"
 				aria-valuenow={percent}
 				aria-valuemin={0}
@@ -54,7 +54,12 @@ export const Certificate = ({
 					Certificate of Completion
 				</div>
 				{progressReport}
-				<ModuleCertificate.Trigger className="border-border text-foreground hover:bg-muted mt-0.5 h-10 w-full cursor-pointer rounded-[9px] border bg-transparent text-[13.5px] font-medium">
+				<ModuleCertificate.Trigger
+					className={cn(
+						TYPE.meta,
+						'border-border text-foreground hover:bg-muted mt-0.5 h-10 w-full cursor-pointer rounded-[9px] border bg-transparent',
+					)}
+				>
 					Get Certificate
 				</ModuleCertificate.Trigger>
 			</div>

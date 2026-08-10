@@ -150,7 +150,7 @@ export function StartLearningWorkshopButtonSkeleton() {
 			)}
 			aria-busy="true"
 		>
-			<Spinner className="w-3" /> Checking your access...
+			<Spinner className="size-3.5" /> Checking your access...
 		</span>
 	)
 }

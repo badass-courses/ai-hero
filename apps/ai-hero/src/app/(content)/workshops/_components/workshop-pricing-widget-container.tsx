@@ -267,12 +267,14 @@ export const WorkshopPricingWidgetContainer: React.FC<
 							waitlist.
 						</p>
 					}
-					onSuccess={(subscriber, email) => {
+					onSuccess={(subscriber) => {
 						if (subscriber && product) {
+							// No email in the payload — track() forwards params to a
+							// third-party analytics store, and an address is PII.
 							track('waitlist_joined', {
 								product_name: product.name,
 								product_id: product.id,
-								email: email,
+								method: 'form',
 							})
 						}
 					}}

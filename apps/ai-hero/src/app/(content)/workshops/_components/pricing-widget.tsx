@@ -319,10 +319,10 @@ const TeamPurchaseControls = () => {
 		updateQuantity,
 		setMerchantCoupon,
 		isSoldOut,
-		options: { teamQuantityLimit },
+		options: { teamQuantityLimit, allowTeamPurchase },
 	} = usePricing()
 
-	if (isSoldOut) return null
+	if (isSoldOut || !allowTeamPurchase) return null
 
 	const clamp = (next: number) =>
 		next < 1
@@ -332,10 +332,11 @@ const TeamPurchaseControls = () => {
 				: next
 
 	const setQuantity = (next: number) => {
+		if (!Number.isFinite(next)) return
 		// A team quantity invalidates a regional coupon, same as the primitive's
 		// own input does.
 		setMerchantCoupon(undefined)
-		updateQuantity(clamp(next))
+		updateQuantity(clamp(Math.trunc(next)))
 	}
 
 	const stepperButton =
@@ -343,16 +344,23 @@ const TeamPurchaseControls = () => {
 
 	return (
 		<div className="mt-4 flex w-full flex-col items-start gap-3">
-			<label className="flex cursor-pointer items-center gap-2.5">
+			{/* Sibling label via htmlFor, not a wrapping <label>: the Radix
+			    checkbox renders a button, and a button inside a label is invalid
+			    markup that leaves the control unnamed. */}
+			<div className="flex items-center gap-2.5">
 				<Checkbox
+					id="team-purchase"
 					checked={isTeamPurchaseActive}
 					onCheckedChange={() => toggleTeamPurchase()}
 					className="rounded-[4px]"
 				/>
-				<span className={cn(TYPE.meta, 'text-muted-foreground')}>
+				<label
+					htmlFor="team-purchase"
+					className={cn(TYPE.meta, 'text-muted-foreground cursor-pointer')}
+				>
 					Buying for your team?
-				</span>
-			</label>
+				</label>
+			</div>
 			{isTeamPurchaseActive && (
 				<div className="flex items-center gap-2.5">
 					<button
@@ -477,7 +485,13 @@ const RegionalPricingBox = () => {
 				: (rawDiscount?.toNumber?.() ?? 0)) * 100,
 	)
 
-	const countryCode = availablePPPCoupon?.country || 'US'
+	// `Intl.DisplayNames.of` THROWS on a structurally invalid region code, and
+	// the code here is stored coupon data — a bad row must not unmount the
+	// whole pricing card.
+	const rawCountryCode = availablePPPCoupon?.country || 'US'
+	const countryCode = /^[A-Za-z]{2}$/.test(rawCountryCode)
+		? rawCountryCode.toUpperCase()
+		: 'US'
 	const country =
 		new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ??
 		countryCode
@@ -488,14 +502,12 @@ const RegionalPricingBox = () => {
 
 	return (
 		<div className="border-border mt-3 w-full rounded-[9px] border px-4 py-3.5">
-			<label
-				className={cn(
-					'flex items-start gap-2.5',
-					!hideCheckbox && 'cursor-pointer',
-				)}
-			>
+			{/* Sibling label via htmlFor — same rule as the team checkbox: the
+			    Radix checkbox is a button and can't live inside a <label>. */}
+			<div className="flex items-start gap-2.5">
 				{!hideCheckbox && (
 					<Checkbox
+						id="regional-pricing"
 						className="mt-0.5 rounded-[4px]"
 						checked={Boolean(appliedPPPCoupon)}
 						onCheckedChange={() => {
@@ -507,12 +519,19 @@ const RegionalPricingBox = () => {
 						}}
 					/>
 				)}
-				<span className={cn(TYPE.metaProse, 'text-muted-foreground text-pretty')}>
+				<label
+					htmlFor={hideCheckbox ? undefined : 'regional-pricing'}
+					className={cn(
+						TYPE.metaProse,
+						'text-muted-foreground text-pretty',
+						!hideCheckbox && 'cursor-pointer',
+					)}
+				>
 					Live in {country}? Activate {percentOff}% off with regional pricing.
 					Content is then viewable from {country} only, and no bonuses are
 					included.
-				</span>
-			</label>
+				</label>
+			</div>
 		</div>
 	)
 }
