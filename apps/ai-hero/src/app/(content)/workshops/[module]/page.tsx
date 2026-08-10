@@ -349,9 +349,13 @@ export default async function ModulePage(props: Props) {
 					imageUrl={workshop.fields?.coverImage?.url}
 					slug={params.module}
 				/>
-				<header className="relative flex items-center justify-center overflow-hidden md:px-8 lg:px-10">
-					<div className="relative z-10 mx-auto flex h-full w-full flex-col-reverse items-center justify-between gap-5 pb-10 md:grid md:grid-cols-5 md:gap-10 md:pt-10 lg:gap-5">
-						<div className="col-span-3 flex shrink-0 flex-col items-center px-5 md:items-start md:px-0">
+				{/* The cover bleeds to the container's top, right and bottom edges,
+				    square-cornered, on the same six-column rhythm as the body below —
+				    its left edge continues the sidebar's hairline. The text column
+				    keeps the page's padding and vertical centering. */}
+				<header className="relative flex items-center justify-center overflow-hidden">
+					<div className="relative z-10 mx-auto flex h-full w-full flex-col-reverse items-center gap-5 md:grid md:grid-cols-6 md:items-stretch md:gap-0">
+						<div className="col-span-4 flex w-full shrink-0 flex-col items-center px-5 pb-10 md:items-start md:justify-center md:px-8 md:py-10 lg:px-10">
 							<WorkshopBreadcrumb />
 							<h1 className="w-full text-center text-3xl font-bold tracking-tight sm:text-4xl md:text-left lg:text-5xl dark:text-white">
 								{workshop.fields?.title}
@@ -374,7 +378,7 @@ export default async function ModulePage(props: Props) {
 								<Contributor />
 							</div>
 						</div>
-						<div className="col-span-2">
+						<div className="relative col-span-2 w-full">
 							{workshop.fields?.coverImage?.url && (
 								<WorkshopImage
 									imageUrl={workshop.fields.coverImage.url}
