@@ -338,18 +338,28 @@ export const shortlinkClickRelations = relations(shortlinkClick, ({ one }) => ({
 /**
  * Shortlink attribution tracking for signups/purchases
  */
-export const shortlinkAttribution = mysqlTable('ShortlinkAttribution', {
-	id: varchar('id', { length: 255 })
-		.notNull()
-		.primaryKey()
-		.$defaultFn(() => guid()),
-	shortlinkId: varchar('shortlinkId', { length: 255 }).notNull(),
-	userId: varchar('userId', { length: 255 }),
-	email: varchar('email', { length: 255 }),
-	type: varchar('type', { length: 50 }).notNull(),
-	metadata: text('metadata'),
-	createdAt: timestamp('createdAt').defaultNow().notNull(),
-})
+export const shortlinkAttribution = mysqlTable(
+	'ShortlinkAttribution',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		shortlinkId: varchar('shortlinkId', { length: 255 }).notNull(),
+		userId: varchar('userId', { length: 255 }),
+		email: varchar('email', { length: 255 }),
+		type: varchar('type', { length: 50 }).notNull(),
+		metadata: text('metadata'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		// Serves the signup dedupe lookup in createShortlinkAttribution and, via
+		// the shortlinkId prefix, the shortlink stats join and delete-by-shortlink.
+		shortlinkEmailTypeIdx: index(
+			'ShortlinkAttribution_shortlink_email_type_idx',
+		).on(table.shortlinkId, table.email, table.type),
+	}),
+)
 
 export const shortlinkAttributionRelations = relations(
 	shortlinkAttribution,
@@ -688,6 +698,11 @@ export const sideEffectIntent = mysqlTable(
 		),
 		contactIdIdx: index('SideEffectIntent_contactId_idx').on(table.contactId),
 		statusIdx: index('SideEffectIntent_status_idx').on(table.status),
+		// Every value-path reader filters provider + type together.
+		providerTypeIdx: index('SideEffectIntent_provider_type_idx').on(
+			table.provider,
+			table.type,
+		),
 	}),
 )
 
