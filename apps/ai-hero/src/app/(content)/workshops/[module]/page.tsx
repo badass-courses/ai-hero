@@ -80,7 +80,12 @@ export async function generateMetadata(
 		openGraph: {
 			images: [
 				{
-					url: `${env.NEXT_PUBLIC_URL}/api/og/default?title=${workshop.fields?.title}`,
+					// The cover art IS the share card — it already carries the title
+					// and the "build production-grade software" framing. The generated
+					// title card is only the fallback for workshops without art.
+					url:
+						workshop.fields?.coverImage?.url ||
+						`${env.NEXT_PUBLIC_URL}/api/og/default?title=${workshop.fields?.title}`,
 				},
 			],
 		},

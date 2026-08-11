@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
-import { TYPE } from '@/components/landing/type'
+import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { Share } from '@/components/share'
 import Spinner from '@/components/spinner'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
@@ -151,11 +151,11 @@ export function StartLearningWorkshopButtonSkeleton() {
 /**
  * The actions bar (`Workshop Landing.dc.html` § "Actions bar"): free-standing
  * 46px/9px controls in a padded hairline-bounded row, one gold object at a
- * time. It gates its own existence on the same conditions its buttons check —
- * an empty bar (a waitlist visitor: no access, nothing pending, no repo) is no
- * bar at all, not a hairline-bounded row of padding around Share. Ability
- * resolves on the client (the page shell is static), so the decision lives
- * here rather than on the server.
+ * time. Share is its permanent floor: because the bar is never empty, it can
+ * ship in the static shell at full height, and access resolving on the client
+ * only ever swaps the row's CONTENTS — a member's controls, or the skeleton
+ * while they load — never its existence. That is what keeps the article from
+ * shifting; every control shares the 46px geometry.
  */
 export function WorkshopActionsBar({
 	workshop,
@@ -169,46 +169,55 @@ export function WorkshopActionsBar({
 	/** `bottom` repeats the bar after the article, wrapped in its own grid row. */
 	variant?: 'top' | 'bottom'
 }) {
-	const {
-		canViewWorkshop: canView,
-		isPendingOpenAccess,
-		status,
-	} = useWorkshopAbility()
+	const { status } = useWorkshopAbility()
 	const { status: sessionStatus } = useSession()
-	const workshopNavigation = useWorkshopNavigation()
-	const hasContent = Boolean(getFirstResourceSlug(workshopNavigation))
-	const cohortParent =
-		workshopNavigation?.parents?.[0]?.type === 'cohort'
-			? workshopNavigation.parents[0]
-			: null
-	const cohortSlug = cohortParent?.resources?.[0]?.resource?.fields?.slug
-
-	const hasBarActions = Boolean(
-		(isPendingOpenAccess && workshop.fields?.startsAt) ||
-			(canView && productType !== 'cohort' && hasContent) ||
-			(!canView && cohortSlug) ||
-			(canView && workshop.fields?.github),
-	)
 
 	// A signed-in viewer almost certainly gets SOME action, but which one is
-	// still in flight — hold the row open with the access skeleton so the
-	// article doesn't jump when the real controls land. The swap is
-	// height-stable: every control in the bar shares the 46px geometry. The
-	// anonymous majority never sees this — their ability resolves
-	// synchronously to "no bar", and the static shell ships without it.
+	// still in flight — hold that part of the row with the access skeleton.
+	// Anonymous viewers skip this: their ability resolves synchronously, and
+	// the static shell renders the bar with just Share.
 	const pendingAccess = sessionStatus === 'authenticated' && status !== 'success'
-	if (!pendingAccess && (status !== 'success' || !hasBarActions)) return null
+
+	// An unpublished workshop says so, in words, where its actions will one
+	// day live. State comes from the server render, so the marker is in the
+	// static shell from the first byte.
+	const workshopState = workshop.fields?.state
+	const stateMark =
+		workshopState && workshopState !== 'published'
+			? {
+					draft: {
+						badge: 'Draft',
+						caption: 'Coming soon',
+					},
+					archived: {
+						badge: 'Archived',
+						caption: 'This workshop is no longer maintained',
+					},
+					deleted: { badge: 'Retired', caption: 'This workshop was removed' },
+				}[workshopState]
+			: undefined
 
 	const bar = (
 		<div
 			className={cn(
-				'flex w-full flex-wrap items-center gap-2.5 border-b px-5 py-2.5 sm:px-8 lg:px-10',
+				// Centered on mobile, where the controls stack as full-width rows
+				// and the marker + Share float as a row of their own; left-aligned
+				// with the marker pushing Share to the far edge from `sm` up.
+				'flex w-full flex-wrap items-center justify-center gap-2.5 border-b px-5 py-2.5 sm:justify-start sm:px-8 lg:px-10',
 				variant === 'bottom' && 'border-b-0',
 			)}
 		>
+			{stateMark && (
+				<span className="inline-flex items-center gap-2.5 sm:mr-auto">
+					<span className={cn(TYPE.badge, BADGE_NEUTRAL)}>
+						{stateMark.badge}
+					</span>
+					<span className={cn(TYPE.metaMark)}>{stateMark.caption}</span>
+				</span>
+			)}
 			{pendingAccess ? (
 				<StartLearningWorkshopButtonSkeleton />
-			) : (
+			) : status === 'success' ? (
 				<>
 					<GetAccessButton className="w-full sm:w-auto" />
 					<StartLearningWorkshopButton
@@ -220,35 +229,35 @@ export function WorkshopActionsBar({
 					{workshop.fields?.github ? (
 						<WorkshopGitHubRepoLink githubUrl={workshop.fields.github} />
 					) : null}
-					<Dialog>
-						<DialogTrigger asChild>
-							<Button
-								className={cn(
-									TYPE.meta,
-									'text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4',
-								)}
-								variant="ghost"
-								size="lg"
-							>
-								<Share2 className="mr-1 size-3.5" /> Share
-							</Button>
-						</DialogTrigger>
-						<DialogContent
-							lockScroll={false}
-							className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-[12px] p-0"
-						>
-							<DialogTitle className={cn(TYPE.subhead, 'border-b px-6 py-5')}>
-								Share
-							</DialogTitle>
-							<Share
-								variant="dialog"
-								title={workshop.fields?.title}
-								className="p-6"
-							/>
-						</DialogContent>
-					</Dialog>
 				</>
-			)}
+			) : null}
+			<Dialog>
+				<DialogTrigger asChild>
+					<Button
+						className={cn(
+							TYPE.meta,
+							'text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4',
+						)}
+						variant="ghost"
+						size="lg"
+					>
+						<Share2 className="mr-1 size-3.5" /> Share
+					</Button>
+				</DialogTrigger>
+				<DialogContent
+					lockScroll={false}
+					className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-[12px] p-0"
+				>
+					<DialogTitle className={cn(TYPE.subhead, 'border-b px-6 py-5')}>
+						Share
+					</DialogTitle>
+					<Share
+						variant="dialog"
+						title={workshop.fields?.title}
+						className="p-6"
+					/>
+				</DialogContent>
+			</Dialog>
 		</div>
 	)
 
