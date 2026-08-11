@@ -175,8 +175,10 @@ export function WorkshopActionsBar({
 	// A signed-in viewer almost certainly gets SOME action, but which one is
 	// still in flight — hold that part of the row with the access skeleton.
 	// Anonymous viewers skip this: their ability resolves synchronously, and
-	// the static shell renders the bar with just Share.
-	const pendingAccess = sessionStatus === 'authenticated' && status !== 'success'
+	// the static shell renders the bar with just Share. Strictly 'pending':
+	// an errored ability query must degrade to the Share-only bar, not spin
+	// the skeleton forever.
+	const pendingAccess = sessionStatus === 'authenticated' && status === 'pending'
 
 	// An unpublished workshop says so, in words, where its actions will one
 	// day live. State comes from the server render, so the marker is in the
