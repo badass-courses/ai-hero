@@ -543,6 +543,11 @@ const RegionalPricingBox = () => {
 								height={14}
 								loading="lazy"
 								className="h-full w-full object-cover"
+								onError={(event) => {
+									// A dead flag service must not paint the broken-image
+									// glyph — hide the img, let the grey ground stand in.
+									event.currentTarget.style.visibility = 'hidden'
+								}}
 							/>
 						</span>{' '}
 						{country}?
