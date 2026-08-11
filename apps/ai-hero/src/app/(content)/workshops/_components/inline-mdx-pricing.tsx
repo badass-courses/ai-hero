@@ -28,6 +28,8 @@ import { formatUsd } from '@coursebuilder/core/utils/format-usd'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
+import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+
 export type PricingData = {
 	formattedPrice?: FormattedPrice | null
 	purchaseToUpgrade?: Purchase | null
@@ -111,50 +113,30 @@ const Buy = ({
 	const savings = fullPrice - finalPrice
 	const savingsPercentage = Math.round((savings / fullPrice) * 100)
 
+	// The house gold CTA with the price riding along in mono — the button and
+	// the number it commits you to are one object (`Workshop Landing.dc.html`
+	// § "Mobile bottom bar"). The blue fill and the animated shine are gone:
+	// the site has one accent and it is not blue, and permanent motion is not
+	// how a resting button earns attention (DESIGN rules 7 and 13).
 	return (
-		<>
-			<div className="">
-				<Pricing.BuyButton
-					className={cn(
-						'dark:bg-primary dark:hover:bg-primary/90 relative cursor-pointer rounded-lg bg-blue-600 px-10 font-semibold hover:bg-blue-700',
-						className,
-					)}
-				>
-					<span data-label="" className="relative z-10">
-						Buy Now
-					</span>
-					<div
-						style={{
-							backgroundSize: '200% 100%',
-						}}
-						className="animate-shine pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 dark:opacity-20"
-					/>
-					<span
-						data-divider=""
-						className="bg-primary-foreground/30 mx-3 h-full w-px"
-					/>
-					<div className="relative z-10 flex items-baseline">
-						{status === 'pending' ? (
-							<Spinner className="w-5" />
-						) : (
-							<>
-								<sup className="text-[10px] leading-tight opacity-50">US</sup>
-								<span className="font-semibold tabular-nums">
-									{formatUsd(finalPrice).dollars}
-								</span>
-								{savings > 0 && !isSoldOut && (
-									<>
-										<span className="ml-1 text-sm font-normal line-through opacity-90">
-											{formatUsd(fullPrice).dollars}
-										</span>
-									</>
-								)}
-							</>
+		<Pricing.BuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
+			<span data-label="">Buy Now</span>
+			<span data-divider="" className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px" />
+			<span className="flex items-baseline font-mono text-[13px] font-medium">
+				{status === 'pending' ? (
+					<Spinner className="size-4" />
+				) : (
+					<>
+						<span className="tabular-nums">{formatUsd(finalPrice).dollars}</span>
+						{savings > 0 && !isSoldOut && (
+							<span className="ml-1.5 font-normal line-through opacity-60">
+								{formatUsd(fullPrice).dollars}
+							</span>
 						)}
-					</div>
-				</Pricing.BuyButton>
-			</div>
-		</>
+					</>
+				)}
+			</span>
+		</Pricing.BuyButton>
 	)
 }
 

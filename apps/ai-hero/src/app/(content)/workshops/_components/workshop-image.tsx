@@ -20,30 +20,29 @@ export default function WorkshopImage({ imageUrl }: { imageUrl: string }) {
 	const url = isWorkshopInProgress
 		? `/workshops/${workshopNavigation?.fields?.slug}/${moduleProgress?.nextResource?.fields?.slug}`
 		: `/workshops/${workshopNavigation?.fields?.slug}/${firstLessonSlug}`
+	// Full-bleed: the image fills its header column edge-to-edge with square
+	// corners — on desktop the column is stretched to the header's height and
+	// the image covers it; on mobile the 16:9 box sets its own height.
+	const containerClassName =
+		'group relative block aspect-video w-full md:absolute md:inset-0 md:aspect-auto'
 	const Comp = ({ children }: { children: React.ReactNode }) =>
 		status === 'success' && canView ? (
-			<Link
-				className="group relative flex items-center justify-center"
-				href={url}
-			>
+			<Link className={containerClassName} href={url}>
 				{children}
 			</Link>
 		) : (
-			<div className="group relative flex items-center justify-center">
-				{children}
-			</div>
+			<div className={containerClassName}>{children}</div>
 		)
 
 	return (
 		<Comp>
 			<Image
 				priority
+				fill
 				alt={workshopNavigation?.fields?.title || ''}
 				src={imageUrl}
-				width={480}
-				height={270}
-				className="brightness-100 transition duration-300 ease-in-out group-hover:brightness-100 sm:rounded"
-				sizes="(max-width: 768px) 100vw, 480px"
+				className="object-cover"
+				sizes="(max-width: 768px) 100vw, 33vw"
 			/>
 			{status === 'success' && canView && (
 				<div className="bg-background/80 absolute bottom-5 right-5 flex items-center justify-center rounded-full p-2 backdrop-blur-md transition ease-out group-hover:scale-110">

@@ -2,12 +2,13 @@
 
 import React, { useRef } from 'react'
 import Link from 'next/link'
+import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { Contributor } from '@/components/contributor'
 import config from '@/config'
 import { env } from '@/env.mjs'
+import { getFirstResourceSlug } from '@/lib/content-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
-import { useMeasure } from 'react-use'
 
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -16,6 +17,7 @@ import {
 	InlineBuyButton,
 	type PricingComponentProps,
 } from './inline-mdx-pricing'
+import { useWorkshopNavigation } from './workshop-navigation-provider'
 import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
 import type { WorkshopPageProps } from './workshop-page-props'
 
@@ -25,27 +27,52 @@ export const WorkshopSidebar = ({
 	className,
 	pricingProps,
 	interestCapture = false,
+	purchased = false,
 }: {
 	children: React.ReactNode
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
+	/** The viewer owns this workshop: the mobile bar offers Continue, not Buy. */
+	purchased?: boolean
 }) => {
-	const [sidebarRef, { height }] = useMeasure<HTMLDivElement>()
-	const [windowHeight, setWindowHeight] = React.useState(0)
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
 
+	// The bottom fade exists to say "there is more below" — so it has to know
+	// whether that is actually true. Driven by the ScrollArea's own scroll
+	// position: at (or near) the end it goes, including the trivial case where
+	// everything fits and there is no scrolling at all. This replaces the old
+	// window-vs-column height comparison, which could only ever say "the column
+	// overflows" and kept fading out the last rows for a reader who had already
+	// scrolled to them.
+	const scrollRootRef = useRef<HTMLDivElement>(null)
+	const [hasMoreBelow, setHasMoreBelow] = React.useState(false)
+
 	React.useEffect(() => {
-		const handleResize = () => {
-			setWindowHeight(window.innerHeight)
+		const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+			'[data-slot="scroll-area-viewport"]',
+		)
+		if (!viewport) return
+
+		const update = () => {
+			setHasMoreBelow(
+				viewport.scrollTop + viewport.clientHeight <
+					viewport.scrollHeight - 8,
+			)
 		}
-		handleResize()
-		window.addEventListener('resize', handleResize)
+		update()
+		viewport.addEventListener('scroll', update, { passive: true })
+		const observer = new ResizeObserver(update)
+		observer.observe(viewport)
+		// Content grows and shrinks in place (accordion sections, resolving
+		// pricing), so watch the content box too, not just the viewport.
+		if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
 
 		return () => {
-			window.removeEventListener('resize', handleResize)
+			viewport.removeEventListener('scroll', update)
+			observer.disconnect()
 		}
 	}, [])
 
@@ -93,14 +120,14 @@ export const WorkshopSidebar = ({
 				    that most needs to follow the reader — a tall pricing card — was
 				    the one state that scrolled away. The `ScrollArea` below caps the
 				    column at the viewport instead, so it can always stick. */}
-				<div ref={sidebarRef} className="md:top-(--nav-height) md:sticky">
+				<div ref={scrollRootRef} className="md:top-(--nav-height) md:sticky">
 					<ScrollArea className="lg:max-h-[calc(100vh-var(--nav-height))] h-full [&_[data-slot='scroll-area-scrollbar']]:opacity-50">
 						{interestCapture ? (
 							<div className="p-5 empty:hidden sm:p-6">{children}</div>
 						) : (
 							children
 						)}
-						{!interestCapture && !Boolean(windowHeight - 63 > height) && (
+						{!interestCapture && hasMoreBelow && (
 							<div className="from-background bg-linear-to-t pointer-events-none absolute bottom-0 left-0 hidden h-20 w-full to-transparent lg:block" />
 						)}
 					</ScrollArea>
@@ -113,8 +140,47 @@ export const WorkshopSidebar = ({
 				workshop={workshop}
 				pricingProps={pricingProps}
 				interestCapture={interestCapture}
+				purchased={purchased}
 			/>
 		</>
+	)
+}
+
+/**
+ * Owner's control in the mobile bar: an outline Continue into the next
+ * unfinished lesson (or the first one on a fresh start). Outline, not gold —
+ * the bar's gold is reserved for the two asks (buy, get notified); resuming
+ * your own course is navigation.
+ */
+const ContinueLearningButton = ({ moduleSlug }: { moduleSlug: string }) => {
+	const workshopNavigation = useWorkshopNavigation()
+	const firstLessonSlug = getFirstResourceSlug(workshopNavigation)
+	const { moduleProgress } = useModuleProgress()
+	const hasCompletedLessons = (moduleProgress?.completedLessons?.length ?? 0) > 0
+	const nextSlug = moduleProgress?.nextResource?.fields?.slug
+
+	// Three owner states: mid-course (a next lesson exists), done (lessons
+	// completed but nothing left), untouched. The done state must not say
+	// "Start" — that promises a fresh course to someone who finished it.
+	const slug = nextSlug ?? firstLessonSlug
+	if (!slug) return null
+	const label =
+		nextSlug && hasCompletedLessons
+			? 'Continue'
+			: hasCompletedLessons
+				? 'Review'
+				: 'Start'
+
+	return (
+		<Button
+			asChild
+			variant="outline"
+			className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
+		>
+			<Link prefetch href={`/workshops/${moduleSlug}/${slug}`}>
+				{label}
+			</Link>
+		</Button>
 	)
 }
 
@@ -123,11 +189,13 @@ export const WorkshopSidebarMobile = ({
 	className,
 	pricingProps,
 	interestCapture = false,
+	purchased = false,
 }: {
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
+	purchased?: boolean
 }) => {
 	const { fields } = workshop ?? {}
 
@@ -149,23 +217,26 @@ export const WorkshopSidebarMobile = ({
 				className,
 			)}
 		>
-			<div className="flex flex-col gap-0.5">
-				<h3 className="font-heading text-sm font-semibold">{fields?.title}</h3>
+			<div className="flex min-w-0 flex-col gap-0.5">
+				<h3 className="font-heading truncate text-sm font-semibold">
+					{fields?.title}
+				</h3>
 				<Contributor className="gap-1 text-sm [&_img]:w-5" />
-				{/* <p className="text-sm opacity-75">{config.author}</p> */}
 			</div>
 			{interestCapture ? (
 				<Button
-					className={cn(WORKSHOP_CTA_BUTTON, 'h-10 gap-2 text-sm')}
+					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
 					onClick={handleScrollToBuy}
 				>
 					Get notified
 				</Button>
+			) : purchased && fields?.slug ? (
+				<ContinueLearningButton moduleSlug={fields.slug} />
 			) : (
 				workshop &&
 				pricingProps && (
 					<InlineBuyButton
-						className="**:data-divider:mx-1 **:data-label:text-sm h-10 gap-2 px-5"
+						className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
 						resource={workshop}
 						pricingDataLoader={pricingProps.pricingDataLoader}
 						pricingProps={pricingProps as any}
