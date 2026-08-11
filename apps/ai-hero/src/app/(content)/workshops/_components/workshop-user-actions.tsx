@@ -9,6 +9,7 @@ import { getFirstResourceSlug } from '@/lib/content-navigation'
 import { MinimalWorkshop } from '@/lib/workshops'
 import { formatInTimeZone } from 'date-fns-tz'
 import { Github, Share2 } from 'lucide-react'
+import { useSession } from 'next-auth/react'
 
 import type { ProductType } from '@coursebuilder/core/schemas'
 import {
@@ -173,6 +174,7 @@ export function WorkshopActionsBar({
 		isPendingOpenAccess,
 		status,
 	} = useWorkshopAbility()
+	const { status: sessionStatus } = useSession()
 	const workshopNavigation = useWorkshopNavigation()
 	const hasContent = Boolean(getFirstResourceSlug(workshopNavigation))
 	const cohortParent =
@@ -187,7 +189,15 @@ export function WorkshopActionsBar({
 			(!canView && cohortSlug) ||
 			(canView && workshop.fields?.github),
 	)
-	if (status !== 'success' || !hasBarActions) return null
+
+	// A signed-in viewer almost certainly gets SOME action, but which one is
+	// still in flight — hold the row open with the access skeleton so the
+	// article doesn't jump when the real controls land. The swap is
+	// height-stable: every control in the bar shares the 46px geometry. The
+	// anonymous majority never sees this — their ability resolves
+	// synchronously to "no bar", and the static shell ships without it.
+	const pendingAccess = sessionStatus === 'authenticated' && status !== 'success'
+	if (!pendingAccess && (status !== 'success' || !hasBarActions)) return null
 
 	const bar = (
 		<div
@@ -196,43 +206,49 @@ export function WorkshopActionsBar({
 				variant === 'bottom' && 'border-b-0',
 			)}
 		>
-			<GetAccessButton className="w-full sm:w-auto" />
-			<StartLearningWorkshopButton
-				className="w-full sm:w-auto"
-				productType={productType}
-				moduleSlug={moduleSlug}
-				workshop={workshop}
-			/>
-			{workshop.fields?.github ? (
-				<WorkshopGitHubRepoLink githubUrl={workshop.fields.github} />
-			) : null}
-			<Dialog>
-				<DialogTrigger asChild>
-					<Button
-						className={cn(
-							TYPE.meta,
-							'text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4',
-						)}
-						variant="ghost"
-						size="lg"
-					>
-						<Share2 className="mr-1 size-3.5" /> Share
-					</Button>
-				</DialogTrigger>
-				<DialogContent
-					lockScroll={false}
-					className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-[12px] p-0"
-				>
-					<DialogTitle className={cn(TYPE.subhead, 'border-b px-6 py-5')}>
-						Share
-					</DialogTitle>
-					<Share
-						variant="dialog"
-						title={workshop.fields?.title}
-						className="p-6"
+			{pendingAccess ? (
+				<StartLearningWorkshopButtonSkeleton />
+			) : (
+				<>
+					<GetAccessButton className="w-full sm:w-auto" />
+					<StartLearningWorkshopButton
+						className="w-full sm:w-auto"
+						productType={productType}
+						moduleSlug={moduleSlug}
+						workshop={workshop}
 					/>
-				</DialogContent>
-			</Dialog>
+					{workshop.fields?.github ? (
+						<WorkshopGitHubRepoLink githubUrl={workshop.fields.github} />
+					) : null}
+					<Dialog>
+						<DialogTrigger asChild>
+							<Button
+								className={cn(
+									TYPE.meta,
+									'text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4',
+								)}
+								variant="ghost"
+								size="lg"
+							>
+								<Share2 className="mr-1 size-3.5" /> Share
+							</Button>
+						</DialogTrigger>
+						<DialogContent
+							lockScroll={false}
+							className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-[12px] p-0"
+						>
+							<DialogTitle className={cn(TYPE.subhead, 'border-b px-6 py-5')}>
+								Share
+							</DialogTitle>
+							<Share
+								variant="dialog"
+								title={workshop.fields?.title}
+								className="p-6"
+							/>
+						</DialogContent>
+					</Dialog>
+				</>
+			)}
 		</div>
 	)
 
