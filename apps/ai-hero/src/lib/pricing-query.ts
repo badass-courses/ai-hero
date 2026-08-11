@@ -3,7 +3,7 @@ import { unstable_cache } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
-import { eq } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 
 import { formatPricesForProduct } from '@coursebuilder/core'
 import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
@@ -31,9 +31,6 @@ export async function getPricingData(
 	})
 
 	const product = await courseBuilderAdapter.getProduct(options.productId)
-	const totalPurchases = await db.query.purchases.findMany({
-		where: eq(purchases.productId, options.productId),
-	})
 
 	const purchaseToUpgrade = formattedPrice.upgradeFromPurchaseId
 		? await courseBuilderAdapter.getPurchase(
@@ -48,8 +45,12 @@ export async function getPricingData(
 		resolvedQuantityAvailable = -1 // Product is unlimited
 	} else {
 		// Product has a finite quantity, subtract purchases
+		const [purchaseCountRow] = await db
+			.select({ count: count() })
+			.from(purchases)
+			.where(eq(purchases.productId, options.productId))
 		resolvedQuantityAvailable =
-			(dbProductQuantityAvailable || 0) - totalPurchases.length
+			(dbProductQuantityAvailable || 0) - (purchaseCountRow?.count ?? 0)
 	}
 
 	return {
