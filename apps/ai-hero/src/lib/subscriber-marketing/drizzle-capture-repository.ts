@@ -301,6 +301,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		limit: number
 		intentIds?: string[]
 	}) {
+		// Only pending rows and failed-retryable rows can ever be due; completed
+		// rows (the vast majority) never survive the filter below, so exclude
+		// them in SQL instead of fetching and discarding them every poll.
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -308,6 +311,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				and(
 					eq(sideEffectIntent.provider, 'kit'),
 					eq(sideEffectIntent.type, 'send-value-path-email'),
+					inArray(sideEffectIntent.status, ['pending', 'failed']),
 				),
 			)
 		const now = new Date().toISOString()
