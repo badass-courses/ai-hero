@@ -593,7 +593,9 @@ async function compileMDXInternal(
 					// — same rendering path as markdown images.
 					Image: (props: MdxImageProps) => <MdxImage {...props} />,
 					CldImage: (props) => <CldImage {...props} />,
-					CommitMap: ({ children }) => <CommitMap>{children}</CommitMap>,
+					CommitMap: ({ children, packageManager }) => (
+						<CommitMap packageManager={packageManager}>{children}</CommitMap>
+					),
 					Commit: ({ children, id }) => <Commit id={id}>{children}</Commit>,
 					CompareTable: ({ children, before, after }) => (
 						<CompareTable before={before} after={after}>

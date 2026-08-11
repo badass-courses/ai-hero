@@ -86,6 +86,29 @@ export default auth(async function middleware(req) {
 		return NextResponse.rewrite(rewriteUrl)
 	}
 
+	if (
+		pathname === '/' &&
+		(req.nextUrl.searchParams.has('code') ||
+			req.nextUrl.searchParams.has('coupon'))
+	) {
+		const requestHost = req.headers.get('host') ?? req.nextUrl.host
+		const forwardedProtocol = req.headers
+			.get('x-forwarded-proto')
+			?.split(',')[0]
+			?.trim()
+		const requestProtocol = forwardedProtocol
+			? `${forwardedProtocol.replace(/:$/, '')}:`
+			: requestHost.includes('localhost') || requestHost.startsWith('127.')
+				? 'http:'
+				: req.nextUrl.protocol
+		const rewriteUrl = new URL(
+			req.nextUrl.pathname + req.nextUrl.search,
+			`${requestProtocol}//${requestHost}`,
+		)
+		rewriteUrl.pathname = '/home-coupon'
+		return NextResponse.rewrite(rewriteUrl)
+	}
+
 	const isAdmin = user?.roles?.some((role) => role.name === 'admin')
 	const canViewAnalytics = user?.roles?.some(
 		(role) => role.name === 'analytics_viewer',
@@ -135,6 +158,22 @@ export default auth(async function middleware(req) {
 
 export const config = {
 	matcher: [
-		'/((?!_next/static|_next/image|favicon.ico|_axiom/web-vitals|sitemap.xml|robots.txt).*)',
+		{ source: '/', has: [{ type: 'query', key: 'code' }] },
+		{ source: '/', has: [{ type: 'query', key: 'coupon' }] },
+		'/admin',
+		'/admin/:path*',
+		'/c/:path*',
+		'/subscribe/:path*',
+		'/products/:path*',
+		'/organization-list',
+		'/settings/:path*',
+		'/cohorts/:path*',
+		'/events/:path*',
+		'/invoices/:path*',
+		'/team/:path*',
+		'/profile/:path*',
+		'/thanks/:path*',
+		'/transfer/:path*',
+		'/welcome/:path*',
 	],
 }

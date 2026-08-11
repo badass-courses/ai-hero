@@ -1,9 +1,8 @@
-import { cache } from 'react'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
-import { getPage } from '@/lib/pages-query'
+import { getCachedPage } from '@/lib/pages-query'
 
 import { ForYourTeamBody } from './_components/for-your-team-body'
 
@@ -19,24 +18,11 @@ const PAGE_SLUG = 'skills-for-your-team'
 
 const TITLE = 'AI Skills for Real Engineering Teams'
 
-/**
- * The row, fetched once per request.
- *
- * `generateMetadata` and the page component both need it, and they run in the
- * same request — so calling `getPage` directly from each ran the Drizzle query
- * and `PageSchema.safeParse` twice for every visit. `getPage` memoizes nothing
- * of its own (it is a plain query in a `'use server'` module), so the
- * deduplication has to happen at the call site.
- *
- * React `cache` rather than `unstable_cache`: this is per-request
- * deduplication, not caching across requests. The body is edited from
- * `/admin/pages` and has to appear on the next request, which a time-based
- * cache would delay.
- */
-const getForYourTeamPage = cache(() => getPage(PAGE_SLUG))
+export const revalidate = 3600
+export const dynamic = 'force-static'
 
 export async function generateMetadata(): Promise<Metadata> {
-	const page = await getForYourTeamPage()
+	const page = await getCachedPage(PAGE_SLUG)
 
 	const title = page?.fields.title || TITLE
 	const description =
@@ -61,7 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function SkillsForYourTeamPage() {
-	const page = await getForYourTeamPage()
+	const page = await getCachedPage(PAGE_SLUG)
 
 	// No row, or an empty body, is a 404 rather than an empty shell. This page
 	// exists to be sent to a team; a chrome-only version of it that returns 200

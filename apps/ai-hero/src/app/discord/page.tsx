@@ -6,7 +6,6 @@ import LayoutClient from '@/components/layout-client'
 import { getDiscordAccount } from '@/lib/discord-query'
 import { requestOAuthAccountLink } from '@/lib/oauth-link-actions'
 import { getServerAuthSession } from '@/server/auth'
-import { isDiscordRelinkEnabledForUser } from '@/server/oauth-link-rollout'
 
 import { DiscordAccessAction } from './discord-access-action'
 import { getDiscordAccessState } from './discord-access'
@@ -34,7 +33,6 @@ export default async function Discord({
 		getSession: getServerAuthSession,
 		findDiscordAccount: getDiscordAccount,
 		linkResult: link,
-		canLinkUser: isDiscordRelinkEnabledForUser,
 	})
 
 	return (

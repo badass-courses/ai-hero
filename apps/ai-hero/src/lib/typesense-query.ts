@@ -5,7 +5,7 @@ import { resourceProgress } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { and, desc, eq, isNotNull } from 'drizzle-orm'
-import { revalidateTag } from 'next/cache'
+import { revalidateTag, unstable_cache } from 'next/cache'
 import Typesense from 'typesense'
 import type { MultiSearchRequestSchema } from 'typesense/lib/Typesense/MultiSearch'
 import { z } from 'zod'
@@ -485,26 +485,6 @@ export async function getNearestNeighbour(
 	distanceThreshold: number,
 	documentIdsToSkip?: string[],
 ) {
-	if (
-		!process.env.TYPESENSE_WRITE_API_KEY ||
-		!process.env.NEXT_PUBLIC_TYPESENSE_HOST
-	) {
-		void log.warn('typesense.query.config-missing', {
-			documentId,
-		})
-		return
-	}
-	const typesenseWriteClient = new Typesense.Client({
-		nodes: [
-			{
-				host: process.env.NEXT_PUBLIC_TYPESENSE_HOST!,
-				port: 443,
-				protocol: 'https',
-			},
-		],
-		apiKey: process.env.TYPESENSE_WRITE_API_KEY!,
-		connectionTimeoutSeconds: 2,
-	})
 	let completedItemIds: string[] = []
 	const { session } = await getServerAuthSession()
 	if (session?.user?.id) {
@@ -529,6 +509,75 @@ export async function getNearestNeighbour(
 		}
 	}
 
+	return queryNearestNeighbour(
+		documentId,
+		numberOfNearestNeighborsToReturn,
+		distanceThreshold,
+		completedItemIds,
+		documentIdsToSkip,
+	)
+}
+
+const _getCachedPublicNearestNeighbour = unstable_cache(
+	async (
+		documentId: string,
+		numberOfNearestNeighborsToReturn: number,
+		distanceThreshold: number,
+		documentIdsToSkip?: string[],
+	) =>
+		queryNearestNeighbour(
+			documentId,
+			numberOfNearestNeighborsToReturn,
+			distanceThreshold,
+			[],
+			documentIdsToSkip,
+		),
+	['public-nearest-neighbour-v1'],
+	{ revalidate: 3600, tags: ['posts-graph'] },
+)
+
+/** Shared, request-independent recommendations for prerendered content. */
+export async function getPublicNearestNeighbour(
+	documentId: string,
+	numberOfNearestNeighborsToReturn: number,
+	distanceThreshold: number,
+	documentIdsToSkip?: string[],
+) {
+	return _getCachedPublicNearestNeighbour(
+		documentId,
+		numberOfNearestNeighborsToReturn,
+		distanceThreshold,
+		documentIdsToSkip,
+	)
+}
+
+async function queryNearestNeighbour(
+	documentId: string,
+	numberOfNearestNeighborsToReturn: number,
+	distanceThreshold: number,
+	completedItemIds: string[],
+	documentIdsToSkip?: string[],
+) {
+	if (
+		!process.env.TYPESENSE_WRITE_API_KEY ||
+		!process.env.NEXT_PUBLIC_TYPESENSE_HOST
+	) {
+		void log.warn('typesense.query.config-missing', {
+			documentId,
+		})
+		return
+	}
+	const typesenseWriteClient = new Typesense.Client({
+		nodes: [
+			{
+				host: process.env.NEXT_PUBLIC_TYPESENSE_HOST!,
+				port: 443,
+				protocol: 'https',
+			},
+		],
+		apiKey: process.env.TYPESENSE_WRITE_API_KEY!,
+		connectionTimeoutSeconds: 2,
+	})
 	const document: any = await typesenseWriteClient
 		.collections(TYPESENSE_COLLECTION_NAME)
 		.documents(documentId)

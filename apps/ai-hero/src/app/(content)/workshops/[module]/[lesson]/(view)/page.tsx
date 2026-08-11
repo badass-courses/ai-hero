@@ -1,53 +1,13 @@
 import type { Metadata, ResolvingMetadata } from 'next'
 import { LessonPage } from '@/app/(content)/workshops/[module]/[lesson]/(view)/shared-page'
-import { db } from '@/db'
-import { contentResource } from '@/db/schema'
 import { getCachedLesson } from '@/lib/lessons-query'
-import {
-	getCachedMinimalWorkshop,
-	getWorkshopNavigation,
-} from '@/lib/workshops-query'
+import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import { measureIfSlow } from '@/server/perf'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
-import { and, eq } from 'drizzle-orm'
 
-export async function generateStaticParams() {
-	const workshops = await db.query.contentResource.findMany({
-		where: and(eq(contentResource.type, 'workshop')),
-	})
-
-	const routeParams: { module: string; lesson: string }[] = []
-
-	for (const workshop of workshops.filter((workshop) =>
-		Boolean(workshop.fields?.slug),
-	)) {
-		const workshopNavigation = await getWorkshopNavigation(
-			workshop.fields?.slug,
-		)
-
-		workshopNavigation?.resources?.forEach((wrapper) => {
-			const resource = wrapper.resource
-			if (resource.type === 'lesson') {
-				routeParams.push({
-					module: workshop.fields?.slug,
-					lesson: resource.fields?.slug,
-				})
-			} else if (resource.type === 'section') {
-				resource.resources?.forEach((sectionWrapper) => {
-					const sectionResource = sectionWrapper.resource
-					if (sectionResource.type === 'lesson') {
-						routeParams.push({
-							module: workshop.fields?.slug,
-							lesson: sectionResource.fields?.slug,
-						})
-					}
-				})
-			}
-		})
-	}
-
-	return routeParams
-}
+// Lesson bodies and playback IDs are paid data. Keep this route request-bound
+// so the server ability check in shared-page runs before either loader.
+export const dynamic = 'force-dynamic'
 
 export async function generateMetadata(
 	props: Props,

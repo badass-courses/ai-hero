@@ -1,10 +1,9 @@
 import React from 'react'
-import { ModuleProgressProvider } from '@/app/(content)/_components/module-progress-provider'
+import { ClientModuleProgressProvider } from '@/app/(content)/_components/module-progress-provider'
 import { CohortNavigationProvider } from '@/app/(content)/workshops/_components/cohort-navigation-provider'
 import { WorkshopNavigationProvider } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
 import { getCohortFromNavigation } from '@/lib/cohort-navigation'
 import { getCachedCohortNavigation } from '@/lib/cohort-navigation-query'
-import { getModuleProgressForUser } from '@/lib/progress'
 import { getCachedWorkshopNavigation } from '@/lib/workshops-query'
 import { log } from '@/server/logger'
 
@@ -17,8 +16,6 @@ const ModuleLayout = async (props: {
 	const { children } = props
 
 	const workshopNavDataLoader = getCachedWorkshopNavigation(params.module)
-	const moduleProgressLoader = getModuleProgressForUser(params.module)
-
 	// Chained, not awaited: the cohort id only exists once the workshop nav
 	// resolves, but awaiting it here would block the whole layout — and the
 	// providers below take promises precisely so the shell can stream. Both
@@ -51,14 +48,14 @@ const ModuleLayout = async (props: {
 			 * into another. Keying remounts it per module (fresh server progress)
 			 * while staying durable across lesson-to-lesson navigation within a module.
 			 */}
-			<ModuleProgressProvider
+			<ClientModuleProgressProvider
 				key={params.module}
-				moduleProgressLoader={moduleProgressLoader}
+				moduleIdOrSlug={params.module}
 			>
 				<CohortNavigationProvider cohortNavDataLoader={cohortNavDataLoader}>
 					{children}
 				</CohortNavigationProvider>
-			</ModuleProgressProvider>
+			</ClientModuleProgressProvider>
 		</WorkshopNavigationProvider>
 	)
 }

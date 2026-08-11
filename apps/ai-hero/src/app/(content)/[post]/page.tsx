@@ -14,13 +14,12 @@ import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { Share } from '@/components/share'
 import { courseBuilderAdapter } from '@/db'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
-import { getAllLists, getCachedListForPost } from '@/lib/lists-query'
+import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
 import { type Post } from '@/lib/posts'
 import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
 import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
 import { getLatestCohort, getUpcomingCohort } from '@/lib/upcoming-cohort-query'
-import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
@@ -40,7 +39,6 @@ import { cn } from '@coursebuilder/utils/cn'
 import { CopyPageButton } from '../_components/copy-page-button'
 import {
 	PostNewsletterCellSkeleton,
-	PostRelatedNewsletter,
 	type PostRelatedItem,
 } from '../_components/post-related-newsletter'
 import { PostUpNextPager } from '../_components/post-up-next-pager'
@@ -68,7 +66,16 @@ import {
 } from './_components/post-header-dialog-buttons'
 import { PostBodyCtaPlacement } from './_components/post-body-cta-placement'
 import { PostClosingNewsletter } from './_components/post-closing-newsletter'
+import { PostActionBar } from './_components/post-action-bar'
 import { PostNextLessonButton } from './_components/post-next-lesson-button'
+import {
+	PersonalizedPostRelatedNewsletter,
+	type RelatedPostPersonalization,
+} from './_components/personalized-post-related-newsletter'
+
+export const revalidate = 3600
+export const dynamicParams = true
+export const dynamic = 'force-static'
 
 type Props = {
 	params: Promise<{ post: string }>
@@ -189,8 +196,8 @@ export default async function PostPage(props: {
 	// Related rows come from whichever source the shape has: a skill's own topic
 	// tags first, then the article / discovery resolver. A skill with no topic
 	// tags still gets rows rather than a half-empty grid.
-	const relatedItems: PostRelatedItem[] = !showRelatedNewsletter
-		? []
+	const related = !showRelatedNewsletter
+		? { items: [], personalization: undefined }
 		: await resolvePostRelatedItems({
 				post,
 				isSkillPost,
@@ -201,6 +208,7 @@ export default async function PostPage(props: {
 				sectionTitle: list?.fields?.title,
 				documentIdsToSkip: listMemberIds,
 			})
+	const relatedItems = related.items
 	// The rail lists the page's non-heading endings alongside the article's own
 	// h2s. Only what actually renders, in document order.
 	//
@@ -346,9 +354,10 @@ export default async function PostPage(props: {
 							// on the page, below the fold, and a placeholder for a section
 							// that may correctly turn out to be one cell wide would reserve
 							// the wrong shape anyway. Same treatment as `PostActionBar`.
-							<PostRelatedNewsletter
+							<PersonalizedPostRelatedNewsletter
 								id="related-reading"
 								items={relatedItems}
+								personalization={related.personalization}
 								// A positioned member's exit IS its completion gesture: at a
 								// list finale (and on every skill, whose pager wraps) this
 								// grid is the closing navigation, and the lesson pager that
@@ -424,25 +433,36 @@ async function resolvePostRelatedItems({
 	sectionTitle?: string
 	/** Content the reader is done with — the finished list, at a list's end. */
 	documentIdsToSkip?: string[]
-}): Promise<PostRelatedItem[]> {
+}): Promise<{
+	items: PostRelatedItem[]
+	personalization?: RelatedPostPersonalization
+}> {
 	if (isSkillPost) {
 		const fromTags = await getRelatedSkillPosts(post)
-		if (fromTags.length > 0) return fromTags
+		if (fromTags.length > 0) {
+			return { items: fromTags, personalization: undefined }
+		}
 	}
 
-	const { items } = await resolveRelatedPostItems({
+	const { items, source } = await resolveRelatedPostItems({
 		postId: post.id,
 		variant,
 		sectionTitle,
 		documentIdsToSkip,
 	})
 
-	return items.map((item) => ({
-		id: item.id,
-		title: item.title,
-		slug: item.slug,
-		meta: relatedItemMeta(item),
-	}))
+	return {
+		items: items.map((item) => ({
+			id: item.id,
+			title: item.title,
+			slug: item.slug,
+			meta: relatedItemMeta(item),
+		})),
+		personalization:
+			source === 'suggested'
+				? { postId: post.id, variant, sectionTitle, documentIdsToSkip }
+				: undefined,
+	}
 }
 
 async function PostBody({
@@ -742,7 +762,7 @@ async function PostHead({
 						</div>
 					</div>
 					<Suspense fallback={null}>
-						<PostActionBar post={post} />
+						<PostActionBar postId={post.id} postSlug={post.fields?.slug} />
 					</Suspense>
 				</div>
 				{/* Directly under the title, which is where the mobile rules put it
@@ -791,12 +811,17 @@ const _getCachedVideoResource = (id: string) =>
 
 export async function generateStaticParams() {
 	const posts = await getAllPosts()
-	const lists = await getAllLists()
+	const lists = await getCachedAllLists()
 
 	const resources = [...posts, ...lists]
 
 	return resources
-		.filter((resource) => Boolean(resource.fields?.slug))
+		.filter(
+			(resource) =>
+				Boolean(resource.fields?.slug) &&
+				resource.fields?.state === 'published' &&
+				['public', 'unlisted'].includes(resource.fields?.visibility ?? ''),
+		)
 		.map((resource) => ({
 			post: resource.fields?.slug,
 		}))
@@ -830,18 +855,4 @@ export async function generateMetadata(
 			],
 		},
 	}
-}
-
-async function PostActionBar({ post }: { post: Post | null }) {
-	const { session, ability } = await getServerAuthSession()
-
-	return (
-		<>
-			{post && ability.can('update', 'Content') ? (
-				<Button asChild size="sm" className="absolute right-0 top-0 z-50">
-					<Link href={`/posts/${post.fields?.slug || post.id}/edit`}>Edit</Link>
-				</Button>
-			) : null}
-		</>
-	)
 }

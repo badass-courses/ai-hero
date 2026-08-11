@@ -2,6 +2,8 @@
 // with resource: /api/og?resource=[SLUG_OR_ID]
 // with custom title: /api/og?title=ANYTHING
 
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { ImageResponse } from 'next/og'
 import { db } from '@/db'
 import { contentResource, contentResourceResource, products } from '@/db/schema'
@@ -10,7 +12,6 @@ import { generateGridPattern } from '@/utils/generate-grid-pattern'
 import { PlayIcon } from '@heroicons/react/24/solid'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
 
-export const runtime = 'edge'
 export const revalidate = 60
 // export const contentType = 'image/png'
 
@@ -102,12 +103,12 @@ export async function GET(request: Request) {
 			}
 		}
 
-		const fontData = await fetch(
-			new URL(
-				'../../../../public/fonts/79122e33-d8c9-4b2c-8add-f48bd7b317e0.ttf',
-				import.meta.url,
+		const fontData = await readFile(
+			join(
+				process.cwd(),
+				'public/fonts/79122e33-d8c9-4b2c-8add-f48bd7b317e0.ttf',
 			),
-		).then((res) => res.arrayBuffer())
+		)
 
 		const seed = resourceSlugOrID || title || 'default-seed'
 

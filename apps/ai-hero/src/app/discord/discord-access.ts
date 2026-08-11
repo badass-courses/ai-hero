@@ -4,7 +4,6 @@ export type DiscordAccessState =
 	| 'expired'
 	| 'denied'
 	| 'sign-in'
-	| 'rollout-unavailable'
 
 type SessionResult = {
 	session?: {
@@ -16,7 +15,6 @@ export async function getDiscordAccessState({
 	getSession,
 	findDiscordAccount,
 	linkResult,
-	canLinkUser = () => true,
 }: {
 	getSession: () => SessionResult | Promise<SessionResult>
 	findDiscordAccount: (
@@ -27,7 +25,6 @@ export async function getDiscordAccessState({
 		| undefined
 		| PromiseLike<{ access_token?: string | null } | null | undefined>
 	linkResult?: string
-	canLinkUser?: (userId: string) => boolean
 }): Promise<DiscordAccessState> {
 	const { session } = await getSession()
 	const userId = session?.user?.id
@@ -37,6 +34,5 @@ export async function getDiscordAccessState({
 	if (account?.access_token) return 'linked'
 	if (linkResult === 'expired') return 'expired'
 	if (linkResult === 'denied') return 'denied'
-	if (!canLinkUser(userId)) return 'rollout-unavailable'
 	return 'ready'
 }

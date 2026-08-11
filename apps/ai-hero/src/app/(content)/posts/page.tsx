@@ -5,14 +5,12 @@ import LayoutClient from '@/components/layout-client'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import config from '@/config'
 import { env } from '@/env.mjs'
-import { getAllLists } from '@/lib/lists-query'
 import { getCachedPostsGraph } from '@/lib/posts-graph'
-import { getAllPosts } from '@/lib/posts-query'
-import { getServerAuthSession } from '@/server/auth'
 
-import { PostActions } from './_components/post-actions'
+import { PostListActions } from './_components/post-list-actions'
 
-export const dynamic = 'force-dynamic'
+export const revalidate = 3600
+export const dynamic = 'force-static'
 
 export const metadata: Metadata = {
 	title: `AI Engineering Posts by ${config.author}`,
@@ -43,15 +41,4 @@ export default async function PostsIndexPage() {
 			</HubLayout>
 		</LayoutClient>
 	)
-}
-
-async function PostListActions({}: {}) {
-	const { ability } = await getServerAuthSession()
-	if (!ability.can('create', 'Content') || !ability.can('update', 'Content')) {
-		return null
-	}
-	const allPosts = await getAllPosts()
-	const allLists = await getAllLists()
-
-	return <PostActions allPosts={allPosts} allLists={allLists} />
 }

@@ -38,21 +38,6 @@ describe('/discord containment journey', () => {
 		expect(state).toBe('ready')
 	})
 
-	it('keeps the button disabled outside the server-side canary allowlist', async () => {
-		const state = await getDiscordAccessState({
-			getSession: vi.fn(async () => ({
-				session: { user: { id: 'not-allowlisted' } },
-			})),
-			findDiscordAccount: vi.fn(async () => null),
-			canLinkUser: () => false,
-		})
-		const markup = renderToStaticMarkup(<DiscordAccessAction state={state} />)
-
-		expect(state).toBe('rollout-unavailable')
-		expect(markup).toContain('rolling out gradually')
-		expect(markup).toContain('disabled')
-	})
-
 	it('shows the secure link action for an authenticated unlinked session', async () => {
 		const state = await getDiscordAccessState({
 			getSession: vi.fn(async () => ({

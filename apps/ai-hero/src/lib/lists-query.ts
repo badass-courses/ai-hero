@@ -23,6 +23,7 @@ import { filterSectionedResources } from './list-sections'
 import { ListSchema, type List, type ListUpdate } from './lists'
 import { PostSchema } from './posts'
 import { updatePost } from './posts-query'
+import { retryTransientDatabaseRead } from './transient-database-read'
 import { deletePostInTypeSense, upsertPostToTypeSense } from './typesense-query'
 
 export async function createList(input: {
@@ -107,6 +108,19 @@ export async function getAllLists() {
 	return parsed
 }
 
+const _getCachedAllLists = unstable_cache(
+	async () => retryTransientDatabaseRead(() => getAllLists()),
+	['all-lists-v1'],
+	{
+		revalidate: 3600,
+		tags: ['lists', 'posts'],
+	},
+)
+
+export async function getCachedAllLists() {
+	return reviveDates(await _getCachedAllLists()) as List[]
+}
+
 export async function getList(listIdOrSlug: string) {
 	const list = await db.query.contentResource.findFirst({
 		where: and(
@@ -145,6 +159,18 @@ export async function getList(listIdOrSlug: string) {
 	}
 
 	return listParsed.data
+}
+
+const _getCachedList = unstable_cache(
+	async (listIdOrSlug: string) =>
+		retryTransientDatabaseRead(() => getList(listIdOrSlug)),
+	['list-v1'],
+	{ revalidate: 3600, tags: ['lists', 'posts'] },
+)
+
+export async function getCachedList(listIdOrSlug: string) {
+	const result = await _getCachedList(listIdOrSlug)
+	return result ? (reviveDates(result) as List) : null
 }
 
 /**
@@ -240,7 +266,9 @@ export async function getCachedListForPost(slugOrId: string) {
  */
 const _getCachedFilteredList = unstable_cache(
 	async (listIdOrSlug: string) => {
-		const deep = await getListWithSections(listIdOrSlug)
+		const deep = await retryTransientDatabaseRead(() =>
+			getListWithSections(listIdOrSlug),
+		)
 		if (!deep) return null
 		// `getListWithSections` matches on slug/id + type only — it is the shared
 		// deep loader, and the cms surfaces that use it MUST see drafts. This
@@ -310,6 +338,7 @@ export async function getCachedFilteredList(listIdOrSlug: string) {
 
 function reviveDates(obj: any): any {
 	if (obj === null || obj === undefined) return obj
+	if (obj instanceof Date) return obj
 	if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(obj)) {
 		const d = new Date(obj)
 		return isNaN(d.getTime()) ? obj : d

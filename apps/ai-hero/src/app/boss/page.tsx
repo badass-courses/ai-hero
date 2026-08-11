@@ -2,18 +2,21 @@ import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
-import { getPage } from '@/lib/pages-query'
+import { getCachedPage } from '@/lib/pages-query'
 import { compileMDX } from '@/utils/compile-mdx'
 
 import BossLetterArticle from './[resourceSlug]/components/boss-letter-article'
 
 const PAGE_SLUG = 'boss-letter'
 
+export const revalidate = 3600
+export const dynamic = 'force-static'
+
 export async function generateMetadata(
 	props: {},
 	parent: ResolvingMetadata,
 ): Promise<Metadata> {
-	const page = await getPage(PAGE_SLUG)
+	const page = await getCachedPage(PAGE_SLUG)
 
 	if (!page) {
 		return parent as Metadata
@@ -35,7 +38,7 @@ export async function generateMetadata(
 }
 
 export default async function BossPage() {
-	const page = await getPage(PAGE_SLUG)
+	const page = await getCachedPage(PAGE_SLUG)
 
 	if (!page || !page.fields?.body) {
 		return notFound()

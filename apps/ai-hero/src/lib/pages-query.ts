@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidateTag } from "next/cache";
+import { revalidateTag, unstable_cache } from "next/cache";
 import { courseBuilderAdapter, db } from "@/db";
 import { contentResource, contentResourceResource } from "@/db/schema";
 import { NewPage, Page, PageSchema } from "@/lib/pages";
@@ -12,6 +12,8 @@ import slugify from "@sindresorhus/slugify";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { v4 } from "uuid";
 import { z } from "zod";
+
+import { retryTransientDatabaseRead } from "./transient-database-read";
 
 export async function getPages(): Promise<Page[]> {
   const { ability } = await getServerAuthSession();
@@ -147,4 +149,37 @@ export async function getPage(slugOrId: string) {
   }
 
   return pageParsed.data;
+}
+
+const _getCachedPage = unstable_cache(
+  async (slugOrId: string) => retryTransientDatabaseRead(() => getPage(slugOrId)),
+  ["pages-v1"],
+  {
+    revalidate: 3600,
+    tags: ["pages"],
+  },
+);
+
+/** Public CMS page loader for static and ISR surfaces. */
+export async function getCachedPage(slugOrId: string) {
+  const result = await _getCachedPage(slugOrId);
+  if (!result) return null;
+
+  const parsed = PageSchema.safeParse(reviveDates(result));
+  return parsed.success ? parsed.data : null;
+}
+
+function reviveDates(value: unknown): unknown {
+  if (value instanceof Date) return value;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date;
+  }
+  if (Array.isArray(value)) return value.map(reviveDates);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, reviveDates(nested)]),
+    );
+  }
+  return value;
 }

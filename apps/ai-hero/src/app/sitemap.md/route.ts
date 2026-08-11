@@ -5,6 +5,9 @@ import {
 	getPublicDiscoveryResources,
 } from '@/lib/agent-discovery'
 
+export const revalidate = 3600
+export const dynamic = 'force-static'
+
 /**
  * sitemap.md - AI agent discovery endpoint
  * Returns a markdown discovery index of free public content and route guidance.

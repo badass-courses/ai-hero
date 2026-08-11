@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useParams, usePathname } from 'next/navigation'
-import { createAppAbility } from '@/ability'
+import { createAppAbility, type AppAbility } from '@/ability'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
 import {
@@ -11,9 +11,14 @@ import {
 	getNextCohortWorkshop,
 	isWorkshopAvailable,
 } from '@/lib/cohort-navigation'
-import { findSectionIdForResourceSlug } from '@/lib/content-navigation'
+import {
+	findSectionIdForResourceSlug,
+	type ResourceNavigation,
+} from '@/lib/content-navigation'
 import { api } from '@/trpc/react'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
+import type { RawRuleOf } from '@casl/ability'
+import { useSession } from 'next-auth/react'
 
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
@@ -33,6 +38,39 @@ type Props = {
 	isCollapsible?: boolean
 }
 
+const freeLessonTypes = new Set(['lesson', 'exercise', 'post'])
+
+/** Recreates only the public `tier: free` rules from the cached nav tree. */
+export function getAnonymousWorkshopAbilityRules(
+	workshopNavigation: ResourceNavigation | null,
+): RawRuleOf<AppAbility>[] {
+	const freeResourceIds: string[] = []
+
+	for (const wrapper of workshopNavigation?.resources ?? []) {
+		if (wrapper.metadata?.tier !== 'free') continue
+
+		if (wrapper.resource.type === 'section') {
+			for (const child of wrapper.resource.resources ?? []) {
+				if (freeLessonTypes.has(child.resource.type)) {
+					freeResourceIds.push(child.resource.id)
+				}
+			}
+		} else if (freeLessonTypes.has(wrapper.resource.type)) {
+			freeResourceIds.push(wrapper.resource.id)
+		}
+	}
+
+	return freeResourceIds.length
+		? [
+				{
+					action: 'read',
+					subject: 'Content',
+					conditions: { id: { $in: freeResourceIds } },
+				},
+			]
+		: []
+}
+
 export function WorkshopResourceList(props: Props) {
 	const wrapperClassName = props.wrapperClassName ?? ''
 	const className = props.className ?? ''
@@ -45,6 +83,8 @@ export function WorkshopResourceList(props: Props) {
 	const { moduleProgress } = useModuleProgress()
 	const params = useParams()
 	const pathname = usePathname()
+	const { status: sessionStatus } = useSession()
+	const isAnonymousShell = sessionStatus !== 'authenticated'
 
 	const { data: abilityRules, status: abilityStatus } =
 		api.ability.getCurrentAbilityRules.useQuery(
@@ -53,11 +93,15 @@ export function WorkshopResourceList(props: Props) {
 				lessonId: props.currentLessonSlug,
 			},
 			{
-				enabled: !!workshopNavigation?.id,
+				enabled: sessionStatus === 'authenticated' && !!workshopNavigation?.id,
 			},
 		)
 
-	const ability = createAppAbility(abilityRules || [])
+	const ability = createAppAbility(
+		isAnonymousShell
+			? getAnonymousWorkshopAbilityRules(workshopNavigation)
+			: abilityRules || [],
+	)
 
 	const sectionId = findSectionIdForResourceSlug(
 		workshopNavigation,
@@ -134,7 +178,7 @@ export function WorkshopResourceList(props: Props) {
 			buildLessonHref={(slug) => `/workshops/${moduleSlug}/${slug}`}
 			buildEditHref={(slug) => `/workshops/${moduleSlug}/${slug}/edit`}
 			ability={ability}
-			abilityStatus={abilityStatus}
+			abilityStatus={isAnonymousShell ? 'success' : abilityStatus}
 			isCollapsible={isCollapsible}
 			isCollapsed={isSidebarCollapsed}
 			onToggleCollapse={setIsSidebarCollapsed}

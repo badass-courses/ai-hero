@@ -145,7 +145,7 @@ export type OAuthLinkCanaryEvent = {
 	ownerRef?: string
 	expectedOwnerRef?: string
 	ownerUnchanged?: boolean
-	reasonClass?: OAuthLinkDenialReason | 'rollout-denied' | 'missing-session'
+	reasonClass?: OAuthLinkDenialReason | 'missing-session'
 	result?: 'allowed' | 'denied' | 'expired' | 'consumed' | 'linked' | 'renewed'
 	expiresAt?: string
 	critical?: boolean

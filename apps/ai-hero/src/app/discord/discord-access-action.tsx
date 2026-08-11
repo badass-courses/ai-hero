@@ -32,17 +32,6 @@ export function DiscordAccessAction({
 		)
 	}
 
-	if (state === 'rollout-unavailable') {
-		return (
-			<div className="flex flex-col items-center gap-3 text-center text-sm">
-				<p>Discord linking is rolling out gradually. Try again later.</p>
-				<Button type="button" disabled className="rounded-[9px]">
-					Link Discord account
-				</Button>
-			</div>
-		)
-	}
-
 	const message =
 		state === 'expired'
 			? 'This link expired. Try again.'

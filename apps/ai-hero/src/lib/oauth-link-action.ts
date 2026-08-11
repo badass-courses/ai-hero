@@ -11,7 +11,6 @@ type OAuthAccountLinkRequestDependencies = {
 		| AuthenticatedSession
 		| null
 		| Promise<AuthenticatedSession | null>
-	isUserAllowed: (userId: string) => boolean
 	findAccount: (input: {
 		userId: string
 		provider: ConnectableOAuthProvider
@@ -37,7 +36,6 @@ type OAuthAccountLinkRequestDependencies = {
  */
 export function createOAuthAccountLinkRequest({
 	getAuthenticatedSession,
-	isUserAllowed,
 	findAccount,
 	issueIntent,
 	writeIntentCookie,
@@ -45,13 +43,6 @@ export function createOAuthAccountLinkRequest({
 	return async function requestOAuthAccountLink() {
 		const session = await getAuthenticatedSession()
 		if (!session) return { status: 'unauthenticated' as const }
-
-		if (!isUserAllowed(session.userId)) {
-			return {
-				status: 'rollout-denied' as const,
-				targetUserId: session.userId,
-			}
-		}
 
 		const provider = 'discord' satisfies ConnectableOAuthProvider
 		const existingAccount = await findAccount({
