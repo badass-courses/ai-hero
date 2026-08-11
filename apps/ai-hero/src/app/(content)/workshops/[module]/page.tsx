@@ -267,7 +267,12 @@ export default async function ModulePage(props: Props) {
 								{hasSelfPacedProduct && hasContent && (
 									<div className="">
 										<hr className="border-border mb-6 mt-8 w-full" />
-										<h3 className="mb-3 mt-5 px-5 text-xl font-bold sm:px-8 sm:text-2xl lg:px-10">
+										<h3
+											className={cn(
+												TYPE.subhead,
+												'mb-3 mt-5 px-5 sm:px-8 lg:px-10',
+											)}
+										>
 											Content
 										</h3>
 										<WorkshopResourceList

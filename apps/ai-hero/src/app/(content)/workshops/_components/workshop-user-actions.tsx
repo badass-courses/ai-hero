@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useWorkshopNavigation } from '@/app/(content)/workshops/_components/workshop-navigation-provider'
+import { TYPE } from '@/components/landing/type'
 import { Share } from '@/components/share'
 import Spinner from '@/components/spinner'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
@@ -76,7 +77,7 @@ export function StartLearningWorkshopButton({
 				)}
 			>
 				Available{' '}
-				<span className="text-foreground font-mono text-[13px] font-medium">
+				<span className={cn(TYPE.metaMono, 'text-foreground font-medium')}>
 					{formattedDate} (PT)
 				</span>
 			</span>
@@ -208,18 +209,21 @@ export function WorkshopActionsBar({
 			<Dialog>
 				<DialogTrigger asChild>
 					<Button
-						className="text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4 text-sm font-medium"
+						className={cn(
+							TYPE.meta,
+							'text-muted-foreground hover:text-foreground hover:bg-muted h-[46px] rounded-[9px] px-4',
+						)}
 						variant="ghost"
 						size="lg"
 					>
-						<Share2 className="mr-1 w-3" /> Share
+						<Share2 className="mr-1 size-3.5" /> Share
 					</Button>
 				</DialogTrigger>
 				<DialogContent
 					lockScroll={false}
-					className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-2xl p-0"
+					className="max-w-[min(640px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-[12px] p-0"
 				>
-					<DialogTitle className="border-b px-6 py-5 text-xl">
+					<DialogTitle className={cn(TYPE.subhead, 'border-b px-6 py-5')}>
 						Share
 					</DialogTitle>
 					<Share
