@@ -165,21 +165,19 @@ export async function getCachedPage(slugOrId: string) {
   const result = await _getCachedPage(slugOrId);
   if (!result) return null;
 
-  const parsed = PageSchema.safeParse(reviveDates(result));
-  return parsed.success ? parsed.data : null;
-}
-
-function reviveDates(value: unknown): unknown {
-  if (value instanceof Date) return value;
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : date;
+  // The cache round-trip serializes Dates to ISO strings; every date field in
+  // the schema is `z.coerce.date()`, so the re-parse restores them. No other
+  // reviving — `fields.publishedAt` is `z.string().datetime()` and converting
+  // it to a Date failed the parse, silently swapping published pages for
+  // their fallbacks (the homepage rendered the retired `landing-page` row).
+  const parsed = PageSchema.safeParse(result);
+  if (!parsed.success) {
+    void log.error("page.cached.parse.error", {
+      scope: "page",
+      slugOrId,
+      issues: parsed.error.issues.slice(0, 5),
+    });
+    return null;
   }
-  if (Array.isArray(value)) return value.map(reviveDates);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, nested]) => [key, reviveDates(nested)]),
-    );
-  }
-  return value;
+  return parsed.data;
 }
