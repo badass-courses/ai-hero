@@ -528,23 +528,28 @@ const RegionalPricingBox = () => {
 					)}
 				>
 					{/* Same voice as the team checkbox above: "Buying for your team?" /
-					    "Buying from Czechia?" — the card's two questions rhyme. */}
-					Buying from{' '}
-					<span className="bg-foreground/10 mr-0.5 inline-block h-[14px] w-[18px] overflow-hidden align-[-2px]">
-						{/* Fixed 18×14 box: the sentence holds its shape whether the
-						    flag has loaded, is loading, or never arrives. */}
-						<img
-							src={`https://hardcore-golick-433858.netlify.app/image?code=${countryCode}`}
-							alt=""
-							width={18}
-							height={14}
-							loading="lazy"
-							className="h-full w-full object-cover"
-						/>
-					</span>{' '}
-					{country}?{' '}
+					    "Buying from Czechia?" — the card's two questions rhyme. The
+					    question and the offer both carry the emphasis; the conditions
+					    stay muted. */}
 					<strong className="text-foreground font-semibold">
-						Activate {percentOff}% off
+						Buying from{' '}
+						<span className="bg-foreground/10 mr-0.5 inline-block h-[14px] w-[18px] overflow-hidden align-[-2px]">
+							{/* Fixed 18×14 box: the sentence holds its shape whether the
+							    flag has loaded, is loading, or never arrives. */}
+							<img
+								src={`https://hardcore-golick-433858.netlify.app/image?code=${countryCode}`}
+								alt=""
+								width={18}
+								height={14}
+								loading="lazy"
+								className="h-full w-full object-cover"
+							/>
+						</span>{' '}
+						{country}?
+					</strong>{' '}
+					Activate{' '}
+					<strong className="text-foreground font-semibold">
+						{percentOff}% off
 					</strong>{' '}
 					with regional pricing. Content is then viewable from {country} only,
 					and no bonuses are included.
