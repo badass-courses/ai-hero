@@ -12,40 +12,54 @@ import {
 	DropdownMenuTrigger,
 } from '@coursebuilder/ui'
 
-export function CommitMap({ children }: { children: React.ReactNode }) {
+type PackageManager = 'npm' | 'pnpm'
+
+// Older courses were published against the pnpm default; newer npm-based
+// courses opt in via <CommitMap packageManager="npm">.
+const PackageManagerContext = React.createContext<PackageManager>('pnpm')
+
+export function CommitMap({
+	children,
+	packageManager = 'pnpm',
+}: {
+	children: React.ReactNode
+	packageManager?: PackageManager
+}) {
 	return (
-		<div className="my-6">
-			<span className="text-muted-foreground inline-flex items-center gap-1 font-mono text-xs uppercase">
-				<svg
-					className="dark:text-primary size-4 text-blue-600"
-					xmlns="http://www.w3.org/2000/svg"
-					width="24"
-					height="24"
-					fill="none"
-					viewBox="0 0 24 24"
-				>
-					<path
-						stroke="currentColor"
-						strokeWidth="1.5"
-						d="M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM7 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm10 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"
-					/>
-					<path
-						stroke="currentColor"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						strokeWidth="1.5"
-						d="M7.021 8.28v7.127m7.39-3.402H10.02c-1.097 0-3.157-.88-3-3.225"
-					/>
-				</svg>
-				Commits
-			</span>
-			<div className="not-prose bg-card relative rounded-xl border p-5">
-				<div className="relative pl-6">
-					<div className="dark:bg-foreground/10 bg-border absolute bottom-[-20px] left-[5px] top-[6px] w-px" />
-					<div className="space-y-6">{children}</div>
+		<PackageManagerContext.Provider value={packageManager}>
+			<div className="my-6">
+				<span className="text-muted-foreground inline-flex items-center gap-1 font-mono text-xs uppercase">
+					<svg
+						className="dark:text-primary size-4 text-blue-600"
+						xmlns="http://www.w3.org/2000/svg"
+						width="24"
+						height="24"
+						fill="none"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke="currentColor"
+							strokeWidth="1.5"
+							d="M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM7 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm10 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"
+						/>
+						<path
+							stroke="currentColor"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth="1.5"
+							d="M7.021 8.28v7.127m7.39-3.402H10.02c-1.097 0-3.157-.88-3-3.225"
+						/>
+					</svg>
+					Commits
+				</span>
+				<div className="not-prose bg-card relative rounded-xl border p-5">
+					<div className="relative pl-6">
+						<div className="dark:bg-foreground/10 bg-border absolute bottom-[-20px] left-[5px] top-[6px] w-px" />
+						<div className="space-y-6">{children}</div>
+					</div>
 				</div>
 			</div>
-		</div>
+		</PackageManagerContext.Provider>
 	)
 }
 
@@ -56,6 +70,7 @@ export function Commit({
 	id: string
 	children: React.ReactNode
 }) {
+	const packageManager = React.useContext(PackageManagerContext)
 	const [copiedCommand, setCopiedCommand] = React.useState<string | null>(null)
 	const [open, setOpen] = React.useState(false)
 	const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -66,8 +81,9 @@ export function Commit({
 		}
 	}, [])
 
-	const resetCommand = `pnpm reset ${id}`
-	const cherryPickCommand = `pnpm cherry-pick ${id}`
+	const runPrefix = packageManager === 'npm' ? 'npm run' : 'pnpm'
+	const resetCommand = `${runPrefix} reset ${id}`
+	const cherryPickCommand = `${runPrefix} cherry-pick ${id}`
 
 	const handleCopy = async (command: string) => {
 		await navigator.clipboard.writeText(command)
