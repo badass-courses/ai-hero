@@ -587,6 +587,11 @@ export const contactEvent = mysqlTable(
 			table.providerEventId,
 		),
 		occurredAtIdx: index('ContactEvent_occurredAt_idx').on(table.occurredAt),
+		// Serves the value-path enrollment scan:
+		// eventType = ? AND providerReference IN (...) — previously a full scan.
+		eventTypeProviderReferenceIdx: index(
+			'ContactEvent_eventType_providerReference_idx',
+		).on(table.eventType, table.providerReference),
 	}),
 )
 
@@ -698,10 +703,13 @@ export const sideEffectIntent = mysqlTable(
 		),
 		contactIdIdx: index('SideEffectIntent_contactId_idx').on(table.contactId),
 		statusIdx: index('SideEffectIntent_status_idx').on(table.status),
-		// Every value-path reader filters provider + type together.
-		providerTypeIdx: index('SideEffectIntent_provider_type_idx').on(
+		// Every value-path reader filters provider + type together; the executor
+		// poll additionally filters status IN ('pending','failed') so the status
+		// column rides the same index and completed rows are never examined.
+		providerTypeStatusIdx: index('SideEffectIntent_provider_type_status_idx').on(
 			table.provider,
 			table.type,
+			table.status,
 		),
 	}),
 )
