@@ -212,8 +212,7 @@ export async function recordValuePathAnswerProgression(args: {
 					contactId: contact.id,
 					kitSubscriberId: args.token.kitSubscriberId,
 					email: contact.email ?? undefined,
-					valuePathSlug:
-						fields.sequenceId ?? args.token.valuePathResourceId,
+					valuePathSlug: fields.sequenceId ?? args.token.valuePathResourceId,
 					emailResourceId: args.token.emailResourceId,
 					kitSequenceId: captureStep?.kitSequenceId,
 					humanReview: shouldBlockValuePathForContactState(state),
@@ -257,85 +256,96 @@ export async function recordValuePathAnswerProgression(args: {
 	const event =
 		existingEvent ??
 		(await args.repository.createContactEvent({
-		contactId: contact.id,
-		providerIdentityId: identity.id,
-		provider: 'ai-hero',
-		providerEventId: eventKey,
-		providerReference: `/ask/${fields.slug}`,
-		eventType: 'value-path.answer-selected',
-		occurredAt: now,
-		semanticIdempotencyKey: eventKey,
-		privacyLevel: 'internal',
-		identityEvidence: identity.evidence,
-		payloadSummary: {
-			summary: `Selected answer ${fields.optionValue ?? 'unknown'} for ${fields.surveyId ?? 'unknown survey'}`,
-			keywords: [
-				'value-path',
-				'answer-selected',
-				fields.sequenceId ?? args.token.sequenceId,
-				fields.optionValue ?? 'unknown-option',
-			].filter(Boolean),
-			restrictedPayloadStored: false,
-		},
-		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
-		createdAt: now,
-	}))
+			contactId: contact.id,
+			providerIdentityId: identity.id,
+			provider: 'ai-hero',
+			providerEventId: eventKey,
+			providerReference: `/ask/${fields.slug}`,
+			eventType: 'value-path.answer-selected',
+			occurredAt: now,
+			semanticIdempotencyKey: eventKey,
+			privacyLevel: 'internal',
+			identityEvidence: identity.evidence,
+			payloadSummary: {
+				summary: `Selected answer ${fields.optionValue ?? 'unknown'} for ${fields.surveyId ?? 'unknown survey'}`,
+				keywords: [
+					'value-path',
+					'answer-selected',
+					fields.sequenceId ?? args.token.sequenceId,
+					fields.optionValue ?? 'unknown-option',
+				].filter(Boolean),
+				restrictedPayloadStored: false,
+			},
+			schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
+			createdAt: now,
+		}))
 
 	if (!nextEmailResourceId) {
-		const selectedAt = stringField(existingIntent?.metadata.selectedAt) ?? event.occurredAt
+		const selectedAt =
+			stringField(existingIntent?.metadata.selectedAt) ?? event.occurredAt
 		let nextAction
 		let intent = existingIntent
 		if (!intent) {
-			const linked = await createLinkedActionRecords(args.repository, () => {
-				const nextAction = {
-					id: args.repository.newId('next_action'),
-					contactId: contact.id,
-					contactStateId: state.id,
-					eventId: event.id,
-					type: 'set-shadow-fields' as const,
-					status: 'planned' as const,
-					gates: captureGate?.gates ?? [],
-					reviewReasons: [],
-					rationale: [
-						`Capture terminal finisher fields after answer page ${args.answerPage.id}.`,
-						...(captureGate?.rationale ?? []),
-					],
-					createdAt: selectedAt,
-				}
-				return {
-					nextAction,
-					sideEffectIntents: [
-						{
-							id: args.repository.newId('side_effect_intent'),
-							nextActionId: nextAction.id,
-							contactId: contact.id,
-							provider: args.mode === 'dry-run' ? 'dry-run' : 'kit',
-							type: 'write-value-path-finisher-fields',
-							status: args.mode === 'dry-run' ? 'dry-run' : 'pending',
-							idempotencyKey: finisherIdempotencyKey!,
-							gates: captureGate?.gates ?? [],
-							reviewReasons: [],
-							metadata: {
-								gate: 'gate-d-value-path-finisher-capture',
-								mode: args.mode ?? 'dry-run',
-								valuePathSlug: args.token.valuePathResourceId,
-								emailResourceId: args.token.emailResourceId,
-								kitSubscriberId: args.token.kitSubscriberId ?? null,
-								answerPageId: args.answerPage.id,
-								surveyId: fields.surveyId,
-								optionValue: fields.optionValue,
-								captureFieldKey: fields.captureFieldKey,
-								captureDateFieldKey: fields.captureDateFieldKey,
-								selectedAt,
-								providerResult: null,
+			try {
+				const linked = await createLinkedActionRecords(args.repository, () => {
+					const nextAction = {
+						id: args.repository.newId('next_action'),
+						contactId: contact.id,
+						contactStateId: state.id,
+						eventId: event.id,
+						type: 'set-shadow-fields' as const,
+						status: 'planned' as const,
+						gates: captureGate?.gates ?? [],
+						reviewReasons: [],
+						rationale: [
+							`Capture terminal finisher fields after answer page ${args.answerPage.id}.`,
+							...(captureGate?.rationale ?? []),
+						],
+						createdAt: selectedAt,
+					}
+					return {
+						nextAction,
+						sideEffectIntents: [
+							{
+								id: args.repository.newId('side_effect_intent'),
+								nextActionId: nextAction.id,
+								contactId: contact.id,
+								provider: args.mode === 'dry-run' ? 'dry-run' : 'kit',
+								type: 'write-value-path-finisher-fields',
+								status: args.mode === 'dry-run' ? 'dry-run' : 'pending',
+								idempotencyKey: finisherIdempotencyKey!,
+								gates: captureGate?.gates ?? [],
+								reviewReasons: [],
+								metadata: {
+									gate: 'gate-d-value-path-finisher-capture',
+									mode: args.mode ?? 'dry-run',
+									valuePathSlug: args.token.valuePathResourceId,
+									emailResourceId: args.token.emailResourceId,
+									kitSubscriberId: args.token.kitSubscriberId ?? null,
+									answerPageId: args.answerPage.id,
+									surveyId: fields.surveyId,
+									optionValue: fields.optionValue,
+									captureFieldKey: fields.captureFieldKey,
+									captureDateFieldKey: fields.captureDateFieldKey,
+									selectedAt,
+									providerResult: null,
+								},
+								createdAt: selectedAt,
 							},
-							createdAt: selectedAt,
-						},
-					],
-				}
-			})
-			nextAction = linked.nextAction
-			intent = linked.sideEffectIntents[0]!
+						],
+					}
+				})
+				nextAction = linked.nextAction
+				intent = linked.sideEffectIntents[0]!
+			} catch (error) {
+				// Same race as the advance branch: reuse the winner's finisher
+				// intent instead of failing the whole progression.
+				if (!isDuplicateSideEffectIntentIdempotencyKeyError(error)) throw error
+				intent = await args.repository.findSideEffectIntentByIdempotencyKey(
+					finisherIdempotencyKey!,
+				)
+				if (!intent) throw error
+			}
 		}
 		let finisherCapture: ValuePathFinisherCaptureResult
 		try {
@@ -450,7 +460,78 @@ export async function recordValuePathAnswerProgression(args: {
 	])
 	let nextAction
 	let intent = existingIntent
-	if (intent) {
+	if (!intent) {
+		try {
+			const linked = await createLinkedActionRecords(args.repository, () => {
+				const nextAction = {
+					id: args.repository.newId('next_action'),
+					contactId: contact.id,
+					contactStateId: state.id,
+					eventId: event.id,
+					type: 'advance-value-path' as const,
+					status:
+						reviewReasons.length === 0
+							? ('planned' as const)
+							: ('blocked' as const),
+					gates: gate.gates,
+					reviewReasons,
+					rationale: [
+						`Advance value path after answer page ${args.answerPage.id}.`,
+						...gate.rationale,
+					],
+					createdAt: now,
+				}
+				return {
+					nextAction,
+					sideEffectIntents: [
+						{
+							id: args.repository.newId('side_effect_intent'),
+							nextActionId: nextAction.id,
+							contactId: contact.id,
+							provider: 'kit',
+							type: 'send-value-path-email',
+							status:
+								gate.mode === 'dry-run'
+									? 'dry-run'
+									: reviewReasons.length === 0
+										? 'pending'
+										: 'blocked',
+							idempotencyKey: idempotencyKey!,
+							gates: gate.gates,
+							reviewReasons,
+							metadata: {
+								gate: 'send-gate-d-value-path-email',
+								mode: gate.mode,
+								valuePathSlug: nextValuePathSlug,
+								emailResourceId: nextEmailResourceId,
+								kitSubscriberId: args.token.kitSubscriberId ?? null,
+								answerPageId: args.answerPage.id,
+								surveyId: fields.surveyId,
+								optionValue: fields.optionValue,
+								nextEmailId: fields.nextEmailId,
+								nextEmailResourceId,
+								kitSequenceId: stringField(fields.kitSequenceId) ?? null,
+								providerResult: null,
+							},
+							createdAt: now,
+						},
+					],
+				}
+			})
+			nextAction = linked.nextAction
+			intent = linked.sideEffectIntents[0]!
+		} catch (error) {
+			// Concurrent answer clicks (email security scanners open every /ask
+			// link at once) can race past the pre-check; the loser must reuse the
+			// winner's intent instead of failing the whole progression.
+			if (!isDuplicateSideEffectIntentIdempotencyKeyError(error)) throw error
+			intent = await args.repository.findSideEffectIntentByIdempotencyKey(
+				idempotencyKey!,
+			)
+			if (!intent) throw error
+		}
+	}
+	if (!nextAction) {
 		nextAction = await args.repository.createNextAction({
 			id: args.repository.newId('next_action'),
 			contactId: contact.id,
@@ -466,65 +547,6 @@ export async function recordValuePathAnswerProgression(args: {
 			],
 			createdAt: now,
 		})
-	} else {
-		const linked = await createLinkedActionRecords(args.repository, () => {
-			const nextAction = {
-				id: args.repository.newId('next_action'),
-				contactId: contact.id,
-				contactStateId: state.id,
-				eventId: event.id,
-				type: 'advance-value-path' as const,
-				status:
-					reviewReasons.length === 0
-						? ('planned' as const)
-						: ('blocked' as const),
-				gates: gate.gates,
-				reviewReasons,
-				rationale: [
-					`Advance value path after answer page ${args.answerPage.id}.`,
-					...gate.rationale,
-				],
-				createdAt: now,
-			}
-			return {
-				nextAction,
-				sideEffectIntents: [
-					{
-						id: args.repository.newId('side_effect_intent'),
-						nextActionId: nextAction.id,
-						contactId: contact.id,
-						provider: 'kit',
-						type: 'send-value-path-email',
-						status:
-							gate.mode === 'dry-run'
-								? 'dry-run'
-								: reviewReasons.length === 0
-									? 'pending'
-									: 'blocked',
-						idempotencyKey: idempotencyKey!,
-						gates: gate.gates,
-						reviewReasons,
-						metadata: {
-							gate: 'send-gate-d-value-path-email',
-							mode: gate.mode,
-							valuePathSlug: nextValuePathSlug,
-							emailResourceId: nextEmailResourceId,
-							kitSubscriberId: args.token.kitSubscriberId ?? null,
-							answerPageId: args.answerPage.id,
-							surveyId: fields.surveyId,
-							optionValue: fields.optionValue,
-							nextEmailId: fields.nextEmailId,
-							nextEmailResourceId,
-							kitSequenceId: stringField(fields.kitSequenceId) ?? null,
-							providerResult: null,
-						},
-						createdAt: now,
-					},
-				],
-			}
-		})
-		nextAction = linked.nextAction
-		intent = linked.sideEffectIntents[0]!
 	}
 
 	return {
@@ -539,6 +561,47 @@ export async function recordValuePathAnswerProgression(args: {
 
 function unique(values: string[]) {
 	return Array.from(new Set(values))
+}
+
+type ErrorLike = {
+	cause?: unknown
+	code?: unknown
+	errno?: unknown
+	message?: unknown
+	sqlMessage?: unknown
+}
+
+/**
+ * Matches unique-key violations on AI_SideEffectIntent.idempotencyKey, both as
+ * mysql2 surfaces them (ER_DUP_ENTRY / errno 1062) and as PlanetScale's vttablet
+ * reports them ("rpc error: code = AlreadyExists desc = Duplicate entry ...").
+ */
+export function isDuplicateSideEffectIntentIdempotencyKeyError(error: unknown) {
+	const chain: ErrorLike[] = []
+	let current = error
+	for (
+		let depth = 0;
+		depth < 5 && current && typeof current === 'object';
+		depth++
+	) {
+		chain.push(current as ErrorLike)
+		current = (current as ErrorLike).cause
+	}
+	const messages = chain.map((candidate) =>
+		[candidate.message, candidate.sqlMessage]
+			.filter((value): value is string => typeof value === 'string')
+			.join(' '),
+	)
+	const isDuplicate =
+		chain.some(
+			(candidate) =>
+				candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062,
+		) ||
+		messages.some((message) => /Duplicate entry|AlreadyExists/i.test(message))
+	if (!isDuplicate) return false
+	return messages.some((message) =>
+		/SideEffectIntent_idempotencyKey/i.test(message),
+	)
 }
 
 function emailIdFromResourceId(resourceId: string) {

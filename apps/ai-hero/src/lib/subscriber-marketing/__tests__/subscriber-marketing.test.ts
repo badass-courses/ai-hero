@@ -1857,6 +1857,94 @@ describe('subscriber marketing value path click progression', () => {
 		})
 	})
 
+	it('reuses the winning intent when concurrent answer clicks race the idempotency key', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const token = {
+			contactId: captured.contact.id,
+			kitSubscriberId: 'kit_123',
+			valuePathResourceId: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-1',
+			sequenceId: 'ai-hero-skills-workflow',
+			expiresAt: '2026-05-14T12:00:00.000Z',
+		}
+		const first = await recordValuePathAnswerProgression({
+			repository,
+			token,
+			answerPage: makeAnswerPage(),
+			now: '2026-05-14T11:05:00.000Z',
+		})
+		expect(first.status).toBe('recorded')
+
+		// Loser of a concurrent insert race: the pre-check misses the winner's
+		// intent, then the insert hits the unique key.
+		const racingRepository = Object.create(repository)
+		let precheck = true
+		racingRepository.findSideEffectIntentByIdempotencyKey = (key: string) => {
+			if (precheck) {
+				precheck = false
+				return undefined
+			}
+			return repository.findSideEffectIntentByIdempotencyKey(key)
+		}
+		racingRepository.createSideEffectIntent = () => {
+			throw new Error(
+				"target: ai-hero.-.primary: vttablet: rpc error: code = AlreadyExists desc = Duplicate entry 'contact:fixture_contact_1:value-path:ai-h' for key 'AI_SideEffectIntent.SideEffectIntent_idempotencyKey' (errno 1062) (sqlstate 23000)",
+			)
+		}
+
+		const loser = await recordValuePathAnswerProgression({
+			repository: racingRepository,
+			token,
+			answerPage: parseValuePathAnswerPageResource({
+				id: 'answer_456',
+				type: 'value-path-page',
+				fields: {
+					kind: 'answer',
+					slug: 'skills-workflow-email-1-incorrect',
+					surveyId: 'email-1.quiz',
+					optionValue: 'incorrect',
+					nextEmailId: 'email-2',
+					nextEmailResourceId: 'ai-hero-skills-workflow.email-2',
+				},
+			})!,
+			now: '2026-05-14T11:05:00.100Z',
+		})
+
+		expect(loser.status).toBe('recorded')
+		expect(loser).toMatchObject({
+			sideEffectIntentId:
+				first.status === 'recorded' ? first.sideEffectIntentId : 'unreachable',
+		})
+		expect(
+			Array.from(repository.sideEffectIntents.values()).filter(
+				(intent) => intent.type === 'send-value-path-email',
+			),
+		).toHaveLength(1)
+	})
+
+	it('still fails progression on non-duplicate intent insert errors', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const brokenRepository = Object.create(repository)
+		brokenRepository.createSideEffectIntent = () => {
+			throw new Error('vttablet: connection refused')
+		}
+		await expect(
+			recordValuePathAnswerProgression({
+				repository: brokenRepository,
+				token: {
+					contactId: captured.contact.id,
+					kitSubscriberId: 'kit_123',
+					valuePathResourceId: 'ai-hero-skills-workflow',
+					emailResourceId: 'ai-hero-skills-workflow.email-1',
+					sequenceId: 'ai-hero-skills-workflow',
+					expiresAt: '2026-05-14T12:00:00.000Z',
+				},
+				answerPage: makeAnswerPage(),
+				now: '2026-05-14T11:05:00.000Z',
+			}),
+		).rejects.toThrow('connection refused')
+	})
+
 	it('captures the terminal email-7 answer once without planning another email', async () => {
 		const { repository, captured } = await makeProgressionFixture()
 		const updateSubscriberFields = vi.fn().mockResolvedValue({ id: 'kit_123' })
