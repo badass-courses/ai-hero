@@ -1,9 +1,10 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { ImageResponse } from 'next/og'
 import { db } from '@/db'
 import { coupon, products, purchases } from '@/db/schema'
 import { and, count, eq, gte, isNull, or } from 'drizzle-orm'
 
-export const runtime = 'edge'
 // Cache headers are set dynamically based on coupon expiry — see below
 export const dynamic = 'force-dynamic'
 
@@ -13,12 +14,12 @@ export async function GET(request: Request) {
 		const hasTitle = searchParams.has('title')
 
 		// Get the font for text rendering
-		const fontData = await fetch(
-			new URL(
-				'../../../../../public/fonts/79122e33-d8c9-4b2c-8add-f48bd7b317e0.ttf',
-				import.meta.url,
+		const fontData = await readFile(
+			join(
+				process.cwd(),
+				'public/fonts/79122e33-d8c9-4b2c-8add-f48bd7b317e0.ttf',
 			),
-		).then((res) => res.arrayBuffer())
+		)
 
 		// Check for global coupon/default coupon by querying db directly
 		let discountPercentage = null
