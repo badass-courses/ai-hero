@@ -1551,7 +1551,13 @@ describe('subscriber marketing value path completed-intent scan', () => {
 			}),
 		)
 		const database = {
-			select: () => ({ from: () => ({ where: async () => rows }) }),
+			select: () => ({
+				from: () => ({
+					where: () => ({
+						orderBy: () => ({ limit: async () => rows }),
+					}),
+				}),
+			}),
 		}
 		const repository = new DrizzleCaptureMarketingRepository(database)
 		const result =

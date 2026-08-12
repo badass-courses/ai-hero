@@ -7,7 +7,7 @@ import {
 	sideEffectIntent,
 	stateTransition,
 } from '@/db/schema'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/utils/guid'
 
@@ -42,6 +42,10 @@ import {
 } from './value-path-intent-scan'
 
 type AiHeroWriteDatabase = any
+
+// ~5k rows of intent payload (metadata/gates included) is ~5MB on the wire,
+// far under vtgate's 64MiB gRPC response cap.
+const SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE = 5000
 
 export type LearnerFlowRecord = {
 	contactId: string
@@ -347,16 +351,31 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async findValuePathEmailSideEffectIntentsForScan() {
-		const rows = await this.database
-			.select()
-			.from(sideEffectIntent)
-			.where(
-				and(
-					eq(sideEffectIntent.provider, 'kit'),
-					eq(sideEffectIntent.type, 'send-value-path-email'),
-				),
-			)
-		return rows.map(toSideEffectIntentRecord)
+		// The scan must see completed rows (frontier semantics, 2026-07-17), but
+		// the unbounded single result crossed vtgate's 64MiB gRPC response cap on
+		// 2026-08-12 (ResourceExhausted). Page by primary key so each response
+		// stays small no matter how many intents accumulate.
+		const records: SideEffectIntent[] = []
+		let cursor: string | undefined
+		for (;;) {
+			const rows = await this.database
+				.select()
+				.from(sideEffectIntent)
+				.where(
+					and(
+						eq(sideEffectIntent.provider, 'kit'),
+						eq(sideEffectIntent.type, 'send-value-path-email'),
+						cursor === undefined ? undefined : gt(sideEffectIntent.id, cursor),
+					),
+				)
+				.orderBy(asc(sideEffectIntent.id))
+				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+			records.push(...rows.map(toSideEffectIntentRecord))
+			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) {
+				return records
+			}
+			cursor = rows[rows.length - 1].id
+		}
 	}
 
 	async findCompletedValuePathEmailSideEffectIntentsForRepair() {
