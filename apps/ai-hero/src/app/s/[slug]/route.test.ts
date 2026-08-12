@@ -52,6 +52,37 @@ describe('buildShortlinkRedirectUrl', () => {
 		expect(url.searchParams.get('utm_content')).toBe('brand_ai_hero')
 		expect(url.searchParams.get('debug_secret')).toBeNull()
 	})
+
+	it('preserves validated Kit identity hints for AI Hero destinations', () => {
+		const hash = 'a'.repeat(64)
+		const url = buildShortlinkRedirectUrl(
+			'https://www.aihero.dev/prompts/add-uncle-bob-live-to-calendar',
+			`https://www.aihero.dev/s/uncle-bob-prompt?ck_subscriber_id=4123456789&sh_kit=${hash}`,
+		)
+
+		expect(url.searchParams.get('ck_subscriber_id')).toBe('4123456789')
+		expect(url.searchParams.get('sh_kit')).toBe(hash)
+	})
+
+	it('does not send Kit identity hints to third-party destinations', () => {
+		const url = buildShortlinkRedirectUrl(
+			'https://calendar.google.com/calendar/render?action=TEMPLATE',
+			'https://www.aihero.dev/s/uncle-bob-calendar?ck_subscriber_id=4123456789&utm_source=kit',
+		)
+
+		expect(url.searchParams.get('ck_subscriber_id')).toBeNull()
+		expect(url.searchParams.get('utm_source')).toBe('kit')
+	})
+
+	it('drops malformed Kit identity hints', () => {
+		const url = buildShortlinkRedirectUrl(
+			'https://www.aihero.dev/prompts/add-uncle-bob-live-to-calendar',
+			'https://www.aihero.dev/s/uncle-bob-prompt?ck_subscriber_id=not-a-subscriber&sh_kit=too-short',
+		)
+
+		expect(url.searchParams.get('ck_subscriber_id')).toBeNull()
+		expect(url.searchParams.get('sh_kit')).toBeNull()
+	})
 })
 
 describe('/s/[slug] redirect', () => {

@@ -22,6 +22,17 @@ export const PromptVisibilitySchema = z.union([
 	z.literal('unlisted'),
 ])
 
+export const PromptEventSchema = z.object({
+	title: z.string().min(2),
+	description: z.string().optional().nullable(),
+	startsAt: z.string().datetime(),
+	endsAt: z.string().datetime(),
+	timezone: z.string().min(1),
+	watchUrl: z.string().url(),
+	humanCalendarUrl: z.string().url(),
+	agentCalendarUrl: z.string().url(),
+})
+
 export const PromptSchema = ContentResourceSchema.merge(
 	z.object({
 		fields: z.object({
@@ -36,8 +47,18 @@ export const PromptSchema = ContentResourceSchema.merge(
 			publishedAt: z.string().datetime().nullish(),
 			model: z.string().default('gpt-4o'),
 			provider: z.string().default('openai'),
+			event: PromptEventSchema.optional().nullable(),
+			agentInstructions: z.array(z.string().min(1)).optional().nullable(),
 		}),
 	}),
 )
 
 export type Prompt = z.infer<typeof PromptSchema>
+
+export function isPromptPubliclyViewable(prompt: Prompt) {
+	return (
+		prompt.fields.state === 'published' &&
+		(prompt.fields.visibility === 'public' ||
+			prompt.fields.visibility === 'unlisted')
+	)
+}

@@ -25,10 +25,25 @@ const ATTRIBUTION_QUERY_PARAMS = [
 	...PAID_CLICK_ID_PARAM_LIST,
 ] as const
 
+const FIRST_PARTY_EMAIL_IDENTITY_PARAMS = [
+	'ck_subscriber_id',
+	'sh_kit',
+] as const
+
 const PAID_CLICK_ID_PARAMS = new Set<string>(PAID_CLICK_ID_PARAM_LIST)
 
 function shouldOverrideDestinationParam(key: string) {
 	return key.startsWith('utm_') || PAID_CLICK_ID_PARAMS.has(key)
+}
+
+function isAiHeroHostname(hostname: string) {
+	return hostname === 'aihero.dev' || hostname.endsWith('.aihero.dev')
+}
+
+function isValidEmailIdentityParam(key: string, value: string) {
+	if (key === 'ck_subscriber_id') return /^\d{1,20}$/.test(value)
+	if (key === 'sh_kit') return /^[a-f0-9]{64}$/i.test(value)
+	return false
 }
 
 /**
@@ -36,7 +51,9 @@ function shouldOverrideDestinationParam(key: string) {
  *
  * Paid ads should use direct final URLs, but this keeps accidental shortlink
  * use from dropping gclid, gbraid, wbraid, or UTM evidence before first-touch
- * capture runs on the destination page.
+ * capture runs on the destination page. Kit subscriber identity hints are
+ * forwarded only to AI Hero destinations. They are caller-controlled identity
+ * hints, never authorization credentials, and must not leak to third parties.
  *
  * @param destination - The stored destination URL for the shortlink.
  * @param requestUrl - The incoming shortlink request URL that may include UTM
@@ -58,6 +75,14 @@ export function buildShortlinkRedirectUrl(
 			!redirectUrl.searchParams.has(key) ||
 			shouldOverrideDestinationParam(key)
 		) {
+			redirectUrl.searchParams.set(key, value)
+		}
+	}
+
+	if (isAiHeroHostname(redirectUrl.hostname)) {
+		for (const key of FIRST_PARTY_EMAIL_IDENTITY_PARAMS) {
+			const value = incomingParams.get(key)
+			if (!value || !isValidEmailIdentityParam(key, value)) continue
 			redirectUrl.searchParams.set(key, value)
 		}
 	}

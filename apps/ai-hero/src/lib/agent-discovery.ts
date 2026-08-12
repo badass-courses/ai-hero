@@ -147,6 +147,11 @@ const PUBLIC_JSON_API_HINTS = [
 		path: '/api/resources?slugOrId=<slug>&type=<type>',
 		description: 'structured resource lookup by slug or id',
 	},
+	{
+		path: '/api/prompts/<slug>',
+		description:
+			'published prompt, event facts, actions, lightweight Kit reader context, and proper device-flow authorization instructions in JSON or Markdown',
+	},
 ] as const satisfies readonly DiscoverySurfaceHint[]
 
 const API_DISCOVERY_RESOURCE_FAMILIES = [
@@ -207,6 +212,12 @@ const API_DISCOVERY_RESOURCE_FAMILIES = [
 		name: 'ai-coding-dictionary-entries',
 		htmlPattern: '/ai-coding-dictionary/:slug',
 		visibility: 'public',
+	},
+	{
+		name: 'agent-prompts',
+		htmlPattern: '/prompts/:slug',
+		api: '/api/prompts/:slug',
+		visibility: 'published public/unlisted',
 	},
 	{
 		name: 'course-sync-openapi',

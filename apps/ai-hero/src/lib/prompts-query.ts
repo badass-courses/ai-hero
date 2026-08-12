@@ -2,13 +2,13 @@
 
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
-import { contentResource } from '@/db/schema'
+import { contentResource, contentResourceProduct } from '@/db/schema'
 import { NewPrompt, Prompt, PromptSchema } from '@/lib/prompts'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { guid } from '@coursebuilder/utils/guid'
 import slugify from '@sindresorhus/slugify'
-import { eq, or, sql } from 'drizzle-orm'
+import { asc, eq, or, sql } from 'drizzle-orm'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
@@ -124,4 +124,14 @@ export async function getPrompt(slugOrId: string): Promise<Prompt | null> {
 	}
 
 	return parsed.data
+}
+
+export async function getPromptProductIds(promptId: string) {
+	const relations = await db.query.contentResourceProduct.findMany({
+		where: (relation, { and, eq, isNull }) =>
+			and(eq(relation.resourceId, promptId), isNull(relation.deletedAt)),
+		orderBy: asc(contentResourceProduct.position),
+	})
+
+	return relations.map((relation) => relation.productId)
 }

@@ -2,7 +2,15 @@ import { BetaAnalyticsDataClient } from '@google-analytics/data'
 
 import { env } from '@/env.mjs'
 
-type GA4TrafficRange = '24h' | '7d' | '30d' | '90d' | '180d'
+export type GA4TrafficRange = '24h' | '7d' | '30d' | '90d' | '180d'
+
+const AGENT_PROMPT_EVENTS = [
+	'agent_prompt_viewed',
+	'agent_prompt_copied',
+	'agent_prompt_calendar_handoff',
+	'agent_prompt_youtube_handoff',
+	'agent_prompt_context_read',
+] as const
 
 type TrafficBreakdownRow = {
 	value: string
@@ -213,9 +221,63 @@ export async function getSessionsByDay(range: GA4TrafficRange = '30d') {
 	)
 }
 
+export async function getAgentPromptUsage(
+	slug: string,
+	range: GA4TrafficRange = '30d',
+) {
+	const [response] = await getClient().runReport({
+		property: `properties/${env.STATS_ANALYTICS_PROPERTY_ID ?? ''}`,
+		dateRanges: [rangeToDateRange(range)],
+		dimensions: [{ name: 'eventName' }, { name: 'pagePath' }],
+		metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }],
+		dimensionFilter: {
+			filter: {
+				fieldName: 'eventName',
+				inListFilter: { values: [...AGENT_PROMPT_EVENTS] },
+			},
+		},
+		limit: 1000,
+	})
+
+	const promptPaths = [`/prompts/${slug}`, `/api/prompts/${slug}`]
+	const rows = (response?.rows ?? []).filter((row) =>
+		promptPaths.some((path) => dimension(row, 1, '').includes(path)),
+	)
+	const events = Object.fromEntries(
+		AGENT_PROMPT_EVENTS.map((eventName) => [
+			eventName,
+			{ eventCount: 0, users: 0 },
+		]),
+	) as Record<
+		(typeof AGENT_PROMPT_EVENTS)[number],
+		{ eventCount: number; users: number }
+	>
+
+	for (const row of rows) {
+		const eventName = dimension(row, 0, '') as keyof typeof events
+		if (!events[eventName]) continue
+		events[eventName].eventCount += metric(row, 0)
+		events[eventName].users += metric(row, 1)
+	}
+
+	return {
+		slug,
+		range,
+		paths: promptPaths,
+		events,
+		totals: {
+			eventCount: Object.values(events).reduce(
+				(total, event) => total + event.eventCount,
+				0,
+			),
+		},
+	}
+}
+
 export default {
 	getTrafficOverview,
 	getTopPages,
 	getTrafficSources,
 	getSessionsByDay,
+	getAgentPromptUsage,
 }
