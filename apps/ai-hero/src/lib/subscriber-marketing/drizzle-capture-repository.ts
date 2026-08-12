@@ -7,7 +7,7 @@ import {
 	sideEffectIntent,
 	stateTransition,
 } from '@/db/schema'
-import { and, asc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, type SQL } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/utils/guid'
 
@@ -355,7 +355,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		// the unbounded single result crossed vtgate's 64MiB gRPC response cap on
 		// 2026-08-12 (ResourceExhausted). Page by primary key so each response
 		// stays small no matter how many intents accumulate.
-		const records: SideEffectIntent[] = []
+		const rows = await this.selectValuePathIntentRowsPaged()
+		return rows.map(toSideEffectIntentRecord)
+	}
+
+	// Keyset-paged full read of kit/send-value-path-email intent rows. Every
+	// full read of this set must go through here — a single unbounded select
+	// crossed vtgate's 64MiB gRPC response cap on 2026-08-12.
+	private async selectValuePathIntentRowsPaged(extraCondition?: SQL) {
+		const collected: any[] = []
 		let cursor: string | undefined
 		for (;;) {
 			const rows = await this.database
@@ -365,14 +373,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					and(
 						eq(sideEffectIntent.provider, 'kit'),
 						eq(sideEffectIntent.type, 'send-value-path-email'),
+						extraCondition,
 						cursor === undefined ? undefined : gt(sideEffectIntent.id, cursor),
 					),
 				)
 				.orderBy(asc(sideEffectIntent.id))
 				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
-			records.push(...rows.map(toSideEffectIntentRecord))
+			collected.push(...rows)
 			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) {
-				return records
+				return collected
 			}
 			cursor = rows[rows.length - 1].id
 		}
@@ -404,20 +413,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		includeCanary?: boolean
 	}): Promise<LearnerFlowRecord[]> {
 		const [intentRows, entryEventRows]: [any[], any[]] = await Promise.all([
-			this.database
-				.select()
-				.from(sideEffectIntent)
-				.where(
-					and(
-						eq(sideEffectIntent.provider, 'kit'),
-						eq(sideEffectIntent.type, 'send-value-path-email'),
-						options?.includeCanary
-							? undefined
-							: excludeLearnerFlowCanary({
-									contactId: sideEffectIntent.contactId,
-								}),
-					),
-				),
+			this.selectValuePathIntentRowsPaged(
+				options?.includeCanary
+					? undefined
+					: excludeLearnerFlowCanary({
+							contactId: sideEffectIntent.contactId,
+						}),
+			),
 			this.database
 				.select()
 				.from(contactEvent)
