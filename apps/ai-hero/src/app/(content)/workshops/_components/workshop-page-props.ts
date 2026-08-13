@@ -1,6 +1,6 @@
 import { MDXRemoteSerializeResult } from 'next-mdx-remote'
 
-import { Product, Purchase } from '@coursebuilder/core/schemas'
+import { Coupon, Product, Purchase } from '@coursebuilder/core/schemas'
 import { CommerceProps, PricingData } from '@coursebuilder/core/types'
 
 export type WorkshopPageProps = {
@@ -14,4 +14,6 @@ export type WorkshopPageProps = {
 	purchasedProductIds?: string[]
 	userId?: string
 	pricingDataLoader: Promise<PricingData>
+	/** Active site-wide sale coupon for the product (e.g. launch intro price). */
+	defaultCoupon?: Coupon | null
 } & CommerceProps

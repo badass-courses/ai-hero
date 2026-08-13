@@ -22,8 +22,25 @@ const getPublicWorkshopPricingProps = unstable_cache(
 
 		if (!product) return null
 
+		// Active site-wide sale for this product (e.g. the launch intro price):
+		// apply it to the pricing data so PricingInline / the buy widget show the
+		// discounted price, and expose the coupon so HasDiscount / DiscountDeadline
+		// can gate sale copy — mirroring loadCohortPageData.
+		const couponResult = await courseBuilderAdapter.getDefaultCoupon([
+			product.id,
+		])
+		const defaultCoupon = couponResult?.defaultCoupon ?? null
+
 		const [pricingData, commerceProps] = await Promise.all([
-			getPricingData({ productId: product.id }),
+			getPricingData({
+				productId: product.id,
+				...(defaultCoupon?.merchantCouponId
+					? {
+							merchantCouponId: defaultCoupon.merchantCouponId,
+							usedCouponId: defaultCoupon.id,
+						}
+					: {}),
+			}),
 			propsForCommerce(
 				{
 					query: {},
@@ -41,9 +58,10 @@ const getPublicWorkshopPricingProps = unstable_cache(
 			pricingData,
 			quantityAvailable: pricingData.quantityAvailable,
 			...commerceProps,
+			...(defaultCoupon ? { defaultCoupon } : {}),
 		}
 	},
-	['public-workshop-pricing-v1'],
+	['public-workshop-pricing-v2'],
 	{ revalidate: 600, tags: ['workshop', 'products', 'pricing'] },
 )
 
@@ -54,7 +72,22 @@ export async function PublicWorkshopPricing({
 	moduleSlug: string
 	children: (props: WorkshopPageProps) => ReactNode
 }) {
-	const publicProps = await getPublicWorkshopPricingProps(moduleSlug)
+	let publicProps = await getPublicWorkshopPricingProps(moduleSlug)
+
+	// The cached entry can outlive the coupon by up to its revalidate window.
+	// If the sale ended in the meantime, drop the coupon and reprice without it
+	// so HasDiscount copy and the widget never advertise an expired price.
+	if (
+		publicProps?.defaultCoupon?.expires &&
+		new Date(publicProps.defaultCoupon.expires) < new Date()
+	) {
+		const { defaultCoupon: _expired, ...rest } = publicProps
+		publicProps = {
+			...rest,
+			pricingData: await getPricingData({ productId: rest.product.id }),
+		}
+	}
+
 	const props: WorkshopPageProps = publicProps
 		? {
 				...publicProps,
