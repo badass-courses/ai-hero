@@ -137,7 +137,12 @@ export default async function ModulePage(props: Props) {
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
-	const bodyHasInlineContentList = bodySource.includes('<WorkshopContentList')
+	// Code fences/inline code are stripped first so a body that merely *shows*
+	// the tag in an example doesn't suppress the real list, and the tag must
+	// close or take props so `<WorkshopContentListFoo>` doesn't match.
+	const bodyHasInlineContentList = /<WorkshopContentList[\s/>]/.test(
+		bodySource.replace(/```[\s\S]*?```|`[^`\n]*`/g, ''),
+	)
 	const { content: body } = await compileMDX(bodySource, {
 		// Dynamic commerce copy: same vocabulary as the cohort page
 		// (content/cohort-copy.mdx). All render from the cached public pricing
