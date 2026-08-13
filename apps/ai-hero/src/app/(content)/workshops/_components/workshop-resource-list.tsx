@@ -36,6 +36,8 @@ type Props = {
 	maxHeight?: string
 	withHeader?: boolean
 	isCollapsible?: boolean
+	/** Render every section collapsed instead of opening the first/current one. */
+	defaultAllClosed?: boolean
 }
 
 const freeLessonTypes = new Set(['lesson', 'exercise', 'post'])
@@ -171,7 +173,8 @@ export function WorkshopResourceList(props: Props) {
 			nextModule={nextModule}
 			moduleId={workshopNavigation.id}
 			resources={resources ?? undefined}
-			defaultOpenSectionId={sectionId}
+			defaultOpenSectionId={props.defaultAllClosed ? null : sectionId}
+			defaultAllClosed={props.defaultAllClosed}
 			currentSlug={props.currentLessonSlug}
 			isOnSolution={pathname.includes('/solution')}
 			completedLessons={moduleProgress?.completedLessons}

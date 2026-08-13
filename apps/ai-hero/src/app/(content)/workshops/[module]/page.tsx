@@ -135,7 +135,15 @@ export default async function ModulePage(props: Props) {
 	const product = await getCachedWorkshopProduct(params.module)
 	const hasSelfPacedProduct = product?.type === 'self-paced'
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
-	const { content: body } = await compileMDX(workshop.fields.body || '', {
+	const bodySource = workshop.fields.body || ''
+	// The body placing the curriculum itself replaces the auto-appended list.
+	// Code fences/inline code are stripped first so a body that merely *shows*
+	// the tag in an example doesn't suppress the real list, and the tag must
+	// close or take props so `<WorkshopContentListFoo>` doesn't match.
+	const bodyHasInlineContentList = /<WorkshopContentList[\s/>]/.test(
+		bodySource.replace(/```[\s\S]*?```|`[^`\n]*`/g, ''),
+	)
+	const { content: body } = await compileMDX(bodySource, {
 		// Dynamic commerce copy: same vocabulary as the cohort page
 		// (content/cohort-copy.mdx). All render from the cached public pricing
 		// props, so they stay correct on the static page: PricingInline shows
@@ -178,6 +186,23 @@ export default async function ModulePage(props: Props) {
 				}
 			</PublicWorkshopPricing>
 		),
+		// Inline curriculum: the same styled sections/lessons list the page
+		// appends under the body in the buy state, but placed exactly where the
+		// copy calls for it. When the body uses it, the auto-appended copy below
+		// the article is suppressed so the list appears once.
+		WorkshopContentList: () =>
+			hasContent ? (
+				<div className="not-prose border-border my-8 max-w-4xl overflow-hidden rounded-md border">
+					<WorkshopResourceList
+						isCollapsible={false}
+						defaultAllClosed
+						className="border-r-0! [&_button]:rounded-none! [&_button]:bg-card! [&_button]:hover:text-primary [&_button]:hover:bg-card w-full max-w-none [&_button]:cursor-pointer [&_ol>li]:last-of-type:[&_button]:border-b-0"
+						withHeader={false}
+						maxHeight="h-auto"
+						wrapperClassName="overflow-hidden pb-0"
+					/>
+				</div>
+			) : null,
 		EnrollNow: (props) => (
 			<PublicWorkshopPricing moduleSlug={params.module}>
 				{(workshopProps) => {
@@ -313,7 +338,9 @@ export default async function ModulePage(props: Props) {
 								<article className="prose dark:prose-invert sm:prose-lg lg:prose-lg prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-table:max-w-4xl prose-pre:max-w-4xl **:data-pre:max-w-4xl max-w-none px-5 pb-10 sm:px-8 lg:px-10">
 									{workshop.fields?.body ? body : <p>No description found.</p>}
 								</article>
-								{hasSelfPacedProduct && hasContent && (
+								{hasSelfPacedProduct &&
+								hasContent &&
+								!bodyHasInlineContentList && (
 									<div className="">
 										<hr className="border-border mb-6 mt-8 w-full" />
 										<h3
