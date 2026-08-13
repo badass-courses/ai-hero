@@ -42,11 +42,19 @@ describe("learner-flow summary pagination", () => {
     const firstIds = Array.from({ length: LEARNER_FLOW_RECORD_PAGE_SIZE }, (_, index) => ({
       contactId: `contact-${String(index).padStart(4, "0")}`,
     }));
+    const secondIds = Array.from(
+      { length: LEARNER_FLOW_RECORD_PAGE_SIZE },
+      (_, index) => ({
+        contactId: `contact-${String(index + LEARNER_FLOW_RECORD_PAGE_SIZE).padStart(4, "0")}`,
+      }),
+    );
     const lastIds = [{ contactId: "contact-z" }];
+    const idPages = [firstIds, secondIds, lastIds];
     const idQueries: Array<{ condition: unknown; limit: number }> = [];
     const relatedQueries: Array<{ table: unknown; condition: unknown }> = [];
     const intentQueries: Array<{ condition: unknown; limit: number }> = [];
     let idPage = 0;
+    let hydrationPage = 0;
     const database = {
       selectDistinct: (selection: unknown) => ({
         from: () => ({
@@ -69,7 +77,7 @@ describe("learner-flow summary pagination", () => {
                   orderBy: () => ({
                     limit: (limit: number) => {
                       intentQueries.push({ condition, limit });
-                      const ids = idPage === 1 ? firstIds : lastIds;
+                      const ids = idPages[hydrationPage] ?? [];
                       return ids.map(({ contactId }) => intentRow(contactId));
                     },
                   }),
@@ -78,7 +86,8 @@ describe("learner-flow summary pagination", () => {
               if (related) {
                 relatedQueries.push({ table, condition });
                 if (table === contact) {
-                  const ids = idPage === 1 ? firstIds : lastIds;
+                  const ids = idPages[hydrationPage] ?? [];
+                  hydrationPage += 1;
                   return ids.map(({ contactId }) => contactRow(contactId));
                 }
                 return [];
@@ -87,7 +96,7 @@ describe("learner-flow summary pagination", () => {
                 orderBy: () => ({
                   limit: (limit: number) => {
                     idQueries.push({ condition, limit });
-                    const result = idPage === 0 ? firstIds : lastIds;
+                    const result = idPages[idPage] ?? [];
                     idPage += 1;
                     return result;
                   },
@@ -105,22 +114,78 @@ describe("learner-flow summary pagination", () => {
       pages.push(page);
     }
 
-    expect(pages.map((page) => page.length)).toEqual([LEARNER_FLOW_RECORD_PAGE_SIZE, 1]);
-    expect(idQueries).toHaveLength(2);
+    expect(pages.map((page) => page.length)).toEqual([
+      LEARNER_FLOW_RECORD_PAGE_SIZE,
+      LEARNER_FLOW_RECORD_PAGE_SIZE,
+      1,
+    ]);
+    expect(idQueries).toHaveLength(3);
     expect(idQueries.every(({ limit }) => limit === LEARNER_FLOW_RECORD_PAGE_SIZE)).toBe(true);
-    const secondIdQuery = new MySqlDialect().sqlToQuery(
+    const dialect = new MySqlDialect();
+    const secondIdQuery = dialect.sqlToQuery(
       idQueries[1]?.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
+    );
+    const thirdIdQuery = dialect.sqlToQuery(
+      idQueries[2]?.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
     );
     expect(secondIdQuery.sql).toContain(">");
     expect(secondIdQuery.params).toContain(firstIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId);
-    expect(intentQueries).toHaveLength(2);
+    expect(thirdIdQuery.params).toContain(secondIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId);
+    expect(intentQueries).toHaveLength(3);
     expect(intentQueries.every(({ limit }) => limit === 5000)).toBe(true);
-    expect(relatedQueries).toHaveLength(6);
+    expect(relatedQueries).toHaveLength(9);
     for (const query of relatedQueries) {
       const rendered = new MySqlDialect().sqlToQuery(
         query.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
       );
       expect(rendered.sql).toContain(" in ");
     }
+  });
+
+  it("does not classify a learner deleted after the frozen ID scan", async () => {
+    let idRead = false;
+    const database = {
+      selectDistinct: (selection: unknown) => ({
+        from: () => ({
+          where: () => ({
+            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+          }),
+        }),
+      }),
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => {
+            if (table === sideEffectIntent) {
+              return { orderBy: () => ({ limit: () => [] }) };
+            }
+            if (
+              table === contactEvent ||
+              table === contact ||
+              table === contactState
+            ) {
+              return [];
+            }
+            return {
+              orderBy: () => ({
+                limit: () => {
+                  if (idRead) return [];
+                  idRead = true;
+                  return [{ contactId: "deleted-after-id-scan" }];
+                },
+              }),
+            };
+          },
+        }),
+      }),
+    };
+    const repository = new DrizzleCaptureMarketingRepository(database);
+
+    const pages = [];
+    for await (const page of repository.findSkillsWorkflowLearnerFlowRecordPages()) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[]]);
+    expect(pages.flat()).toHaveLength(0);
   });
 });

@@ -411,12 +411,25 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	/**
-	 * Bounded learner-flow pages for aggregate callers. The ID query selects one
-	 * varchar per learner. Each yielded page reuses the shared classifier.
+	 * Bounded learner-flow pages for aggregate callers. First freeze the small
+	 * ordered ID set, then hydrate it in fixed pages so concurrent enrollment
+	 * cannot change page membership or count one learner twice during the run.
 	 */
 	async *findSkillsWorkflowLearnerFlowRecordPages(options?: {
 		includeCanary?: boolean
 	}): AsyncGenerator<LearnerFlowRecord[]> {
+		const contactIds = await this.findSkillsWorkflowLearnerFlowContactIds(options)
+		for (let offset = 0; offset < contactIds.length; offset += LEARNER_FLOW_RECORD_PAGE_SIZE) {
+			yield await this.findSkillsWorkflowLearnerFlowRecordsByContactIds(
+				contactIds.slice(offset, offset + LEARNER_FLOW_RECORD_PAGE_SIZE),
+			)
+		}
+	}
+
+	private async findSkillsWorkflowLearnerFlowContactIds(options?: {
+		includeCanary?: boolean
+	}) {
+		const contactIds: string[] = []
 		let cursor: string | undefined
 		for (;;) {
 			const intentContactIds = this.database
@@ -453,11 +466,10 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				.where(cursor === undefined ? undefined : gt(learnerIds.contactId, cursor))
 				.orderBy(asc(learnerIds.contactId))
 				.limit(LEARNER_FLOW_RECORD_PAGE_SIZE)
-			const contactIds = idRows.map((row: { contactId: string }) => row.contactId)
-			if (contactIds.length === 0) return
-			yield await this.findSkillsWorkflowLearnerFlowRecordsByContactIds(contactIds)
-			if (contactIds.length < LEARNER_FLOW_RECORD_PAGE_SIZE) return
-			cursor = contactIds[contactIds.length - 1]
+			const page = idRows.map((row: { contactId: string }) => row.contactId)
+			contactIds.push(...page)
+			if (page.length < LEARNER_FLOW_RECORD_PAGE_SIZE) return contactIds
+			cursor = page[page.length - 1]
 		}
 	}
 
@@ -620,13 +632,15 @@ function assembleLearnerFlowRecords(args: {
 		current.push(event)
 		entryEventsByContactId.set(event.contactId, current)
 	}
-	return args.contactIds.map((contactId) => ({
-		contactId,
-		contact: contactsById.get(contactId),
-		contactState: statesByContactId.get(contactId),
-		intents: sortValuePathIntentsByCreatedAt(intentsByContactId.get(contactId) ?? []),
-		entryEvents: entryEventsByContactId.get(contactId) ?? [],
-	}))
+	return args.contactIds
+		.map((contactId) => ({
+			contactId,
+			contact: contactsById.get(contactId),
+			contactState: statesByContactId.get(contactId),
+			intents: sortValuePathIntentsByCreatedAt(intentsByContactId.get(contactId) ?? []),
+			entryEvents: entryEventsByContactId.get(contactId) ?? [],
+		}))
+		.filter((record) => record.intents.length > 0 || record.entryEvents.length > 0)
 }
 
 function toContactRecord(row: any): ContactRecord {
