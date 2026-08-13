@@ -10,6 +10,8 @@ import {
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
+import { DiscountDeadline } from '@/components/pricing/discount-deadline'
+import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
 import LayoutClient from '@/components/layout-client'
 import config from '@/config'
@@ -134,6 +136,48 @@ export default async function ModulePage(props: Props) {
 	const hasSelfPacedProduct = product?.type === 'self-paced'
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
 	const { content: body } = await compileMDX(workshop.fields.body || '', {
+		// Dynamic commerce copy: same vocabulary as the cohort page
+		// (content/cohort-copy.mdx). All render from the cached public pricing
+		// props, so they stay correct on the static page: PricingInline shows
+		// live prices, HasDiscount gates sale copy on an active default coupon,
+		// DiscountDeadline names the sale's last day in Pacific time.
+		PricingInline: ({ type }: { type: 'original' | 'discounted' }) => (
+			<PublicWorkshopPricing moduleSlug={params.module}>
+				{(workshopProps) => (
+					<PricingInline
+						type={type}
+						pricingDataLoader={workshopProps.pricingDataLoader}
+					/>
+				)}
+			</PublicWorkshopPricing>
+		),
+		DiscountDeadline: ({ format }: { format?: 'short' | 'long' }) => (
+			<PublicWorkshopPricing moduleSlug={params.module}>
+				{(workshopProps) => (
+					<DiscountDeadline
+						format={format}
+						expires={workshopProps.defaultCoupon?.expires ?? null}
+					/>
+				)}
+			</PublicWorkshopPricing>
+		),
+		HasDiscount: ({
+			children,
+			fallback,
+		}: {
+			children: React.ReactNode
+			fallback?: React.ReactNode
+		}) => (
+			<PublicWorkshopPricing moduleSlug={params.module}>
+				{(workshopProps) =>
+					workshopProps.defaultCoupon ? (
+						<>{children}</>
+					) : (
+						<>{fallback ?? null}</>
+					)
+				}
+			</PublicWorkshopPricing>
+		),
 		EnrollNow: (props) => (
 			<PublicWorkshopPricing moduleSlug={params.module}>
 				{(workshopProps) => {
