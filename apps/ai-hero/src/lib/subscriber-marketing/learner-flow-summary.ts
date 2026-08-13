@@ -32,14 +32,24 @@ export type LearnerFlowAggregateSummary = {
   };
 };
 
-export function summarizeLearnerFlowRecords(args: {
-  records: LearnerFlowRecord[];
-  now: string;
-}): {
-  learners: LearnerFlowSummaryItem[];
-  summary: LearnerFlowAggregateSummary;
-} {
-  const learners = args.records.map((record) => ({
+type SummaryAccumulator = Omit<
+  LearnerFlowAggregateSummary,
+  "generatedAt" | "assertion"
+>;
+
+function emptyAccumulator(): SummaryAccumulator {
+  return {
+    counts: { total: 0, moving: 0, terminal: 0, stuck: 0, accounted: 0 },
+    causeCounts: {},
+  };
+}
+
+function addLearnerFlowRecords(
+  accumulator: SummaryAccumulator,
+  records: LearnerFlowRecord[],
+  now: string,
+) {
+  const learners = records.map((record) => ({
     contactId: record.contactId,
     classification: classifyLearnerFlowContact({
       contactId: record.contactId,
@@ -47,55 +57,78 @@ export function summarizeLearnerFlowRecords(args: {
       contactState: record.contactState,
       intents: record.intents,
       entryEvents: record.entryEvents,
-      now: args.now,
+      now,
     }),
   }));
-  const counts = {
-    total: learners.length,
-    moving: learners.filter(
-      ({ classification }) => classification.state === "moving",
-    ).length,
-    terminal: learners.filter(
-      ({ classification }) => classification.state === "terminal",
-    ).length,
-    stuck: learners.filter(
-      ({ classification }) => classification.state === "stuck",
-    ).length,
-    accounted: learners.length,
-  };
-  const causeCounts = learners.reduce<
-    Partial<Record<LearnerFlowStuckCause, number>>
-  >((current, { classification }) => {
+  for (const { classification } of learners) {
+    accumulator.counts.total += 1;
+    accumulator.counts[classification.state] += 1;
+    accumulator.counts.accounted += 1;
     if (classification.cause) {
-      current[classification.cause] = (current[classification.cause] ?? 0) + 1;
+      accumulator.causeCounts[classification.cause] =
+        (accumulator.causeCounts[classification.cause] ?? 0) + 1;
     }
-    return current;
-  }, {});
+  }
+  return learners;
+}
 
+function finishLearnerFlowSummary(
+  accumulator: SummaryAccumulator,
+  generatedAt: string,
+): LearnerFlowAggregateSummary {
   return {
-    learners,
-    summary: {
-      generatedAt: args.now,
-      counts,
-      causeCounts,
-      assertion: {
-        passed: counts.moving + counts.terminal + counts.stuck === counts.total,
-        expression:
-          "moving + terminal + stuck = total contacts on course paths",
-      },
+    generatedAt,
+    ...accumulator,
+    assertion: {
+      passed:
+        accumulator.counts.moving +
+          accumulator.counts.terminal +
+          accumulator.counts.stuck ===
+        accumulator.counts.total,
+      expression:
+        "moving + terminal + stuck = total contacts on course paths",
     },
   };
+}
+
+export function summarizeLearnerFlowRecords(args: {
+  records: LearnerFlowRecord[];
+  now: string;
+}): {
+  learners: LearnerFlowSummaryItem[];
+  summary: LearnerFlowAggregateSummary;
+} {
+  const accumulator = emptyAccumulator();
+  const learners = addLearnerFlowRecords(
+    accumulator,
+    args.records,
+    args.now,
+  );
+  return {
+    learners,
+    summary: finishLearnerFlowSummary(accumulator, args.now),
+  };
+}
+
+export async function summarizeLearnerFlowRecordPages(args: {
+  pages: AsyncIterable<LearnerFlowRecord[]>;
+  now: string;
+}) {
+  const accumulator = emptyAccumulator();
+  for await (const records of args.pages) {
+    addLearnerFlowRecords(accumulator, records, args.now);
+  }
+  return finishLearnerFlowSummary(accumulator, args.now);
 }
 
 /** Aggregate-only, authenticated-admin reporting surface. */
 export async function getLearnerFlowAggregateSummary() {
   const repository = new DrizzleCaptureMarketingRepository(db);
   const generatedAt = new Date().toISOString();
-  const records = await repository.findSkillsWorkflowLearnerFlowRecords();
-  const summary = summarizeLearnerFlowRecords({
-    records,
+  const summary = await summarizeLearnerFlowRecordPages({
+    pages: repository.findSkillsWorkflowLearnerFlowRecordPages(),
     now: generatedAt,
-  }).summary;
+  });
   await log[summary.assertion.passed ? "info" : "warn"](
     "subscriber_funnel.learner_flow_classified",
     {
