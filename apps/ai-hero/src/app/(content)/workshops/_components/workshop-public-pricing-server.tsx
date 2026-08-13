@@ -72,7 +72,22 @@ export async function PublicWorkshopPricing({
 	moduleSlug: string
 	children: (props: WorkshopPageProps) => ReactNode
 }) {
-	const publicProps = await getPublicWorkshopPricingProps(moduleSlug)
+	let publicProps = await getPublicWorkshopPricingProps(moduleSlug)
+
+	// The cached entry can outlive the coupon by up to its revalidate window.
+	// If the sale ended in the meantime, drop the coupon and reprice without it
+	// so HasDiscount copy and the widget never advertise an expired price.
+	if (
+		publicProps?.defaultCoupon?.expires &&
+		new Date(publicProps.defaultCoupon.expires) < new Date()
+	) {
+		const { defaultCoupon: _expired, ...rest } = publicProps
+		publicProps = {
+			...rest,
+			pricingData: await getPricingData({ productId: rest.product.id }),
+		}
+	}
+
 	const props: WorkshopPageProps = publicProps
 		? {
 				...publicProps,
