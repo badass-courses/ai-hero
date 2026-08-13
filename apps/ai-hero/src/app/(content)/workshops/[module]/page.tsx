@@ -190,6 +190,7 @@ export default async function ModulePage(props: Props) {
 				<div className="not-prose border-border my-8 max-w-4xl overflow-hidden rounded-md border">
 					<WorkshopResourceList
 						isCollapsible={false}
+						defaultAllClosed
 						className="border-r-0! [&_button]:rounded-none! [&_button]:bg-card! [&_button]:hover:text-primary [&_button]:hover:bg-card w-full max-w-none [&_button]:cursor-pointer [&_ol>li]:last-of-type:[&_button]:border-b-0"
 						withHeader={false}
 						maxHeight="h-auto"

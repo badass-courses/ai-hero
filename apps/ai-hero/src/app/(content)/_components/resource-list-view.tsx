@@ -67,6 +67,8 @@ export type ResourceListViewProps = {
 	moduleId: string
 	resources?: ContentResourceResource[]
 	defaultOpenSectionId?: string | null
+	/** Start with every section collapsed (overrides the first-section default). */
+	defaultAllClosed?: boolean
 
 	currentSlug?: string
 	isOnSolution?: boolean
@@ -100,6 +102,7 @@ export function ResourceListView({
 	moduleId,
 	resources,
 	defaultOpenSectionId,
+	defaultAllClosed,
 	currentSlug,
 	isOnSolution = false,
 	completedLessons,
@@ -233,7 +236,9 @@ export function ResourceListView({
 							collapsible
 							className={cn('flex flex-col', wrapperClassName)}
 							defaultValue={
-								defaultOpenSectionId || resources?.[0]?.resource?.id
+								defaultAllClosed
+									? undefined
+									: defaultOpenSectionId || resources?.[0]?.resource?.id
 							}
 						>
 							<ol>
