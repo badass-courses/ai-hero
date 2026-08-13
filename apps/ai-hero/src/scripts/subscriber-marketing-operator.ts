@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { db } from '@/db'
+import { closeDatabasePool, db } from '@/db'
 import {
 	contact,
 	contactEvent,
@@ -533,18 +533,22 @@ if (command === 'lookup') {
 	console.log(JSON.stringify({ ...result, receiptPath }, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
 	if (args.includes('--summary-only')) {
-		const summary = await getLearnerFlowAggregateSummary()
-		console.log(
-			JSON.stringify(
-				{
-					mode: 'read-only' as const,
-					writes: { database: false, provider: false },
-					...summary,
-				},
-				null,
-				2,
-			),
-		)
+		try {
+			const summary = await getLearnerFlowAggregateSummary()
+			console.log(
+				JSON.stringify(
+					{
+						mode: 'read-only' as const,
+						writes: { database: false, provider: false },
+						...summary,
+					},
+					null,
+					2,
+				),
+			)
+		} finally {
+			await closeDatabasePool()
+		}
 	} else {
 		const result = await buildLearnerFlowStuckList()
 		if (args.includes('--json')) {

@@ -1,5 +1,4 @@
 import { db } from "@/db";
-import { log } from "@/server/logger";
 
 import {
   DrizzleCaptureMarketingRepository,
@@ -121,22 +120,12 @@ export async function summarizeLearnerFlowRecordPages(args: {
   return finishLearnerFlowSummary(accumulator, args.now);
 }
 
-/** Aggregate-only, authenticated-admin reporting surface. */
+/** Pure aggregate read. Callers own logging and process resource cleanup. */
 export async function getLearnerFlowAggregateSummary() {
   const repository = new DrizzleCaptureMarketingRepository(db);
   const generatedAt = new Date().toISOString();
-  const summary = await summarizeLearnerFlowRecordPages({
+  return summarizeLearnerFlowRecordPages({
     pages: repository.findSkillsWorkflowLearnerFlowRecordPages(),
     now: generatedAt,
   });
-  await log[summary.assertion.passed ? "info" : "warn"](
-    "subscriber_funnel.learner_flow_classified",
-    {
-      funnel: "skills-newsletter",
-      ...summary.counts,
-      causeCounts: summary.causeCounts,
-      assertionPassed: summary.assertion.passed,
-    },
-  );
-  return summary;
 }

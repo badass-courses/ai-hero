@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import type { LearnerFlowRecord } from "./drizzle-capture-repository";
@@ -97,5 +98,15 @@ describe("learner-flow aggregate summary", () => {
         expression: "moving + terminal + stuck = total contacts on course paths",
       },
     });
+  });
+
+  it("keeps aggregate computation independent from the server logger", () => {
+    const source = readFileSync(
+      new URL("./learner-flow-summary.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).not.toContain("@/server/logger");
+    expect(source).not.toContain("log[");
   });
 });

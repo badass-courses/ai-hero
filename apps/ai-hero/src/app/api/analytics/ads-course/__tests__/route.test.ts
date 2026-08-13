@@ -58,6 +58,15 @@ describe('ads-course analytics API', () => {
 		expect(mocks.getAdsCourseMetrics).toHaveBeenCalledWith({ productId: 'email-course', range: 'today' })
 		expect(mocks.getLearnerFlowReport).toHaveBeenCalledOnce()
 		expect(mocks.getLearnerFlowAggregateSummary).toHaveBeenCalledOnce()
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'subscriber_funnel.learner_flow_classified',
+			expect.objectContaining({
+				funnel: 'skills-newsletter',
+				total: 216,
+				accounted: 216,
+				assertionPassed: true,
+			}),
+		)
 	})
 
 	it('rejects unsupported ranges before querying providers', async () => {
