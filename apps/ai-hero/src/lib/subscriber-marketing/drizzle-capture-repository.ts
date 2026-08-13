@@ -7,7 +7,7 @@ import {
 	sideEffectIntent,
 	stateTransition,
 } from '@/db/schema'
-import { and, asc, eq, gt, inArray, type SQL } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, sql, type SQL } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/utils/guid'
 
@@ -429,9 +429,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	/**
-	 * Bounded learner-flow pages for aggregate callers. First freeze the small
-	 * ordered ID set, then hydrate it in fixed pages so concurrent enrollment
-	 * cannot change page membership or count one learner twice during the run.
+	 * Bounded learner-flow pages for aggregate callers. First collect an ordered,
+	 * deduplicated ID list, then hydrate fixed pages. This prevents cursor drift
+	 * and duplicate IDs; it is not a transactional database snapshot.
 	 */
 	async *findSkillsWorkflowLearnerFlowRecordPages(options?: {
 		includeCanary?: boolean
@@ -590,7 +590,23 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					status: sideEffectIntent.status,
 					completedAt: sideEffectIntent.completedAt,
 					reviewReasons: sideEffectIntent.reviewReasons,
-					metadata: sideEffectIntent.metadata,
+					valuePathSlug: jsonString(sideEffectIntent.metadata, '$.valuePathSlug'),
+					emailResourceId: jsonString(sideEffectIntent.metadata, '$.emailResourceId'),
+					metadataCompletedAt: jsonString(sideEffectIntent.metadata, '$.completedAt'),
+					learnerFlowCanary: jsonBoolean(sideEffectIntent.metadata, '$.learnerFlowCanary'),
+					learnerFlowCanaryCadenceHours: jsonNumber(sideEffectIntent.metadata, '$.learnerFlowCanaryCadenceHours'),
+					learnerFlowFixture: jsonBoolean(sideEffectIntent.metadata, '$.learnerFlowFixture'),
+					learnerFlowFixtureStatus: jsonString(sideEffectIntent.metadata, '$.learnerFlowFixtureStatus'),
+					retryable: jsonBoolean(sideEffectIntent.metadata, '$.retryable'),
+					retryAttemptCount: jsonNumber(sideEffectIntent.metadata, '$.retryAttemptCount'),
+					maxRetryAttempts: jsonNumber(sideEffectIntent.metadata, '$.maxRetryAttempts'),
+					retryReason: jsonString(sideEffectIntent.metadata, '$.retryReason'),
+					bounced: jsonBoolean(sideEffectIntent.metadata, '$.bounced'),
+					complained: jsonBoolean(sideEffectIntent.metadata, '$.complained'),
+					unsubscribed: jsonBoolean(sideEffectIntent.metadata, '$.unsubscribed'),
+					providerResultBounced: jsonBoolean(sideEffectIntent.metadata, '$.providerResult.bounced'),
+					providerResultComplained: jsonBoolean(sideEffectIntent.metadata, '$.providerResult.complained'),
+					providerResultUnsubscribed: jsonBoolean(sideEffectIntent.metadata, '$.providerResult.unsubscribed'),
 					createdAt: sideEffectIntent.createdAt,
 				})
 				.from(sideEffectIntent)
@@ -754,6 +770,11 @@ function assembleLearnerFlowRecords(args: {
 }
 
 function toLearnerFlowSummaryIntent(row: any): LearnerFlowSummaryIntent {
+	const providerResult = compactDefined({
+		bounced: toJsonBoolean(row.providerResultBounced),
+		complained: toJsonBoolean(row.providerResultComplained),
+		unsubscribed: toJsonBoolean(row.providerResultUnsubscribed),
+	})
 	return {
 		id: row.id,
 		contactId: row.contactId,
@@ -762,7 +783,24 @@ function toLearnerFlowSummaryIntent(row: any): LearnerFlowSummaryIntent {
 		status: row.status,
 		completedAt: row.completedAt ? toIso(row.completedAt) : null,
 		reviewReasons: row.reviewReasons,
-		metadata: row.metadata,
+		metadata: compactDefined({
+			valuePathSlug: toJsonString(row.valuePathSlug),
+			emailResourceId: toJsonString(row.emailResourceId),
+			completedAt: toJsonString(row.metadataCompletedAt),
+			learnerFlowCanary: toJsonBoolean(row.learnerFlowCanary),
+			learnerFlowCanaryCadenceHours: toJsonNumber(row.learnerFlowCanaryCadenceHours),
+			learnerFlowFixture: toJsonBoolean(row.learnerFlowFixture),
+			learnerFlowFixtureStatus: toJsonString(row.learnerFlowFixtureStatus),
+			retryable: toJsonBoolean(row.retryable),
+			retryAttemptCount: toJsonNumber(row.retryAttemptCount),
+			maxRetryAttempts: toJsonNumber(row.maxRetryAttempts),
+			retryReason: toJsonString(row.retryReason),
+			bounced: toJsonBoolean(row.bounced),
+			complained: toJsonBoolean(row.complained),
+			unsubscribed: toJsonBoolean(row.unsubscribed),
+			providerResult:
+				Object.keys(providerResult).length > 0 ? providerResult : undefined,
+		}),
 		createdAt: toIso(row.createdAt),
 	}
 }
@@ -867,6 +905,55 @@ function toContactStateRecord(row: any): ContactState {
 		schemaVersion: row.schemaVersion,
 		updatedAt: toIso(row.updatedAt),
 	}
+}
+
+const LEARNER_FLOW_METADATA_STRING_MAX_BYTES = 500
+
+function jsonString(column: SQL | typeof sideEffectIntent.metadata, path: string) {
+	return sql<string | null>`CASE
+		WHEN JSON_TYPE(JSON_EXTRACT(${column}, ${path})) = 'STRING'
+			AND OCTET_LENGTH(JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path}))) <= ${LEARNER_FLOW_METADATA_STRING_MAX_BYTES}
+		THEN JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path}))
+		ELSE NULL
+	END`
+}
+
+function jsonNumber(column: SQL | typeof sideEffectIntent.metadata, path: string) {
+	return sql<number | null>`CASE
+		WHEN JSON_TYPE(JSON_EXTRACT(${column}, ${path})) IN ('INTEGER', 'DOUBLE', 'DECIMAL')
+		THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path})) AS DOUBLE)
+		ELSE NULL
+	END`
+}
+
+function jsonBoolean(column: SQL | typeof sideEffectIntent.metadata, path: string) {
+	return sql<number | null>`CASE
+		WHEN JSON_TYPE(JSON_EXTRACT(${column}, ${path})) = 'BOOLEAN'
+		THEN JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path})) = 'true'
+		ELSE NULL
+	END`
+}
+
+function compactDefined(values: Record<string, unknown>) {
+	return Object.fromEntries(
+		Object.entries(values).filter(([, value]) => value !== undefined),
+	)
+}
+
+function toJsonString(value: unknown) {
+	return typeof value === 'string' && value !== 'null' ? value : undefined
+}
+
+function toJsonNumber(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value)
+		? value
+		: undefined
+}
+
+function toJsonBoolean(value: unknown) {
+	if (value === true || value === 1) return true
+	if (value === false || value === 0) return false
+	return undefined
 }
 
 function toIso(value: string | Date) {

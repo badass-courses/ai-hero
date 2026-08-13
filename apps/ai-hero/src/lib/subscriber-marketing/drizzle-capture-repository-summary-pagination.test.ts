@@ -10,19 +10,29 @@ import {
 
 const intentRow = (contactId: string) => ({
   id: `intent-${contactId}`,
-  nextActionId: `action-${contactId}`,
   contactId,
   provider: "kit",
   type: "send-value-path-email",
   status: "pending",
   completedAt: null,
-  idempotencyKey: `key-${contactId}`,
-  gates: [],
   reviewReasons: [],
-  metadata: {
-    valuePathSlug: "ai-hero-skills-workflow",
-    emailResourceId: "ai-hero-skills-workflow.email-0",
-  },
+  valuePathSlug: "ai-hero-skills-workflow",
+  emailResourceId: "ai-hero-skills-workflow.email-0",
+  metadataCompletedAt: null,
+  learnerFlowCanary: null,
+  learnerFlowCanaryCadenceHours: null,
+  learnerFlowFixture: null,
+  learnerFlowFixtureStatus: null,
+  retryable: null,
+  retryAttemptCount: null,
+  maxRetryAttempts: null,
+  retryReason: null,
+  bounced: null,
+  complained: null,
+  unsubscribed: null,
+  providerResultBounced: null,
+  providerResultComplained: null,
+  providerResultUnsubscribed: null,
   createdAt: "2026-08-13T11:00:00.000Z",
 });
 
@@ -137,17 +147,85 @@ describe("learner-flow summary pagination", () => {
     expect(intentQueries).toHaveLength(3);
     expect(intentQueries.every(({ limit }) => limit === 5000)).toBe(true);
     for (const query of intentQueries) {
-      expect(Object.keys(query.selection ?? {}).sort()).toEqual([
+      const selected = Object.keys(query.selection ?? {}).sort();
+      expect(selected).not.toContain("metadata");
+      expect(selected).toEqual([
+        "bounced",
+        "complained",
         "completedAt",
         "contactId",
         "createdAt",
+        "emailResourceId",
         "id",
-        "metadata",
+        "learnerFlowCanary",
+        "learnerFlowCanaryCadenceHours",
+        "learnerFlowFixture",
+        "learnerFlowFixtureStatus",
+        "maxRetryAttempts",
+        "metadataCompletedAt",
         "provider",
+        "providerResultBounced",
+        "providerResultComplained",
+        "providerResultUnsubscribed",
+        "retryAttemptCount",
+        "retryReason",
+        "retryable",
         "reviewReasons",
         "status",
         "type",
+        "unsubscribed",
+        "valuePathSlug",
       ]);
+      const metadataFacts = Object.entries(query.selection ?? {})
+        .filter(([key]) => ![
+          "id",
+          "contactId",
+          "provider",
+          "type",
+          "status",
+          "completedAt",
+          "reviewReasons",
+          "createdAt",
+        ].includes(key))
+        .map(([, expression]) =>
+          new MySqlDialect().sqlToQuery(
+            expression as Parameters<MySqlDialect["sqlToQuery"]>[0],
+          ),
+        );
+      expect(metadataFacts).toHaveLength(17);
+      expect(metadataFacts.every(({ sql }) => sql.includes("JSON_EXTRACT"))).toBe(true);
+      expect(metadataFacts.every(({ sql }) => sql.includes("JSON_TYPE"))).toBe(true);
+      const stringFacts = metadataFacts.filter(({ sql }) =>
+        sql.includes("= 'STRING'"),
+      );
+      expect(stringFacts).toHaveLength(5);
+      expect(
+        stringFacts.every(({ sql }) => sql.includes("OCTET_LENGTH")),
+      ).toBe(true);
+      expect(
+        stringFacts.every(({ params }) => params.includes(500)),
+      ).toBe(true);
+      expect(metadataFacts.flatMap(({ params }) => params)).toEqual(
+        expect.arrayContaining([
+          "$.valuePathSlug",
+          "$.emailResourceId",
+          "$.completedAt",
+          "$.learnerFlowCanary",
+          "$.learnerFlowCanaryCadenceHours",
+          "$.learnerFlowFixture",
+          "$.learnerFlowFixtureStatus",
+          "$.retryable",
+          "$.retryAttemptCount",
+          "$.maxRetryAttempts",
+          "$.retryReason",
+          "$.bounced",
+          "$.complained",
+          "$.unsubscribed",
+          "$.providerResult.bounced",
+          "$.providerResult.complained",
+          "$.providerResult.unsubscribed",
+        ]),
+      );
     }
     expect(eventQueries).toHaveLength(3);
     expect(
@@ -251,6 +329,158 @@ describe("learner-flow summary pagination", () => {
     );
     expect(secondQuery.sql).toContain("`id` >");
     expect(secondQuery.params).toContain(fullPage[4999]?.id);
+  });
+
+  it("reconstructs only bounded classifier metadata facts", async () => {
+    const contactId = "metadata-facts";
+    const projected = {
+      ...intentRow(contactId),
+      completedAt: null,
+      metadataCompletedAt: "2026-08-13T10:00:00.000Z",
+      learnerFlowCanary: 1,
+      learnerFlowCanaryCadenceHours: 1.5,
+      learnerFlowFixture: 1,
+      learnerFlowFixtureStatus: "active",
+      retryable: 0,
+      retryAttemptCount: 3,
+      maxRetryAttempts: 5,
+      retryReason: "kit-timeout",
+      bounced: 1,
+      complained: 0,
+      unsubscribed: false,
+      providerResultBounced: false,
+      providerResultComplained: 1,
+      providerResultUnsubscribed: 1,
+      metadata: {
+        piiEmail: "must-not-survive@example.com",
+        providerError: { response: "must-not-survive" },
+      },
+    };
+    let idPage = 0;
+    const database = {
+      selectDistinct: (selection: unknown) => ({
+        from: () => ({
+          where: () => ({
+            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+          }),
+        }),
+      }),
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => {
+            if (table === sideEffectIntent) {
+              return { orderBy: () => ({ limit: () => [projected] }) };
+            }
+            if (table === contactEvent) {
+              return { orderBy: () => ({ limit: () => [] }) };
+            }
+            if (table === contact || table === contactState) return [];
+            return {
+              orderBy: () => ({
+                limit: () => {
+                  const result = idPage === 0 ? [{ contactId }] : [];
+                  idPage += 1;
+                  return result;
+                },
+              }),
+            };
+          },
+        }),
+      }),
+    };
+    const repository = new DrizzleCaptureMarketingRepository(database);
+
+    const pages = [];
+    for await (const page of repository.findSkillsWorkflowLearnerFlowRecordPages()) {
+      pages.push(page);
+    }
+
+    expect(pages[0]?.[0]?.intents[0]?.metadata).toEqual({
+      valuePathSlug: "ai-hero-skills-workflow",
+      emailResourceId: "ai-hero-skills-workflow.email-0",
+      completedAt: "2026-08-13T10:00:00.000Z",
+      learnerFlowCanary: true,
+      learnerFlowCanaryCadenceHours: 1.5,
+      learnerFlowFixture: true,
+      learnerFlowFixtureStatus: "active",
+      retryable: false,
+      retryAttemptCount: 3,
+      maxRetryAttempts: 5,
+      retryReason: "kit-timeout",
+      bounced: true,
+      complained: false,
+      unsubscribed: false,
+      providerResult: {
+        bounced: false,
+        complained: true,
+        unsubscribed: true,
+      },
+    });
+    expect(JSON.stringify(pages)).not.toContain("must-not-survive");
+    expect(JSON.stringify(pages)).not.toContain("piiEmail");
+    expect(JSON.stringify(pages)).not.toContain("providerError");
+  });
+
+  it("does not coerce wrong JSON scalar types into classifier facts", async () => {
+    const contactId = "wrong-json-types";
+    const projected = {
+      ...intentRow(contactId),
+      valuePathSlug: "null",
+      emailResourceId: "null",
+      metadataCompletedAt: "null",
+      learnerFlowCanary: "true",
+      learnerFlowCanaryCadenceHours: "1.5",
+      learnerFlowFixture: "1",
+      retryable: "false",
+      retryAttemptCount: "3",
+      maxRetryAttempts: "5",
+      bounced: "true",
+      complained: "false",
+      unsubscribed: "0",
+      providerResultBounced: "true",
+      learnerFlowFixtureStatus: "null",
+      retryReason: "null",
+    };
+    let idPage = 0;
+    const database = {
+      selectDistinct: (selection: unknown) => ({
+        from: () => ({
+          where: () => ({
+            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+          }),
+        }),
+      }),
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => {
+            if (table === sideEffectIntent) {
+              return { orderBy: () => ({ limit: () => [projected] }) };
+            }
+            if (table === contactEvent) {
+              return { orderBy: () => ({ limit: () => [] }) };
+            }
+            if (table === contact || table === contactState) return [];
+            return {
+              orderBy: () => ({
+                limit: () => {
+                  const result = idPage === 0 ? [{ contactId }] : [];
+                  idPage += 1;
+                  return result;
+                },
+              }),
+            };
+          },
+        }),
+      }),
+    };
+    const repository = new DrizzleCaptureMarketingRepository(database);
+
+    const pages = [];
+    for await (const page of repository.findSkillsWorkflowLearnerFlowRecordPages()) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[]]);
   });
 
   it("keyset-pages projected entry events inside one learner page", async () => {
