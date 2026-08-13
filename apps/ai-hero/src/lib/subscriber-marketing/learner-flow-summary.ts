@@ -7,6 +7,7 @@ import {
 import {
   classifyLearnerFlowContact,
   type LearnerFlowClassification,
+  type LearnerFlowContactInput,
   type LearnerFlowStuckCause,
 } from "./learner-flow-classifier";
 
@@ -43,16 +44,29 @@ function emptyAccumulator(): SummaryAccumulator {
   };
 }
 
+type LearnerFlowSummaryRecord = Pick<LearnerFlowRecord, "contactId"> & {
+  intents: LearnerFlowContactInput["intents"];
+  contactState?: Pick<
+    NonNullable<LearnerFlowRecord["contactState"]>,
+    "humanReview" | "lifecycle"
+  >;
+  entryEvents: Array<
+    Pick<
+      LearnerFlowRecord["entryEvents"][number],
+      "eventType" | "occurredAt" | "providerReference"
+    >
+  >;
+};
+
 function addLearnerFlowRecords(
   accumulator: SummaryAccumulator,
-  records: LearnerFlowRecord[],
+  records: LearnerFlowSummaryRecord[],
   now: string,
 ) {
   const learners = records.map((record) => ({
     contactId: record.contactId,
     classification: classifyLearnerFlowContact({
       contactId: record.contactId,
-      contact: record.contact,
       contactState: record.contactState,
       intents: record.intents,
       entryEvents: record.entryEvents,
@@ -91,7 +105,7 @@ function finishLearnerFlowSummary(
 }
 
 export function summarizeLearnerFlowRecords(args: {
-  records: LearnerFlowRecord[];
+  records: LearnerFlowSummaryRecord[];
   now: string;
 }): {
   learners: LearnerFlowSummaryItem[];
@@ -110,7 +124,7 @@ export function summarizeLearnerFlowRecords(args: {
 }
 
 export async function summarizeLearnerFlowRecordPages(args: {
-  pages: AsyncIterable<LearnerFlowRecord[]>;
+  pages: AsyncIterable<LearnerFlowSummaryRecord[]>;
   now: string;
 }) {
   const accumulator = emptyAccumulator();

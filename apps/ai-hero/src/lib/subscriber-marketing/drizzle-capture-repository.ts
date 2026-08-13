@@ -25,6 +25,7 @@ import {
 import {
 	COURSE_VALUE_PATH_SLUGS,
 	isCourseValuePathIntent,
+	type LearnerFlowIntent,
 } from './learner-flow-classifier'
 import type {
 	ContactEventRecord,
@@ -46,8 +47,18 @@ type AiHeroWriteDatabase = any
 // ~5k rows of intent payload (metadata/gates included) is ~5MB on the wire,
 // far under vtgate's 64MiB gRPC response cap.
 const SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE = 5000
+// Projected entry rows are small, but still page them so pathological history
+// cannot recreate vtgate's 64MiB response failure inside one learner page.
+export const LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE = 5000
 // Summary reads keep the joined payload and related-row IN lists bounded.
 export const LEARNER_FLOW_RECORD_PAGE_SIZE = 1000
+
+type LearnerFlowSummaryIntent = LearnerFlowIntent
+
+type LearnerFlowSummaryEntryEvent = Pick<
+	ContactEventRecord,
+	'id' | 'contactId' | 'eventType' | 'providerReference' | 'occurredAt'
+>
 
 export type LearnerFlowRecord = {
 	contactId: string
@@ -55,6 +66,13 @@ export type LearnerFlowRecord = {
 	contactState?: ContactState
 	intents: SideEffectIntent[]
 	entryEvents: ContactEventRecord[]
+}
+
+type LearnerFlowSummaryRecord = {
+	contactId: string
+	contactState?: Pick<ContactState, 'lifecycle' | 'humanReview'>
+	intents: LearnerFlowSummaryIntent[]
+	entryEvents: LearnerFlowSummaryEntryEvent[]
 }
 
 export class DrizzleCaptureMarketingRepository implements CaptureMarketingRepository {
@@ -417,7 +435,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	 */
 	async *findSkillsWorkflowLearnerFlowRecordPages(options?: {
 		includeCanary?: boolean
-	}): AsyncGenerator<LearnerFlowRecord[]> {
+	}): AsyncGenerator<LearnerFlowSummaryRecord[]> {
 		const contactIds = await this.findSkillsWorkflowLearnerFlowContactIds(options)
 		for (let offset = 0; offset < contactIds.length; offset += LEARNER_FLOW_RECORD_PAGE_SIZE) {
 			yield await this.findSkillsWorkflowLearnerFlowRecordsByContactIds(
@@ -536,39 +554,92 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 
 	private async findSkillsWorkflowLearnerFlowRecordsByContactIds(
 		contactIds: string[],
-	): Promise<LearnerFlowRecord[]> {
+	): Promise<LearnerFlowSummaryRecord[]> {
 		if (contactIds.length === 0) return []
-		const [intentRows, entryEventRows, contacts, states]: [any[], any[], any[], any[]] =
+		const [intentRows, entryEventRows, states]: [any[], any[], any[]] =
 			await Promise.all([
-				this.selectValuePathIntentRowsPaged(
-					inArray(sideEffectIntent.contactId, contactIds),
-				),
+				this.selectLearnerFlowIntentRowsPaged(contactIds),
+				this.selectLearnerFlowEntryEventRowsPaged(contactIds),
 				this.database
-					.select()
-					.from(contactEvent)
-					.where(
-						and(
-							inArray(contactEvent.contactId, contactIds),
-							eq(contactEvent.eventType, 'value-path.entered'),
-							inArray(
-								contactEvent.providerReference,
-								COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
-							),
-						),
-					),
-				this.database.select().from(contact).where(inArray(contact.id, contactIds)),
-				this.database
-					.select()
+					.select({
+						contactId: contactState.contactId,
+						lifecycle: contactState.lifecycle,
+						humanReview: contactState.humanReview,
+					})
 					.from(contactState)
 					.where(inArray(contactState.contactId, contactIds)),
 			])
-		return assembleLearnerFlowRecords({
+		return assembleLearnerFlowSummaryRecords({
 			contactIds,
 			intentRows,
 			entryEventRows,
-			contacts,
 			states,
 		})
+	}
+
+	private async selectLearnerFlowIntentRowsPaged(contactIds: string[]) {
+		const collected: any[] = []
+		let cursor: string | undefined
+		for (;;) {
+			const rows = await this.database
+				.select({
+					id: sideEffectIntent.id,
+					contactId: sideEffectIntent.contactId,
+					provider: sideEffectIntent.provider,
+					type: sideEffectIntent.type,
+					status: sideEffectIntent.status,
+					completedAt: sideEffectIntent.completedAt,
+					reviewReasons: sideEffectIntent.reviewReasons,
+					metadata: sideEffectIntent.metadata,
+					createdAt: sideEffectIntent.createdAt,
+				})
+				.from(sideEffectIntent)
+				.where(
+					and(
+						inArray(sideEffectIntent.contactId, contactIds),
+						eq(sideEffectIntent.provider, 'kit'),
+						eq(sideEffectIntent.type, 'send-value-path-email'),
+						cursor === undefined ? undefined : gt(sideEffectIntent.id, cursor),
+					),
+				)
+				.orderBy(asc(sideEffectIntent.id))
+				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+			collected.push(...rows)
+			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) return collected
+			cursor = rows[rows.length - 1].id
+		}
+	}
+
+	private async selectLearnerFlowEntryEventRowsPaged(contactIds: string[]) {
+		const collected: any[] = []
+		let cursor: string | undefined
+		for (;;) {
+			const rows = await this.database
+				.select({
+					id: contactEvent.id,
+					contactId: contactEvent.contactId,
+					eventType: contactEvent.eventType,
+					providerReference: contactEvent.providerReference,
+					occurredAt: contactEvent.occurredAt,
+				})
+				.from(contactEvent)
+				.where(
+					and(
+						inArray(contactEvent.contactId, contactIds),
+						eq(contactEvent.eventType, 'value-path.entered'),
+						inArray(
+							contactEvent.providerReference,
+							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
+						),
+						cursor === undefined ? undefined : gt(contactEvent.id, cursor),
+					),
+				)
+				.orderBy(asc(contactEvent.id))
+				.limit(LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE)
+			collected.push(...rows)
+			if (rows.length < LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE) return collected
+			cursor = rows[rows.length - 1].id
+		}
 	}
 
 	async updateSideEffectIntent(
@@ -603,6 +674,45 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			.limit(1)
 		return rows[0] ? toProviderIdentityRecord(rows[0]) : undefined
 	}
+}
+
+function assembleLearnerFlowSummaryRecords(args: {
+	contactIds: string[]
+	intentRows: any[]
+	entryEventRows: any[]
+	states: any[]
+}): LearnerFlowSummaryRecord[] {
+	const intents = args.intentRows.map(toLearnerFlowSummaryIntent).filter(isCourseValuePathIntent)
+	const entryEvents = args.entryEventRows.map(toLearnerFlowSummaryEntryEvent)
+	const statesByContactId = new Map<string, Pick<ContactState, 'lifecycle' | 'humanReview'>>(
+		args.states.map((record) => [
+			record.contactId,
+			{ lifecycle: record.lifecycle, humanReview: Boolean(record.humanReview) },
+		]),
+	)
+	const intentsByContactId = new Map<string, LearnerFlowSummaryIntent[]>()
+	for (const intent of intents) {
+		const current = intentsByContactId.get(intent.contactId) ?? []
+		current.push(intent)
+		intentsByContactId.set(intent.contactId, current)
+	}
+	const entryEventsByContactId = new Map<string, LearnerFlowSummaryEntryEvent[]>()
+	for (const event of entryEvents) {
+		const current = entryEventsByContactId.get(event.contactId) ?? []
+		current.push(event)
+		entryEventsByContactId.set(event.contactId, current)
+	}
+	return args.contactIds
+		.map((contactId) => ({
+			contactId,
+			contactState: statesByContactId.get(contactId),
+			intents: [...(intentsByContactId.get(contactId) ?? [])].sort(
+				(left, right) =>
+					left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+			),
+			entryEvents: entryEventsByContactId.get(contactId) ?? [],
+		}))
+		.filter((record) => record.intents.length > 0 || record.entryEvents.length > 0)
 }
 
 function assembleLearnerFlowRecords(args: {
@@ -641,6 +751,30 @@ function assembleLearnerFlowRecords(args: {
 			entryEvents: entryEventsByContactId.get(contactId) ?? [],
 		}))
 		.filter((record) => record.intents.length > 0 || record.entryEvents.length > 0)
+}
+
+function toLearnerFlowSummaryIntent(row: any): LearnerFlowSummaryIntent {
+	return {
+		id: row.id,
+		contactId: row.contactId,
+		provider: row.provider,
+		type: row.type,
+		status: row.status,
+		completedAt: row.completedAt ? toIso(row.completedAt) : null,
+		reviewReasons: row.reviewReasons,
+		metadata: row.metadata,
+		createdAt: toIso(row.createdAt),
+	}
+}
+
+function toLearnerFlowSummaryEntryEvent(row: any): LearnerFlowSummaryEntryEvent {
+	return {
+		id: row.id,
+		contactId: row.contactId,
+		eventType: row.eventType,
+		providerReference: row.providerReference,
+		occurredAt: toIso(row.occurredAt),
+	}
 }
 
 function toContactRecord(row: any): ContactRecord {

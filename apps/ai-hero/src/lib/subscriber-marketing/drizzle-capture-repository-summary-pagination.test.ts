@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DrizzleCaptureMarketingRepository,
+  LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE,
   LEARNER_FLOW_RECORD_PAGE_SIZE,
 } from "./drizzle-capture-repository";
 
@@ -25,18 +26,6 @@ const intentRow = (contactId: string) => ({
   createdAt: "2026-08-13T11:00:00.000Z",
 });
 
-const contactRow = (id: string) => ({
-  id,
-  userId: null,
-  email: `${id}@example.com`,
-  name: null,
-  lifecycle: "new",
-  isProvisional: true,
-  optInAttribution: null,
-  createdAt: "2026-08-13T10:00:00.000Z",
-  updatedAt: "2026-08-13T10:00:00.000Z",
-});
-
 describe("learner-flow summary pagination", () => {
   it("bounds the learner-id and related-row selects for every page", async () => {
     const firstIds = Array.from({ length: LEARNER_FLOW_RECORD_PAGE_SIZE }, (_, index) => ({
@@ -51,8 +40,17 @@ describe("learner-flow summary pagination", () => {
     const lastIds = [{ contactId: "contact-z" }];
     const idPages = [firstIds, secondIds, lastIds];
     const idQueries: Array<{ condition: unknown; limit: number }> = [];
-    const relatedQueries: Array<{ table: unknown; condition: unknown }> = [];
-    const intentQueries: Array<{ condition: unknown; limit: number }> = [];
+    const relatedQueries: Array<{
+      table: unknown;
+      condition: unknown;
+      selection: Record<string, unknown> | undefined;
+    }> = [];
+    const eventQueries: Array<{ condition: unknown; limit: number }> = [];
+    const intentQueries: Array<{
+      condition: unknown;
+      limit: number;
+      selection: Record<string, unknown> | undefined;
+    }> = [];
     let idPage = 0;
     let hydrationPage = 0;
     const database = {
@@ -63,12 +61,11 @@ describe("learner-flow summary pagination", () => {
           }),
         }),
       }),
-      select: () => ({
+      select: (selection?: Record<string, unknown>) => ({
         from: (table: unknown) => {
           const related =
             table === sideEffectIntent ||
             table === contactEvent ||
-            table === contact ||
             table === contactState;
           return {
             where: (condition: unknown) => {
@@ -76,7 +73,7 @@ describe("learner-flow summary pagination", () => {
                 return {
                   orderBy: () => ({
                     limit: (limit: number) => {
-                      intentQueries.push({ condition, limit });
+                      intentQueries.push({ condition, limit, selection });
                       const ids = idPages[hydrationPage] ?? [];
                       return ids.map(({ contactId }) => intentRow(contactId));
                     },
@@ -84,12 +81,18 @@ describe("learner-flow summary pagination", () => {
                 };
               }
               if (related) {
-                relatedQueries.push({ table, condition });
-                if (table === contact) {
-                  const ids = idPages[hydrationPage] ?? [];
-                  hydrationPage += 1;
-                  return ids.map(({ contactId }) => contactRow(contactId));
+                relatedQueries.push({ table, condition, selection });
+                if (table === contactEvent) {
+                  return {
+                    orderBy: () => ({
+                      limit: (limit: number) => {
+                        eventQueries.push({ condition, limit });
+                        return [];
+                      },
+                    }),
+                  };
                 }
+                if (table === contactState) hydrationPage += 1;
                 return [];
               }
               return {
@@ -133,13 +136,227 @@ describe("learner-flow summary pagination", () => {
     expect(thirdIdQuery.params).toContain(secondIds[LEARNER_FLOW_RECORD_PAGE_SIZE - 1]?.contactId);
     expect(intentQueries).toHaveLength(3);
     expect(intentQueries.every(({ limit }) => limit === 5000)).toBe(true);
-    expect(relatedQueries).toHaveLength(9);
+    for (const query of intentQueries) {
+      expect(Object.keys(query.selection ?? {}).sort()).toEqual([
+        "completedAt",
+        "contactId",
+        "createdAt",
+        "id",
+        "metadata",
+        "provider",
+        "reviewReasons",
+        "status",
+        "type",
+      ]);
+    }
+    expect(eventQueries).toHaveLength(3);
+    expect(
+      eventQueries.every(
+        ({ limit }) => limit === LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE,
+      ),
+    ).toBe(true);
+    expect(relatedQueries).toHaveLength(6);
+    expect(relatedQueries.some(({ table }) => table === contact)).toBe(false);
+    for (const query of relatedQueries.filter(({ table }) => table === contactState)) {
+      expect(Object.keys(query.selection ?? {}).sort()).toEqual([
+        "contactId",
+        "humanReview",
+        "lifecycle",
+      ]);
+    }
+    for (const query of relatedQueries.filter(({ table }) => table === contactEvent)) {
+      expect(Object.keys(query.selection ?? {}).sort()).toEqual([
+        "contactId",
+        "eventType",
+        "id",
+        "occurredAt",
+        "providerReference",
+      ]);
+    }
     for (const query of relatedQueries) {
       const rendered = new MySqlDialect().sqlToQuery(
         query.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
       );
       expect(rendered.sql).toContain(" in ");
     }
+  });
+
+  it("keyset-pages projected intents inside one learner page", async () => {
+    const contactId = "intent-heavy";
+    const fullPage = Array.from({ length: 5000 }, (_, index) => ({
+      ...intentRow(contactId),
+      id: `intent-${String(index).padStart(6, "0")}`,
+    }));
+    const lastPage = [
+      { ...intentRow(contactId), id: "intent-z-1" },
+      { ...intentRow(contactId), id: "intent-z-2" },
+    ];
+    const intentPages = [fullPage, lastPage];
+    const intentQueries: Array<{
+      selection: Record<string, unknown> | undefined;
+      condition: unknown;
+      limit: number;
+    }> = [];
+    let idPage = 0;
+    const database = {
+      selectDistinct: (selection: unknown) => ({
+        from: () => ({
+          where: () => ({
+            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+          }),
+        }),
+      }),
+      select: (selection?: Record<string, unknown>) => ({
+        from: (table: unknown) => ({
+          where: (condition: unknown) => {
+            if (table === sideEffectIntent) {
+              return {
+                orderBy: () => ({
+                  limit: (limit: number) => {
+                    intentQueries.push({ selection, condition, limit });
+                    return intentPages[intentQueries.length - 1] ?? [];
+                  },
+                }),
+              };
+            }
+            if (table === contactEvent) {
+              return { orderBy: () => ({ limit: () => [] }) };
+            }
+            if (table === contact || table === contactState) return [];
+            return {
+              orderBy: () => ({
+                limit: () => {
+                  const result = idPage === 0 ? [{ contactId }] : [];
+                  idPage += 1;
+                  return result;
+                },
+              }),
+            };
+          },
+        }),
+      }),
+    };
+    const repository = new DrizzleCaptureMarketingRepository(database);
+
+    const pages = [];
+    for await (const page of repository.findSkillsWorkflowLearnerFlowRecordPages()) {
+      pages.push(page);
+    }
+
+    expect(pages[0]?.[0]?.intents).toHaveLength(5002);
+    expect(intentQueries).toHaveLength(2);
+    expect(intentQueries.every(({ limit }) => limit === 5000)).toBe(true);
+    const secondQuery = new MySqlDialect().sqlToQuery(
+      intentQueries[1]?.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
+    );
+    expect(secondQuery.sql).toContain("`id` >");
+    expect(secondQuery.params).toContain(fullPage[4999]?.id);
+  });
+
+  it("keyset-pages projected entry events inside one learner page", async () => {
+    const contactId = "entry-heavy";
+    const fullPage = Array.from(
+      { length: LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE },
+      (_, index) => ({
+        id: `event-${String(index).padStart(6, "0")}`,
+        contactId,
+        eventType: "value-path.entered",
+        providerReference: "value-path:ai-hero-skills-workflow",
+        occurredAt: "2026-08-13T11:00:00.000Z",
+      }),
+    );
+    const lastPage = [
+      {
+        id: "event-z-1",
+        contactId,
+        eventType: "value-path.entered",
+        providerReference: "value-path:ai-hero-skills-workflow",
+        occurredAt: "2026-08-13T12:00:00.000Z",
+      },
+      {
+        id: "event-z-2",
+        contactId,
+        eventType: "value-path.entered",
+        providerReference: "value-path:ai-hero-skills-workflow",
+        occurredAt: "2026-08-13T13:00:00.000Z",
+      },
+    ];
+    const eventPages = [fullPage, lastPage];
+    const eventQueries: Array<{
+      selection: Record<string, unknown> | undefined;
+      condition: unknown;
+      limit: number;
+    }> = [];
+    let idPage = 0;
+    const database = {
+      selectDistinct: (selection: unknown) => ({
+        from: () => ({
+          where: () => ({
+            union: () => ({ as: () => ({ contactId: selection && {} }) }),
+          }),
+        }),
+      }),
+      select: (selection?: Record<string, unknown>) => ({
+        from: (table: unknown) => ({
+          where: (condition: unknown) => {
+            if (table === sideEffectIntent) {
+              return { orderBy: () => ({ limit: () => [] }) };
+            }
+            if (table === contactEvent) {
+              return {
+                orderBy: () => ({
+                  limit: (limit: number) => {
+                    eventQueries.push({ selection, condition, limit });
+                    return eventPages[eventQueries.length - 1] ?? [];
+                  },
+                }),
+              };
+            }
+            if (table === contact || table === contactState) return [];
+            return {
+              orderBy: () => ({
+                limit: () => {
+                  const result = idPage === 0 ? [{ contactId }] : [];
+                  idPage += 1;
+                  return result;
+                },
+              }),
+            };
+          },
+        }),
+      }),
+    };
+    const repository = new DrizzleCaptureMarketingRepository(database);
+
+    const pages = [];
+    for await (const page of repository.findSkillsWorkflowLearnerFlowRecordPages()) {
+      pages.push(page);
+    }
+
+    expect(pages).toHaveLength(1);
+    expect(pages[0]?.[0]?.entryEvents).toHaveLength(
+      LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE + 2,
+    );
+    expect(eventQueries).toHaveLength(2);
+    expect(
+      eventQueries.every(
+        ({ limit }) => limit === LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE,
+      ),
+    ).toBe(true);
+    expect(Object.keys(eventQueries[0]?.selection ?? {}).sort()).toEqual([
+      "contactId",
+      "eventType",
+      "id",
+      "occurredAt",
+      "providerReference",
+    ]);
+    const secondQuery = new MySqlDialect().sqlToQuery(
+      eventQueries[1]?.condition as Parameters<MySqlDialect["sqlToQuery"]>[0],
+    );
+    expect(secondQuery.sql).toContain("`id` >");
+    expect(secondQuery.params).toContain(
+      fullPage[LEARNER_FLOW_ENTRY_EVENT_PAGE_SIZE - 1]?.id,
+    );
   });
 
   it("does not classify a learner deleted after the frozen ID scan", async () => {
@@ -158,13 +375,10 @@ describe("learner-flow summary pagination", () => {
             if (table === sideEffectIntent) {
               return { orderBy: () => ({ limit: () => [] }) };
             }
-            if (
-              table === contactEvent ||
-              table === contact ||
-              table === contactState
-            ) {
-              return [];
+            if (table === contactEvent) {
+              return { orderBy: () => ({ limit: () => [] }) };
             }
+            if (table === contact || table === contactState) return [];
             return {
               orderBy: () => ({
                 limit: () => {
