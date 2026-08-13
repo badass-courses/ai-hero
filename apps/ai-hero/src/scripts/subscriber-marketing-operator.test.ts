@@ -31,14 +31,23 @@ describe('subscriber marketing operator reliability contracts', () => {
 		expect(gateStatus).toContain('byContact')
 	})
 
-	it('emits aggregate-only stuck summaries without customer rows', () => {
+	it('routes summary-only through the bounded aggregate reader', () => {
 		const stuckList = commandSource(
 			'learner-flow-stuck-list',
 			'learner-flow-unstick',
 		)
 		expect(stuckList).toContain("args.includes('--summary-only')")
-		expect(stuckList).toContain('stuck: _customerRows')
-		expect(stuckList).toContain('JSON.stringify(summary')
+		expect(stuckList).toContain('getLearnerFlowAggregateSummary()')
+		expect(stuckList.indexOf('getLearnerFlowAggregateSummary()')).toBeLessThan(
+			stuckList.indexOf('buildLearnerFlowStuckList()'),
+		)
+		expect(stuckList).not.toContain('stuck: _customerRows')
+		expect(stuckList).toContain('finally {')
+		expect(stuckList).toContain('await closeDatabasePool()')
+		expect(stuckList.indexOf('console.log')).toBeLessThan(
+			stuckList.indexOf('await closeDatabasePool()'),
+		)
+		expect(source).not.toContain('process.exit(0)')
 	})
 
 	it('keeps retry sends out of the broad learner-flow unstick command', () => {

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { db } from '@/db'
+import { closeDatabasePool, db } from '@/db'
 import {
 	contact,
 	contactEvent,
@@ -46,6 +46,7 @@ import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
 } from '@/lib/subscriber-marketing/learner-flow-classifier'
+import { getLearnerFlowAggregateSummary } from '@/lib/subscriber-marketing/learner-flow-summary'
 import {
 	cleanupLearnerFlowDrillFixtures,
 	createLearnerFlowDrillFixtures,
@@ -531,14 +532,30 @@ if (command === 'lookup') {
 	)
 	console.log(JSON.stringify({ ...result, receiptPath }, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
-	const result = await buildLearnerFlowStuckList()
 	if (args.includes('--summary-only')) {
-		const { stuck: _customerRows, ...summary } = result
-		console.log(JSON.stringify(summary, null, 2))
-	} else if (args.includes('--json')) {
-		console.log(JSON.stringify(result, null, 2))
+		try {
+			const summary = await getLearnerFlowAggregateSummary()
+			console.log(
+				JSON.stringify(
+					{
+						mode: 'read-only' as const,
+						writes: { database: false, provider: false },
+						...summary,
+					},
+					null,
+					2,
+				),
+			)
+		} finally {
+			await closeDatabasePool()
+		}
 	} else {
-		console.log(formatLearnerFlowStuckList(result))
+		const result = await buildLearnerFlowStuckList()
+		if (args.includes('--json')) {
+			console.log(JSON.stringify(result, null, 2))
+		} else {
+			console.log(formatLearnerFlowStuckList(result))
+		}
 	}
 } else if (command === 'learner-flow-unstick') {
 	const allowWrite = args.includes('--allow-write')

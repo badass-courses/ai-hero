@@ -1,5 +1,6 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { mysqlTable } from '@/db/mysql-table'
+import { createDatabasePoolCloser } from '@/db/pool-lifecycle'
 import { env } from '@/env.mjs'
 import {
 	type MySqlDatabase,
@@ -63,6 +64,9 @@ const pool = preserveQueryResultShape(
 const getConnection = pool.getConnection.bind(pool)
 pool.getConnection = (async () =>
 	preserveQueryResultShape(await getConnection())) as typeof pool.getConnection
+
+/** Close the app-owned MySQL pool after a finite CLI command completes. */
+export const closeDatabasePool = createDatabasePoolCloser(pool)
 
 export const db = drizzle(pool, {
 	schema,

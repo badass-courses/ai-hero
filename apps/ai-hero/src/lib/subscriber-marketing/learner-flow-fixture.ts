@@ -76,7 +76,9 @@ export function isLearnerFlowCanaryIntent(intent: SideEffectIntent) {
 	return intent.metadata.learnerFlowCanary === true
 }
 
-export function isCleanedLearnerFlowFixtureIntent(intent: SideEffectIntent) {
+export function isCleanedLearnerFlowFixtureIntent(
+	intent: Pick<SideEffectIntent, 'status' | 'metadata'>,
+) {
 	return (
 		intent.status === 'skipped' &&
 		intent.metadata.learnerFlowFixture === true &&
