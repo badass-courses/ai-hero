@@ -152,13 +152,15 @@ describe('agent OpenAPI contract', () => {
 		expect(update['x-idempotency']).toContain('not idempotent')
 		expect(update['x-idempotency']).toContain('GET the resource')
 		expect(update.description).toContain('slug is immutable')
-		expect(rollback.description).toContain(
-			'published resource remains published',
-		)
+		expect(update.description).toContain('queued durably after commit')
+		expect(rollback.description).toContain('lifecycle state')
 		expect(rollback.description).toContain('never rewritten')
 		expect(
 			document.components.schemas.EditorResourceMutationResponse.properties,
-		).toHaveProperty('warnings')
+		).toMatchObject({
+			effects: expect.any(Object),
+			warnings: expect.any(Object),
+		})
 	})
 
 	it('documents changelog compatibility fields as deprecated', () => {

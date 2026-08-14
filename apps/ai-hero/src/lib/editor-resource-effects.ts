@@ -1,55 +1,23 @@
 import { revalidatePath, revalidateTag } from 'next/cache'
+import {
+	CONTENT_RESOURCE_INDEX_REQUESTED_EVENT,
+	contentResourceIndexEventId,
+} from '@/inngest/events/content-resource-index'
+import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
-import type { ContentResource } from '@coursebuilder/core/schemas/content-resource-schema'
 
 import type {
-	EditorResourceEffectWarning,
+	EditorResourceEffectResult,
 	EditorResourceEffects,
-	EditorResourceRecord,
 } from './editor-resource'
-import { upsertPostToTypeSense } from './typesense-query'
-
-const MAX_RECONCILIATION_PASSES = 5
-
-function asTypesenseResource(resource: EditorResourceRecord): ContentResource {
-	const fields = resource.fields ?? {}
-	return {
-		id: resource.id,
-		type: resource.type,
-		createdById: resource.createdById,
-		currentVersionId: resource.currentVersionId,
-		fields,
-		slug: typeof fields.slug === 'string' ? fields.slug : null,
-		createdAt: resource.createdAt,
-		updatedAt: resource.updatedAt,
-		deletedAt: resource.deletedAt,
-		resources: [],
-		resourceProducts: [],
-		organizationId: resource.organizationId,
-		createdByOrganizationMembershipId:
-			resource.createdByOrganizationMembershipId,
-	}
-}
-
-function searchAction(
-	previous: EditorResourceRecord,
-	current: EditorResourceRecord,
-) {
-	return previous.fields?.state !== 'published' &&
-		current.fields?.state === 'published'
-		? 'publish'
-		: 'save'
-}
 
 export const editorResourceEffects: EditorResourceEffects = {
-	async afterWrite({
-		action,
-		previousResource,
-		resource,
-		userId,
-		getCurrentResource,
-	}) {
-		const warnings: EditorResourceEffectWarning[] = []
+	async afterWrite({ action, previousResource, resource, userId }) {
+		const warnings: EditorResourceEffectResult['warnings'] = []
+		const effects: EditorResourceEffectResult['effects'] = {
+			typesense: 'not-applicable',
+			cache: 'completed',
+		}
 		const fields = resource.fields ?? {}
 		const previousFields = previousResource.fields ?? {}
 		const slug = typeof fields.slug === 'string' ? fields.slug : null
@@ -65,71 +33,52 @@ export const editorResourceEffects: EditorResourceEffects = {
 			.sort()
 
 		if (resource.type === 'workshop') {
-			try {
-				let previousIndexed = previousResource
-				let candidate = resource
-				let reconciled = false
-
-				for (let pass = 1; pass <= MAX_RECONCILIATION_PASSES; pass++) {
-					const result = await upsertPostToTypeSense(
-						asTypesenseResource(candidate),
-						searchAction(previousIndexed, candidate),
-					)
-					if (!result.ok) {
-						warnings.push({
-							effect: 'typesense',
-							message: `Typesense reconciliation did not complete (${result.reason}).`,
-						})
-						break
-					}
-
-					const latest = await getCurrentResource()
-					if (
-						!latest ||
-						latest.currentVersionId === candidate.currentVersionId
-					) {
-						reconciled = true
-						break
-					}
-
-					await log.info('editor.resource.typesense.reconcile-stale', {
+			const committedVersionId = resource.currentVersionId
+			if (!committedVersionId) {
+				effects.typesense = 'degraded'
+				warnings.push({
+					effect: 'typesense',
+					message:
+						'Typesense indexing was not queued because the committed version ID is missing.',
+				})
+			} else {
+				try {
+					const eventId = contentResourceIndexEventId({
 						resourceId: resource.id,
-						indexedVersionId: candidate.currentVersionId,
-						currentVersionId: latest.currentVersionId,
-						pass,
+						committedVersionId,
+					})
+					const enqueued = await inngest.send({
+						id: eventId,
+						name: CONTENT_RESOURCE_INDEX_REQUESTED_EVENT,
+						data: {
+							resourceId: resource.id,
+							committedVersionId,
+						},
+					})
+					if (!enqueued.ids.length) {
+						throw new Error('Inngest accepted no indexing event')
+					}
+					effects.typesense = 'queued'
+					void log.info('editor.resource.typesense.queued', {
+						resourceId: resource.id,
+						versionId: committedVersionId,
+						eventId,
 						userId,
 					})
-					previousIndexed = candidate
-					candidate = latest
-				}
-
-				if (
-					!reconciled &&
-					!warnings.some(({ effect }) => effect === 'typesense')
-				) {
+				} catch (error) {
+					effects.typesense = 'degraded'
 					warnings.push({
 						effect: 'typesense',
 						message:
-							'Typesense reconciliation could not catch up with the current resource version.',
+							'Typesense indexing could not be queued after the database commit.',
 					})
-				}
-				if (reconciled) {
-					await log.info('editor.resource.typesense.success', {
+					void log.warn('editor.resource.typesense.enqueue-failed', {
 						resourceId: resource.id,
-						versionId: candidate.currentVersionId,
+						versionId: committedVersionId,
 						userId,
+						error: error instanceof Error ? error.message : String(error),
 					})
 				}
-			} catch (error) {
-				warnings.push({
-					effect: 'typesense',
-					message: 'Typesense reconciliation failed after the database commit.',
-				})
-				await log.warn('editor.resource.typesense.failed', {
-					resourceId: resource.id,
-					userId,
-					error: error instanceof Error ? error.message : String(error),
-				})
 			}
 		}
 
@@ -149,18 +98,19 @@ export const editorResourceEffects: EditorResourceEffects = {
 				}
 			}
 		} catch (error) {
+			effects.cache = 'degraded'
 			warnings.push({
 				effect: 'cache',
 				message: 'Cache invalidation failed after the database commit.',
 			})
-			await log.warn('editor.resource.cache-invalidation.failed', {
+			void log.warn('editor.resource.cache-invalidation.failed', {
 				resourceId: resource.id,
 				userId,
 				error: error instanceof Error ? error.message : String(error),
 			})
 		}
 
-		await log.info('editor.resource.write.completed', {
+		void log.info('editor.resource.write.completed', {
 			resourceId: resource.id,
 			resourceType: resource.type,
 			action,
@@ -168,8 +118,9 @@ export const editorResourceEffects: EditorResourceEffects = {
 			previousVersionId: previousResource.currentVersionId,
 			versionId: resource.currentVersionId,
 			userId,
+			effects,
 			warnings,
 		})
-		return warnings
+		return { effects, warnings }
 	},
 }

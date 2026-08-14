@@ -53,6 +53,13 @@ function readString(obj: unknown, key: string): string | undefined {
 	return typeof v === 'string' && v.length > 0 ? v : undefined
 }
 
+function readTimestamp(obj: unknown, key: string): number | undefined {
+	const value = readString(obj, key)
+	if (!value) return undefined
+	const timestamp = Date.parse(value)
+	return Number.isFinite(timestamp) ? timestamp : undefined
+}
+
 function readImageUrl(obj: unknown, key: string): string | undefined {
 	if (!obj || typeof obj !== 'object') return undefined
 	const v = (obj as Record<string, unknown>)[key]
@@ -235,6 +242,7 @@ export async function upsertPostToTypeSense(
 			visibility: post.fields?.visibility,
 			state: post.fields?.state,
 			created_at_timestamp: post.createdAt?.getTime() ?? Date.now(),
+			published_at_timestamp: readTimestamp(post.fields, 'publishedAt'),
 			updated_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
 			...(tags.length > 0 && { tags: tags.map((tag) => tag) }),
 			...(parentResources && {
@@ -274,9 +282,10 @@ export async function upsertPostToTypeSense(
 				.create(
 					{
 						...resource.data,
-						...(action === 'publish' && {
-							published_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
-						}),
+						...(action === 'publish' &&
+							resource.data.published_at_timestamp === undefined && {
+								published_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
+							}),
 						updated_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
 					},
 					{ action: 'emplace' },

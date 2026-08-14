@@ -91,6 +91,7 @@ beforeEach(() => {
 			createdById: 'user_editor',
 		},
 		baselineVersion: null,
+		effects: { typesense: 'queued', cache: 'completed' },
 		warnings: [],
 	})
 })

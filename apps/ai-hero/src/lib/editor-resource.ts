@@ -60,11 +60,17 @@ export const EditorResourceEffectWarningSchema = z.object({
 	message: z.string(),
 })
 
+export const EditorResourceEffectStatusSchema = z.object({
+	typesense: z.enum(['queued', 'degraded', 'not-applicable']),
+	cache: z.enum(['completed', 'degraded']),
+})
+
 export const EditorResourceMutationResponseSchema = z.object({
 	resource: EditorResourceSchema,
 	revision: z.string(),
 	version: EditorResourceVersionSchema,
 	baselineVersion: EditorResourceVersionSchema.nullable(),
+	effects: EditorResourceEffectStatusSchema,
 	warnings: z.array(EditorResourceEffectWarningSchema),
 })
 
@@ -136,6 +142,10 @@ export interface EditorResourceRepository {
 export type EditorResourceEffectWarning = z.infer<
 	typeof EditorResourceEffectWarningSchema
 >
+export type EditorResourceEffectResult = {
+	effects: z.infer<typeof EditorResourceEffectStatusSchema>
+	warnings: EditorResourceEffectWarning[]
+}
 
 export interface EditorResourceEffects {
 	afterWrite(input: {
@@ -143,8 +153,7 @@ export interface EditorResourceEffects {
 		previousResource: EditorResourceRecord
 		resource: EditorResourceRecord
 		userId: string
-		getCurrentResource: () => Promise<EditorResourceRecord | null>
-	}): Promise<EditorResourceEffectWarning[]>
+	}): Promise<EditorResourceEffectResult>
 }
 
 export class EditorResourceError extends Error {
@@ -436,19 +445,18 @@ export function createEditorResourceService(
 				fields,
 			})
 
-			const warnings = await effects.afterWrite({
+			const effectResult = await effects.afterWrite({
 				action: request.action,
 				previousResource: result.previousResource,
 				resource: result.resource,
 				userId: context.userId,
-				getCurrentResource: () => repository.getResource(resourceId),
 			})
 
 			return {
 				...responseResource(result.resource),
 				version: result.version,
 				baselineVersion: result.baselineVersion,
-				warnings,
+				...effectResult,
 			}
 		},
 
@@ -520,19 +528,18 @@ export function createEditorResourceService(
 				),
 			})
 
-			const warnings = await effects.afterWrite({
+			const effectResult = await effects.afterWrite({
 				action: 'rollback',
 				previousResource: result.previousResource,
 				resource: result.resource,
 				userId: context.userId,
-				getCurrentResource: () => repository.getResource(resourceId),
 			})
 
 			return {
 				...responseResource(result.resource),
 				version: result.version,
 				baselineVersion: result.baselineVersion,
-				warnings,
+				...effectResult,
 			}
 		},
 	}

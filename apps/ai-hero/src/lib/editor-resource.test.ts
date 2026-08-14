@@ -176,7 +176,10 @@ const effects = { afterWrite: vi.fn() }
 
 beforeEach(() => {
 	effects.afterWrite.mockReset()
-	effects.afterWrite.mockResolvedValue([])
+	effects.afterWrite.mockResolvedValue({
+		effects: { typesense: 'queued', cache: 'completed' },
+		warnings: [],
+	})
 })
 
 describe('editor resource authorization', () => {
@@ -531,7 +534,13 @@ describe('editor resource service', () => {
 		const orderedEffects = {
 			afterWrite: vi.fn(async () => {
 				order.push('effects')
-				return []
+				return {
+					effects: {
+						typesense: 'queued' as const,
+						cache: 'completed' as const,
+					},
+					warnings: [],
+				}
 			}),
 		}
 		const service = createEditorResourceService(repository, orderedEffects)
@@ -694,9 +703,10 @@ describe('editor resource service', () => {
 	})
 
 	it('returns degraded post-commit effect warnings', async () => {
-		effects.afterWrite.mockResolvedValueOnce([
-			{ effect: 'typesense', message: 'Typesense reconciliation failed.' },
-		])
+		effects.afterWrite.mockResolvedValueOnce({
+			effects: { typesense: 'degraded', cache: 'completed' },
+			warnings: [{ effect: 'typesense', message: 'Typesense enqueue failed.' }],
+		})
 		const repository = new FakeRepository([resource()])
 		const service = createEditorResourceService(repository, effects)
 		const initial = await service.get('workshop_1', editor)
@@ -707,8 +717,12 @@ describe('editor resource service', () => {
 			editor,
 		)
 
+		expect(result.effects).toEqual({
+			typesense: 'degraded',
+			cache: 'completed',
+		})
 		expect(result.warnings).toEqual([
-			{ effect: 'typesense', message: 'Typesense reconciliation failed.' },
+			{ effect: 'typesense', message: 'Typesense enqueue failed.' },
 		])
 	})
 

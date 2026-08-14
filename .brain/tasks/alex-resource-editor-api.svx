@@ -73,9 +73,15 @@ After a timeout, GET the resource and compare its representation and ETag before
 
 The slug is immutable through the v1 update and rollback routes. Rollback preserves the current lifecycle state, so it cannot publish or unpublish.
 
+## Durable search indexing
+
+After a workshop commit, the API emits immutable `content/resource.index-requested` data containing only `resourceId` and `committedVersionId`. Its event ID is bound to that committed version. The registered Inngest function uses keyed concurrency of one run per resource ID. Every run reads and indexes the latest current MySQL resource inside a durable step, so reordered events converge on current state instead of replaying an older request snapshot.
+
+The API invalidates page caches synchronously. Its mutation response reports whether indexing was queued or degraded and includes a warning when enqueue fails. It never waits for a synchronous Typesense write.
+
 ## Verification gap
 
-The focused tests verify the service-level stale-write contract and post-commit effect interleavings. They do not run two transactions against live MySQL. Verify `SELECT ... FOR UPDATE`, affected-row compare-and-swap behavior, and Typesense connectivity in a non-production deployment before launch.
+The focused tests verify the service-level stale-write contract and reversed Inngest event behavior. They do not run two transactions against live MySQL. Verify `SELECT ... FOR UPDATE`, affected-row compare-and-swap behavior, Inngest registration, and Typesense connectivity in a non-production deployment before launch.
 
 ## Guardrails
 

@@ -8,6 +8,10 @@ import {
 	AiCodingDictionarySourceChanged,
 } from '@/inngest/events/ai-coding-dictionary'
 import {
+	CONTENT_RESOURCE_INDEX_REQUESTED_EVENT,
+	ContentResourceIndexRequested,
+} from '@/inngest/events/content-resource-index'
+import {
 	GITHUB_SOURCE_SYNC_REQUESTED_EVENT,
 	GithubSourceSyncRequested,
 } from '@/inngest/events/github-source'
@@ -181,6 +185,7 @@ import { inngestTelemetryMiddleware } from './inngest-telemetry-middleware'
 export type Events = {
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
+	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated

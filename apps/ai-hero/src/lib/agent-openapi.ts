@@ -928,7 +928,7 @@ const editorResourcePaths = {
 			operationId: 'updateEditorResource',
 			summary: 'Save or publish an assigned resource',
 			description:
-				'Merges allowed fields into an assigned page or workshop. The slug is immutable in v1. action=publish is the only accepted state transition. Every write appends immutable version history and may return degraded post-commit effect warnings. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
+				'Merges allowed fields into an assigned page or workshop. The slug is immutable in v1. action=publish is the only accepted state transition. Every write appends immutable version history. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
 			responseSchema: 'EditorResourceMutationResponse',
 			requestSchema: 'EditorResourceMutationRequest',
 			parameters: [ifMatchParameter],
@@ -970,7 +970,7 @@ const editorResourcePaths = {
 			operationId: 'rollbackEditorResource',
 			summary: 'Restore a prior resource version',
 			description:
-				'Copies a selected prior snapshot into a new immutable child version while preserving the current slug. A published resource remains published. History is never rewritten. The response may include degraded post-commit effect warnings. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
+				'Copies a selected prior snapshot into a new immutable child version while preserving the current slug and lifecycle state. History is never rewritten. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
 			responseSchema: 'EditorResourceMutationResponse',
 			requestSchema: 'EditorResourceRollbackRequest',
 			parameters: [ifMatchParameter],

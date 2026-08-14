@@ -32,6 +32,7 @@ import { cohortEntitlementSyncWorkflow } from './functions/cohort-entitlement-sy
 import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
+import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
@@ -123,6 +124,7 @@ export const inngestConfig = {
 		eventReminderBroadcast,
 		cohortReminderBroadcast,
 		contentReadRetention,
+		contentResourceIndexRequested,
 		courseSyncDetectionPoller,
 		typesensePopularitySync,
 		valuePathEmailExecutor,
