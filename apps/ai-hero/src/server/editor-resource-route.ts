@@ -12,6 +12,7 @@ export const editorResourceCorsHeaders = {
 	'Access-Control-Allow-Methods': 'GET, PATCH, POST, OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type, Authorization, If-Match',
 	'Access-Control-Expose-Headers': 'ETag',
+	'Cache-Control': 'no-store',
 }
 
 export function editorResourceOptionsResponse() {

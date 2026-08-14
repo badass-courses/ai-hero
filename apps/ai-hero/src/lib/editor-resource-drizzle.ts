@@ -5,7 +5,7 @@ import {
 	contentResourceVersion,
 	contributionTypes,
 } from '@/db/schema'
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, max, or } from 'drizzle-orm'
 
 import {
 	buildEditorResourceFieldsDigest,
@@ -243,11 +243,12 @@ export const editorResourceRepository: EditorResourceRepository = {
 				)
 			}
 
-			const latestVersion = await tx.query.contentResourceVersion.findFirst({
-				where: eq(contentResourceVersion.resourceId, input.resourceId),
-				orderBy: desc(contentResourceVersion.versionNumber),
-			})
-			const firstVersionNumber = (latestVersion?.versionNumber ?? 0) + 1
+			const latestVersionNumber = await tx
+				.select({ value: max(contentResourceVersion.versionNumber) })
+				.from(contentResourceVersion)
+				.where(eq(contentResourceVersion.resourceId, input.resourceId))
+				.then((rows) => Number(rows[0]?.value ?? 0))
+			const firstVersionNumber = latestVersionNumber + 1
 			const now = new Date()
 			const baselineVersion = current.currentVersionId
 				? null
@@ -258,7 +259,7 @@ export const editorResourceRepository: EditorResourceRepository = {
 						versionNumber: firstVersionNumber,
 						fields: current.fields ?? {},
 						createdAt: now,
-						createdById: input.userId,
+						createdById: current.createdById,
 					}
 			const version: EditorResourceVersion = {
 				id: createEditorResourceVersionId(current.id),

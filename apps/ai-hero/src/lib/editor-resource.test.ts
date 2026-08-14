@@ -6,6 +6,7 @@ import {
 	createEditorResourceVersionId,
 	createEditorResourceService,
 	EditorResourceError,
+	parseEditorResourceEtag,
 	type EditorAccessContext,
 	type EditorResourceRecord,
 	type EditorResourceRepository,
@@ -126,7 +127,7 @@ class FakeRepository implements EditorResourceRepository {
 						versionNumber: nextNumber,
 						fields: structuredClone(current.fields ?? {}),
 						createdAt: now,
-						createdById: input.userId,
+						createdById: current.createdById,
 					}
 		const version: EditorResourceVersion = {
 			id: `version_${this.sequence}`,
@@ -166,6 +167,21 @@ beforeEach(() => {
 })
 
 describe('editor resource authorization', () => {
+	it('accepts only one quoted strong If-Match validator', () => {
+		expect(parseEditorResourceEtag('"revision"')).toBe('revision')
+		for (const invalid of [
+			null,
+			'revision',
+			'W/"revision"',
+			'*',
+			'"first", "second"',
+			'"unterminated',
+			'""',
+		]) {
+			expect(parseEditorResourceEtag(invalid)).toBeNull()
+		}
+	})
+
 	it('creates globally unique ids with a resource-bound identity segment', () => {
 		const first = createEditorResourceVersionId('workshop_1')
 		const second = createEditorResourceVersionId('workshop_2')
@@ -178,6 +194,9 @@ describe('editor resource authorization', () => {
 	it('uses an active editor contribution as the exact resource grant', () => {
 		expect(canAccessEditorResource(resource(), editor)).toBe(true)
 		expect(canAccessEditorResource(resource(), stranger)).toBe(false)
+		expect(
+			canAccessEditorResource(resource({ deletedAt: new Date() }), editor),
+		).toBe(false)
 	})
 
 	it('rejects the wrong, inactive, or deleted contribution and type', () => {
@@ -288,6 +307,7 @@ describe('editor resource service', () => {
 		expect(result.baselineVersion).toMatchObject({
 			versionNumber: 1,
 			parentVersionId: null,
+			createdById: 'user_owner',
 			fields: { title: 'Crash Course' },
 		})
 		expect(result.version).toMatchObject({
@@ -296,6 +316,66 @@ describe('editor resource service', () => {
 			fields: { body: 'First edit' },
 		})
 		expect(result.resource.currentVersionId).toBe(result.version.id)
+	})
+
+	it('rejects unknown mutable fields while preserving legacy fields', async () => {
+		const current = resource()
+		const repository = new FakeRepository([
+			resource({ fields: { ...current.fields, legacyFlag: true } }),
+		])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+
+		await expect(
+			service.update(
+				'workshop_1',
+				{ action: 'save', fields: { surprise: 'nope' } },
+				initial.revision,
+				editor,
+			),
+		).rejects.toMatchObject({ status: 400, code: 'invalid-input' })
+		const saved = await service.update(
+			'workshop_1',
+			{ action: 'save', fields: { body: 'approved' } },
+			initial.revision,
+			editor,
+		)
+		expect(saved.resource.fields).toMatchObject({
+			body: 'approved',
+			legacyFlag: true,
+		})
+	})
+
+	it('lets only one concurrent writer commit the same revision', async () => {
+		const repository = new FakeRepository([resource()])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+		const results = await Promise.allSettled([
+			service.update(
+				'workshop_1',
+				{ action: 'save', fields: { body: 'first' } },
+				initial.revision,
+				editor,
+			),
+			service.update(
+				'workshop_1',
+				{ action: 'save', fields: { body: 'second' } },
+				initial.revision,
+				editor,
+			),
+		])
+
+		expect(
+			results.filter((result) => result.status === 'fulfilled'),
+		).toHaveLength(1)
+		expect(
+			results.find((result) => result.status === 'rejected'),
+		).toMatchObject({
+			status: 'rejected',
+			reason: { status: 409, code: 'conflict' },
+		})
+		expect(await repository.listVersions('workshop_1')).toHaveLength(2)
+		expect(effects.afterWrite).toHaveBeenCalledOnce()
 	})
 
 	it('chains normal versions and rejects stale writes with 409', async () => {
@@ -385,6 +465,25 @@ describe('editor resource service', () => {
 			),
 		).rejects.toMatchObject({ status: 400, code: 'invalid-input' })
 		expect(repository.resources.get('workshop_1')?.currentVersionId).toBeNull()
+	})
+
+	it('does not run effects when the transaction fails', async () => {
+		const repository = new FakeRepository([resource()])
+		vi.spyOn(repository, 'commitVersionedMutation').mockRejectedValue(
+			new Error('transaction rolled back'),
+		)
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+
+		await expect(
+			service.update(
+				'workshop_1',
+				{ action: 'save', fields: { body: 'never committed' } },
+				initial.revision,
+				editor,
+			),
+		).rejects.toThrow('transaction rolled back')
+		expect(effects.afterWrite).not.toHaveBeenCalled()
 	})
 
 	it('runs effects only after the versioned commit returns', async () => {

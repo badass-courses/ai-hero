@@ -130,6 +130,10 @@ describe('agent OpenAPI contract', () => {
 			expect(operation.responses).toHaveProperty('428')
 		}
 
+		for (const operation of [read, update, rollback]) {
+			expect(operation.responses['200']).toHaveProperty('headers.ETag')
+		}
+
 		expect(update['x-resource-authorization']).toContain(
 			'active ContentContribution',
 		)

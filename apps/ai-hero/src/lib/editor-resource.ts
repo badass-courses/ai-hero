@@ -223,11 +223,15 @@ export function formatEditorResourceEtag(revision: string) {
 export function parseEditorResourceEtag(value: string | null) {
 	if (!value) return null
 	const trimmed = value.trim()
-	if (trimmed.startsWith('W/')) return null
-	if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-		return trimmed.slice(1, -1)
+	if (
+		trimmed === '*' ||
+		trimmed.startsWith('W/') ||
+		trimmed.includes(',') ||
+		!/^"[^"\r\n]+"$/.test(trimmed)
+	) {
+		return null
 	}
-	return trimmed
+	return trimmed.slice(1, -1)
 }
 
 function publicResource(resource: EditorResourceRecord) {
@@ -285,13 +289,56 @@ function assertValidResourceFields(
 	}
 }
 
+const MUTABLE_EDITOR_FIELDS: Record<EditorResourceType, ReadonlySet<string>> = {
+	workshop: new Set([
+		'body',
+		'coverImage',
+		'description',
+		'endsAt',
+		'github',
+		'githubUrl',
+		'slug',
+		'startsAt',
+		'subtitle',
+		'timezone',
+		'title',
+		'visibility',
+	]),
+	page: new Set([
+		'body',
+		'description',
+		'slug',
+		'socialImage',
+		'title',
+		'visibility',
+	]),
+}
+
 function validateCandidateFields(
 	resource: EditorResourceRecord,
 	request: EditorResourceMutationRequest,
 ) {
+	const resourceType = resource.type
+	if (!supportedType(resourceType)) {
+		throw new EditorResourceError(
+			`Resource type ${resourceType} is not supported by the editor API`,
+			422,
+			'unsupported-resource',
+		)
+	}
 	if ('state' in request.fields) {
 		throw new EditorResourceError(
 			'Use action=publish for state changes',
+			400,
+			'invalid-input',
+		)
+	}
+	const unknownFields = Object.keys(request.fields).filter(
+		(field) => !MUTABLE_EDITOR_FIELDS[resourceType].has(field),
+	)
+	if (unknownFields.length) {
+		throw new EditorResourceError(
+			`Unsupported mutable fields: ${unknownFields.sort().join(', ')}`,
 			400,
 			'invalid-input',
 		)

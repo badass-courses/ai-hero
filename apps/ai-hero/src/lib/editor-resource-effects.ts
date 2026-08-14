@@ -12,11 +12,16 @@ export const editorResourceEffects: EditorResourceEffects = {
 		const slug = typeof fields.slug === 'string' ? fields.slug : null
 		const previousSlug =
 			typeof previousFields.slug === 'string' ? previousFields.slug : null
+		const changedFields = [
+			...new Set([...Object.keys(previousFields), ...Object.keys(fields)]),
+		]
+			.filter(
+				(key) =>
+					JSON.stringify(previousFields[key]) !== JSON.stringify(fields[key]),
+			)
+			.sort()
 		const searchAction =
-			action === 'publish' ||
-			(action === 'rollback' &&
-				previousFields.state !== 'published' &&
-				fields.state === 'published')
+			previousFields.state !== 'published' && fields.state === 'published'
 				? 'publish'
 				: 'save'
 
@@ -81,6 +86,8 @@ export const editorResourceEffects: EditorResourceEffects = {
 			resourceId: resource.id,
 			resourceType: resource.type,
 			action,
+			changedFields,
+			previousVersionId: previousResource.currentVersionId,
 			versionId: resource.currentVersionId,
 			userId,
 		})

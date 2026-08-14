@@ -821,6 +821,11 @@ const contentPaths = {
 	},
 }
 
+const etagResponseHeader = {
+	description: 'Strong revision validator for the returned resource.',
+	schema: { type: 'string' },
+}
+
 const ifMatchParameter = {
 	name: 'If-Match',
 	in: 'header',
@@ -836,6 +841,7 @@ function editorResourceOperation({
 	responseSchema,
 	readOnly,
 	destructive,
+	returnsEtag = false,
 	requestSchema,
 	parameters,
 	extraResponses,
@@ -846,6 +852,7 @@ function editorResourceOperation({
 	responseSchema: string
 	readOnly: boolean
 	destructive: boolean
+	returnsEtag?: boolean
 	requestSchema?: string
 	parameters?: Array<Record<string, unknown>>
 	extraResponses?: Record<string, unknown>
@@ -875,7 +882,10 @@ function editorResourceOperation({
 				}
 			: {}),
 		responses: {
-			'200': response('Successful response.', schemaRef(responseSchema)),
+			'200': {
+				...response('Successful response.', schemaRef(responseSchema)),
+				...(returnsEtag ? { headers: { ETag: etagResponseHeader } } : {}),
+			},
 			...authErrorResponses,
 			...extraResponses,
 		},
@@ -906,6 +916,7 @@ const editorResourcePaths = {
 			responseSchema: 'EditorResourceResponse',
 			readOnly: true,
 			destructive: false,
+			returnsEtag: true,
 		}),
 		patch: editorResourceOperation({
 			operationId: 'updateEditorResource',
@@ -917,6 +928,7 @@ const editorResourcePaths = {
 			parameters: [ifMatchParameter],
 			readOnly: false,
 			destructive: true,
+			returnsEtag: true,
 			extraResponses: {
 				...commonErrorResponses,
 				'409': response(
@@ -958,6 +970,7 @@ const editorResourcePaths = {
 			parameters: [ifMatchParameter],
 			readOnly: false,
 			destructive: true,
+			returnsEtag: true,
 			extraResponses: {
 				...commonErrorResponses,
 				'409': response(

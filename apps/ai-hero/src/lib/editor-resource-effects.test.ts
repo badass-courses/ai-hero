@@ -42,6 +42,9 @@ function workshop(slug: string): EditorResourceRecord {
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.revalidatePath.mockReset()
+	mocks.revalidateTag.mockReset()
+	mocks.upsertPostToTypeSense.mockReset()
 	mocks.upsertPostToTypeSense.mockResolvedValue(undefined)
 })
 
@@ -64,5 +67,45 @@ describe('editor resource post-commit effects', () => {
 		expect(mocks.revalidatePath).toHaveBeenCalledWith('/workshops')
 		expect(mocks.revalidatePath).toHaveBeenCalledWith('/workshops/old-slug')
 		expect(mocks.revalidatePath).toHaveBeenCalledWith('/workshops/new-slug')
+	})
+
+	it('returns after a committed write when Typesense fails', async () => {
+		mocks.upsertPostToTypeSense.mockRejectedValue(new Error('search down'))
+
+		await expect(
+			editorResourceEffects.afterWrite({
+				action: 'save',
+				previousResource: workshop('old-slug'),
+				resource: workshop('new-slug'),
+				userId: 'editor_1',
+			}),
+		).resolves.toBeUndefined()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'editor.resource.typesense.failed',
+			expect.objectContaining({ error: 'search down' }),
+		)
+	})
+
+	it('returns after a committed write when cache invalidation fails', async () => {
+		mocks.revalidateTag.mockImplementationOnce(() => {
+			throw new Error('cache down')
+		})
+
+		await expect(
+			editorResourceEffects.afterWrite({
+				action: 'save',
+				previousResource: workshop('old-slug'),
+				resource: workshop('new-slug'),
+				userId: 'editor_1',
+			}),
+		).resolves.toBeUndefined()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'editor.resource.cache-invalidation.failed',
+			expect.objectContaining({ error: 'cache down' }),
+		)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'editor.resource.write.completed',
+			expect.objectContaining({ versionId: 'version_2' }),
+		)
 	})
 })
