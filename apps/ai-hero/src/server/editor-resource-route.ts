@@ -3,17 +3,19 @@ import { subject } from '@casl/ability'
 
 import {
 	EditorResourceError,
-	formatEditorResourceEtag,
 	type EditorResourceRecord,
 } from '@/lib/editor-resource'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 
+export const AIH_EXPECTED_REVISION_HEADER = 'X-AIH-Expected-Revision'
+export const AIH_RESOURCE_REVISION_HEADER = 'X-AIH-Resource-Revision'
+
 export const editorResourceCorsHeaders = {
 	'Access-Control-Allow-Origin': '*',
 	'Access-Control-Allow-Methods': 'GET, PATCH, POST, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type, Authorization, If-Match',
-	'Access-Control-Expose-Headers': 'ETag',
+	'Access-Control-Allow-Headers': `Content-Type, Authorization, ${AIH_EXPECTED_REVISION_HEADER}`,
+	'Access-Control-Expose-Headers': AIH_RESOURCE_REVISION_HEADER,
 	'Cache-Control': 'no-store',
 }
 
@@ -86,7 +88,7 @@ export function editorResourceJson(
 		headers: {
 			...editorResourceCorsHeaders,
 			...(options.revision
-				? { ETag: formatEditorResourceEtag(options.revision) }
+				? { [AIH_RESOURCE_REVISION_HEADER]: options.revision }
 				: {}),
 		},
 	})

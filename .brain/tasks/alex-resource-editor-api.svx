@@ -23,7 +23,7 @@ The API is the required unblock. UI changes are not required.
 - The caller cannot read or mutate an unassigned resource through the editor API.
 - Every write creates immutable `ContentResourceVersion` history and updates `currentVersionId` atomically.
 - If a resource has no current version, the first write creates a baseline snapshot before the candidate version so rollback is possible.
-- Writes use optimistic concurrency through `If-Match`, an ETag, version ID, or equivalent stable hash. A stale write returns HTTP 409.
+- Writes use `X-AIH-Expected-Revision` for optimistic concurrency. Reads return the same value in JSON as `revision` and in `X-AIH-Resource-Revision`. A missing expected revision returns HTTP 428. A stale revision reaches the route and returns HTTP 409.
 - Rollback creates a new immutable version from a selected prior version. It never rewrites history.
 - Workshop mutation runs the existing schema validation, Typesense behavior where applicable, cache invalidation, canonical path revalidation, and structured logging.
 - The API is included truthfully in the existing OpenAPI registry with destructive/read-only classification.
@@ -38,7 +38,7 @@ Prefer a small resource-bound surface under `/api/editor/resources`. Exact route
 Minimum operations:
 
 - list assigned resources
-- get one assigned resource with revision or ETag
+- get one assigned resource with JSON `revision` and `X-AIH-Resource-Revision`
 - update/save/publish one assigned resource
 - list immutable versions
 - rollback to a selected version by creating a new version
@@ -69,7 +69,9 @@ Use a transaction for version rows, resource fields, and the current pointer.
 
 Editor mutations are not idempotent. They do not accept `Idempotency-Key`. Every accepted mutation appends an immutable version.
 
-After a timeout, GET the resource and compare its representation and ETag before retrying. Retry only with the current `If-Match` value. Do not add a schema migration only for first-release idempotency.
+After a timeout, GET the resource and compare its representation and revision before retrying. Retry only with the current `X-AIH-Expected-Revision` value. Do not add a schema migration only for first-release idempotency.
+
+Do not use HTTP `ETag` or `If-Match` for this API. Vercel replaces the route's ETag with a weak body ETag and intercepts `If-Match` with platform HTTP 412 before the route can return its own conflict response.
 
 The slug is immutable through the v1 update and rollback routes. Rollback preserves the current lifecycle state, so it cannot publish or unpublish.
 

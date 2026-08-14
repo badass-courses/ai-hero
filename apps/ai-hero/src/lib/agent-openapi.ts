@@ -821,16 +821,18 @@ const contentPaths = {
 	},
 }
 
-const etagResponseHeader = {
-	description: 'Strong revision validator for the returned resource.',
+const revisionResponseHeader = {
+	description:
+		'Resource revision to send as X-AIH-Expected-Revision on the next mutation.',
 	schema: { type: 'string' },
 }
 
-const ifMatchParameter = {
-	name: 'If-Match',
+const expectedRevisionParameter = {
+	name: 'X-AIH-Expected-Revision',
 	in: 'header',
 	required: true,
-	description: 'Strong ETag returned by the last resource read.',
+	description:
+		'Revision from the last response body or X-AIH-Resource-Revision header.',
 	schema: { type: 'string' },
 }
 
@@ -841,7 +843,7 @@ function editorResourceOperation({
 	responseSchema,
 	readOnly,
 	destructive,
-	returnsEtag = false,
+	returnsRevision = false,
 	requestSchema,
 	parameters,
 	extraResponses,
@@ -852,7 +854,7 @@ function editorResourceOperation({
 	responseSchema: string
 	readOnly: boolean
 	destructive: boolean
-	returnsEtag?: boolean
+	returnsRevision?: boolean
 	requestSchema?: string
 	parameters?: Array<Record<string, unknown>>
 	extraResponses?: Record<string, unknown>
@@ -875,7 +877,7 @@ function editorResourceOperation({
 		...(!readOnly
 			? {
 					'x-idempotency':
-						'This operation is not idempotent and does not accept Idempotency-Key. Every accepted mutation appends a version. After a timeout, GET the resource and compare its representation and ETag before retrying with the current If-Match value.',
+						'This operation is not idempotent and does not accept Idempotency-Key. Every accepted mutation appends a version. After a timeout, GET the resource and compare its representation and revision before retrying with the current X-AIH-Expected-Revision value.',
 				}
 			: {}),
 		...(parameters?.length ? { parameters } : {}),
@@ -890,7 +892,13 @@ function editorResourceOperation({
 		responses: {
 			'200': {
 				...response('Successful response.', schemaRef(responseSchema)),
-				...(returnsEtag ? { headers: { ETag: etagResponseHeader } } : {}),
+				...(returnsRevision
+					? {
+							headers: {
+								'X-AIH-Resource-Revision': revisionResponseHeader,
+							},
+						}
+					: {}),
 			},
 			...authErrorResponses,
 			...extraResponses,
@@ -918,34 +926,37 @@ const editorResourcePaths = {
 			operationId: 'getEditorResource',
 			summary: 'Read an assigned editor resource',
 			description:
-				'Returns the assigned page or workshop and a strong ETag for optimistic concurrency.',
+				'Returns the assigned page or workshop, including revision in JSON and X-AIH-Resource-Revision for optimistic concurrency.',
 			responseSchema: 'EditorResourceResponse',
 			readOnly: true,
 			destructive: false,
-			returnsEtag: true,
+			returnsRevision: true,
 		}),
 		patch: editorResourceOperation({
 			operationId: 'updateEditorResource',
 			summary: 'Save or publish an assigned resource',
 			description:
-				'Merges allowed fields into an assigned page or workshop. The slug is immutable in v1. action=publish is the only accepted state transition. Every write appends immutable version history. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
+				'Merges allowed fields into an assigned page or workshop. The slug is immutable in v1. action=publish is the only accepted state transition. Every write appends immutable version history. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale X-AIH-Expected-Revision returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
 			responseSchema: 'EditorResourceMutationResponse',
 			requestSchema: 'EditorResourceMutationRequest',
-			parameters: [ifMatchParameter],
+			parameters: [expectedRevisionParameter],
 			readOnly: false,
 			destructive: true,
-			returnsEtag: true,
+			returnsRevision: true,
 			extraResponses: {
 				...commonErrorResponses,
 				'409': response(
-					'The If-Match revision is stale.',
+					'The X-AIH-Expected-Revision value is stale.',
 					schemaRef('ErrorResponse'),
 				),
 				'422': response(
 					'The resource or state is not editable.',
 					schemaRef('ErrorResponse'),
 				),
-				'428': response('If-Match is required.', schemaRef('ErrorResponse')),
+				'428': response(
+					'X-AIH-Expected-Revision is required.',
+					schemaRef('ErrorResponse'),
+				),
 			},
 		}),
 	},
@@ -970,24 +981,27 @@ const editorResourcePaths = {
 			operationId: 'rollbackEditorResource',
 			summary: 'Restore a prior resource version',
 			description:
-				'Copies a selected prior snapshot into a new immutable child version while preserving the current slug and lifecycle state. History is never rewritten. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
+				'Copies a selected prior snapshot into a new immutable child version while preserving the current slug and lifecycle state. History is never rewritten. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale X-AIH-Expected-Revision returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
 			responseSchema: 'EditorResourceMutationResponse',
 			requestSchema: 'EditorResourceRollbackRequest',
-			parameters: [ifMatchParameter],
+			parameters: [expectedRevisionParameter],
 			readOnly: false,
 			destructive: true,
-			returnsEtag: true,
+			returnsRevision: true,
 			extraResponses: {
 				...commonErrorResponses,
 				'409': response(
-					'The If-Match revision is stale.',
+					'The X-AIH-Expected-Revision value is stale.',
 					schemaRef('ErrorResponse'),
 				),
 				'422': response(
 					'The selected version cannot be restored.',
 					schemaRef('ErrorResponse'),
 				),
-				'428': response('If-Match is required.', schemaRef('ErrorResponse')),
+				'428': response(
+					'X-AIH-Expected-Revision is required.',
+					schemaRef('ErrorResponse'),
+				),
 			},
 		}),
 	},

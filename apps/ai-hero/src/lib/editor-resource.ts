@@ -244,24 +244,6 @@ export function createEditorResourceVersionId(resourceId: string) {
 	return `version~${resourceHash}~${guid()}`
 }
 
-export function formatEditorResourceEtag(revision: string) {
-	return `"${revision}"`
-}
-
-export function parseEditorResourceEtag(value: string | null) {
-	if (!value) return null
-	const trimmed = value.trim()
-	if (
-		trimmed === '*' ||
-		trimmed.startsWith('W/') ||
-		trimmed.includes(',') ||
-		!/^"[^"\r\n]+"$/.test(trimmed)
-	) {
-		return null
-	}
-	return trimmed.slice(1, -1)
-}
-
 function publicResource(resource: EditorResourceRecord) {
 	if (!supportedType(resource.type)) {
 		throw new EditorResourceError(

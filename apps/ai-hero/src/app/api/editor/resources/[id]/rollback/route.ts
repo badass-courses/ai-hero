@@ -1,10 +1,8 @@
 import { NextRequest } from 'next/server'
-import {
-	EditorResourceRollbackRequestSchema,
-	parseEditorResourceEtag,
-} from '@/lib/editor-resource'
+import { EditorResourceRollbackRequestSchema } from '@/lib/editor-resource'
 import { editorResourceService } from '@/lib/editor-resource-drizzle'
 import {
+	AIH_EXPECTED_REVISION_HEADER,
 	authenticateEditorResourceRequest,
 	editorResourceErrorResponse,
 	editorResourceJson,
@@ -24,12 +22,14 @@ const rollbackEditorResourceHandler = async (
 	const auth = await authenticateEditorResourceRequest(request)
 	if (!auth.ok) return auth.response
 
-	const expectedRevision = parseEditorResourceEtag(
-		request.headers.get('If-Match'),
-	)
+	const expectedRevision = request.headers
+		.get(AIH_EXPECTED_REVISION_HEADER)
+		?.trim()
 	if (!expectedRevision) {
 		return editorResourceJson(
-			{ error: 'If-Match with the last read ETag is required' },
+			{
+				error: `${AIH_EXPECTED_REVISION_HEADER} with the last read revision is required`,
+			},
 			{ status: 428 },
 		)
 	}

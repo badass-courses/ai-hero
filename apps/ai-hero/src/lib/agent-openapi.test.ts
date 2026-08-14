@@ -124,14 +124,23 @@ describe('agent OpenAPI contract', () => {
 				'x-required-scopes': [],
 			})
 			expect(operation.parameters).toContainEqual(
-				expect.objectContaining({ name: 'If-Match', required: true }),
+				expect.objectContaining({
+					name: 'X-AIH-Expected-Revision',
+					required: true,
+				}),
+			)
+			expect(operation.parameters).not.toContainEqual(
+				expect.objectContaining({ name: 'If-Match' }),
 			)
 			expect(operation.responses).toHaveProperty('409')
 			expect(operation.responses).toHaveProperty('428')
 		}
 
 		for (const operation of [read, update, rollback]) {
-			expect(operation.responses['200']).toHaveProperty('headers.ETag')
+			expect(operation.responses['200']).toHaveProperty(
+				'headers.X-AIH-Resource-Revision',
+			)
+			expect(operation.responses['200']).not.toHaveProperty('headers.ETag')
 		}
 
 		expect(update['x-resource-authorization']).toContain(
@@ -151,6 +160,7 @@ describe('agent OpenAPI contract', () => {
 		)
 		expect(update['x-idempotency']).toContain('not idempotent')
 		expect(update['x-idempotency']).toContain('GET the resource')
+		expect(update['x-idempotency']).toContain('X-AIH-Expected-Revision')
 		expect(update.description).toContain('slug is immutable')
 		expect(update.description).toContain('queued durably after commit')
 		expect(rollback.description).toContain('lifecycle state')

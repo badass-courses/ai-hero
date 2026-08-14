@@ -7,7 +7,6 @@ import {
 	createEditorResourceVersionId,
 	createEditorResourceService,
 	EditorResourceError,
-	parseEditorResourceEtag,
 	type EditorAccessContext,
 	type EditorResourceRecord,
 	type EditorResourceRepository,
@@ -183,21 +182,6 @@ beforeEach(() => {
 })
 
 describe('editor resource authorization', () => {
-	it('accepts only one quoted strong If-Match validator', () => {
-		expect(parseEditorResourceEtag('"revision"')).toBe('revision')
-		for (const invalid of [
-			null,
-			'revision',
-			'W/"revision"',
-			'*',
-			'"first", "second"',
-			'"unterminated',
-			'""',
-		]) {
-			expect(parseEditorResourceEtag(invalid)).toBeNull()
-		}
-	})
-
 	it('creates globally unique ids with a resource-bound identity segment', () => {
 		const first = createEditorResourceVersionId('workshop_1')
 		const second = createEditorResourceVersionId('workshop_2')
