@@ -3,6 +3,7 @@ type Awaitable<T> = T | Promise<T>
 type MerchantCouponRecord = {
 	id: string
 	type?: string | null
+	status?: number
 }
 
 type SiteCouponRecord = {
@@ -10,6 +11,10 @@ type SiteCouponRecord = {
 	merchantCouponId?: string | null
 	restrictedToProductId?: string | null
 	fields?: Record<string, unknown> | null
+	status?: number
+	expires?: Date | null
+	maxUses?: number
+	usedCount?: number
 }
 
 type EntitlementRecord = {
@@ -65,10 +70,41 @@ const isActiveEntitlement = (
 	!entitlement.deletedAt &&
 	(!entitlement.expiresAt || entitlement.expiresAt > now)
 
+const couponPermitsProduct = (coupon: SiteCouponRecord, productId: string) =>
+	!coupon.restrictedToProductId || coupon.restrictedToProductId === productId
+
+const couponIsActive = (coupon: SiteCouponRecord, now: Date) => {
+	if (coupon.status !== 1) return false
+	if (coupon.expires && coupon.expires <= now) return false
+	if (coupon.maxUses === -1) return true
+	return (
+		typeof coupon.maxUses === 'number' &&
+		typeof coupon.usedCount === 'number' &&
+		coupon.usedCount < coupon.maxUses
+	)
+}
+
+const isPublicCouponProvenance = ({
+	merchantCoupon,
+	siteCoupon,
+	productId,
+	now,
+}: {
+	merchantCoupon: MerchantCouponRecord
+	siteCoupon: SiteCouponRecord | null
+	productId: string
+	now: Date
+}) =>
+	merchantCoupon.status === 1 &&
+	Boolean(siteCoupon && couponIsActive(siteCoupon, now)) &&
+	siteCoupon?.merchantCouponId === merchantCoupon.id &&
+	siteCoupon.fields?.exclusive !== true &&
+	couponPermitsProduct(siteCoupon, productId)
+
 /**
  * A MerchantCoupon id selects provider discount data. It does not prove that
- * the caller owns an exclusive credit. Keep this app-local until AI Hero can
- * consume the equivalent policy from Course Builder without a launch migration.
+ * the caller may use the discount. PPP is also stripped here and can only be
+ * reselected by server pricing from country, quantity, and purchase state.
  */
 export async function authorizeExclusiveCouponSelection({
 	adapter,
@@ -86,11 +122,47 @@ export async function authorizeExclusiveCouponSelection({
 		requestedSiteCouponId ? adapter.getCoupon(requestedSiteCouponId) : null,
 	])
 
-	const protectedMerchantCoupon =
-		requestedMerchantCoupon?.type === 'special credit'
 	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
+	const publicProvenance = requestedMerchantCoupon
+		? isPublicCouponProvenance({
+				merchantCoupon: requestedMerchantCoupon,
+				siteCoupon: requestedSiteCoupon,
+				productId,
+				now,
+			})
+		: false
+	const protectedMerchantCoupon = Boolean(
+		requestedMerchantCouponId && !publicProvenance,
+	)
 
-	if (!protectedMerchantCoupon && !protectedSiteCoupon) {
+	if (!requestedMerchantCouponId) {
+		if (!requestedSiteCoupon) {
+			return {
+				authorized: true,
+				protectedMerchantCoupon,
+				protectedSiteCoupon,
+			}
+		}
+		if (!protectedSiteCoupon) {
+			return {
+				authorized:
+					couponIsActive(requestedSiteCoupon, now) &&
+					couponPermitsProduct(requestedSiteCoupon, productId),
+				protectedMerchantCoupon,
+				protectedSiteCoupon,
+			}
+		}
+	}
+
+	if (requestedMerchantCoupon?.type === 'ppp') {
+		return {
+			authorized: false,
+			protectedMerchantCoupon,
+			protectedSiteCoupon,
+		}
+	}
+
+	if (publicProvenance) {
 		return {
 			authorized: true,
 			protectedMerchantCoupon,
@@ -98,7 +170,11 @@ export async function authorizeExclusiveCouponSelection({
 		}
 	}
 
-	if (!verifiedUserId || quantity !== 1) {
+	if (
+		(requestedMerchantCouponId && requestedMerchantCoupon?.status !== 1) ||
+		!verifiedUserId ||
+		quantity !== 1
+	) {
 		return {
 			authorized: false,
 			protectedMerchantCoupon,
@@ -131,10 +207,10 @@ export async function authorizeExclusiveCouponSelection({
 		}
 
 		const sourceCoupon = await adapter.getCoupon(entitlement.sourceId)
-		if (!sourceCoupon?.merchantCouponId) continue
 		if (
-			sourceCoupon.restrictedToProductId &&
-			sourceCoupon.restrictedToProductId !== productId
+			!sourceCoupon?.merchantCouponId ||
+			!couponIsActive(sourceCoupon, now) ||
+			!couponPermitsProduct(sourceCoupon, productId)
 		) {
 			continue
 		}

@@ -19,17 +19,74 @@ const mocks = vi.hoisted(() => {
 		amountDiscount: 10_000,
 		percentageDiscount: null,
 	}
+	const pppMerchantCoupon = {
+		id: 'merchant-ppp-raw',
+		type: 'ppp',
+		status: 1,
+		amountDiscount: null,
+		percentageDiscount: 0.5,
+	}
+	const rawDeniedMerchantCoupons = [
+		{
+			id: 'merchant-special-raw',
+			type: 'special',
+			status: 1,
+			amountDiscount: 5_000,
+			percentageDiscount: null,
+		},
+		{
+			id: 'merchant-bulk-raw',
+			type: 'bulk',
+			status: 1,
+			amountDiscount: null,
+			percentageDiscount: 0.2,
+		},
+		{
+			id: 'merchant-stacked-raw',
+			type: 'stacked',
+			status: 1,
+			amountDiscount: 15_000,
+			percentageDiscount: null,
+		},
+		{
+			id: 'merchant-upgrade-raw',
+			type: 'upgrade',
+			status: 1,
+			amountDiscount: 15_000,
+			percentageDiscount: null,
+		},
+		{
+			id: 'merchant-credit-bulk-raw',
+			type: 'special credit bulk',
+			status: 1,
+			amountDiscount: 20_000,
+			percentageDiscount: null,
+		},
+	]
 	const protectedCoupon = {
 		id: 'coupon-prior-credit',
 		merchantCouponId: protectedMerchantCoupon.id,
 		restrictedToProductId: 'product-crash-course',
 		fields: { exclusive: true },
+		status: 1,
+		expires: null,
+		maxUses: -1,
+		usedCount: 0,
 	}
 	const defaultCoupon = {
 		id: 'coupon-intro',
 		merchantCouponId: defaultMerchantCoupon.id,
 		restrictedToProductId: 'product-crash-course',
 		fields: {},
+		status: 1,
+		expires: null,
+		maxUses: -1,
+		usedCount: 0,
+	}
+	const expiredPublicCoupon = {
+		...defaultCoupon,
+		id: 'coupon-public-expired',
+		expires: new Date('2020-01-01T00:00:00Z'),
 	}
 	const entitlement = {
 		id: 'entitlement-prior-credit',
@@ -44,14 +101,18 @@ const mocks = vi.hoisted(() => {
 	const adapter = {
 		getMerchantCoupon: vi.fn(
 			async (id: string) =>
-				[protectedMerchantCoupon, defaultMerchantCoupon].find(
-					(coupon) => coupon.id === id,
-				) ?? null,
+				[
+					protectedMerchantCoupon,
+					defaultMerchantCoupon,
+					pppMerchantCoupon,
+					...rawDeniedMerchantCoupons,
+				].find((coupon) => coupon.id === id) ?? null,
 		),
 		getCoupon: vi.fn(
 			async (id: string) =>
-				[protectedCoupon, defaultCoupon].find((coupon) => coupon.id === id) ??
-				null,
+				[protectedCoupon, defaultCoupon, expiredPublicCoupon].find(
+					(coupon) => coupon.id === id,
+				) ?? null,
 		),
 		getEntitlementTypeByName: vi.fn(async () => ({
 			id: 'entitlement-type-special-credit',
@@ -75,6 +136,8 @@ const mocks = vi.hoisted(() => {
 		getEntitlementsForUser,
 		getServerAuthSession: vi.fn(),
 		protectedMerchantCoupon,
+		pppMerchantCoupon,
+		rawDeniedMerchantCoupons,
 	}
 })
 
@@ -128,15 +191,36 @@ const formattedInput = {
 describe('pricing.formatted exclusive coupon authorization', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mocks.formatPricesForProduct.mockImplementation(async (input) => ({
-			id: input.productId,
-			calculatedPrice:
-				input.merchantCouponId === mocks.protectedMerchantCoupon.id ? 99 : 199,
-			appliedMerchantCoupon:
-				input.merchantCouponId === mocks.protectedMerchantCoupon.id
-					? mocks.protectedMerchantCoupon
-					: mocks.defaultMerchantCoupon,
-		}))
+		mocks.formatPricesForProduct.mockImplementation(async (input) => {
+			const computedBulkCoupon = mocks.rawDeniedMerchantCoupons.find(
+				(coupon) => coupon.type === 'bulk',
+			)
+			if (input.userId === 'user-ppp') {
+				return {
+					id: input.productId,
+					calculatedPrice: 149.5,
+					appliedMerchantCoupon: mocks.pppMerchantCoupon,
+				}
+			}
+			if (input.quantity > 1) {
+				return {
+					id: input.productId,
+					calculatedPrice: 500,
+					appliedMerchantCoupon: computedBulkCoupon,
+				}
+			}
+			return {
+				id: input.productId,
+				calculatedPrice:
+					input.merchantCouponId === mocks.protectedMerchantCoupon.id
+						? 99
+						: 199,
+				appliedMerchantCoupon:
+					input.merchantCouponId === mocks.protectedMerchantCoupon.id
+						? mocks.protectedMerchantCoupon
+						: mocks.defaultMerchantCoupon,
+			}
+		})
 	})
 
 	it('falls back to the $199 default for a logged-out replay', async () => {
@@ -171,6 +255,120 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 		)
 	})
 
+	it.each(mocks.rawDeniedMerchantCoupons)(
+		'strips a raw $type selector without site provenance',
+		async (merchantCoupon) => {
+			mocks.getServerAuthSession.mockResolvedValue({ session: null })
+			mocks.getEntitlementsForUser.mockResolvedValue([])
+
+			const result = await caller().formatted({
+				productId: 'product-crash-course',
+				quantity: 1,
+				merchantCoupon: {
+					id: merchantCoupon.id,
+					type: merchantCoupon.type,
+				},
+			})
+
+			expect(result.calculatedPrice).toBe(199)
+			expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
+				expect.objectContaining({
+					merchantCouponId: mocks.defaultMerchantCoupon.id,
+				}),
+			)
+		},
+	)
+
+	it('keeps a raw public selector with matching site provenance', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		mocks.getEntitlementsForUser.mockResolvedValue([])
+
+		const result = await caller().formatted({
+			productId: 'product-crash-course',
+			quantity: 1,
+			couponId: 'coupon-intro',
+			merchantCoupon: {
+				id: mocks.defaultMerchantCoupon.id,
+				type: mocks.defaultMerchantCoupon.type,
+			},
+		})
+
+		expect(result.calculatedPrice).toBe(199)
+		expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
+			expect.objectContaining({
+				merchantCouponId: mocks.defaultMerchantCoupon.id,
+			}),
+		)
+	})
+
+	it('strips a raw bulk selector and keeps server-computed bulk pricing', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		mocks.getEntitlementsForUser.mockResolvedValue([])
+		const rawBulkCoupon = mocks.rawDeniedMerchantCoupons.find(
+			(coupon) => coupon.type === 'bulk',
+		)
+
+		const result = await caller().formatted({
+			productId: 'product-crash-course',
+			quantity: 5,
+			merchantCoupon: {
+				id: rawBulkCoupon?.id as string,
+				type: 'bulk',
+			},
+		})
+
+		expect(result.appliedMerchantCoupon?.type).toBe('bulk')
+		expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
+			expect.objectContaining({
+				merchantCouponId: mocks.defaultMerchantCoupon.id,
+				quantity: 5,
+			}),
+		)
+	})
+
+	it('rejects an inactive public site coupon without a merchant selector', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		mocks.getEntitlementsForUser.mockResolvedValue([])
+
+		const result = await caller().formatted({
+			productId: 'product-crash-course',
+			quantity: 1,
+			couponId: 'coupon-public-expired',
+		})
+
+		expect(result.calculatedPrice).toBe(199)
+		expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
+			expect.objectContaining({
+				merchantCouponId: mocks.defaultMerchantCoupon.id,
+				usedCouponId: 'coupon-intro',
+			}),
+		)
+	})
+
+	it('strips raw PPP and keeps server-revalidated PPP pricing', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { id: 'user-ppp' } },
+		})
+		mocks.getEntitlementsForUser.mockResolvedValue([])
+
+		const result = await caller().formatted({
+			productId: 'product-crash-course',
+			quantity: 1,
+			merchantCoupon: {
+				id: mocks.pppMerchantCoupon.id,
+				type: mocks.pppMerchantCoupon.type,
+			},
+		})
+
+		expect(result.appliedMerchantCoupon?.type).toBe('ppp')
+		expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
+			expect.objectContaining({
+				merchantCouponId: mocks.defaultMerchantCoupon.id,
+				userId: 'user-ppp',
+			}),
+		)
+	})
+
 	it('preserves the $99 path for the entitled session user', async () => {
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { id: mocks.entitlement.userId } },
@@ -183,6 +381,7 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 		expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
 			expect.objectContaining({
 				merchantCouponId: mocks.protectedMerchantCoupon.id,
+				usedCouponId: 'coupon-prior-credit',
 				userId: mocks.entitlement.userId,
 			}),
 		)

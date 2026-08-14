@@ -3,6 +3,7 @@ import {
 	POST as coreCourseBuilderPOST,
 } from '@/coursebuilder/course-builder-config'
 import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
+import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
@@ -69,6 +70,11 @@ const protectCommerceRequest = async (request: NextRequest) => {
 	return protectCourseBuilderRequest(request, {
 		adapter: courseBuilderAdapter,
 		verifiedUserId: session?.user?.id,
+		resolveServerComputedMerchantCoupon: (input) =>
+			resolveServerComputedCheckoutCoupon({
+				...input,
+				adapter: courseBuilderAdapter,
+			}),
 	})
 }
 

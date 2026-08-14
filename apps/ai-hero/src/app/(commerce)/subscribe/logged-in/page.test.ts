@@ -4,12 +4,17 @@ const mocks = vi.hoisted(() => {
 	const merchantCoupon = {
 		id: 'merchant-prior-credit',
 		type: 'special credit',
+		status: 1,
 	}
 	const coupon = {
 		id: 'coupon-prior-credit',
 		merchantCouponId: merchantCoupon.id,
 		restrictedToProductId: 'product-crash-course',
 		fields: { exclusive: true },
+		status: 1,
+		expires: null,
+		maxUses: -1,
+		usedCount: 0,
 	}
 	const entitlement = {
 		id: 'entitlement-prior-credit',
@@ -30,9 +35,16 @@ const mocks = vi.hoisted(() => {
 		getEntitlementsForUser,
 		merchantCoupon,
 		redirect: vi.fn((url: string) => url),
+		resolveServerComputedCheckoutCoupon: vi.fn(
+			async (): Promise<{ id: string; type: string } | null> => null,
+		),
 	}
 })
 
+vi.mock('@/coursebuilder/server-computed-checkout-coupon', () => ({
+	resolveServerComputedCheckoutCoupon:
+		mocks.resolveServerComputedCheckoutCoupon,
+}))
 vi.mock('@/coursebuilder/stripe-provider', () => ({
 	stripeProvider: { createCheckoutSession: mocks.createCheckoutSession },
 }))
@@ -85,6 +97,7 @@ const searchParams = {
 describe('logged-in checkout coupon authorization', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue(null)
 	})
 
 	it('removes an unowned exclusive selector before Stripe checkout', async () => {
@@ -112,6 +125,46 @@ describe('logged-in checkout coupon authorization', () => {
 				couponId: mocks.merchantCoupon.id,
 				usedCouponId: mocks.coupon.id,
 				userId: 'user-actual',
+			}),
+			expect.anything(),
+		)
+	})
+
+	it('replaces callback provenance with the entitlement source coupon', async () => {
+		mocks.getEntitlementsForUser.mockResolvedValue([mocks.entitlement])
+
+		await LoginPage({
+			searchParams: Promise.resolve({
+				...searchParams,
+				usedCouponId: 'coupon-untrusted',
+			}),
+		})
+
+		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+			expect.objectContaining({
+				couponId: mocks.merchantCoupon.id,
+				usedCouponId: mocks.coupon.id,
+			}),
+			expect.anything(),
+		)
+	})
+
+	it('forwards a server-computed bulk coupon after rejecting raw input', async () => {
+		mocks.getEntitlementsForUser.mockResolvedValue([mocks.entitlement])
+		mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue({
+			id: 'merchant-server-bulk',
+			type: 'bulk',
+		})
+
+		await LoginPage({
+			searchParams: Promise.resolve({ ...searchParams, quantity: '5' }),
+		})
+
+		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+			expect.objectContaining({
+				couponId: 'merchant-server-bulk',
+				usedCouponId: undefined,
+				quantity: 5,
 			}),
 			expect.anything(),
 		)

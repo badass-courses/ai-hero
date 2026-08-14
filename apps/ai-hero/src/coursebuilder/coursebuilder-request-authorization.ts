@@ -7,6 +7,12 @@ import {
 type ProtectCourseBuilderRequestOptions = {
 	adapter: ExclusiveCouponAuthorizationAdapter
 	verifiedUserId?: string
+	resolveServerComputedMerchantCoupon?: (input: {
+		productId: string
+		quantity: number
+		verifiedUserId?: string
+		country: string
+	}) => Promise<{ id: string; type?: string | null } | null>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -19,6 +25,28 @@ const numberValue = (value: unknown) => {
 	if (value === undefined || value === null || value === '') return 1
 	const number = typeof value === 'number' ? value : Number(value)
 	return Number.isFinite(number) ? number : 0
+}
+
+const SENSITIVE_CHECKOUT_KEYS = [
+	'productId',
+	'quantity',
+	'couponId',
+	'usedCouponId',
+	'userId',
+	'bulk',
+	'upgradeFromPurchaseId',
+] as const
+
+const normalizeSensitiveCheckoutParams = (url: URL) => {
+	for (const key of SENSITIVE_CHECKOUT_KEYS) {
+		const values = url.searchParams.getAll(key)
+		if (values.length === 0) continue
+		const canonicalValue = values.at(-1)
+		url.searchParams.delete(key)
+		if (canonicalValue !== undefined) {
+			url.searchParams.set(key, canonicalValue)
+		}
+	}
 }
 
 const requestWithJsonBody = (
@@ -51,17 +79,36 @@ const requestWithUrl = async (request: NextRequest, url: URL) => {
 	})
 }
 
+const parsePricesFormattedBody = async (request: NextRequest) => {
+	const contentType = request.headers.get('content-type') ?? ''
+	if (contentType.includes('application/json')) {
+		try {
+			const body: unknown = await request.clone().json()
+			return isRecord(body) ? body : null
+		} catch {
+			return null
+		}
+	}
+	if (contentType.includes('application/x-www-form-urlencoded')) {
+		const form = new URLSearchParams(await request.clone().text())
+		const body: Record<string, unknown> = Object.fromEntries(form)
+		if (body.quantity !== undefined) {
+			body.quantity = numberValue(body.quantity)
+		}
+		if (body.autoApplyPPP !== undefined) {
+			body.autoApplyPPP = body.autoApplyPPP !== 'false'
+		}
+		return body
+	}
+	return null
+}
+
 const protectPricesFormattedRequest = async (
 	request: NextRequest,
 	{ adapter, verifiedUserId }: ProtectCourseBuilderRequestOptions,
 ) => {
-	let body: unknown
-	try {
-		body = await request.clone().json()
-	} catch {
-		return request
-	}
-	if (!isRecord(body)) return request
+	const body = await parsePricesFormattedBody(request)
+	if (!body) return request
 
 	if (verifiedUserId) body.userId = verifiedUserId
 	else delete body.userId
@@ -91,27 +138,54 @@ const protectPricesFormattedRequest = async (
 
 const protectCheckoutRequest = async (
 	request: NextRequest,
-	{ adapter, verifiedUserId }: ProtectCourseBuilderRequestOptions,
+	{
+		adapter,
+		verifiedUserId,
+		resolveServerComputedMerchantCoupon,
+	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	const url = new URL(request.url)
+	normalizeSensitiveCheckoutParams(url)
 	if (verifiedUserId) url.searchParams.set('userId', verifiedUserId)
 	else url.searchParams.delete('userId')
 
 	const productId = stringValue(url.searchParams.get('productId'))
 	if (!productId) return requestWithUrl(request, url)
+	const quantity = numberValue(url.searchParams.get('quantity') ?? 1)
 
 	const decision = await authorizeExclusiveCouponSelection({
 		adapter,
 		verifiedUserId,
 		productId,
-		quantity: numberValue(url.searchParams.get('quantity') ?? 1),
+		quantity,
 		requestedMerchantCouponId: stringValue(url.searchParams.get('couponId')),
 		requestedSiteCouponId: stringValue(url.searchParams.get('usedCouponId')),
 	})
 
+	if (decision.authorized && decision.entitlementCouponId) {
+		url.searchParams.set('usedCouponId', decision.entitlementCouponId)
+	}
+
 	if (!decision.authorized) {
 		url.searchParams.delete('couponId')
 		url.searchParams.delete('usedCouponId')
+
+		const serverComputedCoupon = await resolveServerComputedMerchantCoupon?.({
+			productId,
+			quantity,
+			verifiedUserId,
+			country:
+				url.searchParams.get('country') ||
+				request.headers.get('x-vercel-ip-country') ||
+				process.env.DEFAULT_COUNTRY ||
+				'US',
+		})
+		if (
+			serverComputedCoupon?.type === 'bulk' ||
+			serverComputedCoupon?.type === 'ppp'
+		) {
+			url.searchParams.set('couponId', serverComputedCoupon.id)
+		}
 	}
 
 	return requestWithUrl(request, url)

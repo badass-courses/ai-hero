@@ -1,6 +1,7 @@
 import { ParsedUrlQuery } from 'querystring'
 import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
@@ -83,13 +84,25 @@ export default async function LoginPage({
 		requestedMerchantCouponId: checkoutParams.couponId,
 		requestedSiteCouponId: checkoutParams.usedCouponId,
 	})
+	const serverComputedCoupon = !couponAuthorization.authorized
+		? await resolveServerComputedCheckoutCoupon({
+				adapter: courseBuilderAdapter,
+				productId: checkoutParams.productId,
+				quantity: checkoutParams.quantity ?? 1,
+				verifiedUserId: user.id,
+				country: countryCode,
+			})
+		: null
 	const authorizedCheckoutParams = {
 		...checkoutParams,
 		userId: user.id,
 		...(organizationId && { organizationId }),
 		...checkoutAttribution,
+		...(couponAuthorization.entitlementCouponId && {
+			usedCouponId: couponAuthorization.entitlementCouponId,
+		}),
 		...(!couponAuthorization.authorized && {
-			couponId: undefined,
+			couponId: serverComputedCoupon?.id,
 			usedCouponId: undefined,
 		}),
 	}
