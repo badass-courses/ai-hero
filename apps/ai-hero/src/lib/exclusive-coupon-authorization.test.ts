@@ -20,6 +20,16 @@ const deniedMerchantCoupons = [
 	{ id: 'merchant-upgrade', type: 'upgrade', status: 1 },
 	{ id: 'merchant-credit-bulk', type: 'special credit bulk', status: 1 },
 ]
+const internalMerchantTypes = [
+	'ppp',
+	'bulk',
+	'stacked',
+	'upgrade',
+	'special credit',
+	'special bulk',
+	'ppp bulk',
+	'special credit bulk',
+]
 
 const protectedCoupon = {
 	id: 'coupon-prior-credit',
@@ -207,18 +217,63 @@ describe('authorizeExclusiveCouponSelection', () => {
 		},
 	)
 
-	it('leaves a matching active public coupon compatible', async () => {
-		const result = await decide({
-			requestedMerchantCouponId: publicMerchantCoupon.id,
-			requestedSiteCouponId: publicCoupon.id,
-		})
+	it.each(internalMerchantTypes)(
+		'rejects public-looking provenance for internal merchant type %s',
+		async (type) => {
+			const merchantCoupon = {
+				id: `merchant-generated-${type}`,
+				type,
+				status: 1,
+			}
+			const siteCoupon = {
+				...publicCoupon,
+				id: `coupon-generated-${type}`,
+				merchantCouponId: merchantCoupon.id,
+			}
+			const adapter = {
+				...createAdapter(),
+				getMerchantCoupon: async (id: string) =>
+					id === merchantCoupon.id ? merchantCoupon : null,
+				getCoupon: async (id: string) =>
+					id === siteCoupon.id ? siteCoupon : null,
+			}
 
-		expect(result).toMatchObject({
-			authorized: true,
-			protectedMerchantCoupon: false,
-			protectedSiteCoupon: false,
-		})
-	})
+			const [paired, siteOnly] = await Promise.all([
+				decide({
+					adapter: adapter as never,
+					requestedMerchantCouponId: merchantCoupon.id,
+					requestedSiteCouponId: siteCoupon.id,
+				}),
+				decide({
+					adapter: adapter as never,
+					requestedMerchantCouponId: undefined,
+					requestedSiteCouponId: siteCoupon.id,
+				}),
+			])
+
+			expect(paired.authorized).toBe(false)
+			expect(siteOnly.authorized).toBe(false)
+		},
+	)
+
+	it.each([
+		['merchant and site selectors', publicMerchantCoupon.id],
+		['site selector only', undefined],
+	])(
+		'leaves a valid public special compatible via %s',
+		async (_, merchantId) => {
+			const result = await decide({
+				requestedMerchantCouponId: merchantId,
+				requestedSiteCouponId: publicCoupon.id,
+			})
+
+			expect(result).toMatchObject({
+				authorized: true,
+				protectedMerchantCoupon: false,
+				protectedSiteCoupon: false,
+			})
+		},
+	)
 
 	it('rejects raw PPP until server pricing revalidates it', async () => {
 		const result = await decide({

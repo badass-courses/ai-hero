@@ -95,6 +95,7 @@ const isPublicCouponProvenance = ({
 	productId: string
 	now: Date
 }) =>
+	merchantCoupon.type === 'special' &&
 	merchantCoupon.status === 1 &&
 	Boolean(siteCoupon && couponIsActive(siteCoupon, now)) &&
 	siteCoupon?.merchantCouponId === merchantCoupon.id &&
@@ -115,12 +116,14 @@ export async function authorizeExclusiveCouponSelection({
 	requestedSiteCouponId,
 	now = new Date(),
 }: AuthorizeExclusiveCouponSelectionInput): Promise<ExclusiveCouponAuthorizationDecision> {
-	const [requestedMerchantCoupon, requestedSiteCoupon] = await Promise.all([
-		requestedMerchantCouponId
-			? adapter.getMerchantCoupon(requestedMerchantCouponId)
-			: null,
-		requestedSiteCouponId ? adapter.getCoupon(requestedSiteCouponId) : null,
-	])
+	const requestedSiteCoupon = requestedSiteCouponId
+		? await adapter.getCoupon(requestedSiteCouponId)
+		: null
+	const merchantCouponId =
+		requestedMerchantCouponId || requestedSiteCoupon?.merchantCouponId
+	const requestedMerchantCoupon = merchantCouponId
+		? await adapter.getMerchantCoupon(merchantCouponId)
+		: null
 
 	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
 	const publicProvenance = requestedMerchantCoupon
@@ -145,9 +148,7 @@ export async function authorizeExclusiveCouponSelection({
 		}
 		if (!protectedSiteCoupon) {
 			return {
-				authorized:
-					couponIsActive(requestedSiteCoupon, now) &&
-					couponPermitsProduct(requestedSiteCoupon, productId),
+				authorized: publicProvenance,
 				protectedMerchantCoupon,
 				protectedSiteCoupon,
 			}

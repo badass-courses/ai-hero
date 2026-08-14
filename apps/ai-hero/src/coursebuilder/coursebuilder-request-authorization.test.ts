@@ -456,6 +456,71 @@ describe('protectCourseBuilderRequest', () => {
 		expect(protectedRequest.nextUrl.searchParams.has('couponId')).toBe(false)
 	})
 
+	it('ignores forged caller country when server pricing reselects PPP', async () => {
+		const resolveServerComputedMerchantCoupon = vi.fn(
+			async () => pppMerchantCoupon,
+		)
+		const request = new NextRequest(
+			`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&country=IN&cancelUrl=%2F&couponId=${pppMerchantCoupon.id}`,
+			{
+				method: 'POST',
+				headers: { 'x-vercel-ip-country': 'US' },
+			},
+		)
+
+		const protectedRequest = await protectCourseBuilderRequest(request, {
+			adapter: createAdapter() as never,
+			resolveServerComputedMerchantCoupon,
+		})
+
+		expect(resolveServerComputedMerchantCoupon).toHaveBeenCalledWith(
+			expect.objectContaining({ country: 'US' }),
+		)
+		expect(protectedRequest.nextUrl.searchParams.getAll('country')).toEqual([])
+		expect(protectedRequest.nextUrl.searchParams.get('couponId')).toBe(
+			pppMerchantCoupon.id,
+		)
+	})
+
+	it.each([
+		['IN', 'DE'],
+		['DE', 'IN'],
+	])(
+		'removes divergent duplicate country values %s then %s before legacy parsing',
+		async (firstCountry, lastCountry) => {
+			const resolveServerComputedMerchantCoupon = vi.fn(
+				async () => pppMerchantCoupon,
+			)
+			const url = new URL(
+				'https://aihero.dev/api/coursebuilder/checkout/stripe',
+			)
+			url.searchParams.set('productId', 'product-crash-course')
+			url.searchParams.set('quantity', '1')
+			url.searchParams.append('country', firstCountry)
+			url.searchParams.append('country', lastCountry)
+			url.searchParams.set('cancelUrl', '/')
+			url.searchParams.set('couponId', pppMerchantCoupon.id)
+
+			const protectedRequest = await protectCourseBuilderRequest(
+				new NextRequest(url, {
+					method: 'POST',
+					headers: { 'x-vercel-ip-country': 'CA' },
+				}),
+				{
+					adapter: createAdapter() as never,
+					resolveServerComputedMerchantCoupon,
+				},
+			)
+
+			expect(resolveServerComputedMerchantCoupon).toHaveBeenCalledWith(
+				expect.objectContaining({ country: 'CA' }),
+			)
+			expect(protectedRequest.nextUrl.searchParams.getAll('country')).toEqual(
+				[],
+			)
+		},
+	)
+
 	it('forwards PPP selected again by server pricing', async () => {
 		const request = new NextRequest(
 			`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&couponId=${pppMerchantCoupon.id}`,

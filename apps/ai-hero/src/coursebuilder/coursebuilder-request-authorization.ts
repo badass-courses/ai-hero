@@ -35,6 +35,7 @@ const SENSITIVE_CHECKOUT_KEYS = [
 	'userId',
 	'bulk',
 	'upgradeFromPurchaseId',
+	'country',
 ] as const
 
 const normalizeSensitiveCheckoutParams = (url: URL) => {
@@ -144,8 +145,15 @@ const protectCheckoutRequest = async (
 		resolveServerComputedMerchantCoupon,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
+	// Vercel country is trusted; the checkout query is caller-controlled.
+	const trustedCountry =
+		request.headers.get('x-vercel-ip-country') ||
+		process.env.DEFAULT_COUNTRY ||
+		'US'
 	const url = new URL(request.url)
 	normalizeSensitiveCheckoutParams(url)
+	// Legacy checkout prefers query country, so never forward the caller value.
+	url.searchParams.delete('country')
 	if (verifiedUserId) url.searchParams.set('userId', verifiedUserId)
 	else url.searchParams.delete('userId')
 
@@ -174,11 +182,7 @@ const protectCheckoutRequest = async (
 			productId,
 			quantity,
 			verifiedUserId,
-			country:
-				url.searchParams.get('country') ||
-				request.headers.get('x-vercel-ip-country') ||
-				process.env.DEFAULT_COUNTRY ||
-				'US',
+			country: trustedCountry,
 		})
 		if (
 			serverComputedCoupon?.type === 'bulk' ||
