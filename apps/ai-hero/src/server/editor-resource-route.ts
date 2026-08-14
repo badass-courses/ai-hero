@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { subject } from '@casl/ability'
 
 import {
 	EditorResourceError,
 	formatEditorResourceEtag,
+	type EditorResourceRecord,
 } from '@/lib/editor-resource'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
@@ -27,7 +29,8 @@ export async function authenticateEditorResourceRequest(request: NextRequest) {
 			ok: false,
 			response: NextResponse.json(
 				{
-					error: 'Unauthorized: use Authorization: Bearer <device-token>',
+					error:
+						'Unauthorized: use Authorization: Bearer <active AI Hero DeviceAccessToken>',
 					docs: '/api',
 				},
 				{ status: 401, headers: editorResourceCorsHeaders },
@@ -54,7 +57,7 @@ export async function authenticateEditorResourceRequest(request: NextRequest) {
 			ok: false,
 			response: NextResponse.json(
 				{
-					error: 'Forbidden: a role-derived OAuth device token is required',
+					error: 'Forbidden: an active AI Hero DeviceAccessToken is required',
 					docs: '/api',
 				},
 				{ status: 403, headers: editorResourceCorsHeaders },
@@ -67,6 +70,8 @@ export async function authenticateEditorResourceRequest(request: NextRequest) {
 		context: {
 			userId: auth.user.id,
 			isAdmin: auth.ability.can('manage', 'all'),
+			canManageResource: (resource: EditorResourceRecord) =>
+				auth.ability.can('manage', subject('Content', resource)),
 		},
 		user: auth.user,
 	} as const

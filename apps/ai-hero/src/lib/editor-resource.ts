@@ -55,11 +55,17 @@ export const EditorResourceVersionListResponseSchema = z.array(
 	EditorResourceVersionSchema,
 )
 
+export const EditorResourceEffectWarningSchema = z.object({
+	effect: z.enum(['typesense', 'cache']),
+	message: z.string(),
+})
+
 export const EditorResourceMutationResponseSchema = z.object({
 	resource: EditorResourceSchema,
 	revision: z.string(),
 	version: EditorResourceVersionSchema,
 	baselineVersion: EditorResourceVersionSchema.nullable(),
+	warnings: z.array(EditorResourceEffectWarningSchema),
 })
 
 export type EditorResourceMutationRequest = z.infer<
@@ -96,6 +102,7 @@ export type EditorResourceVersion = z.infer<typeof EditorResourceVersionSchema>
 export type EditorAccessContext = {
 	userId: string
 	isAdmin: boolean
+	canManageResource: (resource: EditorResourceRecord) => boolean
 }
 
 export type VersionedMutationInput = EditorAccessContext & {
@@ -103,6 +110,7 @@ export type VersionedMutationInput = EditorAccessContext & {
 	expectedRevision: string
 	fields?: Record<string, unknown>
 	rollbackVersionId?: string
+	rollbackVersionFieldsDigest?: string
 }
 
 export type VersionedMutationResult = {
@@ -125,13 +133,18 @@ export interface EditorResourceRepository {
 	): Promise<VersionedMutationResult>
 }
 
+export type EditorResourceEffectWarning = z.infer<
+	typeof EditorResourceEffectWarningSchema
+>
+
 export interface EditorResourceEffects {
 	afterWrite(input: {
 		action: 'save' | 'publish' | 'rollback'
 		previousResource: EditorResourceRecord
 		resource: EditorResourceRecord
 		userId: string
-	}): Promise<void>
+		getCurrentResource: () => Promise<EditorResourceRecord | null>
+	}): Promise<EditorResourceEffectWarning[]>
 }
 
 export class EditorResourceError extends Error {
@@ -157,7 +170,13 @@ export function canAccessEditorResource(
 	context: EditorAccessContext,
 ) {
 	if (resource.deletedAt) return false
-	if (context.isAdmin || resource.createdById === context.userId) return true
+	if (context.isAdmin) return true
+	if (
+		resource.createdById === context.userId &&
+		context.canManageResource(resource)
+	) {
+		return true
+	}
 
 	return resource.contributions.some(
 		(contribution) =>
@@ -297,21 +316,13 @@ const MUTABLE_EDITOR_FIELDS: Record<EditorResourceType, ReadonlySet<string>> = {
 		'endsAt',
 		'github',
 		'githubUrl',
-		'slug',
 		'startsAt',
 		'subtitle',
 		'timezone',
 		'title',
 		'visibility',
 	]),
-	page: new Set([
-		'body',
-		'description',
-		'slug',
-		'socialImage',
-		'title',
-		'visibility',
-	]),
+	page: new Set(['body', 'description', 'socialImage', 'title', 'visibility']),
 }
 
 function validateCandidateFields(
@@ -425,17 +436,19 @@ export function createEditorResourceService(
 				fields,
 			})
 
-			await effects.afterWrite({
+			const warnings = await effects.afterWrite({
 				action: request.action,
 				previousResource: result.previousResource,
 				resource: result.resource,
 				userId: context.userId,
+				getCurrentResource: () => repository.getResource(resourceId),
 			})
 
 			return {
 				...responseResource(result.resource),
 				version: result.version,
 				baselineVersion: result.baselineVersion,
+				warnings,
 			}
 		},
 
@@ -450,9 +463,43 @@ export function createEditorResourceService(
 			if (!selected) {
 				throw new EditorResourceError('Version not found', 404, 'not-found')
 			}
+			const currentFields = current.fields ?? {}
+			const selectedState = selected.fields.state ?? 'draft'
+			if (selectedState !== 'draft' && selectedState !== 'published') {
+				throw new EditorResourceError(
+					'Only draft or published versions can be restored',
+					422,
+					'unsupported-resource',
+				)
+			}
+			const currentState = currentFields.state ?? 'draft'
+			if (currentState !== 'draft' && currentState !== 'published') {
+				throw new EditorResourceError(
+					'Archived or deleted resources cannot be restored through this API',
+					422,
+					'unsupported-resource',
+				)
+			}
+			const rollbackFields: Record<string, unknown> = {
+				...selected.fields,
+				state: currentState,
+			}
+			if ('slug' in currentFields) rollbackFields.slug = currentFields.slug
+			else delete rollbackFields.slug
+			if ('publishedAt' in currentFields) {
+				rollbackFields.publishedAt = currentFields.publishedAt
+			} else {
+				delete rollbackFields.publishedAt
+			}
+			if (currentState === 'published' && !rollbackFields.publishedAt) {
+				Object.assign(
+					rollbackFields,
+					publishedAtStamp('published', currentFields),
+				)
+			}
 			if (
-				selected.fields.state !== 'draft' &&
-				selected.fields.state !== 'published'
+				rollbackFields.state !== 'draft' &&
+				rollbackFields.state !== 'published'
 			) {
 				throw new EditorResourceError(
 					'Only draft or published versions can be restored',
@@ -460,27 +507,32 @@ export function createEditorResourceService(
 					'unsupported-resource',
 				)
 			}
-			assertValidResourceFields(current, selected.fields)
+			assertValidResourceFields(current, rollbackFields)
 
 			const result = await repository.commitVersionedMutation({
 				...context,
 				resourceId,
 				expectedRevision,
-				fields: selected.fields,
+				fields: rollbackFields,
 				rollbackVersionId: versionId,
+				rollbackVersionFieldsDigest: buildEditorResourceFieldsDigest(
+					selected.fields,
+				),
 			})
 
-			await effects.afterWrite({
+			const warnings = await effects.afterWrite({
 				action: 'rollback',
 				previousResource: result.previousResource,
 				resource: result.resource,
 				userId: context.userId,
+				getCurrentResource: () => repository.getResource(resourceId),
 			})
 
 			return {
 				...responseResource(result.resource),
 				version: result.version,
 				baselineVersion: result.baselineVersion,
+				warnings,
 			}
 		},
 	}

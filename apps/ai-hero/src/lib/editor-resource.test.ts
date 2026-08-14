@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+	buildEditorResourceFieldsDigest,
 	buildEditorResourceRevision,
 	canAccessEditorResource,
 	createEditorResourceVersionId,
@@ -14,10 +15,15 @@ import {
 	type VersionedMutationInput,
 } from './editor-resource'
 
-const editor: EditorAccessContext = { userId: 'user_editor', isAdmin: false }
+const editor: EditorAccessContext = {
+	userId: 'user_editor',
+	isAdmin: false,
+	canManageResource: () => false,
+}
 const stranger: EditorAccessContext = {
 	userId: 'user_stranger',
 	isAdmin: false,
+	canManageResource: () => false,
 }
 
 function resource(
@@ -112,7 +118,14 @@ class FakeRepository implements EditorResourceRepository {
 		if (input.rollbackVersionId && !selected) {
 			throw new EditorResourceError('Version not found', 404, 'not-found')
 		}
-		const fields = structuredClone(selected?.fields ?? input.fields ?? {})
+		if (
+			selected &&
+			input.rollbackVersionFieldsDigest !==
+				buildEditorResourceFieldsDigest(selected.fields)
+		) {
+			throw new EditorResourceError('selected changed', 409, 'conflict')
+		}
+		const fields = structuredClone(input.fields ?? {})
 		const now = new Date(
 			Date.parse('2026-08-14T00:00:00.000Z') + ++this.sequence * 1000,
 		)
@@ -163,7 +176,7 @@ const effects = { afterWrite: vi.fn() }
 
 beforeEach(() => {
 	effects.afterWrite.mockReset()
-	effects.afterWrite.mockResolvedValue(undefined)
+	effects.afterWrite.mockResolvedValue([])
 })
 
 describe('editor resource authorization', () => {
@@ -261,17 +274,27 @@ describe('editor resource authorization', () => {
 		}
 	})
 
-	it('keeps admin and creator compatibility without a contributor role', () => {
+	it('requires concrete capability for creator compatibility', () => {
+		const owned = resource({ contributions: [] })
 		expect(
-			canAccessEditorResource(resource({ contributions: [] }), {
+			canAccessEditorResource(owned, {
 				userId: 'admin',
 				isAdmin: true,
+				canManageResource: () => false,
 			}),
 		).toBe(true)
 		expect(
-			canAccessEditorResource(resource({ contributions: [] }), {
+			canAccessEditorResource(owned, {
 				userId: 'user_owner',
 				isAdmin: false,
+				canManageResource: () => false,
+			}),
+		).toBe(false)
+		expect(
+			canAccessEditorResource(owned, {
+				userId: 'user_owner',
+				isAdmin: false,
+				canManageResource: (candidate) => candidate.id === owned.id,
 			}),
 		).toBe(true)
 	})
@@ -344,6 +367,14 @@ describe('editor resource service', () => {
 			body: 'approved',
 			legacyFlag: true,
 		})
+		await expect(
+			service.update(
+				'workshop_1',
+				{ action: 'save', fields: { slug: 'hijacked-route' } },
+				saved.revision,
+				editor,
+			),
+		).rejects.toMatchObject({ status: 400, code: 'invalid-input' })
 	})
 
 	it('lets only one concurrent writer commit the same revision', async () => {
@@ -500,6 +531,7 @@ describe('editor resource service', () => {
 		const orderedEffects = {
 			afterWrite: vi.fn(async () => {
 				order.push('effects')
+				return []
 			}),
 		}
 		const service = createEditorResourceService(repository, orderedEffects)
@@ -548,6 +580,136 @@ describe('editor resource service', () => {
 			editor,
 		)
 		expect(published.resource.fields.state).toBe('published')
+	})
+
+	it('rolls back a first-write baseline with missing historical state', async () => {
+		const original = resource()
+		const { state: _state, ...fieldsWithoutState } = original.fields ?? {}
+		const repository = new FakeRepository([
+			resource({ fields: fieldsWithoutState }),
+		])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+		const first = await service.update(
+			'workshop_1',
+			{ action: 'save', fields: { body: 'first edit' } },
+			initial.revision,
+			editor,
+		)
+		const rolledBack = await service.rollback(
+			'workshop_1',
+			first.baselineVersion!.id,
+			first.revision,
+			editor,
+		)
+
+		expect(first.baselineVersion?.fields).not.toHaveProperty('state')
+		expect(rolledBack.resource.fields).toMatchObject({
+			state: 'draft',
+			slug: 'crash-course',
+		})
+	})
+
+	it('preserves the current slug during rollback', async () => {
+		const repository = new FakeRepository([resource()])
+		repository.versions.set('workshop_1', [
+			{
+				id: 'foreign_slug_version',
+				resourceId: 'workshop_1',
+				parentVersionId: null,
+				versionNumber: 1,
+				fields: {
+					...resource().fields,
+					slug: 'another-resources-route',
+				},
+				createdAt: new Date(),
+				createdById: editor.userId,
+			},
+		])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+		const rolledBack = await service.rollback(
+			'workshop_1',
+			'foreign_slug_version',
+			initial.revision,
+			editor,
+		)
+
+		expect(rolledBack.resource.fields.slug).toBe('crash-course')
+		expect(rolledBack.version.fields.slug).toBe('crash-course')
+	})
+
+	it('does not publish a draft resource through rollback', async () => {
+		const repository = new FakeRepository([resource()])
+		repository.versions.set('workshop_1', [
+			{
+				id: 'published_version',
+				resourceId: 'workshop_1',
+				parentVersionId: null,
+				versionNumber: 1,
+				fields: { ...resource().fields, state: 'published' },
+				createdAt: new Date(),
+				createdById: editor.userId,
+			},
+		])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+		const rolledBack = await service.rollback(
+			'workshop_1',
+			'published_version',
+			initial.revision,
+			editor,
+		)
+
+		expect(rolledBack.resource.fields.state).toBe('draft')
+	})
+
+	it('keeps a published resource published during rollback', async () => {
+		const repository = new FakeRepository([resource()])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+		const first = await service.update(
+			'workshop_1',
+			{ action: 'save', fields: { body: 'draft edit' } },
+			initial.revision,
+			editor,
+		)
+		const published = await service.update(
+			'workshop_1',
+			{ action: 'publish', fields: {} },
+			first.revision,
+			editor,
+		)
+		const rolledBack = await service.rollback(
+			'workshop_1',
+			first.baselineVersion!.id,
+			published.revision,
+			editor,
+		)
+
+		expect(rolledBack.resource.fields.state).toBe('published')
+		expect(rolledBack.resource.fields.publishedAt).toBe(
+			published.resource.fields.publishedAt,
+		)
+	})
+
+	it('returns degraded post-commit effect warnings', async () => {
+		effects.afterWrite.mockResolvedValueOnce([
+			{ effect: 'typesense', message: 'Typesense reconciliation failed.' },
+		])
+		const repository = new FakeRepository([resource()])
+		const service = createEditorResourceService(repository, effects)
+		const initial = await service.get('workshop_1', editor)
+		const result = await service.update(
+			'workshop_1',
+			{ action: 'save', fields: { body: 'committed' } },
+			initial.revision,
+			editor,
+		)
+
+		expect(result.warnings).toEqual([
+			{ effect: 'typesense', message: 'Typesense reconciliation failed.' },
+		])
 	})
 
 	it('rolls back by creating a new child version', async () => {

@@ -867,11 +867,17 @@ function editorResourceOperation({
 		'x-destructive': destructive,
 		'x-required-scopes': [],
 		'x-required-ability':
-			'manage all, resource creator, or active editor contribution on the concrete resource',
+			'manage all, concrete manage Content ability for a resource created by the caller, or active editor contribution on the concrete resource',
 		'x-resource-authorization':
-			'An active ContentContribution whose contribution type slug is editor grants the authenticated user this operation on that exact resource. Admin and creator compatibility remain separate grants.',
+			'An active ContentContribution whose active contribution type slug is editor grants the authenticated user this operation on that exact resource. createdById alone grants nothing; creator compatibility also requires concrete manage Content ability.',
 		'x-agent-token-policy':
-			'Scoped aih_pat_* tokens are excluded. Use Authorization: Bearer with the collaborator OAuth device token. No workspace-wide PAT write scope is required or accepted.',
+			'Scoped aih_pat_* tokens are excluded. Use Authorization: Bearer with an active AI Hero DeviceAccessToken. Existing analytics-issued DeviceAccessToken values are valid while active. No workspace-wide PAT write scope is required or accepted.',
+		...(!readOnly
+			? {
+					'x-idempotency':
+						'This operation is not idempotent and does not accept Idempotency-Key. Every accepted mutation appends a version. After a timeout, GET the resource and compare its representation and ETag before retrying with the current If-Match value.',
+				}
+			: {}),
 		...(parameters?.length ? { parameters } : {}),
 		...(requestSchema
 			? {
@@ -899,7 +905,7 @@ const editorResourcePaths = {
 			operationId: 'listEditorResources',
 			summary: 'List assigned editor resources',
 			description:
-				'Lists supported page and workshop resources assigned to the device-token user by an active editor contribution. Admins and resource creators retain compatibility access.',
+				'Lists supported page and workshop resources available to the active AI Hero DeviceAccessToken user. An active editor contribution grants exact-resource access. Admin access remains separate. Creator access also requires concrete manage Content ability; createdById alone is insufficient.',
 			responseSchema: 'EditorResourceListResponse',
 			readOnly: true,
 			destructive: false,
@@ -922,7 +928,7 @@ const editorResourcePaths = {
 			operationId: 'updateEditorResource',
 			summary: 'Save or publish an assigned resource',
 			description:
-				'Merges fields into an assigned page or workshop. action=publish is the only accepted state transition. Every write appends immutable version history. A stale If-Match returns 409.',
+				'Merges allowed fields into an assigned page or workshop. The slug is immutable in v1. action=publish is the only accepted state transition. Every write appends immutable version history and may return degraded post-commit effect warnings. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
 			responseSchema: 'EditorResourceMutationResponse',
 			requestSchema: 'EditorResourceMutationRequest',
 			parameters: [ifMatchParameter],
@@ -964,7 +970,7 @@ const editorResourcePaths = {
 			operationId: 'rollbackEditorResource',
 			summary: 'Restore a prior resource version',
 			description:
-				'Copies a selected prior snapshot into a new immutable child version. History is never rewritten. A stale If-Match returns 409.',
+				'Copies a selected prior snapshot into a new immutable child version while preserving the current slug. A published resource remains published. History is never rewritten. The response may include degraded post-commit effect warnings. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
 			responseSchema: 'EditorResourceMutationResponse',
 			requestSchema: 'EditorResourceRollbackRequest',
 			parameters: [ifMatchParameter],
@@ -1252,7 +1258,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 			{
 				name: 'Resource editor',
 				description:
-					'Resource-bound collaborator operations authorized by an active editor contribution and OAuth device-token identity.',
+					'Resource-bound collaborator operations authorized by an active editor contribution and an active AI Hero DeviceAccessToken. Existing analytics-issued DeviceAccessToken values are valid while active.',
 			},
 		],
 		paths: {

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 	service: {
 		get: vi.fn(),
 		update: vi.fn(),
+		rollback: vi.fn(),
 	},
 	getUserAbilityForRequest: vi.fn(),
 	log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -27,6 +28,7 @@ vi.mock('@/server/with-skill', () => ({
 	withSkill: <T>(handler: T) => handler,
 }))
 
+import { POST as ROLLBACK } from './rollback/route'
 import { GET, PATCH } from './route'
 
 const context = { params: Promise.resolve({ id: 'workshop_1' }) }
@@ -89,6 +91,7 @@ beforeEach(() => {
 			createdById: 'user_editor',
 		},
 		baselineVersion: null,
+		warnings: [],
 	})
 })
 
@@ -111,6 +114,41 @@ describe('editor resource route', () => {
 		expect(mocks.service.update).not.toHaveBeenCalled()
 	})
 
+	it('returns 400 for malformed mutation and rollback JSON', async () => {
+		const malformed = (url: string, method: 'PATCH' | 'POST') =>
+			new NextRequest(url, {
+				method,
+				headers: {
+					Authorization: 'Bearer device-token',
+					'Content-Type': 'application/json',
+					'If-Match': '"revision_1"',
+				},
+				body: '{"broken":',
+			})
+
+		const update = await PATCH(
+			malformed(
+				'http://localhost:3000/api/editor/resources/workshop_1',
+				'PATCH',
+			),
+			context,
+		)
+		const rollback = await ROLLBACK(
+			malformed(
+				'http://localhost:3000/api/editor/resources/workshop_1/rollback',
+				'POST',
+			),
+			context,
+		)
+
+		expect(update.status).toBe(400)
+		expect(rollback.status).toBe(400)
+		expect(await update.json()).toMatchObject({ code: 'invalid-input' })
+		expect(await rollback.json()).toMatchObject({ code: 'invalid-input' })
+		expect(mocks.service.update).not.toHaveBeenCalled()
+		expect(mocks.service.rollback).not.toHaveBeenCalled()
+	})
+
 	it('maps a stale revision to 409', async () => {
 		mocks.service.update.mockRejectedValue(
 			new EditorResourceError('stale', 409, 'conflict'),
@@ -129,7 +167,7 @@ describe('editor resource route', () => {
 			'workshop_1',
 			{ action: 'save', fields: { body: 'edit' } },
 			'revision_1',
-			{ userId: 'user_editor', isAdmin: false },
+			expect.objectContaining({ userId: 'user_editor', isAdmin: false }),
 		)
 		expect(response.headers.get('etag')).toBe('"revision_2"')
 		expect(EditorResourceMutationResponseSchema.safeParse(body).success).toBe(

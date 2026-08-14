@@ -62,9 +62,16 @@ const updateEditorResourceHandler = async (
 	}
 
 	try {
-		const parsed = EditorResourceMutationRequestSchema.safeParse(
-			await request.json(),
-		)
+		let body: unknown
+		try {
+			body = await request.json()
+		} catch {
+			return editorResourceJson(
+				{ error: 'Malformed JSON', code: 'invalid-input' },
+				{ status: 400 },
+			)
+		}
+		const parsed = EditorResourceMutationRequestSchema.safeParse(body)
 		if (!parsed.success) {
 			return editorResourceJson(
 				{ error: 'Invalid input', issues: parsed.error.issues },

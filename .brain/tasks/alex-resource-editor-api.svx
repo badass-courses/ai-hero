@@ -50,10 +50,10 @@ The collaborator self-approves. Do not add proposal, approval, review-queue, or 
 Create or reuse one resource-aware service. It should recognize:
 
 - global admin
-- existing owner/contributor behavior when applicable
-- active `ContentContributions` row with contribution type `editor`
+- existing creator behavior only when the caller also has concrete `manage Content` capability for that resource
+- active `ContentContributions` row with an active contribution type `editor`
 
-The editor API must always check the concrete resource. Do not rely on `ability.can('update', 'Content')` with an abstract subject string.
+`createdById` alone is not an authorization grant. The editor API must always check the concrete resource. Do not rely on `ability.can('update', 'Content')` with an abstract subject string.
 
 Do not add broad `content:write` or `content:publish` access as the authorization boundary.
 
@@ -64,6 +64,18 @@ Use the existing `ContentResourceVersion` system. Generalize existing version he
 The first mutation for a resource with `currentVersionId = null` must preserve the current production fields as a baseline version, then create the candidate child version.
 
 Use a transaction for version rows, resource fields, and the current pointer.
+
+## Retry behavior
+
+Editor mutations are not idempotent. They do not accept `Idempotency-Key`. Every accepted mutation appends an immutable version.
+
+After a timeout, GET the resource and compare its representation and ETag before retrying. Retry only with the current `If-Match` value. Do not add a schema migration only for first-release idempotency.
+
+The slug is immutable through the v1 update and rollback routes. Rollback preserves the current lifecycle state, so it cannot publish or unpublish.
+
+## Verification gap
+
+The focused tests verify the service-level stale-write contract and post-commit effect interleavings. They do not run two transactions against live MySQL. Verify `SELECT ... FOR UPDATE`, affected-row compare-and-swap behavior, and Typesense connectivity in a non-production deployment before launch.
 
 ## Guardrails
 

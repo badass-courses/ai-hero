@@ -11,6 +11,10 @@ vi.mock('@/server/ability-for-request', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
+import {
+	canAccessEditorResource,
+	type EditorResourceRecord,
+} from '@/lib/editor-resource'
 import { authenticateEditorResourceRequest } from './editor-resource-route'
 
 const request = (authorization?: string) =>
@@ -40,7 +44,7 @@ describe('editor resource route authentication', () => {
 		expect(mocks.getUserAbilityForRequest).not.toHaveBeenCalled()
 	})
 
-	it('accepts an OAuth device-token identity without a contributor role', async () => {
+	it('accepts an active AI Hero DeviceAccessToken identity without a global contributor role', async () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue({
 			user,
 			ability,
@@ -54,6 +58,50 @@ describe('editor resource route authentication', () => {
 			context: { userId: user.id, isAdmin: false },
 			user,
 		})
+		expect(result.ok && result.context.canManageResource).toEqual(
+			expect.any(Function),
+		)
+	})
+
+	it('combines an analytics-issued device token with an active editor contribution', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { ...user, roles: [{ name: 'analytics_viewer' }] },
+			ability,
+			authMethod: 'device-token',
+		})
+		const result = await authenticateEditorResourceRequest(
+			request('Bearer analytics-issued-device-token'),
+		)
+		const assigned: EditorResourceRecord = {
+			id: 'workshop_1',
+			type: 'workshop',
+			createdById: 'someone_else',
+			fields: { title: 'Crash Course' },
+			currentVersionId: null,
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			deletedAt: null,
+			organizationId: null,
+			createdByOrganizationMembershipId: null,
+			contributions: [
+				{
+					userId: user.id,
+					active: true,
+					deletedAt: null,
+					contributionType: {
+						slug: 'editor',
+						active: true,
+						deletedAt: null,
+					},
+				},
+			],
+		}
+
+		expect(result.ok).toBe(true)
+		expect(result.ok && canAccessEditorResource(assigned, result.context)).toBe(
+			true,
+		)
+		expect(ability.can).toHaveBeenCalledWith('manage', 'all')
 	})
 
 	it('rejects workspace-wide PAT identities on the collaborator API', async () => {

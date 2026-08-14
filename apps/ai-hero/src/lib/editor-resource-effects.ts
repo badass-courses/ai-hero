@@ -2,11 +2,54 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { log } from '@/server/logger'
 import type { ContentResource } from '@coursebuilder/core/schemas/content-resource-schema'
 
-import type { EditorResourceEffects } from './editor-resource'
+import type {
+	EditorResourceEffectWarning,
+	EditorResourceEffects,
+	EditorResourceRecord,
+} from './editor-resource'
 import { upsertPostToTypeSense } from './typesense-query'
 
+const MAX_RECONCILIATION_PASSES = 5
+
+function asTypesenseResource(resource: EditorResourceRecord): ContentResource {
+	const fields = resource.fields ?? {}
+	return {
+		id: resource.id,
+		type: resource.type,
+		createdById: resource.createdById,
+		currentVersionId: resource.currentVersionId,
+		fields,
+		slug: typeof fields.slug === 'string' ? fields.slug : null,
+		createdAt: resource.createdAt,
+		updatedAt: resource.updatedAt,
+		deletedAt: resource.deletedAt,
+		resources: [],
+		resourceProducts: [],
+		organizationId: resource.organizationId,
+		createdByOrganizationMembershipId:
+			resource.createdByOrganizationMembershipId,
+	}
+}
+
+function searchAction(
+	previous: EditorResourceRecord,
+	current: EditorResourceRecord,
+) {
+	return previous.fields?.state !== 'published' &&
+		current.fields?.state === 'published'
+		? 'publish'
+		: 'save'
+}
+
 export const editorResourceEffects: EditorResourceEffects = {
-	async afterWrite({ action, previousResource, resource, userId }) {
+	async afterWrite({
+		action,
+		previousResource,
+		resource,
+		userId,
+		getCurrentResource,
+	}) {
+		const warnings: EditorResourceEffectWarning[] = []
 		const fields = resource.fields ?? {}
 		const previousFields = previousResource.fields ?? {}
 		const slug = typeof fields.slug === 'string' ? fields.slug : null
@@ -20,39 +63,70 @@ export const editorResourceEffects: EditorResourceEffects = {
 					JSON.stringify(previousFields[key]) !== JSON.stringify(fields[key]),
 			)
 			.sort()
-		const searchAction =
-			previousFields.state !== 'published' && fields.state === 'published'
-				? 'publish'
-				: 'save'
 
 		if (resource.type === 'workshop') {
 			try {
-				const typesenseResource: ContentResource = {
-					id: resource.id,
-					type: resource.type,
-					createdById: resource.createdById,
-					currentVersionId: resource.currentVersionId,
-					fields,
-					slug,
-					createdAt: resource.createdAt,
-					updatedAt: resource.updatedAt,
-					deletedAt: resource.deletedAt,
-					resources: [],
-					resourceProducts: [],
-					organizationId: resource.organizationId,
-					createdByOrganizationMembershipId:
-						resource.createdByOrganizationMembershipId,
+				let previousIndexed = previousResource
+				let candidate = resource
+				let reconciled = false
+
+				for (let pass = 1; pass <= MAX_RECONCILIATION_PASSES; pass++) {
+					const result = await upsertPostToTypeSense(
+						asTypesenseResource(candidate),
+						searchAction(previousIndexed, candidate),
+					)
+					if (!result.ok) {
+						warnings.push({
+							effect: 'typesense',
+							message: `Typesense reconciliation did not complete (${result.reason}).`,
+						})
+						break
+					}
+
+					const latest = await getCurrentResource()
+					if (
+						!latest ||
+						latest.currentVersionId === candidate.currentVersionId
+					) {
+						reconciled = true
+						break
+					}
+
+					await log.info('editor.resource.typesense.reconcile-stale', {
+						resourceId: resource.id,
+						indexedVersionId: candidate.currentVersionId,
+						currentVersionId: latest.currentVersionId,
+						pass,
+						userId,
+					})
+					previousIndexed = candidate
+					candidate = latest
 				}
-				await upsertPostToTypeSense(typesenseResource, searchAction)
-				await log.info('editor.resource.typesense.success', {
-					resourceId: resource.id,
-					action: searchAction,
-					userId,
-				})
+
+				if (
+					!reconciled &&
+					!warnings.some(({ effect }) => effect === 'typesense')
+				) {
+					warnings.push({
+						effect: 'typesense',
+						message:
+							'Typesense reconciliation could not catch up with the current resource version.',
+					})
+				}
+				if (reconciled) {
+					await log.info('editor.resource.typesense.success', {
+						resourceId: resource.id,
+						versionId: candidate.currentVersionId,
+						userId,
+					})
+				}
 			} catch (error) {
+				warnings.push({
+					effect: 'typesense',
+					message: 'Typesense reconciliation failed after the database commit.',
+				})
 				await log.warn('editor.resource.typesense.failed', {
 					resourceId: resource.id,
-					action: searchAction,
 					userId,
 					error: error instanceof Error ? error.message : String(error),
 				})
@@ -75,6 +149,10 @@ export const editorResourceEffects: EditorResourceEffects = {
 				}
 			}
 		} catch (error) {
+			warnings.push({
+				effect: 'cache',
+				message: 'Cache invalidation failed after the database commit.',
+			})
 			await log.warn('editor.resource.cache-invalidation.failed', {
 				resourceId: resource.id,
 				userId,
@@ -90,6 +168,8 @@ export const editorResourceEffects: EditorResourceEffects = {
 			previousVersionId: previousResource.currentVersionId,
 			versionId: resource.currentVersionId,
 			userId,
+			warnings,
 		})
+		return warnings
 	},
 }

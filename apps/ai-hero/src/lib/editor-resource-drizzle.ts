@@ -210,7 +210,7 @@ export const editorResourceRepository: EditorResourceRepository = {
 				)
 			}
 
-			let candidateFields = input.fields
+			const candidateFields = input.fields
 			if (input.rollbackVersionId) {
 				const selected = await tx.query.contentResourceVersion.findFirst({
 					where: and(
@@ -223,8 +223,8 @@ export const editorResourceRepository: EditorResourceRepository = {
 				}
 				const selectedFields = selected.fields ?? {}
 				if (
-					!input.fields ||
-					buildEditorResourceFieldsDigest(input.fields) !==
+					!input.rollbackVersionFieldsDigest ||
+					input.rollbackVersionFieldsDigest !==
 						buildEditorResourceFieldsDigest(selectedFields)
 				) {
 					throw new EditorResourceError(
@@ -233,7 +233,6 @@ export const editorResourceRepository: EditorResourceRepository = {
 						'conflict',
 					)
 				}
-				candidateFields = selectedFields
 			}
 			if (!candidateFields) {
 				throw new EditorResourceError(

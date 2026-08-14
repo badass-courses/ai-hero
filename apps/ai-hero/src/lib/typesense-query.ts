@@ -99,10 +99,17 @@ async function deriveResourceImage(
 	}
 }
 
+export type TypesenseUpsertResult =
+	| { ok: true }
+	| {
+			ok: false
+			reason: 'config-missing' | 'invalid-resource' | 'write-failed'
+	  }
+
 export async function upsertPostToTypeSense(
 	post: ContentResource,
 	action: PostAction,
-) {
+): Promise<TypesenseUpsertResult> {
 	try {
 		void log.debug('typesense.upsert.init', {
 			host: process.env.NEXT_PUBLIC_TYPESENSE_HOST,
@@ -118,7 +125,7 @@ export async function upsertPostToTypeSense(
 				postId: post.id,
 				resourceType: post.type,
 			})
-			return
+			return { ok: false, reason: 'config-missing' }
 		}
 		const typesenseWriteClient = new Typesense.Client({
 			nodes: [
@@ -147,13 +154,14 @@ export async function upsertPostToTypeSense(
 				void log.info('typesense.upsert.skip-delete.success', {
 					postId: post.id,
 				})
+				return { ok: true }
 			} catch (err: any) {
 				void log.warn('typesense.upsert.skip-delete.failed', {
 					postId: post.id,
 					error: getErrorMessage(err),
 				})
+				return { ok: false, reason: 'write-failed' }
 			}
-			return
 		}
 
 		void log.debug('typesense.tags.fetch', {
@@ -250,7 +258,7 @@ export async function upsertPostToTypeSense(
 				action,
 				error: resource.error.message,
 			})
-			return
+			return { ok: false, reason: 'invalid-resource' }
 		}
 
 		void log.debug('typesense.upsert.prepare', {
@@ -279,6 +287,7 @@ export async function upsertPostToTypeSense(
 				action,
 			})
 			revalidatePostsGraph(post.id)
+			return { ok: true }
 		} catch (err: any) {
 			void log.warn('typesense.upsert.failed', {
 				postId: post.id,
@@ -286,6 +295,7 @@ export async function upsertPostToTypeSense(
 				error: getErrorMessage(err),
 				action,
 			})
+			return { ok: false, reason: 'write-failed' }
 		}
 	} catch (error: any) {
 		// Catch any unexpected errors but don't throw
@@ -295,6 +305,7 @@ export async function upsertPostToTypeSense(
 			resourceType: post.type,
 			action,
 		})
+		return { ok: false, reason: 'write-failed' }
 	}
 }
 
