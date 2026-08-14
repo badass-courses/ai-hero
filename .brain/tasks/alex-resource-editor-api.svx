@@ -1,0 +1,107 @@
+---
+title: "Ship resource-bound collaborator editor API"
+type: "task"
+status: "active"
+assignee: "api-builder"
+created_at: "2026-08-14"
+---
+
+# Ship resource-bound collaborator editor API
+
+## Outcome
+
+Ship the smallest production-quality API that lets a high-trust collaborator edit and publish an explicitly assigned AI Hero content resource without receiving global admin access.
+
+The first target is the public AI Coding Crash Course workshop. Do not hardcode Alex's email or the Crash Course ID into authorization code. Use the existing `ContentContributions` relation and `editor` contribution type as the direct resource allowlist.
+
+The API is the required unblock. UI changes are not required.
+
+## Done conditions
+
+- An authenticated API caller can list or read only resources for which they have an active `editor` contribution.
+- The caller can update and publish an assigned workshop, including a page that is already customer-visible while stored as draft/unlisted.
+- The caller cannot read or mutate an unassigned resource through the editor API.
+- Every write creates immutable `ContentResourceVersion` history and updates `currentVersionId` atomically.
+- If a resource has no current version, the first write creates a baseline snapshot before the candidate version so rollback is possible.
+- Writes use optimistic concurrency through `If-Match`, an ETag, version ID, or equivalent stable hash. A stale write returns HTTP 409.
+- Rollback creates a new immutable version from a selected prior version. It never rewrites history.
+- Workshop mutation runs the existing schema validation, Typesense behavior where applicable, cache invalidation, canonical path revalidation, and structured logging.
+- The API is included truthfully in the existing OpenAPI registry with destructive/read-only classification.
+- Focused tests cover authorization, first-write baseline versioning, normal version chains, stale writes, publish, live draft/unlisted mutation semantics, cache hooks where testable, and rollback.
+- Run the relevant tests and type checks.
+- Commit the coherent implementation on `worker/alex-editor-api` as `shitratgit[bot]`.
+
+## API shape
+
+Prefer a small resource-bound surface under `/api/editor/resources`. Exact route names may adapt to repo conventions after source inspection.
+
+Minimum operations:
+
+- list assigned resources
+- get one assigned resource with revision or ETag
+- update/save/publish one assigned resource
+- list immutable versions
+- rollback to a selected version by creating a new version
+
+The collaborator self-approves. Do not add proposal, approval, review-queue, or operator-publish states.
+
+## Authorization
+
+Create or reuse one resource-aware service. It should recognize:
+
+- global admin
+- existing creator behavior only when the caller also has concrete `manage Content` capability for that resource
+- active `ContentContributions` row with an active contribution type `editor`
+
+`createdById` alone is not an authorization grant. The editor API must always check the concrete resource. Do not rely on `ability.can('update', 'Content')` with an abstract subject string.
+
+Do not add broad `content:write` or `content:publish` access as the authorization boundary.
+
+## Versioning
+
+Use the existing `ContentResourceVersion` system. Generalize existing version helpers when practical instead of creating a parallel table.
+
+The first mutation for a resource with `currentVersionId = null` must preserve the current production fields as a baseline version, then create the candidate child version.
+
+Use a transaction for version rows, resource fields, and the current pointer.
+
+## Retry behavior
+
+Editor mutations are not idempotent. They do not accept `Idempotency-Key`. Every accepted mutation appends an immutable version.
+
+After a timeout, GET the resource and compare its representation and ETag before retrying. Retry only with the current `If-Match` value. Do not add a schema migration only for first-release idempotency.
+
+The slug is immutable through the v1 update and rollback routes. Rollback preserves the current lifecycle state, so it cannot publish or unpublish.
+
+## Durable search indexing
+
+After a workshop commit, the API emits immutable `content/resource.index-requested` data containing only `resourceId` and `committedVersionId`. Its event ID is bound to that committed version. The registered Inngest function uses keyed concurrency of one run per resource ID. Every run reads and indexes the latest current MySQL resource inside a durable step, so reordered events converge on current state instead of replaying an older request snapshot.
+
+The API invalidates page caches synchronously. Its mutation response reports whether indexing was queued or degraded and includes a warning when enqueue fails. It never waits for a synchronous Typesense write.
+
+## Verification gap
+
+The focused tests verify the service-level stale-write contract and reversed Inngest event behavior. They do not run two transactions against live MySQL. Verify `SELECT ... FOR UPDATE`, affected-row compare-and-swap behavior, Inngest registration, and Typesense connectivity in a non-production deployment before launch.
+
+## Guardrails
+
+- Do not deploy.
+- Do not mutate production data.
+- Do not grant Alex access yet.
+- Do not send email or Slack.
+- Do not edit immutable files under `.brain/data/**/receipts/`.
+- Preserve unrelated files and changes.
+- Keep provider or transport details out of the domain service so MCP can later reuse the API contract.
+- Do not wait for a selector/tag/group grant model. Direct resource contribution is the first release.
+
+## Report
+
+Write a concise DONE summary with:
+
+- commit SHA
+- changed files
+- endpoint contract
+- tests and type checks run
+- any residual risk or deploy requirement
+
+Print `DONE` when the branch is ready for parent review.

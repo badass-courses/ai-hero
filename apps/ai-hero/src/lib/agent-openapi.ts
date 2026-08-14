@@ -2,6 +2,14 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 import type { ZodTypeAny } from 'zod'
 
 import {
+	EditorResourceListResponseSchema,
+	EditorResourceMutationRequestSchema,
+	EditorResourceMutationResponseSchema,
+	EditorResourceResponseSchema,
+	EditorResourceRollbackRequestSchema,
+	EditorResourceVersionListResponseSchema,
+} from './editor-resource'
+import {
 	AddListItemRequestSchema,
 	CommandPreflightResultSchema,
 	CompleteMultipartUploadResponseSchema,
@@ -813,6 +821,178 @@ const contentPaths = {
 	},
 }
 
+const etagResponseHeader = {
+	description: 'Strong revision validator for the returned resource.',
+	schema: { type: 'string' },
+}
+
+const ifMatchParameter = {
+	name: 'If-Match',
+	in: 'header',
+	required: true,
+	description: 'Strong ETag returned by the last resource read.',
+	schema: { type: 'string' },
+}
+
+function editorResourceOperation({
+	operationId,
+	summary,
+	description,
+	responseSchema,
+	readOnly,
+	destructive,
+	returnsEtag = false,
+	requestSchema,
+	parameters,
+	extraResponses,
+}: {
+	operationId: string
+	summary: string
+	description: string
+	responseSchema: string
+	readOnly: boolean
+	destructive: boolean
+	returnsEtag?: boolean
+	requestSchema?: string
+	parameters?: Array<Record<string, unknown>>
+	extraResponses?: Record<string, unknown>
+}) {
+	return {
+		tags: ['Resource editor'],
+		operationId,
+		summary,
+		description,
+		security: BEARER_SECURITY,
+		'x-read-only': readOnly,
+		'x-destructive': destructive,
+		'x-required-scopes': [],
+		'x-required-ability':
+			'manage all, concrete manage Content ability for a resource created by the caller, or active editor contribution on the concrete resource',
+		'x-resource-authorization':
+			'An active ContentContribution whose active contribution type slug is editor grants the authenticated user this operation on that exact resource. createdById alone grants nothing; creator compatibility also requires concrete manage Content ability.',
+		'x-agent-token-policy':
+			'Scoped aih_pat_* tokens are excluded. Use Authorization: Bearer with an active AI Hero DeviceAccessToken. Existing analytics-issued DeviceAccessToken values are valid while active. No workspace-wide PAT write scope is required or accepted.',
+		...(!readOnly
+			? {
+					'x-idempotency':
+						'This operation is not idempotent and does not accept Idempotency-Key. Every accepted mutation appends a version. After a timeout, GET the resource and compare its representation and ETag before retrying with the current If-Match value.',
+				}
+			: {}),
+		...(parameters?.length ? { parameters } : {}),
+		...(requestSchema
+			? {
+					requestBody: {
+						required: true,
+						content: jsonContent(schemaRef(requestSchema)),
+					},
+				}
+			: {}),
+		responses: {
+			'200': {
+				...response('Successful response.', schemaRef(responseSchema)),
+				...(returnsEtag ? { headers: { ETag: etagResponseHeader } } : {}),
+			},
+			...authErrorResponses,
+			...extraResponses,
+		},
+	}
+}
+
+const editorResourcePaths = {
+	'/api/editor/resources': {
+		options: preflight('preflightEditorResources'),
+		get: editorResourceOperation({
+			operationId: 'listEditorResources',
+			summary: 'List assigned editor resources',
+			description:
+				'Lists supported page and workshop resources available to the active AI Hero DeviceAccessToken user. An active editor contribution grants exact-resource access. Admin access remains separate. Creator access also requires concrete manage Content ability; createdById alone is insufficient.',
+			responseSchema: 'EditorResourceListResponse',
+			readOnly: true,
+			destructive: false,
+		}),
+	},
+	'/api/editor/resources/{id}': {
+		parameters: [pathParameter('id', 'Assigned resource id.')],
+		options: preflight('preflightEditorResource'),
+		get: editorResourceOperation({
+			operationId: 'getEditorResource',
+			summary: 'Read an assigned editor resource',
+			description:
+				'Returns the assigned page or workshop and a strong ETag for optimistic concurrency.',
+			responseSchema: 'EditorResourceResponse',
+			readOnly: true,
+			destructive: false,
+			returnsEtag: true,
+		}),
+		patch: editorResourceOperation({
+			operationId: 'updateEditorResource',
+			summary: 'Save or publish an assigned resource',
+			description:
+				'Merges allowed fields into an assigned page or workshop. The slug is immutable in v1. action=publish is the only accepted state transition. Every write appends immutable version history. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
+			responseSchema: 'EditorResourceMutationResponse',
+			requestSchema: 'EditorResourceMutationRequest',
+			parameters: [ifMatchParameter],
+			readOnly: false,
+			destructive: true,
+			returnsEtag: true,
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response(
+					'The If-Match revision is stale.',
+					schemaRef('ErrorResponse'),
+				),
+				'422': response(
+					'The resource or state is not editable.',
+					schemaRef('ErrorResponse'),
+				),
+				'428': response('If-Match is required.', schemaRef('ErrorResponse')),
+			},
+		}),
+	},
+	'/api/editor/resources/{id}/versions': {
+		parameters: [pathParameter('id', 'Assigned resource id.')],
+		options: preflight('preflightEditorResourceVersions'),
+		get: editorResourceOperation({
+			operationId: 'listEditorResourceVersions',
+			summary: 'List immutable resource versions',
+			description:
+				'Lists immutable versions newest first for an assigned page or workshop.',
+			responseSchema: 'EditorResourceVersionListResponse',
+			readOnly: true,
+			destructive: false,
+			extraResponses: commonErrorResponses,
+		}),
+	},
+	'/api/editor/resources/{id}/rollback': {
+		parameters: [pathParameter('id', 'Assigned resource id.')],
+		options: preflight('preflightEditorResourceRollback'),
+		post: editorResourceOperation({
+			operationId: 'rollbackEditorResource',
+			summary: 'Restore a prior resource version',
+			description:
+				'Copies a selected prior snapshot into a new immutable child version while preserving the current slug and lifecycle state. History is never rewritten. Workshop search indexing is queued durably after commit; the response reports queued or degraded effect state and warnings. Page caches are invalidated synchronously. A stale If-Match returns 409. This operation is not idempotent; after a timeout, GET and reconcile before retrying.',
+			responseSchema: 'EditorResourceMutationResponse',
+			requestSchema: 'EditorResourceRollbackRequest',
+			parameters: [ifMatchParameter],
+			readOnly: false,
+			destructive: true,
+			returnsEtag: true,
+			extraResponses: {
+				...commonErrorResponses,
+				'409': response(
+					'The If-Match revision is stale.',
+					schemaRef('ErrorResponse'),
+				),
+				'422': response(
+					'The selected version cannot be restored.',
+					schemaRef('ErrorResponse'),
+				),
+				'428': response('If-Match is required.', schemaRef('ErrorResponse')),
+			},
+		}),
+	},
+}
+
 const personalAccessTokenPaths = {
 	'/api/personal-access-tokens': {
 		options: preflight('preflightPersonalAccessTokens'),
@@ -951,6 +1131,12 @@ const zodSchemas = {
 	MintPersonalAccessTokenRequest: MintPersonalAccessTokenSchema,
 	PersonalAccessToken: PersonalAccessTokenResponseSchema,
 	MintPersonalAccessTokenResponse: MintPersonalAccessTokenResponseSchema,
+	EditorResourceMutationRequest: EditorResourceMutationRequestSchema,
+	EditorResourceRollbackRequest: EditorResourceRollbackRequestSchema,
+	EditorResourceResponse: EditorResourceResponseSchema,
+	EditorResourceListResponse: EditorResourceListResponseSchema,
+	EditorResourceVersionListResponse: EditorResourceVersionListResponseSchema,
+	EditorResourceMutationResponse: EditorResourceMutationResponseSchema,
 } satisfies Record<string, ZodTypeAny>
 
 function toOpenApiSchema(schema: ZodTypeAny): Record<string, unknown> {
@@ -1054,7 +1240,7 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 		jsonSchemaDialect: 'https://json-schema.org/draft/2019-09/schema',
 		info: {
 			title: 'AI Hero Agent and Content API',
-			version: '1.1.0',
+			version: '1.2.0',
 			description:
 				'Start at /api. Scoped aih_pat_* tokens may use content:read plus the narrow write scopes content:write, content:publish, content:relations, media:upload, and shortlinks:manage. On scoped write operations, x-required-scopes lists every PAT scope that can gate the operation and x-scope-requirements states the exact required combination or payload condition. Role-derived device tokens use x-required-ability instead. Customer data, purchases, surveys, survey responses, support memory, and agent-token administration remain outside PAT write access.',
 		},
@@ -1069,9 +1255,15 @@ export function buildAgentOpenApiDocument(baseUrl: string) {
 				description:
 					'Public reads, PAT-backed reads and narrow writes, and role-derived device-token operations.',
 			},
+			{
+				name: 'Resource editor',
+				description:
+					'Resource-bound collaborator operations authorized by an active editor contribution and an active AI Hero DeviceAccessToken. Existing analytics-issued DeviceAccessToken values are valid while active.',
+			},
 		],
 		paths: {
 			...contentPaths,
+			...editorResourcePaths,
 			...personalAccessTokenPaths,
 		},
 		components: {

@@ -102,6 +102,67 @@ describe('agent OpenAPI contract', () => {
 		)
 	})
 
+	it('classifies resource-bound editor operations truthfully', () => {
+		const document = buildAgentOpenApiDocument('http://localhost:3000')
+		const list = document.paths['/api/editor/resources'].get
+		const read = document.paths['/api/editor/resources/{id}'].get
+		const update = document.paths['/api/editor/resources/{id}'].patch
+		const versions = document.paths['/api/editor/resources/{id}/versions'].get
+		const rollback = document.paths['/api/editor/resources/{id}/rollback'].post
+
+		for (const operation of [list, read, versions]) {
+			expect(operation).toMatchObject({
+				'x-read-only': true,
+				'x-destructive': false,
+				'x-required-scopes': [],
+			})
+		}
+		for (const operation of [update, rollback]) {
+			expect(operation).toMatchObject({
+				'x-read-only': false,
+				'x-destructive': true,
+				'x-required-scopes': [],
+			})
+			expect(operation.parameters).toContainEqual(
+				expect.objectContaining({ name: 'If-Match', required: true }),
+			)
+			expect(operation.responses).toHaveProperty('409')
+			expect(operation.responses).toHaveProperty('428')
+		}
+
+		for (const operation of [read, update, rollback]) {
+			expect(operation.responses['200']).toHaveProperty('headers.ETag')
+		}
+
+		expect(update['x-resource-authorization']).toContain(
+			'active ContentContribution',
+		)
+		expect(update['x-resource-authorization']).toContain(
+			'createdById alone grants nothing',
+		)
+		expect(update['x-agent-token-policy']).toContain(
+			'active AI Hero DeviceAccessToken',
+		)
+		expect(update['x-agent-token-policy']).toContain(
+			'analytics-issued DeviceAccessToken',
+		)
+		expect(update['x-agent-token-policy']).toContain(
+			'aih_pat_* tokens are excluded',
+		)
+		expect(update['x-idempotency']).toContain('not idempotent')
+		expect(update['x-idempotency']).toContain('GET the resource')
+		expect(update.description).toContain('slug is immutable')
+		expect(update.description).toContain('queued durably after commit')
+		expect(rollback.description).toContain('lifecycle state')
+		expect(rollback.description).toContain('never rewritten')
+		expect(
+			document.components.schemas.EditorResourceMutationResponse.properties,
+		).toMatchObject({
+			effects: expect.any(Object),
+			warnings: expect.any(Object),
+		})
+	})
+
 	it('documents changelog compatibility fields as deprecated', () => {
 		const document = buildAgentOpenApiDocument('http://localhost:3000')
 		const schema = document.components.schemas.SkillChangelogSuccessResponse
