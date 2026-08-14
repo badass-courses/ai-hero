@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
+import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -74,13 +75,27 @@ export default async function LoginPage({
 		rawSubscriberId: cookieStore.get('ck_subscriber_id')?.value,
 	})
 
+	const couponAuthorization = await authorizeExclusiveCouponSelection({
+		adapter: courseBuilderAdapter,
+		verifiedUserId: user.id,
+		productId: checkoutParams.productId,
+		quantity: checkoutParams.quantity ?? 1,
+		requestedMerchantCouponId: checkoutParams.couponId,
+		requestedSiteCouponId: checkoutParams.usedCouponId,
+	})
+	const authorizedCheckoutParams = {
+		...checkoutParams,
+		userId: user.id,
+		...(organizationId && { organizationId }),
+		...checkoutAttribution,
+		...(!couponAuthorization.authorized && {
+			couponId: undefined,
+			usedCouponId: undefined,
+		}),
+	}
+
 	const stripe = await stripeProvider.createCheckoutSession(
-		{
-			...checkoutParams,
-			userId: user?.id,
-			...(organizationId && { organizationId }),
-			...checkoutAttribution,
-		},
+		authorizedCheckoutParams,
 		courseBuilderAdapter,
 	)
 	return redirect(stripe.redirect)

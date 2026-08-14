@@ -2,10 +2,13 @@ import {
 	GET as courseBuilderGET,
 	POST as coreCourseBuilderPOST,
 } from '@/coursebuilder/course-builder-config'
+import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
+import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shortfall'
 import { inngest } from '@/inngest/inngest.server'
+import { getServerAuthSession } from '@/server/auth'
 import { withSkill } from '@/server/with-skill'
 import { StripePaymentAdapter } from '@coursebuilder/core/providers/stripe'
 import type { NextRequest } from 'next/server'
@@ -18,9 +21,8 @@ const isCashBalanceEvent = (type: string): type is CashBalanceEventType =>
 	type === 'cash_balance.funds_available' ||
 	type === 'customer_cash_balance_transaction.created'
 
-const stripe = (
-	stripeProvider.options.paymentsAdapter as StripePaymentAdapter
-).stripe
+const stripe = (stripeProvider.options.paymentsAdapter as StripePaymentAdapter)
+	.stripe
 
 async function dispatchCashBalanceReconciliation(request: Request) {
 	const signature = request.headers.get('stripe-signature')
@@ -38,9 +40,7 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 		customer?: string | { id: string }
 	}
 	const customerId =
-		typeof object.customer === 'string'
-			? object.customer
-			: object.customer?.id
+		typeof object.customer === 'string' ? object.customer : object.customer?.id
 	if (!customerId) {
 		throw new Error(
 			`Stripe ${stripeEvent.type} event ${stripeEvent.id} has no customer`,
@@ -58,14 +58,32 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 	})
 }
 
+const isProtectedCommerceRequest = (request: NextRequest) =>
+	request.nextUrl.pathname.endsWith('/prices-formatted') ||
+	request.nextUrl.pathname.includes('/checkout/')
+
+const protectCommerceRequest = async (request: NextRequest) => {
+	if (!isProtectedCommerceRequest(request)) return request
+
+	const { session } = await getServerAuthSession()
+	return protectCourseBuilderRequest(request, {
+		adapter: courseBuilderAdapter,
+		verifiedUserId: session?.user?.id,
+	})
+}
+
+const courseBuilderGETWithCouponAuthorization = async (request: NextRequest) =>
+	courseBuilderGET(await protectCommerceRequest(request))
+
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	request: NextRequest,
 ) => {
 	const webhookRequest = request.clone()
-	const response = await coreCourseBuilderPOST(request)
+	const protectedRequest = await protectCommerceRequest(request)
+	const response = await coreCourseBuilderPOST(protectedRequest)
 	if (response.ok) await dispatchCashBalanceReconciliation(webhookRequest)
 	return response
 }
 
-export const GET = withSkill(courseBuilderGET)
+export const GET = withSkill(courseBuilderGETWithCouponAuthorization)
 export const POST = withSkill(courseBuilderPOSTWithCashBalanceReconciliation)
