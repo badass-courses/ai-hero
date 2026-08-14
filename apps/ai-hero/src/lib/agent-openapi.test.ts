@@ -102,6 +102,44 @@ describe('agent OpenAPI contract', () => {
 		)
 	})
 
+	it('classifies resource-bound editor operations truthfully', () => {
+		const document = buildAgentOpenApiDocument('http://localhost:3000')
+		const list = document.paths['/api/editor/resources'].get
+		const read = document.paths['/api/editor/resources/{id}'].get
+		const update = document.paths['/api/editor/resources/{id}'].patch
+		const versions = document.paths['/api/editor/resources/{id}/versions'].get
+		const rollback = document.paths['/api/editor/resources/{id}/rollback'].post
+
+		for (const operation of [list, read, versions]) {
+			expect(operation).toMatchObject({
+				'x-read-only': true,
+				'x-destructive': false,
+				'x-required-scopes': [],
+			})
+		}
+		for (const operation of [update, rollback]) {
+			expect(operation).toMatchObject({
+				'x-read-only': false,
+				'x-destructive': true,
+				'x-required-scopes': [],
+			})
+			expect(operation.parameters).toContainEqual(
+				expect.objectContaining({ name: 'If-Match', required: true }),
+			)
+			expect(operation.responses).toHaveProperty('409')
+			expect(operation.responses).toHaveProperty('428')
+		}
+
+		expect(update['x-resource-authorization']).toContain(
+			'active ContentContribution',
+		)
+		expect(update['x-agent-token-policy']).toContain('OAuth device token')
+		expect(update['x-agent-token-policy']).toContain(
+			'aih_pat_* tokens are excluded',
+		)
+		expect(rollback.description).toContain('never rewritten')
+	})
+
 	it('documents changelog compatibility fields as deprecated', () => {
 		const document = buildAgentOpenApiDocument('http://localhost:3000')
 		const schema = document.components.schemas.SkillChangelogSuccessResponse

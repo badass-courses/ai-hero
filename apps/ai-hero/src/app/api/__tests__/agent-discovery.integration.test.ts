@@ -171,7 +171,7 @@ describe('AI Hero discovery surfaces', () => {
 					['get', 'post', 'put', 'patch', 'delete', 'options'].includes(key),
 				),
 			).length
-		expect(contentOperationCount).toBe(56)
+		expect(contentOperationCount).toBe(65)
 		// List membership is a relations write: content:read must see it as
 		// excluded, while a content:relations PAT (or update Content) may act.
 		expect(document.paths['/api/lists/{listId}/resources'].post).toMatchObject({
