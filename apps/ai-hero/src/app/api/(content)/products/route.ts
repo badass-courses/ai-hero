@@ -1,3 +1,4 @@
+import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter } from '@/db'
 import {
@@ -253,6 +254,8 @@ const updateProductHandler = async (request: NextRequest) => {
 						}
 					: currentProduct.price,
 		})
+
+		revalidateTag('workshop', 'max')
 
 		const readback = await getProductWithFullStructure(input.id)
 
