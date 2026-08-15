@@ -19,6 +19,7 @@ import { cn } from '@coursebuilder/utils/cn'
 import { MobileNavigation } from './mobile-navigation'
 import { NavLinkItem } from './nav-link-item'
 import { useCohortOffer } from './nav-cta-context'
+import { FEATURED_PROMO } from './promo-config'
 import { getNavMode } from './nav-mode'
 import { NavPill, navTextLink } from './nav-pill'
 import {
@@ -26,6 +27,7 @@ import {
 	PRIMARY_LEARNING_ENTRY,
 	PRIMARY_NAV_ITEMS,
 } from './primary-nav'
+import { useTimedActivation } from './timed-promo-bar-switch'
 import { UserMenu } from './user-menu'
 
 /**
@@ -190,6 +192,21 @@ const FreeCourseCta = ({
 	subscriberResolved: boolean
 }) => {
 	const cohortOffer = useCohortOffer()
+	const featuredPromoActive = useTimedActivation(
+		FEATURED_PROMO.startsAt,
+		false,
+	)
+	const activeOffer =
+		featuredPromoActive &&
+		FEATURED_PROMO.resourceId &&
+		FEATURED_PROMO.navLabel &&
+		FEATURED_PROMO.navHref
+			? {
+					id: FEATURED_PROMO.resourceId,
+					label: FEATURED_PROMO.navLabel,
+					href: FEATURED_PROMO.navHref,
+				}
+			: cohortOffer
 
 	// The SAME answer `/skills/subscribe` and the inline CTA use, so the bar
 	// cannot advertise a course the page then refuses to offer.
@@ -225,11 +242,11 @@ const FreeCourseCta = ({
 	// that waits on the gate query, so it would put this behind a request that
 	// has to land first and give the bar yet another state to settle through.
 	const ownershipAsked =
-		Boolean(cohortOffer?.id) && sessionStatus !== 'unauthenticated'
+		Boolean(activeOffer?.id) && sessionStatus !== 'unauthenticated'
 
 	const { data: ownership, isPending: ownershipPending } =
 		api.ability.ownsResource.useQuery(
-			{ resourceId: cohortOffer?.id ?? '' },
+			{ resourceId: activeOffer?.id ?? '' },
 			{
 				enabled: ownershipAsked,
 				staleTime: 5 * 60 * 1000,
@@ -247,7 +264,12 @@ const FreeCourseCta = ({
 	// without buying anything, and the offer says which waitlist it is — the
 	// next cohort's, or the unreleased workshop's. The field comes off the same
 	// subscriber record the rung above reads, so this costs nothing extra.
-	const alreadyWaiting = hasJoinedOfferWaitlist(subscriber, cohortOffer?.waitlist)
+	const activeOfferWaitlist =
+		activeOffer && 'waitlist' in activeOffer ? activeOffer.waitlist : undefined
+	const alreadyWaiting = hasJoinedOfferWaitlist(
+		subscriber,
+		activeOfferWaitlist,
+	)
 
 	// The free course is the front door and outranks everything: someone who has
 	// not taken it is asked for that, cohort or no cohort. Only once they are on
@@ -257,8 +279,8 @@ const FreeCourseCta = ({
 	const cohortSettled = ownership?.owned === true || alreadyWaiting
 	const offer = !isSubscribed
 		? { label: 'Get the free course', href: '/skills/subscribe' }
-		: cohortOffer && !cohortSettled
-			? { label: cohortOffer.label, href: cohortOffer.href }
+		: activeOffer && !cohortSettled
+			? { label: activeOffer.label, href: activeOffer.href }
 			: null
 
 	// Hold the slot rather than guess at it.

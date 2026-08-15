@@ -1,11 +1,15 @@
 import { unstable_cache } from 'next/cache'
+import {
+	CRASH_COURSE_PRODUCT_ID,
+	isProductPromoActive,
+} from '@/components/navigation/promo-config'
 import { db } from '@/db'
 import { coupon } from '@/db/schema'
 import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import { getSaleBannerData } from '@/lib/sale-banner'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import { log } from '@/server/logger'
-import { and, desc, eq, gte, isNotNull } from 'drizzle-orm'
+import { and, desc, eq, gte, isNotNull, ne } from 'drizzle-orm'
 
 import type { Coupon } from '@coursebuilder/core/schemas'
 
@@ -105,9 +109,11 @@ export type NextOffer = {
  * the waitlist, already bought) is decided by the caller and can only ever
  * REMOVE the offer.
  */
-export const getNextOffer = unstable_cache(
-	async (): Promise<NextOffer | null> => {
-		const sale = await resolveSaleOffer()
+type ProductPromotionEpoch = 'pre-crash-course' | 'crash-course-live'
+
+const getNextOfferCached = unstable_cache(
+	async (promotionEpoch: ProductPromotionEpoch): Promise<NextOffer | null> => {
+		const sale = await resolveSaleOffer(promotionEpoch)
 		if (sale) return sale
 
 		const upcoming = await getUpcomingCohort()
@@ -152,9 +158,23 @@ export const getNextOffer = unstable_cache(
 
 		return null
 	},
-	['next-offer-v1'],
+	['next-offer-v2'],
 	{ revalidate: 600, tags: ['products', 'cohorts', 'workshops'] },
 )
+
+/**
+ * The epoch argument gives pre-launch and live-launch offers separate cache
+ * keys. The first request at midnight does not inherit a pre-launch result.
+ */
+export async function getNextOffer(): Promise<NextOffer | null> {
+	const promotionEpoch: ProductPromotionEpoch = isProductPromoActive(
+		CRASH_COURSE_PRODUCT_ID,
+	)
+		? 'crash-course-live'
+		: 'pre-crash-course'
+
+	return getNextOfferCached(promotionEpoch)
+}
 
 /**
  * The discounted product as an offer, when a default coupon is live.
@@ -164,10 +184,18 @@ export const getNextOffer = unstable_cache(
  * So this rung costs one extra read and works for any product type we ever
  * put on sale, without this file knowing what types exist.
  */
-async function resolveSaleOffer(): Promise<NextOffer | null> {
+async function resolveSaleOffer(
+	promotionEpoch: ProductPromotionEpoch,
+): Promise<NextOffer | null> {
 	try {
-		const active = await findActiveProductSaleCoupon()
+		const active = await findActiveProductSaleCoupon(promotionEpoch)
 		if (!active) return null
+		if (
+			active.restrictedToProductId === CRASH_COURSE_PRODUCT_ID &&
+			promotionEpoch === 'pre-crash-course'
+		) {
+			return null
+		}
 
 		const sale = await getSaleBannerData(active)
 		if (!sale) return null
@@ -219,13 +247,18 @@ async function resolveSaleOffer(): Promise<NextOffer | null> {
  * to point at, and the right behaviour is to fall through to the cohort rung
  * and let the cohort's own pricing widget apply the discount at checkout.
  */
-async function findActiveProductSaleCoupon() {
+async function findActiveProductSaleCoupon(
+	promotionEpoch: ProductPromotionEpoch,
+) {
 	const row = await db.query.coupon.findFirst({
 		where: and(
 			eq(coupon.status, 1),
 			eq(coupon.default, true),
 			gte(coupon.expires, new Date()),
 			isNotNull(coupon.restrictedToProductId),
+			promotionEpoch === 'pre-crash-course'
+				? ne(coupon.restrictedToProductId, CRASH_COURSE_PRODUCT_ID)
+				: undefined,
 		),
 		orderBy: desc(coupon.percentageDiscount),
 	})
