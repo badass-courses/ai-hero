@@ -302,6 +302,10 @@ const updateResourceHandler = async (request: NextRequest) => {
 			revalidateTag(`video-resource:${id}`, 'max')
 		}
 
+		if (currentResource.type === 'workshop') {
+			revalidateTag('workshop', 'max')
+		}
+
 		// A section's title/description and a list's own fields render through
 		// the list caches (sidebars, list landing), and neither type has any
 		// other write route that would bust them — without this an edit here
