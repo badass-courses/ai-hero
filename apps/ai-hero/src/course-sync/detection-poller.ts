@@ -50,6 +50,7 @@ export type CourseSyncRevisionHead = {
 	providerRevision: string
 	runId: string
 	runState: CourseSyncRunSummary['state']
+	previousAppliedRunId?: string | null
 }
 
 export type CourseSyncManifestRead = {
@@ -702,7 +703,9 @@ export function createCourseSyncDetectionPoller(
 					isLegacyAppliedHead(head, courseVersionId))
 			controlPlaneRunId = headMatchesRevision ? (head?.runId ?? null) : null
 			previousAppliedRunId =
-				head?.runState === 'applied' && !headMatchesRevision ? head.runId : null
+				head?.previousAppliedRunId ??
+				(head?.runState === 'applied' && !headMatchesRevision ? head.runId : null)
+			if (previousAppliedRunId === controlPlaneRunId) previousAppliedRunId = null
 			const observedBefore = sameRevision(
 				state,
 				courseVersionId,

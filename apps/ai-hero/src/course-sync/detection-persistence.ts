@@ -7,7 +7,7 @@ import {
 	courseSyncSourceRevision,
 } from '@/db/schema'
 import { log } from '@/server/logger'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 
 import type {
 	CourseSyncPollLogInput,
@@ -18,26 +18,44 @@ import type {
 export async function getCourseSyncRevisionHead(
 	bindingId: string,
 ): Promise<CourseSyncRevisionHead | null> {
-	const [row] = await db
-		.select({
-			courseVersionId: courseSyncSourceRevision.courseVersionId,
-			providerRevision: courseSyncSourceRevision.providerRevision,
-			runId: courseSyncRun.runId,
-			runState: courseSyncRun.state,
-		})
-		.from(courseSyncSourceRevision)
-		.innerJoin(
-			courseSyncRun,
-			eq(courseSyncRun.sourceRevisionId, courseSyncSourceRevision.sourceRevisionId),
-		)
-		.where(eq(courseSyncSourceRevision.bindingId, bindingId))
-		.orderBy(desc(courseSyncSourceRevision.stagedAt), desc(courseSyncRun.updatedAt))
-		.limit(1)
+	const [[row], previousApplied] = await Promise.all([
+		db
+			.select({
+				courseVersionId: courseSyncSourceRevision.courseVersionId,
+				providerRevision: courseSyncSourceRevision.providerRevision,
+				runId: courseSyncRun.runId,
+				runState: courseSyncRun.state,
+			})
+			.from(courseSyncSourceRevision)
+			.innerJoin(
+				courseSyncRun,
+				eq(
+					courseSyncRun.sourceRevisionId,
+					courseSyncSourceRevision.sourceRevisionId,
+				),
+			)
+			.where(eq(courseSyncSourceRevision.bindingId, bindingId))
+			.orderBy(
+				desc(courseSyncSourceRevision.stagedAt),
+				desc(courseSyncRun.updatedAt),
+			)
+			.limit(1),
+		db.query.courseSyncRun.findFirst({
+			columns: { runId: true },
+			where: and(
+				eq(courseSyncRun.bindingId, bindingId),
+				eq(courseSyncRun.state, 'applied'),
+				isNull(courseSyncRun.rollbackOfRunId),
+			),
+			orderBy: desc(courseSyncRun.updatedAt),
+		}),
+	])
 
 	return row
 		? {
 				...row,
 				runState: row.runState as CourseSyncRevisionHead['runState'],
+				previousAppliedRunId: previousApplied?.runId ?? null,
 			}
 		: null
 }
