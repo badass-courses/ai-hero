@@ -11,7 +11,12 @@ import {
 	recordCourseSyncPollFailure,
 	type CourseSyncNotification,
 } from '@/course-sync/detection-poller'
-import { CourseSyncError } from '@/course-sync/errors'
+import {
+	CourseSyncError,
+	captureCourseSyncStepResult,
+	unwrapCourseSyncStepResult,
+	type CourseSyncStepResult,
+} from '@/course-sync/errors'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { env } from '@/env.mjs'
 import {
@@ -73,13 +78,11 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 						)
 					},
 					appendLog: async (input) => {
-						await step.run(
-							`append-failed-course-sync-log-${input.stage}`,
-							() =>
-								appendCourseSyncPollLog({
-									...input,
-									occurredAt: new Date(input.occurredAt),
-								}),
+						await step.run(`append-failed-course-sync-log-${input.stage}`, () =>
+							appendCourseSyncPollLog({
+								...input,
+								occurredAt: new Date(input.occurredAt),
+							}),
 						)
 					},
 					notify: async (notification) => {
@@ -94,9 +97,21 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 	},
 	{ cron: 'TZ=UTC */30 * * * *' },
 	async ({ step, runId }) => {
+		async function runTypedStep<T>(
+			id: string,
+			operation: () => Promise<T>,
+		): Promise<T> {
+			const result = await step.run(id, () =>
+				captureCourseSyncStepResult(operation),
+			)
+			return unwrapCourseSyncStepResult(
+				result as unknown as CourseSyncStepResult<T>,
+			)
+		}
+
 		const poll = createCourseSyncDetectionPoller({
 			readManifest: () =>
-				step.run('detect-course-manifest', async () => {
+				runTypedStep('detect-course-manifest', async () => {
 					const { config, missingConfig } = getDropboxSyncConfig({
 						DROPBOX_APP_KEY: env.DROPBOX_APP_KEY,
 						DROPBOX_APP_SECRET: env.DROPBOX_APP_SECRET,
@@ -123,19 +138,21 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					})
 				}),
 			getRevisionHead: (bindingId) =>
-				step.run('load-course-sync-revision-head', () =>
+				runTypedStep('load-course-sync-revision-head', () =>
 					getCourseSyncRevisionHead(bindingId),
 				),
+			getRun: (controlPlaneRunId) =>
+				runTypedStep('load-course-sync-control-plane-run', () =>
+					courseSyncControlPlane.getRun(controlPlaneRunId),
+				),
 			getPollState: async (bindingId) => {
-				const state = await step.run('load-course-sync-poll-state', () =>
+				const state = await runTypedStep('load-course-sync-poll-state', () =>
 					getCourseSyncPollState(bindingId),
 				)
-				return state
-					? { ...state, updatedAt: new Date(state.updatedAt) }
-					: null
+				return state ? { ...state, updatedAt: new Date(state.updatedAt) } : null
 			},
 			savePollState: async (state) => {
-				await step.run('save-course-sync-poll-state', () =>
+				await runTypedStep('save-course-sync-poll-state', () =>
 					saveCourseSyncPollState({
 						...state,
 						updatedAt: new Date(state.updatedAt),
@@ -143,7 +160,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				)
 			},
 			appendLog: async (input) => {
-				await step.run('append-course-sync-poll-log', () =>
+				await runTypedStep('append-course-sync-poll-log', () =>
 					appendCourseSyncPollLog({
 						...input,
 						occurredAt: new Date(input.occurredAt),
@@ -151,23 +168,23 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				)
 			},
 			freezeAsset: (input) =>
-				step.run(`freeze-asset-${input.sourceVideoId}`, () =>
+				runTypedStep(`freeze-asset-${input.sourceVideoId}`, () =>
 					courseSyncControlPlane.freezeAsset(input),
 				),
 			stage: (input) =>
-				step.run('stage-course-sync-revision', () =>
+				runTypedStep('stage-course-sync-revision', () =>
 					courseSyncControlPlane.stageFrozen(input),
 				),
 			preview: (controlPlaneRunId) =>
-				step.run('preview-course-sync-revision', () =>
+				runTypedStep('preview-course-sync-revision', () =>
 					courseSyncControlPlane.preview(controlPlaneRunId),
 				),
 			apply: (input) =>
-				step.run('apply-course-sync-revision', () =>
+				runTypedStep('apply-course-sync-revision', () =>
 					courseSyncControlPlane.apply(input),
 				),
 			notify: async (notification) => {
-				await step.run('notify-course-sync-completion', () =>
+				await runTypedStep('notify-course-sync-completion', () =>
 					notifyCourseSync(notification),
 				)
 			},

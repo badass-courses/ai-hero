@@ -5,20 +5,33 @@ import {
 	contentResourceResource,
 	contentResourceVersion,
 	courseSyncBinding,
+	courseSyncFrozenAssetReceipt,
+	courseSyncPollLog,
+	courseSyncPollState,
 	courseSyncRun,
 	courseSyncRunResourceVersion,
 	courseSyncSourceRevision,
 	courseSyncSourceRevisionAsset,
 	products,
 } from '@/db/schema'
-import { and, asc, desc, eq, inArray, isNull, max, ne, sql } from 'drizzle-orm'
+import { log } from '@/server/logger'
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 
+import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
-import { sha256, stableJson } from './control-plane'
 import {
-	assertManagedChildRelations,
+	courseSyncRollbackStageIdempotencyKey,
+	sha256,
+	stableJson,
+} from './control-plane'
+import {
+	assertCourseSyncLaunchApplyPolicy,
 	chunkCourseSyncWrites,
+	courseSyncRollbackPointer,
+	resolveCourseSyncRollbackFields,
 } from './persistence-invariants'
+import { assertCourseSyncTargetContract } from './target-contract'
+import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -60,10 +73,6 @@ function resourceType(sourceKind: SyncPlan['resources'][number]['sourceKind']) {
 	return sourceKind === 'video' ? 'videoResource' : sourceKind
 }
 
-function exactBinding(actual: CourseSyncBinding, expected: CourseSyncBinding) {
-	return stableJson(actual) === stableJson(expected)
-}
-
 async function readRun(runId: string): Promise<SyncRunRecord | null> {
 	const row = await db.query.courseSyncRun.findFirst({
 		where: eq(courseSyncRun.runId, runId),
@@ -77,14 +86,73 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			where: eq(courseSyncBinding.bindingId, binding.bindingId),
 		})
 		if (existing) {
-			if (!exactBinding(existing.binding, binding)) {
-				throw new CourseSyncError(
-					'IMMUTABLE_BINDING_CONFLICT',
-					'The stored sync binding does not match the server-owned binding.',
-					409,
+			const resolved = resolveStoredCourseSyncBinding(existing.binding, binding)
+			if (!resolved.migrated) return resolved.binding
+
+			let migrated = false
+			const locked = await db.transaction(async (trx) => {
+				const [current] = await trx
+					.select()
+					.from(courseSyncBinding)
+					.where(eq(courseSyncBinding.bindingId, binding.bindingId))
+					.for('update')
+				if (!current) {
+					throw new CourseSyncError(
+						'IMMUTABLE_BINDING_CONFLICT',
+						'The stored sync binding disappeared during migration.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+				const currentResolved = resolveStoredCourseSyncBinding(
+					current.binding,
+					binding,
 				)
+				if (currentResolved.migrated) {
+					const occurredAt = new Date()
+					await trx
+						.update(courseSyncBinding)
+						.set({
+							sourceCourseId: binding.sourceCourseId,
+							productId: binding.productId,
+							anchorWorkshopId: binding.anchorWorkshopId,
+							status: binding.status,
+							binding,
+						})
+						.where(eq(courseSyncBinding.bindingId, binding.bindingId))
+					await trx
+						.insert(courseSyncPollLog)
+						.values({
+							id: `cspl_binding_migration_${sha256(binding.bindingId)}`,
+							bindingId: binding.bindingId,
+							courseVersionId: 'unknown',
+							providerRevision: 'unknown',
+							runId: `binding-migration:${binding.bindingId}:v1-v2`,
+							stage: 'migration',
+							outcome: 'succeeded',
+							metadata: {
+								fromContractVersion: 1,
+								toContractVersion: 2,
+							},
+							occurredAt,
+						})
+						.onDuplicateKeyUpdate({
+							set: { id: sql`values(${courseSyncPollLog.id})` },
+						})
+					migrated = true
+				}
+				return currentResolved.binding
+			})
+			if (migrated) {
+				void log
+					.info('course_sync.binding.migrated', {
+						bindingId: binding.bindingId,
+						fromContractVersion: 1,
+						toContractVersion: 2,
+					})
+					.catch(() => undefined)
 			}
-			return bindingFromRow(existing)
+			return locked
 		}
 		await db.insert(courseSyncBinding).values({
 			bindingId: binding.bindingId,
@@ -135,47 +203,35 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					with: { resource: true },
 				}),
 			])
-		const productFields = product?.fields as Record<string, unknown> | undefined
-		const workshopFields = workshop?.fields as
-			| Record<string, unknown>
-			| undefined
-		if (
-			!product ||
-			product.type !== binding.productType ||
-			productFields?.state !== binding.requiredState ||
-			productFields.visibility !== binding.requiredVisibility
-		) {
-			throw new CourseSyncError(
-				'TARGET_PRODUCT_ASSERTION_FAILED',
-				'The bound product is missing or is not the required self-paced draft/unlisted target.',
-				409,
-			)
-		}
-		if (
-			!workshop ||
-			workshop.deletedAt ||
-			workshop.type !== 'workshop' ||
-			workshopFields?.state !== binding.requiredState ||
-			workshopFields.visibility !== binding.requiredVisibility
-		) {
-			throw new CourseSyncError(
-				'TARGET_WORKSHOP_ASSERTION_FAILED',
-				'The bound workshop is missing or is not draft/unlisted.',
-				409,
-			)
-		}
-		if (
-			!relation ||
-			relation.position !== 0 ||
-			otherProductRelations.length > 0
-		) {
-			throw new CourseSyncError(
-				'TARGET_RELATION_ASSERTION_FAILED',
-				'The bound product/workshop relation is missing, moved, deleted, or widened.',
-				409,
-			)
-		}
-		assertManagedChildRelations(binding, childRelations)
+		assertCourseSyncTargetContract(binding, {
+			product: product
+				? {
+						id: product.id,
+						type: product.type ?? 'missing',
+						fields: product.fields,
+					}
+				: null,
+			workshop: workshop
+				? {
+						id: workshop.id,
+						type: workshop.type,
+						fields: workshop.fields,
+						deletedAt: workshop.deletedAt,
+					}
+				: null,
+			relation: relation ? { position: relation.position } : null,
+			otherProductRelations,
+			childRelations: childRelations.map((child) => ({
+				position: child.position,
+				resource: child.resource
+					? {
+							id: child.resource.id,
+							type: child.resource.type,
+							fields: child.resource.fields,
+						}
+					: null,
+			})),
+		})
 	},
 
 	async findRunByStageKey(bindingId, key) {
@@ -239,8 +295,82 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 		return asset ?? null
 	},
 
+	async findFrozenAssetReceipt(receiptKey) {
+		const row = await db.query.courseSyncFrozenAssetReceipt.findFirst({
+			where: eq(courseSyncFrozenAssetReceipt.receiptKey, receiptKey),
+		})
+		return row
+			? {
+					sourceVideoId: row.sourceVideoId,
+					relativePath: row.relativePath,
+					providerRevision: row.providerRevision,
+					providerContentHash: row.providerContentHash,
+					producerSha256: row.producerSha256,
+					bytes: row.bytes,
+					snapshotUri: row.snapshotUri,
+					muxAssetId: row.muxAssetId,
+					muxPlaybackId: row.muxPlaybackId,
+					duration: row.duration,
+				}
+			: null
+	},
+
+	async saveFrozenAssetReceipt({
+		receiptKey,
+		bindingId,
+		courseVersionId,
+		asset,
+	}) {
+		if (!asset.muxAssetId) {
+			throw new CourseSyncError(
+				'FROZEN_ASSET_RECEIPT_INCOMPLETE',
+				'A frozen asset receipt requires a Mux asset ID.',
+				500,
+				{ category: 'internal', retryable: false },
+			)
+		}
+		await db
+			.insert(courseSyncFrozenAssetReceipt)
+			.values({
+				receiptKey,
+				bindingId,
+				courseVersionId,
+				sourceVideoId: asset.sourceVideoId,
+				relativePath: asset.relativePath,
+				providerRevision: asset.providerRevision,
+				providerContentHash: asset.providerContentHash,
+				producerSha256: asset.producerSha256,
+				bytes: asset.bytes,
+				snapshotUri: asset.snapshotUri,
+				muxAssetId: asset.muxAssetId,
+				muxPlaybackId: asset.muxPlaybackId,
+				duration: asset.duration,
+			})
+			.onDuplicateKeyUpdate({
+				set: {
+					muxPlaybackId: sql`if(${courseSyncFrozenAssetReceipt.muxAssetId} = values(${courseSyncFrozenAssetReceipt.muxAssetId}), values(${courseSyncFrozenAssetReceipt.muxPlaybackId}), ${courseSyncFrozenAssetReceipt.muxPlaybackId})`,
+					duration: sql`if(${courseSyncFrozenAssetReceipt.muxAssetId} = values(${courseSyncFrozenAssetReceipt.muxAssetId}), values(${courseSyncFrozenAssetReceipt.duration}), ${courseSyncFrozenAssetReceipt.duration})`,
+					updatedAt: sql`if(${courseSyncFrozenAssetReceipt.muxAssetId} = values(${courseSyncFrozenAssetReceipt.muxAssetId}), values(${courseSyncFrozenAssetReceipt.updatedAt}), ${courseSyncFrozenAssetReceipt.updatedAt})`,
+				},
+			})
+		const stored = await this.findFrozenAssetReceipt(receiptKey)
+		if (!stored) {
+			throw new CourseSyncError(
+				'FROZEN_ASSET_RECEIPT_MISSING',
+				'The frozen asset receipt disappeared after persistence.',
+				500,
+			)
+		}
+		return stored
+	},
+
 	async createStaged({ revision, run }) {
 		await db.transaction(async (trx) => {
+			await trx
+				.select({ bindingId: courseSyncBinding.bindingId })
+				.from(courseSyncBinding)
+				.where(eq(courseSyncBinding.bindingId, revision.bindingId))
+				.for('update')
 			await trx.insert(courseSyncSourceRevision).values({
 				sourceRevisionId: revision.sourceRevisionId,
 				bindingId: revision.bindingId,
@@ -254,7 +384,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			await trx.insert(courseSyncSourceRevisionAsset).values(
 				revision.assets.map((asset) => ({
 					sourceRevisionId: revision.sourceRevisionId,
-					...asset,
+					sourceVideoId: asset.sourceVideoId,
+					relativePath: asset.relativePath,
+					providerRevision: asset.providerRevision,
+					providerContentHash: asset.providerContentHash,
+					producerSha256: asset.producerSha256,
+					bytes: asset.bytes,
+					snapshotUri: asset.snapshotUri,
+					muxAssetId: asset.muxAssetId,
+					muxPlaybackId: asset.muxPlaybackId,
+					duration: asset.duration,
 				})),
 			)
 			await trx.insert(courseSyncRun).values(run)
@@ -352,19 +491,45 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 	},
 
 	async applyAtomically({ runId, plan, idempotencyKey, createdById }) {
+		assertCourseSyncLaunchApplyPolicy(plan)
 		await db.transaction(async (trx) => {
-			const row = await trx.query.courseSyncRun.findFirst({
-				where: eq(courseSyncRun.runId, runId),
-			})
+			// The binding row is the serialization lock for apply, preview-head
+			// changes, and rollback. Acquire it before every other mutable row.
+			const [storedBinding] = await trx
+				.select({ binding: courseSyncBinding.binding })
+				.from(courseSyncBinding)
+				.where(eq(courseSyncBinding.bindingId, plan.bindingId))
+				.for('update')
+			if (!storedBinding) {
+				throw new CourseSyncError(
+					'BINDING_NOT_FOUND',
+					'Sync binding not found during apply.',
+					409,
+					{ category: 'target_precondition', retryable: false },
+				)
+			}
+			const binding = resolveStoredCourseSyncBinding(
+				storedBinding.binding,
+				AI_HERO_COURSE_SYNC_BINDING,
+			).binding
+			const [row] = await trx
+				.select()
+				.from(courseSyncRun)
+				.where(eq(courseSyncRun.runId, runId))
+				.for('update')
+			const { planSha256: claimedPlanSha256, ...planInput } = plan
 			if (
 				!row ||
 				(row.state !== 'previewed' && row.state !== 'failed') ||
-				row.planSha256 !== plan.planSha256
+				row.planSha256 !== plan.planSha256 ||
+				claimedPlanSha256 !== sha256(stableJson(planInput)) ||
+				stableJson(row.plan) !== stableJson(plan)
 			) {
 				throw new CourseSyncError(
 					'APPLY_CONCURRENCY_CONFLICT',
-					'The run or content-addressed plan changed before apply.',
+					'The locked run or content-addressed plan changed before apply.',
 					409,
+					{ category: 'lifecycle_conflict', retryable: false },
 				)
 			}
 			if (
@@ -376,13 +541,133 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					'IDEMPOTENCY_CONFLICT',
 					'Failed apply retry used another idempotency key.',
 					409,
+					{ category: 'lifecycle_conflict', retryable: false },
 				)
 			}
+			const [lockedRevision] = await trx
+				.select()
+				.from(courseSyncSourceRevision)
+				.where(
+					eq(courseSyncSourceRevision.sourceRevisionId, row.sourceRevisionId),
+				)
+				.for('update')
+			const competingRuns = await trx
+				.select({ runId: courseSyncRun.runId })
+				.from(courseSyncRun)
+				.where(
+					and(
+						eq(courseSyncRun.bindingId, binding.bindingId),
+						inArray(courseSyncRun.state, ['staged', 'previewed', 'applying']),
+					),
+				)
+				.for('update')
+			const [lockedPollState] = await trx
+				.select()
+				.from(courseSyncPollState)
+				.where(eq(courseSyncPollState.bindingId, binding.bindingId))
+				.for('update')
+			if (
+				!lockedRevision ||
+				competingRuns.some((candidate) => candidate.runId !== runId) ||
+				row.bindingId !== binding.bindingId ||
+				row.sourceRevisionId !== plan.sourceRevisionId ||
+				row.courseVersionId !== plan.courseVersionId ||
+				lockedRevision.courseVersionId !== plan.courseVersionId ||
+				lockedRevision.bindingId !== binding.bindingId ||
+				(binding.applyPolicy === 'operator' &&
+					(!lockedPollState ||
+						lockedPollState.status !== 'awaiting-apply' ||
+						lockedPollState.controlPlaneRunId !== runId ||
+						lockedPollState.courseVersionId !== plan.courseVersionId ||
+						lockedPollState.providerRevision !==
+							lockedRevision.providerRevision))
+			) {
+				throw new CourseSyncError(
+					'STALE_PREVIEW',
+					'The run is not the current awaiting-apply head.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			const [lockedProduct] = await trx
+				.select()
+				.from(products)
+				.where(eq(products.id, binding.productId))
+				.for('update')
+			const [lockedWorkshop] = await trx
+				.select()
+				.from(contentResource)
+				.where(eq(contentResource.id, binding.anchorWorkshopId))
+				.for('update')
+			const lockedProductRelations = await trx
+				.select()
+				.from(contentResourceProduct)
+				.where(
+					and(
+						eq(contentResourceProduct.resourceId, binding.anchorWorkshopId),
+						isNull(contentResourceProduct.deletedAt),
+					),
+				)
+				.for('update')
+			const lockedChildren = await trx
+				.select({
+					position: contentResourceResource.position,
+					resourceId: contentResource.id,
+					resourceType: contentResource.type,
+					resourceFields: contentResource.fields,
+				})
+				.from(contentResourceResource)
+				.leftJoin(
+					contentResource,
+					eq(contentResource.id, contentResourceResource.resourceId),
+				)
+				.where(
+					and(
+						eq(contentResourceResource.resourceOfId, binding.anchorWorkshopId),
+						isNull(contentResourceResource.deletedAt),
+					),
+				)
+				.for('update')
+			const lockedRelation = lockedProductRelations.find(
+				(relation) => relation.productId === binding.productId,
+			)
+			assertCourseSyncTargetContract(binding, {
+				product: lockedProduct
+					? {
+							id: lockedProduct.id,
+							type: lockedProduct.type ?? 'missing',
+							fields: lockedProduct.fields,
+						}
+					: null,
+				workshop: lockedWorkshop
+					? {
+							id: lockedWorkshop.id,
+							type: lockedWorkshop.type,
+							fields: lockedWorkshop.fields,
+							deletedAt: lockedWorkshop.deletedAt,
+						}
+					: null,
+				relation: lockedRelation ? { position: lockedRelation.position } : null,
+				otherProductRelations: lockedProductRelations.filter(
+					(relation) => relation.productId !== binding.productId,
+				),
+				childRelations: lockedChildren.map((child) => ({
+					position: child.position,
+					resource: child.resourceId
+						? {
+								id: child.resourceId,
+								type: child.resourceType ?? 'missing',
+								fields: child.resourceFields,
+							}
+						: null,
+				})),
+			})
 
 			const priorReceipts = await trx
 				.select({ resourceId: courseSyncRunResourceVersion.resourceId })
 				.from(courseSyncRunResourceVersion)
 				.where(eq(courseSyncRunResourceVersion.runId, runId))
+				.for('update')
 			if (priorReceipts.length > 0) {
 				throw new CourseSyncError(
 					'FAILED_APPLY_NOT_ROLLED_BACK',
@@ -401,6 +686,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				})
 				.from(contentResource)
 				.where(inArray(contentResource.id, resourceIds))
+				.for('update')
 			const existingById = new Map(existingRows.map((item) => [item.id, item]))
 			const relationRows = await trx
 				.select({
@@ -411,6 +697,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				})
 				.from(contentResourceResource)
 				.where(inArray(contentResourceResource.resourceId, resourceIds))
+				.for('update')
 			const relationsByResource = new Map<
 				string,
 				Array<(typeof relationRows)[number]>
@@ -420,24 +707,29 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				relations.push(relation)
 				relationsByResource.set(relation.resourceId, relations)
 			}
-			const latestVersions = await trx
+			const lockedVersions = await trx
 				.select({
 					resourceId: contentResourceVersion.resourceId,
-					versionNumber: max(contentResourceVersion.versionNumber),
+					versionNumber: contentResourceVersion.versionNumber,
 				})
 				.from(contentResourceVersion)
 				.where(inArray(contentResourceVersion.resourceId, resourceIds))
-				.groupBy(contentResourceVersion.resourceId)
-			const latestVersionByResource = new Map(
-				latestVersions.map((item) => [
-					item.resourceId,
-					Number(item.versionNumber ?? 0),
-				]),
-			)
+				.for('update')
+			const latestVersionByResource = new Map<string, number>()
+			for (const version of lockedVersions) {
+				latestVersionByResource.set(
+					version.resourceId,
+					Math.max(
+						latestVersionByResource.get(version.resourceId) ?? 0,
+						version.versionNumber,
+					),
+				)
+			}
 
 			const newResources: Array<typeof contentResource.$inferInsert> = []
 			const versions: Array<typeof contentResourceVersion.$inferInsert> = []
-			const receipts: Array<typeof courseSyncRunResourceVersion.$inferInsert> = []
+			const receipts: Array<typeof courseSyncRunResourceVersion.$inferInsert> =
+				[]
 			const relationPromotions: Array<
 				typeof contentResourceResource.$inferInsert
 			> = []
@@ -453,7 +745,9 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							409,
 						)
 					}
-					if ((relationsByResource.get(item.targetResourceId) ?? []).length > 0) {
+					if (
+						(relationsByResource.get(item.targetResourceId) ?? []).length > 0
+					) {
 						throw new CourseSyncError(
 							'ORPHAN_RELATION_CONFLICT',
 							'A create target already has a relation, including a tombstone.',
@@ -479,7 +773,8 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					const sync = fields.courseSync as Record<string, unknown> | undefined
 					if (
 						existing.type !== resourceType(item.sourceKind) ||
-						fields.state !== (item.sourceKind === 'video' ? 'ready' : 'draft') ||
+						fields.state !==
+							(item.sourceKind === 'video' ? 'ready' : 'draft') ||
 						fields.visibility !== 'unlisted' ||
 						sync?.bindingId !== plan.bindingId
 					) {
@@ -489,30 +784,36 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							409,
 						)
 					}
-					if (existing.currentVersionId !== item.previousVersionId) {
+					if (
+						existing.currentVersionId !== item.previousVersionId ||
+						sha256(stableJson(existing.fields ?? {})) !==
+							item.previousFieldsSha256
+					) {
 						throw new CourseSyncError(
 							'APPLY_TARGET_CHANGED',
-							'A managed resource pointer changed after preview.',
+							'A managed resource pointer or fields changed after preview.',
 							409,
+							{ category: 'lifecycle_conflict', retryable: false },
 						)
 					}
-					const relations =
-						relationsByResource.get(item.targetResourceId) ?? []
+					const relations = relationsByResource.get(item.targetResourceId) ?? []
 					const activeRelations = relations.filter(
 						(relation) => relation.deletedAt === null,
 					)
+					const previousParentResourceId =
+						item.previousParentResourceId ?? item.parentResourceId
+					const previousPosition = item.previousPosition ?? item.position
 					const expectedRelations = item.previousDetached
 						? relations.filter(
 								(relation) =>
 									relation.deletedAt !== null &&
-									// The tombstone was written under the OLD parent. Filtering
-									// by the new planned parent finds nothing when a restore
-									// also moves the resource, aborting the apply.
-									relation.resourceOfId ===
-										(item.previousParentResourceId ?? item.parentResourceId),
+									relation.resourceOfId === previousParentResourceId &&
+									relation.position === previousPosition,
 							)
 						: activeRelations.filter(
-								(relation) => relation.resourceOfId === item.parentResourceId,
+								(relation) =>
+									relation.resourceOfId === previousParentResourceId &&
+									relation.position === previousPosition,
 							)
 					if (
 						expectedRelations.length !== 1 ||
@@ -659,10 +960,26 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						},
 					})
 			}
+			const appliedAt = new Date()
 			await trx
 				.update(courseSyncRun)
-				.set({ state: 'applied', updatedAt: new Date() })
+				.set({ state: 'applied', updatedAt: appliedAt })
 				.where(eq(courseSyncRun.runId, runId))
+			await trx
+				.update(courseSyncPollState)
+				.set({
+					status: 'succeeded',
+					consecutiveFailures: 0,
+					failureClass: null,
+					updatedAt: appliedAt,
+				})
+				.where(
+					and(
+						eq(courseSyncPollState.bindingId, binding.bindingId),
+						eq(courseSyncPollState.status, 'awaiting-apply'),
+						eq(courseSyncPollState.controlPlaneRunId, runId),
+					),
+				)
 		})
 		const applied = await readRun(runId)
 		if (!applied)
@@ -685,10 +1002,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				updatedAt: new Date(),
 			})
 			.where(
-				and(
-					eq(courseSyncRun.runId, runId),
-					ne(courseSyncRun.state, 'applied'),
-				),
+				and(eq(courseSyncRun.runId, runId), ne(courseSyncRun.state, 'applied')),
 			)
 		const failed = await readRun(runId)
 		if (!failed)
@@ -698,24 +1012,138 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 
 	async rollbackAtomically({
 		runId,
+		bindingId,
 		idempotencyKey,
 		compensatingRunId,
 		createdById,
 	}) {
 		await db.transaction(async (trx) => {
-			const original = await trx.query.courseSyncRun.findFirst({
-				where: eq(courseSyncRun.runId, runId),
-			})
-			if (!original || original.state !== 'applied') {
+			const [lockedBinding] = await trx
+				.select({ bindingId: courseSyncBinding.bindingId })
+				.from(courseSyncBinding)
+				.where(eq(courseSyncBinding.bindingId, bindingId))
+				.for('update')
+			const [original] = await trx
+				.select()
+				.from(courseSyncRun)
+				.where(eq(courseSyncRun.runId, runId))
+				.for('update')
+			const [currentHead] = await trx
+				.select({ runId: courseSyncRun.runId })
+				.from(courseSyncRun)
+				.where(
+					and(
+						eq(courseSyncRun.bindingId, bindingId),
+						eq(courseSyncRun.state, 'applied'),
+						isNull(courseSyncRun.rollbackOfRunId),
+					),
+				)
+				.orderBy(desc(courseSyncRun.updatedAt))
+				.limit(1)
+				.for('update')
+			if (
+				!lockedBinding ||
+				!original ||
+				original.bindingId !== bindingId ||
+				original.state !== 'applied' ||
+				currentHead?.runId !== runId
+			) {
 				throw new CourseSyncError(
 					'ROLLBACK_CONCURRENCY_CONFLICT',
 					'The run is no longer applied.',
 					409,
 				)
 			}
-			const receipts = await trx.query.courseSyncRunResourceVersion.findMany({
-				where: eq(courseSyncRunResourceVersion.runId, runId),
-			})
+			const receipts = await trx
+				.select()
+				.from(courseSyncRunResourceVersion)
+				.where(eq(courseSyncRunResourceVersion.runId, runId))
+				.for('update')
+			if (
+				!original.plan ||
+				receipts.length !== original.plan.resources.length
+			) {
+				throw new CourseSyncError(
+					'ROLLBACK_RECEIPTS_INCOMPLETE',
+					'Rollback receipts do not match the applied plan.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			const resourceIds = receipts.map((receipt) => receipt.resourceId)
+			const lockedResources = await trx
+				.select()
+				.from(contentResource)
+				.where(inArray(contentResource.id, resourceIds))
+				.for('update')
+			const lockedRelations = await trx
+				.select()
+				.from(contentResourceResource)
+				.where(inArray(contentResourceResource.resourceId, resourceIds))
+				.for('update')
+			const lockedVersions = await trx
+				.select()
+				.from(contentResourceVersion)
+				.where(inArray(contentResourceVersion.resourceId, resourceIds))
+				.for('update')
+			const resourcesById = new Map(
+				lockedResources.map((resource) => [resource.id, resource]),
+			)
+			const versionsById = new Map(
+				lockedVersions.map((version) => [version.id, version]),
+			)
+			const versionsByResource = new Map<string, number>()
+			for (const version of lockedVersions) {
+				versionsByResource.set(
+					version.resourceId,
+					Math.max(
+						versionsByResource.get(version.resourceId) ?? 0,
+						version.versionNumber,
+					),
+				)
+			}
+			for (const receipt of receipts) {
+				const planItem = original.plan.resources.find(
+					(item) => item.targetResourceId === receipt.resourceId,
+				)
+				const current = resourcesById.get(receipt.resourceId)
+				const appliedVersion = versionsById.get(
+					receipt.contentResourceVersionId,
+				)
+				const relations = lockedRelations.filter(
+					(relation) => relation.resourceId === receipt.resourceId,
+				)
+				const activeRelations = relations.filter(
+					(relation) => relation.deletedAt === null,
+				)
+				const relationMatches = planItem?.detached
+					? activeRelations.length === 0 &&
+						relations.some(
+							(relation) =>
+								relation.resourceOfId === planItem.parentResourceId &&
+								relation.position === planItem.position &&
+								relation.deletedAt !== null,
+						)
+					: activeRelations.length === 1 &&
+						activeRelations[0]?.resourceOfId === planItem?.parentResourceId &&
+						activeRelations[0]?.position === planItem?.position
+				if (
+					!planItem ||
+					!current ||
+					!appliedVersion ||
+					current.currentVersionId !== receipt.contentResourceVersionId ||
+					stableJson(current.fields ?? {}) !==
+						stableJson(appliedVersion.fields ?? {}) ||
+					!relationMatches
+				) {
+					throw new CourseSyncError(
+						'ROLLBACK_TARGET_CHANGED',
+						'A resource pointer, fields, or relation changed after apply.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+			}
 			const now = new Date()
 			await trx.insert(courseSyncRun).values({
 				runId: compensatingRunId,
@@ -723,7 +1151,10 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				sourceRevisionId: original.sourceRevisionId,
 				courseVersionId: original.courseVersionId,
 				state: 'applying',
-				stageIdempotencyKey: `rollback:${runId}:${idempotencyKey}`,
+				stageIdempotencyKey: courseSyncRollbackStageIdempotencyKey(
+					runId,
+					idempotencyKey,
+				),
 				stageFingerprint: original.stageFingerprint,
 				applyIdempotencyKey: idempotencyKey,
 				rollbackOfRunId: runId,
@@ -732,55 +1163,55 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				createdAt: now,
 				updatedAt: now,
 			})
-			const pointers: Array<{ resourceId: string; versionId: string }> = []
+			const rollbackVersions: Array<
+				typeof contentResourceVersion.$inferInsert
+			> = []
+			const rollbackReceipts: Array<
+				typeof courseSyncRunResourceVersion.$inferInsert
+			> = []
+			const relationRestorations: Array<
+				typeof contentResourceResource.$inferInsert
+			> = []
+			const relationTombstones: Array<{
+				resourceId: string
+				parentResourceId: string
+			}> = []
+			const pointerRestorations: Array<typeof contentResource.$inferInsert> = []
 			for (const receipt of receipts) {
 				if (receipt.action === 'retain') continue
 				const planItem = original.plan?.resources.find(
 					(item) => item.targetResourceId === receipt.resourceId,
 				)
-				const current = await trx.query.contentResource.findFirst({
-					where: eq(contentResource.id, receipt.resourceId),
-				})
-				if (!current)
+				const current = resourcesById.get(receipt.resourceId)
+				if (!current || !planItem) {
 					throw new CourseSyncError(
 						'ROLLBACK_RESOURCE_MISSING',
-						'A rollback resource disappeared.',
+						'A rollback resource or plan item disappeared.',
 						409,
 					)
-				const parent = receipt.parentVersionId
-					? await trx.query.contentResourceVersion.findFirst({
-							where: eq(contentResourceVersion.id, receipt.parentVersionId),
-						})
-					: null
-				const currentFields = current.fields as Record<string, unknown>
-				const fields = parent?.fields ?? {
-					...currentFields,
-					state: planItem?.sourceKind === 'video' ? 'deleted' : 'draft',
-					visibility: 'unlisted',
-					courseSync: {
-						...((currentFields.courseSync as
-							| Record<string, unknown>
-							| undefined) ?? {}),
-						active: false,
-						rollbackOfRunId: runId,
-					},
 				}
-				// Version rows carry large `fields` JSON; aggregate instead of
-				// sorting them through the MySQL sort buffer.
-				const [latest] = await trx
-					.select({ versionNumber: max(contentResourceVersion.versionNumber) })
-					.from(contentResourceVersion)
-					.where(eq(contentResourceVersion.resourceId, receipt.resourceId))
+				const parent = receipt.parentVersionId
+					? versionsById.get(receipt.parentVersionId)
+					: null
+				const fields = resolveCourseSyncRollbackFields({
+					action: planItem.action,
+					sourceKind: planItem.sourceKind,
+					currentFields: (current.fields ?? {}) as Record<string, unknown>,
+					previousVersionFields: parent
+						? ((parent.fields ?? {}) as Record<string, unknown>)
+						: null,
+					runId,
+				})
 				const versionId = `version~${sha256(stableJson({ compensatingRunId, resourceId: receipt.resourceId, fields }))}`
-				await trx.insert(contentResourceVersion).values({
+				rollbackVersions.push({
 					id: versionId,
 					resourceId: receipt.resourceId,
 					parentVersionId: current.currentVersionId,
-					versionNumber: Number(latest?.versionNumber ?? 0) + 1,
+					versionNumber: (versionsByResource.get(receipt.resourceId) ?? 0) + 1,
 					fields,
 					createdById,
 				})
-				await trx.insert(courseSyncRunResourceVersion).values({
+				rollbackReceipts.push({
 					runId: compensatingRunId,
 					resourceId: receipt.resourceId,
 					contentResourceVersionId: versionId,
@@ -791,30 +1222,149 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					receipt.previousParentResourceId !== null &&
 					receipt.previousPosition !== null
 				) {
-					await trx
-						.update(contentResourceResource)
-						.set({
-							resourceOfId: receipt.previousParentResourceId,
-							position: receipt.previousPosition,
-							deletedAt: planItem?.previousDetached ? now : null,
-						})
-						.where(
-							and(
-								eq(contentResourceResource.resourceId, receipt.resourceId),
-								eq(
-									contentResourceResource.resourceOfId,
-									receipt.previousParentResourceId,
+					relationRestorations.push({
+						resourceOfId: receipt.previousParentResourceId,
+						resourceId: receipt.resourceId,
+						position: receipt.previousPosition,
+						metadata: {
+							bindingId: original.bindingId,
+							rollbackOfRunId: runId,
+						},
+						deletedAt: planItem.previousDetached ? now : null,
+					})
+				}
+				if (
+					receipt.previousParentResourceId === null ||
+					receipt.previousParentResourceId !== planItem.parentResourceId
+				) {
+					relationTombstones.push({
+						resourceId: receipt.resourceId,
+						parentResourceId: planItem.parentResourceId,
+					})
+				}
+				pointerRestorations.push(
+					courseSyncRollbackPointer({
+						resourceId: receipt.resourceId,
+						resourceType: current.type,
+						createdById: current.createdById,
+						versionId,
+						fields,
+					}),
+				)
+			}
+			for (const batch of chunkCourseSyncWrites(rollbackVersions)) {
+				await trx.insert(contentResourceVersion).values(batch)
+			}
+			for (const batch of chunkCourseSyncWrites(rollbackReceipts)) {
+				await trx.insert(courseSyncRunResourceVersion).values(batch)
+			}
+			const preparedVersions =
+				rollbackVersions.length === 0
+					? []
+					: await trx
+							.select({ id: contentResourceVersion.id })
+							.from(contentResourceVersion)
+							.where(
+								inArray(
+									contentResourceVersion.id,
+									rollbackVersions.map((version) => version.id),
+								),
+							)
+			const preparedReceipts = await trx
+				.select({ resourceId: courseSyncRunResourceVersion.resourceId })
+				.from(courseSyncRunResourceVersion)
+				.where(eq(courseSyncRunResourceVersion.runId, compensatingRunId))
+			if (
+				preparedVersions.length !== rollbackVersions.length ||
+				preparedReceipts.length !== rollbackReceipts.length
+			) {
+				throw new CourseSyncError(
+					'ROLLBACK_PREPARATION_COUNT_MISMATCH',
+					'Prepared rollback rows do not match the compensating plan.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
+			}
+			for (const batch of chunkCourseSyncWrites(relationRestorations)) {
+				await trx
+					.insert(contentResourceResource)
+					.values(batch)
+					.onDuplicateKeyUpdate({
+						set: {
+							position: sql`values(${contentResourceResource.position})`,
+							metadata: sql`values(${contentResourceResource.metadata})`,
+							deletedAt: sql`values(${contentResourceResource.deletedAt})`,
+							updatedAt: now,
+						},
+					})
+			}
+			for (const batch of chunkCourseSyncWrites(relationTombstones)) {
+				await trx
+					.update(contentResourceResource)
+					.set({ deletedAt: now, updatedAt: now })
+					.where(
+						or(
+							...batch.map((relation) =>
+								and(
+									eq(contentResourceResource.resourceId, relation.resourceId),
+									eq(
+										contentResourceResource.resourceOfId,
+										relation.parentResourceId,
+									),
 								),
 							),
-						)
-				}
-				pointers.push({ resourceId: receipt.resourceId, versionId })
+						),
+					)
 			}
-			for (const pointer of pointers) {
+			for (const batch of chunkCourseSyncWrites(pointerRestorations)) {
 				await trx
-					.update(contentResource)
-					.set({ currentVersionId: pointer.versionId, updatedAt: now })
-					.where(eq(contentResource.id, pointer.resourceId))
+					.insert(contentResource)
+					.values(batch)
+					.onDuplicateKeyUpdate({
+						set: {
+							currentVersionId: sql`values(${contentResource.currentVersionId})`,
+							fields: sql`values(${contentResource.fields})`,
+							updatedAt: now,
+						},
+					})
+			}
+			const restoredResources =
+				pointerRestorations.length === 0
+					? []
+					: await trx
+							.select({
+								id: contentResource.id,
+								currentVersionId: contentResource.currentVersionId,
+								fields: contentResource.fields,
+							})
+							.from(contentResource)
+							.where(
+								inArray(
+									contentResource.id,
+									pointerRestorations.map((resource) => resource.id),
+								),
+							)
+			const expectedRestorations = new Map(
+				pointerRestorations.map((resource) => [resource.id, resource]),
+			)
+			if (
+				restoredResources.length !== pointerRestorations.length ||
+				restoredResources.some((resource) => {
+					const expected = expectedRestorations.get(resource.id)
+					return (
+						!expected ||
+						resource.currentVersionId !== expected.currentVersionId ||
+						stableJson(resource.fields ?? {}) !==
+							stableJson(expected.fields ?? {})
+					)
+				})
+			) {
+				throw new CourseSyncError(
+					'ROLLBACK_WRITE_VERIFICATION_FAILED',
+					'Rollback pointer or denormalized fields did not match the restored version.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
 			}
 			await trx
 				.update(courseSyncRun)
@@ -824,6 +1374,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				.update(courseSyncRun)
 				.set({ state: 'rolled_back', compensatingRunId, updatedAt: now })
 				.where(eq(courseSyncRun.runId, runId))
+			await trx
+				.update(courseSyncPollState)
+				.set({
+					status: 'held',
+					consecutiveFailures: 1,
+					controlPlaneRunId: runId,
+					failureClass: 'APPLIED_RUN_ROLLED_BACK',
+					updatedAt: now,
+				})
+				.where(eq(courseSyncPollState.bindingId, bindingId))
 		})
 		const rolledBack = await readRun(runId)
 		if (!rolledBack)

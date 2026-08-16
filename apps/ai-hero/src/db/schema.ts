@@ -187,6 +187,34 @@ export const courseSyncSourceRevisionAsset = mysqlTable(
 	}),
 )
 
+export const courseSyncFrozenAssetReceipt = mysqlTable(
+	'CourseSyncFrozenAssetReceipt',
+	{
+		receiptKey: varchar('receiptKey', { length: 64 }).notNull().primaryKey(),
+		bindingId: varchar('bindingId', { length: 255 }).notNull(),
+		courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+		sourceVideoId: varchar('sourceVideoId', { length: 255 }).notNull(),
+		relativePath: varchar('relativePath', { length: 1000 }).notNull(),
+		providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+		providerContentHash: varchar('providerContentHash', { length: 255 }),
+		producerSha256: varchar('producerSha256', { length: 64 }).notNull(),
+		bytes: bigint('bytes', { mode: 'number' }).notNull(),
+		snapshotUri: varchar('snapshotUri', { length: 1000 }),
+		muxAssetId: varchar('muxAssetId', { length: 255 }).notNull(),
+		muxPlaybackId: varchar('muxPlaybackId', { length: 255 }),
+		duration: double('duration'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		bindingAssetIdx: index('CourseSyncFrozenAssetReceipt_binding_asset_idx').on(
+			table.bindingId,
+			table.producerSha256,
+			table.bytes,
+		),
+	}),
+)
+
 export const courseSyncRun = mysqlTable(
 	'CourseSyncRun',
 	{

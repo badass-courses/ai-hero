@@ -1,13 +1,70 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
-	AI_HERO_DRAFT_SYNC_BINDING,
+	AI_HERO_COURSE_SYNC_BINDING,
 	type CourseSyncBinding,
+	type ResourcePlanItem,
+	type SyncPlan,
 } from './types'
 import {
+	assertCourseSyncLaunchApplyPolicy,
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
+	courseSyncRollbackPointer,
+	resolveCourseSyncRollbackFields,
 } from './persistence-invariants'
+
+function launchPlan(): SyncPlan {
+	let position = 0
+	const resources: ResourcePlanItem[] = []
+	for (const [sourceKind, updateCount, retainCount] of [
+		['section', 0, 6],
+		['lesson', 21, 38],
+		['video', 18, 52],
+	] as const) {
+		for (const [action, count] of [
+			['update', updateCount],
+			['retain', retainCount],
+		] as const) {
+			for (let index = 0; index < count; index += 1) {
+				const sourceId = `${sourceKind}-${action}-${index}`
+				resources.push({
+					sourceKind,
+					sourceId,
+					targetResourceId: `target-${sourceId}`,
+					parentResourceId: `parent-${sourceKind}`,
+					position: position++,
+					detached: false,
+					previousDetached: false,
+					previousParentResourceId: `parent-${sourceKind}`,
+					previousPosition: position - 1,
+					action,
+					fields: { sourceId },
+					previousVersionId: `version-${sourceId}`,
+					previousFieldsSha256: 'a'.repeat(64),
+				})
+			}
+		}
+	}
+	return {
+		bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+		sourceRevisionId: 'revision-launch',
+		courseVersionId: 'course-version-launch',
+		resources,
+		media: Array.from({ length: 70 }, (_, index) => ({
+			sourceVideoId: `video-${index}`,
+			providerRevision: `revision-${index}`,
+			sha256: `${index}`.padStart(64, '0'),
+			bytes: index + 1,
+			action: index < 18 ? ('update' as const) : ('retain' as const),
+			muxAssetId: `mux-${index}`,
+			muxPlaybackId: `playback-${index}`,
+			duration: 60,
+		})),
+		planSha256: 'b'.repeat(64),
+	}
+}
 
 function section(position: number) {
 	return {
@@ -17,13 +74,178 @@ function section(position: number) {
 			fields: {
 				state: 'draft',
 				visibility: 'unlisted',
-				courseSync: { bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId },
+				courseSync: { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId },
 			},
 		},
 	}
 }
 
 describe('course sync persistence invariants', () => {
+	it('creates the exact prefixed frozen-asset receipt table without masking drift', () => {
+		const migration = readFileSync(
+			new URL(
+				'../db/migrations/20260816_ai_hero_course_sync_launch_safety.sql',
+				import.meta.url,
+			),
+			'utf8',
+		)
+		expect(migration).toMatch(
+			/^CREATE TABLE `AI_CourseSyncFrozenAssetReceipt` \(/,
+		)
+		expect(migration).not.toMatch(/IF NOT EXISTS/i)
+		expect(migration).not.toMatch(/CREATE TABLE `CourseSyncFrozenAssetReceipt`/)
+	})
+
+	it('accepts only the exact topology-preserving launch plan', () => {
+		expect(() => assertCourseSyncLaunchApplyPolicy(launchPlan())).not.toThrow()
+	})
+
+	it.each([
+		[
+			'reparent',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.parentResourceId = 'another-parent'
+			},
+		],
+		[
+			'reorder',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.position += 1
+			},
+		],
+		[
+			'detach',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.detached = true
+			},
+		],
+		[
+			'create',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.action = 'create'
+				plan.resources[0]!.previousParentResourceId = null
+				plan.resources[0]!.previousPosition = null
+				plan.resources[0]!.previousVersionId = null
+				plan.resources[0]!.previousFieldsSha256 = null
+			},
+		],
+		[
+			'wrong resource count',
+			(plan: SyncPlan) => {
+				plan.resources = plan.resources.slice(1)
+			},
+		],
+		[
+			'wrong media count',
+			(plan: SyncPlan) => {
+				plan.media = plan.media.slice(1)
+			},
+		],
+	] as const)(
+		'rejects %s outside the supervised launch shape before apply',
+		(_label, mutate) => {
+			const plan = launchPlan()
+			mutate(plan)
+			expect(() => assertCourseSyncLaunchApplyPolicy(plan)).toThrowError(
+				expect.objectContaining({
+					code: 'LAUNCH_APPLY_POLICY_VIOLATION',
+					retryable: false,
+				}),
+			)
+		},
+	)
+
+	it('restores previous fields into both the rollback version and denormalized pointer', () => {
+		const appliedFields = {
+			title: 'Applied title',
+			body: 'Applied body',
+			state: 'draft',
+			visibility: 'unlisted',
+			courseSync: { bindingId: 'binding-1', active: true },
+		}
+		const previousFields = {
+			title: 'Previous title',
+			body: 'Previous body',
+			state: 'draft',
+			visibility: 'unlisted',
+			courseSync: { bindingId: 'binding-1', active: true },
+		}
+		const restoredFields = resolveCourseSyncRollbackFields({
+			action: 'update',
+			sourceKind: 'lesson',
+			currentFields: appliedFields,
+			previousVersionFields: previousFields,
+			runId: 'run-1',
+		})
+		const pointer = courseSyncRollbackPointer({
+			resourceId: 'lesson-1',
+			resourceType: 'lesson',
+			createdById: 'user-1',
+			versionId: 'version-previous',
+			fields: restoredFields,
+		})
+
+		expect(restoredFields).toEqual(previousFields)
+		expect(restoredFields).not.toEqual(appliedFields)
+		expect(pointer).toEqual({
+			id: 'lesson-1',
+			type: 'lesson',
+			createdById: 'user-1',
+			currentVersionId: 'version-previous',
+			fields: previousFields,
+		})
+	})
+
+	it('rejects an updated resource when its previous version fields are missing', () => {
+		expect(() =>
+			resolveCourseSyncRollbackFields({
+				action: 'update',
+				sourceKind: 'lesson',
+				currentFields: { title: 'Applied' },
+				previousVersionFields: null,
+				runId: 'run-1',
+			}),
+		).toThrowError(
+			expect.objectContaining({ code: 'ROLLBACK_PARENT_VERSION_MISSING' }),
+		)
+	})
+
+	it('leaves retained fields alone and safely tombstones created resource fields', () => {
+		const currentFields = {
+			title: 'Current',
+			state: 'ready',
+			visibility: 'unlisted',
+			courseSync: { bindingId: 'binding-1', active: true },
+		}
+		expect(
+			resolveCourseSyncRollbackFields({
+				action: 'retain',
+				sourceKind: 'video',
+				currentFields,
+				previousVersionFields: null,
+				runId: 'run-1',
+			}),
+		).toEqual(currentFields)
+		expect(
+			resolveCourseSyncRollbackFields({
+				action: 'create',
+				sourceKind: 'video',
+				currentFields,
+				previousVersionFields: null,
+				runId: 'run-1',
+			}),
+		).toEqual({
+			...currentFields,
+			state: 'deleted',
+			visibility: 'unlisted',
+			courseSync: {
+				bindingId: 'binding-1',
+				active: false,
+				rollbackOfRunId: 'run-1',
+			},
+		})
+	})
+
 	it('splits apply writes into bounded multi-row batches without loss or duplication', () => {
 		const rows = Array.from({ length: 121 }, (_, index) => index)
 		const chunks = chunkCourseSyncWrites(rows, 50)
@@ -34,20 +256,24 @@ describe('course sync persistence invariants', () => {
 	it('accepts any number of ordered managed sections', () => {
 		expect(() =>
 			assertManagedChildRelations(
-				AI_HERO_DRAFT_SYNC_BINDING as CourseSyncBinding,
+				AI_HERO_COURSE_SYNC_BINDING as CourseSyncBinding,
 				[section(0), section(1), section(2)],
 			),
 		).not.toThrow()
 	})
 
 	it('rejects duplicate, negative, or foreign managed child slots', () => {
-		const binding = AI_HERO_DRAFT_SYNC_BINDING as CourseSyncBinding
+		const binding = AI_HERO_COURSE_SYNC_BINDING as CourseSyncBinding
 		expect(() =>
 			assertManagedChildRelations(binding, [section(0), section(0)]),
-		).toThrowError(expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }))
+		).toThrowError(
+			expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }),
+		)
 		expect(() =>
 			assertManagedChildRelations(binding, [section(-1)]),
-		).toThrowError(expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }))
+		).toThrowError(
+			expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }),
+		)
 		expect(() =>
 			assertManagedChildRelations(binding, [
 				{
@@ -62,6 +288,8 @@ describe('course sync persistence invariants', () => {
 					},
 				},
 			]),
-		).toThrowError(expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }))
+		).toThrowError(
+			expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }),
+		)
 	})
 })
