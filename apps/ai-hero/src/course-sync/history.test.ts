@@ -86,7 +86,8 @@ function source(): CourseSyncHistorySource {
 						expected: ['Polling run completes.'],
 						retryable: true,
 						sideEffects: {
-							sourceAssetsRead: 'unknown',
+							sourceAssetsRead: { count: 0, precision: 'unknown' },
+							muxAssetsCreated: { count: 0, precision: 'unknown' },
 							targetWrites: 'none',
 						},
 						currentRunCreated: false,
@@ -221,6 +222,62 @@ describe('course sync history loaders', () => {
 		})
 		expect(historySource.listRevisions).toHaveBeenCalledWith('version-070')
 		expect(historySource.listPollLogs).toHaveBeenCalledWith('version-070')
+	})
+
+	it.each([
+		['released', 'staging'],
+		['awaiting-apply', 'awaiting-apply'],
+		['applying', 'applying'],
+		['succeeded', 'applied'],
+	] as const)(
+		'derives %s from current lifecycle state instead of an old held log',
+		async (status, expectedOutcome) => {
+			const historySource = source()
+			historySource.listPollStates = vi.fn(async () => [
+				{
+					bindingId: 'binding-1',
+					courseVersionId: 'version-070',
+					providerRevision: 'dropbox-070',
+					status,
+					consecutiveFailures: 0,
+					controlPlaneRunId: 'sync-run-070',
+					failureClass: null,
+					updatedAt: new Date('2026-07-24T19:30:00.000Z'),
+				},
+			])
+
+			const detail = await getCourseSyncHistory('version-070', historySource)
+
+			expect(detail?.outcome).toBe(expectedOutcome)
+			expect(detail?.failureSummary).toBeNull()
+		},
+	)
+
+	it('uses the newest persisted lifecycle timestamp when poll state is absent', async () => {
+		const historySource = source()
+		historySource.listPollStates = vi.fn(async () => [])
+		const applied = await getCourseSyncHistory('version-070', historySource)
+		expect(applied?.outcome).toBe('applied')
+
+		const originalLogs = await historySource.listPollLogs('version-070')
+		historySource.listPollLogs = vi.fn(async () => [
+			...originalLogs,
+			{
+				id: 'log-release-newest',
+				bindingId: 'binding-1',
+				courseVersionId: 'version-070',
+				providerRevision: 'dropbox-070',
+				runId: 'release-1',
+				controlPlaneRunId: null,
+				stage: 'release',
+				outcome: 'succeeded',
+				failureClass: null,
+				occurredAt: new Date('2026-07-24T19:00:00.000Z'),
+			},
+		])
+		const released = await getCourseSyncHistory('version-070', historySource)
+		expect(released?.outcome).toBe('staging')
+		expect(released?.failureSummary).toBeNull()
 	})
 
 	it('sorts the index newest first', async () => {

@@ -52,7 +52,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 							name: 'Idempotency-Key',
 							in: 'header',
 							required: true,
-							schema: { type: 'string', minLength: 1 },
+							schema: { type: 'string', minLength: 1, maxLength: 255 },
 						},
 					],
 					requestBody: {
@@ -129,14 +129,14 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 			'/v1/course-sync/runs/{runId}:apply': {
 				post: {
 					operationId: 'applyStagedSyncRun',
-					security: [{ WorkerBearer: [] }, { OperatorBearer: [] }],
+					security: [{ OperatorBearer: [] }],
 					parameters: [
 						idParameter('runId'),
 						{
 							name: 'Idempotency-Key',
 							in: 'header',
 							required: true,
-							schema: { type: 'string' },
+							schema: { type: 'string', minLength: 1, maxLength: 255 },
 						},
 					],
 					responses: { 200: runResponse },
@@ -152,7 +152,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 							name: 'Idempotency-Key',
 							in: 'header',
 							required: true,
-							schema: { type: 'string' },
+							schema: { type: 'string', minLength: 1, maxLength: 255 },
 						},
 					],
 					responses: { 200: runResponse },
@@ -273,6 +273,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 								'applied',
 								'failed',
 								'rolled_back',
+								'superseded',
 							],
 						},
 						planSha256: { type: ['string', 'null'] },

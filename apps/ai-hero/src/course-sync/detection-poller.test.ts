@@ -4,6 +4,7 @@ import type {
 } from '@ai-hero/course-sync-schema'
 import { describe, expect, it, vi } from 'vitest'
 
+import { CourseSyncError } from './errors'
 import {
 	buildCourseSyncNotificationPayload,
 	createCourseSyncDetectionPoller,
@@ -58,6 +59,7 @@ const frozenAsset = {
 	muxAssetId: 'mux-1',
 	muxPlaybackId: 'playback-1',
 	duration: 60,
+	freezeEffects: { sourceAssetsRead: 1, muxAssetsCreated: 1 },
 }
 
 function run(
@@ -97,30 +99,39 @@ function run(
 }
 
 function harness(input?: {
+	manifest?: CourseJsonDocumentV3
 	head?: CourseSyncRevisionHead | null
 	state?: CourseSyncPollState | null
 	apply?: CourseSyncDetectionPollerDependencies['apply']
+	getRun?: CourseSyncDetectionPollerDependencies['getRun']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
 	freezeAsset?: CourseSyncDetectionPollerDependencies['freezeAsset']
 	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
 }) {
 	let state = input?.state ?? null
 	let head = input?.head ?? null
+	const detectedManifest = input?.manifest ?? manifest
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
 	const stage = vi.fn(input?.stage ?? (async () => run('staged')))
 	const preview = vi.fn(async () => run('previewed'))
 	const apply = vi.fn(input?.apply ?? (async () => run('applied')))
+	const getRun = vi.fn(
+		input?.getRun ??
+			(async () =>
+				head ? run(head.runState, { runId: head.runId }) : run('previewed')),
+	)
 	const freezeAsset = vi.fn(input?.freezeAsset ?? (async () => frozenAsset))
 	const dependencies: CourseSyncDetectionPollerDependencies = {
 		readManifest: async () => ({
-			manifest,
+			manifest: detectedManifest,
 			summary: {
-				courseVersionId: 'version-2',
+				courseVersionId: detectedManifest.courseVersionId,
 				manifest: { rev: 'dropbox-rev-2', sha256: 'b'.repeat(64) },
 			},
 		}),
 		getRevisionHead: async () => head,
+		getRun,
 		getPollState: async () => state,
 		freezeAsset,
 		savePollState: async (next) => {
@@ -144,6 +155,7 @@ function harness(input?: {
 		stage,
 		preview,
 		apply,
+		getRun,
 		logs,
 		notifications,
 		state: () => state,
@@ -269,11 +281,58 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({ status: 'succeeded' })
 	})
 
+	it.each([
+		['applying', 'in-progress', 'applying'],
+		['failed', 'held', 'held'],
+		['rolled_back', 'held', 'held'],
+		['superseded', 'held', 'held'],
+	] as const)(
+		'reconciles awaiting-apply when the current run is %s',
+		async (runState, expectedOutcome, expectedStatus) => {
+			const awaitingState: CourseSyncPollState = {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'awaiting-apply',
+				consecutiveFailures: 0,
+				controlPlaneRunId: 'sync-run-2',
+				failureClass: null,
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			}
+			const test = harness({
+				state: awaitingState,
+				head: {
+					courseVersionId: 'version-2',
+					providerRevision: 'dropbox-rev-2',
+					runId: 'sync-run-2',
+					runState,
+				},
+				getRun: async () => run(runState),
+			})
+
+			await expect(test.poll(`poll-${runState}`)).resolves.toMatchObject({
+				outcome: expectedOutcome,
+				controlPlaneRunId: 'sync-run-2',
+			})
+			expect(test.state()).toMatchObject({ status: expectedStatus })
+			expect(test.stage).not.toHaveBeenCalled()
+			if (
+				runState === 'failed' ||
+				runState === 'rolled_back' ||
+				runState === 'superseded'
+			) {
+				expect(test.notifications).toHaveLength(1)
+			}
+		},
+	)
+
 	it('holds a serialized target failure immediately and keeps run IDs honest', async () => {
-		const serializedFailure = new Error(
+		const serializedFailure = new CourseSyncError(
+			'TARGET_CONTRACT_MISMATCH',
 			'Target contract mismatch: state expected published, actual draft.',
+			409,
+			{ category: 'target_precondition', retryable: false },
 		)
-		serializedFailure.name = 'TARGET_CONTRACT_MISMATCH'
 		const test = harness({
 			head: {
 				courseVersionId: 'version-1',
@@ -303,12 +362,72 @@ describe('course sync detection poller', () => {
 					currentRunCreated: false,
 					previousAppliedRunId: 'sync-run-1',
 					sideEffects: {
-						sourceAssetsRead: false,
+						sourceAssetsRead: { count: 0, precision: 'at-least' },
+						muxAssetsCreated: { count: 0, precision: 'at-least' },
 						targetWrites: 'none',
 					},
 				}),
 			}),
 		])
+	})
+
+	it('reports partial freeze side effects as a lower bound, never false', async () => {
+		const firstLesson = manifest.sections[0]!.lessons[0]!
+		if (firstLesson.type !== 'explainer') throw new Error('fixture mismatch')
+		const twoVideoManifest: CourseJsonDocumentV3 = {
+			...manifest,
+			sections: [
+				{
+					...manifest.sections[0]!,
+					lessons: [
+						...manifest.sections[0]!.lessons,
+						{
+							type: 'explainer',
+							id: 'lesson-2',
+							title: 'Lesson 2',
+							explainer: {
+								...firstLesson.explainer,
+								id: 'video-2',
+								relativePath: 'video-2.mp4',
+							},
+						},
+					],
+				},
+			],
+		}
+		let calls = 0
+		const test = harness({
+			manifest: twoVideoManifest,
+			freezeAsset: async (input) => {
+				calls += 1
+				if (calls === 2) throw new Error('Mux timed out after create')
+				return { ...frozenAsset, sourceVideoId: input.sourceVideoId }
+			},
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'failed',
+				consecutiveFailures: 1,
+				controlPlaneRunId: null,
+				failureClass: 'MUX_API_FAILED',
+				updatedAt: new Date('2026-07-24T15:00:00.000Z'),
+			},
+		})
+
+		await expect(test.poll('poll-freeze-partial')).resolves.toMatchObject({
+			outcome: 'held',
+		})
+		expect(test.notifications[0]).toMatchObject({
+			kind: 'failure',
+			summary: {
+				sideEffects: {
+					sourceAssetsRead: { count: 1, precision: 'at-least' },
+					muxAssetsCreated: { count: 1, precision: 'at-least' },
+					targetWrites: 'none',
+				},
+			},
+		})
 	})
 
 	it('retries one transient freeze failure, then holds at two strikes', async () => {
@@ -486,6 +605,35 @@ describe('course sync detection poller', () => {
 		])
 	})
 
+	it('does not restore a hold when operator release wins an onFailure race', async () => {
+		const releasedState: CourseSyncPollState = {
+			bindingId: 'csb_ai_coding_crash_course',
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			status: 'released',
+			consecutiveFailures: 0,
+			controlPlaneRunId: null,
+			failureClass: null,
+			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
+		}
+		const test = failureHarness(releasedState)
+
+		await expect(
+			recordCourseSyncPollFailure(test.dependencies, {
+				runId: 'old-failed-poll',
+			}),
+		).resolves.toEqual({ held: false, consecutiveFailures: 0 })
+		expect(test.state()).toEqual(releasedState)
+		expect(test.notifications).toHaveLength(0)
+		expect(test.logs).toEqual([
+			expect.objectContaining({
+				stage: 'notify',
+				outcome: 'skipped',
+				metadata: { reason: 'operator-release-won-race' },
+			}),
+		])
+	})
+
 	it('skips notification when a killed run is already held', async () => {
 		const test = failureHarness({
 			bindingId: 'csb_ai_coding_crash_course',
@@ -571,6 +719,7 @@ describe('course sync detection poller', () => {
 		})
 		const failure = buildCourseSyncNotificationPayload({
 			kind: 'failure',
+			outcome: 'held',
 			courseVersionId,
 			courseName: 'AI Coding Crash Course',
 			providerRevision: 'dropbox-rev-2',
@@ -586,7 +735,8 @@ describe('course sync detection poller', () => {
 				expected: ['Operation completes within its retry policy.'],
 				retryable: true,
 				sideEffects: {
-					sourceAssetsRead: 'unknown',
+					sourceAssetsRead: { count: 17, precision: 'at-least' },
+					muxAssetsCreated: { count: 17, precision: 'at-least' },
 					targetWrites: 'rolled-back',
 				},
 				currentRunCreated: true,

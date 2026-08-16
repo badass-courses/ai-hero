@@ -87,6 +87,10 @@ export type FrozenSourceAsset = {
 	muxAssetId: string | null
 	muxPlaybackId: string | null
 	duration: number | null
+	freezeEffects?: {
+		sourceAssetsRead: number
+		muxAssetsCreated: number
+	}
 }
 
 export type SourceRevisionRecord = {
@@ -114,6 +118,7 @@ export type ResourcePlanItem = {
 	action: CourseSyncResourceAction
 	fields: Record<string, unknown>
 	previousVersionId: string | null
+	previousFieldsSha256: string | null
 }
 
 export type MediaPlanItem = {
@@ -236,6 +241,13 @@ export interface CourseSyncPersistence {
 		producerSha256: string,
 		bytes: number,
 	): Promise<FrozenSourceAsset | null>
+	findFrozenAssetReceipt(receiptKey: string): Promise<FrozenSourceAsset | null>
+	saveFrozenAssetReceipt(input: {
+		receiptKey: string
+		bindingId: string
+		courseVersionId: string
+		asset: FrozenSourceAsset
+	}): Promise<FrozenSourceAsset>
 	createStaged(input: {
 		revision: SourceRevisionRecord
 		run: SyncRunRecord
@@ -261,6 +273,7 @@ export interface CourseSyncPersistence {
 	): Promise<SyncRunRecord>
 	rollbackAtomically(input: {
 		runId: string
+		bindingId: string
 		idempotencyKey: string
 		compensatingRunId: string
 		createdById: string

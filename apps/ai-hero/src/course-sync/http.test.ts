@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { CourseSyncError } from './errors'
-import { authorizeCourseSyncRequest, courseSyncErrorResponse } from './http'
+import {
+	authorizeCourseSyncRequest,
+	courseSyncErrorResponse,
+	idempotencyKey,
+} from './http'
 
 function request(token: string) {
 	return new Request('https://www.aihero.dev/v1/course-sync', {
@@ -53,6 +57,15 @@ describe('course sync service roles', () => {
 				'operator',
 			]),
 		).toThrow('Unauthorized')
+	})
+
+	it('rejects idempotency keys longer than the database contract', () => {
+		const oversized = new Request('https://www.aihero.dev/v1/course-sync', {
+			headers: { 'Idempotency-Key': 'x'.repeat(256) },
+		})
+		expect(() => idempotencyKey(oversized)).toThrowError(
+			expect.objectContaining({ code: 'IDEMPOTENCY_KEY_INVALID' }),
+		)
 	})
 
 	it('returns safe typed details for operator-correctable failures', async () => {

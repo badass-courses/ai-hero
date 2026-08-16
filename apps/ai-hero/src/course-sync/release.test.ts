@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import {
+	releaseCourseSyncPollHold,
+	releasedCourseSyncPollState,
+	type CourseSyncPollReleaseInput,
+} from './release'
 import { CourseSyncError } from './errors'
-import { releaseCourseSyncPollHold } from './release'
 import type {
 	CourseSyncPollLogInput,
 	CourseSyncPollState,
@@ -19,77 +23,152 @@ const heldState: CourseSyncPollState = {
 }
 
 function harness(
-	assertTarget: (bindingId: string) => Promise<void> = vi.fn(
-		async () => undefined,
-	),
+	options: {
+		assertTarget?: () => Promise<void>
+		failAudit?: boolean
+	} = {},
 ) {
 	let state = structuredClone(heldState)
 	const logs: CourseSyncPollLogInput[] = []
-	return {
-		assertTarget,
-		logs,
-		state: () => state,
-		release: (reason = 'Target contract corrected and reviewed.') =>
-			releaseCourseSyncPollHold(
-				{
-					assertTarget,
-					getPollState: async () => state,
-					savePollState: async (next) => {
-						state = next
-					},
-					appendLog: async (entry) => {
-						logs.push(entry)
-					},
-				},
-				{
-					bindingId: heldState.bindingId,
-					actor: 'operator',
-					reason,
-					operationId: 'release-1',
-					occurredAt: new Date('2026-08-16T20:00:00.000Z'),
-				},
-			),
-	}
+	const receipts = new Map<
+		string,
+		{ request: string; state: CourseSyncPollState }
+	>()
+	let transaction = Promise.resolve()
+	const releaseAtomically = vi.fn(async (input: CourseSyncPollReleaseInput) => {
+		let result!: CourseSyncPollState
+		let failure: unknown
+		transaction = transaction.then(async () => {
+			try {
+				const request = JSON.stringify({
+					bindingId: input.bindingId,
+					actor: input.actor,
+					reason: input.reason,
+				})
+				const prior = receipts.get(input.operationId)
+				if (prior) {
+					if (prior.request !== request) {
+						throw new CourseSyncError(
+							'IDEMPOTENCY_CONFLICT',
+							'Release key reused with different input.',
+							409,
+						)
+					}
+					result = structuredClone(prior.state)
+					return
+				}
+				const transactionState = structuredClone(state)
+				const transactionLogs = structuredClone(logs)
+				await options.assertTarget?.()
+				const released = releasedCourseSyncPollState(
+					transactionState,
+					input.occurredAt,
+				)
+				transactionLogs.push({
+					bindingId: input.bindingId,
+					courseVersionId: state.courseVersionId,
+					providerRevision: state.providerRevision,
+					runId: input.operationId,
+					stage: 'release',
+					outcome: 'succeeded',
+					occurredAt: input.occurredAt,
+				})
+				if (options.failAudit) throw new Error('audit insert failed')
+				state = released
+				logs.splice(0, logs.length, ...transactionLogs)
+				receipts.set(input.operationId, { request, state: released })
+				result = structuredClone(released)
+			} catch (error) {
+				failure = error
+			}
+		})
+		await transaction
+		if (failure) throw failure
+		return result
+	})
+	const release = (input: Partial<CourseSyncPollReleaseInput> = {}) =>
+		releaseCourseSyncPollHold(
+			{ releaseAtomically },
+			{
+				bindingId: heldState.bindingId,
+				actor: 'operator',
+				reason: 'Target contract corrected and reviewed.',
+				operationId: 'release-1',
+				occurredAt: new Date('2026-08-16T20:00:00.000Z'),
+				...input,
+			},
+		)
+	return { release, releaseAtomically, logs, state: () => state }
 }
 
 describe('operator course sync hold release', () => {
-	it('rechecks the target, resets held state, and writes an audit log', async () => {
-		const test = harness()
-		await expect(test.release()).resolves.toMatchObject({ status: 'released' })
-		expect(test.assertTarget).toHaveBeenCalledOnce()
+	it('delegates one normalized atomic release operation', async () => {
+		const assertTarget = vi.fn(async () => undefined)
+		const test = harness({ assertTarget })
+
+		await expect(
+			test.release({ reason: '  Target   corrected.  ' }),
+		).resolves.toMatchObject({ status: 'released' })
+		expect(assertTarget).toHaveBeenCalledOnce()
+		expect(test.releaseAtomically).toHaveBeenCalledWith(
+			expect.objectContaining({ reason: 'Target corrected.' }),
+		)
 		expect(test.state()).toMatchObject({
 			status: 'released',
 			consecutiveFailures: 0,
 			failureClass: null,
 			controlPlaneRunId: null,
 		})
-		expect(test.logs).toEqual([
-			expect.objectContaining({
-				stage: 'release',
-				outcome: 'succeeded',
-				metadata: expect.objectContaining({
-					actor: 'operator',
-					reason: 'Target contract corrected and reviewed.',
-					previousStatus: 'held',
-				}),
-			}),
-		])
+		expect(test.logs).toHaveLength(1)
 	})
 
-	it('leaves the hold untouched when the target still fails', async () => {
-		const test = harness(
-			vi.fn(async () => {
+	it('rolls back state when target recheck or audit insertion fails', async () => {
+		const targetFailure = harness({
+			assertTarget: async () => {
 				throw new CourseSyncError(
 					'TARGET_CONTRACT_MISMATCH',
 					'Target contract mismatch.',
 					409,
 				)
-			}),
-		)
-		await expect(test.release()).rejects.toMatchObject({
+			},
+		})
+		await expect(targetFailure.release()).rejects.toMatchObject({
 			code: 'TARGET_CONTRACT_MISMATCH',
 		})
-		expect(test.state()).toEqual(heldState)
-		expect(test.logs).toHaveLength(0)
+		expect(targetFailure.state()).toEqual(heldState)
+		expect(targetFailure.logs).toHaveLength(0)
+
+		const auditFailure = harness({ failAudit: true })
+		await expect(auditFailure.release()).rejects.toThrow('audit insert failed')
+		expect(auditFailure.state()).toEqual(heldState)
+		expect(auditFailure.logs).toHaveLength(0)
+	})
+
+	it('replays one receipt and rejects conflicting key reuse', async () => {
+		const test = harness()
+		const first = await test.release()
+		const replay = await test.release()
+		expect(replay).toEqual(first)
+		expect(test.logs).toHaveLength(1)
+
+		await expect(
+			test.release({ reason: 'Different operator decision.' }),
+		).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
+		expect(test.logs).toHaveLength(1)
+	})
+
+	it('serializes concurrent retries into one receipt', async () => {
+		const test = harness()
+		const [first, second] = await Promise.all([test.release(), test.release()])
+		expect(second).toEqual(first)
+		expect(test.logs).toHaveLength(1)
+	})
+
+	it('rejects unbounded operation IDs before persistence', async () => {
+		const test = harness()
+		await expect(
+			test.release({ operationId: 'x'.repeat(256) }),
+		).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_INVALID' })
+		expect(test.releaseAtomically).not.toHaveBeenCalled()
 	})
 })

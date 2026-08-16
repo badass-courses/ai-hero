@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { createActor } from 'xstate'
-import type { CourseJsonDocumentV3 } from '@ai-hero/course-sync-schema'
+import {
+	courseJsonVideos,
+	type CourseJsonDocumentV3,
+} from '@ai-hero/course-sync-schema'
 import { describe, expect, it } from 'vitest'
 
 import { createCourseSyncControlPlane } from './control-plane'
@@ -57,6 +60,7 @@ function exactDeltaFixture(
 	courseVersionId: string,
 	options: {
 		changedVideos?: ReadonlySet<number>
+		changedExportHashes?: ReadonlySet<number>
 		changedBodies?: ReadonlySet<number>
 	} = {},
 ): CourseJsonDocumentV3 {
@@ -64,9 +68,11 @@ function exactDeltaFixture(
 	let videoNumber = 0
 	const makeVideo = (slot: 'explainer' | 'problem' | 'solution') => {
 		videoNumber += 1
-		const changed = options.changedVideos?.has(videoNumber) ?? false
-		const revision = changed ? 'v2' : 'v1'
-		const bytes = bytesFor(videoNumber, revision)
+		const mediaChanged = options.changedVideos?.has(videoNumber) ?? false
+		const exportChanged = options.changedExportHashes?.has(videoNumber) ?? false
+		const mediaRevision = mediaChanged ? 'v2' : 'v1'
+		const exportRevision = exportChanged ? 'v2' : 'v1'
+		const bytes = bytesFor(videoNumber, mediaRevision)
 		return {
 			id: `video-${videoNumber}`,
 			relativePath: `versions/${courseVersionId}/video-${videoNumber}.mp4`,
@@ -75,7 +81,7 @@ function exactDeltaFixture(
 					? `Body ${lessonNumber} revised`
 					: `Body ${lessonNumber}`,
 			description: `Description ${videoNumber}`,
-			hash: `render-${videoNumber}-${revision}`,
+			hash: `render-${videoNumber}-${exportRevision}`,
 			sha256: createHash('sha256').update(bytes).digest('hex'),
 			bytes: bytes.byteLength,
 			chapters: [],
@@ -173,6 +179,8 @@ function harness(
 		changedVideo?: number
 		changedVideosByCourseVersion?: ReadonlyMap<string, ReadonlySet<number>>
 		targetValid?: boolean
+		failMuxCreateAt?: number
+		failMuxWaitOnceFor?: number
 		idStart?: number
 	} = {},
 ) {
@@ -201,17 +209,25 @@ function harness(
 	}
 	const snapshots: Array<{ key: string; bytes: number }> = []
 	const muxAssets = new Map<string, CourseSyncMuxAsset>()
+	let muxCreateCalls = 0
+	const failedWaits = new Set<number>()
 	const muxClient: CourseSyncMuxClient = {
 		async getAsset(assetId) {
 			return muxAssets.get(assetId) ?? null
 		},
 		async createAsset({ passthrough }) {
+			muxCreateCalls += 1
+			if (muxCreateCalls === options.failMuxCreateAt) {
+				throw new Error('injected Mux create failure')
+			}
 			const sourceVideoId = JSON.parse(passthrough).v as string
-			const asset = {
+			const sourceVideoNumber = Number(sourceVideoId.replace('video-', ''))
+			const preparing = sourceVideoNumber === options.failMuxWaitOnceFor
+			const asset: CourseSyncMuxAsset = {
 				id: `mux-${sourceVideoId}`,
-				status: 'ready' as const,
-				playbackId: `playback-${sourceVideoId}`,
-				duration: 60,
+				status: preparing ? 'preparing' : 'ready',
+				playbackId: preparing ? null : `playback-${sourceVideoId}`,
+				duration: preparing ? null : 60,
 			}
 			muxAssets.set(asset.id, asset)
 			snapshots.push({ key: asset.id, bytes: 0 })
@@ -220,7 +236,22 @@ function harness(
 		async waitForReady(assetId) {
 			const asset = muxAssets.get(assetId)
 			if (!asset) throw new Error('missing mux asset')
-			return asset
+			const sourceVideoNumber = Number(assetId.replace('mux-video-', ''))
+			if (
+				sourceVideoNumber === options.failMuxWaitOnceFor &&
+				!failedWaits.has(sourceVideoNumber)
+			) {
+				failedWaits.add(sourceVideoNumber)
+				throw new Error('injected Mux wait failure')
+			}
+			const ready: CourseSyncMuxAsset = {
+				...asset,
+				status: 'ready',
+				playbackId: `playback-video-${sourceVideoNumber}`,
+				duration: 60,
+			}
+			muxAssets.set(assetId, ready)
+			return ready
 		},
 	}
 	let id = options.idStart ?? 0
@@ -232,7 +263,13 @@ function harness(
 		makeId: (prefix) => `${prefix}_${++id}`,
 		clock: () => new Date(`2026-07-17T00:00:0${id}.000Z`),
 	})
-	return { controlPlane, persistence, snapshots, reads: () => reads }
+	return {
+		controlPlane,
+		persistence,
+		snapshots,
+		reads: () => reads,
+		muxCreates: () => muxCreateCalls,
+	}
 }
 
 async function stagedAndPreviewed(
@@ -296,10 +333,12 @@ describe('draft course sync control plane', () => {
 		expect(testHarness.persistence.receipts).toHaveLength(0)
 	})
 
-	it('previews the exact launch delta with stable IDs and 18 media replacements', async () => {
-		const changedVideos = new Set(
-			Array.from({ length: 18 }, (_, index) => index + 1),
-		)
+	it('previews the exact 19 export, 18 media, and 2 body launch delta', async () => {
+		const changedExportHashes = new Set([
+			...Array.from({ length: 11 }, (_, index) => index * 2 + 1),
+			...Array.from({ length: 8 }, (_, index) => index + 23),
+		])
+		const changedVideos = new Set([...changedExportHashes].slice(0, 18))
 		const changedBodies = new Set([57, 58])
 		const testHarness = harness({
 			changedVideosByCourseVersion: new Map([
@@ -323,6 +362,7 @@ describe('draft course sync control plane', () => {
 
 		const currentManifest = exactDeltaFixture('course-version-current', {
 			changedVideos,
+			changedExportHashes,
 			changedBodies,
 		})
 		const current = await stagedAndPreviewed(
@@ -344,6 +384,11 @@ describe('draft course sync control plane', () => {
 				(item) => item.sourceKind === 'video' && item.action === 'update',
 			),
 		).toHaveLength(18)
+		expect(
+			currentPlan?.resources.filter(
+				(item) => item.sourceKind === 'video' && item.action === 'retain',
+			),
+		).toHaveLength(52)
 		for (const lessonId of ['lesson-57', 'lesson-58']) {
 			const item = currentPlan?.resources.find(
 				(resource) =>
@@ -352,6 +397,35 @@ describe('draft course sync control plane', () => {
 			expect(item).toMatchObject({ action: 'update' })
 			expect(item?.fields.body).toContain('revised')
 		}
+		const baselineExportHashes = new Map(
+			courseJsonVideos(baselineManifest).map((video) => [video.id, video.hash]),
+		)
+		expect(
+			courseJsonVideos(currentManifest).filter(
+				(video) => baselineExportHashes.get(video.id) !== video.hash,
+			),
+		).toHaveLength(19)
+		expect(
+			currentPlan?.resources.filter(
+				(item) => item.sourceKind === 'lesson' && item.action === 'update',
+			),
+		).toHaveLength(21)
+		expect(
+			currentPlan?.resources.filter(
+				(item) => item.sourceKind === 'lesson' && item.action === 'retain',
+			),
+		).toHaveLength(38)
+		expect(
+			currentPlan?.resources.filter(
+				(item) => item.sourceKind === 'section' && item.action === 'retain',
+			),
+		).toHaveLength(6)
+		expect(
+			currentPlan?.resources.filter((item) => item.action === 'update'),
+		).toHaveLength(39)
+		expect(
+			currentPlan?.resources.filter((item) => item.action === 'retain'),
+		).toHaveLength(96)
 		expect(
 			currentPlan?.resources.some((item) => item.action === 'create'),
 		).toBe(false)
@@ -404,6 +478,72 @@ describe('draft course sync control plane', () => {
 		expect(JSON.stringify(previewed)).not.toContain(
 			AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
 		)
+	})
+
+	it('reuses each successful freeze receipt after a later asset fails', async () => {
+		const testHarness = harness({ failMuxCreateAt: 2 })
+		const source = fixture()
+		await expect(
+			testHarness.controlPlane.freezeAsset({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifest: source,
+				sourceVideoId: 'video-1',
+			}),
+		).resolves.toMatchObject({ muxAssetId: 'mux-video-1' })
+		await expect(
+			testHarness.controlPlane.freezeAsset({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifest: source,
+				sourceVideoId: 'video-2',
+			}),
+		).rejects.toThrow('injected Mux create failure')
+		expect(testHarness.muxCreates()).toBe(2)
+
+		const retriedFirst = await testHarness.controlPlane.freezeAsset({
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			manifest: source,
+			sourceVideoId: 'video-1',
+		})
+		expect(retriedFirst.freezeEffects).toEqual({
+			sourceAssetsRead: 0,
+			muxAssetsCreated: 0,
+		})
+		expect(testHarness.muxCreates()).toBe(2)
+		await expect(
+			testHarness.controlPlane.freezeAsset({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifest: source,
+				sourceVideoId: 'video-2',
+			}),
+		).resolves.toMatchObject({ muxAssetId: 'mux-video-2' })
+		expect(testHarness.muxCreates()).toBe(3)
+	})
+
+	it('reconciles a provisional Mux receipt after readiness polling fails', async () => {
+		const testHarness = harness({ failMuxWaitOnceFor: 1 })
+		const source = fixture()
+		await expect(
+			testHarness.controlPlane.freezeAsset({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifest: source,
+				sourceVideoId: 'video-1',
+			}),
+		).rejects.toThrow('injected Mux wait failure')
+		expect(testHarness.muxCreates()).toBe(1)
+		expect(testHarness.persistence.frozenAssetReceipts.size).toBe(1)
+
+		await expect(
+			testHarness.controlPlane.freezeAsset({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifest: source,
+				sourceVideoId: 'video-1',
+			}),
+		).resolves.toMatchObject({
+			muxAssetId: 'mux-video-1',
+			muxPlaybackId: 'playback-video-1',
+			freezeEffects: { sourceAssetsRead: 0, muxAssetsCreated: 0 },
+		})
+		expect(testHarness.muxCreates()).toBe(1)
 	})
 
 	it('reuses a ready binding-scoped Mux asset without resolving Dropbox again', async () => {
@@ -566,6 +706,142 @@ describe('draft course sync control plane', () => {
 			testHarness.persistence.relations.get(lessonOne.targetResourceId)
 				?.position,
 		).toBe(0)
+	})
+
+	it('rejects locked resource-field and relation drift after preview', async () => {
+		const fieldsHarness = harness()
+		const baseline = await stagedAndPreviewed(fieldsHarness)
+		await fieldsHarness.controlPlane.apply({
+			runId: baseline.staged.runId,
+			idempotencyKey: 'apply-drift-baseline',
+		})
+		const changed = await stagedAndPreviewed(
+			fieldsHarness,
+			fixture('drift-fields', 1),
+			'stage-drift-fields',
+		)
+		const changedItem = fieldsHarness.persistence.runs
+			.get(changed.staged.runId)
+			?.plan?.resources.find((item) => item.action === 'update')
+		if (!changedItem) throw new Error('changed plan item missing')
+		const changedResource = fieldsHarness.persistence.resources.get(
+			changedItem.targetResourceId,
+		)
+		if (!changedResource) throw new Error('changed resource missing')
+		changedResource.fields = {
+			...changedResource.fields,
+			title: 'Manual edit',
+		}
+		await expect(
+			fieldsHarness.controlPlane.apply({
+				runId: changed.staged.runId,
+				idempotencyKey: 'apply-after-field-drift',
+			}),
+		).rejects.toMatchObject({ code: 'APPLY_TARGET_CHANGED' })
+
+		const relationHarness = harness()
+		const relationBaseline = await stagedAndPreviewed(relationHarness)
+		await relationHarness.controlPlane.apply({
+			runId: relationBaseline.staged.runId,
+			idempotencyKey: 'apply-relation-baseline',
+		})
+		const relationChange = await stagedAndPreviewed(
+			relationHarness,
+			fixture('drift-relation', 1),
+			'stage-drift-relation',
+		)
+		const relationItem = relationHarness.persistence.runs
+			.get(relationChange.staged.runId)
+			?.plan?.resources.find((item) => item.action === 'update')
+		if (!relationItem) throw new Error('relation plan item missing')
+		const relation = relationHarness.persistence.relations.get(
+			relationItem.targetResourceId,
+		)
+		if (!relation) throw new Error('managed relation missing')
+		relation.position += 1
+		await expect(
+			relationHarness.controlPlane.apply({
+				runId: relationChange.staged.runId,
+				idempotencyKey: 'apply-after-relation-drift',
+			}),
+		).rejects.toMatchObject({ code: 'MANAGED_RELATION_MISSING' })
+	})
+
+	it('rejects preview A after revision B becomes the awaiting head', async () => {
+		const testHarness = harness()
+		const revisionA = await stagedAndPreviewed(
+			testHarness,
+			fixture('revision-a'),
+			'stage-revision-a',
+		)
+		const revisionB = await stagedAndPreviewed(
+			testHarness,
+			fixture('revision-b'),
+			'stage-revision-b',
+		)
+		expect(
+			testHarness.persistence.runs.get(revisionA.staged.runId)?.state,
+		).toBe('superseded')
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: revisionA.staged.runId,
+				idempotencyKey: 'apply-stale-a',
+			}),
+		).rejects.toMatchObject({ code: 'INVALID_RUN_STATE' })
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: revisionB.staged.runId,
+				idempotencyKey: 'apply-current-b',
+			}),
+		).resolves.toMatchObject({ state: 'applied' })
+	})
+
+	it('aborts rollback after a later edit or later apply', async () => {
+		const editedHarness = harness()
+		const first = await stagedAndPreviewed(editedHarness)
+		await editedHarness.controlPlane.apply({
+			runId: first.staged.runId,
+			idempotencyKey: 'apply-before-edit',
+		})
+		const receipt = editedHarness.persistence.receipts.find(
+			(candidate) => candidate.runId === first.staged.runId,
+		)
+		if (!receipt) throw new Error('apply receipt missing')
+		const edited = editedHarness.persistence.resources.get(receipt.resourceId)
+		if (!edited) throw new Error('applied resource missing')
+		edited.currentVersionId = 'manual-editor-version'
+		await expect(
+			editedHarness.controlPlane.rollback({
+				runId: first.staged.runId,
+				idempotencyKey: 'rollback-after-edit',
+			}),
+		).rejects.toMatchObject({ code: 'ROLLBACK_TARGET_CHANGED' })
+
+		const laterHarness = harness()
+		const revisionA = await stagedAndPreviewed(
+			laterHarness,
+			fixture('rollback-a'),
+			'stage-rollback-a',
+		)
+		await laterHarness.controlPlane.apply({
+			runId: revisionA.staged.runId,
+			idempotencyKey: 'apply-rollback-a',
+		})
+		const revisionB = await stagedAndPreviewed(
+			laterHarness,
+			fixture('rollback-b', 1),
+			'stage-rollback-b',
+		)
+		await laterHarness.controlPlane.apply({
+			runId: revisionB.staged.runId,
+			idempotencyKey: 'apply-rollback-b',
+		})
+		await expect(
+			laterHarness.controlPlane.rollback({
+				runId: revisionA.staged.runId,
+				idempotencyKey: 'rollback-old-a',
+			}),
+		).rejects.toMatchObject({ code: 'ROLLBACK_CONCURRENCY_CONFLICT' })
 	})
 
 	it('retries a rolled-back mid-apply failure with the same plan and key without duplicates', async () => {

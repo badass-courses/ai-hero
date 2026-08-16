@@ -249,6 +249,7 @@ export const drizzleCourseSyncHistorySource: CourseSyncHistorySource = {
 
 export type CourseSyncHistoryOutcome =
 	| 'applied'
+	| 'applying'
 	| 'awaiting-apply'
 	| 'failed'
 	| 'held'
@@ -319,11 +320,41 @@ function failureSummaryFromMetadata(
 		!Array.isArray(summary.actual) ||
 		!Array.isArray(summary.expected) ||
 		typeof summary.retryable !== 'boolean' ||
-		typeof summary.currentRunCreated !== 'boolean'
+		typeof summary.currentRunCreated !== 'boolean' ||
+		!summary.sideEffects ||
+		typeof summary.sideEffects !== 'object'
 	) {
 		return null
 	}
-	return value as CourseSyncFailureSummary
+	const sideEffects = summary.sideEffects as Partial<
+		CourseSyncFailureSummary['sideEffects']
+	>
+	const count = (candidate: unknown) => {
+		if (
+			candidate &&
+			typeof candidate === 'object' &&
+			typeof (candidate as { count?: unknown }).count === 'number' &&
+			['exact', 'at-least', 'unknown'].includes(
+				String((candidate as { precision?: unknown }).precision),
+			)
+		) {
+			return candidate as CourseSyncFailureSummary['sideEffects']['sourceAssetsRead']
+		}
+		return { count: 0, precision: 'unknown' as const }
+	}
+	return {
+		...(value as CourseSyncFailureSummary),
+		sideEffects: {
+			sourceAssetsRead: count(sideEffects.sourceAssetsRead),
+			muxAssetsCreated: count(sideEffects.muxAssetsCreated),
+			targetWrites:
+				sideEffects.targetWrites === 'none' ||
+				sideEffects.targetWrites === 'rolled-back' ||
+				sideEffects.targetWrites === 'unknown'
+					? sideEffects.targetWrites
+					: 'unknown',
+		},
+	}
 }
 
 function attemptOutcome(
@@ -347,43 +378,93 @@ function overallOutcome(input: {
 	logs: PollLogRow[]
 	state: PollStateRow | null
 }): { outcome: CourseSyncHistoryOutcome; failureClass: string | null } {
-	const applied = [...input.runs]
-		.reverse()
-		.find((run) => run.state === 'applied')
-	if (applied) return { outcome: 'applied', failureClass: null }
-
-	const heldLog = [...input.logs]
-		.reverse()
-		.find((log) => log.outcome === 'held')
-	if (input.state?.status === 'held' || heldLog) {
-		return {
-			outcome: 'held',
-			failureClass: input.state?.failureClass ?? heldLog?.failureClass ?? null,
+	if (input.state) {
+		switch (input.state.status) {
+			case 'succeeded':
+				return { outcome: 'applied', failureClass: null }
+			case 'awaiting-apply':
+				return { outcome: 'awaiting-apply', failureClass: null }
+			case 'applying':
+				return { outcome: 'applying', failureClass: null }
+			case 'held':
+				return {
+					outcome: 'held',
+					failureClass: input.state.failureClass,
+				}
+			case 'failed':
+				return {
+					outcome: 'failed',
+					failureClass: input.state.failureClass,
+				}
+			case 'released':
+			case 'staging':
+				return { outcome: 'staging', failureClass: null }
 		}
 	}
 
-	if (input.state?.status === 'awaiting-apply') {
-		return { outcome: 'awaiting-apply', failureClass: null }
+	const latestRun = [...input.runs].sort(
+		(left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+	)[0]
+	const latestLifecycleLog = [...input.logs]
+		.sort(
+			(left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
+		)
+		.find(
+			(log) =>
+				log.outcome === 'held' ||
+				log.outcome === 'failed' ||
+				(log.stage === 'apply' && log.outcome === 'succeeded') ||
+				(log.stage === 'release' && log.outcome === 'succeeded'),
+		)
+	const lifecycleLogOutcome = () => {
+		if (latestLifecycleLog?.stage === 'apply') {
+			return { outcome: 'applied' as const, failureClass: null }
+		}
+		if (latestLifecycleLog?.stage === 'release') {
+			return { outcome: 'staging' as const, failureClass: null }
+		}
+		if (latestLifecycleLog?.outcome === 'held') {
+			return {
+				outcome: 'held' as const,
+				failureClass: latestLifecycleLog.failureClass,
+			}
+		}
+		if (latestLifecycleLog?.outcome === 'failed') {
+			return {
+				outcome: 'failed' as const,
+				failureClass: latestLifecycleLog.failureClass,
+			}
+		}
+		return null
 	}
-
-	const failedRun = [...input.runs]
-		.reverse()
-		.find((run) => run.state === 'failed')
-	const failedLog = [...input.logs]
-		.reverse()
-		.find((log) => log.outcome === 'failed')
-	if (input.state?.status === 'failed' || failedRun || failedLog) {
-		return {
-			outcome: 'failed',
-			failureClass:
-				input.state?.failureClass ??
-				failedRun?.failureCode ??
-				failedLog?.failureClass ??
-				null,
+	if (
+		latestLifecycleLog &&
+		(!latestRun ||
+			latestLifecycleLog.occurredAt.getTime() > latestRun.updatedAt.getTime())
+	) {
+		return lifecycleLogOutcome() ?? { outcome: 'staging', failureClass: null }
+	}
+	if (latestRun) {
+		switch (latestRun.state) {
+			case 'applied':
+				return { outcome: 'applied', failureClass: null }
+			case 'previewed':
+				return { outcome: 'awaiting-apply', failureClass: null }
+			case 'applying':
+				return { outcome: 'applying', failureClass: null }
+			case 'failed':
+				return {
+					outcome: 'failed',
+					failureClass: latestRun.failureCode,
+				}
+			case 'rolled_back':
+				return { outcome: 'held', failureClass: 'APPLIED_RUN_ROLLED_BACK' }
+			case 'superseded':
+				return { outcome: 'held', failureClass: 'PREVIEW_SUPERSEDED' }
 		}
 	}
 
-	return { outcome: 'staging', failureClass: null }
+	return lifecycleLogOutcome() ?? { outcome: 'staging', failureClass: null }
 }
 
 /**
@@ -459,10 +540,14 @@ async function loadHistory(
 			revisions.find((row) => row.courseVersionId === versionId) ?? null
 		const versionRuns = runs
 			.filter((row) => row.courseVersionId === versionId)
-			.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+			.sort(
+				(left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+			)
 		const versionLogs = logs
 			.filter((row) => row.courseVersionId === versionId)
-			.sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime())
+			.sort(
+				(left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
+			)
 		const state =
 			states.find((row) => row.courseVersionId === versionId) ?? null
 		const assetSummary = revision
@@ -482,9 +567,7 @@ async function loadHistory(
 			state,
 		})
 		const allAttempts = buildAttempts(versionLogs)
-		const attempts = allAttempts.filter(
-			(attempt) => !isIdlePollCycle(attempt),
-		)
+		const attempts = allAttempts.filter((attempt) => !isIdlePollCycle(attempt))
 		const timedAttempt =
 			allAttempts.find((attempt) => attempt.outcome === 'applied') ??
 			allAttempts.at(-1)
@@ -527,7 +610,8 @@ async function loadHistory(
 			durationSeconds: timedAttempt
 				? Math.max(
 						0,
-						(timedAttempt.finishedAt.getTime() - timedAttempt.startedAt.getTime()) /
+						(timedAttempt.finishedAt.getTime() -
+							timedAttempt.startedAt.getTime()) /
 							1000,
 					)
 				: null,

@@ -51,6 +51,15 @@ describe('course sync OpenAPI contract', () => {
 		})
 		expect(
 			document.paths['/v1/course-sync/runs/{runId}:apply'].post.security,
-		).toEqual([{ WorkerBearer: [] }, { OperatorBearer: [] }])
+		).toEqual([{ OperatorBearer: [] }])
+		const releaseKey = document.paths[
+			'/v1/course-sync/bindings/{bindingId}/poll-state:release'
+		].post.parameters.find(
+			(parameter: { name?: string }) => parameter.name === 'Idempotency-Key',
+		)
+		expect(releaseKey?.schema).toMatchObject({ minLength: 1, maxLength: 255 })
+		expect(document.components.schemas.SyncRun.properties.state.enum).toContain(
+			'superseded',
+		)
 	})
 })

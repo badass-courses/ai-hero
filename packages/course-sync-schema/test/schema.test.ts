@@ -15,6 +15,7 @@ import {
 } from "../src/course-json-v3.js"
 import {
 	decodeCourseSyncBindingSummary,
+	decodeCourseSyncRunSummary,
 	decodeStageSourceRevisionRequest,
 } from "../src/control-plane.js"
 import { makeCourseJsonV3Fixture } from "./fixtures/course-json.v3.js"
@@ -156,6 +157,19 @@ assert.throws(() =>
 			managedChildren: { state: "draft", visibility: "unlisted" },
 			sectionMappingPolicy: "two-sections-in-anchor-workshop",
 		},
+	}),
+)
+assert.doesNotThrow(() =>
+	decodeCourseSyncRunSummary({
+		runId: "run-superseded",
+		bindingId: "csb_ai_coding_crash_course",
+		courseVersionId: "version-a",
+		state: "superseded",
+		planSha256: "a".repeat(64),
+		noOp: false,
+		failureCode: null,
+		plan: null,
+		resourceCounts: { create: 0, update: 0, retain: 0 },
 	}),
 )
 assert.throws(() =>

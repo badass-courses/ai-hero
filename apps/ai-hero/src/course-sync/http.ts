@@ -56,6 +56,14 @@ export function idempotencyKey(request: Request) {
 			400,
 		)
 	}
+	if (value.length > 255) {
+		throw new CourseSyncError(
+			'IDEMPOTENCY_KEY_INVALID',
+			'Idempotency-Key must contain 1 to 255 characters.',
+			400,
+			{ category: 'lifecycle_conflict', retryable: false },
+		)
+	}
 	return value
 }
 

@@ -21,6 +21,7 @@ export const CourseSyncRunState = Schema.Literals([
 	"applied",
 	"failed",
 	"rolled_back",
+	"superseded",
 ])
 
 export const CourseSyncResourceAction = Schema.Literals([

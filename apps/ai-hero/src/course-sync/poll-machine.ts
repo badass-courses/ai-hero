@@ -3,24 +3,22 @@ import { assign, createActor, setup } from 'xstate'
 import type { CourseSyncBinding } from './types'
 
 export type CourseSyncPollMachineInput = {
-	bindingStatus: CourseSyncBinding['status']
 	pollStatus: string | null
 	strikes: number
 	applyPolicy: CourseSyncBinding['applyPolicy']
 }
 
 export type CourseSyncPollMachineEvent =
-	| { type: 'TICK' }
 	| { type: 'REVISION.START' }
-	| { type: 'REVISION.NEW' }
 	| { type: 'PREVIEW.OK' }
+	| { type: 'APPLY.START' }
 	| { type: 'APPLY.OK' }
+	| { type: 'APPLY.FAILED' }
+	| { type: 'APPLY.ROLLED_BACK' }
+	| { type: 'APPLY.SUPERSEDED' }
 	| { type: 'FAIL.RETRYABLE' }
 	| { type: 'FAIL.NON_RETRYABLE' }
 	| { type: 'OPERATOR.RELEASE' }
-	| { type: 'OPERATOR.SUSPEND' }
-	| { type: 'OPERATOR.RESUME' }
-	| { type: 'OPERATOR.REVOKE' }
 
 export const courseSyncPollMachine = setup({
 	types: {
@@ -29,10 +27,9 @@ export const courseSyncPollMachine = setup({
 		events: {} as CourseSyncPollMachineEvent,
 	},
 	guards: {
-		bindingRevoked: ({ context }) => context.bindingStatus === 'revoked',
-		bindingSuspended: ({ context }) => context.bindingStatus === 'suspended',
 		wasHeld: ({ context }) => context.pollStatus === 'held',
 		wasAwaitingApply: ({ context }) => context.pollStatus === 'awaiting-apply',
+		wasApplying: ({ context }) => context.pollStatus === 'applying',
 		wasFailed: ({ context }) => context.pollStatus === 'failed',
 		wasStaging: ({ context }) => context.pollStatus === 'staging',
 		operatorApply: ({ context }) => context.applyPolicy === 'operator',
@@ -51,13 +48,12 @@ export const courseSyncPollMachine = setup({
 	states: {
 		restoring: {
 			always: [
-				{ guard: 'bindingRevoked', target: 'revoked' },
-				{ guard: 'bindingSuspended', target: 'suspended' },
 				{ guard: 'wasHeld', target: '#courseSyncPoll.active.held' },
 				{
 					guard: 'wasAwaitingApply',
 					target: '#courseSyncPoll.active.awaitingApply',
 				},
+				{ guard: 'wasApplying', target: '#courseSyncPoll.active.applying' },
 				{ guard: 'wasFailed', target: '#courseSyncPoll.active.failed' },
 				{ guard: 'wasStaging', target: '#courseSyncPoll.active.staging' },
 				{ target: '#courseSyncPoll.active.idle' },
@@ -65,10 +61,6 @@ export const courseSyncPollMachine = setup({
 		},
 		active: {
 			initial: 'idle',
-			on: {
-				'OPERATOR.SUSPEND': '#courseSyncPoll.suspended',
-				'OPERATOR.REVOKE': '#courseSyncPoll.revoked',
-			},
 			states: {
 				idle: {
 					on: { 'REVISION.START': 'staging' },
@@ -95,13 +87,37 @@ export const courseSyncPollMachine = setup({
 				},
 				awaitingApply: {
 					on: {
-						'REVISION.NEW': 'staging',
+						'APPLY.START': 'applying',
 						'APPLY.OK': { target: 'idle', actions: 'resetStrikes' },
+						'APPLY.FAILED': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
+						'APPLY.ROLLED_BACK': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
+						'APPLY.SUPERSEDED': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
 					},
 				},
 				applying: {
 					on: {
 						'APPLY.OK': { target: 'idle', actions: 'resetStrikes' },
+						'APPLY.FAILED': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
+						'APPLY.ROLLED_BACK': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
+						'APPLY.SUPERSEDED': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
 						'FAIL.NON_RETRYABLE': {
 							target: 'held',
 							actions: 'incrementStrike',
@@ -129,13 +145,6 @@ export const courseSyncPollMachine = setup({
 				},
 			},
 		},
-		suspended: {
-			on: {
-				'OPERATOR.RESUME': 'active',
-				'OPERATOR.REVOKE': 'revoked',
-			},
-		},
-		revoked: { type: 'final' },
 	},
 })
 

@@ -1,8 +1,4 @@
-import {
-	appendCourseSyncPollLog,
-	getCourseSyncPollState,
-	saveCourseSyncPollState,
-} from '@/course-sync/detection-persistence'
+import { releaseCourseSyncPollHoldAtomically } from '@/course-sync/detection-persistence'
 import { CourseSyncError } from '@/course-sync/errors'
 import {
 	authorizeCourseSyncRequest,
@@ -11,7 +7,6 @@ import {
 	idempotencyKey,
 } from '@/course-sync/http'
 import { releaseCourseSyncPollHold } from '@/course-sync/release'
-import { courseSyncControlPlane } from '@/course-sync/runtime'
 
 export async function POST(
 	request: Request,
@@ -31,14 +26,7 @@ export async function POST(
 			)
 		}
 		const state = await releaseCourseSyncPollHold(
-			{
-				assertTarget: async (candidateBindingId) => {
-					await courseSyncControlPlane.getBinding(candidateBindingId)
-				},
-				getPollState: getCourseSyncPollState,
-				savePollState: saveCourseSyncPollState,
-				appendLog: appendCourseSyncPollLog,
-			},
+			{ releaseAtomically: releaseCourseSyncPollHoldAtomically },
 			{
 				bindingId,
 				actor: 'operator',

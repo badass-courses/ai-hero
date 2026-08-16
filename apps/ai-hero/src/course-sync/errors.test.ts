@@ -1,21 +1,75 @@
 import { describe, expect, it } from 'vitest'
 
-import { courseSyncFailureClass } from './detection-poller'
-import { CourseSyncError } from './errors'
+import {
+	CourseSyncError,
+	captureCourseSyncStepResult,
+	unwrapCourseSyncStepResult,
+} from './errors'
 
 describe('course sync errors across step serialization', () => {
-	it('uses the typed code as Error.name so Inngest preserves it', () => {
-		const original = new CourseSyncError(
-			'TARGET_CONTRACT_MISMATCH',
-			'Target contract mismatch.',
-			409,
-			{ category: 'target_precondition', retryable: false },
+	it('preserves source-validation retry policy through the real JSON envelope', async () => {
+		const captured = await captureCourseSyncStepResult(async () => {
+			throw new CourseSyncError(
+				'VIDEO_BYTE_COUNT_MISMATCH',
+				'Video byte count mismatch.',
+				409,
+				{
+					category: 'source_validation',
+					retryable: false,
+					details: { sourceVideoId: 'video-18', expected: 100, actual: 99 },
+				},
+			)
+		})
+		const transported = JSON.parse(JSON.stringify(captured))
+
+		expect(() => unwrapCourseSyncStepResult(transported)).toThrowError(
+			expect.objectContaining({
+				code: 'VIDEO_BYTE_COUNT_MISMATCH',
+				category: 'source_validation',
+				retryable: false,
+				details: {
+					sourceVideoId: 'video-18',
+					expected: 100,
+					actual: 99,
+				},
+			}),
 		)
-		const serialized = JSON.parse(
-			JSON.stringify({ name: original.name, message: original.message }),
-		) as { name: string; message: string }
-		const restored = new Error(serialized.message)
-		restored.name = serialized.name
-		expect(courseSyncFailureClass(restored)).toBe('TARGET_CONTRACT_MISMATCH')
+	})
+
+	it('preserves target violations through the real JSON envelope', async () => {
+		const violations = [
+			{
+				target: { kind: 'workshop', id: 'workshop-1' },
+				field: 'state',
+				expected: 'published',
+				actual: 'draft',
+			},
+		]
+		const captured = await captureCourseSyncStepResult(async () => {
+			throw new CourseSyncError(
+				'TARGET_CONTRACT_MISMATCH',
+				'Target contract mismatch.',
+				409,
+				{
+					category: 'target_precondition',
+					retryable: false,
+					details: { violations },
+				},
+			)
+		})
+		const transported = JSON.parse(JSON.stringify(captured))
+
+		try {
+			unwrapCourseSyncStepResult(transported)
+			expect.unreachable('expected transported failure')
+		} catch (error) {
+			expect(error).toBeInstanceOf(CourseSyncError)
+			expect(error).toMatchObject({
+				code: 'TARGET_CONTRACT_MISMATCH',
+				category: 'target_precondition',
+				retryable: false,
+				details: { violations },
+			})
+		}
 	})
 })

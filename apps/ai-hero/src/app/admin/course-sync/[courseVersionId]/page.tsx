@@ -129,7 +129,9 @@ export default async function CourseSyncHistoryDetailPage({
 
 			{history.failureSummary && (
 				<section className="border-b bg-amber-50 px-8 py-8 text-amber-950 sm:px-16">
-					<h2 className="text-xl font-semibold">Course sync held</h2>
+					<h2 className="text-xl font-semibold">
+						Course sync {history.outcome === 'failed' ? 'failed' : 'held'}
+					</h2>
 					<dl className="mt-5 grid gap-5 lg:grid-cols-2">
 						<div>
 							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
@@ -161,7 +163,11 @@ export default async function CourseSyncHistoryDetailPage({
 							</dt>
 							<dd className="mt-1 text-sm">
 								Source assets read:{' '}
-								{String(history.failureSummary.sideEffects.sourceAssetsRead)};
+								{history.failureSummary.sideEffects.sourceAssetsRead.precision}{' '}
+								{history.failureSummary.sideEffects.sourceAssetsRead.count}; Mux
+								assets created:{' '}
+								{history.failureSummary.sideEffects.muxAssetsCreated.precision}{' '}
+								{history.failureSummary.sideEffects.muxAssetsCreated.count};
 								target writes: {history.failureSummary.sideEffects.targetWrites}
 							</dd>
 						</div>

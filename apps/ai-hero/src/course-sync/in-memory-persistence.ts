@@ -36,6 +36,10 @@ function cloneMap<T>(map: Map<string, T>): Map<string, T> {
 export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly bindings = new Map<string, CourseSyncBinding>()
 	readonly revisions = new Map<string, SourceRevisionRecord>()
+	readonly frozenAssetReceipts = new Map<
+		string,
+		SourceRevisionRecord['assets'][number]
+	>()
 	readonly runs = new Map<string, SyncRunRecord>()
 	readonly resources = new Map<
 		string,
@@ -51,6 +55,8 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	assertTargetCalls = 0
 	failAfterVersionWrites: number | null = null
 	beforeApplyTargetRecheck: (() => void) | null = null
+	currentAwaitingApplyRunId: string | null = null
+	currentAppliedRunId: string | null = null
 
 	async ensureBinding(binding: CourseSyncBinding) {
 		const existing = this.bindings.get(binding.bindingId)
@@ -114,6 +120,35 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		return null
 	}
 
+	async findFrozenAssetReceipt(receiptKey: string) {
+		return structuredClone(this.frozenAssetReceipts.get(receiptKey) ?? null)
+	}
+
+	async saveFrozenAssetReceipt(input: {
+		receiptKey: string
+		bindingId: string
+		courseVersionId: string
+		asset: SourceRevisionRecord['assets'][number]
+	}) {
+		const existing = this.frozenAssetReceipts.get(input.receiptKey)
+		if (existing) {
+			if (existing.muxAssetId === input.asset.muxAssetId) {
+				const completed = {
+					...existing,
+					muxPlaybackId: input.asset.muxPlaybackId,
+					duration: input.asset.duration,
+				}
+				this.frozenAssetReceipts.set(input.receiptKey, completed)
+				return structuredClone(completed)
+			}
+			return structuredClone(existing)
+		}
+		const stored = structuredClone(input.asset)
+		delete stored.freezeEffects
+		this.frozenAssetReceipts.set(input.receiptKey, stored)
+		return structuredClone(stored)
+	}
+
 	async createStaged(input: {
 		revision: SourceRevisionRecord
 		run: SyncRunRecord
@@ -160,6 +195,17 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	}
 
 	async savePreview(runId: string, plan: NonNullable<SyncRunRecord['plan']>) {
+		const previousAwaitingRunId = this.currentAwaitingApplyRunId
+		if (previousAwaitingRunId && previousAwaitingRunId !== runId) {
+			const previous = this.runs.get(previousAwaitingRunId)
+			if (previous?.state === 'previewed') {
+				this.runs.set(previousAwaitingRunId, {
+					...previous,
+					state: 'superseded',
+					updatedAt: new Date(previous.updatedAt.getTime() + 1),
+				})
+			}
+		}
 		const run = this.runs.get(runId)
 		if (!run || run.state !== 'staged') {
 			throw new CourseSyncError(
@@ -176,6 +222,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			updatedAt: new Date(run.updatedAt.getTime() + 1),
 		}
 		this.runs.set(runId, updated)
+		this.currentAwaitingApplyRunId = runId
 		return structuredClone(updated)
 	}
 
@@ -186,10 +233,14 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		createdById: string
 	}) {
 		const current = this.runs.get(input.runId)
+		const { planSha256: claimedPlanSha256, ...planInput } = input.plan
 		if (
 			!current ||
+			this.currentAwaitingApplyRunId !== input.runId ||
 			(current.state !== 'previewed' && current.state !== 'failed') ||
-			current.planSha256 !== input.plan.planSha256
+			current.planSha256 !== input.plan.planSha256 ||
+			claimedPlanSha256 !== sha256(stableJson(planInput)) ||
+			stableJson(current.plan) !== stableJson(input.plan)
 		) {
 			throw new CourseSyncError(
 				'APPLY_CONCURRENCY_CONFLICT',
@@ -262,8 +313,21 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					409,
 				)
 			if (item.action !== 'create') {
+				if (sha256(stableJson(resource.fields)) !== item.previousFieldsSha256) {
+					throw new CourseSyncError(
+						'APPLY_TARGET_CHANGED',
+						'Resource fields changed after preview.',
+						409,
+					)
+				}
 				const relation = relations.get(item.targetResourceId)
-				if (!relation || relation.detached !== item.previousDetached) {
+				if (
+					!relation ||
+					relation.detached !== item.previousDetached ||
+					relation.parentId !==
+						(item.previousParentResourceId ?? item.parentResourceId) ||
+					relation.position !== (item.previousPosition ?? item.position)
+				) {
 					throw new CourseSyncError(
 						'MANAGED_RELATION_MISSING',
 						'Relation missing or detached state changed.',
@@ -358,6 +422,8 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			updatedAt: new Date(run.updatedAt.getTime() + 1),
 		}
 		this.runs.set(input.runId, applied)
+		this.currentAwaitingApplyRunId = null
+		this.currentAppliedRunId = input.runId
 		return structuredClone(applied)
 	}
 
@@ -383,12 +449,17 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 
 	async rollbackAtomically(input: {
 		runId: string
+		bindingId: string
 		idempotencyKey: string
 		compensatingRunId: string
 		createdById: string
 	}) {
 		const original = this.runs.get(input.runId)
-		if (!original || original.state !== 'applied') {
+		if (
+			!original ||
+			original.state !== 'applied' ||
+			this.currentAppliedRunId !== input.runId
+		) {
 			throw new CourseSyncError(
 				'ROLLBACK_CONCURRENCY_CONFLICT',
 				'Run changed.',
@@ -398,6 +469,28 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const runReceipts = this.receipts.filter(
 			(receipt) => receipt.runId === input.runId,
 		)
+		for (const receipt of runReceipts) {
+			const planItem = original.plan?.resources.find(
+				(item) => item.targetResourceId === receipt.resourceId,
+			)
+			const resource = this.resources.get(receipt.resourceId)
+			const relation = this.relations.get(receipt.resourceId)
+			if (
+				!planItem ||
+				!resource ||
+				resource.currentVersionId !== receipt.versionId ||
+				!relation ||
+				relation.parentId !== planItem.parentResourceId ||
+				relation.position !== planItem.position ||
+				relation.detached !== planItem.detached
+			) {
+				throw new CourseSyncError(
+					'ROLLBACK_TARGET_CHANGED',
+					'A resource or relation changed after this run applied.',
+					409,
+				)
+			}
+		}
 		// Preflight every lookup before touching any state. Throwing partway
 		// through the mutation loop below would leave versions, resources,
 		// relations, and receipts half-rolled-back with no way to finish or undo.
@@ -473,6 +566,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					position: receipt.previousPosition,
 					detached: planItem.previousDetached,
 				})
+			} else {
+				this.relations.set(receipt.resourceId, {
+					parentId: planItem.parentResourceId,
+					childId: receipt.resourceId,
+					position: planItem.position,
+					detached: true,
+				})
 			}
 			this.receipts.push({
 				runId: input.compensatingRunId,
@@ -500,6 +600,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			compensatingRunId: compensating.runId,
 		}
 		this.runs.set(input.runId, rolledBack)
+		this.currentAppliedRunId = null
 		return structuredClone(rolledBack)
 	}
 }
