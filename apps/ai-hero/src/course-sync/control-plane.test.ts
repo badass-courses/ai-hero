@@ -698,10 +698,7 @@ describe('draft course sync control plane', () => {
 		expect(compensating?.stageIdempotencyKey).toMatch(/^[a-f0-9]{64}$/)
 		expect(compensating?.stageIdempotencyKey).toHaveLength(64)
 		expect(
-			courseSyncRollbackStageIdempotencyKey(
-				staged.runId,
-				'r'.repeat(255),
-			),
+			courseSyncRollbackStageIdempotencyKey(staged.runId, 'r'.repeat(255)),
 		).toBe(expectedKey)
 	})
 
@@ -741,6 +738,93 @@ describe('draft course sync control plane', () => {
 			testHarness.persistence.relations.get(lessonOne.targetResourceId)
 				?.position,
 		).toBe(0)
+	})
+
+	it('restores updated fields, preserves retained fields, and tombstones created resources', async () => {
+		const testHarness = harness()
+		const baseline = await stagedAndPreviewed(testHarness)
+		await testHarness.controlPlane.apply({
+			runId: baseline.staged.runId,
+			idempotencyKey: 'apply-rollback-field-baseline',
+		})
+
+		const revision = fixture('rollback-field-cases', 1)
+		const lesson = revision.sections[0]?.lessons[0]
+		if (!lesson || lesson.type !== 'explainer') {
+			throw new Error('rollback field fixture lesson missing')
+		}
+		lesson.explainer.body += `\n<QuizQuestion data={{ id: 'rollback-created', question: 'Created?', type: 'essay' }} />`
+		const changed = await stagedAndPreviewed(
+			testHarness,
+			revision,
+			'stage-rollback-field-cases',
+		)
+		const plan = testHarness.persistence.runs.get(changed.staged.runId)?.plan
+		const updatedItem = plan?.resources.find(
+			(item) => item.action === 'update' && item.sourceKind === 'lesson',
+		)
+		const retainedItem = plan?.resources.find(
+			(item) => item.action === 'retain' && item.sourceKind === 'lesson',
+		)
+		const createdItem = plan?.resources.find(
+			(item) => item.action === 'create' && item.sourceKind === 'question',
+		)
+		if (!updatedItem || !retainedItem || !createdItem) {
+			throw new Error('rollback field plan cases missing')
+		}
+		const updatedBefore = structuredClone(
+			testHarness.persistence.resources.get(updatedItem.targetResourceId),
+		)
+		const updatedRelationBefore = structuredClone(
+			testHarness.persistence.relations.get(updatedItem.targetResourceId),
+		)
+		const retainedBefore = structuredClone(
+			testHarness.persistence.resources.get(retainedItem.targetResourceId),
+		)
+		const retainedRelationBefore = structuredClone(
+			testHarness.persistence.relations.get(retainedItem.targetResourceId),
+		)
+
+		await testHarness.controlPlane.apply({
+			runId: changed.staged.runId,
+			idempotencyKey: 'apply-rollback-field-cases',
+		})
+		expect(
+			testHarness.persistence.resources.get(updatedItem.targetResourceId)
+				?.fields,
+		).not.toEqual(updatedBefore?.fields)
+		await testHarness.controlPlane.rollback({
+			runId: changed.staged.runId,
+			idempotencyKey: 'rollback-field-cases',
+		})
+
+		expect(
+			testHarness.persistence.resources.get(updatedItem.targetResourceId)
+				?.fields,
+		).toEqual(updatedBefore?.fields)
+		expect(
+			testHarness.persistence.relations.get(updatedItem.targetResourceId),
+		).toEqual(updatedRelationBefore)
+		expect(
+			testHarness.persistence.resources.get(retainedItem.targetResourceId),
+		).toEqual(retainedBefore)
+		expect(
+			testHarness.persistence.relations.get(retainedItem.targetResourceId),
+		).toEqual(retainedRelationBefore)
+		expect(
+			testHarness.persistence.resources.get(createdItem.targetResourceId)
+				?.fields,
+		).toMatchObject({
+			state: 'draft',
+			visibility: 'unlisted',
+			courseSync: {
+				active: false,
+				rollbackOfRunId: changed.staged.runId,
+			},
+		})
+		expect(
+			testHarness.persistence.relations.get(createdItem.targetResourceId),
+		).toMatchObject({ detached: true })
 	})
 
 	it('rejects locked resource-field and relation drift after preview', async () => {

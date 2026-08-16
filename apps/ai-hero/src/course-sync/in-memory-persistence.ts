@@ -1,5 +1,6 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
+import { resolveCourseSyncRollbackFields } from './persistence-invariants'
 import {
 	courseSyncRollbackStageIdempotencyKey,
 	sha256,
@@ -529,18 +530,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			const parent = receipt.parentVersionId
 				? this.versions.get(receipt.parentVersionId)
 				: null
-			const fields = parent?.fields ?? {
-				...resource.fields,
-				state: planItem.sourceKind === 'video' ? 'deleted' : 'draft',
-				visibility: 'unlisted',
-				courseSync: {
-					...((resource.fields.courseSync as
-						| Record<string, unknown>
-						| undefined) ?? {}),
-					active: false,
-					rollbackOfRunId: input.runId,
-				},
-			}
+			const fields = resolveCourseSyncRollbackFields({
+				action: planItem.action,
+				sourceKind: planItem.sourceKind,
+				currentFields: resource.fields,
+				previousVersionFields: parent?.fields ?? null,
+				runId: input.runId,
+			})
 			const versionId = `version~${sha256(
 				stableJson({
 					compensatingRunId: input.compensatingRunId,
