@@ -8,6 +8,7 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
+import { assertCourseSyncLaunchApplyPolicy } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -899,6 +900,7 @@ export function createCourseSyncControlPlane(
 					409,
 				)
 			}
+			assertCourseSyncLaunchApplyPolicy(run.plan)
 			await requireBinding(run.bindingId)
 			try {
 				return publicRun(

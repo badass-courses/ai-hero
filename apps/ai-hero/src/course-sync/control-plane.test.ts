@@ -275,6 +275,21 @@ function harness(
 	}
 }
 
+async function applyDirectly(
+	testHarness: ReturnType<typeof harness>,
+	runId: string,
+	idempotencyKey: string,
+) {
+	const run = testHarness.persistence.runs.get(runId)
+	if (!run?.plan) throw new Error('previewed run plan missing')
+	return testHarness.persistence.applyAtomically({
+		runId,
+		plan: run.plan,
+		idempotencyKey,
+		createdById: 'test-worker',
+	})
+}
+
 async function stagedAndPreviewed(
 	testHarness: ReturnType<typeof harness>,
 	manifest: CourseJsonDocumentV3 = fixture(),
@@ -326,10 +341,7 @@ describe('draft course sync control plane', () => {
 		}
 
 		await expect(
-			testHarness.controlPlane.apply({
-				runId: staged.runId,
-				idempotencyKey: 'apply-after-target-drift',
-			}),
+			applyDirectly(testHarness, staged.runId, 'apply-after-target-drift'),
 		).rejects.toMatchObject({ code: 'TARGET_CONTRACT_MISMATCH' })
 		expect(testHarness.persistence.resources.size).toBe(0)
 		expect(testHarness.persistence.versions.size).toBe(0)
@@ -354,10 +366,11 @@ describe('draft course sync control plane', () => {
 			baselineManifest,
 			'stage-exact-baseline',
 		)
-		await testHarness.controlPlane.apply({
-			runId: baseline.staged.runId,
-			idempotencyKey: 'apply-exact-baseline',
-		})
+		await applyDirectly(
+			testHarness,
+			baseline.staged.runId,
+			'apply-exact-baseline',
+		)
 		const baselinePlan = testHarness.persistence.runs.get(
 			baseline.staged.runId,
 		)?.plan
@@ -452,6 +465,77 @@ describe('draft course sync control plane', () => {
 		expect(JSON.stringify(current.previewed)).not.toContain(
 			AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
 		)
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: current.staged.runId,
+				idempotencyKey: 'apply-exact-current',
+			}),
+		).resolves.toMatchObject({ state: 'applied' })
+	})
+
+	it('rejects a reviewed topology change before any apply write', async () => {
+		const changedExportHashes = new Set([
+			...Array.from({ length: 11 }, (_, index) => index * 2 + 1),
+			...Array.from({ length: 8 }, (_, index) => index + 23),
+		])
+		const changedVideos = new Set([...changedExportHashes].slice(0, 18))
+		const changedBodies = new Set([57, 58])
+		const testHarness = harness({
+			changedVideosByCourseVersion: new Map([
+				['course-version-policy-current', changedVideos],
+			]),
+		})
+		const baseline = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-policy-baseline'),
+			'stage-policy-baseline',
+		)
+		await applyDirectly(
+			testHarness,
+			baseline.staged.runId,
+			'apply-policy-baseline',
+		)
+		const current = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-policy-current', {
+				changedVideos,
+				changedExportHashes,
+				changedBodies,
+			}),
+			'stage-policy-current',
+		)
+		const run = testHarness.persistence.runs.get(current.staged.runId)
+		const changedItem = run?.plan?.resources[0]
+		if (!run?.plan || !changedItem) throw new Error('policy plan missing')
+		changedItem.position += 1
+		const before = structuredClone({
+			runs: [...testHarness.persistence.runs],
+			resources: [...testHarness.persistence.resources],
+			versions: [...testHarness.persistence.versions],
+			relations: [...testHarness.persistence.relations],
+			receipts: testHarness.persistence.receipts,
+			currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
+		})
+
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: current.staged.runId,
+				idempotencyKey: 'apply-policy-reparent',
+			}),
+		).rejects.toMatchObject({
+			code: 'LAUNCH_APPLY_POLICY_VIOLATION',
+			retryable: false,
+		})
+		expect(
+			structuredClone({
+				runs: [...testHarness.persistence.runs],
+				resources: [...testHarness.persistence.resources],
+				versions: [...testHarness.persistence.versions],
+				relations: [...testHarness.persistence.relations],
+				receipts: testHarness.persistence.receipts,
+				currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
+			}),
+		).toEqual(before)
 	})
 
 	it('freezes and stream-verifies a baseline v3 revision into one workshop', async () => {
@@ -618,10 +702,7 @@ describe('draft course sync control plane', () => {
 	it('applies all versions atomically, returns no-op on replay, and compensates without deleting drafts', async () => {
 		const testHarness = harness()
 		const { staged } = await stagedAndPreviewed(testHarness)
-		const applied = await testHarness.controlPlane.apply({
-			runId: staged.runId,
-			idempotencyKey: 'apply-key',
-		})
+		const applied = await applyDirectly(testHarness, staged.runId, 'apply-key')
 		expect(applied.state).toBe('applied')
 		expect(testHarness.persistence.resources.size).toBe(34)
 		expect(
@@ -676,10 +757,11 @@ describe('draft course sync control plane', () => {
 	it('hashes a maximum-length rollback key into the compensating run column', async () => {
 		const testHarness = harness()
 		const { staged } = await stagedAndPreviewed(testHarness)
-		await testHarness.controlPlane.apply({
-			runId: staged.runId,
-			idempotencyKey: 'apply-before-long-rollback-key',
-		})
+		await applyDirectly(
+			testHarness,
+			staged.runId,
+			'apply-before-long-rollback-key',
+		)
 
 		await testHarness.controlPlane.rollback({
 			runId: staged.runId,
@@ -702,13 +784,10 @@ describe('draft course sync control plane', () => {
 		).toBe(expectedKey)
 	})
 
-	it('compensates relation ordering as well as resource versions', async () => {
+	it('blocks relation reordering under the supervised launch policy', async () => {
 		const testHarness = harness()
 		const first = await stagedAndPreviewed(testHarness)
-		await testHarness.controlPlane.apply({
-			runId: first.staged.runId,
-			idempotencyKey: 'apply-v1',
-		})
+		await applyDirectly(testHarness, first.staged.runId, 'apply-v1')
 		const reordered = fixture('course-version-reordered')
 		reordered.sections[0]?.lessons.reverse()
 		const second = await stagedAndPreviewed(
@@ -722,17 +801,14 @@ describe('draft course sync control plane', () => {
 		)
 		expect(lessonOne).toMatchObject({ position: 7, previousPosition: 0 })
 		if (!lessonOne) throw new Error('lesson-1 plan missing')
-		await testHarness.controlPlane.apply({
-			runId: second.staged.runId,
-			idempotencyKey: 'apply-reordered',
-		})
-		expect(
-			testHarness.persistence.relations.get(lessonOne.targetResourceId)
-				?.position,
-		).toBe(7)
-		await testHarness.controlPlane.rollback({
-			runId: second.staged.runId,
-			idempotencyKey: 'rollback-reordered',
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: second.staged.runId,
+				idempotencyKey: 'apply-reordered',
+			}),
+		).rejects.toMatchObject({
+			code: 'LAUNCH_APPLY_POLICY_VIOLATION',
+			retryable: false,
 		})
 		expect(
 			testHarness.persistence.relations.get(lessonOne.targetResourceId)
@@ -743,10 +819,11 @@ describe('draft course sync control plane', () => {
 	it('restores updated fields, preserves retained fields, and tombstones created resources', async () => {
 		const testHarness = harness()
 		const baseline = await stagedAndPreviewed(testHarness)
-		await testHarness.controlPlane.apply({
-			runId: baseline.staged.runId,
-			idempotencyKey: 'apply-rollback-field-baseline',
-		})
+		await applyDirectly(
+			testHarness,
+			baseline.staged.runId,
+			'apply-rollback-field-baseline',
+		)
 
 		const revision = fixture('rollback-field-cases', 1)
 		const lesson = revision.sections[0]?.lessons[0]
@@ -785,10 +862,11 @@ describe('draft course sync control plane', () => {
 			testHarness.persistence.relations.get(retainedItem.targetResourceId),
 		)
 
-		await testHarness.controlPlane.apply({
-			runId: changed.staged.runId,
-			idempotencyKey: 'apply-rollback-field-cases',
-		})
+		await applyDirectly(
+			testHarness,
+			changed.staged.runId,
+			'apply-rollback-field-cases',
+		)
 		expect(
 			testHarness.persistence.resources.get(updatedItem.targetResourceId)
 				?.fields,
@@ -827,13 +905,106 @@ describe('draft course sync control plane', () => {
 		).toMatchObject({ detached: true })
 	})
 
+	it('leaves all in-memory state unchanged when a mixed create/update rollback fails during preparation', async () => {
+		const testHarness = harness()
+		const baseline = await stagedAndPreviewed(testHarness)
+		await applyDirectly(
+			testHarness,
+			baseline.staged.runId,
+			'apply-atomic-rollback-baseline',
+		)
+		const revision = fixture('mixed-create-update-rollback', 1)
+		const lesson = revision.sections[0]?.lessons[0]
+		if (!lesson || lesson.type !== 'explainer') {
+			throw new Error('mixed rollback lesson missing')
+		}
+		lesson.explainer.body += `\n<QuizQuestion data={{ id: 'mixed-created', question: 'Created?', type: 'essay' }} />`
+		const changed = await stagedAndPreviewed(
+			testHarness,
+			revision,
+			'stage-mixed-create-update-rollback',
+		)
+		await applyDirectly(
+			testHarness,
+			changed.staged.runId,
+			'apply-mixed-create-update-rollback',
+		)
+		const changedRun = testHarness.persistence.runs.get(changed.staged.runId)
+		const createItem = changedRun?.plan?.resources.find(
+			(item) => item.action === 'create',
+		)
+		const updateItem = changedRun?.plan?.resources.find(
+			(item) => item.action === 'update' && item.previousVersionId !== null,
+		)
+		if (!createItem || !updateItem?.previousVersionId) {
+			throw new Error('mixed rollback plan cases missing')
+		}
+		const runReceipts = testHarness.persistence.receipts.filter(
+			(receipt) => receipt.runId === changed.staged.runId,
+		)
+		const createReceipt = runReceipts.find(
+			(receipt) => receipt.resourceId === createItem.targetResourceId,
+		)
+		const updateReceipt = runReceipts.find(
+			(receipt) => receipt.resourceId === updateItem.targetResourceId,
+		)
+		if (!createReceipt || !updateReceipt) {
+			throw new Error('mixed rollback receipts missing')
+		}
+		const otherReceipts = testHarness.persistence.receipts.filter(
+			(receipt) => receipt !== createReceipt && receipt !== updateReceipt,
+		)
+		testHarness.persistence.receipts.splice(
+			0,
+			testHarness.persistence.receipts.length,
+			...otherReceipts.filter(
+				(receipt) => receipt.runId !== changed.staged.runId,
+			),
+			createReceipt,
+			updateReceipt,
+			...runReceipts.filter(
+				(receipt) => receipt !== createReceipt && receipt !== updateReceipt,
+			),
+		)
+		testHarness.persistence.versions.delete(updateItem.previousVersionId)
+		const before = structuredClone({
+			runs: [...testHarness.persistence.runs],
+			resources: [...testHarness.persistence.resources],
+			versions: [...testHarness.persistence.versions],
+			relations: [...testHarness.persistence.relations],
+			receipts: testHarness.persistence.receipts,
+			currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
+		})
+
+		await expect(
+			testHarness.persistence.rollbackAtomically({
+				runId: changed.staged.runId,
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				idempotencyKey: 'rollback-mixed-create-update-failure',
+				compensatingRunId: 'csr_run_failed_mixed_rollback',
+				createdById: 'test-worker',
+			}),
+		).rejects.toMatchObject({ code: 'ROLLBACK_PARENT_VERSION_MISSING' })
+		expect(
+			structuredClone({
+				runs: [...testHarness.persistence.runs],
+				resources: [...testHarness.persistence.resources],
+				versions: [...testHarness.persistence.versions],
+				relations: [...testHarness.persistence.relations],
+				receipts: testHarness.persistence.receipts,
+				currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
+			}),
+		).toEqual(before)
+	})
+
 	it('rejects locked resource-field and relation drift after preview', async () => {
 		const fieldsHarness = harness()
 		const baseline = await stagedAndPreviewed(fieldsHarness)
-		await fieldsHarness.controlPlane.apply({
-			runId: baseline.staged.runId,
-			idempotencyKey: 'apply-drift-baseline',
-		})
+		await applyDirectly(
+			fieldsHarness,
+			baseline.staged.runId,
+			'apply-drift-baseline',
+		)
 		const changed = await stagedAndPreviewed(
 			fieldsHarness,
 			fixture('drift-fields', 1),
@@ -852,18 +1023,20 @@ describe('draft course sync control plane', () => {
 			title: 'Manual edit',
 		}
 		await expect(
-			fieldsHarness.controlPlane.apply({
-				runId: changed.staged.runId,
-				idempotencyKey: 'apply-after-field-drift',
-			}),
+			applyDirectly(
+				fieldsHarness,
+				changed.staged.runId,
+				'apply-after-field-drift',
+			),
 		).rejects.toMatchObject({ code: 'APPLY_TARGET_CHANGED' })
 
 		const relationHarness = harness()
 		const relationBaseline = await stagedAndPreviewed(relationHarness)
-		await relationHarness.controlPlane.apply({
-			runId: relationBaseline.staged.runId,
-			idempotencyKey: 'apply-relation-baseline',
-		})
+		await applyDirectly(
+			relationHarness,
+			relationBaseline.staged.runId,
+			'apply-relation-baseline',
+		)
 		const relationChange = await stagedAndPreviewed(
 			relationHarness,
 			fixture('drift-relation', 1),
@@ -879,10 +1052,11 @@ describe('draft course sync control plane', () => {
 		if (!relation) throw new Error('managed relation missing')
 		relation.position += 1
 		await expect(
-			relationHarness.controlPlane.apply({
-				runId: relationChange.staged.runId,
-				idempotencyKey: 'apply-after-relation-drift',
-			}),
+			applyDirectly(
+				relationHarness,
+				relationChange.staged.runId,
+				'apply-after-relation-drift',
+			),
 		).rejects.toMatchObject({ code: 'MANAGED_RELATION_MISSING' })
 	})
 
@@ -908,20 +1082,14 @@ describe('draft course sync control plane', () => {
 			}),
 		).rejects.toMatchObject({ code: 'INVALID_RUN_STATE' })
 		await expect(
-			testHarness.controlPlane.apply({
-				runId: revisionB.staged.runId,
-				idempotencyKey: 'apply-current-b',
-			}),
+			applyDirectly(testHarness, revisionB.staged.runId, 'apply-current-b'),
 		).resolves.toMatchObject({ state: 'applied' })
 	})
 
 	it('aborts rollback after a later edit or later apply', async () => {
 		const editedHarness = harness()
 		const first = await stagedAndPreviewed(editedHarness)
-		await editedHarness.controlPlane.apply({
-			runId: first.staged.runId,
-			idempotencyKey: 'apply-before-edit',
-		})
+		await applyDirectly(editedHarness, first.staged.runId, 'apply-before-edit')
 		const receipt = editedHarness.persistence.receipts.find(
 			(candidate) => candidate.runId === first.staged.runId,
 		)
@@ -942,19 +1110,21 @@ describe('draft course sync control plane', () => {
 			fixture('rollback-a'),
 			'stage-rollback-a',
 		)
-		await laterHarness.controlPlane.apply({
-			runId: revisionA.staged.runId,
-			idempotencyKey: 'apply-rollback-a',
-		})
+		await applyDirectly(
+			laterHarness,
+			revisionA.staged.runId,
+			'apply-rollback-a',
+		)
 		const revisionB = await stagedAndPreviewed(
 			laterHarness,
 			fixture('rollback-b', 1),
 			'stage-rollback-b',
 		)
-		await laterHarness.controlPlane.apply({
-			runId: revisionB.staged.runId,
-			idempotencyKey: 'apply-rollback-b',
-		})
+		await applyDirectly(
+			laterHarness,
+			revisionB.staged.runId,
+			'apply-rollback-b',
+		)
 		await expect(
 			laterHarness.controlPlane.rollback({
 				runId: revisionA.staged.runId,
@@ -963,9 +1133,36 @@ describe('draft course sync control plane', () => {
 		).rejects.toMatchObject({ code: 'ROLLBACK_CONCURRENCY_CONFLICT' })
 	})
 
-	it('retries a rolled-back mid-apply failure with the same plan and key without duplicates', async () => {
-		const testHarness = harness()
-		const { staged } = await stagedAndPreviewed(testHarness)
+	it('retries a rolled-back mid-apply failure with the same exact launch plan and key', async () => {
+		const changedExportHashes = new Set([
+			...Array.from({ length: 11 }, (_, index) => index * 2 + 1),
+			...Array.from({ length: 8 }, (_, index) => index + 23),
+		])
+		const changedVideos = new Set([...changedExportHashes].slice(0, 18))
+		const testHarness = harness({
+			changedVideosByCourseVersion: new Map([
+				['course-version-failure-current', changedVideos],
+			]),
+		})
+		const baseline = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-failure-baseline'),
+			'stage-failure-baseline',
+		)
+		await applyDirectly(
+			testHarness,
+			baseline.staged.runId,
+			'apply-failure-baseline',
+		)
+		const { staged } = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-failure-current', {
+				changedVideos,
+				changedExportHashes,
+				changedBodies: new Set([57, 58]),
+			}),
+			'stage-failure-current',
+		)
 		const planSha256 = testHarness.persistence.runs.get(
 			staged.runId,
 		)?.planSha256
@@ -977,10 +1174,10 @@ describe('draft course sync control plane', () => {
 				idempotencyKey: 'apply-failure-key',
 			}),
 		).rejects.toMatchObject({ code: 'INJECTED_APPLY_FAILURE' })
-		expect(testHarness.persistence.resources.size).toBe(0)
-		expect(testHarness.persistence.versions.size).toBe(0)
-		expect(testHarness.persistence.relations.size).toBe(0)
-		expect(testHarness.persistence.receipts).toHaveLength(0)
+		expect(testHarness.persistence.resources.size).toBe(135)
+		expect(testHarness.persistence.versions.size).toBe(135)
+		expect(testHarness.persistence.relations.size).toBe(135)
+		expect(testHarness.persistence.receipts).toHaveLength(135)
 		expect(testHarness.persistence.runs.get(staged.runId)).toMatchObject({
 			state: 'failed',
 			applyIdempotencyKey: 'apply-failure-key',
@@ -1000,22 +1197,22 @@ describe('draft course sync control plane', () => {
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(retried).toMatchObject({ state: 'applied', noOp: false })
-		expect(testHarness.persistence.resources.size).toBe(34)
-		expect(testHarness.persistence.versions.size).toBe(34)
-		expect(testHarness.persistence.receipts).toHaveLength(34)
+		expect(testHarness.persistence.resources.size).toBe(135)
+		expect(testHarness.persistence.versions.size).toBe(174)
+		expect(testHarness.persistence.receipts).toHaveLength(270)
 
 		const replay = await testHarness.controlPlane.apply({
 			runId: staged.runId,
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(replay).toMatchObject({ state: 'applied', noOp: true })
-		expect(testHarness.persistence.resources.size).toBe(34)
-		expect(testHarness.persistence.versions.size).toBe(34)
-		expect(testHarness.persistence.relations.size).toBe(34)
-		expect(testHarness.persistence.receipts).toHaveLength(34)
+		expect(testHarness.persistence.resources.size).toBe(135)
+		expect(testHarness.persistence.versions.size).toBe(174)
+		expect(testHarness.persistence.relations.size).toBe(135)
+		expect(testHarness.persistence.receipts).toHaveLength(270)
 	})
 
-	it('extracts questions, replays without churn, and detaches removed questions', async () => {
+	it('extracts questions, replays without churn, and blocks detach changes', async () => {
 		const quizBody = `
 <Quiz>
   <QuizQuestion data={{
@@ -1061,10 +1258,7 @@ describe('draft course sync control plane', () => {
 				answer: 'A and C.',
 			},
 		})
-		await testHarness.controlPlane.apply({
-			runId: first.staged.runId,
-			idempotencyKey: 'apply-quiz-v1',
-		})
+		await applyDirectly(testHarness, first.staged.runId, 'apply-quiz-v1')
 		const questionId = questions?.[1]?.targetResourceId
 		if (!questionId) throw new Error('derived question missing')
 		const versionCount = testHarness.persistence.versions.size
@@ -1098,50 +1292,16 @@ describe('draft course sync control plane', () => {
 			update: 2,
 			retain: 34,
 		})
-		await testHarness.controlPlane.apply({
-			runId: second.staged.runId,
-			idempotencyKey: 'apply-quiz-v2',
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: second.staged.runId,
+				idempotencyKey: 'apply-quiz-v2',
+			}),
+		).rejects.toMatchObject({
+			code: 'LAUNCH_APPLY_POLICY_VIOLATION',
+			retryable: false,
 		})
 		expect(testHarness.persistence.resources.has(questionId)).toBe(true)
-		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
-			true,
-		)
-
-		await testHarness.controlPlane.rollback({
-			runId: second.staged.runId,
-			idempotencyKey: 'rollback-quiz-v2',
-		})
-		expect(testHarness.persistence.resources.has(questionId)).toBe(true)
-		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
-			false,
-		)
-
-		removed.courseVersionId = 'quiz-v2-detached-again'
-		const detachedAgain = await stagedAndPreviewed(
-			testHarness,
-			removed,
-			'stage-quiz-v2-detached-again',
-		)
-		await testHarness.controlPlane.apply({
-			runId: detachedAgain.staged.runId,
-			idempotencyKey: 'apply-quiz-v2-detached-again',
-		})
-		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
-			true,
-		)
-
-		const restored = structuredClone(manifest)
-		restored.courseVersionId = 'quiz-v3'
-		const third = await stagedAndPreviewed(
-			testHarness,
-			restored,
-			'stage-quiz-v3',
-		)
-		await testHarness.controlPlane.apply({
-			runId: third.staged.runId,
-			idempotencyKey: 'apply-quiz-v3',
-		})
-		expect(testHarness.persistence.resources.size).toBe(36)
 		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
 			false,
 		)
@@ -1186,10 +1346,7 @@ describe('draft course sync control plane', () => {
 	it('diffs a new revision and changes only the one lesson whose frozen media changed', async () => {
 		const first = harness()
 		const { staged } = await stagedAndPreviewed(first)
-		await first.controlPlane.apply({
-			runId: staged.runId,
-			idempotencyKey: 'apply-v1',
-		})
+		await applyDirectly(first, staged.runId, 'apply-v1')
 
 		const changed = fixture('course-version-v2', 7)
 		const changedReaderHarness = harness({ changedVideo: 7, idStart: 100 })

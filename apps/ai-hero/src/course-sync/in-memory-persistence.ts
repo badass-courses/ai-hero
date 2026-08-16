@@ -38,6 +38,11 @@ function cloneMap<T>(map: Map<string, T>): Map<string, T> {
 	)
 }
 
+function replaceMap<T>(target: Map<string, T>, source: Map<string, T>): void {
+	target.clear()
+	for (const [key, value] of source) target.set(key, value)
+}
+
 export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly bindings = new Map<string, CourseSyncBinding>()
 	readonly revisions = new Map<string, SourceRevisionRecord>()
@@ -496,9 +501,16 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				)
 			}
 		}
-		// Preflight every lookup before touching any state. Throwing partway
-		// through the mutation loop below would leave versions, resources,
-		// relations, and receipts half-rolled-back with no way to finish or undo.
+		const nextRuns = cloneMap(this.runs)
+		const nextResources = cloneMap(this.resources)
+		const nextVersions = cloneMap(this.versions)
+		const nextRelations = cloneMap(this.relations)
+		const nextReceipts = structuredClone(this.receipts)
+		const nextVersionNumbers = new Map<string, number>()
+
+		// Resolve every lookup, restored field payload, version, relation, and
+		// receipt against cloned state. Nothing observable changes until every
+		// rollback operation has prepared successfully.
 		const plannedRollbacks = runReceipts
 			.filter((receipt) => receipt.action !== 'retain')
 			.map((receipt) => {
@@ -506,16 +518,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					(item) => item.targetResourceId === receipt.resourceId,
 				)
 				if (!planItem) {
-					// Detached state is restored from this item. Defaulting it silently
-					// would re-attach a resource that should stay detached, which is the
-					// exact thing this rollback path exists to get right.
 					throw new CourseSyncError(
 						'ROLLBACK_PLAN_ITEM_MISSING',
 						`No plan item found for resource ${receipt.resourceId} during rollback.`,
 						409,
 					)
 				}
-				const resource = this.resources.get(receipt.resourceId)
+				const resource = nextResources.get(receipt.resourceId)
 				if (!resource) {
 					throw new CourseSyncError(
 						'ROLLBACK_RESOURCE_MISSING',
@@ -523,66 +532,84 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 						409,
 					)
 				}
-				return { receipt, planItem, resource }
+				const parent = receipt.parentVersionId
+					? nextVersions.get(receipt.parentVersionId)
+					: null
+				const fields = resolveCourseSyncRollbackFields({
+					action: planItem.action,
+					sourceKind: planItem.sourceKind,
+					currentFields: resource.fields,
+					previousVersionFields: parent?.fields ?? null,
+					runId: input.runId,
+				})
+				const versionId = `version~${sha256(
+					stableJson({
+						compensatingRunId: input.compensatingRunId,
+						resourceId: receipt.resourceId,
+						fields,
+					}),
+				)}`
+				const previousVersionNumber =
+					nextVersionNumbers.get(receipt.resourceId) ??
+					Math.max(
+						0,
+						...[...nextVersions.values()]
+							.filter((version) => version.resourceId === receipt.resourceId)
+							.map((version) => version.versionNumber),
+					)
+				const versionNumber = previousVersionNumber + 1
+				nextVersionNumbers.set(receipt.resourceId, versionNumber)
+				return {
+					resourceId: receipt.resourceId,
+					version: {
+						id: versionId,
+						resourceId: receipt.resourceId,
+						parentVersionId: resource.currentVersionId,
+						versionNumber,
+						fields: structuredClone(fields),
+					},
+					fields: structuredClone(fields),
+					relation:
+						receipt.previousParentResourceId !== null &&
+						receipt.previousPosition !== null
+							? {
+									parentId: receipt.previousParentResourceId,
+									childId: receipt.resourceId,
+									position: receipt.previousPosition,
+									detached: planItem.previousDetached,
+								}
+							: {
+									parentId: planItem.parentResourceId,
+									childId: receipt.resourceId,
+									position: planItem.position,
+									detached: true,
+								},
+					receipt: {
+						runId: input.compensatingRunId,
+						resourceId: receipt.resourceId,
+						versionId,
+						parentVersionId: receipt.versionId,
+						previousParentResourceId: null,
+						previousPosition: null,
+						action: 'update',
+					},
+				}
 			})
 
-		for (const { receipt, planItem, resource } of plannedRollbacks) {
-			const parent = receipt.parentVersionId
-				? this.versions.get(receipt.parentVersionId)
-				: null
-			const fields = resolveCourseSyncRollbackFields({
-				action: planItem.action,
-				sourceKind: planItem.sourceKind,
-				currentFields: resource.fields,
-				previousVersionFields: parent?.fields ?? null,
-				runId: input.runId,
-			})
-			const versionId = `version~${sha256(
-				stableJson({
-					compensatingRunId: input.compensatingRunId,
-					resourceId: receipt.resourceId,
-					fields,
-				}),
-			)}`
-			const count = [...this.versions.values()].filter(
-				(version) => version.resourceId === receipt.resourceId,
-			).length
-			this.versions.set(versionId, {
-				id: versionId,
-				resourceId: receipt.resourceId,
-				parentVersionId: resource.currentVersionId,
-				versionNumber: count + 1,
-				fields: structuredClone(fields),
-			})
-			resource.currentVersionId = versionId
-			resource.fields = structuredClone(fields)
-			if (
-				receipt.previousParentResourceId !== null &&
-				receipt.previousPosition !== null
-			) {
-				this.relations.set(receipt.resourceId, {
-					parentId: receipt.previousParentResourceId,
-					childId: receipt.resourceId,
-					position: receipt.previousPosition,
-					detached: planItem.previousDetached,
-				})
-			} else {
-				this.relations.set(receipt.resourceId, {
-					parentId: planItem.parentResourceId,
-					childId: receipt.resourceId,
-					position: planItem.position,
-					detached: true,
-				})
+		for (const rollback of plannedRollbacks) {
+			nextVersions.set(rollback.version.id, rollback.version)
+			const resource = nextResources.get(rollback.resourceId)
+			if (!resource) {
+				throw new CourseSyncError(
+					'ROLLBACK_RESOURCE_MISSING',
+					'A prepared rollback resource disappeared from cloned state.',
+					409,
+				)
 			}
-			this.receipts.push({
-				runId: input.compensatingRunId,
-				resourceId: receipt.resourceId,
-				versionId,
-				parentVersionId: receipt.versionId,
-				previousParentResourceId: null,
-				previousPosition: null,
-				action: 'update',
-			})
+			resource.currentVersionId = rollback.version.id
+			resource.fields = rollback.fields
+			nextRelations.set(rollback.resourceId, rollback.relation)
+			nextReceipts.push(rollback.receipt)
 		}
 		const compensating: SyncRunRecord = {
 			...structuredClone(original),
@@ -596,13 +623,19 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			rollbackOfRunId: input.runId,
 			compensatingRunId: null,
 		}
-		this.runs.set(compensating.runId, compensating)
+		nextRuns.set(compensating.runId, compensating)
 		const rolledBack: SyncRunRecord = {
-			...original,
+			...structuredClone(original),
 			state: 'rolled_back',
 			compensatingRunId: compensating.runId,
 		}
-		this.runs.set(input.runId, rolledBack)
+		nextRuns.set(input.runId, rolledBack)
+
+		replaceMap(this.runs, nextRuns)
+		replaceMap(this.resources, nextResources)
+		replaceMap(this.versions, nextVersions)
+		replaceMap(this.relations, nextRelations)
+		this.receipts.splice(0, this.receipts.length, ...nextReceipts)
 		this.currentAppliedRunId = null
 		return structuredClone(rolledBack)
 	}

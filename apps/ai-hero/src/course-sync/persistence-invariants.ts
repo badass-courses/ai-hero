@@ -1,7 +1,83 @@
 import { CourseSyncError } from './errors'
-import type { CourseSyncBinding, ResourcePlanItem } from './types'
+import {
+	AI_HERO_COURSE_SYNC_BINDING,
+	type CourseSyncBinding,
+	type ResourcePlanItem,
+	type SyncPlan,
+} from './types'
 
 export const COURSE_SYNC_APPLY_BATCH_SIZE = 50
+
+const AI_HERO_LAUNCH_RESOURCE_COUNTS = {
+	section: { update: 0, retain: 6 },
+	lesson: { update: 21, retain: 38 },
+	video: { update: 18, retain: 52 },
+	question: { update: 0, retain: 0 },
+} as const
+
+export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
+	const resourceCounts = Object.fromEntries(
+		(['section', 'lesson', 'video', 'question'] as const).map((sourceKind) => [
+			sourceKind,
+			{
+				update: plan.resources.filter(
+					(item) => item.sourceKind === sourceKind && item.action === 'update',
+				).length,
+				retain: plan.resources.filter(
+					(item) => item.sourceKind === sourceKind && item.action === 'retain',
+				).length,
+			},
+		]),
+	) as Record<
+		keyof typeof AI_HERO_LAUNCH_RESOURCE_COUNTS,
+		{ update: number; retain: number }
+	>
+	const mediaCounts = {
+		update: plan.media.filter((item) => item.action === 'update').length,
+		retain: plan.media.filter((item) => item.action === 'retain').length,
+	}
+	const topologyChanged = plan.resources.some(
+		(item) =>
+			item.action === 'create' ||
+			item.previousVersionId === null ||
+			item.previousFieldsSha256 === null ||
+			item.previousParentResourceId !== item.parentResourceId ||
+			item.previousPosition !== item.position ||
+			item.previousDetached !== item.detached ||
+			item.detached,
+	)
+	const resourceCountsMatch = Object.entries(
+		AI_HERO_LAUNCH_RESOURCE_COUNTS,
+	).every(([sourceKind, expected]) => {
+		const actual =
+			resourceCounts[sourceKind as keyof typeof AI_HERO_LAUNCH_RESOURCE_COUNTS]
+		return (
+			actual.update === expected.update && actual.retain === expected.retain
+		)
+	})
+	if (
+		plan.bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId ||
+		topologyChanged ||
+		!resourceCountsMatch ||
+		mediaCounts.update !== 18 ||
+		mediaCounts.retain !== 52
+	) {
+		throw new CourseSyncError(
+			'LAUNCH_APPLY_POLICY_VIOLATION',
+			'Apply blocked: the reviewed plan is outside the approved 39-update, 96-retain, topology-preserving launch shape.',
+			409,
+			{
+				category: 'target_precondition',
+				retryable: false,
+				details: {
+					resourceCounts,
+					mediaCounts,
+					topologyChanged,
+				},
+			},
+		)
+	}
+}
 
 export function resolveCourseSyncRollbackFields(input: {
 	action: ResourcePlanItem['action']

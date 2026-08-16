@@ -1,13 +1,70 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { AI_HERO_COURSE_SYNC_BINDING, type CourseSyncBinding } from './types'
 import {
+	AI_HERO_COURSE_SYNC_BINDING,
+	type CourseSyncBinding,
+	type ResourcePlanItem,
+	type SyncPlan,
+} from './types'
+import {
+	assertCourseSyncLaunchApplyPolicy,
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
 	courseSyncRollbackPointer,
 	resolveCourseSyncRollbackFields,
 } from './persistence-invariants'
+
+function launchPlan(): SyncPlan {
+	let position = 0
+	const resources: ResourcePlanItem[] = []
+	for (const [sourceKind, updateCount, retainCount] of [
+		['section', 0, 6],
+		['lesson', 21, 38],
+		['video', 18, 52],
+	] as const) {
+		for (const [action, count] of [
+			['update', updateCount],
+			['retain', retainCount],
+		] as const) {
+			for (let index = 0; index < count; index += 1) {
+				const sourceId = `${sourceKind}-${action}-${index}`
+				resources.push({
+					sourceKind,
+					sourceId,
+					targetResourceId: `target-${sourceId}`,
+					parentResourceId: `parent-${sourceKind}`,
+					position: position++,
+					detached: false,
+					previousDetached: false,
+					previousParentResourceId: `parent-${sourceKind}`,
+					previousPosition: position - 1,
+					action,
+					fields: { sourceId },
+					previousVersionId: `version-${sourceId}`,
+					previousFieldsSha256: 'a'.repeat(64),
+				})
+			}
+		}
+	}
+	return {
+		bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+		sourceRevisionId: 'revision-launch',
+		courseVersionId: 'course-version-launch',
+		resources,
+		media: Array.from({ length: 70 }, (_, index) => ({
+			sourceVideoId: `video-${index}`,
+			providerRevision: `revision-${index}`,
+			sha256: `${index}`.padStart(64, '0'),
+			bytes: index + 1,
+			action: index < 18 ? ('update' as const) : ('retain' as const),
+			muxAssetId: `mux-${index}`,
+			muxPlaybackId: `playback-${index}`,
+			duration: 60,
+		})),
+		planSha256: 'b'.repeat(64),
+	}
+}
 
 function section(position: number) {
 	return {
@@ -38,6 +95,65 @@ describe('course sync persistence invariants', () => {
 		expect(migration).not.toMatch(/IF NOT EXISTS/i)
 		expect(migration).not.toMatch(/CREATE TABLE `CourseSyncFrozenAssetReceipt`/)
 	})
+
+	it('accepts only the exact topology-preserving launch plan', () => {
+		expect(() => assertCourseSyncLaunchApplyPolicy(launchPlan())).not.toThrow()
+	})
+
+	it.each([
+		[
+			'reparent',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.parentResourceId = 'another-parent'
+			},
+		],
+		[
+			'reorder',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.position += 1
+			},
+		],
+		[
+			'detach',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.detached = true
+			},
+		],
+		[
+			'create',
+			(plan: SyncPlan) => {
+				plan.resources[0]!.action = 'create'
+				plan.resources[0]!.previousParentResourceId = null
+				plan.resources[0]!.previousPosition = null
+				plan.resources[0]!.previousVersionId = null
+				plan.resources[0]!.previousFieldsSha256 = null
+			},
+		],
+		[
+			'wrong resource count',
+			(plan: SyncPlan) => {
+				plan.resources = plan.resources.slice(1)
+			},
+		],
+		[
+			'wrong media count',
+			(plan: SyncPlan) => {
+				plan.media = plan.media.slice(1)
+			},
+		],
+	] as const)(
+		'rejects %s outside the supervised launch shape before apply',
+		(_label, mutate) => {
+			const plan = launchPlan()
+			mutate(plan)
+			expect(() => assertCourseSyncLaunchApplyPolicy(plan)).toThrowError(
+				expect.objectContaining({
+					code: 'LAUNCH_APPLY_POLICY_VIOLATION',
+					retryable: false,
+				}),
+			)
+		},
+	)
 
 	it('restores previous fields into both the rollback version and denormalized pointer', () => {
 		const appliedFields = {
