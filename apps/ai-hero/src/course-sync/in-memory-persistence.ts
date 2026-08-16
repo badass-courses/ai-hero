@@ -1,6 +1,10 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
-import { sha256, stableJson } from './control-plane'
+import {
+	courseSyncRollbackStageIdempotencyKey,
+	sha256,
+	stableJson,
+} from './control-plane'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -588,7 +592,10 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			...structuredClone(original),
 			runId: input.compensatingRunId,
 			state: 'applied',
-			stageIdempotencyKey: `rollback:${input.runId}:${input.idempotencyKey}`,
+			stageIdempotencyKey: courseSyncRollbackStageIdempotencyKey(
+				input.runId,
+				input.idempotencyKey,
+			),
 			applyIdempotencyKey: input.idempotencyKey,
 			rollbackOfRunId: input.runId,
 			compensatingRunId: null,

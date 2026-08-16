@@ -6,7 +6,10 @@ import {
 } from '@ai-hero/course-sync-schema'
 import { describe, expect, it } from 'vitest'
 
-import { createCourseSyncControlPlane } from './control-plane'
+import {
+	courseSyncRollbackStageIdempotencyKey,
+	createCourseSyncControlPlane,
+} from './control-plane'
 import { InMemoryCourseSyncPersistence } from './in-memory-persistence'
 import { courseSyncRunMachine } from './run-machine'
 import {
@@ -668,6 +671,38 @@ describe('draft course sync control plane', () => {
 					resource.fields.visibility === 'unlisted',
 			),
 		).toBe(true)
+	})
+
+	it('hashes a maximum-length rollback key into the compensating run column', async () => {
+		const testHarness = harness()
+		const { staged } = await stagedAndPreviewed(testHarness)
+		await testHarness.controlPlane.apply({
+			runId: staged.runId,
+			idempotencyKey: 'apply-before-long-rollback-key',
+		})
+
+		await testHarness.controlPlane.rollback({
+			runId: staged.runId,
+			idempotencyKey: 'r'.repeat(255),
+		})
+
+		const original = testHarness.persistence.runs.get(staged.runId)
+		const compensating = original?.compensatingRunId
+			? testHarness.persistence.runs.get(original.compensatingRunId)
+			: null
+		const expectedKey = courseSyncRollbackStageIdempotencyKey(
+			staged.runId,
+			'r'.repeat(255),
+		)
+		expect(compensating?.stageIdempotencyKey).toBe(expectedKey)
+		expect(compensating?.stageIdempotencyKey).toMatch(/^[a-f0-9]{64}$/)
+		expect(compensating?.stageIdempotencyKey).toHaveLength(64)
+		expect(
+			courseSyncRollbackStageIdempotencyKey(
+				staged.runId,
+				'r'.repeat(255),
+			),
+		).toBe(expectedKey)
 	})
 
 	it('compensates relation ordering as well as resource versions', async () => {

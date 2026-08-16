@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS `CourseSyncFrozenAssetReceipt` (
+CREATE TABLE `AI_CourseSyncFrozenAssetReceipt` (
   `receiptKey` varchar(64) NOT NULL,
   `bindingId` varchar(255) NOT NULL,
   `courseVersionId` varchar(255) NOT NULL,

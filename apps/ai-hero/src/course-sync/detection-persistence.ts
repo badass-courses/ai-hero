@@ -22,12 +22,20 @@ import type {
 	CourseSyncRevisionHead,
 } from './detection-poller'
 import { CourseSyncError } from './errors'
+import { canAutomaticallySaveCourseSyncPollState } from './poll-state-guard'
 import {
 	releasedCourseSyncPollState,
 	type CourseSyncPollReleaseInput,
 } from './release'
 import { assertCourseSyncTargetContract } from './target-contract'
 import { AI_HERO_COURSE_SYNC_BINDING } from './types'
+
+export function courseSyncRevisionHeadWhere(bindingId: string) {
+	return and(
+		eq(courseSyncSourceRevision.bindingId, bindingId),
+		isNull(courseSyncRun.rollbackOfRunId),
+	)
+}
 
 export async function getCourseSyncRevisionHead(
 	bindingId: string,
@@ -48,7 +56,7 @@ export async function getCourseSyncRevisionHead(
 					courseSyncSourceRevision.sourceRevisionId,
 				),
 			)
-			.where(eq(courseSyncSourceRevision.bindingId, bindingId))
+			.where(courseSyncRevisionHeadWhere(bindingId))
 			.orderBy(
 				desc(courseSyncSourceRevision.stagedAt),
 				desc(courseSyncRun.updatedAt),
@@ -100,12 +108,13 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 			.from(courseSyncPollState)
 			.where(eq(courseSyncPollState.bindingId, state.bindingId))
 			.for('update')
-		if (
-			current?.status === 'released' &&
-			(state.status === 'failed' || state.status === 'held')
-		) {
-			return
-		}
+		const currentState = current
+			? {
+					...current,
+					status: current.status as CourseSyncPollState['status'],
+				}
+			: null
+		if (!canAutomaticallySaveCourseSyncPollState(currentState, state)) return
 		if (
 			current?.status === 'awaiting-apply' &&
 			current.controlPlaneRunId &&

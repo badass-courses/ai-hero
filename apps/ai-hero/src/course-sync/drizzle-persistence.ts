@@ -19,7 +19,11 @@ import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
-import { sha256, stableJson } from './control-plane'
+import {
+	courseSyncRollbackStageIdempotencyKey,
+	sha256,
+	stableJson,
+} from './control-plane'
 import { chunkCourseSyncWrites } from './persistence-invariants'
 import { assertCourseSyncTargetContract } from './target-contract'
 import { AI_HERO_COURSE_SYNC_BINDING } from './types'
@@ -1141,7 +1145,10 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				sourceRevisionId: original.sourceRevisionId,
 				courseVersionId: original.courseVersionId,
 				state: 'applying',
-				stageIdempotencyKey: `rollback:${runId}:${idempotencyKey}`,
+				stageIdempotencyKey: courseSyncRollbackStageIdempotencyKey(
+					runId,
+					idempotencyKey,
+				),
 				stageFingerprint: original.stageFingerprint,
 				applyIdempotencyKey: idempotencyKey,
 				rollbackOfRunId: runId,

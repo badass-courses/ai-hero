@@ -40,6 +40,13 @@ export function sha256(value: string | Uint8Array): string {
 	return createHash('sha256').update(value).digest('hex')
 }
 
+export function courseSyncRollbackStageIdempotencyKey(
+	runId: string,
+	idempotencyKey: string,
+): string {
+	return sha256(stableJson({ operation: 'rollback', runId, idempotencyKey }))
+}
+
 export function targetResourceId(
 	bindingId: string,
 	kind: 'section' | 'lesson' | 'question' | 'video',

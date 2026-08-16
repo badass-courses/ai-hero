@@ -217,6 +217,23 @@ describe('course sync detection poller', () => {
 		)
 	})
 
+	it('restages the current source revision after its successful run was rolled back', async () => {
+		const test = harness({
+			head: {
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				runId: 'sync-run-2',
+				runState: 'rolled_back',
+			},
+		})
+
+		await expect(test.poll('poll-after-rollback')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.stage).toHaveBeenCalledOnce()
+		expect(test.preview).toHaveBeenCalledOnce()
+	})
+
 	it('stages, previews, and waits for an operator without applying', async () => {
 		const test = harness({
 			head: {

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -24,6 +25,21 @@ function section(position: number) {
 }
 
 describe('course sync persistence invariants', () => {
+	it('creates the exact prefixed frozen-asset receipt table without masking drift', () => {
+		const migration = readFileSync(
+			new URL(
+				'../db/migrations/20260816_ai_hero_course_sync_launch_safety.sql',
+				import.meta.url,
+			),
+			'utf8',
+		)
+		expect(migration).toMatch(
+			/^CREATE TABLE `AI_CourseSyncFrozenAssetReceipt` \(/,
+		)
+		expect(migration).not.toMatch(/IF NOT EXISTS/i)
+		expect(migration).not.toMatch(/CREATE TABLE `CourseSyncFrozenAssetReceipt`/)
+	})
+
 	it('splits apply writes into bounded multi-row batches without loss or duplication', () => {
 		const rows = Array.from({ length: 121 }, (_, index) => index)
 		const chunks = chunkCourseSyncWrites(rows, 50)
