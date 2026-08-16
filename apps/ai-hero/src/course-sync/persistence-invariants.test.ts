@@ -22,6 +22,7 @@ function launchPlan(): SyncPlan {
 		['section', 0, 6],
 		['lesson', 21, 38],
 		['video', 18, 52],
+		['question', 0, 87],
 	] as const) {
 		for (const [action, count] of [
 			['update', updateCount],
@@ -133,6 +134,17 @@ describe('course sync persistence invariants', () => {
 			'wrong resource count',
 			(plan: SyncPlan) => {
 				plan.resources = plan.resources.slice(1)
+			},
+		],
+		[
+			'missing retained question',
+			(plan: SyncPlan) => {
+				const questionIndex = plan.resources.findIndex(
+					(resource) => resource.sourceKind === 'question',
+				)
+				plan.resources = plan.resources.filter(
+					(_resource, index) => index !== questionIndex,
+				)
 			},
 		],
 		[

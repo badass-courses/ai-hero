@@ -76,13 +76,18 @@ function exactDeltaFixture(
 		const mediaRevision = mediaChanged ? 'v2' : 'v1'
 		const exportRevision = exportChanged ? 'v2' : 'v1'
 		const bytes = bytesFor(videoNumber, mediaRevision)
+		const body =
+			slot !== 'solution' && options.changedBodies?.has(lessonNumber)
+				? `Body ${lessonNumber} revised`
+				: `Body ${lessonNumber}`
+		const questionCount = lessonNumber <= 28 ? 2 : 1
+		const questions = Array.from({ length: questionCount }, (_, index) =>
+			`<QuizQuestion data={{ id: 'question-${lessonNumber}-${index + 1}', question: 'Question ${lessonNumber}.${index + 1}?', type: 'essay' }} />`,
+		).join('\n')
 		return {
 			id: `video-${videoNumber}`,
 			relativePath: `versions/${courseVersionId}/video-${videoNumber}.mp4`,
-			body:
-				slot !== 'solution' && options.changedBodies?.has(lessonNumber)
-					? `Body ${lessonNumber} revised`
-					: `Body ${lessonNumber}`,
+			body: slot === 'solution' ? body : `${body}\n${questions}`,
 			description: `Description ${videoNumber}`,
 			hash: `render-${videoNumber}-${exportRevision}`,
 			sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -440,8 +445,13 @@ describe('draft course sync control plane', () => {
 			currentPlan?.resources.filter((item) => item.action === 'update'),
 		).toHaveLength(39)
 		expect(
+			currentPlan?.resources.filter(
+				(item) => item.sourceKind === 'question' && item.action === 'retain',
+			),
+		).toHaveLength(87)
+		expect(
 			currentPlan?.resources.filter((item) => item.action === 'retain'),
-		).toHaveLength(96)
+		).toHaveLength(183)
 		expect(
 			currentPlan?.resources.some((item) => item.action === 'create'),
 		).toBe(false)
@@ -1174,10 +1184,10 @@ describe('draft course sync control plane', () => {
 				idempotencyKey: 'apply-failure-key',
 			}),
 		).rejects.toMatchObject({ code: 'INJECTED_APPLY_FAILURE' })
-		expect(testHarness.persistence.resources.size).toBe(135)
-		expect(testHarness.persistence.versions.size).toBe(135)
-		expect(testHarness.persistence.relations.size).toBe(135)
-		expect(testHarness.persistence.receipts).toHaveLength(135)
+		expect(testHarness.persistence.resources.size).toBe(222)
+		expect(testHarness.persistence.versions.size).toBe(222)
+		expect(testHarness.persistence.relations.size).toBe(222)
+		expect(testHarness.persistence.receipts).toHaveLength(222)
 		expect(testHarness.persistence.runs.get(staged.runId)).toMatchObject({
 			state: 'failed',
 			applyIdempotencyKey: 'apply-failure-key',
@@ -1197,19 +1207,19 @@ describe('draft course sync control plane', () => {
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(retried).toMatchObject({ state: 'applied', noOp: false })
-		expect(testHarness.persistence.resources.size).toBe(135)
-		expect(testHarness.persistence.versions.size).toBe(174)
-		expect(testHarness.persistence.receipts).toHaveLength(270)
+		expect(testHarness.persistence.resources.size).toBe(222)
+		expect(testHarness.persistence.versions.size).toBe(261)
+		expect(testHarness.persistence.receipts).toHaveLength(444)
 
 		const replay = await testHarness.controlPlane.apply({
 			runId: staged.runId,
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(replay).toMatchObject({ state: 'applied', noOp: true })
-		expect(testHarness.persistence.resources.size).toBe(135)
-		expect(testHarness.persistence.versions.size).toBe(174)
-		expect(testHarness.persistence.relations.size).toBe(135)
-		expect(testHarness.persistence.receipts).toHaveLength(270)
+		expect(testHarness.persistence.resources.size).toBe(222)
+		expect(testHarness.persistence.versions.size).toBe(261)
+		expect(testHarness.persistence.relations.size).toBe(222)
+		expect(testHarness.persistence.receipts).toHaveLength(444)
 	})
 
 	it('extracts questions, replays without churn, and blocks detach changes', async () => {

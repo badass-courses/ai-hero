@@ -12,7 +12,7 @@ const AI_HERO_LAUNCH_RESOURCE_COUNTS = {
 	section: { update: 0, retain: 6 },
 	lesson: { update: 21, retain: 38 },
 	video: { update: 18, retain: 52 },
-	question: { update: 0, retain: 0 },
+	question: { update: 0, retain: 87 },
 } as const
 
 export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
@@ -64,7 +64,7 @@ export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 	) {
 		throw new CourseSyncError(
 			'LAUNCH_APPLY_POLICY_VIOLATION',
-			'Apply blocked: the reviewed plan is outside the approved 39-update, 96-retain, topology-preserving launch shape.',
+			'Apply blocked: the reviewed plan is outside the approved 39-update, 96 section/lesson/video-retain, 87 question-retain, topology-preserving launch shape.',
 			409,
 			{
 				category: 'target_precondition',
