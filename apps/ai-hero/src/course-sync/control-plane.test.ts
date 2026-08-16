@@ -7,7 +7,7 @@ import { createCourseSyncControlPlane } from './control-plane'
 import { InMemoryCourseSyncPersistence } from './in-memory-persistence'
 import { courseSyncRunMachine } from './run-machine'
 import {
-	AI_HERO_DRAFT_SYNC_BINDING,
+	AI_HERO_COURSE_SYNC_BINDING,
 	type CourseSyncMuxAsset,
 	type CourseSyncMuxClient,
 	type CourseSyncMuxSourceResolver,
@@ -22,7 +22,7 @@ function fixture(courseVersionId = 'course-version-v1', changedVideo = 0) {
 	return {
 		$schema: 'course.schema.json',
 		schemaVersion: 3 as const,
-		courseId: AI_HERO_DRAFT_SYNC_BINDING.sourceCourseId,
+		courseId: AI_HERO_COURSE_SYNC_BINDING.sourceCourseId,
 		courseVersionId,
 		archiveTTL: '90d' as const,
 		courseName: 'Fixture Course',
@@ -50,6 +50,72 @@ function fixture(courseVersionId = 'course-version-v1', changedVideo = 0) {
 				}
 			}),
 		})),
+	}
+}
+
+function exactDeltaFixture(
+	courseVersionId: string,
+	options: {
+		changedVideos?: ReadonlySet<number>
+		changedBodies?: ReadonlySet<number>
+	} = {},
+): CourseJsonDocumentV3 {
+	let lessonNumber = 0
+	let videoNumber = 0
+	const makeVideo = (slot: 'explainer' | 'problem' | 'solution') => {
+		videoNumber += 1
+		const changed = options.changedVideos?.has(videoNumber) ?? false
+		const revision = changed ? 'v2' : 'v1'
+		const bytes = bytesFor(videoNumber, revision)
+		return {
+			id: `video-${videoNumber}`,
+			relativePath: `versions/${courseVersionId}/video-${videoNumber}.mp4`,
+			body:
+				slot !== 'solution' && options.changedBodies?.has(lessonNumber)
+					? `Body ${lessonNumber} revised`
+					: `Body ${lessonNumber}`,
+			description: `Description ${videoNumber}`,
+			hash: `render-${videoNumber}-${revision}`,
+			sha256: createHash('sha256').update(bytes).digest('hex'),
+			bytes: bytes.byteLength,
+			chapters: [],
+		}
+	}
+	const lessons = Array.from({ length: 59 }, () => {
+		lessonNumber += 1
+		return lessonNumber <= 11
+			? {
+					type: 'problem' as const,
+					id: `lesson-${lessonNumber}`,
+					title: `Lesson ${lessonNumber}`,
+					problem: makeVideo('problem'),
+					solution: makeVideo('solution'),
+				}
+			: {
+					type: 'explainer' as const,
+					id: `lesson-${lessonNumber}`,
+					title: `Lesson ${lessonNumber}`,
+					explainer: makeVideo('explainer'),
+				}
+	})
+	let lessonOffset = 0
+	const sectionSizes = [10, 10, 10, 10, 10, 9]
+	return {
+		$schema: 'course.schema.json',
+		schemaVersion: 3,
+		courseId: AI_HERO_COURSE_SYNC_BINDING.sourceCourseId,
+		courseVersionId,
+		archiveTTL: '90d',
+		courseName: 'Exact Delta Fixture',
+		sections: sectionSizes.map((size, sectionIndex) => {
+			const sectionLessons = lessons.slice(lessonOffset, lessonOffset + size)
+			lessonOffset += size
+			return {
+				id: `section-${sectionIndex + 1}`,
+				title: `Section ${sectionIndex + 1}`,
+				lessons: sectionLessons,
+			}
+		}),
 	}
 }
 
@@ -105,6 +171,7 @@ function fixture060(): CourseJsonDocumentV3 {
 function harness(
 	options: {
 		changedVideo?: number
+		changedVideosByCourseVersion?: ReadonlyMap<string, ReadonlySet<number>>
 		targetValid?: boolean
 		idStart?: number
 	} = {},
@@ -113,12 +180,16 @@ function harness(
 	persistence.targetValid = options.targetValid ?? true
 	let reads = 0
 	const muxSourceResolver: CourseSyncMuxSourceResolver = {
-		async resolve({ relativePath }) {
+		async resolve({ courseVersionId, relativePath }) {
 			reads += 1
 			const match = /video-(\d+)\.mp4$/.exec(relativePath)
 			if (!match) throw new Error('bad fixture path')
 			const number = Number(match[1])
-			const revision = number === options.changedVideo ? 'v2' : 'v1'
+			const revision =
+				number === options.changedVideo ||
+				options.changedVideosByCourseVersion?.get(courseVersionId)?.has(number)
+					? 'v2'
+					: 'v1'
 			const bytes = bytesFor(number, revision)
 			return {
 				url: `https://dropbox.test/${relativePath}`,
@@ -170,7 +241,7 @@ async function stagedAndPreviewed(
 	key = 'stage-key',
 ) {
 	const staged = await testHarness.controlPlane.stage({
-		bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+		bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 		idempotencyKey: key,
 		manifest,
 	})
@@ -197,14 +268,113 @@ describe('draft course sync control plane', () => {
 		const testHarness = harness({ targetValid: false })
 		await expect(
 			testHarness.controlPlane.stage({
-				bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 				idempotencyKey: 'stage-key',
 				manifest: fixture(),
 			}),
-		).rejects.toMatchObject({ code: 'TARGET_ASSERTION_FAILED' })
+		).rejects.toMatchObject({ code: 'TARGET_CONTRACT_MISMATCH' })
 		expect(testHarness.reads()).toBe(0)
 		expect(testHarness.persistence.bindings.size).toBe(0)
 		expect(testHarness.persistence.runs.size).toBe(0)
+	})
+
+	it('rechecks target state inside atomic apply before any writes', async () => {
+		const testHarness = harness()
+		const { staged } = await stagedAndPreviewed(testHarness)
+		testHarness.persistence.beforeApplyTargetRecheck = () => {
+			testHarness.persistence.targetValid = false
+		}
+
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: staged.runId,
+				idempotencyKey: 'apply-after-target-drift',
+			}),
+		).rejects.toMatchObject({ code: 'TARGET_CONTRACT_MISMATCH' })
+		expect(testHarness.persistence.resources.size).toBe(0)
+		expect(testHarness.persistence.versions.size).toBe(0)
+		expect(testHarness.persistence.receipts).toHaveLength(0)
+	})
+
+	it('previews the exact launch delta with stable IDs and 18 media replacements', async () => {
+		const changedVideos = new Set(
+			Array.from({ length: 18 }, (_, index) => index + 1),
+		)
+		const changedBodies = new Set([57, 58])
+		const testHarness = harness({
+			changedVideosByCourseVersion: new Map([
+				['course-version-current', changedVideos],
+			]),
+		})
+		const baselineManifest = exactDeltaFixture('course-version-baseline')
+		const baseline = await stagedAndPreviewed(
+			testHarness,
+			baselineManifest,
+			'stage-exact-baseline',
+		)
+		await testHarness.controlPlane.apply({
+			runId: baseline.staged.runId,
+			idempotencyKey: 'apply-exact-baseline',
+		})
+		const baselinePlan = testHarness.persistence.runs.get(
+			baseline.staged.runId,
+		)?.plan
+		expect(baselinePlan?.media).toHaveLength(70)
+
+		const currentManifest = exactDeltaFixture('course-version-current', {
+			changedVideos,
+			changedBodies,
+		})
+		const current = await stagedAndPreviewed(
+			testHarness,
+			currentManifest,
+			'stage-exact-current',
+		)
+		const currentPlan = testHarness.persistence.runs.get(
+			current.staged.runId,
+		)?.plan
+		expect(
+			currentPlan?.media.filter((item) => item.action === 'update'),
+		).toHaveLength(18)
+		expect(
+			currentPlan?.media.filter((item) => item.action === 'retain'),
+		).toHaveLength(52)
+		expect(
+			currentPlan?.resources.filter(
+				(item) => item.sourceKind === 'video' && item.action === 'update',
+			),
+		).toHaveLength(18)
+		for (const lessonId of ['lesson-57', 'lesson-58']) {
+			const item = currentPlan?.resources.find(
+				(resource) =>
+					resource.sourceKind === 'lesson' && resource.sourceId === lessonId,
+			)
+			expect(item).toMatchObject({ action: 'update' })
+			expect(item?.fields.body).toContain('revised')
+		}
+		expect(
+			currentPlan?.resources.some((item) => item.action === 'create'),
+		).toBe(false)
+		expect(
+			currentPlan?.resources.map((item) => item.targetResourceId).sort(),
+		).toEqual(
+			baselinePlan?.resources.map((item) => item.targetResourceId).sort(),
+		)
+		const baselineSlugs = new Map(
+			baselinePlan?.resources.map((item) => [
+				item.targetResourceId,
+				item.fields.slug,
+			]),
+		)
+		for (const item of currentPlan?.resources ?? []) {
+			expect(item.fields.slug).toBe(baselineSlugs.get(item.targetResourceId))
+		}
+		expect(JSON.stringify(current.previewed)).not.toContain(
+			AI_HERO_COURSE_SYNC_BINDING.productId,
+		)
+		expect(JSON.stringify(current.previewed)).not.toContain(
+			AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
+		)
 	})
 
 	it('freezes and stream-verifies a baseline v3 revision into one workshop', async () => {
@@ -225,21 +395,21 @@ describe('draft course sync control plane', () => {
 		expect(
 			sections?.map((item) => [item.parentResourceId, item.position]),
 		).toEqual([
-			[AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 0],
-			[AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 1],
+			[AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId, 0],
+			[AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId, 1],
 		])
 		expect(JSON.stringify(previewed)).not.toContain(
-			AI_HERO_DRAFT_SYNC_BINDING.productId,
+			AI_HERO_COURSE_SYNC_BINDING.productId,
 		)
 		expect(JSON.stringify(previewed)).not.toContain(
-			AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId,
+			AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
 		)
 	})
 
 	it('reuses a ready binding-scoped Mux asset without resolving Dropbox again', async () => {
 		const testHarness = harness()
 		await testHarness.controlPlane.stage({
-			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			idempotencyKey: 'stage-v1',
 			manifest: fixture('course-version-v1'),
 		})
@@ -247,7 +417,7 @@ describe('draft course sync control plane', () => {
 
 		const next = fixture('course-version-v2')
 		const frozen = await testHarness.controlPlane.freezeAsset({
-			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			manifest: next,
 			sourceVideoId: 'video-1',
 		})
@@ -284,9 +454,9 @@ describe('draft course sync control plane', () => {
 				item.position,
 			]),
 		).toEqual([
-			['section-1', AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 0],
-			['section-2', AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 1],
-			['section-3', AI_HERO_DRAFT_SYNC_BINDING.anchorWorkshopId, 2],
+			['section-1', AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId, 0],
+			['section-2', AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId, 1],
+			['section-3', AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId, 2],
 		])
 	})
 
@@ -294,7 +464,7 @@ describe('draft course sync control plane', () => {
 		const testHarness = harness()
 		await expect(
 			testHarness.controlPlane.stage({
-				bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 				idempotencyKey: 'empty-sections',
 				manifest: { ...fixture(), sections: [] },
 			}),
@@ -317,9 +487,9 @@ describe('draft course sync control plane', () => {
 			),
 		).toBe(true)
 		expect(testHarness.persistence.receipts).toHaveLength(34)
-		const videoResources = [...testHarness.persistence.resources.values()].filter(
-			(resource) => resource.type === 'videoResource',
-		)
+		const videoResources = [
+			...testHarness.persistence.resources.values(),
+		].filter((resource) => resource.type === 'videoResource')
 		expect(videoResources).toHaveLength(16)
 		expect(videoResources[0]?.fields).toMatchObject({
 			state: 'ready',
@@ -334,7 +504,7 @@ describe('draft course sync control plane', () => {
 		).toHaveLength(16)
 
 		const replay = await testHarness.controlPlane.stage({
-			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			idempotencyKey: 'another-stage-key',
 			manifest: fixture(),
 		})
@@ -505,7 +675,7 @@ describe('draft course sync control plane', () => {
 		const versionCount = testHarness.persistence.versions.size
 
 		const replay = await testHarness.controlPlane.stage({
-			bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			idempotencyKey: 'stage-quiz-replay',
 			manifest,
 		})
@@ -538,7 +708,9 @@ describe('draft course sync control plane', () => {
 			idempotencyKey: 'apply-quiz-v2',
 		})
 		expect(testHarness.persistence.resources.has(questionId)).toBe(true)
-		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(true)
+		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
+			true,
+		)
 
 		await testHarness.controlPlane.rollback({
 			runId: second.staged.runId,
@@ -559,7 +731,9 @@ describe('draft course sync control plane', () => {
 			runId: detachedAgain.staged.runId,
 			idempotencyKey: 'apply-quiz-v2-detached-again',
 		})
-		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(true)
+		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
+			true,
+		)
 
 		const restored = structuredClone(manifest)
 		restored.courseVersionId = 'quiz-v3'
@@ -600,7 +774,7 @@ describe('draft course sync control plane', () => {
 			const testHarness = harness()
 			await expect(
 				testHarness.controlPlane.stage({
-					bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId,
+					bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 					idempotencyKey: `stage-invalid-${label}`,
 					manifest,
 				}),

@@ -11,14 +11,15 @@ import {
 	courseSyncSourceRevisionAsset,
 	products,
 } from '@/db/schema'
+import { log } from '@/server/logger'
 import { and, asc, desc, eq, inArray, isNull, max, ne, sql } from 'drizzle-orm'
 
+import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
 import { sha256, stableJson } from './control-plane'
-import {
-	assertManagedChildRelations,
-	chunkCourseSyncWrites,
-} from './persistence-invariants'
+import { chunkCourseSyncWrites } from './persistence-invariants'
+import { assertCourseSyncTargetContract } from './target-contract'
+import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -60,10 +61,6 @@ function resourceType(sourceKind: SyncPlan['resources'][number]['sourceKind']) {
 	return sourceKind === 'video' ? 'videoResource' : sourceKind
 }
 
-function exactBinding(actual: CourseSyncBinding, expected: CourseSyncBinding) {
-	return stableJson(actual) === stableJson(expected)
-}
-
 async function readRun(runId: string): Promise<SyncRunRecord | null> {
 	const row = await db.query.courseSyncRun.findFirst({
 		where: eq(courseSyncRun.runId, runId),
@@ -77,14 +74,51 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			where: eq(courseSyncBinding.bindingId, binding.bindingId),
 		})
 		if (existing) {
-			if (!exactBinding(existing.binding, binding)) {
-				throw new CourseSyncError(
-					'IMMUTABLE_BINDING_CONFLICT',
-					'The stored sync binding does not match the server-owned binding.',
-					409,
+			const resolved = resolveStoredCourseSyncBinding(existing.binding, binding)
+			if (!resolved.migrated) return resolved.binding
+
+			let migrated = false
+			const locked = await db.transaction(async (trx) => {
+				const [current] = await trx
+					.select()
+					.from(courseSyncBinding)
+					.where(eq(courseSyncBinding.bindingId, binding.bindingId))
+					.for('update')
+				if (!current) {
+					throw new CourseSyncError(
+						'IMMUTABLE_BINDING_CONFLICT',
+						'The stored sync binding disappeared during migration.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+				const currentResolved = resolveStoredCourseSyncBinding(
+					current.binding,
+					binding,
 				)
+				if (currentResolved.migrated) {
+					await trx
+						.update(courseSyncBinding)
+						.set({
+							sourceCourseId: binding.sourceCourseId,
+							productId: binding.productId,
+							anchorWorkshopId: binding.anchorWorkshopId,
+							status: binding.status,
+							binding,
+						})
+						.where(eq(courseSyncBinding.bindingId, binding.bindingId))
+					migrated = true
+				}
+				return currentResolved.binding
+			})
+			if (migrated) {
+				await log.info('course_sync.binding.migrated', {
+					bindingId: binding.bindingId,
+					fromContractVersion: 1,
+					toContractVersion: 2,
+				})
 			}
-			return bindingFromRow(existing)
+			return locked
 		}
 		await db.insert(courseSyncBinding).values({
 			bindingId: binding.bindingId,
@@ -135,47 +169,35 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					with: { resource: true },
 				}),
 			])
-		const productFields = product?.fields as Record<string, unknown> | undefined
-		const workshopFields = workshop?.fields as
-			| Record<string, unknown>
-			| undefined
-		if (
-			!product ||
-			product.type !== binding.productType ||
-			productFields?.state !== binding.requiredState ||
-			productFields.visibility !== binding.requiredVisibility
-		) {
-			throw new CourseSyncError(
-				'TARGET_PRODUCT_ASSERTION_FAILED',
-				'The bound product is missing or is not the required self-paced draft/unlisted target.',
-				409,
-			)
-		}
-		if (
-			!workshop ||
-			workshop.deletedAt ||
-			workshop.type !== 'workshop' ||
-			workshopFields?.state !== binding.requiredState ||
-			workshopFields.visibility !== binding.requiredVisibility
-		) {
-			throw new CourseSyncError(
-				'TARGET_WORKSHOP_ASSERTION_FAILED',
-				'The bound workshop is missing or is not draft/unlisted.',
-				409,
-			)
-		}
-		if (
-			!relation ||
-			relation.position !== 0 ||
-			otherProductRelations.length > 0
-		) {
-			throw new CourseSyncError(
-				'TARGET_RELATION_ASSERTION_FAILED',
-				'The bound product/workshop relation is missing, moved, deleted, or widened.',
-				409,
-			)
-		}
-		assertManagedChildRelations(binding, childRelations)
+		assertCourseSyncTargetContract(binding, {
+			product: product
+				? {
+						id: product.id,
+						type: product.type ?? 'missing',
+						fields: product.fields,
+					}
+				: null,
+			workshop: workshop
+				? {
+						id: workshop.id,
+						type: workshop.type,
+						fields: workshop.fields,
+						deletedAt: workshop.deletedAt,
+					}
+				: null,
+			relation: relation ? { position: relation.position } : null,
+			otherProductRelations,
+			childRelations: childRelations.map((child) => ({
+				position: child.position,
+				resource: child.resource
+					? {
+							id: child.resource.id,
+							type: child.resource.type,
+							fields: child.resource.fields,
+						}
+					: null,
+			})),
+		})
 	},
 
 	async findRunByStageKey(bindingId, key) {
@@ -378,6 +400,97 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					409,
 				)
 			}
+
+			const [storedBinding] = await trx
+				.select({ binding: courseSyncBinding.binding })
+				.from(courseSyncBinding)
+				.where(eq(courseSyncBinding.bindingId, plan.bindingId))
+				.for('update')
+			if (!storedBinding) {
+				throw new CourseSyncError(
+					'BINDING_NOT_FOUND',
+					'Sync binding not found during apply.',
+					409,
+					{ category: 'target_precondition', retryable: false },
+				)
+			}
+			const binding = resolveStoredCourseSyncBinding(
+				storedBinding.binding,
+				AI_HERO_COURSE_SYNC_BINDING,
+			).binding
+			const [lockedProduct] = await trx
+				.select()
+				.from(products)
+				.where(eq(products.id, binding.productId))
+				.for('update')
+			const [lockedWorkshop] = await trx
+				.select()
+				.from(contentResource)
+				.where(eq(contentResource.id, binding.anchorWorkshopId))
+				.for('update')
+			const lockedProductRelations = await trx
+				.select()
+				.from(contentResourceProduct)
+				.where(
+					and(
+						eq(contentResourceProduct.resourceId, binding.anchorWorkshopId),
+						isNull(contentResourceProduct.deletedAt),
+					),
+				)
+				.for('update')
+			const lockedChildren = await trx
+				.select({
+					position: contentResourceResource.position,
+					resourceId: contentResource.id,
+					resourceType: contentResource.type,
+					resourceFields: contentResource.fields,
+				})
+				.from(contentResourceResource)
+				.leftJoin(
+					contentResource,
+					eq(contentResource.id, contentResourceResource.resourceId),
+				)
+				.where(
+					and(
+						eq(contentResourceResource.resourceOfId, binding.anchorWorkshopId),
+						isNull(contentResourceResource.deletedAt),
+					),
+				)
+				.for('update')
+			const lockedRelation = lockedProductRelations.find(
+				(relation) => relation.productId === binding.productId,
+			)
+			assertCourseSyncTargetContract(binding, {
+				product: lockedProduct
+					? {
+							id: lockedProduct.id,
+							type: lockedProduct.type ?? 'missing',
+							fields: lockedProduct.fields,
+						}
+					: null,
+				workshop: lockedWorkshop
+					? {
+							id: lockedWorkshop.id,
+							type: lockedWorkshop.type,
+							fields: lockedWorkshop.fields,
+							deletedAt: lockedWorkshop.deletedAt,
+						}
+					: null,
+				relation: lockedRelation ? { position: lockedRelation.position } : null,
+				otherProductRelations: lockedProductRelations.filter(
+					(relation) => relation.productId !== binding.productId,
+				),
+				childRelations: lockedChildren.map((child) => ({
+					position: child.position,
+					resource: child.resourceId
+						? {
+								id: child.resourceId,
+								type: child.resourceType ?? 'missing',
+								fields: child.resourceFields,
+							}
+						: null,
+				})),
+			})
 
 			const priorReceipts = await trx
 				.select({ resourceId: courseSyncRunResourceVersion.resourceId })

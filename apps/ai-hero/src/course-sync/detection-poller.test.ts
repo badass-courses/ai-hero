@@ -101,15 +101,17 @@ function harness(input?: {
 	state?: CourseSyncPollState | null
 	apply?: CourseSyncDetectionPollerDependencies['apply']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
+	freezeAsset?: CourseSyncDetectionPollerDependencies['freezeAsset']
 	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
 }) {
 	let state = input?.state ?? null
+	let head = input?.head ?? null
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
 	const stage = vi.fn(input?.stage ?? (async () => run('staged')))
 	const preview = vi.fn(async () => run('previewed'))
 	const apply = vi.fn(input?.apply ?? (async () => run('applied')))
-	const freezeAsset = vi.fn(async () => frozenAsset)
+	const freezeAsset = vi.fn(input?.freezeAsset ?? (async () => frozenAsset))
 	const dependencies: CourseSyncDetectionPollerDependencies = {
 		readManifest: async () => ({
 			manifest,
@@ -118,7 +120,7 @@ function harness(input?: {
 				manifest: { rev: 'dropbox-rev-2', sha256: 'b'.repeat(64) },
 			},
 		}),
-		getRevisionHead: async () => input?.head ?? null,
+		getRevisionHead: async () => head,
 		getPollState: async () => state,
 		freezeAsset,
 		savePollState: async (next) => {
@@ -145,6 +147,9 @@ function harness(input?: {
 		logs,
 		notifications,
 		state: () => state,
+		setHead: (next: CourseSyncRevisionHead | null) => {
+			head = next
+		},
 	}
 }
 
@@ -200,7 +205,7 @@ describe('course sync detection poller', () => {
 		)
 	})
 
-	it('stages, verifies, applies, and notifies a new revision', async () => {
+	it('stages, previews, and waits for an operator without applying', async () => {
 		const test = harness({
 			head: {
 				courseVersionId: 'version-1',
@@ -211,7 +216,7 @@ describe('course sync detection poller', () => {
 		})
 
 		await expect(test.poll('poll-2')).resolves.toMatchObject({
-			outcome: 'applied',
+			outcome: 'awaiting-apply',
 			controlPlaneRunId: 'sync-run-2',
 		})
 		expect(test.freezeAsset).toHaveBeenCalledWith({
@@ -227,32 +232,97 @@ describe('course sync detection poller', () => {
 			}),
 		)
 		expect(test.preview).toHaveBeenCalledWith('sync-run-2')
-		expect(test.apply).toHaveBeenCalledWith({
-			runId: 'sync-run-2',
-			idempotencyKey: 'course-sync-poll-apply:sync-run-2',
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
 		})
 		expect(test.notifications).toEqual([
 			expect.objectContaining({
-				kind: 'success',
+				kind: 'review',
 				resourceCounts: { create: 1, update: 0, retain: 0 },
 				mediaCount: 1,
 			}),
 		])
+		// Later ticks stay quiet until the authenticated operator applies the run.
+		test.setHead({
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			runId: 'sync-run-2',
+			runState: 'previewed',
+		})
+		await expect(test.poll('poll-awaiting')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		expect(test.notifications).toHaveLength(1)
+
+		test.setHead({
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			runId: 'sync-run-2',
+			runState: 'applied',
+		})
+		await expect(test.poll('poll-applied-externally')).resolves.toMatchObject({
+			outcome: 'no-op',
+		})
+		expect(test.state()).toMatchObject({ status: 'succeeded' })
 	})
 
-	it('retries the same revision once, then holds at two strikes', async () => {
-		const apply = vi.fn(async () => {
+	it('holds a serialized target failure immediately and keeps run IDs honest', async () => {
+		const serializedFailure = new Error(
+			'Target contract mismatch: state expected published, actual draft.',
+		)
+		serializedFailure.name = 'TARGET_CONTRACT_MISMATCH'
+		const test = harness({
+			head: {
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1',
+				runState: 'applied',
+			},
+			freezeAsset: async () => {
+				throw serializedFailure
+			},
+		})
+
+		await expect(test.poll('poll-target-failure')).resolves.toMatchObject({
+			outcome: 'held',
+			consecutiveFailures: 1,
+			controlPlaneRunId: null,
+			failureClass: 'TARGET_CONTRACT_MISMATCH',
+		})
+		expect(test.stage).not.toHaveBeenCalled()
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.notifications).toEqual([
+			expect.objectContaining({
+				kind: 'failure',
+				controlPlaneRunId: null,
+				summary: expect.objectContaining({
+					retryable: false,
+					currentRunCreated: false,
+					previousAppliedRunId: 'sync-run-1',
+					sideEffects: {
+						sourceAssetsRead: false,
+						targetWrites: 'none',
+					},
+				}),
+			}),
+		])
+	})
+
+	it('retries one transient freeze failure, then holds at two strikes', async () => {
+		const freezeAsset = vi.fn(async () => {
 			throw new Error('database timeout')
 		})
 		const test = harness({
 			head: {
-				courseVersionId: 'version-2',
-				providerRevision: 'dropbox-rev-2',
-				runId: 'sync-run-2',
-				runState: 'failed',
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1',
+				runState: 'applied',
 			},
-			stage: async () => run('failed'),
-			apply,
+			freezeAsset,
 		})
 
 		await expect(test.poll('poll-failure-1')).resolves.toMatchObject({
@@ -260,15 +330,6 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 1,
 		})
 		expect(test.notifications).toHaveLength(0)
-		expect(test.logs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					stage: 'notify',
-					outcome: 'skipped',
-					metadata: { reason: 'first-failure-will-retry' },
-				}),
-			]),
-		)
 		await expect(test.poll('poll-failure-2')).resolves.toMatchObject({
 			outcome: 'held',
 			consecutiveFailures: 2,
@@ -281,7 +342,8 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 		})
 		expect(test.notifications).toHaveLength(1)
-		expect(apply).toHaveBeenCalledTimes(2)
+		expect(freezeAsset).toHaveBeenCalledTimes(2)
+		expect(test.apply).not.toHaveBeenCalled()
 		expect(test.logs).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ stage: 'retry', outcome: 'started' }),
@@ -325,7 +387,7 @@ describe('course sync detection poller', () => {
 		)
 	})
 
-	it('pages when a new revision reaches two main-loop failures', async () => {
+	it('does not let a new revision bypass an operator hold', async () => {
 		const test = harness({
 			state: {
 				bindingId: 'csb_ai_coding_crash_course',
@@ -337,23 +399,16 @@ describe('course sync detection poller', () => {
 				failureClass: 'Error',
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			},
-			stage: async () => run('failed'),
-			apply: async () => {
-				throw new Error('database timeout')
-			},
 		})
 
-		await expect(test.poll('new-revision-failure-1')).resolves.toMatchObject({
-			outcome: 'failed',
-			consecutiveFailures: 1,
-		})
-		await expect(test.poll('new-revision-failure-2')).resolves.toMatchObject({
+		await expect(test.poll('new-revision-held')).resolves.toMatchObject({
 			outcome: 'held',
 			consecutiveFailures: 2,
+			controlPlaneRunId: null,
 		})
-		expect(test.notifications).toEqual([
-			expect.objectContaining({ kind: 'failure' }),
-		])
+		expect(test.freezeAsset).not.toHaveBeenCalled()
+		expect(test.stage).not.toHaveBeenCalled()
+		expect(test.notifications).toHaveLength(0)
 	})
 
 	it('skips a queued tick while a fresh staging marker exists', async () => {
@@ -525,10 +580,22 @@ describe('course sync detection poller', () => {
 			stage: 'apply',
 			failureClass: 'PLANETSCALE_TRANSACTION_TIMEOUT',
 			reason: 'The database transaction timed out.',
+			summary: {
+				code: 'PLANETSCALE_TRANSACTION_TIMEOUT',
+				actual: ['Dependency or internal operation failed.'],
+				expected: ['Operation completes within its retry policy.'],
+				retryable: true,
+				sideEffects: {
+					sourceAssetsRead: 'unknown',
+					targetWrites: 'rolled-back',
+				},
+				currentRunCreated: true,
+				previousAppliedRunId: 'sync-run-1',
+			},
 		})
 
 		expect(success.text).toBe(
-			'Synced AI Coding Crash Course (98479f85) into the draft workshop: 4 sections, 39 lessons, 47 videos, 31 min. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
+			'Synced AI Coding Crash Course (98479f85) into the bound workshop: 4 sections, 39 lessons, 47 videos, 31 min. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
 		)
 		expect(success.attachments[0]?.text).toContain(
 			'https://www.aihero.dev/workshops/ai-coding-crash-course/edit',
@@ -544,13 +611,22 @@ describe('course sync detection poller', () => {
 			]),
 		)
 		expect(failure.text).toBe(
-			'Course sync failed while apply AI Coding Crash Course (98479f85): The database transaction timed out. It failed twice in a row and is holding for a human. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
+			'Course sync held while apply AI Coding Crash Course (98479f85): The database transaction timed out. It exhausted the retry policy and is holding for an operator. http://localhost:3000/admin/course-sync/98479f85-7dc8-4053-83da-7f4d2df1a195',
 		)
 		expect(failure.attachments[0]?.fields).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
 					title: 'Failure class',
 					value: 'PLANETSCALE_TRANSACTION_TIMEOUT',
+				}),
+				expect.objectContaining({ title: 'Retryable', value: 'yes' }),
+				expect.objectContaining({
+					title: 'Current sync run',
+					value: 'sync-run-2',
+				}),
+				expect.objectContaining({
+					title: 'Previous applied run',
+					value: 'sync-run-1',
 				}),
 			]),
 		)

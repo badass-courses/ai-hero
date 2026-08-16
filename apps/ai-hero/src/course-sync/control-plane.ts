@@ -10,7 +10,7 @@ import {
 import { CourseSyncError, asCourseSyncError } from './errors'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import {
-	AI_HERO_DRAFT_SYNC_BINDING,
+	AI_HERO_COURSE_SYNC_BINDING,
 	type CourseSyncBinding,
 	type CourseSyncControlPlaneDependencies,
 	type FrozenSourceAsset,
@@ -135,13 +135,14 @@ function assertManifestScope(
 function publicBinding(binding: CourseSyncBinding): CourseSyncBindingSummary {
 	return {
 		bindingId: binding.bindingId,
+		contractVersion: binding.contractVersion,
 		status: binding.status,
 		sourceCourseId: binding.sourceCourseId,
+		applyPolicy: binding.applyPolicy,
 		target: {
-			productType: binding.productType,
-			anchorResourceType: 'workshop',
-			requiredState: binding.requiredState,
-			requiredVisibility: binding.requiredVisibility,
+			product: binding.targetContract.product,
+			workshop: binding.targetContract.workshop,
+			managedChildren: binding.managedChildContract,
 			sectionMappingPolicy: binding.sectionMappingPolicy,
 		},
 	}
@@ -353,15 +354,15 @@ export function createCourseSyncControlPlane(
 	const persistence = dependencies.persistence
 
 	const requireBinding = async (bindingId: string) => {
-		if (bindingId !== AI_HERO_DRAFT_SYNC_BINDING.bindingId) {
+		if (bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId) {
 			throw new CourseSyncError(
 				'BINDING_NOT_FOUND',
 				'Sync binding not found.',
 				404,
 			)
 		}
-		await persistence.assertTarget(AI_HERO_DRAFT_SYNC_BINDING)
-		const binding = await persistence.ensureBinding(AI_HERO_DRAFT_SYNC_BINDING)
+		await persistence.assertTarget(AI_HERO_COURSE_SYNC_BINDING)
+		const binding = await persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
 		if (binding.status !== 'active') {
 			throw new CourseSyncError(
 				'BINDING_NOT_ACTIVE',

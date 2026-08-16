@@ -8,7 +8,11 @@ import {
 import type { FrozenSourceAsset } from './types'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
-import { AI_HERO_DRAFT_SYNC_BINDING } from './types'
+import {
+	startCourseSyncPollLifecycle,
+	type CourseSyncPollLifecycleActor,
+} from './poll-machine'
+import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 
 export const COURSE_SYNC_WORKSHOP_EDIT_URL =
 	'https://www.aihero.dev/workshops/ai-coding-crash-course/edit'
@@ -21,13 +25,20 @@ export type CourseSyncPollStage =
 	| 'apply'
 	| 'retry'
 	| 'hold'
+	| 'release'
 	| 'notify'
 
 export type CourseSyncPollState = {
 	bindingId: string
 	courseVersionId: string
 	providerRevision: string
-	status: 'staging' | 'succeeded' | 'failed' | 'held'
+	status:
+		| 'staging'
+		| 'awaiting-apply'
+		| 'succeeded'
+		| 'failed'
+		| 'held'
+		| 'released'
 	consecutiveFailures: number
 	controlPlaneRunId: string | null
 	failureClass: string | null
@@ -62,6 +73,19 @@ export type CourseSyncPollLogInput = {
 	occurredAt: Date
 }
 
+export type CourseSyncFailureSummary = {
+	code: string
+	actual: string[]
+	expected: string[]
+	retryable: boolean
+	sideEffects: {
+		sourceAssetsRead: boolean | 'unknown'
+		targetWrites: 'none' | 'rolled-back'
+	}
+	currentRunCreated: boolean
+	previousAppliedRunId: string | null
+}
+
 export type CourseSyncNotification =
 	| {
 			kind: 'success'
@@ -78,6 +102,17 @@ export type CourseSyncNotification =
 			workshopEditUrl: string
 	  }
 	| {
+			kind: 'review'
+			courseVersionId: string
+			courseName: string | null
+			providerRevision: string
+			manifestSha256: string | null
+			runId: string
+			controlPlaneRunId: string
+			resourceCounts: CourseSyncRunSummary['resourceCounts']
+			mediaCount: number
+	  }
+	| {
 			kind: 'failure'
 			courseVersionId: string
 			courseName: string | null
@@ -88,6 +123,7 @@ export type CourseSyncNotification =
 			stage: CourseSyncPollStage
 			failureClass: string
 			reason: string
+			summary: CourseSyncFailureSummary
 	  }
 
 export const COURSE_SYNC_SLACK_USERNAME = 'AI Hero Course Sync'
@@ -134,7 +170,12 @@ export type CourseSyncDetectionPollerDependencies = {
 }
 
 export type CourseSyncPollResult =
-	| { outcome: 'no-op' | 'in-progress'; courseVersionId: string; runId: string }
+	| {
+			outcome: 'no-op' | 'in-progress' | 'awaiting-apply'
+			courseVersionId: string
+			runId: string
+			controlPlaneRunId?: string
+	  }
 	| {
 			outcome: 'applied'
 			courseVersionId: string
@@ -175,12 +216,107 @@ function isLegacyAppliedHead(
 	)
 }
 
-function failureClass(error: unknown) {
+export function courseSyncFailureClass(error: unknown) {
 	return error instanceof CourseSyncError
 		? error.code
 		: error instanceof Error
 			? error.name || 'COURSE_SYNC_POLL_FAILED'
 			: 'COURSE_SYNC_POLL_FAILED'
+}
+
+export const NON_RETRYABLE_COURSE_SYNC_CODES = new Set([
+	'TARGET_CONTRACT_MISMATCH',
+	'TARGET_PRODUCT_ASSERTION_FAILED',
+	'TARGET_WORKSHOP_ASSERTION_FAILED',
+	'TARGET_RELATION_ASSERTION_FAILED',
+	'TARGET_CHILD_SCOPE_WIDENED',
+	'IMMUTABLE_BINDING_CONFLICT',
+	'BINDING_NOT_ACTIVE',
+	'SOURCE_COURSE_MISMATCH',
+	'IDEMPOTENCY_CONFLICT',
+	'IMMUTABLE_REVISION_CONFLICT',
+	'MANAGED_RESOURCE_SCOPE_MISMATCH',
+	'MANAGED_RESOURCE_MISSING',
+	'MANAGED_RELATION_MISSING',
+	'APPLY_TARGET_CHANGED',
+	'RESOURCE_ALREADY_EXISTS',
+	'ORPHAN_RELATION_CONFLICT',
+	'RETAINED_VERSION_MISSING',
+	'FAILED_APPLY_NOT_ROLLED_BACK',
+])
+
+export function isNonRetryableCourseSyncFailure(
+	failure: CourseSyncError,
+	code: string,
+) {
+	return (
+		failure.retryable === false ||
+		code.startsWith('TARGET_') ||
+		NON_RETRYABLE_COURSE_SYNC_CODES.has(code)
+	)
+}
+
+function safeFailureSummary(input: {
+	failure: CourseSyncError
+	code: string
+	stage: CourseSyncPollStage
+	controlPlaneRunId: string | null
+	previousAppliedRunId: string | null
+}): CourseSyncFailureSummary {
+	const violations = Array.isArray(input.failure.details?.violations)
+		? (input.failure.details.violations as Array<Record<string, unknown>>)
+		: []
+	const violationLabel = (violation: Record<string, unknown>) => {
+		const target =
+			violation.target && typeof violation.target === 'object'
+				? (violation.target as Record<string, unknown>)
+				: {}
+		const targetId =
+			target.id ?? target.resourceId ?? target.workshopId ?? 'unknown'
+		return `${String(target.kind ?? 'target')} ${String(targetId)} ${String(violation.field)}`
+	}
+	const summarizeViolations = (value: 'actual' | 'expected'): string[] => {
+		const summary = violations
+			.slice(0, 12)
+			.map(
+				(violation) =>
+					`${violationLabel(violation)}=${String(violation[value] ?? 'missing')}`,
+			)
+		if (violations.length > summary.length) {
+			summary.push(`+${violations.length - summary.length} more violations`)
+		}
+		return summary
+	}
+	const actual = summarizeViolations('actual')
+	const expected = summarizeViolations('expected')
+	const targetFailure = input.code.startsWith('TARGET_')
+	return {
+		code: input.code,
+		actual:
+			actual.length > 0
+				? actual
+				: targetFailure
+					? [input.failure.message]
+					: ['Dependency or internal operation failed.'],
+		expected:
+			expected.length > 0
+				? expected
+				: targetFailure
+					? [
+							'product=self-paced/published/public',
+							'workshop=workshop/published/unlisted',
+							'managed children=draft/unlisted',
+						]
+					: ['Operation completes within its retry policy.'],
+		retryable: !isNonRetryableCourseSyncFailure(input.failure, input.code),
+		sideEffects: {
+			sourceAssetsRead:
+				input.stage === 'stage' && !input.controlPlaneRunId ? false : 'unknown',
+			targetWrites: input.stage === 'apply' ? 'rolled-back' : 'none',
+		},
+		currentRunCreated: input.controlPlaneRunId !== null,
+		previousAppliedRunId: input.previousAppliedRunId,
+	}
 }
 
 function mediaCount(run: CourseSyncRunSummary) {
@@ -229,7 +365,7 @@ export function buildCourseSyncNotificationPayload(
 
 	if (notification.kind === 'success') {
 		const durationMinutes = Math.floor(notification.durationSeconds / 60)
-		const text = `Synced ${versionLabel} into the draft workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min. ${permalink}`
+		const text = `Synced ${versionLabel} into the bound workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min. ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
 			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
@@ -284,8 +420,62 @@ export function buildCourseSyncNotificationPayload(
 		}
 	}
 
+	if (notification.kind === 'review') {
+		const text = `Course sync preview ready for operator apply: ${versionLabel}. No course-content writes were made. ${permalink}`
+		return {
+			username: COURSE_SYNC_SLACK_USERNAME,
+			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
+			text,
+			attachments: [
+				{
+					fallback: text,
+					color: '#f2c744',
+					title: 'AI Hero course sync awaiting apply',
+					text: `<${permalink}|Review the staged sync plan>`,
+					fields: [
+						{
+							title: 'Course version',
+							value: notification.courseVersionId,
+							short: true,
+						},
+						{ title: 'Manifest SHA', value: manifestSha, short: true },
+						{
+							title: 'Sync run',
+							value: notification.controlPlaneRunId,
+							short: true,
+						},
+						{
+							title: 'Created',
+							value: String(notification.resourceCounts.create),
+							short: true,
+						},
+						{
+							title: 'Updated',
+							value: String(notification.resourceCounts.update),
+							short: true,
+						},
+						{
+							title: 'Retained',
+							value: String(notification.resourceCounts.retain),
+							short: true,
+						},
+						{
+							title: 'Media updated',
+							value: String(notification.mediaCount),
+							short: true,
+						},
+					],
+				},
+			],
+		}
+	}
+
 	const reason = compactFailureReason(notification.reason)
-	const text = `Course sync failed while ${notification.stage} ${versionLabel}: ${reason}. It failed twice in a row and is holding for a human. ${permalink}`
+	const holdReason = notification.summary.retryable
+		? 'It exhausted the retry policy and is holding for an operator.'
+		: 'It is deterministic and held immediately without retry.'
+	const text = `Course sync held while ${notification.stage} ${versionLabel}: ${reason}. ${holdReason} ${permalink}`
+	const sideEffects = `Source assets read: ${String(notification.summary.sideEffects.sourceAssetsRead)}; target writes: ${notification.summary.sideEffects.targetWrites}`
 	return {
 		username: COURSE_SYNC_SLACK_USERNAME,
 		icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
@@ -294,7 +484,7 @@ export function buildCourseSyncNotificationPayload(
 			{
 				fallback: text,
 				color: '#d92d20',
-				title: 'AI Hero course sync failed',
+				title: 'AI Hero course sync held',
 				text: `<${permalink}|Open the sync history>`,
 				fields: [
 					{
@@ -308,10 +498,31 @@ export function buildCourseSyncNotificationPayload(
 						value: notification.failureClass,
 						short: true,
 					},
+					{
+						title: 'Retryable',
+						value: notification.summary.retryable ? 'yes' : 'no',
+						short: true,
+					},
+					{
+						title: 'Actual',
+						value: notification.summary.actual.join('; '),
+						short: false,
+					},
+					{
+						title: 'Expected',
+						value: notification.summary.expected.join('; '),
+						short: false,
+					},
+					{ title: 'Side effects', value: sideEffects, short: false },
 					{ title: 'Poll run', value: notification.runId, short: true },
 					{
-						title: 'Sync run',
-						value: notification.controlPlaneRunId ?? 'not staged',
+						title: 'Current sync run',
+						value: notification.controlPlaneRunId ?? 'not created',
+						short: true,
+					},
+					{
+						title: 'Previous applied run',
+						value: notification.summary.previousAppliedRunId ?? 'none',
 						short: true,
 					},
 					{
@@ -332,11 +543,24 @@ export async function recordCourseSyncPollFailure(
 	>,
 	input: { runId: string; failureClass?: string; occurredAt?: Date },
 ) {
-	const bindingId = AI_HERO_DRAFT_SYNC_BINDING.bindingId
+	const bindingId = AI_HERO_COURSE_SYNC_BINDING.bindingId
 	const state = await dependencies.getPollState(bindingId)
 	const failureKind = input.failureClass ?? 'POLL_RUN_KILLED'
-	const strikes = Math.min((state?.consecutiveFailures ?? 0) + 1, 2)
-	const held = strikes >= 2
+	const lifecycle = startCourseSyncPollLifecycle({
+		bindingStatus: AI_HERO_COURSE_SYNC_BINDING.status,
+		pollStatus: state?.status ?? null,
+		strikes: state?.consecutiveFailures ?? 0,
+		applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+	})
+	if (
+		lifecycle.getSnapshot().matches({ active: 'idle' }) ||
+		lifecycle.getSnapshot().matches({ active: 'failed' })
+	) {
+		lifecycle.send({ type: 'REVISION.START' })
+	}
+	lifecycle.send({ type: 'FAIL.RETRYABLE' })
+	const strikes = lifecycle.getSnapshot().context.strikes
+	const held = lifecycle.getSnapshot().matches({ active: 'held' })
 	const transitionedToHeld = held && state?.status !== 'held'
 	const occurredAt = input.occurredAt ?? new Date()
 	const courseVersionId = state?.courseVersionId ?? 'unknown'
@@ -391,6 +615,17 @@ export async function recordCourseSyncPollFailure(
 			stage: 'stage',
 			failureClass: failureKind,
 			reason: 'The polling run stopped before it finished',
+			summary: safeFailureSummary({
+				failure: new CourseSyncError(
+					failureKind,
+					'The polling run stopped before it finished.',
+					500,
+				),
+				code: failureKind,
+				stage: 'stage',
+				controlPlaneRunId: state?.controlPlaneRunId ?? null,
+				previousAppliedRunId: null,
+			}),
 		})
 	} else {
 		await dependencies.appendLog({
@@ -415,7 +650,7 @@ export function createCourseSyncDetectionPoller(
 	dependencies: CourseSyncDetectionPollerDependencies,
 ) {
 	const clock = dependencies.clock ?? (() => new Date())
-	const bindingId = AI_HERO_DRAFT_SYNC_BINDING.bindingId
+	const bindingId = AI_HERO_COURSE_SYNC_BINDING.bindingId
 
 	const log = (base: Omit<CourseSyncPollLogInput, 'occurredAt'>) =>
 		dependencies.appendLog({ ...base, occurredAt: clock() })
@@ -427,7 +662,9 @@ export function createCourseSyncDetectionPoller(
 		let providerRevision = 'unknown'
 		let manifestSha256: string | null = null
 		let controlPlaneRunId: string | null = null
+		let previousAppliedRunId: string | null = null
 		let previousState: CourseSyncPollState | null = null
+		let lifecycle: CourseSyncPollLifecycleActor | null = null
 		let activeStage: CourseSyncPollStage = 'detect'
 
 		try {
@@ -459,12 +696,32 @@ export function createCourseSyncDetectionPoller(
 				dependencies.getPollState(bindingId),
 			])
 			previousState = state
-			controlPlaneRunId = state?.controlPlaneRunId ?? head?.runId ?? null
+			const headMatchesRevision =
+				head?.courseVersionId === courseVersionId &&
+				(head.providerRevision === providerRevision ||
+					isLegacyAppliedHead(head, courseVersionId))
+			controlPlaneRunId = headMatchesRevision ? (head?.runId ?? null) : null
+			previousAppliedRunId =
+				head?.runState === 'applied' && !headMatchesRevision ? head.runId : null
 			const observedBefore = sameRevision(
 				state,
 				courseVersionId,
 				providerRevision,
 			)
+			lifecycle = startCourseSyncPollLifecycle({
+				bindingStatus: AI_HERO_COURSE_SYNC_BINDING.status,
+				pollStatus:
+					state?.status === 'held'
+						? 'held'
+						: observedBefore
+							? (state?.status ?? null)
+							: null,
+				strikes:
+					state?.status === 'held' || observedBefore
+						? (state?.consecutiveFailures ?? 0)
+						: 0,
+				applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+			})
 			const appliedAlready =
 				(observedBefore && state?.status === 'succeeded') ||
 				(head?.courseVersionId === courseVersionId &&
@@ -513,6 +770,25 @@ export function createCourseSyncDetectionPoller(
 				return { outcome: 'no-op', courseVersionId, runId }
 			}
 
+			if (observedBefore && state?.status === 'awaiting-apply') {
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId,
+					stage: 'verify',
+					outcome: 'skipped',
+					metadata: { reason: 'awaiting-operator-apply' },
+				})
+				return {
+					outcome: 'awaiting-apply',
+					courseVersionId,
+					runId,
+					controlPlaneRunId: controlPlaneRunId ?? undefined,
+				}
+			}
+
 			const stagingMarkerFresh =
 				observedBefore &&
 				state?.status === 'staging' &&
@@ -531,11 +807,7 @@ export function createCourseSyncDetectionPoller(
 				return { outcome: 'in-progress', courseVersionId, runId }
 			}
 
-			if (
-				observedBefore &&
-				state?.status === 'held' &&
-				state.consecutiveFailures >= 2
-			) {
+			if (lifecycle.getSnapshot().matches({ active: 'held' })) {
 				await log({
 					bindingId,
 					courseVersionId,
@@ -544,16 +816,19 @@ export function createCourseSyncDetectionPoller(
 					controlPlaneRunId,
 					stage: 'hold',
 					outcome: 'held',
-					failureClass: state.failureClass,
-					metadata: { consecutiveFailures: state.consecutiveFailures },
+					failureClass: state?.failureClass,
+					metadata: {
+						consecutiveFailures: state?.consecutiveFailures ?? 1,
+						heldCourseVersionId: state?.courseVersionId ?? null,
+					},
 				})
 				return {
 					outcome: 'held',
 					courseVersionId,
 					runId,
 					controlPlaneRunId,
-					failureClass: state.failureClass ?? 'COURSE_SYNC_POLL_HELD',
-					consecutiveFailures: state.consecutiveFailures,
+					failureClass: state?.failureClass ?? 'COURSE_SYNC_POLL_HELD',
+					consecutiveFailures: state?.consecutiveFailures ?? 1,
 				}
 			}
 
@@ -575,6 +850,7 @@ export function createCourseSyncDetectionPoller(
 				})
 			}
 
+			lifecycle.send({ type: 'REVISION.START' })
 			activeStage = 'stage'
 			await dependencies.savePollState({
 				bindingId,
@@ -650,6 +926,47 @@ export function createCourseSyncDetectionPoller(
 			}
 
 			if (syncRun.state === 'previewed' || syncRun.state === 'failed') {
+				lifecycle.send({ type: 'PREVIEW.OK' })
+				if (lifecycle.getSnapshot().matches({ active: 'awaitingApply' })) {
+					await dependencies.savePollState({
+						bindingId,
+						courseVersionId,
+						providerRevision,
+						status: 'awaiting-apply',
+						consecutiveFailures: 0,
+						controlPlaneRunId: syncRun.runId,
+						failureClass: null,
+						updatedAt: clock(),
+					})
+					await dependencies.notify({
+						kind: 'review',
+						courseVersionId,
+						courseName,
+						providerRevision,
+						manifestSha256,
+						runId,
+						controlPlaneRunId: syncRun.runId,
+						resourceCounts: syncRun.resourceCounts,
+						mediaCount: mediaCount(syncRun),
+					})
+					await log({
+						bindingId,
+						courseVersionId,
+						providerRevision,
+						runId,
+						controlPlaneRunId: syncRun.runId,
+						stage: 'notify',
+						outcome: 'succeeded',
+						metadata: { reason: 'awaiting-operator-apply' },
+					})
+					return {
+						outcome: 'awaiting-apply',
+						courseVersionId,
+						runId,
+						controlPlaneRunId: syncRun.runId,
+					}
+				}
+
 				activeStage = 'apply'
 				await log({
 					bindingId,
@@ -673,6 +990,7 @@ export function createCourseSyncDetectionPoller(
 					500,
 				)
 			}
+			lifecycle.send({ type: 'APPLY.OK' })
 			await log({
 				bindingId,
 				courseVersionId,
@@ -740,22 +1058,33 @@ export function createCourseSyncDetectionPoller(
 			}
 		} catch (error) {
 			const failure = asCourseSyncError(error)
-			const kind = failureClass(error)
-			const priorFailures = sameRevision(
-				previousState,
-				courseVersionId,
-				providerRevision,
-			)
-				? (previousState?.consecutiveFailures ?? 0)
-				: 0
-			const strikes = Math.min(priorFailures + 1, 2)
-			const held = strikes >= 2
-			const transitionedToHeld =
-				held &&
-				!(
-					previousState?.status === 'held' &&
-					sameRevision(previousState, courseVersionId, providerRevision)
-				)
+			const kind = courseSyncFailureClass(error)
+			const nonRetryable = isNonRetryableCourseSyncFailure(failure, kind)
+			lifecycle ??= startCourseSyncPollLifecycle({
+				bindingStatus: AI_HERO_COURSE_SYNC_BINDING.status,
+				pollStatus: previousState?.status ?? null,
+				strikes: previousState?.consecutiveFailures ?? 0,
+				applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+			})
+			if (
+				lifecycle.getSnapshot().matches({ active: 'idle' }) ||
+				lifecycle.getSnapshot().matches({ active: 'failed' })
+			) {
+				lifecycle.send({ type: 'REVISION.START' })
+			}
+			lifecycle.send({
+				type: nonRetryable ? 'FAIL.NON_RETRYABLE' : 'FAIL.RETRYABLE',
+			})
+			const strikes = lifecycle.getSnapshot().context.strikes
+			const held = lifecycle.getSnapshot().matches({ active: 'held' })
+			const transitionedToHeld = held && previousState?.status !== 'held'
+			const summary = safeFailureSummary({
+				failure,
+				code: kind,
+				stage: activeStage,
+				controlPlaneRunId,
+				previousAppliedRunId,
+			})
 			await log({
 				bindingId,
 				courseVersionId,
@@ -768,6 +1097,7 @@ export function createCourseSyncDetectionPoller(
 				metadata: {
 					consecutiveFailures: strikes,
 					error: failure.message,
+					failureSummary: summary,
 				},
 			})
 			if (held) {
@@ -780,7 +1110,10 @@ export function createCourseSyncDetectionPoller(
 					stage: 'hold',
 					outcome: 'held',
 					failureClass: kind,
-					metadata: { consecutiveFailures: strikes },
+					metadata: {
+						consecutiveFailures: strikes,
+						failureSummary: summary,
+					},
 				})
 			}
 			await dependencies.savePollState({
@@ -793,8 +1126,6 @@ export function createCourseSyncDetectionPoller(
 				failureClass: kind,
 				updatedAt: clock(),
 			})
-			// Strike one always retries on its own; only page humans when the
-			// run actually holds for one.
 			if (transitionedToHeld) {
 				try {
 					await dependencies.notify({
@@ -808,6 +1139,7 @@ export function createCourseSyncDetectionPoller(
 						stage: activeStage,
 						failureClass: kind,
 						reason: failure.message,
+						summary,
 					})
 					await log({
 						bindingId,
@@ -829,7 +1161,7 @@ export function createCourseSyncDetectionPoller(
 						controlPlaneRunId,
 						stage: 'notify',
 						outcome: 'failed',
-						failureClass: failureClass(notificationError),
+						failureClass: courseSyncFailureClass(notificationError),
 					})
 				}
 			} else {

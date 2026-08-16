@@ -42,7 +42,7 @@ assert.equal("authoringStatus" in (ghostLesson ?? {}), false)
 
 assert.equal(
 	makeCourseBuilderClientKey("lesson", "database-migrations"),
-	"lesson:database-migrations"
+	"lesson:database-migrations",
 )
 
 assert.throws(() => {
@@ -115,13 +115,22 @@ assert.doesNotThrow(() =>
 assert.doesNotThrow(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",
+		contractVersion: 2,
 		status: "active",
 		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
+		applyPolicy: "operator",
 		target: {
-			productType: "self-paced",
-			anchorResourceType: "workshop",
-			requiredState: "draft",
-			requiredVisibility: "unlisted",
+			product: {
+				type: "self-paced",
+				state: "published",
+				visibility: "public",
+			},
+			workshop: {
+				type: "workshop",
+				state: "published",
+				visibility: "unlisted",
+			},
+			managedChildren: { state: "draft", visibility: "unlisted" },
 			sectionMappingPolicy: "sections-in-anchor-workshop",
 		},
 	}),
@@ -129,13 +138,22 @@ assert.doesNotThrow(() =>
 assert.throws(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",
+		contractVersion: 2,
 		status: "active",
 		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
+		applyPolicy: "operator",
 		target: {
-			productType: "self-paced",
-			anchorResourceType: "workshop",
-			requiredState: "draft",
-			requiredVisibility: "unlisted",
+			product: {
+				type: "self-paced",
+				state: "published",
+				visibility: "public",
+			},
+			workshop: {
+				type: "workshop",
+				state: "published",
+				visibility: "unlisted",
+			},
+			managedChildren: { state: "draft", visibility: "unlisted" },
 			sectionMappingPolicy: "two-sections-in-anchor-workshop",
 		},
 	}),

@@ -1,3 +1,4 @@
+import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
 import { sha256, stableJson } from './control-plane'
 import type {
@@ -49,18 +50,15 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	targetValid = true
 	assertTargetCalls = 0
 	failAfterVersionWrites: number | null = null
+	beforeApplyTargetRecheck: (() => void) | null = null
 
 	async ensureBinding(binding: CourseSyncBinding) {
 		const existing = this.bindings.get(binding.bindingId)
-		if (existing && stableJson(existing) !== stableJson(binding)) {
-			throw new CourseSyncError(
-				'IMMUTABLE_BINDING_CONFLICT',
-				'Binding changed.',
-				409,
-			)
-		}
-		this.bindings.set(binding.bindingId, structuredClone(binding))
-		return structuredClone(binding)
+		const resolved = existing
+			? resolveStoredCourseSyncBinding(existing, binding)
+			: { binding, migrated: false }
+		this.bindings.set(binding.bindingId, structuredClone(resolved.binding))
+		return structuredClone(resolved.binding)
 	}
 
 	async getBinding(bindingId: string) {
@@ -71,9 +69,10 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		this.assertTargetCalls += 1
 		if (!this.targetValid) {
 			throw new CourseSyncError(
-				'TARGET_ASSERTION_FAILED',
-				'Target scope is invalid.',
+				'TARGET_CONTRACT_MISMATCH',
+				'Target contract mismatch.',
 				409,
+				{ category: 'target_precondition', retryable: false },
 			)
 		}
 	}
@@ -209,6 +208,12 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				409,
 			)
 		}
+		this.beforeApplyTargetRecheck?.()
+		const binding = this.bindings.get(input.plan.bindingId)
+		if (!binding) {
+			throw new CourseSyncError('BINDING_NOT_FOUND', 'Binding missing.', 409)
+		}
+		await this.assertTarget(binding)
 		const run: SyncRunRecord = {
 			...current,
 			state: 'applying',

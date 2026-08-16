@@ -4,7 +4,38 @@ import type {
 	CourseSyncRunState,
 } from '@ai-hero/course-sync-schema'
 
-export const AI_HERO_DRAFT_SYNC_BINDING = {
+export type CourseSyncBinding = {
+	contractVersion: 2
+	bindingId: string
+	sourceCourseId: string
+	productId: string
+	anchorWorkshopId: string
+	targetContract: {
+		product: {
+			type: 'self-paced'
+			state: 'published'
+			visibility: 'public'
+		}
+		workshop: {
+			type: 'workshop'
+			state: 'published'
+			visibility: 'unlisted'
+		}
+		relation: { position: 0; exclusiveProduct: true }
+	}
+	managedChildContract: {
+		state: 'draft'
+		visibility: 'unlisted'
+	}
+	applyPolicy: 'auto' | 'operator'
+	sectionMappingPolicy: 'sections-in-anchor-workshop'
+	assetConnector: 'dropbox-shared-link'
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK'
+	status: 'active' | 'suspended' | 'revoked'
+}
+
+/** The only stored v1 value that may be migrated in place. */
+export const AI_HERO_COURSE_SYNC_BINDING_V1 = {
 	bindingId: 'csb_ai_coding_crash_course',
 	sourceCourseId: '50385098-a712-486f-b777-1f76ef31e9e5',
 	productId: 'product-ma254',
@@ -16,21 +47,34 @@ export const AI_HERO_DRAFT_SYNC_BINDING = {
 	assetConnector: 'dropbox-shared-link',
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
 	status: 'active',
-} as const satisfies CourseSyncBinding
+} as const
 
-export type CourseSyncBinding = {
-	bindingId: string
-	sourceCourseId: string
-	productId: string
-	anchorWorkshopId: string
-	productType: 'self-paced'
-	requiredState: 'draft'
-	requiredVisibility: 'unlisted'
-	sectionMappingPolicy: 'sections-in-anchor-workshop'
-	assetConnector: 'dropbox-shared-link'
-	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK'
-	status: 'active' | 'suspended' | 'revoked'
-}
+export const AI_HERO_COURSE_SYNC_BINDING = {
+	contractVersion: 2,
+	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
+	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
+	productId: AI_HERO_COURSE_SYNC_BINDING_V1.productId,
+	anchorWorkshopId: AI_HERO_COURSE_SYNC_BINDING_V1.anchorWorkshopId,
+	targetContract: {
+		product: {
+			type: 'self-paced',
+			state: 'published',
+			visibility: 'public',
+		},
+		workshop: {
+			type: 'workshop',
+			state: 'published',
+			visibility: 'unlisted',
+		},
+		relation: { position: 0, exclusiveProduct: true },
+	},
+	managedChildContract: { state: 'draft', visibility: 'unlisted' },
+	applyPolicy: 'operator',
+	sectionMappingPolicy: 'sections-in-anchor-workshop',
+	assetConnector: 'dropbox-shared-link',
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
+	status: 'active',
+} as const satisfies CourseSyncBinding
 
 export type FrozenSourceAsset = {
 	sourceVideoId: string

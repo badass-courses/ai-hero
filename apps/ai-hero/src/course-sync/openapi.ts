@@ -18,10 +18,10 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 	return {
 		openapi: '3.1.0',
 		info: {
-			title: 'AI Hero Draft Course Sync Control Plane',
-			version: '1.0.0',
+			title: 'AI Hero Course Sync Control Plane',
+			version: '2.0.0',
 			description:
-				'Draft-only control plane. Target product, workshop, section, lesson, visibility, and relation IDs are server-owned.',
+				'Operator-apply control plane. Target product, workshop, child contracts, and relation IDs are server-owned.',
 		},
 		servers: [{ url: baseUrl }],
 		paths: {
@@ -39,6 +39,40 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 								},
 							},
 						},
+					},
+				},
+			},
+			'/v1/course-sync/bindings/{bindingId}/poll-state:release': {
+				post: {
+					operationId: 'releaseCourseSyncPollHold',
+					security: [{ OperatorBearer: [] }],
+					parameters: [
+						idParameter('bindingId'),
+						{
+							name: 'Idempotency-Key',
+							in: 'header',
+							required: true,
+							schema: { type: 'string', minLength: 1 },
+						},
+					],
+					requestBody: {
+						required: true,
+						content: {
+							'application/json': {
+								schema: {
+									type: 'object',
+									additionalProperties: false,
+									required: ['reason'],
+									properties: {
+										reason: { type: 'string', minLength: 1, maxLength: 500 },
+									},
+								},
+							},
+						},
+					},
+					responses: {
+						200: { description: 'Audited poll hold release receipt' },
+						409: { description: 'Target still mismatched or state not held' },
 					},
 				},
 			},
@@ -95,7 +129,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 			'/v1/course-sync/runs/{runId}:apply': {
 				post: {
 					operationId: 'applyStagedSyncRun',
-					security: [{ WorkerBearer: [] }],
+					security: [{ WorkerBearer: [] }, { OperatorBearer: [] }],
 					parameters: [
 						idParameter('runId'),
 						{
@@ -160,28 +194,55 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 				},
 				SyncBinding: {
 					type: 'object',
-					required: ['bindingId', 'status', 'sourceCourseId', 'target'],
+					required: [
+						'bindingId',
+						'contractVersion',
+						'status',
+						'sourceCourseId',
+						'applyPolicy',
+						'target',
+					],
 					properties: {
 						bindingId: { type: 'string', minLength: 1 },
+						contractVersion: { const: 2 },
 						status: {
 							type: 'string',
 							enum: ['active', 'suspended', 'revoked'],
 						},
 						sourceCourseId: { type: 'string', minLength: 1 },
+						applyPolicy: { enum: ['auto', 'operator'] },
 						target: {
 							type: 'object',
 							required: [
-								'productType',
-								'anchorResourceType',
-								'requiredState',
-								'requiredVisibility',
+								'product',
+								'workshop',
+								'managedChildren',
 								'sectionMappingPolicy',
 							],
 							properties: {
-								productType: { const: 'self-paced' },
-								anchorResourceType: { const: 'workshop' },
-								requiredState: { const: 'draft' },
-								requiredVisibility: { const: 'unlisted' },
+								product: {
+									type: 'object',
+									properties: {
+										type: { const: 'self-paced' },
+										state: { const: 'published' },
+										visibility: { const: 'public' },
+									},
+								},
+								workshop: {
+									type: 'object',
+									properties: {
+										type: { const: 'workshop' },
+										state: { const: 'published' },
+										visibility: { const: 'unlisted' },
+									},
+								},
+								managedChildren: {
+									type: 'object',
+									properties: {
+										state: { const: 'draft' },
+										visibility: { const: 'unlisted' },
+									},
+								},
 								sectionMappingPolicy: {
 									const: 'sections-in-anchor-workshop',
 								},

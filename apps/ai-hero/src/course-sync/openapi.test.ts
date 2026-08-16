@@ -3,13 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { buildCourseSyncOpenApiDocument } from './openapi'
 
 describe('course sync OpenAPI contract', () => {
-	it('exposes only draft control-plane operations and keeps target IDs out of stage input', () => {
+	it('exposes operator release/apply while keeping target IDs out of stage input', () => {
 		const document = buildCourseSyncOpenApiDocument('https://www.aihero.dev')
 		const operations = Object.values(document.paths).flatMap((path) =>
 			Object.values(path).map((operation) => operation.operationId),
 		)
 		expect(operations).toEqual([
 			'getSyncBinding',
+			'releaseCourseSyncPollHold',
 			'stageSourceRevision',
 			'previewSyncRun',
 			'getSyncRun',
@@ -33,5 +34,23 @@ describe('course sync OpenAPI contract', () => {
 			document.components.schemas.SyncBinding.properties.target.properties
 				.sectionMappingPolicy,
 		).toEqual({ const: 'sections-in-anchor-workshop' })
+		expect(
+			document.components.schemas.SyncBinding.properties.target.properties
+				.product.properties,
+		).toMatchObject({
+			type: { const: 'self-paced' },
+			state: { const: 'published' },
+			visibility: { const: 'public' },
+		})
+		expect(
+			document.components.schemas.SyncBinding.properties.target.properties
+				.managedChildren.properties,
+		).toEqual({
+			state: { const: 'draft' },
+			visibility: { const: 'unlisted' },
+		})
+		expect(
+			document.paths['/v1/course-sync/runs/{runId}:apply'].post.security,
+		).toEqual([{ WorkerBearer: [] }, { OperatorBearer: [] }])
 	})
 })

@@ -54,7 +54,7 @@ export async function POST(
 			return courseSyncJson(await courseSyncControlPlane.preview(parsed.runId))
 		}
 		if (parsed.operation === 'apply') {
-			authorizeCourseSyncRequest(request, 'worker')
+			authorizeCourseSyncRequest(request, ['worker', 'operator'])
 			return courseSyncJson(
 				await courseSyncControlPlane.apply({
 					runId: parsed.runId,

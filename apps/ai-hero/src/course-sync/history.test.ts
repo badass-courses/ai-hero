@@ -79,6 +79,20 @@ function source(): CourseSyncHistorySource {
 				stage: 'hold',
 				outcome: 'held',
 				failureClass: 'POLL_RUN_KILLED',
+				metadata: {
+					failureSummary: {
+						code: 'POLL_RUN_KILLED',
+						actual: ['Polling run stopped.'],
+						expected: ['Polling run completes.'],
+						retryable: true,
+						sideEffects: {
+							sourceAssetsRead: 'unknown',
+							targetWrites: 'none',
+						},
+						currentRunCreated: false,
+						previousAppliedRunId: null,
+					},
+				},
 				occurredAt: new Date('2026-07-24T18:02:01.000Z'),
 			},
 			{
@@ -167,12 +181,12 @@ function source(): CourseSyncHistorySource {
 }
 
 describe('course sync history loaders', () => {
-	it('never selects the large manifest or plan in sorted history projections', () => {
+	it('keeps large manifests/plans out while selecting bounded poll metadata', () => {
 		expect(Object.keys(courseSyncRevisionHistoryProjection)).not.toContain(
 			'manifest',
 		)
 		expect(Object.keys(courseSyncRunHistoryProjection)).not.toContain('plan')
-		expect(Object.keys(courseSyncPollLogHistoryProjection)).not.toContain(
+		expect(Object.keys(courseSyncPollLogHistoryProjection)).toContain(
 			'metadata',
 		)
 	})
@@ -196,10 +210,15 @@ describe('course sync history loaders', () => {
 			'held',
 			'applied',
 		])
-		expect(
-			detail?.attempts.map((attempt) => attempt.pollRunId),
-		).not.toContain('poll-idle-1')
+		expect(detail?.attempts.map((attempt) => attempt.pollRunId)).not.toContain(
+			'poll-idle-1',
+		)
 		expect(detail?.idlePollCount).toBe(1)
+		expect(detail?.failureSummary).toBeNull()
+		expect(detail?.attempts[1]?.events[1]?.failureSummary).toMatchObject({
+			code: 'POLL_RUN_KILLED',
+			currentRunCreated: false,
+		})
 		expect(historySource.listRevisions).toHaveBeenCalledWith('version-070')
 		expect(historySource.listPollLogs).toHaveBeenCalledWith('version-070')
 	})

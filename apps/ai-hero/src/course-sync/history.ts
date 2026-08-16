@@ -9,6 +9,8 @@ import {
 } from '@/db/schema'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 
+import type { CourseSyncFailureSummary } from './detection-poller'
+
 export const courseSyncRevisionHistoryProjection = {
 	sourceRevisionId: courseSyncSourceRevision.sourceRevisionId,
 	bindingId: courseSyncSourceRevision.bindingId,
@@ -64,6 +66,7 @@ export const courseSyncPollLogHistoryProjection = {
 	stage: courseSyncPollLog.stage,
 	outcome: courseSyncPollLog.outcome,
 	failureClass: courseSyncPollLog.failureClass,
+	metadata: courseSyncPollLog.metadata,
 	occurredAt: courseSyncPollLog.occurredAt,
 } as const
 
@@ -107,6 +110,7 @@ type PollLogRow = {
 	stage: string
 	outcome: string
 	failureClass: string | null
+	metadata?: Record<string, unknown> | null
 	occurredAt: Date
 }
 
@@ -243,13 +247,19 @@ export const drizzleCourseSyncHistorySource: CourseSyncHistorySource = {
 	},
 }
 
-export type CourseSyncHistoryOutcome = 'applied' | 'failed' | 'held' | 'staging'
+export type CourseSyncHistoryOutcome =
+	| 'applied'
+	| 'awaiting-apply'
+	| 'failed'
+	| 'held'
+	| 'staging'
 
 export type CourseSyncHistoryEvent = {
 	id: string
 	stage: string
 	outcome: string
 	failureClass: string | null
+	failureSummary: CourseSyncFailureSummary | null
 	occurredAt: Date
 	controlPlaneRunId: string | null
 }
@@ -274,6 +284,7 @@ export type CourseSyncHistoryItem = {
 	when: Date
 	outcome: CourseSyncHistoryOutcome
 	failureClass: string | null
+	failureSummary: CourseSyncFailureSummary | null
 	sectionCount: number | null
 	lessonCount: number | null
 	videoCount: number | null
@@ -295,6 +306,24 @@ function latestDate(dates: Array<Date | null | undefined>) {
 	return new Date(
 		Math.max(...dates.filter(Boolean).map((date) => date!.getTime())),
 	)
+}
+
+function failureSummaryFromMetadata(
+	metadata: Record<string, unknown> | null | undefined,
+): CourseSyncFailureSummary | null {
+	const value = metadata?.failureSummary
+	if (!value || typeof value !== 'object') return null
+	const summary = value as Partial<CourseSyncFailureSummary>
+	if (
+		typeof summary.code !== 'string' ||
+		!Array.isArray(summary.actual) ||
+		!Array.isArray(summary.expected) ||
+		typeof summary.retryable !== 'boolean' ||
+		typeof summary.currentRunCreated !== 'boolean'
+	) {
+		return null
+	}
+	return value as CourseSyncFailureSummary
 }
 
 function attemptOutcome(
@@ -331,6 +360,10 @@ function overallOutcome(input: {
 			outcome: 'held',
 			failureClass: input.state?.failureClass ?? heldLog?.failureClass ?? null,
 		}
+	}
+
+	if (input.state?.status === 'awaiting-apply') {
+		return { outcome: 'awaiting-apply', failureClass: null }
 	}
 
 	const failedRun = [...input.runs]
@@ -392,6 +425,7 @@ function buildAttempts(logs: PollLogRow[]): CourseSyncHistoryAttempt[] {
 			stage: event.stage,
 			outcome: event.outcome,
 			failureClass: event.failureClass,
+			failureSummary: failureSummaryFromMetadata(event.metadata),
 			occurredAt: event.occurredAt,
 			controlPlaneRunId: event.controlPlaneRunId,
 		})),
@@ -461,6 +495,16 @@ async function loadHistory(
 			state?.updatedAt,
 		]
 
+		const latestFailureSummary =
+			[...versionLogs]
+				.reverse()
+				.map((entry) => failureSummaryFromMetadata(entry.metadata))
+				.find((summary) => summary !== null) ?? null
+		const failureSummary =
+			status.outcome === 'failed' || status.outcome === 'held'
+				? latestFailureSummary
+				: null
+
 		return {
 			bindingId,
 			courseVersionId: versionId,
@@ -475,6 +519,7 @@ async function loadHistory(
 			when: latestDate(dates),
 			outcome: status.outcome,
 			failureClass: status.failureClass,
+			failureSummary,
 			sectionCount: revision ? toNumber(revision.sectionCount) : null,
 			lessonCount: revision ? toNumber(revision.lessonCount) : null,
 			videoCount: assetSummary ? toNumber(assetSummary.videoCount) : null,

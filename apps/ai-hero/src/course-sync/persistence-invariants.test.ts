@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-	AI_HERO_DRAFT_SYNC_BINDING,
+	AI_HERO_COURSE_SYNC_BINDING,
 	type CourseSyncBinding,
 } from './types'
 import {
@@ -17,7 +17,7 @@ function section(position: number) {
 			fields: {
 				state: 'draft',
 				visibility: 'unlisted',
-				courseSync: { bindingId: AI_HERO_DRAFT_SYNC_BINDING.bindingId },
+				courseSync: { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId },
 			},
 		},
 	}
@@ -34,14 +34,14 @@ describe('course sync persistence invariants', () => {
 	it('accepts any number of ordered managed sections', () => {
 		expect(() =>
 			assertManagedChildRelations(
-				AI_HERO_DRAFT_SYNC_BINDING as CourseSyncBinding,
+				AI_HERO_COURSE_SYNC_BINDING as CourseSyncBinding,
 				[section(0), section(1), section(2)],
 			),
 		).not.toThrow()
 	})
 
 	it('rejects duplicate, negative, or foreign managed child slots', () => {
-		const binding = AI_HERO_DRAFT_SYNC_BINDING as CourseSyncBinding
+		const binding = AI_HERO_COURSE_SYNC_BINDING as CourseSyncBinding
 		expect(() =>
 			assertManagedChildRelations(binding, [section(0), section(0)]),
 		).toThrowError(expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }))

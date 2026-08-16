@@ -40,8 +40,8 @@ export function assertManagedChildRelations(
 		const sync = fields?.courseSync as Record<string, unknown> | undefined
 		if (
 			child.resource?.type !== 'section' ||
-			fields?.state !== binding.requiredState ||
-			fields.visibility !== binding.requiredVisibility ||
+			fields?.state !== binding.managedChildContract.state ||
+			fields.visibility !== binding.managedChildContract.visibility ||
 			sync?.bindingId !== binding.bindingId
 		) {
 			throw new CourseSyncError(

@@ -16,17 +16,20 @@ function sameSecret(actual: string, expected: string) {
 
 export function authorizeCourseSyncRequest(
 	request: Request,
-	role: CourseSyncRole,
+	role: CourseSyncRole | ReadonlyArray<CourseSyncRole>,
 ) {
 	const configured = {
 		stage: env.COURSE_SYNC_STAGE_TOKEN,
 		worker: env.COURSE_SYNC_WORKER_TOKEN,
 		operator: env.COURSE_SYNC_OPERATOR_TOKEN,
 	}
-	const allowed =
-		role === 'read'
+	const roles: ReadonlyArray<CourseSyncRole> =
+		typeof role === 'string' ? [role] : role
+	const allowed = roles.flatMap((candidate) =>
+		candidate === 'read'
 			? [configured.stage, configured.worker, configured.operator]
-			: [configured[role]]
+			: [configured[candidate]],
+	)
 	const expected = allowed.filter((token): token is string => Boolean(token))
 	if (expected.length === 0) {
 		throw new CourseSyncError(
@@ -66,6 +69,12 @@ export function courseSyncErrorResponse(error: unknown) {
 					failure.status >= 500
 						? 'Course sync operation failed.'
 						: failure.message,
+				...(failure.status < 500
+					? {
+							retryable: failure.retryable,
+							details: failure.details ?? null,
+						}
+					: {}),
 			},
 		},
 		{ status: failure.status, headers: { 'Cache-Control': 'no-store' } },

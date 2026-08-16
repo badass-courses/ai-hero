@@ -31,13 +31,25 @@ export const CourseSyncResourceAction = Schema.Literals([
 
 export const CourseSyncBindingSummary = Schema.Struct({
 	bindingId: NonEmptyString,
+	contractVersion: Schema.Literal(2),
 	status: Schema.Literals(["active", "suspended", "revoked"]),
 	sourceCourseId: NonEmptyString,
+	applyPolicy: Schema.Literals(["auto", "operator"]),
 	target: Schema.Struct({
-		productType: Schema.Literal("self-paced"),
-		anchorResourceType: Schema.Literal("workshop"),
-		requiredState: Schema.Literal("draft"),
-		requiredVisibility: Schema.Literal("unlisted"),
+		product: Schema.Struct({
+			type: Schema.Literal("self-paced"),
+			state: Schema.Literal("published"),
+			visibility: Schema.Literal("public"),
+		}),
+		workshop: Schema.Struct({
+			type: Schema.Literal("workshop"),
+			state: Schema.Literal("published"),
+			visibility: Schema.Literal("unlisted"),
+		}),
+		managedChildren: Schema.Struct({
+			state: Schema.Literal("draft"),
+			visibility: Schema.Literal("unlisted"),
+		}),
 		sectionMappingPolicy: Schema.Literal("sections-in-anchor-workshop"),
 	}),
 })
@@ -58,15 +70,15 @@ export const CourseSyncRunSummary = Schema.Struct({
 					sourceId: NonEmptyString,
 					action: CourseSyncResourceAction,
 					position: Schema.Number,
-				})
+				}),
 			),
 			media: Schema.Array(
 				Schema.Struct({
 					sourceVideoId: NonEmptyString,
 					action: Schema.Literals(["update", "retain"]),
-				})
+				}),
 			),
-		})
+		}),
 	),
 	resourceCounts: Schema.Struct({
 		create: Schema.Number,
