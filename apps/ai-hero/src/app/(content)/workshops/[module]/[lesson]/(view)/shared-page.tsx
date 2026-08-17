@@ -12,6 +12,7 @@ import { ContentReadTracker } from '@/components/content-read-tracker'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { env } from '@/env.mjs'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
+import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import type { Lesson } from '@/lib/lessons'
 import {
 	getLessonVideoPlaybackResource,
@@ -63,12 +64,36 @@ export async function LessonPage({
 	// Compile the lesson body only after the viewer is confirmed allowed to open
 	// the lesson. Compilation can resolve embedded video playback IDs server-side
 	// (see compile-mdx.tsx), so it must never run for an unauthorized viewer.
-	const mdxContentPromise = compileMDX(
-		lesson?.fields?.body || '',
-		{},
-		{},
-		{ lessonId: lesson.id },
-	)
+	//
+	// `maxLinks: 0` disables the auto-linker: lesson bodies already carry
+	// hand-authored dictionary links, and the entries are passed only so those
+	// links render as `DictionaryHoverLink` with the term's definition on hover,
+	// the same as in articles.
+	//
+	// The dictionary is fetched from GitHub and does fail (504s observed), so it
+	// is strictly best-effort: hover cards are a nicety, and paid course material
+	// must never fail to render because a third-party read timed out. On failure
+	// the links stay plain links.
+	const mdxContentPromise = getAiCodingDictionary()
+		.then(({ entries }) => entries)
+		.catch(async (error) => {
+			await log.warn('lesson.dictionary.unavailable', {
+				lessonId: lesson.id,
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return null
+		})
+		.then((entries) =>
+			compileMDX(
+				lesson?.fields?.body || '',
+				{},
+				{},
+				{
+					lessonId: lesson.id,
+					...(entries ? { dictionaryAutoLink: { entries, maxLinks: 0 } } : {}),
+				},
+			),
+		)
 
 	return (
 		<main className="w-full">
