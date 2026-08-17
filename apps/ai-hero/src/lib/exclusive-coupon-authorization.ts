@@ -55,6 +55,8 @@ export type ExclusiveCouponAuthorizationDecision = {
 	authorized: boolean
 	protectedMerchantCoupon: boolean
 	protectedSiteCoupon: boolean
+	/** The denied selection was a PPP coupon; server pricing may re-derive PPP. */
+	requestedPPP?: boolean
 	entitlementCouponId?: string
 }
 
@@ -160,6 +162,7 @@ export async function authorizeExclusiveCouponSelection({
 			authorized: false,
 			protectedMerchantCoupon,
 			protectedSiteCoupon,
+			requestedPPP: true,
 		}
 	}
 

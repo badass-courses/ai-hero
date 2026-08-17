@@ -281,6 +281,7 @@ describe('authorizeExclusiveCouponSelection', () => {
 		})
 
 		expect(result.authorized).toBe(false)
+		expect(result.requestedPPP).toBe(true)
 	})
 
 	it('rejects inactive public site input without a merchant selector', async () => {

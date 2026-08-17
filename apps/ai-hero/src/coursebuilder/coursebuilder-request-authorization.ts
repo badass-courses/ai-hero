@@ -132,6 +132,12 @@ const protectPricesFormattedRequest = async (
 	if (!decision.authorized) {
 		delete body.merchantCoupon
 		delete body.couponId
+		// A PPP selection is stripped, not honored; the client disables
+		// autoApplyPPP while its PPP box is checked, so re-enable it and let
+		// server pricing re-derive PPP from the trusted country.
+		if (decision.requestedPPP) {
+			body.autoApplyPPP = true
+		}
 	}
 
 	return requestWithJsonBody(request, body)
