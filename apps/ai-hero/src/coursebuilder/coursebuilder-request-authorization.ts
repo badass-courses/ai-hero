@@ -5,7 +5,12 @@ import {
 } from '@/lib/exclusive-coupon-authorization'
 
 type ProtectCourseBuilderRequestOptions = {
-	adapter: ExclusiveCouponAuthorizationAdapter
+	adapter: ExclusiveCouponAuthorizationAdapter & {
+		getPurchase?: (purchaseId: string) => Promise<{
+			userId?: string | null
+			status?: string
+		} | null>
+	}
 	verifiedUserId?: string
 	resolveServerComputedMerchantCoupon?: (input: {
 		productId: string
@@ -201,10 +206,24 @@ const protectCheckoutRequest = async (
 	// PPP is opt-in: it region-locks the purchase, so the buyer must select it.
 	// Legacy checkout hardcodes autoApplyPPP and re-derives PPP from the query
 	// country (falling back to the trusted header), so without an explicit PPP
-	// selection pin the query country to a non-PPP value. Upgrades keep the
-	// real country — a PPP purchase upgrade legitimately re-applies PPP.
-	if (!decision.requestedPPP && !url.searchParams.get('upgradeFromPurchaseId')) {
-		url.searchParams.set('country', 'US')
+	// selection pin the query country to a non-PPP value. The one exemption is
+	// upgrading the caller's own region-restricted (PPP) purchase, which
+	// legitimately re-applies PPP — a forged upgradeFromPurchaseId must not
+	// unpin the country.
+	if (!decision.requestedPPP) {
+		const upgradeFromPurchaseId = stringValue(
+			url.searchParams.get('upgradeFromPurchaseId'),
+		)
+		const upgradePurchase =
+			upgradeFromPurchaseId && verifiedUserId
+				? await adapter.getPurchase?.(upgradeFromPurchaseId)
+				: null
+		const upgradesOwnRestrictedPurchase =
+			upgradePurchase?.userId === verifiedUserId &&
+			upgradePurchase?.status === 'Restricted'
+		if (!upgradesOwnRestrictedPurchase) {
+			url.searchParams.set('country', 'US')
+		}
 	}
 
 	return requestWithUrl(request, url)
