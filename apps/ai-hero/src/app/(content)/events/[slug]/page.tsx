@@ -19,7 +19,7 @@ import { compileMDX } from '@/utils/compile-mdx'
 import { formatInTimeZone } from 'date-fns-tz'
 import { count, eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 import { Event as EventMetaSchema, Ticket } from 'schema-dts'
 
 import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'

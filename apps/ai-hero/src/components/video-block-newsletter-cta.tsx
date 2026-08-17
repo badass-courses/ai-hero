@@ -12,7 +12,7 @@ import {
 	ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 import { useSession } from 'next-auth/react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 import { twMerge } from 'tailwind-merge'
 
 import common from '../text/common'

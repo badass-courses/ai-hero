@@ -27,7 +27,7 @@ import {
 	getCachedWorkshopProduct,
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 import { Course } from 'schema-dts'
 
 import { Skeleton } from '@coursebuilder/ui'

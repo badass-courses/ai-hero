@@ -28,7 +28,7 @@ import {
 } from '@/utils/get-nextup-resource-from-list'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { Github } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 import readingTime from 'reading-time'
 
 import { ContentResourceResource } from '@coursebuilder/core/schemas'
