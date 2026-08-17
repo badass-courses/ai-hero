@@ -110,6 +110,15 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				)
 				if (currentResolved.migrated) {
 					const occurredAt = new Date()
+					const fromContractVersion = currentResolved.fromContractVersion
+					if (fromContractVersion === null) {
+						throw new CourseSyncError(
+							'IMMUTABLE_BINDING_CONFLICT',
+							'Migrated binding is missing its prior contract version.',
+							409,
+							{ category: 'lifecycle_conflict', retryable: false },
+						)
+					}
 					await trx
 						.update(courseSyncBinding)
 						.set({
@@ -123,16 +132,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					await trx
 						.insert(courseSyncPollLog)
 						.values({
-							id: `cspl_binding_migration_${sha256(binding.bindingId)}`,
+							id: `cspl_binding_migration_${sha256(`${binding.bindingId}:v${binding.contractVersion}`)}`,
 							bindingId: binding.bindingId,
 							courseVersionId: 'unknown',
 							providerRevision: 'unknown',
-							runId: `binding-migration:${binding.bindingId}:v1-v2`,
+							runId: `binding-migration:${binding.bindingId}:v${fromContractVersion}-v${binding.contractVersion}`,
 							stage: 'migration',
 							outcome: 'succeeded',
 							metadata: {
-								fromContractVersion: 1,
-								toContractVersion: 2,
+								fromContractVersion,
+								toContractVersion: binding.contractVersion,
 							},
 							occurredAt,
 						})
@@ -566,6 +575,14 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				.from(courseSyncPollState)
 				.where(eq(courseSyncPollState.bindingId, binding.bindingId))
 				.for('update')
+			const pollStateAuthorizesApply =
+				lockedPollState !== undefined &&
+				lockedPollState.controlPlaneRunId === runId &&
+				lockedPollState.courseVersionId === plan.courseVersionId &&
+				lockedPollState.providerRevision === lockedRevision?.providerRevision &&
+				(lockedPollState.status === 'awaiting-apply' ||
+					(binding.applyPolicy === 'bounded-auto' &&
+						lockedPollState.status === 'applying'))
 			if (
 				!lockedRevision ||
 				competingRuns.some((candidate) => candidate.runId !== runId) ||
@@ -574,17 +591,11 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				row.courseVersionId !== plan.courseVersionId ||
 				lockedRevision.courseVersionId !== plan.courseVersionId ||
 				lockedRevision.bindingId !== binding.bindingId ||
-				(binding.applyPolicy === 'operator' &&
-					(!lockedPollState ||
-						lockedPollState.status !== 'awaiting-apply' ||
-						lockedPollState.controlPlaneRunId !== runId ||
-						lockedPollState.courseVersionId !== plan.courseVersionId ||
-						lockedPollState.providerRevision !==
-							lockedRevision.providerRevision))
+				!pollStateAuthorizesApply
 			) {
 				throw new CourseSyncError(
 					'STALE_PREVIEW',
-					'The run is not the current awaiting-apply head.',
+					'The run is not the current authorized apply head.',
 					409,
 					{ category: 'lifecycle_conflict', retryable: false },
 				)
@@ -960,6 +971,69 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						},
 					})
 			}
+
+			const activatedResources = await trx
+				.select({
+					id: contentResource.id,
+					currentVersionId: contentResource.currentVersionId,
+					fields: contentResource.fields,
+				})
+				.from(contentResource)
+				.where(inArray(contentResource.id, resourceIds))
+			const activatedRelations = await trx
+				.select({
+					resourceOfId: contentResourceResource.resourceOfId,
+					resourceId: contentResourceResource.resourceId,
+					position: contentResourceResource.position,
+				})
+				.from(contentResourceResource)
+				.where(
+					and(
+						inArray(contentResourceResource.resourceId, resourceIds),
+						isNull(contentResourceResource.deletedAt),
+					),
+				)
+			const expectedPlanByResource = new Map(
+				plan.resources.map((item) => [item.targetResourceId, item]),
+			)
+			const expectedReceiptByResource = new Map(
+				receipts.map((receipt) => [receipt.resourceId, receipt]),
+			)
+			const activeRelationsByResource = new Map<
+				string,
+				Array<(typeof activatedRelations)[number]>
+			>()
+			for (const relation of activatedRelations) {
+				const active = activeRelationsByResource.get(relation.resourceId) ?? []
+				active.push(relation)
+				activeRelationsByResource.set(relation.resourceId, active)
+			}
+			const activationMismatch =
+				activatedResources.length !== plan.resources.length ||
+				activatedRelations.length !== plan.resources.length ||
+				activatedResources.some((resource) => {
+					const item = expectedPlanByResource.get(resource.id)
+					const receipt = expectedReceiptByResource.get(resource.id)
+					const relations = activeRelationsByResource.get(resource.id) ?? []
+					return (
+						!item ||
+						!receipt ||
+						resource.currentVersionId !== receipt.contentResourceVersionId ||
+						stableJson(resource.fields ?? {}) !== stableJson(item.fields) ||
+						relations.length !== 1 ||
+						relations[0]?.resourceOfId !== item.parentResourceId ||
+						relations[0]?.position !== item.position
+					)
+				})
+			if (activationMismatch) {
+				throw new CourseSyncError(
+					'APPLY_WRITE_VERIFICATION_FAILED',
+					'Applied pointers, fields, relations, or version receipts did not match the content-addressed plan.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
+			}
+
 			const appliedAt = new Date()
 			await trx
 				.update(courseSyncRun)
@@ -976,7 +1050,10 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				.where(
 					and(
 						eq(courseSyncPollState.bindingId, binding.bindingId),
-						eq(courseSyncPollState.status, 'awaiting-apply'),
+						inArray(courseSyncPollState.status, [
+							'awaiting-apply',
+							'applying',
+						]),
 						eq(courseSyncPollState.controlPlaneRunId, runId),
 					),
 				)

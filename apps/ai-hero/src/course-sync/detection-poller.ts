@@ -5,6 +5,7 @@ import {
 	type CourseSyncRunSummary,
 } from '@ai-hero/course-sync-schema'
 
+import type { CourseSyncBoundedAutoApplyDecision } from './persistence-invariants'
 import type { FrozenSourceAsset } from './types'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
@@ -120,6 +121,8 @@ export type CourseSyncNotification =
 			controlPlaneRunId: string
 			resourceCounts: CourseSyncRunSummary['resourceCounts']
 			mediaCount: number
+			planSha256: string
+			autoApplyReason: string
 	  }
 	| {
 			kind: 'failure'
@@ -172,9 +175,44 @@ export type CourseSyncDetectionPollerDependencies = {
 		frozenAssets: ReadonlyArray<FrozenSourceAsset>
 	}): Promise<CourseSyncRunSummary>
 	preview(runId: string): Promise<CourseSyncRunSummary>
+	evaluateBoundedAutoApply(
+		runId: string,
+	): Promise<CourseSyncBoundedAutoApplyDecision>
+	claimReviewNotification(input: {
+		bindingId: string
+		courseVersionId: string
+		providerRevision: string
+		runId: string
+		controlPlaneRunId: string
+		planSha256: string
+		occurredAt: Date
+	}): Promise<boolean>
+	completeReviewNotification(input: {
+		bindingId: string
+		courseVersionId: string
+		providerRevision: string
+		runId: string
+		controlPlaneRunId: string
+		planSha256: string
+		occurredAt: Date
+	}): Promise<void>
+	failReviewNotification(input: {
+		bindingId: string
+		courseVersionId: string
+		providerRevision: string
+		runId: string
+		controlPlaneRunId: string
+		planSha256: string
+		occurredAt: Date
+		failureClass: string
+	}): Promise<void>
 	apply(input: {
 		runId: string
 		idempotencyKey: string
+	}): Promise<CourseSyncRunSummary>
+	verifyApplied(input: {
+		runId: string
+		planSha256: string
 	}): Promise<CourseSyncRunSummary>
 	notify(notification: CourseSyncNotification): Promise<void>
 	clock?: () => Date
@@ -434,6 +472,16 @@ export function buildCourseSyncNotificationPayload(
 						},
 						{ title: 'Manifest SHA', value: manifestSha, short: true },
 						{
+							title: 'Plan SHA',
+							value: notification.planSha256.slice(0, 12),
+							short: true,
+						},
+						{
+							title: 'Auto apply',
+							value: notification.autoApplyReason,
+							short: true,
+						},
+						{
 							title: 'Sync run',
 							value: notification.controlPlaneRunId,
 							short: true,
@@ -685,6 +733,119 @@ export function createCourseSyncDetectionPoller(
 		let freezeProgressKnown = true
 		let freezeInFlight = false
 
+		const notifyReview = async (
+			syncRun: CourseSyncRunSummary,
+			autoApplyReason: string,
+		) => {
+			if (!syncRun.planSha256) {
+				throw new CourseSyncError(
+					'PLAN_HASH_MISSING',
+					'The preview has no content-addressed plan hash.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			const reviewReceipt = {
+				bindingId,
+				courseVersionId,
+				providerRevision,
+				runId,
+				controlPlaneRunId: syncRun.runId,
+				planSha256: syncRun.planSha256,
+				occurredAt: clock(),
+			}
+			const claimed =
+				await dependencies.claimReviewNotification(reviewReceipt)
+			if (!claimed) {
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId: syncRun.runId,
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: {
+						reason: 'duplicate-review-notification',
+						planSha256: syncRun.planSha256,
+					},
+				})
+				return
+			}
+			try {
+				await dependencies.notify({
+					kind: 'review',
+					courseVersionId,
+					courseName,
+					providerRevision,
+					manifestSha256,
+					runId,
+					controlPlaneRunId: syncRun.runId,
+					resourceCounts: syncRun.resourceCounts,
+					mediaCount: mediaCount(syncRun),
+					planSha256: syncRun.planSha256,
+					autoApplyReason,
+				})
+			} catch (error) {
+				const failureClass = courseSyncFailureClass(error)
+				await dependencies.failReviewNotification({
+					...reviewReceipt,
+					occurredAt: clock(),
+					failureClass,
+				})
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId: syncRun.runId,
+					stage: 'notify',
+					outcome: 'failed',
+					failureClass,
+					metadata: {
+						reason: 'review-notification-delivery-failed',
+						planSha256: syncRun.planSha256,
+					},
+				})
+				return
+			}
+			try {
+				await dependencies.completeReviewNotification({
+					...reviewReceipt,
+					occurredAt: clock(),
+				})
+			} catch (error) {
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId: syncRun.runId,
+					stage: 'notify',
+					outcome: 'failed',
+					failureClass: courseSyncFailureClass(error),
+					metadata: {
+						reason: 'review-notification-receipt-ambiguous',
+						planSha256: syncRun.planSha256,
+					},
+				})
+				return
+			}
+			await log({
+				bindingId,
+				courseVersionId,
+				providerRevision,
+				runId,
+				controlPlaneRunId: syncRun.runId,
+				stage: 'notify',
+				outcome: 'succeeded',
+				metadata: {
+					reason: 'awaiting-operator-apply',
+					planSha256: syncRun.planSha256,
+				},
+			})
+		}
+
 		try {
 			await log({
 				bindingId,
@@ -812,6 +973,7 @@ export function createCourseSyncDetectionPoller(
 						status: 'awaiting-apply',
 						updatedAt: clock(),
 					})
+					await notifyReview(currentRun, 'awaiting-operator-apply')
 					await log({
 						bindingId,
 						courseVersionId,
@@ -1160,7 +1322,36 @@ export function createCourseSyncDetectionPoller(
 			}
 
 			if (syncRun.state === 'previewed' || syncRun.state === 'failed') {
-				lifecycle.send({ type: 'PREVIEW.OK' })
+				if (!syncRun.planSha256) {
+					throw new CourseSyncError(
+						'PLAN_HASH_MISSING',
+						'The preview has no content-addressed plan hash.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+				const previewPlanSha256 = syncRun.planSha256
+				const autoDecision =
+					syncRun.state === 'previewed' &&
+					AI_HERO_COURSE_SYNC_BINDING.applyPolicy === 'bounded-auto'
+						? await dependencies.evaluateBoundedAutoApply(syncRun.runId)
+						: null
+				if (
+					autoDecision &&
+					autoDecision.planSha256 !== previewPlanSha256
+				) {
+					throw new CourseSyncError(
+						'PLAN_HASH_MISMATCH',
+						'The bounded-auto decision does not match the staged preview.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+				const boundedAutoEligible = autoDecision?.eligible === true
+				lifecycle.send({
+					type: 'PREVIEW.EVALUATED',
+					boundedAutoEligible,
+				})
 				if (lifecycle.getSnapshot().matches({ active: 'awaitingApply' })) {
 					await dependencies.savePollState({
 						bindingId,
@@ -1172,27 +1363,12 @@ export function createCourseSyncDetectionPoller(
 						failureClass: null,
 						updatedAt: clock(),
 					})
-					await dependencies.notify({
-						kind: 'review',
-						courseVersionId,
-						courseName,
-						providerRevision,
-						manifestSha256,
-						runId,
-						controlPlaneRunId: syncRun.runId,
-						resourceCounts: syncRun.resourceCounts,
-						mediaCount: mediaCount(syncRun),
-					})
-					await log({
-						bindingId,
-						courseVersionId,
-						providerRevision,
-						runId,
-						controlPlaneRunId: syncRun.runId,
-						stage: 'notify',
-						outcome: 'succeeded',
-						metadata: { reason: 'awaiting-operator-apply' },
-					})
+					await notifyReview(
+						syncRun,
+						autoDecision?.eligible === false
+							? autoDecision.reason
+							: 'operator-policy-or-preview-state',
+					)
 					return {
 						outcome: 'awaiting-apply',
 						courseVersionId,
@@ -1202,6 +1378,16 @@ export function createCourseSyncDetectionPoller(
 				}
 
 				activeStage = 'apply'
+				await dependencies.savePollState({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					status: 'applying',
+					consecutiveFailures: 0,
+					controlPlaneRunId: syncRun.runId,
+					failureClass: null,
+					updatedAt: clock(),
+				})
 				await log({
 					bindingId,
 					courseVersionId,
@@ -1210,10 +1396,18 @@ export function createCourseSyncDetectionPoller(
 					controlPlaneRunId,
 					stage: 'apply',
 					outcome: 'started',
+					metadata: {
+						mode: 'bounded-auto',
+						planSha256: previewPlanSha256,
+					},
 				})
 				syncRun = await dependencies.apply({
 					runId: syncRun.runId,
 					idempotencyKey: `course-sync-poll-apply:${syncRun.runId}`,
+				})
+				syncRun = await dependencies.verifyApplied({
+					runId: syncRun.runId,
+					planSha256: previewPlanSha256,
 				})
 			}
 

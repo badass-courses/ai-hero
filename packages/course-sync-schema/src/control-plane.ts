@@ -32,10 +32,10 @@ export const CourseSyncResourceAction = Schema.Literals([
 
 export const CourseSyncBindingSummary = Schema.Struct({
 	bindingId: NonEmptyString,
-	contractVersion: Schema.Literal(2),
+	contractVersion: Schema.Literal(3),
 	status: Schema.Literals(["active", "suspended", "revoked"]),
 	sourceCourseId: NonEmptyString,
-	applyPolicy: Schema.Literals(["auto", "operator"]),
+	applyPolicy: Schema.Literals(["bounded-auto", "operator"]),
 	target: Schema.Struct({
 		product: Schema.Struct({
 			type: Schema.Literal("self-paced"),

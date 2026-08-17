@@ -107,12 +107,22 @@ function harness(input?: {
 	stage?: CourseSyncDetectionPollerDependencies['stage']
 	freezeAsset?: CourseSyncDetectionPollerDependencies['freezeAsset']
 	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
+	evaluateBoundedAutoApply?: CourseSyncDetectionPollerDependencies['evaluateBoundedAutoApply']
+	claimReviewNotification?: CourseSyncDetectionPollerDependencies['claimReviewNotification']
+	completeReviewNotification?: CourseSyncDetectionPollerDependencies['completeReviewNotification']
+	failReviewNotification?: CourseSyncDetectionPollerDependencies['failReviewNotification']
+	verifyApplied?: CourseSyncDetectionPollerDependencies['verifyApplied']
+	notify?: CourseSyncDetectionPollerDependencies['notify']
 }) {
 	let state = input?.state ?? null
 	let head = input?.head ?? null
 	const detectedManifest = input?.manifest ?? manifest
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
+	const reviewNotificationState = new Map<
+		string,
+		'started' | 'succeeded' | 'failed'
+	>()
 	const stage = vi.fn(input?.stage ?? (async () => run('staged')))
 	const preview = vi.fn(async () => run('previewed'))
 	const apply = vi.fn(input?.apply ?? (async () => run('applied')))
@@ -122,6 +132,50 @@ function harness(input?: {
 				head ? run(head.runState, { runId: head.runId }) : run('previewed')),
 	)
 	const freezeAsset = vi.fn(input?.freezeAsset ?? (async () => frozenAsset))
+	const evaluateBoundedAutoApply = vi.fn(
+		input?.evaluateBoundedAutoApply ??
+			(async () => ({
+				eligible: false as const,
+				planSha256: 'plan-sha',
+				reason: 'launch-policy-violation' as const,
+				failureCode: 'LAUNCH_APPLY_POLICY_VIOLATION',
+			})),
+	)
+	const claimReviewNotification = vi.fn(
+		input?.claimReviewNotification ??
+			(async ({ courseVersionId, planSha256 }) => {
+				const key = `${courseVersionId}:${planSha256}`
+				const state = reviewNotificationState.get(key)
+				if (state === 'started' || state === 'succeeded') return false
+				reviewNotificationState.set(key, 'started')
+				return true
+			}),
+	)
+	const completeReviewNotification = vi.fn(
+		input?.completeReviewNotification ??
+			(async ({ courseVersionId, planSha256 }) => {
+				reviewNotificationState.set(
+					`${courseVersionId}:${planSha256}`,
+					'succeeded',
+				)
+			}),
+	)
+	const failReviewNotification = vi.fn(
+		input?.failReviewNotification ??
+			(async ({ courseVersionId, planSha256 }) => {
+				reviewNotificationState.set(
+					`${courseVersionId}:${planSha256}`,
+					'failed',
+				)
+			}),
+	)
+	const notify = vi.fn(async (notification: CourseSyncNotification) => {
+		await input?.notify?.(notification)
+		notifications.push(notification)
+	})
+	const verifyApplied = vi.fn(
+		input?.verifyApplied ?? (async () => run('applied')),
+	)
 	const dependencies: CourseSyncDetectionPollerDependencies = {
 		readManifest: async () => ({
 			manifest: detectedManifest,
@@ -143,10 +197,13 @@ function harness(input?: {
 		},
 		stage,
 		preview,
+		evaluateBoundedAutoApply,
+		claimReviewNotification,
+		completeReviewNotification,
+		failReviewNotification,
 		apply,
-		notify: async (notification) => {
-			notifications.push(notification)
-		},
+		verifyApplied,
+		notify,
 		clock: () => new Date('2026-07-24T18:00:00.000Z'),
 	}
 	return {
@@ -155,6 +212,12 @@ function harness(input?: {
 		stage,
 		preview,
 		apply,
+		verifyApplied,
+		evaluateBoundedAutoApply,
+		claimReviewNotification,
+		completeReviewNotification,
+		failReviewNotification,
+		notify,
 		getRun,
 		logs,
 		notifications,
@@ -296,6 +359,108 @@ describe('course sync detection poller', () => {
 			outcome: 'no-op',
 		})
 		expect(test.state()).toMatchObject({ status: 'succeeded' })
+	})
+
+	it('auto-applies only a bounded eligible preview and verifies readback', async () => {
+		const test = harness({
+			head: {
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1',
+				runState: 'applied',
+			},
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+
+		await expect(test.poll('poll-auto')).resolves.toMatchObject({
+			outcome: 'applied',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		expect(test.evaluateBoundedAutoApply).toHaveBeenCalledWith('sync-run-2')
+		expect(test.apply).toHaveBeenCalledWith({
+			runId: 'sync-run-2',
+			idempotencyKey: 'course-sync-poll-apply:sync-run-2',
+		})
+		expect(test.verifyApplied).toHaveBeenCalledWith({
+			runId: 'sync-run-2',
+			planSha256: 'plan-sha',
+		})
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		expect(test.notifications).toEqual([
+			expect.objectContaining({ kind: 'success' }),
+		])
+	})
+
+	it('suppresses a yellow notification when its plan receipt already exists', async () => {
+		const test = harness({
+			head: {
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1',
+				runState: 'applied',
+			},
+			claimReviewNotification: async () => false,
+		})
+
+		await expect(test.poll('poll-duplicate-review')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.notifications).toHaveLength(0)
+		expect(test.logs).toContainEqual(
+			expect.objectContaining({
+				stage: 'notify',
+				outcome: 'skipped',
+				metadata: expect.objectContaining({
+					reason: 'duplicate-review-notification',
+					planSha256: 'plan-sha',
+				}),
+			}),
+		)
+	})
+
+	it('retries one failed yellow delivery and dedupes after completion', async () => {
+		let attempts = 0
+		const test = harness({
+			head: {
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1',
+				runState: 'applied',
+			},
+			notify: async (notification) => {
+				if (notification.kind === 'review' && attempts++ === 0) {
+					throw new Error('injected Slack failure')
+				}
+			},
+		})
+
+		await expect(test.poll('poll-review-fails')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.failReviewNotification).toHaveBeenCalledOnce()
+		expect(test.completeReviewNotification).not.toHaveBeenCalled()
+		test.setHead({
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			runId: 'sync-run-2',
+			runState: 'previewed',
+		})
+
+		await expect(test.poll('poll-review-retry')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.completeReviewNotification).toHaveBeenCalledOnce()
+		await expect(test.poll('poll-review-deduped')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.notify).toHaveBeenCalledTimes(2)
+		expect(test.notifications).toHaveLength(1)
 	})
 
 	it.each([

@@ -12,6 +12,7 @@ import {
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
 	courseSyncRollbackPointer,
+	evaluateCourseSyncBoundedAutoApply,
 	resolveCourseSyncRollbackFields,
 } from './persistence-invariants'
 
@@ -119,6 +120,57 @@ describe('course sync persistence invariants', () => {
 		).not.toThrow()
 	})
 
+	it('returns a typed bounded-auto decision without weakening apply enforcement', () => {
+		expect(evaluateCourseSyncBoundedAutoApply(currentManifestPlan())).toEqual({
+			eligible: true,
+			planSha256: 'b'.repeat(64),
+		})
+		const atBudget = currentManifestPlan()
+		for (const resource of atBudget.resources) resource.action = 'retain'
+		for (const resource of atBudget.resources.slice(0, 50)) {
+			resource.action = 'update'
+		}
+		for (const media of atBudget.media) media.action = 'retain'
+		for (const media of atBudget.media.slice(0, 25)) media.action = 'update'
+		expect(evaluateCourseSyncBoundedAutoApply(atBudget)).toEqual({
+			eligible: true,
+			planSha256: 'b'.repeat(64),
+		})
+
+		const overBudget = currentManifestPlan()
+		for (const resource of overBudget.resources) resource.action = 'retain'
+		for (const resource of overBudget.resources.slice(0, 51)) {
+			resource.action = 'update'
+		}
+		expect(evaluateCourseSyncBoundedAutoApply(overBudget)).toEqual({
+			eligible: false,
+			planSha256: 'b'.repeat(64),
+			reason: 'change-budget-exceeded',
+			failureCode: 'BOUNDED_AUTO_CHANGE_BUDGET_EXCEEDED',
+		})
+
+		const overMediaBudget = currentManifestPlan()
+		for (const media of overMediaBudget.media) media.action = 'retain'
+		for (const media of overMediaBudget.media.slice(0, 26)) {
+			media.action = 'update'
+		}
+		expect(evaluateCourseSyncBoundedAutoApply(overMediaBudget)).toEqual({
+			eligible: false,
+			planSha256: 'b'.repeat(64),
+			reason: 'change-budget-exceeded',
+			failureCode: 'BOUNDED_AUTO_CHANGE_BUDGET_EXCEEDED',
+		})
+
+		const unsafe = currentManifestPlan()
+		unsafe.resources[0]!.detached = true
+		expect(evaluateCourseSyncBoundedAutoApply(unsafe)).toEqual({
+			eligible: false,
+			planSha256: 'b'.repeat(64),
+			reason: 'launch-policy-violation',
+			failureCode: 'LAUNCH_APPLY_POLICY_VIOLATION',
+		})
+	})
+
 	it.each([
 		[
 			'reparent',
@@ -169,6 +221,18 @@ describe('course sync persistence invariants', () => {
 			'wrong media count',
 			(plan: SyncPlan) => {
 				plan.media = plan.media.slice(1)
+			},
+		],
+		[
+			'unready media',
+			(plan: SyncPlan) => {
+				plan.media[0]!.muxPlaybackId = ''
+			},
+		],
+		[
+			'zero-duration media',
+			(plan: SyncPlan) => {
+				plan.media[0]!.duration = 0
 			},
 		],
 	] as const)(

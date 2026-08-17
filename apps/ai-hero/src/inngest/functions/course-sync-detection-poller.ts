@@ -1,6 +1,9 @@
 import { slackProvider } from '@/coursebuilder/slack-provider'
 import {
 	appendCourseSyncPollLog,
+	claimCourseSyncReviewNotification,
+	completeCourseSyncReviewNotification,
+	failCourseSyncReviewNotification,
 	getCourseSyncPollState,
 	getCourseSyncRevisionHead,
 	saveCourseSyncPollState,
@@ -179,9 +182,29 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				runTypedStep('preview-course-sync-revision', () =>
 					courseSyncControlPlane.preview(controlPlaneRunId),
 				),
+			evaluateBoundedAutoApply: (controlPlaneRunId) =>
+				runTypedStep('evaluate-bounded-auto-apply', () =>
+					courseSyncControlPlane.evaluateBoundedAutoApply(controlPlaneRunId),
+				),
+			claimReviewNotification: (input) =>
+				runTypedStep('claim-course-sync-review-notification', () =>
+					claimCourseSyncReviewNotification(input),
+				),
+			completeReviewNotification: (input) =>
+				runTypedStep('complete-course-sync-review-notification', () =>
+					completeCourseSyncReviewNotification(input),
+				),
+			failReviewNotification: (input) =>
+				runTypedStep('fail-course-sync-review-notification', () =>
+					failCourseSyncReviewNotification(input),
+				),
 			apply: (input) =>
 				runTypedStep('apply-course-sync-revision', () =>
 					courseSyncControlPlane.apply(input),
+				),
+			verifyApplied: (input) =>
+				runTypedStep('verify-auto-applied-course-sync-revision', () =>
+					courseSyncControlPlane.verifyApplied(input),
 				),
 			notify: async (notification) => {
 				await runTypedStep('notify-course-sync-completion', () =>

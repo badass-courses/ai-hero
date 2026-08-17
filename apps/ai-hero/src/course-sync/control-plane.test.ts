@@ -475,12 +475,28 @@ describe('draft course sync control plane', () => {
 		expect(JSON.stringify(current.previewed)).not.toContain(
 			AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
 		)
+		const decision = await testHarness.controlPlane.evaluateBoundedAutoApply(
+			current.staged.runId,
+		)
+		expect(decision).toEqual({
+			eligible: true,
+			planSha256: current.previewed.planSha256,
+		})
 		await expect(
 			testHarness.controlPlane.apply({
 				runId: current.staged.runId,
 				idempotencyKey: 'apply-exact-current',
 			}),
 		).resolves.toMatchObject({ state: 'applied' })
+		await expect(
+			testHarness.controlPlane.verifyApplied({
+				runId: current.staged.runId,
+				planSha256: current.previewed.planSha256!,
+			}),
+		).resolves.toMatchObject({
+			state: 'applied',
+			planSha256: current.previewed.planSha256,
+		})
 	})
 
 	it('rejects a reviewed topology change before any apply write', async () => {
