@@ -19,6 +19,64 @@ import {
 	type CourseSyncMuxSourceResolver,
 } from './types'
 
+const REPAIRED_SOLUTION_FIXTURE = [
+	{
+		lessonId: 'sync_lesson_17cb720d495489c2bc507413',
+		solutionId: 'solution_0ebfea36d381',
+		solutionVideoId: 'sync_video_ed56f9800b02e28244db32f3',
+	},
+	{
+		lessonId: 'sync_lesson_1bba2d9fc5becc3550ec3bcd',
+		solutionId: 'solution_a106cf7eff85',
+		solutionVideoId: 'sync_video_7250b4daafd92e24fe7757b2',
+	},
+	{
+		lessonId: 'sync_lesson_207193dae4b8859f9148d777',
+		solutionId: 'solution_d21b9334f0d1',
+		solutionVideoId: 'sync_video_4c4033b30cb8b976a0b1c79d',
+	},
+	{
+		lessonId: 'sync_lesson_2c0f57a981f95464f6b5cc24',
+		solutionId: 'solution_6efdd5ecd603',
+		solutionVideoId: 'sync_video_4272d06078a0c888410a5b2d',
+	},
+	{
+		lessonId: 'sync_lesson_3d9827e7a9a30454ced47a4a',
+		solutionId: 'solution_20376121d0c1',
+		solutionVideoId: 'sync_video_145d1db668af3426266e44ab',
+	},
+	{
+		lessonId: 'sync_lesson_552acb47c4c2dc9e8b1f2807',
+		solutionId: 'solution_49b9aa020d81',
+		solutionVideoId: 'sync_video_f441b063ae4cc90017023616',
+	},
+	{
+		lessonId: 'sync_lesson_69b503aafbff3839d55c0222',
+		solutionId: 'solution_c745f4c98763',
+		solutionVideoId: 'sync_video_2efe9387fe61e1574537886b',
+	},
+	{
+		lessonId: 'sync_lesson_93e82e4a18d9501a6de0ab3a',
+		solutionId: 'solution_4786ac8a44a9',
+		solutionVideoId: 'sync_video_e0c6c83faae8c20136597ece',
+	},
+	{
+		lessonId: 'sync_lesson_b749cd542fd6de592bb0e41f',
+		solutionId: 'solution_4d92ec6f8fac',
+		solutionVideoId: 'sync_video_9b2329c53c9758be27e72028',
+	},
+	{
+		lessonId: 'sync_lesson_c0f44c83860a52f833312ccb',
+		solutionId: 'solution_b903cfb31540',
+		solutionVideoId: 'sync_video_f0bcdee695e16c50ca623f08',
+	},
+	{
+		lessonId: 'sync_lesson_cc780638e647bc0cb349d2c1',
+		solutionId: 'solution_87bf52933762',
+		solutionVideoId: 'sync_video_db5ea84500ad945ebd6cfc45',
+	},
+] as const
+
 function bytesFor(videoNumber: number, revision = 'v1') {
 	return new TextEncoder().encode(`video-${videoNumber}-${revision}`)
 }
@@ -81,8 +139,10 @@ function exactDeltaFixture(
 				? `Body ${lessonNumber} revised`
 				: `Body ${lessonNumber}`
 		const questionCount = lessonNumber <= 28 ? 2 : 1
-		const questions = Array.from({ length: questionCount }, (_, index) =>
-			`<QuizQuestion data={{ id: 'question-${lessonNumber}-${index + 1}', question: 'Question ${lessonNumber}.${index + 1}?', type: 'essay' }} />`,
+		const questions = Array.from(
+			{ length: questionCount },
+			(_, index) =>
+				`<QuizQuestion data={{ id: 'question-${lessonNumber}-${index + 1}', question: 'Question ${lessonNumber}.${index + 1}?', type: 'essay' }} />`,
 		).join('\n')
 		return {
 			id: `video-${videoNumber}`,
@@ -353,6 +413,74 @@ describe('draft course sync control plane', () => {
 		expect(testHarness.persistence.receipts).toHaveLength(0)
 	})
 
+	it('recognizes every repaired production solution id as a guarded dry-run adoption', async () => {
+		const persistence = new InMemoryCourseSyncPersistence()
+		const candidates = REPAIRED_SOLUTION_FIXTURE.map((repair, index) => {
+			persistence.resources.set(repair.lessonId, {
+				resourceId: repair.lessonId,
+				type: 'lesson',
+				currentVersionId: `lesson-version-${index}`,
+				fields: {},
+			})
+			persistence.resources.set(repair.solutionVideoId, {
+				resourceId: repair.solutionVideoId,
+				type: 'videoResource',
+				currentVersionId: `video-version-${index}`,
+				fields: {},
+			})
+			persistence.resources.set(repair.solutionId, {
+				resourceId: repair.solutionId,
+				type: 'solution',
+				currentVersionId: null,
+				fields: {
+					title: `Lesson ${index + 1} Solution`,
+					body: `Solution ${index + 1}`,
+					slug: `lesson-${index + 1}-solution~${repair.solutionId.slice(-12)}`,
+					description: `Description ${index + 1}`,
+					state: 'draft',
+					visibility: 'unlisted',
+					videoResourceId: repair.solutionVideoId,
+					optional: false,
+				},
+			})
+			persistence.relations.set(repair.solutionId, {
+				parentId: repair.lessonId,
+				childId: repair.solutionId,
+				position: 0,
+				detached: false,
+			})
+			persistence.relations.set(repair.solutionVideoId, {
+				parentId: repair.solutionId,
+				childId: repair.solutionVideoId,
+				position: 0,
+				detached: false,
+			})
+			return {
+				canonicalTargetResourceId: `sync_solution_fixture_${index}`,
+				lessonResourceId: repair.lessonId,
+				solutionVideoResourceId: repair.solutionVideoId,
+				sourceLessonId: `source-lesson-${index}`,
+			}
+		})
+
+		const adoptions = await persistence.findSolutionResourceAdoptions(
+			AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			candidates,
+		)
+
+		expect([...adoptions.values()].map((item) => item.resourceId)).toEqual(
+			REPAIRED_SOLUTION_FIXTURE.map((repair) => repair.solutionId),
+		)
+		expect(
+			[...adoptions.values()].every(
+				(item) =>
+					item.position === 0 &&
+					item.currentVersionId === null &&
+					item.fields.videoResourceId === item.solutionVideoResourceId,
+			),
+		).toBe(true)
+	})
+
 	it('previews the exact 19 export, 18 media, and 2 body launch delta', async () => {
 		const changedExportHashes = new Set([
 			...Array.from({ length: 11 }, (_, index) => index * 2 + 1),
@@ -380,6 +508,46 @@ describe('draft course sync control plane', () => {
 			baseline.staged.runId,
 		)?.plan
 		expect(baselinePlan?.media).toHaveLength(70)
+		const baselineSolutions = baselinePlan?.resources.filter(
+			(item) => item.sourceKind === 'solution',
+		)
+		expect(baselineSolutions).toHaveLength(11)
+		for (const solution of baselineSolutions ?? []) {
+			expect(solution.targetResourceId).toMatch(/^sync_solution_[a-f0-9]{24}$/)
+			expect(solution).toMatchObject({ position: 0, action: 'create' })
+			expect(solution.fields).toMatchObject({
+				body: expect.any(String),
+				description: expect.any(String),
+				state: 'draft',
+				visibility: 'unlisted',
+				optional: false,
+				videoResourceId: expect.stringMatching(/^sync_video_/),
+			})
+			const problemVideo = baselinePlan?.resources.find(
+				(item) =>
+					item.sourceKind === 'video' &&
+					item.parentResourceId === solution.parentResourceId,
+			)
+			const solutionVideo = baselinePlan?.resources.find(
+				(item) =>
+					item.sourceKind === 'video' &&
+					item.parentResourceId === solution.targetResourceId,
+			)
+			expect(problemVideo).toMatchObject({ position: 0 })
+			expect(solutionVideo).toMatchObject({ position: 0 })
+			expect(
+				testHarness.persistence.relations.get(solution.targetResourceId),
+			).toMatchObject({
+				parentId: solution.parentResourceId,
+				position: 0,
+			})
+			expect(
+				testHarness.persistence.relations.get(solutionVideo!.targetResourceId),
+			).toMatchObject({
+				parentId: solution.targetResourceId,
+				position: 0,
+			})
+		}
 
 		const currentManifest = exactDeltaFixture('course-version-current', {
 			changedVideos,
@@ -451,7 +619,7 @@ describe('draft course sync control plane', () => {
 		).toHaveLength(87)
 		expect(
 			currentPlan?.resources.filter((item) => item.action === 'retain'),
-		).toHaveLength(183)
+		).toHaveLength(194)
 		expect(
 			currentPlan?.resources.some((item) => item.action === 'create'),
 		).toBe(false)
@@ -497,6 +665,220 @@ describe('draft course sync control plane', () => {
 			state: 'applied',
 			planSha256: current.previewed.planSha256,
 		})
+	})
+
+	it('adopts repaired solution resources without recreating or moving them', async () => {
+		const testHarness = harness()
+		const baseline = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-repair-baseline'),
+			'stage-repair-baseline',
+		)
+		await applyDirectly(
+			testHarness,
+			baseline.staged.runId,
+			'apply-repair-baseline',
+		)
+		const baselineRun = testHarness.persistence.runs.get(baseline.staged.runId)
+		if (!baselineRun?.plan) throw new Error('repair baseline plan missing')
+		const canonicalSolutions = baselineRun.plan.resources.filter(
+			(item) => item.sourceKind === 'solution',
+		)
+		expect(canonicalSolutions).toHaveLength(REPAIRED_SOLUTION_FIXTURE.length)
+		const canonicalSolutionIds = new Set(
+			canonicalSolutions.map((item) => item.targetResourceId),
+		)
+		const repairedVideoParents = new Map<string, string>()
+
+		for (const [index, solution] of canonicalSolutions.entries()) {
+			const repair = REPAIRED_SOLUTION_FIXTURE[index]!
+			const solutionVideo = baselineRun.plan.resources.find(
+				(item) =>
+					item.sourceKind === 'video' &&
+					item.parentResourceId === solution.targetResourceId,
+			)
+			if (!solutionVideo) throw new Error('repair solution video missing')
+			testHarness.persistence.resources.delete(solution.targetResourceId)
+			testHarness.persistence.relations.delete(solution.targetResourceId)
+			for (const [versionId, version] of testHarness.persistence.versions) {
+				if (version.resourceId === solution.targetResourceId) {
+					testHarness.persistence.versions.delete(versionId)
+				}
+			}
+			testHarness.persistence.resources.set(repair.solutionId, {
+				resourceId: repair.solutionId,
+				type: 'solution',
+				currentVersionId: null,
+				fields: {
+					title: solution.fields.title,
+					body: solution.fields.body,
+					slug: `${String(solution.fields.title)
+						.toLowerCase()
+						.replace(/[^a-z0-9]+/g, '-')
+						.replace(/^-|-$/g, '')}~${repair.solutionId.slice(-12)}`,
+					description: solution.fields.description,
+					state: 'draft',
+					visibility: 'unlisted',
+					videoResourceId: solutionVideo.targetResourceId,
+					optional: false,
+				},
+			})
+			testHarness.persistence.relations.set(repair.solutionId, {
+				parentId: solution.parentResourceId,
+				childId: repair.solutionId,
+				position: 0,
+				detached: false,
+			})
+			testHarness.persistence.relations.set(solutionVideo.targetResourceId, {
+				parentId: repair.solutionId,
+				childId: solutionVideo.targetResourceId,
+				position: 0,
+				detached: false,
+			})
+			repairedVideoParents.set(
+				solutionVideo.targetResourceId,
+				repair.solutionId,
+			)
+		}
+		const oldResources = baselineRun.plan.resources.flatMap((item) => {
+			if (item.sourceKind === 'solution') return []
+			const repairedParent = repairedVideoParents.get(item.targetResourceId)
+			return [
+				repairedParent
+					? {
+							...item,
+							parentResourceId:
+								canonicalSolutions.find(
+									(solution) =>
+										solution.targetResourceId === item.parentResourceId,
+								)?.parentResourceId ?? item.parentResourceId,
+							position: 1,
+						}
+					: item,
+			]
+		})
+		testHarness.persistence.receipts.splice(
+			0,
+			testHarness.persistence.receipts.length,
+			...testHarness.persistence.receipts.filter(
+				(receipt) => !canonicalSolutionIds.has(receipt.resourceId),
+			),
+		)
+		testHarness.persistence.runs.set(baselineRun.runId, {
+			...baselineRun,
+			plan: { ...baselineRun.plan, resources: oldResources },
+		})
+
+		const next = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-repair-next'),
+			'stage-repair-next',
+		)
+		const nextPlan = testHarness.persistence.runs.get(next.staged.runId)?.plan
+		const adoptedSolutions = nextPlan?.resources.filter(
+			(item) => item.sourceKind === 'solution',
+		)
+		expect(adoptedSolutions).toHaveLength(REPAIRED_SOLUTION_FIXTURE.length)
+		expect(adoptedSolutions?.map((item) => item.targetResourceId)).toEqual(
+			REPAIRED_SOLUTION_FIXTURE.map((repair) => repair.solutionId),
+		)
+		expect(next.previewed.resourceCounts).toEqual({
+			create: 0,
+			update: 11,
+			retain: 222,
+		})
+		for (const solution of adoptedSolutions ?? []) {
+			expect(solution.action).toBe('update')
+			expect(solution.solutionAdoption).toMatchObject({
+				canonicalTargetResourceId: expect.stringMatching(/^sync_solution_/),
+				createBaselineVersion: true,
+			})
+			const solutionVideo = nextPlan?.resources.find(
+				(item) =>
+					item.sourceKind === 'video' &&
+					item.parentResourceId === solution.targetResourceId,
+			)
+			expect(solutionVideo).toMatchObject({
+				action: 'retain',
+				position: 0,
+				previousParentResourceId: solution.targetResourceId,
+				previousPosition: 0,
+			})
+		}
+		await expect(
+			testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId),
+		).resolves.toMatchObject({ eligible: true })
+		const firstAdoptedSolution = adoptedSolutions?.[0]
+		if (!firstAdoptedSolution) throw new Error('first adoption missing')
+		const extraSolutionId = 'solution_deadbeefcafe'
+		testHarness.persistence.resources.set(extraSolutionId, {
+			resourceId: extraSolutionId,
+			type: 'solution',
+			currentVersionId: null,
+			fields: {},
+		})
+		testHarness.persistence.relations.set(extraSolutionId, {
+			parentId: firstAdoptedSolution.parentResourceId,
+			childId: extraSolutionId,
+			position: 1,
+			detached: false,
+		})
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: next.staged.runId,
+				idempotencyKey: 'apply-repair-next',
+			}),
+		).rejects.toMatchObject({ code: 'SOLUTION_ADOPTION_RELATION_CONFLICT' })
+		testHarness.persistence.resources.delete(extraSolutionId)
+		testHarness.persistence.relations.delete(extraSolutionId)
+		await expect(
+			testHarness.controlPlane.apply({
+				runId: next.staged.runId,
+				idempotencyKey: 'apply-repair-next',
+			}),
+		).resolves.toMatchObject({ state: 'applied' })
+		for (const [videoId, solutionId] of repairedVideoParents) {
+			expect(testHarness.persistence.relations.get(videoId)).toMatchObject({
+				parentId: solutionId,
+				position: 0,
+			})
+		}
+		expect(
+			[...canonicalSolutionIds].some((id) =>
+				testHarness.persistence.resources.has(id),
+			),
+		).toBe(false)
+		await expect(
+			testHarness.controlPlane.rollback({
+				runId: next.staged.runId,
+				idempotencyKey: 'rollback-repair-next',
+			}),
+		).resolves.toMatchObject({ state: 'rolled_back' })
+		for (const [videoId, solutionId] of repairedVideoParents) {
+			expect(testHarness.persistence.relations.get(videoId)).toMatchObject({
+				parentId: solutionId,
+				position: 0,
+			})
+		}
+		const afterRollback = await stagedAndPreviewed(
+			testHarness,
+			exactDeltaFixture('course-version-repair-after-rollback'),
+			'stage-repair-after-rollback',
+		)
+		const afterRollbackSolutions = testHarness.persistence.runs
+			.get(afterRollback.staged.runId)
+			?.plan?.resources.filter((item) => item.sourceKind === 'solution')
+		expect(
+			afterRollbackSolutions?.map((item) => item.targetResourceId),
+		).toEqual(REPAIRED_SOLUTION_FIXTURE.map((repair) => repair.solutionId))
+		expect(
+			afterRollbackSolutions?.every(
+				(item) =>
+					item.action === 'update' &&
+					item.solutionAdoption?.createBaselineVersion === false,
+			),
+		).toBe(true)
+		expect(afterRollback.previewed.resourceCounts.create).toBe(0)
 	})
 
 	it('rejects a reviewed topology change before any apply write', async () => {
@@ -693,7 +1075,7 @@ describe('draft course sync control plane', () => {
 		expect(testHarness.reads()).toBe(34)
 		expect(testHarness.snapshots).toHaveLength(34)
 		expect(previewed.resourceCounts).toEqual({
-			create: 66,
+			create: 71,
 			update: 0,
 			retain: 0,
 		})
@@ -1200,10 +1582,10 @@ describe('draft course sync control plane', () => {
 				idempotencyKey: 'apply-failure-key',
 			}),
 		).rejects.toMatchObject({ code: 'INJECTED_APPLY_FAILURE' })
-		expect(testHarness.persistence.resources.size).toBe(222)
-		expect(testHarness.persistence.versions.size).toBe(222)
-		expect(testHarness.persistence.relations.size).toBe(222)
-		expect(testHarness.persistence.receipts).toHaveLength(222)
+		expect(testHarness.persistence.resources.size).toBe(233)
+		expect(testHarness.persistence.versions.size).toBe(233)
+		expect(testHarness.persistence.relations.size).toBe(233)
+		expect(testHarness.persistence.receipts).toHaveLength(233)
 		expect(testHarness.persistence.runs.get(staged.runId)).toMatchObject({
 			state: 'failed',
 			applyIdempotencyKey: 'apply-failure-key',
@@ -1223,19 +1605,19 @@ describe('draft course sync control plane', () => {
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(retried).toMatchObject({ state: 'applied', noOp: false })
-		expect(testHarness.persistence.resources.size).toBe(222)
-		expect(testHarness.persistence.versions.size).toBe(261)
-		expect(testHarness.persistence.receipts).toHaveLength(444)
+		expect(testHarness.persistence.resources.size).toBe(233)
+		expect(testHarness.persistence.versions.size).toBe(272)
+		expect(testHarness.persistence.receipts).toHaveLength(466)
 
 		const replay = await testHarness.controlPlane.apply({
 			runId: staged.runId,
 			idempotencyKey: 'apply-failure-key',
 		})
 		expect(replay).toMatchObject({ state: 'applied', noOp: true })
-		expect(testHarness.persistence.resources.size).toBe(222)
-		expect(testHarness.persistence.versions.size).toBe(261)
-		expect(testHarness.persistence.relations.size).toBe(222)
-		expect(testHarness.persistence.receipts).toHaveLength(444)
+		expect(testHarness.persistence.resources.size).toBe(233)
+		expect(testHarness.persistence.versions.size).toBe(272)
+		expect(testHarness.persistence.relations.size).toBe(233)
+		expect(testHarness.persistence.receipts).toHaveLength(466)
 	})
 
 	it('extracts questions, replays without churn, and blocks detach changes', async () => {

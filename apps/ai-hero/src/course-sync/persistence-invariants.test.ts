@@ -22,6 +22,7 @@ function launchPlan(): SyncPlan {
 	for (const [sourceKind, updateCount, retainCount] of [
 		['section', 0, 6],
 		['lesson', 21, 38],
+		['solution', 11, 0],
 		['video', 18, 52],
 		['question', 0, 87],
 	] as const) {
@@ -71,9 +72,9 @@ function launchPlan(): SyncPlan {
 function currentManifestPlan(): SyncPlan {
 	const plan = launchPlan()
 	for (const resource of plan.resources) resource.action = 'retain'
-	for (const resource of plan.resources.filter(
-		(resource) => resource.sourceKind === 'lesson',
-	).slice(0, 2)) {
+	for (const resource of plan.resources
+		.filter((resource) => resource.sourceKind === 'lesson')
+		.slice(0, 2)) {
 		resource.action = 'update'
 	}
 	plan.resources.find((resource) => resource.sourceKind === 'video')!.action =

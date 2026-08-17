@@ -53,19 +53,37 @@ export function courseSyncRollbackStageIdempotencyKey(
 
 export function targetResourceId(
 	bindingId: string,
-	kind: 'section' | 'lesson' | 'question' | 'video',
+	kind: 'section' | 'lesson' | 'solution' | 'question' | 'video',
 	sourceId: string,
 ): string {
 	return `sync_${kind}_${sha256(`${bindingId}:${kind}:${sourceId}`).slice(0, 24)}`
 }
 
+function slugifyTitle(title: string): string {
+	return (
+		title
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-|-$/g, '')
+			.slice(0, 60) || 'course-content'
+	)
+}
+
 function slug(sourceId: string, title: string): string {
-	const readable = title
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-|-$/g, '')
-		.slice(0, 60)
-	return `${readable || 'course-content'}-${sha256(sourceId).slice(0, 8)}`
+	return `${slugifyTitle(title)}-${sha256(sourceId).slice(0, 8)}`
+}
+
+function solutionSlug(sourceId: string, title: string): string {
+	return `${slugifyTitle(title)}~${sha256(`solution:${sourceId}`).slice(0, 12)}`
+}
+
+export function solutionAdoptionBaselineVersionId(
+	resourceId: string,
+	fields: Record<string, unknown>,
+): string {
+	return `version~${sha256(
+		stableJson({ operation: 'adopt-course-sync-solution', resourceId, fields }),
+	)}`
 }
 
 function assertManifestScope(
@@ -245,6 +263,10 @@ function sourceResourceFields(
 				)
 			}
 			const lessonId = targetResourceId(binding.bindingId, 'lesson', lesson.id)
+			const solutionId =
+				lesson.type === 'problem' && lesson.solution
+					? targetResourceId(binding.bindingId, 'solution', lesson.id)
+					: null
 			const lessonItem = {
 				sourceKind: 'lesson' as const,
 				sourceId: lesson.id,
@@ -288,6 +310,7 @@ function sourceResourceFields(
 						`Frozen Mux asset is missing for video ${video.id}.`,
 					)
 				}
+				const isSolutionVideo = videoIndex === 1 && solutionId !== null
 				return {
 					sourceKind: 'video' as const,
 					sourceId: video.id,
@@ -296,8 +319,8 @@ function sourceResourceFields(
 						'video',
 						video.id,
 					),
-					parentResourceId: lessonId,
-					position: videoIndex,
+					parentResourceId: isSolutionVideo ? solutionId : lessonId,
+					position: 0,
 					detached: false,
 					previousDetached: false,
 					fields: {
@@ -323,6 +346,42 @@ function sourceResourceFields(
 					},
 				}
 			})
+			const primaryVideoItem = videoItems[0]
+			if (!primaryVideoItem) {
+				throw new CourseSyncError(
+					'SOURCE_LESSON_VIDEO_MISSING',
+					`Lesson ${lesson.id} has no managed primary video.`,
+				)
+			}
+			const solutionItem =
+				lesson.type === 'problem' && lesson.solution && solutionId
+					? {
+							sourceKind: 'solution' as const,
+							sourceId: lesson.id,
+							targetResourceId: solutionId,
+							parentResourceId: lessonId,
+							position: 0,
+							detached: false,
+							previousDetached: false,
+							fields: {
+								title: `${lesson.title} Solution`,
+								body: lesson.solution.body || '',
+								slug: solutionSlug(lesson.id, `${lesson.title} Solution`),
+								description: lesson.solution.description || '',
+								state: 'draft',
+								visibility: 'unlisted',
+								videoResourceId: videoItems[1]?.targetResourceId,
+								optional: false,
+								courseSync: {
+									bindingId: binding.bindingId,
+									sourceCourseId: manifest.courseId,
+									sourceSectionId: section.id,
+									sourceLessonId: lesson.id,
+									sourceVideoId: lesson.solution.id,
+								},
+							},
+						}
+					: null
 			const questionItems = extractQuizQuestions(primary.body, lesson.id).map(
 				(question) => ({
 					sourceKind: 'question' as const,
@@ -350,7 +409,12 @@ function sourceResourceFields(
 					},
 				}),
 			)
-			return [lessonItem, ...videoItems, ...questionItems]
+			return [
+				lessonItem,
+				primaryVideoItem,
+				...(solutionItem && videoItems[1] ? [solutionItem, videoItems[1]] : []),
+				...questionItems,
+			]
 		})
 		return [sectionItem, ...lessonItems]
 	})
@@ -771,11 +835,104 @@ export function createCourseSyncControlPlane(
 					item,
 				]),
 			)
-			const desired = sourceResourceFields(
+			const canonicalDesired = sourceResourceFields(
 				binding,
 				revision.manifest,
 				revision.assets,
 			)
+			const solutionCandidates = canonicalDesired.flatMap((item) => {
+				if (item.sourceKind !== 'solution') return []
+				const solutionVideo = canonicalDesired.find(
+					(candidate) =>
+						candidate.sourceKind === 'video' &&
+						candidate.parentResourceId === item.targetResourceId,
+				)
+				if (!solutionVideo) {
+					throw new CourseSyncError(
+						'SOURCE_SOLUTION_VIDEO_MISSING',
+						`Lesson ${item.sourceId} has no managed solution video.`,
+					)
+				}
+				return [
+					{
+						canonicalTargetResourceId: item.targetResourceId,
+						lessonResourceId: item.parentResourceId,
+						solutionVideoResourceId: solutionVideo.targetResourceId,
+						sourceLessonId: item.sourceId,
+					},
+				]
+			})
+			const solutionAdoptions = await persistence.findSolutionResourceAdoptions(
+				binding.bindingId,
+				solutionCandidates,
+			)
+			const adoptedSolutionIdByCanonical = new Map(
+				[...solutionAdoptions.values()].map((adoption) => [
+					adoption.canonicalTargetResourceId,
+					adoption.resourceId,
+				]),
+			)
+			const desired = canonicalDesired.map((item) => {
+				if (item.sourceKind === 'solution') {
+					const adoption = solutionAdoptions.get(item.targetResourceId)
+					if (!adoption) return item
+					const adoptedSlug = adoption.fields.slug
+					const baselineVersionId =
+						adoption.currentVersionId ??
+						solutionAdoptionBaselineVersionId(
+							adoption.resourceId,
+							adoption.fields,
+						)
+					return {
+						...item,
+						targetResourceId: adoption.resourceId,
+						fields: {
+							...item.fields,
+							...(typeof adoptedSlug === 'string' ? { slug: adoptedSlug } : {}),
+						},
+						solutionAdoption: {
+							canonicalTargetResourceId: item.targetResourceId,
+							baselineVersionId,
+							createBaselineVersion: adoption.currentVersionId === null,
+						},
+					}
+				}
+				const adoptedParentId = adoptedSolutionIdByCanonical.get(
+					item.parentResourceId,
+				)
+				return adoptedParentId
+					? { ...item, parentResourceId: adoptedParentId }
+					: item
+			})
+			const adoptionPreviousByTarget = new Map<
+				string,
+				(typeof desired)[number]
+			>()
+			for (const adoption of solutionAdoptions.values()) {
+				const adoptedSolution = desired.find(
+					(item) => item.targetResourceId === adoption.resourceId,
+				)
+				if (adoptedSolution) {
+					adoptionPreviousByTarget.set(adoption.resourceId, {
+						...adoptedSolution,
+						fields: adoption.fields,
+						parentResourceId: adoption.lessonResourceId,
+						position: adoption.position,
+					})
+				}
+				const adoptedVideo = desired.find(
+					(item) => item.targetResourceId === adoption.solutionVideoResourceId,
+				)
+				if (adoptedVideo) {
+					adoptionPreviousByTarget.set(adoption.solutionVideoResourceId, {
+						...(previousByTarget.get(adoption.solutionVideoResourceId) ??
+							adoptedVideo),
+						parentResourceId: adoption.resourceId,
+						position: 0,
+						detached: false,
+					})
+				}
+			}
 			const desiredIds = new Set(desired.map((item) => item.targetResourceId))
 			const removedQuestions = [...previousByTarget.values()].filter(
 				(item) =>
@@ -791,7 +948,9 @@ export function createCourseSyncControlPlane(
 				planned.map((item) => item.targetResourceId),
 			)
 			const resources: ResourcePlanItem[] = planned.map((item) => {
-				const previous = previousByTarget.get(item.targetResourceId)
+				const previous =
+					adoptionPreviousByTarget.get(item.targetResourceId) ??
+					previousByTarget.get(item.targetResourceId)
 				const snapshot = snapshots.get(item.targetResourceId)
 				const action = !snapshot
 					? 'create'
@@ -807,7 +966,10 @@ export function createCourseSyncControlPlane(
 					...item,
 					action,
 					previousDetached: previous?.detached ?? false,
-					previousVersionId: snapshot?.currentVersionId ?? null,
+					previousVersionId:
+						item.solutionAdoption?.baselineVersionId ??
+						snapshot?.currentVersionId ??
+						null,
 					previousFieldsSha256: snapshot
 						? sha256(stableJson(snapshot.fields))
 						: null,

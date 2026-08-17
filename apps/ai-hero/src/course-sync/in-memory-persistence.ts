@@ -1,6 +1,7 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
 import { resolveCourseSyncRollbackFields } from './persistence-invariants'
+import { assertAdoptableSolutionResource } from './solution-adoption'
 import {
 	courseSyncRollbackStageIdempotencyKey,
 	sha256,
@@ -9,6 +10,8 @@ import {
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
+	SolutionResourceAdoption,
+	SolutionResourceAdoptionCandidate,
 	SourceRevisionRecord,
 	SyncRunRecord,
 	TargetResourceSnapshot,
@@ -193,6 +196,70 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		)
 	}
 
+	async findSolutionResourceAdoptions(
+		bindingId: string,
+		candidates: ReadonlyArray<SolutionResourceAdoptionCandidate>,
+	) {
+		const adoptions = new Map<string, SolutionResourceAdoption>()
+		for (const candidate of candidates) {
+			if (this.resources.has(candidate.canonicalTargetResourceId)) continue
+			const solutionRelations = [...this.relations.values()].filter(
+				(relation) =>
+					relation.parentId === candidate.lessonResourceId &&
+					!relation.detached &&
+					this.resources.get(relation.childId)?.type === 'solution',
+			)
+			if (solutionRelations.length === 0) continue
+			if (solutionRelations.length !== 1) {
+				throw new CourseSyncError(
+					'SOLUTION_ADOPTION_RELATION_CONFLICT',
+					`Lesson ${candidate.sourceLessonId} has more than one active solution child.`,
+					409,
+					{ category: 'target_precondition', retryable: false },
+				)
+			}
+			const solutionRelation = solutionRelations[0]!
+			const resource = this.resources.get(solutionRelation.childId)!
+			assertAdoptableSolutionResource({
+				bindingId,
+				candidate,
+				resource: {
+					id: resource.resourceId,
+					type: resource.type,
+					fields: resource.fields,
+				},
+			})
+			const childRelations = [...this.relations.values()].filter(
+				(relation) =>
+					relation.parentId === resource.resourceId && !relation.detached,
+			)
+			if (
+				childRelations.length !== 1 ||
+				childRelations[0]?.childId !== candidate.solutionVideoResourceId ||
+				childRelations[0]?.position !== 0 ||
+				this.resources.get(candidate.solutionVideoResourceId)?.type !==
+					'videoResource'
+			) {
+				throw new CourseSyncError(
+					'SOLUTION_ADOPTION_RELATION_CONFLICT',
+					`Solution ${resource.resourceId} does not own exactly the expected repaired video.`,
+					409,
+					{ category: 'target_precondition', retryable: false },
+				)
+			}
+			adoptions.set(candidate.canonicalTargetResourceId, {
+				canonicalTargetResourceId: candidate.canonicalTargetResourceId,
+				resourceId: resource.resourceId,
+				lessonResourceId: candidate.lessonResourceId,
+				solutionVideoResourceId: candidate.solutionVideoResourceId,
+				currentVersionId: resource.currentVersionId,
+				fields: structuredClone(resource.fields),
+				position: solutionRelation.position,
+			})
+		}
+		return adoptions
+	}
+
 	async getTargetResources(resourceIds: ReadonlyArray<string>) {
 		return new Map(
 			resourceIds.flatMap((resourceId) => {
@@ -323,6 +390,73 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					409,
 				)
 			if (item.action !== 'create') {
+				if (item.solutionAdoption) {
+					const solutionVideoResourceId = item.fields.videoResourceId
+					if (
+						item.sourceKind !== 'solution' ||
+						typeof solutionVideoResourceId !== 'string' ||
+						resource.currentVersionId !==
+							(item.solutionAdoption.createBaselineVersion
+								? null
+								: item.solutionAdoption.baselineVersionId)
+					) {
+						throw new CourseSyncError(
+							'SOLUTION_ADOPTION_SCOPE_MISMATCH',
+							'The repaired solution changed after preview.',
+							409,
+							{ category: 'target_precondition', retryable: false },
+						)
+					}
+					const lessonResourceId =
+						item.previousParentResourceId ?? item.parentResourceId
+					assertAdoptableSolutionResource({
+						bindingId: input.plan.bindingId,
+						candidate: {
+							canonicalTargetResourceId:
+								item.solutionAdoption.canonicalTargetResourceId,
+							lessonResourceId,
+							solutionVideoResourceId,
+							sourceLessonId: item.sourceId,
+						},
+						resource: {
+							id: resource.resourceId,
+							type: resource.type,
+							fields: resource.fields,
+						},
+					})
+					const solutionSiblings = [...relations.values()].filter(
+						(relation) =>
+							relation.parentId === lessonResourceId &&
+							!relation.detached &&
+							resources.get(relation.childId)?.type === 'solution',
+					)
+					const solutionChildren = [...relations.values()].filter(
+						(relation) =>
+							relation.parentId === resource.resourceId && !relation.detached,
+					)
+					if (
+						solutionSiblings.length !== 1 ||
+						solutionSiblings[0]?.childId !== resource.resourceId ||
+						solutionSiblings[0]?.position !== item.previousPosition ||
+						solutionChildren.length !== 1 ||
+						solutionChildren[0]?.childId !== solutionVideoResourceId ||
+						solutionChildren[0]?.position !== 0 ||
+						resources.get(solutionVideoResourceId)?.type !== 'videoResource'
+					) {
+						throw new CourseSyncError(
+							'SOLUTION_ADOPTION_RELATION_CONFLICT',
+							'The repaired solution topology changed after preview.',
+							409,
+							{ category: 'lifecycle_conflict', retryable: false },
+						)
+					}
+				} else if (resource.currentVersionId !== item.previousVersionId) {
+					throw new CourseSyncError(
+						'APPLY_TARGET_CHANGED',
+						'Resource pointer changed after preview.',
+						409,
+					)
+				}
 				if (sha256(stableJson(resource.fields)) !== item.previousFieldsSha256) {
 					throw new CourseSyncError(
 						'APPLY_TARGET_CHANGED',
@@ -369,6 +503,29 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			const priorVersions = [...versions.values()].filter(
 				(version) => version.resourceId === item.targetResourceId,
 			)
+			let parentVersionId = resource.currentVersionId
+			if (item.solutionAdoption?.createBaselineVersion) {
+				if (
+					parentVersionId !== null ||
+					priorVersions.length > 0 ||
+					versions.has(item.solutionAdoption.baselineVersionId)
+				) {
+					throw new CourseSyncError(
+						'SOLUTION_ADOPTION_BASELINE_CONFLICT',
+						'The repaired solution baseline already exists or has a pointer.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+				versions.set(item.solutionAdoption.baselineVersionId, {
+					id: item.solutionAdoption.baselineVersionId,
+					resourceId: item.targetResourceId,
+					parentVersionId: null,
+					versionNumber: priorVersions.length + 1,
+					fields: structuredClone(resource.fields),
+				})
+				parentVersionId = item.solutionAdoption.baselineVersionId
+			}
 			const versionId = `version~${sha256(
 				stableJson({
 					runId: input.runId,
@@ -379,15 +536,17 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			versions.set(versionId, {
 				id: versionId,
 				resourceId: item.targetResourceId,
-				parentVersionId: resource.currentVersionId,
-				versionNumber: priorVersions.length + 1,
+				parentVersionId,
+				versionNumber:
+					priorVersions.length +
+					(item.solutionAdoption?.createBaselineVersion ? 2 : 1),
 				fields: structuredClone(item.fields),
 			})
 			receipts.push({
 				runId: input.runId,
 				resourceId: item.targetResourceId,
 				versionId,
-				parentVersionId: resource.currentVersionId,
+				parentVersionId,
 				previousParentResourceId: item.previousParentResourceId,
 				previousPosition: item.previousPosition,
 				action: item.action,
