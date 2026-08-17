@@ -192,10 +192,19 @@ const protectCheckoutRequest = async (
 		})
 		if (
 			serverComputedCoupon?.type === 'bulk' ||
-			serverComputedCoupon?.type === 'ppp'
+			(serverComputedCoupon?.type === 'ppp' && decision.requestedPPP)
 		) {
 			url.searchParams.set('couponId', serverComputedCoupon.id)
 		}
+	}
+
+	// PPP is opt-in: it region-locks the purchase, so the buyer must select it.
+	// Legacy checkout hardcodes autoApplyPPP and re-derives PPP from the query
+	// country (falling back to the trusted header), so without an explicit PPP
+	// selection pin the query country to a non-PPP value. Upgrades keep the
+	// real country — a PPP purchase upgrade legitimately re-applies PPP.
+	if (!decision.requestedPPP && !url.searchParams.get('upgradeFromPurchaseId')) {
+		url.searchParams.set('country', 'US')
 	}
 
 	return requestWithUrl(request, url)
