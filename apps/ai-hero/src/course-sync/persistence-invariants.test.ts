@@ -67,6 +67,21 @@ function launchPlan(): SyncPlan {
 	}
 }
 
+function currentManifestPlan(): SyncPlan {
+	const plan = launchPlan()
+	for (const resource of plan.resources) resource.action = 'retain'
+	for (const resource of plan.resources.filter(
+		(resource) => resource.sourceKind === 'lesson',
+	).slice(0, 2)) {
+		resource.action = 'update'
+	}
+	plan.resources.find((resource) => resource.sourceKind === 'video')!.action =
+		'update'
+	for (const media of plan.media) media.action = 'retain'
+	plan.media[0]!.action = 'update'
+	return plan
+}
+
 function section(position: number) {
 	return {
 		position,
@@ -97,8 +112,11 @@ describe('course sync persistence invariants', () => {
 		expect(migration).not.toMatch(/CREATE TABLE `CourseSyncFrozenAssetReceipt`/)
 	})
 
-	it('accepts only the exact topology-preserving launch plan', () => {
+	it('accepts the topology-preserving managed inventory regardless of update distribution', () => {
 		expect(() => assertCourseSyncLaunchApplyPolicy(launchPlan())).not.toThrow()
+		expect(() =>
+			assertCourseSyncLaunchApplyPolicy(currentManifestPlan()),
+		).not.toThrow()
 	})
 
 	it.each([

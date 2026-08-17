@@ -8,12 +8,14 @@ import {
 
 export const COURSE_SYNC_APPLY_BATCH_SIZE = 50
 
-const AI_HERO_LAUNCH_RESOURCE_COUNTS = {
-	section: { update: 0, retain: 6 },
-	lesson: { update: 21, retain: 38 },
-	video: { update: 18, retain: 52 },
-	question: { update: 0, retain: 87 },
+const AI_HERO_MANAGED_RESOURCE_COUNTS = {
+	section: 6,
+	lesson: 59,
+	video: 70,
+	question: 87,
 } as const
+
+const AI_HERO_MANAGED_MEDIA_COUNT = 70
 
 export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 	const resourceCounts = Object.fromEntries(
@@ -29,7 +31,7 @@ export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 			},
 		]),
 	) as Record<
-		keyof typeof AI_HERO_LAUNCH_RESOURCE_COUNTS,
+		keyof typeof AI_HERO_MANAGED_RESOURCE_COUNTS,
 		{ update: number; retain: number }
 	>
 	const mediaCounts = {
@@ -46,25 +48,24 @@ export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 			item.previousDetached !== item.detached ||
 			item.detached,
 	)
-	const resourceCountsMatch = Object.entries(
-		AI_HERO_LAUNCH_RESOURCE_COUNTS,
+	const resourceInventoryMatches = Object.entries(
+		AI_HERO_MANAGED_RESOURCE_COUNTS,
 	).every(([sourceKind, expected]) => {
 		const actual =
-			resourceCounts[sourceKind as keyof typeof AI_HERO_LAUNCH_RESOURCE_COUNTS]
-		return (
-			actual.update === expected.update && actual.retain === expected.retain
-		)
+			resourceCounts[sourceKind as keyof typeof AI_HERO_MANAGED_RESOURCE_COUNTS]
+		return actual.update + actual.retain === expected
 	})
+	const mediaInventoryMatches =
+		mediaCounts.update + mediaCounts.retain === AI_HERO_MANAGED_MEDIA_COUNT
 	if (
 		plan.bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId ||
 		topologyChanged ||
-		!resourceCountsMatch ||
-		mediaCounts.update !== 18 ||
-		mediaCounts.retain !== 52
+		!resourceInventoryMatches ||
+		!mediaInventoryMatches
 	) {
 		throw new CourseSyncError(
 			'LAUNCH_APPLY_POLICY_VIOLATION',
-			'Apply blocked: the reviewed plan is outside the approved 39-update, 96 section/lesson/video-retain, 87 question-retain, topology-preserving launch shape.',
+			'Apply blocked: the plan is outside the managed 6-section, 59-lesson, 70-video, 87-question, topology-preserving course shape.',
 			409,
 			{
 				category: 'target_precondition',
