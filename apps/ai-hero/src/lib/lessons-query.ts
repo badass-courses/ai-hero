@@ -34,6 +34,7 @@ import {
 } from '@coursebuilder/core/schemas/video-resource'
 import { last } from '@coursebuilder/nodash'
 
+import { parseLessonVideoTranscriptRows } from './lesson-transcript'
 import { Lesson } from './lessons'
 import { SolutionSchema } from './solution'
 import { getCachedSolution, getSolution } from './solutions-query'
@@ -99,30 +100,35 @@ export const getLessonVideoTranscript = async (
 		thresholdMs: 100,
 		data: { lessonIdOrSlug },
 		operation: async () => {
-			const query = sql`SELECT cr_video.fields->>'$.transcript' AS transcript
-				FROM ${contentResource} AS cr_lesson
-				JOIN ${contentResourceResource} AS crr ON cr_lesson.id = crr.resourceOfId
-				JOIN ${contentResource} AS cr_video ON crr.resourceId = cr_video.id
+			try {
+				const query = sql`SELECT cr_video.fields->>'$.transcript' AS transcript
+					FROM ${contentResource} AS cr_lesson
+					JOIN ${contentResourceResource} AS crr ON cr_lesson.id = crr.resourceOfId
+					JOIN ${contentResource} AS cr_video ON crr.resourceId = cr_video.id
 
-				WHERE (cr_lesson.id = ${lessonIdOrSlug} OR JSON_UNQUOTE(JSON_EXTRACT(cr_lesson.fields, '$.slug')) = ${lessonIdOrSlug})
-					AND cr_video.type = 'videoResource'
-				LIMIT 1;`
-			const result = await db.execute(query)
+					WHERE (cr_lesson.id = ${lessonIdOrSlug} OR JSON_UNQUOTE(JSON_EXTRACT(cr_lesson.fields, '$.slug')) = ${lessonIdOrSlug})
+						AND cr_video.type = 'videoResource'
+					LIMIT 1;`
+				const result = await db.execute(query)
+				const parsedResult = parseLessonVideoTranscriptRows(result.rows)
 
-			const parsedResult = z
-				.array(z.object({ transcript: z.string() }))
-				.safeParse(result.rows)
+				if (parsedResult.status === 'invalid') {
+					await log.warn('lesson.transcript.invalid', {
+						lessonIdOrSlug,
+						rowCount: Array.isArray(result.rows) ? result.rows.length : null,
+						error: formatZodError(parsedResult.error),
+					})
+				}
 
-			if (!parsedResult.success) {
-				await log.error('lesson.transcript.error', {
-					lessonId: lessonIdOrSlug,
-					slug: lessonIdOrSlug,
-					error: formatZodError(parsedResult.error),
+				return parsedResult.transcript
+			} catch (error) {
+				await log.error('lesson.transcript.fetch_failed', {
+					lessonIdOrSlug,
+					error: getErrorMessage(error),
+					stack: getErrorStack(error),
 				})
 				return null
 			}
-
-			return parsedResult.data[0]?.transcript
 		},
 	})
 }
