@@ -63,9 +63,10 @@ type FieldBackedConversionIntent = Exclude<
  * every CTA trusts that cookie before asking Kit. The remote write succeeded,
  * but the site keeps asking the reader to do it again.
  *
- * The fields passed here are the exact fields sent in the successful request,
- * so projecting them is not optimistic guessing. It is the local commit of an
- * already-accepted write.
+ * The fields passed here are the exact fields sent through a provider contract
+ * that creates and writes missing custom fields before it resolves. Never call
+ * this after enqueueing a background write; an accepted queue event is not Kit
+ * confirmation.
  */
 export function withConfirmedConversionFields<
 	T extends { fields?: Record<string, unknown> | null },

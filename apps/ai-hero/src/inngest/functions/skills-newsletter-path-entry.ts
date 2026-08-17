@@ -1,5 +1,10 @@
 import { db } from '@/db'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
+import {
+	emailListProvider,
+	KitSubscribeError,
+	subscribeToKitListWithoutFields,
+} from '@/coursebuilder/email-list-provider'
+import { kitWriteRetrySchedule } from '@/coursebuilder/kit-write-retry'
 import { SKILLS_NEWSLETTER_SUBSCRIBED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
@@ -13,6 +18,70 @@ import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 
 import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
+import { NonRetriableError, RetryAfterError } from 'inngest'
+
+export const SKILLS_NEWSLETTER_PATH_RETRIES = 3
+export const PAUSED_SEQUENCE_MAX_PROVIDER_CALLS =
+	2 * (SKILLS_NEWSLETTER_PATH_RETRIES + 1)
+
+async function throwForDurableKitRetry({
+	error,
+	attempt,
+	maxAttempts,
+	operation,
+	listType,
+}: {
+	error: unknown
+	attempt: number
+	maxAttempts: number
+	operation: 'shadow-sequence-probe' | 'shadow-backfill-tag'
+	listType: 'sequence' | 'tag'
+}): Promise<never> {
+	const schedule = kitWriteRetrySchedule(error, { attempt: attempt + 1 })
+	if (schedule) {
+		if (attempt + 1 >= maxAttempts) {
+			await log.warn('kit.write.outcome', {
+				operation,
+				outcome: 'exhausted',
+				context: 'skills-newsletter-path-entry',
+				listType,
+				attempts: attempt + 1,
+				providerCalls: 1,
+				maxProviderCallsForOperation: maxAttempts,
+				maxProviderCallsForPausedEvent: PAUSED_SEQUENCE_MAX_PROVIDER_CALLS,
+				status: schedule.status,
+			})
+			throw error
+		}
+
+		await log.warn('kit.write.retry', {
+			operation,
+			context: 'skills-newsletter-path-entry',
+			listType,
+			attempt: attempt + 1,
+			providerCalls: 1,
+			maxProviderCallsForOperation: maxAttempts,
+			maxProviderCallsForPausedEvent: PAUSED_SEQUENCE_MAX_PROVIDER_CALLS,
+			...schedule,
+		})
+		throw new RetryAfterError('Kit provider retry scheduled', schedule.delayMs)
+	}
+
+	if (error instanceof ConvertKitApiError || error instanceof KitSubscribeError) {
+		await log.warn('kit.write.outcome', {
+			operation,
+			outcome: 'failed',
+			context: 'skills-newsletter-path-entry',
+			listType,
+			attempts: attempt + 1,
+			providerCalls: 1,
+			status: error.status,
+		})
+		throw new NonRetriableError('Kit rejected background write')
+	}
+
+	throw error
+}
 
 export const skillsNewsletterPathEntry = inngest.createFunction(
 	{
@@ -21,10 +90,15 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		// (zero runs while sibling functions from the same syncs ran). Re-keying
 		// forces a fresh function record and trigger binding.
 		id: 'skills-newsletter-path-entry-v2',
-		retries: 3,
+		retries: SKILLS_NEWSLETTER_PATH_RETRIES,
+		concurrency: 1,
+		// The healthy paused path performs one expected 400 plus one tag write.
+		// One run per two seconds caps that path at 60 Kit calls per minute.
+		// Each durable step has its own four-attempt budget: eight calls worst case.
+		throttle: { limit: 1, period: '2s' },
 	},
 	{ event: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT },
-	async ({ event, step }) => {
+	async ({ event, step, attempt, maxAttempts }) => {
 		await log.info('subscriber_funnel.event_received', {
 			funnel: 'skills-newsletter',
 			eventId: event.id,
@@ -98,49 +172,124 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			return entryResult
 		}
 
-		// Separate step on purpose: course entry above is already durable, and a Kit
-		// outage here retries on its own without replanning email zero.
-		await step.run('subscribe-to-shadow-newsletter', async () => {
-			const user = {
-				email: event.data.email,
-				name: event.data.name,
-			} as Parameters<
-				typeof emailListProvider.subscribeToList
-			>[0]['user']
-			try {
-				await emailListProvider.subscribeToList({
-					listId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
-					listType: 'sequence',
-					user,
-					fields: {},
-				})
-			} catch (error) {
-				if (!(error instanceof ConvertKitApiError) || error.status !== 400) {
-					throw error
+		const user = {
+			email: event.data.email,
+			name: event.data.name,
+		} as Parameters<typeof emailListProvider.subscribeToList>[0]['user']
+		const configuredMaxAttempts =
+			maxAttempts ?? SKILLS_NEWSLETTER_PATH_RETRIES + 1
+
+		await step.run('log-shadow-sequence-logical-operation', () =>
+			log.info('kit.write.logical_operation', {
+				operation: 'shadow-sequence-probe',
+				logicalOperations: 1,
+				context: 'skills-newsletter-path-entry',
+				listType: 'sequence',
+				providerCallInvariant: 'one-call-per-step-attempt',
+				maxProviderCallsForPausedEvent: PAUSED_SEQUENCE_MAX_PROVIDER_CALLS,
+			}),
+		)
+
+		// The sequence probe and fallback tag are separate durable steps. When the
+		// tag retries, Inngest reuses the completed 400 probe instead of repeating it.
+		const sequenceResult = await step.run(
+			'probe-shadow-newsletter-sequence',
+			async () => {
+				try {
+					await subscribeToKitListWithoutFields({
+						listId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
+						listType: 'sequence',
+						user,
+					})
+					await log.info('kit.write.outcome', {
+						operation: 'shadow-sequence-probe',
+						outcome: attempt > 0 ? 'recovered' : 'succeeded',
+						context: 'skills-newsletter-path-entry',
+						listType: 'sequence',
+						attempts: attempt + 1,
+						providerCalls: 1,
+					})
+					return { status: 'subscribed' as const }
+				} catch (error) {
+					if (error instanceof ConvertKitApiError && error.status === 400) {
+						await log.info('kit.write.outcome', {
+							operation: 'shadow-sequence-probe',
+							outcome: 'deferred',
+							context: 'skills-newsletter-path-entry',
+							listType: 'sequence',
+							attempts: attempt + 1,
+							providerCalls: 1,
+							status: 400,
+						})
+						return { status: 'deferred' as const }
+					}
+					return throwForDurableKitRetry({
+						error,
+						attempt,
+						maxAttempts: configuredMaxAttempts,
+						operation: 'shadow-sequence-probe',
+						listType: 'sequence',
+					})
 				}
-				await emailListProvider.subscribeToList({
-					listId: SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
+			},
+		)
+
+		if (sequenceResult.status === 'deferred') {
+			await step.run('log-shadow-backfill-logical-operation', () =>
+				log.info('kit.write.logical_operation', {
+					operation: 'shadow-backfill-tag',
+					logicalOperations: 1,
+					context: 'skills-newsletter-path-entry',
 					listType: 'tag',
-					user,
-					fields: {},
-				})
-				await log.info('subscriber_funnel.shadow_newsletter_deferred', {
+					providerCallInvariant: 'one-call-per-step-attempt',
+					maxProviderCallsForPausedEvent: PAUSED_SEQUENCE_MAX_PROVIDER_CALLS,
+				}),
+			)
+			await step.run('tag-shadow-newsletter-backfill', async () => {
+				try {
+					await subscribeToKitListWithoutFields({
+						listId: SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
+						listType: 'tag',
+						user,
+					})
+					await log.info('kit.write.outcome', {
+						operation: 'shadow-backfill-tag',
+						outcome: attempt > 0 ? 'recovered' : 'succeeded',
+						context: 'skills-newsletter-path-entry',
+						listType: 'tag',
+						attempts: attempt + 1,
+						providerCalls: 1,
+					})
+					return { status: 'tagged' as const }
+				} catch (error) {
+					return throwForDurableKitRetry({
+						error,
+						attempt,
+						maxAttempts: configuredMaxAttempts,
+						operation: 'shadow-backfill-tag',
+						listType: 'tag',
+					})
+				}
+			})
+			await step.run('log-shadow-newsletter-deferred', () =>
+				log.info('subscriber_funnel.shadow_newsletter_deferred', {
 					funnel: 'skills-newsletter',
 					eventId: event.id,
 					contactId: entryResult.contactId,
 					kitSequenceId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
 					kitBackfillTagId: SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
-				})
-				return { status: 'deferred' as const }
-			}
-			await log.info('subscriber_funnel.shadow_newsletter_subscribed', {
-				funnel: 'skills-newsletter',
-				eventId: event.id,
-				kitSequenceId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
-				contactId: entryResult.contactId,
-			})
-			return { status: 'subscribed' as const }
-		})
+				}),
+			)
+		} else {
+			await step.run('log-shadow-newsletter-subscribed', () =>
+				log.info('subscriber_funnel.shadow_newsletter_subscribed', {
+					funnel: 'skills-newsletter',
+					eventId: event.id,
+					kitSequenceId: SHADOW_NEWSLETTER_KIT_SEQUENCE,
+					contactId: entryResult.contactId,
+				}),
+			)
+		}
 
 		return entryResult
 	},

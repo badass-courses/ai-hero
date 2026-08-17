@@ -6,23 +6,20 @@ import {
 	type WorkshopInterestRequested,
 } from '@/inngest/events/workshop-interest'
 import { inngest } from '@/inngest/inngest.server'
-import { setSubscriberCookie } from '@/lib/convertkit'
 import {
 	conversionIntentContract,
-	withConfirmedConversionFields,
 	type ConversionSurface,
 } from '@/lib/cta/conversion-intent'
 import { createSubscriberGateSnapshot } from '@/lib/cta/subscriber-gate-cookie'
 import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
-import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
 import { workshopInterestFieldKey } from './workshop-interest-config'
 
 /**
- * One-click interest for identified visitors: persist the intent in Inngest,
- * project it into the subscriber cookie, and return before Kit is touched.
- * The worker writes the dated field and matching interest_<slug> tag.
+ * One-click interest for identified visitors: persist the intent in Inngest
+ * and return before Kit is touched. The worker writes the dated field and
+ * matching interest_<slug> tag. We do not project the field until Kit confirms it.
  *
  * New visitors go through the intent-aware ConvertKit form, which writes the
  * same field and applies the same derived tag through the shared finalizer.
@@ -87,28 +84,9 @@ export async function addWorkshopInterest(
 		return { success: false, reason: 'request-failed' as const }
 	}
 
-	const subscribed = subscriber
-		? SubscriberSchema.parse(
-				withConfirmedConversionFields(subscriber, contract.fields),
-			)
-		: null
-
-	if (subscribed) {
-		try {
-			await setSubscriberCookie(subscribed)
-		} catch (error) {
-			await log.error('workshop.interest.cookie.failed', {
-				workshopSlug,
-				subscriberId: subscribed.id,
-				via: identity.via,
-				error: error instanceof Error ? error.message : String(error),
-			})
-		}
-	}
-
 	await log.info('workshop.interest.deferred', {
 		workshopSlug,
-		subscriberId: subscribed?.id,
+		subscriberId: subscriber?.id,
 		via: identity.via,
 		fieldKey,
 		intentKey: contract.key,
@@ -123,9 +101,9 @@ export async function addWorkshopInterest(
 		})
 	}
 
-	const gate = subscribed
-		? createSubscriberGateSnapshot(subscribed)
-		: { state: null, fields: contract.fields }
+	const gate = subscriber
+		? createSubscriberGateSnapshot(subscriber)
+		: { state: null, fields: {} }
 	return {
 		success: true as const,
 		gate: {

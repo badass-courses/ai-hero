@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
 import { POST as courseBuilderPOST } from '@/coursebuilder/course-builder-config'
+import { readKitSubscribeFailureCode } from '@/coursebuilder/email-list-provider'
 import { env } from '@/env.mjs'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
@@ -15,7 +16,7 @@ import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
 	serializeOptInAttributionForKit,
 } from '@/lib/subscriber-marketing/opt-in-attribution-stash'
-import { SubscriberSchema } from '@/schemas/subscriber'
+import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
@@ -39,26 +40,84 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 
 	// Get the original response from coursebuilder
 	const response = await courseBuilderPOST(clonedRequest)
-
-	// Only track successful subscriptions (status 200).
-	if (response.status === 200 && email) {
-		let kitSubscriberId: string | number | undefined
-		try {
-			const subscriber = SubscriberSchema.parse(await response.clone().json())
-			kitSubscriberId = subscriber.id
-		} catch {
-			// Subscriber body is optional for lean attribution; skip kit id.
+	if (response.status !== 200) {
+		const failureCode = readKitSubscribeFailureCode(
+			await response.clone().text(),
+		)
+		if (failureCode) {
+			await log.warn('kit.subscribe.failed', {
+				context: 'coursebuilder-subscribe-route',
+				reason: failureCode,
+			})
+			switch (failureCode) {
+				case 'rate-limited':
+					return Response.json(
+						{ error: 'Subscription is temporarily unavailable' },
+						{ status: 429 },
+					)
+				case 'upstream':
+				case 'unresolved':
+					return Response.json(
+						{ error: 'Subscription could not be confirmed' },
+						{ status: 502 },
+					)
+				case 'rejected':
+					return Response.json(
+						{ error: 'Subscription was rejected' },
+						{ status: 400 },
+					)
+			}
 		}
+		return response
+	}
+
+	let confirmedSubscriber: Subscriber | undefined
+	let confirmedEmail: string | undefined
+
+	if (response.status === 200) {
+		try {
+			confirmedSubscriber = SubscriberSchema.parse(
+				await response.clone().json(),
+			)
+		} catch {
+			await log.warn('kit.subscribe.response_unresolved', {
+				context: 'coursebuilder-subscribe-route',
+				reason: 'malformed-subscriber',
+			})
+			return Response.json(
+				{ error: 'Subscription could not be confirmed' },
+				{ status: 502 },
+			)
+		}
+
+		const requestedEmail =
+			typeof email === 'string' ? email.trim().toLowerCase() : undefined
+		const returnedEmail = confirmedSubscriber.email_address
+			?.trim()
+			.toLowerCase()
+		if (!requestedEmail || returnedEmail !== requestedEmail) {
+			await log.warn('kit.subscribe.response_unresolved', {
+				context: 'coursebuilder-subscribe-route',
+				reason: returnedEmail ? 'subscriber-mismatch' : 'missing-email',
+			})
+			return Response.json(
+				{ error: 'Subscription could not be confirmed' },
+				{ status: 502 },
+			)
+		}
+		confirmedEmail = confirmedSubscriber.email_address
+	}
+
+	// Only track subscriptions after the response body confirms the subscriber.
+	if (response.status === 200 && confirmedSubscriber && confirmedEmail) {
+		const subscriber = confirmedSubscriber
+		const subscriberEmail = confirmedEmail
+		const kitSubscriberId: string | number = subscriber.id
 
 		if (Number(body.listId) === 9376133) {
 			try {
-				const subscriber = SubscriberSchema.parse(await response.clone().json())
-				if (!subscriber.email_address) {
-					throw new Error('Skills subscriber response is missing an email')
-				}
-				kitSubscriberId = subscriber.id
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
-					email: subscriber.email_address,
+					email: subscriberEmail,
 					subscriberState: subscriber.state,
 				})
 				const cookieStore = await cookies()
@@ -75,9 +134,8 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						: undefined
 					if (serialized) {
 						try {
-							const { setConvertkitSubscriberFields } = await import(
-								'@coursebuilder/core/providers/convertkit'
-							)
+							const { setConvertkitSubscriberFields } =
+								await import('@coursebuilder/core/providers/convertkit')
 							await setConvertkitSubscriberFields({
 								subscriber: { id: subscriber.id, fields: subscriber.fields },
 								fields: { [AIH_OPTIN_ATTRIBUTION_FIELD]: serialized },
@@ -104,8 +162,8 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						hasAttribution: Boolean(optInAttribution),
 						hasClickId: Boolean(
 							optInAttribution?.gclid ||
-								optInAttribution?.gbraid ||
-								optInAttribution?.wbraid,
+							optInAttribution?.gbraid ||
+							optInAttribution?.wbraid,
 						),
 						attributionStashed,
 						optInAttribution,
@@ -115,7 +173,7 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 						data: {
 							kitSubscriberId: String(subscriber.id),
-							email: subscriber.email_address,
+							email: subscriberEmail,
 							name: subscriber.first_name ?? undefined,
 							formId: 9376133,
 							source: body.fields?.source ?? 'aihero_skills_page',

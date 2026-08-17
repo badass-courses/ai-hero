@@ -72,6 +72,10 @@ vi.mock('@/server/with-skill', () => ({
 	withSkill: (handler: (req: NextRequest) => Promise<Response>) => handler,
 }))
 
+import { KitSubscribeError } from '@/coursebuilder/email-list-provider'
+
+import { CourseBuilder } from '@coursebuilder/core'
+
 import { POST } from './route'
 
 function subscriberResponse(body: Record<string, unknown>, status = 200) {
@@ -89,6 +93,43 @@ function request(body: Record<string, unknown>) {
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(body),
 		},
+	)
+}
+
+function useRealCourseBuilderFailureBoundary(error: Error) {
+	mocks.courseBuilderPOST.mockImplementation((req: Request) =>
+		CourseBuilder(req, {
+			baseUrl: 'http://localhost',
+			basePath: '/api/coursebuilder',
+			authConfig: {} as never,
+			logger: {
+				debug: vi.fn(),
+				info: vi.fn(),
+				warn: vi.fn(),
+				error: vi.fn(),
+			},
+			adapter: {
+				getUserByEmail: async (email: string) => ({
+					id: 'user-1',
+					email,
+					name: 'Reader',
+					emailVerified: null,
+				}),
+			} as never,
+			providers: [
+				{
+					id: 'convertkit',
+					name: 'Convertkit',
+					type: 'email-list',
+					defaultListType: 'form',
+					defaultListId: 'default-form',
+					options: {},
+					subscribeToList: async () => {
+						throw error
+					},
+				} as never,
+			],
+		}),
 	)
 }
 
@@ -314,21 +355,33 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		},
 	)
 
-	// Kit's body not matching `SubscriberSchema` is the other way in, and the one
-	// that best fits a reader carrying a stale cookie from another account.
-	it('still returns 200 when the Kit response body will not parse', async () => {
-		mocks.courseBuilderPOST.mockResolvedValue(
-			subscriberResponse({ unexpected: 'shape' }),
-		)
+	it.each([
+		['rate-limited', 429, null],
+		['upstream', 502, null],
+		['unresolved', 502, null],
+		['rejected', 400, null],
+	] as const)(
+		'maps real Course Builder %s failures to HTTP %s',
+		async (code, status, retryAfter) => {
+			useRealCourseBuilderFailureBoundary(
+				new KitSubscribeError({
+					code,
+					status: code === 'rate-limited' ? 429 : undefined,
+				}),
+			)
 
-		const response = await POST(
-			request({
-				email: 'skills@example.com',
-				listId: 9376133,
-				fields: { source: 'aihero_skills_page' },
-			}),
-		)
+			const response = await POST(
+				request({ email: 'reader@example.com', listId: 555 }),
+			)
 
-		expect(response.status).toBe(200)
-	})
+			expect(response.status).toBe(status)
+			expect(response.headers.get('retry-after')).toBe(retryAfter)
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(mocks.recordSignupAttribution).not.toHaveBeenCalled()
+			expect(mocks.log.warn).toHaveBeenCalledWith('kit.subscribe.failed', {
+				context: 'coursebuilder-subscribe-route',
+				reason: code,
+			})
+		},
+	)
 })

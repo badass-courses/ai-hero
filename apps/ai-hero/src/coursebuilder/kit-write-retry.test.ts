@@ -1,13 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
 
 import {
-	KIT_WRITE_BASE_DELAY_MS,
-	retryKitWrite,
+	KIT_RATE_LIMIT_DELAY_MS,
+	KIT_RATE_LIMIT_JITTER_MS,
+	KIT_SERVER_ERROR_BASE_DELAY_MS,
+	kitWriteRetrySchedule,
 } from './kit-write-retry'
 
-function kitError(status: number, responseHeaders: Record<string, string> = {}) {
+function kitError(
+	status: number,
+	responseHeaders: Record<string, string> = {},
+) {
 	return new ConvertKitApiError({
 		message: `Kit failed with ${status}`,
 		status,
@@ -17,60 +22,88 @@ function kitError(status: number, responseHeaders: Record<string, string> = {}) 
 	})
 }
 
-describe('retryKitWrite', () => {
-	it.each([429, 500, 503])(
-		'retries Kit HTTP %s responses with exponential backoff',
-		async (status) => {
-			const write = vi
-				.fn()
-				.mockRejectedValueOnce(kitError(status))
-				.mockRejectedValueOnce(kitError(status))
-				.mockResolvedValue({ id: 42 })
-			const sleep = vi.fn().mockResolvedValue(undefined)
-			const onRetry = vi.fn()
+describe('kitWriteRetrySchedule', () => {
+	it('schedules a 429 after the rolling rate-limit window', () => {
+		expect(kitWriteRetrySchedule(kitError(429), { random: () => 0.5 })).toEqual(
+			{
+				status: 429,
+				delayMs: KIT_RATE_LIMIT_DELAY_MS + KIT_RATE_LIMIT_JITTER_MS / 2,
+				delaySource: 'rate-limit-window',
+			},
+		)
+	})
 
-			await expect(retryKitWrite({ write, sleep, onRetry })).resolves.toEqual({
-				id: 42,
-			})
-			expect(write).toHaveBeenCalledTimes(3)
-			expect(sleep).toHaveBeenNthCalledWith(1, KIT_WRITE_BASE_DELAY_MS)
-			expect(sleep).toHaveBeenNthCalledWith(2, KIT_WRITE_BASE_DELAY_MS * 2)
-			expect(onRetry).toHaveBeenNthCalledWith(1, {
-				attempt: 1,
+	it.each([500, 503])(
+		'schedules Kit HTTP %s with short server-error backoff',
+		(status) => {
+			expect(
+				kitWriteRetrySchedule(kitError(status), {
+					attempt: 2,
+					random: () => 0,
+				}),
+			).toEqual({
 				status,
-				delayMs: KIT_WRITE_BASE_DELAY_MS,
+				delayMs: KIT_SERVER_ERROR_BASE_DELAY_MS * 2,
+				delaySource: 'server-error',
 			})
+		},
+	)
+
+	it('honors a Retry-After seconds header', () => {
+		expect(
+			kitWriteRetrySchedule(kitError(429, { 'retry-after': '10' })),
+		).toEqual({
+			status: 429,
+			delayMs: 10_000,
+			delaySource: 'retry-after',
 		})
-
-	it('honors a bounded Retry-After header', async () => {
-		const write = vi
-			.fn()
-			.mockRejectedValueOnce(kitError(429, { 'retry-after': '10' }))
-			.mockResolvedValue('ok')
-		const sleep = vi.fn().mockResolvedValue(undefined)
-
-		await retryKitWrite({ write, sleep })
-
-		expect(sleep).toHaveBeenCalledWith(2_000)
 	})
 
-	it('does not retry non-retryable Kit responses', async () => {
-		const error = kitError(400)
-		const write = vi.fn().mockRejectedValue(error)
-		const sleep = vi.fn()
-
-		await expect(retryKitWrite({ write, sleep })).rejects.toBe(error)
-		expect(write).toHaveBeenCalledTimes(1)
-		expect(sleep).not.toHaveBeenCalled()
+	it('honors a Retry-After HTTP date header', () => {
+		const now = Date.parse('2026-08-17T20:00:00.000Z')
+		expect(
+			kitWriteRetrySchedule(
+				kitError(429, {
+					'retry-after': 'Mon, 17 Aug 2026 20:00:30 GMT',
+				}),
+				{ now: () => now },
+			),
+		).toEqual({
+			status: 429,
+			delayMs: 30_000,
+			delaySource: 'retry-after',
+		})
 	})
 
-	it('rethrows after the third retryable failure', async () => {
-		const error = kitError(429)
-		const write = vi.fn().mockRejectedValue(error)
-		const sleep = vi.fn().mockResolvedValue(undefined)
+	it('keeps a Retry-After longer than the rolling-window fallback', () => {
+		expect(
+			kitWriteRetrySchedule(kitError(429, { 'retry-after': '120' })),
+		).toEqual({
+			status: 429,
+			delayMs: 120_000,
+			delaySource: 'retry-after',
+		})
+	})
 
-		await expect(retryKitWrite({ write, sleep })).rejects.toBe(error)
-		expect(write).toHaveBeenCalledTimes(3)
-		expect(sleep).toHaveBeenCalledTimes(2)
+	it('does not schedule non-retryable provider responses', () => {
+		expect(kitWriteRetrySchedule(kitError(400))).toBeUndefined()
+		expect(
+			kitWriteRetrySchedule(new Error('network unavailable')),
+		).toBeUndefined()
+	})
+
+	it('jitters concurrent 429 schedules across the rolling-window boundary', () => {
+		const delays = [0, 0.5, 1].map(
+			(randomValue) =>
+				kitWriteRetrySchedule(kitError(429), {
+					random: () => randomValue,
+				})?.delayMs,
+		)
+
+		expect(delays).toEqual([
+			KIT_RATE_LIMIT_DELAY_MS,
+			KIT_RATE_LIMIT_DELAY_MS + KIT_RATE_LIMIT_JITTER_MS / 2,
+			KIT_RATE_LIMIT_DELAY_MS + KIT_RATE_LIMIT_JITTER_MS,
+		])
 	})
 })
