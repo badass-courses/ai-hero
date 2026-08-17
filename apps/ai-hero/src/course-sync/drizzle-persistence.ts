@@ -89,7 +89,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const resolved = resolveStoredCourseSyncBinding(existing.binding, binding)
 			if (!resolved.migrated) return resolved.binding
 
-			let migrated = false
+			let migratedFromContractVersion: 2 | null = null
 			const locked = await db.transaction(async (trx) => {
 				const [current] = await trx
 					.select()
@@ -148,16 +148,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						.onDuplicateKeyUpdate({
 							set: { id: sql`values(${courseSyncPollLog.id})` },
 						})
-					migrated = true
+					migratedFromContractVersion = fromContractVersion
 				}
 				return currentResolved.binding
 			})
-			if (migrated) {
+			if (migratedFromContractVersion !== null) {
 				void log
 					.info('course_sync.binding.migrated', {
 						bindingId: binding.bindingId,
-						fromContractVersion: 1,
-						toContractVersion: 2,
+						fromContractVersion: migratedFromContractVersion,
+						toContractVersion: binding.contractVersion,
 					})
 					.catch(() => undefined)
 			}
