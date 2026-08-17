@@ -34,10 +34,28 @@ describe('createDictionaryAutoLinkRemarkPlugin', () => {
 		expect(html).toContain('/ai-coding-dictionary/agent')
 	})
 
-	// Lesson bodies opt out of auto-linking: they already carry hand-authored
-	// dictionary links, and pass entries only so those links get hover cards.
 	it('inserts no links at all when maxLinks is 0', async () => {
 		const html = await render('An agent does the work.', 0)
 		expect(html).not.toContain('<a')
+	})
+
+	// Both article and lesson bodies mix hand-authored links with auto-linked
+	// ones, so the author's own link must survive untouched and unnested.
+	it('leaves a hand-authored link alone and does not nest inside it', async () => {
+		const html = await render(
+			'The [agent](https://www.aihero.dev/ai-coding-dictionary/agent) works.',
+			3,
+		)
+		expect(html).toBe(
+			'<p>The <a href="https://www.aihero.dev/ai-coding-dictionary/agent">agent</a> works.</p>',
+		)
+	})
+
+	it('auto-links a term the author forgot, once per lesson', async () => {
+		const html = await render(
+			'An agent plans. The agent then executes.',
+			3,
+		)
+		expect(html.match(/<a /g)).toHaveLength(1)
 	})
 })

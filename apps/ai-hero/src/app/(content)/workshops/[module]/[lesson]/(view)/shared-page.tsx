@@ -65,10 +65,11 @@ export async function LessonPage({
 	// the lesson. Compilation can resolve embedded video playback IDs server-side
 	// (see compile-mdx.tsx), so it must never run for an unauthorized viewer.
 	//
-	// `maxLinks: 0` disables the auto-linker: lesson bodies already carry
-	// hand-authored dictionary links, and the entries are passed only so those
-	// links render as `DictionaryHoverLink` with the term's definition on hover,
-	// the same as in articles.
+	// Same treatment as articles: hand-authored dictionary links get the term's
+	// definition on hover, and the auto-linker fills the gaps an author left —
+	// terms are linked whether or not someone remembered to link them. Existing
+	// links are never touched (the plugin skips `link` nodes) and each term is
+	// auto-linked at most once per lesson.
 	//
 	// The dictionary is fetched from GitHub and does fail (504s observed), so it
 	// is strictly best-effort: hover cards are a nicety, and paid course material
@@ -90,7 +91,7 @@ export async function LessonPage({
 				{},
 				{
 					lessonId: lesson.id,
-					...(entries ? { dictionaryAutoLink: { entries, maxLinks: 0 } } : {}),
+					...(entries ? { dictionaryAutoLink: { entries, maxLinks: 3 } } : {}),
 				},
 			),
 		)
