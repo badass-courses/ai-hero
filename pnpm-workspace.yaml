@@ -18,6 +18,11 @@ allowBuilds:
   workerd: true
 
 overrides:
+  '@coursebuilder/core': '2.0.3'
+  # Core 2.0.3 was published with workspace protocols in its npm manifest.
+  # Resolve those two package-local dependencies to the versions in its pack artifact.
+  '@coursebuilder/core@2.0.3>@coursebuilder/email-templates': '1.0.8'
+  '@coursebuilder/core@2.0.3>@coursebuilder/nodash': '0.0.3'
   '@internationalized/date': '3.12.2'
   '@types/react': '19.2.7'
   '@types/react-dom': '19.2.3'
