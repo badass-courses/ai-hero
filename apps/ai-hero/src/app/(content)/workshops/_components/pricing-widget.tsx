@@ -318,9 +318,38 @@ const TeamPurchaseControls = () => {
 		quantity,
 		updateQuantity,
 		setMerchantCoupon,
+		activeMerchantCoupon,
+		status,
 		isSoldOut,
 		options: { teamQuantityLimit, allowTeamPurchase },
 	} = usePricing()
+
+	// The pricing machine drops TOGGLE_TEAM_PURCHASE while PPP is active, and
+	// only accepts it in the ready state — so clearing PPP and toggling must be
+	// two steps, the second deferred until the price reload finishes.
+	const pendingTeamToggle = React.useRef(false)
+	React.useEffect(() => {
+		if (!pendingTeamToggle.current) return
+		if (status === 'error') {
+			// A failed reload voids the deferred toggle — a later unrelated
+			// success must not switch to team purchase without a new click.
+			pendingTeamToggle.current = false
+			return
+		}
+		if (status === 'success') {
+			pendingTeamToggle.current = false
+			toggleTeamPurchase()
+		}
+	}, [status, toggleTeamPurchase])
+
+	const onTeamCheckedChange = () => {
+		if (activeMerchantCoupon?.type === 'ppp') {
+			pendingTeamToggle.current = true
+			setMerchantCoupon(undefined)
+		} else {
+			toggleTeamPurchase()
+		}
+	}
 
 	if (isSoldOut || !allowTeamPurchase) return null
 
@@ -351,7 +380,7 @@ const TeamPurchaseControls = () => {
 				<Checkbox
 					id="team-purchase"
 					checked={isTeamPurchaseActive}
-					onCheckedChange={() => toggleTeamPurchase()}
+					onCheckedChange={onTeamCheckedChange}
 					className="rounded-[4px]"
 				/>
 				<label

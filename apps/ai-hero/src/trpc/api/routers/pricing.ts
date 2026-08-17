@@ -404,7 +404,12 @@ export const pricingRouter = createTRPCRouter({
 				merchantCouponId: activeMerchantCoupon?.id,
 				...(upgradeFromPurchaseId && { upgradeFromPurchaseId }),
 				userId: verifiedUserId,
-				autoApplyPPP,
+				// A stripped PPP selection means the client disabled autoApplyPPP
+				// while asking for PPP; re-enable it so server pricing re-derives
+				// PPP from the trusted country instead of silently dropping it.
+				autoApplyPPP:
+					autoApplyPPP ||
+					Boolean(!couponAuthorization.authorized && couponAuthorization.requestedPPP),
 				preferStacking: hasEntitlementCoupon,
 				usedCouponId,
 				ctx: courseBuilderAdapter,

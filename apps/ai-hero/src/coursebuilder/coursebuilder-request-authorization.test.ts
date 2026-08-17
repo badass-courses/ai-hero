@@ -115,6 +115,31 @@ describe('protectCourseBuilderRequest', () => {
 		})
 	})
 
+	it('re-enables autoApplyPPP when stripping a PPP selection from formatted pricing', async () => {
+		const request = new NextRequest(
+			'https://aihero.dev/api/coursebuilder/prices-formatted',
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					productId: 'product-crash-course',
+					quantity: 1,
+					autoApplyPPP: false,
+					merchantCoupon: pppMerchantCoupon,
+				}),
+			},
+		)
+
+		const protectedRequest = await protect(request)
+		const body = await protectedRequest.json()
+
+		expect(body).toEqual({
+			productId: 'product-crash-course',
+			quantity: 1,
+			autoApplyPPP: true,
+		})
+	})
+
 	it('sanitizes supported form-encoded formatted pricing', async () => {
 		const form = new URLSearchParams({
 			productId: 'product-crash-course',
