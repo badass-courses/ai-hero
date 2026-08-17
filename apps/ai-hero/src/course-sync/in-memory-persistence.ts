@@ -72,7 +72,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const existing = this.bindings.get(binding.bindingId)
 		const resolved = existing
 			? resolveStoredCourseSyncBinding(existing, binding)
-			: { binding, migrated: false }
+			: { binding, migrated: false, fromContractVersion: null }
 		this.bindings.set(binding.bindingId, structuredClone(resolved.binding))
 		return structuredClone(resolved.binding)
 	}

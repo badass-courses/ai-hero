@@ -10,7 +10,7 @@ export type CourseSyncPollMachineInput = {
 
 export type CourseSyncPollMachineEvent =
 	| { type: 'REVISION.START' }
-	| { type: 'PREVIEW.OK' }
+	| { type: 'PREVIEW.EVALUATED'; boundedAutoEligible: boolean }
 	| { type: 'APPLY.START' }
 	| { type: 'APPLY.OK' }
 	| { type: 'APPLY.FAILED' }
@@ -32,7 +32,10 @@ export const courseSyncPollMachine = setup({
 		wasApplying: ({ context }) => context.pollStatus === 'applying',
 		wasFailed: ({ context }) => context.pollStatus === 'failed',
 		wasStaging: ({ context }) => context.pollStatus === 'staging',
-		operatorApply: ({ context }) => context.applyPolicy === 'operator',
+		boundedAutoApply: ({ context, event }) =>
+			context.applyPolicy === 'bounded-auto' &&
+			event.type === 'PREVIEW.EVALUATED' &&
+			event.boundedAutoEligible,
 		hasTransientStrike: ({ context }) => context.strikes >= 1,
 	},
 	actions: {
@@ -67,9 +70,9 @@ export const courseSyncPollMachine = setup({
 				},
 				staging: {
 					on: {
-						'PREVIEW.OK': [
-							{ guard: 'operatorApply', target: 'awaitingApply' },
-							{ target: 'applying' },
+						'PREVIEW.EVALUATED': [
+							{ guard: 'boundedAutoApply', target: 'applying' },
+							{ target: 'awaitingApply' },
 						],
 						'FAIL.NON_RETRYABLE': {
 							target: 'held',

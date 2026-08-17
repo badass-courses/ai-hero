@@ -152,6 +152,180 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 	})
 }
 
+export type CourseSyncReviewNotificationReceiptInput = {
+	bindingId: string
+	courseVersionId: string
+	providerRevision: string
+	runId: string
+	controlPlaneRunId: string
+	planSha256: string
+	occurredAt: Date
+}
+
+function courseSyncReviewNotificationReceipt(input: {
+	bindingId: string
+	courseVersionId: string
+	planSha256: string
+}) {
+	const notificationKey = sha256(
+		stableJson({
+			kind: 'review',
+			bindingId: input.bindingId,
+			courseVersionId: input.courseVersionId,
+			planSha256: input.planSha256,
+		}),
+	)
+	return {
+		notificationKey,
+		receiptId: `cspl_review_notice_${notificationKey}`,
+	}
+}
+
+export async function claimCourseSyncReviewNotification(
+	input: CourseSyncReviewNotificationReceiptInput,
+): Promise<boolean> {
+	const { notificationKey, receiptId } =
+		courseSyncReviewNotificationReceipt(input)
+	return db.transaction(async (trx) => {
+		await trx
+			.select({ bindingId: courseSyncBinding.bindingId })
+			.from(courseSyncBinding)
+			.where(eq(courseSyncBinding.bindingId, input.bindingId))
+			.for('update')
+		const [existing] = await trx
+			.select({
+				id: courseSyncPollLog.id,
+				outcome: courseSyncPollLog.outcome,
+				metadata: courseSyncPollLog.metadata,
+			})
+			.from(courseSyncPollLog)
+			.where(eq(courseSyncPollLog.id, receiptId))
+			.for('update')
+		if (
+			existing?.outcome === 'succeeded' ||
+			existing?.outcome === 'started'
+		) {
+			return false
+		}
+		if (existing) {
+			const deliveryAttempts = Number(
+				(existing.metadata?.deliveryAttempts as number | undefined) ?? 1,
+			)
+			await trx
+				.update(courseSyncPollLog)
+				.set({
+					runId: input.runId,
+					controlPlaneRunId: input.controlPlaneRunId,
+					outcome: 'started',
+					failureClass: null,
+					metadata: {
+						...existing.metadata,
+						deliveryAttempts: deliveryAttempts + 1,
+					},
+					occurredAt: input.occurredAt,
+				})
+				.where(eq(courseSyncPollLog.id, receiptId))
+			return true
+		}
+		await trx.insert(courseSyncPollLog).values({
+			id: receiptId,
+			bindingId: input.bindingId,
+			courseVersionId: input.courseVersionId,
+			providerRevision: input.providerRevision,
+			runId: input.runId,
+			controlPlaneRunId: input.controlPlaneRunId,
+			stage: 'notify',
+			outcome: 'started',
+			failureClass: null,
+			metadata: {
+				kind: 'review',
+				notificationKey,
+				planSha256: input.planSha256,
+				deliveryAttempts: 1,
+			},
+			occurredAt: input.occurredAt,
+		})
+		return true
+	})
+}
+
+export async function completeCourseSyncReviewNotification(
+	input: CourseSyncReviewNotificationReceiptInput,
+): Promise<void> {
+	const { receiptId } = courseSyncReviewNotificationReceipt(input)
+	await db.transaction(async (trx) => {
+		await trx
+			.select({ bindingId: courseSyncBinding.bindingId })
+			.from(courseSyncBinding)
+			.where(eq(courseSyncBinding.bindingId, input.bindingId))
+			.for('update')
+		const [existing] = await trx
+			.select({
+				id: courseSyncPollLog.id,
+				outcome: courseSyncPollLog.outcome,
+				metadata: courseSyncPollLog.metadata,
+			})
+			.from(courseSyncPollLog)
+			.where(eq(courseSyncPollLog.id, receiptId))
+			.for('update')
+		if (!existing) {
+			throw new CourseSyncError(
+				'REVIEW_NOTIFICATION_RECEIPT_MISSING',
+				'Cannot complete a review notification without its durable claim.',
+				409,
+				{ category: 'lifecycle_conflict', retryable: true },
+			)
+		}
+		if (existing.outcome === 'succeeded') return
+		await trx
+			.update(courseSyncPollLog)
+			.set({
+				outcome: 'succeeded',
+				metadata: {
+					...existing.metadata,
+					deliveredAt: input.occurredAt.toISOString(),
+				},
+				occurredAt: input.occurredAt,
+			})
+			.where(eq(courseSyncPollLog.id, receiptId))
+	})
+}
+
+export async function failCourseSyncReviewNotification(
+	input: CourseSyncReviewNotificationReceiptInput & { failureClass: string },
+): Promise<void> {
+	const { receiptId } = courseSyncReviewNotificationReceipt(input)
+	await db.transaction(async (trx) => {
+		await trx
+			.select({ bindingId: courseSyncBinding.bindingId })
+			.from(courseSyncBinding)
+			.where(eq(courseSyncBinding.bindingId, input.bindingId))
+			.for('update')
+		const [existing] = await trx
+			.select({
+				id: courseSyncPollLog.id,
+				outcome: courseSyncPollLog.outcome,
+				metadata: courseSyncPollLog.metadata,
+			})
+			.from(courseSyncPollLog)
+			.where(eq(courseSyncPollLog.id, receiptId))
+			.for('update')
+		if (!existing || existing.outcome === 'succeeded') return
+		await trx
+			.update(courseSyncPollLog)
+			.set({
+				outcome: 'failed',
+				failureClass: input.failureClass,
+				metadata: {
+					...existing.metadata,
+					failedAt: input.occurredAt.toISOString(),
+				},
+				occurredAt: input.occurredAt,
+			})
+			.where(eq(courseSyncPollLog.id, receiptId))
+	})
+}
+
 export async function releaseCourseSyncPollHoldAtomically(
 	input: CourseSyncPollReleaseInput,
 ): Promise<CourseSyncPollState> {

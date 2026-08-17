@@ -9,6 +9,7 @@ import {
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
 	AI_HERO_COURSE_SYNC_BINDING_V1,
+	AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR,
 } from './types'
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 
@@ -46,7 +47,7 @@ function validFacts(): CourseSyncTargetFacts {
 	}
 }
 
-describe('course sync target contract v2', () => {
+describe('course sync target contract v3', () => {
 	it('accepts the pinned live target while keeping managed children draft/unlisted', () => {
 		expect(
 			collectCourseSyncTargetViolations(
@@ -130,19 +131,35 @@ describe('course sync target contract v2', () => {
 })
 
 describe('stored binding migration', () => {
-	it('migrates only the exact v1 binding literal and is idempotent on v2', () => {
-		expect(
+	it('migrates only the exact v2 literal and is idempotent on v3', () => {
+		expect(() =>
 			resolveStoredCourseSyncBinding(
 				structuredClone(AI_HERO_COURSE_SYNC_BINDING_V1),
 				AI_HERO_COURSE_SYNC_BINDING,
 			),
-		).toEqual({ binding: AI_HERO_COURSE_SYNC_BINDING, migrated: true })
+		).toThrowError(
+			expect.objectContaining({ code: 'IMMUTABLE_BINDING_CONFLICT' }),
+		)
+		expect(
+			resolveStoredCourseSyncBinding(
+				structuredClone(AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR),
+				AI_HERO_COURSE_SYNC_BINDING,
+			),
+		).toEqual({
+			binding: AI_HERO_COURSE_SYNC_BINDING,
+			migrated: true,
+			fromContractVersion: 2,
+		})
 		expect(
 			resolveStoredCourseSyncBinding(
 				structuredClone(AI_HERO_COURSE_SYNC_BINDING),
 				AI_HERO_COURSE_SYNC_BINDING,
 			),
-		).toEqual({ binding: AI_HERO_COURSE_SYNC_BINDING, migrated: false })
+		).toEqual({
+			binding: AI_HERO_COURSE_SYNC_BINDING,
+			migrated: false,
+			fromContractVersion: null,
+		})
 	})
 
 	it('rejects unknown binding drift', () => {

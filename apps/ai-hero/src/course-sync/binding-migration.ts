@@ -1,5 +1,8 @@
 import { CourseSyncError } from './errors'
-import { AI_HERO_COURSE_SYNC_BINDING_V1, type CourseSyncBinding } from './types'
+import {
+	AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR,
+	type CourseSyncBinding,
+} from './types'
 
 function stableValue(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(stableValue)
@@ -20,21 +23,26 @@ function sameBinding(left: unknown, right: unknown) {
 }
 
 /**
- * Resolve a stored binding without accepting drift. The exact v1 server literal
- * is the sole migration source; any other value remains an immutable conflict.
+ * Resolve a stored binding without accepting drift. Only exact prior
+ * server-owned literals may migrate; any other value remains immutable.
  */
 export function resolveStoredCourseSyncBinding(
 	stored: unknown,
 	expected: CourseSyncBinding,
-): { binding: CourseSyncBinding; migrated: boolean } {
-	if (sameBinding(stored, expected))
-		return { binding: expected, migrated: false }
-	if (sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V1)) {
-		return { binding: expected, migrated: true }
+): {
+	binding: CourseSyncBinding
+	migrated: boolean
+	fromContractVersion: 2 | null
+} {
+	if (sameBinding(stored, expected)) {
+		return { binding: expected, migrated: false, fromContractVersion: null }
+	}
+	if (sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR)) {
+		return { binding: expected, migrated: true, fromContractVersion: 2 }
 	}
 	throw new CourseSyncError(
 		'IMMUTABLE_BINDING_CONFLICT',
-		'The stored sync binding does not match the server-owned v2 binding or the exact migratable v1 binding.',
+		'The stored sync binding does not match the server-owned v3 binding or an exact migratable prior binding.',
 		409,
 		{ category: 'lifecycle_conflict', retryable: false },
 	)

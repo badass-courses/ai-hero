@@ -2,22 +2,46 @@ import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
 
 import { courseSyncPollMachine } from './poll-machine'
+import type { CourseSyncBinding } from './types'
 
-function actor(status: string | null, strikes = 0) {
+function actor(
+	status: string | null,
+	strikes = 0,
+	applyPolicy: CourseSyncBinding['applyPolicy'] = 'operator',
+) {
 	return createActor(courseSyncPollMachine, {
-		input: {
-			pollStatus: status,
-			strikes,
-			applyPolicy: 'operator',
-		},
+		input: { pollStatus: status, strikes, applyPolicy },
 	}).start()
 }
 
 describe('course sync poll machine', () => {
-	it('stops an operator-policy preview at awaiting apply', () => {
+	it('routes only eligible bounded-auto previews to applying', () => {
+		const eligible = actor(null, 0, 'bounded-auto')
+		eligible.send({ type: 'REVISION.START' })
+		eligible.send({
+			type: 'PREVIEW.EVALUATED',
+			boundedAutoEligible: true,
+		})
+		expect(eligible.getSnapshot().value).toEqual({ active: 'applying' })
+
+		const ineligible = actor(null, 0, 'bounded-auto')
+		ineligible.send({ type: 'REVISION.START' })
+		ineligible.send({
+			type: 'PREVIEW.EVALUATED',
+			boundedAutoEligible: false,
+		})
+		expect(ineligible.getSnapshot().value).toEqual({
+			active: 'awaitingApply',
+		})
+	})
+
+	it('stops operator-policy previews at awaiting apply', () => {
 		const poll = actor(null)
 		poll.send({ type: 'REVISION.START' })
-		poll.send({ type: 'PREVIEW.OK' })
+		poll.send({
+			type: 'PREVIEW.EVALUATED',
+			boundedAutoEligible: true,
+		})
 		expect(poll.getSnapshot().value).toEqual({ active: 'awaitingApply' })
 	})
 
@@ -74,7 +98,7 @@ describe('course sync poll machine', () => {
 		expect(new Set(courseSyncPollMachine.events)).toEqual(
 			new Set([
 				'REVISION.START',
-				'PREVIEW.OK',
+				'PREVIEW.EVALUATED',
 				'APPLY.START',
 				'APPLY.OK',
 				'APPLY.FAILED',

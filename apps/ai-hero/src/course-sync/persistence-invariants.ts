@@ -16,6 +16,17 @@ const AI_HERO_MANAGED_RESOURCE_COUNTS = {
 } as const
 
 const AI_HERO_MANAGED_MEDIA_COUNT = 70
+export const COURSE_SYNC_BOUNDED_AUTO_MAX_RESOURCE_UPDATES = 50
+export const COURSE_SYNC_BOUNDED_AUTO_MAX_MEDIA_UPDATES = 25
+
+export type CourseSyncBoundedAutoApplyDecision =
+	| { eligible: true; planSha256: string }
+	| {
+			eligible: false
+			planSha256: string
+			reason: 'launch-policy-violation' | 'change-budget-exceeded'
+			failureCode: string
+	  }
 
 export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 	const resourceCounts = Object.fromEntries(
@@ -57,15 +68,26 @@ export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 	})
 	const mediaInventoryMatches =
 		mediaCounts.update + mediaCounts.retain === AI_HERO_MANAGED_MEDIA_COUNT
+	const mediaReady = plan.media.every(
+		(item) =>
+			item.muxAssetId.trim().length > 0 &&
+			item.muxPlaybackId.trim().length > 0 &&
+			Number.isFinite(item.duration) &&
+			item.duration > 0 &&
+			Number.isInteger(item.bytes) &&
+			item.bytes > 0 &&
+			item.sha256.trim().length > 0,
+	)
 	if (
 		plan.bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId ||
 		topologyChanged ||
 		!resourceInventoryMatches ||
-		!mediaInventoryMatches
+		!mediaInventoryMatches ||
+		!mediaReady
 	) {
 		throw new CourseSyncError(
 			'LAUNCH_APPLY_POLICY_VIOLATION',
-			'Apply blocked: the plan is outside the managed 6-section, 59-lesson, 70-video, 87-question, topology-preserving course shape.',
+			'Apply blocked: the plan is outside the managed, topology-preserving, asset-ready 6-section, 59-lesson, 70-video, 87-question course shape.',
 			409,
 			{
 				category: 'target_precondition',
@@ -74,9 +96,49 @@ export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 					resourceCounts,
 					mediaCounts,
 					topologyChanged,
+					mediaReady,
 				},
 			},
 		)
+	}
+}
+
+export function evaluateCourseSyncBoundedAutoApply(
+	plan: SyncPlan,
+): CourseSyncBoundedAutoApplyDecision {
+	try {
+		assertCourseSyncLaunchApplyPolicy(plan)
+		const resourceUpdates = plan.resources.filter(
+			(item) => item.action === 'update',
+		).length
+		const mediaUpdates = plan.media.filter(
+			(item) => item.action === 'update',
+		).length
+		if (
+			resourceUpdates > COURSE_SYNC_BOUNDED_AUTO_MAX_RESOURCE_UPDATES ||
+			mediaUpdates > COURSE_SYNC_BOUNDED_AUTO_MAX_MEDIA_UPDATES
+		) {
+			return {
+				eligible: false,
+				planSha256: plan.planSha256,
+				reason: 'change-budget-exceeded',
+				failureCode: 'BOUNDED_AUTO_CHANGE_BUDGET_EXCEEDED',
+			}
+		}
+		return { eligible: true, planSha256: plan.planSha256 }
+	} catch (error) {
+		if (
+			error instanceof CourseSyncError &&
+			error.code === 'LAUNCH_APPLY_POLICY_VIOLATION'
+		) {
+			return {
+				eligible: false,
+				planSha256: plan.planSha256,
+				reason: 'launch-policy-violation',
+				failureCode: error.code,
+			}
+		}
+		throw error
 	}
 }
 

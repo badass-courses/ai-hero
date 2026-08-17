@@ -7,6 +7,8 @@ vi.mock('@/db', () => ({ db: dbMock }))
 vi.mock('@/server/logger', () => ({ log: { info: vi.fn() } }))
 
 import {
+	claimCourseSyncReviewNotification,
+	completeCourseSyncReviewNotification,
 	courseSyncRevisionHeadWhere,
 	saveCourseSyncPollState,
 } from './detection-persistence'
@@ -42,6 +44,83 @@ describe('course-sync revision head persistence', () => {
 		const query = dialect.sqlToQuery(condition.getSQL())
 
 		expect(query.sql).toContain('`AI_CourseSyncRun`.`rollbackOfRunId` is null')
+	})
+
+	it('claims each review plan notification once with a durable receipt', async () => {
+		const storedValues: Array<Record<string, unknown>> = []
+		const receipt = { value: null as Record<string, unknown> | null }
+		const makeTransaction = () => {
+			let selectIndex = 0
+			return {
+				select: vi.fn(() => {
+					const rows =
+						selectIndex++ === 0
+							? [{ bindingId: 'csb_ai_coding_crash_course' }]
+							: receipt.value
+								? [receipt.value]
+								: []
+					const query = {
+						from: vi.fn(),
+						where: vi.fn(),
+						for: vi.fn(async () => rows),
+					}
+					query.from.mockReturnValue(query)
+					query.where.mockReturnValue(query)
+					return query
+				}),
+				insert: vi.fn(() => ({
+					values: vi.fn(async (value: Record<string, unknown>) => {
+						storedValues.push(value)
+						receipt.value = { ...value }
+					}),
+				})),
+				update: vi.fn(() => {
+					const query = {
+						set: vi.fn(),
+						where: vi.fn(async () => undefined),
+					}
+					query.set.mockImplementation((value: Record<string, unknown>) => {
+						receipt.value = { ...receipt.value, ...value }
+						return query
+					})
+					return query
+				}),
+			}
+		}
+		dbMock.transaction.mockImplementation(
+			async (
+				run: (
+					transaction: ReturnType<typeof makeTransaction>,
+				) => Promise<boolean>,
+			) => run(makeTransaction()),
+		)
+		const input = {
+			bindingId: 'csb_ai_coding_crash_course',
+			courseVersionId: 'version-1',
+			providerRevision: 'dropbox-rev-1',
+			runId: 'poll-1',
+			controlPlaneRunId: 'run-1',
+			planSha256: 'a'.repeat(64),
+			occurredAt: new Date('2026-08-17T16:00:00.000Z'),
+		}
+
+		await expect(claimCourseSyncReviewNotification(input)).resolves.toBe(true)
+		await expect(claimCourseSyncReviewNotification(input)).resolves.toBe(false)
+		await completeCourseSyncReviewNotification({
+			...input,
+			occurredAt: new Date('2026-08-17T16:00:01.000Z'),
+		})
+		await expect(claimCourseSyncReviewNotification(input)).resolves.toBe(false)
+		expect(receipt.value).toMatchObject({ outcome: 'succeeded' })
+		expect(storedValues).toHaveLength(1)
+		expect(storedValues[0]).toMatchObject({
+			stage: 'notify',
+			outcome: 'started',
+			metadata: {
+				kind: 'review',
+				planSha256: 'a'.repeat(64),
+			},
+		})
 	})
 
 	it('keeps a rollback hold when a stale succeeded save acquires the lock later', async () => {

@@ -116,10 +116,10 @@ assert.doesNotThrow(() =>
 assert.doesNotThrow(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",
-		contractVersion: 2,
+		contractVersion: 3,
 		status: "active",
 		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
-		applyPolicy: "operator",
+		applyPolicy: "bounded-auto",
 		target: {
 			product: {
 				type: "self-paced",
@@ -139,10 +139,10 @@ assert.doesNotThrow(() =>
 assert.throws(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",
-		contractVersion: 2,
+		contractVersion: 3,
 		status: "active",
 		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
-		applyPolicy: "operator",
+		applyPolicy: "bounded-auto",
 		target: {
 			product: {
 				type: "self-paced",

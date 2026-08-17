@@ -204,13 +204,13 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 					],
 					properties: {
 						bindingId: { type: 'string', minLength: 1 },
-						contractVersion: { const: 2 },
+						contractVersion: { const: 3 },
 						status: {
 							type: 'string',
 							enum: ['active', 'suspended', 'revoked'],
 						},
 						sourceCourseId: { type: 'string', minLength: 1 },
-						applyPolicy: { enum: ['auto', 'operator'] },
+						applyPolicy: { enum: ['bounded-auto', 'operator'] },
 						target: {
 							type: 'object',
 							required: [

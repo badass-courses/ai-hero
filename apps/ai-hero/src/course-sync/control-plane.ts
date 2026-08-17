@@ -8,7 +8,10 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
-import { assertCourseSyncLaunchApplyPolicy } from './persistence-invariants'
+import {
+	assertCourseSyncLaunchApplyPolicy,
+	evaluateCourseSyncBoundedAutoApply,
+} from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -860,6 +863,62 @@ export function createCourseSyncControlPlane(
 				planSha256: sha256(stableJson(planInput)),
 			}
 			return publicRun(await persistence.savePreview(runId, plan))
+		},
+
+		async evaluateBoundedAutoApply(runId: string) {
+			const run = await persistence.getRun(runId)
+			if (!run) {
+				throw new CourseSyncError('RUN_NOT_FOUND', 'Sync run not found.', 404)
+			}
+			if (run.state !== 'previewed' || !run.plan || !run.planSha256) {
+				throw new CourseSyncError(
+					'INVALID_RUN_STATE',
+					'Only a content-addressed preview can be evaluated for bounded automatic apply.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			const { planSha256: claimedPlanSha256, ...planInput } = run.plan
+			if (
+				claimedPlanSha256 !== run.planSha256 ||
+				claimedPlanSha256 !== sha256(stableJson(planInput))
+			) {
+				throw new CourseSyncError(
+					'PLAN_HASH_MISMATCH',
+					'The stored preview plan hash does not match the run.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			return evaluateCourseSyncBoundedAutoApply(run.plan)
+		},
+
+		async verifyApplied(input: { runId: string; planSha256: string }) {
+			const run = await persistence.getRun(input.runId)
+			if (
+				!run ||
+				run.state !== 'applied' ||
+				run.planSha256 !== input.planSha256 ||
+				run.plan?.planSha256 !== input.planSha256
+			) {
+				throw new CourseSyncError(
+					'AUTO_APPLY_READBACK_FAILED',
+					'The applied run did not match the content-addressed preview during readback.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
+			}
+			const { planSha256: claimedPlanSha256, ...planInput } = run.plan
+			if (claimedPlanSha256 !== sha256(stableJson(planInput))) {
+				throw new CourseSyncError(
+					'AUTO_APPLY_READBACK_FAILED',
+					'The applied plan failed its content-addressed readback.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
+			}
+			assertCourseSyncLaunchApplyPolicy(run.plan)
+			return publicRun(run)
 		},
 
 		async apply(input: { runId: string; idempotencyKey: string }) {
