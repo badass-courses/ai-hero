@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { Check, Copy, GitBranch, RotateCcw } from 'lucide-react'
-import Markdown from 'react-markdown'
+import { Markdown } from '@/components/markdown'
 
 import {
 	Button,

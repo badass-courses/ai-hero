@@ -3,6 +3,8 @@ import * as React from 'react'
 import { LRUCache } from 'lru-cache'
 import { compileMDX } from 'next-mdx-remote/rsc'
 
+import { rehypeInternalLinks } from '@/utils/rehype-internal-links'
+
 import {
 	SidebarGroup,
 	SidebarGroupLabel,
@@ -137,7 +139,12 @@ export async function compileHubSidebarMdx(
 		components: hideWhatsNew
 			? sidebarMdxComponentsWithoutWhatsNew
 			: sidebarMdxComponents,
-		options: { parseFrontmatter: true },
+		options: {
+			parseFrontmatter: true,
+			// Same internal-link rewriting as the article pipeline: an authored
+			// `https://aihero.dev/...` entry navigates as a root-relative path.
+			mdxOptions: { rehypePlugins: [rehypeInternalLinks] },
+		},
 	}).then(({ content }) => content)
 	// The promise is cached so concurrent renders share one compile; a
 	// rejection evicts itself and still throws to the caller, whose fallback

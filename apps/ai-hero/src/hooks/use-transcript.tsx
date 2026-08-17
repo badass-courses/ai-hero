@@ -3,7 +3,7 @@ import { reprocessTranscript } from '@/app/(content)/posts/[slug]/edit/actions'
 import Spinner from '@/components/spinner'
 import { getVideoResource } from '@/lib/video-resource-query'
 import { RefreshCcw } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import {
 	Button,

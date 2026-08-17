@@ -4,7 +4,7 @@ import React, { use } from 'react'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
 import type { MuxPlayerRefAttributes } from '@mux/mux-player-react'
 import { FileText, TextIcon, VideoIcon } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import type { ContentResource } from '@coursebuilder/core/schemas'
 import {

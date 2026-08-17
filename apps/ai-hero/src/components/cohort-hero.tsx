@@ -18,7 +18,7 @@ import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import { getResourcePath } from '@/utils/resource-paths'
 import { ArrowRight } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import { cn } from '@coursebuilder/utils/cn'
 
