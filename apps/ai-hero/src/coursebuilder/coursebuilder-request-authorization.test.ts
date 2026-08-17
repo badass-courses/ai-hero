@@ -470,6 +470,81 @@ describe('protectCourseBuilderRequest', () => {
 		])
 	})
 
+	it('pins the checkout country when PPP was not selected', async () => {
+		const request = new NextRequest(
+			`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&couponId=${publicMerchantCoupon.id}&usedCouponId=${publicCoupon.id}`,
+			{ method: 'POST', headers: { 'x-vercel-ip-country': 'CZ' } },
+		)
+
+		const protectedRequest = await protect(request)
+
+		expect(protectedRequest.nextUrl.searchParams.get('country')).toBe('US')
+		expect(protectedRequest.nextUrl.searchParams.get('couponId')).toBe(
+			publicMerchantCoupon.id,
+		)
+	})
+
+	it('keeps the real country when upgrading an owned restricted purchase', async () => {
+		const request = new NextRequest(
+			'https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&upgradeFromPurchaseId=purchase-ppp',
+			{ method: 'POST', headers: { 'x-vercel-ip-country': 'CZ' } },
+		)
+
+		const protectedRequest = await protectCourseBuilderRequest(request, {
+			adapter: {
+				...createAdapter({}),
+				getPurchase: async (id: string) =>
+					id === 'purchase-ppp'
+						? { userId: 'user-owner', status: 'Restricted' }
+						: null,
+			} as never,
+			verifiedUserId: 'user-owner',
+		})
+
+		expect(protectedRequest.nextUrl.searchParams.getAll('country')).toEqual([])
+	})
+
+	it.each([
+		['a forged purchase id', 'purchase-unknown', 'user-owner'],
+		['someone else’s purchase', 'purchase-ppp', 'user-other'],
+		['a logged-out caller', 'purchase-ppp', undefined],
+	])(
+		'pins the country for an upgrade via %s',
+		async (_, upgradeFromPurchaseId, verifiedUserId) => {
+			const request = new NextRequest(
+				`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&upgradeFromPurchaseId=${upgradeFromPurchaseId}`,
+				{ method: 'POST', headers: { 'x-vercel-ip-country': 'CZ' } },
+			)
+
+			const protectedRequest = await protectCourseBuilderRequest(request, {
+				adapter: {
+					...createAdapter({}),
+					getPurchase: async (id: string) =>
+						id === 'purchase-ppp'
+							? { userId: 'user-owner', status: 'Restricted' }
+							: null,
+				} as never,
+				verifiedUserId,
+			})
+
+			expect(protectedRequest.nextUrl.searchParams.get('country')).toBe('US')
+		},
+	)
+
+	it('withholds a server-computed PPP selector when PPP was not selected', async () => {
+		const request = new NextRequest(
+			`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&couponId=${protectedMerchantCoupon.id}`,
+			{ method: 'POST', headers: { 'x-vercel-ip-country': 'CZ' } },
+		)
+
+		const protectedRequest = await protect(request, {
+			serverComputedMerchantCoupon: pppMerchantCoupon,
+		})
+
+		expect(protectedRequest.nextUrl.searchParams.has('couponId')).toBe(false)
+		expect(protectedRequest.nextUrl.searchParams.get('country')).toBe('US')
+	})
+
 	it('strips raw PPP until server pricing revalidates it', async () => {
 		const request = new NextRequest(
 			`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&couponId=${pppMerchantCoupon.id}`,
