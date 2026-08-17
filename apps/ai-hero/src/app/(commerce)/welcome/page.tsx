@@ -186,6 +186,9 @@ const Welcome = async (props: {
 		return (
 			<LayoutClient withContainer>
 				<div className="">
+					<PostPurchaseDiscordAccess
+						isDiscordConnected={isDiscordConnected}
+					/>
 					<WelcomePage
 						product={product}
 						productResources={productResources}
@@ -202,9 +205,6 @@ const Welcome = async (props: {
 						userEmail={session?.user?.email}
 						cancelPurchaseTransfer={cancelPurchaseTransfer}
 						initiatePurchaseTransfer={initiatePurchaseTransfer}
-					/>
-					<PostPurchaseDiscordAccess
-						isDiscordConnected={isDiscordConnected}
 					/>
 				</div>
 			</LayoutClient>
