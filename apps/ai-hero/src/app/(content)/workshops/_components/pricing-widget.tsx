@@ -329,7 +329,14 @@ const TeamPurchaseControls = () => {
 	// two steps, the second deferred until the price reload finishes.
 	const pendingTeamToggle = React.useRef(false)
 	React.useEffect(() => {
-		if (pendingTeamToggle.current && status === 'success') {
+		if (!pendingTeamToggle.current) return
+		if (status === 'error') {
+			// A failed reload voids the deferred toggle — a later unrelated
+			// success must not switch to team purchase without a new click.
+			pendingTeamToggle.current = false
+			return
+		}
+		if (status === 'success') {
 			pendingTeamToggle.current = false
 			toggleTeamPurchase()
 		}

@@ -140,6 +140,15 @@ export async function authorizeExclusiveCouponSelection({
 		requestedMerchantCouponId && !publicProvenance,
 	)
 
+	if (requestedMerchantCoupon?.type === 'ppp') {
+		return {
+			authorized: false,
+			protectedMerchantCoupon,
+			protectedSiteCoupon,
+			requestedPPP: true,
+		}
+	}
+
 	if (!requestedMerchantCouponId) {
 		if (!requestedSiteCoupon) {
 			return {
@@ -154,15 +163,6 @@ export async function authorizeExclusiveCouponSelection({
 				protectedMerchantCoupon,
 				protectedSiteCoupon,
 			}
-		}
-	}
-
-	if (requestedMerchantCoupon?.type === 'ppp') {
-		return {
-			authorized: false,
-			protectedMerchantCoupon,
-			protectedSiteCoupon,
-			requestedPPP: true,
 		}
 	}
 

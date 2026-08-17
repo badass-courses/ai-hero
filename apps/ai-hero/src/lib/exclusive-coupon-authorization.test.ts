@@ -51,6 +51,16 @@ const publicCoupon = {
 	maxUses: -1,
 	usedCount: 0,
 }
+const pppLinkedCoupon = {
+	id: 'coupon-ppp-linked',
+	merchantCouponId: pppMerchantCoupon.id,
+	restrictedToProductId: 'product-crash-course',
+	fields: {},
+	status: 1,
+	expires: null,
+	maxUses: -1,
+	usedCount: 0,
+}
 const wrongProductPublicCoupon = {
 	...publicCoupon,
 	id: 'coupon-public-other-product',
@@ -87,6 +97,7 @@ const merchantCoupons = [
 const siteCoupons = [
 	protectedCoupon,
 	publicCoupon,
+	pppLinkedCoupon,
 	wrongProductPublicCoupon,
 	expiredPublicCoupon,
 	exhaustedPublicCoupon,
@@ -278,6 +289,16 @@ describe('authorizeExclusiveCouponSelection', () => {
 	it('rejects raw PPP until server pricing revalidates it', async () => {
 		const result = await decide({
 			requestedMerchantCouponId: pppMerchantCoupon.id,
+		})
+
+		expect(result.authorized).toBe(false)
+		expect(result.requestedPPP).toBe(true)
+	})
+
+	it('flags a PPP-linked site coupon selection so pricing can re-derive PPP', async () => {
+		const result = await decide({
+			requestedMerchantCouponId: undefined,
+			requestedSiteCouponId: pppLinkedCoupon.id,
 		})
 
 		expect(result.authorized).toBe(false)
