@@ -1,8 +1,6 @@
 import * as React from 'react'
 import { headers } from 'next/headers'
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { Icon } from '@/components/brand/icons'
 import LayoutClient from '@/components/layout-client'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter, db } from '@/db'
@@ -26,40 +24,13 @@ import {
 } from '@coursebuilder/commerce-next/post-purchase/subscription-welcome-page'
 import { WelcomePage } from '@coursebuilder/commerce-next/post-purchase/welcome-page'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
+import {
+	PostPurchaseDiscordAccess,
+	withoutDiscordProvider,
+} from './welcome-discord-entry'
 import { PurchaseUserTransfer } from '@coursebuilder/core/schemas'
-import { Button } from '@coursebuilder/ui'
 import { PurchaseInfoSchema } from '@coursebuilder/core/schemas/purchase-info'
 import { isString } from '@coursebuilder/nodash'
-
-/**
- * The shared WelcomePage renders its own Discord button as a bare
- * `signIn('discord')`, which skips this app's OAuth link-intent flow and dead
- * ends a logged-in buyer on Auth.js's AccessDenied screen. Hiding the provider
- * removes that button so we can point people at `/discord`, which sets the
- * intent before starting OAuth.
- */
-function withoutDiscordProvider(providers: { id: string; name: string }[]) {
-	return providers.filter((provider) => provider.id !== 'discord')
-}
-
-function JoinDiscordCallout() {
-	return (
-		<aside className="mt-10 flex flex-col items-start gap-4 rounded-[11px] border border-border bg-card p-6 sm:flex-row sm:items-center sm:justify-between">
-			<div className="flex flex-col gap-1">
-				<h2 className="font-heading text-lg font-bold">Join the Discord</h2>
-				<p className="text-muted-foreground text-sm">
-					Link your Discord account to get into the AI Hero server.
-				</p>
-			</div>
-			<Button asChild className="rounded-[9px]">
-				<Link href="/discord" className="flex items-center gap-2">
-					<Icon name="Discord" size="20" />
-					Join Discord
-				</Link>
-			</Button>
-		</aside>
-	)
-}
 
 async function getPurchaseForChargeId(chargeIdentifier: string) {
 	const maxRetries = 5
@@ -215,7 +186,6 @@ const Welcome = async (props: {
 		return (
 			<LayoutClient withContainer>
 				<div className="">
-					{!isDiscordConnected && <JoinDiscordCallout />}
 					<WelcomePage
 						product={product}
 						productResources={productResources}
@@ -232,6 +202,9 @@ const Welcome = async (props: {
 						userEmail={session?.user?.email}
 						cancelPurchaseTransfer={cancelPurchaseTransfer}
 						initiatePurchaseTransfer={initiatePurchaseTransfer}
+					/>
+					<PostPurchaseDiscordAccess
+						isDiscordConnected={isDiscordConnected}
 					/>
 				</div>
 			</LayoutClient>
