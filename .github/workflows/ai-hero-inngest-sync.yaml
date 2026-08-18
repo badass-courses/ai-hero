@@ -21,6 +21,7 @@ jobs:
       contains(github.event.deployment_status.target_url, 'ai-hero')
     env:
       DEPLOYMENT_URL: ${{ github.event.deployment_status.target_url }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
     steps:
       - name: Sync Inngest registry
@@ -30,6 +31,17 @@ jobs:
           # Sync the immutable production deployment URL from Vercel's deployment
           # event. The custom-domain alias can still point at the prior deployment
           # when this event fires, which leaves new or renamed functions unregistered.
+          #
+          # Vercel Deployment Protection (SSO) covers production deployment URLs, so
+          # an unauthenticated request is redirected to vercel.com/sso-api and never
+          # reaches the Next.js handler. The project's Protection Bypass for
+          # Automation secret is sent as x-vercel-protection-bypass to get through.
+          # www.aihero.dev is not protected, but it is the alias we cannot trust here.
+          if [[ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]]; then
+            echo "::error::VERCEL_AUTOMATION_BYPASS_SECRET is empty. Vercel Deployment Protection will reject this sync. Generate the project's Protection Bypass for Automation secret (Vercel project settings -> Deployment Protection) and store it as the VERCEL_AUTOMATION_BYPASS_SECRET repository secret."
+            exit 1
+          fi
+
           endpoint="${DEPLOYMENT_URL%/}/api/inngest"
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
@@ -44,7 +56,8 @@ jobs:
               --output "$response_file" \
               --write-out '%{http_code}' \
               --request PUT "$endpoint" \
-              --header "Content-Type: application/json"); then
+              --header "Content-Type: application/json" \
+              --header "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"); then
               response="$(cat "$response_file")"
               echo "Inngest response (HTTP ${http_status}): ${response}"
 
