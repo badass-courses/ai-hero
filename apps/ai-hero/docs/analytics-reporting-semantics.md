@@ -16,9 +16,9 @@ The first contract covers the revenue surfaces most likely to be compared or pag
 
 Agents must use the same `range` and `productId` when comparing surfaces. Summary revenue is `data.totalRevenue`. Daily revenue is `data[].revenue`. Revenue amounts use USD major units.
 
-`purchases/recent` is ordered by `createdAt DESC, id DESC`. Follow `meta.pagination.nextOffset` until it is `null`. `meta.totalRows` is the current page size, not the total number of matching purchases.
+`purchases/recent` is ordered by `createdAt DESC, id DESC` and defaults to `range=30d`. Use `range=all` when historical purchases are required. Follow `meta.pagination.nextOffset` until it is `null`. `meta.totalRows` is the current page size, not the total number of matching purchases.
 
-Each successful surface response includes its available schema, normalized self link, and filter-preserving next actions. Re-query before reporting live launch numbers because separate requests can observe different purchases.
+Successful revenue surface responses include their available schema. All successful responses include a normalized self link and filter-preserving next actions. Re-query before reporting live launch numbers because separate requests can observe different purchases.
 
 ## Traffic range behavior
 

@@ -96,6 +96,8 @@ describe('analytics API agent contract', () => {
 				expect.stringContaining('same range and productId'),
 				expect.stringContaining('data[].revenue'),
 				expect.stringContaining('nextOffset'),
+				expect.stringContaining('attribution surfaces also accept'),
+				expect.stringContaining('defaults to range=30d'),
 			]),
 			schema: {
 				version: '2026-08-18',
@@ -105,6 +107,12 @@ describe('analytics API agent contract', () => {
 					properties: {
 						productId: { type: 'string' },
 					},
+					allOf: [
+						{
+							then: { properties: { limit: { maximum: 1000 } } },
+							else: { properties: { limit: { maximum: 100 } } },
+						},
+					],
 				},
 				surfaces: {
 					summary: {

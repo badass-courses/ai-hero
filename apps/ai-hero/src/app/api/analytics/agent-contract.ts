@@ -7,7 +7,8 @@ export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Use the same range and productId when comparing summary with revenue/daily. Requests at different times can include different purchases.',
 	'Read summary revenue from data.totalRevenue. Read daily revenue from data[].revenue. There is no totalRevenue field on revenue/daily rows.',
 	'For purchases/recent, follow meta.pagination.nextOffset until it is null. meta.totalRows is the current page size, not the total matching purchase count.',
-	'Absent productId means all products. A productId only scopes surfaces whose schema lists productId in supports.',
+	'Absent productId means all products on product-aware surfaces. Published revenue schemas list productId support, and some attribution surfaces also accept it.',
+	'purchases/recent defaults to range=30d. Use range=all when historical purchases are required.',
 	'Treat each response as a point-in-time read. Re-query before reporting live launch numbers.',
 ] as const
 
@@ -173,7 +174,6 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 				limit: {
 					type: 'integer',
 					minimum: 1,
-					maximum: 1000,
 					default: 20,
 					description:
 						'Max 100 generally. Max 1000 only for surveys/responses.',
@@ -189,6 +189,16 @@ export function getAnalyticsAgentSchema(surfaceNames: readonly SurfaceName[]) {
 				surveySlug: { type: 'string' },
 				questionId: { type: 'string' },
 			},
+			allOf: [
+				{
+					if: {
+						properties: { surface: { const: 'surveys/responses' } },
+						required: ['surface'],
+					},
+					then: { properties: { limit: { maximum: 1000 } } },
+					else: { properties: { limit: { maximum: 100 } } },
+				},
+			],
 		},
 		surfaces: REVENUE_SURFACE_SCHEMAS,
 	}
