@@ -34,6 +34,10 @@ export async function GET(request: Request) {
 					eq(coupon.default, true), // flagged as default
 					eq(coupon.status, 1), // status "active" (matches adapter logic)
 					or(isNull(coupon.expires), gte(coupon.expires, now)), // not expired
+					// Only unlimited-use coupons are site-wide sales. A single-use
+					// 100%-off comp coupon flagged `default` made every OG image
+					// advertise "Save 100% for a limited time".
+					eq(coupon.maxUses, -1),
 				),
 				orderBy: (coupon, { desc }) => [desc(coupon.percentageDiscount)],
 				with: {
