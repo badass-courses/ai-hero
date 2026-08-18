@@ -322,8 +322,10 @@ async function main() {
 					const videoId = await text({
 						message: 'Enter video resource ID:',
 						initialValue:
-							currentPost.resources?.find((r) => r.resource.type === 'video')
-								?.resource.id || '',
+							currentPost.resources?.find(
+								(r: NonNullable<Post['resources']>[number]) =>
+									r.resource.type === 'video',
+							)?.resource.id || '',
 						validate: (value) => {
 							if (!value) return 'Video resource ID is required'
 							return
