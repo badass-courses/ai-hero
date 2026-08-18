@@ -3,8 +3,12 @@ import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import { ContributorImage } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { env } from '@/env.mjs'
 import { getDiscordAccount } from '@/lib/discord-query'
-import { requestOAuthAccountLink } from '@/lib/oauth-link-actions'
+import {
+	requestOAuthAccountLink,
+	switchOAuthAccountLogin,
+} from '@/lib/oauth-link-actions'
 import { getServerAuthSession } from '@/server/auth'
 
 import { DiscordAccessAction } from './discord-access-action'
@@ -53,6 +57,8 @@ export default async function Discord({
 				<DiscordAccessAction
 					state={discordAccessState}
 					requestLink={requestOAuthAccountLink}
+					switchLogin={switchOAuthAccountLogin}
+					supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
 				/>
 			</main>
 		</LayoutClient>

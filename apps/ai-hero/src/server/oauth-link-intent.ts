@@ -394,7 +394,8 @@ export function createOAuthLinkIntentService({
 					linkKind: 'created' | 'renewed'
 					flowId: string
 			  }
-			| { status: 'expired' | 'denied' }
+			| { status: 'expired' }
+			| { status: 'denied'; reasonClass?: OAuthLinkDenialReason }
 		> {
 			const tokenDigest = hashOAuthLinkToken(rawToken)
 			const flowId = getOAuthLinkFlowIdFromDigest(tokenDigest)
@@ -487,7 +488,10 @@ export function createOAuthLinkIntentService({
 					intent,
 					ownershipReadback: repositoryResult.ownershipReadback,
 				})
-				return { status: 'denied' }
+				return {
+					status: 'denied',
+					reasonClass: repositoryResult.reasonClass,
+				}
 			}
 
 			if (repositoryResult.consumedIntent !== true) {

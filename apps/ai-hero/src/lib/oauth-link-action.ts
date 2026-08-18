@@ -6,6 +6,10 @@ type AuthenticatedSession = {
 	sessionToken: string
 }
 
+type OAuthAccountSwitchLoginDependencies = {
+	signOut: (options: { redirectTo: string }) => Promise<unknown>
+}
+
 type OAuthAccountLinkRequestDependencies = {
 	getAuthenticatedSession: () =>
 		| AuthenticatedSession
@@ -28,6 +32,14 @@ type OAuthAccountLinkRequestDependencies = {
 		rawToken: string
 		expiresAt: Date
 	}) => void | Promise<void>
+}
+
+export function createOAuthAccountSwitchLogin({
+	signOut,
+}: OAuthAccountSwitchLoginDependencies) {
+	return async function switchOAuthAccountLogin() {
+		await signOut({ redirectTo: '/login?callbackUrl=/discord' })
+	}
 }
 
 /**

@@ -227,7 +227,7 @@ describe('Auth.js OAuth containment policy', () => {
 		)
 	})
 
-	it('performs no account write or provider-side event for a denied link intent', async () => {
+	it('returns a safe account conflict result for a cross-user-owned denial', async () => {
 		const alice = { id: 'alice', email: 'alice@example.com' }
 		const harness = createLockedAuthHarness({
 			provider: 'discord',
@@ -238,7 +238,7 @@ describe('Auth.js OAuth containment policy', () => {
 			delete: vi.fn(),
 			get: vi.fn((name: string) =>
 				oauthLinkIntentCookieNames.some((cookieName) => cookieName === name)
-					? { value: 'denied-link-token' }
+					? { value: 'conflicting-link-token' }
 					: undefined,
 			),
 		}
@@ -249,18 +249,65 @@ describe('Auth.js OAuth containment policy', () => {
 				userId: alice.id,
 				sessionToken: 'active-session',
 			})),
-			consumeLinkIntent: vi.fn(async () => ({ status: 'denied' as const })),
+			consumeLinkIntent: vi.fn(async () => ({
+				status: 'denied' as const,
+				reasonClass: 'cross-user-owned' as const,
+			})),
 		})
 
 		await expect(
 			runWithOAuthContainmentRequest(authCallbackRequest('discord'), () =>
 				callback({ account: harness.account }),
 			),
-		).resolves.toBe('/discord?link=denied')
+		).resolves.toBe('/discord?link=account-conflict')
 		expect(harness.calls.linkAccount).not.toHaveBeenCalled()
 		expect(harness.calls.createUser).not.toHaveBeenCalled()
 		expect(harness.calls.linkAccountEvent).not.toHaveBeenCalled()
 	})
+
+	it.each([
+		['generic', undefined],
+		['claim-loss', 'claim-lost'],
+	] as const)(
+		'keeps a %s denied link intent on the retry path',
+		async (_denialKind, reasonClass) => {
+			const alice = { id: 'alice', email: 'alice@example.com' }
+			const harness = createLockedAuthHarness({
+				provider: 'discord',
+				accountOwner: null,
+				activeUser: alice,
+			})
+			const cookieStore = {
+				delete: vi.fn(),
+				get: vi.fn((name: string) =>
+					oauthLinkIntentCookieNames.some((cookieName) => cookieName === name)
+						? { value: 'denied-link-token' }
+						: undefined,
+				),
+			}
+			const callback = createOAuthContainmentSignInCallback({
+				getCookieStore: () => cookieStore,
+				findAccountOwner: harness.findAccountOwner,
+				getAuthenticatedSession: vi.fn(async () => ({
+					userId: alice.id,
+					sessionToken: 'active-session',
+				})),
+				consumeLinkIntent: vi.fn(async () => ({
+					status: 'denied' as const,
+					...(reasonClass ? { reasonClass } : {}),
+				})),
+			})
+
+			await expect(
+				runWithOAuthContainmentRequest(authCallbackRequest('discord'), () =>
+					callback({ account: harness.account }),
+				),
+			).resolves.toBe('/discord?link=denied')
+			expect(harness.calls.linkAccount).not.toHaveBeenCalled()
+			expect(harness.calls.createUser).not.toHaveBeenCalled()
+			expect(harness.calls.linkAccountEvent).not.toHaveBeenCalled()
+		},
+	)
 
 	it('preserves logged-out Discord email auto-linking without caller identity', async () => {
 		const alice = { id: 'alice', email: 'alice@example.com' }
