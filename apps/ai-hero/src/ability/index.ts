@@ -64,6 +64,9 @@ export const UserSchema = userSchema.merge(
 
 export type User = z.infer<typeof UserSchema>
 
+type UserOrganizationRole = NonNullable<User['organizationRoles']>[number]
+type UserEntitlement = NonNullable<User['entitlements']>[number]
+
 interface OrganizationBilling {
 	organizationId: string
 }
@@ -157,63 +160,65 @@ export function getAbilityRules(options: GetAbilityOptions = {}) {
 
 		// Organization permissions
 		if (options.user.organizationRoles) {
-			options.user.organizationRoles.forEach(({ organizationId, name }) => {
-				// Base permissions for all roles
-				can('read', 'Organization', {
-					organizationId: { $eq: organizationId },
-				})
-
-				if (name === 'owner' || name === BILLING_ADMIN_ROLE) {
-					can('read', 'Team')
-					can('invite', 'Team')
-				}
-
-				if (name === 'owner') {
-					can('manage', 'Organization', {
-						organizationId: { $eq: organizationId },
-					})
-					can('manage', 'OrganizationMember', {
-						organizationId: { $eq: organizationId },
-					})
-					can('manage', 'OrganizationBilling', {
-						organizationId: { $eq: organizationId },
-					})
-					can('transfer', 'Organization', {
-						organizationId: { $eq: organizationId },
-					})
-				}
-
-				if (name === BILLING_ADMIN_ROLE) {
-					can('read', 'OrganizationBilling', {
-						organizationId: { $eq: organizationId },
-					})
-				}
-
-				if (name === 'admin') {
-					can(['create', 'read', 'update'], 'Organization', {
-						organizationId: { $eq: organizationId },
-					})
-					can(['create', 'read', 'update', 'delete'], 'OrganizationMember', {
-						organizationId: { $eq: organizationId },
-					})
-					can(['read', 'update'], 'OrganizationBilling', {
-						organizationId: { $eq: organizationId },
-					})
-				}
-
-				if (name === 'member' || name === 'learner') {
+			options.user.organizationRoles.forEach(
+				({ organizationId, name }: UserOrganizationRole) => {
+					// Base permissions for all roles
 					can('read', 'Organization', {
 						organizationId: { $eq: organizationId },
 					})
-					can('read', 'OrganizationMember', {
-						organizationId: { $eq: organizationId },
-					})
-					can('delete', 'OrganizationMember', {
-						organizationId: { $eq: organizationId },
-						userId: { $eq: options.user?.id },
-					})
-				}
-			})
+
+					if (name === 'owner' || name === BILLING_ADMIN_ROLE) {
+						can('read', 'Team')
+						can('invite', 'Team')
+					}
+
+					if (name === 'owner') {
+						can('manage', 'Organization', {
+							organizationId: { $eq: organizationId },
+						})
+						can('manage', 'OrganizationMember', {
+							organizationId: { $eq: organizationId },
+						})
+						can('manage', 'OrganizationBilling', {
+							organizationId: { $eq: organizationId },
+						})
+						can('transfer', 'Organization', {
+							organizationId: { $eq: organizationId },
+						})
+					}
+
+					if (name === BILLING_ADMIN_ROLE) {
+						can('read', 'OrganizationBilling', {
+							organizationId: { $eq: organizationId },
+						})
+					}
+
+					if (name === 'admin') {
+						can(['create', 'read', 'update'], 'Organization', {
+							organizationId: { $eq: organizationId },
+						})
+						can(['create', 'read', 'update', 'delete'], 'OrganizationMember', {
+							organizationId: { $eq: organizationId },
+						})
+						can(['read', 'update'], 'OrganizationBilling', {
+							organizationId: { $eq: organizationId },
+						})
+					}
+
+					if (name === 'member' || name === 'learner') {
+						can('read', 'Organization', {
+							organizationId: { $eq: organizationId },
+						})
+						can('read', 'OrganizationMember', {
+							organizationId: { $eq: organizationId },
+						})
+						can('delete', 'OrganizationMember', {
+							organizationId: { $eq: organizationId },
+							userId: { $eq: options.user?.id },
+						})
+					}
+				},
+			)
 		}
 	}
 
@@ -364,7 +369,7 @@ export function defineRulesForPurchases(
 
 	// check workshop in cohort
 	if (user?.entitlements && module?.id) {
-		user.entitlements.forEach((entitlement) => {
+		user.entitlements.forEach((entitlement: UserEntitlement) => {
 			if (entitlement.type === cohortEntitlementType?.id) {
 				// Grant access to the workshop itself
 				can('read', 'Content', {
@@ -396,7 +401,7 @@ export function defineRulesForPurchases(
 
 	// check self-paced workshop and its lessons
 	if (user?.entitlements && module?.id) {
-		user.entitlements.forEach((entitlement) => {
+		user.entitlements.forEach((entitlement: UserEntitlement) => {
 			if (entitlement.type === workshopEntitlementType?.id) {
 				// Grant access to the workshop itself and its lessons
 				const contentIds = Array.isArray(entitlement.metadata?.contentIds)
@@ -471,7 +476,7 @@ export function defineRulesForPurchases(
 		const moduleStarted =
 			!moduleStartsAt || new Date(moduleStartsAt) < new Date()
 
-		user.entitlements.forEach((entitlement) => {
+		user.entitlements.forEach((entitlement: UserEntitlement) => {
 			if (entitlement.type === cohortEntitlementType?.id && moduleStarted) {
 				can('read', 'Content', {
 					id: { $in: allModuleResourceIds },
