@@ -144,7 +144,7 @@ function buildContextualNextActions(
 	options: {
 		limit?: number
 		offset?: number
-		rowCount?: number
+		nextOffset?: number | null
 		productId?: string
 	} = {},
 ) {
@@ -183,7 +183,6 @@ function buildContextualNextActions(
 	if (paginated) {
 		const limit = options.limit ?? (surface === 'surveys/responses' ? 100 : 20)
 		const offset = options.offset ?? 0
-		const rowCount = options.rowCount ?? 0
 		const max = surface === 'surveys/responses' ? 1000 : 100
 		const noun =
 			surface === 'surveys/responses' ? 'survey response rows' : 'purchases'
@@ -212,9 +211,9 @@ function buildContextualNextActions(
 			}
 		}
 
-		if (rowCount === limit) {
+		if (options.nextOffset !== null && options.nextOffset !== undefined) {
 			actions.unshift(
-				paginationAction(offset + limit, `Fetch the next page of ${noun}`),
+				paginationAction(options.nextOffset, `Fetch the next page of ${noun}`),
 			)
 		}
 		if (offset > 0) {
@@ -511,12 +510,42 @@ export const GET = withSkill(async (request: NextRequest) => {
 			range: range as AnalyticsRange,
 			productId,
 		})
-		if (summaryResult.ok) {
-			const summaryData = summaryResult.data as { purchaseCount?: unknown }
-			if (typeof summaryData.purchaseCount === 'number') {
-				totalMatchingRows = summaryData.purchaseCount
-			}
+		if (!summaryResult.ok) {
+			return NextResponse.json(
+				{
+					ok: false,
+					endpoint: '/api/analytics',
+					surface,
+					error: {
+						code: 'PURCHASE_COUNT_UNAVAILABLE',
+						message: 'Could not determine the exact matching purchase count.',
+					},
+					fix: summaryResult.fix,
+				},
+				{
+					status: summaryResult.error.code.endsWith('_UNAVAILABLE') ? 503 : 500,
+					headers: corsHeaders,
+				},
+			)
 		}
+
+		const summaryData = summaryResult.data as { purchaseCount?: unknown }
+		if (typeof summaryData.purchaseCount !== 'number') {
+			return NextResponse.json(
+				{
+					ok: false,
+					endpoint: '/api/analytics',
+					surface,
+					error: {
+						code: 'INVALID_PURCHASE_COUNT',
+						message:
+							'The revenue summary did not return a numeric purchaseCount.',
+					},
+				},
+				{ status: 500, headers: corsHeaders },
+			)
+		}
+		totalMatchingRows = summaryData.purchaseCount
 	}
 
 	const meta = getMeta(
@@ -572,7 +601,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 			next_actions: buildContextualNextActions(surface, range, {
 				limit,
 				offset,
-				rowCount: Array.isArray(result.data) ? result.data.length : 0,
+				nextOffset: meta.pagination?.nextOffset,
 				productId,
 			}),
 		},

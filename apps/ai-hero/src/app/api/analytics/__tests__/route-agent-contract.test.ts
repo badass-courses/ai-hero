@@ -263,4 +263,66 @@ describe('analytics API agent contract', () => {
 		expect(body._links.previous.href).toContain('offset=0')
 		expect(body._links.next).toBeUndefined()
 	})
+
+	it('does not advertise a next page when the exact final page is full', async () => {
+		mocks.query
+			.mockResolvedValueOnce({
+				ok: true,
+				data: [
+					{ id: 'purchase_2', createdAt: '2026-08-18T12:00:00.000Z' },
+					{ id: 'purchase_1', createdAt: '2026-08-18T11:00:00.000Z' },
+				],
+				meta: { queryTimeMs: 5, truncated: false },
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				data: { totalRevenue: 398, purchaseCount: 2, avgOrderValue: 199 },
+				meta: { queryTimeMs: 2, truncated: false },
+			})
+
+		const response = await GET(
+			request('?surface=purchases/recent&range=7d&limit=2&offset=0'),
+		)
+		const body = await response.json()
+
+		expect(body.meta.pagination.hasMore).toBe(false)
+		expect(body.meta.pagination.nextOffset).toBeNull()
+		expect(body._links.next).toBeUndefined()
+		expect(
+			body.next_actions.some(
+				(action: { description: string }) =>
+					action.description === 'Fetch the next page of purchases',
+			),
+		).toBe(false)
+	})
+
+	it('fails clearly when an exact purchase count is unavailable', async () => {
+		mocks.query
+			.mockResolvedValueOnce({
+				ok: true,
+				data: [{ id: 'purchase_1', createdAt: '2026-08-18T11:00:00.000Z' }],
+				meta: { queryTimeMs: 5, truncated: false },
+			})
+			.mockResolvedValueOnce({
+				ok: false,
+				error: {
+					code: 'DATABASE_UNAVAILABLE',
+					message: 'Database unavailable',
+				},
+				fix: 'Retry later',
+			})
+
+		const response = await GET(
+			request('?surface=purchases/recent&range=7d&limit=2&offset=0'),
+		)
+		const body = await response.json()
+
+		expect(response.status).toBe(503)
+		expect(body).toMatchObject({
+			ok: false,
+			surface: 'purchases/recent',
+			error: { code: 'PURCHASE_COUNT_UNAVAILABLE' },
+			fix: 'Retry later',
+		})
+	})
 })
