@@ -102,6 +102,7 @@ function harness(input?: {
 	manifest?: CourseJsonDocumentV3
 	head?: CourseSyncRevisionHead | null
 	state?: CourseSyncPollState | null
+	readManifest?: CourseSyncDetectionPollerDependencies['readManifest']
 	apply?: CourseSyncDetectionPollerDependencies['apply']
 	getRun?: CourseSyncDetectionPollerDependencies['getRun']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
@@ -177,13 +178,15 @@ function harness(input?: {
 		input?.verifyApplied ?? (async () => run('applied')),
 	)
 	const dependencies: CourseSyncDetectionPollerDependencies = {
-		readManifest: async () => ({
-			manifest: detectedManifest,
-			summary: {
-				courseVersionId: detectedManifest.courseVersionId,
-				manifest: { rev: 'dropbox-rev-2', sha256: 'b'.repeat(64) },
-			},
-		}),
+		readManifest:
+			input?.readManifest ??
+			(async () => ({
+				manifest: detectedManifest,
+				summary: {
+					courseVersionId: detectedManifest.courseVersionId,
+					manifest: { rev: 'dropbox-rev-2', sha256: 'b'.repeat(64) },
+				},
+			})),
 		getRevisionHead: async () => head,
 		getRun,
 		getPollState: async () => state,
@@ -276,6 +279,75 @@ describe('course sync detection poller', () => {
 			expect.arrayContaining([
 				expect.objectContaining({ stage: 'compare', outcome: 'skipped' }),
 				expect.objectContaining({ stage: 'notify', outcome: 'skipped' }),
+			]),
+		)
+	})
+
+	it('does not re-announce success when staging short-circuits to an applied run', async () => {
+		const test = harness({
+			stage: async () => run('applied', { noOp: true }),
+		})
+
+		await expect(test.poll('poll-noop-stage')).resolves.toMatchObject({
+			outcome: 'no-op',
+			courseVersionId: 'version-2',
+		})
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.notifications).toHaveLength(0)
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			consecutiveFailures: 0,
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+		})
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: { reason: 'stage-no-op-already-applied' },
+				}),
+			]),
+		)
+	})
+
+	it('never writes poll state from an environment without Dropbox configuration', async () => {
+		const priorState: CourseSyncPollState = {
+			bindingId: 'csb_ai_coding_crash_course',
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			status: 'succeeded',
+			consecutiveFailures: 0,
+			controlPlaneRunId: 'sync-run-2',
+			failureClass: null,
+			updatedAt: new Date('2026-07-24T17:30:00.000Z'),
+		}
+		const test = harness({
+			state: priorState,
+			readManifest: async () => {
+				throw new CourseSyncError(
+					'DROPBOX_SYNC_NOT_CONFIGURED',
+					'Dropbox sync is not configured: DROPBOX_REFRESH_TOKEN',
+					503,
+				)
+			},
+		})
+
+		await expect(test.poll('poll-unconfigured')).resolves.toMatchObject({
+			outcome: 'failed',
+			failureClass: 'DROPBOX_SYNC_NOT_CONFIGURED',
+		})
+		expect(test.state()).toEqual(priorState)
+		expect(test.notifications).toHaveLength(0)
+		expect(test.logs).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					outcome: 'failed',
+					failureClass: 'DROPBOX_SYNC_NOT_CONFIGURED',
+					metadata: expect.objectContaining({
+						reason: 'environment-not-configured-poll-state-not-saved',
+					}),
+				}),
 			]),
 		)
 	})

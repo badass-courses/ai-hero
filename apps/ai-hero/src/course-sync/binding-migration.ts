@@ -1,6 +1,7 @@
 import { CourseSyncError } from './errors'
 import {
 	AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR,
+	AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED,
 	type CourseSyncBinding,
 } from './types'
 
@@ -32,17 +33,20 @@ export function resolveStoredCourseSyncBinding(
 ): {
 	binding: CourseSyncBinding
 	migrated: boolean
-	fromContractVersion: 2 | null
+	fromContractVersion: 2 | 3 | null
 } {
 	if (sameBinding(stored, expected)) {
 		return { binding: expected, migrated: false, fromContractVersion: null }
+	}
+	if (sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED)) {
+		return { binding: expected, migrated: true, fromContractVersion: 3 }
 	}
 	if (sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR)) {
 		return { binding: expected, migrated: true, fromContractVersion: 2 }
 	}
 	throw new CourseSyncError(
 		'IMMUTABLE_BINDING_CONFLICT',
-		'The stored sync binding does not match the server-owned v3 binding or an exact migratable prior binding.',
+		'The stored sync binding does not match the server-owned v4 binding or an exact migratable prior binding.',
 		409,
 		{ category: 'lifecycle_conflict', retryable: false },
 	)

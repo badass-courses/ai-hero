@@ -5,7 +5,7 @@ import type {
 } from '@ai-hero/course-sync-schema'
 
 export type CourseSyncBinding = {
-	contractVersion: 3
+	contractVersion: 4
 	bindingId: string
 	sourceCourseId: string
 	productId: string
@@ -19,7 +19,7 @@ export type CourseSyncBinding = {
 		workshop: {
 			type: 'workshop'
 			state: 'published'
-			visibility: 'unlisted'
+			visibility: 'public'
 		}
 		relation: { position: 0; exclusiveProduct: true }
 	}
@@ -76,7 +76,11 @@ export const AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR = {
 	status: 'active',
 } as const
 
-export const AI_HERO_COURSE_SYNC_BINDING = {
+/**
+ * The stored v3 value from before the Crash Course launch published the
+ * anchor workshop. Only this exact literal may migrate to v4.
+ */
+export const AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED = {
 	contractVersion: 3,
 	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
 	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
@@ -92,6 +96,33 @@ export const AI_HERO_COURSE_SYNC_BINDING = {
 			type: 'workshop',
 			state: 'published',
 			visibility: 'unlisted',
+		},
+		relation: { position: 0, exclusiveProduct: true },
+	},
+	managedChildContract: { state: 'draft', visibility: 'unlisted' },
+	applyPolicy: 'bounded-auto',
+	sectionMappingPolicy: 'sections-in-anchor-workshop',
+	assetConnector: 'dropbox-shared-link',
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
+	status: 'active',
+} as const
+
+export const AI_HERO_COURSE_SYNC_BINDING = {
+	contractVersion: 4,
+	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
+	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
+	productId: AI_HERO_COURSE_SYNC_BINDING_V1.productId,
+	anchorWorkshopId: AI_HERO_COURSE_SYNC_BINDING_V1.anchorWorkshopId,
+	targetContract: {
+		product: {
+			type: 'self-paced',
+			state: 'published',
+			visibility: 'public',
+		},
+		workshop: {
+			type: 'workshop',
+			state: 'published',
+			visibility: 'public',
 		},
 		relation: { position: 0, exclusiveProduct: true },
 	},

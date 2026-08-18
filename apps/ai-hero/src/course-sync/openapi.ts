@@ -204,7 +204,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 					],
 					properties: {
 						bindingId: { type: 'string', minLength: 1 },
-						contractVersion: { const: 3 },
+						contractVersion: { const: 4 },
 						status: {
 							type: 'string',
 							enum: ['active', 'suspended', 'revoked'],
@@ -233,7 +233,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 									properties: {
 										type: { const: 'workshop' },
 										state: { const: 'published' },
-										visibility: { const: 'unlisted' },
+										visibility: { const: 'public' },
 									},
 								},
 								managedChildren: {
