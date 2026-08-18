@@ -107,9 +107,14 @@ function getMeta(
 		offset: number
 		surface: SurfaceName
 		range: ApiAnalyticsRange
+		totalMatchingRows?: number
 	},
 ) {
 	const rowCount = Array.isArray(data) ? data.length : 1
+	const hasMore =
+		options.totalMatchingRows !== undefined
+			? options.offset + rowCount < options.totalMatchingRows
+			: rowCount === options.limit
 	return {
 		totalRows: rowCount,
 		truncated,
@@ -120,10 +125,10 @@ function getMeta(
 				? {
 						limit: options.limit,
 						offset: options.offset,
-						nextOffset:
-							rowCount === options.limit
-								? options.offset + options.limit
-								: null,
+						returnedRows: rowCount,
+						totalMatchingRows: options.totalMatchingRows,
+						hasMore,
+						nextOffset: hasMore ? options.offset + rowCount : null,
 						previousOffset:
 							options.offset > 0
 								? Math.max(0, options.offset - options.limit)
@@ -139,7 +144,7 @@ function buildContextualNextActions(
 	options: {
 		limit?: number
 		offset?: number
-		rowCount?: number
+		nextOffset?: number | null
 		productId?: string
 	} = {},
 ) {
@@ -178,7 +183,6 @@ function buildContextualNextActions(
 	if (paginated) {
 		const limit = options.limit ?? (surface === 'surveys/responses' ? 100 : 20)
 		const offset = options.offset ?? 0
-		const rowCount = options.rowCount ?? 0
 		const max = surface === 'surveys/responses' ? 1000 : 100
 		const noun =
 			surface === 'surveys/responses' ? 'survey response rows' : 'purchases'
@@ -207,9 +211,9 @@ function buildContextualNextActions(
 			}
 		}
 
-		if (rowCount === limit) {
+		if (options.nextOffset !== null && options.nextOffset !== undefined) {
 			actions.unshift(
-				paginationAction(offset + limit, `Fetch the next page of ${noun}`),
+				paginationAction(options.nextOffset, `Fetch the next page of ${noun}`),
 			)
 		}
 		if (offset > 0) {
@@ -500,6 +504,68 @@ export const GET = withSkill(async (request: NextRequest) => {
 		)
 	}
 
+	let totalMatchingRows: number | undefined
+	if (surface === 'purchases/recent') {
+		const summaryResult = await analytics.query('summary', {
+			range: range as AnalyticsRange,
+			productId,
+		})
+		if (!summaryResult.ok) {
+			return NextResponse.json(
+				{
+					ok: false,
+					endpoint: '/api/analytics',
+					surface,
+					error: {
+						code: 'PURCHASE_COUNT_UNAVAILABLE',
+						message: 'Could not determine the exact matching purchase count.',
+					},
+					fix: summaryResult.fix,
+				},
+				{
+					status: summaryResult.error.code.endsWith('_UNAVAILABLE') ? 503 : 500,
+					headers: corsHeaders,
+				},
+			)
+		}
+
+		const summaryData = summaryResult.data as { purchaseCount?: unknown }
+		if (typeof summaryData.purchaseCount !== 'number') {
+			return NextResponse.json(
+				{
+					ok: false,
+					endpoint: '/api/analytics',
+					surface,
+					error: {
+						code: 'INVALID_PURCHASE_COUNT',
+						message:
+							'The revenue summary did not return a numeric purchaseCount.',
+					},
+				},
+				{ status: 500, headers: corsHeaders },
+			)
+		}
+		totalMatchingRows = summaryData.purchaseCount
+	}
+
+	const meta = getMeta(
+		result.data,
+		result.meta.queryTimeMs,
+		result.meta.truncated,
+		{
+			limit,
+			offset,
+			surface,
+			range,
+			totalMatchingRows,
+		},
+	)
+	const hrefForOffset = (pageOffset: number) => {
+		const params = new URLSearchParams(normalizedSearchParams)
+		params.set('offset', String(pageOffset))
+		return `${requestUrl.origin}${requestUrl.pathname}?${params.toString()}`
+	}
+
 	return NextResponse.json(
 		{
 			ok: true,
@@ -512,26 +578,30 @@ export const GET = withSkill(async (request: NextRequest) => {
 			agent_instructions: ANALYTICS_AGENT_INSTRUCTIONS,
 			schema: getRevenueSurfaceSchema(surface),
 			data: result.data,
-			meta: getMeta(
-				result.data,
-				result.meta.queryTimeMs,
-				result.meta.truncated,
-				{
-					limit,
-					offset,
-					surface,
-					range,
-				},
-			),
+			meta,
 			_links: {
-				self: {
-					href: `${requestUrl.origin}${requestUrl.pathname}?${normalizedSearchParams.toString()}`,
-				},
+				self: { href: hrefForOffset(offset) },
+				...(meta.pagination?.nextOffset !== null &&
+				meta.pagination?.nextOffset !== undefined
+					? {
+							next: {
+								href: hrefForOffset(meta.pagination.nextOffset),
+							},
+						}
+					: {}),
+				...(meta.pagination?.previousOffset !== null &&
+				meta.pagination?.previousOffset !== undefined
+					? {
+							previous: {
+								href: hrefForOffset(meta.pagination.previousOffset),
+							},
+						}
+					: {}),
 			},
 			next_actions: buildContextualNextActions(surface, range, {
 				limit,
 				offset,
-				rowCount: Array.isArray(result.data) ? result.data.length : 0,
+				nextOffset: meta.pagination?.nextOffset,
 				productId,
 			}),
 		},

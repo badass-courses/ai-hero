@@ -1,12 +1,12 @@
 import type { SurfaceName } from '@/lib/analytics'
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-08-18'
+export const ANALYTICS_SCHEMA_VERSION = '2026-08-18.1'
 
 export const ANALYTICS_AGENT_INSTRUCTIONS = [
 	'Revenue amounts are USD major units. Treat database revenue surfaces as the revenue source of truth, not GA4.',
 	'Use the same range and productId when comparing summary with revenue/daily. Requests at different times can include different purchases.',
 	'Read summary revenue from data.totalRevenue. Read daily revenue from data[].revenue. There is no totalRevenue field on revenue/daily rows.',
-	'For purchases/recent, follow meta.pagination.nextOffset until it is null. meta.totalRows is the current page size, not the total matching purchase count.',
+	'The 100-row purchases/recent limit is a per-page cap, not a total cap. Read meta.pagination.totalMatchingRows for the full matching count. Follow _links.next.href until it is absent, or meta.pagination.nextOffset until it is null. meta.totalRows is the current page size.',
 	'Absent productId means all products on product-aware surfaces. Published revenue schemas list productId support, and some attribution surfaces also accept it.',
 	'purchases/recent defaults to range=30d. Use range=all when historical purchases are required.',
 	'Treat each response as a point-in-time read. Re-query before reporting live launch numbers.',
@@ -109,6 +109,13 @@ export const REVENUE_SURFACE_SCHEMAS = {
 	'purchases/recent': {
 		supports: ['range', 'productId', 'limit', 'offset'],
 		order: ['createdAt desc', 'id desc'],
+		pagination: {
+			limitMaximum: 100,
+			currentPageCount: 'meta.pagination.returnedRows',
+			totalMatchingCount: 'meta.pagination.totalMatchingRows',
+			nextPage: '_links.next.href',
+			previousPage: '_links.previous.href',
+		},
 		data: {
 			type: 'array',
 			items: {
@@ -137,7 +144,8 @@ export const REVENUE_SURFACE_SCHEMAS = {
 		},
 		semantics: [
 			'Rows are newest first. Large historical purchases do not outrank newer purchases.',
-			'Follow meta.pagination.nextOffset until null. meta.totalRows is only the current page size.',
+			'The 100-row limit is per page. Follow _links.next.href until absent, or meta.pagination.nextOffset until null.',
+			'Read meta.pagination.totalMatchingRows for the full matching purchase count. meta.totalRows and meta.pagination.returnedRows describe only the current page.',
 		],
 	},
 } as const
