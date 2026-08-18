@@ -7,6 +7,7 @@ import {
 	COURSES_CATALOG,
 	COURSES_COMING_NEXT,
 	COURSES_DETAILS_EYEBROW,
+	COURSES_NEXT_COHORT_CARD,
 	COURSES_PAST_COHORTS,
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
@@ -15,13 +16,16 @@ import {
 	FLAGSHIP_TEAM,
 } from '@/lib/courses-content'
 import type { CoursesHeroState } from '@/lib/courses-hero-state'
+import type { NextOffer } from '@/lib/next-offer'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
+import type { MinimalWorkshop } from '@/lib/workshops'
 import { getResourcePath } from '@/utils/resource-paths'
 import { ArrowRight, Star, Users } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
 import { CohortHero } from '@/components/cohort-hero'
+import { WorkshopHero } from '@/components/workshop-hero'
 
 /**
  * "This is currently on — we're in the window, learning with Matt."
@@ -137,29 +141,51 @@ export function CoursesPage({
 	flagship,
 	isPurchasable,
 	alumniLabel,
-	comingNext,
+	comingNextWorkshop,
 	pastCohorts,
 	sale,
 	running,
+	featuredWorkshopOffer,
 }: {
 	flagship: UpcomingCohortSummary | null
 	isPurchasable: boolean
 	/** e.g. "8,500+" — null hides the stat. */
 	alumniLabel: string | null
-	/** Crash-course cover art; null (workshop missing) drops the card. */
-	comingNext: { image?: string } | null
+	/** The crash-course workshop; null (missing) drops its card / hero. */
+	comingNextWorkshop: MinimalWorkshop | null
 	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
 	pastCohorts: UpcomingCohortSummary[]
 	/** A live discount on the flagship. Never carries a price. */
 	sale: CoursesHeroState['sale']
 	/** Set when the viewer owns the flagship AND it is inside its window now. */
 	running: CoursesHeroState['running']
+	/**
+	 * Set when the offer ladder ranks the self-paced workshop above the cohort
+	 * (`page.tsx`): the workshop becomes the hero, the cohort becomes a card.
+	 */
+	featuredWorkshopOffer: NextOffer | null
 }) {
-	// The crash course leads the catalog when it exists: it is the closest
-	// thing to the cohort, and the waitlist it feeds is the same ask the hero
-	// makes. Missing workshop means missing card, never an empty cell.
+	const workshopLeads = Boolean(featuredWorkshopOffer && comingNextWorkshop)
+
+	// The crash course leads the catalog when it exists AND is not already the
+	// hero — the page never lists one thing twice. When the workshop takes the
+	// hero, the demoted cohort takes the workshop's cell instead: still on the
+	// page, one step smaller, honestly badged as the waitlist it is.
 	const catalog = [
-		...(comingNext
+		...(workshopLeads && flagship
+			? [
+					{
+						title: flagship.title,
+						href: getResourcePath('cohort', flagship.slug, 'view'),
+						description:
+							flagship.description ?? COURSES_NEXT_COHORT_CARD.fallbackBlurb,
+						badge: COURSES_NEXT_COHORT_CARD.badge,
+						badgeTone: 'accent' as const,
+						image: flagship.image,
+					},
+				]
+			: []),
+		...(!workshopLeads && comingNextWorkshop
 			? [
 					{
 						title: COURSES_COMING_NEXT.title,
@@ -167,7 +193,7 @@ export function CoursesPage({
 						description: COURSES_COMING_NEXT.description,
 						badge: COURSES_COMING_NEXT.badge,
 						badgeTone: 'accent' as const,
-						image: comingNext.image,
+						image: comingNextWorkshop.fields.coverImage?.url,
 					},
 				]
 			: []),
@@ -181,17 +207,27 @@ export function CoursesPage({
 			    to them again. */}
 			{running ? <RunningStrip running={running} /> : null}
 
-			{/* 1. The flagship IS the hero — the same component the homepage's
-			    cohort section renders, so the two surfaces cannot drift. Here the
-			    cohort's name is the page's h1. See `components/cohort-hero.tsx`. */}
-			<CohortHero
-				flagship={flagship}
-				isPurchasable={isPurchasable}
-				alumniLabel={alumniLabel}
-				sale={sale}
-				headingLevel="h1"
-				headingId="flagship-heading"
-			/>
+			{/* 1. The hero is the offer ladder's top rung. Usually the flagship
+			    cohort — the same component the homepage's cohort section renders,
+			    so the two surfaces cannot drift. While the self-paced workshop
+			    outranks it (a live sale, or its arrival between cohorts), the
+			    workshop takes the slot and the cohort takes a catalog card. */}
+			{workshopLeads && featuredWorkshopOffer && comingNextWorkshop ? (
+				<WorkshopHero
+					offer={featuredWorkshopOffer}
+					workshop={comingNextWorkshop}
+					headingId="flagship-heading"
+				/>
+			) : (
+				<CohortHero
+					flagship={flagship}
+					isPurchasable={isPurchasable}
+					alumniLabel={alumniLabel}
+					sale={sale}
+					headingLevel="h1"
+					headingId="flagship-heading"
+				/>
+			)}
 
 			{/* 2 + 3. The practical detail, then the team ask.
 			    Four short answers in a hairline grid rather than four
@@ -202,6 +238,11 @@ export function CoursesPage({
 			    (DESIGN rule 12). */}
 			<section aria-label={COURSES_DETAILS_EYEBROW} className="border-b">
 				<div className="flex flex-col gap-4 px-[18px] py-16 sm:px-11 md:py-20">
+					{/* The facts answer cohort questions — office hours, the cohort
+					    window — so they only render under the cohort hero. Under the
+					    workshop hero they would describe a product the reader is not
+					    looking at. The team ask below stays: it is true of any seat. */}
+					{workshopLeads ? null : (
 					<div className="flex flex-col gap-6">
 						<p className={MONO_LABEL}>{COURSES_DETAILS_EYEBROW}</p>
 						<div className="border-border bg-border grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))]">
@@ -231,6 +272,7 @@ export function CoursesPage({
 							))}
 						</div>
 					</div>
+					)}
 
 					{/* Team seats sits under the details, not between the offer and
 					    its proof, where it used to interrupt the one path this

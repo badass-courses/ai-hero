@@ -46,6 +46,13 @@ export type PricingComponentProps = {
 	centered?: boolean
 	resourceType: string
 	className?: string
+	/**
+	 * When set, a slim regional-pricing strip renders alongside the buy button
+	 * (anchored to the nearest positioned ancestor — the mobile bottom bar) and
+	 * taps scroll to this element id. Mobile-bar only: on desktop the buy box
+	 * itself carries the regional-pricing checkbox.
+	 */
+	regionalPricingNoteTargetId?: string
 }
 
 /**
@@ -62,6 +69,7 @@ export const BuyButtonComponent: React.FC<
 	centered,
 	className,
 	resourceType,
+	regionalPricingNoteTargetId,
 }) => {
 	const couponFromCode = commerceProps?.couponFromCode
 	const { validCoupon } = useCoupon(couponFromCode)
@@ -86,8 +94,78 @@ export const BuyButtonComponent: React.FC<
 					className={className}
 					centered={centered}
 				/>
+				{regionalPricingNoteTargetId && (
+					<RegionalPricingNote targetId={regionalPricingNoteTargetId} />
+				)}
 			</Pricing.Product>
 		</Pricing.Root>
+	)
+}
+
+/**
+ * One-line regional-pricing notice for the mobile bottom bar. The desktop buy
+ * box explains PPP with a checkbox and the from-country restriction, but a
+ * phone visitor only ever meets the bar — so eligible visitors emailed support
+ * asking whether regional pricing exists at all. This surfaces the answer
+ * without owning the decision: tapping scrolls to the buy box, where the
+ * checkbox and the restriction copy (a condition of the discount) live.
+ *
+ * Renders nothing unless a PPP coupon is actually available for this visitor
+ * and not already applied (an applied coupon is visible in the button price).
+ */
+const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
+	const { formattedPrice, activeMerchantCoupon } = usePricing()
+
+	const availablePPPCoupon = Array.isArray(formattedPrice?.availableCoupons)
+		? formattedPrice.availableCoupons.find((coupon) => coupon?.type === 'ppp')
+		: undefined
+	if (!availablePPPCoupon || activeMerchantCoupon?.type === 'ppp') return null
+
+	const rawDiscount = availablePPPCoupon.percentageDiscount as
+		| string
+		| number
+		| { toNumber?: () => number }
+		| undefined
+	const percentOff = Math.floor(
+		(typeof rawDiscount === 'string'
+			? Number(rawDiscount)
+			: typeof rawDiscount === 'number'
+				? rawDiscount
+				: (rawDiscount?.toNumber?.() ?? 0)) * 100,
+	)
+
+	// Same guard as the buy box: `Intl.DisplayNames.of` throws on a structurally
+	// invalid region code, and this code is stored coupon data.
+	const rawCountryCode = availablePPPCoupon.country || 'US'
+	const countryCode = /^[A-Za-z]{2}$/.test(rawCountryCode)
+		? rawCountryCode.toUpperCase()
+		: 'US'
+	const country =
+		new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ??
+		countryCode
+
+	return (
+		<button
+			type="button"
+			data-regional-note=""
+			onClick={() => {
+				document
+					.getElementById(targetId)
+					?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+			}}
+			// Anchored to the bar's bottom edge as a second row under title+button;
+			// the bar reserves this row's height via its `has-[[data-regional-note]]`
+			// padding — the two must move together.
+			className="absolute bottom-0 left-0 w-full cursor-pointer border-t px-3 py-1.5 text-left"
+		>
+			<span className="text-muted-foreground text-pretty text-xs">
+				{/* Rhymes with the buy box's "Buying from {country}?" sentence so the
+				    tap lands on familiar words. */}
+				Buying from{' '}
+				<strong className="text-foreground font-semibold">{country}</strong>?{' '}
+				{percentOff}% off regional pricing is available&nbsp;→
+			</span>
+		</button>
 	)
 }
 
@@ -155,6 +233,7 @@ export const withEventPricing = (
 		centered = false,
 		resourceType,
 		className,
+		regionalPricingNoteTargetId,
 	}: {
 		pricingProps: PropsForCommerce
 		resource: Cohort | MinimalWorkshop
@@ -163,6 +242,7 @@ export const withEventPricing = (
 		centered?: boolean
 		resourceType: string
 		className?: string
+		regionalPricingNoteTargetId?: string
 	}) {
 		const { coupon } = React.useContext(CouponContext)
 
@@ -240,6 +320,7 @@ export const withEventPricing = (
 						pricingDataLoader={pricingDataLoader}
 						pricingWidgetOptions={defaultPricingOptions}
 						className={className}
+						regionalPricingNoteTargetId={regionalPricingNoteTargetId}
 					/>
 				)}
 			</PriceCheckProvider>

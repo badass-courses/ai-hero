@@ -6,6 +6,7 @@ import {
 } from '@/lib/cohort-stats'
 import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import { getCoursesHeroState } from '@/lib/courses-hero-state'
+import { getNextOfferSafe } from '@/lib/next-offer'
 import {
 	getLatestCohort,
 	getPastCohorts,
@@ -50,8 +51,31 @@ export default async function CoursesRoute() {
 
 	// Depends on the flagship (the sale is guarded to its resource id, and the
 	// running window is read off its cohort), so it cannot join the batch above.
-	const { sale, running } = await getCoursesHeroState(flagship)
-	// Excluding whatever the hero shows, so the page never lists a cohort twice.
+	// `getNextOfferSafe` joins it because it is the same cached read the hero
+	// state resolves internally — a second call is a cache hit, not a query.
+	const [{ sale, running }, offer] = await Promise.all([
+		getCoursesHeroState(flagship),
+		getNextOfferSafe(),
+	])
+
+	// The hero follows the offer ladder (`next-offer.ts`). When the top offer
+	// is the self-paced workshop — a live sale on it, or its waitlist while no
+	// cohort is purchasable — the workshop IS the hero, and the cohort takes a
+	// card in the grid instead of pitching a closed enrollment above the thing
+	// a reader can actually buy. The id check keeps a sale on the cohort (or
+	// any other resource) from hijacking the slot.
+	const featuredWorkshopOffer =
+		!upcoming &&
+		offer &&
+		(offer.kind === 'sale' || offer.kind === 'workshop-waitlist') &&
+		comingNextWorkshop &&
+		offer.id === comingNextWorkshop.id
+			? offer
+			: null
+
+	// The flagship never sits on the past shelf: it is either the hero, or —
+	// when the workshop leads — the catalog's cohort card (`CoursesPage`).
+	// Either way the page lists it exactly once.
 	const pastCohorts = flagship
 		? allPastCohorts.filter((cohort) => cohort.id !== flagship.id)
 		: allPastCohorts
@@ -65,11 +89,8 @@ export default async function CoursesRoute() {
 				pastCohorts={pastCohorts}
 				sale={sale}
 				running={running}
-				comingNext={
-					comingNextWorkshop
-						? { image: comingNextWorkshop.fields?.coverImage?.url }
-						: null
-				}
+				featuredWorkshopOffer={featuredWorkshopOffer}
+				comingNextWorkshop={comingNextWorkshop}
 			/>
 		</LayoutClient>
 	)

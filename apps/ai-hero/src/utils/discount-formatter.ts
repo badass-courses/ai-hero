@@ -24,9 +24,14 @@ export function formatDiscount(coupon: {
 	const hasFixedDiscount = coupon.amountDiscount && coupon.amountDiscount > 0
 
 	if (hasFixedDiscount && coupon.amountDiscount) {
-		// Fixed amount discount (in cents, convert to dollars)
+		// Fixed amount discount (in cents, convert to dollars). Whole dollars
+		// print without cents: every real sale is authored as one ("Save $100",
+		// not "Save $100.00"), and the trailing zeros read as machine output on
+		// every surface this string reaches (nav, hero, sale banner).
 		const discountValue = coupon.amountDiscount / 100
-		return `$${discountValue.toFixed(2)}`
+		return Number.isInteger(discountValue)
+			? `$${discountValue}`
+			: `$${discountValue.toFixed(2)}`
 	} else {
 		// Percentage discount
 		const percentOff = Number(coupon.percentageDiscount) * 100

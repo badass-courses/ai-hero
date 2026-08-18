@@ -213,7 +213,11 @@ export const WorkshopSidebarMobile = ({
 	return (
 		<div
 			className={cn(
-				'bg-background/90 backdrop-blur-xs fixed bottom-0 left-0 z-20 flex w-full items-center justify-between gap-3 border-t px-3 py-3 transition-opacity duration-300 md:hidden',
+				// `has-[[data-regional-note]]:pb-[49px]` reserves the height of the
+				// regional-pricing row (`RegionalPricingNote`, 37px), which is
+				// absolutely anchored to the bar's bottom edge, plus the bar's own
+				// 12px row gap — the two must move together.
+				'bg-background/90 backdrop-blur-xs has-[[data-regional-note]]:pb-[49px] fixed bottom-0 left-0 z-20 flex w-full items-center justify-between gap-3 border-t px-3 py-3 transition-opacity duration-300 md:hidden',
 				className,
 			)}
 		>
@@ -246,6 +250,7 @@ export const WorkshopSidebarMobile = ({
 							withTitle: false,
 							withImage: false,
 						}}
+						regionalPricingNoteTargetId="buy"
 					/>
 				)
 			)}
