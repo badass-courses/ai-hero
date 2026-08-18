@@ -2,6 +2,7 @@
 
 import React from 'react'
 import Link from 'next/link'
+import { TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
 import type { Cohort } from '@/lib/cohort'
@@ -156,9 +157,11 @@ const RegionalPricingNote = ({ targetId }: { targetId: string }) => {
 			// Anchored to the bar's bottom edge as a second row under title+button;
 			// the bar reserves this row's height via its `has-[[data-regional-note]]`
 			// padding — the two must move together.
-			className="absolute bottom-0 left-0 w-full cursor-pointer border-t px-3 py-1.5 text-left"
+			className="border-border absolute bottom-0 left-0 w-full cursor-pointer border-t px-3 py-1.5 text-left"
 		>
-			<span className="text-muted-foreground text-pretty text-xs">
+			<span
+				className={cn(TYPE.metaSm, 'text-muted-foreground text-pretty')}
+			>
 				{/* Rhymes with the buy box's "Buying from {country}?" sentence so the
 				    tap lands on familiar words. */}
 				Buying from{' '}

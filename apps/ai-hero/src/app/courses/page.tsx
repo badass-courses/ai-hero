@@ -59,15 +59,15 @@ export default async function CoursesRoute() {
 	])
 
 	// The hero follows the offer ladder (`next-offer.ts`). When the top offer
-	// is a live SALE on the self-paced workshop, the workshop IS the hero, and
-	// the cohort takes a card in the grid instead of pitching a closed
-	// enrollment above the thing a reader can actually buy. Sale only:
-	// `WorkshopHero` is a purchase hero ("Available now", "Get the course"),
-	// and a `workshop-waitlist` offer — an unreleased course — would wear that
-	// copy as a lie. The id check keeps a sale on the cohort (or any other
-	// resource) from hijacking the slot.
+	// is a live SALE on the self-paced workshop, the workshop IS the hero —
+	// even over an open cohort enrollment, matching the ladder's own rule that
+	// a discount outranks seats ("if we have discounted something, that is the
+	// thing to talk about") — and the cohort takes a card in the grid. Sale
+	// only: `WorkshopHero` is a purchase hero ("Available now", "Get the
+	// course"), and a `workshop-waitlist` offer — an unreleased course — would
+	// wear that copy as a lie. The id check keeps a sale on the cohort (or any
+	// other resource) from hijacking the slot.
 	const featuredWorkshopOffer =
-		!upcoming &&
 		offer &&
 		offer.kind === 'sale' &&
 		comingNextWorkshop &&

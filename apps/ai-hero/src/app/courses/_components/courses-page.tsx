@@ -11,6 +11,7 @@ import {
 	COURSES_PAST_COHORTS,
 	COURSES_TESTIMONIALS,
 	COURSES_TESTIMONIALS_EYEBROW,
+	FLAGSHIP_ENROLLING,
 	FLAGSHIP_FACTS,
 	FLAGSHIP_RUNNING,
 	FLAGSHIP_TEAM,
@@ -189,8 +190,9 @@ export function CoursesPage({
 
 	// When the workshop takes the hero, the demoted cohort takes the top of
 	// the cohorts shelf: still on the page, one step smaller, honestly badged
-	// as the waitlist it is — and the shelf's label widens from "Past cohorts"
-	// to "Cohorts", because one row of it now isn't past.
+	// with its real state (a sale can outrank even an open enrollment) — and
+	// the shelf's label widens from "Past cohorts" to "Cohorts", because one
+	// row of it now isn't past.
 	const cohortShelfLeader =
 		workshopLeads && flagship
 			? {
@@ -198,7 +200,9 @@ export function CoursesPage({
 					href: getResourcePath('cohort', flagship.slug, 'view'),
 					description:
 						flagship.description ?? COURSES_NEXT_COHORT_CARD.fallbackBlurb,
-					badge: COURSES_NEXT_COHORT_CARD.badge,
+					badge: isPurchasable
+						? FLAGSHIP_ENROLLING.badge
+						: COURSES_NEXT_COHORT_CARD.badge,
 					badgeTone: 'accent' as const,
 					image: flagship.image,
 				}
