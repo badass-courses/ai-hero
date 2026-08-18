@@ -4,6 +4,11 @@ import type { AnalyticsRange, SurfaceEntry, SurfaceName } from '@/lib/analytics'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
+import {
+	ANALYTICS_AGENT_INSTRUCTIONS,
+	getAnalyticsAgentSchema,
+	getRevenueSurfaceSchema,
+} from './agent-contract'
 
 type ApiAnalyticsRange = AnalyticsRange | '180d'
 
@@ -110,7 +115,8 @@ function getMeta(
 		truncated,
 		queryTimeMs,
 		pagination:
-			options.surface === 'surveys/responses'
+			options.surface === 'surveys/responses' ||
+			options.surface === 'purchases/recent'
 				? {
 						limit: options.limit,
 						offset: options.offset,
@@ -130,7 +136,12 @@ function getMeta(
 function buildContextualNextActions(
 	surface: SurfaceName,
 	range: ApiAnalyticsRange,
-	options: { limit?: number; offset?: number; rowCount?: number } = {},
+	options: {
+		limit?: number
+		offset?: number
+		rowCount?: number
+		productId?: string
+	} = {},
 ) {
 	const entry = catalogByName[surface]
 	const suggestions = CATEGORY_SUGGESTIONS[entry.category] ?? []
@@ -142,42 +153,72 @@ function buildContextualNextActions(
 	}> = suggestions
 		.filter((name) => name !== surface)
 		.slice(0, 4)
-		.map((name) => ({
-			command: `GET /api/analytics?surface=${name}&range=<range>`,
-			description: catalogByName[name].description,
-			params: {
-				range: {
-					value: range,
-					enum: RANGE_OPTIONS,
+		.map((name) => {
+			const searchParams = new URLSearchParams({ surface: name, range })
+			if (options.productId) {
+				searchParams.set('productId', options.productId)
+			}
+			return {
+				command: `GET /api/analytics?${searchParams.toString()}`,
+				description: catalogByName[name].description,
+				params: {
+					range: {
+						value: range,
+						enum: RANGE_OPTIONS,
+					},
+					...(options.productId
+						? { productId: { value: options.productId } }
+						: {}),
 				},
-			},
-		}))
+			}
+		})
 
-	if (surface === 'surveys/responses') {
-		const limit = options.limit ?? 100
+	const paginated =
+		surface === 'surveys/responses' || surface === 'purchases/recent'
+	if (paginated) {
+		const limit = options.limit ?? (surface === 'surveys/responses' ? 100 : 20)
 		const offset = options.offset ?? 0
 		const rowCount = options.rowCount ?? 0
-		if (rowCount === limit) {
-			actions.unshift({
-				command: `GET /api/analytics?surface=surveys/responses&range=${range}&limit=${limit}&offset=${offset + limit}`,
-				description: 'Fetch the next page of survey response rows',
+		const max = surface === 'surveys/responses' ? 1000 : 100
+		const noun =
+			surface === 'surveys/responses' ? 'survey response rows' : 'purchases'
+
+		const paginationAction = (nextOffset: number, description: string) => {
+			const searchParams = new URLSearchParams({
+				surface,
+				range,
+				limit: String(limit),
+				offset: String(nextOffset),
+			})
+			if (options.productId) {
+				searchParams.set('productId', options.productId)
+			}
+			return {
+				command: `GET /api/analytics?${searchParams.toString()}`,
+				description,
 				params: {
 					range: { value: range, enum: RANGE_OPTIONS },
-					limit: { value: limit, max: 1000 },
-					offset: { value: offset + limit },
+					limit: { value: limit, max },
+					offset: { value: nextOffset },
+					...(options.productId
+						? { productId: { value: options.productId } }
+						: {}),
 				},
-			})
+			}
+		}
+
+		if (rowCount === limit) {
+			actions.unshift(
+				paginationAction(offset + limit, `Fetch the next page of ${noun}`),
+			)
 		}
 		if (offset > 0) {
-			actions.unshift({
-				command: `GET /api/analytics?surface=surveys/responses&range=${range}&limit=${limit}&offset=${Math.max(0, offset - limit)}`,
-				description: 'Fetch the previous page of survey response rows',
-				params: {
-					range: { value: range, enum: RANGE_OPTIONS },
-					limit: { value: limit, max: 1000 },
-					offset: { value: Math.max(0, offset - limit) },
-				},
-			})
+			actions.unshift(
+				paginationAction(
+					Math.max(0, offset - limit),
+					`Fetch the previous page of ${noun}`,
+				),
+			)
 		}
 	}
 
@@ -236,7 +277,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 		)
 	}
 
-	const { searchParams } = new URL(request.url)
+	const requestUrl = new URL(request.url)
+	const { searchParams } = requestUrl
 	const rawSurface = searchParams.get('surface')
 
 	if (!rawSurface) {
@@ -255,14 +297,21 @@ export const GET = withSkill(async (request: NextRequest) => {
 					'YouTube surfaces are useful for correlation/content analysis but lag by about 48 hours.',
 				],
 				surfaces: catalog,
+				agent_instructions: ANALYTICS_AGENT_INSTRUCTIONS,
+				schema: getAnalyticsAgentSchema(catalog.map((entry) => entry.name)),
+				_links: {
+					self: { href: `${requestUrl.origin}${requestUrl.pathname}` },
+				},
 				next_actions: [
 					{
-						command: 'GET /api/analytics/ads-course?productId=email-course&range=today',
-						description: 'Read matching Google Ads economics and email-course funnel metrics',
+						command:
+							'GET /api/analytics/ads-course?productId=email-course&range=today',
+						description:
+							'Read matching Google Ads economics and email-course funnel metrics',
 					},
 					{
 						command:
-							'GET /api/analytics?surface=<surface>&range=<range>&limit=<limit>',
+							'GET /api/analytics?surface=<surface>&range=<range>&limit=<limit>&offset=<offset>&productId=<productId>',
 						description: 'Query a specific analytics surface',
 						params: {
 							surface: {
@@ -288,7 +337,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 							productId: {
 								required: false,
 								description:
-									'Optional product filter for product-aware attribution surfaces',
+									'Optional product filter for product-aware revenue, purchase, and attribution surfaces',
 							},
 							purchaseId: {
 								required: false,
@@ -380,6 +429,21 @@ export const GET = withSkill(async (request: NextRequest) => {
 	const surveyId = searchParams.get('surveyId') ?? undefined
 	const surveySlug = searchParams.get('surveySlug') ?? undefined
 	const questionId = searchParams.get('questionId') ?? undefined
+	const normalizedSearchParams = new URLSearchParams({
+		surface,
+		range,
+		limit: String(limit),
+		offset: String(offset),
+	})
+	for (const [name, value] of [
+		['productId', productId],
+		['purchaseId', purchaseId],
+		['surveyId', surveyId],
+		['surveySlug', surveySlug],
+		['questionId', questionId],
+	] as const) {
+		if (value !== undefined) normalizedSearchParams.set(name, value)
+	}
 
 	await log.info('api.analytics.query', {
 		userId: (user as any)?.id ?? null,
@@ -426,6 +490,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 				next_actions: buildContextualNextActions(surface, range, {
 					limit,
 					offset,
+					productId,
 				}),
 			},
 			{
@@ -442,7 +507,10 @@ export const GET = withSkill(async (request: NextRequest) => {
 			surface,
 			range,
 			offset,
+			productId,
 			description: catalogByName[surface].description,
+			agent_instructions: ANALYTICS_AGENT_INSTRUCTIONS,
+			schema: getRevenueSurfaceSchema(surface),
 			data: result.data,
 			meta: getMeta(
 				result.data,
@@ -455,10 +523,16 @@ export const GET = withSkill(async (request: NextRequest) => {
 					range,
 				},
 			),
+			_links: {
+				self: {
+					href: `${requestUrl.origin}${requestUrl.pathname}?${normalizedSearchParams.toString()}`,
+				},
+			},
 			next_actions: buildContextualNextActions(surface, range, {
 				limit,
 				offset,
 				rowCount: Array.isArray(result.data) ? result.data.length : 0,
+				productId,
 			}),
 		},
 		{ headers: corsHeaders },
