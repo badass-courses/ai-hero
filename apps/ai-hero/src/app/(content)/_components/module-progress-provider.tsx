@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import { api } from '@/trpc/react'
-import { useSession } from 'next-auth/react'
 
 import {
 	ModuleProgress,
@@ -156,11 +155,15 @@ export const ClientModuleProgressProvider = ({
 	children: React.ReactNode
 	moduleIdOrSlug: string
 }) => {
-	const { status: sessionStatus } = useSession()
+	// Always fetch: learners in the email-course flow have progress keyed to the
+	// httpOnly `ck_subscriber` cookie without ever being next-auth-authenticated,
+	// so gating this on session status left their completions (written fine by
+	// the server action) invisible after every reload. The server resolves
+	// session → subscriber cookie → empty, and the anonymous branch answers
+	// without touching the database.
 	const { data: moduleProgress = null } = api.progress.moduleProgress.useQuery(
 		{ moduleIdOrSlug },
 		{
-			enabled: sessionStatus === 'authenticated',
 			staleTime: 60_000,
 			refetchOnWindowFocus: false,
 			retry: 1,
