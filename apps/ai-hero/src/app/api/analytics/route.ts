@@ -107,9 +107,14 @@ function getMeta(
 		offset: number
 		surface: SurfaceName
 		range: ApiAnalyticsRange
+		totalMatchingRows?: number
 	},
 ) {
 	const rowCount = Array.isArray(data) ? data.length : 1
+	const hasMore =
+		options.totalMatchingRows !== undefined
+			? options.offset + rowCount < options.totalMatchingRows
+			: rowCount === options.limit
 	return {
 		totalRows: rowCount,
 		truncated,
@@ -120,10 +125,10 @@ function getMeta(
 				? {
 						limit: options.limit,
 						offset: options.offset,
-						nextOffset:
-							rowCount === options.limit
-								? options.offset + options.limit
-								: null,
+						returnedRows: rowCount,
+						totalMatchingRows: options.totalMatchingRows,
+						hasMore,
+						nextOffset: hasMore ? options.offset + rowCount : null,
 						previousOffset:
 							options.offset > 0
 								? Math.max(0, options.offset - options.limit)
@@ -500,6 +505,38 @@ export const GET = withSkill(async (request: NextRequest) => {
 		)
 	}
 
+	let totalMatchingRows: number | undefined
+	if (surface === 'purchases/recent') {
+		const summaryResult = await analytics.query('summary', {
+			range: range as AnalyticsRange,
+			productId,
+		})
+		if (summaryResult.ok) {
+			const summaryData = summaryResult.data as { purchaseCount?: unknown }
+			if (typeof summaryData.purchaseCount === 'number') {
+				totalMatchingRows = summaryData.purchaseCount
+			}
+		}
+	}
+
+	const meta = getMeta(
+		result.data,
+		result.meta.queryTimeMs,
+		result.meta.truncated,
+		{
+			limit,
+			offset,
+			surface,
+			range,
+			totalMatchingRows,
+		},
+	)
+	const hrefForOffset = (pageOffset: number) => {
+		const params = new URLSearchParams(normalizedSearchParams)
+		params.set('offset', String(pageOffset))
+		return `${requestUrl.origin}${requestUrl.pathname}?${params.toString()}`
+	}
+
 	return NextResponse.json(
 		{
 			ok: true,
@@ -512,21 +549,25 @@ export const GET = withSkill(async (request: NextRequest) => {
 			agent_instructions: ANALYTICS_AGENT_INSTRUCTIONS,
 			schema: getRevenueSurfaceSchema(surface),
 			data: result.data,
-			meta: getMeta(
-				result.data,
-				result.meta.queryTimeMs,
-				result.meta.truncated,
-				{
-					limit,
-					offset,
-					surface,
-					range,
-				},
-			),
+			meta,
 			_links: {
-				self: {
-					href: `${requestUrl.origin}${requestUrl.pathname}?${normalizedSearchParams.toString()}`,
-				},
+				self: { href: hrefForOffset(offset) },
+				...(meta.pagination?.nextOffset !== null &&
+				meta.pagination?.nextOffset !== undefined
+					? {
+							next: {
+								href: hrefForOffset(meta.pagination.nextOffset),
+							},
+						}
+					: {}),
+				...(meta.pagination?.previousOffset !== null &&
+				meta.pagination?.previousOffset !== undefined
+					? {
+							previous: {
+								href: hrefForOffset(meta.pagination.previousOffset),
+							},
+						}
+					: {}),
 			},
 			next_actions: buildContextualNextActions(surface, range, {
 				limit,
