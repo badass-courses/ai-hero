@@ -114,7 +114,12 @@ type GetAbilityOptions = {
 }
 
 const hasRole = ({ user, role }: { user?: User | null; role: string }) => {
-	return Boolean(user?.roles?.map((role) => role.name).includes(role))
+	return Boolean(
+		user?.roles?.some(
+			(assignedRole: NonNullable<User['roles']>[number]) =>
+				assignedRole.name === role,
+		),
+	)
 }
 
 /**
