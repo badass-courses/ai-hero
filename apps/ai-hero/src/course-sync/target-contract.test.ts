@@ -10,6 +10,7 @@ import {
 	AI_HERO_COURSE_SYNC_BINDING,
 	AI_HERO_COURSE_SYNC_BINDING_V1,
 	AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR,
+	AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED,
 } from './types'
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 
@@ -23,7 +24,7 @@ function validFacts(): CourseSyncTargetFacts {
 		workshop: {
 			id: AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
 			type: 'workshop',
-			fields: { state: 'published', visibility: 'unlisted' },
+			fields: { state: 'published', visibility: 'public' },
 			deletedAt: null,
 		},
 		relation: { position: 0 },
@@ -47,7 +48,7 @@ function validFacts(): CourseSyncTargetFacts {
 	}
 }
 
-describe('course sync target contract v3', () => {
+describe('course sync target contract v4', () => {
 	it('accepts the pinned live target while keeping managed children draft/unlisted', () => {
 		expect(
 			collectCourseSyncTargetViolations(
@@ -60,7 +61,7 @@ describe('course sync target contract v3', () => {
 	it('reports every expected and actual violation in one typed failure', () => {
 		const facts = validFacts()
 		facts.product!.fields = { state: 'draft', visibility: 'unlisted' }
-		facts.workshop!.fields = { state: 'draft', visibility: 'public' }
+		facts.workshop!.fields = { state: 'draft', visibility: 'unlisted' }
 		facts.relation = { position: 4 }
 
 		let failure: CourseSyncError | null = null
@@ -95,8 +96,8 @@ describe('course sync target contract v3', () => {
 				},
 				{
 					code: 'TARGET_WORKSHOP_VISIBILITY_MISMATCH',
-					expected: 'unlisted',
-					actual: 'public',
+					expected: 'public',
+					actual: 'unlisted',
 				},
 				{
 					code: 'TARGET_RELATION_POSITION_MISMATCH',
@@ -131,7 +132,7 @@ describe('course sync target contract v3', () => {
 })
 
 describe('stored binding migration', () => {
-	it('migrates only the exact v2 literal and is idempotent on v3', () => {
+	it('migrates only the exact v2/v3 literals and is idempotent on v4', () => {
 		expect(() =>
 			resolveStoredCourseSyncBinding(
 				structuredClone(AI_HERO_COURSE_SYNC_BINDING_V1),
@@ -149,6 +150,16 @@ describe('stored binding migration', () => {
 			binding: AI_HERO_COURSE_SYNC_BINDING,
 			migrated: true,
 			fromContractVersion: 2,
+		})
+		expect(
+			resolveStoredCourseSyncBinding(
+				structuredClone(AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED),
+				AI_HERO_COURSE_SYNC_BINDING,
+			),
+		).toEqual({
+			binding: AI_HERO_COURSE_SYNC_BINDING,
+			migrated: true,
+			fromContractVersion: 3,
 		})
 		expect(
 			resolveStoredCourseSyncBinding(

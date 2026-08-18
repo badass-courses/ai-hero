@@ -12,7 +12,7 @@ import {
 	products,
 } from '@/db/schema'
 import { log } from '@/server/logger'
-import { and, desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, isNull, ne } from 'drizzle-orm'
 
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { sha256, stableJson } from './control-plane'
@@ -31,9 +31,13 @@ import { assertCourseSyncTargetContract } from './target-contract'
 import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 
 export function courseSyncRevisionHeadWhere(bindingId: string) {
+	// Failed runs (including discarded verification artifacts) never advanced
+	// the sync frontier, so they must not become the revision head and mask
+	// the latest applied revision from the poller's already-applied check.
 	return and(
 		eq(courseSyncSourceRevision.bindingId, bindingId),
 		isNull(courseSyncRun.rollbackOfRunId),
+		ne(courseSyncRun.state, 'failed'),
 	)
 }
 

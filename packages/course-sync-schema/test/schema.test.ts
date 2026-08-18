@@ -116,7 +116,7 @@ assert.doesNotThrow(() =>
 assert.doesNotThrow(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",
-		contractVersion: 3,
+		contractVersion: 4,
 		status: "active",
 		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
 		applyPolicy: "bounded-auto",
@@ -129,7 +129,7 @@ assert.doesNotThrow(() =>
 			workshop: {
 				type: "workshop",
 				state: "published",
-				visibility: "unlisted",
+				visibility: "public",
 			},
 			managedChildren: { state: "draft", visibility: "unlisted" },
 			sectionMappingPolicy: "sections-in-anchor-workshop",
@@ -139,7 +139,7 @@ assert.doesNotThrow(() =>
 assert.throws(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",
-		contractVersion: 3,
+		contractVersion: 4,
 		status: "active",
 		sourceCourseId: "50385098-a712-486f-b777-1f76ef31e9e5",
 		applyPolicy: "bounded-auto",
@@ -152,7 +152,7 @@ assert.throws(() =>
 			workshop: {
 				type: "workshop",
 				state: "published",
-				visibility: "unlisted",
+				visibility: "public",
 			},
 			managedChildren: { state: "draft", visibility: "unlisted" },
 			sectionMappingPolicy: "two-sections-in-anchor-workshop",

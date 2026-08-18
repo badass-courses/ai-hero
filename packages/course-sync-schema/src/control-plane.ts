@@ -32,7 +32,7 @@ export const CourseSyncResourceAction = Schema.Literals([
 
 export const CourseSyncBindingSummary = Schema.Struct({
 	bindingId: NonEmptyString,
-	contractVersion: Schema.Literal(3),
+	contractVersion: Schema.Literal(4),
 	status: Schema.Literals(["active", "suspended", "revoked"]),
 	sourceCourseId: NonEmptyString,
 	applyPolicy: Schema.Literals(["bounded-auto", "operator"]),
@@ -45,7 +45,7 @@ export const CourseSyncBindingSummary = Schema.Struct({
 		workshop: Schema.Struct({
 			type: Schema.Literal("workshop"),
 			state: Schema.Literal("published"),
-			visibility: Schema.Literal("unlisted"),
+			visibility: Schema.Literal("public"),
 		}),
 		managedChildren: Schema.Struct({
 			state: Schema.Literal("draft"),

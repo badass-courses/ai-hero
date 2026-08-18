@@ -330,7 +330,7 @@ function safeFailureSummary(input: {
 				: targetFailure
 					? [
 							'product=self-paced/published/public',
-							'workshop=workshop/published/unlisted',
+							'workshop=workshop/published/public',
 							'managed children=draft/unlisted',
 						]
 					: ['Operation completes within its retry policy.'],
@@ -1297,6 +1297,30 @@ export function createCourseSyncDetectionPoller(
 				metadata: { state: syncRun.state, noOp: syncRun.noOp },
 			})
 
+			if (syncRun.noOp && syncRun.state === 'applied') {
+				await dependencies.savePollState({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					status: 'succeeded',
+					consecutiveFailures: 0,
+					controlPlaneRunId,
+					failureClass: null,
+					updatedAt: clock(),
+				})
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId,
+					stage: 'notify',
+					outcome: 'skipped',
+					metadata: { reason: 'stage-no-op-already-applied' },
+				})
+				return { outcome: 'no-op', courseVersionId, runId, controlPlaneRunId }
+			}
+
 			if (syncRun.state === 'staged') {
 				activeStage = 'verify'
 				await log({
@@ -1487,6 +1511,34 @@ export function createCourseSyncDetectionPoller(
 		} catch (error) {
 			const failure = asCourseSyncError(error)
 			const kind = courseSyncFailureClass(error)
+			if (kind === 'DROPBOX_SYNC_NOT_CONFIGURED') {
+				// An environment without Dropbox credentials (e.g. a preview
+				// deployment sharing the database) must never write the shared
+				// poll state: doing so clobbers the healthy poller's record and
+				// forces spurious re-stages. Log and stop, with no side effects.
+				await log({
+					bindingId,
+					courseVersionId,
+					providerRevision,
+					runId,
+					controlPlaneRunId,
+					stage: activeStage,
+					outcome: 'failed',
+					failureClass: kind,
+					metadata: {
+						error: failure.message,
+						reason: 'environment-not-configured-poll-state-not-saved',
+					},
+				})
+				return {
+					outcome: 'failed',
+					courseVersionId,
+					runId,
+					controlPlaneRunId,
+					failureClass: kind,
+					consecutiveFailures: previousState?.consecutiveFailures ?? 0,
+				}
+			}
 			const nonRetryable = isNonRetryableCourseSyncFailure(failure)
 			lifecycle ??= startCourseSyncPollLifecycle({
 				pollStatus: previousState?.status ?? null,

@@ -92,7 +92,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const resolved = resolveStoredCourseSyncBinding(existing.binding, binding)
 			if (!resolved.migrated) return resolved.binding
 
-			let migratedFromContractVersion: 2 | null = null
+			let migratedFromContractVersion: 2 | 3 | null = null
 			const locked = await db.transaction(async (trx) => {
 				const [current] = await trx
 					.select()
