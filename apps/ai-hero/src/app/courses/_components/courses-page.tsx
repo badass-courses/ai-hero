@@ -168,23 +168,10 @@ export function CoursesPage({
 	const workshopLeads = Boolean(featuredWorkshopOffer && comingNextWorkshop)
 
 	// The crash course leads the catalog when it exists AND is not already the
-	// hero — the page never lists one thing twice. When the workshop takes the
-	// hero, the demoted cohort takes the workshop's cell instead: still on the
-	// page, one step smaller, honestly badged as the waitlist it is.
+	// hero — the page never lists one thing twice. The demoted cohort does NOT
+	// join this grid: its note promises "self-paced, start any day", and a
+	// closed cohort is neither. It leads the cohorts shelf below instead.
 	const catalog = [
-		...(workshopLeads && flagship
-			? [
-					{
-						title: flagship.title,
-						href: getResourcePath('cohort', flagship.slug, 'view'),
-						description:
-							flagship.description ?? COURSES_NEXT_COHORT_CARD.fallbackBlurb,
-						badge: COURSES_NEXT_COHORT_CARD.badge,
-						badgeTone: 'accent' as const,
-						image: flagship.image,
-					},
-				]
-			: []),
 		...(!workshopLeads && comingNextWorkshop
 			? [
 					{
@@ -199,6 +186,26 @@ export function CoursesPage({
 			: []),
 		...COURSES_CATALOG.items,
 	]
+
+	// When the workshop takes the hero, the demoted cohort takes the top of
+	// the cohorts shelf: still on the page, one step smaller, honestly badged
+	// as the waitlist it is — and the shelf's label widens from "Past cohorts"
+	// to "Cohorts", because one row of it now isn't past.
+	const cohortShelfLeader =
+		workshopLeads && flagship
+			? {
+					title: flagship.title,
+					href: getResourcePath('cohort', flagship.slug, 'view'),
+					description:
+						flagship.description ?? COURSES_NEXT_COHORT_CARD.fallbackBlurb,
+					badge: COURSES_NEXT_COHORT_CARD.badge,
+					badgeTone: 'accent' as const,
+					image: flagship.image,
+				}
+			: null
+	const cohortShelfEyebrow = cohortShelfLeader
+		? COURSES_NEXT_COHORT_CARD.shelfEyebrow
+		: COURSES_PAST_COHORTS.eyebrow
 
 	return (
 		<main className="bg-background text-foreground">
@@ -410,10 +417,13 @@ export function CoursesPage({
 					    a closed thing sitting unlabelled among things you can start
 					    today reads as available. The badge and the label are what keep
 					    the row honest for a reader who has not bought. */}
-					{pastCohorts.length > 0 && (
+					{(pastCohorts.length > 0 || cohortShelfLeader) && (
 						<div className="mt-12">
-							<p className={MONO_LABEL}>{COURSES_PAST_COHORTS.eyebrow}</p>
+							<p className={MONO_LABEL}>{cohortShelfEyebrow}</p>
 							<div className={cn(CATALOG_GRID, 'mt-6')}>
+								{cohortShelfLeader ? (
+									<CatalogCard {...cohortShelfLeader} />
+								) : null}
 								{pastCohorts.map((cohort) => (
 									<CatalogCard
 										key={cohort.id}

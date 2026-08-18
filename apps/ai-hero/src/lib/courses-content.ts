@@ -268,6 +268,9 @@ export const COURSES_FEATURED_WORKSHOP = {
  */
 export const COURSES_NEXT_COHORT_CARD = {
 	badge: 'Waitlist open',
+	/** The cohorts shelf's label while this card leads it — "Past cohorts"
+	 *  would be a lie about the first row. */
+	shelfEyebrow: 'Cohorts',
 	fallbackBlurb:
 		'The flagship cohort. Join the waitlist on its page and you hear the moment the next dates land.',
 } as const
