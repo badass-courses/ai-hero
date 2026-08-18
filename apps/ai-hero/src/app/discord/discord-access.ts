@@ -3,6 +3,7 @@ export type DiscordAccessState =
 	| 'ready'
 	| 'expired'
 	| 'denied'
+	| 'account-conflict'
 	| 'sign-in'
 
 type SessionResult = {
@@ -34,5 +35,6 @@ export async function getDiscordAccessState({
 	if (account?.access_token) return 'linked'
 	if (linkResult === 'expired') return 'expired'
 	if (linkResult === 'denied') return 'denied'
+	if (linkResult === 'account-conflict') return 'account-conflict'
 	return 'ready'
 }

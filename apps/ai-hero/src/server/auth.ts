@@ -570,7 +570,7 @@ export const authOptions: NextAuthConfig = {
 
 const nextAuth = NextAuth(authOptions)
 
-export const { auth, signIn } = nextAuth
+export const { auth, signIn, signOut } = nextAuth
 export const GET = (request: Parameters<typeof nextAuth.handlers.GET>[0]) =>
 	runWithOAuthContainmentRequest(
 		request,

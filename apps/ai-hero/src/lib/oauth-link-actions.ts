@@ -12,8 +12,11 @@ import { oauthLinkIntentService } from '@/server/oauth-link-intent-drizzle'
 import { createAuthenticatedOAuthLinkSessionResolver } from '@/server/oauth-link-session'
 import { and, eq } from 'drizzle-orm'
 
-import { createOAuthAccountLinkRequest } from './oauth-link-action'
-import { signIn } from '@/server/auth'
+import {
+	createOAuthAccountLinkRequest,
+	createOAuthAccountSwitchLogin,
+} from './oauth-link-action'
+import { signIn, signOut } from '@/server/auth'
 
 const getSessionAndUser =
 	courseBuilderAdapter.getSessionAndUser?.bind(courseBuilderAdapter)
@@ -25,6 +28,8 @@ const getAuthenticatedSession = createAuthenticatedOAuthLinkSessionResolver({
 	getCookieStore: cookies,
 	getSessionAndUser,
 })
+
+const switchLogin = createOAuthAccountSwitchLogin({ signOut })
 
 const requestLink = createOAuthAccountLinkRequest({
 	getAuthenticatedSession,
@@ -39,6 +44,14 @@ const requestLink = createOAuthAccountLinkRequest({
 		writeOAuthLinkIntentCookie(cookieStore, input)
 	},
 })
+
+/**
+ * Clears the current session before the customer chooses the AI Hero login
+ * that already owns the Discord account.
+ */
+export async function switchOAuthAccountLogin() {
+	await switchLogin()
+}
 
 /**
  * Starts a Discord link from a fresh database session. The action accepts no

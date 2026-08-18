@@ -362,7 +362,10 @@ describe('OAuth link intent security contract', () => {
 				sessionBinding: aliceBinding,
 				account: discordAccount,
 			}),
-		).resolves.toEqual({ status: 'denied' })
+		).resolves.toEqual({
+			status: 'denied',
+			reasonClass: 'cross-user-owned',
+		})
 		expect(accountWrites).not.toHaveBeenCalled()
 		expect(accounts.get('discord:discord-123')).toBe('bob')
 

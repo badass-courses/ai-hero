@@ -14,6 +14,7 @@ import {
 	redactOAuthLinkRef,
 	type OAuthLinkAccount,
 	type OAuthLinkCanaryEvent,
+	type OAuthLinkDenialReason,
 } from '@/server/oauth-link-intent'
 import type { AuthenticatedOAuthLinkSession } from '@/server/oauth-link-session'
 
@@ -55,7 +56,8 @@ type OAuthContainmentDependencies = {
 				linkKind: 'created' | 'renewed'
 				flowId: string
 		  }
-		| { status: 'expired' | 'denied' }
+		| { status: 'expired' }
+		| { status: 'denied'; reasonClass?: OAuthLinkDenialReason }
 	>
 	observe?: (event: OAuthLinkCanaryEvent) => void | Promise<void>
 }
@@ -350,7 +352,11 @@ export function createOAuthContainmentSignInCallback({
 				account: account as OAuthLinkAccount,
 			})
 			if (result.status === 'expired') return '/discord?link=expired'
-			if (result.status === 'denied') return '/discord?link=denied'
+			if (result.status === 'denied') {
+				return result.reasonClass === 'cross-user-owned'
+					? '/discord?link=account-conflict'
+					: '/discord?link=denied'
+			}
 			if (!('targetUserId' in result)) return '/discord?link=denied'
 			if (result.targetUserId !== session.userId) {
 				return '/discord?link=denied'

@@ -1,8 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createOAuthAccountLinkRequest } from './oauth-link-action'
+import {
+	createOAuthAccountLinkRequest,
+	createOAuthAccountSwitchLogin,
+} from './oauth-link-action'
 import { hashOAuthLinkSession } from '@/server/oauth-link-intent'
 
+describe('OAuth account switch login', () => {
+	it('signs out once and returns to email login for Discord', async () => {
+		const signOut = vi.fn(async () => {})
+		const switchLogin = createOAuthAccountSwitchLogin({ signOut })
+
+		await expect(switchLogin()).resolves.toBeUndefined()
+		expect(switchLogin).toHaveLength(0)
+		expect(signOut).toHaveBeenCalledOnce()
+		expect(signOut).toHaveBeenCalledWith({
+			redirectTo: '/login?callbackUrl=/discord',
+		})
+	})
+})
 
 describe('OAuth account link request', () => {
 	it('derives the target and binding from a fresh authenticated server session', async () => {
