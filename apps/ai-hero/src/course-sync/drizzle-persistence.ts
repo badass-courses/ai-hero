@@ -30,12 +30,15 @@ import {
 	courseSyncRollbackPointer,
 	resolveCourseSyncRollbackFields,
 } from './persistence-invariants'
+import { assertAdoptableSolutionResource } from './solution-adoption'
 import { assertCourseSyncTargetContract } from './target-contract'
 import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
 	FrozenSourceAsset,
+	SolutionResourceAdoption,
+	SolutionResourceAdoptionCandidate,
 	SourceRevisionRecord,
 	SyncPlan,
 	SyncRunRecord,
@@ -454,6 +457,141 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 		return pointer ? readRun(pointer.runId) : null
 	},
 
+	async findSolutionResourceAdoptions(
+		bindingId: string,
+		candidates: ReadonlyArray<SolutionResourceAdoptionCandidate>,
+	) {
+		if (candidates.length === 0) {
+			return new Map<string, SolutionResourceAdoption>()
+		}
+		const canonicalIds = candidates.map(
+			(candidate) => candidate.canonicalTargetResourceId,
+		)
+		const lessonIds = candidates.map((candidate) => candidate.lessonResourceId)
+		const [canonicalRows, solutionRows] = await Promise.all([
+			db
+				.select({ id: contentResource.id })
+				.from(contentResource)
+				.where(inArray(contentResource.id, canonicalIds)),
+			db
+				.select({
+					lessonResourceId: contentResourceResource.resourceOfId,
+					position: contentResourceResource.position,
+					resourceId: contentResource.id,
+					type: contentResource.type,
+					currentVersionId: contentResource.currentVersionId,
+					fields: contentResource.fields,
+				})
+				.from(contentResourceResource)
+				.innerJoin(
+					contentResource,
+					eq(contentResource.id, contentResourceResource.resourceId),
+				)
+				.where(
+					and(
+						inArray(contentResourceResource.resourceOfId, lessonIds),
+						isNull(contentResourceResource.deletedAt),
+						eq(contentResource.type, 'solution'),
+					),
+				),
+		])
+		const canonicalExisting = new Set(canonicalRows.map((row) => row.id))
+		const manualSolutionIds = solutionRows
+			.map((row) => row.resourceId)
+			.filter((resourceId) => !canonicalExisting.has(resourceId))
+		const childRows =
+			manualSolutionIds.length === 0
+				? []
+				: await db
+						.select({
+							parentResourceId: contentResourceResource.resourceOfId,
+							resourceId: contentResourceResource.resourceId,
+							position: contentResourceResource.position,
+							type: contentResource.type,
+						})
+						.from(contentResourceResource)
+						.innerJoin(
+							contentResource,
+							eq(contentResource.id, contentResourceResource.resourceId),
+						)
+						.where(
+							and(
+								inArray(
+									contentResourceResource.resourceOfId,
+									manualSolutionIds,
+								),
+								isNull(contentResourceResource.deletedAt),
+							),
+						)
+		const adoptions = new Map<string, SolutionResourceAdoption>()
+		for (const candidate of candidates) {
+			const matchingRows = solutionRows.filter(
+				(row) => row.lessonResourceId === candidate.lessonResourceId,
+			)
+			if (canonicalExisting.has(candidate.canonicalTargetResourceId)) {
+				if (
+					matchingRows.some(
+						(row) => row.resourceId !== candidate.canonicalTargetResourceId,
+					)
+				) {
+					throw new CourseSyncError(
+						'SOLUTION_ADOPTION_RELATION_CONFLICT',
+						`Lesson ${candidate.sourceLessonId} has both canonical and manual solution resources.`,
+						409,
+						{ category: 'target_precondition', retryable: false },
+					)
+				}
+				continue
+			}
+			if (matchingRows.length === 0) continue
+			if (matchingRows.length !== 1) {
+				throw new CourseSyncError(
+					'SOLUTION_ADOPTION_RELATION_CONFLICT',
+					`Lesson ${candidate.sourceLessonId} has more than one active solution child.`,
+					409,
+					{ category: 'target_precondition', retryable: false },
+				)
+			}
+			const resource = matchingRows[0]!
+			const fields = (resource.fields ?? {}) as Record<string, unknown>
+			assertAdoptableSolutionResource({
+				bindingId,
+				candidate,
+				resource: {
+					id: resource.resourceId,
+					type: resource.type,
+					fields,
+				},
+			})
+			const children = childRows.filter(
+				(row) => row.parentResourceId === resource.resourceId,
+			)
+			if (
+				children.length !== 1 ||
+				children[0]?.resourceId !== candidate.solutionVideoResourceId ||
+				children[0]?.position !== 0 ||
+				children[0]?.type !== 'videoResource'
+			) {
+				throw new CourseSyncError(
+					'SOLUTION_ADOPTION_RELATION_CONFLICT',
+					`Solution ${resource.resourceId} does not own exactly the expected repaired video.`,
+					409,
+					{ category: 'target_precondition', retryable: false },
+				)
+			}
+			adoptions.set(candidate.canonicalTargetResourceId, {
+				canonicalTargetResourceId: candidate.canonicalTargetResourceId,
+				resourceId: resource.resourceId,
+				lessonResourceId: candidate.lessonResourceId,
+				solutionVideoResourceId: candidate.solutionVideoResourceId,
+				currentVersionId: resource.currentVersionId,
+				fields,
+				position: resource.position,
+			})
+		}
+		return adoptions
+	},
+
 	async getTargetResources(resourceIds) {
 		if (resourceIds.length === 0) return new Map()
 		const rows = await db
@@ -718,6 +856,66 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				relations.push(relation)
 				relationsByResource.set(relation.resourceId, relations)
 			}
+			const solutionAdoptionItems = plan.resources.filter(
+				(item) => item.solutionAdoption !== undefined,
+			)
+			const adoptionLessonIds = solutionAdoptionItems.map(
+				(item) => item.previousParentResourceId ?? item.parentResourceId,
+			)
+			const adoptionSolutionIds = solutionAdoptionItems.map(
+				(item) => item.targetResourceId,
+			)
+			const adoptionLessonRelations =
+				adoptionLessonIds.length === 0
+					? []
+					: await trx
+							.select({
+								parentResourceId: contentResourceResource.resourceOfId,
+								resourceId: contentResourceResource.resourceId,
+								position: contentResourceResource.position,
+								type: contentResource.type,
+							})
+							.from(contentResourceResource)
+							.innerJoin(
+								contentResource,
+								eq(contentResource.id, contentResourceResource.resourceId),
+							)
+							.where(
+								and(
+									inArray(
+										contentResourceResource.resourceOfId,
+										adoptionLessonIds,
+									),
+									isNull(contentResourceResource.deletedAt),
+									eq(contentResource.type, 'solution'),
+								),
+							)
+							.for('update')
+			const adoptionChildRelations =
+				adoptionSolutionIds.length === 0
+					? []
+					: await trx
+							.select({
+								parentResourceId: contentResourceResource.resourceOfId,
+								resourceId: contentResourceResource.resourceId,
+								position: contentResourceResource.position,
+								type: contentResource.type,
+							})
+							.from(contentResourceResource)
+							.innerJoin(
+								contentResource,
+								eq(contentResource.id, contentResourceResource.resourceId),
+							)
+							.where(
+								and(
+									inArray(
+										contentResourceResource.resourceOfId,
+										adoptionSolutionIds,
+									),
+									isNull(contentResourceResource.deletedAt),
+								),
+							)
+							.for('update')
 			const lockedVersions = await trx
 				.select({
 					resourceId: contentResourceVersion.resourceId,
@@ -782,7 +980,55 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					}
 					const fields = existing.fields as Record<string, unknown>
 					const sync = fields.courseSync as Record<string, unknown> | undefined
-					if (
+					if (item.solutionAdoption) {
+						const solutionVideoResourceId = item.fields.videoResourceId
+						if (
+							item.sourceKind !== 'solution' ||
+							typeof solutionVideoResourceId !== 'string'
+						) {
+							throw new CourseSyncError(
+								'SOLUTION_ADOPTION_SCOPE_MISMATCH',
+								'The solution adoption plan is malformed.',
+								409,
+								{ category: 'target_precondition', retryable: false },
+							)
+						}
+						const lessonResourceId =
+							item.previousParentResourceId ?? item.parentResourceId
+						assertAdoptableSolutionResource({
+							bindingId: plan.bindingId,
+							candidate: {
+								canonicalTargetResourceId:
+									item.solutionAdoption.canonicalTargetResourceId,
+								lessonResourceId,
+								solutionVideoResourceId,
+								sourceLessonId: item.sourceId,
+							},
+							resource: { id: existing.id, type: existing.type, fields },
+						})
+						const solutionSiblings = adoptionLessonRelations.filter(
+							(relation) => relation.parentResourceId === lessonResourceId,
+						)
+						const solutionChildren = adoptionChildRelations.filter(
+							(relation) => relation.parentResourceId === existing.id,
+						)
+						if (
+							solutionSiblings.length !== 1 ||
+							solutionSiblings[0]?.resourceId !== existing.id ||
+							solutionSiblings[0]?.position !== item.previousPosition ||
+							solutionChildren.length !== 1 ||
+							solutionChildren[0]?.resourceId !== solutionVideoResourceId ||
+							solutionChildren[0]?.position !== 0 ||
+							solutionChildren[0]?.type !== 'videoResource'
+						) {
+							throw new CourseSyncError(
+								'SOLUTION_ADOPTION_RELATION_CONFLICT',
+								'The repaired solution topology changed after preview.',
+								409,
+								{ category: 'lifecycle_conflict', retryable: false },
+							)
+						}
+					} else if (
 						existing.type !== resourceType(item.sourceKind) ||
 						fields.state !==
 							(item.sourceKind === 'video' ? 'ready' : 'draft') ||
@@ -795,8 +1041,12 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							409,
 						)
 					}
+					const expectedCurrentVersionId =
+						item.solutionAdoption?.createBaselineVersion === true
+							? null
+							: item.previousVersionId
 					if (
-						existing.currentVersionId !== item.previousVersionId ||
+						existing.currentVersionId !== expectedCurrentVersionId ||
 						sha256(stableJson(existing.fields ?? {})) !==
 							item.previousFieldsSha256
 					) {
@@ -840,7 +1090,32 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					}
 				}
 
-				const parentVersionId = existing?.currentVersionId ?? null
+				let parentVersionId = existing?.currentVersionId ?? null
+				let nextVersionNumber =
+					(latestVersionByResource.get(item.targetResourceId) ?? 0) + 1
+				if (item.solutionAdoption?.createBaselineVersion) {
+					if (
+						parentVersionId !== null ||
+						latestVersionByResource.has(item.targetResourceId)
+					) {
+						throw new CourseSyncError(
+							'SOLUTION_ADOPTION_BASELINE_CONFLICT',
+							'The repaired solution gained a version pointer after preview.',
+							409,
+							{ category: 'lifecycle_conflict', retryable: false },
+						)
+					}
+					versions.push({
+						id: item.solutionAdoption.baselineVersionId,
+						resourceId: item.targetResourceId,
+						parentVersionId: null,
+						versionNumber: nextVersionNumber,
+						fields: existing?.fields ?? {},
+						createdById,
+					})
+					parentVersionId = item.solutionAdoption.baselineVersionId
+					nextVersionNumber += 1
+				}
 				let contentResourceVersionId = parentVersionId
 				if (item.action !== 'retain') {
 					contentResourceVersionId = `version~${sha256(
@@ -854,8 +1129,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						id: contentResourceVersionId,
 						resourceId: item.targetResourceId,
 						parentVersionId,
-						versionNumber:
-							(latestVersionByResource.get(item.targetResourceId) ?? 0) + 1,
+						versionNumber: nextVersionNumber,
 						fields: item.fields,
 						createdById,
 					})
@@ -1050,10 +1324,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				.where(
 					and(
 						eq(courseSyncPollState.bindingId, binding.bindingId),
-						inArray(courseSyncPollState.status, [
-							'awaiting-apply',
-							'applying',
-						]),
+						inArray(courseSyncPollState.status, ['awaiting-apply', 'applying']),
 						eq(courseSyncPollState.controlPlaneRunId, runId),
 					),
 				)

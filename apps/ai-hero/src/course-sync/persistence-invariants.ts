@@ -11,6 +11,7 @@ export const COURSE_SYNC_APPLY_BATCH_SIZE = 50
 const AI_HERO_MANAGED_RESOURCE_COUNTS = {
 	section: 6,
 	lesson: 59,
+	solution: 11,
 	video: 70,
 	question: 87,
 } as const
@@ -30,17 +31,21 @@ export type CourseSyncBoundedAutoApplyDecision =
 
 export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 	const resourceCounts = Object.fromEntries(
-		(['section', 'lesson', 'video', 'question'] as const).map((sourceKind) => [
-			sourceKind,
-			{
-				update: plan.resources.filter(
-					(item) => item.sourceKind === sourceKind && item.action === 'update',
-				).length,
-				retain: plan.resources.filter(
-					(item) => item.sourceKind === sourceKind && item.action === 'retain',
-				).length,
-			},
-		]),
+		(['section', 'lesson', 'solution', 'video', 'question'] as const).map(
+			(sourceKind) => [
+				sourceKind,
+				{
+					update: plan.resources.filter(
+						(item) =>
+							item.sourceKind === sourceKind && item.action === 'update',
+					).length,
+					retain: plan.resources.filter(
+						(item) =>
+							item.sourceKind === sourceKind && item.action === 'retain',
+					).length,
+				},
+			],
+		),
 	) as Record<
 		keyof typeof AI_HERO_MANAGED_RESOURCE_COUNTS,
 		{ update: number; retain: number }
@@ -87,7 +92,7 @@ export function assertCourseSyncLaunchApplyPolicy(plan: SyncPlan): void {
 	) {
 		throw new CourseSyncError(
 			'LAUNCH_APPLY_POLICY_VIOLATION',
-			'Apply blocked: the plan is outside the managed, topology-preserving, asset-ready 6-section, 59-lesson, 70-video, 87-question course shape.',
+			'Apply blocked: the plan is outside the managed, topology-preserving, asset-ready 6-section, 59-lesson, 11-solution, 70-video, 87-question course shape.',
 			409,
 			{
 				category: 'target_precondition',

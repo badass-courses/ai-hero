@@ -133,9 +133,18 @@ export type SourceRevisionRecord = {
 }
 
 export type ResourcePlanItem = {
-	sourceKind: 'section' | 'lesson' | 'question' | 'video'
+	sourceKind: 'section' | 'lesson' | 'solution' | 'question' | 'video'
 	sourceId: string
 	targetResourceId: string
+	/**
+	 * Present when the 2026-08-17 repair's manual `solution_*` resource is the
+	 * physical target for a deterministic `sync_solution_*` lineage id.
+	 */
+	solutionAdoption?: {
+		canonicalTargetResourceId: string
+		baselineVersionId: string
+		createBaselineVersion: boolean
+	}
 	parentResourceId: string
 	position: number
 	detached: boolean
@@ -191,6 +200,23 @@ export type TargetResourceSnapshot = {
 	resourceId: string
 	currentVersionId: string | null
 	fields: Record<string, unknown>
+}
+
+export type SolutionResourceAdoptionCandidate = {
+	canonicalTargetResourceId: string
+	lessonResourceId: string
+	solutionVideoResourceId: string
+	sourceLessonId: string
+}
+
+export type SolutionResourceAdoption = {
+	canonicalTargetResourceId: string
+	resourceId: string
+	lessonResourceId: string
+	solutionVideoResourceId: string
+	currentVersionId: string | null
+	fields: Record<string, unknown>
+	position: number
 }
 
 export type ResolvedDropboxAsset = {
@@ -282,6 +308,10 @@ export interface CourseSyncPersistence {
 	getRun(runId: string): Promise<SyncRunRecord | null>
 	getRevision(sourceRevisionId: string): Promise<SourceRevisionRecord | null>
 	getLastAppliedRun(bindingId: string): Promise<SyncRunRecord | null>
+	findSolutionResourceAdoptions(
+		bindingId: string,
+		candidates: ReadonlyArray<SolutionResourceAdoptionCandidate>,
+	): Promise<ReadonlyMap<string, SolutionResourceAdoption>>
 	getTargetResources(
 		resourceIds: ReadonlyArray<string>,
 	): Promise<ReadonlyMap<string, TargetResourceSnapshot>>
