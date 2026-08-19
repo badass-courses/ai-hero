@@ -35,7 +35,7 @@ describe('AuthorizedOfficeHoursSchedule', () => {
 
 		const schedule = await AuthorizedOfficeHoursSchedule({
 			cohortId: 'cohort-1',
-			authorizedWorkshopId: 'workshop-1',
+			officeHoursWorkshopId: 'workshop-1',
 			timeZone: 'UTC',
 			timeZoneLabel: 'UTC',
 		})
@@ -43,7 +43,7 @@ describe('AuthorizedOfficeHoursSchedule', () => {
 
 		expect(mocks.getCohortOfficeHoursSessionsForWorkshop).toHaveBeenCalledWith({
 			cohortId: 'cohort-1',
-			authorizedWorkshopId: 'workshop-1',
+			workshopId: 'workshop-1',
 		})
 		expect(markup).toContain('Watch Replay')
 		expect(markup).toContain(
@@ -70,7 +70,7 @@ describe('AuthorizedOfficeHoursSchedule', () => {
 
 		const schedule = await AuthorizedOfficeHoursSchedule({
 			cohortId: 'cohort-1',
-			authorizedWorkshopId: 'workshop-1',
+			officeHoursWorkshopId: 'workshop-1',
 			timeZone: 'UTC',
 		})
 
@@ -79,7 +79,7 @@ describe('AuthorizedOfficeHoursSchedule', () => {
 			'cohort.office-hours.resolve.failed',
 			expect.objectContaining({
 				cohortId: 'cohort-1',
-				authorizedWorkshopId: 'workshop-1',
+				workshopId: 'workshop-1',
 				error: 'database unavailable',
 			}),
 		)

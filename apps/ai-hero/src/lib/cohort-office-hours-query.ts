@@ -1,5 +1,6 @@
 import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
+import { getAbilityForResource } from '@/utils/get-current-ability-rules'
 import { and, eq, isNull, or, sql } from 'drizzle-orm'
 
 import {
@@ -23,16 +24,20 @@ function parseOfficeHoursSessions(value: unknown): CohortOfficeHoursSession[] {
 }
 
 /**
- * Reads only the office-hours session field after proving the requested cohort
- * directly contains the workshop that the lesson route already authorized.
+ * Reads only the office-hours session field after two independent checks:
+ * the current request can read the protected workshop, and the active cohort
+ * relation directly contains that workshop. A free lesson is not enough.
  */
 export async function getCohortOfficeHoursSessionsForWorkshop({
 	cohortId,
-	authorizedWorkshopId,
+	workshopId,
 }: {
 	cohortId: string
-	authorizedWorkshopId: string
+	workshopId: string
 }): Promise<CohortOfficeHoursSession[]> {
+	const { canViewWorkshop } = await getAbilityForResource(undefined, workshopId)
+	if (!canViewWorkshop) return []
+
 	const rows = await db
 		.select({
 			sessions: sql<unknown>`JSON_EXTRACT(${contentResource.fields}, '$.officeHoursSessions')`,
@@ -42,7 +47,8 @@ export async function getCohortOfficeHoursSessionsForWorkshop({
 			contentResourceResource,
 			and(
 				eq(contentResourceResource.resourceOfId, contentResource.id),
-				eq(contentResourceResource.resourceId, authorizedWorkshopId),
+				eq(contentResourceResource.resourceId, workshopId),
+				isNull(contentResourceResource.deletedAt),
 			),
 		)
 		.where(

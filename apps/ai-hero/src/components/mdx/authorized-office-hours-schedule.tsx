@@ -7,18 +7,18 @@ import { log } from '@/server/logger'
 
 type AuthorizedOfficeHoursScheduleProps = OfficeHoursScheduleProps & {
 	cohortId?: string
-	authorizedWorkshopId?: string
+	officeHoursWorkshopId?: string
 }
 
 /**
- * The lesson route injects `authorizedWorkshopId` only after its purchaser
- * ability check. Authored inline sessions still render as authored; a cohortId
- * lookup without that server-only proof renders nothing.
+ * The lesson route includes `officeHoursWorkshopId` only when its request can
+ * read the workshop. The data resolver repeats that request-bound check before
+ * reading the cohort. Authored inline sessions still render as authored.
  */
 export async function AuthorizedOfficeHoursSchedule({
 	sessions: authoredSessions,
 	cohortId,
-	authorizedWorkshopId,
+	officeHoursWorkshopId,
 	...displayProps
 }: AuthorizedOfficeHoursScheduleProps) {
 	if (authoredSessions) {
@@ -27,18 +27,18 @@ export async function AuthorizedOfficeHoursSchedule({
 		)
 	}
 
-	if (!cohortId || !authorizedWorkshopId) return null
+	if (!cohortId || !officeHoursWorkshopId) return null
 
 	let sessions
 	try {
 		sessions = await getCohortOfficeHoursSessionsForWorkshop({
 			cohortId,
-			authorizedWorkshopId,
+			workshopId: officeHoursWorkshopId,
 		})
 	} catch (error) {
 		await log.warn('cohort.office-hours.resolve.failed', {
 			cohortId,
-			authorizedWorkshopId,
+			workshopId: officeHoursWorkshopId,
 			error: error instanceof Error ? error.message : String(error),
 		})
 		return null

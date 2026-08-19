@@ -175,11 +175,11 @@ async function MdxEmbeddedVideo({
 type CompileMDXContext = {
 	lessonId?: string
 	/**
-	 * Server-only proof that the current lesson route passed its purchaser
-	 * ability check. The office-hours resolver also requires the cohort to
-	 * contain this workshop before it returns any session data.
+	 * Included only when the current request can read the workshop. The
+	 * office-hours data resolver repeats that request-bound access check and
+	 * requires an active cohort relation before returning session data.
 	 */
-	authorizedWorkshopId?: string
+	officeHoursWorkshopId?: string
 	dictionaryAutoLink?: {
 		entries: DictionaryEntry[]
 		maxLinks?: number
@@ -636,7 +636,7 @@ async function compileMDXInternal(
 						<AuthorizedOfficeHoursSchedule
 							sessions={sessions}
 							cohortId={cohortId}
-							authorizedWorkshopId={context?.authorizedWorkshopId}
+							officeHoursWorkshopId={context?.officeHoursWorkshopId}
 							variant={variant}
 							showActions={showActions}
 							timeZone={timeZone}
@@ -742,10 +742,11 @@ async function compileMDXInternal(
  * callout line resolved for a dead cohort (W1 §2.4): that context now keys
  * the entry instead of bypassing the cache.
  *
- * Reuse across users is safe because nothing per-user exists at compile time:
- * the cached value is an immutable element tree whose components (including
- * data-fetching ones like `SubscriberCount`) are module-level references that
- * React still renders per request.
+ * Reuse across users is safe because request access is represented only by
+ * `officeHoursWorkshopId`, which participates in the key. The data resolver
+ * still repeats the request-bound workshop check at render time. The cached
+ * value is an immutable element tree whose components (including data-fetching
+ * ones like `SubscriberCount`) React renders for each request.
  */
 const compiledMdxCache = new LRUCache<
 	string,

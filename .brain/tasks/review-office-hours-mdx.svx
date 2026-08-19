@@ -35,13 +35,15 @@ No content repair is required.
 
 # Fix
 
-The lesson render now supplies office-hours sessions on the server after purchaser authorization:
+The lesson render now supplies office-hours sessions on the server with two request-bound access checks:
 
-- `LessonPage` adds the already-authorized workshop ID to the MDX compile context only after `canViewLesson` passes.
-- The MDX cache key includes that workshop ID, so authorized and public compile contexts cannot share an entry.
-- `AuthorizedOfficeHoursSchedule` refuses a cohort lookup without the server-only workshop proof.
-- The database query requires a direct cohort-to-workshop relation and selects only `fields.officeHoursSessions`.
-- The selected value is parsed through `CohortOfficeHoursSessionsSchema` before it reaches the client.
+- `LessonPage` adds `officeHoursWorkshopId` to MDX context only when `canViewWorkshop` is true. A viewable free lesson does not get protected workshop context.
+- `getCohortOfficeHoursSessionsForWorkshop` repeats the request-bound `canViewWorkshop` decision before it reads cohort data. It does not trust the compile-context string as authority.
+- Purchaser entitlements, admin access, and reviewer access use the existing workshop ability rules. Anonymous free-lesson access does not grant workshop access.
+- The MDX cache key includes `officeHoursWorkshopId`, so protected and context-free compiles cannot share an entry in either cache order.
+- `AuthorizedOfficeHoursSchedule` refuses a cohort lookup without the server-only workshop context.
+- The database query requires a direct, active cohort-to-workshop relation. It excludes soft-deleted cohort rows and soft-deleted relation rows.
+- The query selects only `fields.officeHoursSessions`. The value is parsed through `CohortOfficeHoursSessionsSchema` before it reaches the client.
 - The browser component no longer calls the privileged generic resource API.
 - Inline authored `sessions` still render without a database lookup.
 
@@ -50,20 +52,25 @@ The lesson render now supplies office-hours sessions on the server after purchas
 - `.brain/tasks/restore-office-hours-mdx.svx`
 - `.brain/tasks/review-office-hours-mdx.svx`
 - `apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/(view)/shared-page.tsx`
+- `apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/(view)/shared-page.test.tsx`
 - `apps/ai-hero/src/components/office-hours-schedule.tsx`
 - `apps/ai-hero/src/components/mdx/authorized-office-hours-schedule.tsx`
 - `apps/ai-hero/src/components/mdx/authorized-office-hours-schedule.test.tsx`
+- `apps/ai-hero/src/lib/cohort-office-hours-access.test.ts`
 - `apps/ai-hero/src/lib/cohort-office-hours-query.ts`
 - `apps/ai-hero/src/lib/cohort-office-hours-query.test.ts`
 - `apps/ai-hero/src/utils/compile-mdx.tsx`
+- `apps/ai-hero/src/utils/compile-mdx-office-hours-cache.test.tsx`
 
 # Tests and checks
 
-- Red test receipt: the focused test failed because `authorized-office-hours-schedule` did not exist.
-- `pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/components/mdx/authorized-office-hours-schedule.test.tsx src/lib/cohort-office-hours-query.test.ts` — 6 passed.
+- Red test receipt: the initial focused test failed because `authorized-office-hours-schedule` did not exist.
+- Independent review at `/tmp/aih-office-hours-independent-review.md` found the free-lesson authorization gap, missing relation tombstone filter, and missing cache-order coverage. All required findings are covered below.
+- Focused Vitest run across the access rules, data boundary, route guard, server wrapper, and real MDX cache — 18 passed across 5 files.
+- The tests prove purchaser access to six sessions, anonymous free-lesson denial, admin and reviewer access, non-purchaser redirect before compilation, soft-deleted relation exclusion, and both cache orders.
 - `pnpm --filter ai-hero typecheck` — passed.
-- Targeted ESLint on changed application files — passed.
-- `pnpm --filter ai-hero test` — 1,907 passed; 5 existing tests plus one markdown-route suite setup failed in unrelated API products, progress, Skills, and markdown-route files.
+- Targeted ESLint on changed application files — 0 errors; one existing `<img>` warning remains in `compile-mdx.tsx`.
+- `pnpm --filter ai-hero test` — 1,919 passed; 5 existing tests plus one markdown-route suite setup failed in unrelated API products, progress, Skills, and markdown-route files.
 - `pnpm --filter ai-hero lint` — the changed files passed, but the full command still fails on 19 existing errors in `cohort-pricing-widget-container.tsx` and `sidebar-sections.tsx`.
 - `pi-notes brain check` — passed for 36 pages.
 - `git diff --check` — passed.
@@ -83,5 +90,5 @@ Use a normal purchaser account, not an admin account:
 # Residual risks
 
 - Post-deploy purchaser readback is still required because this worker neither deployed nor mutated production.
-- The server returns nothing if an authored cohort ID is not directly related to the authorized workshop. It logs `cohort.office-hours.resolve.failed` only for lookup errors, not for an expected relation miss.
-- The query is intentionally uncached. It adds one small, schema-checked database read only on authorized pages containing the component.
+- The server returns nothing if the request cannot read the protected workshop or the authored cohort lacks an active relation to it. Expected access and relation misses are not error-logged.
+- The query is intentionally uncached. Authorized renders repeat the request-bound workshop check, then add one narrow, schema-checked database read.

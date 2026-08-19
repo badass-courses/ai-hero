@@ -91,7 +91,9 @@ export async function LessonPage({
 				{},
 				{
 					lessonId: lesson.id,
-					...(workshop ? { authorizedWorkshopId: workshop.id } : {}),
+					...(workshop && ability.canViewWorkshop
+						? { officeHoursWorkshopId: workshop.id }
+						: {}),
 					...(entries ? { dictionaryAutoLink: { entries, maxLinks: 3 } } : {}),
 				},
 			),
