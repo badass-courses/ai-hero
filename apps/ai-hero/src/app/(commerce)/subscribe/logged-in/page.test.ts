@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => {
 		type: 'special credit',
 		status: 1,
 	}
+	const pppMerchantCoupon = {
+		id: 'merchant-requested-ppp',
+		type: 'ppp',
+		status: 1,
+	}
 	const coupon = {
 		id: 'coupon-prior-credit',
 		merchantCouponId: merchantCoupon.id,
@@ -33,7 +38,9 @@ const mocks = vi.hoisted(() => {
 		})),
 		entitlement,
 		getEntitlementsForUser,
+		headers: vi.fn(async () => new Headers()),
 		merchantCoupon,
+		pppMerchantCoupon,
 		redirect: vi.fn((url: string) => url),
 		resolveServerComputedCheckoutCoupon: vi.fn(
 			async (): Promise<{ id: string; type: string } | null> => null,
@@ -51,7 +58,9 @@ vi.mock('@/coursebuilder/stripe-provider', () => ({
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
 		getMerchantCoupon: vi.fn(async (id: string) =>
-			id === mocks.merchantCoupon.id ? mocks.merchantCoupon : null,
+			[mocks.merchantCoupon, mocks.pppMerchantCoupon].find(
+				(coupon) => coupon.id === id,
+			) ?? null,
 		),
 		getCoupon: vi.fn(async (id: string) =>
 			id === mocks.coupon.id ? mocks.coupon : null,
@@ -75,7 +84,7 @@ vi.mock('@/server/auth', () => ({
 }))
 vi.mock('next/headers', () => ({
 	cookies: vi.fn(async () => ({ get: vi.fn(() => undefined) })),
-	headers: vi.fn(async () => new Headers()),
+	headers: mocks.headers,
 }))
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }))
 vi.mock('@coursebuilder/core/lib/checkout-attribution', () => ({
@@ -97,6 +106,7 @@ const searchParams = {
 describe('logged-in checkout coupon authorization', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.headers.mockResolvedValue(new Headers())
 		mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue(null)
 	})
 
@@ -182,6 +192,84 @@ describe('logged-in checkout coupon authorization', () => {
 				couponId: undefined,
 				usedCouponId: undefined,
 				quantity: 0,
+			}),
+			expect.anything(),
+		)
+	})
+
+	it.each([
+		{ country: 'TR', serverCouponId: 'merchant-server-ppp-70' },
+		{ country: 'TH', serverCouponId: 'merchant-server-ppp-65' },
+	])(
+		'keeps the preserved $country country for an explicit lower PPP handoff',
+		async ({ country, serverCouponId }) => {
+			mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue({
+				id: serverCouponId,
+				type: 'ppp',
+			})
+
+			await LoginPage({
+				searchParams: Promise.resolve({
+					...searchParams,
+					country,
+					couponId: mocks.pppMerchantCoupon.id,
+					usedCouponId: undefined,
+				}),
+			})
+
+			expect(mocks.resolveServerComputedCheckoutCoupon).toHaveBeenCalledWith(
+				expect.objectContaining({ country }),
+			)
+			expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+				expect.objectContaining({
+					country,
+					couponId: serverCouponId,
+					usedCouponId: undefined,
+				}),
+				expect.anything(),
+			)
+		},
+	)
+
+	it('uses the trusted callback country for an alumni-only checkout', async () => {
+		mocks.getEntitlementsForUser.mockResolvedValue([mocks.entitlement])
+		mocks.headers.mockResolvedValue(
+			new Headers({ 'x-vercel-ip-country': 'CA' }),
+		)
+
+		await LoginPage({
+			searchParams: Promise.resolve({ ...searchParams, country: 'TR' }),
+		})
+
+		expect(mocks.resolveServerComputedCheckoutCoupon).not.toHaveBeenCalled()
+		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+			expect.objectContaining({
+				country: 'CA',
+				couponId: mocks.merchantCoupon.id,
+				usedCouponId: mocks.coupon.id,
+			}),
+			expect.anything(),
+		)
+	})
+
+	it('keeps an ineligible PPP region without inventing a coupon', async () => {
+		await LoginPage({
+			searchParams: Promise.resolve({
+				...searchParams,
+				country: 'US',
+				couponId: mocks.pppMerchantCoupon.id,
+				usedCouponId: undefined,
+			}),
+		})
+
+		expect(mocks.resolveServerComputedCheckoutCoupon).toHaveBeenCalledWith(
+			expect.objectContaining({ country: 'US' }),
+		)
+		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+			expect.objectContaining({
+				country: 'US',
+				couponId: undefined,
+				usedCouponId: undefined,
 			}),
 			expect.anything(),
 		)

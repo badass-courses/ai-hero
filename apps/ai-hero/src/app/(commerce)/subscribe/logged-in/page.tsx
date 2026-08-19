@@ -34,7 +34,7 @@ export default async function LoginPage({
 	const { session } = await getServerAuthSession()
 	const user = session?.user
 	const headersList = await headers()
-	const countryCode =
+	const trustedCountry =
 		headersList.get('x-vercel-ip-country') ||
 		process.env.DEFAULT_COUNTRY ||
 		'US'
@@ -84,18 +84,27 @@ export default async function LoginPage({
 		requestedMerchantCouponId: checkoutParams.couponId,
 		requestedSiteCouponId: checkoutParams.usedCouponId,
 	})
+	// The guarded initial checkout writes its trusted country into the login
+	// handoff. Preserve it only when the rejected selector proves that the buyer
+	// explicitly chose PPP. Ordinary callbacks keep using the current trusted
+	// header/default instead of accepting a caller-controlled country.
+	const checkoutCountry =
+		couponAuthorization.requestedPPP && checkoutParams.country
+			? checkoutParams.country
+			: trustedCountry
 	const serverComputedCoupon = !couponAuthorization.authorized
 		? await resolveServerComputedCheckoutCoupon({
 				adapter: courseBuilderAdapter,
 				productId: checkoutParams.productId,
 				quantity: checkoutParams.quantity ?? 1,
 				verifiedUserId: user.id,
-				country: countryCode,
+				country: checkoutCountry,
 			})
 		: null
 	const authorizedCheckoutParams = {
 		...checkoutParams,
 		userId: user.id,
+		country: checkoutCountry,
 		...(organizationId && { organizationId }),
 		...checkoutAttribution,
 		...(couponAuthorization.entitlementCouponId && {

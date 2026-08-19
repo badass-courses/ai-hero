@@ -71,7 +71,9 @@ const pppTiers = [
 	{ country: 'AM', percentage: 0.55, total: 134.55 },
 	{ country: 'AL', percentage: 0.6, total: 119.6 },
 	{ country: 'BJ', percentage: 0.65, total: 104.65 },
+	{ country: 'TH', percentage: 0.65, total: 104.65 },
 	{ country: 'AR', percentage: 0.7, total: 89.7 },
+	{ country: 'TR', percentage: 0.7, total: 89.7 },
 	{ country: 'AF', percentage: 0.75, total: 74.75 },
 ] as const
 
@@ -102,7 +104,7 @@ const pppCoupons: ReadonlyMap<
 type Credit =
 	| { kind: 'none' }
 	| { kind: 'irrelevant'; amount: 3700 | 4500 }
-	| { kind: 'exclusive'; amount: 20000 }
+	| { kind: 'exclusive'; amount: 19000 | 20000 }
 	| { kind: 'ordinary'; amount: 2000 | 20000 }
 
 function creditRecords(credit: Credit) {
@@ -437,17 +439,36 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 		expect(payload?.metadata?.provenanceIds).toContain(CREDIT_SITE_COUPON_ID)
 	})
 
-	it('uses PPP below $99 and leaves the exclusive alumni credit untouched', async () => {
+	it.each([
+		{ country: 'TR', alumniCredit: 20000 as const, totalCents: '8970' },
+		{ country: 'TH', alumniCredit: 19000 as const, totalCents: '10465' },
+	])(
+		'uses lower $country PPP instead of the higher alumni price',
+		async ({ country, alumniCredit, totalCents }) => {
+			const { payload } = await checkout({
+				country,
+				credit: { kind: 'exclusive', amount: alumniCredit },
+			})
+
+			expect(payload?.metadata).toMatchObject({
+				expectedTotalCents: totalCents,
+				pricingCandidate: 'ppp',
+			})
+			expect(payload?.metadata?.usedEntitlementCouponIds).toBeUndefined()
+		},
+	)
+
+	it('uses the alumni credit where PPP is unavailable', async () => {
 		const { payload } = await checkout({
-			country: 'AR',
+			country: 'US',
 			credit: { kind: 'exclusive', amount: 20000 },
 		})
 
 		expect(payload?.metadata).toMatchObject({
-			expectedTotalCents: '8970',
-			pricingCandidate: 'ppp',
+			expectedTotalCents: '9900',
+			pricingCandidate: 'credit',
+			usedEntitlementCouponIds: CREDIT_SITE_COUPON_ID,
 		})
-		expect(payload?.metadata?.usedEntitlementCouponIds).toBeUndefined()
 	})
 
 	it('preserves supported intro-sale plus ordinary-credit stacking', async () => {

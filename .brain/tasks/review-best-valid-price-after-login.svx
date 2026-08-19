@@ -1,0 +1,78 @@
+---
+title: Review the best valid price after login fix
+status: ready-for-review
+branch: worker/ppp-login-price
+issue: AIH-245
+privacy: private
+---
+
+# Review the best valid price after login fix
+
+## Root cause
+
+The guarded anonymous checkout preserved its trusted country in the login handoff. The logged-in callback ignored that country when it recomputed the coupon.
+
+`apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.tsx` used the callback request header for the server resolver, then passed the preserved query country to the final provider call. Those two pricing passes could use different countries. If the callback header fell back to `US`, PPP disappeared and the exclusive alumni credit could replace Turkey's lower price.
+
+## Fix
+
+The logged-in callback now computes one `checkoutCountry` after coupon authorization:
+
+- An explicit PPP handoff uses the preserved country.
+- An ordinary callback uses the current trusted header, `DEFAULT_COUNTRY`, or `US`.
+- The server-computed coupon resolver and final provider checkout both receive the same country.
+- Raw PPP selectors remain rejected. The server still reselects PPP from country and current pricing data.
+- Exclusive, restricted, team, and non-stacking rules did not change.
+
+## Changed files
+
+- `apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.tsx`
+- `apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.test.ts`
+- `apps/ai-hero/src/tests/pricing-contract.test.ts`
+- `.brain/tasks/fix-best-valid-price-after-login.svx`
+- `.brain/tasks/review-best-valid-price-after-login.svx`
+
+## Regression coverage
+
+The logged-in callback tests prove:
+
+- Turkey (`TR`) and Thailand (`TH`) explicit PPP handoffs preserve their country when the callback header is absent.
+- The resolver country equals the final provider country.
+- An ordinary alumni-only callback ignores a carried PPP-looking country and uses its trusted callback header.
+- An ineligible `US` PPP handoff does not invent a coupon.
+
+The Course Builder contract tests prove:
+
+- Turkey's 70 percent PPP produces `$89.70` and beats the current `$99` alumni price.
+- Thailand's 65 percent PPP produces `$104.65` and beats a synthetic `$109` alumni price.
+- The synthetic Thailand boundary uses a `$190` credit because the current `$200` alumni credit produces `$99`; for that current combination, alumni correctly wins.
+- An ineligible `US` region keeps the `$99` alumni price.
+
+## Checks
+
+- Red test: the new logged-in callback suite failed three assertions before the fix. The resolver received `US` for `TR` and `TH`, and the provider received carried `TR` for an ordinary `CA` callback.
+- Targeted commerce tests: 5 files passed, 90 tests passed.
+- AI Hero type check: passed.
+- ESLint on the three changed TypeScript files: passed.
+- Full AI Hero lint: failed on pre-existing unrelated files with 19 errors and 46 warnings. The changed files had no lint findings.
+- `git diff --check`: passed.
+
+## Production readback
+
+Not run. This worker did not deploy, create a live checkout, or mutate production or customer state.
+
+After deployment, an approved operator should use an alumni-entitled test account from trusted Turkey geolocation:
+
+1. Confirm the anonymous Crash Course price is `$89.70`.
+2. Select PPP and complete the login handoff.
+3. Confirm hosted Stripe Checkout still shows `$89.70` before payment.
+4. Confirm checkout metadata reports country `TR`, pricing candidate `ppp`, and the 70 percent PPP coupon provenance.
+5. Do not tell the affected customer it is fixed until this readback passes.
+
+Control readbacks should confirm an ineligible `US` region keeps the valid alumni price and a non-PPP callback follows its trusted header.
+
+## Residual risks
+
+- The preserved handoff country is still carried in a query parameter. Existing coupon authorization limits this path to a real PPP selector, but a signed or server-side handoff would provide a stronger integrity boundary.
+- Production behavior remains unproved until the approved authenticated Turkey readback runs.
+- Full-project lint is already red outside this change, so it cannot serve as a clean repository-wide gate for this branch.
