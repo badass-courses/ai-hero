@@ -305,6 +305,22 @@ describe('authorizeExclusiveCouponSelection', () => {
 		expect(result.requestedPPP).toBe(true)
 	})
 
+	it('does not treat an inactive PPP merchant coupon as current PPP intent', async () => {
+		const result = await decide({
+			adapter: {
+				...createAdapter(),
+				getMerchantCoupon: async () => ({
+					...pppMerchantCoupon,
+					status: 0,
+				}),
+			} as never,
+			requestedMerchantCouponId: pppMerchantCoupon.id,
+		})
+
+		expect(result.authorized).toBe(false)
+		expect(result.requestedPPP).toBeUndefined()
+	})
+
 	it('rejects inactive public site input without a merchant selector', async () => {
 		const result = await decide({
 			requestedMerchantCouponId: undefined,

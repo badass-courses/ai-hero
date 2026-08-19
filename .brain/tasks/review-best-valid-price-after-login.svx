@@ -1,6 +1,6 @@
 ---
 title: Review the best valid price after login fix
-status: ready-for-review
+status: ready-for-rereview
 branch: worker/ppp-login-price
 issue: AIH-245
 privacy: private
@@ -8,71 +8,140 @@ privacy: private
 
 # Review the best valid price after login fix
 
+## Review history
+
+The first fix in `3f30ec4` preserved query `country` when coupon authorization reported PPP intent. Independent review correctly blocked it: coupon IDs prove intent, not country. A caller could forge `country=TR` and supply a known PPP selector.
+
+This follow-up removes that trust decision. Do not review or deploy `3f30ec4` alone.
+
 ## Root cause
 
-The guarded anonymous checkout preserved its trusted country in the login handoff. The logged-in callback ignored that country when it recomputed the coupon.
+The guarded first checkout derived country from Vercel, but the authentication callback could lose that request header. The callback then recomputed price with `US` while final checkout still carried the prior query country. The two pricing passes disagreed, and alumni credit could replace lower Turkey PPP.
 
-`apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.tsx` used the callback request header for the server resolver, then passed the preserved query country to the final provider call. Those two pricing passes could use different countries. If the callback header fell back to `US`, PPP disappeared and the exclusive alumni credit could replace Turkey's lower price.
+The country must survive login without becoming caller-controlled.
 
 ## Fix
 
-The logged-in callback now computes one `checkoutCountry` after coupon authorization:
+`/subscribe/verify-login` now creates a 10-minute, HMAC-SHA256 handoff after reading the trusted Vercel country. It replaces query country with that trusted value before building the login callback.
 
-- An explicit PPP handoff uses the preserved country.
-- An ordinary callback uses the current trusted header, `DEFAULT_COUNTRY`, or `US`.
-- The server-computed coupon resolver and final provider checkout both receive the same country.
-- Raw PPP selectors remain rejected. The server still reselects PPP from country and current pricing data.
-- Exclusive, restricted, team, and non-stacking rules did not change.
+The signed, domain-separated payload contains:
+
+- version
+- country
+- whether active PPP was selected
+- product ID
+- quantity
+- issued and expiry timestamps
+- random nonce
+
+The logged-in callback verifies the signature, expiry, country, product ID, and quantity. It uses the handoff country only when both conditions hold:
+
+1. The signed payload says PPP was selected.
+2. current coupon authorization sees an active PPP selector.
+
+PPP intent only permits server recomputation. It never proves country. Missing, malformed, tampered, expired, or mismatched state falls back to the current trusted header, `DEFAULT_COUNTRY`, or `US`.
+
+`resolveLoggedInCheckoutPricing` now owns this boundary. It passes one country to server coupon resolution and final Stripe checkout. Raw coupon selectors remain stripped. Server pricing still reselects the current coupon and chooses one best valid discount without stacking.
+
+Inactive PPP merchant coupons no longer set `requestedPPP`.
 
 ## Changed files
 
-- `apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.tsx`
-- `apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.test.ts`
-- `apps/ai-hero/src/tests/pricing-contract.test.ts`
 - `.brain/tasks/fix-best-valid-price-after-login.svx`
 - `.brain/tasks/review-best-valid-price-after-login.svx`
+- `apps/ai-hero/src/app/(commerce)/subscribe/verify-login/page.tsx`
+- `apps/ai-hero/src/app/(commerce)/subscribe/verify-login/page.test.tsx`
+- `apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.tsx`
+- `apps/ai-hero/src/app/(commerce)/subscribe/logged-in/page.test.ts`
+- `apps/ai-hero/src/lib/checkout-login-handoff.ts`
+- `apps/ai-hero/src/lib/checkout-login-handoff.test.ts`
+- `apps/ai-hero/src/lib/logged-in-checkout-pricing.ts`
+- `apps/ai-hero/src/lib/exclusive-coupon-authorization.ts`
+- `apps/ai-hero/src/lib/exclusive-coupon-authorization.test.ts`
+- `apps/ai-hero/src/test/setup.ts`
+- `apps/ai-hero/src/tests/pricing-contract.test.ts`
 
-## Regression coverage
+## Security regression coverage
 
-The logged-in callback tests prove:
+The handoff tests prove:
 
-- Turkey (`TR`) and Thailand (`TH`) explicit PPP handoffs preserve their country when the callback header is absent.
-- The resolver country equals the final provider country.
-- An ordinary alumni-only callback ignores a carried PPP-looking country and uses its trusted callback header.
-- An ineligible `US` PPP handoff does not invent a coupon.
+- A valid signed Turkey handoff verifies.
+- Payload or signature tampering fails.
+- Expired state fails.
+- Changed product, quantity, or country fails.
+- Missing token or secret fails closed.
 
-The Course Builder contract tests prove:
+The route tests prove:
 
-- Turkey's 70 percent PPP produces `$89.70` and beats the current `$99` alumni price.
-- Thailand's 65 percent PPP produces `$104.65` and beats a synthetic `$109` alumni price.
-- The synthetic Thailand boundary uses a `$190` credit because the current `$200` alumni credit produces `$99`; for that current combination, alumni correctly wins.
-- An ineligible `US` region keeps the `$99` alumni price.
+- The signing page ignores forged query country and signs its trusted Vercel country.
+- `US` header plus forged `country=TR` and a real PPP ID stays `US` without a valid handoff.
+- Missing header plus the same forged input falls back to `US`.
+- An inactive PPP selector cannot authorize a signed carried country.
+- Tampered, expired, product-mismatched, quantity-mismatched, and country-mismatched handoffs fall back safely.
+- A valid signed Turkey handoff gives both coupon resolution and Stripe country `TR`.
+- Resolver and provider countries remain identical.
+- A signed `US` PPP selection does not invent PPP.
+
+## Pricing policy coverage
+
+The real Course Builder contract proves:
+
+- Turkey 70 percent PPP is `$89.70` and beats the current `$99` alumni price.
+- One integration-shaped path starts with a valid signed Turkey handoff, runs real callback coupon authorization, runs real server coupon resolution, and reaches Stripe metadata with country `TR`, `pricingCandidate: ppp`, `$89.70`, PPP provenance, and no alumni entitlement consumption.
+- Thailand 65 percent PPP is `$104.65`, but the current `$200` alumni credit wins at `$99` with `pricingCandidate: credit` and alumni entitlement provenance.
+- The older synthetic Thailand boundary remains: PPP `$104.65` beats a synthetic `$109` alumni price.
+- `US` keeps the valid `$99` alumni price where PPP is unavailable.
 
 ## Checks
 
-- Red test: the new logged-in callback suite failed three assertions before the fix. The resolver received `US` for `TR` and `TH`, and the provider received carried `TR` for an ordinary `CA` callback.
-- Targeted commerce tests: 5 files passed, 90 tests passed.
+- Red receipt: new handoff tests first failed because the module did not exist.
+- Red receipt: forged, missing, expired, and mismatched callback tests first used query country before verification existed.
+- Red receipt: verify-login route tests first returned forged query country instead of trusted header country.
+- Red receipt: inactive PPP first set `requestedPPP: true`.
+- Targeted commerce/security suite: 7 files passed, 109 tests passed.
 - AI Hero type check: passed.
-- ESLint on the three changed TypeScript files: passed.
-- Full AI Hero lint: failed on pre-existing unrelated files with 19 errors and 46 warnings. The changed files had no lint findings.
+- ESLint on all 11 changed TypeScript and TSX files: passed.
 - `git diff --check`: passed.
+- Full AI Hero lint: still fails on the same unrelated baseline, 19 errors and 46 warnings. No changed file appears in that output.
+- `pi-notes brain check`: passed.
 
-## Production readback
+## Production readback gate
 
-Not run. This worker did not deploy, create a live checkout, or mutate production or customer state.
+Not run. This worker did not deploy, create a live checkout, or mutate production, Stripe, Front, coupons, or customer state.
 
-After deployment, an approved operator should use an alumni-entitled test account from trusted Turkey geolocation:
+After merge and deployment, an explicitly approved operator should run bounded readbacks without payment:
 
-1. Confirm the anonymous Crash Course price is `$89.70`.
-2. Select PPP and complete the login handoff.
-3. Confirm hosted Stripe Checkout still shows `$89.70` before payment.
-4. Confirm checkout metadata reports country `TR`, pricing candidate `ppp`, and the 70 percent PPP coupon provenance.
-5. Do not tell the affected customer it is fixed until this readback passes.
+1. Turkey alumni control:
+   - anonymous PPP is `$89.70`
+   - login handoff remains `$89.70`
+   - Stripe metadata country is `TR`
+   - `pricingCandidate` is `ppp`
+   - 70 percent PPP provenance is present
+   - no alumni entitlement coupon is consumed
+2. Thailand current-policy control:
+   - anonymous PPP is `$104.65`
+   - logged-in best price is `$99`
+   - `pricingCandidate` is `credit`
+   - alumni entitlement provenance is present
+   - PPP is not stacked
+3. US tamper control:
+   - callback query `country=TR` plus a real PPP ID remains `US`
+   - no Turkey PPP checkout is created
+4. Invalid-state controls:
+   - expired or tampered token
+   - changed product ID
+   - changed quantity
+   - changed country
+   - inactive PPP selector
+   - each falls back without honoring carried country
+5. Restricted-purchase control:
+   - when Turkey PPP wins, restriction country and checkout country both equal `TR`
 
-Control readbacks should confirm an ineligible `US` region keeps the valid alumni price and a non-PPP callback follows its trusted header.
+Do not tell affected customers that AIH-245 is fixed until the Turkey positive check and US tamper control pass.
 
 ## Residual risks
 
-- The preserved handoff country is still carried in a query parameter. Existing coupon authorization limits this path to a real PPP selector, but a signed or server-side handoff would provide a stronger integrity boundary.
-- Production behavior remains unproved until the approved authenticated Turkey readback runs.
-- Full-project lint is already red outside this change, so it cannot serve as a clean repository-wide gate for this branch.
+- The signed handoff is a bearer token and can be replayed during its 10-minute lifetime. Its nonce makes tokens unique but is not consumed server-side. A one-time server record would close replay if future threat evidence justifies the state and cleanup cost.
+- The token uses `NEXTAUTH_SECRET` with protocol-specific domain separation. Rotating that secret safely invalidates outstanding handoffs.
+- Production behavior remains unproved until the approved readback gate runs.
+- Full-project lint remains red outside this change, so changed-file lint and targeted tests are the clean gates for this branch.

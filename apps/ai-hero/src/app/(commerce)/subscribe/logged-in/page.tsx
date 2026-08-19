@@ -1,11 +1,11 @@
 import { ParsedUrlQuery } from 'querystring'
 import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
-import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
+import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -76,44 +76,25 @@ export default async function LoginPage({
 		rawSubscriberId: cookieStore.get('ck_subscriber_id')?.value,
 	})
 
-	const couponAuthorization = await authorizeExclusiveCouponSelection({
+	const pricing = await resolveLoggedInCheckoutPricing({
 		adapter: courseBuilderAdapter,
 		verifiedUserId: user.id,
-		productId: checkoutParams.productId,
-		quantity: checkoutParams.quantity ?? 1,
-		requestedMerchantCouponId: checkoutParams.couponId,
-		requestedSiteCouponId: checkoutParams.usedCouponId,
+		checkoutParams,
+		checkoutHandoffToken:
+			typeof rawSearchParams.checkoutHandoff === 'string'
+				? rawSearchParams.checkoutHandoff
+				: undefined,
+		trustedCountry,
+		handoffSecret: env.NEXTAUTH_SECRET,
 	})
-	// The guarded initial checkout writes its trusted country into the login
-	// handoff. Preserve it only when the rejected selector proves that the buyer
-	// explicitly chose PPP. Ordinary callbacks keep using the current trusted
-	// header/default instead of accepting a caller-controlled country.
-	const checkoutCountry =
-		couponAuthorization.requestedPPP && checkoutParams.country
-			? checkoutParams.country
-			: trustedCountry
-	const serverComputedCoupon = !couponAuthorization.authorized
-		? await resolveServerComputedCheckoutCoupon({
-				adapter: courseBuilderAdapter,
-				productId: checkoutParams.productId,
-				quantity: checkoutParams.quantity ?? 1,
-				verifiedUserId: user.id,
-				country: checkoutCountry,
-			})
-		: null
 	const authorizedCheckoutParams = {
 		...checkoutParams,
 		userId: user.id,
-		country: checkoutCountry,
+		country: pricing.country,
+		couponId: pricing.couponId,
+		usedCouponId: pricing.usedCouponId,
 		...(organizationId && { organizationId }),
 		...checkoutAttribution,
-		...(couponAuthorization.entitlementCouponId && {
-			usedCouponId: couponAuthorization.entitlementCouponId,
-		}),
-		...(!couponAuthorization.authorized && {
-			couponId: serverComputedCoupon?.id,
-			usedCouponId: undefined,
-		}),
 	}
 
 	const stripe = await stripeProvider.createCheckoutSession(

@@ -4,9 +4,11 @@ import { redirect } from 'next/navigation'
 import { Logo } from '@/components/brand/logo'
 import LayoutClient from '@/components/layout-client'
 import { Login } from '@/components/login'
-import { db } from '@/db'
+import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
+import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
 import { getProduct } from '@/lib/products-query'
 import {
 	hasActiveNonBulkPurchaseForProduct,
@@ -32,7 +34,7 @@ export default async function VerifyLoginPage({
 }: {
 	searchParams: Promise<ParsedUrlQuery>
 }) {
-	await headers()
+	const headersList = await headers()
 	const { checkoutUrl, ...checkoutParams } = await searchParams
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
@@ -97,8 +99,40 @@ export default async function VerifyLoginPage({
 		return '/subscribe/error'
 	}
 
+	if (!env.NEXTAUTH_SECRET) {
+		return redirect('/subscribe/error')
+	}
+
+	const rawTrustedCountry =
+		headersList.get('x-vercel-ip-country') ||
+		process.env.DEFAULT_COUNTRY ||
+		'US'
+	const normalizedTrustedCountry = rawTrustedCountry.toUpperCase()
+	const trustedCountry = /^[A-Z]{2}$/.test(normalizedTrustedCountry)
+		? normalizedTrustedCountry
+		: 'US'
+	const couponAuthorization = await authorizeExclusiveCouponSelection({
+		adapter: courseBuilderAdapter,
+		verifiedUserId: user?.id,
+		productId: parsedCheckoutParams.data.productId,
+		quantity: parsedCheckoutParams.data.quantity ?? 1,
+		requestedMerchantCouponId: parsedCheckoutParams.data.couponId,
+		requestedSiteCouponId: parsedCheckoutParams.data.usedCouponId,
+	})
+	const checkoutHandoff = createCheckoutLoginHandoff({
+		secret: env.NEXTAUTH_SECRET,
+		country: trustedCountry,
+		pppSelected: couponAuthorization.requestedPPP === true,
+		productId: parsedCheckoutParams.data.productId,
+		quantity: parsedCheckoutParams.data.quantity ?? 1,
+	})
+	const signedCheckoutParams = {
+		...parsedCheckoutParams.data,
+		country: trustedCountry,
+		checkoutHandoff,
+	}
 	const checkoutSearchParams = new URLSearchParams(
-		Object.entries(parsedCheckoutParams.data).flatMap(([key, value]) => {
+		Object.entries(signedCheckoutParams).flatMap(([key, value]) => {
 			if (value === undefined || value === null) return []
 			return [[key, String(value)]]
 		}),
