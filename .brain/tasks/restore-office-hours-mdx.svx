@@ -1,0 +1,43 @@
+---
+title: Restore purchaser office-hours recordings
+status: complete
+assignee: "shitrat (flagg, herdr pane w3T:p2Q, 2026-08-19)"
+branch: worker/office-hours-mdx
+---
+
+# Goal
+
+Prove why AI Coding for Real Engineers office-hours components disappeared from purchaser pages, then restore them where verified purchasers expect them.
+
+# Source context
+
+- `/Users/joel/Code/badass-courses/aihero-support/.brain/tasks/fix-cohort-office-hours-recordings-hidden-by-401.svx`
+- Support conversation `cnv_1oihgm5h`
+- Linear issue AIH-242
+
+Joel remembers these recordings as components embedded in MDX. Do not assume the content is gone. Trace content storage and rendering separately.
+
+# Required work
+
+1. Claim this task by setting `assignee`.
+2. Read repo instructions.
+3. Trace current cohort and workshop resource retrieval, MDX compilation, component mapping, purchaser authorization, route/cache behavior, and any local dictionary or snapshot changes.
+4. Use read-only source commands to verify whether the production resource body still contains the office-hours components when possible.
+5. Identify the exact disappearance point: content data, component registry, MDX parser, authorization, route, or cache.
+6. Add failing tests that represent a verified purchaser page containing the expected office-hours component.
+7. Implement the smallest safe fix. Preserve paid-content authorization.
+8. Define production readback that proves the components render for an authorized purchaser and remain unavailable to unauthorized users.
+9. Run targeted tests, type checks, and lint.
+10. Write `.brain/tasks/review-office-hours-mdx.svx` with root cause, content readback, changed files, tests, production verification, and residual risks.
+11. Commit on this worker branch as `shitratgit[bot]`. Do not push and do not touch main.
+
+# Safety
+
+- No production resource edits, database writes, deploys, Front actions, or customer mutations.
+- Never edit existing files under `.brain/data/**/receipts/`.
+- Do not make paid recordings public.
+- Do not replace missing source content with invented links or titles.
+
+# Done
+
+Print `DONE` with the commit, exact disappearance point, tests, changed files, and any required content repair.

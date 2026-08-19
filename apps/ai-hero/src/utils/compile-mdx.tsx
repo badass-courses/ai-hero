@@ -11,6 +11,7 @@ import {
 } from '@/app/admin/pages/_components/page-builder-mdx-components'
 import { CldImage, ThemeImage } from '@/components/cld-image'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
+import { AuthorizedOfficeHoursSchedule } from '@/components/mdx/authorized-office-hours-schedule'
 import { Heading } from '@/components/mdx/heading'
 import { AISummary, TrackLink } from '@/components/mdx/mdx-components'
 import { SubscriberCount } from '@/components/subscriber-count'
@@ -118,11 +119,6 @@ const Timeline = dynamic(() =>
 const TimelineItem = dynamic(() =>
 	import('@/components/mdx/timeline').then((mod) => mod.TimelineItem),
 )
-const DynamicOfficeHoursSchedule = dynamic(() =>
-	import('@/components/office-hours-schedule').then(
-		(mod) => mod.OfficeHoursSchedule,
-	),
-)
 const Quiz = dynamic(() =>
 	import('@/components/mdx/quiz').then((mod) => mod.Quiz),
 )
@@ -178,6 +174,12 @@ async function MdxEmbeddedVideo({
 
 type CompileMDXContext = {
 	lessonId?: string
+	/**
+	 * Server-only proof that the current lesson route passed its purchaser
+	 * ability check. The office-hours resolver also requires the cohort to
+	 * contain this workshop before it returns any session data.
+	 */
+	authorizedWorkshopId?: string
 	dictionaryAutoLink?: {
 		entries: DictionaryEntry[]
 		maxLinks?: number
@@ -631,9 +633,10 @@ async function compileMDXInternal(
 						timeZoneLabel,
 						className,
 					}) => (
-						<DynamicOfficeHoursSchedule
+						<AuthorizedOfficeHoursSchedule
 							sessions={sessions}
 							cohortId={cohortId}
+							authorizedWorkshopId={context?.authorizedWorkshopId}
 							variant={variant}
 							showActions={showActions}
 							timeZone={timeZone}

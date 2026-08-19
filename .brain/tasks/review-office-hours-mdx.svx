@@ -1,0 +1,87 @@
+---
+title: Review purchaser office-hours MDX restoration
+status: complete
+branch: worker/office-hours-mdx
+source_task: .brain/tasks/restore-office-hours-mdx.svx
+---
+
+# Root cause
+
+The recordings did not disappear from content storage or the MDX component registry.
+
+The exact disappearance point was the authorization boundary used by the client-side `OfficeHoursSchedule` lookup:
+
+1. The paid lesson body still contains `<OfficeHoursSchedule cohortId="cohort-m0k0w" variant="lesson" />`.
+2. `compile-mdx.tsx` still maps `OfficeHoursSchedule` to the application component.
+3. The lesson route is request-bound and checks `canViewLesson` before it compiles the paid body.
+4. The component then made a browser request to `/api/resources?slugOrId=cohort-m0k0w&type=cohort`.
+5. Commit `84d4f362` changed that generic resource route to require global `read Content` ability.
+6. `getUserAbilityForRequest` recognizes Authorization tokens, not the purchaser's browser session cookie. A normal signed-in purchaser therefore reached the API as anonymous and received HTTP 401.
+7. The component caught the 401, replaced its sessions with an empty array, and returned `null`.
+
+The MDX parser, component registration, local dictionary snapshots, and MDX cache were not the cause. The compiled-MDX cache key includes the full source and compile context. The lesson page is `force-dynamic`; its lesson body cache is tagged and content writes invalidate the lesson tag.
+
+# Content readback
+
+Read-only production database queries on 2026-08-19 proved:
+
+- lesson `lesson-3cmbs` / `office-hours~3cmbs` has a 1,100-character body;
+- the body contains one `OfficeHoursSchedule` component with cohort `cohort-m0k0w`;
+- cohort `cohort-m0k0w` still has six schema-valid office-hours sessions;
+- all six stored YouTube watch URLs returned HTTP 200 to HEAD requests;
+- the public generic resource request still returns HTTP 401, as intended for that privileged API.
+
+No content repair is required.
+
+# Fix
+
+The lesson render now supplies office-hours sessions on the server after purchaser authorization:
+
+- `LessonPage` adds the already-authorized workshop ID to the MDX compile context only after `canViewLesson` passes.
+- The MDX cache key includes that workshop ID, so authorized and public compile contexts cannot share an entry.
+- `AuthorizedOfficeHoursSchedule` refuses a cohort lookup without the server-only workshop proof.
+- The database query requires a direct cohort-to-workshop relation and selects only `fields.officeHoursSessions`.
+- The selected value is parsed through `CohortOfficeHoursSessionsSchema` before it reaches the client.
+- The browser component no longer calls the privileged generic resource API.
+- Inline authored `sessions` still render without a database lookup.
+
+# Changed files
+
+- `.brain/tasks/restore-office-hours-mdx.svx`
+- `.brain/tasks/review-office-hours-mdx.svx`
+- `apps/ai-hero/src/app/(content)/workshops/[module]/[lesson]/(view)/shared-page.tsx`
+- `apps/ai-hero/src/components/office-hours-schedule.tsx`
+- `apps/ai-hero/src/components/mdx/authorized-office-hours-schedule.tsx`
+- `apps/ai-hero/src/components/mdx/authorized-office-hours-schedule.test.tsx`
+- `apps/ai-hero/src/lib/cohort-office-hours-query.ts`
+- `apps/ai-hero/src/lib/cohort-office-hours-query.test.ts`
+- `apps/ai-hero/src/utils/compile-mdx.tsx`
+
+# Tests and checks
+
+- Red test receipt: the focused test failed because `authorized-office-hours-schedule` did not exist.
+- `pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/components/mdx/authorized-office-hours-schedule.test.tsx src/lib/cohort-office-hours-query.test.ts` — 6 passed.
+- `pnpm --filter ai-hero typecheck` — passed.
+- Targeted ESLint on changed application files — passed.
+- `pnpm --filter ai-hero test` — 1,907 passed; 5 existing tests plus one markdown-route suite setup failed in unrelated API products, progress, Skills, and markdown-route files.
+- `pnpm --filter ai-hero lint` — the changed files passed, but the full command still fails on 19 existing errors in `cohort-pricing-widget-container.tsx` and `sidebar-sections.tsx`.
+- `pi-notes brain check` — passed for 36 pages.
+- `git diff --check` — passed.
+
+# Production verification after deployment
+
+Use a normal purchaser account, not an admin account:
+
+1. Open `/workshops/before-start~ubuuc/office-hours~3cmbs`.
+2. Confirm the lesson stays on the lesson route and renders six `Watch Replay` links.
+3. Confirm the browser makes no `/api/resources?...type=cohort` request.
+4. Open each replay link and confirm HTTP 200.
+5. In an anonymous browser, open the same lesson route.
+6. Confirm it redirects to `/workshops/before-start~ubuuc` and no office-hours title, recording link, or session payload appears.
+7. Confirm the unauthenticated generic resource request remains HTTP 401.
+
+# Residual risks
+
+- Post-deploy purchaser readback is still required because this worker neither deployed nor mutated production.
+- The server returns nothing if an authored cohort ID is not directly related to the authorized workshop. It logs `cohort.office-hours.resolve.failed` only for lookup errors, not for an expected relation miss.
+- The query is intentionally uncached. It adds one small, schema-checked database read only on authorized pages containing the component.
