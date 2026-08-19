@@ -142,10 +142,22 @@ async function OfficeHoursScheduleWithSessions({
 	cohortId,
 	...props
 }: OfficeHoursScheduleMdxProps) {
+	// A failed cohort lookup renders an empty schedule rather than rejecting
+	// the whole MDX render — the schedule is an embed inside a page that must
+	// survive it.
 	const resolvedSessions =
 		sessions ??
 		(cohortId
-			? ((await getCachedCohort(cohortId))?.fields?.officeHoursSessions ?? [])
+			? await getCachedCohort(cohortId).then(
+					(cohort) => cohort?.fields?.officeHoursSessions ?? [],
+					(error) => {
+						void log.error('mdx.office-hours-schedule.cohort-load-failed', {
+							cohortId,
+							error: error instanceof Error ? error.message : String(error),
+						})
+						return []
+					},
+				)
 			: [])
 
 	return <DynamicOfficeHoursSchedule sessions={resolvedSessions} {...props} />
