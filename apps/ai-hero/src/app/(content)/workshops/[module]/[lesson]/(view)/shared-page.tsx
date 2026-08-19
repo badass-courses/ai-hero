@@ -1,5 +1,4 @@
 import { Suspense } from 'react'
-import Image from 'next/image'
 import { notFound, redirect } from 'next/navigation'
 import { AuthedVideoPlayer } from '@/app/(content)/_components/authed-video-player'
 import { LessonControls } from '@/app/(content)/_components/lesson-controls'
@@ -10,7 +9,6 @@ import UpNext from '@/app/(content)/workshops/_components/up-next'
 import { WorkshopPricing } from '@/app/(content)/workshops/_components/workshop-pricing-server'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
-import { env } from '@/env.mjs'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import type { Lesson } from '@/lib/lessons'
@@ -252,9 +250,6 @@ async function PlayerContainer({
 	const videoResourceReference = lesson?.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
-	const thumbnailUrl =
-		videoResourceReference &&
-		`${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
 
 	void log.debug('lesson.player.video-resource.loaded', {
 		lessonId: lesson.id,
@@ -277,21 +272,6 @@ async function PlayerContainer({
 				aria-label="video"
 				className="dark relative flex flex-col items-center justify-center border-b bg-black text-white dark:text-white"
 			>
-				{thumbnailUrl && (
-					<Image
-						src={thumbnailUrl}
-						alt="thumbnail"
-						fill
-						className="blur-xs absolute inset-0 z-0 h-full w-full bg-cover opacity-20"
-						priority
-					/>
-				)}
-				{/* <div
-					className="absolute inset-0 z-0 h-full w-full bg-cover opacity-20 blur-xs"
-					style={{
-						backgroundImage: `url(${thumbnailUrl})`,
-					}}
-				/> */}
 				<Suspense
 					fallback={
 						<PlayerContainerSkeleton className="h-auto w-full bg-black md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]" />
