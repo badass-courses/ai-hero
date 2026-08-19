@@ -294,7 +294,7 @@ async function PlayerContainer({
 				/> */}
 				<Suspense
 					fallback={
-						<PlayerContainerSkeleton className="h-auto w-full bg-black md:max-h-[75svh]" />
+						<PlayerContainerSkeleton className="h-auto w-full bg-black md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]" />
 					}
 				>
 					<WorkshopPricing
@@ -314,7 +314,12 @@ async function PlayerContainer({
 					</WorkshopPricing>
 					<AuthedVideoPlayer
 						key={lesson.id}
-						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh]"
+						// The width cap mirrors the height cap: with only max-h, a short
+						// viewport clamps the height while the width stays full, the box
+						// stops being 16:9, and Safari/Chrome each mangle the mismatch
+						// (cropped video, cut-off controls). Height-capped + width-capped
+						// keeps the box a true 16:9 that always fits the viewport.
+						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]"
 						muxPlaybackId={muxPlaybackId}
 						playbackPositionLoader={playbackPositionLoader}
 						// playbackIdLoader={playbackIdLoader}
