@@ -1,4 +1,5 @@
 import { Suspense } from 'react'
+import Image from 'next/image'
 import { notFound, redirect } from 'next/navigation'
 import { AuthedVideoPlayer } from '@/app/(content)/_components/authed-video-player'
 import { LessonControls } from '@/app/(content)/_components/lesson-controls'
@@ -8,6 +9,7 @@ import PostToC from '@/app/(content)/posts/_components/post-toc'
 import UpNext from '@/app/(content)/workshops/_components/up-next'
 import { WorkshopPricing } from '@/app/(content)/workshops/_components/workshop-pricing-server'
 import { ContentReadTracker } from '@/components/content-read-tracker'
+import { env } from '@/env.mjs'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
@@ -250,6 +252,9 @@ async function PlayerContainer({
 	const videoResourceReference = lesson?.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
 	})
+	const thumbnailUrl =
+		videoResourceReference &&
+		`${env.NEXT_PUBLIC_URL}/api/thumbnails?videoResourceId=${videoResourceReference.resourceId}&time=${lesson.fields?.thumbnailTime || 0}`
 
 	void log.debug('lesson.player.video-resource.loaded', {
 		lessonId: lesson.id,
@@ -274,7 +279,24 @@ async function PlayerContainer({
 			>
 				<Suspense
 					fallback={
-						<PlayerContainerSkeleton className="h-auto w-full bg-black md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]" />
+						/*
+						 * The blurred thumbnail lives inside the fallback so it exists
+						 * exactly while the player loads: rendered behind the (transparent)
+						 * skeleton, unmounted with it. As a permanent section backdrop it
+						 * leaked around the pillar-boxed player and read as a glitch.
+						 */
+						<>
+							{thumbnailUrl && (
+								<Image
+									src={thumbnailUrl}
+									alt=""
+									fill
+									className="blur-xs absolute inset-0 z-0 h-full w-full object-cover opacity-20"
+									priority
+								/>
+							)}
+							<PlayerContainerSkeleton className="z-10 h-auto w-full bg-transparent md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]" />
+						</>
 					}
 				>
 					<WorkshopPricing
