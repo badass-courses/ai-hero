@@ -24,6 +24,7 @@ import { PromoCard } from '@/components/mdx/promo-card'
 import type { PromoCardProps } from '@/components/mdx/promo-card'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createCalloutLineAutoInsertRemarkPlugin } from '@/lib/callout-line-autoinsert'
+import { getCachedCohort } from '@/lib/cohorts-query'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
@@ -123,6 +124,44 @@ const DynamicOfficeHoursSchedule = dynamic(() =>
 		(mod) => mod.OfficeHoursSchedule,
 	),
 )
+
+type OfficeHoursScheduleMdxProps = React.ComponentProps<
+	typeof DynamicOfficeHoursSchedule
+> & {
+	cohortId?: string
+}
+
+// Sessions resolve here on the server: a browser fetch of the cohort
+// resource hits the auth-gated /api/resources as an anonymous request and
+// 401s, silently hiding the schedule — which is exactly what happened to
+// past cohorts' office-hours pages after the API gained its auth gate.
+// Async server components are valid MDX components under RSC rendering,
+// but the MDX types don't know that, hence the cast at the registration.
+async function OfficeHoursScheduleWithSessions({
+	sessions,
+	cohortId,
+	...props
+}: OfficeHoursScheduleMdxProps) {
+	// A failed cohort lookup renders an empty schedule rather than rejecting
+	// the whole MDX render — the schedule is an embed inside a page that must
+	// survive it.
+	const resolvedSessions =
+		sessions ??
+		(cohortId
+			? await getCachedCohort(cohortId).then(
+					(cohort) => cohort?.fields?.officeHoursSessions ?? [],
+					(error) => {
+						void log.error('mdx.office-hours-schedule.cohort-load-failed', {
+							cohortId,
+							error: error instanceof Error ? error.message : String(error),
+						})
+						return []
+					},
+				)
+			: [])
+
+	return <DynamicOfficeHoursSchedule sessions={resolvedSessions} {...props} />
+}
 const Quiz = dynamic(() =>
 	import('@/components/mdx/quiz').then((mod) => mod.Quiz),
 )
@@ -622,25 +661,10 @@ async function compileMDXInternal(
 					QuizQuestion: (props) => (
 						<QuizQuestion {...props} lessonId={context?.lessonId} />
 					),
-					OfficeHoursSchedule: ({
-						sessions,
-						cohortId,
-						variant,
-						showActions,
-						timeZone,
-						timeZoneLabel,
-						className,
-					}) => (
-						<DynamicOfficeHoursSchedule
-							sessions={sessions}
-							cohortId={cohortId}
-							variant={variant}
-							showActions={showActions}
-							timeZone={timeZone}
-							timeZoneLabel={timeZoneLabel}
-							className={className}
-						/>
-					),
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any -- async
+					// server components are valid MDX components under RSC rendering,
+					// but @types/mdx cannot express them.
+					OfficeHoursSchedule: OfficeHoursScheduleWithSessions as any,
 					...components,
 				},
 				options: {
