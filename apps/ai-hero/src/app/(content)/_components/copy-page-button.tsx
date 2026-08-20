@@ -32,6 +32,7 @@ export function CopyPageButton({
 	labelClassName,
 	variant = 'outline',
 	size = 'default',
+	'aria-label': ariaLabel,
 	...rest
 }: CopySource & {
 	/** Classes for the "Copy page" label span — pass `hidden sm:grid` for an icon-only button on mobile (the icon's flip to a check still signals the copy). */
@@ -108,6 +109,9 @@ export function CopyPageButton({
 			variant={variant}
 			size={size}
 			aria-live="polite"
+			// When the visible label is hidden (icon-only mobile), the copied
+			// confirmation must land in the accessible name instead.
+			aria-label={ariaLabel ? (copied ? 'Copied!' : ariaLabel) : undefined}
 			className={cn('cursor-pointer', className)}
 			{...rest}
 		>

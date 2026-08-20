@@ -76,7 +76,10 @@ export function CopyProblemPromptButton({
 			onClick={handleCopy}
 			variant="outline"
 			size="sm"
-			aria-label="Copy prompt"
+			aria-live="polite"
+			// The visible status text is sm+-only; on mobile the accessible
+			// name carries the copied confirmation.
+			aria-label={copied ? 'Prompt copied' : 'Copy prompt'}
 			className={cn('group h-11 px-5 text-base', className)}
 			type="button"
 			{...rest}
