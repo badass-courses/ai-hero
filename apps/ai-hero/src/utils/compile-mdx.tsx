@@ -24,7 +24,7 @@ import { PromoCard } from '@/components/mdx/promo-card'
 import type { PromoCardProps } from '@/components/mdx/promo-card'
 import type { DictionaryEntry } from '@/lib/ai-coding-dictionary'
 import { createCalloutLineAutoInsertRemarkPlugin } from '@/lib/callout-line-autoinsert'
-import { getCachedCohort } from '@/lib/cohorts-query'
+import { getCohortOfficeHoursSessionsForWorkshop } from '@/lib/cohort-office-hours-query'
 import { createDictionaryAutoLinkRemarkPlugin } from '@/lib/dictionary-autolink'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
@@ -36,6 +36,7 @@ import {
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { sanitizeMdxSource } from '@/utils/sanitize-mdx-source'
 import { recmaCodeHike, remarkCodeHike } from 'codehike/mdx'
+import type { MDXComponents } from 'mdx/types'
 import type { CldImageProps } from 'next-cloudinary'
 import {
 	compileMDX as _compileMDX,
@@ -137,27 +138,28 @@ type OfficeHoursScheduleMdxProps = React.ComponentProps<
 // past cohorts' office-hours pages after the API gained its auth gate.
 // Async server components are valid MDX components under RSC rendering,
 // but the MDX types don't know that, hence the cast at the registration.
-async function OfficeHoursScheduleWithSessions({
-	sessions,
-	cohortId,
-	...props
-}: OfficeHoursScheduleMdxProps) {
+async function OfficeHoursScheduleWithSessions(
+	{ sessions, cohortId, ...props }: OfficeHoursScheduleMdxProps,
+	officeHoursWorkshopId?: string,
+) {
 	// A failed cohort lookup renders an empty schedule rather than rejecting
 	// the whole MDX render — the schedule is an embed inside a page that must
-	// survive it.
+	// survive it. The resolver repeats the request-bound workshop check and
+	// requires an active cohort relation before returning session data.
 	const resolvedSessions =
 		sessions ??
-		(cohortId
-			? await getCachedCohort(cohortId).then(
-					(cohort) => cohort?.fields?.officeHoursSessions ?? [],
-					(error) => {
-						void log.error('mdx.office-hours-schedule.cohort-load-failed', {
-							cohortId,
-							error: error instanceof Error ? error.message : String(error),
-						})
-						return []
-					},
-				)
+		(cohortId && officeHoursWorkshopId
+			? await getCohortOfficeHoursSessionsForWorkshop({
+					cohortId,
+					workshopId: officeHoursWorkshopId,
+				}).catch((error) => {
+					void log.error('mdx.office-hours-schedule.cohort-load-failed', {
+						cohortId,
+						workshopId: officeHoursWorkshopId,
+						error: error instanceof Error ? error.message : String(error),
+					})
+					return []
+				})
 			: [])
 
 	return <DynamicOfficeHoursSchedule sessions={resolvedSessions} {...props} />
@@ -217,6 +219,11 @@ async function MdxEmbeddedVideo({
 
 type CompileMDXContext = {
 	lessonId?: string
+	/**
+	 * Included only when the current request can read the workshop. The data
+	 * resolver repeats that check and requires an active cohort relation.
+	 */
+	officeHoursWorkshopId?: string
 	dictionaryAutoLink?: {
 		entries: DictionaryEntry[]
 		maxLinks?: number
@@ -661,10 +668,11 @@ async function compileMDXInternal(
 					QuizQuestion: (props) => (
 						<QuizQuestion {...props} lessonId={context?.lessonId} />
 					),
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any -- async
-					// server components are valid MDX components under RSC rendering,
-					// but @types/mdx cannot express them.
-					OfficeHoursSchedule: OfficeHoursScheduleWithSessions as any,
+					OfficeHoursSchedule: ((props: OfficeHoursScheduleMdxProps) =>
+						OfficeHoursScheduleWithSessions(
+							props,
+							context?.officeHoursWorkshopId,
+						)) as unknown as MDXComponents[string],
 					...components,
 				},
 				options: {
@@ -763,10 +771,11 @@ async function compileMDXInternal(
  * callout line resolved for a dead cohort (W1 §2.4): that context now keys
  * the entry instead of bypassing the cache.
  *
- * Reuse across users is safe because nothing per-user exists at compile time:
- * the cached value is an immutable element tree whose components (including
- * data-fetching ones like `SubscriberCount`) are module-level references that
- * React still renders per request.
+ * Reuse across users is safe because request access is represented only by
+ * `officeHoursWorkshopId`, which participates in the key. The data resolver
+ * still repeats the request-bound workshop check at render time. The cached
+ * value is an immutable element tree whose components (including data-fetching
+ * ones like `SubscriberCount`) React renders for each request.
  */
 const compiledMdxCache = new LRUCache<
 	string,
