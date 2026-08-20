@@ -296,6 +296,13 @@ export function PlayerGestureShell({
 			// We own show/hide on touch: the container's own tap/autohide logic
 			// is target-dependent and its timers are private. -1 disables them.
 			mc.setAttribute('autohide', '-1')
+			// Inline styles because gerwig exports no "controller" part (no
+			// page CSS can reach the element) and its shadow rules beat
+			// inherited values. The shell's centered button replaces gerwig's
+			// (which is template-gated to <470px and never exists on iPads);
+			// the bottom play button is gerwig's own, unhidden and touch-sized.
+			mc.style.setProperty('--center-play-button', 'none')
+			mc.style.setProperty('--bottom-play-button', 'inline-flex')
 		}
 
 		const onUserInactiveChange = (evt: Event) => {
@@ -535,6 +542,12 @@ export function PlayerGestureShell({
 				return
 			}
 			activePointerIdRef.current = e.pointerId
+			// Capture so pointerup always reaches us even if the surface
+			// swaps geometry (chrome reveal) mid-tap — a lost up leaves a
+			// stale id that would swallow the next tap as a phantom pinch.
+			try {
+				;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+			} catch {}
 			machineRef.current?.pointerDown(zoneForEvent(e), e.clientX, e.clientY)
 		},
 		[zoneForEvent],

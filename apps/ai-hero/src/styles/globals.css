@@ -1401,19 +1401,12 @@ pre .ah-code-inline {
  */
 @media (pointer: coarse) {
 	/*
-	 * gerwig hides the bottom play button below 470px with a rule on
-	 * media-controller inside its shadow stylesheet; inherited values
-	 * can't beat that, but an outer ::part rule wins the cross-tree
-	 * cascade. Play/pause lives bottom-left AND as the gesture shell's
-	 * own big centered button whenever the chrome shows (gerwig's
-	 * centered/pre-play button is template-gated to <470px, so it can
-	 * never appear on iPads — the shell's button replaces it everywhere
-	 * on touch).
+	 * Control visibility (hide gerwig's centered play, re-enable the
+	 * bottom play button) is set as inline style on the media-controller
+	 * element by PlayerGestureShell: gerwig's exportparts does not expose
+	 * a "controller" part, so no page-level ::part rule can reach it, and
+	 * inherited values lose to the theme's own shadow rules.
 	 */
-	mux-player::part(controller) {
-		--center-play-button: none;
-		--bottom-play-button: inline-flex;
-	}
 	mux-player {
 		--media-control-height: 28px;
 		--media-control-padding: 9px;
