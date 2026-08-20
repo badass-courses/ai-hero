@@ -1390,18 +1390,31 @@ pre .ah-code-inline {
 }
 
 /*
- * Bigger media-chrome touch targets on coarse pointers (phones/tablets).
- * The gerwig defaults (14-16px control height, 12px range thumb) are sized
- * for mouse precision and drew "buttons are very small on ipad/phone"
- * feedback from learners. Vars are media-chrome's documented sizing API and
+ * YouTube-web-style bottom bar on coarse pointers (phones/tablets).
+ * Learner feedback: bar buttons too small on ipad/phone. A floating
+ * center cluster covered the screencast content, so play/pause lives
+ * bottom-left in the bar like YouTube's mobile-web player (gerwig
+ * hides it under 470px — re-enable it), sized for touch. No seek
+ * buttons: double-tapping the corners seeks, like everyone expects.
+ * Vars are media-chrome's documented sizing/visibility API and
  * inherit through the mux-player shadow DOM.
  */
 @media (pointer: coarse) {
+	/*
+	 * gerwig hides the bottom play button below 470px with a rule on
+	 * media-controller inside its shadow stylesheet; inherited values
+	 * can't beat that, but an outer ::part rule wins the cross-tree
+	 * cascade. Play/pause bottom-left, no small centered play button.
+	 */
+	mux-player::part(controller) {
+		--center-play-button: none;
+		--bottom-play-button: inline-flex;
+	}
 	mux-player {
-		--media-control-height: 24px;
-		--media-control-padding: 8px;
-		--media-range-thumb-width: 16px;
-		--media-range-thumb-height: 16px;
-		--media-range-track-height: 6px;
+		--media-control-height: 28px;
+		--media-control-padding: 9px;
+		/* keep the timeline slim (YouTube-style); just a grabbable thumb */
+		--media-range-thumb-width: 14px;
+		--media-range-thumb-height: 14px;
 	}
 }

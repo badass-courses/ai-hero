@@ -22,7 +22,7 @@ Researched across YouTube desktop web, mobile web, and the native apps (the nati
 
 | # | Feature | YouTube behavior | Ours today | Verdict |
 |---|---|---|---|---|
-| 1 | **Big centered controls: ⏪10 · play/pause · ⏩10** | Center cluster, ~56–64dp touch targets, visible whenever controls are shown | Phone: centered play only, no seek. iPad: none | 🛠 custom center cluster in our overlay (Mux's own `microvideo` theme proves the pattern) |
+| 1 | **Touch-sized play/pause, bottom-left** | YouTube mobile-web keeps the video clean: big play button in the bottom bar, no floating overlay | Phone: small centered play. iPad: tiny bar button | 🔧 re-enable gerwig's bottom play button (hidden <470px) via a `::part(controller)` var override + touch sizing. *Decision note: a floating center cluster was built first and rejected in live testing — it covered the screencast content. No on-video seek buttons either; double-tap corners is the expected idiom.* |
 | 2 | **Double-tap left/right → ±10s seek** | Works even while controls are hidden; renders only a ripple + "10 seconds" label; consecutive taps accumulate (10→20→30); center dead zone | Nothing | 🛠 custom gesture layer (the marquee gesture) |
 | 3 | **Bigger touch targets for remaining chrome** | n/a (YouTube's are big by default) | media-chrome defaults sized for mouse | 🔧 CSS vars under `@media (pointer: coarse)`: `--media-control-height`, `--media-button-icon-width/height`, `--media-range-thumb-width/height`, `--media-range-track-height` |
 | 4 | **Tap to reveal/hide + auto-hide** | Tap shows chrome, ~3s auto-hide, never hides while paused | ✅ built-in (media-chrome, `autohide` default 2s, pause-guard included) | keep; our overlay syncs via the `userinactivechange` event |
@@ -59,7 +59,7 @@ Desktop's baseline is already close to YouTube: single-click play/pause works (m
 
 ### The interaction model (decided 2026-08-20)
 
-YouTube ships two different touch models: the native app's "single tap only reveals chrome, play/pause needs the center button" and desktop web's "single click/tap toggles playback directly". **Vojta picked the desktop-web model for touch**: single tap pauses/resumes (after the 250ms double-tap disambiguation window), pausing shows the chrome (which stays while paused), and resuming re-arms the ~3s auto-hide. Double-tap on the side thirds still seeks without pausing, and the center cluster shows whenever the chrome does. Desktop mouse behavior (single click = play/pause, built-in) stays untouched.
+YouTube ships two different touch models: the native app's "single tap only reveals chrome, play/pause needs the center button" and desktop web's "single click/tap toggles playback directly". **Vojta picked the desktop-web model for touch**: single tap pauses/resumes (after the 250ms double-tap disambiguation window), pausing shows the chrome (which stays while paused), and resuming re-arms the ~3s auto-hide. Double-tap on the side thirds still seeks without pausing. Every play/pause transition flashes a YouTube-style center glyph (scales up and fades, ~0.5s) as confirmation. Chrome hide timing: ~1s after playback starts, ~3s after other interactions. Desktop mouse behavior (single click = play/pause, built-in) stays untouched.
 
 ## Solution design
 
@@ -80,9 +80,9 @@ Renders:
 <div id={shellId} class="relative …">        ← takes over the aspect/max-h caps
   {children}                                  ← the MuxPlayer, unchanged
   <GestureSurface />                           ← absolute inset-0, coarse-pointer only
-  <CenterCluster />                            ← ⏪10 ▶/⏸ ⏩10, shown with chrome
+  <PlayPauseFlash />                           ← center glyph on state change
   <SeekFeedback />                             ← ripple + "±NN seconds" label
-  <SpeedPill />                                ← P2: "2x ▶▶" while long-pressing
+  <SpeedPill />                                ← "2x ▶▶" while long-pressing
 </div>
 ```
 
@@ -153,7 +153,7 @@ Out of scope at launch: hero video (muted, `pointer-events-none`, decorative), `
 
 1. `autohide` 2s (media-chrome default) vs ~3s (YouTube feel) — one attribute; propose 3s with the cluster since bigger targets need a beat longer.
 2. Center dead-zone width — start at 30% (Vidstack uses side-30% regions), tune on device.
-3. Do we keep gerwig's small centered play on phones underneath our cluster or hide it always? Proposal: hide whenever the shell is active.
+3. ~~Centered play button~~ — resolved: hidden on coarse pointers; play/pause lives bottom-left like YouTube mobile web.
 
 ## Verified facts this spec rests on
 

@@ -4,7 +4,7 @@ import * as React from 'react'
 import { track } from '@/utils/analytics'
 import type { MuxPlayerRefAttributes } from '@mux/mux-player-react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { Pause, Play, RotateCcw, RotateCw } from 'lucide-react'
+import { Pause, Play } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -14,7 +14,10 @@ import {
 } from './video-gesture-machine'
 
 const SEEK_SECONDS = 10
+// YouTube-ish timings: ~3s idle hide after an interaction, but a much
+// quicker drop once playback (re)starts.
 const CHROME_HIDE_MS = 3000
+const CHROME_HIDE_AFTER_PLAY_MS = 1000
 const TOAST_MS = 800
 const RIPPLE_MS = 700
 const DEFAULT_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2]
@@ -86,7 +89,6 @@ export function PlayerGestureShell({
 
 	const [isCoarse, setIsCoarse] = React.useState(false)
 	const [chromeVisible, setChromeVisible] = React.useState(false)
-	const [paused, setPaused] = React.useState(true)
 	const [hasPlayed, setHasPlayed] = React.useState(false)
 	const [ripple, setRipple] = React.useState<{
 		zone: 'left' | 'right'
@@ -98,11 +100,14 @@ export function PlayerGestureShell({
 		key: number
 	} | null>(null)
 	const [holdActive, setHoldActive] = React.useState(false)
+	const [playFlash, setPlayFlash] = React.useState<{
+		kind: 'play' | 'pause'
+		key: number
+	} | null>(null)
 
 	const chromeVisibleRef = React.useRef(chromeVisible)
 	chromeVisibleRef.current = chromeVisible
-	const pausedRef = React.useRef(paused)
-	pausedRef.current = paused
+	const pausedRef = React.useRef(true)
 	const hideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 	const rippleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
 		null,
@@ -132,7 +137,7 @@ export function PlayerGestureShell({
 	}, [])
 
 	const setChrome = React.useCallback(
-		(visible: boolean) => {
+		(visible: boolean, hideAfterMs = CHROME_HIDE_MS) => {
 			const mc = getMediaController(playerRef.current)
 			if (mc) mc.userInactive = !visible
 			setChromeVisible(visible)
@@ -142,7 +147,7 @@ export function PlayerGestureShell({
 					const inner = getMediaController(playerRef.current)
 					if (inner) inner.userInactive = true
 					setChromeVisible(false)
-				}, CHROME_HIDE_MS)
+				}, hideAfterMs)
 			}
 		},
 		[playerRef, clearHideTimer],
@@ -256,15 +261,16 @@ export function PlayerGestureShell({
 			if (!inactive && isCoarse) setChrome(true)
 		}
 		const onPlay = () => {
-			// The ref must lead the state: setChrome reads it synchronously.
 			pausedRef.current = false
-			setPaused(false)
 			setHasPlayed(true)
-			if (isCoarse && chromeVisibleRef.current) setChrome(true)
+			setPlayFlash({ kind: 'play', key: ++keyCounterRef.current })
+			// Chrome clears out fast once playback starts, YouTube-style.
+			if (isCoarse && chromeVisibleRef.current)
+				setChrome(true, CHROME_HIDE_AFTER_PLAY_MS)
 		}
 		const onPause = () => {
 			pausedRef.current = true
-			setPaused(true)
+			setPlayFlash({ kind: 'pause', key: ++keyCounterRef.current })
 			endHoldSpeed()
 			if (isCoarse) setChrome(true)
 		}
@@ -278,18 +284,6 @@ export function PlayerGestureShell({
 			player.removeEventListener('pause', onPause)
 		}
 	}, [playerRef, shellId, isCoarse, setChrome, endHoldSpeed])
-
-	// Hide the theme's own small centered play button while our cluster is up.
-	React.useEffect(() => {
-		const player = playerRef.current
-		if (!player) return
-		if (isCoarse && hasPlayed) {
-			player.style.setProperty('--center-play-button', 'none')
-			return () => {
-				player.style.removeProperty('--center-play-button')
-			}
-		}
-	}, [playerRef, isCoarse, hasPlayed])
 
 	// Desktop extras: chapter keys, speed stepping, keyboard HUD, and the
 	// click swallow after a mouse hold. Native capture listeners so we run
@@ -356,11 +350,12 @@ export function PlayerGestureShell({
 				return
 			}
 			if (e.ctrlKey || e.metaKey || e.altKey) return
-			if (e.key === '>') {
+			// Some layouts/synthetic keyboards report shift+. rather than '>'.
+			if (e.key === '>' || (e.shiftKey && e.key === '.')) {
 				stepRate(1)
 				return
 			}
-			if (e.key === '<') {
+			if (e.key === '<' || (e.shiftKey && e.key === ',')) {
 				stepRate(-1)
 				return
 			}
@@ -418,13 +413,6 @@ export function PlayerGestureShell({
 			new CustomEvent(eventName, { composed: true, bubbles: true }),
 		)
 		void track('video_gesture', { gesture: 'double_click_fullscreen' })
-	}, [playerRef])
-
-	const togglePlay = React.useCallback(() => {
-		const player = playerRef.current
-		if (!player) return
-		if (player.paused) void player.play().catch(() => {})
-		else player.pause()
 	}, [playerRef])
 
 	// Mouse press-and-hold for 2x (fine pointers, video area only).
@@ -501,7 +489,6 @@ export function PlayerGestureShell({
 		machineRef.current?.cancel()
 	}, [])
 
-	const clusterVisible = isCoarse && hasPlayed && (chromeVisible || paused)
 	const surfaceActive = isCoarse && hasPlayed
 
 	return (
@@ -529,66 +516,24 @@ export function PlayerGestureShell({
 					onPointerCancel={onSurfacePointerCancel}
 				/>
 			)}
-			{isCoarse && hasPlayed && (
+			{playFlash && (
 				<div
-					className={cn(
-						'pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-8 transition-opacity duration-200 sm:gap-12',
-						clusterVisible ? 'opacity-100' : 'opacity-0',
-					)}
+					key={playFlash.key}
+					className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
 				>
-					<ClusterButton
-						label={`Back ${SEEK_SECONDS} seconds`}
-						disabled={!clusterVisible}
-						onAction={() => {
-							seekBy(-SEEK_SECONDS)
-							armHideTimer()
-							void track('video_gesture', { gesture: 'center_cluster_seek' })
-						}}
+					<motion.div
+						initial={{ opacity: 0.9, scale: prefersReducedMotion ? 1 : 0.7 }}
+						animate={{ opacity: 0, scale: prefersReducedMotion ? 1 : 1.3 }}
+						transition={{ duration: 0.5, ease: 'easeOut' }}
+						onAnimationComplete={() => setPlayFlash(null)}
+						className="flex h-16 w-16 items-center justify-center rounded-full bg-black/60 text-white"
 					>
-						<RotateCcw aria-hidden="true" className="h-7 w-7" />
-						<span
-							aria-hidden="true"
-							className="absolute text-[10px] font-semibold"
-						>
-							{SEEK_SECONDS}
-						</span>
-					</ClusterButton>
-					<ClusterButton
-						big
-						label={paused ? 'Play' : 'Pause'}
-						disabled={!clusterVisible}
-						onAction={() => {
-							togglePlay()
-							armHideTimer()
-							void track('video_gesture', { gesture: 'center_cluster_play' })
-						}}
-					>
-						{paused ? (
-							<Play
-								aria-hidden="true"
-								className="ml-1 h-9 w-9 fill-current"
-							/>
+						{playFlash.kind === 'play' ? (
+							<Play aria-hidden="true" className="ml-1 h-8 w-8 fill-current" />
 						) : (
-							<Pause aria-hidden="true" className="h-9 w-9 fill-current" />
+							<Pause aria-hidden="true" className="h-8 w-8 fill-current" />
 						)}
-					</ClusterButton>
-					<ClusterButton
-						label={`Forward ${SEEK_SECONDS} seconds`}
-						disabled={!clusterVisible}
-						onAction={() => {
-							seekBy(SEEK_SECONDS)
-							armHideTimer()
-							void track('video_gesture', { gesture: 'center_cluster_seek' })
-						}}
-					>
-						<RotateCw aria-hidden="true" className="h-7 w-7" />
-						<span
-							aria-hidden="true"
-							className="absolute text-[10px] font-semibold"
-						>
-							{SEEK_SECONDS}
-						</span>
-					</ClusterButton>
+					</motion.div>
 				</div>
 			)}
 			<AnimatePresence>
@@ -641,32 +586,3 @@ export function PlayerGestureShell({
 	)
 }
 
-function ClusterButton({
-	label,
-	big,
-	disabled,
-	onAction,
-	children,
-}: {
-	label: string
-	big?: boolean
-	disabled?: boolean
-	onAction: () => void
-	children: React.ReactNode
-}) {
-	return (
-		<button
-			type="button"
-			aria-label={label}
-			tabIndex={disabled ? -1 : 0}
-			className={cn(
-				'touch-manipulation relative flex items-center justify-center rounded-full bg-black/60 text-white transition-transform active:scale-95',
-				big ? 'h-[72px] w-[72px]' : 'h-14 w-14',
-				disabled ? 'pointer-events-none' : 'pointer-events-auto',
-			)}
-			onClick={onAction}
-		>
-			{children}
-		</button>
-	)
-}
