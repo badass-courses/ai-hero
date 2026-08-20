@@ -97,6 +97,7 @@ export function PlayerGestureShell({
 
 	const [isCoarse, setIsCoarse] = React.useState(false)
 	const [chromeVisible, setChromeVisible] = React.useState(false)
+	const [paused, setPausedState] = React.useState(true)
 	const [hasPlayed, setHasPlayed] = React.useState(false)
 	const [ripple, setRipple] = React.useState<{
 		zone: 'left' | 'right'
@@ -270,6 +271,7 @@ export function PlayerGestureShell({
 		}
 		const onPlay = () => {
 			pausedRef.current = false
+			setPausedState(false)
 			setHasPlayed(true)
 			setPlayFlash({ kind: 'play', key: ++keyCounterRef.current })
 			// Chrome clears out fast once playback starts, YouTube-style.
@@ -283,6 +285,7 @@ export function PlayerGestureShell({
 		}
 		const onPause = () => {
 			pausedRef.current = true
+			setPausedState(true)
 			setPlayFlash({ kind: 'pause', key: ++keyCounterRef.current })
 			endHoldSpeed()
 			if (isCoarse) setChrome(true)
@@ -297,6 +300,18 @@ export function PlayerGestureShell({
 			player.removeEventListener('pause', onPause)
 		}
 	}, [playerRef, shellId, isCoarse, setChrome, endHoldSpeed])
+
+	// The centered play button doubles as gerwig's pre-play button. Keep
+	// it as the start affordance, hide it once playback has begun (from
+	// then on play/pause lives bottom-left plus tap-anywhere).
+	React.useEffect(() => {
+		const player = playerRef.current
+		if (!player || !isCoarse || !hasPlayed) return
+		player.style.setProperty('--center-play-button', 'none')
+		return () => {
+			player.style.removeProperty('--center-play-button')
+		}
+	}, [playerRef, isCoarse, hasPlayed])
 
 	// Desktop extras: chapter keys, speed stepping, keyboard HUD, and the
 	// click swallow after a mouse hold. Native capture listeners so we run
@@ -502,7 +517,8 @@ export function PlayerGestureShell({
 		machineRef.current?.cancel()
 	}, [])
 
-	const surfaceActive = isCoarse && hasPlayed
+	const surfaceActive = isCoarse
+	const chromeShowing = chromeVisible || paused
 
 	return (
 		<div
@@ -518,7 +534,7 @@ export function PlayerGestureShell({
 					aria-hidden="true"
 					className={cn(
 						'touch-manipulation absolute z-10 select-none',
-						chromeVisible
+						chromeShowing
 							? 'bottom-24 left-0 right-0 top-14'
 							: 'inset-0',
 					)}
