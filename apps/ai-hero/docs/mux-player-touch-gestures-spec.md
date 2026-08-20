@@ -59,7 +59,7 @@ Desktop's baseline is already close to YouTube: single-click play/pause works (m
 
 ### The interaction model (final, 2026-08-20 — revised twice in live testing)
 
-The YouTube-native two-step, picked by Vojta after first trying direct tap-to-pause: **a tap while the chrome is hidden only reveals it (bringing up a big centered play/pause button); a tap while the chrome shows — or while paused — toggles play/pause.** The two-step is the accidental-tap protection. Details:
+The YouTube-native model, converged on by Vojta after first trying direct tap-to-pause: **a tap while the chrome is hidden reveals it (bringing up a big centered play/pause button); a background tap while the chrome shows hides it again; play/pause is the centered or bottom button.** While paused, a background tap resumes (media-chrome CSS pins the chrome visible when paused, so a "hide" would read as a dead tap). The reveal/dismiss symmetry is the accidental-tap protection. Details:
 
 - Double-tap on the side thirds seeks without pausing (accumulating ripple); a center tap during a seek burst ends the burst and acts as a fresh tap (a swallowed tap reads as a dead spot).
 - A lingering press that never engaged 2x (e.g. while paused) acts as a tap on release — no dead taps.

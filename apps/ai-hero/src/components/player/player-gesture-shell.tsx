@@ -223,9 +223,11 @@ export function PlayerGestureShell({
 		setHoldActive(false)
 	}, [playerRef])
 
-	// Vojta's model (2026-08-20, revised): YouTube-native two-step — a tap
-	// while the chrome is hidden only reveals it; a tap while the chrome
-	// shows (or the video is paused) toggles play/pause.
+	// Vojta's model (2026-08-20, final): YouTube-native — a tap with the
+	// chrome hidden reveals it; a background tap with the chrome up hides
+	// it again (play/pause is the centered/bottom button); while paused, a
+	// background tap resumes (the chrome is CSS-pinned visible when paused,
+	// so a "hide" there would read as a dead tap).
 	const handleSingleTap = React.useCallback(() => {
 		const player = playerRef.current
 		if (!player) return
@@ -238,9 +240,13 @@ export function PlayerGestureShell({
 			void track('video_gesture', { gesture: 'tap_reveal_chrome' })
 			return
 		}
-		if (player.paused) void player.play().catch(() => {})
-		else player.pause()
-		void track('video_gesture', { gesture: 'tap_play_toggle' })
+		if (player.paused) {
+			void player.play().catch(() => {})
+			void track('video_gesture', { gesture: 'tap_play_toggle' })
+			return
+		}
+		setChrome(false)
+		void track('video_gesture', { gesture: 'tap_hide_chrome' })
 	}, [playerRef, setChrome])
 	const handleSingleTapRef = React.useRef(handleSingleTap)
 	handleSingleTapRef.current = handleSingleTap
