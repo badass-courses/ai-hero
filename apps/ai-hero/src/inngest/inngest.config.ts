@@ -18,6 +18,7 @@ import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
 import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
+import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
 
@@ -100,6 +101,7 @@ const allFunctions = [
 	addSubscriptionRoleDiscord,
 	removePurchaseRoleDiscord,
 	postPurchaseWorkflow,
+	teamPurchaseFulfillmentWorkflow,
 	postPurchaseDiscordRole,
 	postPurchaseWelcomeEmail,
 	buyerPurchaseBenefitFollowup,
