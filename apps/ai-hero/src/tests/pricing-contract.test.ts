@@ -2,6 +2,7 @@ import type Stripe from 'stripe'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
+import type { CheckoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 
 import { formatPricesForProduct } from '@coursebuilder/core'
@@ -473,6 +474,15 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 		const appAdapter = createAppAdapter({
 			credit: { kind: 'exclusive', amount: 20000 },
 		})
+		const handoffStore: CheckoutLoginHandoffStore = {
+			issue: async () => undefined,
+			claim: async ({ nonceHash, userId }) => ({
+				kind: 'acquired',
+				claim: { nonceHash, claimId: 'claim-contract', userId },
+			}),
+			complete: async () => true,
+			failRetryable: async () => true,
+		}
 		const checkoutHandoffToken = createCheckoutLoginHandoff({
 			secret,
 			country: 'TR',
@@ -485,6 +495,7 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 
 		const pricing = await resolveLoggedInCheckoutPricing({
 			adapter: appAdapter,
+			handoffStore,
 			verifiedUserId: USER_ID,
 			checkoutParams: {
 				productId: PRODUCT_ID,
@@ -493,11 +504,14 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 				couponId: pppCoupon.id,
 			},
 			checkoutHandoffToken,
+			browserSession: 'browser-contract',
 			trustedCountry: 'US',
 			handoffSecret: secret,
 			now: new Date('2026-08-19T20:05:00.000Z'),
 		})
 
+		expect(pricing.kind).toBe('ready')
+		if (pricing.kind !== 'ready') throw new Error('expected ready pricing')
 		expect(pricing.checkoutHandoff).toMatchObject({ valid: true })
 		expect(pricing.couponAuthorization).toMatchObject({
 			authorized: false,

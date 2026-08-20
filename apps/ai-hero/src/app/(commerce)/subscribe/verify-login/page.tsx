@@ -1,5 +1,5 @@
 import { ParsedUrlQuery } from 'querystring'
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { Logo } from '@/components/brand/logo'
 import LayoutClient from '@/components/layout-client'
@@ -7,7 +7,15 @@ import { Login } from '@/components/login'
 import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
+import {
+	CHECKOUT_LOGIN_BROWSER_COOKIE,
+	hashCheckoutLoginBrowserSession,
+} from '@/lib/checkout-login-browser-session'
+import {
+	createCheckoutLoginHandoffEnvelope,
+	hashCheckoutLoginHandoffNonce,
+} from '@/lib/checkout-login-handoff'
+import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
 import { getProduct } from '@/lib/products-query'
 import {
@@ -35,7 +43,8 @@ export default async function VerifyLoginPage({
 	searchParams: Promise<ParsedUrlQuery>
 }) {
 	const headersList = await headers()
-	const { checkoutUrl, ...checkoutParams } = await searchParams
+	const rawSearchParams = await searchParams
+	const { checkoutUrl, ...checkoutParams } = rawSearchParams
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
 	const providers = getProviders()
@@ -99,6 +108,25 @@ export default async function VerifyLoginPage({
 		return '/subscribe/error'
 	}
 
+	const cookieStore = await cookies()
+	const browserSession = cookieStore.get(
+		CHECKOUT_LOGIN_BROWSER_COOKIE,
+	)?.value
+	if (!browserSession) {
+		const returnParams = new URLSearchParams()
+		for (const [key, value] of Object.entries(rawSearchParams)) {
+			if (Array.isArray(value)) {
+				for (const item of value) returnParams.append(key, item)
+			} else if (value !== undefined) {
+				returnParams.set(key, value)
+			}
+		}
+		const returnTo = `/subscribe/verify-login?${returnParams.toString()}`
+		return redirect(
+			`/subscribe/verify-login/browser-session?returnTo=${encodeURIComponent(returnTo)}`,
+		)
+	}
+
 	if (!env.NEXTAUTH_SECRET) {
 		return redirect('/subscribe/error')
 	}
@@ -119,17 +147,28 @@ export default async function VerifyLoginPage({
 		requestedMerchantCouponId: parsedCheckoutParams.data.couponId,
 		requestedSiteCouponId: parsedCheckoutParams.data.usedCouponId,
 	})
-	const checkoutHandoff = createCheckoutLoginHandoff({
+	const now = new Date()
+	const checkoutHandoff = createCheckoutLoginHandoffEnvelope({
 		secret: env.NEXTAUTH_SECRET,
 		country: trustedCountry,
 		pppSelected: couponAuthorization.requestedPPP === true,
 		productId: parsedCheckoutParams.data.productId,
 		quantity: parsedCheckoutParams.data.quantity ?? 1,
+		now,
+	})
+	await checkoutLoginHandoffStore.issue({
+		nonceHash: hashCheckoutLoginHandoffNonce(
+			checkoutHandoff.payload.nonce,
+		),
+		browserSessionHash: hashCheckoutLoginBrowserSession(browserSession),
+		payload: checkoutHandoff.payload,
+		boundUserId: user?.id,
+		now,
 	})
 	const signedCheckoutParams = {
 		...parsedCheckoutParams.data,
 		country: trustedCountry,
-		checkoutHandoff,
+		checkoutHandoff: checkoutHandoff.token,
 	}
 	const checkoutSearchParams = new URLSearchParams(
 		Object.entries(signedCheckoutParams).flatMap(([key, value]) => {

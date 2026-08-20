@@ -36,18 +36,98 @@ const mocks = vi.hoisted(() => {
 		expiresAt: null,
 	}
 	const getEntitlementsForUser = vi.fn()
+	let lifecycleState:
+		| 'issued'
+		| 'consuming'
+		| 'completed'
+		| 'failed_retryable' = 'issued'
+	let boundUserId: string | undefined
+	let completedRedirect: string | undefined
+	let expectedBrowserSessionHash = ''
+	const claim = vi.fn(
+		async (input: {
+			browserSessionHash: string
+			nonceHash: string
+			userId: string
+		}) => {
+			if (input.browserSessionHash !== expectedBrowserSessionHash) {
+				return { kind: 'browser-mismatch' as const }
+			}
+			if (boundUserId && boundUserId !== input.userId) {
+				return { kind: 'user-mismatch' as const }
+			}
+			if (lifecycleState === 'completed' && completedRedirect) {
+				return { kind: 'completed' as const, redirect: completedRedirect }
+			}
+			if (
+				lifecycleState !== 'issued' &&
+				lifecycleState !== 'failed_retryable'
+			) {
+				return { kind: 'replayed' as const, state: lifecycleState }
+			}
+			lifecycleState = 'consuming'
+			boundUserId = input.userId
+			return {
+				kind: 'acquired' as const,
+				claim: {
+					nonceHash: input.nonceHash,
+					claimId: 'claim-test',
+					userId: input.userId,
+				},
+			}
+		},
+	)
+	const complete = vi.fn(
+		async (input: { redirect: string; claim: { userId: string } }) => {
+			if (
+				lifecycleState !== 'consuming' ||
+				boundUserId !== input.claim.userId
+			) {
+				return false
+			}
+			lifecycleState = 'completed'
+			completedRedirect = input.redirect
+			return true
+		},
+	)
+	const failRetryable = vi.fn(
+		async (input: { claim: { userId: string } }) => {
+			if (
+				lifecycleState !== 'consuming' ||
+				boundUserId !== input.claim.userId
+			) {
+				return false
+			}
+			lifecycleState = 'failed_retryable'
+			return true
+		},
+	)
+	const getServerAuthSession = vi.fn(async () => ({
+		session: { user: { id: 'user-actual' } },
+	}))
 	return {
+		browserSession: 'browser-session-a',
+		claim,
+		complete,
 		coupon,
 		createCheckoutSession: vi.fn(async () => ({
 			redirect: 'https://checkout.example/session',
 		})),
 		entitlement,
+		failRetryable,
 		getEntitlementsForUser,
+		getServerAuthSession,
 		headers: vi.fn(async () => new Headers()),
 		inactivePppMerchantCoupon,
 		merchantCoupon,
 		pppMerchantCoupon,
 		redirect: vi.fn((url: string) => url),
+		resetLifecycle(browserSessionHash: string) {
+			lifecycleState = 'issued'
+			boundUserId = undefined
+			completedRedirect = undefined
+			expectedBrowserSessionHash = browserSessionHash
+		},
 		resolveServerComputedCheckoutCoupon: vi.fn(
 			async (): Promise<{ id: string; type: string } | null> => null,
 		),
@@ -79,6 +159,13 @@ vi.mock('@/db', () => ({
 		getEntitlementsForUser: mocks.getEntitlementsForUser,
 	},
 }))
+vi.mock('@/lib/checkout-login-handoff-store', () => ({
+	checkoutLoginHandoffStore: {
+		claim: mocks.claim,
+		complete: mocks.complete,
+		failRetryable: mocks.failRetryable,
+	},
+}))
 vi.mock('@/lib/checkout-subscriber-attribution', () => ({
 	addKitSubscriberToCheckoutAttribution: vi.fn(() => ({})),
 }))
@@ -86,12 +173,16 @@ vi.mock('@/lib/subscriptions', () => ({
 	getSubscriptionStatus: vi.fn(async () => ({ hasActiveSubscription: false })),
 }))
 vi.mock('@/server/auth', () => ({
-	getServerAuthSession: vi.fn(async () => ({
-		session: { user: { id: 'user-actual' } },
-	})),
+	getServerAuthSession: mocks.getServerAuthSession,
 }))
 vi.mock('next/headers', () => ({
-	cookies: vi.fn(async () => ({ get: vi.fn(() => undefined) })),
+	cookies: vi.fn(async () => ({
+		get: vi.fn((name: string) =>
+			name === '__Host-aih_checkout_login_session'
+				? { value: mocks.browserSession }
+				: undefined,
+		),
+	})),
 	headers: mocks.headers,
 }))
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }))
@@ -99,6 +190,7 @@ vi.mock('@coursebuilder/core/lib/checkout-attribution', () => ({
 	buildCheckoutAttribution: vi.fn(() => ({})),
 }))
 
+import { hashCheckoutLoginBrowserSession } from '@/lib/checkout-login-browser-session'
 import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
 
 import LoginPage from './page'
@@ -138,6 +230,13 @@ const signedHandoff = ({
 describe('logged-in checkout coupon authorization', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.browserSession = 'browser-session-a'
+		mocks.resetLifecycle(
+			hashCheckoutLoginBrowserSession(mocks.browserSession),
+		)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { id: 'user-actual' } },
+		})
 		mocks.headers.mockResolvedValue(new Headers())
 		mocks.resolveServerComputedCheckoutCoupon.mockResolvedValue(null)
 	})
@@ -258,6 +357,118 @@ describe('logged-in checkout coupon authorization', () => {
 		)
 	})
 
+	it('returns the completed checkout receipt on sequential replay', async () => {
+		const params = {
+			...searchParams,
+			country: 'TR',
+			couponId: mocks.pppMerchantCoupon.id,
+			usedCouponId: undefined,
+			checkoutHandoff: signedHandoff(),
+		}
+
+		await LoginPage({ searchParams: Promise.resolve(params) })
+		await LoginPage({ searchParams: Promise.resolve(params) })
+
+		expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(1)
+		expect(mocks.complete).toHaveBeenCalledTimes(1)
+		expect(mocks.redirect).toHaveBeenLastCalledWith(
+			'https://checkout.example/session',
+		)
+	})
+
+	it('allows exactly one provider call for concurrent handoff consumers', async () => {
+		let releaseProvider:
+			| ((value: { redirect: string }) => void)
+			| undefined
+		mocks.createCheckoutSession.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					releaseProvider = resolve
+				}),
+		)
+		const params = {
+			...searchParams,
+			country: 'TR',
+			couponId: mocks.pppMerchantCoupon.id,
+			usedCouponId: undefined,
+			checkoutHandoff: signedHandoff(),
+		}
+
+		const first = LoginPage({ searchParams: Promise.resolve(params) })
+		await vi.waitFor(() => {
+			expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(1)
+		})
+		await LoginPage({ searchParams: Promise.resolve(params) })
+
+		expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(1)
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/subscribe/error?reason=replayed-consuming',
+		)
+		releaseProvider?.({ redirect: 'https://checkout.example/session' })
+		await first
+	})
+
+	it('rejects replay from another authenticated user', async () => {
+		const params = {
+			...searchParams,
+			country: 'TR',
+			couponId: mocks.pppMerchantCoupon.id,
+			usedCouponId: undefined,
+			checkoutHandoff: signedHandoff(),
+		}
+		await LoginPage({ searchParams: Promise.resolve(params) })
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { id: 'user-other' } },
+		})
+
+		await LoginPage({ searchParams: Promise.resolve(params) })
+
+		expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(1)
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/subscribe/error?reason=user-mismatch',
+		)
+	})
+
+	it('rejects a transferred token without its HttpOnly browser session', async () => {
+		mocks.browserSession = 'browser-session-b'
+
+		await LoginPage({
+			searchParams: Promise.resolve({
+				...searchParams,
+				country: 'TR',
+				couponId: mocks.pppMerchantCoupon.id,
+				usedCouponId: undefined,
+				checkoutHandoff: signedHandoff(),
+			}),
+		})
+
+		expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/subscribe/error?reason=browser-mismatch',
+		)
+	})
+
+	it('releases a failed provider claim so the same user can retry', async () => {
+		const providerError = new Error('transient provider failure')
+		mocks.createCheckoutSession.mockRejectedValueOnce(providerError)
+		const params = {
+			...searchParams,
+			country: 'TR',
+			couponId: mocks.pppMerchantCoupon.id,
+			usedCouponId: undefined,
+			checkoutHandoff: signedHandoff(),
+		}
+
+		await expect(
+			LoginPage({ searchParams: Promise.resolve(params) }),
+		).rejects.toBe(providerError)
+		await LoginPage({ searchParams: Promise.resolve(params) })
+
+		expect(mocks.failRetryable).toHaveBeenCalledTimes(1)
+		expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(2)
+		expect(mocks.complete).toHaveBeenCalledTimes(1)
+	})
+
 	it.each([
 		['a trusted US header', new Headers({ 'x-vercel-ip-country': 'US' })],
 		['no country header', new Headers()],
@@ -338,7 +549,7 @@ describe('logged-in checkout coupon authorization', () => {
 			{ country: 'TH', productId: searchParams.productId, quantity: '1' },
 		],
 	] as const)(
-		'falls back safely for a %s signed handoff',
+		'rejects a %s signed handoff before pricing or provider work',
 		async (_, handoff, callbackParams) => {
 			await LoginPage({
 				searchParams: Promise.resolve({
@@ -350,12 +561,10 @@ describe('logged-in checkout coupon authorization', () => {
 				}),
 			})
 
-			expect(mocks.resolveServerComputedCheckoutCoupon).toHaveBeenCalledWith(
-				expect.objectContaining({ country: 'US' }),
-			)
-			expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
-				expect.objectContaining({ country: 'US', couponId: undefined }),
-				expect.anything(),
+			expect(mocks.resolveServerComputedCheckoutCoupon).not.toHaveBeenCalled()
+			expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
+			expect(mocks.redirect).toHaveBeenCalledWith(
+				expect.stringMatching(/^\/subscribe\/error\?reason=invalid-/),
 			)
 		},
 	)

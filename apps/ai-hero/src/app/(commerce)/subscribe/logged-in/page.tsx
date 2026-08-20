@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import { CHECKOUT_LOGIN_BROWSER_COOKIE } from '@/lib/checkout-login-browser-session'
+import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
 import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
@@ -78,15 +80,26 @@ export default async function LoginPage({
 
 	const pricing = await resolveLoggedInCheckoutPricing({
 		adapter: courseBuilderAdapter,
+		handoffStore: checkoutLoginHandoffStore,
 		verifiedUserId: user.id,
 		checkoutParams,
 		checkoutHandoffToken:
 			typeof rawSearchParams.checkoutHandoff === 'string'
 				? rawSearchParams.checkoutHandoff
 				: undefined,
+		browserSession: cookieStore.get(CHECKOUT_LOGIN_BROWSER_COOKIE)?.value,
 		trustedCountry,
 		handoffSecret: env.NEXTAUTH_SECRET,
 	})
+	if (pricing.kind === 'completed') {
+		return redirect(pricing.redirect)
+	}
+	if (pricing.kind === 'rejected') {
+		return redirect(
+			`/subscribe/error?reason=${encodeURIComponent(pricing.reason)}`,
+		)
+	}
+
 	const authorizedCheckoutParams = {
 		...checkoutParams,
 		userId: user.id,
@@ -97,9 +110,29 @@ export default async function LoginPage({
 		...checkoutAttribution,
 	}
 
-	const stripe = await stripeProvider.createCheckoutSession(
-		authorizedCheckoutParams,
-		courseBuilderAdapter,
-	)
+	let stripe: { redirect: string }
+	try {
+		stripe = await stripeProvider.createCheckoutSession(
+			authorizedCheckoutParams,
+			courseBuilderAdapter,
+		)
+	} catch (error) {
+		if (pricing.claim) {
+			await checkoutLoginHandoffStore.failRetryable({
+				claim: pricing.claim,
+			})
+		}
+		throw error
+	}
+
+	if (pricing.claim) {
+		const receiptStored = await checkoutLoginHandoffStore.complete({
+			claim: pricing.claim,
+			redirect: stripe.redirect,
+		})
+		if (!receiptStored) {
+			throw new Error('checkout-login-handoff-receipt-write-failed')
+		}
+	}
 	return redirect(stripe.redirect)
 }

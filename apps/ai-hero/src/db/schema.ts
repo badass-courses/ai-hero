@@ -109,6 +109,35 @@ export const {
 	entitlementTypes,
 } = getCourseBuilderSchema(mysqlTable)
 
+export const checkoutLoginHandoff = mysqlTable(
+	'CheckoutLoginHandoff',
+	{
+		nonceHash: varchar('nonceHash', { length: 64 }).notNull().primaryKey(),
+		browserSessionHash: varchar('browserSessionHash', { length: 64 }).notNull(),
+		country: varchar('country', { length: 2 }).notNull(),
+		productId: varchar('productId', { length: 255 }).notNull(),
+		quantity: int('quantity').notNull(),
+		pppSelected: boolean('pppSelected').notNull(),
+		state: varchar('state', { length: 32 }).notNull(),
+		boundUserId: varchar('boundUserId', { length: 255 }),
+		claimId: varchar('claimId', { length: 64 }),
+		checkoutRedirect: text('checkoutRedirect'),
+		issuedAt: timestamp('issuedAt', { mode: 'date', fsp: 3 }).notNull(),
+		expiresAt: timestamp('expiresAt', { mode: 'date', fsp: 3 }).notNull(),
+		completedAt: timestamp('completedAt', { mode: 'date', fsp: 3 }),
+		updatedAt: timestamp('updatedAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		expiresAtIdx: index('CheckoutLoginHandoff_expiresAt_idx').on(
+			table.expiresAt,
+		),
+		stateIdx: index('CheckoutLoginHandoff_state_idx').on(table.state),
+	}),
+)
+
 /**
  * Draft-only Course Video Manager -> AI Hero control-plane records.
  * The binding is server-created and immutable; public callers never write target IDs.

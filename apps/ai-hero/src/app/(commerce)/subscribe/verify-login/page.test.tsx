@@ -6,6 +6,15 @@ const mocks = vi.hoisted(() => ({
 		authorized: false,
 		requestedPPP: true,
 	})),
+	browserSession: 'test-browser-session',
+	cookies: vi.fn(async () => ({
+		get: vi.fn((name: string) =>
+			name === '__Host-aih_checkout_login_session'
+				? { value: 'test-browser-session' }
+				: undefined,
+		),
+	})),
+	handoffIssue: vi.fn(async () => undefined),
 	headers: vi.fn(async () => new Headers()),
 	redirect: vi.fn((url: string) => url),
 }))
@@ -28,6 +37,9 @@ vi.mock('@/lib/exclusive-coupon-authorization', () => ({
 	authorizeExclusiveCouponSelection:
 		mocks.authorizeExclusiveCouponSelection,
 }))
+vi.mock('@/lib/checkout-login-handoff-store', () => ({
+	checkoutLoginHandoffStore: { issue: mocks.handoffIssue },
+}))
 vi.mock('@/lib/products-query', () => ({
 	getProduct: vi.fn(async () => ({
 		id: 'product-crash-course',
@@ -41,10 +53,17 @@ vi.mock('@/server/auth', () => ({
 	getProviders: vi.fn(() => []),
 	getServerAuthSession: vi.fn(async () => ({ session: null, ability: null })),
 }))
-vi.mock('next/headers', () => ({ headers: mocks.headers }))
+vi.mock('next/headers', () => ({
+	cookies: mocks.cookies,
+	headers: mocks.headers,
+}))
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }))
 
-import { verifyCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
+import { hashCheckoutLoginBrowserSession } from '@/lib/checkout-login-browser-session'
+import {
+	hashCheckoutLoginHandoffNonce,
+	verifyCheckoutLoginHandoff,
+} from '@/lib/checkout-login-handoff'
 
 import VerifyLoginPage from './page'
 
@@ -67,6 +86,13 @@ function callbackUrlFrom(result: unknown) {
 describe('verify-login checkout handoff', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mocks.cookies.mockResolvedValue({
+			get: vi.fn((name: string) =>
+				name === '__Host-aih_checkout_login_session'
+					? { value: mocks.browserSession }
+					: undefined,
+			),
+		})
 		mocks.authorizeExclusiveCouponSelection.mockResolvedValue({
 			authorized: false,
 			requestedPPP: true,
@@ -107,6 +133,43 @@ describe('verify-login checkout handoff', () => {
 				valid: true,
 				payload: { country: trustedCountry, pppSelected: true },
 			})
+			if (!verification.valid) throw new Error('expected valid handoff')
+			expect(mocks.handoffIssue).toHaveBeenCalledWith(
+				expect.objectContaining({
+					nonceHash: hashCheckoutLoginHandoffNonce(
+						verification.payload.nonce,
+					),
+					browserSessionHash: hashCheckoutLoginBrowserSession(
+						mocks.browserSession,
+					),
+					payload: verification.payload,
+				}),
+			)
 		},
 	)
+
+	it('bootstraps an HttpOnly browser session before issuing a handoff', async () => {
+		mocks.cookies.mockResolvedValue({
+			get: vi.fn(
+				(_name: string): { value: string } | undefined => undefined,
+			),
+		})
+		const redirectError = new Error('redirected')
+		mocks.redirect.mockImplementationOnce(() => {
+			throw redirectError
+		})
+
+		await expect(
+			VerifyLoginPage({
+				searchParams: Promise.resolve(checkoutParams),
+			}),
+		).rejects.toBe(redirectError)
+
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			expect.stringMatching(
+				/^\/subscribe\/verify-login\/browser-session\?returnTo=/,
+			),
+		)
+		expect(mocks.handoffIssue).not.toHaveBeenCalled()
+	})
 })

@@ -1,10 +1,15 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import {
+	createHash,
+	createHmac,
+	randomUUID,
+	timingSafeEqual,
+} from 'node:crypto'
 
 const HANDOFF_VERSION = 1 as const
 const HANDOFF_TTL_MS = 10 * 60 * 1000
 const SIGNATURE_DOMAIN = 'ai-hero:checkout-login-handoff:v1:'
 
-type CheckoutLoginHandoffPayload = {
+export type CheckoutLoginHandoffPayload = {
 	version: typeof HANDOFF_VERSION
 	country: string
 	pppSelected: boolean
@@ -35,15 +40,7 @@ export type CheckoutLoginHandoffVerification =
 				| 'country-mismatch'
 	  }
 
-export function createCheckoutLoginHandoff({
-	secret,
-	country,
-	pppSelected,
-	productId,
-	quantity,
-	nonce = randomUUID(),
-	now = new Date(),
-}: {
+type CreateCheckoutLoginHandoffInput = {
 	secret: string
 	country: string
 	pppSelected: boolean
@@ -51,7 +48,17 @@ export function createCheckoutLoginHandoff({
 	quantity: number
 	nonce?: string
 	now?: Date
-}) {
+}
+
+export function createCheckoutLoginHandoffEnvelope({
+	secret,
+	country,
+	pppSelected,
+	productId,
+	quantity,
+	nonce = randomUUID(),
+	now = new Date(),
+}: CreateCheckoutLoginHandoffInput) {
 	if (!secret) throw new Error('checkout-login-handoff-secret-required')
 
 	const issuedAt = now.getTime()
@@ -72,7 +79,22 @@ export function createCheckoutLoginHandoff({
 	const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString(
 		'base64url',
 	)
-	return `${HANDOFF_VERSION}.${encodedPayload}.${sign(encodedPayload, secret)}`
+	return {
+		payload,
+		token: `${HANDOFF_VERSION}.${encodedPayload}.${sign(encodedPayload, secret)}`,
+	}
+}
+
+export function createCheckoutLoginHandoff(
+	input: CreateCheckoutLoginHandoffInput,
+) {
+	return createCheckoutLoginHandoffEnvelope(input).token
+}
+
+export function hashCheckoutLoginHandoffNonce(nonce: string) {
+	return createHash('sha256')
+		.update(`ai-hero:checkout-login-handoff-nonce:v1:${nonce}`)
+		.digest('hex')
 }
 
 export function verifyCheckoutLoginHandoff({
