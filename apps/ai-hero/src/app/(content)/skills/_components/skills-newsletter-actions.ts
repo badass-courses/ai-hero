@@ -19,6 +19,7 @@ import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
+import { issueSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
 
 import {
 	SKILLS_FORM_ID,
@@ -91,6 +92,16 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			}
 		}
 		await setSubscriberCookie(subscribed)
+		try {
+			await issueSkillsCourseRecoveryToken({
+				kitSubscriberId: String(subscribed.id),
+				email: subscribed.email_address!,
+			})
+		} catch {
+			await log.warn('skills.course.recovery_token_issue_failed', {
+				outcome: 'not-issued',
+			})
+		}
 		await sendSkillsNewsletterPathEntry(subscribed, source)
 
 		// From the PARSED record, not the cookie: on the session path there may be

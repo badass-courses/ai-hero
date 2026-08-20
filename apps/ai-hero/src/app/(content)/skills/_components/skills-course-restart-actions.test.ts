@@ -1,14 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	buildPersonalization: vi.fn(),
-	findContactByEmail: vi.fn(),
-	getAnswerPages: vi.fn(),
+	getServerAuthSession: vi.fn(),
 	getSubscriberByEmail: vi.fn(),
-	log: { info: vi.fn(), error: vi.fn() },
-	reconcile: vi.fn(),
-	resolveIdentity: vi.fn(),
-	sendAnEmail: vi.fn(),
+	inngestSend: vi.fn(),
+	log: { error: vi.fn() },
+	readRecoveryToken: vi.fn(),
 }))
 
 vi.mock('@/coursebuilder/email-list-provider', () => ({
@@ -16,128 +13,189 @@ vi.mock('@/coursebuilder/email-list-provider', () => ({
 		getSubscriberByEmail: mocks.getSubscriberByEmail,
 	},
 }))
-
-vi.mock('@/db', () => ({ db: {} }))
-vi.mock('@/emails/basic-email', () => ({ default: vi.fn() }))
-vi.mock('@/env.mjs', () => ({
-	env: {
-		NEXT_PUBLIC_SITE_TITLE: 'AI Hero',
-		NEXT_PUBLIC_SUPPORT_EMAIL: 'support@aihero.dev',
-	},
+vi.mock('@/inngest/inngest.server', () => ({
+	inngest: { send: mocks.inngestSend },
 }))
-vi.mock('@/lib/enrolment-identity', () => ({
-	resolveEnrolmentIdentity: mocks.resolveIdentity,
-}))
-vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
-	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
-}))
-vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
-	DrizzleCaptureMarketingRepository: class {
-		findContactByEmail = mocks.findContactByEmail
-	},
-}))
-vi.mock('@/lib/subscriber-marketing/value-path-answer-page', () => ({
-	getValuePathAnswerPages: mocks.getAnswerPages,
-}))
-vi.mock('@/lib/subscriber-marketing/value-path-email-executor', () => ({
-	buildValuePathEmailPersonalization: mocks.buildPersonalization,
-}))
+vi.mock(
+	'@/lib/subscriber-marketing/skills-course-recovery-token.server',
+	() => ({
+		readSkillsCourseRecoveryToken: mocks.readRecoveryToken,
+	}),
+)
 vi.mock('@/schemas/subscriber', () => ({
-	SubscriberSchema: { parse: (value: unknown) => value },
+	SubscriberSchema: {
+		safeParse: (value: unknown) =>
+			value
+				? { success: true, data: value }
+				: { success: false, error: new Error('invalid subscriber') },
+	},
+}))
+vi.mock('@/server/auth', () => ({
+	getServerAuthSession: mocks.getServerAuthSession,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
-vi.mock('@coursebuilder/utils/send-an-email', () => ({
-	sendAnEmail: mocks.sendAnEmail,
-}))
 
 import { resendSkillsCourseLessonOne } from './skills-course-restart-actions'
 
 describe('resendSkillsCourseLessonOne', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET = 'test-secret'
-		process.env.NEXT_PUBLIC_URL = 'https://www.aihero.dev'
-		mocks.resolveIdentity.mockResolvedValue({
-			identity: {
-				email: 'learner@example.com',
-				name: 'Learner',
-				via: 'cookie',
-			},
-			subscriber: { id: 41, email_address: 'learner@example.com' },
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'learner@example.com' } },
 		})
 		mocks.getSubscriberByEmail.mockResolvedValue({
 			id: 41,
 			email_address: 'learner@example.com',
 			state: 'active',
-			fields: {},
 		})
-		mocks.reconcile.mockResolvedValue({ status: 'active' })
-		mocks.findContactByEmail.mockResolvedValue({ id: 'contact-41' })
-		mocks.getAnswerPages.mockResolvedValue([])
-		mocks.buildPersonalization.mockReturnValue({
-			passed: true,
-			fields: {
-				aih_value_path_answer_links_json: JSON.stringify([
-					{ optionValue: 'personal', href: 'https://aih.test/personal' },
-					{ optionValue: 'team', href: 'https://aih.test/team' },
-					{ optionValue: 'unsure', href: 'https://aih.test/unsure' },
-				]),
+		mocks.readRecoveryToken.mockResolvedValue({
+			valid: false,
+			reason: 'missing',
+		})
+		mocks.inngestSend.mockResolvedValue({ ids: ['event-1'] })
+		mocks.log.error.mockResolvedValue(undefined)
+	})
+
+	it('queues only after the server session email matches the provider subscriber', async () => {
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: true,
+		})
+
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledWith(
+			'learner@example.com',
+		)
+		expect(mocks.readRecoveryToken).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).toHaveBeenCalledWith({
+			id: expect.stringMatching(/^skills-course-lesson-one-recovery:/),
+			name: 'skills-course/lesson-one-recovery.requested',
+			data: {
+				requestId: expect.any(String),
+				recoveryKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+				requestedAt: expect.any(String),
+				kitSubscriberId: '41',
+				source: 'authenticated-session',
 			},
 		})
-		mocks.sendAnEmail.mockResolvedValue({ MessageID: 'message-1' })
+		const queued = mocks.inngestSend.mock.calls[0]?.[0]
+		expect(JSON.stringify(queued)).not.toContain('learner@example.com')
 	})
 
-	it('sends one transactional lesson without touching a Kit sequence', async () => {
-		const result = await resendSkillsCourseLessonOne('skills_hero_recovery')
+	it('rejects a provider subscriber whose email does not match the session', async () => {
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			id: 999,
+			email_address: 'victim@example.com',
+			state: 'active',
+		})
 
-		expect(result).toEqual({ success: true })
-		expect(mocks.sendAnEmail).toHaveBeenCalledTimes(1)
-		expect(mocks.sendAnEmail).toHaveBeenCalledWith(
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: false,
+			reason: 'not-identified',
+		})
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('queues from an unexpired server-signed recovery token', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		mocks.readRecoveryToken.mockResolvedValue({
+			valid: true,
+			payload: {
+				kitSubscriberId: '41',
+				email: 'learner@example.com',
+			},
+		})
+
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: true,
+		})
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
-				To: 'learner@example.com',
-				type: 'transactional',
-				componentProps: expect.objectContaining({
-					body: expect.stringContaining('https://aih.test/personal'),
-				}),
+				data: expect.objectContaining({ source: 'signed-recovery-token' }),
 			}),
 		)
-		expect(mocks.getSubscriberByEmail).toHaveBeenCalledTimes(1)
 	})
 
-	it('uses the same development signing secret as the answer page', async () => {
-		delete process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET
+	it('does not let a signed token enqueue an arbitrary subscriber id', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		mocks.readRecoveryToken.mockResolvedValue({
+			valid: true,
+			payload: {
+				kitSubscriberId: '999',
+				email: 'learner@example.com',
+			},
+		})
 
-		const result = await resendSkillsCourseLessonOne()
-
-		expect(result).toEqual({ success: true })
-		expect(mocks.buildPersonalization).toHaveBeenCalledWith(
-			expect.objectContaining({
-				pathTokenSecret: 'dev-value-path-token-secret',
-			}),
-		)
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: false,
+			reason: 'not-identified',
+		})
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
-	it('redirects an inactive subscriber through Kit confirmation', async () => {
-		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+	it('does not use an arbitrary ck_subscriber or ck_subscriber_id without authorization', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
 
-		const result = await resendSkillsCourseLessonOne()
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: false,
+			reason: 'not-identified',
+		})
+		expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
 
-		expect(result).toMatchObject({
+	it('does not enqueue from an unsigned, tampered, or expired browser token', async () => {
+		mocks.getServerAuthSession.mockResolvedValue({ session: null })
+		mocks.readRecoveryToken.mockResolvedValue({
+			valid: false,
+			reason: 'tampered',
+		})
+
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: false,
+			reason: 'not-identified',
+		})
+		expect(mocks.getSubscriberByEmail).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('uses one stable opaque idempotency key for an authorized subscriber', async () => {
+		await resendSkillsCourseLessonOne()
+		await resendSkillsCourseLessonOne()
+
+		const firstEvent = mocks.inngestSend.mock.calls[0]?.[0]
+		const secondEvent = mocks.inngestSend.mock.calls[1]?.[0]
+		expect(firstEvent.data.recoveryKey).toBe(secondEvent.data.recoveryKey)
+		expect(firstEvent.id).not.toBe(secondEvent.id)
+	})
+
+	it('routes inactive authorized subscribers through confirmation', async () => {
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			id: 41,
+			email_address: 'learner@example.com',
+			state: 'inactive',
+		})
+
+		await expect(resendSkillsCourseLessonOne()).resolves.toMatchObject({
 			success: false,
 			reason: 'confirmation-required',
 		})
-		expect(mocks.sendAnEmail).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
-	it('does not claim success when the email provider rejects the resend', async () => {
-		mocks.sendAnEmail.mockResolvedValue({ ErrorCode: 406 })
+	it('redacts identity and provider errors when queueing fails', async () => {
+		mocks.inngestSend.mockRejectedValue(
+			new Error('429 learner@example.com subscriber 41'),
+		)
 
-		const result = await resendSkillsCourseLessonOne()
-
-		expect(result).toEqual({ success: false, reason: 'request-failed' })
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: false,
+			reason: 'request-failed',
+		})
+		const logged = JSON.stringify(mocks.log.error.mock.calls)
+		expect(logged).not.toContain('learner@example.com')
+		expect(logged).not.toContain('41')
 		expect(mocks.log.error).toHaveBeenCalledWith(
-			'skills.course.lesson_one_resend_failed',
-			expect.objectContaining({ error: 'Postmark rejected lesson one: 406' }),
+			'skills.course.lesson_one_recovery_enqueue_failed',
+			{ outcome: 'not-queued' },
 		)
 	})
 })

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	getServerAuthSession: vi.fn(),
 	getSubscriberFromCookie: vi.fn(),
 	inngestSend: vi.fn(),
+	issueRecoveryToken: vi.fn(),
 	log: {
 		info: vi.fn(),
 		warn: vi.fn(),
@@ -72,6 +73,11 @@ vi.mock('@/lib/subscriber-marketing/opt-in-attribution', () => ({
 	parseOptInAttributionCookie: () => undefined,
 }))
 
+vi.mock(
+	'@/lib/subscriber-marketing/skills-course-recovery-token.server',
+	() => ({ issueSkillsCourseRecoveryToken: mocks.issueRecoveryToken }),
+)
+
 import { tagSubscriberAsSkills } from './skills-newsletter-actions'
 
 describe('tagSubscriberAsSkills', () => {
@@ -88,6 +94,7 @@ describe('tagSubscriberAsSkills', () => {
 		mocks.subscribeToList.mockResolvedValue(subscriber)
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
 		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.issueRecoveryToken.mockResolvedValue(undefined)
 		mocks.cookieGet.mockReturnValue(undefined)
 		mocks.getServerAuthSession.mockResolvedValue(null)
 	})
@@ -137,6 +144,21 @@ describe('tagSubscriberAsSkills', () => {
 		expect(mocks.subscribeToList).not.toHaveBeenCalled()
 	})
 
+	it('does not report enrollment failure when recovery token issuance fails', async () => {
+		mocks.issueRecoveryToken.mockRejectedValue(
+			new Error('token secret missing'),
+		)
+
+		await expect(tagSubscriberAsSkills('skills-post')).resolves.toEqual({
+			success: true,
+		})
+		expect(mocks.inngestSend).toHaveBeenCalledTimes(1)
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'skills.course.recovery_token_issue_failed',
+			{ outcome: 'not-issued' },
+		)
+	})
+
 	it('emits course entry with the placement source when ft_attr is absent', async () => {
 		const result = await tagSubscriberAsSkills('skills-post')
 
@@ -156,6 +178,10 @@ describe('tagSubscriberAsSkills', () => {
 				}),
 			}),
 		)
+		expect(mocks.issueRecoveryToken).toHaveBeenCalledWith({
+			kitSubscriberId: '1',
+			email: 'contact',
+		})
 		expect(mocks.setSubscriberCookie).toHaveBeenCalledWith(
 			expect.objectContaining({
 				fields: expect.objectContaining({

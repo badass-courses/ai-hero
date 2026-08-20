@@ -61,6 +61,7 @@ import { sendLiveEventWelcomeEmail } from './functions/send-live-event-welcome-e
 import { shortlinkAttribution } from './functions/shortlink-attribution'
 import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
+import { skillsCourseLessonOneRecovery } from './functions/skills-course-lesson-one-recovery'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
@@ -143,6 +144,7 @@ const allFunctions = [
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,
+	skillsCourseLessonOneRecovery,
 	workshopInterestSync,
 	skillsNewsletterConfirmationReconciler,
 	notifyOnPostCreated,
