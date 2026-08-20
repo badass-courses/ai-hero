@@ -65,9 +65,11 @@ The lesson render now supplies office-hours sessions on the server with two requ
 # Tests and checks
 
 - Red test receipt: the initial focused test failed because `authorized-office-hours-schedule` did not exist.
-- Independent review at `/tmp/aih-office-hours-independent-review.md` found the free-lesson authorization gap, missing relation tombstone filter, and missing cache-order coverage. All required findings are covered below.
-- Focused Vitest run across the access rules, data boundary, route guard, server wrapper, and real MDX cache — 18 passed across 5 files.
-- The tests prove purchaser access to six sessions, anonymous free-lesson denial, admin and reviewer access, non-purchaser redirect before compilation, soft-deleted relation exclusion, and both cache orders.
+- Independent review at `/tmp/aih-office-hours-independent-review.md` found the free-lesson authorization gap, missing relation tombstone filter, and missing cache-order coverage.
+- Follow-up review at `/tmp/aih-office-hours-independent-review-v2.md` confirmed those code fixes and found one test-only gap: the purchaser fixture used self-paced `workshop_content_access` instead of Cohort 004 `cohort_content_access`.
+- Focused Vitest run across the access rules, data boundary, route guard, server wrapper, and real MDX cache — 19 passed across 5 files.
+- The access tests now cover an ordinary Cohort 004 purchaser with an active `cohort_content_access` entitlement, workshop `workshop-ubuuc`, office-hours lesson `lesson-3cmbs`, and a started workshop. They assert read access to both workshop and lesson while retaining the self-paced purchaser case.
+- The remaining tests prove six-session resolution, anonymous free-lesson denial, admin and reviewer access, non-purchaser redirect before compilation, soft-deleted relation exclusion, and both cache orders.
 - `pnpm --filter ai-hero typecheck` — passed.
 - Targeted ESLint on changed application files — 0 errors; one existing `<img>` warning remains in `compile-mdx.tsx`.
 - `pnpm --filter ai-hero test` — 1,919 passed; 5 existing tests plus one markdown-route suite setup failed in unrelated API products, progress, Skills, and markdown-route files.
