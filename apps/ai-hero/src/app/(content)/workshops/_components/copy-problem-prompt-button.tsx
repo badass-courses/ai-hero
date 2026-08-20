@@ -4,7 +4,7 @@ import { use, useState } from 'react'
 import type { Lesson } from '@/lib/lessons'
 import { track } from '@/utils/analytics'
 import { getAdjacentWorkshopResources } from '@/utils/get-adjacent-workshop-resources'
-import { Sparkle } from 'lucide-react'
+import { CheckIcon } from 'lucide-react'
 
 import type { ContentResource } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
@@ -76,6 +76,7 @@ export function CopyProblemPromptButton({
 			onClick={handleCopy}
 			variant="outline"
 			size="sm"
+			aria-label="Copy prompt"
 			className={cn('group h-11 px-5 text-base', className)}
 			type="button"
 			{...rest}
@@ -88,7 +89,7 @@ export function CopyProblemPromptButton({
 					})}
 				>
 					<svg
-						className="dark:text-primary mr-1 size-4 text-amber-500"
+						className="dark:text-primary size-4 text-amber-500 sm:mr-1"
 						xmlns="http://www.w3.org/2000/svg"
 						fill="none"
 						viewBox="0 0 15 15"
@@ -102,8 +103,8 @@ export function CopyProblemPromptButton({
 							d="M1 7.75A6.75 6.75 0 0 0 7.75 1a6.75 6.75 0 0 0 6.75 6.75 6.75 6.75 0 0 0-6.75 6.75A6.75 6.75 0 0 0 1 7.75Z"
 						/>
 					</svg>
-					{/* <Sparkle className="dark:text-primary size-4 text-orange-600" /> */}
-					Copy Prompt
+					{/* Icon-only on mobile so the lesson controls fit one row. */}
+					<span className="hidden sm:inline">Copy Prompt</span>
 				</span>
 				<span
 					aria-hidden={!copied}
@@ -112,7 +113,8 @@ export function CopyProblemPromptButton({
 						{ 'opacity-0': !copied },
 					)}
 				>
-					Copied!
+					<CheckIcon className="size-4 sm:hidden" aria-hidden="true" />
+					<span className="hidden sm:inline">Copied!</span>
 				</span>
 			</span>
 		</Button>

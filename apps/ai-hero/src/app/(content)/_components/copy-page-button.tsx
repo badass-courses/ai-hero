@@ -29,10 +29,14 @@ export function CopyPageButton({
 	markdown,
 	sourceUrl,
 	className,
+	labelClassName,
 	variant = 'outline',
 	size = 'default',
 	...rest
-}: CopySource & ButtonProps) {
+}: CopySource & {
+	/** Classes for the "Copy page" label span — pass `hidden sm:grid` for an icon-only button on mobile (the icon's flip to a check still signals the copy). */
+	labelClassName?: string
+} & ButtonProps) {
 	const [copied, setCopied] = useState(false)
 	const prefersReducedMotion = useReducedMotion()
 
@@ -123,7 +127,7 @@ export function CopyPageButton({
 					</motion.span>
 				</AnimatePresence>
 			</span>
-			<span className="relative grid">
+			<span className={cn('relative grid', labelClassName)}>
 				<span
 					aria-hidden="true"
 					className="invisible col-start-1 row-start-1 whitespace-nowrap"
