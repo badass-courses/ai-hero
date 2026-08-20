@@ -65,7 +65,10 @@ export const LessonControls = async ({
 				className,
 			)}
 		>
-			<div className="flex grow items-center">
+			{/* Left cells separate with border-r, right cells with border-l; the
+			    last left cell drops its border-r so the seam between the groups
+			    is a single hairline. */}
+			<div className="flex grow items-center [&>*:last-child]:border-r-0">
 				<React.Suspense fallback={null}>
 					<GetAccessButton
 						className="border-r-border bg-primary dark:hover:bg-primary/90 h-10 grow justify-center rounded-none border-0 border-r px-5 text-sm sm:h-12 sm:grow-0"
