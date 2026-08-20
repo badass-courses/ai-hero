@@ -26,7 +26,11 @@ export type LoggedInCheckoutPricingResult =
 			checkoutHandoff: CheckoutLoginHandoffVerification
 			couponAuthorization: ExclusiveCouponAuthorizationDecision
 	  }
-	| { kind: 'completed'; redirect: string }
+	| {
+			kind: 'completed'
+			providerSessionId: string
+			redirect: string
+	  }
 	| { kind: 'rejected'; reason: string }
 
 export async function resolveLoggedInCheckoutPricing({
@@ -99,7 +103,11 @@ export async function resolveLoggedInCheckoutPricing({
 			now,
 		})
 		if (claimResult.kind === 'completed') {
-			return { kind: 'completed', redirect: claimResult.redirect }
+			return {
+				kind: 'completed',
+				providerSessionId: claimResult.receipt.providerSessionId,
+				redirect: claimResult.receipt.redirect,
+			}
 		}
 		if (claimResult.kind !== 'acquired') {
 			return {

@@ -10,8 +10,9 @@ describe('checkout login handoff lifecycle', () => {
 	it('has one claim path and one retry path', () => {
 		expect(checkoutLoginHandoffTransitions).toEqual({
 			issued: ['consuming', 'expired'],
-			consuming: ['completed', 'failed_retryable'],
+			consuming: ['completed', 'failed_retryable', 'failed_terminal'],
 			failed_retryable: ['consuming', 'expired'],
+			failed_terminal: [],
 			completed: [],
 			expired: [],
 		})
@@ -33,7 +34,10 @@ describe('checkout login handoff lifecycle', () => {
 		])
 	})
 
-	it('does not leave completed or expired', () => {
+	it('does not leave terminal, completed, or expired', () => {
+		expect(
+			canTransitionCheckoutLoginHandoff('failed_terminal', 'consuming'),
+		).toBe(false)
 		expect(canTransitionCheckoutLoginHandoff('completed', 'consuming')).toBe(
 			false,
 		)

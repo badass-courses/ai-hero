@@ -482,6 +482,7 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 			}),
 			complete: async () => true,
 			failRetryable: async () => true,
+			failTerminal: async () => true,
 		}
 		const checkoutHandoffToken = createCheckoutLoginHandoff({
 			secret,

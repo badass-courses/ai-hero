@@ -1,7 +1,8 @@
 export const checkoutLoginHandoffTransitions = {
 	issued: ['consuming', 'expired'],
-	consuming: ['completed', 'failed_retryable'],
+	consuming: ['completed', 'failed_retryable', 'failed_terminal'],
 	failed_retryable: ['consuming', 'expired'],
+	failed_terminal: [],
 	completed: [],
 	expired: [],
 } as const

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+	checkoutLoginHandoffProviderIdempotencyKey,
 	createCheckoutLoginHandoff,
+	hashCheckoutLoginHandoffNonce,
 	verifyCheckoutLoginHandoff,
 } from './checkout-login-handoff'
 
@@ -26,6 +28,16 @@ const createToken = (
 	})
 
 describe('checkout login handoff', () => {
+	it('derives one stable provider key from the durable nonce hash', () => {
+		const nonceHash = hashCheckoutLoginHandoffNonce('nonce-a')
+		expect(checkoutLoginHandoffProviderIdempotencyKey(nonceHash)).toBe(
+			`aih-login-checkout:${nonceHash}`,
+		)
+		expect(() => checkoutLoginHandoffProviderIdempotencyKey('forged')).toThrow(
+			'invalid-checkout-login-handoff-nonce-hash',
+		)
+	})
+
 	it('accepts an authentic short-lived Turkey PPP handoff', () => {
 		const token = createToken()
 

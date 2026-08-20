@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { CheckoutSessionResult } from '@coursebuilder/core/types'
+
 const mocks = vi.hoisted(() => {
 	const merchantCoupon = {
 		id: 'merchant-prior-credit',
@@ -40,9 +42,12 @@ const mocks = vi.hoisted(() => {
 		| 'issued'
 		| 'consuming'
 		| 'completed'
-		| 'failed_retryable' = 'issued'
+		| 'failed_retryable'
+		| 'failed_terminal' = 'issued'
 	let boundUserId: string | undefined
-	let completedRedirect: string | undefined
+	let completedReceipt:
+		| { providerSessionId: string; redirect: string }
+		| undefined
 	let expectedBrowserSessionHash = ''
 	const claim = vi.fn(
 		async (input: {
@@ -56,8 +61,8 @@ const mocks = vi.hoisted(() => {
 			if (boundUserId && boundUserId !== input.userId) {
 				return { kind: 'user-mismatch' as const }
 			}
-			if (lifecycleState === 'completed' && completedRedirect) {
-				return { kind: 'completed' as const, redirect: completedRedirect }
+			if (lifecycleState === 'completed' && completedReceipt) {
+				return { kind: 'completed' as const, receipt: completedReceipt }
 			}
 			if (
 				lifecycleState !== 'issued' &&
@@ -78,7 +83,10 @@ const mocks = vi.hoisted(() => {
 		},
 	)
 	const complete = vi.fn(
-		async (input: { redirect: string; claim: { userId: string } }) => {
+		async (input: {
+			receipt: { providerSessionId: string; redirect: string }
+			claim: { userId: string }
+		}) => {
 			if (
 				lifecycleState !== 'consuming' ||
 				boundUserId !== input.claim.userId
@@ -86,7 +94,7 @@ const mocks = vi.hoisted(() => {
 				return false
 			}
 			lifecycleState = 'completed'
-			completedRedirect = input.redirect
+			completedReceipt = input.receipt
 			return true
 		},
 	)
@@ -102,6 +110,18 @@ const mocks = vi.hoisted(() => {
 			return true
 		},
 	)
+	const failTerminal = vi.fn(
+		async (input: { claim: { userId: string } }) => {
+			if (
+				lifecycleState !== 'consuming' ||
+				boundUserId !== input.claim.userId
+			) {
+				return false
+			}
+			lifecycleState = 'failed_terminal'
+			return true
+		},
+	)
 	const getServerAuthSession = vi.fn(async () => ({
 		session: { user: { id: 'user-actual' } },
 	}))
@@ -110,11 +130,16 @@ const mocks = vi.hoisted(() => {
 		claim,
 		complete,
 		coupon,
-		createCheckoutSession: vi.fn(async () => ({
-			redirect: 'https://checkout.example/session',
-		})),
+		createCheckoutSession: vi.fn(
+			async (): Promise<CheckoutSessionResult> => ({
+				kind: 'success',
+				providerSessionId: 'cs_test_logged_in',
+				redirect: 'https://checkout.stripe.com/c/pay/cs_test_logged_in',
+			}),
+		),
 		entitlement,
 		failRetryable,
+		failTerminal,
 		getEntitlementsForUser,
 		getServerAuthSession,
 		headers: vi.fn(async () => new Headers()),
@@ -125,7 +150,7 @@ const mocks = vi.hoisted(() => {
 		resetLifecycle(browserSessionHash: string) {
 			lifecycleState = 'issued'
 			boundUserId = undefined
-			completedRedirect = undefined
+			completedReceipt = undefined
 			expectedBrowserSessionHash = browserSessionHash
 		},
 		resolveServerComputedCheckoutCoupon: vi.fn(
@@ -139,7 +164,9 @@ vi.mock('@/coursebuilder/server-computed-checkout-coupon', () => ({
 		mocks.resolveServerComputedCheckoutCoupon,
 }))
 vi.mock('@/coursebuilder/stripe-provider', () => ({
-	stripeProvider: { createCheckoutSession: mocks.createCheckoutSession },
+	stripeProvider: {
+		createCheckoutSessionResult: mocks.createCheckoutSession,
+	},
 }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
@@ -164,6 +191,7 @@ vi.mock('@/lib/checkout-login-handoff-store', () => ({
 		claim: mocks.claim,
 		complete: mocks.complete,
 		failRetryable: mocks.failRetryable,
+		failTerminal: mocks.failTerminal,
 	},
 }))
 vi.mock('@/lib/checkout-subscriber-attribution', () => ({
@@ -354,6 +382,9 @@ describe('logged-in checkout coupon authorization', () => {
 				usedCouponId: undefined,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				idempotencyKey: expect.stringMatching(/^aih-login-checkout:/),
+			}),
 		)
 	})
 
@@ -372,13 +403,17 @@ describe('logged-in checkout coupon authorization', () => {
 		expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(1)
 		expect(mocks.complete).toHaveBeenCalledTimes(1)
 		expect(mocks.redirect).toHaveBeenLastCalledWith(
-			'https://checkout.example/session',
+			'https://checkout.stripe.com/c/pay/cs_test_logged_in',
 		)
 	})
 
 	it('allows exactly one provider call for concurrent handoff consumers', async () => {
 		let releaseProvider:
-			| ((value: { redirect: string }) => void)
+			| ((value: {
+					kind: 'success'
+					providerSessionId: string
+					redirect: string
+			  }) => void)
 			| undefined
 		mocks.createCheckoutSession.mockImplementationOnce(
 			() =>
@@ -404,7 +439,11 @@ describe('logged-in checkout coupon authorization', () => {
 		expect(mocks.redirect).toHaveBeenCalledWith(
 			'/subscribe/error?reason=replayed-consuming',
 		)
-		releaseProvider?.({ redirect: 'https://checkout.example/session' })
+		releaseProvider?.({
+			kind: 'success',
+			providerSessionId: 'cs_test_logged_in',
+			redirect: 'https://checkout.stripe.com/c/pay/cs_test_logged_in',
+		})
 		await first
 	})
 
@@ -448,9 +487,11 @@ describe('logged-in checkout coupon authorization', () => {
 		)
 	})
 
-	it('releases a failed provider claim so the same user can retry', async () => {
-		const providerError = new Error('transient provider failure')
-		mocks.createCheckoutSession.mockRejectedValueOnce(providerError)
+	it('releases a typed retryable provider failure so the same user can retry', async () => {
+		mocks.createCheckoutSession.mockResolvedValueOnce({
+			kind: 'failure',
+			failure: { code: 'transient-provider-failure', retryable: true },
+		})
 		const params = {
 			...searchParams,
 			country: 'TR',
@@ -459,11 +500,12 @@ describe('logged-in checkout coupon authorization', () => {
 			checkoutHandoff: signedHandoff(),
 		}
 
-		await expect(
-			LoginPage({ searchParams: Promise.resolve(params) }),
-		).rejects.toBe(providerError)
+		await LoginPage({ searchParams: Promise.resolve(params) })
 		await LoginPage({ searchParams: Promise.resolve(params) })
 
+		expect(mocks.redirect).toHaveBeenCalledWith(
+			'/subscribe/error?reason=transient-provider-failure',
+		)
 		expect(mocks.failRetryable).toHaveBeenCalledTimes(1)
 		expect(mocks.createCheckoutSession).toHaveBeenCalledTimes(2)
 		expect(mocks.complete).toHaveBeenCalledTimes(1)
@@ -516,6 +558,9 @@ describe('logged-in checkout coupon authorization', () => {
 		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
 			expect.objectContaining({ country: 'US', couponId: undefined }),
 			expect.anything(),
+			expect.objectContaining({
+				idempotencyKey: expect.stringMatching(/^aih-login-checkout:/),
+			}),
 		)
 	})
 
@@ -611,6 +656,9 @@ describe('logged-in checkout coupon authorization', () => {
 				usedCouponId: undefined,
 			}),
 			expect.anything(),
+			expect.objectContaining({
+				idempotencyKey: expect.stringMatching(/^aih-login-checkout:/),
+			}),
 		)
 	})
 })

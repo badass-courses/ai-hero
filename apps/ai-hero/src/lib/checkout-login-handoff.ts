@@ -97,6 +97,13 @@ export function hashCheckoutLoginHandoffNonce(nonce: string) {
 		.digest('hex')
 }
 
+export function checkoutLoginHandoffProviderIdempotencyKey(nonceHash: string) {
+	if (!/^[a-f0-9]{64}$/.test(nonceHash)) {
+		throw new Error('invalid-checkout-login-handoff-nonce-hash')
+	}
+	return `aih-login-checkout:${nonceHash}`
+}
+
 export function verifyCheckoutLoginHandoff({
 	token,
 	secret,
