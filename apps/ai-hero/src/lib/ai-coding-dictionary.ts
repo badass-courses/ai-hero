@@ -1,6 +1,13 @@
 import { unstable_cache } from 'next/cache'
+import {
+	getGithubSourceErrorStatus,
+	githubSourceAuthMode,
+	githubSourceOctokit,
+	isGithubSourceDegradableError,
+	mapWithConcurrency,
+	readGithubSource,
+} from '@/lib/github-source-resilience'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
-import { Octokit } from '@octokit/rest'
 
 const DICTIONARY_OWNER = 'mattpocock'
 const DICTIONARY_REPO = 'dictionary-of-ai-coding'
@@ -48,11 +55,6 @@ function toValidIsoDate(value: unknown): string | null {
 	return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-const octokit = new Octokit({
-	auth: process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined,
-	userAgent: 'ai-hero-dictionary/1.0.0',
-})
-
 export const AI_CODING_DICTIONARY_REVALIDATE_SECONDS =
 	DICTIONARY_REVALIDATE_SECONDS
 
@@ -87,20 +89,28 @@ async function getReadmeMarkdown() {
 }
 
 async function getDictionaryRefUpdatedAt() {
-	try {
-		const response = await octokit.rest.repos.getBranch({
-			owner: DICTIONARY_OWNER,
-			repo: DICTIONARY_REPO,
-			branch: DICTIONARY_REF,
-		})
+	return readGithubSource({
+		cacheKey: `branch:${DICTIONARY_OWNER}/${DICTIONARY_REPO}/${DICTIONARY_REF}`,
+		operation: 'branch',
+		authMode: githubSourceAuthMode,
+		anonymousFallback: async () => null,
+		request: async () => {
+			const response = await githubSourceOctokit.rest.repos.getBranch({
+				owner: DICTIONARY_OWNER,
+				repo: DICTIONARY_REPO,
+				branch: DICTIONARY_REF,
+			})
 
-		return (
-			toValidIsoDate(response.data.commit.commit.committer?.date) ??
-			toValidIsoDate(response.data.commit.commit.author?.date)
-		)
-	} catch {
-		return null
-	}
+			return (
+				toValidIsoDate(response.data.commit.commit.committer?.date) ??
+				toValidIsoDate(response.data.commit.commit.author?.date)
+			)
+		},
+		fallback: async (error) => {
+			if (!isGithubSourceDegradableError(error)) throw error
+			return null
+		},
+	})
 }
 
 function titleToDictionaryPath(title: string) {
@@ -159,60 +169,57 @@ function getDescription(markdown: string) {
 }
 
 async function getDictionarySourceFrontmatter() {
-	let dictionaryFiles: Array<{ path?: string; type?: string }> = []
+	const dictionaryFiles = await readGithubSource({
+		cacheKey: `tree:${DICTIONARY_OWNER}/${DICTIONARY_REPO}/${DICTIONARY_REF}`,
+		operation: 'tree',
+		authMode: githubSourceAuthMode,
+		anonymousFallback: async () => [],
+		request: async () => {
+			const response = await githubSourceOctokit.rest.git.getTree({
+				owner: DICTIONARY_OWNER,
+				repo: DICTIONARY_REPO,
+				tree_sha: DICTIONARY_REF,
+				recursive: 'true',
+			})
 
-	try {
-		const response = await octokit.rest.git.getTree({
-			owner: DICTIONARY_OWNER,
-			repo: DICTIONARY_REPO,
-			tree_sha: DICTIONARY_REF,
-			recursive: 'true',
-		})
-
-		dictionaryFiles = response.data.tree.filter(
-			(item) =>
-				item.type === 'blob' &&
-				item.path?.startsWith('dictionary/') &&
-				item.path.endsWith('.md'),
-		)
-	} catch (error) {
-		const status =
-			typeof error === 'object' && error && 'status' in error
-				? Number(error.status)
-				: undefined
-
-		if (status !== 403) {
-			throw error
-		}
-	}
+			return response.data.tree.filter(
+				(item) =>
+					item.type === 'blob' &&
+					item.path?.startsWith('dictionary/') &&
+					item.path.endsWith('.md'),
+			)
+		},
+		fallback: async (error) => {
+			if (!isGithubSourceDegradableError(error)) throw error
+			return []
+		},
+	})
 
 	const frontmatterByPath = new Map<string, DictionaryFrontmatter>()
 
-	await Promise.all(
-		dictionaryFiles.map(async (file) => {
-			if (!file.path) return
+	await mapWithConcurrency(dictionaryFiles, 6, async (file) => {
+		if (!file.path) return
 
-			try {
-				const rawUrl = `https://raw.githubusercontent.com/${DICTIONARY_OWNER}/${DICTIONARY_REPO}/${DICTIONARY_REF}/${file.path
-					.split('/')
-					.map(encodeURIComponent)
-					.join('/')}`
-				const sourceResponse = await fetch(rawUrl, {
-					next: { revalidate: DICTIONARY_REVALIDATE_SECONDS },
-					signal: AbortSignal.timeout(5000),
-				})
+		try {
+			const rawUrl = `https://raw.githubusercontent.com/${DICTIONARY_OWNER}/${DICTIONARY_REPO}/${DICTIONARY_REF}/${file.path
+				.split('/')
+				.map(encodeURIComponent)
+				.join('/')}`
+			const sourceResponse = await fetch(rawUrl, {
+				next: { revalidate: DICTIONARY_REVALIDATE_SECONDS },
+				signal: AbortSignal.timeout(5000),
+			})
 
-				if (!sourceResponse.ok) return
+			if (!sourceResponse.ok) return
 
-				frontmatterByPath.set(
-					file.path,
-					parseDictionaryFrontmatter(await sourceResponse.text()),
-				)
-			} catch {
-				return
-			}
-		}),
-	)
+			frontmatterByPath.set(
+				file.path,
+				parseDictionaryFrontmatter(await sourceResponse.text()),
+			)
+		} catch {
+			return
+		}
+	})
 
 	return frontmatterByPath
 }
@@ -385,14 +392,39 @@ async function loadDictionary(): Promise<DictionaryData> {
 	)
 }
 
-export const getAiCodingDictionary = unstable_cache(
+const getCachedAiCodingDictionary = unstable_cache(
 	loadDictionary,
-	['ai-coding-dictionary-github-readme-v1'],
+	['ai-coding-dictionary-github-readme-v2'],
 	{
 		revalidate: DICTIONARY_REVALIDATE_SECONDS,
 		tags: ['ai-coding-dictionary'],
 	},
 )
+
+export async function getAiCodingDictionary(): Promise<DictionaryData> {
+	try {
+		return await getCachedAiCodingDictionary()
+	} catch (error) {
+		const status = getGithubSourceErrorStatus(error)
+		console.warn(
+			JSON.stringify({
+				event: 'github_source.dictionary_degraded',
+				schemaVersion: 1,
+				outcome: 'empty_fallback',
+				status,
+				authMode: githubSourceAuthMode,
+				errorCategory:
+					status === 401 ? 'invalid_credential' : 'source_failure',
+			}),
+		)
+		return {
+			sections: [],
+			entries: [],
+			sourceUrl: AI_CODING_DICTIONARY_SOURCE_URL,
+			updatedAt: '1970-01-01T00:00:00.000Z',
+		}
+	}
+}
 
 export async function getAiCodingDictionaryEntry(slug: string) {
 	const dictionary = await getAiCodingDictionary()
