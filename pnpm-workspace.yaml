@@ -40,3 +40,6 @@ packageExtensions:
     dependencies:
       '@codemirror/state': '^6.0.0'
       '@codemirror/view': '^6.0.0'
+
+patchedDependencies:
+  '@coursebuilder/core@2.0.3': patches/@coursebuilder__core@2.0.3.patch

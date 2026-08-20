@@ -1,6 +1,10 @@
 import type Stripe from 'stripe'
 import { describe, expect, it, vi } from 'vitest'
 
+import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
+import type { CheckoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
+import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
+
 import { formatPricesForProduct } from '@coursebuilder/core'
 import {
 	MockCourseBuilderAdapter,
@@ -71,7 +75,9 @@ const pppTiers = [
 	{ country: 'AM', percentage: 0.55, total: 134.55 },
 	{ country: 'AL', percentage: 0.6, total: 119.6 },
 	{ country: 'BJ', percentage: 0.65, total: 104.65 },
+	{ country: 'TH', percentage: 0.65, total: 104.65 },
 	{ country: 'AR', percentage: 0.7, total: 89.7 },
+	{ country: 'TR', percentage: 0.7, total: 89.7 },
 	{ country: 'AF', percentage: 0.75, total: 74.75 },
 ] as const
 
@@ -102,7 +108,7 @@ const pppCoupons: ReadonlyMap<
 type Credit =
 	| { kind: 'none' }
 	| { kind: 'irrelevant'; amount: 3700 | 4500 }
-	| { kind: 'exclusive'; amount: 20000 }
+	| { kind: 'exclusive'; amount: 19000 | 20000 }
 	| { kind: 'ordinary'; amount: 2000 | 20000 }
 
 function creditRecords(credit: Credit) {
@@ -339,11 +345,15 @@ async function checkout({
 	credit = { kind: 'none' },
 	purchaseStatus = 'Restricted',
 	user = true,
+	couponId,
+	appAdapter,
 }: {
 	country: string
 	credit?: Credit
 	purchaseStatus?: 'Restricted' | 'Valid'
 	user?: boolean
+	couponId?: string
+	appAdapter?: CourseBuilderAdapter
 }) {
 	const payments = createPaymentsAdapter()
 	const result = await stripeCheckout({
@@ -354,9 +364,10 @@ async function checkout({
 			quantity: 1,
 			bulk: false,
 			cancelUrl: 'https://www.aihero.dev/cancel',
+			...(couponId && { couponId }),
 		},
 		config: checkoutConfig(payments.adapter),
-		adapter: createAppAdapter({ credit, purchaseStatus }),
+		adapter: appAdapter ?? createAppAdapter({ credit, purchaseStatus }),
 	})
 	const payload = payments.createCheckoutSession.mock.calls[0]?.[0]
 
@@ -437,17 +448,124 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 		expect(payload?.metadata?.provenanceIds).toContain(CREDIT_SITE_COUPON_ID)
 	})
 
-	it('uses PPP below $99 and leaves the exclusive alumni credit untouched', async () => {
+	it.each([
+		{ country: 'TR', alumniCredit: 20000 as const, totalCents: '8970' },
+		{ country: 'TH', alumniCredit: 19000 as const, totalCents: '10465' },
+	])(
+		'uses lower $country PPP instead of the higher alumni price',
+		async ({ country, alumniCredit, totalCents }) => {
+			const { payload } = await checkout({
+				country,
+				credit: { kind: 'exclusive', amount: alumniCredit },
+			})
+
+			expect(payload?.metadata).toMatchObject({
+				expectedTotalCents: totalCents,
+				pricingCandidate: 'ppp',
+			})
+			expect(payload?.metadata?.usedEntitlementCouponIds).toBeUndefined()
+		},
+	)
+
+	it('joins a signed Turkey login handoff to real coupon resolution and restricted checkout metadata', async () => {
+		const now = new Date('2026-08-19T20:00:00.000Z')
+		const secret = 'test-checkout-handoff-secret'
+		const pppCoupon = pppCoupons.get(0.7)!
+		const appAdapter = createAppAdapter({
+			credit: { kind: 'exclusive', amount: 20000 },
+		})
+		const handoffStore: CheckoutLoginHandoffStore = {
+			issue: async () => undefined,
+			claim: async ({ nonceHash, userId }) => ({
+				kind: 'acquired',
+				claim: { nonceHash, claimId: 'claim-contract', userId },
+			}),
+			complete: async () => true,
+			failRetryable: async () => true,
+			failTerminal: async () => true,
+		}
+		const checkoutHandoffToken = createCheckoutLoginHandoff({
+			secret,
+			country: 'TR',
+			pppSelected: true,
+			productId: PRODUCT_ID,
+			quantity: 1,
+			nonce: 'nonce-pricing-contract',
+			now,
+		})
+
+		const pricing = await resolveLoggedInCheckoutPricing({
+			adapter: appAdapter,
+			handoffStore,
+			verifiedUserId: USER_ID,
+			checkoutParams: {
+				productId: PRODUCT_ID,
+				quantity: 1,
+				country: 'TR',
+				couponId: pppCoupon.id,
+			},
+			checkoutHandoffToken,
+			browserSession: 'browser-contract',
+			trustedCountry: 'US',
+			handoffSecret: secret,
+			now: new Date('2026-08-19T20:05:00.000Z'),
+		})
+
+		expect(pricing.kind).toBe('ready')
+		if (pricing.kind !== 'ready') throw new Error('expected ready pricing')
+		expect(pricing.checkoutHandoff).toMatchObject({ valid: true })
+		expect(pricing.couponAuthorization).toMatchObject({
+			authorized: false,
+			requestedPPP: true,
+		})
+		expect(pricing).toMatchObject({
+			country: 'TR',
+			couponId: pppCoupon.id,
+			usedCouponId: undefined,
+		})
+
 		const { payload } = await checkout({
-			country: 'AR',
+			country: pricing.country,
+			credit: { kind: 'exclusive', amount: 20000 },
+			couponId: pricing.couponId,
+			appAdapter,
+		})
+		expect(payload?.metadata).toMatchObject({
+			country: 'TR',
+			expectedTotalCents: '8970',
+			pricingCandidate: 'ppp',
+			provenanceIds: pppCoupon.id,
+		})
+		expect(payload?.metadata?.appliedPPPStripeCouponId).toBeTruthy()
+		expect(payload?.metadata?.usedEntitlementCouponIds).toBeUndefined()
+	})
+
+	it('uses the current $99 alumni policy instead of Thailand PPP at $104.65', async () => {
+		const { payload } = await checkout({
+			country: 'TH',
 			credit: { kind: 'exclusive', amount: 20000 },
 		})
 
 		expect(payload?.metadata).toMatchObject({
-			expectedTotalCents: '8970',
-			pricingCandidate: 'ppp',
+			country: 'TH',
+			expectedTotalCents: '9900',
+			pricingCandidate: 'credit',
+			usedEntitlementCouponIds: CREDIT_SITE_COUPON_ID,
 		})
-		expect(payload?.metadata?.usedEntitlementCouponIds).toBeUndefined()
+		expect(payload?.metadata?.provenanceIds).toContain(CREDIT_SITE_COUPON_ID)
+	})
+
+	it('uses the alumni credit where PPP is unavailable', async () => {
+		const { payload } = await checkout({
+			country: 'US',
+			credit: { kind: 'exclusive', amount: 20000 },
+		})
+
+		expect(payload?.metadata).toMatchObject({
+			expectedTotalCents: '9900',
+			pricingCandidate: 'credit',
+			usedEntitlementCouponIds: CREDIT_SITE_COUPON_ID,
+		})
 	})
 
 	it('preserves supported intro-sale plus ordinary-credit stacking', async () => {
