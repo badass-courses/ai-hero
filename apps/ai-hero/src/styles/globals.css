@@ -1401,13 +1401,16 @@ pre .ah-code-inline {
  */
 @media (pointer: coarse) {
 	/*
-	 * Control visibility (hide gerwig's centered play, re-enable the
-	 * bottom play button) is set as inline style on the media-controller
-	 * element by PlayerGestureShell: gerwig's exportparts does not expose
-	 * a "controller" part, so no page-level ::part rule can reach it, and
-	 * inherited values lose to the theme's own shadow rules.
+	 * Scoped to players inside the gesture shell (learner-facing lesson,
+	 * post, and MDX players) — hero/marketing/CMS-preview players keep
+	 * stock sizing. Control visibility (hide gerwig's centered play,
+	 * re-enable the bottom play button) is set as inline style on the
+	 * media-controller element by PlayerGestureShell: gerwig's
+	 * exportparts does not expose a "controller" part, so no page-level
+	 * ::part rule can reach it, and inherited values lose to the theme's
+	 * own shadow rules.
 	 */
-	mux-player {
+	[data-player-gesture-shell] mux-player {
 		--media-control-height: 28px;
 		--media-control-padding: 9px;
 		/* keep the timeline slim (YouTube-style); just a grabbable thumb */

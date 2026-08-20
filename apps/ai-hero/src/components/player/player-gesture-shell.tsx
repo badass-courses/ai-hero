@@ -27,6 +27,15 @@ type MediaControllerElement = HTMLElement & {
 	autohide: string
 }
 
+// media-controller's own autohide CSS refuses to fade the chrome while
+// paused (`:not([mediapaused])` in its :host rule) and gerwig keeps its
+// backdrop up. Our touch model hides on tap regardless of play state, so
+// on coarse pointers we append these two rules into the (open) shadow
+// roots as constructed stylesheets — removable, and a no-op if a future
+// bundle closes the roots (controls then just stay pinned while paused).
+const PAUSED_HIDE_CONTROLLER_CSS = `:host([userinactive][mediapaused]:not([mediaisairplaying]):not([mediaiscasting]):not([audio])) ::slotted(:not([slot="media"]):not([slot="poster"]):not([noautohide]):not([role="dialog"])) { opacity: 0; transition: var(--media-control-transition-out, opacity 1s); }`
+const PAUSED_HIDE_THEME_CSS = `media-controller[userinactive][mediapaused]::part(vertical-layer) { background-color: transparent; }`
+
 // The bundled media-chrome inside mux-player exposes no working
 // `userInactive` property setter — drive the attribute directly, which
 // is what media-chrome's own show/hide code does. The chrome CSS reacts
@@ -68,12 +77,26 @@ const HOTKEY_EXEMPT_ROLES = new Set([
 	'combobox',
 	'listbox',
 	'menu',
+	'menubar',
 	'menuitem',
+	'menuitemcheckbox',
+	'menuitemradio',
 	'slider',
 	'spinbutton',
 	'tablist',
 	'tab',
 	'radiogroup',
+	// Space/arrow-driven toggle and composite widgets (non-native ones —
+	// native inputs are covered by the localName check below).
+	'checkbox',
+	'radio',
+	'switch',
+	'option',
+	'grid',
+	'gridcell',
+	'treegrid',
+	'tree',
+	'treeitem',
 ])
 
 /**
@@ -97,11 +120,12 @@ function isTypingTarget(event: Event) {
 /**
  * YouTube-style gesture layer around a MuxPlayer.
  *
- * On coarse pointers it owns the touch interaction model: a tap with the
- * chrome hidden reveals it (with a big centered play/pause button); a tap
- * with the chrome up toggles play/pause. Double-tap on the side thirds
- * seeks ±10s (with accumulation), press-and-hold plays at 2x, and the
- * chrome auto-hides ~1s after play starts / ~3s after interactions.
+ * On coarse pointers it owns the touch interaction model: a background
+ * tap reveals the chrome when hidden (with a big centered play/pause
+ * button) and hides it when up — playing or paused (pre-play, a tap
+ * starts playback). Double-tap on the side thirds seeks ±5s (with
+ * accumulation), press-and-hold plays at 2x, and the chrome auto-hides
+ * ~1s after play starts / ~3s after interactions while playing.
  * On fine pointers it adds
  * double-click fullscreen, click-and-hold 2x, chapter keys (Ctrl/⌘+arrows),
  * `<`/`>` speed stepping, and an on-screen HUD for the built-in keyboard
@@ -144,7 +168,9 @@ export function PlayerGestureShell({
 	} | null>(null)
 
 	const chromeVisibleRef = React.useRef(chromeVisible)
-	chromeVisibleRef.current = chromeVisible
+	React.useEffect(() => {
+		chromeVisibleRef.current = chromeVisible
+	}, [chromeVisible])
 	const pausedRef = React.useRef(true)
 	const hideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 	const rippleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
@@ -178,12 +204,14 @@ export function PlayerGestureShell({
 		(visible: boolean, hideAfterMs = CHROME_HIDE_MS) => {
 			const mc = getMediaController(playerRef.current)
 			if (mc) setControllerInactive(mc, !visible)
+			chromeVisibleRef.current = visible
 			setChromeVisible(visible)
 			clearHideTimer()
 			if (visible && !pausedRef.current) {
 				hideTimerRef.current = setTimeout(() => {
 					const inner = getMediaController(playerRef.current)
 					if (inner) setControllerInactive(inner, true)
+					chromeVisibleRef.current = false
 					setChromeVisible(false)
 				}, hideAfterMs)
 			}
@@ -191,12 +219,15 @@ export function PlayerGestureShell({
 		[playerRef, clearHideTimer],
 	)
 
-	// A tap anywhere off the video instantly hides the chrome while
-	// playing — the page tap both scrolls/acts AND dismisses, YouTube-style.
+	// A tap anywhere off the video instantly hides the chrome — playing or
+	// paused — the page tap both scrolls/acts AND dismisses, YouTube-style.
 	React.useEffect(() => {
 		if (!isCoarse) return
 		const onDocPointerDown = (e: PointerEvent) => {
-			if (!chromeVisibleRef.current || pausedRef.current) return
+			if (!chromeVisibleRef.current) return
+			const mc = getMediaController(playerRef.current)
+			// Pre-play the chrome is the only affordance — leave it up.
+			if (mc && !mc.hasAttribute('mediahasplayed')) return
 			const shell = shellRef.current
 			if (shell && e.composedPath().includes(shell)) return
 			setChrome(false)
@@ -204,7 +235,7 @@ export function PlayerGestureShell({
 		document.addEventListener('pointerdown', onDocPointerDown, true)
 		return () =>
 			document.removeEventListener('pointerdown', onDocPointerDown, true)
-	}, [isCoarse, setChrome])
+	}, [isCoarse, setChrome, playerRef])
 
 	const armHideTimer = React.useCallback(() => {
 		if (!chromeVisibleRef.current) return
@@ -250,26 +281,31 @@ export function PlayerGestureShell({
 		setHoldActive(false)
 	}, [playerRef])
 
-	// Vojta's model (2026-08-20, final): YouTube-native — a tap with the
-	// chrome hidden reveals it; a background tap with the chrome up hides
-	// it again (play/pause is the centered/bottom button); while paused, a
-	// background tap resumes (the chrome is CSS-pinned visible when paused,
-	// so a "hide" there would read as a dead tap).
+	// YouTube-native two-step model, play-state-agnostic: a background tap
+	// reveals the chrome when hidden and hides it when up — paused or
+	// playing makes no difference (play/pause is the centered/bottom
+	// button). The one exception is pre-play, where a tap starts playback
+	// instead of hiding the only affordance on screen.
 	const handleSingleTap = React.useCallback(() => {
 		const player = playerRef.current
 		if (!player) return
 		const mc = getMediaController(player)
-		const chromeShowing =
-			(mc ? !mc.hasAttribute('userinactive') : chromeVisibleRef.current) ||
-			player.paused
+		// Pre-play first: the controller carries `userinactive` before any
+		// interaction, so this can't wait behind the visibility branch.
+		const hasPlayedYet = mc
+			? mc.hasAttribute('mediahasplayed')
+			: !player.paused
+		if (player.paused && !hasPlayedYet) {
+			void player.play().catch(() => {})
+			void track('video_gesture', { gesture: 'tap_play_toggle' })
+			return
+		}
+		const chromeShowing = mc
+			? !mc.hasAttribute('userinactive')
+			: chromeVisibleRef.current
 		if (!chromeShowing) {
 			setChrome(true)
 			void track('video_gesture', { gesture: 'tap_reveal_chrome' })
-			return
-		}
-		if (player.paused) {
-			void player.play().catch(() => {})
-			void track('video_gesture', { gesture: 'tap_play_toggle' })
 			return
 		}
 		setChrome(false)
@@ -316,7 +352,22 @@ export function PlayerGestureShell({
 			{ seekSeconds: SEEK_SECONDS },
 		)
 	}
-	React.useEffect(() => () => machineRef.current?.destroy(), [])
+	React.useEffect(
+		() => () => {
+			machineRef.current?.destroy()
+			if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+			if (rippleTimerRef.current) clearTimeout(rippleTimerRef.current)
+			if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+			if (mouseHoldTimerRef.current) clearTimeout(mouseHoldTimerRef.current)
+			// Restore the rate directly (no setState on an unmounted tree) so
+			// unmounting mid-hold can't leave the player stuck at 2x.
+			const player = playerRef.current
+			if (player && holdPrevRateRef.current !== null) {
+				player.playbackRate = holdPrevRateRef.current
+			}
+		},
+		[playerRef],
+	)
 
 	// Player wiring: fullscreen container, visibility ownership, media events.
 	React.useEffect(() => {
@@ -328,7 +379,26 @@ export function PlayerGestureShell({
 		player.setAttribute('fullscreen-element', shellId)
 
 		const mc = getMediaController(player)
+		const prevAutohide = mc?.getAttribute('autohide') ?? null
+		const injectedSheets: Array<{ root: ShadowRoot; sheet: CSSStyleSheet }> = []
+		const injectSheet = (root: ShadowRoot | null | undefined, css: string) => {
+			if (!root) return
+			try {
+				const sheet = new CSSStyleSheet()
+				sheet.replaceSync(css)
+				root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet]
+				injectedSheets.push({ root, sheet })
+			} catch {}
+		}
 		if (isCoarse && mc) {
+			// Let the chrome hide while paused too (tap-to-hide is
+			// play-state-agnostic in our model; media-chrome's own CSS pins it).
+			injectSheet(mc.shadowRoot, PAUSED_HIDE_CONTROLLER_CSS)
+			injectSheet(
+				(player as unknown as { shadowRoot?: ShadowRoot }).shadowRoot?.
+					querySelector('media-theme')?.shadowRoot,
+				PAUSED_HIDE_THEME_CSS,
+			)
 			// We own show/hide on touch: the container's own tap/autohide logic
 			// is target-dependent and its timers are private. -1 disables them.
 			mc.setAttribute('autohide', '-1')
@@ -389,6 +459,20 @@ export function PlayerGestureShell({
 			player.removeEventListener('userinactivechange', onUserInactiveChange)
 			player.removeEventListener('play', onPlay)
 			player.removeEventListener('pause', onPause)
+			// Undo the coarse-pointer takeover so a pointer-type flip (e.g.
+			// detaching a touchscreen laptop's mouse) hands auto-hide and the
+			// button layout back to media-chrome's defaults.
+			if (isCoarse && mc) {
+				if (prevAutohide === null) mc.removeAttribute('autohide')
+				else mc.setAttribute('autohide', prevAutohide)
+				mc.style.removeProperty('--center-play-button')
+				mc.style.removeProperty('--bottom-play-button')
+			}
+			for (const { root, sheet } of injectedSheets) {
+				root.adoptedStyleSheets = root.adoptedStyleSheets.filter(
+					(s) => s !== sheet,
+				)
+			}
 		}
 	}, [playerRef, shellId, isCoarse, setChrome, endHoldSpeed])
 
@@ -404,13 +488,14 @@ export function PlayerGestureShell({
 			if (!player) return
 			const rates = DEFAULT_RATES
 			const current = player.playbackRate
-			const index = rates.findIndex((r) => r >= current - 0.001)
-			const nextIndex = Math.min(
-				Math.max((index === -1 ? rates.length - 1 : index) + direction, 0),
-				rates.length - 1,
-			)
-			const next = rates[nextIndex]
-			if (next === undefined || next === current) return
+			// Nearest preset strictly past the current rate, so off-preset
+			// rates (e.g. 1.1) step to the adjacent preset instead of
+			// skipping one.
+			const next =
+				direction === 1
+					? rates.find((r) => r > current + 0.001)
+					: [...rates].reverse().find((r) => r < current - 0.001)
+			if (next === undefined) return
 			player.playbackRate = next
 			flashToast(`${next}x`)
 			void track('video_gesture', { gesture: 'speed_step' })
@@ -584,6 +669,10 @@ export function PlayerGestureShell({
 	}, [playerRef, seekBy, flashToast, toggleFullscreen])
 
 	// Mouse press-and-hold for 2x (fine pointers, video area only).
+	// Pointer capture is off the table here: it would retarget the
+	// compatibility `click` away from media-chrome's own click-to-pause.
+	// Window-level capture listeners guarantee the release is seen even
+	// when the mouse leaves the shell before letting go.
 	const onShellPointerDown = React.useCallback(
 		(e: React.PointerEvent) => {
 			if (e.pointerType !== 'mouse' || e.button !== 0) return
@@ -591,24 +680,42 @@ export function PlayerGestureShell({
 			if (mouseHoldTimerRef.current) clearTimeout(mouseHoldTimerRef.current)
 			mouseHoldTimerRef.current = setTimeout(() => {
 				mouseHoldTimerRef.current = null
+				// Only a hold that actually engages 2x consumes the click —
+				// holding a paused video must still click-to-play on release.
+				const player = playerRef.current
+				if (!player || player.paused) return
 				holdConsumedClickRef.current = true
 				beginHoldSpeed()
 			}, 500)
-		},
-		[beginHoldSpeed],
-	)
-	const onShellPointerUp = React.useCallback(
-		(e: React.PointerEvent) => {
-			armHideTimer()
-			if (e.pointerType !== 'mouse') return
-			if (mouseHoldTimerRef.current) {
-				clearTimeout(mouseHoldTimerRef.current)
-				mouseHoldTimerRef.current = null
+			const ac = new AbortController()
+			const finish = (evt: Event) => {
+				ac.abort()
+				if (mouseHoldTimerRef.current) {
+					clearTimeout(mouseHoldTimerRef.current)
+					mouseHoldTimerRef.current = null
+				}
+				if (holdPrevRateRef.current !== null) endHoldSpeed()
+				// An outside release produces no click on the shell, so the
+				// swallow flag would go stale and eat the next real click.
+				const shell = shellRef.current
+				if (!shell || !evt.composedPath().includes(shell)) {
+					holdConsumedClickRef.current = false
+				}
 			}
-			if (holdPrevRateRef.current !== null) endHoldSpeed()
+			window.addEventListener('pointerup', finish, {
+				capture: true,
+				signal: ac.signal,
+			})
+			window.addEventListener('pointercancel', finish, {
+				capture: true,
+				signal: ac.signal,
+			})
 		},
-		[armHideTimer, endHoldSpeed],
+		[playerRef, beginHoldSpeed, endHoldSpeed],
 	)
+	const onShellPointerUp = React.useCallback(() => {
+		armHideTimer()
+	}, [armHideTimer])
 	const onShellDoubleClick = React.useCallback(
 		(e: React.MouseEvent) => {
 			if (isCoarse) return
@@ -664,11 +771,18 @@ export function PlayerGestureShell({
 	}, [])
 
 	const surfaceActive = isCoarse
-	const chromeShowing = chromeVisible || paused
+	// Pre-play the chrome is pinned up (it's the only affordance); once
+	// playback has started, visibility is tap-driven regardless of pause.
+	const chromeShowing = chromeVisible || (paused && !hasPlayed)
 
+	// Overlay styling note: everything below renders ON the video frame,
+	// not on a page surface, so it uses fixed light-on-dark scrim colors
+	// (bg-black/60, text-white) by design — theme tokens would flip to
+	// dark-on-light in light mode and become unreadable over footage.
 	return (
 		<div
 			ref={shellRef}
+			data-player-gesture-shell=""
 			className={cn('relative', className)}
 			onPointerDown={onShellPointerDown}
 			onPointerUp={onShellPointerUp}
@@ -797,7 +911,7 @@ export function PlayerGestureShell({
 							animate={{ opacity: 1 }}
 							exit={{ opacity: 0 }}
 							transition={{ duration: 0.12 }}
-							className="rounded-full bg-black/70 px-3 py-1 text-sm font-medium text-white"
+							className="rounded-[9px] bg-black/70 px-3 py-1 text-sm font-medium text-white"
 						>
 							{holdActive ? '2x ❯❯' : toast?.text}
 						</motion.div>

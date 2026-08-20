@@ -5,13 +5,17 @@
  * translates pointer events into `pointerDown/Move/Up` and reacts to the
  * callbacks. Zones are computed by the caller from the tap's x position.
  *
- * Interaction model (YouTube-style, tap-to-pause variant):
+ * Interaction model (YouTube-style):
  * - single tap        -> resolved after a disambiguation delay; the shell
- *                        maps it to play/pause (YouTube desktop-web style,
- *                        chosen over the native app's tap-reveals-chrome)
- * - double tap L/R    -> seek -/+ `seekSeconds`, then further taps on the
- *                        same side within the accumulate window keep adding
+ *                        maps it to reveal/dismiss chrome (play-state
+ *                        agnostic; pre-play it starts playback)
+ * - double tap L/R    -> seek -/+ `seekSeconds` (both taps in the same
+ *                        zone), then further taps on the same side within
+ *                        the accumulate window keep adding
  * - double tap center -> dead zone, treated as a single tap
+ * - two taps in
+ *   different zones   -> not a double tap; the second restarts as a fresh
+ *                        first tap (a sloppy pair must never seek)
  * - press and hold    -> temporary 2x while held
  * - pointer travel    -> cancels the tap/hold (it's a scroll)
  */
@@ -50,6 +54,12 @@ export type GestureMachine = {
 	destroy: () => void
 }
 
+/**
+ * Creates the touch gesture state machine.
+ *
+ * @param callbacks - fired as gestures resolve; see {@link GestureCallbacks}
+ * @param options - timing/zone overrides merged over {@link defaultGestureOptions}
+ */
 export function createGestureMachine(
 	callbacks: GestureCallbacks,
 	options: Partial<GestureOptions> = {},
@@ -61,6 +71,7 @@ export function createGestureMachine(
 	let holdTimer: ReturnType<typeof setTimeout> | null = null
 
 	let pendingSingle = false
+	let pendingZone: GestureZone | null = null
 	let accumulateZone: GestureZone | null = null
 	let accumulateCount = 0
 	let holding = false
@@ -74,6 +85,7 @@ export function createGestureMachine(
 		if (singleTapTimer) clearTimeout(singleTapTimer)
 		singleTapTimer = null
 		pendingSingle = false
+		pendingZone = null
 	}
 	const clearAccumulate = () => {
 		if (accumulateTimer) clearTimeout(accumulateTimer)
@@ -109,6 +121,20 @@ export function createGestureMachine(
 			zone,
 		)
 		armAccumulate(zone)
+	}
+
+	// Shared by cancel/destroy as a plain closure so a destructured
+	// reference works without a bound `this`.
+	const cancelAll = () => {
+		clearHold()
+		clearSingle()
+		clearAccumulate()
+		downZone = null
+		moved = false
+		if (holding) {
+			holding = false
+			callbacks.onHoldEnd()
+		}
 	}
 
 	return {
@@ -174,40 +200,34 @@ export function createGestureMachine(
 				clearAccumulate()
 			}
 
-			// Second tap of a double tap.
+			// Second tap of a double tap — only if it lands in the same zone.
+			// A cross-zone pair (center-then-right, left-then-right) is sloppy
+			// input: drop the pending tap and start over rather than seek.
 			if (pendingSingle) {
+				const sameZone = zone === pendingZone
 				clearSingle()
-				if (zone === 'center') {
-					callbacks.onSingleTap()
-				} else {
-					seek(zone)
+				if (sameZone) {
+					if (zone === 'center') {
+						callbacks.onSingleTap()
+					} else {
+						seek(zone)
+					}
+					return
 				}
-				return
 			}
 
 			// First tap: wait out the double-tap window before toggling chrome.
 			pendingSingle = true
+			pendingZone = zone
 			singleTapTimer = setTimeout(() => {
 				singleTapTimer = null
 				pendingSingle = false
+				pendingZone = null
 				callbacks.onSingleTap()
 			}, opts.singleTapMs)
 		},
 
-		cancel() {
-			clearHold()
-			clearSingle()
-			clearAccumulate()
-			downZone = null
-			moved = false
-			if (holding) {
-				holding = false
-				callbacks.onHoldEnd()
-			}
-		},
-
-		destroy() {
-			this.cancel()
-		},
+		cancel: cancelAll,
+		destroy: cancelAll,
 	}
 }

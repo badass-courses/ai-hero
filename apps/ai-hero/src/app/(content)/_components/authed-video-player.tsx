@@ -258,7 +258,7 @@ export function AuthedVideoPlayer({
 			chromeSlot={
 				<AutoPlayToggle
 					id="autoplay-player-chrome"
-					className="rounded-full bg-black/60 px-3 py-1.5 text-white"
+					className="rounded-[9px] bg-black/60 px-3 py-1.5 text-white"
 				/>
 			}
 		>

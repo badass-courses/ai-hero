@@ -105,6 +105,23 @@ describe('createGestureMachine', () => {
 		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
 	})
 
+	it('never seeks on a cross-zone pair; the second tap restarts as a first tap', () => {
+		const { callbacks, machine } = setup()
+		tap(machine, 'center')
+		tap(machine, 'right')
+		expect(callbacks.onSeek).not.toHaveBeenCalled()
+		// The restarted pending tap resolves as a single after the window…
+		vi.advanceTimersByTime(250)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
+		// …and left-then-right must not seek in either direction.
+		tap(machine, 'left')
+		tap(machine, 'right')
+		expect(callbacks.onSeek).not.toHaveBeenCalled()
+		// The right tap is now the pending first tap, so a second right seeks.
+		tap(machine, 'right')
+		expect(callbacks.onSeek).toHaveBeenCalledWith(10, 10, 'right')
+	})
+
 	it('treats a center-zone double tap as a single chrome toggle', () => {
 		const { callbacks, machine } = setup()
 		tap(machine, 'center')

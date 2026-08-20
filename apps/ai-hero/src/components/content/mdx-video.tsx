@@ -77,7 +77,7 @@ export default function MDXVideo({
 		<PlayerGestureShell
 			playerRef={playerRef}
 			className={cn(
-				'aspect-video w-full max-w-4xl overflow-hidden rounded-lg',
+				'not-prose mb-5 aspect-video w-full max-w-4xl overflow-hidden rounded-lg border',
 				className,
 			)}
 		>
