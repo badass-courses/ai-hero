@@ -163,12 +163,15 @@ export function createGestureMachine(
 				return
 			}
 
-			// Continuing an accumulate burst: single taps keep seeking.
+			// Continuing an accumulate burst: single taps keep seeking. A
+			// center tap ends the burst and behaves like a fresh first tap
+			// (a swallowed center tap reads as a dead spot).
 			if (accumulateZone !== null) {
 				if (zone !== 'center') {
 					seek(zone)
+					return
 				}
-				return
+				clearAccumulate()
 			}
 
 			// Second tap of a double tap.

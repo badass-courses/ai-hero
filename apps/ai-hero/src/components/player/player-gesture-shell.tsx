@@ -73,10 +73,12 @@ function isTypingTarget(event: Event) {
 /**
  * YouTube-style gesture layer around a MuxPlayer.
  *
- * On coarse pointers it owns the touch interaction model: single tap toggles
- * the chrome, double-tap on the side thirds seeks ±10s (with accumulation),
- * press-and-hold plays at 2x, and a big centered ⏪10 / play-pause / ⏩10
- * cluster shows whenever the chrome does. On fine pointers it adds
+ * On coarse pointers it owns the touch interaction model: a tap with the
+ * chrome hidden reveals it (with a big centered play/pause button); a tap
+ * with the chrome up toggles play/pause. Double-tap on the side thirds
+ * seeks ±10s (with accumulation), press-and-hold plays at 2x, and the
+ * chrome auto-hides ~1s after play starts / ~3s after interactions.
+ * On fine pointers it adds
  * double-click fullscreen, click-and-hold 2x, chapter keys (Ctrl/⌘+arrows),
  * `<`/`>` speed stepping, and an on-screen HUD for the built-in keyboard
  * shortcuts. The wrapper is also the player's `fullscreen-element`, so all
@@ -162,6 +164,21 @@ export function PlayerGestureShell({
 		[playerRef, clearHideTimer],
 	)
 
+	// A tap anywhere off the video instantly hides the chrome while
+	// playing — the page tap both scrolls/acts AND dismisses, YouTube-style.
+	React.useEffect(() => {
+		if (!isCoarse) return
+		const onDocPointerDown = (e: PointerEvent) => {
+			if (!chromeVisibleRef.current || pausedRef.current) return
+			const shell = shellRef.current
+			if (shell && e.composedPath().includes(shell)) return
+			setChrome(false)
+		}
+		document.addEventListener('pointerdown', onDocPointerDown, true)
+		return () =>
+			document.removeEventListener('pointerdown', onDocPointerDown, true)
+	}, [isCoarse, setChrome])
+
 	const armHideTimer = React.useCallback(() => {
 		if (!chromeVisibleRef.current) return
 		setChrome(true)
@@ -206,22 +223,35 @@ export function PlayerGestureShell({
 		setHoldActive(false)
 	}, [playerRef])
 
+	// Vojta's model (2026-08-20, revised): YouTube-native two-step — a tap
+	// while the chrome is hidden only reveals it; a tap while the chrome
+	// shows (or the video is paused) toggles play/pause.
+	const handleSingleTap = React.useCallback(() => {
+		const player = playerRef.current
+		if (!player) return
+		const mc = getMediaController(player)
+		const chromeShowing =
+			(mc ? !mc.hasAttribute('userinactive') : chromeVisibleRef.current) ||
+			player.paused
+		if (!chromeShowing) {
+			setChrome(true)
+			void track('video_gesture', { gesture: 'tap_reveal_chrome' })
+			return
+		}
+		if (player.paused) void player.play().catch(() => {})
+		else player.pause()
+		void track('video_gesture', { gesture: 'tap_play_toggle' })
+	}, [playerRef, setChrome])
+	const handleSingleTapRef = React.useRef(handleSingleTap)
+	handleSingleTapRef.current = handleSingleTap
+
 	// Touch gesture machine (coarse pointers).
 	const machineRef = React.useRef<ReturnType<
 		typeof createGestureMachine
 	> | null>(null)
 	if (machineRef.current === null) {
 		machineRef.current = createGestureMachine({
-			// Vojta's call (2026-08-20): tap pauses/resumes directly, YouTube
-			// desktop-web style, rather than the native app's reveal-then-act.
-			// Chrome visibility follows: pause shows it, play re-arms auto-hide.
-			onSingleTap: () => {
-				const player = playerRef.current
-				if (!player) return
-				if (player.paused) void player.play().catch(() => {})
-				else player.pause()
-				void track('video_gesture', { gesture: 'tap_play_toggle' })
-			},
+			onSingleTap: () => handleSingleTapRef.current(),
 			onSeek: (delta, burst, zone) => {
 				seekBy(delta)
 				if (rippleTimerRef.current) clearTimeout(rippleTimerRef.current)
@@ -239,7 +269,15 @@ export function PlayerGestureShell({
 				}
 			},
 			onHoldStart: beginHoldSpeed,
-			onHoldEnd: endHoldSpeed,
+			onHoldEnd: () => {
+				if (holdPrevRateRef.current === null) {
+					// The hold never engaged 2x (e.g. while paused): a lingering
+					// tap should still act as a tap, not die silently.
+					handleSingleTapRef.current()
+					return
+				}
+				endHoldSpeed()
+			},
 		})
 	}
 	React.useEffect(() => () => machineRef.current?.destroy(), [])
@@ -273,7 +311,12 @@ export function PlayerGestureShell({
 			pausedRef.current = false
 			setPausedState(false)
 			setHasPlayed(true)
-			setPlayFlash({ kind: 'play', key: ++keyCounterRef.current })
+			// On touch with the chrome up, the center button's icon flip IS the
+			// feedback; the flash is for state changes without a visible button.
+			const mcPlay = getMediaController(playerRef.current)
+			const chromeUp = mcPlay ? !mcPlay.hasAttribute('userinactive') : false
+			if (!(isCoarse && chromeUp))
+				setPlayFlash({ kind: 'play', key: ++keyCounterRef.current })
 			// Chrome clears out fast once playback starts, YouTube-style.
 			// The userinactive attribute is the truth for visibility — the
 			// React mirror can drift if a show happened before hydration.
@@ -286,7 +329,12 @@ export function PlayerGestureShell({
 		const onPause = () => {
 			pausedRef.current = true
 			setPausedState(true)
-			setPlayFlash({ kind: 'pause', key: ++keyCounterRef.current })
+			const mcPause = getMediaController(playerRef.current)
+			const chromeUpAtPause = mcPause
+				? !mcPause.hasAttribute('userinactive')
+				: false
+			if (!(isCoarse && chromeUpAtPause))
+				setPlayFlash({ kind: 'pause', key: ++keyCounterRef.current })
 			endHoldSpeed()
 			if (isCoarse) setChrome(true)
 		}
@@ -300,18 +348,6 @@ export function PlayerGestureShell({
 			player.removeEventListener('pause', onPause)
 		}
 	}, [playerRef, shellId, isCoarse, setChrome, endHoldSpeed])
-
-	// The centered play button doubles as gerwig's pre-play button. Keep
-	// it as the start affordance, hide it once playback has begun (from
-	// then on play/pause lives bottom-left plus tap-anywhere).
-	React.useEffect(() => {
-		const player = playerRef.current
-		if (!player || !isCoarse || !hasPlayed) return
-		player.style.setProperty('--center-play-button', 'none')
-		return () => {
-			player.style.removeProperty('--center-play-button')
-		}
-	}, [playerRef, isCoarse, hasPlayed])
 
 	// Desktop extras: chapter keys, speed stepping, keyboard HUD, and the
 	// click swallow after a mouse hold. Native capture listeners so we run
@@ -544,6 +580,38 @@ export function PlayerGestureShell({
 					onPointerUp={onSurfacePointerUp}
 					onPointerCancel={onSurfacePointerCancel}
 				/>
+			)}
+			{isCoarse && (
+				<div
+					className={cn(
+						'pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-200',
+						chromeShowing ? 'opacity-100' : 'opacity-0',
+					)}
+				>
+					<button
+						type="button"
+						aria-label={paused ? 'Play' : 'Pause'}
+						tabIndex={chromeShowing ? 0 : -1}
+						className={cn(
+							'touch-manipulation flex h-[72px] w-[72px] items-center justify-center rounded-full bg-black/60 text-white transition-transform active:scale-95',
+							chromeShowing ? 'pointer-events-auto' : 'pointer-events-none',
+						)}
+						onClick={() => {
+							const player = playerRef.current
+							if (!player) return
+							if (player.paused) void player.play().catch(() => {})
+							else player.pause()
+							armHideTimer()
+							void track('video_gesture', { gesture: 'center_play_button' })
+						}}
+					>
+						{paused ? (
+							<Play aria-hidden="true" className="ml-1 h-9 w-9 fill-current" />
+						) : (
+							<Pause aria-hidden="true" className="h-9 w-9 fill-current" />
+						)}
+					</button>
+				</div>
 			)}
 			{playFlash && (
 				<div

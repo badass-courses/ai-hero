@@ -70,6 +70,21 @@ describe('createGestureMachine', () => {
 		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 	})
 
+	it('a center tap during a burst ends it and acts as a fresh first tap', () => {
+		const { callbacks, machine } = setup()
+		tap(machine, 'right')
+		tap(machine, 'right')
+		tap(machine, 'center')
+		expect(callbacks.onSeek).toHaveBeenCalledTimes(1)
+		vi.advanceTimersByTime(250)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
+		// and the burst is over: a later side tap is a first tap again
+		tap(machine, 'right')
+		vi.advanceTimersByTime(250)
+		expect(callbacks.onSeek).toHaveBeenCalledTimes(1)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(2)
+	})
+
 	it('a tap on the opposite side during a burst starts a new burst there', () => {
 		const { callbacks, machine } = setup()
 		tap(machine, 'right')
