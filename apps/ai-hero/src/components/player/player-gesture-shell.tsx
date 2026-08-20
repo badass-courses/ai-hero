@@ -61,13 +61,36 @@ function isVideoAreaEvent(event: Event) {
 		)
 }
 
+const HOTKEY_EXEMPT_ROLES = new Set([
+	'textbox',
+	'searchbox',
+	'combobox',
+	'listbox',
+	'menu',
+	'menuitem',
+	'slider',
+	'spinbutton',
+	'tablist',
+	'tab',
+	'radiogroup',
+])
+
+/**
+ * Standard global-hotkey exemptions: anything the user might be typing in
+ * or steering with arrow keys keeps its native behavior.
+ */
 function isTypingTarget(event: Event) {
-	const el = event.composedPath()[0] as HTMLElement | undefined
-	if (!el) return false
-	return (
-		['input', 'textarea', 'select'].includes(el.localName) ||
-		el.isContentEditable
-	)
+	if ((event as KeyboardEvent).isComposing) return true
+	for (const node of event.composedPath()) {
+		const el = node as HTMLElement
+		if (!el?.localName) continue
+		if (['input', 'textarea', 'select', 'audio', 'video'].includes(el.localName))
+			return true
+		if (el.isContentEditable) return true
+		const role = el.getAttribute?.('role')
+		if (role && HOTKEY_EXEMPT_ROLES.has(role)) return true
+	}
+	return false
 }
 
 /**
@@ -491,6 +514,67 @@ export function PlayerGestureShell({
 		)
 		void track('video_gesture', { gesture: 'double_click_fullscreen' })
 	}, [playerRef])
+
+	// Page-wide shortcuts: seek/play/mute/fullscreen work without the
+	// player being focused, YouTube-style. When focus IS inside the player
+	// media-chrome's own hotkeys handle it (skip to avoid double-seeks);
+	// defaultPrevented guards typing fields and a second player on the page.
+	React.useEffect(() => {
+		const onGlobalKeyDown = (e: KeyboardEvent) => {
+			if (e.defaultPrevented) return
+			if (e.ctrlKey || e.metaKey || e.altKey) return
+			if (isTypingTarget(e)) return
+			const player = playerRef.current
+			if (!player) return
+			if (e.composedPath().includes(player)) return
+			switch (e.key) {
+				case 'ArrowLeft':
+				case 'j':
+					seekBy(-SEEK_SECONDS)
+					flashToast(`−${SEEK_SECONDS}s`)
+					break
+				case 'ArrowRight':
+				case 'l':
+					seekBy(SEEK_SECONDS)
+					flashToast(`+${SEEK_SECONDS}s`)
+					break
+				case 'k':
+					if (player.paused) void player.play().catch(() => {})
+					else player.pause()
+					break
+				case ' ': {
+					// Space still activates focused controls (buttons, links);
+					// only body-level space becomes play/pause instead of scroll.
+					const onControl = e
+						.composedPath()
+						.some((node) => {
+							const el = node as HTMLElement
+							return (
+								['button', 'a', 'summary'].includes(el?.localName) ||
+								el?.getAttribute?.('role') === 'button'
+							)
+						})
+					if (onControl) return
+					if (player.paused) void player.play().catch(() => {})
+					else player.pause()
+					break
+				}
+				case 'm':
+					player.muted = !player.muted
+					flashToast(player.muted ? 'Muted' : 'Unmuted')
+					break
+				case 'f':
+					toggleFullscreen()
+					break
+				default:
+					return
+			}
+			e.preventDefault()
+			void track('video_gesture', { gesture: 'global_hotkey', key: e.key })
+		}
+		document.addEventListener('keydown', onGlobalKeyDown)
+		return () => document.removeEventListener('keydown', onGlobalKeyDown)
+	}, [playerRef, seekBy, flashToast, toggleFullscreen])
 
 	// Mouse press-and-hold for 2x (fine pointers, video area only).
 	const onShellPointerDown = React.useCallback(
