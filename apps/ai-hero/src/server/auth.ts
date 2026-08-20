@@ -13,12 +13,10 @@ import {
 import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
-import {
-	getDiscordRefreshFailureKind,
-	getNextAuthErrorLogLevel,
-} from '@/server/auth-log-policy'
+import { getDiscordRefreshFailureKind } from '@/server/auth-log-policy'
+import { authLogger } from '@/server/auth-logger'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
-import { log, serializeError } from '@/server/logger'
+import { log } from '@/server/logger'
 import {
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
@@ -241,6 +239,17 @@ const oauthContainmentSignInCallback = createOAuthContainmentSignInCallback({
 	getAuthenticatedSession: getAuthenticatedOAuthLinkSession,
 	consumeLinkIntent: (input) => oauthLinkIntentService.consume(input),
 	observe: observeOAuthLinkCanary,
+	reportSignInFailure: async ({ provider, reason }) => {
+		const data = {
+			provider,
+			authFailureKind: reason,
+		}
+		if (reason === 'ownership-lookup-failed') {
+			await log.error('auth.oauth.signin.denied', data)
+			return
+		}
+		await log.warn('auth.oauth.signin.denied', data)
+	},
 })
 
 async function triggerVerifiedOAuthRoleSync({
@@ -312,32 +321,7 @@ const postSignInInvitationHandler = createPostSignInInvitationHandler({
  * @see https://next-auth.js.org/configuration/options
  */
 export const authOptions: NextAuthConfig = {
-	logger: {
-		error: (error) => {
-			const serialized = serializeError(error)
-			const data = {
-				error: serialized,
-				errorName: serialized.name ?? null,
-				errorMessage: serialized.message,
-				errorCode:
-					typeof serialized.code === 'string' ||
-					typeof serialized.code === 'number'
-						? serialized.code
-						: null,
-				errorType: typeof serialized.type === 'string' ? serialized.type : null,
-			}
-			if (getNextAuthErrorLogLevel(serialized) === 'info') {
-				void log.info('auth.nextauth.expected', data)
-				return
-			}
-			void log.error('auth.nextauth.error', data)
-		},
-		warn: (code) => {
-			void log.warn('auth.nextauth.warn', {
-				code: String(code),
-			})
-		},
-	},
+	logger: authLogger,
 	events: {
 		createUser: async ({ user }) => {
 			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
