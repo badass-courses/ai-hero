@@ -86,6 +86,8 @@ export default function MDXVideo({
 				metadata={muxMetadata}
 				streamType="on-demand"
 				className="h-full w-full"
+				forwardSeekOffset={5}
+				backwardSeekOffset={5}
 				playbackRates={[0.75, 1, 1.25, 1.5, 1.75, 2]}
 				maxResolution="2160p"
 				minResolution="540p"

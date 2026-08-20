@@ -13,7 +13,8 @@ import {
 	type GestureZone,
 } from './video-gesture-machine'
 
-const SEEK_SECONDS = 10
+// 5s like YouTube's arrow keys — our videos are short, 10s overshoots.
+const SEEK_SECONDS = 5
 // YouTube-ish timings: ~3s idle hide after an interaction, but a much
 // quicker drop once playback (re)starts.
 const CHROME_HIDE_MS = 3000
@@ -111,10 +112,13 @@ export function PlayerGestureShell({
 	playerRef,
 	className,
 	children,
+	chromeSlot,
 }: {
 	playerRef: React.RefObject<MuxPlayerRefAttributes | null>
 	className?: string
 	children: React.ReactNode
+	/** Extra control rendered in the touch chrome's top-left (e.g. autoplay toggle), fading with the chrome. */
+	chromeSlot?: React.ReactNode
 }) {
 	const shellId = React.useId()
 	const shellRef = React.useRef<HTMLDivElement>(null)
@@ -279,7 +283,8 @@ export function PlayerGestureShell({
 		typeof createGestureMachine
 	> | null>(null)
 	if (machineRef.current === null) {
-		machineRef.current = createGestureMachine({
+		machineRef.current = createGestureMachine(
+			{
 			onSingleTap: () => handleSingleTapRef.current(),
 			onSeek: (delta, burst, zone) => {
 				seekBy(delta)
@@ -298,16 +303,18 @@ export function PlayerGestureShell({
 				}
 			},
 			onHoldStart: beginHoldSpeed,
-			onHoldEnd: () => {
-				if (holdPrevRateRef.current === null) {
-					// The hold never engaged 2x (e.g. while paused): a lingering
-					// tap should still act as a tap, not die silently.
-					handleSingleTapRef.current()
-					return
-				}
-				endHoldSpeed()
+				onHoldEnd: () => {
+					if (holdPrevRateRef.current === null) {
+						// The hold never engaged 2x (e.g. while paused): a lingering
+						// tap should still act as a tap, not die silently.
+						handleSingleTapRef.current()
+						return
+					}
+					endHoldSpeed()
+				},
 			},
-		})
+			{ seekSeconds: SEEK_SECONDS },
+		)
 	}
 	React.useEffect(() => () => machineRef.current?.destroy(), [])
 
@@ -686,6 +693,18 @@ export function PlayerGestureShell({
 					onPointerUp={onSurfacePointerUp}
 					onPointerCancel={onSurfacePointerCancel}
 				/>
+			)}
+			{isCoarse && chromeSlot && (
+				<div
+					className={cn(
+						'absolute left-2 top-2 z-20 transition-opacity duration-200',
+						chromeShowing
+							? 'opacity-100'
+							: 'pointer-events-none opacity-0',
+					)}
+				>
+					{chromeSlot}
+				</div>
 			)}
 			{isCoarse && (
 				<div

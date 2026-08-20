@@ -4,6 +4,8 @@ import * as React from 'react'
 import { use } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
+
+import { AutoPlayToggle } from './autoplay-toggle'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
@@ -180,6 +182,8 @@ export function AuthedVideoPlayer({
 	const playerProps = {
 		defaultHiddenCaptions: true,
 		streamType: 'on-demand',
+		forwardSeekOffset: 5,
+		backwardSeekOffset: 5,
 		thumbnailTime: bingeMode ? 0 : resource.fields?.thumbnailTime || 0,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
@@ -248,7 +252,16 @@ export function AuthedVideoPlayer({
 	} as MuxPlayerProps
 
 	return playbackId ? (
-		<PlayerGestureShell playerRef={playerRef} className={cn(className)}>
+		<PlayerGestureShell
+			playerRef={playerRef}
+			className={cn(className)}
+			chromeSlot={
+				<AutoPlayToggle
+					id="autoplay-player-chrome"
+					className="rounded-full bg-black/60 px-3 py-1.5 text-white"
+				/>
+			}
+		>
 			<MuxPlayer
 				metadata={muxMetadata}
 				ref={playerRef}
