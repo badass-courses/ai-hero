@@ -9,6 +9,8 @@ created_at: "2026-08-20"
 
 Found while researching the YouTube-style touch-gesture layer (2026-08-20). Vojta confirmed the bug reproduces. Autoplay/binge is NOT affected (it reads cookie prefs and plays on the local ref, no context needed).
 
+**Status: fix implemented in PR #134 (feat/player-touch-gestures) together with the gesture layer — close this task when that PR merges.**
+
 ## Transcript timestamps do nothing on lesson pages
 
 `AuthedVideoPlayer` keeps a local `playerRef` but never publishes it to the shared `MuxPlayerProvider` context — the `setMuxPlayerRef(playerRef)` call at `apps/ai-hero/src/app/(content)/_components/authed-video-player.tsx:199` is commented out. `VideoTranscriptRenderer`'s mm:ss buttons write `muxPlayerRef.current.currentTime` into a null ref, so clicking a transcript timestamp does not seek.
