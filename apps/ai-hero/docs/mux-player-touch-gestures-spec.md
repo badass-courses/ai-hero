@@ -22,7 +22,7 @@ Researched across YouTube desktop web, mobile web, and the native apps (the nati
 
 | # | Feature | YouTube behavior | Ours today | Verdict |
 |---|---|---|---|---|
-| 1 | **Touch-sized play/pause, bottom-left** | YouTube mobile-web keeps the video clean: big play button in the bottom bar, no floating overlay | Phone: small centered play. iPad: tiny bar button | 🔧 re-enable gerwig's bottom play button (hidden <470px) via a `::part(controller)` var override + touch sizing. *Decision note: a floating center cluster was built first and rejected in live testing — it covered the screencast content. No on-video seek buttons either; double-tap corners is the expected idiom.* |
+| 1 | **Touch-sized play/pause** | Big centered button whenever chrome shows + bar button | Phone: small centered play. iPad: tiny bar button | 🛠 shell renders its own centered play/pause with the chrome (72px target) — gerwig's is template-gated to <470px so iPads never get it; bottom bar play also re-enabled via `::part(controller)` + touch sizing. *Decision trail: a 3-button center cluster was rejected (covered the screencast); no on-video seek buttons — double-tap corners is the idiom.* |
 | 2 | **Double-tap left/right → ±10s seek** | Works even while controls are hidden; renders only a ripple + "10 seconds" label; consecutive taps accumulate (10→20→30); center dead zone | Nothing | 🛠 custom gesture layer (the marquee gesture) |
 | 3 | **Bigger touch targets for remaining chrome** | n/a (YouTube's are big by default) | media-chrome defaults sized for mouse | 🔧 CSS vars under `@media (pointer: coarse)`: `--media-control-height`, `--media-button-icon-width/height`, `--media-range-thumb-width/height`, `--media-range-track-height` |
 | 4 | **Tap to reveal/hide + auto-hide** | Tap shows chrome, ~3s auto-hide, never hides while paused | ✅ built-in (media-chrome, `autohide` default 2s, pause-guard included) | keep; our overlay syncs via the `userinactivechange` event |
@@ -57,9 +57,18 @@ Desktop's baseline is already close to YouTube: single-click play/pause works (m
 - **Keyboard shortcuts** — ✅ already at YouTube parity for what matters: space/`k`, `j`/`l` ±10s, arrows, `f`, `m`, `c` (media-chrome built-in; our seek offset is already 10s). What's missing is *feedback*, covered by #8.
 - **Speed menu, chapters, captions, storyboard hover previews, autoplay-next** — ✅ all already present (binge mode covers autoplay-next).
 
-### The interaction model (decided 2026-08-20)
+### The interaction model (final, 2026-08-20 — revised twice in live testing)
 
-YouTube ships two different touch models: the native app's "single tap only reveals chrome, play/pause needs the center button" and desktop web's "single click/tap toggles playback directly". **Vojta picked the desktop-web model for touch**: single tap pauses/resumes (after the 250ms double-tap disambiguation window), pausing shows the chrome (which stays while paused), and resuming re-arms the ~3s auto-hide. Double-tap on the side thirds still seeks without pausing. Every play/pause transition flashes a YouTube-style center glyph (scales up and fades, ~0.5s) as confirmation. Chrome hide timing: ~1s after playback starts, ~3s after other interactions. Desktop mouse behavior (single click = play/pause, built-in) stays untouched.
+The YouTube-native two-step, picked by Vojta after first trying direct tap-to-pause: **a tap while the chrome is hidden only reveals it (bringing up a big centered play/pause button); a tap while the chrome shows — or while paused — toggles play/pause.** The two-step is the accidental-tap protection. Details:
+
+- Double-tap on the side thirds seeks without pausing (accumulating ripple); a center tap during a seek burst ends the burst and acts as a fresh tap (a swallowed tap reads as a dead spot).
+- A lingering press that never engaged 2x (e.g. while paused) acts as a tap on release — no dead taps.
+- Tapping anywhere **off** the video instantly hides the chrome while playing.
+- The centered play/pause button is the shell's own (gerwig's is template-gated to <470px, so iPads could never render it); it doubles as the pre-play affordance. The state-change flash only fires when the button isn't visible — otherwise the icon flip is the feedback.
+- Chrome hide timing: ~1s after playback starts, ~3s after other interactions, never while paused. Fade transitions are media-chrome's (~0.25s).
+- Desktop mouse behavior (single click = play/pause, built-in) stays untouched.
+
+Implementation gotcha for posterity: the media-chrome bundle inside mux-player 3.13 has **no working `userInactive` property setter** — visibility must be driven by setting/removing the `userinactive` attribute directly.
 
 ## Solution design
 
@@ -154,6 +163,10 @@ Out of scope at launch: hero video (muted, `pointer-events-none`, decorative), `
 1. `autohide` 2s (media-chrome default) vs ~3s (YouTube feel) — one attribute; propose 3s with the cluster since bigger targets need a beat longer.
 2. Center dead-zone width — start at 30% (Vidstack uses side-30% regions), tune on device.
 3. ~~Centered play button~~ — resolved: hidden on coarse pointers; play/pause lives bottom-left like YouTube mobile web.
+
+## External validation
+
+Eleken's video-player UI guide (reviewed 2026-08-20) independently lands on the same choices: auto-hide that's easy to summon, central play affordance, double-tap skip, thumbnail scrubbing with chapter markers, input-adaptive target sizes, speed controls emphasized for learning platforms, and "a redesign that does less rarely feels like an improvement" (we removed nothing). One idea worth a future look: **the paused state as usable real estate** — chapter navigation, transcript, or recommendations while paused. Filed as a product question, not player work.
 
 ## Verified facts this spec rests on
 

@@ -570,8 +570,11 @@ export function PlayerGestureShell({
 					aria-hidden="true"
 					className={cn(
 						'touch-manipulation absolute z-10 select-none',
+						// With the chrome up, leave only the strips the chrome actually
+						// occupies. Fixed 56/96px insets left a 49px sliver on a 201px
+						// phone player — reserve fractions capped at the desktop sizes.
 						chromeShowing
-							? 'bottom-24 left-0 right-0 top-14'
+							? 'left-0 right-0 top-[min(48px,15%)] bottom-[min(88px,35%)]'
 							: 'inset-0',
 					)}
 					style={{ WebkitTouchCallout: 'none' } as React.CSSProperties}
