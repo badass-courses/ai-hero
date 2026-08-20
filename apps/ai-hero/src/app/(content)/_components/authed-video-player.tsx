@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { use } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
@@ -170,6 +171,12 @@ export function AuthedVideoPlayer({
 	const { moduleProgress, addLessonProgress } = useModuleProgress()
 	const [isPending, startTransition] = React.useTransition()
 
+	// Publish the ref to the shared context so consumers outside this tree
+	// (transcript timestamp buttons) can drive the player.
+	React.useEffect(() => {
+		setMuxPlayerRef(playerRef)
+	}, [setMuxPlayerRef])
+
 	const playerProps = {
 		defaultHiddenCaptions: true,
 		streamType: 'on-demand',
@@ -196,7 +203,6 @@ export function AuthedVideoPlayer({
 			handleTextTrackChange(playerRef, setPlayerPrefs)
 			setPreferredPlaybackRate(playerRef, playbackRate)
 			setPreferredTextTrack(playerRef)
-			// setMuxPlayerRef(playerRef)
 
 			if (bingeMode) {
 				playerRef?.current?.play().catch(console.warn)
@@ -242,14 +248,16 @@ export function AuthedVideoPlayer({
 	} as MuxPlayerProps
 
 	return playbackId ? (
-		<MuxPlayer
-			metadata={muxMetadata}
-			ref={playerRef}
-			playbackId={playbackId}
-			className={cn(className)}
-			{...playerProps}
-			{...props}
-		/>
+		<PlayerGestureShell playerRef={playerRef} className={cn(className)}>
+			<MuxPlayer
+				metadata={muxMetadata}
+				ref={playerRef}
+				playbackId={playbackId}
+				className="h-full w-full"
+				{...playerProps}
+				{...props}
+			/>
+		</PlayerGestureShell>
 	) : null
 }
 

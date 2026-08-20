@@ -1388,3 +1388,20 @@ pre .ah-code-inline {
 		animation: none;
 	}
 }
+
+/*
+ * Bigger media-chrome touch targets on coarse pointers (phones/tablets).
+ * The gerwig defaults (14-16px control height, 12px range thumb) are sized
+ * for mouse precision and drew "buttons are very small on ipad/phone"
+ * feedback from learners. Vars are media-chrome's documented sizing API and
+ * inherit through the mux-player shadow DOM.
+ */
+@media (pointer: coarse) {
+	mux-player {
+		--media-control-height: 24px;
+		--media-control-padding: 8px;
+		--media-range-thumb-width: 16px;
+		--media-range-thumb-height: 16px;
+		--media-range-track-height: 6px;
+	}
+}

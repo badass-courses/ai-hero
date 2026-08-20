@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import Spinner from '@/components/spinner'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
@@ -137,13 +138,15 @@ export function PostPlayer({
 	return (
 		<div className={cn('relative h-full w-full', className)}>
 			{playbackId ? (
-				<MuxPlayer
-					metadata={muxMetadata}
-					playbackId={playbackId}
-					className={cn(className)}
-					ref={playerRef}
-					{...playerProps}
-				/>
+				<PlayerGestureShell playerRef={playerRef} className="h-full w-full">
+					<MuxPlayer
+						metadata={muxMetadata}
+						playbackId={playbackId}
+						className={cn('h-full w-full', className)}
+						ref={playerRef}
+						{...playerProps}
+					/>
+				</PlayerGestureShell>
 			) : (
 				<div className="flex h-full w-full items-center justify-center bg-gray-300">
 					<Spinner />
@@ -152,7 +155,9 @@ export function PostPlayer({
 			{state.action?.type === 'COMPLETED' && (
 				<div
 					className={cn(
-						'bg-background/85 dark absolute left-0 top-0 flex h-full w-full flex-col items-center justify-center pb-6 backdrop-blur-md sm:pb-16',
+						// z-30 keeps the completed overlay above the gesture layer's
+						// z-20 HUD/cluster so end-of-video actions stay tappable.
+						'bg-background/85 dark absolute left-0 top-0 z-30 flex h-full w-full flex-col items-center justify-center pb-6 backdrop-blur-md sm:pb-16',
 						className,
 					)}
 				>

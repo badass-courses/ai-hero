@@ -1,9 +1,14 @@
 'use client'
 
+import * as React from 'react'
 import Image from 'next/image'
+import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { api } from '@/trpc/react'
-import type { MuxPlayerProps } from '@mux/mux-player-react'
+import type {
+	MuxPlayerProps,
+	MuxPlayerRefAttributes,
+} from '@mux/mux-player-react'
 import MuxPlayer from '@mux/mux-player-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -42,6 +47,7 @@ export default function MDXVideo({
 	})
 
 	const playbackId = muxPlaybackId ?? data?.muxPlaybackId
+	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
 
 	// Only show the loading state while the fallback query is actually running.
 	if (!muxPlaybackId && status === 'pending')
@@ -68,16 +74,18 @@ export default function MDXVideo({
 	if (!playbackId) return null
 
 	return (
-		<div
+		<PlayerGestureShell
+			playerRef={playerRef}
 			className={cn(
-				'flex aspect-video w-full max-w-4xl items-center justify-center overflow-hidden rounded-lg',
+				'aspect-video w-full max-w-4xl overflow-hidden rounded-lg',
 				className,
 			)}
 		>
 			<MuxPlayer
+				ref={playerRef}
 				metadata={muxMetadata}
 				streamType="on-demand"
-				className="aspect-video w-full"
+				className="h-full w-full"
 				playbackRates={[0.75, 1, 1.25, 1.5, 1.75, 2]}
 				maxResolution="2160p"
 				minResolution="540p"
@@ -88,6 +96,6 @@ export default function MDXVideo({
 				playsInline
 				{...props}
 			/>
-		</div>
+		</PlayerGestureShell>
 	)
 }
