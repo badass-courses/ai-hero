@@ -65,10 +65,11 @@ export const LessonControls = async ({
 				className,
 			)}
 		>
-			{/* Left cells separate with border-r, right cells with border-l; the
-			    last left cell drops its border-r so the seam between the groups
-			    is a single hairline. */}
-			<div className="flex grow items-center [&>*:last-child]:border-r-0">
+			{/* Left cells separate with border-r, right cells with border-l.
+			    Only the growing Get Full Access button ever pushes the last left
+			    cell flush against the right group (mobile), doubling the seam —
+			    drop the trailing border-r exactly there and nowhere else. */}
+			<div className="flex grow items-center max-sm:[&:has([data-get-access])>*:last-child]:border-r-0">
 				<React.Suspense fallback={null}>
 					<GetAccessButton
 						className="border-r-border bg-primary dark:hover:bg-primary/90 h-10 grow justify-center rounded-none border-0 border-r px-5 text-sm sm:h-12 sm:grow-0"
