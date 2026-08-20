@@ -108,8 +108,10 @@ type Handler = (args: {
 		name: typeof NEW_PURCHASE_CREATED_EVENT
 		data: {
 			purchaseId: string
-			checkoutSessionId: string
+			checkoutSessionId: string | null
+			invoiceId?: string
 			productType: 'self-paced'
+			quantity?: number
 		}
 	}
 	step: {
@@ -136,7 +138,7 @@ const stopAfterConsumption = new Error('stop after entitlement consumption')
 
 function createRun(results: unknown[]) {
 	const adapter = {
-		getPurchase: vi.fn(async () => ({
+		getPurchase: vi.fn(async (): Promise<unknown> => ({
 			id: 'purchase_contract',
 			userId: 'user_contract',
 			productId: 'product_ai_coding_crash_course',
@@ -223,4 +225,5 @@ describe('post-purchase exclusive-credit consumption contract', () => {
 			expect.objectContaining({ deletedAt: expect.any(Date) }),
 		)
 	})
+
 })
