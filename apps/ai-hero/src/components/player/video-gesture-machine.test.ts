@@ -8,7 +8,7 @@ import {
 
 function setup() {
 	const callbacks = {
-		onToggleChrome: vi.fn(),
+		onSingleTap: vi.fn(),
 		onSeek: vi.fn(),
 		onHoldStart: vi.fn(),
 		onHoldEnd: vi.fn(),
@@ -30,12 +30,12 @@ describe('createGestureMachine', () => {
 		vi.useRealTimers()
 	})
 
-	it('fires onToggleChrome after the disambiguation window on a single tap', () => {
+	it('fires onSingleTap after the disambiguation window on a single tap', () => {
 		const { callbacks, machine } = setup()
 		tap(machine, 'center')
-		expect(callbacks.onToggleChrome).not.toHaveBeenCalled()
+		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 		vi.advanceTimersByTime(250)
-		expect(callbacks.onToggleChrome).toHaveBeenCalledTimes(1)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
 		expect(callbacks.onSeek).not.toHaveBeenCalled()
 	})
 
@@ -46,7 +46,7 @@ describe('createGestureMachine', () => {
 		tap(machine, 'right')
 		expect(callbacks.onSeek).toHaveBeenCalledWith(10, 10, 'right')
 		vi.advanceTimersByTime(1000)
-		expect(callbacks.onToggleChrome).not.toHaveBeenCalled()
+		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 	})
 
 	it('seeks -10 on a left-zone double tap', () => {
@@ -67,7 +67,7 @@ describe('createGestureMachine', () => {
 		expect(callbacks.onSeek).toHaveBeenNthCalledWith(1, 10, 10, 'right')
 		expect(callbacks.onSeek).toHaveBeenNthCalledWith(2, 10, 20, 'right')
 		expect(callbacks.onSeek).toHaveBeenNthCalledWith(3, 10, 30, 'right')
-		expect(callbacks.onToggleChrome).not.toHaveBeenCalled()
+		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 	})
 
 	it('a tap on the opposite side during a burst starts a new burst there', () => {
@@ -87,14 +87,14 @@ describe('createGestureMachine', () => {
 		// Post-expiry the tap is a fresh first tap, so it pends a chrome toggle.
 		expect(callbacks.onSeek).toHaveBeenCalledTimes(1)
 		vi.advanceTimersByTime(250)
-		expect(callbacks.onToggleChrome).toHaveBeenCalledTimes(1)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
 	})
 
 	it('treats a center-zone double tap as a single chrome toggle', () => {
 		const { callbacks, machine } = setup()
 		tap(machine, 'center')
 		tap(machine, 'center')
-		expect(callbacks.onToggleChrome).toHaveBeenCalledTimes(1)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
 		expect(callbacks.onSeek).not.toHaveBeenCalled()
 	})
 
@@ -106,7 +106,7 @@ describe('createGestureMachine', () => {
 		machine.pointerUp()
 		expect(callbacks.onHoldEnd).toHaveBeenCalledTimes(1)
 		vi.advanceTimersByTime(1000)
-		expect(callbacks.onToggleChrome).not.toHaveBeenCalled()
+		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 		expect(callbacks.onSeek).not.toHaveBeenCalled()
 	})
 
@@ -118,7 +118,7 @@ describe('createGestureMachine', () => {
 		expect(callbacks.onHoldStart).toHaveBeenCalledTimes(1)
 		machine.pointerUp()
 		vi.advanceTimersByTime(1000)
-		expect(callbacks.onToggleChrome).not.toHaveBeenCalled()
+		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 	})
 
 	it('pointer travel cancels the tap and the hold', () => {
@@ -129,7 +129,7 @@ describe('createGestureMachine', () => {
 		expect(callbacks.onHoldStart).not.toHaveBeenCalled()
 		machine.pointerUp()
 		vi.advanceTimersByTime(1000)
-		expect(callbacks.onToggleChrome).not.toHaveBeenCalled()
+		expect(callbacks.onSingleTap).not.toHaveBeenCalled()
 		expect(callbacks.onSeek).not.toHaveBeenCalled()
 	})
 
@@ -139,7 +139,7 @@ describe('createGestureMachine', () => {
 		machine.pointerMove(104, 103)
 		machine.pointerUp()
 		vi.advanceTimersByTime(250)
-		expect(callbacks.onToggleChrome).toHaveBeenCalledTimes(1)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
 	})
 
 	it('cancel ends an active hold and clears pending taps', () => {
@@ -151,7 +151,7 @@ describe('createGestureMachine', () => {
 		tap(machine, 'right')
 		vi.advanceTimersByTime(250)
 		// Fresh state after cancel: the tap is a first tap again.
-		expect(callbacks.onToggleChrome).toHaveBeenCalledTimes(1)
+		expect(callbacks.onSingleTap).toHaveBeenCalledTimes(1)
 		expect(callbacks.onSeek).not.toHaveBeenCalled()
 	})
 })

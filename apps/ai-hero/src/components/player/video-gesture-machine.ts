@@ -5,8 +5,10 @@
  * translates pointer events into `pointerDown/Move/Up` and reacts to the
  * callbacks. Zones are computed by the caller from the tap's x position.
  *
- * Interaction model (matches YouTube's touch player):
- * - single tap        -> toggle chrome (after a disambiguation delay)
+ * Interaction model (YouTube-style, tap-to-pause variant):
+ * - single tap        -> resolved after a disambiguation delay; the shell
+ *                        maps it to play/pause (YouTube desktop-web style,
+ *                        chosen over the native app's tap-reveals-chrome)
  * - double tap L/R    -> seek -/+ `seekSeconds`, then further taps on the
  *                        same side within the accumulate window keep adding
  * - double tap center -> dead zone, treated as a single tap
@@ -17,7 +19,7 @@
 export type GestureZone = 'left' | 'center' | 'right'
 
 export type GestureCallbacks = {
-	onToggleChrome: () => void
+	onSingleTap: () => void
 	/** deltaSeconds is signed; burstSeconds is the cumulative |amount| for the label */
 	onSeek: (deltaSeconds: number, burstSeconds: number, zone: GestureZone) => void
 	onHoldStart: () => void
@@ -173,7 +175,7 @@ export function createGestureMachine(
 			if (pendingSingle) {
 				clearSingle()
 				if (zone === 'center') {
-					callbacks.onToggleChrome()
+					callbacks.onSingleTap()
 				} else {
 					seek(zone)
 				}
@@ -185,7 +187,7 @@ export function createGestureMachine(
 			singleTapTimer = setTimeout(() => {
 				singleTapTimer = null
 				pendingSingle = false
-				callbacks.onToggleChrome()
+				callbacks.onSingleTap()
 			}, opts.singleTapMs)
 		},
 

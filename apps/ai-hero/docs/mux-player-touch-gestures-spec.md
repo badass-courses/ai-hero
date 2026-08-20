@@ -57,9 +57,9 @@ Desktop's baseline is already close to YouTube: single-click play/pause works (m
 - **Keyboard shortcuts** — ✅ already at YouTube parity for what matters: space/`k`, `j`/`l` ±10s, arrows, `f`, `m`, `c` (media-chrome built-in; our seek offset is already 10s). What's missing is *feedback*, covered by #8.
 - **Speed menu, chapters, captions, storyboard hover previews, autoplay-next** — ✅ all already present (binge mode covers autoplay-next).
 
-### The interaction model we're copying (important, commonly gotten wrong)
+### The interaction model (decided 2026-08-20)
 
-On touch, YouTube's single tap **never** plays/pauses — it only toggles chrome. Play/pause is always tap-to-reveal → tap the big center button. That two-step is the accidental-tap protection, and it's why the center cluster (#1) and double-tap (#2) ship together: double-tap covers "quick seek without chrome", the cluster covers everything else. We copy this exactly; we do **not** add tap-to-pause on touch. Desktop mouse behavior (single click = play/pause, built-in) stays untouched.
+YouTube ships two different touch models: the native app's "single tap only reveals chrome, play/pause needs the center button" and desktop web's "single click/tap toggles playback directly". **Vojta picked the desktop-web model for touch**: single tap pauses/resumes (after the 250ms double-tap disambiguation window), pausing shows the chrome (which stays while paused), and resuming re-arms the ~3s auto-hide. Double-tap on the side thirds still seeks without pausing, and the center cluster shows whenever the chrome does. Desktop mouse behavior (single click = play/pause, built-in) stays untouched.
 
 ## Solution design
 
@@ -106,7 +106,7 @@ Why this shape (from the extensibility research):
 
 Small reducer, no DOM: input events `{pointerdown, pointerup, move, timerExpired}` with `x`-zone (left 0–35% / center / right 65–100%) and timestamps → actions.
 
-- **Single tap**: 250ms disambiguation timer → `REVEAL_CONTROLS`. (The delay only postpones chrome reveal — never a playback action, so it's imperceptible.)
+- **Single tap**: 250ms disambiguation timer → toggle play/pause (see the interaction-model decision above).
 - **Double tap in a side zone**: cancels the timer → `SEEK(±10)`, enters accumulate mode (~650ms rolling window) where each further tap on the same side adds ±10 and the label counts up "20 seconds", "30 seconds". Chrome stays hidden (YouTube parity).
 - **Double tap in the center dead zone**: treated as single tap.
 - **Long-press ≥500ms** (P2): `SPEED_HOLD_START` → set `playbackRate = 2` (stash prior rate); `pointerup` → restore. Known harmless quirk: `onRateChange` will transiently persist 2x to the prefs cookie and then persist the restored rate — net state correct.

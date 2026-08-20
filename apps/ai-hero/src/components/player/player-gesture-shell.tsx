@@ -198,7 +198,16 @@ export function PlayerGestureShell({
 	> | null>(null)
 	if (machineRef.current === null) {
 		machineRef.current = createGestureMachine({
-			onToggleChrome: () => setChrome(!chromeVisibleRef.current),
+			// Vojta's call (2026-08-20): tap pauses/resumes directly, YouTube
+			// desktop-web style, rather than the native app's reveal-then-act.
+			// Chrome visibility follows: pause shows it, play re-arms auto-hide.
+			onSingleTap: () => {
+				const player = playerRef.current
+				if (!player) return
+				if (player.paused) void player.play().catch(() => {})
+				else player.pause()
+				void track('video_gesture', { gesture: 'tap_play_toggle' })
+			},
 			onSeek: (delta, burst, zone) => {
 				seekBy(delta)
 				if (rippleTimerRef.current) clearTimeout(rippleTimerRef.current)
@@ -239,7 +248,12 @@ export function PlayerGestureShell({
 
 		const onUserInactiveChange = (evt: Event) => {
 			const inactive = Boolean((evt as CustomEvent).detail)
+			chromeVisibleRef.current = !inactive
 			setChromeVisible(!inactive)
+			// The chrome can be shown by media-chrome's own paths (pre-play tap,
+			// keyup, stray pointer events). With autohide -1 the container never
+			// hides it again, so every show must re-arm our hide timer.
+			if (!inactive && isCoarse) setChrome(true)
 		}
 		const onPlay = () => {
 			// The ref must lead the state: setChrome reads it synchronously.
