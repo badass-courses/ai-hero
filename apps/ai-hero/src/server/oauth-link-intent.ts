@@ -87,6 +87,7 @@ export type OAuthLinkDenialReason =
 	| 'intent-expired'
 	| 'provider-mismatch'
 	| 'session-mismatch'
+	| 'rollout-denied'
 	| 'cross-user-owned'
 	| 'claim-lost'
 
@@ -380,11 +381,13 @@ export function createOAuthLinkIntentService({
 		async consume({
 			rawToken,
 			provider,
+			authenticatedUserId,
 			sessionBinding,
 			account,
 		}: {
 			rawToken: string
 			provider: ConnectableOAuthProvider
+			authenticatedUserId: string
 			sessionBinding: string
 			account: OAuthLinkAccount
 		}): Promise<
@@ -437,7 +440,10 @@ export function createOAuthLinkIntentService({
 				})
 				return { status: 'denied' }
 			}
-			if (intent.sessionBinding !== sessionBinding) {
+			if (
+				intent.targetUserId !== authenticatedUserId ||
+				intent.sessionBinding !== sessionBinding
+			) {
 				actor.send({ type: 'DENY' })
 				await emitDenied({
 					flowId,

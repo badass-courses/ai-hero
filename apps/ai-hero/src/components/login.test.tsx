@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -23,6 +24,44 @@ vi.mock('@/env.mjs', () => ({
 }))
 
 import { Login } from './login'
+
+const loginPageSource = readFileSync(
+	new URL('../app/(user)/login/page.tsx', import.meta.url),
+	'utf8',
+)
+
+const oauthProviders = {
+	github: {
+		id: 'github',
+		name: 'GitHub',
+		type: 'oauth',
+		style: { logo: '', bg: '', text: '' },
+		signinUrl: '/api/auth/signin/github',
+	},
+	discord: {
+		id: 'discord',
+		name: 'Discord',
+		type: 'oauth',
+		style: { logo: '', bg: '', text: '' },
+		signinUrl: '/api/auth/signin/discord',
+	},
+}
+
+describe('Login provider choices', () => {
+	it('offers both login services with exact non-restrictive labels', () => {
+		const markup = renderToStaticMarkup(
+			<Login providers={oauthProviders} callbackUrl="/profile" />,
+		)
+
+		expect(markup).toContain('Continue with GitHub')
+		expect(markup).toContain('Continue with Discord')
+		expect(markup).not.toContain('Sign in with existing')
+		expect(loginPageSource).toContain(
+			'Choose GitHub, Discord, or email to continue.',
+		)
+		expect(loginPageSource).not.toContain('only sign in to accounts already linked')
+	})
+})
 
 describe('Login email flow', () => {
 	it('uses the Auth.js client sign-in flow instead of a stale server CSRF token', () => {

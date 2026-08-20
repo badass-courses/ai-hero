@@ -1,10 +1,6 @@
 'use client'
 
 import React from 'react'
-import { Icon } from '@/components/brand/icons'
-import { disconnectDiscord } from '@/lib/discord-disconnect-action'
-import { disconnectGithub } from '@/lib/github-query'
-import { Provider } from '@/server/auth'
 import { api } from '@/trpc/react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useSession } from 'next-auth/react'
@@ -23,6 +19,9 @@ import {
 	useToast,
 } from '@coursebuilder/ui'
 
+import type { GithubProfileLinkStatus } from '../profile-link-status'
+import { ProfileAccountConnections } from './profile-account-connections'
+
 const formSchema = z.object({
 	name: z.string(),
 	email: z.string().email(),
@@ -30,16 +29,20 @@ const formSchema = z.object({
 
 const EditProfileForm: React.FC<{
 	user: any
-	githubConnected?: boolean
-	githubProvider?: Provider | null
-	discordConnected?: boolean
-	discordProvider?: Provider | null
+	githubConnected: boolean
+	githubAvailable: boolean
+	githubLinkingEnabled: boolean
+	githubLinkStatus: GithubProfileLinkStatus | null
+	discordConnected: boolean
+	discordAvailable: boolean
 }> = ({
 	user,
 	githubConnected,
-	githubProvider,
+	githubAvailable,
+	githubLinkingEnabled,
+	githubLinkStatus,
 	discordConnected,
-	discordProvider,
+	discordAvailable,
 }) => {
 	const { update: updateSession } = useSession()
 	const { mutateAsync: updateName } = api.users.updateName.useMutation()
@@ -117,77 +120,14 @@ const EditProfileForm: React.FC<{
 							)}
 						/>
 					</fieldset>
-					{(githubProvider || discordProvider) && (
-						<fieldset className="mt-5 w-full">
-							<h3 className="text-lg font-bold">Accounts</h3>
-							<ul className="divide-y border-b">
-								{githubProvider && (
-									<li className="flex items-center justify-between py-3">
-										<h4 className="inline-flex items-center gap-2 font-medium">
-											<Icon name="Github" className="h-5 w-5" />
-											GitHub
-										</h4>
-										<div>
-											{githubConnected ? (
-												<Button
-													type="button"
-													variant="secondary"
-													size="sm"
-													onClick={async () => {
-														await disconnectGithub()
-														window.location.reload()
-													}}
-												>
-													Disconnect
-												</Button>
-											) : (
-												<Button
-													type="button"
-													size="sm"
-													disabled
-													title="Account linking is temporarily unavailable"
-												>
-													Unavailable
-												</Button>
-											)}
-										</div>
-									</li>
-								)}
-								{discordProvider && (
-									<li className="flex items-center justify-between py-3">
-										<h4 className="inline-flex items-center gap-2 font-medium">
-											<Icon name="Discord" className="h-5 w-5" />
-											Discord
-										</h4>
-										<div>
-											{discordConnected ? (
-												<Button
-													type="button"
-													variant="secondary"
-													size="sm"
-													onClick={async () => {
-														await disconnectDiscord()
-														window.location.reload()
-													}}
-												>
-													Disconnect
-												</Button>
-											) : (
-												<Button
-													type="button"
-													size="sm"
-													disabled
-													title="Account linking is temporarily unavailable"
-												>
-													Unavailable
-												</Button>
-											)}
-										</div>
-									</li>
-								)}
-							</ul>
-						</fieldset>
-					)}
+					<ProfileAccountConnections
+						githubAvailable={githubAvailable}
+						githubConnected={githubConnected}
+						githubLinkingEnabled={githubLinkingEnabled}
+						githubLinkStatus={githubLinkStatus}
+						discordAvailable={discordAvailable}
+						discordConnected={discordConnected}
+					/>
 					{(form.formState.dirtyFields.name || form.formState.isSubmitting) && (
 						<Button type="submit" disabled={form.formState.isSubmitting}>
 							Update profile

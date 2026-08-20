@@ -16,7 +16,7 @@ export default async function LoginPage() {
 				className="!min-h-[calc(100dvh-var(--nav-height))]"
 				providers={providers}
 				title={`Log in to AI Hero`}
-				subtitle={`Use email to create an account. GitHub and Discord only sign in to accounts already linked.`}
+				subtitle={`Choose GitHub, Discord, or email to continue.`}
 			/>
 		</LayoutClient>
 	)

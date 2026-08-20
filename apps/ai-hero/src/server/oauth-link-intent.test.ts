@@ -62,10 +62,7 @@ function createMemoryRepository() {
 			accounts.set(accountKey, intent.targetUserId)
 			return {
 				status: 'linked' as const,
-				linkKind:
-					ownerId === intent.targetUserId
-						? ('renewed' as const)
-						: ('created' as const),
+				linkKind: ownerId === intent.targetUserId ? ('renewed' as const) : ('created' as const),
 				consumedIntent: true as const,
 				ownershipReadback: {
 					beforeOwnerId: ownerId,
@@ -100,9 +97,7 @@ function createHarness() {
 const aliceBinding = hashOAuthLinkSession('alice-session-secret')
 const bobBinding = hashOAuthLinkSession('bob-session-secret')
 
-async function issueDiscordIntent(
-	service: ReturnType<typeof createOAuthLinkIntentService>,
-) {
+async function issueDiscordIntent(service: ReturnType<typeof createOAuthLinkIntentService>) {
 	return service.issue({
 		targetUserId: 'alice',
 		provider: 'discord',
@@ -150,6 +145,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: issued.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: discordAccount,
 			}),
@@ -173,6 +169,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: 'tampered-token',
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: discordAccount,
 			}),
@@ -200,6 +197,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: issued.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: discordAccount,
 			}),
@@ -213,6 +211,7 @@ describe('OAuth link intent security contract', () => {
 		const input = {
 			rawToken: issued.rawToken,
 			provider: 'discord' as const,
+			authenticatedUserId: 'alice',
 			sessionBinding: aliceBinding,
 			account: discordAccount,
 		}
@@ -232,6 +231,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: issued.rawToken,
 				provider: 'github',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: {
 					type: 'oauth',
@@ -252,6 +252,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: issued.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: bobBinding,
 				account: discordAccount,
 			}),
@@ -266,21 +267,15 @@ describe('OAuth link intent security contract', () => {
 		const input = {
 			rawToken: issued.rawToken,
 			provider: 'discord' as const,
+			authenticatedUserId: 'alice',
 			sessionBinding: aliceBinding,
 			account: discordAccount,
 		}
 
-		const results = await Promise.all([
-			service.consume(input),
-			service.consume(input),
-		])
+		const results = await Promise.all([service.consume(input), service.consume(input)])
 
-		expect(results.filter((result) => result.status === 'linked')).toHaveLength(
-			1,
-		)
-		expect(results.filter((result) => result.status === 'denied')).toHaveLength(
-			1,
-		)
+		expect(results.filter((result) => result.status === 'linked')).toHaveLength(1)
+		expect(results.filter((result) => result.status === 'denied')).toHaveLength(1)
 		expect(accountWrites).toHaveBeenCalledOnce()
 	})
 
@@ -301,29 +296,26 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: aliceIntent.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: discordAccount,
 			}),
 			service.consume({
 				rawToken: bobIntent.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'bob',
 				sessionBinding: bobBinding,
 				account: discordAccount,
 			}),
 		])
 
-		expect(results.filter((result) => result.status === 'linked')).toHaveLength(
-			1,
-		)
-		expect(results.filter((result) => result.status === 'denied')).toHaveLength(
-			1,
-		)
+		expect(results.filter((result) => result.status === 'linked')).toHaveLength(1)
+		expect(results.filter((result) => result.status === 'denied')).toHaveLength(1)
 		expect(accountWrites).toHaveBeenCalledOnce()
 		expect(['alice', 'bob']).toContain(accounts.get('discord:discord-123'))
 		expect(
 			observe.mock.calls.some(
-				([event]) =>
-					event.action === 'ownership_after' && event.ownerUnchanged === true,
+				([event]) => event.action === 'ownership_after' && event.ownerUnchanged === true,
 			),
 		).toBe(true)
 	})
@@ -337,6 +329,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: issued.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: { ...discordAccount, access_token: 'renewed-token' },
 			}),
@@ -359,6 +352,7 @@ describe('OAuth link intent security contract', () => {
 			service.consume({
 				rawToken: issued.rawToken,
 				provider: 'discord',
+				authenticatedUserId: 'alice',
 				sessionBinding: aliceBinding,
 				account: discordAccount,
 			}),
@@ -371,9 +365,7 @@ describe('OAuth link intent security contract', () => {
 
 		const events = observe.mock.calls.map(([event]) => event)
 		const denied = events.find((event) => event.action === 'validation_denied')
-		const ownershipAfter = events.find(
-			(event) => event.action === 'ownership_after',
-		)
+		const ownershipAfter = events.find((event) => event.action === 'ownership_after')
 		expect(denied).toMatchObject({ reasonClass: 'cross-user-owned' })
 		expect(ownershipAfter).toMatchObject({ ownerUnchanged: true })
 		expect(new Set(events.map((event) => event.flowId)).size).toBe(1)
@@ -390,6 +382,7 @@ describe('OAuth link intent security contract', () => {
 		await service.consume({
 			rawToken: issued.rawToken,
 			provider: 'discord',
+			authenticatedUserId: 'alice',
 			sessionBinding: aliceBinding,
 			account: discordAccount,
 		})
@@ -407,6 +400,165 @@ describe('OAuth link intent security contract', () => {
 		const receipt = JSON.stringify(observe.mock.calls)
 		expect(receipt).not.toContain('alice')
 		expect(receipt).not.toContain('discord-123')
+		expect(receipt).not.toContain(issued.rawToken)
+	})
+})
+
+const githubAccount: OAuthLinkAccount = {
+	type: 'oauth',
+	provider: 'github',
+	providerAccountId: 'github-123',
+	access_token: 'github-provider-token',
+}
+
+async function issueGithubIntent(service: ReturnType<typeof createOAuthLinkIntentService>) {
+	return service.issue({
+		targetUserId: 'alice',
+		provider: 'github',
+		sessionBinding: aliceBinding,
+	})
+}
+
+describe('GitHub OAuth link intent security contract', () => {
+	it('consumes once and refuses replay', async () => {
+		const { service, accountWrites, observe } = createHarness()
+		const issued = await issueGithubIntent(service)
+		const input = {
+			rawToken: issued.rawToken,
+			provider: 'github' as const,
+			authenticatedUserId: 'alice',
+			sessionBinding: aliceBinding,
+			account: githubAccount,
+		}
+
+		await expect(service.consume(input)).resolves.toMatchObject({
+			status: 'linked',
+			targetUserId: 'alice',
+		})
+		await expect(service.consume(input)).resolves.toEqual({ status: 'denied' })
+		expect(accountWrites).toHaveBeenCalledOnce()
+		expect(observe).toHaveBeenCalledWith(
+			expect.objectContaining({
+				action: 'intent_issued',
+				provider: 'github',
+				flowId: expect.stringMatching(/^olf_/),
+			}),
+		)
+		expect(observe).toHaveBeenCalledWith(
+			expect.objectContaining({
+				action: 'link_result',
+				provider: 'github',
+				result: 'linked',
+			}),
+		)
+	})
+
+	it('refuses expiry, session swap, and provider swap without consuming', async () => {
+		const sessionHarness = createHarness()
+		const sessionIntent = await issueGithubIntent(sessionHarness.service)
+		await expect(
+			sessionHarness.service.consume({
+				rawToken: sessionIntent.rawToken,
+				provider: 'github',
+				authenticatedUserId: 'alice',
+				sessionBinding: bobBinding,
+				account: githubAccount,
+			}),
+		).resolves.toEqual({ status: 'denied' })
+		expect(sessionHarness.intents.size).toBe(1)
+
+		await expect(
+			sessionHarness.service.consume({
+				rawToken: sessionIntent.rawToken,
+				provider: 'github',
+				authenticatedUserId: 'bob',
+				sessionBinding: aliceBinding,
+				account: githubAccount,
+			}),
+		).resolves.toEqual({ status: 'denied' })
+		expect(sessionHarness.intents.size).toBe(1)
+
+		await expect(
+			sessionHarness.service.consume({
+				rawToken: sessionIntent.rawToken,
+				provider: 'discord',
+				authenticatedUserId: 'alice',
+				sessionBinding: aliceBinding,
+				account: discordAccount,
+			}),
+		).resolves.toEqual({ status: 'denied' })
+		expect(sessionHarness.intents.size).toBe(1)
+		expect(sessionHarness.accountWrites).not.toHaveBeenCalled()
+
+		const memory = createMemoryRepository()
+		const issuer = createOAuthLinkIntentService({
+			repository: memory.repository,
+			now: () => now,
+			newToken: () => 'github-expired-token',
+			newNonce: () => 'github-expired-nonce',
+		})
+		const expired = createOAuthLinkIntentService({
+			repository: memory.repository,
+			now: () => new Date(now.getTime() + 11 * 60_000),
+		})
+		const expiredIntent = await issueGithubIntent(issuer)
+		await expect(
+			expired.consume({
+				rawToken: expiredIntent.rawToken,
+				provider: 'github',
+				authenticatedUserId: 'alice',
+				sessionBinding: aliceBinding,
+				account: githubAccount,
+			}),
+		).resolves.toEqual({ status: 'expired' })
+		expect(memory.accountWrites).not.toHaveBeenCalled()
+	})
+
+	it('allows only one concurrent GitHub callback to link', async () => {
+		const { service, accountWrites } = createHarness()
+		const issued = await issueGithubIntent(service)
+		const input = {
+			rawToken: issued.rawToken,
+			provider: 'github' as const,
+			authenticatedUserId: 'alice',
+			sessionBinding: aliceBinding,
+			account: githubAccount,
+		}
+
+		const results = await Promise.all([service.consume(input), service.consume(input)])
+
+		expect(results.filter((result) => result.status === 'linked')).toHaveLength(1)
+		expect(results.filter((result) => result.status === 'denied')).toHaveLength(1)
+		expect(accountWrites).toHaveBeenCalledOnce()
+	})
+
+	it('never moves a GitHub account owned by another AI Hero user', async () => {
+		const { service, accounts, accountWrites, observe } = createHarness()
+		accounts.set('github:github-123', 'bob')
+		const issued = await issueGithubIntent(service)
+
+		await expect(
+			service.consume({
+				rawToken: issued.rawToken,
+				provider: 'github',
+				authenticatedUserId: 'alice',
+				sessionBinding: aliceBinding,
+				account: githubAccount,
+			}),
+		).resolves.toEqual({
+			status: 'denied',
+			reasonClass: 'cross-user-owned',
+		})
+		expect(accounts.get('github:github-123')).toBe('bob')
+		expect(accountWrites).not.toHaveBeenCalled()
+		expect(observe).toHaveBeenCalledWith(
+			expect.objectContaining({
+				action: 'ownership_after',
+				ownerUnchanged: true,
+			}),
+		)
+		const receipt = JSON.stringify(observe.mock.calls)
+		expect(receipt).not.toContain('github-123')
 		expect(receipt).not.toContain(issued.rawToken)
 	})
 })
