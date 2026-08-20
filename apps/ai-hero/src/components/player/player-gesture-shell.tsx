@@ -23,8 +23,16 @@ const RIPPLE_MS = 700
 const DEFAULT_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2]
 
 type MediaControllerElement = HTMLElement & {
-	userInactive: boolean
 	autohide: string
+}
+
+// The bundled media-chrome inside mux-player exposes no working
+// `userInactive` property setter — drive the attribute directly, which
+// is what media-chrome's own show/hide code does. The chrome CSS reacts
+// to the attribute.
+function setControllerInactive(mc: MediaControllerElement, inactive: boolean) {
+	if (inactive) mc.setAttribute('userinactive', '')
+	else mc.removeAttribute('userinactive')
 }
 
 function getMediaController(
@@ -139,13 +147,13 @@ export function PlayerGestureShell({
 	const setChrome = React.useCallback(
 		(visible: boolean, hideAfterMs = CHROME_HIDE_MS) => {
 			const mc = getMediaController(playerRef.current)
-			if (mc) mc.userInactive = !visible
+			if (mc) setControllerInactive(mc, !visible)
 			setChromeVisible(visible)
 			clearHideTimer()
 			if (visible && !pausedRef.current) {
 				hideTimerRef.current = setTimeout(() => {
 					const inner = getMediaController(playerRef.current)
-					if (inner) inner.userInactive = true
+					if (inner) setControllerInactive(inner, true)
 					setChromeVisible(false)
 				}, hideAfterMs)
 			}
@@ -265,8 +273,13 @@ export function PlayerGestureShell({
 			setHasPlayed(true)
 			setPlayFlash({ kind: 'play', key: ++keyCounterRef.current })
 			// Chrome clears out fast once playback starts, YouTube-style.
-			if (isCoarse && chromeVisibleRef.current)
-				setChrome(true, CHROME_HIDE_AFTER_PLAY_MS)
+			// The userinactive attribute is the truth for visibility — the
+			// React mirror can drift if a show happened before hydration.
+			const mcNow = getMediaController(player)
+			const visibleNow = mcNow
+				? !mcNow.hasAttribute('userinactive')
+				: chromeVisibleRef.current
+			if (isCoarse && visibleNow) setChrome(true, CHROME_HIDE_AFTER_PLAY_MS)
 		}
 		const onPause = () => {
 			pausedRef.current = true
