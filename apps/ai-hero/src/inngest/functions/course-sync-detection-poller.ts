@@ -20,6 +20,7 @@ import {
 	unwrapCourseSyncStepResult,
 	type CourseSyncStepResult,
 } from '@/course-sync/errors'
+import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { env } from '@/env.mjs'
 import {
@@ -179,9 +180,14 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					}),
 				)
 			},
-			freezeAsset: (input) =>
-				runTypedStep(`freeze-asset-${input.sourceVideoId}`, () =>
-					courseSyncControlPlane.freezeAsset(input),
+			freezeAssetBatch: (input) =>
+				runTypedStep(
+					`freeze-assets-batch-${String(input.batchNumber).padStart(3, '0')}`,
+					() =>
+						freezeCourseSyncAssetBatch(
+							input,
+							courseSyncControlPlane.freezeAsset,
+						),
 				),
 			stage: (input) =>
 				runTypedStep('stage-course-sync-revision', () =>

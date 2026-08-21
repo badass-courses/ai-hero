@@ -225,6 +225,7 @@ describe('course sync history loaders', () => {
 	})
 
 	it.each([
+		['batching', 'batching'],
 		['released', 'staging'],
 		['awaiting-apply', 'awaiting-apply'],
 		['applying', 'applying'],

@@ -6,6 +6,12 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import type { CourseSyncBoundedAutoApplyDecision } from './persistence-invariants'
+import {
+	courseSyncFreezeBatches,
+	type CourseSyncFreezeBatchInput,
+	type CourseSyncFreezeProgress,
+	type CourseSyncFrozenAssetBatch,
+} from './freeze-batches'
 import type { FrozenSourceAsset } from './types'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
@@ -35,6 +41,7 @@ export type CourseSyncPollState = {
 	courseVersionId: string
 	providerRevision: string
 	status:
+		| 'batching'
 		| 'staging'
 		| 'awaiting-apply'
 		| 'applying'
@@ -163,11 +170,9 @@ export type CourseSyncDetectionPollerDependencies = {
 	ensureBinding(bindingId: string): Promise<void>
 	savePollState(state: CourseSyncPollState): Promise<void>
 	appendLog(input: CourseSyncPollLogInput): Promise<void>
-	freezeAsset(input: {
-		bindingId: string
-		manifest: CourseJsonDocumentV3
-		sourceVideoId: string
-	}): Promise<FrozenSourceAsset>
+	freezeAssetBatch(
+		input: CourseSyncFreezeBatchInput,
+	): Promise<CourseSyncFrozenAssetBatch>
 	stage(input: {
 		bindingId: string
 		idempotencyKey: string
@@ -276,6 +281,24 @@ export function courseSyncFailureClass(error: unknown) {
 
 export function isNonRetryableCourseSyncFailure(failure: CourseSyncError) {
 	return failure.retryable === false
+}
+
+function freezeProgressFromFailure(
+	failure: CourseSyncError,
+): CourseSyncFreezeProgress | null {
+	const progress = failure.details?.freezeProgress
+	if (!progress || typeof progress !== 'object') return null
+	const candidate = progress as Partial<CourseSyncFreezeProgress>
+	if (
+		typeof candidate.sourceAssetsRead !== 'number' ||
+		typeof candidate.muxAssetsCreated !== 'number' ||
+		(candidate.precision !== 'exact' &&
+			candidate.precision !== 'at-least' &&
+			candidate.precision !== 'unknown')
+	) {
+		return null
+	}
+	return candidate as CourseSyncFreezeProgress
 }
 
 function safeFailureSummary(input: {
@@ -732,7 +755,7 @@ export function createCourseSyncDetectionPoller(
 		let sourceAssetsRead = 0
 		let muxAssetsCreated = 0
 		let freezeProgressKnown = true
-		let freezeInFlight = false
+		let freezeBatchInFlight = false
 
 		const notifyReview = async (
 			syncRun: CourseSyncRunSummary,
@@ -1180,24 +1203,6 @@ export function createCourseSyncDetectionPoller(
 				}
 			}
 
-			const stagingMarkerFresh =
-				observedBefore &&
-				state?.status === 'staging' &&
-				clock().getTime() - state.updatedAt.getTime() < 2 * 60 * 60 * 1000
-			if (stagingMarkerFresh) {
-				await log({
-					bindingId,
-					courseVersionId,
-					providerRevision,
-					runId,
-					controlPlaneRunId,
-					stage: 'stage',
-					outcome: 'skipped',
-					metadata: { reason: 'freeze-sweep-in-progress' },
-				})
-				return { outcome: 'in-progress', courseVersionId, runId }
-			}
-
 			if (lifecycle.getSnapshot().matches({ active: 'held' })) {
 				await dependencies.ensureBinding(bindingId)
 				await log({
@@ -1242,13 +1247,18 @@ export function createCourseSyncDetectionPoller(
 				})
 			}
 
-			lifecycle.send({ type: 'REVISION.START' })
+			const resuming =
+				observedBefore &&
+				(state?.status === 'batching' || state?.status === 'staging')
+			lifecycle.send({
+				type: resuming ? 'REVISION.RESUME' : 'REVISION.START',
+			})
 			activeStage = 'stage'
 			await dependencies.savePollState({
 				bindingId,
 				courseVersionId,
 				providerRevision,
-				status: 'staging',
+				status: 'batching',
 				consecutiveFailures: retry ? 1 : 0,
 				controlPlaneRunId: observedBefore
 					? (state?.controlPlaneRunId ?? null)
@@ -1263,24 +1273,39 @@ export function createCourseSyncDetectionPoller(
 				runId,
 				stage: 'stage',
 				outcome: 'started',
+				metadata: { mode: 'resumable-batches', resuming },
 			})
 			const frozenAssets: FrozenSourceAsset[] = []
-			for (const video of courseJsonVideos(detected.manifest)) {
-				freezeInFlight = true
-				const asset = await dependencies.freezeAsset({
+			const freezeBatches = courseSyncFreezeBatches(
+				courseJsonVideos(detected.manifest).map((video) => video.id),
+			)
+			for (const [batchNumber, sourceVideoIds] of freezeBatches.entries()) {
+				freezeBatchInFlight = true
+				const batch = await dependencies.freezeAssetBatch({
 					bindingId,
 					manifest: detected.manifest,
-					sourceVideoId: video.id,
+					batchNumber,
+					sourceVideoIds,
 				})
-				freezeInFlight = false
-				if (asset.freezeEffects) {
-					sourceAssetsRead += asset.freezeEffects.sourceAssetsRead
-					muxAssetsCreated += asset.freezeEffects.muxAssetsCreated
-				} else {
-					freezeProgressKnown = false
-				}
-				frozenAssets.push(asset)
+				freezeBatchInFlight = false
+				sourceAssetsRead += batch.progress.sourceAssetsRead
+				muxAssetsCreated += batch.progress.muxAssetsCreated
+				if (batch.progress.precision !== 'exact') freezeProgressKnown = false
+				frozenAssets.push(...batch.assets)
 			}
+			lifecycle.send({ type: 'BATCHES.OK' })
+			await dependencies.savePollState({
+				bindingId,
+				courseVersionId,
+				providerRevision,
+				status: 'staging',
+				consecutiveFailures: retry ? 1 : 0,
+				controlPlaneRunId: observedBefore
+					? (state?.controlPlaneRunId ?? null)
+					: null,
+				failureClass: null,
+				updatedAt: clock(),
+			})
 			let syncRun = await dependencies.stage({
 				bindingId,
 				idempotencyKey: `course-sync-poll:${courseVersionId}:${providerRevision}`,
@@ -1560,6 +1585,7 @@ export function createCourseSyncDetectionPoller(
 			const strikes = lifecycle.getSnapshot().context.strikes
 			const held = lifecycle.getSnapshot().matches({ active: 'held' })
 			const transitionedToHeld = held && previousState?.status !== 'held'
+			const interruptedBatchProgress = freezeProgressFromFailure(failure)
 			const summary = safeFailureSummary({
 				failure,
 				code: kind,
@@ -1567,13 +1593,19 @@ export function createCourseSyncDetectionPoller(
 				controlPlaneRunId,
 				previousAppliedRunId,
 				freezeProgress: {
-					sourceAssetsRead,
-					muxAssetsCreated,
-					precision: freezeInFlight
-						? 'at-least'
-						: freezeProgressKnown
-							? 'exact'
-							: 'unknown',
+					sourceAssetsRead:
+						sourceAssetsRead +
+						(interruptedBatchProgress?.sourceAssetsRead ?? 0),
+					muxAssetsCreated:
+						muxAssetsCreated +
+						(interruptedBatchProgress?.muxAssetsCreated ?? 0),
+					precision: !freezeProgressKnown
+						? 'unknown'
+						: interruptedBatchProgress
+							? interruptedBatchProgress.precision
+							: freezeBatchInFlight
+								? 'at-least'
+								: 'exact',
 				},
 			})
 			await log({

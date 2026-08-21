@@ -40,6 +40,7 @@ describe('automatic course-sync poll-state saves', () => {
 	it('reserves every transition out of held for atomic operator release', () => {
 		const rollbackHold = state('held', '2026-08-16T19:00:00.000Z')
 		for (const status of [
+			'batching',
 			'staging',
 			'awaiting-apply',
 			'applying',
