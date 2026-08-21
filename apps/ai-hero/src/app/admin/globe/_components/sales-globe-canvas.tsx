@@ -41,16 +41,22 @@ export function SalesGlobeCanvas({
 	points,
 	rings,
 	focusHit,
+	lookAtMs = LOOK_AT_MS,
+	holdAutoRotate = false,
 }: {
 	points: readonly GlobeHit[]
 	rings: readonly GlobeHit[]
 	focusHit: GlobeHit | null
+	lookAtMs?: number
+	holdAutoRotate?: boolean
 }) {
 	const containerRef = React.useRef<HTMLDivElement>(null)
 	const globeRef = React.useRef<GlobeMethods | undefined>(undefined)
 	const userDrivingRef = React.useRef(false)
 	const idleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 	const seenFocusIdRef = React.useRef<string | null>(null)
+	const holdAutoRotateRef = React.useRef(holdAutoRotate)
+	holdAutoRotateRef.current = holdAutoRotate
 	const [size, setSize] = React.useState({ width: 0, height: 0 })
 
 	const clearIdleTimer = React.useCallback(() => {
@@ -108,6 +114,7 @@ export function SalesGlobeCanvas({
 
 		const controls = globe.controls() as GlobeOrbitControls
 		configureSalesGlobeControls(controls)
+		if (holdAutoRotateRef.current) controls.autoRotate = false
 
 		const onStart = () => {
 			userDrivingRef.current = true
@@ -117,8 +124,11 @@ export function SalesGlobeCanvas({
 		const onEnd = () => {
 			userDrivingRef.current = false
 			clearIdleTimer()
+			if (holdAutoRotateRef.current) return
 			idleTimerRef.current = setTimeout(() => {
-				if (!userDrivingRef.current) controls.autoRotate = true
+				if (!userDrivingRef.current && !holdAutoRotateRef.current) {
+					controls.autoRotate = true
+				}
 			}, IDLE_RESUME_MS)
 		}
 
@@ -126,6 +136,10 @@ export function SalesGlobeCanvas({
 		controls.addEventListener('end', onEnd)
 		globe.pointOfView({ altitude: DEFAULT_GLOBE_ALTITUDE })
 	}, [clearIdleTimer])
+
+	React.useEffect(() => {
+		if (holdAutoRotate) setAutoRotate(false)
+	}, [holdAutoRotate, setAutoRotate])
 
 	React.useEffect(() => {
 		if (!focusHit) return
@@ -140,16 +154,16 @@ export function SalesGlobeCanvas({
 		if (!globe || userDrivingRef.current) return
 
 		const current = globe.pointOfView()
-		setAutoRotate(true)
+		setAutoRotate(!holdAutoRotate)
 		globe.pointOfView(
 			{
 				lat: focusHit.lat,
 				lng: focusHit.lng,
 				altitude: current.altitude || DEFAULT_GLOBE_ALTITUDE,
 			},
-			LOOK_AT_MS,
+			lookAtMs,
 		)
-	}, [focusHit, setAutoRotate])
+	}, [focusHit, holdAutoRotate, lookAtMs, setAutoRotate])
 
 	const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
 		const globe = globeRef.current

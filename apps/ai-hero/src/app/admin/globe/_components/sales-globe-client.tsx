@@ -19,11 +19,14 @@ import countryCentroids from '../_data/country-centroids.json'
 import type { GlobeHit } from './sales-globe-canvas'
 import {
 	DEFAULT_REPLAY_SPEED,
+	REPLAY_LOOK_AT_MIN_MS,
+	REPLAY_MIN_GAP_MS,
 	REPLAY_SPEEDS,
 	mergePendingHits,
 	nextHitGapMs,
 	oldestFirst,
 	replayHitGapMs,
+	replayLookAtMs,
 	type ReplaySpeed,
 } from './sales-globe-feed'
 
@@ -127,6 +130,8 @@ export function SalesGlobeClient({
 	const modeRef = React.useRef<BoardMode>('live')
 	const speedRef = React.useRef<ReplaySpeed>(DEFAULT_REPLAY_SPEED)
 	const pausedRef = React.useRef(false)
+	const lastPlayedRef = React.useRef<SerializedPurchaseTickerHit | null>(null)
+	const [lookAtMs, setLookAtMs] = React.useState(REPLAY_LOOK_AT_MIN_MS)
 
 	const rememberMute = React.useCallback((nextMuted: boolean) => {
 		mutedRef.current = nextMuted
@@ -232,6 +237,21 @@ export function SalesGlobeClient({
 			}
 			return
 		}
+		const following = pendingHitsRef.current[0]
+		const replayGap =
+			modeRef.current === 'replay' && following
+				? replayHitGapMs({
+						previousCreatedAt: next.createdAt,
+						nextCreatedAt: following.createdAt,
+						speed: speedRef.current,
+					})
+				: null
+		if (replayGap !== null) {
+			setLookAtMs(replayLookAtMs(replayGap))
+		} else {
+			setLookAtMs(REPLAY_LOOK_AT_MIN_MS)
+		}
+		lastPlayedRef.current = next
 		addLiveHit(next)
 		if (modeRef.current === 'replay') {
 			setReplayProgress((current) => ({
@@ -247,9 +267,7 @@ export function SalesGlobeClient({
 			return
 		}
 		const gap =
-			modeRef.current === 'replay'
-				? replayHitGapMs(next.isTeam, speedRef.current)
-				: nextHitGapMs(pendingHitsRef.current.length, next.isTeam)
+			replayGap ?? nextHitGapMs(pendingHitsRef.current.length, next.isTeam)
 		pumpTimerRef.current = setTimeout(() => {
 			playNextPendingRef.current()
 		}, gap)
@@ -264,6 +282,8 @@ export function SalesGlobeClient({
 		setPendingCount(0)
 		pausedRef.current = false
 		setPaused(false)
+		lastPlayedRef.current = null
+		setLookAtMs(REPLAY_LOOK_AT_MIN_MS)
 	}, [])
 
 	const enqueueLiveHits = React.useCallback(
@@ -461,10 +481,21 @@ export function SalesGlobeClient({
 		) {
 			return
 		}
+		const previous = lastPlayedRef.current
+		const following = pendingHitsRef.current[0]
 		clearTimeout(pumpTimerRef.current)
+		const gap =
+			previous && following
+				? replayHitGapMs({
+						previousCreatedAt: previous.createdAt,
+						nextCreatedAt: following.createdAt,
+						speed: nextSpeed,
+					})
+				: REPLAY_MIN_GAP_MS
+		setLookAtMs(replayLookAtMs(gap))
 		pumpTimerRef.current = setTimeout(() => {
 			playNextPendingRef.current()
-		}, replayHitGapMs(false, nextSpeed))
+		}, gap)
 	}, [])
 
 	React.useEffect(() => {
@@ -673,6 +704,8 @@ export function SalesGlobeClient({
 					points={points}
 					rings={visibleRings}
 					focusHit={visibleRings[0] ?? null}
+					lookAtMs={lookAtMs}
+					holdAutoRotate={mode === 'replay'}
 				/>
 				<div className="pointer-events-none absolute left-3 top-3 rounded border border-white/10 bg-black/55 px-2 py-1 font-mono text-xs text-white/75 backdrop-blur">
 					{mode === 'replay'
