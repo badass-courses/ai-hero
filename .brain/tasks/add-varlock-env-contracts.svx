@@ -1,0 +1,45 @@
+---
+title: "Add Varlock environment contracts"
+type: "task"
+status: "ready-for-review"
+created_at: "2026-08-21"
+updated_at: "2026-08-21"
+privacy: "private"
+---
+
+# Add Varlock environment contracts
+
+## Problem
+
+A Vercel production env pull returned short, identical placeholder values for `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY`. AI Hero production remained healthy because the live deployment had effective Inngest credentials from the Vercel integration, but local refund and inspection commands mistook the redacted placeholders for broken production credentials.
+
+Presence-only validation did not distinguish real credentials from placeholders. The operator path then misdiagnosed a production outage.
+
+## Decision
+
+Add Varlock as a validation layer before replacing the existing T3/Zod runtime loader.
+
+The first contract covers only the two Inngest credentials:
+
+- values remain sensitive and are required only in production
+- both keys must be at least 32 characters
+- signing keys must use an Inngest production or test prefix
+- `prebuild` validates the effective ambient build credentials before `next build`
+- `pnpm env:check` provides the same redacted local check
+
+Do not validate integration-managed secrets from a Vercel project env pull. Vercel returns bracketed sensitive placeholders rather than the effective deployment values. The Vercel build environment is the authoritative validation point.
+
+## Scope boundary
+
+This change does not replace `src/env.mjs`, inject resolved values into Next.js, rotate credentials, mutate Vercel, or change runtime environment loading.
+
+Expand the schema after launch. Migrate one provider boundary at a time and keep the existing runtime validator until the Varlock contract is complete.
+
+## Verification
+
+- `pnpm env:check` passes when the keys are absent locally or in preview
+- simulated Vercel production fails when either key is absent
+- a synthetic valid pair passes Varlock validation
+- synthetic short keys fail with redacted validation errors
+- `pnpm typecheck` passes
+- full lint remains blocked by pre-existing React errors; the changed configuration and schema add no lint findings
