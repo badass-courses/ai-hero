@@ -384,6 +384,22 @@ describe('draft course sync control plane', () => {
 		expect(courseSyncRunMachine.events).not.toContain('PUBLISH')
 	})
 
+	it('ensures the server binding without asserting the target', async () => {
+		const testHarness = harness({ targetValid: false })
+
+		await expect(
+			testHarness.controlPlane.ensureBinding(
+				AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			),
+		).resolves.toMatchObject({ contractVersion: 4 })
+		expect(
+			testHarness.persistence.bindings.get(
+				AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			),
+		).toEqual(AI_HERO_COURSE_SYNC_BINDING)
+		expect(testHarness.persistence.assertTargetCalls).toBe(0)
+	})
+
 	it('rejects an invalid target before reading or mutating Dropbox bytes', async () => {
 		const testHarness = harness({ targetValid: false })
 		await expect(
