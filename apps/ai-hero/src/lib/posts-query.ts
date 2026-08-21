@@ -41,6 +41,7 @@ import { ListSchema, type List } from './lists'
 import { DatabaseError, PostCreationError } from './post-errors'
 import { PostOrListSchema } from './post-or-list'
 import { generateContentHash } from './post-utils'
+import { parsePublicContentSlug } from './public-content-slug'
 import { TagSchema, type Tag } from './tags'
 import { deletePostInTypeSense, upsertPostToTypeSense } from './typesense-query'
 
@@ -1456,7 +1457,10 @@ const _dedupedPostOrList = cache(async (slugOrId: string) => {
 })
 
 export async function getCachedPostOrList(slugOrId: string) {
-	return _dedupedPostOrList(slugOrId)
+	const safeSlugOrId = parsePublicContentSlug(slugOrId)
+	if (!safeSlugOrId) return null
+
+	return _dedupedPostOrList(safeSlugOrId)
 }
 
 export async function getPostOrList(slugOrId: string) {

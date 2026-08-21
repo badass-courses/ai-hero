@@ -46,6 +46,8 @@ describe('proxy matcher', () => {
 	it.each([
 		'/',
 		'/a-public-post',
+		'/skills%E2%80%94discussed',
+		'/grill-with-doc%EE%80%80s',
 		'/lists',
 		'/lists/ai-coding',
 		'/rss.xml',
