@@ -19,6 +19,7 @@ import {
 	startCourseSyncPollLifecycle,
 	type CourseSyncPollLifecycleActor,
 } from './poll-machine'
+import { courseSyncApplyPolicyOverride } from './poll-policy'
 import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 
 export const COURSE_SYNC_WORKSHOP_EDIT_URL =
@@ -52,6 +53,7 @@ export type CourseSyncPollState = {
 	consecutiveFailures: number
 	controlPlaneRunId: string | null
 	failureClass: string | null
+	applyPolicyOverride: 'operator' | null
 	updatedAt: Date
 }
 
@@ -268,6 +270,13 @@ function isLegacyAppliedHead(
 		head?.courseVersionId === courseVersionId &&
 		head.runState === 'applied' &&
 		head.providerRevision === courseVersionId
+	)
+}
+
+function effectiveApplyPolicy(state: CourseSyncPollState | null) {
+	return (
+		courseSyncApplyPolicyOverride(state) ??
+		AI_HERO_COURSE_SYNC_BINDING.applyPolicy
 	)
 }
 
@@ -635,7 +644,7 @@ export async function recordCourseSyncPollFailure(
 	const lifecycle = startCourseSyncPollLifecycle({
 		pollStatus: state?.status ?? null,
 		strikes: state?.consecutiveFailures ?? 0,
-		applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+		applyPolicy: effectiveApplyPolicy(state),
 	})
 	if (
 		lifecycle.getSnapshot().matches({ active: 'idle' }) ||
@@ -684,6 +693,7 @@ export async function recordCourseSyncPollFailure(
 		consecutiveFailures: strikes,
 		controlPlaneRunId: state?.controlPlaneRunId ?? null,
 		failureClass: failureKind,
+		applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 		updatedAt: occurredAt,
 	})
 	// Strike one always retries on its own; only page humans when the run
@@ -925,10 +935,7 @@ export function createCourseSyncDetectionPoller(
 					state?.status === 'held' || observedBefore
 						? (state?.consecutiveFailures ?? 0)
 						: 0,
-				applyPolicy:
-					state?.status === 'released' || state?.status === 'awaiting-apply'
-						? 'operator'
-						: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+				applyPolicy: effectiveApplyPolicy(state),
 			})
 			const appliedAlready =
 				(observedBefore && state?.status === 'succeeded') ||
@@ -963,6 +970,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: clock(),
 				})
 				await log({
@@ -996,6 +1004,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'awaiting-apply',
+						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 						updatedAt: clock(),
 					})
 					await notifyReview(currentRun, 'awaiting-operator-apply')
@@ -1023,6 +1032,7 @@ export function createCourseSyncDetectionPoller(
 						status: 'succeeded',
 						consecutiveFailures: 0,
 						failureClass: null,
+						applyPolicyOverride: null,
 						updatedAt: clock(),
 					})
 					await log({
@@ -1049,6 +1059,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'applying',
+						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 						updatedAt: clock(),
 					})
 					await log({
@@ -1120,6 +1131,7 @@ export function createCourseSyncDetectionPoller(
 						status: held ? 'held' : 'failed',
 						consecutiveFailures: lifecycle.getSnapshot().context.strikes,
 						failureClass,
+						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 						updatedAt: clock(),
 					}
 					await log({
@@ -1264,6 +1276,7 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
+				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 				updatedAt: clock(),
 			})
 			await log({
@@ -1304,6 +1317,7 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
+				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 				updatedAt: clock(),
 			})
 			let syncRun = await dependencies.stage({
@@ -1334,6 +1348,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: clock(),
 				})
 				await log({
@@ -1413,6 +1428,7 @@ export function createCourseSyncDetectionPoller(
 						consecutiveFailures: 0,
 						controlPlaneRunId: syncRun.runId,
 						failureClass: null,
+						applyPolicyOverride: 'operator',
 						updatedAt: clock(),
 					})
 					await notifyReview(
@@ -1438,6 +1454,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId: syncRun.runId,
 					failureClass: null,
+					applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 					updatedAt: clock(),
 				})
 				await log({
@@ -1528,6 +1545,7 @@ export function createCourseSyncDetectionPoller(
 				consecutiveFailures: 0,
 				controlPlaneRunId,
 				failureClass: null,
+				applyPolicyOverride: null,
 				updatedAt: clock(),
 			})
 			return {
@@ -1571,7 +1589,7 @@ export function createCourseSyncDetectionPoller(
 			lifecycle ??= startCourseSyncPollLifecycle({
 				pollStatus: previousState?.status ?? null,
 				strikes: previousState?.consecutiveFailures ?? 0,
-				applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+				applyPolicy: effectiveApplyPolicy(previousState),
 			})
 			if (
 				lifecycle.getSnapshot().matches({ active: 'idle' }) ||
@@ -1647,6 +1665,7 @@ export function createCourseSyncDetectionPoller(
 				consecutiveFailures: strikes,
 				controlPlaneRunId,
 				failureClass: kind,
+				applyPolicyOverride: courseSyncApplyPolicyOverride(previousState),
 				updatedAt: clock(),
 			})
 			if (transitionedToHeld) {

@@ -22,6 +22,7 @@ import type {
 	CourseSyncRevisionHead,
 } from './detection-poller'
 import { CourseSyncError } from './errors'
+import { courseSyncApplyPolicyOverride } from './poll-policy'
 import { canAutomaticallySaveCourseSyncPollState } from './poll-state-guard'
 import {
 	releasedCourseSyncPollState,
@@ -96,6 +97,8 @@ export async function getCourseSyncPollState(
 		? {
 				...row,
 				status: row.status as CourseSyncPollState['status'],
+				applyPolicyOverride:
+					row.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 			}
 		: null
 }
@@ -112,13 +115,23 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 			.from(courseSyncPollState)
 			.where(eq(courseSyncPollState.bindingId, state.bindingId))
 			.for('update')
-		const currentState = current
+		const currentState: CourseSyncPollState | null = current
 			? {
 					...current,
 					status: current.status as CourseSyncPollState['status'],
+					applyPolicyOverride:
+						current.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 				}
 			: null
 		if (!canAutomaticallySaveCourseSyncPollState(currentState, state)) return
+		const nextState: CourseSyncPollState = {
+			...state,
+			applyPolicyOverride:
+				state.status === 'succeeded'
+					? null
+					: (courseSyncApplyPolicyOverride(currentState) ??
+						state.applyPolicyOverride),
+		}
 		if (
 			current?.status === 'awaiting-apply' &&
 			current.controlPlaneRunId &&
@@ -141,16 +154,17 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 		}
 		await trx
 			.insert(courseSyncPollState)
-			.values(state)
+			.values(nextState)
 			.onDuplicateKeyUpdate({
 				set: {
-					courseVersionId: state.courseVersionId,
-					providerRevision: state.providerRevision,
-					status: state.status,
-					consecutiveFailures: state.consecutiveFailures,
-					controlPlaneRunId: state.controlPlaneRunId,
-					failureClass: state.failureClass,
-					updatedAt: state.updatedAt,
+					courseVersionId: nextState.courseVersionId,
+					providerRevision: nextState.providerRevision,
+					status: nextState.status,
+					consecutiveFailures: nextState.consecutiveFailures,
+					controlPlaneRunId: nextState.controlPlaneRunId,
+					failureClass: nextState.failureClass,
+					applyPolicyOverride: nextState.applyPolicyOverride,
+					updatedAt: nextState.updatedAt,
 				},
 			})
 	})
@@ -387,10 +401,18 @@ export async function releaseCourseSyncPollHoldAtomically(
 			const releasedState = value as Omit<CourseSyncPollState, 'updatedAt'> & {
 				updatedAt: string | Date
 			}
-			return {
+			const replayedState: CourseSyncPollState = {
 				...releasedState,
+				status: releasedState.status,
+				applyPolicyOverride:
+					releasedState.applyPolicyOverride === 'operator'
+						? 'operator'
+						: releasedState.status === 'released'
+							? 'operator'
+							: null,
 				updatedAt: new Date(releasedState.updatedAt),
 			}
+			return replayedState
 		}
 
 		const [lockedState] = await trx
@@ -409,6 +431,8 @@ export async function releaseCourseSyncPollHoldAtomically(
 		const currentState: CourseSyncPollState = {
 			...lockedState,
 			status: lockedState.status as CourseSyncPollState['status'],
+			applyPolicyOverride:
+				lockedState.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 		}
 		const released = releasedCourseSyncPollState(currentState, input.occurredAt)
 
@@ -517,6 +541,7 @@ export async function releaseCourseSyncPollHoldAtomically(
 				consecutiveFailures: released.consecutiveFailures,
 				controlPlaneRunId: released.controlPlaneRunId,
 				failureClass: released.failureClass,
+				applyPolicyOverride: released.applyPolicyOverride,
 				updatedAt: released.updatedAt,
 			})
 			.where(

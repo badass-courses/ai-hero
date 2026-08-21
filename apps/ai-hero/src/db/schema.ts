@@ -314,6 +314,7 @@ export const courseSyncPollState = mysqlTable('CourseSyncPollState', {
 	consecutiveFailures: int('consecutiveFailures').notNull().default(0),
 	controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
 	failureClass: varchar('failureClass', { length: 100 }),
+	applyPolicyOverride: varchar('applyPolicyOverride', { length: 32 }),
 	updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
 })
 
