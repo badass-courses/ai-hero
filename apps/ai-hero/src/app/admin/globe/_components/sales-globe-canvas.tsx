@@ -3,12 +3,24 @@
 import * as React from 'react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
 
+import {
+	DEFAULT_GLOBE_ALTITUDE,
+	IDLE_RESUME_MS,
+	LOOK_AT_MS,
+	configureSalesGlobeControls,
+	povAfterViewportKey,
+	type GlobeOrbitControls,
+} from './sales-globe-navigation'
+
 export type GlobeHit = Readonly<{
 	id: string
 	lat: number
 	lng: number
 	isTeam: boolean
 }>
+
+const EARTH_NIGHT_URL = '/admin-globe/earth-night.jpg'
+const EARTH_BUMP_URL = '/admin-globe/earth-topology.png'
 
 function isTeamHit(value: object): boolean {
 	return 'isTeam' in value && value.isTeam === true
@@ -22,16 +34,38 @@ const pointAltitude = (point: object) => (isTeamHit(point) ? 0.08 : 0.04)
 const pointRadius = (point: object) => (isTeamHit(point) ? 0.45 : 0.25)
 const pointColor = (point: object) => (isTeamHit(point) ? '#f97316' : '#22c55e')
 
+/**
+ * Night-earth globe with a graticule mesh, auto-rotate, and 3ds Max-style orbit/zoom.
+ */
 export function SalesGlobeCanvas({
 	points,
 	rings,
+	focusHit,
 }: {
 	points: readonly GlobeHit[]
 	rings: readonly GlobeHit[]
+	focusHit: GlobeHit | null
 }) {
 	const containerRef = React.useRef<HTMLDivElement>(null)
 	const globeRef = React.useRef<GlobeMethods | undefined>(undefined)
+	const userDrivingRef = React.useRef(false)
+	const idleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+	const seenFocusIdRef = React.useRef<string | null>(null)
 	const [size, setSize] = React.useState({ width: 0, height: 0 })
+
+	const clearIdleTimer = React.useCallback(() => {
+		if (idleTimerRef.current) {
+			clearTimeout(idleTimerRef.current)
+			idleTimerRef.current = null
+		}
+	}, [])
+
+	const setAutoRotate = React.useCallback((enabled: boolean) => {
+		const controls = globeRef.current?.controls() as
+			| GlobeOrbitControls
+			| undefined
+		if (controls) controls.autoRotate = enabled
+	}, [])
 
 	React.useEffect(() => {
 		const container = containerRef.current
@@ -64,16 +98,105 @@ export function SalesGlobeCanvas({
 		return () => document.removeEventListener('visibilitychange', syncAnimation)
 	}, [])
 
+	React.useEffect(() => {
+		return () => clearIdleTimer()
+	}, [clearIdleTimer])
+
+	const handleGlobeReady = React.useCallback(() => {
+		const globe = globeRef.current
+		if (!globe) return
+
+		const controls = globe.controls() as GlobeOrbitControls
+		configureSalesGlobeControls(controls)
+
+		const onStart = () => {
+			userDrivingRef.current = true
+			clearIdleTimer()
+			controls.autoRotate = false
+		}
+		const onEnd = () => {
+			userDrivingRef.current = false
+			clearIdleTimer()
+			idleTimerRef.current = setTimeout(() => {
+				if (!userDrivingRef.current) controls.autoRotate = true
+			}, IDLE_RESUME_MS)
+		}
+
+		controls.addEventListener('start', onStart)
+		controls.addEventListener('end', onEnd)
+		globe.pointOfView({ altitude: DEFAULT_GLOBE_ALTITUDE })
+	}, [clearIdleTimer])
+
+	React.useEffect(() => {
+		if (!focusHit) return
+		if (seenFocusIdRef.current === null) {
+			seenFocusIdRef.current = focusHit.id
+			return
+		}
+		if (seenFocusIdRef.current === focusHit.id) return
+		seenFocusIdRef.current = focusHit.id
+
+		const globe = globeRef.current
+		if (!globe || userDrivingRef.current) return
+
+		const current = globe.pointOfView()
+		setAutoRotate(true)
+		globe.pointOfView(
+			{
+				lat: focusHit.lat,
+				lng: focusHit.lng,
+				altitude: current.altitude || DEFAULT_GLOBE_ALTITUDE,
+			},
+			LOOK_AT_MS,
+		)
+	}, [focusHit, setAutoRotate])
+
+	const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+		const globe = globeRef.current
+		if (!globe) return
+		const next = povAfterViewportKey(globe.pointOfView(), event.key)
+		if (!next) return
+		event.preventDefault()
+		userDrivingRef.current = true
+		setAutoRotate(false)
+		globe.pointOfView(next, event.key === 'Z' || event.key === 'z' ? 400 : 0)
+	}
+
+	React.useEffect(() => {
+		const container = containerRef.current
+		if (!container) return
+		const onWheel = (event: WheelEvent) => {
+			event.preventDefault()
+		}
+		container.addEventListener('wheel', onWheel, {
+			passive: false,
+			capture: true,
+		})
+		return () =>
+			container.removeEventListener('wheel', onWheel, { capture: true })
+	}, [])
+
 	return (
-		<div ref={containerRef} className="h-full w-full">
+		<div
+			ref={containerRef}
+			tabIndex={0}
+			onKeyDown={handleKeyDown}
+			className="h-full w-full cursor-grab outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70 active:cursor-grabbing"
+			aria-label="Sales globe. Drag to orbit. Scroll to zoom. Z resets distance. Arrow keys orbit."
+		>
 			{size.width > 0 && size.height > 0 ? (
 				<Globe
 					ref={globeRef}
 					width={size.width}
 					height={size.height}
 					backgroundColor="rgba(0,0,0,0)"
-					atmosphereColor="#38bdf8"
-					atmosphereAltitude={0.18}
+					globeImageUrl={EARTH_NIGHT_URL}
+					bumpImageUrl={EARTH_BUMP_URL}
+					showAtmosphere
+					showGraticules
+					atmosphereColor="#22d3ee"
+					atmosphereAltitude={0.22}
+					onGlobeReady={handleGlobeReady}
 					ringsData={[...rings]}
 					ringLat="lat"
 					ringLng="lng"

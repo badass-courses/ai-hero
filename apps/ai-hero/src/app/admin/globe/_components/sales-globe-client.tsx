@@ -371,7 +371,11 @@ export function SalesGlobeClient({
 			</header>
 
 			<section className="relative h-[clamp(360px,62dvh,760px)] min-w-0 overflow-hidden rounded-lg border bg-[radial-gradient(circle_at_center,rgba(14,116,144,0.18),transparent_62%)]">
-				<SalesGlobeCanvas points={points} rings={visibleRings} />
+				<SalesGlobeCanvas
+					points={points}
+					rings={visibleRings}
+					focusHit={visibleRings[0] ?? null}
+				/>
 				<div className="pointer-events-none absolute left-3 top-3 rounded border border-white/10 bg-black/55 px-2 py-1 font-mono text-xs text-white/75 backdrop-blur">
 					{visibleHits.length} recent paid hit
 					{visibleHits.length === 1 ? '' : 's'}
