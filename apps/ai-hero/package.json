@@ -51,7 +51,8 @@
 		"cohort-004:backfill-status": "tsx -r dotenv/config scripts/cohort-004-backfill-status.mts",
 		"cohort-004:repair-entitlements": "tsx -r dotenv/config scripts/repair-cohort-004-entitlements.mts",
 		"crash-course:backfill-ppp-alumni": "dotenv -e .env.vercel -- tsx scripts/backfill-crash-course-ppp-alumni-entitlements.ts",
-		"crash-course:purchaser-tag": "dotenv -e .env.vercel -- tsx src/scripts/crash-course-purchaser-tag.ts"
+		"crash-course:purchaser-tag": "dotenv -e .env.vercel -- tsx src/scripts/crash-course-purchaser-tag.ts",
+		"globe:geo-backfill": "dotenv -e .env.vercel -- tsx src/scripts/globe-geo-backfill.ts"
 	},
 	"dependencies": {
 		"@ai-hero/course-sync-schema": "workspace:*",

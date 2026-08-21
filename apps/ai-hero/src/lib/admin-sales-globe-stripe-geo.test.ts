@@ -6,6 +6,7 @@ import type { PurchaseTickerHit } from './admin-sales-globe-contract'
 import {
 	applyStripeBillingToHit,
 	enrichGlobeHitsFromStripe,
+	persistPurchaseGeoFromStripe,
 	stripeAddressFromFields,
 } from './admin-sales-globe-stripe-geo'
 
@@ -127,6 +128,41 @@ describe('stripe billing onto globe hits', () => {
 		expect(us).toMatchObject({ city: 'San Francisco', lat: 37.7621 })
 		expect(austin).toMatchObject({ city: 'Austin', lat: 30.2672 })
 		expect(readBilling).toHaveBeenCalledOnce()
+		expect(persist).toHaveBeenCalledOnce()
+	})
+
+	it('persists matching Stripe billing through the purchase geo writer', async () => {
+		const persist = vi.fn().mockResolvedValue(undefined)
+		const plan = await persistPurchaseGeoFromStripe({
+			row: {
+				id: 'purchase_us',
+				country: 'US',
+				city: null,
+				state: null,
+				ipAddress: null,
+				fields: {},
+				sessionIdentifier: 'cs_test',
+				chargeIdentifier: 'ch_test',
+			},
+			readGeo: async () => ({
+				address: {
+					city: 'San Francisco',
+					region: 'CA',
+					postal: '94107',
+					country: 'US',
+				},
+				metadata: { ip_address: '203.0.113.9' },
+			}),
+			persist,
+		})
+
+		expect(plan).toMatchObject({
+			skip: false,
+			city: 'San Francisco',
+			state: 'CA',
+			ipAddress: '203.0.113.9',
+			source: 'stripe-billing',
+		})
 		expect(persist).toHaveBeenCalledOnce()
 	})
 })

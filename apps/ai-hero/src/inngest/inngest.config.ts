@@ -65,6 +65,7 @@ import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsl
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
 import { computeVideoSplitPoints } from './functions/split_video'
+import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
@@ -113,6 +114,7 @@ const allFunctions = [
 	syncPurchaseTags,
 	addPurchasesConvertkit,
 	stripeSubscriptionCheckoutSessionComplete,
+	persistPurchaseGeo,
 	createUserOrganizations,
 	ensurePersonalOrganizationWorkflow,
 	videoResourceAttached,

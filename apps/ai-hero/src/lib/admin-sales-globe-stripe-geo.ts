@@ -9,7 +9,10 @@ import type { PurchaseTickerHit } from './admin-sales-globe-contract'
 import {
 	billingAddressForPurchase,
 	globeFieldsPatch,
+	planPurchaseGeoWrite,
 	resolveGlobeLocation,
+	type CheckoutGeoMetadata,
+	type PurchaseGeoWritePlan,
 	type StripeBillingAddress,
 } from './admin-sales-globe-geo'
 
@@ -19,6 +22,9 @@ const STRIPE_GEO_CONCURRENCY = 6
 export type GlobeEnrichmentRow = Readonly<{
 	id: string
 	country: string | null
+	city?: string | null
+	state?: string | null
+	ipAddress?: string | null
 	fields: unknown
 	sessionIdentifier: string | null
 	chargeIdentifier: string | null
@@ -55,25 +61,65 @@ export async function readStripeBillingAddress({
 	chargeIdentifier: string | null
 	stripe: Stripe
 }): Promise<StripeBillingAddress | null> {
+	const geo = await readStripeCheckoutGeo({
+		sessionIdentifier,
+		chargeIdentifier,
+		stripe,
+	})
+	return geo.address
+}
+
+function checkoutGeoFromStripeMetadata(
+	metadata: Stripe.Metadata | null | undefined
+): CheckoutGeoMetadata {
+	if (!metadata) return {}
+	return {
+		city: metadata.city ?? null,
+		region: metadata.region ?? null,
+		latitude: metadata.latitude ?? null,
+		longitude: metadata.longitude ?? null,
+		ip_address: metadata.ip_address ?? null,
+	}
+}
+
+/**
+ * Checkout billing plus session metadata (Vercel city/region/coords/IP).
+ */
+export async function readStripeCheckoutGeo({
+	sessionIdentifier,
+	chargeIdentifier,
+	stripe,
+}: {
+	sessionIdentifier: string | null
+	chargeIdentifier: string | null
+	stripe: Stripe
+}): Promise<{
+	address: StripeBillingAddress | null
+	metadata: CheckoutGeoMetadata
+}> {
+	let address: StripeBillingAddress | null = null
+	let metadata: CheckoutGeoMetadata = {}
+
 	if (sessionIdentifier?.startsWith('cs_')) {
 		try {
 			const session = await stripe.checkout.sessions.retrieve(sessionIdentifier)
-			const fromSession = stripeAddressFromFields(
-				session.customer_details?.address
-			)
-			if (fromSession) return fromSession
+			address = stripeAddressFromFields(session.customer_details?.address)
+			metadata = checkoutGeoFromStripeMetadata(session.metadata)
 		} catch {
 			// Fall through to the charge. One missing session must not fail the board.
 		}
 	}
 
-	if (!chargeIdentifier) return null
-	try {
-		const charge = await stripe.charges.retrieve(chargeIdentifier)
-		return stripeAddressFromFields(charge.billing_details?.address)
-	} catch {
-		return null
+	if (!address && chargeIdentifier) {
+		try {
+			const charge = await stripe.charges.retrieve(chargeIdentifier)
+			address = stripeAddressFromFields(charge.billing_details?.address)
+		} catch {
+			address = null
+		}
 	}
+
+	return { address, metadata }
 }
 
 function isCountryOnly(hit: PurchaseTickerHit): boolean {
@@ -204,4 +250,95 @@ async function persistGlobeLocation({
 			fields: globeFieldsPatch(row.fields, location),
 		})
 		.where(eq(purchases.id, hit.id))
+}
+
+/**
+ * Write a planned city/state/IP/globe cache onto one purchase.
+ */
+export async function persistPurchaseGeoWrite({
+	purchaseId,
+	fields,
+	plan,
+}: {
+	purchaseId: string
+	fields: unknown
+	plan: PurchaseGeoWritePlan
+}): Promise<void> {
+	if (plan.skip) {
+		if (plan.reason === 'nothing-to-write') {
+			const current =
+				fields && typeof fields === 'object' && !Array.isArray(fields)
+					? { ...(fields as Record<string, unknown>) }
+					: {}
+			current.globeAttempted = true
+			await db
+				.update(purchases)
+				.set({ fields: current })
+				.where(eq(purchases.id, purchaseId))
+		}
+		return
+	}
+	await db
+		.update(purchases)
+		.set({
+			...(plan.city ? { city: plan.city } : {}),
+			...(plan.state ? { state: plan.state } : {}),
+			...(plan.ipAddress ? { ipAddress: plan.ipAddress } : {}),
+			...(plan.location && plan.source
+				? {
+						fields: globeFieldsPatch(
+							fields,
+							plan.location,
+							plan.source
+						),
+					}
+				: {}),
+		})
+		.where(eq(purchases.id, purchaseId))
+}
+
+/**
+ * Fill one purchase from Stripe session metadata and matching billing.
+ */
+export async function persistPurchaseGeoFromStripe({
+	row,
+	readGeo,
+	persist = persistPurchaseGeoWrite,
+}: {
+	row: GlobeEnrichmentRow
+	readGeo: (row: GlobeEnrichmentRow) => Promise<{
+		address: StripeBillingAddress | null
+		metadata: CheckoutGeoMetadata
+	}>
+	persist?: (input: {
+		purchaseId: string
+		fields: unknown
+		plan: PurchaseGeoWritePlan
+	}) => Promise<void>
+}): Promise<PurchaseGeoWritePlan> {
+	const already = planPurchaseGeoWrite({
+		country: row.country,
+		city: row.city ?? null,
+		state: row.state ?? null,
+		ipAddress: row.ipAddress ?? null,
+		fields: row.fields,
+	})
+	if (already.skip && already.reason === 'already-written') {
+		return already
+	}
+
+	const geo = await readGeo(row)
+	const plan = planPurchaseGeoWrite({
+		country: row.country,
+		city: row.city ?? null,
+		state: row.state ?? null,
+		ipAddress: row.ipAddress ?? null,
+		fields: row.fields,
+		metadata: geo.metadata,
+		billing: geo.address,
+	})
+	if (!plan.skip || plan.reason === 'nothing-to-write') {
+		await persist({ purchaseId: row.id, fields: row.fields, plan })
+	}
+	return plan
 }
