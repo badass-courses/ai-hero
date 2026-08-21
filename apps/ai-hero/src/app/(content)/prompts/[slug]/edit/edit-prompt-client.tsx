@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createPromptBindings } from '@/lib/cms/prompt-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { PromptSchema, type Prompt } from '@/lib/prompts'
 
 import { createResourceEditor, promptManifest } from '@coursebuilder/ui/cms'
@@ -31,6 +32,8 @@ export function EditPromptClient({
 		return createResourceEditor({
 			manifest: {
 				...promptManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(promptManifest.media),
 				schema: PromptSchema,
 				// Legacy-parity normalization (''/null fallbacks) so inputs stay
 				// controlled — same coercions the old useForm defaults applied,
