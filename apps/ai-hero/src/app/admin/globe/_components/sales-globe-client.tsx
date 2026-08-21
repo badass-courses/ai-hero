@@ -11,11 +11,18 @@ import {
 	type SerializedPurchaseTickerHit,
 } from '@/lib/admin-sales-globe-contract'
 import { Button } from '@/components/ui/button'
-import { Globe2, Pause, Play, Radio, User, Volume2, VolumeX } from 'lucide-react'
+import {
+	Globe2,
+	Pause,
+	Play,
+	Radio,
+	User,
+	Volume2,
+	VolumeX,
+} from 'lucide-react'
 
 import { Gravatar } from '@coursebuilder/ui'
 
-import countryCentroids from '../_data/country-centroids.json'
 import type { GlobeHit } from './sales-globe-canvas'
 import {
 	DEFAULT_REPLAY_SPEED,
@@ -36,7 +43,7 @@ const SalesGlobeCanvas = dynamic(
 	{
 		ssr: false,
 		loading: () => <div className="bg-muted h-full w-full animate-pulse" />,
-	},
+	}
 )
 
 const MUTE_KEY = 'aih-admin-sales-globe-muted'
@@ -52,29 +59,28 @@ const regionNames = new Intl.DisplayNames(['en'], { type: 'region' })
 type AudioState = 'suspended' | 'running'
 type BoardMode = 'live' | 'replay' | 'history'
 
-type CountryLocation = Readonly<{
-	lat: number
-	lng: number
-}>
-
-function countryToLatLng(
-	code: string | null | undefined,
-): CountryLocation | null {
-	const normalized = code?.trim().toUpperCase()
-	if (!normalized || !(normalized in countryCentroids)) return null
-
-	// SAFETY: the `in` check proves this normalized key exists in the vendored map.
-	const value = countryCentroids[normalized as keyof typeof countryCentroids]
-	const lat = value[0]
-	const lng = value[1]
-	return typeof lat === 'number' && typeof lng === 'number'
-		? { lat, lng }
-		: null
+function countryLabel(country: string | null): string {
+	return country ? (regionNames.of(country) ?? country) : 'Unknown'
 }
 
 function toGlobeHit(hit: SerializedPurchaseTickerHit): GlobeHit | null {
-	const location = countryToLatLng(hit.country)
-	return location ? { id: hit.id, ...location, isTeam: hit.isTeam } : null
+	if (
+		typeof hit.lat !== 'number' ||
+		typeof hit.lng !== 'number' ||
+		!Number.isFinite(hit.lat) ||
+		!Number.isFinite(hit.lng)
+	) {
+		return null
+	}
+	return { id: hit.id, lat: hit.lat, lng: hit.lng, isTeam: hit.isTeam }
+}
+
+function placeLabel(hit: SerializedPurchaseTickerHit): string {
+	const parts = [hit.city, hit.region].filter((value): value is string =>
+		Boolean(value)
+	)
+	if (parts.length > 0) return parts.join(', ')
+	return countryLabel(hit.country)
 }
 
 function countryFlag(country: string | null): string {
@@ -83,12 +89,8 @@ function countryFlag(country: string | null): string {
 		...country
 			.toUpperCase()
 			.split('')
-			.map((character) => 127397 + character.charCodeAt(0)),
+			.map((character) => 127397 + character.charCodeAt(0))
 	)
-}
-
-function countryLabel(country: string | null): string {
-	return country ? (regionNames.of(country) ?? country) : 'Unknown'
 }
 
 export function SalesGlobeClient({
@@ -99,7 +101,7 @@ export function SalesGlobeClient({
 	products: readonly AdminGlobeProductOption[]
 }) {
 	const [hits, setHits] = React.useState(() =>
-		initialPurchases.slice(0, MAX_HITS),
+		initialPurchases.slice(0, MAX_HITS)
 	)
 	const [rings, setRings] = React.useState<GlobeHit[]>([])
 	const [pinnedProductId, setPinnedProductId] = React.useState('all')
@@ -116,7 +118,7 @@ export function SalesGlobeClient({
 		total: 0,
 	})
 	const seenIdsRef = React.useRef(
-		new Set(initialPurchases.map((purchase) => purchase.id)),
+		new Set(initialPurchases.map((purchase) => purchase.id))
 	)
 	const inFlightRef = React.useRef(false)
 	const activeRequestRef = React.useRef<AbortController | null>(null)
@@ -202,8 +204,8 @@ export function SalesGlobeClient({
 			setHits((current) =>
 				[hit, ...current.filter((candidate) => candidate.id !== hit.id)].slice(
 					0,
-					MAX_HITS,
-				),
+					MAX_HITS
+				)
 			)
 
 			const globeHit = toGlobeHit(hit)
@@ -222,7 +224,7 @@ export function SalesGlobeClient({
 			}
 			playHit(hit.isTeam)
 		},
-		[playHit],
+		[playHit]
 	)
 
 	playNextPendingRef.current = () => {
@@ -291,13 +293,13 @@ export function SalesGlobeClient({
 			if (incoming.length === 0) return
 			pendingHitsRef.current = mergePendingHits(
 				pendingHitsRef.current,
-				incoming,
+				incoming
 			)
 			setPendingCount(pendingHitsRef.current.length)
 			if (pumpTimerRef.current || pausedRef.current) return
 			playNextPendingRef.current()
 		},
-		[],
+		[]
 	)
 
 	const poll = React.useCallback(
@@ -314,7 +316,7 @@ export function SalesGlobeClient({
 					{
 						cache: 'no-store',
 						signal: controller.signal,
-					},
+					}
 				)
 				if (!response.ok) {
 					throw new Error(`Sales globe poll failed with ${response.status}`)
@@ -328,7 +330,7 @@ export function SalesGlobeClient({
 
 				if (options?.replace) {
 					seenIdsRef.current = new Set(
-						parsed.data.purchases.map((purchase) => purchase.id),
+						parsed.data.purchases.map((purchase) => purchase.id)
 					)
 					setHits(parsed.data.purchases.slice(0, MAX_HITS))
 					setPollFailed(false)
@@ -355,37 +357,34 @@ export function SalesGlobeClient({
 				}
 			}
 		},
-		[enqueueLiveHits],
+		[enqueueLiveHits]
 	)
 
-	const fetchHistory = React.useCallback(
-		async (productId: string) => {
-			historyRequestRef.current?.abort()
-			const controller = new AbortController()
-			historyRequestRef.current = controller
-			const params = new URLSearchParams({
-				limit: String(MAX_PURCHASE_LIMIT),
-			})
-			if (productId !== 'all') params.set('productId', productId)
-			const response = await fetch(
-				`/api/admin/globe/purchases?${params.toString()}`,
-				{
-					cache: 'no-store',
-					signal: controller.signal,
-				},
-			)
-			if (!response.ok) {
-				throw new Error(`Sales globe history failed with ${response.status}`)
+	const fetchHistory = React.useCallback(async (productId: string) => {
+		historyRequestRef.current?.abort()
+		const controller = new AbortController()
+		historyRequestRef.current = controller
+		const params = new URLSearchParams({
+			limit: String(MAX_PURCHASE_LIMIT),
+		})
+		if (productId !== 'all') params.set('productId', productId)
+		const response = await fetch(
+			`/api/admin/globe/purchases?${params.toString()}`,
+			{
+				cache: 'no-store',
+				signal: controller.signal,
 			}
-			const payload: unknown = await response.json()
-			const parsed = SalesGlobePurchasesResponseSchema.safeParse(payload)
-			if (!parsed.success) {
-				throw new Error('Sales globe history returned an invalid payload')
-			}
-			return parsed.data.purchases
-		},
-		[],
-	)
+		)
+		if (!response.ok) {
+			throw new Error(`Sales globe history failed with ${response.status}`)
+		}
+		const payload: unknown = await response.json()
+		const parsed = SalesGlobePurchasesResponseSchema.safeParse(payload)
+		if (!parsed.success) {
+			throw new Error('Sales globe history returned an invalid payload')
+		}
+		return parsed.data.purchases
+	}, [])
 
 	const showHistory = React.useCallback(async () => {
 		setHistoryLoading(true)
@@ -544,7 +543,7 @@ export function SalesGlobeClient({
 			ringTimersRef.current.clear()
 			void audioContextRef.current?.close()
 		},
-		[],
+		[]
 	)
 
 	const products = React.useMemo(() => {
@@ -559,11 +558,11 @@ export function SalesGlobeClient({
 			mode === 'live' && pinnedProductId !== 'all'
 				? hits.filter((hit) => hit.productId === pinnedProductId)
 				: hits,
-		[hits, mode, pinnedProductId],
+		[hits, mode, pinnedProductId]
 	)
 	const points = React.useMemo(
 		() => visibleHits.flatMap((hit) => toGlobeHit(hit) ?? []),
-		[visibleHits],
+		[visibleHits]
 	)
 	const visibleRings = React.useMemo(() => {
 		if (mode !== 'live' || pinnedProductId === 'all') return rings
@@ -759,7 +758,7 @@ export function SalesGlobeClient({
 											<User className="size-4" />
 										</span>
 									)}
-									<span className="text-xl" title={countryLabel(hit.country)}>
+									<span className="text-xl" title={placeLabel(hit)}>
 										{countryFlag(hit.country)}
 									</span>
 								</div>
@@ -772,7 +771,7 @@ export function SalesGlobeClient({
 											{hit.userEmail ?? 'email unavailable'}
 										</span>
 										<span className="text-muted-foreground text-xs">
-											{countryLabel(hit.country)}
+											{placeLabel(hit)}
 										</span>
 									</div>
 									<div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">

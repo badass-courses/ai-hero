@@ -1,5 +1,12 @@
 import { db } from '@/db'
-import { coupon, products, purchases, users } from '@/db/schema'
+import {
+	coupon,
+	merchantCharge,
+	merchantSession,
+	products,
+	purchases,
+	users,
+} from '@/db/schema'
 import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
 
 import {
@@ -8,8 +15,16 @@ import {
 	type AdminGlobeProductOption,
 	type PurchaseTickerHit,
 } from './admin-sales-globe-contract'
+import {
+	readCachedGlobeLocation,
+	resolveGlobeLocation,
+} from './admin-sales-globe-geo'
+import type { GlobeEnrichmentRow } from './admin-sales-globe-stripe-geo'
 
-export { LIVE_PURCHASE_LIMIT, MAX_PURCHASE_LIMIT } from './admin-sales-globe-contract'
+export {
+	LIVE_PURCHASE_LIMIT,
+	MAX_PURCHASE_LIMIT,
+} from './admin-sales-globe-contract'
 
 const DEFAULT_PURCHASE_LIMIT = 50
 const PAID_PURCHASE_STATUSES = ['Valid', 'Restricted'] as const
@@ -21,6 +36,11 @@ export type PurchaseTickerRow = Readonly<{
 	productName: string | null
 	productId: string
 	country: string | null
+	city: string | null
+	state: string | null
+	fields: unknown
+	sessionIdentifier: string | null
+	chargeIdentifier: string | null
 	userName: string | null
 	userEmail: string | null
 	userImage: string | null
@@ -38,7 +58,7 @@ export function normalizePurchaseLimit(limit: number | undefined): number {
  * Optional product pin for history and replay. `all` and empty mean every product.
  */
 export function normalizeProductId(
-	productId: string | null | undefined,
+	productId: string | null | undefined
 ): string | undefined {
 	const value = productId?.trim()
 	if (!value || value === 'all' || value.length > 128) return undefined
@@ -63,6 +83,11 @@ export function buildRecentPaidPurchasesQuery({
 			productName: products.name,
 			productId: purchases.productId,
 			country: purchases.country,
+			city: purchases.city,
+			state: purchases.state,
+			fields: purchases.fields,
+			sessionIdentifier: merchantSession.identifier,
+			chargeIdentifier: merchantCharge.identifier,
 			userName: users.name,
 			userEmail: users.email,
 			userImage: users.image,
@@ -72,12 +97,17 @@ export function buildRecentPaidPurchasesQuery({
 		.leftJoin(products, eq(purchases.productId, products.id))
 		.leftJoin(users, eq(purchases.userId, users.id))
 		.leftJoin(coupon, eq(purchases.bulkCouponId, coupon.id))
+		.leftJoin(
+			merchantSession,
+			eq(purchases.merchantSessionId, merchantSession.id)
+		)
+		.leftJoin(merchantCharge, eq(purchases.merchantChargeId, merchantCharge.id))
 		.where(
 			and(
 				inArray(purchases.status, [...PAID_PURCHASE_STATUSES]),
 				gt(purchases.totalAmount, '0'),
-				pinnedProductId ? eq(purchases.productId, pinnedProductId) : undefined,
-			),
+				pinnedProductId ? eq(purchases.productId, pinnedProductId) : undefined
+			)
 		)
 		.orderBy(desc(purchases.createdAt), desc(purchases.id))
 		.limit(normalizePurchaseLimit(limit))
@@ -93,8 +123,19 @@ function optionalTrimmed(value: string | null): string | null {
 	return normalized ? normalized : null
 }
 
+function locationForRow(row: PurchaseTickerRow) {
+	const country = normalizeCountry(row.country)
+	const cached = readCachedGlobeLocation(row.fields)
+	if (cached) return cached
+	return resolveGlobeLocation({
+		country,
+		city: optionalTrimmed(row.city),
+		region: optionalTrimmed(row.state),
+	})
+}
+
 export function mapPurchaseTickerRows(
-	rows: readonly PurchaseTickerRow[],
+	rows: readonly PurchaseTickerRow[]
 ): PurchaseTickerHit[] {
 	return rows.map((row) => {
 		const amount = Number(row.totalAmount)
@@ -106,6 +147,8 @@ export function mapPurchaseTickerRows(
 			typeof row.bulkCouponMaxUses === 'number' && row.bulkCouponMaxUses > 1
 				? row.bulkCouponMaxUses
 				: null
+		const country = normalizeCountry(row.country)
+		const location = locationForRow(row)
 
 		return {
 			id: row.id,
@@ -113,14 +156,30 @@ export function mapPurchaseTickerRows(
 			amount,
 			productName: row.productName ?? '(unknown)',
 			productId: row.productId,
-			country: normalizeCountry(row.country),
+			country,
 			userName: optionalTrimmed(row.userName),
 			userEmail: optionalTrimmed(row.userEmail),
 			userImage: optionalTrimmed(row.userImage),
+			city: location?.city ?? optionalTrimmed(row.city),
+			region: location?.region ?? optionalTrimmed(row.state),
+			lat: location?.lat ?? null,
+			lng: location?.lng ?? null,
 			isTeam: seats !== null,
 			seats,
 		}
 	})
+}
+
+function enrichmentRowsFrom(
+	rows: readonly PurchaseTickerRow[]
+): GlobeEnrichmentRow[] {
+	return rows.map((row) => ({
+		id: row.id,
+		country: normalizeCountry(row.country),
+		fields: row.fields,
+		sessionIdentifier: optionalTrimmed(row.sessionIdentifier),
+		chargeIdentifier: optionalTrimmed(row.chargeIdentifier),
+	}))
 }
 
 export async function getRecentPaidPurchases({
@@ -131,7 +190,28 @@ export async function getRecentPaidPurchases({
 	productId?: string | null
 } = {}): Promise<PurchaseTickerHit[]> {
 	const rows = await buildRecentPaidPurchasesQuery({ limit, productId })
-	return mapPurchaseTickerRows(rows)
+	const hits = mapPurchaseTickerRows(rows)
+	try {
+		const { env } = await import('@/env.mjs')
+		const Stripe = (await import('stripe')).default
+		const { enrichGlobeHitsFromStripe, readStripeBillingAddress } =
+			await import('./admin-sales-globe-stripe-geo')
+		const stripe = new Stripe(env.STRIPE_SECRET_TOKEN, {
+			apiVersion: '2024-06-20',
+		})
+		return await enrichGlobeHitsFromStripe({
+			hits,
+			rows: enrichmentRowsFrom(rows),
+			readBilling: (row) =>
+				readStripeBillingAddress({
+					sessionIdentifier: row.sessionIdentifier,
+					chargeIdentifier: row.chargeIdentifier,
+					stripe,
+				}),
+		})
+	} catch {
+		return hits
+	}
 }
 
 /**

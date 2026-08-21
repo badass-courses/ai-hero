@@ -10,8 +10,31 @@ import {
 	mapPurchaseTickerRows,
 	normalizeProductId,
 	normalizePurchaseLimit,
+	type PurchaseTickerRow,
 } from './admin-sales-globe'
 import { serializePurchaseTickerHit } from './admin-sales-globe-contract'
+
+function row(
+	overrides: Partial<PurchaseTickerRow> & Pick<PurchaseTickerRow, 'id'>
+): PurchaseTickerRow {
+	return {
+		createdAt: new Date('2026-08-21T17:00:00.000Z'),
+		totalAmount: '49.00',
+		productName: 'AI Hero',
+		productId: 'product_2',
+		country: 'US',
+		city: null,
+		state: null,
+		fields: {},
+		sessionIdentifier: null,
+		chargeIdentifier: null,
+		userName: 'Ada',
+		userEmail: 'ada@example.com',
+		userImage: 'https://example.com/ada.png',
+		bulkCouponMaxUses: 1,
+		...overrides,
+	}
+}
 
 describe('admin sales globe purchase query', () => {
 	it('selects only positive paid hits in newest-first stable order', () => {
@@ -27,9 +50,22 @@ describe('admin sales globe purchase query', () => {
 		expect(compiled.sql).toContain('`AI_Purchase`.`status` in (?, ?)')
 		expect(compiled.sql).toContain('`AI_Purchase`.`totalAmount` > ?')
 		expect(compiled.sql).toContain(
-			'order by `AI_Purchase`.`createdAt` desc, `AI_Purchase`.`id` desc',
+			'order by `AI_Purchase`.`createdAt` desc, `AI_Purchase`.`id` desc'
 		)
 		expect(compiled.params).toEqual(['Valid', 'Restricted', '0', 500])
+	})
+
+	it('joins Stripe session and charge identifiers for finer geo', () => {
+		const database = drizzle.mock({ schema, mode: 'planetscale' })
+		const query = buildRecentPaidPurchasesQuery({
+			database: database as unknown as typeof import('@/db').db,
+		})
+		const compiled = query.toSQL()
+
+		expect(compiled.sql).toContain('`AI_Purchase`.`city`')
+		expect(compiled.sql).toContain('`AI_Purchase`.`state`')
+		expect(compiled.sql).toContain('`AI_MerchantSession`.`identifier`')
+		expect(compiled.sql).toContain('`AI_MerchantCharge`.`identifier`')
 	})
 
 	it('caps limits and falls back to the default for invalid input', () => {
@@ -70,7 +106,7 @@ describe('admin sales globe purchase query', () => {
 	it('maps the exact ticker shape and derives teams only from coupon seats', () => {
 		const createdAt = new Date('2026-08-21T17:00:00.123Z')
 		const [hit] = mapPurchaseTickerRows([
-			{
+			row({
 				id: 'purchase_team',
 				createdAt,
 				totalAmount: '398.00',
@@ -81,10 +117,10 @@ describe('admin sales globe purchase query', () => {
 				userEmail: 'buyer@example.com',
 				userImage: '   ',
 				bulkCouponMaxUses: 3,
-			},
+			}),
 		])
 
-		expect(hit).toEqual({
+		expect(hit).toMatchObject({
 			id: 'purchase_team',
 			createdAt,
 			amount: 398,
@@ -96,6 +132,10 @@ describe('admin sales globe purchase query', () => {
 			userImage: null,
 			isTeam: true,
 			seats: 3,
+			lat: 38,
+			lng: -97,
+			city: null,
+			region: null,
 		})
 		expect(serializePurchaseTickerHit(hit!)).toEqual({
 			...hit,
@@ -103,22 +143,37 @@ describe('admin sales globe purchase query', () => {
 		})
 	})
 
-	it('does not invent a country or team for malformed data', () => {
+	it('pings Austin instead of the US centroid when city and state are present', () => {
 		const [hit] = mapPurchaseTickerRows([
-			{
-				id: 'purchase_individual',
-				createdAt: new Date('2026-08-21T17:00:00.000Z'),
-				totalAmount: '49.00',
-				productName: 'AI Hero',
-				productId: 'product_2',
-				country: 'USA',
-				userName: 'Ada',
-				userEmail: 'ada@example.com',
-				userImage: 'https://example.com/ada.png',
-				bulkCouponMaxUses: 1,
-			},
+			row({
+				id: 'purchase_austin',
+				city: 'Austin',
+				state: 'TX',
+			}),
 		])
 
-		expect(hit).toMatchObject({ country: null, isTeam: false, seats: null })
+		expect(hit).toMatchObject({
+			city: 'Austin',
+			region: 'TX',
+			lat: 30.2672,
+			lng: -97.7431,
+		})
+	})
+
+	it('does not invent a country or team for malformed data', () => {
+		const [hit] = mapPurchaseTickerRows([
+			row({
+				id: 'purchase_individual',
+				country: 'USA',
+			}),
+		])
+
+		expect(hit).toMatchObject({
+			country: null,
+			isTeam: false,
+			seats: null,
+			lat: null,
+			lng: null,
+		})
 	})
 })
