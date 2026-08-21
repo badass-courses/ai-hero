@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CourseSyncError } from './errors'
 import {
+	freezeCourseSyncAssetBatch,
+	type FreezeCourseSyncAsset,
+} from './freeze-batches'
+import {
 	buildCourseSyncNotificationPayload,
 	createCourseSyncDetectionPoller,
 	recordCourseSyncPollFailure,
@@ -107,7 +111,7 @@ function harness(input?: {
 	getRun?: CourseSyncDetectionPollerDependencies['getRun']
 	ensureBinding?: CourseSyncDetectionPollerDependencies['ensureBinding']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
-	freezeAsset?: CourseSyncDetectionPollerDependencies['freezeAsset']
+	freezeAsset?: FreezeCourseSyncAsset
 	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
 	evaluateBoundedAutoApply?: CourseSyncDetectionPollerDependencies['evaluateBoundedAutoApply']
 	claimReviewNotification?: CourseSyncDetectionPollerDependencies['claimReviewNotification']
@@ -134,6 +138,9 @@ function harness(input?: {
 				head ? run(head.runState, { runId: head.runId }) : run('previewed')),
 	)
 	const freezeAsset = vi.fn(input?.freezeAsset ?? (async () => frozenAsset))
+	const freezeAssetBatch = vi.fn((batchInput) =>
+		freezeCourseSyncAssetBatch(batchInput, freezeAsset),
+	)
 	const ensureBinding = vi.fn(input?.ensureBinding ?? (async () => undefined))
 	const evaluateBoundedAutoApply = vi.fn(
 		input?.evaluateBoundedAutoApply ??
@@ -193,7 +200,7 @@ function harness(input?: {
 		getRun,
 		getPollState: async () => state,
 		ensureBinding,
-		freezeAsset,
+		freezeAssetBatch,
 		savePollState: async (next) => {
 			state = next
 		},
@@ -216,6 +223,7 @@ function harness(input?: {
 		poll: createCourseSyncDetectionPoller(dependencies),
 		ensureBinding,
 		freezeAsset,
+		freezeAssetBatch,
 		stage,
 		preview,
 		apply,
@@ -849,37 +857,133 @@ describe('course sync detection poller', () => {
 		})
 	})
 
-	it('skips a queued tick while a fresh staging marker exists', async () => {
+	it('continues after a partial batch without duplicate assets or runs', async () => {
+		const firstLesson = manifest.sections[0]!.lessons[0]!
+		if (firstLesson.type !== 'explainer') throw new Error('fixture mismatch')
+		const sourceVideoIds = Array.from(
+			{ length: 12 },
+			(_, index) => `video-${index + 1}`,
+		)
+		const batchManifest: CourseJsonDocumentV3 = {
+			...manifest,
+			sections: [
+				{
+					...manifest.sections[0]!,
+					lessons: sourceVideoIds.map((sourceVideoId, index) => ({
+						...firstLesson,
+						id: `lesson-${index + 1}`,
+						explainer: {
+							...firstLesson.explainer,
+							id: sourceVideoId,
+							relativePath: `${sourceVideoId}.mp4`,
+							sha256: String(index + 1).padStart(64, 'a'),
+						},
+					})),
+				},
+			],
+		}
+		const receipts = new Map<string, typeof frozenAsset>()
+		const muxCreates: string[] = []
+		let interrupt = true
 		const test = harness({
-			state: {
-				bindingId: 'csb_ai_coding_crash_course',
-				courseVersionId: 'version-2',
-				providerRevision: 'dropbox-rev-2',
-				status: 'staging',
-				consecutiveFailures: 0,
-				controlPlaneRunId: null,
-				failureClass: null,
-				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			manifest: batchManifest,
+			freezeAsset: async ({ sourceVideoId }) => {
+				const receipt = receipts.get(sourceVideoId)
+				if (receipt) {
+					return {
+						...receipt,
+						freezeEffects: { sourceAssetsRead: 0, muxAssetsCreated: 0 },
+					}
+				}
+				if (sourceVideoId === 'video-4' && interrupt) {
+					interrupt = false
+					throw new Error('injected interruption')
+				}
+				const asset = {
+					...frozenAsset,
+					sourceVideoId,
+					relativePath: `${sourceVideoId}.mp4`,
+					muxAssetId: `mux-${sourceVideoId}`,
+					muxPlaybackId: `playback-${sourceVideoId}`,
+				}
+				receipts.set(sourceVideoId, asset)
+				muxCreates.push(sourceVideoId)
+				return asset
 			},
 		})
 
-		await expect(test.poll('poll-queued')).resolves.toEqual({
-			outcome: 'in-progress',
-			courseVersionId: 'version-2',
-			runId: 'poll-queued',
+		await expect(test.poll('poll-interrupted')).resolves.toMatchObject({
+			outcome: 'failed',
+			consecutiveFailures: 1,
 		})
-		expect(test.freezeAsset).not.toHaveBeenCalled()
 		expect(test.stage).not.toHaveBeenCalled()
-		expect(test.logs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					stage: 'stage',
-					outcome: 'skipped',
-					metadata: { reason: 'freeze-sweep-in-progress' },
+		expect(test.logs).toContainEqual(
+			expect.objectContaining({
+				outcome: 'failed',
+				metadata: expect.objectContaining({
+					failureSummary: expect.objectContaining({
+						sideEffects: expect.objectContaining({
+							muxAssetsCreated: { count: 3, precision: 'at-least' },
+						}),
+					}),
 				}),
-			]),
+			}),
+		)
+
+		await expect(test.poll('poll-continued')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		expect(
+			test.freezeAssetBatch.mock.calls.map(
+				([input]) => input.sourceVideoIds.length,
+			),
+		).toEqual([10, 10, 2])
+		expect(muxCreates).toEqual(sourceVideoIds)
+		expect(new Set(muxCreates).size).toBe(12)
+		expect(test.stage).toHaveBeenCalledOnce()
+		const stagedAssets = test.stage.mock.calls[0]![0].frozenAssets
+		expect(stagedAssets.map((asset) => asset.sourceVideoId)).toEqual(
+			sourceVideoIds,
+		)
+		expect(new Set(stagedAssets.map((asset) => asset.sourceVideoId)).size).toBe(
+			12,
 		)
 	})
+
+	it.each(['batching', 'staging'] as const)(
+		'resumes a persisted %s marker immediately from frozen receipts',
+		async (status) => {
+			const test = harness({
+				state: {
+					bindingId: 'csb_ai_coding_crash_course',
+					courseVersionId: 'version-2',
+					providerRevision: 'dropbox-rev-2',
+					status,
+					consecutiveFailures: 0,
+					controlPlaneRunId: null,
+					failureClass: null,
+					updatedAt: new Date('2026-07-24T17:59:59.000Z'),
+				},
+			})
+
+			await expect(test.poll(`poll-resume-${status}`)).resolves.toMatchObject({
+				outcome: 'awaiting-apply',
+				courseVersionId: 'version-2',
+			})
+			expect(test.freezeAsset).toHaveBeenCalledOnce()
+			expect(test.stage).toHaveBeenCalledOnce()
+			expect(test.logs).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						stage: 'stage',
+						outcome: 'started',
+						metadata: { mode: 'resumable-batches', resuming: true },
+					}),
+				]),
+			)
+		},
+	)
 
 	it('pages once when a killed run transitions into held', async () => {
 		const initialState: CourseSyncPollState = {

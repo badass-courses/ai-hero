@@ -122,7 +122,7 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 		if (
 			current?.status === 'awaiting-apply' &&
 			current.controlPlaneRunId &&
-			((state.status === 'staging' &&
+			(((state.status === 'batching' || state.status === 'staging') &&
 				(state.courseVersionId !== current.courseVersionId ||
 					state.providerRevision !== current.providerRevision)) ||
 				(state.status === 'awaiting-apply' &&
