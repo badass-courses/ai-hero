@@ -1,6 +1,5 @@
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MuxPlayerProvider } from '@/hooks/use-mux-player'
 import { describe, expect, it } from 'vitest'
 
 import { ResourceListView, type NextModuleLink } from './resource-list-view'
@@ -95,22 +94,5 @@ describe('ResourceListView position and next-module affordances', () => {
 		// Inside the scroller, so it scrolls with the lessons above it.
 		const scrollerEnd = markup.lastIndexOf('data-slot="scroll-area-viewport"')
 		expect(markup.indexOf('Next workshop')).toBeGreaterThan(scrollerEnd)
-	})
-
-	it('offers the 480p opt-in next to autoplay', () => {
-		const markup = renderToStaticMarkup(
-			<MuxPlayerProvider>
-				<ResourceListView
-					title="Getting To Know Claude Code"
-					titleHref="/workshops/claude-code~p9j8f"
-					moduleId="workshop-p9j8f"
-					buildLessonHref={(slug) => `/workshops/claude-code~p9j8f/${slug}`}
-					showAutoplay
-				/>
-			</MuxPlayerProvider>,
-		)
-
-		expect(markup).toContain('Autoplay')
-		expect(markup).toContain('Allow 480p')
 	})
 })

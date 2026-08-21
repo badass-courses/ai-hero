@@ -23,6 +23,8 @@ import {
 	useToast,
 } from '@coursebuilder/ui'
 
+import { LowResolutionToggle } from './low-resolution-toggle'
+
 const formSchema = z.object({
 	name: z.string(),
 	email: z.string().email(),
@@ -195,6 +197,13 @@ const EditProfileForm: React.FC<{
 					)}
 				</form>
 			</Form>
+			<section className="mt-10 space-y-3">
+				<h2 className="text-sm font-medium">Playback</h2>
+				<p className="text-muted-foreground text-sm">
+					For slow or metered connections.
+				</p>
+				<LowResolutionToggle />
+			</section>
 		</div>
 	)
 }

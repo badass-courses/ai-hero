@@ -8,13 +8,13 @@ import { cn } from '@coursebuilder/ui/utils/cn'
 
 /**
  * Opt-in to Mux 480p. Off by default so the player keeps the 540p floor.
+ * Lives on the profile page, not on lesson chrome.
  */
 export function LowResolutionToggle({
 	className,
-	id = 'low-resolution-toggle',
+	id = 'profile-low-resolution-toggle',
 }: {
 	className?: string
-	/** Unique per instance — the toggle can render in the sidebar and in player chrome. */
 	id?: string
 }) {
 	const { playerPrefs, setPlayerPrefs } = useMuxPlayer()
@@ -29,14 +29,16 @@ export function LowResolutionToggle({
 	)
 
 	return (
-		<div className={cn('flex items-center gap-2', className)}>
+		<div className={cn('flex items-center gap-3', className)}>
 			<Switch
 				aria-label={`Allow 480p ${playerPrefs.allowLowResolution ? 'on' : 'off'}`}
 				id={id}
 				checked={playerPrefs.allowLowResolution}
 				onCheckedChange={handleChange}
 			/>
-			<Label htmlFor={id}>Allow 480p</Label>
+			<Label htmlFor={id} className="font-normal">
+				Allow 480p
+			</Label>
 		</div>
 	)
 }

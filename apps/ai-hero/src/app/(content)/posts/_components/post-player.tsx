@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { PlayerPrefToggles } from '@/app/(content)/_components/player-pref-toggles'
+import { AutoPlayToggle } from '@/app/(content)/_components/autoplay-toggle'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import Spinner from '@/components/spinner'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
@@ -142,10 +142,9 @@ export function PostPlayer({
 					playerRef={playerRef}
 					className="h-full w-full"
 					chromeSlot={
-						<PlayerPrefToggles
-							idPrefix="player-chrome"
+						<AutoPlayToggle
+							id="autoplay-player-chrome"
 							className="rounded-[9px] bg-black/60 px-3 py-1.5 text-white"
-							toggleClassName="text-white"
 						/>
 					}
 				>
