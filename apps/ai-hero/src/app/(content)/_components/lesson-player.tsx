@@ -53,7 +53,6 @@ export function LessonPlayer({
 		<>
 			{playbackId ? (
 				<MuxPlayer
-					key={minResolution}
 					ref={playerRef}
 					metadata={muxMetadata}
 					playbackId={playbackId}

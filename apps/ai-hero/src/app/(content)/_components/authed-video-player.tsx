@@ -262,7 +262,6 @@ export function AuthedVideoPlayer({
 			}
 		>
 			<MuxPlayer
-				key={minResolution}
 				metadata={muxMetadata}
 				ref={playerRef}
 				playbackId={playbackId}

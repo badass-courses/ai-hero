@@ -86,7 +86,6 @@ export default function MDXVideo({
 			)}
 		>
 			<MuxPlayer
-				key={minResolution}
 				ref={playerRef}
 				metadata={muxMetadata}
 				streamType="on-demand"

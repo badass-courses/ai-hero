@@ -150,7 +150,6 @@ export function PostPlayer({
 					}
 				>
 					<MuxPlayer
-						key={minResolution}
 						metadata={muxMetadata}
 						playbackId={playbackId}
 						className={cn('h-full w-full', className)}
@@ -249,7 +248,6 @@ export function SimplePostPlayer({
 			{playbackId ? (
 				<>
 					<MuxPlayer
-						key={minResolution}
 						ref={playerRef}
 						metadata={muxMetadata}
 						onTimeUpdate={(e) => {
