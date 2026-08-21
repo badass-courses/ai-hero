@@ -37,7 +37,7 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/utils/cn'
 
-import { AutoPlayToggle } from './autoplay-toggle'
+import { PlayerPrefToggles } from './player-pref-toggles'
 
 /**
  * The module that follows this one, rendered as the last row of the list.
@@ -220,7 +220,10 @@ export function ResourceListView({
 									)}
 									{showAutoplay && (
 										<div className="mt-3">
-											<AutoPlayToggle className="text-muted-foreground hover:[&_label]:text-foreground gap-2 text-[12px] transition [&>label]:font-normal [&_button]:scale-90" />
+											<PlayerPrefToggles
+												idPrefix="player-sidebar"
+												toggleClassName="text-muted-foreground hover:[&_label]:text-foreground gap-2 text-[12px] transition [&>label]:font-normal [&_button]:scale-90"
+											/>
 										</div>
 									)}
 								</div>

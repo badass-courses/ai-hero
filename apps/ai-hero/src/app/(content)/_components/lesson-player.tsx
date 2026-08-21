@@ -3,6 +3,8 @@
 import * as React from 'react'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
+import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
 import {
 	type MuxPlayerProps,
 	type MuxPlayerRefAttributes,
@@ -29,6 +31,8 @@ export function LessonPlayer({
 		contentType: 'lesson',
 	})
 
+	const { playerPrefs } = useMuxPlayer()
+	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
 	const chapters = videoResource?.chapters ?? null
 	useMuxChapters(playerRef, chapters)
@@ -40,7 +44,7 @@ export function LessonPlayer({
 		thumbnailTime: 0,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
-		minResolution: '540p',
+		minResolution,
 	} as MuxPlayerProps
 
 	const playbackId = muxPlaybackId || videoResource?.muxPlaybackId
@@ -49,6 +53,7 @@ export function LessonPlayer({
 		<>
 			{playbackId ? (
 				<MuxPlayer
+					key={minResolution}
 					ref={playerRef}
 					metadata={muxMetadata}
 					playbackId={playbackId}
