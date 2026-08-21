@@ -31,7 +31,7 @@ describe('course sync poll run-now route', () => {
 
 	it('directly invokes one idempotent course-sync poll', async () => {
 		fetchMock.mockResolvedValue(
-			Response.json({ data: { run_id: '01M0JNYTEST000000000000000' } }),
+			Response.json({ data: { id: '01M0JJGST0C0JGBPF94WXWEGPT' } }),
 		)
 
 		const response = await POST(
@@ -46,7 +46,7 @@ describe('course sync poll run-now route', () => {
 		await expect(response.json()).resolves.toMatchObject({
 			accepted: true,
 			bindingId,
-			runId: '01M0JNYTEST000000000000000',
+			runId: '01M0JJGST0C0JGBPF94WXWEGPT',
 			invocationKey: expect.stringMatching(/^course-sync-poll:[a-f0-9]{64}$/),
 		})
 		expect(fetchMock).toHaveBeenCalledWith(

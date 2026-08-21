@@ -12,6 +12,25 @@ import { env } from '@/env.mjs'
 
 const INNGEST_APP_ID = 'ai-hero'
 const COURSE_SYNC_POLLER_FUNCTION_ID = 'ai-hero-course-sync-detection-poller'
+const INNGEST_RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/
+
+function findInngestRunId(value: unknown): string | null {
+	if (typeof value === 'string') return INNGEST_RUN_ID.test(value) ? value : null
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			const runId = findInngestRunId(item)
+			if (runId) return runId
+		}
+		return null
+	}
+	if (value && typeof value === 'object') {
+		for (const item of Object.values(value)) {
+			const runId = findInngestRunId(item)
+			if (runId) return runId
+		}
+	}
+	return null
+}
 
 export async function POST(
 	request: Request,
@@ -54,9 +73,9 @@ export async function POST(
 				502,
 			)
 		}
-		const result = (await response.json()) as { data?: { run_id?: unknown } }
-		const runId = result.data?.run_id
-		if (typeof runId !== 'string' || !runId) {
+		const result = (await response.json()) as unknown
+		const runId = findInngestRunId(result)
+		if (!runId) {
 			throw new CourseSyncError(
 				'COURSE_SYNC_INNGEST_INVOKE_INVALID',
 				'Inngest function invocation returned no run ID.',
