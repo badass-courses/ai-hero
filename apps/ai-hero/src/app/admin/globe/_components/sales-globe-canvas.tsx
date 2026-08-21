@@ -9,6 +9,7 @@ import {
 	LOOK_AT_MS,
 	configureSalesGlobeControls,
 	povAfterViewportKey,
+	setSalesGlobeWheelCapture,
 	type GlobeOrbitControls,
 } from './sales-globe-navigation'
 
@@ -58,6 +59,9 @@ export function SalesGlobeCanvas({
 	const holdAutoRotateRef = React.useRef(holdAutoRotate)
 	holdAutoRotateRef.current = holdAutoRotate
 	const [size, setSize] = React.useState({ width: 0, height: 0 })
+	const [wheelCaptured, setWheelCaptured] = React.useState(false)
+	const wheelCapturedRef = React.useRef(false)
+	wheelCapturedRef.current = wheelCaptured
 
 	const clearIdleTimer = React.useCallback(() => {
 		if (idleTimerRef.current) {
@@ -115,6 +119,7 @@ export function SalesGlobeCanvas({
 		const controls = globe.controls() as GlobeOrbitControls
 		configureSalesGlobeControls(controls)
 		if (holdAutoRotateRef.current) controls.autoRotate = false
+		setSalesGlobeWheelCapture(controls, wheelCapturedRef.current)
 
 		const onStart = () => {
 			userDrivingRef.current = true
@@ -166,6 +171,10 @@ export function SalesGlobeCanvas({
 	}, [focusHit, holdAutoRotate, lookAtMs, setAutoRotate])
 
 	const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+		if (event.key === 'Escape') {
+			containerRef.current?.blur()
+			return
+		}
 		const globe = globeRef.current
 		if (!globe) return
 		const next = povAfterViewportKey(globe.pointOfView(), event.key)
@@ -177,9 +186,17 @@ export function SalesGlobeCanvas({
 	}
 
 	React.useEffect(() => {
+		const controls = globeRef.current?.controls() as
+			| GlobeOrbitControls
+			| undefined
+		if (controls) setSalesGlobeWheelCapture(controls, wheelCaptured)
+	}, [wheelCaptured])
+
+	React.useEffect(() => {
 		const container = containerRef.current
 		if (!container) return
 		const onWheel = (event: WheelEvent) => {
+			if (!wheelCapturedRef.current) return
 			event.preventDefault()
 		}
 		container.addEventListener('wheel', onWheel, {
@@ -194,9 +211,12 @@ export function SalesGlobeCanvas({
 		<div
 			ref={containerRef}
 			tabIndex={0}
+			onPointerDown={() => containerRef.current?.focus()}
+			onFocus={() => setWheelCaptured(true)}
+			onBlur={() => setWheelCaptured(false)}
 			onKeyDown={handleKeyDown}
-			className="h-full w-full cursor-grab outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70 active:cursor-grabbing"
-			aria-label="Sales globe. Drag to orbit. Scroll to zoom. Z resets distance. Arrow keys orbit."
+			className="h-full w-full cursor-grab outline-none focus:ring-1 focus:ring-cyan-400/70 active:cursor-grabbing"
+			aria-label="Sales globe. Click to take over scroll zoom. Drag to orbit. Escape releases scroll. Z resets distance. Arrow keys orbit."
 		>
 			{size.width > 0 && size.height > 0 ? (
 				<Globe

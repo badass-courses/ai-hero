@@ -93,15 +93,16 @@ export function povAfterViewportKey(
 }
 
 /**
- * Configure OrbitControls for grab-to-orbit, wheel zoom, and auto-rotate.
- * Pan stays off: globe.gl pins the orbit target at the planet center.
+ * Configure OrbitControls for grab-to-orbit and auto-rotate.
+ * Wheel zoom stays off until the globe is clicked. Pan stays off:
+ * globe.gl pins the orbit target at the planet center.
  */
 export function configureSalesGlobeControls(
 	controls: GlobeOrbitControls,
 ): void {
 	controls.enableDamping = true
 	controls.enablePan = false
-	controls.enableZoom = true
+	controls.enableZoom = false
 	controls.zoomToCursor = true
 	controls.rotateSpeed = 0.55
 	controls.zoomSpeed = 0.85
@@ -110,4 +111,14 @@ export function configureSalesGlobeControls(
 	controls.mouseButtons.LEFT = ORBIT_ACTION.ROTATE
 	controls.mouseButtons.MIDDLE = ORBIT_ACTION.ROTATE
 	controls.mouseButtons.RIGHT = ORBIT_ACTION.ROTATE
+}
+
+/**
+ * Wheel zoom is off until the operator clicks the globe. Page scroll stays page scroll.
+ */
+export function setSalesGlobeWheelCapture(
+	controls: GlobeOrbitControls,
+	captured: boolean,
+): void {
+	controls.enableZoom = captured
 }

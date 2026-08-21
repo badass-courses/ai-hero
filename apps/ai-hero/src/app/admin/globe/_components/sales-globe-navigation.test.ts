@@ -5,6 +5,7 @@ import {
 	clampLatitude,
 	configureSalesGlobeControls,
 	povAfterViewportKey,
+	setSalesGlobeWheelCapture,
 	wrapLongitude,
 	type GlobeOrbitControls,
 } from './sales-globe-navigation'
@@ -67,10 +68,14 @@ describe('sales globe navigation', () => {
 		configureSalesGlobeControls(controls)
 		expect(controls.autoRotate).toBe(true)
 		expect(controls.enablePan).toBe(false)
-		expect(controls.enableZoom).toBe(true)
+		expect(controls.enableZoom).toBe(false)
 		expect(controls.zoomToCursor).toBe(true)
 		expect(controls.mouseButtons.LEFT).toBe(ORBIT_ACTION.ROTATE)
 		expect(controls.mouseButtons.MIDDLE).toBe(ORBIT_ACTION.ROTATE)
 		expect(controls.mouseButtons.RIGHT).toBe(ORBIT_ACTION.ROTATE)
+		setSalesGlobeWheelCapture(controls, true)
+		expect(controls.enableZoom).toBe(true)
+		setSalesGlobeWheelCapture(controls, false)
+		expect(controls.enableZoom).toBe(false)
 	})
 })
