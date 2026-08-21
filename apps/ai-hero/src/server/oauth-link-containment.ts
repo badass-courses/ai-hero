@@ -6,6 +6,7 @@ import {
 	isConnectableOAuthProvider,
 	readOAuthLinkIntentToken,
 	type ConnectableOAuthProvider,
+	type OAuthCookiePolicy,
 	type OAuthCookieStore,
 } from '@/lib/oauth-link-cookie'
 import {
@@ -36,6 +37,7 @@ type AccountOwner = { id: string } | null
 
 type OAuthContainmentDependencies = {
 	getCookieStore: () => OAuthCookieStore | Promise<OAuthCookieStore>
+	getCookiePolicy: () => OAuthCookiePolicy | Promise<OAuthCookiePolicy>
 	findAccountOwner: (account: {
 		provider: ConnectableOAuthProvider
 		providerAccountId: string
@@ -47,6 +49,7 @@ type OAuthContainmentDependencies = {
 	consumeLinkIntent?: (input: {
 		rawToken: string
 		provider: ConnectableOAuthProvider
+		authenticatedUserId: string
 		sessionBinding: string
 		account: OAuthLinkAccount
 	}) => Promise<
@@ -59,6 +62,10 @@ type OAuthContainmentDependencies = {
 		| { status: 'expired' }
 		| { status: 'denied'; reasonClass?: OAuthLinkDenialReason }
 	>
+	isExplicitLinkAllowed?: (input: {
+		provider: ConnectableOAuthProvider
+		userId: string
+	}) => boolean | Promise<boolean>
 	observe?: (event: OAuthLinkCanaryEvent) => void | Promise<void>
 }
 
@@ -92,6 +99,21 @@ export class OAuthContainmentError extends Error {
 		super(`OAuth containment: ${message}`)
 		this.name = 'OAuthContainmentError'
 	}
+}
+
+type OAuthLinkResultStatus =
+	| 'denied'
+	| 'expired'
+	| 'account-conflict'
+	| 'not-enabled'
+
+export function getOAuthLinkResultPath(
+	provider: ConnectableOAuthProvider,
+	status: OAuthLinkResultStatus,
+) {
+	return provider === 'github'
+		? `/profile?link=${status}`
+		: `/discord?link=${status}`
 }
 
 function getCallbackProvider(request: Request): string | null {
@@ -241,7 +263,7 @@ export function createOAuthContainmentAdapter<T extends Adapter>(
 				})
 				const authorization = request?.authorizedAccount
 				const reason = authorization
-					? `${account.provider} linkAccount is not authorized for ${authorization.providerAccountId}`
+					? `${account.provider} linkAccount is not authorized for the verified account`
 					: `missing or inconsistent request guard for ${account.provider} linkAccount`
 				throw new OAuthContainmentError(reason)
 			}
@@ -280,9 +302,11 @@ export function createOAuthContainmentAdapter<T extends Adapter>(
  */
 export function createOAuthContainmentSignInCallback({
 	getCookieStore,
+	getCookiePolicy,
 	findAccountOwner,
 	getAuthenticatedSession,
 	consumeLinkIntent,
+	isExplicitLinkAllowed,
 	observe,
 }: OAuthContainmentDependencies) {
 	return async ({
@@ -294,12 +318,24 @@ export function createOAuthContainmentSignInCallback({
 			return true
 		}
 
-		const cookieStore = await getCookieStore()
-		const rawLinkToken = readOAuthLinkIntentToken(cookieStore)
+		const [cookieStore, cookiePolicy] = await Promise.all([
+			getCookieStore(),
+			getCookiePolicy(),
+		])
+		let rawLinkToken: string | null = null
+		let intentCookieConflict = false
+		try {
+			rawLinkToken = readOAuthLinkIntentToken(cookieStore, cookiePolicy)
+		} catch {
+			intentCookieConflict = true
+		}
 		clearLegacyOAuthLinkCookies(cookieStore)
 		clearOAuthLinkIntentCookies(cookieStore)
 
 		if (!account.providerAccountId) return false
+		if (intentCookieConflict) {
+			return getOAuthLinkResultPath(account.provider, 'denied')
+		}
 		const request = containedRequestFor(account.provider)
 		if (!request || request.authorizedAccount) return false
 
@@ -328,9 +364,14 @@ export function createOAuthContainmentSignInCallback({
 					action: 'flow_completed',
 					result: 'denied',
 				})
-				return '/discord?link=denied'
+				return getOAuthLinkResultPath(account.provider, 'denied')
 			}
-			const session = await getAuthenticatedSession()
+			let session: AuthenticatedOAuthLinkSession | null = null
+			try {
+				session = await getAuthenticatedSession()
+			} catch {
+				session = null
+			}
 			if (!session) {
 				await emit?.({
 					...callbackBase,
@@ -343,23 +384,56 @@ export function createOAuthContainmentSignInCallback({
 					action: 'flow_completed',
 					result: 'denied',
 				})
-				return '/discord?link=denied'
+				return getOAuthLinkResultPath(account.provider, 'denied')
+			}
+			if (isExplicitLinkAllowed) {
+				let allowed = false
+				try {
+					allowed = await isExplicitLinkAllowed({
+						provider: account.provider,
+						userId: session.userId,
+					})
+				} catch {
+					allowed = false
+				}
+				if (!allowed) {
+					await emit?.({
+						...callbackBase,
+						action: 'validation_denied',
+						reasonClass: 'rollout-denied',
+						result: 'denied',
+					})
+					await emit?.({
+						...callbackBase,
+						action: 'flow_completed',
+						result: 'denied',
+					})
+					return getOAuthLinkResultPath(account.provider, 'not-enabled')
+				}
 			}
 			const result = await consumeLinkIntent({
 				rawToken: rawLinkToken,
 				provider: account.provider,
+				authenticatedUserId: session.userId,
 				sessionBinding: hashOAuthLinkSession(session.sessionToken),
 				account: account as OAuthLinkAccount,
 			})
-			if (result.status === 'expired') return '/discord?link=expired'
-			if (result.status === 'denied') {
-				return result.reasonClass === 'cross-user-owned'
-					? '/discord?link=account-conflict'
-					: '/discord?link=denied'
+			if (result.status === 'expired') {
+				return getOAuthLinkResultPath(account.provider, 'expired')
 			}
-			if (!('targetUserId' in result)) return '/discord?link=denied'
+			if (result.status === 'denied') {
+				return getOAuthLinkResultPath(
+					account.provider,
+					result.reasonClass === 'cross-user-owned'
+						? 'account-conflict'
+						: 'denied',
+				)
+			}
+			if (!('targetUserId' in result)) {
+				return getOAuthLinkResultPath(account.provider, 'denied')
+			}
 			if (result.targetUserId !== session.userId) {
-				return '/discord?link=denied'
+				return getOAuthLinkResultPath(account.provider, 'denied')
 			}
 
 			request.authorizedAccount = {

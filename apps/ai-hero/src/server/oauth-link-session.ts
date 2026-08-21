@@ -1,5 +1,6 @@
 import {
 	readAuthSessionToken,
+	type OAuthCookiePolicy,
 	type OAuthCookieStore,
 } from '@/lib/oauth-link-cookie'
 
@@ -17,15 +18,21 @@ export function createAuthenticatedOAuthLinkSessionResolver({
 	getCookieStore,
 	getSessionAndUser,
 	now = () => new Date(),
+	getCookiePolicy,
 }: {
 	getCookieStore: () => OAuthCookieStore | Promise<OAuthCookieStore>
 	getSessionAndUser: (
 		sessionToken: string,
 	) => SessionAndUser | null | PromiseLike<SessionAndUser | null>
 	now?: () => Date
+	getCookiePolicy: () => OAuthCookiePolicy | Promise<OAuthCookiePolicy>
 }) {
 	return async (): Promise<AuthenticatedOAuthLinkSession | null> => {
-		const sessionToken = readAuthSessionToken(await getCookieStore())
+		const [cookieStore, cookiePolicy] = await Promise.all([
+			getCookieStore(),
+			getCookiePolicy(),
+		])
+		const sessionToken = readAuthSessionToken(cookieStore, cookiePolicy)
 		if (!sessionToken) return null
 		const result = await getSessionAndUser(sessionToken)
 		if (

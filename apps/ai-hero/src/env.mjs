@@ -92,6 +92,8 @@ export const env = createEnv({
 		POSTMARK_WEBHOOK_SECRET: z.string(),
 		GITHUB_CLIENT_ID: z.string().optional(),
 		GITHUB_CLIENT_SECRET: z.string().optional(),
+		AIH_GITHUB_RELINK_USER_ALLOWLIST: z.string().optional(),
+		AIH_GITHUB_RELINK_GLOBAL_ENABLED: z.enum(['true', 'false']).optional(),
 		TWITTER_CLIENT_ID: z.string().optional(),
 		TWITTER_CLIENT_SECRET: z.string().optional(),
 		RESEND_API_KEY: z.string().optional(),
@@ -213,6 +215,10 @@ export const env = createEnv({
 		STATS_STRIPE_API_KEY: process.env.STATS_STRIPE_API_KEY,
 		GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
 		GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
+		AIH_GITHUB_RELINK_USER_ALLOWLIST:
+			process.env.AIH_GITHUB_RELINK_USER_ALLOWLIST,
+		AIH_GITHUB_RELINK_GLOBAL_ENABLED:
+			process.env.AIH_GITHUB_RELINK_GLOBAL_ENABLED,
 		DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY,
 		UPLOADTHING_URL: process.env.UPLOADTHING_URL,
 		POSTMARK_API_KEY: process.env.POSTMARK_API_KEY,

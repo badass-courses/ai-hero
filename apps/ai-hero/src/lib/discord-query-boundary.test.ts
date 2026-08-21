@@ -11,7 +11,7 @@ const actionSource = readFileSync(
 )
 const profileSource = readFileSync(
 	new URL(
-		'../app/(user)/profile/_components/edit-profile-form.tsx',
+		'../app/(user)/profile/_components/profile-account-connections.tsx',
 		import.meta.url,
 	),
 	'utf8',
@@ -38,7 +38,7 @@ describe('Discord server boundary', () => {
 		expect(exports).toEqual(['disconnectDiscord'])
 	})
 
-	it('imports the narrow action from the client profile form', () => {
+	it('imports the narrow action from the client profile account controls', () => {
 		expect(profileSource).toContain(
 			"import { disconnectDiscord } from '@/lib/discord-disconnect-action'",
 		)

@@ -29,6 +29,25 @@ export const authSessionCookieNames = [
 	'__Secure-authjs.session-token',
 ] as const
 
+export type OAuthCookiePolicy = {
+	secure: boolean
+	authSessionCookieName: (typeof authSessionCookieNames)[number]
+	unexpectedAuthSessionCookieName: (typeof authSessionCookieNames)[number]
+	oauthLinkIntentCookieName: (typeof oauthLinkIntentCookieNames)[number]
+	unexpectedOAuthLinkIntentCookieName: (typeof oauthLinkIntentCookieNames)[number]
+}
+
+export function createOAuthCookiePolicy(secure: boolean): OAuthCookiePolicy {
+	return {
+		secure,
+		authSessionCookieName: authSessionCookieNames[secure ? 1 : 0],
+		unexpectedAuthSessionCookieName: authSessionCookieNames[secure ? 0 : 1],
+		oauthLinkIntentCookieName: oauthLinkIntentCookieNames[secure ? 1 : 0],
+		unexpectedOAuthLinkIntentCookieName:
+			oauthLinkIntentCookieNames[secure ? 0 : 1],
+	}
+}
+
 type CookieValue = { value: string }
 
 export type OAuthCookieStore = {
@@ -47,37 +66,49 @@ export type OAuthCookieStore = {
 	): unknown
 }
 
-function readFirstCookie(
+function readExpectedCookie(
 	cookieStore: OAuthCookieStore,
-	names: readonly string[],
+	input: { expectedName: string; unexpectedName: string; label: string },
 ) {
-	for (const name of names) {
-		const value = cookieStore.get?.(name)?.value
-		if (value) return value
+	const expectedValue = cookieStore.get?.(input.expectedName)?.value
+	const unexpectedValue = cookieStore.get?.(input.unexpectedName)?.value
+	if (unexpectedValue && unexpectedValue !== expectedValue) {
+		throw new Error(`${input.label} cookie selection is ambiguous`)
 	}
-	return null
+	return expectedValue ?? null
 }
 
-export function readOAuthLinkIntentToken(cookieStore: OAuthCookieStore) {
-	return readFirstCookie(cookieStore, oauthLinkIntentCookieNames)
+export function readOAuthLinkIntentToken(
+	cookieStore: OAuthCookieStore,
+	policy: OAuthCookiePolicy,
+) {
+	return readExpectedCookie(cookieStore, {
+		expectedName: policy.oauthLinkIntentCookieName,
+		unexpectedName: policy.unexpectedOAuthLinkIntentCookieName,
+		label: 'OAuth link intent',
+	})
 }
 
-export function readAuthSessionToken(cookieStore: OAuthCookieStore) {
-	return readFirstCookie(cookieStore, authSessionCookieNames)
+export function readAuthSessionToken(
+	cookieStore: OAuthCookieStore,
+	policy: OAuthCookiePolicy,
+) {
+	return readExpectedCookie(cookieStore, {
+		expectedName: policy.authSessionCookieName,
+		unexpectedName: policy.unexpectedAuthSessionCookieName,
+		label: 'OAuth link session',
+	})
 }
 
 export function writeOAuthLinkIntentCookie(
 	cookieStore: OAuthCookieStore,
 	input: { rawToken: string; expiresAt: Date },
+	policy: OAuthCookiePolicy,
 ) {
 	if (!cookieStore.set) throw new Error('OAuth link cookie store is read-only')
-	const secure = process.env.NODE_ENV === 'production'
-	const name = secure
-		? oauthLinkIntentCookieNames[1]
-		: oauthLinkIntentCookieNames[0]
-	cookieStore.set(name, input.rawToken, {
+	cookieStore.set(policy.oauthLinkIntentCookieName, input.rawToken, {
 		httpOnly: true,
-		secure,
+		secure: policy.secure,
 		sameSite: 'lax',
 		path: '/',
 		expires: input.expiresAt,

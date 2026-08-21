@@ -13,9 +13,14 @@ import {
 import { getLatestCourseLesson } from '@/lib/course-resume-navigation'
 import { getContentNavigation } from '@/lib/content-navigation-query'
 import { getProviders, getServerAuthSession } from '@/server/auth'
+import { isGithubOAuthLinkEnabledForUser } from '@/server/github-oauth-link-rollout'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
 import EditProfileForm from './_components/edit-profile-form'
+import {
+	hasUsableProfileOAuthAccount,
+	parseGithubProfileLinkStatus,
+} from './profile-link-status'
 
 const PROFILE_COURSE_PURCHASE_STATUSES = ['Valid', 'Restricted'] as const
 
@@ -125,9 +130,14 @@ async function getPurchasedCourses(userId: string): Promise<PurchasedCourse[]> {
 	})
 }
 
-export default async function ProfilePage() {
+export default async function ProfilePage({
+	searchParams,
+}: {
+	searchParams: Promise<{ link?: string }>
+}) {
 	const { session, ability } = await getServerAuthSession()
 	const providers = getProviders()
+	const { link } = await searchParams
 
 	if (!ability.can('read', 'User', session?.user?.id)) {
 		redirect('/')
@@ -153,13 +163,25 @@ export default async function ProfilePage() {
 	}
 
 	const githubProvider = providers?.github
-	const githubConnected = Boolean(
-		user.accounts.find((account: any) => account.provider === 'github'),
+	const githubConnected = hasUsableProfileOAuthAccount(
+		user.accounts,
+		'github',
 	)
 	const discordProvider = providers?.discord
-	const discordConnected = Boolean(
-		user.accounts.find((account: any) => account.provider === 'discord'),
+	const discordConnected = hasUsableProfileOAuthAccount(
+		user.accounts,
+		'discord',
 	)
+	const githubLinkingEnabled = Boolean(
+		githubProvider &&
+			(githubConnected || isGithubOAuthLinkEnabledForUser(session.user.id)),
+	)
+	const parsedGithubLinkStatus = parseGithubProfileLinkStatus(link)
+	const githubLinkStatus = githubProvider
+		? parsedGithubLinkStatus === 'linked' && !githubConnected
+			? null
+			: parsedGithubLinkStatus
+		: null
 	const purchasedCourses = await getPurchasedCourses(session.user.id)
 
 	if (ability.can('read', 'User', session?.user?.id)) {
@@ -213,9 +235,11 @@ export default async function ProfilePage() {
 						<EditProfileForm
 							user={session.user}
 							githubConnected={githubConnected}
-							githubProvider={githubProvider}
+							githubAvailable={Boolean(githubProvider)}
+							githubLinkingEnabled={githubLinkingEnabled}
+							githubLinkStatus={githubLinkStatus}
 							discordConnected={discordConnected}
-							discordProvider={discordProvider}
+							discordAvailable={Boolean(discordProvider)}
 						/>
 					</main>
 				</div>

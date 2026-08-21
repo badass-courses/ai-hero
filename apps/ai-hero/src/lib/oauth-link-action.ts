@@ -11,6 +11,7 @@ type OAuthAccountSwitchLoginDependencies = {
 }
 
 type OAuthAccountLinkRequestDependencies = {
+	provider: ConnectableOAuthProvider
 	getAuthenticatedSession: () =>
 		| AuthenticatedSession
 		| null
@@ -28,10 +29,12 @@ type OAuthAccountLinkRequestDependencies = {
 		provider: ConnectableOAuthProvider
 		sessionBinding: string
 	}) => Promise<{ rawToken: string; expiresAt: Date }>
+	clearIntentCookies: () => void | Promise<void>
 	writeIntentCookie: (input: {
 		rawToken: string
 		expiresAt: Date
 	}) => void | Promise<void>
+	isUserAllowed?: (userId: string) => boolean | Promise<boolean>
 }
 
 export function createOAuthAccountSwitchLogin({
@@ -43,27 +46,34 @@ export function createOAuthAccountSwitchLogin({
 }
 
 /**
- * The request takes no caller identity or provider. Discord and the target user
- * both come from trusted server state.
+ * The returned action takes no caller identity or provider. The provider is
+ * fixed when the server constructs the action, while the target user and
+ * session binding come from the authenticated database session.
  */
 export function createOAuthAccountLinkRequest({
+	provider,
 	getAuthenticatedSession,
 	findAccount,
 	issueIntent,
+	clearIntentCookies,
 	writeIntentCookie,
+	isUserAllowed = () => true,
 }: OAuthAccountLinkRequestDependencies) {
 	return async function requestOAuthAccountLink() {
 		const session = await getAuthenticatedSession()
 		if (!session) return { status: 'unauthenticated' as const }
 
-		const provider = 'discord' satisfies ConnectableOAuthProvider
 		const existingAccount = await findAccount({
 			userId: session.userId,
 			provider,
 		})
 		if (existingAccount?.access_token) return { status: 'linked' as const }
+		if (!(await isUserAllowed(session.userId))) {
+			return { status: 'rollout-denied' as const }
+		}
 
 		try {
+			await clearIntentCookies()
 			const issued = await issueIntent({
 				targetUserId: session.userId,
 				provider,
