@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	billingAddressForPurchase,
 	normalizePostal,
+	planPurchaseGeoWrite,
 	readCachedGlobeLocation,
 	resolveGlobeLocation,
 	type GlobeGeoDatasets,
@@ -31,6 +32,28 @@ const datasets: GlobeGeoDatasets = {
 }
 
 describe('resolveGlobeLocation', () => {
+	it('uses Vercel coordinates before ZIP, city, region, or country', () => {
+		expect(
+			resolveGlobeLocation(
+				{
+					country: 'US',
+					city: 'Austin',
+					region: 'TX',
+					postal: '94107',
+					latitude: '30.2672',
+					longitude: '-97.7431',
+				},
+				datasets
+			)
+		).toEqual({
+			lat: 30.2672,
+			lng: -97.7431,
+			city: 'Austin',
+			region: 'TX',
+			precision: 'ip',
+		})
+	})
+
 	it('pings a US ZIP before city, region, or country', () => {
 		expect(
 			resolveGlobeLocation(
@@ -147,5 +170,92 @@ describe('normalizePostal and cached globe fields', () => {
 			})
 		).toBeNull()
 		expect(readCachedGlobeLocation({ attribution: { source: 'x' } })).toBeNull()
+	})
+
+	it('keeps a Vercel IP cache', () => {
+		expect(
+			readCachedGlobeLocation({
+				globe: {
+					lat: 37.7749,
+					lng: -122.4194,
+					city: 'San Francisco',
+					region: 'CA',
+					precision: 'ip',
+				},
+			})
+		).toMatchObject({ precision: 'ip', lat: 37.7749 })
+	})
+})
+
+describe('planPurchaseGeoWrite', () => {
+	it('writes matching Stripe billing onto an empty US purchase', () => {
+		expect(
+			planPurchaseGeoWrite(
+				{
+					country: 'US',
+					billing: {
+						city: 'Austin',
+						region: 'TX',
+						postal: '94107',
+						country: 'US',
+					},
+				},
+				datasets
+			)
+		).toMatchObject({
+			skip: false,
+			city: 'Austin',
+			state: 'TX',
+			location: { precision: 'postal', lat: 37.7609 },
+			source: 'stripe-billing',
+		})
+	})
+
+	it('prefers Vercel coordinates over Stripe ZIP', () => {
+		expect(
+			planPurchaseGeoWrite(
+				{
+					country: 'US',
+					metadata: {
+						city: 'Austin',
+						region: 'TX',
+						latitude: '30.2672',
+						longitude: '-97.7431',
+						ip_address: '203.0.113.9',
+					},
+					billing: {
+						city: 'San Francisco',
+						region: 'CA',
+						postal: '94107',
+						country: 'US',
+					},
+				},
+				datasets
+			)
+		).toMatchObject({
+			skip: false,
+			city: 'Austin',
+			state: 'TX',
+			ipAddress: '203.0.113.9',
+			location: { precision: 'ip', lat: 30.2672, lng: -97.7431 },
+			source: 'vercel',
+		})
+	})
+
+	it('does not move a TH purchase to a US billing ZIP', () => {
+		expect(
+			planPurchaseGeoWrite(
+				{
+					country: 'TH',
+					billing: {
+						city: 'Austin',
+						region: 'TX',
+						postal: '94107',
+						country: 'US',
+					},
+				},
+				datasets
+			)
+		).toMatchObject({ skip: true, reason: 'nothing-to-write' })
 	})
 })

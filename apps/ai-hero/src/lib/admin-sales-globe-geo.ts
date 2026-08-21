@@ -6,7 +6,7 @@ import regionCentroids from '@/app/admin/globe/_data/region-centroids.json'
 import usZipCentroids from '@/app/admin/globe/_data/us-zip-centroids.json'
 import { z } from 'zod'
 
-export type GlobePrecision = 'postal' | 'city' | 'region' | 'country'
+export type GlobePrecision = 'ip' | 'postal' | 'city' | 'region' | 'country'
 
 export type GlobeLocation = Readonly<{
 	lat: number
@@ -14,6 +14,16 @@ export type GlobeLocation = Readonly<{
 	city: string | null
 	region: string | null
 	precision: GlobePrecision
+}>
+
+export type GlobeSource = 'vercel' | 'stripe-billing'
+
+export type CheckoutGeoMetadata = Readonly<{
+	city?: string | null
+	region?: string | null
+	latitude?: string | null
+	longitude?: string | null
+	ip_address?: string | null
 }>
 
 export type StripeBillingAddress = Readonly<{
@@ -35,7 +45,7 @@ const CachedGlobeLocationSchema = z.object({
 	lng: z.number().finite(),
 	city: z.string().min(1).nullable().optional(),
 	region: z.string().min(1).nullable().optional(),
-	precision: z.enum(['postal', 'city', 'region', 'country']),
+	precision: z.enum(['ip', 'postal', 'city', 'region', 'country']),
 })
 
 const defaultDatasets: GlobeGeoDatasets = {
@@ -97,6 +107,35 @@ function pair(
 		: null
 }
 
+function parseCoordinate(value: string | number | null | undefined): number | null {
+	if (typeof value === 'number') {
+		return Number.isFinite(value) ? value : null
+	}
+	if (!value) return null
+	const parsed = Number(value)
+	return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseCoordinatePair(
+	latitude: string | number | null | undefined,
+	longitude: string | number | null | undefined
+): { lat: number; lng: number } | null {
+	const lat = parseCoordinate(latitude)
+	const lng = parseCoordinate(longitude)
+	return lat !== null && lng !== null ? { lat, lng } : null
+}
+
+/**
+ * First hop from Stripe/Vercel metadata, dropping the dummy checkout fallback.
+ */
+export function normalizeIpAddress(
+	value: string | null | undefined
+): string | null {
+	const first = value?.split(',')[0]?.trim()
+	if (!first || first === '0.0.0.0' || first === '::') return null
+	return first.slice(0, 191)
+}
+
 function optionalTrimmed(value: string | null | undefined): string | null {
 	const normalized = value?.trim()
 	return normalized ? normalized : null
@@ -111,6 +150,8 @@ export function resolveGlobeLocation(
 		city?: string | null
 		region?: string | null
 		postal?: string | null
+		latitude?: string | number | null
+		longitude?: string | number | null
 	},
 	datasets: GlobeGeoDatasets = defaultDatasets
 ): GlobeLocation | null {
@@ -120,6 +161,11 @@ export function resolveGlobeLocation(
 	const postal = normalizePostal(country, input.postal)
 	const cityKey = normalizePlace(city)
 	const regionKey = normalizePlace(region)
+	const ipCoords = parseCoordinatePair(input.latitude, input.longitude)
+
+	if (ipCoords) {
+		return { ...ipCoords, city, region, precision: 'ip' }
+	}
 
 	if (country === 'US' && postal) {
 		const coords = pair(datasets.postal[postal])
@@ -197,7 +243,8 @@ export function readCachedGlobeLocation(fields: unknown): GlobeLocation | null {
 
 export function globeFieldsPatch(
 	fields: unknown,
-	location: GlobeLocation
+	location: GlobeLocation,
+	source: GlobeSource = 'stripe-billing'
 ): Record<string, unknown> {
 	const current =
 		fields && typeof fields === 'object' && !Array.isArray(fields)
@@ -209,7 +256,175 @@ export function globeFieldsPatch(
 		city: location.city,
 		region: location.region,
 		precision: location.precision,
-		source: 'stripe-billing',
+		source,
 	}
 	return current
 }
+
+/**
+ * Write city/state/IP and a globe cache onto one purchase.
+ */
+export async function persistPurchaseGeoWrite({
+	purchaseId,
+	fields,
+	plan,
+}: {
+	purchaseId: string
+	fields: unknown
+	plan: PurchaseGeoWritePlan
+}): Promise<void> {
+	if (plan.skip) return
+	await db
+		.update(purchases)
+		.set({
+			...(plan.city ? { city: plan.city } : {}),
+			...(plan.state ? { state: plan.state } : {}),
+			...(plan.ipAddress ? { ipAddress: plan.ipAddress } : {}),
+			...(plan.location && plan.source
+				? { fields: globeFieldsPatch(fields, plan.location, plan.source) }
+				: {}),
+		})
+		.where(eq(purchases.id, purchaseId))
+}
+
+/**
+ * Fill one purchase from Stripe session metadata and matching billing.
+ */
+export async function persistPurchaseGeoFromStripe({
+	row,
+	readGeo,
+	persist = persistPurchaseGeoWrite,
+}: {
+	row: GlobeEnrichmentRow
+	readGeo: (row: GlobeEnrichmentRow) => Promise<{
+		address: StripeBillingAddress | null
+		metadata: CheckoutGeoMetadata
+	}>
+	persist?: (input: {
+		purchaseId: string
+		fields: unknown
+		plan: PurchaseGeoWritePlan
+	}) => Promise<void>
+}): Promise<PurchaseGeoWritePlan> {
+	const geo = await readGeo(row)
+	const plan = planPurchaseGeoWrite({
+		country: row.country,
+		city: row.city ?? null,
+		state: row.state ?? null,
+		ipAddress: row.ipAddress ?? null,
+		fields: row.fields,
+		metadata: geo.metadata,
+		billing: geo.address,
+	})
+	if (!plan.skip) {
+		await persist({ purchaseId: row.id, fields: row.fields, plan })
+	}
+	return plan
+}
+
+export type PurchaseGeoWritePlan = Readonly<{
+	skip: boolean
+	reason: string | null
+	city: string | null
+	state: string | null
+	ipAddress: string | null
+	location: GlobeLocation | null
+	source: GlobeSource | null
+}>
+
+/**
+ * Decide what to write onto a purchase from Vercel metadata and Stripe billing.
+ * Country-only pings are not cached. Billing is ignored when its country
+ * disagrees with the purchase country.
+ */
+export function planPurchaseGeoWrite(
+	input: {
+		country: string | null
+		city?: string | null
+		state?: string | null
+		ipAddress?: string | null
+		fields?: unknown
+		metadata?: CheckoutGeoMetadata | null
+		billing?: StripeBillingAddress | null
+	},
+	datasets?: GlobeGeoDatasets
+): PurchaseGeoWritePlan {
+	const cached = readCachedGlobeLocation(input.fields)
+	if (cached && optionalTrimmed(input.city)) {
+		return {
+			skip: true,
+			reason: 'already-written',
+			city: optionalTrimmed(input.city),
+			state: optionalTrimmed(input.state),
+			ipAddress: normalizeIpAddress(input.ipAddress),
+			location: cached,
+			source: null,
+		}
+	}
+
+	const matched = billingAddressForPurchase(input.country, input.billing)
+	const city =
+		optionalTrimmed(input.metadata?.city) ??
+		optionalTrimmed(input.city) ??
+		matched?.city ??
+		null
+	const state =
+		optionalTrimmed(input.metadata?.region) ??
+		optionalTrimmed(input.state) ??
+		matched?.region ??
+		null
+	const ipAddress =
+		normalizeIpAddress(input.metadata?.ip_address) ??
+		normalizeIpAddress(input.ipAddress)
+	const location = resolveGlobeLocation(
+		{
+			country: input.country,
+			city,
+			region: state,
+			postal: matched?.postal,
+			latitude: input.metadata?.latitude,
+			longitude: input.metadata?.longitude,
+		},
+		datasets
+	)
+	const persistable =
+		location && location.precision !== 'country' ? location : null
+	const source: GlobeSource | null = persistable
+		? persistable.precision === 'ip'
+			? 'vercel'
+			: matched
+				? 'stripe-billing'
+				: 'vercel'
+		: null
+	const cityChanged = Boolean(city && city !== optionalTrimmed(input.city))
+	const stateChanged = Boolean(state && state !== optionalTrimmed(input.state))
+	const ipChanged = Boolean(
+		ipAddress && ipAddress !== normalizeIpAddress(input.ipAddress)
+	)
+	const globeChanged = Boolean(persistable && !cached)
+
+	if (!cityChanged && !stateChanged && !ipChanged && !globeChanged) {
+		return {
+			skip: true,
+			reason: persistable || city || state || ipAddress
+				? 'already-written'
+				: 'nothing-to-write',
+			city,
+			state,
+			ipAddress,
+			location: persistable,
+			source,
+		}
+	}
+
+	return {
+		skip: false,
+		reason: null,
+		city,
+		state,
+		ipAddress,
+		location: persistable,
+		source,
+	}
+}
+
