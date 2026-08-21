@@ -18,6 +18,7 @@ import { SiteStructuredData } from '@/lib/structured-data'
 import { NavCtaProvider } from '@/components/navigation/nav-cta-context'
 import { PromoBar } from '@/components/navigation/promo-bar'
 import { PromoBarSlot } from '@/components/navigation/promo-bar-slot'
+import { PlaybackPrefHydrator } from '@/hooks/playback-pref-hydrator'
 import { TRPCReactProvider } from '@/trpc/react'
 import { ourFileRouter } from '@/uploadthing/core'
 import { GoogleAnalytics } from '@next/third-parties/google'
@@ -141,6 +142,7 @@ export default async function RootLayout({
 					/>
 					<FeedbackInsert />
 					<TRPCReactProvider>
+						<PlaybackPrefHydrator />
 						<NuqsAdapter>
 							<Party />
 							<ThemeProvider
