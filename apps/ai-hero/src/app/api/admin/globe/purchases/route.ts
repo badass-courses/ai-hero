@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
 	getRecentPaidPurchases,
+	normalizeProductId,
 	normalizePurchaseLimit,
 } from '@/lib/admin-sales-globe'
 import { serializePurchaseTickerHit } from '@/lib/admin-sales-globe-contract'
@@ -24,11 +25,13 @@ export async function GET(request: NextRequest) {
 		return errorResponse(403, 'Admin access required')
 	}
 
-	const rawLimit = new URL(request.url).searchParams.get('limit')
+	const search = new URL(request.url).searchParams
+	const rawLimit = search.get('limit')
 	const limit = normalizePurchaseLimit(
 		rawLimit === null ? undefined : Number(rawLimit),
 	)
-	const purchases = await getRecentPaidPurchases({ limit })
+	const productId = normalizeProductId(search.get('productId'))
+	const purchases = await getRecentPaidPurchases({ limit, productId })
 
 	return NextResponse.json(
 		{ purchases: purchases.map(serializePurchaseTickerHit) },

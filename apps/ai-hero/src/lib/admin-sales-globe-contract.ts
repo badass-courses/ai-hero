@@ -1,5 +1,8 @@
 import { z } from 'zod'
 
+export const LIVE_PURCHASE_LIMIT = 100
+export const MAX_PURCHASE_LIMIT = 500
+
 export const SerializedPurchaseTickerHitSchema = z.object({
 	id: z.string().min(1),
 	createdAt: z.string().datetime(),
@@ -31,6 +34,11 @@ export type PurchaseTickerHit = Omit<
 > & {
 	createdAt: Date
 }
+
+export type AdminGlobeProductOption = Readonly<{
+	id: string
+	name: string
+}>
 
 export function serializePurchaseTickerHit(
 	hit: PurchaseTickerHit,

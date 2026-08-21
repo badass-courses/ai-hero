@@ -86,7 +86,10 @@ describe('admin sales globe purchases API', () => {
 
 		expect(response.status).toBe(200)
 		expect(response.headers.get('cache-control')).toBe('private, no-store')
-		expect(mocks.getRecentPaidPurchases).toHaveBeenCalledWith({ limit: 100 })
+		expect(mocks.getRecentPaidPurchases).toHaveBeenCalledWith({
+			limit: 500,
+			productId: undefined,
+		})
 		expect(await response.json()).toMatchObject({
 			purchases: [
 				{
@@ -102,6 +105,20 @@ describe('admin sales globe purchases API', () => {
 
 		await GET(request('?limit=nope'))
 
-		expect(mocks.getRecentPaidPurchases).toHaveBeenCalledWith({ limit: 50 })
+		expect(mocks.getRecentPaidPurchases).toHaveBeenCalledWith({
+			limit: 50,
+			productId: undefined,
+		})
+	})
+
+	it('forwards a product pin to the purchase query', async () => {
+		mocks.getServerAuthSession.mockResolvedValue(auth({ admin: true }))
+
+		await GET(request('?limit=500&productId=product_crash'))
+
+		expect(mocks.getRecentPaidPurchases).toHaveBeenCalledWith({
+			limit: 500,
+			productId: 'product_crash',
+		})
 	})
 })

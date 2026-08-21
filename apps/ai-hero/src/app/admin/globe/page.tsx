@@ -1,5 +1,9 @@
 import { notFound } from 'next/navigation'
-import { getRecentPaidPurchases } from '@/lib/admin-sales-globe'
+import {
+	LIVE_PURCHASE_LIMIT,
+	getAdminGlobeProductOptions,
+	getRecentPaidPurchases,
+} from '@/lib/admin-sales-globe'
 import { serializePurchaseTickerHit } from '@/lib/admin-sales-globe-contract'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -14,11 +18,15 @@ export default async function AdminSalesGlobePage() {
 		notFound()
 	}
 
-	const recentPurchases = await getRecentPaidPurchases({ limit: 100 })
+	const [recentPurchases, products] = await Promise.all([
+		getRecentPaidPurchases({ limit: LIVE_PURCHASE_LIMIT }),
+		getAdminGlobeProductOptions(),
+	])
 
 	return (
 		<SalesGlobeClient
 			initialPurchases={recentPurchases.map(serializePurchaseTickerHit)}
+			products={products}
 		/>
 	)
 }
