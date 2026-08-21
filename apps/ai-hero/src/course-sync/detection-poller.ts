@@ -871,10 +871,8 @@ export function createCourseSyncDetectionPoller(
 			})
 
 			activeStage = 'compare'
-			const [head, state] = await Promise.all([
-				dependencies.getRevisionHead(bindingId),
-				dependencies.getPollState(bindingId),
-			])
+			const head = await dependencies.getRevisionHead(bindingId)
+			const state = await dependencies.getPollState(bindingId)
 			previousState = state
 			const headMatchesRevision =
 				head?.courseVersionId === courseVersionId &&

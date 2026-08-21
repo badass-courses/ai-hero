@@ -27,6 +27,7 @@ import {
 	readDropboxCourseManifest,
 } from '@/lib/dropbox-course-sync'
 
+import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
 import { inngest } from '../inngest.server'
 
 async function notifyCourseSync(notification: CourseSyncNotification) {
@@ -98,7 +99,10 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 			)
 		},
 	},
-	{ cron: 'TZ=UTC */30 * * * *' },
+	[
+		{ cron: 'TZ=UTC */30 * * * *' },
+		{ event: COURSE_SYNC_POLL_REQUESTED_EVENT },
+	],
 	async ({ step, runId }) => {
 		async function runTypedStep<T>(
 			id: string,
