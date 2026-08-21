@@ -16,6 +16,10 @@ export const SerializedPurchaseTickerHitSchema = z.object({
 	userName: z.string().nullable(),
 	userEmail: z.string().nullable(),
 	userImage: z.string().nullable(),
+	city: z.string().min(1).nullable(),
+	region: z.string().min(1).nullable(),
+	lat: z.number().finite().nullable(),
+	lng: z.number().finite().nullable(),
 	isTeam: z.boolean(),
 	seats: z.number().int().min(2).nullable(),
 })
@@ -41,7 +45,7 @@ export type AdminGlobeProductOption = Readonly<{
 }>
 
 export function serializePurchaseTickerHit(
-	hit: PurchaseTickerHit,
+	hit: PurchaseTickerHit
 ): SerializedPurchaseTickerHit {
 	return {
 		...hit,

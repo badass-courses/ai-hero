@@ -20,6 +20,10 @@ function hit(id: string): SerializedPurchaseTickerHit {
 		userName: 'Ada',
 		userEmail: 'ada@example.com',
 		userImage: null,
+		city: null,
+		region: null,
+		lat: 38,
+		lng: -97,
 		isTeam: false,
 		seats: null,
 	}
@@ -36,14 +40,14 @@ describe('sales globe feed', () => {
 
 	it('appends unseen hits and skips duplicates', () => {
 		expect(
-			mergePendingHits([hit('a')], [hit('a'), hit('b')]).map((row) => row.id),
+			mergePendingHits([hit('a')], [hit('a'), hit('b')]).map((row) => row.id)
 		).toEqual(['a', 'b'])
 	})
 
 	it('keeps the newest pending hits when the pipe overflows', () => {
 		const pending = [hit('old')]
 		const incoming = Array.from({ length: MAX_PENDING_HITS }, (_, index) =>
-			hit(`n${index}`),
+			hit(`n${index}`)
 		)
 		const merged = mergePendingHits(pending, incoming, MAX_PENDING_HITS)
 		expect(merged).toHaveLength(MAX_PENDING_HITS)
@@ -58,28 +62,28 @@ describe('sales globe feed', () => {
 				previousCreatedAt: '2026-08-21T17:00:00.000Z',
 				nextCreatedAt: '2026-08-21T17:00:01.000Z',
 				speed: 1,
-			}),
+			})
 		).toBe(1_100)
 		expect(
 			replayHitGapMs({
 				previousCreatedAt: '2026-08-21T17:00:00.000Z',
 				nextCreatedAt: '2026-08-21T17:05:00.000Z',
 				speed: 1,
-			}),
+			})
 		).toBe(2_500)
 		expect(
 			replayHitGapMs({
 				previousCreatedAt: '2026-08-21T17:00:00.000Z',
 				nextCreatedAt: '2026-08-21T17:05:00.000Z',
 				speed: 2,
-			}),
+			})
 		).toBe(1_250)
 		expect(
 			replayHitGapMs({
 				previousCreatedAt: '2026-08-21T17:00:00.000Z',
 				nextCreatedAt: '2026-08-21T18:00:00.000Z',
 				speed: 1,
-			}),
+			})
 		).toBe(3_600)
 	})
 
@@ -90,8 +94,8 @@ describe('sales globe feed', () => {
 	})
 
 	it('sorts replay hits oldest first with a stable id tie-break', () => {
-		expect(
-			[hit('b'), hit('a')].sort(oldestFirst).map((row) => row.id),
-		).toEqual(['a', 'b'])
+		expect([hit('b'), hit('a')].sort(oldestFirst).map((row) => row.id)).toEqual(
+			['a', 'b']
+		)
 	})
 })

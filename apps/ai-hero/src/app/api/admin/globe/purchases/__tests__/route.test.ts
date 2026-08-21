@@ -31,7 +31,7 @@ function auth({ admin }: { admin: boolean }) {
 			can: vi.fn((action: string, subject: string) =>
 				admin
 					? action === 'manage' && subject === 'all'
-					: action === 'view' && subject === 'Analytics',
+					: action === 'view' && subject === 'Analytics'
 			),
 		},
 	}
@@ -77,6 +77,10 @@ describe('admin sales globe purchases API', () => {
 				userName: 'Ada',
 				userEmail: 'ada@example.com',
 				userImage: null,
+				city: 'Austin',
+				region: 'TX',
+				lat: 30.2672,
+				lng: -97.7431,
 				isTeam: false,
 				seats: null,
 			},
