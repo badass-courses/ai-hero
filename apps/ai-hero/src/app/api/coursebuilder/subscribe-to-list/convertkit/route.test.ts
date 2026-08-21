@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
 	const recordSignupAttribution = vi.fn().mockResolvedValue('captured')
 	const createShortlinkAttribution = vi.fn().mockResolvedValue(undefined)
 	const inngestSend = vi.fn().mockResolvedValue(undefined)
+	const issueRecoveryToken = vi.fn().mockResolvedValue(undefined)
 	const reconcile = vi.fn()
 	const cookieGet = vi.fn()
 	const log = {
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => {
 		recordSignupAttribution,
 		createShortlinkAttribution,
 		inngestSend,
+		issueRecoveryToken,
 		reconcile,
 		cookieGet,
 		log,
@@ -59,6 +61,11 @@ vi.mock('@/lib/signup-attribution', () => ({
 vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
 	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
 }))
+
+vi.mock(
+	'@/lib/subscriber-marketing/skills-course-recovery-token.server',
+	() => ({ issueSkillsCourseRecoveryToken: mocks.issueRecoveryToken }),
+)
 
 vi.mock('@/server/logger', () => ({
 	log: mocks.log,
@@ -138,6 +145,7 @@ beforeEach(() => {
 	mocks.recordSignupAttribution.mockResolvedValue('captured')
 	mocks.createShortlinkAttribution.mockResolvedValue(undefined)
 	mocks.inngestSend.mockResolvedValue(undefined)
+	mocks.issueRecoveryToken.mockResolvedValue(undefined)
 	mocks.cookieGet.mockImplementation((name: string) => {
 		if (name === 'ft_attr') {
 			return {
@@ -200,6 +208,10 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		)
 
 		expect(response.status).toBe(200)
+		expect(mocks.issueRecoveryToken).toHaveBeenCalledWith({
+			kitSubscriberId: '99',
+			email: 'skills@example.com',
+		})
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
 				name: 'skills-newsletter/subscribed',
@@ -216,6 +228,34 @@ describe('subscribe-to-list convertkit route attribution', () => {
 			kitSubscriberId: 99,
 			rawCookie: expect.any(String),
 		})
+	})
+
+	it('keeps path entry when recovery token issuance fails', async () => {
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 99,
+				email_address: 'skills@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.issueRecoveryToken.mockRejectedValue(new Error('token unavailable'))
+
+		const response = await POST(
+			request({
+				email: 'skills@example.com',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(response.status).toBe(200)
+		expect(mocks.inngestSend).toHaveBeenCalledTimes(1)
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'skills.course.recovery_token_issue_failed',
+			{ outcome: 'not-issued' },
+		)
 	})
 
 	it('returns 200 when attribution insert fails', async () => {
