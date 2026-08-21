@@ -4,8 +4,6 @@ import * as React from 'react'
 import { use } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
-
-import { AutoPlayToggle } from './autoplay-toggle'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
@@ -19,6 +17,7 @@ import {
 	getModuleCompletionState,
 	type ResourceNavigation,
 } from '@/lib/content-navigation'
+import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
 import {
 	setPlaybackPositionForResource,
 	setProgressForResource,
@@ -52,6 +51,7 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import { revalidateModuleLesson } from '../actions'
 import { useWorkshopNavigation } from '../workshops/_components/workshop-navigation-provider'
 import { useModuleProgress } from './module-progress-provider'
+import { PlayerPrefToggles } from './player-pref-toggles'
 
 export function AuthedVideoPlayer({
 	title,
@@ -110,11 +110,9 @@ export function AuthedVideoPlayer({
 
 	useMuxChapters(playerRef, chapters)
 	const { dispatch: dispatchVideoPlayerOverlay } = useVideoPlayerOverlay()
-	const {
-		playerPrefs: { playbackRate, volume, autoplay: bingeMode },
-		setPlayerPrefs,
-		setMuxPlayerRef,
-	} = useMuxPlayer()
+	const { playerPrefs, setPlayerPrefs, setMuxPlayerRef } = useMuxPlayer()
+	const { playbackRate, volume, autoplay: bingeMode } = playerPrefs
+	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const router = useRouter()
 	const [currentResource, setCurrentResource] =
 		React.useState<ContentResource>(resource)
@@ -187,7 +185,7 @@ export function AuthedVideoPlayer({
 		thumbnailTime: bingeMode ? 0 : resource.fields?.thumbnailTime || 0,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
-		minResolution: '540p',
+		minResolution,
 		accentColor: '#DD9637',
 		currentTime: playbackStartTime,
 		playbackRate,
@@ -256,9 +254,10 @@ export function AuthedVideoPlayer({
 			playerRef={playerRef}
 			className={cn(className)}
 			chromeSlot={
-				<AutoPlayToggle
-					id="autoplay-player-chrome"
+				<PlayerPrefToggles
+					idPrefix="player-chrome"
 					className="rounded-[9px] bg-black/60 px-3 py-1.5 text-white"
+					toggleClassName="text-white"
 				/>
 			}
 		>
