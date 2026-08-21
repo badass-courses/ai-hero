@@ -857,7 +857,7 @@ describe('course sync detection poller', () => {
 		})
 	})
 
-	it('continues after a partial batch without duplicate assets or runs', async () => {
+	it('continues after an interrupted batch sequence without duplicate assets or runs', async () => {
 		const firstLesson = manifest.sections[0]!.lessons[0]!
 		if (firstLesson.type !== 'explainer') throw new Error('fixture mismatch')
 		const sourceVideoIds = Array.from(
@@ -934,11 +934,11 @@ describe('course sync detection poller', () => {
 			outcome: 'awaiting-apply',
 			controlPlaneRunId: 'sync-run-2',
 		})
-		expect(
-			test.freezeAssetBatch.mock.calls.map(
-				([input]) => input.sourceVideoIds.length,
-			),
-		).toEqual([10, 10, 2])
+		const durableBatchSizes = test.freezeAssetBatch.mock.calls.map(
+			([input]) => input.sourceVideoIds.length,
+		)
+		expect(durableBatchSizes).toHaveLength(16)
+		expect(new Set(durableBatchSizes)).toEqual(new Set([1]))
 		expect(muxCreates).toEqual(sourceVideoIds)
 		expect(new Set(muxCreates).size).toBe(12)
 		expect(test.stage).toHaveBeenCalledOnce()
