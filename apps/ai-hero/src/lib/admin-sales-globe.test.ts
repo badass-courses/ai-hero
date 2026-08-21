@@ -8,6 +8,7 @@ vi.mock('@/db', () => ({ db: null }))
 import {
 	buildRecentPaidPurchasesQuery,
 	mapPurchaseTickerRows,
+	normalizeProductId,
 	normalizePurchaseLimit,
 } from './admin-sales-globe'
 import { serializePurchaseTickerHit } from './admin-sales-globe-contract'
@@ -28,7 +29,7 @@ describe('admin sales globe purchase query', () => {
 		expect(compiled.sql).toContain(
 			'order by `AI_Purchase`.`createdAt` desc, `AI_Purchase`.`id` desc',
 		)
-		expect(compiled.params).toEqual(['Valid', 'Restricted', '0', 100])
+		expect(compiled.params).toEqual(['Valid', 'Restricted', '0', 500])
 	})
 
 	it('caps limits and falls back to the default for invalid input', () => {
@@ -36,7 +37,34 @@ describe('admin sales globe purchase query', () => {
 		expect(normalizePurchaseLimit(Number.NaN)).toBe(50)
 		expect(normalizePurchaseLimit(0)).toBe(1)
 		expect(normalizePurchaseLimit(12.9)).toBe(12)
-		expect(normalizePurchaseLimit(101)).toBe(100)
+		expect(normalizePurchaseLimit(101)).toBe(101)
+		expect(normalizePurchaseLimit(501)).toBe(500)
+	})
+
+	it('treats all, empty, and oversized product pins as unfiltered', () => {
+		expect(normalizeProductId('all')).toBeUndefined()
+		expect(normalizeProductId('  ')).toBeUndefined()
+		expect(normalizeProductId('product_crash')).toBe('product_crash')
+		expect(normalizeProductId('x'.repeat(129))).toBeUndefined()
+	})
+
+	it('pins the query to one product when a product id is present', () => {
+		const database = drizzle.mock({ schema, mode: 'planetscale' })
+		const query = buildRecentPaidPurchasesQuery({
+			database: database as unknown as typeof import('@/db').db,
+			limit: 500,
+			productId: 'product_crash',
+		})
+		const compiled = query.toSQL()
+
+		expect(compiled.sql).toContain('`AI_Purchase`.`productId` = ?')
+		expect(compiled.params).toEqual([
+			'Valid',
+			'Restricted',
+			'0',
+			'product_crash',
+			500,
+		])
 	})
 
 	it('maps the exact ticker shape and derives teams only from coupon seats', () => {

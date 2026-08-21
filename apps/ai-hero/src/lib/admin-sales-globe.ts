@@ -1,11 +1,17 @@
 import { db } from '@/db'
 import { coupon, products, purchases, users } from '@/db/schema'
-import { and, desc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
 
-import type { PurchaseTickerHit } from './admin-sales-globe-contract'
+import {
+	LIVE_PURCHASE_LIMIT,
+	MAX_PURCHASE_LIMIT,
+	type AdminGlobeProductOption,
+	type PurchaseTickerHit,
+} from './admin-sales-globe-contract'
+
+export { LIVE_PURCHASE_LIMIT, MAX_PURCHASE_LIMIT } from './admin-sales-globe-contract'
 
 const DEFAULT_PURCHASE_LIMIT = 50
-const MAX_PURCHASE_LIMIT = 100
 const PAID_PURCHASE_STATUSES = ['Valid', 'Restricted'] as const
 
 export type PurchaseTickerRow = Readonly<{
@@ -28,13 +34,27 @@ export function normalizePurchaseLimit(limit: number | undefined): number {
 	return Math.max(1, Math.min(Math.trunc(limit), MAX_PURCHASE_LIMIT))
 }
 
+/**
+ * Optional product pin for history and replay. `all` and empty mean every product.
+ */
+export function normalizeProductId(
+	productId: string | null | undefined,
+): string | undefined {
+	const value = productId?.trim()
+	if (!value || value === 'all' || value.length > 128) return undefined
+	return value
+}
+
 export function buildRecentPaidPurchasesQuery({
 	database = db,
 	limit,
+	productId,
 }: {
 	database?: typeof db
 	limit?: number
+	productId?: string | null
 } = {}) {
+	const pinnedProductId = normalizeProductId(productId)
 	return database
 		.select({
 			id: purchases.id,
@@ -56,6 +76,7 @@ export function buildRecentPaidPurchasesQuery({
 			and(
 				inArray(purchases.status, [...PAID_PURCHASE_STATUSES]),
 				gt(purchases.totalAmount, '0'),
+				pinnedProductId ? eq(purchases.productId, pinnedProductId) : undefined,
 			),
 		)
 		.orderBy(desc(purchases.createdAt), desc(purchases.id))
@@ -104,9 +125,33 @@ export function mapPurchaseTickerRows(
 
 export async function getRecentPaidPurchases({
 	limit,
+	productId,
 }: {
 	limit?: number
+	productId?: string | null
 } = {}): Promise<PurchaseTickerHit[]> {
-	const rows = await buildRecentPaidPurchasesQuery({ limit })
+	const rows = await buildRecentPaidPurchasesQuery({ limit, productId })
 	return mapPurchaseTickerRows(rows)
+}
+
+/**
+ * Product names for the admin globe pin and replay controls.
+ */
+export async function getAdminGlobeProductOptions({
+	database = db,
+}: {
+	database?: typeof db
+} = {}): Promise<AdminGlobeProductOption[]> {
+	const rows = await database
+		.select({
+			id: products.id,
+			name: products.name,
+		})
+		.from(products)
+		.orderBy(asc(products.name))
+
+	return rows.flatMap((row) => {
+		const name = row.name?.trim()
+		return name ? [{ id: row.id, name }] : []
+	})
 }
