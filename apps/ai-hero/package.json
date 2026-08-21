@@ -10,7 +10,8 @@
 		"dev:party": "pnpx partykit dev",
 		"tunnel": "ngrok http --domain=neatly-diverse-goldfish.ngrok-free.app 3000",
 		"email:preview": "email dev --dir ./src/emails",
-		"prebuild": "pnpm --filter @ai-hero/course-sync-schema build && pnpm cta-report:build",
+		"env:check": "varlock load --path .env.schema --filter=INNGEST_* --agent",
+		"prebuild": "pnpm env:check && pnpm --filter @ai-hero/course-sync-schema build && pnpm cta-report:build",
 		"build": "next build",
 		"db:push": "dotenv drizzle-kit push",
 		"db:studio": "dotenv drizzle-kit studio",
@@ -305,6 +306,7 @@
 		"tsx": "^4.7.1",
 		"tw-animate-css": "^1.4.0",
 		"typescript": "5.4.5",
+		"varlock": "1.17.0",
 		"vite": "5.4.10",
 		"vite-tsconfig-paths": "^5.1.4",
 		"vitest": "1.6.0"
