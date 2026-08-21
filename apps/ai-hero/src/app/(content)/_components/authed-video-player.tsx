@@ -50,8 +50,8 @@ import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { revalidateModuleLesson } from '../actions'
 import { useWorkshopNavigation } from '../workshops/_components/workshop-navigation-provider'
+import { AutoPlayToggle } from './autoplay-toggle'
 import { useModuleProgress } from './module-progress-provider'
-import { PlayerPrefToggles } from './player-pref-toggles'
 
 export function AuthedVideoPlayer({
 	title,
@@ -254,10 +254,9 @@ export function AuthedVideoPlayer({
 			playerRef={playerRef}
 			className={cn(className)}
 			chromeSlot={
-				<PlayerPrefToggles
-					idPrefix="player-chrome"
+				<AutoPlayToggle
+					id="autoplay-player-chrome"
 					className="rounded-[9px] bg-black/60 px-3 py-1.5 text-white"
-					toggleClassName="text-white"
 				/>
 			}
 		>
