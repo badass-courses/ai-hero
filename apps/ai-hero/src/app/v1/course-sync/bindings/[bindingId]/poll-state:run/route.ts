@@ -8,8 +8,10 @@ import {
 	idempotencyKey,
 } from '@/course-sync/http'
 import { AI_HERO_COURSE_SYNC_BINDING } from '@/course-sync/types'
-import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '@/inngest/events/course-sync-poll'
-import { inngest } from '@/inngest/inngest.server'
+import { env } from '@/env.mjs'
+
+const INNGEST_APP_ID = 'ai-hero'
+const COURSE_SYNC_POLLER_FUNCTION_ID = 'ai-hero-course-sync-detection-poller'
 
 export async function POST(
 	request: Request,
@@ -26,24 +28,44 @@ export async function POST(
 			)
 		}
 		const key = idempotencyKey(request)
-		const eventId = `course-sync-poll:${createHash('sha256').update(key).digest('hex')}`
-		const result = await inngest.send({
-			id: eventId,
-			name: COURSE_SYNC_POLL_REQUESTED_EVENT,
-			data: {
-				bindingId,
-				requestedBy: 'operator',
-				reason: 'operator-requested-run-now',
+		const invocationKey = `course-sync-poll:${createHash('sha256').update(key).digest('hex')}`
+		const response = await fetch(
+			`https://api.inngest.com/v2/apps/${INNGEST_APP_ID}/functions/${COURSE_SYNC_POLLER_FUNCTION_ID}/invoke`,
+			{
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${env.INNGEST_SIGNING_KEY}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					data: {
+						bindingId,
+						requestedBy: 'operator',
+						reason: 'operator-requested-run-now',
+					},
+					idempotencyKey: invocationKey,
+				}),
 			},
-		})
+		)
+		if (!response.ok) {
+			throw new CourseSyncError(
+				'COURSE_SYNC_INNGEST_INVOKE_FAILED',
+				`Inngest function invocation failed (${response.status}).`,
+				502,
+			)
+		}
+		const result = (await response.json()) as { data?: { run_id?: unknown } }
+		const runId = result.data?.run_id
+		if (typeof runId !== 'string' || !runId) {
+			throw new CourseSyncError(
+				'COURSE_SYNC_INNGEST_INVOKE_INVALID',
+				'Inngest function invocation returned no run ID.',
+				502,
+			)
+		}
 
 		return courseSyncJson(
-			{
-				accepted: true,
-				bindingId,
-				eventId,
-				inngestEventIds: (result as { ids?: string[] }).ids ?? [],
-			},
+			{ accepted: true, bindingId, invocationKey, runId },
 			202,
 		)
 	} catch (error) {

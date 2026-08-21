@@ -1,17 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const send = vi.hoisted(() => vi.fn())
+const fetchMock = vi.hoisted(() => vi.fn())
+vi.stubGlobal('fetch', fetchMock)
 
 vi.mock('@/env.mjs', () => ({
 	env: {
 		COURSE_SYNC_STAGE_TOKEN: 'stage-token-for-tests-1234',
 		COURSE_SYNC_WORKER_TOKEN: 'worker-token-for-tests-123',
 		COURSE_SYNC_OPERATOR_TOKEN: 'operator-token-for-tests-1',
+		INNGEST_SIGNING_KEY: 'signkey-prod-test',
 	},
-}))
-
-vi.mock('@/inngest/inngest.server', () => ({
-	inngest: { send },
 }))
 
 import { POST } from './route'
@@ -28,11 +26,14 @@ function request(headers: Record<string, string>) {
 
 describe('course sync poll run-now route', () => {
 	beforeEach(() => {
-		send.mockReset()
-		send.mockResolvedValue({ ids: ['evt_1'] })
+		fetchMock.mockReset()
 	})
 
-	it('queues one idempotent operator-requested poll', async () => {
+	it('directly invokes one idempotent course-sync poll', async () => {
+		fetchMock.mockResolvedValue(
+			Response.json({ data: { run_id: '01M0JNYTEST000000000000000' } }),
+		)
+
 		const response = await POST(
 			request({
 				authorization: 'Bearer operator-token-for-tests-1',
@@ -45,17 +46,19 @@ describe('course sync poll run-now route', () => {
 		await expect(response.json()).resolves.toMatchObject({
 			accepted: true,
 			bindingId,
-			inngestEventIds: ['evt_1'],
+			runId: '01M0JNYTEST000000000000000',
+			invocationKey: expect.stringMatching(/^course-sync-poll:[a-f0-9]{64}$/),
 		})
-		expect(send).toHaveBeenCalledWith({
-			id: expect.stringMatching(/^course-sync-poll:[a-f0-9]{64}$/),
-			name: 'course-sync/poll.requested',
-			data: {
-				bindingId,
-				requestedBy: 'operator',
-				reason: 'operator-requested-run-now',
-			},
-		})
+		expect(fetchMock).toHaveBeenCalledWith(
+			'https://api.inngest.com/v2/apps/ai-hero/functions/ai-hero-course-sync-detection-poller/invoke',
+			expect.objectContaining({
+				method: 'POST',
+				headers: expect.objectContaining({
+					Authorization: 'Bearer signkey-prod-test',
+				}),
+				body: expect.stringContaining('operator-requested-run-now'),
+			}),
+		)
 	})
 
 	it('rejects requests without the operator token', async () => {
@@ -65,6 +68,6 @@ describe('course sync poll run-now route', () => {
 		)
 
 		expect(response.status).toBe(401)
-		expect(send).not.toHaveBeenCalled()
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
