@@ -23,6 +23,55 @@ export type LoginTemplateProps = {
 	className?: string
 }
 
+type LoginErrorInfo = {
+	title: string
+	message: string
+}
+
+export function getLoginErrorInfo(error: string | null): LoginErrorInfo | null {
+	switch (error) {
+		case 'OAuthCallback':
+		case 'OAuthCallbackError':
+			return {
+				title: "Sign-in couldn't be completed",
+				message:
+					'Try GitHub or Discord again, or choose a different sign-in method.',
+			}
+		case 'OAuthAccountNotLinked':
+		case 'AccountNotLinked':
+			return {
+				title: 'Account not connected',
+				message: 'Sign in with email first, then connect your provider.',
+			}
+		case 'MissingCSRF':
+			return {
+				title: 'Sign-in expired',
+				message: 'Reload this page and try again.',
+			}
+		default:
+			return null
+	}
+}
+
+export function getLoginMessageInfo(
+	message: string | null,
+): LoginErrorInfo | null {
+	switch (message) {
+		case 'Please log in first to connect Discord':
+			return {
+				title: 'Login required',
+				message: 'Log in before connecting Discord.',
+			}
+		case 'Log in to manage Discord roles':
+			return {
+				title: 'Login required',
+				message: 'Log in before managing Discord roles.',
+			}
+		default:
+			return null
+	}
+}
+
 export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 	providers = {},
 	image,
@@ -52,29 +101,17 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 		? (searchParams.get('error') as string)
 		: null
 
+	const errorInfo = getLoginErrorInfo(error)
+	const messageInfo = getLoginMessageInfo(message)
+	const alertInfo = errorInfo ?? messageInfo
+
 	React.useEffect(() => {
-		if (message) {
-			toast.error(message as string, {
+		const currentInfo = getLoginErrorInfo(error) ?? getLoginMessageInfo(message)
+		if (currentInfo) {
+			toast.error(`${currentInfo.title}. ${currentInfo.message}`, {
 				icon: '⛔️',
+				duration: 8000,
 			})
-		}
-		if (error) {
-			switch (error) {
-				case 'OAuthAccountNotLinked':
-					toast.error(
-						'That GitHub or Discord account is not linked to AI Hero. Sign in with email instead.',
-						{
-							icon: '⛔️',
-							duration: 8000,
-						},
-					)
-					break
-				case 'OAuthCallback':
-					toast.error('Sign-in was interrupted. Please try again.', {
-						icon: '⛔️',
-					})
-					break
-			}
 		}
 	}, [message, error])
 
@@ -123,6 +160,17 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 					{title ? title : `Log in`}
 					{subtitle && <span data-subtitle="">{subtitle}</span>}
 				</h1>
+				{alertInfo ? (
+					<div
+						role="alert"
+						className="border-destructive/30 bg-destructive/10 mb-6 rounded-md border p-4 text-left"
+					>
+						<p className="font-semibold">{alertInfo.title}</p>
+						<p className="text-muted-foreground mt-1 text-sm">
+							{alertInfo.message}
+						</p>
+					</div>
+				) : null}
 				{error === 'Verification' ? (
 					<p data-verification-error="">
 						<Balancer>
