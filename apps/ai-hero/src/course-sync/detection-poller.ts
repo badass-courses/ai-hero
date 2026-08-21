@@ -160,6 +160,7 @@ export type CourseSyncDetectionPollerDependencies = {
 	getRevisionHead(bindingId: string): Promise<CourseSyncRevisionHead | null>
 	getRun(runId: string): Promise<CourseSyncRunSummary>
 	getPollState(bindingId: string): Promise<CourseSyncPollState | null>
+	ensureBinding(bindingId: string): Promise<void>
 	savePollState(state: CourseSyncPollState): Promise<void>
 	appendLog(input: CourseSyncPollLogInput): Promise<void>
 	freezeAsset(input: {
@@ -1197,6 +1198,7 @@ export function createCourseSyncDetectionPoller(
 			}
 
 			if (lifecycle.getSnapshot().matches({ active: 'held' })) {
+				await dependencies.ensureBinding(bindingId)
 				await log({
 					bindingId,
 					courseVersionId,

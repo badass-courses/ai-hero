@@ -105,6 +105,7 @@ function harness(input?: {
 	readManifest?: CourseSyncDetectionPollerDependencies['readManifest']
 	apply?: CourseSyncDetectionPollerDependencies['apply']
 	getRun?: CourseSyncDetectionPollerDependencies['getRun']
+	ensureBinding?: CourseSyncDetectionPollerDependencies['ensureBinding']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
 	freezeAsset?: CourseSyncDetectionPollerDependencies['freezeAsset']
 	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
@@ -133,6 +134,7 @@ function harness(input?: {
 				head ? run(head.runState, { runId: head.runId }) : run('previewed')),
 	)
 	const freezeAsset = vi.fn(input?.freezeAsset ?? (async () => frozenAsset))
+	const ensureBinding = vi.fn(input?.ensureBinding ?? (async () => undefined))
 	const evaluateBoundedAutoApply = vi.fn(
 		input?.evaluateBoundedAutoApply ??
 			(async () => ({
@@ -190,6 +192,7 @@ function harness(input?: {
 		getRevisionHead: async () => head,
 		getRun,
 		getPollState: async () => state,
+		ensureBinding,
 		freezeAsset,
 		savePollState: async (next) => {
 			state = next
@@ -211,6 +214,7 @@ function harness(input?: {
 	}
 	return {
 		poll: createCourseSyncDetectionPoller(dependencies),
+		ensureBinding,
 		freezeAsset,
 		stage,
 		preview,
@@ -760,7 +764,8 @@ describe('course sync detection poller', () => {
 		)
 	})
 
-	it('does not let a new revision bypass an operator hold', async () => {
+	it('migrates the server binding without letting a new revision bypass an operator hold', async () => {
+		const order: string[] = []
 		const test = harness({
 			state: {
 				bindingId: 'csb_ai_coding_crash_course',
@@ -772,6 +777,14 @@ describe('course sync detection poller', () => {
 				failureClass: 'Error',
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			},
+			ensureBinding: async () => {
+				order.push('ensure-binding')
+			},
+			appendLog: async (entry) => {
+				if (entry.stage === 'hold' && entry.outcome === 'held') {
+					order.push('hold-log')
+				}
+			},
 		})
 
 		await expect(test.poll('new-revision-held')).resolves.toMatchObject({
@@ -779,6 +792,8 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 			controlPlaneRunId: null,
 		})
+		expect(test.ensureBinding).toHaveBeenCalledOnce()
+		expect(order).toEqual(['ensure-binding', 'hold-log'])
 		expect(test.freezeAsset).not.toHaveBeenCalled()
 		expect(test.stage).not.toHaveBeenCalled()
 		expect(test.notifications).toHaveLength(0)

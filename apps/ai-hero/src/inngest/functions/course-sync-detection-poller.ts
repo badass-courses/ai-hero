@@ -154,6 +154,11 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				)
 				return state ? { ...state, updatedAt: new Date(state.updatedAt) } : null
 			},
+			ensureBinding: async (bindingId) => {
+				await runTypedStep('ensure-course-sync-binding', () =>
+					courseSyncControlPlane.ensureBinding(bindingId),
+				)
+			},
 			savePollState: async (state) => {
 				await runTypedStep('save-course-sync-poll-state', () =>
 					saveCourseSyncPollState({
