@@ -50,7 +50,7 @@ describe('course sync poll run-now route', () => {
 			invocationKey: expect.stringMatching(/^course-sync-poll:[a-f0-9]{64}$/),
 		})
 		expect(fetchMock).toHaveBeenCalledWith(
-			'https://api.inngest.com/v2/apps/ai-hero/functions/ai-hero-course-sync-detection-poller/invoke',
+			'https://api.inngest.com/v2/apps/ai-hero/functions/ai-hero-ai-hero-course-sync-detection-poller/invoke',
 			expect.objectContaining({
 				method: 'POST',
 				headers: expect.objectContaining({

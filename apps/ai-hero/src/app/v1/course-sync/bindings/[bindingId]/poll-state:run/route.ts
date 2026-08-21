@@ -11,7 +11,10 @@ import { AI_HERO_COURSE_SYNC_BINDING } from '@/course-sync/types'
 import { env } from '@/env.mjs'
 
 const INNGEST_APP_ID = 'ai-hero'
-const COURSE_SYNC_POLLER_FUNCTION_ID = 'ai-hero-course-sync-detection-poller'
+// Inngest registers function IDs with the app ID prefix. The invoke API needs
+// that absolute ID, not the local createFunction() ID.
+const COURSE_SYNC_POLLER_FUNCTION_ID =
+	'ai-hero-ai-hero-course-sync-detection-poller'
 const INNGEST_RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/
 
 function findInngestRunId(value: unknown): string | null {
