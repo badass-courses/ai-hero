@@ -14,6 +14,7 @@ import { Gravatar } from '@coursebuilder/ui'
 
 import countryCentroids from '../_data/country-centroids.json'
 import type { GlobeHit } from './sales-globe-canvas'
+import { mergePendingHits, nextHitGapMs } from './sales-globe-feed'
 
 const SalesGlobeCanvas = dynamic(
 	() =>
@@ -96,12 +97,16 @@ export function SalesGlobeClient({
 	const [muted, setMuted] = React.useState(false)
 	const [audioState, setAudioState] = React.useState<AudioState>('suspended')
 	const [pollFailed, setPollFailed] = React.useState(false)
+	const [pendingCount, setPendingCount] = React.useState(0)
 	const seenIdsRef = React.useRef(
 		new Set(initialPurchases.map((purchase) => purchase.id)),
 	)
 	const inFlightRef = React.useRef(false)
 	const activeRequestRef = React.useRef<AbortController | null>(null)
 	const ringTimersRef = React.useRef(new Set<ReturnType<typeof setTimeout>>())
+	const pendingHitsRef = React.useRef<SerializedPurchaseTickerHit[]>([])
+	const pumpTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+	const playNextPendingRef = React.useRef<() => void>(() => undefined)
 	const audioContextRef = React.useRef<AudioContext | null>(null)
 	const mutedRef = React.useRef(false)
 
@@ -197,6 +202,32 @@ export function SalesGlobeClient({
 		[playHit],
 	)
 
+	playNextPendingRef.current = () => {
+		pumpTimerRef.current = null
+		const next = pendingHitsRef.current.shift()
+		setPendingCount(pendingHitsRef.current.length)
+		if (!next) return
+		addLiveHit(next)
+		if (pendingHitsRef.current.length === 0) return
+		pumpTimerRef.current = setTimeout(() => {
+			playNextPendingRef.current()
+		}, nextHitGapMs(pendingHitsRef.current.length, next.isTeam))
+	}
+
+	const enqueueLiveHits = React.useCallback(
+		(incoming: readonly SerializedPurchaseTickerHit[]) => {
+			if (incoming.length === 0) return
+			pendingHitsRef.current = mergePendingHits(
+				pendingHitsRef.current,
+				incoming,
+			)
+			setPendingCount(pendingHitsRef.current.length)
+			if (pumpTimerRef.current) return
+			playNextPendingRef.current()
+		},
+		[],
+	)
+
 	const poll = React.useCallback(async () => {
 		if (inFlightRef.current) return
 		inFlightRef.current = true
@@ -223,8 +254,8 @@ export function SalesGlobeClient({
 				.sort(oldestFirst)
 			for (const purchase of unseen) {
 				seenIdsRef.current.add(purchase.id)
-				addLiveHit(purchase)
 			}
+			enqueueLiveHits(unseen)
 			setPollFailed(false)
 		} catch (error) {
 			if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -237,7 +268,7 @@ export function SalesGlobeClient({
 			}
 			inFlightRef.current = false
 		}
-	}, [addLiveHit])
+	}, [enqueueLiveHits])
 
 	React.useEffect(() => {
 		const stored = window.localStorage.getItem(MUTE_KEY)
@@ -271,6 +302,10 @@ export function SalesGlobeClient({
 			window.clearInterval(interval)
 			document.removeEventListener('visibilitychange', catchUp)
 			activeRequestRef.current?.abort()
+			if (pumpTimerRef.current) {
+				clearTimeout(pumpTimerRef.current)
+				pumpTimerRef.current = null
+			}
 			for (const timer of ringTimers) clearTimeout(timer)
 			ringTimers.clear()
 		}
@@ -337,6 +372,9 @@ export function SalesGlobeClient({
 						) : (
 							<span className="text-emerald-500">live</span>
 						)}
+						{pendingCount > 0 ? (
+							<span className="text-cyan-400">{pendingCount} queued</span>
+						) : null}
 					</div>
 					<h1 className="mt-1 text-2xl font-semibold tracking-tight">
 						Sales situation board
