@@ -22,8 +22,9 @@ Add Varlock as a validation layer before replacing the existing T3/Zod runtime l
 The first contract covers only the two Inngest credentials:
 
 - values remain sensitive and are required only in production
-- both keys must be at least 32 characters
-- signing keys must use an Inngest production or test prefix
+- production keys must be at least 32 characters
+- production signing keys must use the Inngest production prefix
+- preview placeholders remain allowed because preview function registration is deliberately disarmed
 - `prebuild` validates the effective ambient build credentials before `next build`
 - `pnpm env:check` provides the same redacted local check
 
