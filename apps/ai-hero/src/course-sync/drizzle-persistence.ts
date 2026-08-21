@@ -1319,6 +1319,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					status: 'succeeded',
 					consecutiveFailures: 0,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: appliedAt,
 				})
 				.where(

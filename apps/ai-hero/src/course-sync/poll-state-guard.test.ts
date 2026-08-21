@@ -15,6 +15,7 @@ function state(
 		consecutiveFailures: status === 'held' ? 1 : 0,
 		controlPlaneRunId: 'run-1',
 		failureClass: status === 'held' ? 'APPLIED_RUN_ROLLED_BACK' : null,
+		applyPolicyOverride: null,
 		updatedAt: new Date(updatedAt),
 	}
 }

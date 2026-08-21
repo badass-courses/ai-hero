@@ -19,6 +19,7 @@ const heldState: CourseSyncPollState = {
 	consecutiveFailures: 1,
 	controlPlaneRunId: null,
 	failureClass: 'TARGET_CONTRACT_MISMATCH',
+	applyPolicyOverride: null,
 	updatedAt: new Date('2026-08-16T19:31:05.000Z'),
 }
 
@@ -118,6 +119,7 @@ describe('operator course sync hold release', () => {
 			consecutiveFailures: 0,
 			failureClass: null,
 			controlPlaneRunId: null,
+			applyPolicyOverride: 'operator',
 		})
 		expect(test.logs).toHaveLength(1)
 	})

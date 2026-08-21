@@ -114,6 +114,20 @@ describe('course sync persistence invariants', () => {
 		expect(migration).not.toMatch(/CREATE TABLE `CourseSyncFrozenAssetReceipt`/)
 	})
 
+	it('adds one nullable durable operator-policy override to poll state', () => {
+		const migration = readFileSync(
+			new URL(
+				'../db/migrations/20260821_ai_hero_course_sync_review_gate.sql',
+				import.meta.url,
+			),
+			'utf8',
+		)
+		expect(migration).toBe(
+			'ALTER TABLE `AI_CourseSyncPollState`\n  ADD COLUMN `applyPolicyOverride` varchar(32) DEFAULT NULL;\n',
+		)
+		expect(migration).not.toMatch(/IF NOT EXISTS/i)
+	})
+
 	it('accepts the topology-preserving managed inventory regardless of update distribution', () => {
 		expect(() => assertCourseSyncLaunchApplyPolicy(launchPlan())).not.toThrow()
 		expect(() =>

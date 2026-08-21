@@ -332,6 +332,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0,
 			controlPlaneRunId: 'sync-run-2',
 			failureClass: null,
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T17:30:00.000Z'),
 		}
 		const test = harness({
@@ -412,6 +413,7 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({
 			status: 'awaiting-apply',
 			controlPlaneRunId: 'sync-run-2',
+			applyPolicyOverride: 'operator',
 		})
 		expect(test.notifications).toEqual([
 			expect.objectContaining({
@@ -475,6 +477,7 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({
 			status: 'succeeded',
 			controlPlaneRunId: 'sync-run-2',
+			applyPolicyOverride: null,
 		})
 		expect(test.notifications).toEqual([
 			expect.objectContaining({ kind: 'success' }),
@@ -563,6 +566,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 0,
 				controlPlaneRunId: 'sync-run-2',
 				failureClass: null,
+				applyPolicyOverride: 'operator',
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			}
 			const test = harness({
@@ -677,6 +681,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 1,
 				controlPlaneRunId: null,
 				failureClass: 'MUX_API_FAILED',
+				applyPolicyOverride: null,
 				updatedAt: new Date('2026-07-24T15:00:00.000Z'),
 			},
 		})
@@ -747,6 +752,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 2,
 				controlPlaneRunId: 'sync-run-2',
 				failureClass: 'Error',
+				applyPolicyOverride: null,
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			},
 			appendLog: async (entry) => {
@@ -783,6 +789,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 2,
 				controlPlaneRunId: 'sync-run-1',
 				failureClass: 'Error',
+				applyPolicyOverride: null,
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			},
 			ensureBinding: async () => {
@@ -807,6 +814,94 @@ describe('course sync detection poller', () => {
 		expect(test.notifications).toHaveLength(0)
 	})
 
+	it('preserves operator review across a released strike-one retry', async () => {
+		let failOnce = true
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'released',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				applyPolicyOverride: 'operator',
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			freezeAsset: async () => {
+				if (failOnce) {
+					failOnce = false
+					throw new Error('injected strike one')
+				}
+				return frozenAsset
+			},
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+
+		await expect(test.poll('released-strike-one')).resolves.toMatchObject({
+			outcome: 'failed',
+			consecutiveFailures: 1,
+		})
+		expect(test.state()).toMatchObject({
+			status: 'failed',
+			applyPolicyOverride: 'operator',
+		})
+
+		await expect(test.poll('released-retry')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		expect(test.preview).toHaveBeenCalledOnce()
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply',
+			applyPolicyOverride: 'operator',
+		})
+
+		test.setHead({
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			runId: 'sync-run-2',
+			runState: 'applied',
+		})
+		await expect(test.poll('released-applied-by-operator')).resolves.toMatchObject({
+			outcome: 'no-op',
+		})
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			applyPolicyOverride: null,
+		})
+	})
+
+	it('consumes operator review after a verified staging no-op', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'released',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				applyPolicyOverride: 'operator',
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			stage: async () => run('applied', { noOp: true }),
+		})
+
+		await expect(test.poll('released-no-op')).resolves.toMatchObject({
+			outcome: 'no-op',
+		})
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			applyPolicyOverride: null,
+		})
+	})
+
 	it('requires operator review after release and across superseding revisions', async () => {
 		const test = harness({
 			state: {
@@ -817,6 +912,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 0,
 				controlPlaneRunId: null,
 				failureClass: null,
+				applyPolicyOverride: 'operator',
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			},
 			evaluateBoundedAutoApply: async () => ({
@@ -963,6 +1059,7 @@ describe('course sync detection poller', () => {
 					consecutiveFailures: 0,
 					controlPlaneRunId: null,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: new Date('2026-07-24T17:59:59.000Z'),
 				},
 			})
@@ -994,6 +1091,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0,
 			controlPlaneRunId: null,
 			failureClass: null,
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
 		const test = failureHarness(initialState)
@@ -1037,6 +1135,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0,
 			controlPlaneRunId: null,
 			failureClass: null,
+			applyPolicyOverride: 'operator',
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
 		const test = failureHarness(releasedState)
@@ -1066,6 +1165,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 			controlPlaneRunId: null,
 			failureClass: 'POLL_RUN_KILLED',
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		})
 
@@ -1099,6 +1199,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 			controlPlaneRunId: null,
 			failureClass: 'POLL_RUN_KILLED',
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
 		const test = failureHarness(heldState)
