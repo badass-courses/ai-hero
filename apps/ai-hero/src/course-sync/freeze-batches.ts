@@ -3,7 +3,7 @@ import type { CourseJsonDocumentV3 } from '@ai-hero/course-sync-schema'
 import { CourseSyncError, asCourseSyncError } from './errors'
 import type { FrozenSourceAsset } from './types'
 
-export const COURSE_SYNC_FREEZE_BATCH_SIZE = 10
+export const COURSE_SYNC_FREEZE_BATCH_SIZE = 1
 
 export type CourseSyncFreezeBatchInput = {
 	bindingId: string

@@ -34,14 +34,11 @@ function frozenAsset(sourceVideoId: string): FrozenSourceAsset {
 }
 
 describe('course sync freeze batches', () => {
-	it('partitions stable source IDs into batches of at most ten', () => {
+	it('keeps each durable batch to one asset', () => {
 		const ids = Array.from({ length: 23 }, (_, index) => `video-${index + 1}`)
 
-		expect(courseSyncFreezeBatches(ids)).toEqual([
-			ids.slice(0, 10),
-			ids.slice(10, 20),
-			ids.slice(20),
-		])
+		expect(COURSE_SYNC_FREEZE_BATCH_SIZE).toBe(1)
+		expect(courseSyncFreezeBatches(ids)).toEqual(ids.map((id) => [id]))
 		expect(
 			courseSyncFreezeBatches(ids).every(
 				(batch) => batch.length <= COURSE_SYNC_FREEZE_BATCH_SIZE,
@@ -74,11 +71,9 @@ describe('course sync freeze batches', () => {
 		expect(freezeAsset).not.toHaveBeenCalled()
 	})
 
-	it('replays a partial batch from durable receipts without duplicate assets', async () => {
-		const ids = Array.from({ length: 12 }, (_, index) => `video-${index + 1}`)
+	it('replays a completed batch from its receipt without a duplicate asset', async () => {
 		const receipts = new Map<string, FrozenSourceAsset>()
 		const muxCreates: string[] = []
-		let interrupt = true
 		const freezeAsset = vi.fn(async ({ sourceVideoId }) => {
 			const receipt = receipts.get(sourceVideoId)
 			if (receipt) {
@@ -87,64 +82,33 @@ describe('course sync freeze batches', () => {
 					freezeEffects: { sourceAssetsRead: 0, muxAssetsCreated: 0 },
 				}
 			}
-			if (sourceVideoId === 'video-4' && interrupt) {
-				interrupt = false
-				throw new Error('injected interruption')
-			}
 			const asset = frozenAsset(sourceVideoId)
 			receipts.set(sourceVideoId, asset)
 			muxCreates.push(sourceVideoId)
 			return asset
 		})
-		const [firstBatch, secondBatch] = courseSyncFreezeBatches(ids)
+		const input = {
+			bindingId: 'binding-1',
+			manifest,
+			batchNumber: 0,
+			sourceVideoIds: ['video-1'],
+		}
 
-		await expect(
-			freezeCourseSyncAssetBatch(
-				{
-					bindingId: 'binding-1',
-					manifest,
-					batchNumber: 0,
-					sourceVideoIds: firstBatch!,
-				},
-				freezeAsset,
-			),
-		).rejects.toMatchObject({
-			code: 'COURSE_SYNC_INTERNAL_ERROR',
-			details: {
-				freezeProgress: {
-					sourceAssetsRead: 3,
-					muxAssetsCreated: 3,
-					precision: 'at-least',
-				},
-			},
+		const created = await freezeCourseSyncAssetBatch(input, freezeAsset)
+		const replayed = await freezeCourseSyncAssetBatch(input, freezeAsset)
+
+		expect(created.assets.map((asset) => asset.sourceVideoId)).toEqual([
+			'video-1',
+		])
+		expect(replayed.assets.map((asset) => asset.sourceVideoId)).toEqual([
+			'video-1',
+		])
+		expect(replayed.progress).toEqual({
+			sourceAssetsRead: 0,
+			muxAssetsCreated: 0,
+			precision: 'exact',
 		})
-
-		const replayed = await freezeCourseSyncAssetBatch(
-			{
-				bindingId: 'binding-1',
-				manifest,
-				batchNumber: 0,
-				sourceVideoIds: firstBatch!,
-			},
-			freezeAsset,
-		)
-		const continued = await freezeCourseSyncAssetBatch(
-			{
-				bindingId: 'binding-1',
-				manifest,
-				batchNumber: 1,
-				sourceVideoIds: secondBatch!,
-			},
-			freezeAsset,
-		)
-
-		expect(
-			[...replayed.assets, ...continued.assets].map(
-				(asset) => asset.sourceVideoId,
-			),
-		).toEqual(ids)
-		expect(receipts.size).toBe(12)
-		expect(muxCreates).toEqual(ids)
-		expect(new Set(muxCreates).size).toBe(12)
+		expect(receipts.size).toBe(1)
+		expect(muxCreates).toEqual(['video-1'])
 	})
 })
