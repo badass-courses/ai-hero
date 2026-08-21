@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { api } from '@/trpc/react'
 
 import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -18,14 +19,28 @@ export function LowResolutionToggle({
 	id?: string
 }) {
 	const { playerPrefs, setPlayerPrefs } = useMuxPlayer()
+	const utils = api.useUtils()
+	const { mutate } = api.users.setPlaybackPrefs.useMutation({
+		onMutate: async (input) => {
+			await utils.users.getPlaybackPrefs.cancel()
+			utils.users.getPlaybackPrefs.setData(undefined, {
+				allowLowResolution: input.allowLowResolution,
+				stored: true,
+			})
+			setPlayerPrefs({
+				allowLowResolution: input.allowLowResolution,
+			})
+		},
+	})
 
 	const handleChange = React.useCallback(
 		(checked: boolean) => {
 			setPlayerPrefs({
 				allowLowResolution: checked,
 			})
+			mutate({ allowLowResolution: checked })
 		},
-		[setPlayerPrefs],
+		[mutate, setPlayerPrefs],
 	)
 
 	return (
