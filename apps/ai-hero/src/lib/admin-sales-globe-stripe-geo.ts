@@ -264,7 +264,20 @@ export async function persistPurchaseGeoWrite({
 	fields: unknown
 	plan: PurchaseGeoWritePlan
 }): Promise<void> {
-	if (plan.skip) return
+	if (plan.skip) {
+		if (plan.reason === 'nothing-to-write') {
+			const current =
+				fields && typeof fields === 'object' && !Array.isArray(fields)
+					? { ...(fields as Record<string, unknown>) }
+					: {}
+			current.globeAttempted = true
+			await db
+				.update(purchases)
+				.set({ fields: current })
+				.where(eq(purchases.id, purchaseId))
+		}
+		return
+	}
 	await db
 		.update(purchases)
 		.set({
@@ -303,6 +316,17 @@ export async function persistPurchaseGeoFromStripe({
 		plan: PurchaseGeoWritePlan
 	}) => Promise<void>
 }): Promise<PurchaseGeoWritePlan> {
+	const already = planPurchaseGeoWrite({
+		country: row.country,
+		city: row.city ?? null,
+		state: row.state ?? null,
+		ipAddress: row.ipAddress ?? null,
+		fields: row.fields,
+	})
+	if (already.skip && already.reason === 'already-written') {
+		return already
+	}
+
 	const geo = await readGeo(row)
 	const plan = planPurchaseGeoWrite({
 		country: row.country,
@@ -313,7 +337,7 @@ export async function persistPurchaseGeoFromStripe({
 		metadata: geo.metadata,
 		billing: geo.address,
 	})
-	if (!plan.skip) {
+	if (!plan.skip || plan.reason === 'nothing-to-write') {
 		await persist({ purchaseId: row.id, fields: row.fields, plan })
 	}
 	return plan

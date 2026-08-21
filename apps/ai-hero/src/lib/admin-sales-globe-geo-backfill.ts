@@ -5,7 +5,7 @@ import {
 	purchases,
 } from '@/db/schema'
 import { AI_CODING_CRASH_COURSE_PRODUCT_ID } from '@/lib/crash-course-purchaser-tag'
-import { and, desc, eq, gt, inArray, isNotNull, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 
 import type { GlobeEnrichmentRow } from './admin-sales-globe-stripe-geo'
 
@@ -117,6 +117,9 @@ export function buildGlobeGeoBackfillQuery({
 				inArray(purchases.status, [...PAID_PURCHASE_STATUSES]),
 				gt(purchases.totalAmount, '0'),
 				isNull(purchases.city),
+				isNull(purchases.ipAddress),
+				sql`JSON_CONTAINS_PATH(${purchases.fields}, 'one', '$.globe.lat') = 0`,
+				sql`JSON_CONTAINS_PATH(${purchases.fields}, 'one', '$.globeAttempted') = 0`,
 				or(
 					isNotNull(merchantSession.identifier),
 					isNotNull(merchantCharge.identifier)

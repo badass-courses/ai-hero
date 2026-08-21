@@ -1,3 +1,4 @@
+import { closeDatabasePool } from '@/db'
 import { env } from '@/env.mjs'
 import {
 	buildGlobeGeoBackfillQuery,
@@ -92,11 +93,17 @@ async function main() {
 	}
 
 	process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`)
+	await closeDatabasePool()
 }
 
-void main().catch((error: unknown) => {
+void main().catch(async (error: unknown) => {
 	process.stderr.write(
 		`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`
 	)
+	try {
+		await closeDatabasePool()
+	} catch {
+		// Best effort. The process is already failing.
+	}
 	process.exit(1)
 })

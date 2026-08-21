@@ -261,67 +261,6 @@ export function globeFieldsPatch(
 	return current
 }
 
-/**
- * Write city/state/IP and a globe cache onto one purchase.
- */
-export async function persistPurchaseGeoWrite({
-	purchaseId,
-	fields,
-	plan,
-}: {
-	purchaseId: string
-	fields: unknown
-	plan: PurchaseGeoWritePlan
-}): Promise<void> {
-	if (plan.skip) return
-	await db
-		.update(purchases)
-		.set({
-			...(plan.city ? { city: plan.city } : {}),
-			...(plan.state ? { state: plan.state } : {}),
-			...(plan.ipAddress ? { ipAddress: plan.ipAddress } : {}),
-			...(plan.location && plan.source
-				? { fields: globeFieldsPatch(fields, plan.location, plan.source) }
-				: {}),
-		})
-		.where(eq(purchases.id, purchaseId))
-}
-
-/**
- * Fill one purchase from Stripe session metadata and matching billing.
- */
-export async function persistPurchaseGeoFromStripe({
-	row,
-	readGeo,
-	persist = persistPurchaseGeoWrite,
-}: {
-	row: GlobeEnrichmentRow
-	readGeo: (row: GlobeEnrichmentRow) => Promise<{
-		address: StripeBillingAddress | null
-		metadata: CheckoutGeoMetadata
-	}>
-	persist?: (input: {
-		purchaseId: string
-		fields: unknown
-		plan: PurchaseGeoWritePlan
-	}) => Promise<void>
-}): Promise<PurchaseGeoWritePlan> {
-	const geo = await readGeo(row)
-	const plan = planPurchaseGeoWrite({
-		country: row.country,
-		city: row.city ?? null,
-		state: row.state ?? null,
-		ipAddress: row.ipAddress ?? null,
-		fields: row.fields,
-		metadata: geo.metadata,
-		billing: geo.address,
-	})
-	if (!plan.skip) {
-		await persist({ purchaseId: row.id, fields: row.fields, plan })
-	}
-	return plan
-}
-
 export type PurchaseGeoWritePlan = Readonly<{
 	skip: boolean
 	reason: string | null
@@ -350,7 +289,7 @@ export function planPurchaseGeoWrite(
 	datasets?: GlobeGeoDatasets
 ): PurchaseGeoWritePlan {
 	const cached = readCachedGlobeLocation(input.fields)
-	if (cached && optionalTrimmed(input.city)) {
+	if (cached) {
 		return {
 			skip: true,
 			reason: 'already-written',
