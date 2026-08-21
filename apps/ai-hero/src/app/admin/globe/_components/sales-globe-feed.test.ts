@@ -6,6 +6,7 @@ import {
 	nextHitGapMs,
 	oldestFirst,
 	replayHitGapMs,
+	replayLookAtMs,
 } from './sales-globe-feed'
 
 function hit(id: string): SerializedPurchaseTickerHit {
@@ -51,12 +52,41 @@ describe('sales globe feed', () => {
 		expect(merged.some((row) => row.id === 'old')).toBe(false)
 	})
 
-	it('uses speed as the only replay throttle', () => {
-		expect(replayHitGapMs(false, 1)).toBe(620)
-		expect(replayHitGapMs(true, 1)).toBe(820)
-		expect(replayHitGapMs(false, 2)).toBe(310)
-		expect(replayHitGapMs(false, 8)).toBe(78)
-		expect(replayHitGapMs(false, 100)).toBe(40)
+	it('paces replay from real time between sales, not a metronome', () => {
+		expect(
+			replayHitGapMs({
+				previousCreatedAt: '2026-08-21T17:00:00.000Z',
+				nextCreatedAt: '2026-08-21T17:00:01.000Z',
+				speed: 1,
+			}),
+		).toBe(1_100)
+		expect(
+			replayHitGapMs({
+				previousCreatedAt: '2026-08-21T17:00:00.000Z',
+				nextCreatedAt: '2026-08-21T17:05:00.000Z',
+				speed: 1,
+			}),
+		).toBe(2_500)
+		expect(
+			replayHitGapMs({
+				previousCreatedAt: '2026-08-21T17:00:00.000Z',
+				nextCreatedAt: '2026-08-21T17:05:00.000Z',
+				speed: 2,
+			}),
+		).toBe(1_250)
+		expect(
+			replayHitGapMs({
+				previousCreatedAt: '2026-08-21T17:00:00.000Z',
+				nextCreatedAt: '2026-08-21T18:00:00.000Z',
+				speed: 1,
+			}),
+		).toBe(3_600)
+	})
+
+	it('lets the camera use most of the replay beat', () => {
+		expect(replayLookAtMs(1_100)).toBe(900)
+		expect(replayLookAtMs(2_500)).toBe(1_800)
+		expect(replayLookAtMs(3_600)).toBe(2_000)
 	})
 
 	it('sorts replay hits oldest first with a stable id tie-break', () => {
