@@ -799,6 +799,56 @@ describe('course sync detection poller', () => {
 		expect(test.notifications).toHaveLength(0)
 	})
 
+	it('requires operator review after release and across superseding revisions', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				status: 'released',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+
+		await expect(test.poll('released-revision')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.stage).toHaveBeenCalledOnce()
+		expect(test.preview).toHaveBeenCalledOnce()
+		expect(test.evaluateBoundedAutoApply).toHaveBeenCalledOnce()
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply',
+			consecutiveFailures: 0,
+		})
+
+		const superseding = harness({
+			manifest: { ...manifest, courseVersionId: 'version-3' },
+			state: test.state(),
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+		await expect(superseding.poll('superseding-revision')).resolves.toMatchObject(
+			{ outcome: 'awaiting-apply', courseVersionId: 'version-3' },
+		)
+		expect(superseding.stage).toHaveBeenCalledOnce()
+		expect(superseding.apply).not.toHaveBeenCalled()
+		expect(superseding.verifyApplied).not.toHaveBeenCalled()
+		expect(superseding.state()).toMatchObject({
+			courseVersionId: 'version-3',
+			status: 'awaiting-apply',
+		})
+	})
+
 	it('skips a queued tick while a fresh staging marker exists', async () => {
 		const test = harness({
 			state: {

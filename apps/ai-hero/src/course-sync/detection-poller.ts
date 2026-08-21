@@ -904,7 +904,10 @@ export function createCourseSyncDetectionPoller(
 					state?.status === 'held' || observedBefore
 						? (state?.consecutiveFailures ?? 0)
 						: 0,
-				applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+				applyPolicy:
+					state?.status === 'released' || state?.status === 'awaiting-apply'
+						? 'operator'
+						: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
 			})
 			const appliedAlready =
 				(observedBefore && state?.status === 'succeeded') ||
