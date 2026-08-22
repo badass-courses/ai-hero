@@ -374,7 +374,7 @@ async function checkout({
 	return { payments, payload, result }
 }
 
-describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
+describe('@coursebuilder/core 2.0.4 AI Hero pricing contract', () => {
 	it('keeps the public intro checkout at $199', async () => {
 		const { payments, payload, result } = await checkout({
 			country: 'US',
