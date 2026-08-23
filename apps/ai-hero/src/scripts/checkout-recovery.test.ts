@@ -166,3 +166,53 @@ describe('checkout recovery command', () => {
 		expect(testRuntime.sendReplay).not.toHaveBeenCalled()
 	})
 })
+
+describe('checkout recovery argument parsing', () => {
+	it('parses apply mode and an explicit receipt path', () => {
+		expect(
+			parseCheckoutRecoveryArgs([
+				'--checkout-session-id',
+				'cs_live_recovery1',
+				'--apply',
+				'--receipt',
+				'tmp/receipt.json',
+			]),
+		).toEqual({
+			checkoutSessionId: 'cs_live_recovery1',
+			apply: true,
+			receiptPath: 'tmp/receipt.json',
+		})
+	})
+
+	it('rejects a flag whose value is missing or is another flag', () => {
+		expect(() => parseCheckoutRecoveryArgs(['--checkout-session-id'])).toThrow(
+			'--checkout-session-id requires a value',
+		)
+		expect(() =>
+			parseCheckoutRecoveryArgs([
+				'--checkout-session-id',
+				'cs_test_recovery',
+				'--receipt',
+				'--apply',
+			]),
+		).toThrow('--receipt requires a value')
+	})
+
+	it('rejects a missing or malformed session id', () => {
+		const message = '--checkout-session-id must be one exact Stripe session id'
+		expect(() => parseCheckoutRecoveryArgs([])).toThrow(message)
+		expect(() => parseCheckoutRecoveryArgs(['--apply'])).toThrow(message)
+		expect(() =>
+			parseCheckoutRecoveryArgs(['--checkout-session-id', 'pi_not_a_session']),
+		).toThrow(message)
+		expect(() =>
+			parseCheckoutRecoveryArgs(['--checkout-session-id', 'cs_test_bad id']),
+		).toThrow(message)
+	})
+
+	it('rejects the bare separator the pnpm 9 runbook used', () => {
+		expect(() =>
+			parseCheckoutRecoveryArgs(['--', '--checkout-session-id', 'cs_test_x']),
+		).toThrow('Unknown argument: --')
+	})
+})
