@@ -39,7 +39,15 @@ Dry-run needs:
 Apply additionally needs:
 
 - `INNGEST_EVENT_KEY`
-- `NEXT_PUBLIC_APP_NAME` (the Inngest app id the event is sent as)
+- `NEXT_PUBLIC_APP_NAME` (the Inngest client id; not transmitted with the event)
+
+`vercel env pull` writes `"[SENSITIVE]"` instead of the value for sensitive variables such as `INNGEST_EVENT_KEY`. The command refuses that placeholder by name before any network call. Lease the real key into the shell instead:
+
+```bash
+export INNGEST_EVENT_KEY=$(secrets lease ai-hero::inngest_event_key --ttl 10m | tail -1)
+```
+
+The apply-mode Inngest client is pinned to cloud mode (`isDev: false`). It never probes a local Inngest dev server on port 8288, so a running `pnpm dev` cannot swallow the replay.
 
 `STRIPE_WEBHOOK_SECRET` is optional. The recovery path never verifies a webhook signature. When it is unset, `StripePaymentAdapter` logs one harmless `Stripe webhook secret not found` line at construction. Export the secret to silence it.
 

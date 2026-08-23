@@ -43,9 +43,23 @@ describe('checkout recovery environment boundary', () => {
 			COURSE_SYNC_WORKER_TOKEN: undefined,
 			COURSE_SYNC_OPERATOR_TOKEN: undefined,
 		}
-		expect(() =>
-			resolveCheckoutRecoveryEnv(noisy, { apply: false }),
-		).not.toThrow()
+		expect(resolveCheckoutRecoveryEnv(noisy, { apply: false })).toEqual(
+			resolveCheckoutRecoveryEnv(dryRunSource, { apply: false }),
+		)
+	})
+
+	it('refuses the Vercel "[SENSITIVE]" placeholder by name without echoing values', () => {
+		const source = {
+			...dryRunSource,
+			INNGEST_EVENT_KEY: '[SENSITIVE]',
+			NEXT_PUBLIC_APP_NAME: 'ai-hero',
+		}
+		expect(() => resolveCheckoutRecoveryEnv(source, { apply: true })).toThrow(
+			/placeholder, not a value: INNGEST_EVENT_KEY/,
+		)
+		expect(() => resolveCheckoutRecoveryEnv(source, { apply: true })).not.toThrow(
+			/mysql:|sk_test/,
+		)
 	})
 
 	it('treats the Stripe webhook secret as optional and passes it through', () => {

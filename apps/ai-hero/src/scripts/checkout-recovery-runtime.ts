@@ -69,6 +69,13 @@ function present(
 }
 
 /**
+ * `vercel env pull` writes this literal for every sensitive variable. A file
+ * that carries it has no usable secret, so fail before any Stripe or Inngest
+ * round trip instead of with a 401 at send time.
+ */
+export const VERCEL_SENSITIVE_PLACEHOLDER = '[SENSITIVE]'
+
+/**
  * Resolves the environment the recovery command genuinely uses.
  *
  * Reports missing variable NAMES only. It never echoes a value.
@@ -85,6 +92,14 @@ export function resolveCheckoutRecoveryEnv(
 	if (missing.length > 0) {
 		throw new Error(
 			`Missing required environment variables: ${missing.join(', ')}`,
+		)
+	}
+	const placeholders = names.filter(
+		(name) => present(source, name) === VERCEL_SENSITIVE_PLACEHOLDER,
+	)
+	if (placeholders.length > 0) {
+		throw new Error(
+			`Environment variables hold the Vercel "[SENSITIVE]" placeholder, not a value: ${placeholders.join(', ')}. Lease the real value (for example \`secrets lease ai-hero::inngest_event_key\`) and export it.`,
 		)
 	}
 
@@ -183,7 +198,10 @@ export async function createCheckoutRecoveryRuntime(
 				throw new Error('Replay send requires apply mode environment')
 			}
 			const { Inngest } = await import('inngest')
-			const client = new Inngest({ id: env.inngestAppId })
+			// Explicit cloud mode. Without `isDev: false` the SDK infers dev mode
+			// from a shell with no NODE_ENV and, if a local dev server answers on
+			// :8288, posts the replay there while reporting success.
+			const client = new Inngest({ id: env.inngestAppId, isDev: false })
 			return client.send(event)
 		},
 		close: closePool,
