@@ -39,3 +39,6 @@ jobs:
 
       - name: Typecheck
         run: pnpm turbo typecheck
+
+      - name: Checkout recovery patch contract
+        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
