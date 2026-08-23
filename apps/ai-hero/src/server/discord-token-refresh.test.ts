@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+	DISCORD_REFRESH_ATTEMPT_TIMEOUT_MS,
+	DISCORD_REFRESH_TOTAL_TIMEOUT_MS,
 	getDiscordRefreshAccountUpdate,
 	refreshDiscordAccessToken,
 } from './discord-token-refresh'
@@ -26,6 +28,10 @@ const input = {
 }
 
 describe('Discord token refresh', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
 	it('transitions an invalid grant to reconnect-required without retrying', async () => {
 		const fetchToken = vi.fn(async () =>
 			response({ status: 400, body: { error: 'invalid_grant' } }),
@@ -78,6 +84,74 @@ describe('Discord token refresh', () => {
 		})
 		expect(fetchToken).toHaveBeenCalledTimes(2)
 		expect(sleep).toHaveBeenCalledOnce()
+	})
+
+	it('times out one provider attempt before retrying successfully', async () => {
+		vi.useFakeTimers()
+		const aborted = vi.fn()
+		const fetchToken = vi
+			.fn()
+			.mockImplementationOnce(
+				(_url: string, init: RequestInit) =>
+					new Promise<ReturnType<typeof response>>((_resolve, reject) => {
+						init.signal?.addEventListener('abort', () => {
+							aborted()
+							reject(new Error('provider request aborted'))
+						})
+					}),
+			)
+			.mockResolvedValueOnce(
+				response({
+					status: 200,
+					body: {
+						access_token: 'new-access-token',
+						refresh_token: 'new-refresh-token',
+						expires_in: 3600,
+					},
+				}),
+			)
+
+		const resultPromise = refreshDiscordAccessToken({ ...input, fetchToken })
+		await vi.advanceTimersByTimeAsync(DISCORD_REFRESH_ATTEMPT_TIMEOUT_MS + 100)
+
+		await expect(resultPromise).resolves.toEqual({
+			status: 'refreshed',
+			accessToken: 'new-access-token',
+			refreshToken: 'new-refresh-token',
+			expiresIn: 3600,
+			attempts: 2,
+		})
+		expect(aborted).toHaveBeenCalledOnce()
+		expect(fetchToken).toHaveBeenCalledTimes(2)
+		expect(fetchToken.mock.calls[0]?.[1].signal?.aborted).toBe(true)
+	})
+
+	it('bounds total provider wall clock when every attempt hangs', async () => {
+		vi.useFakeTimers()
+		const fetchToken = vi.fn(
+			(_url: string, init: RequestInit) =>
+				new Promise<ReturnType<typeof response>>((_resolve, reject) => {
+					init.signal?.addEventListener('abort', () => {
+						reject(new Error('provider request aborted'))
+					})
+				}),
+		)
+		const startedAt = Date.now()
+
+		const resultPromise = refreshDiscordAccessToken({ ...input, fetchToken })
+		await vi.advanceTimersByTimeAsync(DISCORD_REFRESH_TOTAL_TIMEOUT_MS)
+
+		await expect(resultPromise).resolves.toEqual({
+			status: 'failed',
+			reasonCode: 'time-budget-exhausted',
+			attempts: 3,
+			lastStatus: null,
+		})
+		expect(Date.now() - startedAt).toBe(DISCORD_REFRESH_TOTAL_TIMEOUT_MS)
+		expect(fetchToken).toHaveBeenCalledTimes(3)
+		for (const [, request] of fetchToken.mock.calls) {
+			expect(request.signal?.aborted).toBe(true)
+		}
 	})
 
 	it('bounds transient retries', async () => {

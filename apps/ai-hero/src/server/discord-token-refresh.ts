@@ -1,6 +1,8 @@
 const DISCORD_TOKEN_URL = 'https://discord.com/api/oauth2/token'
 const MAX_REFRESH_ATTEMPTS = 3
 const RETRY_DELAYS_MS = [100, 250] as const
+export const DISCORD_REFRESH_ATTEMPT_TIMEOUT_MS = 2_500
+export const DISCORD_REFRESH_TOTAL_TIMEOUT_MS = 6_000
 
 type DiscordTokenResponse = {
 	ok: boolean
@@ -13,7 +15,7 @@ type FetchDiscordToken = (
 	init: RequestInit,
 ) => Promise<DiscordTokenResponse>
 
-type DiscordRefreshResult =
+export type DiscordRefreshResult =
 	| {
 			status: 'refreshed'
 			accessToken: string
@@ -37,6 +39,7 @@ type DiscordRefreshResult =
 				| 'invalid-response'
 				| 'configuration-error'
 				| 'retry-exhausted'
+				| 'time-budget-exhausted'
 			attempts: number
 			lastStatus: number | null
 	  }
@@ -114,6 +117,32 @@ function parseSuccessfulResponse(
 const defaultSleep = (delayMs: number) =>
 	new Promise<void>((resolve) => setTimeout(resolve, delayMs))
 
+const PROVIDER_TIMEOUT = Symbol('discord-provider-timeout')
+
+async function runWithTimeout<T>({
+	task,
+	timeoutMs,
+	onTimeout,
+}: {
+	task: Promise<T>
+	timeoutMs: number
+	onTimeout?: () => void
+}): Promise<T | typeof PROVIDER_TIMEOUT> {
+	let timeoutId: ReturnType<typeof setTimeout> | undefined
+	const timeout = new Promise<typeof PROVIDER_TIMEOUT>((resolve) => {
+		timeoutId = setTimeout(() => {
+			onTimeout?.()
+			resolve(PROVIDER_TIMEOUT)
+		}, timeoutMs)
+	})
+
+	try {
+		return await Promise.race([task, timeout])
+	} finally {
+		if (timeoutId) clearTimeout(timeoutId)
+	}
+}
+
 export function getDiscordRefreshAccountUpdate(
 	result: DiscordRefreshResult,
 	nowSeconds: number,
@@ -172,16 +201,44 @@ export async function refreshDiscordAccessToken({
 		refresh_token: refreshToken,
 	})
 	let lastStatus: number | null = null
+	let attempts = 0
+	let totalBudgetExhausted = false
+	const startedAt = Date.now()
+	const remainingBudgetMs = () =>
+		DISCORD_REFRESH_TOTAL_TIMEOUT_MS - (Date.now() - startedAt)
 
 	for (let attempt = 1; attempt <= MAX_REFRESH_ATTEMPTS; attempt += 1) {
-		try {
-			const response = await fetchToken(DISCORD_TOKEN_URL, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-				body,
-			})
+		const remainingMs = remainingBudgetMs()
+		if (remainingMs <= 0) {
+			totalBudgetExhausted = true
+			break
+		}
+		attempts = attempt
+		const abortController = new AbortController()
+		const providerResult = await runWithTimeout({
+			task: (async () => {
+				const response = await fetchToken(DISCORD_TOKEN_URL, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body,
+					signal: abortController.signal,
+				})
+				const responseBody = await response.json().catch(() => null)
+				return { response, responseBody }
+			})().catch(() => null),
+			timeoutMs: Math.min(
+				DISCORD_REFRESH_ATTEMPT_TIMEOUT_MS,
+				remainingMs,
+			),
+			onTimeout: () => abortController.abort(),
+		})
+
+		if (providerResult === PROVIDER_TIMEOUT || providerResult === null) {
+			lastStatus = null
+			if (remainingBudgetMs() <= 0) totalBudgetExhausted = true
+		} else {
+			const { response, responseBody } = providerResult
 			lastStatus = response.status
-			const responseBody = await response.json().catch(() => null)
 
 			if (response.ok) {
 				const refreshed = parseSuccessfulResponse(responseBody, refreshToken)
@@ -215,19 +272,33 @@ export async function refreshDiscordAccessToken({
 					lastStatus,
 				}
 			}
-		} catch {
-			lastStatus = null
 		}
 
+		if (totalBudgetExhausted) break
 		if (attempt < MAX_REFRESH_ATTEMPTS) {
-			await sleep(RETRY_DELAYS_MS[attempt - 1] ?? RETRY_DELAYS_MS.at(-1)!)
+			const delayMs = RETRY_DELAYS_MS[attempt - 1] ?? RETRY_DELAYS_MS.at(-1)!
+			const remainingBeforeSleepMs = remainingBudgetMs()
+			if (remainingBeforeSleepMs <= 0) {
+				totalBudgetExhausted = true
+				break
+			}
+			const sleepResult = await runWithTimeout({
+				task: sleep(Math.min(delayMs, remainingBeforeSleepMs)),
+				timeoutMs: remainingBeforeSleepMs,
+			})
+			if (sleepResult === PROVIDER_TIMEOUT) {
+				totalBudgetExhausted = true
+				break
+			}
 		}
 	}
 
 	return {
 		status: 'failed',
-		reasonCode: 'retry-exhausted',
-		attempts: MAX_REFRESH_ATTEMPTS,
+		reasonCode: totalBudgetExhausted
+			? 'time-budget-exhausted'
+			: 'retry-exhausted',
+		attempts,
 		lastStatus,
 	}
 }
