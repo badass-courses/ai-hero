@@ -69,14 +69,20 @@ export function DiscordAccessAction({
 			? 'This link expired. Try again.'
 			: state === 'denied'
 				? "We couldn't link that Discord account. Try again."
-				: 'Link Discord to continue.'
+				: state === 'reconnect-required'
+					? 'Discord needs to be reconnected. Link it again to restore access.'
+					: 'Link Discord to continue.'
 
 	return (
 		<div className="flex flex-col items-center gap-3 text-center text-sm">
 			<p>{message}</p>
 			<form action={requestLink}>
 				<Button type="submit" disabled={!requestLink} className="rounded-[9px]">
-					{state === 'ready' ? 'Link Discord account' : 'Try again'}
+					{state === 'ready'
+						? 'Link Discord account'
+						: state === 'reconnect-required'
+							? 'Reconnect Discord'
+							: 'Try again'}
 				</Button>
 			</form>
 		</div>

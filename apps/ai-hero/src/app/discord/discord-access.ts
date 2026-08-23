@@ -1,5 +1,6 @@
 export type DiscordAccessState =
 	| 'linked'
+	| 'reconnect-required'
 	| 'ready'
 	| 'expired'
 	| 'denied'
@@ -36,5 +37,6 @@ export async function getDiscordAccessState({
 	if (linkResult === 'expired') return 'expired'
 	if (linkResult === 'denied') return 'denied'
 	if (linkResult === 'account-conflict') return 'account-conflict'
+	if (account) return 'reconnect-required'
 	return 'ready'
 }

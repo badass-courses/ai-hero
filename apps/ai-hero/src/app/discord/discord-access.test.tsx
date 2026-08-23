@@ -41,8 +41,19 @@ describe('/discord containment journey', () => {
 				access_token: null,
 			})),
 		})
+		const markup = renderToStaticMarkup(
+			<DiscordAccessAction
+				state={state}
+				requestLink={async () => {}}
+				{...recoveryActions}
+			/>,
+		)
 
-		expect(state).toBe('ready')
+		expect(state).toBe('reconnect-required')
+		expect(markup).toContain('Discord needs to be reconnected')
+		expect(markup).toContain('Reconnect Discord')
+		expect(markup).not.toContain('token')
+		expect(markup).not.toContain('relink-user')
 	})
 
 	it('shows the secure link action for an authenticated unlinked session', async () => {
