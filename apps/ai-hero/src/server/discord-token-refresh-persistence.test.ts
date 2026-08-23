@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { DiscordRefreshResult } from './discord-token-refresh'
 import {
+	DISCORD_REFRESH_TOTAL_TIMEOUT_MS,
+	type DiscordRefreshResult,
+} from './discord-token-refresh'
+import {
+	DISCORD_REFRESH_CLAIM_LEASE_MS,
 	claimDiscordRefresh,
+	getDiscordRefreshClaimExpiresAt,
+	isDiscordTokenExpired,
 	persistDiscordRefreshResult,
 	type DiscordAccountCredentials,
 } from './discord-token-refresh-persistence'
@@ -26,7 +32,9 @@ const reconnectRequired: DiscordRefreshResult = {
 	attempts: 1,
 }
 
-function createStore() {
+function createStore({
+	claimExpiration = claimExpiresAt,
+}: { claimExpiration?: number } = {}) {
 	let row: DiscordAccountCredentials | null = { ...expected }
 
 	return {
@@ -34,21 +42,27 @@ function createStore() {
 			return row
 		},
 		read: vi.fn(async () => (row ? { ...row } : null)),
-		claim: vi.fn(async () => {
-			if (
-				row?.refreshToken !== expected.refreshToken ||
-				row.expiresAt !== expected.expiresAt
-			) {
-				return 0
-			}
-			row = { ...row, expiresAt: claimExpiresAt }
-			return 1
-		}),
+		claim: vi.fn(
+			async (
+				claimExpected: DiscordAccountCredentials = expected,
+				newExpiration = claimExpiration,
+			) => {
+				if (
+					!row ||
+					row.refreshToken !== claimExpected.refreshToken ||
+					row.expiresAt !== claimExpected.expiresAt
+				) {
+					return 0
+				}
+				row = { ...row, expiresAt: newExpiration }
+				return 1
+			},
+		),
 		writeClaimed: vi.fn(
 			async (update: Partial<DiscordAccountCredentials>) => {
 				if (
 					row?.refreshToken !== expected.refreshToken ||
-					row.expiresAt !== claimExpiresAt
+					row.expiresAt !== claimExpiration
 				) {
 					return 0
 				}
@@ -73,6 +87,10 @@ function createStore() {
 }
 
 describe('Discord token refresh persistence', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
 	it('atomically gives one concurrent refresher the claim', async () => {
 		const store = createStore()
 
@@ -100,6 +118,80 @@ describe('Discord token refresh persistence', () => {
 			databaseOutcome: 'claim-stale',
 		})
 		expect(store.claim).toHaveBeenCalledTimes(2)
+	})
+
+	it('keeps the millisecond-999 claim through provider and persistence work', async () => {
+		vi.useFakeTimers()
+		const startedAtMs = 1_700_000_000_999
+		vi.setSystemTime(startedAtMs)
+		const claimExpiration = getDiscordRefreshClaimExpiresAt(Date.now())
+		const oldClaimExpiration =
+			Math.floor(startedAtMs / 1000) +
+			Math.ceil(DISCORD_REFRESH_TOTAL_TIMEOUT_MS / 1000) +
+			1
+		const store = createStore({ claimExpiration })
+		const provider = vi.fn(async () => {
+			await new Promise<void>((resolve) =>
+				setTimeout(resolve, DISCORD_REFRESH_TOTAL_TIMEOUT_MS - 100),
+			)
+			return refreshed
+		})
+		const persistDelayMs = 500
+
+		const runSession = async () => {
+			const snapshot = store.row
+			if (!snapshot || !isDiscordTokenExpired(snapshot.expiresAt, Date.now())) {
+				return 'not-expired' as const
+			}
+			const sessionClaimExpiration = getDiscordRefreshClaimExpiresAt(
+				Date.now(),
+			)
+			const claim = await claimDiscordRefresh({
+				expected: snapshot,
+				claimExpiresAt: sessionClaimExpiration,
+				claim: () => store.claim(snapshot, sessionClaimExpiration),
+				read: store.read,
+			})
+			if (claim.status !== 'claimed') return claim.status
+
+			const providerResult = await provider()
+			await new Promise<void>((resolve) =>
+				setTimeout(resolve, persistDelayMs),
+			)
+			return persistDiscordRefreshResult({
+				result: providerResult,
+				expected: snapshot,
+				nowSeconds: Math.floor(Date.now() / 1000),
+				writeClaimed: store.writeClaimed,
+				recoverCleared: store.recoverCleared,
+				read: store.read,
+			})
+		}
+
+		const firstSession = runSession()
+		expect(claimExpiration * 1000 - startedAtMs).toBeGreaterThanOrEqual(
+			DISCORD_REFRESH_CLAIM_LEASE_MS,
+		)
+		expect(claimExpiration * 1000 - startedAtMs).toBeLessThan(
+			DISCORD_REFRESH_CLAIM_LEASE_MS + 1000,
+		)
+
+		const oldLeaseBoundaryMs = oldClaimExpiration * 1000
+		await vi.advanceTimersByTimeAsync(oldLeaseBoundaryMs - startedAtMs + 1)
+		expect(store.row).toEqual({
+			...expected,
+			expiresAt: claimExpiration,
+		})
+		await expect(runSession()).resolves.toBe('not-expired')
+		expect(provider).toHaveBeenCalledOnce()
+
+		await vi.advanceTimersByTimeAsync(persistDelayMs)
+		await expect(firstSession).resolves.toMatchObject({ action: 'refreshed' })
+		expect(provider).toHaveBeenCalledOnce()
+		expect(store.row).toMatchObject({
+			accessToken: 'new-access-token',
+			refreshToken: 'new-refresh-token',
+		})
 	})
 
 	it('preserves the rotated credential when success writes before invalid_grant', async () => {

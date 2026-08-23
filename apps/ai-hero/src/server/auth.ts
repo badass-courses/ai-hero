@@ -15,12 +15,11 @@ import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
 import { authLogger } from '@/server/auth-logger'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
-import {
-	DISCORD_REFRESH_TOTAL_TIMEOUT_MS,
-	refreshDiscordAccessToken,
-} from '@/server/discord-token-refresh'
+import { refreshDiscordAccessToken } from '@/server/discord-token-refresh'
 import {
 	claimDiscordRefresh,
+	getDiscordRefreshClaimExpiresAt,
+	isDiscordTokenExpired,
 	persistDiscordRefreshResult,
 	type DiscordAccountCredentials,
 	type DiscordCredentialUpdate,
@@ -255,17 +254,14 @@ export const authOptions: NextAuthConfig = {
 				(account) => account.provider === 'discord',
 			)
 
-			const isDiscordTokenExpired = Boolean(
-				discordAccount?.expires_at &&
-				discordAccount.expires_at * 1000 < Date.now(),
+			const nowMs = Date.now()
+			const discordTokenExpired = isDiscordTokenExpired(
+				discordAccount?.expires_at ?? null,
+				nowMs,
 			)
 
-			if (discordAccount && isDiscordTokenExpired) {
-				const nowSeconds = Math.floor(Date.now() / 1000)
-				const claimExpiresAt =
-					nowSeconds +
-					Math.ceil(DISCORD_REFRESH_TOTAL_TIMEOUT_MS / 1000) +
-					1
+			if (discordAccount && discordTokenExpired) {
+				const claimExpiresAt = getDiscordRefreshClaimExpiresAt(nowMs)
 				const expectedCredentials: DiscordAccountCredentials = {
 					accessToken: discordAccount.access_token,
 					refreshToken: discordAccount.refresh_token,

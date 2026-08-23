@@ -10,6 +10,21 @@ export type DiscordAccountCredentials = {
 }
 
 export type DiscordCredentialUpdate = Partial<DiscordAccountCredentials>
+
+/** Covers the six-second provider budget plus database persistence/readback. */
+export const DISCORD_REFRESH_CLAIM_LEASE_MS = 30_000
+
+export function getDiscordRefreshClaimExpiresAt(nowMs = Date.now()) {
+	return Math.ceil((nowMs + DISCORD_REFRESH_CLAIM_LEASE_MS) / 1000)
+}
+
+export function isDiscordTokenExpired(
+	expiresAt: number | null,
+	nowMs = Date.now(),
+) {
+	return expiresAt !== null && expiresAt * 1000 < nowMs
+}
+
 type ProviderOutcome = DiscordRefreshResult['status']
 type DatabaseOutcome =
 	| 'claim-applied'
