@@ -60,6 +60,10 @@ type OAuthContainmentDependencies = {
 		| { status: 'denied'; reasonClass?: OAuthLinkDenialReason }
 	>
 	observe?: (event: OAuthLinkCanaryEvent) => void | Promise<void>
+	reportSignInFailure?: (failure: {
+		provider: ConnectableOAuthProvider
+		reason: 'missing-email' | 'ownership-lookup-failed'
+	}) => void | Promise<void>
 }
 
 type ContainedAccountAuthorization = {
@@ -284,11 +288,27 @@ export function createOAuthContainmentSignInCallback({
 	getAuthenticatedSession,
 	consumeLinkIntent,
 	observe,
+	reportSignInFailure,
 }: OAuthContainmentDependencies) {
+	const reportFailureSafely = async (
+		failure: Parameters<
+			NonNullable<OAuthContainmentDependencies['reportSignInFailure']>
+		>[0],
+	) => {
+		try {
+			await reportSignInFailure?.(failure)
+		} catch {
+			// Observability must never change the fail-closed auth result or the
+			// customer recovery route.
+		}
+	}
+
 	return async ({
 		account,
+		user,
 	}: {
 		account: SignInAccount
+		user?: { email?: string | null }
 	}): Promise<boolean | string> => {
 		if (!account?.provider || !isConnectableOAuthProvider(account.provider)) {
 			return true
@@ -390,6 +410,14 @@ export function createOAuthContainmentSignInCallback({
 				return true
 			}
 
+			if (user && !user.email) {
+				await reportFailureSafely({
+					provider: account.provider,
+					reason: 'missing-email',
+				})
+				return '/error?error=OAuthProfileMissingEmail'
+			}
+
 			// Logged-out provider sign-in keeps the product's intentional email
 			// auto-linking and new-user behavior. An active session must use the
 			// explicit persisted intent instead of Auth.js's implicit link branch.
@@ -398,6 +426,10 @@ export function createOAuthContainmentSignInCallback({
 			request.ordinaryOAuthAllowed = true
 			return true
 		} catch {
+			await reportFailureSafely({
+				provider: account.provider,
+				reason: 'ownership-lookup-failed',
+			})
 			return false
 		}
 	}

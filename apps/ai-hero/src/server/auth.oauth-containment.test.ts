@@ -535,12 +535,73 @@ describe('Auth.js OAuth containment policy', () => {
 		},
 	)
 
-	it('fails closed when the ownership lookup errors', async () => {
+	it('contains a new OAuth account with no email before locked Auth.js can mutate', async () => {
+		const harness = createLockedAuthHarness({
+			provider: 'github',
+			accountOwner: null,
+		})
+		const invitationWork = vi.fn()
+		const postAuthEvent = vi.fn()
+		const reportSignInFailure = vi.fn(async () => {
+			throw new Error('logging unavailable')
+		})
+		const callback = createOAuthContainmentSignInCallback({
+			getCookieStore: createCookieStore,
+			findAccountOwner: harness.findAccountOwner,
+			getAuthenticatedSession: vi.fn(async () => null),
+			reportSignInFailure,
+		})
+
+		const result = await runWithOAuthContainmentRequest(
+			authCallbackRequest('github'),
+			async () => {
+				const authorization = await callback({
+					account: harness.account,
+					user: { ...harness.profile, email: null },
+				})
+				if (authorization !== true) return authorization
+
+				const authResult = await handleLoginOrRegister(
+					'',
+					harness.profile,
+					harness.account,
+					harness.options as never,
+				)
+				await invitationWork(authResult.user)
+				await postAuthEvent(authResult.user)
+				return authResult
+			},
+		)
+
+		expect(result).toBe('/error?error=OAuthProfileMissingEmail')
+		expect(reportSignInFailure).toHaveBeenCalledWith({
+			provider: 'github',
+			reason: 'missing-email',
+		})
+		for (const mutationOrEvent of [
+			harness.calls.createUser,
+			harness.calls.createUserEvent,
+			harness.calls.linkAccount,
+			harness.calls.linkAccountEvent,
+			harness.calls.createSession,
+			harness.calls.providerCall,
+			invitationWork,
+			postAuthEvent,
+		]) {
+			expect(mutationOrEvent).not.toHaveBeenCalled()
+		}
+	})
+
+	it('fails closed when both ownership lookup and reporting fail', async () => {
+		const reportSignInFailure = vi.fn(async () => {
+			throw new Error('logging unavailable')
+		})
 		const callback = createOAuthContainmentSignInCallback({
 			getCookieStore: createCookieStore,
 			findAccountOwner: vi.fn(async () => {
 				throw new Error('database unavailable')
 			}),
+			reportSignInFailure,
 		})
 
 		await expect(
@@ -553,6 +614,10 @@ describe('Auth.js OAuth containment policy', () => {
 				}),
 			),
 		).resolves.toBe(false)
+		expect(reportSignInFailure).toHaveBeenCalledWith({
+			provider: 'github',
+			reason: 'ownership-lookup-failed',
+		})
 	})
 
 	it('leaves a cross-owner account unchanged in locked Auth.js', async () => {
