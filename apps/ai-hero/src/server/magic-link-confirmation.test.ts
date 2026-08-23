@@ -58,6 +58,32 @@ describe('magic-link confirmation boundary', () => {
 		expect(authHandler).not.toHaveBeenCalled()
 	})
 
+	it('rejects non-canonical signature-only tampering', async () => {
+		const response = await createMagicLinkGetHandler(vi.fn(), {
+			secret,
+			now,
+		})(magicLinkRequest())
+		const value = cookieValue(response)
+		const separator = value.lastIndexOf('.')
+		const payload = value.slice(0, separator)
+		const signature = value.slice(separator + 1)
+		const alphabet =
+			'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+		const lastIndex = alphabet.indexOf(signature.at(-1)!)
+		const alternateLastCharacter = alphabet[(lastIndex & ~3) | 1]
+
+		expect(
+			readMagicLinkCookie(`${payload}.${signature}!`, secret, now),
+		).toBeNull()
+		expect(
+			readMagicLinkCookie(
+				`${payload}.${signature.slice(0, -1)}${alternateLastCharacter}`,
+				secret,
+				now,
+			),
+		).toBeNull()
+	})
+
 	it('answers a scanner HEAD without touching Auth.js or setting a cookie', async () => {
 		const authHandler = vi.fn(async () => new Response(null, { status: 500 }))
 		const handler = createMagicLinkGetHandler(authHandler, { secret, now })

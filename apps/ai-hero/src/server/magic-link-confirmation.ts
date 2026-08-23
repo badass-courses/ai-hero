@@ -90,8 +90,12 @@ export function readMagicLinkCookie(
 	const separator = value.lastIndexOf('.')
 	if (separator <= 0) return null
 	const encoded = value.slice(0, separator)
-	const providedSignature = Buffer.from(value.slice(separator + 1), 'base64url')
-	const expectedSignature = Buffer.from(signature(encoded, secret), 'base64url')
+	const providedSignatureText = value.slice(separator + 1)
+	const expectedSignatureText = signature(encoded, secret)
+	if (providedSignatureText.length !== expectedSignatureText.length) return null
+	const providedSignature = Buffer.from(providedSignatureText, 'base64url')
+	if (providedSignature.toString('base64url') !== providedSignatureText) return null
+	const expectedSignature = Buffer.from(expectedSignatureText, 'base64url')
 	if (
 		providedSignature.length !== expectedSignature.length ||
 		!timingSafeEqual(providedSignature, expectedSignature)
