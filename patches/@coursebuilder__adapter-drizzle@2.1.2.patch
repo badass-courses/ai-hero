@@ -1,0 +1,234 @@
+diff --git a/dist/chunk-I72VK22W.js b/dist/chunk-I72VK22W.js
+index c9bb499b0dfa23a7280d7f7c312fd4b0ec60da55..8c9d43284029062766945fb42baa9877cff9ec04 100644
+--- a/dist/chunk-I72VK22W.js
++++ b/dist/chunk-I72VK22W.js
+@@ -6117,26 +6117,26 @@ function mySqlDrizzleAdapter(client, tableFn = defaultMySqlTableFn, paymentProvi
+             where: eq(merchantCharge.identifier, stripeChargeId)
+           }) || null);
+           const existingPurchaseForCharge = existingMerchantCharge ? await client.query.purchases.findFirst({
+-            where: eq(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+-            with: {
+-              user: true,
+-              product: true,
+-              bulkCoupon: true
+-            }
++            where: eq(purchaseTable.merchantChargeId, existingMerchantCharge.id)
+           }) : null;
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${v4()}`;
++          if (existingMerchantCharge && (existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("Existing merchant charge does not match checkout");
++          }
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${v4()}`;
+           const purchaseId2 = `purch_${v4()}`;
+-          const newMerchantCharge = await client.insert(merchantCharge).values({
+-            id: merchantChargeId,
+-            userId,
+-            identifier: stripeChargeId,
+-            merchantAccountId,
+-            merchantProductId,
+-            merchantCustomerId
+-          });
++          if (!existingMerchantCharge) {
++            await client.insert(merchantCharge).values({
++              id: merchantChargeId,
++              userId,
++              identifier: stripeChargeId,
++              merchantAccountId,
++              merchantProductId,
++              merchantCustomerId
++            });
++          }
+           const existingPurchase = purchaseSchema.nullable().parse(await client.query.purchases.findFirst({
+             where: and(eq(purchaseTable.productId, productId), eq(purchaseTable.userId, userId), inArray(purchaseTable.status, [
+               "Valid",
+@@ -6207,12 +6207,20 @@ function mySqlDrizzleAdapter(client, tableFn = defaultMySqlTableFn, paymentProvi
+               couponToUpdate = await client.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${v4()}`;
+-          await client.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await client.query.merchantSession.findFirst({
++            where: eq(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${v4()}`;
++          if (!existingMerchantSession) {
++            await client.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await client.query.merchantCoupon.findFirst({
+             where: eq(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+diff --git a/dist/lib/mysql/index.cjs b/dist/lib/mysql/index.cjs
+index e5c2823481009f448a6076fa0ebd6f68cfafb26d..c41194d9a5e5ab1a40d7f283ee346a8a231634ee 100644
+--- a/dist/lib/mysql/index.cjs
++++ b/dist/lib/mysql/index.cjs
+@@ -13940,26 +13940,26 @@ function mySqlDrizzleAdapter(client, tableFn = import_mysql_core52.mysqlTable, p
+             where: (0, import_drizzle_orm47.eq)(merchantCharge.identifier, stripeChargeId)
+           }) || null);
+           const existingPurchaseForCharge = existingMerchantCharge ? await client.query.purchases.findFirst({
+-            where: (0, import_drizzle_orm47.eq)(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+-            with: {
+-              user: true,
+-              product: true,
+-              bulkCoupon: true
+-            }
++            where: (0, import_drizzle_orm47.eq)(purchaseTable.merchantChargeId, existingMerchantCharge.id)
+           }) : null;
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${(0, import_uuid.v4)()}`;
++          if (existingMerchantCharge && (existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("Existing merchant charge does not match checkout");
++          }
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${(0, import_uuid.v4)()}`;
+           const purchaseId2 = `purch_${(0, import_uuid.v4)()}`;
+-          const newMerchantCharge = await client.insert(merchantCharge).values({
+-            id: merchantChargeId,
+-            userId,
+-            identifier: stripeChargeId,
+-            merchantAccountId,
+-            merchantProductId,
+-            merchantCustomerId
+-          });
++          if (!existingMerchantCharge) {
++            await client.insert(merchantCharge).values({
++              id: merchantChargeId,
++              userId,
++              identifier: stripeChargeId,
++              merchantAccountId,
++              merchantProductId,
++              merchantCustomerId
++            });
++          }
+           const existingPurchase = purchaseSchema.nullable().parse(await client.query.purchases.findFirst({
+             where: (0, import_drizzle_orm47.and)((0, import_drizzle_orm47.eq)(purchaseTable.productId, productId), (0, import_drizzle_orm47.eq)(purchaseTable.userId, userId), (0, import_drizzle_orm47.inArray)(purchaseTable.status, [
+               "Valid",
+@@ -14030,12 +14030,20 @@ function mySqlDrizzleAdapter(client, tableFn = import_mysql_core52.mysqlTable, p
+               couponToUpdate = await client.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${(0, import_uuid.v4)()}`;
+-          await client.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await client.query.merchantSession.findFirst({
++            where: (0, import_drizzle_orm47.eq)(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${(0, import_uuid.v4)()}`;
++          if (!existingMerchantSession) {
++            await client.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await client.query.merchantCoupon.findFirst({
+             where: (0, import_drizzle_orm47.eq)(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+diff --git a/src/lib/mysql/index.ts b/src/lib/mysql/index.ts
+index e51ab3d6ad9c49e7ef4a1189a436e4371cf26da2..de0182cd0eeae934538f6f0193510d501b97c311 100644
+--- a/src/lib/mysql/index.ts
++++ b/src/lib/mysql/index.ts
+@@ -1010,11 +1010,6 @@ export function mySqlDrizzleAdapter(
+ 									purchaseTable.merchantChargeId,
+ 									existingMerchantCharge.id,
+ 								),
+-								with: {
+-									user: true,
+-									product: true,
+-									bulkCoupon: true,
+-								},
+ 							})
+ 						: null
+ 
+@@ -1022,17 +1017,29 @@ export function mySqlDrizzleAdapter(
+ 						return existingPurchaseForCharge.id
+ 					}
+ 
+-					const merchantChargeId = `mc_${v4()}`
++					if (
++						existingMerchantCharge &&
++						(existingMerchantCharge.userId !== userId ||
++							existingMerchantCharge.merchantAccountId !== merchantAccountId ||
++							existingMerchantCharge.merchantProductId !== merchantProductId ||
++							existingMerchantCharge.merchantCustomerId !== merchantCustomerId)
++					) {
++						throw new Error('Existing merchant charge does not match checkout')
++					}
++
++					const merchantChargeId = existingMerchantCharge?.id ?? `mc_${v4()}`
+ 					const purchaseId = `purch_${v4()}`
+ 
+-					const newMerchantCharge = await client.insert(merchantCharge).values({
+-						id: merchantChargeId,
+-						userId,
+-						identifier: stripeChargeId,
+-						merchantAccountId,
+-						merchantProductId,
+-						merchantCustomerId,
+-					})
++					if (!existingMerchantCharge) {
++						await client.insert(merchantCharge).values({
++							id: merchantChargeId,
++							userId,
++							identifier: stripeChargeId,
++							merchantAccountId,
++							merchantProductId,
++							merchantCustomerId,
++						})
++					}
+ 
+ 					const existingPurchase = purchaseSchema.nullable().parse(
+ 						(await client.query.purchases.findFirst({
+@@ -1163,14 +1170,26 @@ export function mySqlDrizzleAdapter(
+ 						}
+ 					}
+ 
+-					// create a new merchant session
+-					const merchantSessionId = `ms_${v4()}`
+-
+-					await client.insert(merchantSession).values({
+-						id: merchantSessionId,
+-						identifier: checkoutSessionId,
+-						merchantAccountId,
+-					})
++					const existingMerchantSession =
++						await client.query.merchantSession.findFirst({
++							where: eq(merchantSession.identifier, checkoutSessionId),
++						})
++					if (
++						existingMerchantSession &&
++						existingMerchantSession.merchantAccountId !== merchantAccountId
++					) {
++						throw new Error('Existing merchant session does not match checkout')
++					}
++					const merchantSessionId =
++						existingMerchantSession?.id ?? `ms_${v4()}`
++
++					if (!existingMerchantSession) {
++						await client.insert(merchantSession).values({
++							id: merchantSessionId,
++							identifier: checkoutSessionId,
++							merchantAccountId,
++						})
++					}
+ 
+ 					const merchantCouponUsed = stripeCouponId
+ 						? await client.query.merchantCoupon.findFirst({
