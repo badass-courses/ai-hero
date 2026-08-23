@@ -120,6 +120,47 @@ describe('Discord token refresh persistence', () => {
 		expect(store.claim).toHaveBeenCalledTimes(2)
 	})
 
+	it('makes one provider call across concurrent session refreshes', async () => {
+		const store = createStore()
+		const provider = vi.fn(async () => refreshed)
+		const nowMs = 1_700_000_001_000
+
+		const runRefresh = async () => {
+			const snapshot = store.row
+			if (!snapshot) return 'account-missing' as const
+			if (!isDiscordTokenExpired(snapshot.expiresAt, nowMs)) {
+				return 'not-expired' as const
+			}
+
+			const claim = await claimDiscordRefresh({
+				expected: snapshot,
+				claimExpiresAt,
+				claim: () => store.claim(snapshot, claimExpiresAt),
+				read: store.read,
+			})
+			if (claim.status !== 'claimed') return claim.status
+
+			return persistDiscordRefreshResult({
+				result: await provider(),
+				expected: snapshot,
+				nowSeconds: 1_700_000_010,
+				writeClaimed: store.writeClaimed,
+				recoverCleared: store.recoverCleared,
+				read: store.read,
+			})
+		}
+
+		const results = await Promise.all([runRefresh(), runRefresh()])
+
+		expect(provider).toHaveBeenCalledOnce()
+		expect(results).toSatisfy((outcomes: unknown[]) =>
+			outcomes.includes('stale-result') || outcomes.includes('not-expired'),
+		)
+		expect(results).toContainEqual(
+			expect.objectContaining({ action: 'refreshed' }),
+		)
+	})
+
 	it('keeps the millisecond-999 claim through provider and persistence work', async () => {
 		vi.useFakeTimers()
 		const startedAtMs = 1_700_000_000_999
