@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 
+import {
+	MAGIC_LINK_COOKIE_NAME,
+	createMagicLinkConfirmHandler,
+	createMagicLinkGetHandler,
+} from './magic-link-confirmation'
+
 import { Auth } from '@auth/core'
 import type {
 	Adapter,
@@ -79,8 +85,8 @@ function callbackRequest(method: 'GET' | 'POST' = 'GET') {
 	return new Request(url, { method })
 }
 
-async function runCallback(adapter: Adapter, method: 'GET' | 'POST' = 'GET') {
-	return Auth(callbackRequest(method), {
+async function runAuthRequest(adapter: Adapter, request: Request) {
+	return Auth(request, {
 		adapter,
 		basePath: '/api/auth',
 		providers: [
@@ -93,6 +99,15 @@ async function runCallback(adapter: Adapter, method: 'GET' | 'POST' = 'GET') {
 		trustHost: true,
 		pages: { error: '/error' },
 	})
+}
+
+async function runCallback(adapter: Adapter) {
+	return runAuthRequest(adapter, callbackRequest())
+}
+
+function confirmationCookie(response: Response) {
+	const pair = response.headers.get('set-cookie')!.split(';', 1)[0]!
+	return pair.slice(pair.indexOf('=') + 1)
 }
 
 describe('Auth.js magic-link callback reproduction', () => {
@@ -111,13 +126,36 @@ describe('Auth.js magic-link callback reproduction', () => {
 		expect(useVerificationToken).toHaveBeenCalledTimes(2)
 	})
 
-	it('accepts a confirmed POST with token details in the query string', async () => {
+	it('uses the query-free confirmation route to reach Auth.js once', async () => {
 		const { adapter, useVerificationToken } = createHarness()
+		const now = Date.now()
+		const initialResponse = await createMagicLinkGetHandler(vi.fn(), {
+			secret,
+			now,
+		})(callbackRequest())
+		const confirm = createMagicLinkConfirmHandler(
+			(request) => runAuthRequest(adapter, request),
+			{ secret, now },
+		)
 
-		const response = await runCallback(adapter, 'POST')
+		const response = await confirm(
+			new Request('https://www.aihero.dev/api/auth/magic-link/confirm', {
+				method: 'POST',
+				headers: {
+					cookie: `${MAGIC_LINK_COOKIE_NAME}=${confirmationCookie(initialResponse)}`,
+				},
+			}),
+		)
+		const missingCookieResponse = await confirm(
+			new Request('https://www.aihero.dev/api/auth/magic-link/confirm', {
+				method: 'POST',
+			}),
+		)
 
 		expect(response.status).toBe(302)
 		expect(response.headers.get('location')).toBe(callbackUrl)
+		expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
+		expect(missingCookieResponse.status).toBe(303)
 		expect(useVerificationToken).toHaveBeenCalledOnce()
 	})
 })
