@@ -22,7 +22,7 @@ export function isDiscordTokenExpired(
 	expiresAt: number | null,
 	nowMs = Date.now(),
 ) {
-	return expiresAt !== null && expiresAt * 1000 < nowMs
+	return expiresAt !== null && expiresAt * 1000 <= nowMs
 }
 
 type ProviderOutcome = DiscordRefreshResult['status']

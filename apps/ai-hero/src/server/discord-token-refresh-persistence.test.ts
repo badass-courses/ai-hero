@@ -87,6 +87,13 @@ function createStore({
 }
 
 describe('Discord token refresh persistence', () => {
+	it('treats a token as expired at its exact expiry timestamp', () => {
+		const expiresAt = 1_700_000_000
+		expect(isDiscordTokenExpired(expiresAt, expiresAt * 1000 - 1)).toBe(false)
+		expect(isDiscordTokenExpired(expiresAt, expiresAt * 1000)).toBe(true)
+		expect(isDiscordTokenExpired(null, expiresAt * 1000)).toBe(false)
+	})
+
 	afterEach(() => {
 		vi.useRealTimers()
 	})
