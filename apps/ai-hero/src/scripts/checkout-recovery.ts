@@ -253,51 +253,13 @@ export async function runCheckoutRecovery(
 	}
 }
 
-async function createProductionRuntime(): Promise<CheckoutRecoveryRuntime> {
-	const [{ closeDatabasePool, db }, schema, { stripeProvider }, { inngest }, drizzle] =
-		await Promise.all([
-			import('@/db'),
-			import('@/db/schema'),
-			import('@/coursebuilder/stripe-provider'),
-			import('@/inngest/inngest.server'),
-			import('drizzle-orm'),
-		])
-
-	return {
-		getCheckoutSession: (checkoutSessionId) =>
-			stripeProvider.options.paymentsAdapter.getCheckoutSession(checkoutSessionId),
-		inspect: async ({ checkoutSessionId, chargeId }) => {
-			const chargeRows = await db
-				.select({ id: schema.merchantCharge.id })
-				.from(schema.merchantCharge)
-				.where(drizzle.eq(schema.merchantCharge.identifier, chargeId))
-			const sessionRows = await db
-				.select({ id: schema.merchantSession.id })
-				.from(schema.merchantSession)
-				.where(drizzle.eq(schema.merchantSession.identifier, checkoutSessionId))
-			const purchaseConditions = [
-				...chargeRows.map((row) =>
-					drizzle.eq(schema.purchases.merchantChargeId, row.id),
-				),
-				...sessionRows.map((row) =>
-					drizzle.eq(schema.purchases.merchantSessionId, row.id),
-				),
-			]
-			const purchaseRows = purchaseConditions.length
-				? await db
-						.select({ id: schema.purchases.id })
-						.from(schema.purchases)
-						.where(drizzle.or(...purchaseConditions))
-				: []
-			return {
-				chargeIds: chargeRows.map((row) => row.id),
-				merchantSessionIds: sessionRows.map((row) => row.id),
-				purchaseIds: [...new Set(purchaseRows.map((row) => row.id))],
-			}
-		},
-		sendReplay: (event) => inngest.send(event),
-		close: closeDatabasePool,
-	}
+async function createProductionRuntime(
+	args: CheckoutRecoveryArgs,
+): Promise<CheckoutRecoveryRuntime> {
+	const { createCheckoutRecoveryRuntime, resolveCheckoutRecoveryEnv } =
+		await import('./checkout-recovery-runtime')
+	const env = resolveCheckoutRecoveryEnv(process.env, { apply: args.apply })
+	return createCheckoutRecoveryRuntime(env)
 }
 
 async function writeReceiptFile(path: string, receipt: CheckoutRecoveryReceipt) {
@@ -309,7 +271,7 @@ async function main() {
 	let runtime: CheckoutRecoveryRuntime | undefined
 	try {
 		const args = parseCheckoutRecoveryArgs(process.argv.slice(2))
-		runtime = await createProductionRuntime()
+		runtime = await createProductionRuntime(args)
 		const receipt = await runCheckoutRecovery(args, runtime)
 		const receiptPath = resolve(
 			args.receiptPath ??
