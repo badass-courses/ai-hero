@@ -251,4 +251,55 @@ describeMysql('checkout recovery adapter MySQL regression', () => {
 			transferCount: 1,
 		})
 	})
+
+	it('rejects a mismatched existing charge before adopting it', async () => {
+		await pool.query(
+			'UPDATE AI_MerchantCharge SET userId = ? WHERE identifier = ?',
+			['user_other', options.stripeChargeId],
+		)
+
+		await expect(
+			adapter.createMerchantChargeAndPurchase(options),
+		).rejects.toThrow('CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1')
+
+		const [[counts]] = await pool.query<CountRow[]>(`
+			SELECT
+				(SELECT COUNT(*) FROM AI_MerchantCharge) AS chargeCount,
+				(SELECT COUNT(*) FROM AI_MerchantSession) AS sessionCount,
+				(SELECT COUNT(*) FROM AI_Purchase) AS purchaseCount,
+				(SELECT COUNT(*) FROM AI_PurchaseUserTransfer) AS transferCount
+		`)
+		expect(counts).toEqual({
+			chargeCount: 1,
+			sessionCount: 1,
+			purchaseCount: 0,
+			transferCount: 0,
+		})
+	})
+
+	it('rejects a mismatch before returning an existing Purchase', async () => {
+		const existingPurchase = await adapter.createMerchantChargeAndPurchase(options)
+
+		await expect(
+			adapter.createMerchantChargeAndPurchase({
+				...options,
+				userId: 'user_other',
+			}),
+		).rejects.toThrow('CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1')
+
+		const [[counts]] = await pool.query<CountRow[]>(`
+			SELECT
+				(SELECT COUNT(*) FROM AI_MerchantCharge) AS chargeCount,
+				(SELECT COUNT(*) FROM AI_MerchantSession) AS sessionCount,
+				(SELECT COUNT(*) FROM AI_Purchase) AS purchaseCount,
+				(SELECT COUNT(*) FROM AI_PurchaseUserTransfer) AS transferCount
+		`)
+		expect(existingPurchase.id).toMatch(/^purch_/)
+		expect(counts).toEqual({
+			chargeCount: 1,
+			sessionCount: 1,
+			purchaseCount: 1,
+			transferCount: 1,
+		})
+	})
 })
