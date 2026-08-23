@@ -1,6 +1,11 @@
 -- Read-only detector for completed paid Stripe checkout sessions that still
 -- have no Purchase after a 15 minute processing window.
 -- This query performs no writes. Keep LIMIT bounded for operator use.
+--
+-- Two classes of noise are excluded, because neither is a lost sale:
+--   * amount_total = 0 sessions. A 100% coupon checkout never creates a
+--     Stripe charge, so it never creates a Purchase through this path.
+--   * cs_test_* sessions. Test-mode traffic does not need recovery.
 WITH paid_checkout_events AS (
 	SELECT
 		e.identifier AS stripe_event_id,
@@ -15,6 +20,10 @@ WITH paid_checkout_events AS (
 		AND JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.mode')) = 'payment'
 		AND JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.status')) = 'complete'
 		AND JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.payment_status')) = 'paid'
+		-- Drop 100% coupon checkouts: no money moved, so no charge to recover.
+		AND JSON_EXTRACT(e.payload, '$.data.object.amount_total') > 0
+		-- Drop Stripe test-mode sessions.
+		AND JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.id')) NOT LIKE 'cs_test_%'
 		AND e.createdAt < CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
 ),
 charge_events AS (
