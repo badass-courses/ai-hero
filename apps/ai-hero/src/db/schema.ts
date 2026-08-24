@@ -8,6 +8,7 @@ import {
 	index,
 	int,
 	json,
+	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -997,5 +998,66 @@ export const sideEffectIntentRelations = relations(
 			fields: [sideEffectIntent.nextActionId],
 			references: [nextAction.id],
 		}),
+	}),
+)
+
+/**
+ * Server-persisted invoice details (AIH-259). One row per purchase and
+ * merchant charge, edited by the purchase owner or a team manager on the
+ * invoice page, or prefilled through the guarded support seam. Values are
+ * billing details: they must never appear in URLs, logs, or analytics events.
+ *
+ * `updatedByUserId` is only ever an app user (owner/manager saves).
+ * Support writes leave it null and set `supportOperatorId` instead, since
+ * support operators are not app users.
+ */
+export const invoiceSettings = mysqlTable(
+	'InvoiceSettings',
+	{
+		purchaseId: varchar('purchaseId', { length: 255 }).notNull(),
+		merchantChargeId: varchar('merchantChargeId', { length: 255 }).notNull(),
+		recipientName: varchar('recipientName', { length: 255 }),
+		companyName: varchar('companyName', { length: 255 }),
+		address: text('address'),
+		taxId: varchar('taxId', { length: 100 }),
+		notes: text('notes'),
+		source: varchar('source', { length: 20 }).notNull().default('owner'),
+		updatedByUserId: varchar('updatedByUserId', { length: 255 }),
+		supportOperatorId: varchar('supportOperatorId', { length: 255 }),
+		createdAt: timestamp('createdAt', { fsp: 3 }).defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt', { fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		pk: primaryKey({ columns: [table.purchaseId, table.merchantChargeId] }),
+	}),
+)
+
+/**
+ * Redacted audit receipt for every support-driven invoice prefill attempt
+ * that reached a resolved purchase (AIH-259). Carries identifiers, audit
+ * metadata, the caller-supplied input hash, and the outcome. Never billing
+ * values.
+ */
+export const supportInvoicePrefillReceipts = mysqlTable(
+	'SupportInvoicePrefillReceipt',
+	{
+		id: varchar('id', { length: 191 }).notNull().primaryKey(),
+		purchaseId: varchar('purchaseId', { length: 255 }).notNull(),
+		merchantChargeId: varchar('merchantChargeId', { length: 255 }).notNull(),
+		runId: varchar('runId', { length: 255 }).notNull(),
+		conversationId: varchar('conversationId', { length: 255 }).notNull(),
+		operatorId: varchar('operatorId', { length: 255 }).notNull(),
+		approvalReference: varchar('approvalReference', { length: 255 }).notNull(),
+		expectedInboundId: varchar('expectedInboundId', { length: 255 }).notNull(),
+		inputHash: varchar('inputHash', { length: 64 }).notNull(),
+		outcome: varchar('outcome', { length: 40 }).notNull(),
+		readbackMatched: boolean('readbackMatched'),
+		createdAt: timestamp('createdAt', { fsp: 3 }).defaultNow().notNull(),
+	},
+	(table) => ({
+		purchaseIdx: index('sipr_purchase_idx').on(table.purchaseId),
 	}),
 )
