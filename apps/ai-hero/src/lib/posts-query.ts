@@ -447,6 +447,23 @@ function githubSourceFieldOverrides(
 		: { githubSourceSha: null }
 }
 
+/**
+ * A cover replaced through the editor/REST save paths is a hand-uploaded
+ * image — the FAL pipeline bypasses these paths (pick-variant writes via the
+ * adapter directly) and stamps `source: 'generated'` itself. A changed url
+ * therefore always means 'uploaded'; an unchanged or absent cover keeps
+ * whatever source it already carries, so the flag cannot drift.
+ */
+function coverImageSourceOverride(
+	incomingFields: PostUpdate['fields'],
+	currentPost: Post,
+): Record<string, unknown> {
+	const incoming = incomingFields.coverImage
+	return incoming?.url && incoming.url !== currentPost.fields.coverImage?.url
+		? { coverImage: { ...incoming, source: 'uploaded' } }
+		: {}
+}
+
 export async function updatePost(
 	input: PostUpdate,
 	action: 'save' | 'publish' | 'archive' | 'unpublish' = 'save',
@@ -535,6 +552,7 @@ export async function updatePost(
 					slug: postSlug,
 					...githubOverrides,
 					...publishedAtOverride,
+					...coverImageSourceOverride(input.fields, currentPost),
 				},
 			},
 			action,
@@ -563,6 +581,7 @@ export async function updatePost(
 				slug: postSlug,
 				...githubOverrides,
 				...publishedAtOverride,
+				...coverImageSourceOverride(input.fields, currentPost),
 			},
 		})
 
@@ -1205,6 +1224,7 @@ export async function writePostUpdateToDatabase(input: {
 				timeToRead,
 				slug: postSlug,
 				...githubOverrides,
+				...coverImageSourceOverride(postUpdate.fields, currentPost),
 			},
 		})
 		void log.info('post.update.db.success', {

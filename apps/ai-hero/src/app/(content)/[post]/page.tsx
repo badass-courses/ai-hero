@@ -847,10 +847,11 @@ export async function generateMetadata(
 		},
 		openGraph: {
 			images: [
-				// Skill covers are authored at 1200×630 as finished share cards —
-				// serve them as-is; every other post keeps the composed /api/og card.
+				// Hand-uploaded covers (source: 'uploaded') are authored at 1200×630
+				// as finished share cards — serve them as-is; FAL-generated covers
+				// and everything else keep the composed /api/og card.
 				resource.type === 'post' &&
-				resource.fields.postType === 'skill' &&
+				resource.fields.coverImage?.source === 'uploaded' &&
 				resource.fields.coverImage?.url
 					? resource.fields.coverImage.url
 					: getOGImageUrlForResource({
