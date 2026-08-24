@@ -43,10 +43,15 @@ function toSkillItem(item: ListItem) {
 	const fields = item.resource?.fields
 	const slug = stringField(fields, 'slug')
 	if (!slug) return null
+	// fields.icon is `{ url, alt? }` (see PostSchema); the editor stores '' when
+	// empty and null when cleared, so only a non-empty url counts as an icon.
+	const icon = fields?.icon as { url?: unknown } | null | undefined
 	return {
 		slug,
 		title: stringField(fields, 'title') ?? slug,
 		description: stringField(fields, 'description'),
+		iconUrl:
+			typeof icon?.url === 'string' && icon.url ? icon.url : undefined,
 		kind:
 			stringField(fields, 'postType') === 'skill'
 				? ('skill' as const)

@@ -41,6 +41,34 @@ describe('toSkillGroups', () => {
 		expect(group?.items.map((item) => item.kind)).toEqual(['article', 'skill'])
 	})
 
+	test('carries a skill icon url through, and drops empty/cleared icons', () => {
+		const withIcon = skill('skills-ask-matt')
+		;(withIcon.resource.fields as any).icon = {
+			url: 'https://res.cloudinary.com/x/icon.png',
+			alt: 'mark',
+		}
+		const emptyIcon = skill('skills-grill-me')
+		;(emptyIcon.resource.fields as any).icon = { url: '' }
+		const clearedIcon = skill('skills-plan-this')
+		;(clearedIcon.resource.fields as any).icon = null
+
+		const [group] = toSkillGroups([
+			section('section_1', 'Getting Started', [
+				withIcon,
+				emptyIcon,
+				clearedIcon,
+				skill('skills-ship-it'),
+			]),
+		])
+
+		expect(group?.items.map((item) => item.iconUrl)).toEqual([
+			'https://res.cloudinary.com/x/icon.png',
+			undefined,
+			undefined,
+			undefined,
+		])
+	})
+
 	test('a missing postType is an article, never a skill', () => {
 		// The catalog used to gate on publish state alone, so anything in the
 		// list rendered a slash command. Absent metadata must fail toward the

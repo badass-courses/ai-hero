@@ -14,6 +14,7 @@ import { createResourceEditor, postManifest } from '@coursebuilder/ui/cms'
 import type {
 	EditorCtx,
 	FieldSpec,
+	FieldTab,
 	ListMembership,
 } from '@coursebuilder/ui/cms/manifest'
 
@@ -67,16 +68,35 @@ function buildTabsWithPostType(currentPostType: string | undefined) {
 			label: postTypeLabel(value),
 		})),
 	}
-	return postManifest.tabs.map((tab) =>
-		tab.label === 'Content'
-			? {
-					...tab,
-					fields: tab.fields.flatMap((field): FieldSpec[] =>
-						field.kind === 'slug' ? [field, postTypeField] : [field],
-					),
-				}
-			: tab,
-	)
+	// Skill-only: a small mark rendered on /skills catalog rows and the hub
+	// sidebar. A separate tab because the kit's `condition` is tab-level only;
+	// it reacts to the live postType select, so flipping a post to 'skill'
+	// reveals it without a reload. Missing icons render bg-stripes on-site.
+	const skillIconTab: FieldTab = {
+		label: 'Icon',
+		condition: (values) => values?.fields?.postType === 'skill',
+		fields: [
+			{
+				kind: 'image',
+				name: 'fields.icon.url',
+				label: 'Icon',
+				altName: 'fields.icon.alt',
+			},
+		],
+	}
+	return [
+		...postManifest.tabs.map((tab) =>
+			tab.label === 'Content'
+				? {
+						...tab,
+						fields: tab.fields.flatMap((field): FieldSpec[] =>
+							field.kind === 'slug' ? [field, postTypeField] : [field],
+						),
+					}
+				: tab,
+		),
+		skillIconTab,
+	]
 }
 
 export type EditPostClientProps = {

@@ -1,0 +1,89 @@
+---
+title: "Add an icon image field to skill posts"
+type: "task"
+status: "active"
+created_at: "2026-08-24"
+privacy: "private"
+---
+
+# Add an icon image field to skill posts
+
+Add `fields.icon` (`{ url, alt? }`, mirroring `coverImage`) to posts, editable only
+when `postType === 'skill'`, rendered on the `/skills` catalog rows and the hub
+sidebar Skills group. First PR scope: schema + editor + catalog + sidebar. Later:
+skill post page install panel, prev/next pager, learn-map `SkillCard`.
+
+Branch: `feat/skill-post-icon` off main `b34d4a3`. Vojta approved the design
+2026-08-24.
+
+## State (2026-08-24)
+
+Implemented and green (115 tests around posts/skills/cms pass): both schemas,
+the three save-mapping sites, a reactive skill-only "Icon" tab in the post
+editor (kit `FieldTab.condition` on `fields.postType`), and the `/skills`
+catalog render (24px `CldImage`, decorative `alt=""`). **Iconless skills render
+no slot at all** — Vojta rejected the stripes placeholder after seeing it live.
+Not yet done: sidebar icons (the accordion rows go through the shared
+`SeriesLessons` renderer used by every workshop/guide list — deferred as a
+follow-up), install-panel/pager/`SkillCard` surfaces, and a logged-in editor
+smoke test of the Icon tab. Repo typecheck is red on main (pre-existing
+implicit-any wave + kit/zod mismatch), unrelated to this work.
+
+## Durable architecture findings (outlive this task)
+
+These were established by a full pipeline exploration on 2026-08-24 and apply to
+**any** future field added to post `fields`.
+
+- A "skill" is not a resource type. It is `contentResource.type === 'post'` with
+  `fields.postType === 'skill'` (`apps/ai-hero/src/lib/resource-types.ts`,
+  membership gate in `src/lib/skills-query.ts:62-71`). Naming collision:
+  `postType: 'skill-changelog'` posts live at `/skills/[slug]` while actual skill
+  posts live at flat root slugs rendered by `src/app/(content)/[post]/page.tsx`.
+- `fields` is a MySQL JSON column (only `slug` is a generated column). New fields
+  never need a DB migration.
+- **Zod-strip erasure landmine:** `PostSchema.fields` is a stripping `z.object`,
+  and two paths parse-then-write-back: `updatePost`
+  (`src/lib/posts-query.ts:551-560`, again at `:1197-1206`) and the AI-artwork
+  `pick-variant.ts:74-84`. A field missing from `PostSchema` is **silently erased
+  on the next save** — not benignly ignored. Any new field must go into both
+  `PostSchema` and `PostUpdateSchema` (`src/lib/posts.ts`).
+- **Three save-mapping sites** must each carry a new field or the editor drops it
+  on save: `post-form-config.ts` (`defaultValues`, `updateResource`,
+  `autoUpdateResource`) and `src/lib/cms/post-bindings.ts` (~`:356`, the editor's
+  real save path). Clearing rule (documented in-code for `coverImage`): persist
+  `null`, never omit the key — the server merges fields per-key, so an omitted
+  key keeps the stale value forever. The editor input holds `''` when empty, so
+  url schemas need `z.string().url().or(z.literal(''))`.
+- **Editor extension without touching the kit:** `@coursebuilder/ui/cms` is a
+  published dep; per-app fields are injected at the call site by spreading
+  `postManifest` and mapping its tabs — precedent `buildTabsWithPostType` in
+  `edit-post-client.tsx:56-80`. A kit-native
+  `{ kind: 'image', name: 'fields.X.url', altName: 'fields.X.alt' }` FieldSpec
+  gets Cloudinary upload + "Choose from Media" browser for free. Fields/tabs can
+  be gated on form values (e.g. postType) via the kit's `condition`.
+- **Image infra:** Cloudinary only (unsigned browser upload, folder
+  `posts/{postId}`); each upload also creates an `imageResource` content row that
+  the media browser lists. Uploadthing is video-only. `res.cloudinary.com` is in
+  `next.config.mjs` image domains; `fal.media` is not (AI artwork re-uploads to
+  Cloudinary first).
+- **Skill render surfaces** (all text-only before this task): `/skills` catalog
+  `SkillRow` (`skills/_components/skill-set.tsx`), hub sidebar `SkillsNavSection`
+  (`components/navigation/sidebar/sidebar-sections.tsx`), skill post
+  `SkillInstallPanel`, `SkillPager`, learn-map `SkillCard`. The catalog/sidebar
+  read **raw unparsed JSON** through lists (`ListSchema.resources` is
+  `z.array(z.any())`), so plumbing there needs no schema work — just carry the
+  field through `SkillEntry`/`toPending` (`skills-shared.ts`, `skills-query.ts`)
+  and `toSkillItem` (`skill-groups.ts`).
+- **Design rules:** missing image slots inside content render `bg-stripes`,
+  never a gray box (`DESIGN.md` rules 6/15, PR checklist) — but for skill icons
+  Vojta explicitly chose (2026-08-24, after seeing stripes tiles live) to hide
+  the slot entirely when a skill has no icon: iconless rows keep their pre-icon
+  shape. Existing `AGENT_MARKS` are monochrome `currentColor` SVGs — theme-safe
+  inside text rows.
+- **Skip search:** Typesense doc schema is strict, part of it lives in Typesense
+  cloud, and `deriveResourceImage` already maps `coverImage` → `image`. Don't
+  index per-post icons.
+- Caching needs nothing new: skill queries are tagged `posts`/`tags`/`lists` and
+  `updatePost` already fires `revalidateTag('posts')`.
+- Launch-mode blast radius: this pipeline touches no pricing, Kit, checkout,
+  signup, or Inngest funnel path.
