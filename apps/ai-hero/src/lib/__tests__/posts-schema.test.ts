@@ -51,6 +51,36 @@ describe('PostSchema artwork fields', () => {
 		expect(result.fields._artwork).toBeUndefined()
 	})
 
+	it('keeps coverImage.source through a parse — the strip-schema write-back must not erase it', () => {
+		const result = PostSchema.parse({
+			...baseResource,
+			fields: {
+				...baseFields,
+				coverImage: {
+					url: 'https://res.cloudinary.com/x/y.png',
+					source: 'uploaded',
+				},
+			},
+		})
+
+		expect(result.fields.coverImage?.source).toBe('uploaded')
+	})
+
+	it('rejects an unknown coverImage.source label', () => {
+		expect(() =>
+			PostSchema.parse({
+				...baseResource,
+				fields: {
+					...baseFields,
+					coverImage: {
+						url: 'https://res.cloudinary.com/x/y.png',
+						source: 'designed',
+					},
+				},
+			}),
+		).toThrow()
+	})
+
 	it('rejects a coverImage with a non-url string', () => {
 		expect(() =>
 			PostSchema.parse({
