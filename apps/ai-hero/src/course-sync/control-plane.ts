@@ -8,9 +8,13 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
+import {
+	assertCourseSyncLaunchApplyPolicy,
+	evaluateCourseSyncBoundedAutoApply,
+} from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import {
-	AI_HERO_DRAFT_SYNC_BINDING,
+	AI_HERO_COURSE_SYNC_BINDING,
 	type CourseSyncBinding,
 	type CourseSyncControlPlaneDependencies,
 	type FrozenSourceAsset,
@@ -40,21 +44,46 @@ export function sha256(value: string | Uint8Array): string {
 	return createHash('sha256').update(value).digest('hex')
 }
 
+export function courseSyncRollbackStageIdempotencyKey(
+	runId: string,
+	idempotencyKey: string,
+): string {
+	return sha256(stableJson({ operation: 'rollback', runId, idempotencyKey }))
+}
+
 export function targetResourceId(
 	bindingId: string,
-	kind: 'section' | 'lesson' | 'question' | 'video',
+	kind: 'section' | 'lesson' | 'solution' | 'question' | 'video',
 	sourceId: string,
 ): string {
 	return `sync_${kind}_${sha256(`${bindingId}:${kind}:${sourceId}`).slice(0, 24)}`
 }
 
+function slugifyTitle(title: string): string {
+	return (
+		title
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-|-$/g, '')
+			.slice(0, 60) || 'course-content'
+	)
+}
+
 function slug(sourceId: string, title: string): string {
-	const readable = title
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-|-$/g, '')
-		.slice(0, 60)
-	return `${readable || 'course-content'}-${sha256(sourceId).slice(0, 8)}`
+	return `${slugifyTitle(title)}-${sha256(sourceId).slice(0, 8)}`
+}
+
+function solutionSlug(sourceId: string, title: string): string {
+	return `${slugifyTitle(title)}~${sha256(`solution:${sourceId}`).slice(0, 12)}`
+}
+
+export function solutionAdoptionBaselineVersionId(
+	resourceId: string,
+	fields: Record<string, unknown>,
+): string {
+	return `version~${sha256(
+		stableJson({ operation: 'adopt-course-sync-solution', resourceId, fields }),
+	)}`
 }
 
 function assertManifestScope(
@@ -135,13 +164,14 @@ function assertManifestScope(
 function publicBinding(binding: CourseSyncBinding): CourseSyncBindingSummary {
 	return {
 		bindingId: binding.bindingId,
+		contractVersion: binding.contractVersion,
 		status: binding.status,
 		sourceCourseId: binding.sourceCourseId,
+		applyPolicy: binding.applyPolicy,
 		target: {
-			productType: binding.productType,
-			anchorResourceType: 'workshop',
-			requiredState: binding.requiredState,
-			requiredVisibility: binding.requiredVisibility,
+			product: binding.targetContract.product,
+			workshop: binding.targetContract.workshop,
+			managedChildren: binding.managedChildContract,
 			sectionMappingPolicy: binding.sectionMappingPolicy,
 		},
 	}
@@ -190,6 +220,7 @@ function sourceResourceFields(
 		ResourcePlanItem,
 		| 'action'
 		| 'previousVersionId'
+		| 'previousFieldsSha256'
 		| 'previousParentResourceId'
 		| 'previousPosition'
 	>
@@ -231,11 +262,11 @@ function sourceResourceFields(
 					`Lesson ${lesson.id} has no importable video.`,
 				)
 			}
-			const lessonId = targetResourceId(
-				binding.bindingId,
-				'lesson',
-				lesson.id,
-			)
+			const lessonId = targetResourceId(binding.bindingId, 'lesson', lesson.id)
+			const solutionId =
+				lesson.type === 'problem' && lesson.solution
+					? targetResourceId(binding.bindingId, 'solution', lesson.id)
+					: null
 			const lessonItem = {
 				sourceKind: 'lesson' as const,
 				sourceId: lesson.id,
@@ -279,6 +310,7 @@ function sourceResourceFields(
 						`Frozen Mux asset is missing for video ${video.id}.`,
 					)
 				}
+				const isSolutionVideo = videoIndex === 1 && solutionId !== null
 				return {
 					sourceKind: 'video' as const,
 					sourceId: video.id,
@@ -287,12 +319,15 @@ function sourceResourceFields(
 						'video',
 						video.id,
 					),
-					parentResourceId: lessonId,
-					position: videoIndex,
+					parentResourceId: isSolutionVideo ? solutionId : lessonId,
+					position: 0,
 					detached: false,
 					previousDetached: false,
 					fields: {
-						title: videos.length === 1 ? lesson.title : `${lesson.title} ${videoIndex + 1}`,
+						title:
+							videos.length === 1
+								? lesson.title
+								: `${lesson.title} ${videoIndex + 1}`,
 						state: 'ready',
 						visibility: 'unlisted',
 						duration: asset.duration,
@@ -311,6 +346,42 @@ function sourceResourceFields(
 					},
 				}
 			})
+			const primaryVideoItem = videoItems[0]
+			if (!primaryVideoItem) {
+				throw new CourseSyncError(
+					'SOURCE_LESSON_VIDEO_MISSING',
+					`Lesson ${lesson.id} has no managed primary video.`,
+				)
+			}
+			const solutionItem =
+				lesson.type === 'problem' && lesson.solution && solutionId
+					? {
+							sourceKind: 'solution' as const,
+							sourceId: lesson.id,
+							targetResourceId: solutionId,
+							parentResourceId: lessonId,
+							position: 0,
+							detached: false,
+							previousDetached: false,
+							fields: {
+								title: `${lesson.title} Solution`,
+								body: lesson.solution.body || '',
+								slug: solutionSlug(lesson.id, `${lesson.title} Solution`),
+								description: lesson.solution.description || '',
+								state: 'draft',
+								visibility: 'unlisted',
+								videoResourceId: videoItems[1]?.targetResourceId,
+								optional: false,
+								courseSync: {
+									bindingId: binding.bindingId,
+									sourceCourseId: manifest.courseId,
+									sourceSectionId: section.id,
+									sourceLessonId: lesson.id,
+									sourceVideoId: lesson.solution.id,
+								},
+							},
+						}
+					: null
 			const questionItems = extractQuizQuestions(primary.body, lesson.id).map(
 				(question) => ({
 					sourceKind: 'question' as const,
@@ -338,7 +409,12 @@ function sourceResourceFields(
 					},
 				}),
 			)
-			return [lessonItem, ...videoItems, ...questionItems]
+			return [
+				lessonItem,
+				primaryVideoItem,
+				...(solutionItem && videoItems[1] ? [solutionItem, videoItems[1]] : []),
+				...questionItems,
+			]
 		})
 		return [sectionItem, ...lessonItems]
 	})
@@ -352,16 +428,25 @@ export function createCourseSyncControlPlane(
 		dependencies.makeId ?? ((prefix: string) => `${prefix}_${randomUUID()}`)
 	const persistence = dependencies.persistence
 
-	const requireBinding = async (bindingId: string) => {
-		if (bindingId !== AI_HERO_DRAFT_SYNC_BINDING.bindingId) {
+	const assertServerBindingId = (bindingId: string) => {
+		if (bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId) {
 			throw new CourseSyncError(
 				'BINDING_NOT_FOUND',
 				'Sync binding not found.',
 				404,
 			)
 		}
-		await persistence.assertTarget(AI_HERO_DRAFT_SYNC_BINDING)
-		const binding = await persistence.ensureBinding(AI_HERO_DRAFT_SYNC_BINDING)
+	}
+
+	const ensureServerBinding = async (bindingId: string) => {
+		assertServerBindingId(bindingId)
+		return persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
+	}
+
+	const requireBinding = async (bindingId: string) => {
+		assertServerBindingId(bindingId)
+		await persistence.assertTarget(AI_HERO_COURSE_SYNC_BINDING)
+		const binding = await persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
 		if (binding.status !== 'active') {
 			throw new CourseSyncError(
 				'BINDING_NOT_ACTIVE',
@@ -394,28 +479,65 @@ export function createCourseSyncControlPlane(
 		manifest: CourseJsonDocumentV3,
 		video: ReturnType<typeof courseJsonVideos>[number],
 	): Promise<FrozenSourceAsset> => {
-		const reusable = await persistence.findFrozenAsset(
-			binding.bindingId,
-			video.sha256,
-			video.bytes,
+		const receiptKey = sha256(
+			stableJson({
+				bindingId: binding.bindingId,
+				courseVersionId: manifest.courseVersionId,
+				sourceVideoId: video.id,
+				producerSha256: video.sha256,
+				bytes: video.bytes,
+			}),
 		)
+		const exactReceipt = await persistence.findFrozenAssetReceipt(receiptKey)
+		const reusable =
+			exactReceipt ??
+			(await persistence.findFrozenAsset(
+				binding.bindingId,
+				video.sha256,
+				video.bytes,
+			))
 		if (reusable?.muxAssetId) {
 			const existingMuxAsset = await dependencies.muxClient.getAsset(
 				reusable.muxAssetId,
 			)
-			if (
-				existingMuxAsset?.status === 'ready' &&
-				existingMuxAsset.playbackId &&
-				existingMuxAsset.duration !== null
-			) {
+			if (!existingMuxAsset || existingMuxAsset.status === 'errored') {
+				if (exactReceipt) {
+					throw new CourseSyncError(
+						'MUX_RECEIPT_ASSET_UNAVAILABLE',
+						`The receipted Mux asset ${reusable.muxAssetId} is unavailable.`,
+						502,
+						{ category: 'transient_dependency', retryable: true },
+					)
+				}
+			} else {
+				const ready =
+					existingMuxAsset.status === 'ready'
+						? existingMuxAsset
+						: await dependencies.muxClient.waitForReady(existingMuxAsset.id)
+				if (!ready.playbackId || ready.duration === null) {
+					throw new CourseSyncError(
+						'MUX_READY_ASSET_INCOMPLETE',
+						`Mux asset ${ready.id} is ready without playback metadata.`,
+						502,
+					)
+				}
+				const completed = await persistence.saveFrozenAssetReceipt({
+					receiptKey,
+					bindingId: binding.bindingId,
+					courseVersionId: manifest.courseVersionId,
+					asset: {
+						...reusable,
+						sourceVideoId: video.id,
+						relativePath: video.relativePath,
+						producerSha256: video.sha256,
+						bytes: video.bytes,
+						muxPlaybackId: ready.playbackId,
+						duration: ready.duration,
+					},
+				})
 				return {
-					...reusable,
-					sourceVideoId: video.id,
-					relativePath: video.relativePath,
-					producerSha256: video.sha256,
-					bytes: video.bytes,
-					muxPlaybackId: existingMuxAsset.playbackId,
-					duration: existingMuxAsset.duration,
+					...completed,
+					freezeEffects: { sourceAssetsRead: 0, muxAssetsCreated: 0 },
 				}
 			}
 		}
@@ -430,6 +552,16 @@ export function createCourseSyncControlPlane(
 			throw new CourseSyncError(
 				'VIDEO_BYTE_COUNT_MISMATCH',
 				`Dropbox byte count did not match the producer receipt for video ${video.id}.`,
+				409,
+				{
+					category: 'source_validation',
+					retryable: false,
+					details: {
+						sourceVideoId: video.id,
+						expectedBytes: video.bytes,
+						actualBytes: source.bytes,
+					},
+				},
 			)
 		}
 		const passthrough = JSON.stringify({
@@ -448,10 +580,39 @@ export function createCourseSyncControlPlane(
 			url: source.url,
 			passthrough,
 		})
-		const ready =
-			created.status === 'ready'
+		const provisional = await persistence.saveFrozenAssetReceipt({
+			receiptKey,
+			bindingId: binding.bindingId,
+			courseVersionId: manifest.courseVersionId,
+			asset: {
+				sourceVideoId: video.id,
+				relativePath: video.relativePath,
+				providerRevision: source.providerRevision,
+				providerContentHash: source.providerContentHash,
+				producerSha256: video.sha256,
+				bytes: video.bytes,
+				snapshotUri: null,
+				muxAssetId: created.id,
+				muxPlaybackId: created.playbackId,
+				duration: created.duration,
+			},
+		})
+		const provisionalMuxAsset =
+			provisional.muxAssetId === created.id
 				? created
-				: await dependencies.muxClient.waitForReady(created.id)
+				: await dependencies.muxClient.getAsset(provisional.muxAssetId!)
+		if (!provisionalMuxAsset || provisionalMuxAsset.status === 'errored') {
+			throw new CourseSyncError(
+				'MUX_RECEIPT_ASSET_UNAVAILABLE',
+				'The deterministic Mux receipt points to an unavailable asset.',
+				502,
+				{ category: 'transient_dependency', retryable: true },
+			)
+		}
+		const ready =
+			provisionalMuxAsset.status === 'ready'
+				? provisionalMuxAsset
+				: await dependencies.muxClient.waitForReady(provisionalMuxAsset.id)
 		if (!ready.playbackId || ready.duration === null) {
 			throw new CourseSyncError(
 				'MUX_READY_ASSET_INCOMPLETE',
@@ -459,17 +620,20 @@ export function createCourseSyncControlPlane(
 				502,
 			)
 		}
+		const completed = await persistence.saveFrozenAssetReceipt({
+			receiptKey,
+			bindingId: binding.bindingId,
+			courseVersionId: manifest.courseVersionId,
+			asset: {
+				...provisional,
+				muxAssetId: ready.id,
+				muxPlaybackId: ready.playbackId,
+				duration: ready.duration,
+			},
+		})
 		return {
-			sourceVideoId: video.id,
-			relativePath: video.relativePath,
-			providerRevision: source.providerRevision,
-			providerContentHash: source.providerContentHash,
-			producerSha256: video.sha256,
-			bytes: video.bytes,
-			snapshotUri: null,
-			muxAssetId: ready.id,
-			muxPlaybackId: ready.playbackId,
-			duration: ready.duration,
+			...completed,
+			freezeEffects: { sourceAssetsRead: 1, muxAssetsCreated: 1 },
 		}
 	}
 
@@ -601,6 +765,10 @@ export function createCourseSyncControlPlane(
 	}
 
 	return {
+		async ensureBinding(bindingId: string) {
+			return publicBinding(await ensureServerBinding(bindingId))
+		},
+
 		async getBinding(bindingId: string) {
 			return publicBinding(await requireBinding(bindingId))
 		},
@@ -680,14 +848,105 @@ export function createCourseSyncControlPlane(
 					item,
 				]),
 			)
-			const desired = sourceResourceFields(
+			const canonicalDesired = sourceResourceFields(
 				binding,
 				revision.manifest,
 				revision.assets,
 			)
-			const desiredIds = new Set(
-				desired.map((item) => item.targetResourceId),
+			const solutionCandidates = canonicalDesired.flatMap((item) => {
+				if (item.sourceKind !== 'solution') return []
+				const solutionVideo = canonicalDesired.find(
+					(candidate) =>
+						candidate.sourceKind === 'video' &&
+						candidate.parentResourceId === item.targetResourceId,
+				)
+				if (!solutionVideo) {
+					throw new CourseSyncError(
+						'SOURCE_SOLUTION_VIDEO_MISSING',
+						`Lesson ${item.sourceId} has no managed solution video.`,
+					)
+				}
+				return [
+					{
+						canonicalTargetResourceId: item.targetResourceId,
+						lessonResourceId: item.parentResourceId,
+						solutionVideoResourceId: solutionVideo.targetResourceId,
+						sourceLessonId: item.sourceId,
+					},
+				]
+			})
+			const solutionAdoptions = await persistence.findSolutionResourceAdoptions(
+				binding.bindingId,
+				solutionCandidates,
 			)
+			const adoptedSolutionIdByCanonical = new Map(
+				[...solutionAdoptions.values()].map((adoption) => [
+					adoption.canonicalTargetResourceId,
+					adoption.resourceId,
+				]),
+			)
+			const desired = canonicalDesired.map((item) => {
+				if (item.sourceKind === 'solution') {
+					const adoption = solutionAdoptions.get(item.targetResourceId)
+					if (!adoption) return item
+					const adoptedSlug = adoption.fields.slug
+					const baselineVersionId =
+						adoption.currentVersionId ??
+						solutionAdoptionBaselineVersionId(
+							adoption.resourceId,
+							adoption.fields,
+						)
+					return {
+						...item,
+						targetResourceId: adoption.resourceId,
+						fields: {
+							...item.fields,
+							...(typeof adoptedSlug === 'string' ? { slug: adoptedSlug } : {}),
+						},
+						solutionAdoption: {
+							canonicalTargetResourceId: item.targetResourceId,
+							baselineVersionId,
+							createBaselineVersion: adoption.currentVersionId === null,
+						},
+					}
+				}
+				const adoptedParentId = adoptedSolutionIdByCanonical.get(
+					item.parentResourceId,
+				)
+				return adoptedParentId
+					? { ...item, parentResourceId: adoptedParentId }
+					: item
+			})
+			const adoptionPreviousByTarget = new Map<
+				string,
+				(typeof desired)[number]
+			>()
+			for (const adoption of solutionAdoptions.values()) {
+				const adoptedSolution = desired.find(
+					(item) => item.targetResourceId === adoption.resourceId,
+				)
+				if (adoptedSolution) {
+					adoptionPreviousByTarget.set(adoption.resourceId, {
+						...adoptedSolution,
+						fields: adoption.fields,
+						parentResourceId: adoption.lessonResourceId,
+						position: adoption.position,
+					})
+				}
+				const adoptedVideo = desired.find(
+					(item) => item.targetResourceId === adoption.solutionVideoResourceId,
+				)
+				if (adoptedVideo) {
+					adoptionPreviousByTarget.set(adoption.solutionVideoResourceId, {
+						...(previousByTarget.get(adoption.solutionVideoResourceId) ??
+							adoptedVideo),
+						parentResourceId: adoption.resourceId,
+						position: 0,
+						detached: false,
+					})
+				}
+			}
+			const desiredIds = new Set(desired.map((item) => item.targetResourceId))
 			const removedQuestions = [...previousByTarget.values()].filter(
 				(item) =>
 					item.sourceKind === 'question' &&
@@ -702,7 +961,9 @@ export function createCourseSyncControlPlane(
 				planned.map((item) => item.targetResourceId),
 			)
 			const resources: ResourcePlanItem[] = planned.map((item) => {
-				const previous = previousByTarget.get(item.targetResourceId)
+				const previous =
+					adoptionPreviousByTarget.get(item.targetResourceId) ??
+					previousByTarget.get(item.targetResourceId)
 				const snapshot = snapshots.get(item.targetResourceId)
 				const action = !snapshot
 					? 'create'
@@ -718,7 +979,13 @@ export function createCourseSyncControlPlane(
 					...item,
 					action,
 					previousDetached: previous?.detached ?? false,
-					previousVersionId: snapshot?.currentVersionId ?? null,
+					previousVersionId:
+						item.solutionAdoption?.baselineVersionId ??
+						snapshot?.currentVersionId ??
+						null,
+					previousFieldsSha256: snapshot
+						? sha256(stableJson(snapshot.fields))
+						: null,
 					previousParentResourceId: previous?.parentResourceId ?? null,
 					previousPosition: previous?.position ?? null,
 				}
@@ -734,7 +1001,11 @@ export function createCourseSyncControlPlane(
 			)
 			const media = revision.assets.map((asset) => {
 				const previous = previousAssets.get(asset.sourceVideoId)
-				if (!asset.muxAssetId || !asset.muxPlaybackId || asset.duration === null) {
+				if (
+					!asset.muxAssetId ||
+					!asset.muxPlaybackId ||
+					asset.duration === null
+				) {
 					throw new CourseSyncError(
 						'FROZEN_MUX_ASSET_MISSING',
 						`Frozen Mux asset is missing for video ${asset.sourceVideoId}.`,
@@ -767,6 +1038,62 @@ export function createCourseSyncControlPlane(
 				planSha256: sha256(stableJson(planInput)),
 			}
 			return publicRun(await persistence.savePreview(runId, plan))
+		},
+
+		async evaluateBoundedAutoApply(runId: string) {
+			const run = await persistence.getRun(runId)
+			if (!run) {
+				throw new CourseSyncError('RUN_NOT_FOUND', 'Sync run not found.', 404)
+			}
+			if (run.state !== 'previewed' || !run.plan || !run.planSha256) {
+				throw new CourseSyncError(
+					'INVALID_RUN_STATE',
+					'Only a content-addressed preview can be evaluated for bounded automatic apply.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			const { planSha256: claimedPlanSha256, ...planInput } = run.plan
+			if (
+				claimedPlanSha256 !== run.planSha256 ||
+				claimedPlanSha256 !== sha256(stableJson(planInput))
+			) {
+				throw new CourseSyncError(
+					'PLAN_HASH_MISMATCH',
+					'The stored preview plan hash does not match the run.',
+					409,
+					{ category: 'lifecycle_conflict', retryable: false },
+				)
+			}
+			return evaluateCourseSyncBoundedAutoApply(run.plan)
+		},
+
+		async verifyApplied(input: { runId: string; planSha256: string }) {
+			const run = await persistence.getRun(input.runId)
+			if (
+				!run ||
+				run.state !== 'applied' ||
+				run.planSha256 !== input.planSha256 ||
+				run.plan?.planSha256 !== input.planSha256
+			) {
+				throw new CourseSyncError(
+					'AUTO_APPLY_READBACK_FAILED',
+					'The applied run did not match the content-addressed preview during readback.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
+			}
+			const { planSha256: claimedPlanSha256, ...planInput } = run.plan
+			if (claimedPlanSha256 !== sha256(stableJson(planInput))) {
+				throw new CourseSyncError(
+					'AUTO_APPLY_READBACK_FAILED',
+					'The applied plan failed its content-addressed readback.',
+					500,
+					{ category: 'internal', retryable: false },
+				)
+			}
+			assertCourseSyncLaunchApplyPolicy(run.plan)
+			return publicRun(run)
 		},
 
 		async apply(input: { runId: string; idempotencyKey: string }) {
@@ -807,6 +1134,7 @@ export function createCourseSyncControlPlane(
 					409,
 				)
 			}
+			assertCourseSyncLaunchApplyPolicy(run.plan)
 			await requireBinding(run.bindingId)
 			try {
 				return publicRun(
@@ -839,7 +1167,20 @@ export function createCourseSyncControlPlane(
 			const run = await persistence.getRun(input.runId)
 			if (!run)
 				throw new CourseSyncError('RUN_NOT_FOUND', 'Sync run not found.', 404)
-			if (run.state === 'rolled_back') return publicRun(run, true)
+			if (run.state === 'rolled_back') {
+				const compensating = run.compensatingRunId
+					? await persistence.getRun(run.compensatingRunId)
+					: null
+				if (compensating?.applyIdempotencyKey !== input.idempotencyKey) {
+					throw new CourseSyncError(
+						'IDEMPOTENCY_CONFLICT',
+						'Rollback already completed with another key.',
+						409,
+						{ category: 'lifecycle_conflict', retryable: false },
+					)
+				}
+				return publicRun(run, true)
+			}
 			if (run.state !== 'applied') {
 				throw new CourseSyncError(
 					'INVALID_RUN_STATE',
@@ -851,6 +1192,7 @@ export function createCourseSyncControlPlane(
 			return publicRun(
 				await persistence.rollbackAtomically({
 					runId: run.runId,
+					bindingId: run.bindingId,
 					idempotencyKey: input.idempotencyKey,
 					compensatingRunId: makeId('csr_run'),
 					createdById: dependencies.createdById,

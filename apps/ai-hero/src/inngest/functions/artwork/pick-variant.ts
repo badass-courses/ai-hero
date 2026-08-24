@@ -80,6 +80,9 @@ export const pickVariant = inngest.createFunction(
 					coverImage: {
 						url: cloudinaryResult.secure_url,
 						alt: post.fields.title,
+						// og:image serves 'uploaded' covers raw; generated ones keep
+						// the composed /api/og card (see generateMetadata).
+						source: 'generated',
 					},
 				},
 			})

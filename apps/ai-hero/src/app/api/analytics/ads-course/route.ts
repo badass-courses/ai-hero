@@ -84,6 +84,15 @@ export const GET = withSkill(async (request: NextRequest) => {
 			getLearnerFlowReport({ redis }),
 			getLearnerFlowAggregateSummary(),
 		])
+		await log[learnerFlow.assertion.passed ? 'info' : 'warn'](
+			'subscriber_funnel.learner_flow_classified',
+			{
+				funnel: 'skills-newsletter',
+				...learnerFlow.counts,
+				causeCounts: learnerFlow.causeCounts,
+				assertionPassed: learnerFlow.assertion.passed,
+			},
+		)
 		const data = { ...metrics, flowReport, learnerFlow }
 		return NextResponse.json(
 			{

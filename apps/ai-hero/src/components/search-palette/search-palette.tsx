@@ -20,8 +20,13 @@ import {
 import { cn } from '@coursebuilder/utils/cn'
 
 import { useCohortOffer } from '../navigation/nav-cta-context'
-import { FEATURED_PROMO, type Promo } from '../navigation/promo-config'
+import {
+	FEATURED_PROMO,
+	isPromoActive,
+	type Promo,
+} from '../navigation/promo-config'
 import { NAV_ICONS, SkillsIcon } from '../navigation/sidebar/nav-icons'
+import { useTimedActivation } from '../navigation/timed-promo-bar-switch'
 import {
 	Command,
 	CommandEmpty,
@@ -456,8 +461,14 @@ function PalettePromoRow({
 	) => void
 }) {
 	const cohortOffer = useCohortOffer()
+	const featuredPromoActive = useTimedActivation(
+		FEATURED_PROMO.startsAt,
+		false,
+	)
 	const promo = React.useMemo<Promo | null>(() => {
-		if (FEATURED_PROMO) return FEATURED_PROMO
+		if (featuredPromoActive && isPromoActive(FEATURED_PROMO)) {
+			return FEATURED_PROMO
+		}
 		// A live sale earns the row outright: it is the most time-bounded thing
 		// on the site and the palette is where someone goes when they already
 		// know what they want.
@@ -489,7 +500,7 @@ function PalettePromoRow({
 			}
 		}
 		return PALETTE_PROMO
-	}, [cohortOffer])
+	}, [cohortOffer, featuredPromoActive])
 
 	if (!promo) return null
 

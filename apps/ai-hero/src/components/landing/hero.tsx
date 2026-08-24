@@ -11,7 +11,7 @@ import { getSkillEntries } from '@/lib/skills-query'
 import { log } from '@/server/logger'
 import { eq, or, sql } from 'drizzle-orm'
 import { ArrowRight } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 import rehypeRaw from 'rehype-raw'
 
 import { SubscriberCount } from '../subscriber-count'

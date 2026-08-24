@@ -1,0 +1,82 @@
+---
+title: "Worker task: fix PR #70 review findings"
+type: "task"
+assignee: "ShitRat@flagg"
+created_at: "2026-08-08"
+---
+
+# Worker task: fix PR #70 review findings
+
+## Claim first
+
+Set `assignee:` in this file to your callsign plus machine before anything else.
+
+## Where you work
+
+You are already in the worktree `/Users/joel/Code/worktrees/aih-quiz-doc`,
+branch `docs/quiz-entry-point` (PR #70). Commit here with the bot author:
+
+```
+git -c user.name='shitratgit[bot]' -c user.email='286405550+shitratgit[bot]@users.noreply.github.com' \
+  commit --author='shitratgit[bot] <286405550+shitratgit[bot]@users.noreply.github.com>' -m '<msg>'
+```
+
+**Never touch `main`. Do not push.** The steering session owns push and merge.
+
+## Task
+
+Macroscope left three findings on PR #70. Full bodies:
+`.brain/data/quiz-component/pr70-review-comments.json`. Address each with
+source verification — do not fix from the comment text alone.
+
+### 1. High — `apps/ai-hero/docs/quiz.md` identity section (~line 74)
+
+The doc claims the same authored `id` in two different lessons "cannot
+collide" because the endpoint resolves through the lesson join. Macroscope
+says `targetResourceId(bindingId, 'question', authoredId)` has no lesson
+component, so the minted resource id is per-**binding**, not per-lesson.
+
+Verify in `apps/ai-hero/src/course-sync/control-plane.ts` (and
+`quiz-question-extraction.ts`): what actually happens when two lessons in the
+SAME course binding reuse one authored question id? Trace it — do both lessons
+attach the same `sync_question_<hash>` resource? Does the second sync
+overwrite the first's `fields` (question text, `correct`,
+`courseSync.sourceLessonId`)? Does extraction or the control plane reject it
+anywhere? Then rewrite the identity paragraph and, if the behavior is a silent
+overwrite, add it to the doc's sharp-edges list. State what is true: the
+uniqueness scope of an authored id, what the lesson join in the endpoint does
+and does not protect, and what an author must not do.
+
+### 2. Medium — `.brain/projects/quiz-component/decide-multi-select-in-the-inline-quiz.svx` (~line 71)
+
+The receipt shows a `gradeAnswer` snippet whose scalar branch uses strict
+equality, so `gradeAnswer('a', ['a'])` grades false. That defect was found in
+review and fixed before merge — read the shipped
+`apps/ai-hero/src/lib/quiz/grade-answer.ts` and its test to confirm the
+shipped behavior for `('a', ['a'])`. This file is a decision receipt: do NOT
+rewrite the historical snippet. Add a short dated correction note directly
+under it saying the snippet predates the review fix, what the shipped
+function does differently, and pointing at the shipped file.
+
+### 3. Low — `.brain/projects/quiz-component/build-the-answer-endpoint.svx` (~line 88)
+
+In the "No Kit on the answer path" bullet, charter-era prose still says
+`respondentKey` ties a logged-out learner's answers together and `userId`
+fills in on login — impossible after gate-the-saving, and contradicted by the
+Result below. The neighboring anonymous-learners bullet already shows the
+pattern: strike or annotate the stale sentence with a dated "superseded by
+gate-the-saving" note. Keep the historical text legible; do not delete it.
+
+## Rules
+
+- Only touch the three files named above (plus this task file for the claim).
+- Match each file's existing style. There is no enforced formatter; do not
+  run prettier on `quiz.tsx` or anything else.
+- `.brain` receipts are history: annotate, never rewrite what was decided.
+- One commit is fine; two (doc vs receipts) also fine.
+
+## Finish
+
+Print a `DONE` summary, max 12 lines: what you verified in control-plane
+(the actual cross-lesson duplicate-id behavior, with file:line receipts),
+what changed in each file, and the commit sha(s).

@@ -8,6 +8,10 @@ import {
 	AiCodingDictionarySourceChanged,
 } from '@/inngest/events/ai-coding-dictionary'
 import {
+	CONTENT_RESOURCE_INDEX_REQUESTED_EVENT,
+	ContentResourceIndexRequested,
+} from '@/inngest/events/content-resource-index'
+import {
 	GITHUB_SOURCE_SYNC_REQUESTED_EVENT,
 	GithubSourceSyncRequested,
 } from '@/inngest/events/github-source'
@@ -65,6 +69,10 @@ import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
+import {
+	WORKSHOP_INTEREST_REQUESTED_EVENT,
+	type WorkshopInterestRequested,
+} from '@/inngest/events/workshop-interest'
 import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
@@ -137,6 +145,10 @@ import {
 	SlackArtworkSkipRequested,
 } from './events/artwork'
 import {
+	COURSE_SYNC_POLL_REQUESTED_EVENT,
+	type CourseSyncPollRequested,
+} from './events/course-sync-poll'
+import {
 	COHORT_ENTITLEMENT_SYNC_USER_EVENT,
 	COHORT_UPDATED_EVENT,
 	CohortEntitlementSyncUserPayload,
@@ -177,6 +189,8 @@ import { inngestTelemetryMiddleware } from './inngest-telemetry-middleware'
 export type Events = {
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
+	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested
+	[COURSE_SYNC_POLL_REQUESTED_EVENT]: CourseSyncPollRequested
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
 	[IMAGE_RESOURCE_CREATED_EVENT]: ImageResourceCreated
@@ -216,6 +230,7 @@ export type Events = {
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
 	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
+	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested
 	[SLACK_ARTWORK_REGENERATE_REQUESTED_EVENT]: SlackArtworkRegenerateRequested

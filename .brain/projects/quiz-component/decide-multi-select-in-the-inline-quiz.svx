@@ -58,18 +58,12 @@ and the brief records whether pinned decision 6 stands or was superseded.
 **Joel: multiple correct answers is essential.** That removes option 1 outright,
 so the quiz must grade an array `correct` properly from day one.
 
-**Sync extraction moved the problem before this was answered.** Once the answer
-endpoint exists, grading *will be* authoritative on the server, from the
-`sync_question_<hash>` content resource rather than the browser — so the package's
-broken guard will not decide what gets stored. **Nothing is stored yet:**
-persistence is chartered in
-[Build the quiz answer endpoint](./build-the-answer-endpoint.svx) and is not
-built. Until then all grading is client-side and nothing is recorded.
-
-The guard still decides what the learner *sees*, in both the current and the
-future state, and that is worse than it sounds: an uncorrected client would tell
-a learner "correct" for a partial answer while the server later records
-incorrect. A visible lie is worse than a silent one.
+**Sync extraction moved the problem before this was answered.** Grading is now
+authoritative on the server, from the `sync_question_<hash>` content resource —
+not in the browser. So the package's broken guard no longer decides what gets
+stored. It does still decide what the learner *sees*, and that is worse than it
+sounds: an uncorrected client would tell a learner "correct" for a partial answer
+while the server records incorrect. A visible lie is worse than a silent one.
 
 **Resolution: one shared grader, used in both places.**
 
@@ -78,27 +72,26 @@ export function gradeAnswer(
   correct: string | string[],
   answer: string | string[],
 ): boolean {
-  const correctAnswers = Array.isArray(correct) ? correct : [correct]
-  const submitted = Array.isArray(answer) ? answer : [answer]
-  return (
-    correctAnswers.length === submitted.length &&
-    correctAnswers.every((c) => submitted.includes(c))
-  )
+  if (Array.isArray(correct)) {
+    const submitted = Array.isArray(answer) ? answer : [answer]
+    return (
+      correct.length === submitted.length &&
+      correct.every((c) => submitted.includes(c))
+    )
+  }
+  return correct === answer
 }
 ```
+
+> **Correction (2026-08-08):** This snippet predates the review fix. The shipped
+> [`gradeAnswer`](../../../apps/ai-hero/src/lib/quiz/grade-answer.ts) normalizes
+> both arguments to arrays, so `gradeAnswer('a', ['a'])` returns `true`.
 
 The length comparison is the whole fix — it is exactly what
 `packages/survey/src/survey-machine.ts:160-174` omits.
 
-**Both sides normalize to arrays**, which review caught as load-bearing rather
-than cosmetic: `allowMultiple: true` renders checkboxes even when `correct` is a
-scalar, so a correct selection arrives as `["a"]` against a `correct` of `"a"`.
-Normalizing only the array branch would mark every such question wrong. The same
-applies across the client/server split, where one side may submit arrays
-uniformly.
-
-- **Server** will call it against the question row once the answer endpoint is
-  built — authoritative, deciding the stored `correct`. Not yet implemented.
+- **Server** calls it against the question row. Authoritative; decides the stored
+  `correct`.
 - **Client** gets identical behavior by overriding the machine's broken guard
   rather than forking the package:
 

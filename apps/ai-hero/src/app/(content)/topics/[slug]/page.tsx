@@ -6,9 +6,16 @@ import { ResourceRow } from '@/components/landing/resource-row'
 import { HubLayout } from '@/components/navigation/hub-layout'
 import { env } from '@/env.mjs'
 import { type Post } from '@/lib/posts'
-import { getCachedGoalSectionItems, type ResolvedItem } from '@/lib/goal-sections-query'
+import {
+	getCachedGoalSectionItems,
+	type ResolvedItem,
+} from '@/lib/goal-sections-query'
 import { getCachedPostsByTag } from '@/lib/posts-query'
-import { getCachedTopicTag } from '@/lib/topics-query'
+import { getCachedTopicSlugs, getCachedTopicTag } from '@/lib/topics-query'
+
+export const revalidate = 3600
+export const dynamicParams = true
+export const dynamic = 'force-static'
 
 type Props = {
 	params: Promise<{ slug: string }>
@@ -128,6 +135,11 @@ export default async function TopicPage({ params }: Props) {
 	)
 }
 
+export async function generateStaticParams() {
+	const slugs = await getCachedTopicSlugs()
+	return slugs.map((slug) => ({ slug }))
+}
+
 /**
  * Topic listing row — the landing page's `ResourceRow`, not a bespoke one.
  *
@@ -146,7 +158,8 @@ function TopicPostRow({
 	post: Post
 	resolved?: ResolvedItem
 }) {
-	const image = resolved?.thumbnailUrl || post.fields.coverImage?.url || undefined
+	const image =
+		resolved?.thumbnailUrl || post.fields.coverImage?.url || undefined
 	const label = resolved?.isVideo ? 'Video' : 'Article'
 	// "Video · 12 min" on one line, matching `metaLabel` on the Map rather than
 	// splitting the duration onto its own `meta` row.

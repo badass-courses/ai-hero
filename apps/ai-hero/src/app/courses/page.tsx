@@ -6,6 +6,7 @@ import {
 } from '@/lib/cohort-stats'
 import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import { getCoursesHeroState } from '@/lib/courses-hero-state'
+import { getNextOfferSafe } from '@/lib/next-offer'
 import {
 	getLatestCohort,
 	getPastCohorts,
@@ -50,8 +51,33 @@ export default async function CoursesRoute() {
 
 	// Depends on the flagship (the sale is guarded to its resource id, and the
 	// running window is read off its cohort), so it cannot join the batch above.
-	const { sale, running } = await getCoursesHeroState(flagship)
-	// Excluding whatever the hero shows, so the page never lists a cohort twice.
+	// `getNextOfferSafe` joins it because it is the same cached read the hero
+	// state resolves internally — a second call is a cache hit, not a query.
+	const [{ sale, running }, offer] = await Promise.all([
+		getCoursesHeroState(flagship),
+		getNextOfferSafe(),
+	])
+
+	// The hero follows the offer ladder (`next-offer.ts`). When the top offer
+	// is a live SALE on the self-paced workshop, the workshop IS the hero —
+	// even over an open cohort enrollment, matching the ladder's own rule that
+	// a discount outranks seats ("if we have discounted something, that is the
+	// thing to talk about") — and the cohort takes a card in the grid. Sale
+	// only: `WorkshopHero` is a purchase hero ("Available now", "Get the
+	// course"), and a `workshop-waitlist` offer — an unreleased course — would
+	// wear that copy as a lie. The id check keeps a sale on the cohort (or any
+	// other resource) from hijacking the slot.
+	const featuredWorkshopOffer =
+		offer &&
+		offer.kind === 'sale' &&
+		comingNextWorkshop &&
+		offer.id === comingNextWorkshop.id
+			? offer
+			: null
+
+	// The flagship never sits on the past shelf: it is either the hero, or —
+	// when the workshop leads — the catalog's cohort card (`CoursesPage`).
+	// Either way the page lists it exactly once.
 	const pastCohorts = flagship
 		? allPastCohorts.filter((cohort) => cohort.id !== flagship.id)
 		: allPastCohorts
@@ -65,11 +91,8 @@ export default async function CoursesRoute() {
 				pastCohorts={pastCohorts}
 				sale={sale}
 				running={running}
-				comingNext={
-					comingNextWorkshop
-						? { image: comingNextWorkshop.fields?.coverImage?.url }
-						: null
-				}
+				featuredWorkshopOffer={featuredWorkshopOffer}
+				comingNextWorkshop={comingNextWorkshop}
 			/>
 		</LayoutClient>
 	)

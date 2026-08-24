@@ -2,6 +2,8 @@
 
 import * as React from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { AutoPlayToggle } from '@/app/(content)/_components/autoplay-toggle'
+import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import Spinner from '@/components/spinner'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
@@ -9,8 +11,8 @@ import { useMuxPlayer } from '@/hooks/use-mux-player'
 import {
 	handleTextTrackChange,
 	setPreferredTextTrack,
-	useMuxPlayerPrefs,
 } from '@/hooks/use-mux-player-prefs'
+import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
 import { setProgressForResource } from '@/lib/progress'
 import { track } from '@/utils/analytics'
 import {
@@ -51,12 +53,9 @@ export function PostPlayer({
 
 	const { dispatch: dispatchVideoPlayerOverlay, state } =
 		useVideoPlayerOverlay()
-	const {
-		setMuxPlayerRef,
-		muxPlayerRef,
-		setPlayerPrefs,
-		playerPrefs: { playbackRate, volume, autoplay },
-	} = useMuxPlayer()
+	const { setMuxPlayerRef, setPlayerPrefs, playerPrefs } = useMuxPlayer()
+	const { playbackRate, volume, autoplay } = playerPrefs
+	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const muxMetadata = useMuxMetadata({
 		videoId: videoResource?.id,
 		videoTitle: title || videoResource?.id,
@@ -81,10 +80,12 @@ export function PostPlayer({
 		playsInline: true,
 		defaultHiddenCaptions: true,
 		streamType: 'on-demand',
+		forwardSeekOffset: 5,
+		backwardSeekOffset: 5,
 		thumbnailTime: autoplay ? 0 : thumbnailTime || 0,
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
-		minResolution: '540p',
+		minResolution,
 		accentColor: '#DD9637',
 		currentTime: time ? Number(time) : 0,
 		playbackRate,
@@ -137,13 +138,24 @@ export function PostPlayer({
 	return (
 		<div className={cn('relative h-full w-full', className)}>
 			{playbackId ? (
-				<MuxPlayer
-					metadata={muxMetadata}
-					playbackId={playbackId}
-					className={cn(className)}
-					ref={playerRef}
-					{...playerProps}
-				/>
+				<PlayerGestureShell
+					playerRef={playerRef}
+					className="h-full w-full"
+					chromeSlot={
+						<AutoPlayToggle
+							id="autoplay-player-chrome"
+							className="rounded-[9px] bg-black/60 px-3 py-1.5 text-white"
+						/>
+					}
+				>
+					<MuxPlayer
+						metadata={muxMetadata}
+						playbackId={playbackId}
+						className={cn('h-full w-full', className)}
+						ref={playerRef}
+						{...playerProps}
+					/>
+				</PlayerGestureShell>
 			) : (
 				<div className="flex h-full w-full items-center justify-center bg-gray-300">
 					<Spinner />
@@ -152,7 +164,9 @@ export function PostPlayer({
 			{state.action?.type === 'COMPLETED' && (
 				<div
 					className={cn(
-						'bg-background/85 dark absolute left-0 top-0 flex h-full w-full flex-col items-center justify-center pb-6 backdrop-blur-md sm:pb-16',
+						// z-30 keeps the completed overlay above the gesture layer's
+						// z-20 HUD/cluster so end-of-video actions stay tappable.
+						'bg-background/85 dark absolute left-0 top-0 z-30 flex h-full w-full flex-col items-center justify-center pb-6 backdrop-blur-md sm:pb-16',
 						className,
 					)}
 				>
@@ -200,6 +214,8 @@ export function SimplePostPlayer({
 	handleVideoTimeUpdate?: (e: Event) => void
 	thumbnailTime?: number
 }) {
+	const { playerPrefs } = useMuxPlayer()
+	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const muxMetadata = useMuxMetadata({
 		videoId: videoResource?.id,
 		videoTitle: videoResource?.title ?? undefined,
@@ -218,7 +234,7 @@ export function SimplePostPlayer({
 		accentColor: '#DD9637',
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
-		minResolution: '540p',
+		minResolution,
 	} as MuxPlayerProps
 
 	const playbackId =

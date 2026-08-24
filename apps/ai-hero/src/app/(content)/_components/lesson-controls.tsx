@@ -61,14 +61,18 @@ export const LessonControls = async ({
 	return (
 		<div
 			className={cn(
-				'bg-card mb-8 flex w-full flex-col items-stretch border-b sm:flex-row sm:items-center sm:justify-between',
+				'bg-card mb-8 flex w-full items-center justify-between border-b',
 				className,
 			)}
 		>
-			<div className="flex grow items-center">
+			{/* Left cells separate with border-r, right cells with border-l.
+			    Only the growing Get Full Access button ever pushes the last left
+			    cell flush against the right group (mobile), doubling the seam —
+			    drop the trailing border-r exactly there and nowhere else. */}
+			<div className="flex grow items-center max-sm:[&:has([data-get-access])>*:last-child]:border-r-0">
 				<React.Suspense fallback={null}>
 					<GetAccessButton
-						className="border-r-border bg-primary dark:hover:bg-primary/90 h-10 rounded-none border-0 border-r px-5 text-sm sm:h-12"
+						className="border-r-border bg-primary dark:hover:bg-primary/90 h-10 grow justify-center rounded-none border-0 border-r px-5 text-sm sm:h-12 sm:grow-0"
 						abilityLoader={abilityLoader}
 						moduleSlug={moduleSlug}
 					/>
@@ -78,20 +82,18 @@ export const LessonControls = async ({
 						abilityLoader={abilityLoader}
 						lesson={lesson}
 						problem={problem}
-						className="hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r bg-transparent px-3 text-sm sm:h-12"
+						variant="ghost"
+						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
 					/>
 				</React.Suspense>
 				{githubUrl && (
 					<Button
 						asChild
-						variant="outline"
-						className="hover:bg-muted/50 border-r-border h-10 rounded-none border-0 bg-transparent sm:h-12 sm:border-r"
+						variant="ghost"
+						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 sm:h-12 sm:px-4"
 					>
-						<Link href={githubUrl} target="_blank">
+						<Link href={githubUrl} target="_blank" aria-label="Source code">
 							<Github className="text-muted-foreground size-4" />
-							<span className="inline-block sm:hidden" aria-hidden="true">
-								Code
-							</span>
 							<span className="hidden sm:inline-block">Source Code</span>
 						</Link>
 					</Button>
@@ -99,16 +101,19 @@ export const LessonControls = async ({
 				{markdownToCopy && (
 					<CopyPageButton
 						markdown={markdownToCopy}
-						className="hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r bg-transparent px-3 text-sm sm:h-12"
+						aria-label="Copy page"
+						labelClassName="hidden sm:grid"
+						variant="ghost"
+						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-r-border h-10 rounded-none border-0 border-r px-3 text-sm sm:h-12"
 					/>
 				)}
 			</div>
-			<div className="flex items-center justify-end border-t empty:hidden sm:border-t-0 [&>*:first-child]:border-l-0 sm:[&>*:first-child]:border-l">
+			<div className="flex items-center justify-end empty:hidden">
 				{isProblemLesson && (
 					<Button
 						asChild
-						variant="outline"
-						className="hover:bg-muted/50 border-l-border h-10 rounded-none border-0 border-l bg-transparent sm:h-12"
+						variant="ghost"
+						className="hover:bg-muted/50 dark:hover:bg-muted/50 border-l-border h-10 rounded-none border-0 border-l sm:h-12"
 					>
 						<Link href={`${lesson.fields.slug}/solution`} prefetch>
 							Solution

@@ -1,0 +1,4 @@
+Country coordinates derived from world-countries 5.1.0.
+Source: https://github.com/mledoze/countries
+License: Open Database License 1.0, https://opendatacommons.org/licenses/odbl/1-0/
+Projection: cca2 and latlng fields only.

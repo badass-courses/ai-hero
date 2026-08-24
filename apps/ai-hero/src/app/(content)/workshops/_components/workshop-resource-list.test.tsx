@@ -4,6 +4,7 @@ import type {
 	CohortNavigation,
 	CohortWorkshopNav,
 } from '@/lib/cohort-navigation'
+import { createAppAbility } from '@/ability'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ResourceListViewProps } from '../../_components/resource-list-view'
@@ -16,6 +17,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('next/navigation', () => ({
 	useParams: () => ({ module: 'claude-code~p9j8f' }),
 	usePathname: () => '/workshops/claude-code~p9j8f/permissions~pwt8r',
+}))
+
+vi.mock('next-auth/react', () => ({
+	useSession: () => ({ status: 'authenticated' }),
 }))
 
 vi.mock('@/trpc/react', () => ({
@@ -37,7 +42,10 @@ vi.mock(
 	() => ({
 		useWorkshopNavigation: () => ({
 			id: 'workshop-p9j8f',
-			fields: { slug: 'claude-code~p9j8f', title: 'Getting To Know Claude Code' },
+			fields: {
+				slug: 'claude-code~p9j8f',
+				title: 'Getting To Know Claude Code',
+			},
 			resources: [],
 			isSidebarCollapsed: false,
 			setIsSidebarCollapsed: () => {},
@@ -58,7 +66,10 @@ vi.mock('../../_components/resource-list-view', () => ({
 	},
 }))
 
-import { WorkshopResourceList } from './workshop-resource-list'
+import {
+	getAnonymousWorkshopAbilityRules,
+	WorkshopResourceList,
+} from './workshop-resource-list'
 
 function workshop(
 	overrides: Partial<CohortWorkshopNav> & { id: string },
@@ -162,5 +173,65 @@ describe('WorkshopResourceList cohort context', () => {
 
 		expect(renderList()?.nextModule).toBeUndefined()
 		expect(renderList()?.positionLabel).toBe('Workshop 1 of 1')
+	})
+})
+
+describe('anonymous workshop ability', () => {
+	it('links only resources marked free in the cached curriculum', () => {
+		const freeLesson = { id: 'free-lesson', type: 'lesson', fields: {} }
+		const paidLesson = { id: 'paid-lesson', type: 'lesson', fields: {} }
+		const ability = createAppAbility(
+			getAnonymousWorkshopAbilityRules({
+				id: 'workshop',
+				type: 'workshop',
+				fields: {},
+				resources: [
+					{
+						metadata: { tier: 'free' },
+						resource: freeLesson,
+					},
+					{
+						metadata: { tier: 'standard' },
+						resource: paidLesson,
+					},
+				],
+			} as any),
+		)
+
+		expect(
+			ability.can('read', {
+				...freeLesson,
+				__caslSubjectType__: 'Content',
+			} as any),
+		).toBe(true)
+		expect(
+			ability.can('read', {
+				...paidLesson,
+				__caslSubjectType__: 'Content',
+			} as any),
+		).toBe(false)
+	})
+
+	it('grants every lesson in a free section', () => {
+		const rules = getAnonymousWorkshopAbilityRules({
+			id: 'workshop',
+			type: 'workshop',
+			fields: {},
+			resources: [
+				{
+					metadata: { tier: 'free' },
+					resource: {
+						id: 'section',
+						type: 'section',
+						fields: {},
+						resources: [
+							{ resource: { id: 'lesson', type: 'lesson', fields: {} } },
+						],
+					},
+				},
+			],
+		} as any)
+
+		expect(rules[0]?.conditions).toEqual({ id: { $in: ['lesson'] } })
 	})
 })

@@ -5,7 +5,7 @@ import { resourceProgress } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { and, desc, eq, isNotNull } from 'drizzle-orm'
-import { revalidateTag } from 'next/cache'
+import { revalidateTag, unstable_cache } from 'next/cache'
 import Typesense from 'typesense'
 import type { MultiSearchRequestSchema } from 'typesense/lib/Typesense/MultiSearch'
 import { z } from 'zod'
@@ -51,6 +51,13 @@ function readString(obj: unknown, key: string): string | undefined {
 	if (!obj || typeof obj !== 'object') return undefined
 	const v = (obj as Record<string, unknown>)[key]
 	return typeof v === 'string' && v.length > 0 ? v : undefined
+}
+
+function readTimestamp(obj: unknown, key: string): number | undefined {
+	const value = readString(obj, key)
+	if (!value) return undefined
+	const timestamp = Date.parse(value)
+	return Number.isFinite(timestamp) ? timestamp : undefined
 }
 
 function readImageUrl(obj: unknown, key: string): string | undefined {
@@ -99,10 +106,17 @@ async function deriveResourceImage(
 	}
 }
 
+export type TypesenseUpsertResult =
+	| { ok: true }
+	| {
+			ok: false
+			reason: 'config-missing' | 'invalid-resource' | 'write-failed'
+	  }
+
 export async function upsertPostToTypeSense(
 	post: ContentResource,
 	action: PostAction,
-) {
+): Promise<TypesenseUpsertResult> {
 	try {
 		void log.debug('typesense.upsert.init', {
 			host: process.env.NEXT_PUBLIC_TYPESENSE_HOST,
@@ -118,7 +132,7 @@ export async function upsertPostToTypeSense(
 				postId: post.id,
 				resourceType: post.type,
 			})
-			return
+			return { ok: false, reason: 'config-missing' }
 		}
 		const typesenseWriteClient = new Typesense.Client({
 			nodes: [
@@ -147,13 +161,14 @@ export async function upsertPostToTypeSense(
 				void log.info('typesense.upsert.skip-delete.success', {
 					postId: post.id,
 				})
+				return { ok: true }
 			} catch (err: any) {
 				void log.warn('typesense.upsert.skip-delete.failed', {
 					postId: post.id,
 					error: getErrorMessage(err),
 				})
+				return { ok: false, reason: 'write-failed' }
 			}
-			return
 		}
 
 		void log.debug('typesense.tags.fetch', {
@@ -227,6 +242,7 @@ export async function upsertPostToTypeSense(
 			visibility: post.fields?.visibility,
 			state: post.fields?.state,
 			created_at_timestamp: post.createdAt?.getTime() ?? Date.now(),
+			published_at_timestamp: readTimestamp(post.fields, 'publishedAt'),
 			updated_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
 			...(tags.length > 0 && { tags: tags.map((tag) => tag) }),
 			...(parentResources && {
@@ -250,7 +266,7 @@ export async function upsertPostToTypeSense(
 				action,
 				error: resource.error.message,
 			})
-			return
+			return { ok: false, reason: 'invalid-resource' }
 		}
 
 		void log.debug('typesense.upsert.prepare', {
@@ -266,9 +282,10 @@ export async function upsertPostToTypeSense(
 				.create(
 					{
 						...resource.data,
-						...(action === 'publish' && {
-							published_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
-						}),
+						...(action === 'publish' &&
+							resource.data.published_at_timestamp === undefined && {
+								published_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
+							}),
 						updated_at_timestamp: post.updatedAt?.getTime() ?? Date.now(),
 					},
 					{ action: 'emplace' },
@@ -279,6 +296,7 @@ export async function upsertPostToTypeSense(
 				action,
 			})
 			revalidatePostsGraph(post.id)
+			return { ok: true }
 		} catch (err: any) {
 			void log.warn('typesense.upsert.failed', {
 				postId: post.id,
@@ -286,6 +304,7 @@ export async function upsertPostToTypeSense(
 				error: getErrorMessage(err),
 				action,
 			})
+			return { ok: false, reason: 'write-failed' }
 		}
 	} catch (error: any) {
 		// Catch any unexpected errors but don't throw
@@ -295,6 +314,7 @@ export async function upsertPostToTypeSense(
 			resourceType: post.type,
 			action,
 		})
+		return { ok: false, reason: 'write-failed' }
 	}
 }
 
@@ -485,26 +505,6 @@ export async function getNearestNeighbour(
 	distanceThreshold: number,
 	documentIdsToSkip?: string[],
 ) {
-	if (
-		!process.env.TYPESENSE_WRITE_API_KEY ||
-		!process.env.NEXT_PUBLIC_TYPESENSE_HOST
-	) {
-		void log.warn('typesense.query.config-missing', {
-			documentId,
-		})
-		return
-	}
-	const typesenseWriteClient = new Typesense.Client({
-		nodes: [
-			{
-				host: process.env.NEXT_PUBLIC_TYPESENSE_HOST!,
-				port: 443,
-				protocol: 'https',
-			},
-		],
-		apiKey: process.env.TYPESENSE_WRITE_API_KEY!,
-		connectionTimeoutSeconds: 2,
-	})
 	let completedItemIds: string[] = []
 	const { session } = await getServerAuthSession()
 	if (session?.user?.id) {
@@ -529,6 +529,75 @@ export async function getNearestNeighbour(
 		}
 	}
 
+	return queryNearestNeighbour(
+		documentId,
+		numberOfNearestNeighborsToReturn,
+		distanceThreshold,
+		completedItemIds,
+		documentIdsToSkip,
+	)
+}
+
+const _getCachedPublicNearestNeighbour = unstable_cache(
+	async (
+		documentId: string,
+		numberOfNearestNeighborsToReturn: number,
+		distanceThreshold: number,
+		documentIdsToSkip?: string[],
+	) =>
+		queryNearestNeighbour(
+			documentId,
+			numberOfNearestNeighborsToReturn,
+			distanceThreshold,
+			[],
+			documentIdsToSkip,
+		),
+	['public-nearest-neighbour-v1'],
+	{ revalidate: 3600, tags: ['posts-graph'] },
+)
+
+/** Shared, request-independent recommendations for prerendered content. */
+export async function getPublicNearestNeighbour(
+	documentId: string,
+	numberOfNearestNeighborsToReturn: number,
+	distanceThreshold: number,
+	documentIdsToSkip?: string[],
+) {
+	return _getCachedPublicNearestNeighbour(
+		documentId,
+		numberOfNearestNeighborsToReturn,
+		distanceThreshold,
+		documentIdsToSkip,
+	)
+}
+
+async function queryNearestNeighbour(
+	documentId: string,
+	numberOfNearestNeighborsToReturn: number,
+	distanceThreshold: number,
+	completedItemIds: string[],
+	documentIdsToSkip?: string[],
+) {
+	if (
+		!process.env.TYPESENSE_WRITE_API_KEY ||
+		!process.env.NEXT_PUBLIC_TYPESENSE_HOST
+	) {
+		void log.warn('typesense.query.config-missing', {
+			documentId,
+		})
+		return
+	}
+	const typesenseWriteClient = new Typesense.Client({
+		nodes: [
+			{
+				host: process.env.NEXT_PUBLIC_TYPESENSE_HOST!,
+				port: 443,
+				protocol: 'https',
+			},
+		],
+		apiKey: process.env.TYPESENSE_WRITE_API_KEY!,
+		connectionTimeoutSeconds: 2,
+	})
 	const document: any = await typesenseWriteClient
 		.collections(TYPESENSE_COLLECTION_NAME)
 		.documents(documentId)

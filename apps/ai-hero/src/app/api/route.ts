@@ -4,6 +4,9 @@ import {
 	DISCOVERY_CACHE_CONTROL,
 } from '@/lib/agent-discovery'
 
+export const dynamic = 'force-static'
+export const revalidate = 3600
+
 export async function GET() {
 	return NextResponse.json(buildApiDiscoveryDocument(), {
 		headers: {

@@ -11,6 +11,7 @@ vi.mock('@/env.mjs', () => ({
 		STRIPE_SECRET_TOKEN: 'test_stripe_token',
 		STRIPE_WEBHOOK_SECRET: 'test_webhook_secret',
 		DATABASE_URL: 'sqlite://test.db',
+		NEXTAUTH_SECRET: 'test_nextauth_secret',
 		OPENAI_API_KEY: 'test_openai_key',
 		INNGEST_EVENT_KEY: 'test_inngest_key',
 		INNGEST_SIGNING_KEY: 'test_inngest_signing',

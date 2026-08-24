@@ -1,0 +1,41 @@
+---
+title: Preserve the best valid price after login
+status: complete
+assignee: "shitrat (flagg, herdr pane w3T:p2R, 2026-08-19)"
+branch: worker/ppp-login-price
+---
+
+# Goal
+
+Fix AIH-245 so authentication never replaces a lower valid regional price with a higher alumni price.
+
+# Source context
+
+- `/Users/joel/Code/badass-courses/aihero-support/.brain/tasks/fix-ppp-lower-price-lost-after-login.svx`
+- Course Builder PPP algorithm in `packages/core/src/lib/pricing/parity-coupon.ts`
+
+The policy is deterministic: discounts do not stack, and the largest valid discount wins.
+
+# Required work
+
+1. Claim this task by setting `assignee`.
+2. Read repo instructions and relevant Course Builder source.
+3. Trace anonymous pricing, login callback state, alumni coupon lookup, PPP lookup, checkout URL construction, and server rendering.
+4. Identify where best-valid-price selection fails after login.
+5. Add failing tests for Turkey and Thailand with a lower regional price plus a higher alumni price.
+6. Add controls for ineligible PPP regions and alumni-only users.
+7. Implement the smallest deterministic fix. Do not add discount stacking.
+8. Run targeted tests, type checks, and lint.
+9. Write `.brain/tasks/review-best-valid-price-after-login.svx` with root cause, changed files, tests, production verification, and residual risks.
+10. Commit on this worker branch as `shitratgit[bot]`. Do not push and do not touch main.
+
+# Safety
+
+- No production, Stripe, coupon, checkout, Front, or customer mutations.
+- Never edit existing files under `.brain/data/**/receipts/`.
+- Preserve the restricted-coupon and exclusive-coupon rules from the launch hotfix.
+- Stop if the correct ownership is Course Builder and the app cannot safely fix it alone. Record the exact upstream patch shape.
+
+# Done
+
+Print `DONE` with the commit, root cause, tests, changed files, and production readback plan.

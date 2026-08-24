@@ -9,7 +9,7 @@ import {
 } from '@/utils/extract-markdown-headings'
 import { AlignLeft, ChevronRight } from 'lucide-react'
 import { useInteractOutside } from 'react-aria'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 

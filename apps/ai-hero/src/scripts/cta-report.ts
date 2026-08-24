@@ -14,9 +14,9 @@ import {
 	ZERO_ASK_VIDEO_DEFECT_SLUGS,
 } from '@/lib/cta-report'
 import { resolvePostCta } from '@/lib/post-cta'
-import { Client } from '@planetscale/database'
 import { and, inArray, sql } from 'drizzle-orm'
-import { drizzle } from 'drizzle-orm/planetscale-serverless'
+import { drizzle } from 'drizzle-orm/mysql2'
+import mysql from 'mysql2/promise'
 
 import { organicOpportunityCtaBySlug } from '../app/(content)/_components/organic-opportunity-cta'
 
@@ -539,34 +539,42 @@ async function loadPublishedResources() {
 	const databaseUrl = process.env.DATABASE_URL
 	if (!databaseUrl) throw new Error('DATABASE_URL is required')
 
-	const reportDb = drizzle(new Client({ url: databaseUrl }), { schema })
-	const resources = await reportDb.query.contentResource.findMany({
-		columns: {
-			id: true,
-			type: true,
-			fields: true,
-			updatedAt: true,
-		},
-		where: and(
-			inArray(contentResource.type, ['post', 'list', 'cohort']),
-			sql`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.state')) = 'published'`,
-		),
-		with: {
-			resources: {
-				columns: {
-					resourceId: true,
-				},
-				with: {
-					resource: {
-						columns: {
-							id: true,
-							type: true,
+	const pool = mysql.createPool({
+		uri: databaseUrl,
+		connectionLimit: 2,
+		maxIdle: 2,
+		enableKeepAlive: true,
+	})
+	const reportDb = drizzle(pool, { schema, mode: 'planetscale' })
+	const resources = await reportDb.query.contentResource
+		.findMany({
+			columns: {
+				id: true,
+				type: true,
+				fields: true,
+				updatedAt: true,
+			},
+			where: and(
+				inArray(contentResource.type, ['post', 'list', 'cohort']),
+				sql`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.state')) = 'published'`,
+			),
+			with: {
+				resources: {
+					columns: {
+						resourceId: true,
+					},
+					with: {
+						resource: {
+							columns: {
+								id: true,
+								type: true,
+							},
 						},
 					},
 				},
 			},
-		},
-	})
+		})
+		.finally(() => pool.end())
 
 	return resources as ResourceRecord[]
 }

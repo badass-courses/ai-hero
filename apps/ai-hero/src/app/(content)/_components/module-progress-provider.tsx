@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { api } from '@/trpc/react'
 
 import {
 	ModuleProgress,
@@ -22,6 +23,7 @@ const ModuleProgressContext = React.createContext<ModuleProgressContextType>({
 type ProgressAction =
 	| { type: 'REMOVE_LESSON_PROGRESS'; payload: { lessonId: string } }
 	| { type: 'ADD_LESSON_PROGRESS'; payload: { lessonId: string } }
+	| { type: 'HYDRATE_PROGRESS'; payload: ModuleProgress }
 
 function progressReducer(
 	progress: ModuleProgress | null,
@@ -37,6 +39,7 @@ function progressReducer(
 			totalLessonsCount: 0,
 		})
 
+	if (action.type === 'HYDRATE_PROGRESS') return action.payload
 	const { lessonId } = action.payload
 
 	let newProgress = currentProgress
@@ -107,7 +110,10 @@ export const ModuleProgressProvider = ({
 	// toggled completion stays applied immediately everywhere instead of
 	// reverting to the layout's once-loaded base while the server write catches
 	// up — no router.refresh() needed.
-	const [progress, dispatch] = React.useReducer(progressReducer, initialProgress)
+	const [progress, dispatch] = React.useReducer(
+		progressReducer,
+		initialProgress,
+	)
 
 	const removeLessonProgress = (lessonId: string) => {
 		dispatch({
@@ -131,6 +137,84 @@ export const ModuleProgressProvider = ({
 		}),
 		[progress],
 	)
+	return (
+		<ModuleProgressContext.Provider value={value}>
+			{children}
+		</ModuleProgressContext.Provider>
+	)
+}
+
+/**
+ * Starts with an anonymous-safe empty state, then loads member progress after
+ * hydration. Workshop layouts use this so progress cannot poison their ISR shell.
+ */
+export const ClientModuleProgressProvider = ({
+	children,
+	moduleIdOrSlug,
+}: {
+	children: React.ReactNode
+	moduleIdOrSlug: string
+}) => {
+	// Always fetch: learners in the email-course flow have progress keyed to the
+	// httpOnly `ck_subscriber` cookie without ever being next-auth-authenticated,
+	// so gating this on session status left their completions (written fine by
+	// the server action) invisible after every reload. The server resolves
+	// session → subscriber cookie → empty, and the anonymous branch answers
+	// without touching the database.
+	const { data: moduleProgress = null } = api.progress.moduleProgress.useQuery(
+		{ moduleIdOrSlug },
+		{
+			staleTime: 60_000,
+			refetchOnWindowFocus: false,
+			retry: 1,
+		},
+	)
+
+	return (
+		<ModuleProgressStateProvider
+			key={moduleIdOrSlug}
+			initialProgress={moduleProgress}
+		>
+			{children}
+		</ModuleProgressStateProvider>
+	)
+}
+
+function ModuleProgressStateProvider({
+	children,
+	initialProgress,
+}: {
+	children: React.ReactNode
+	initialProgress: ModuleProgress | null
+}) {
+	const [progress, dispatch] = React.useReducer(
+		progressReducer,
+		initialProgress,
+	)
+
+	React.useEffect(() => {
+		if (initialProgress) {
+			// The query resolves once per mounted module. Remounting by key keeps this
+			// update from carrying progress between workshops.
+			dispatch({ type: 'HYDRATE_PROGRESS', payload: initialProgress })
+		}
+	}, [initialProgress])
+
+	const removeLessonProgress = (lessonId: string) => {
+		dispatch({ type: 'REMOVE_LESSON_PROGRESS', payload: { lessonId } })
+	}
+	const addLessonProgress = (lessonId: string) => {
+		dispatch({ type: 'ADD_LESSON_PROGRESS', payload: { lessonId } })
+	}
+	const value = React.useMemo(
+		() => ({
+			moduleProgress: progress,
+			removeLessonProgress,
+			addLessonProgress,
+		}),
+		[progress],
+	)
+
 	return (
 		<ModuleProgressContext.Provider value={value}>
 			{children}

@@ -4,6 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { type AppAbility } from '@/ability'
 import { TYPE } from '@/components/landing/type'
+import { useFillViewportHeight } from '@/hooks/use-fill-viewport-height'
 import { useScrollToActive } from '@/hooks/use-scroll-to-active'
 import { subject } from '@casl/ability'
 import {
@@ -66,6 +67,8 @@ export type ResourceListViewProps = {
 	moduleId: string
 	resources?: ContentResourceResource[]
 	defaultOpenSectionId?: string | null
+	/** Start with every section collapsed (overrides the first-section default). */
+	defaultAllClosed?: boolean
 
 	currentSlug?: string
 	isOnSolution?: boolean
@@ -99,6 +102,7 @@ export function ResourceListView({
 	moduleId,
 	resources,
 	defaultOpenSectionId,
+	defaultAllClosed,
 	currentSlug,
 	isOnSolution = false,
 	completedLessons,
@@ -117,6 +121,11 @@ export function ResourceListView({
 	stickyTopClassName = 'top-0',
 }: ResourceListViewProps) {
 	const scrollAreaRef = useScrollToActive(currentSlug)
+	// Measured height for the sticky box: the `maxHeight` class alone can't be
+	// right both before and after the non-sticky chrome (promo bar, lesson-page
+	// nav) scrolls away. See the hook's doc comment. `h-auto` callers (list
+	// pages) flow with the page and are left alone.
+	const stickyRef = useFillViewportHeight<HTMLDivElement>(maxHeight !== 'h-auto')
 	const hasSections = resources?.some((r) => r?.resource?.type === 'section')
 
 	return (
@@ -151,6 +160,7 @@ export function ResourceListView({
 					</span>
 				)}
 				<div
+					ref={stickyRef}
 					className={cn(
 						'sticky flex flex-col overflow-hidden',
 						stickyTopClassName,
@@ -226,7 +236,9 @@ export function ResourceListView({
 							collapsible
 							className={cn('flex flex-col', wrapperClassName)}
 							defaultValue={
-								defaultOpenSectionId || resources?.[0]?.resource?.id
+								defaultAllClosed
+									? undefined
+									: defaultOpenSectionId || resources?.[0]?.resource?.id
 							}
 						>
 							<ol>
@@ -535,10 +547,11 @@ function LessonResource({
 		)
 	}
 
-	const subRowBase = cn(
-		'relative flex w-full min-w-0 items-center py-2 pr-10 text-[13px] tracking-[-0.005em] transition-colors',
-		indented ? 'pl-16' : 'pl-10',
-	)
+	// Left paddings here must track the regular rows' flat pl-4 (rowClasses
+	// above): the lesson link sits at pl-4 like its siblings, only the
+	// problem/solution sub-rows step in to pl-10.
+	const subRowBase =
+		'relative flex w-full min-w-0 items-center py-2 pl-10 pr-10 text-[13px] tracking-[-0.005em] transition-colors'
 	const subRowActive = 'bg-foreground/[0.03] dark:bg-foreground/[0.04]'
 	const subRowInactive =
 		'hover:bg-foreground/[0.02] dark:hover:bg-foreground/[0.03]'
@@ -558,10 +571,7 @@ function LessonResource({
 					<Link
 						href={lessonHref}
 						prefetch
-						className={cn(
-							'relative flex w-full min-w-0 items-center py-2.5 pr-12 transition-colors',
-							indented ? 'pl-10' : 'pl-4',
-						)}
+						className="relative flex w-full min-w-0 items-center py-2.5 pl-4 pr-12 transition-colors"
 					>
 						<span
 							className={cn(

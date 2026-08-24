@@ -1,0 +1,219 @@
+diff --git a/dist/chunk-4JLRWROQ.js b/dist/chunk-4JLRWROQ.js
+index 71ec68d799f55dcabbb7e79427dc689e2c8719d5..0ffb89cfc5638e016c4182f59a91268cb21e3432 100644
+--- a/dist/chunk-4JLRWROQ.js
++++ b/dist/chunk-4JLRWROQ.js
+@@ -36,6 +36,11 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+           const existingMerchantCharge = merchantChargeSchema.nullable().parse(await trx.query.merchantCharge.findFirst({
+             where: eq(merchantCharge.identifier, stripeChargeId)
+           }) || null);
++          // CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1
++          // This identity check must run before any existing-Purchase return.
++          if (existingMerchantCharge && (existingMerchantCharge.identifier !== stripeChargeId || existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1: existing merchant charge does not match checkout");
++          }
+           const existingPurchaseForCharge = existingMerchantCharge ? await trx.query.purchases.findFirst({
+             where: eq(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+             with: {
+@@ -47,9 +52,10 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${v4()}`;
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${v4()}`;
+           const purchaseId2 = `purch_${v4()}`;
+-          const newMerchantCharge = await trx.insert(merchantCharge).values({
++          if (!existingMerchantCharge) {
++            await trx.insert(merchantCharge).values({
+             id: merchantChargeId,
+             userId,
+             identifier: stripeChargeId,
+@@ -57,6 +63,7 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+             merchantProductId,
+             merchantCustomerId
+           });
++          }
+           const existingPurchase = purchaseSchema.nullable().parse(await trx.query.purchases.findFirst({
+             where: and(eq(purchaseTable.productId, productId), eq(purchaseTable.userId, userId), inArray(purchaseTable.status, [
+               "Valid",
+@@ -127,12 +134,20 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+               couponToUpdate = await trx.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${v4()}`;
+-          await trx.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await trx.query.merchantSession.findFirst({
++            where: eq(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${v4()}`;
++          if (!existingMerchantSession) {
++            await trx.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await trx.query.merchantCoupon.findFirst({
+             where: eq(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+@@ -194,7 +209,8 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+             stripeChargeId: options.stripeChargeId,
+             userId: options.userId
+           });
+-          trx.rollback();
++          // Throwing from the transaction callback rolls it back and preserves
++          // the actionable error instead of replacing it with "Rollback".
+           throw error;
+         }
+       });
+diff --git a/dist/lib/mysql/index.cjs b/dist/lib/mysql/index.cjs
+index 6293b631d787883806c53007776c2078a0fed81b..0958f506247c0cd0dface982699ac0350254045e 100644
+--- a/dist/lib/mysql/index.cjs
++++ b/dist/lib/mysql/index.cjs
+@@ -6032,6 +6032,11 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+           const existingMerchantCharge = import_schemas8.merchantChargeSchema.nullable().parse(await trx.query.merchantCharge.findFirst({
+             where: (0, import_drizzle_orm59.eq)(merchantCharge.identifier, stripeChargeId)
+           }) || null);
++          // CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1
++          // This identity check must run before any existing-Purchase return.
++          if (existingMerchantCharge && (existingMerchantCharge.identifier !== stripeChargeId || existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1: existing merchant charge does not match checkout");
++          }
+           const existingPurchaseForCharge = existingMerchantCharge ? await trx.query.purchases.findFirst({
+             where: (0, import_drizzle_orm59.eq)(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+             with: {
+@@ -6043,9 +6048,10 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${(0, import_uuid6.v4)()}`;
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${(0, import_uuid6.v4)()}`;
+           const purchaseId2 = `purch_${(0, import_uuid6.v4)()}`;
+-          const newMerchantCharge = await trx.insert(merchantCharge).values({
++          if (!existingMerchantCharge) {
++            await trx.insert(merchantCharge).values({
+             id: merchantChargeId,
+             userId,
+             identifier: stripeChargeId,
+@@ -6053,6 +6059,7 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+             merchantProductId,
+             merchantCustomerId
+           });
++          }
+           const existingPurchase = import_schemas8.purchaseSchema.nullable().parse(await trx.query.purchases.findFirst({
+             where: (0, import_drizzle_orm59.and)((0, import_drizzle_orm59.eq)(purchaseTable.productId, productId), (0, import_drizzle_orm59.eq)(purchaseTable.userId, userId), (0, import_drizzle_orm59.inArray)(purchaseTable.status, [
+               "Valid",
+@@ -6123,12 +6130,20 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+               couponToUpdate = await trx.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${(0, import_uuid6.v4)()}`;
+-          await trx.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await trx.query.merchantSession.findFirst({
++            where: (0, import_drizzle_orm55.eq)(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${(0, import_uuid6.v4)()}`;
++          if (!existingMerchantSession) {
++            await trx.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await trx.query.merchantCoupon.findFirst({
+             where: (0, import_drizzle_orm59.eq)(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+@@ -6190,7 +6205,8 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+             stripeChargeId: options.stripeChargeId,
+             userId: options.userId
+           });
+-          trx.rollback();
++          // Throwing from the transaction callback rolls it back and preserves
++          // the actionable error instead of replacing it with "Rollback".
+           throw error;
+         }
+       });
+diff --git a/dist/lib/mysql/workflows/create-merchant-charge-and-purchase.cjs b/dist/lib/mysql/workflows/create-merchant-charge-and-purchase.cjs
+index d511fa1776b18a0b947ae782ad68efdba0336f78..b12be313610c0480de3d0e20484e7da07078f82c 100644
+--- a/dist/lib/mysql/workflows/create-merchant-charge-and-purchase.cjs
++++ b/dist/lib/mysql/workflows/create-merchant-charge-and-purchase.cjs
+@@ -57,6 +57,11 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+           const existingMerchantCharge = import_schemas.merchantChargeSchema.nullable().parse(await trx.query.merchantCharge.findFirst({
+             where: (0, import_drizzle_orm.eq)(merchantCharge.identifier, stripeChargeId)
+           }) || null);
++          // CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1
++          // This identity check must run before any existing-Purchase return.
++          if (existingMerchantCharge && (existingMerchantCharge.identifier !== stripeChargeId || existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1: existing merchant charge does not match checkout");
++          }
+           const existingPurchaseForCharge = existingMerchantCharge ? await trx.query.purchases.findFirst({
+             where: (0, import_drizzle_orm.eq)(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+             with: {
+@@ -68,9 +73,10 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${(0, import_uuid.v4)()}`;
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${(0, import_uuid.v4)()}`;
+           const purchaseId2 = `purch_${(0, import_uuid.v4)()}`;
+-          const newMerchantCharge = await trx.insert(merchantCharge).values({
++          if (!existingMerchantCharge) {
++            await trx.insert(merchantCharge).values({
+             id: merchantChargeId,
+             userId,
+             identifier: stripeChargeId,
+@@ -78,6 +84,7 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+             merchantProductId,
+             merchantCustomerId
+           });
++          }
+           const existingPurchase = import_schemas.purchaseSchema.nullable().parse(await trx.query.purchases.findFirst({
+             where: (0, import_drizzle_orm.and)((0, import_drizzle_orm.eq)(purchaseTable.productId, productId), (0, import_drizzle_orm.eq)(purchaseTable.userId, userId), (0, import_drizzle_orm.inArray)(purchaseTable.status, [
+               "Valid",
+@@ -148,12 +155,20 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+               couponToUpdate = await trx.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${(0, import_uuid.v4)()}`;
+-          await trx.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await trx.query.merchantSession.findFirst({
++            where: (0, import_drizzle_orm.eq)(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${(0, import_uuid.v4)()}`;
++          if (!existingMerchantSession) {
++            await trx.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await trx.query.merchantCoupon.findFirst({
+             where: (0, import_drizzle_orm.eq)(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+@@ -215,7 +230,8 @@ function createMerchantChargeAndPurchaseWorkflow({ client, tables }) {
+             stripeChargeId: options.stripeChargeId,
+             userId: options.userId
+           });
+-          trx.rollback();
++          // Throwing from the transaction callback rolls it back and preserves
++          // the actionable error instead of replacing it with "Rollback".
+           throw error;
+         }
+       });

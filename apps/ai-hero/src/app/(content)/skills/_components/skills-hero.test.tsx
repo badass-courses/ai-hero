@@ -22,7 +22,18 @@ vi.mock('@/trpc/react', () => ({
 				useQuery: () => ({ data: undefined, isPending: false }),
 			},
 		},
+		useUtils: () => ({
+			ability: { getSkillsCourseCtaState: { invalidate: vi.fn() } },
+		}),
 	},
+}))
+
+// SkillsHero renders SkillsCourseForm, a client component that calls
+// useRouter() from next/navigation. renderToStaticMarkup has no app router
+// context, so the real hook throws "invariant expected app router to be
+// mounted" — mock it the same way the other skills CTA tests do.
+vi.mock('next/navigation', () => ({
+	useRouter: () => ({ push: vi.fn() }),
 }))
 
 import { SkillsHero } from './skills-hero'
@@ -36,7 +47,10 @@ describe('SkillsHero', () => {
 		expect(markup).toContain('Total skill installs')
 		expect(markup).toContain('https://www.skills.sh/b/mattpocock/skills')
 		expect(markup).toContain('alt="Live Skills.sh install count"')
-		expect(markup).toContain('flex h-7 items-center')
+		// The `flex h-7 items-center` wrapper this used to check for is gone —
+		// the stats row layout changed to `dl` with `flex flex-wrap items-end
+		// gap-x-[30px] gap-y-5` (see Stats() in skills-hero.tsx). The assertions
+		// above already cover what this test is about: the badge and its data.
 		expect(markup).not.toContain('Latest release')
 	})
 })

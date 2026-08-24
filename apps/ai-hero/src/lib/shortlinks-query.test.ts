@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	createShortlink,
+	createShortlinkAttribution,
 	getShortlinkBySlug,
 	recordClick,
 	updateShortlink,
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => {
 	const update = vi.fn(() => ({ set: updateSet }))
 	const insertValues = vi.fn()
 	const insert = vi.fn(() => ({ values: insertValues }))
+	const guid = vi.fn(() => 'abc123def456')
 
 	return {
 		findFirst,
@@ -31,6 +33,7 @@ const mocks = vi.hoisted(() => {
 		updateWhere,
 		insert,
 		insertValues,
+		guid,
 		log: {
 			info: vi.fn(),
 			warn: vi.fn(),
@@ -72,7 +75,7 @@ vi.mock('next/cache', () => ({
 }))
 
 vi.mock('@coursebuilder/utils/guid', () => ({
-	guid: () => 'guid_123',
+	guid: mocks.guid,
 }))
 
 const allowedAuth = {
@@ -359,6 +362,34 @@ describe('getShortlinkBySlug', () => {
 		await expect(getShortlinkBySlug('bad-link')).resolves.toBeNull()
 
 		expect(mocks.redisSet).not.toHaveBeenCalled()
+	})
+})
+
+describe('createShortlinkAttribution', () => {
+	it('regenerates its internal ID after primary-key collisions', async () => {
+		mocks.findFirst.mockResolvedValueOnce({
+			id: 'shortlink_123',
+			slug: 'campaign-link',
+		})
+		const primaryDuplicate = Object.assign(
+			new Error("Duplicate entry 'abc12' for key 'PRIMARY'"),
+			{ code: 'ER_DUP_ENTRY', errno: 1062 },
+		)
+		mocks.insertValues
+			.mockRejectedValueOnce(primaryDuplicate)
+			.mockRejectedValueOnce(primaryDuplicate)
+			.mockResolvedValueOnce(undefined)
+
+		await createShortlinkAttribution({
+			shortlinkSlug: 'campaign-link',
+			type: 'purchase',
+			userId: 'user_1',
+			email: 'reader@example.com',
+		})
+
+		expect(mocks.insertValues).toHaveBeenCalledTimes(3)
+		expect(mocks.guid).toHaveBeenCalledTimes(3)
+		expect(mocks.log.error).not.toHaveBeenCalled()
 	})
 })
 

@@ -7,6 +7,7 @@ import {
 	questionResponse,
 } from '@/db/schema'
 import { getSubscriberFromCookie } from '@/lib/convertkit'
+import { persistSurveyAnswers } from '@/lib/survey-answer-persistence'
 import { answerSurvey } from '@/lib/surveys-query'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
@@ -16,8 +17,6 @@ import { format } from 'date-fns'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { toSnakeCase } from 'drizzle-orm/casing'
 import { z } from 'zod'
-
-import { guid } from '@coursebuilder/utils/guid'
 
 export function formatDate(date: Date) {
 	return format(date, 'yyyy-MM-dd HH:mm:ss z')
@@ -229,100 +228,14 @@ export const convertkitRouter = createTRPCRouter({
 
 			if (input.surveyId) {
 				try {
-					const survey = await db.query.contentResource.findFirst({
-						where: and(
-							eq(contentResource.type, 'survey'),
-							sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${input.surveyId}`,
-						),
-					})
-
-					const surveyId = survey?.id || input.surveyId
-					const questionSlugs = Object.keys(input.answers).filter(
-						(slug) =>
-							input.answers[slug] !== null && input.answers[slug] !== undefined,
-					)
-
-					const questions = await db.query.contentResource.findMany({
-						where: and(
-							eq(contentResource.type, 'question'),
-							sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') IN (${sql.join(
-								questionSlugs.map((slug) => sql`${slug}`),
-								sql`, `,
-							)})`,
-						),
-					})
-
-					const slugToIdMap = new Map<string, string>()
-					for (const q of questions) {
-						const fields = q.fields as any
-						if (fields.slug) {
-							slugToIdMap.set(fields.slug, q.id)
-						}
-					}
-
-					const missingQuestionSlugs = questionSlugs.filter(
-						(slug) => !slugToIdMap.has(slug),
-					)
-
-					await log.info('survey.answers.lookup', {
+					await persistSurveyAnswers({
+						database: db,
+						logger: log,
 						surveySlug: input.surveyId,
-						resolvedSurveyId: surveyId,
-						questionLookupCount: questions.length,
-						missingQuestionSlugs,
+						answers: input.answers,
 						userId,
 						emailListSubscriberId,
 					})
-
-					const answerRecords = Object.entries(input.answers)
-						.filter(([_, value]) => value !== null && value !== undefined)
-						.map(([questionSlug, value]) => {
-							const answerValue = Array.isArray(value)
-								? value.join(', ')
-								: String(value)
-
-							if (!answerValue.trim()) return null
-
-							const questionId = slugToIdMap.get(questionSlug) || questionSlug
-
-							return {
-								id: guid(),
-								surveyId,
-								questionId,
-								userId,
-								emailListSubscriberId,
-								fields: { answer: answerValue },
-								createdAt: new Date(),
-								updatedAt: new Date(),
-							}
-						})
-						.filter(Boolean) as Array<{
-						id: string
-						surveyId: string
-						questionId: string
-						userId: string | null
-						emailListSubscriberId: string | null
-						fields: Record<string, any>
-						createdAt: Date
-						updatedAt: Date
-					}>
-
-					if (answerRecords.length > 0) {
-						await db.insert(questionResponse).values(answerRecords)
-
-						await log.info('survey.answers.saved', {
-							surveyId,
-							surveySlug: input.surveyId,
-							userId,
-							emailListSubscriberId,
-							answerCount: answerRecords.length,
-						})
-					} else {
-						await log.warn('survey.answers.skipped.empty', {
-							surveySlug: input.surveyId,
-							userId,
-							emailListSubscriberId,
-						})
-					}
 				} catch (error) {
 					await log.error('survey.answers.save.failed', {
 						error: error instanceof Error ? error.message : String(error),
@@ -521,50 +434,12 @@ export const convertkitRouter = createTRPCRouter({
 
 			if (input.surveyId && input.question && input.answer?.trim()) {
 				try {
-					const survey = await db.query.contentResource.findFirst({
-						where: and(
-							eq(contentResource.type, 'survey'),
-							sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${input.surveyId}`,
-						),
-					})
-
-					const surveyId = survey?.id || input.surveyId
-					const question = await db.query.contentResource.findFirst({
-						where: and(
-							eq(contentResource.type, 'question'),
-							sql`JSON_EXTRACT(${contentResource.fields}, '$.slug') = ${input.question}`,
-						),
-					})
-
-					const questionId = question?.id || input.question
-
-					await log.info('survey.answer.lookup', {
+					await persistSurveyAnswers({
+						database: db,
+						logger: log,
 						surveySlug: input.surveyId,
-						questionSlug: input.question,
-						resolvedSurveyId: surveyId,
-						resolvedQuestionId: questionId,
-						usedSurveySlugFallback: !survey?.id,
-						usedQuestionSlugFallback: !question?.id,
-						userId,
-						emailListSubscriberId,
-					})
-
-					await db.insert(questionResponse).values({
-						id: guid(),
-						surveyId,
-						questionId,
-						userId,
-						emailListSubscriberId,
-						fields: { answer: input.answer },
-						createdAt: new Date(),
-						updatedAt: new Date(),
-					})
-
-					await log.info('survey.answer.saved', {
-						surveyId,
-						surveySlug: input.surveyId,
-						questionId,
-						questionSlug: input.question,
+						answers: { [input.question]: input.answer },
+						eventPrefix: 'survey.answer',
 						userId,
 						emailListSubscriberId,
 					})

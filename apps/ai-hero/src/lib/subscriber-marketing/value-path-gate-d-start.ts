@@ -1,4 +1,7 @@
-import type { CaptureMarketingRepository } from './capture-contact-event'
+import {
+	createLinkedActionRecords,
+	type CaptureMarketingRepository,
+} from './capture-contact-event'
 import { CONTACT_EVENT_SCHEMA_VERSION, type Gate } from './types'
 import {
 	evaluateGateDRuntimeAllowlist,
@@ -25,6 +28,7 @@ export type ValuePathGateDStartRepository = Pick<
 	| 'createNextAction'
 	| 'findSideEffectIntentByIdempotencyKey'
 	| 'createSideEffectIntent'
+	| 'createNextActionWithSideEffectIntents'
 >
 
 export type ValuePathGateDStartResult = {
@@ -271,44 +275,55 @@ async function startValuePathGateDContact(args: {
 		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 		createdAt: args.now,
 	})
-	const nextAction = await args.repository.createNextAction({
-		id: args.repository.newId('next_action'),
-		contactId: contact.id,
-		contactStateId: state.id,
-		eventId: event.id,
-		type: 'enter-value-path',
-		status: 'planned',
-		gates,
-		reviewReasons: [],
-		rationale: [
-			`Start value path ${args.valuePathSlug} with ${args.emailResourceId}.`,
-			...runtimeDecision.rationale,
-			...sendDecision.rationale,
-		],
-		createdAt: args.now,
-	})
-	const intent = await args.repository.createSideEffectIntent({
-		id: args.repository.newId('side_effect_intent'),
-		nextActionId: nextAction.id,
-		contactId: contact.id,
-		provider: 'kit',
-		type: 'send-value-path-email',
-		status: 'pending',
-		idempotencyKey,
-		gates,
-		reviewReasons: [],
-		metadata: {
-			gate: 'send-gate-d-value-path-email',
-			activationId: args.allowlist.activationId,
-			mode: args.allowlist.mode,
-			valuePathSlug: args.valuePathSlug,
-			emailResourceId: args.emailResourceId,
-			kitSubscriberId: args.kitSubscriberId ?? null,
-			kitSequenceId: args.kitSequenceId,
-			providerResult: null,
+	const { nextAction, sideEffectIntents } = await createLinkedActionRecords(
+		args.repository,
+		() => {
+			const nextAction = {
+				id: args.repository.newId('next_action'),
+				contactId: contact.id,
+				contactStateId: state.id,
+				eventId: event.id,
+				type: 'enter-value-path' as const,
+				status: 'planned' as const,
+				gates,
+				reviewReasons: [],
+				rationale: [
+					`Start value path ${args.valuePathSlug} with ${args.emailResourceId}.`,
+					...runtimeDecision.rationale,
+					...sendDecision.rationale,
+				],
+				createdAt: args.now,
+			}
+			return {
+				nextAction,
+				sideEffectIntents: [
+					{
+						id: args.repository.newId('side_effect_intent'),
+						nextActionId: nextAction.id,
+						contactId: contact.id,
+						provider: 'kit',
+						type: 'send-value-path-email',
+						status: 'pending',
+						idempotencyKey,
+						gates,
+						reviewReasons: [],
+						metadata: {
+							gate: 'send-gate-d-value-path-email',
+							activationId: args.allowlist.activationId,
+							mode: args.allowlist.mode,
+							valuePathSlug: args.valuePathSlug,
+							emailResourceId: args.emailResourceId,
+							kitSubscriberId: args.kitSubscriberId ?? null,
+							kitSequenceId: args.kitSequenceId,
+							providerResult: null,
+						},
+						createdAt: args.now,
+					},
+				],
+			}
 		},
-		createdAt: args.now,
-	})
+	)
+	const intent = sideEffectIntents[0]!
 	return {
 		contactId: contact.id,
 		kitSubscriberId: args.kitSubscriberId,

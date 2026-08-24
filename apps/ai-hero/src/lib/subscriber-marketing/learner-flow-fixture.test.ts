@@ -183,10 +183,15 @@ describe('learner-flow stuck fixture', () => {
 			allowWrite: true,
 			now,
 		})
+		const kitCleanupEmails: string[] = []
 		const cleaned = await cleanupLearnerFlowStuckFixture({
 			repository,
 			contactId: created.contactId!,
 			allowWrite: true,
+			unsubscribeSyntheticKitSubscriber: async (email) => {
+				kitCleanupEmails.push(email)
+				return { status: 'cancelled', readbackAttempts: 1 }
+			},
 			now: '2026-07-16T16:35:00.000Z',
 		})
 		const intent = repository.intents.get(created.intentId!)!
@@ -198,6 +203,11 @@ describe('learner-flow stuck fixture', () => {
 			wouldSkip: 0,
 			alreadyCleaned: 0,
 		})
+		expect(cleaned.kitCleanup).toEqual({
+			status: 'cancelled',
+			readbackAttempts: 1,
+		})
+		expect(kitCleanupEmails).toHaveLength(1)
 		expect(isCleanedLearnerFlowFixtureIntent(intent)).toBe(true)
 		expect(isCourseValuePathIntent(intent)).toBe(false)
 	})
@@ -217,6 +227,10 @@ describe('learner-flow stuck fixture', () => {
 				repository,
 				contactId: contact.id,
 				allowWrite: true,
+				unsubscribeSyntheticKitSubscriber: async () => ({
+					status: 'cancelled',
+					readbackAttempts: 1,
+				}),
 				now,
 			}),
 		).rejects.toThrow('contact is not a synthetic fixture address')

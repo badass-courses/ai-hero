@@ -1,6 +1,7 @@
 import { headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { entitlementTypes } from '@/db/schema'
+import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
 import { getServerAuthSession } from '@/server/auth'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { isAfter } from 'date-fns'
@@ -306,11 +307,26 @@ export const pricingRouter = createTRPCRouter({
 
 			const verifiedUserId = token?.session?.user?.id
 
+			if (!productId) throw new Error('productId is required')
+
+			const couponAuthorization = await authorizeExclusiveCouponSelection({
+				adapter: courseBuilderAdapter,
+				verifiedUserId,
+				productId,
+				quantity,
+				requestedMerchantCouponId: merchantCoupon?.id,
+				requestedSiteCouponId: couponId,
+			})
+			const authorizedMerchantCoupon = couponAuthorization.authorized
+				? merchantCoupon
+				: undefined
+			const authorizedCouponId = couponAuthorization.authorized
+				? couponAuthorization.entitlementCouponId || couponId
+				: undefined
+
 			const purchases = getValidPurchases(
 				await courseBuilderAdapter.getPurchasesForUser(verifiedUserId),
 			)
-
-			if (!productId) throw new Error('productId is required')
 
 			const country =
 				(await headers()).get('x-vercel-ip-country') ||
@@ -344,14 +360,19 @@ export const pricingRouter = createTRPCRouter({
 			const price = await courseBuilderAdapter.getPriceForProduct(productId)
 			const unitPrice = price?.unitAmount || 0
 
-			const { activeMerchantCoupon, defaultCoupon, usedCouponId } =
-				await checkForAvailableCoupons({
-					merchantCoupon,
-					couponId,
-					productId,
-					unitPrice,
-					quantity,
-				})
+			const {
+				activeMerchantCoupon,
+				defaultCoupon,
+				usedCouponId: selectedCouponId,
+			} = await checkForAvailableCoupons({
+				merchantCoupon: authorizedMerchantCoupon,
+				couponId: authorizedCouponId,
+				productId,
+				unitPrice,
+				quantity,
+			})
+			const usedCouponId =
+				couponAuthorization.entitlementCouponId || selectedCouponId
 
 			// Only enable stacking if the user has an entitlement-based coupon
 			// Stacking should ONLY happen when there's an entitlement (special credit)
@@ -383,7 +404,12 @@ export const pricingRouter = createTRPCRouter({
 				merchantCouponId: activeMerchantCoupon?.id,
 				...(upgradeFromPurchaseId && { upgradeFromPurchaseId }),
 				userId: verifiedUserId,
-				autoApplyPPP,
+				// A stripped PPP selection means the client disabled autoApplyPPP
+				// while asking for PPP; re-enable it so server pricing re-derives
+				// PPP from the trusted country instead of silently dropping it.
+				autoApplyPPP:
+					autoApplyPPP ||
+					Boolean(!couponAuthorization.authorized && couponAuthorization.requestedPPP),
 				preferStacking: hasEntitlementCoupon,
 				usedCouponId,
 				ctx: courseBuilderAdapter,

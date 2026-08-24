@@ -226,9 +226,53 @@ export const COURSES_TESTIMONIALS = [
 export const COURSES_COMING_NEXT = {
 	title: 'AI Coding Crash Course',
 	slug: 'ai-coding-crash-course',
-	badge: 'Waitlist open',
+	// Shipped 2026-08-17. The card wore "Waitlist open" / "Matt is recording…"
+	// into launch week, selling a waitlist for a course you could buy.
+	badge: 'Available now',
 	description:
-		'Matt is recording a self-paced AI coding course you can start any day, no cohort dates required. Join the waitlist and you hear the moment it ships.',
+		'A self-paced AI coding course you can start any day, no cohort dates required: build production-grade software with agents doing the typing.',
+} as const
+
+/**
+ * The workshop as the page's hero, for as long as the offer ladder ranks it
+ * above the cohort (`next-offer.ts`: a live sale on it, or its waitlist while
+ * nothing is purchasable). The cohort does not leave the page — it takes a
+ * card in the grid below (`COURSES_NEXT_COHORT_CARD`).
+ */
+export const COURSES_FEATURED_WORKSHOP = {
+	/** Same slot and same reasoning as `FLAGSHIP_HERO.eyebrow`: the headline is
+	 *  the course's NAME, so what kind of thing it is goes here. */
+	eyebrow: 'Self-paced course',
+	badge: 'Available now',
+	heading: 'Start today',
+	/** Fallback for a workshop authored without a description. */
+	description:
+		'A self-paced course: lessons and exercises you run on your own schedule, starting the moment you buy.',
+	/** Under the ask's heading — distinct from `description`, which can also
+	 *  render as the hero's statement when the workshop has none of its own. */
+	askDescription:
+		'Buy it, open the first lesson, and go — no cohort dates, no schedule to keep.',
+	ctaLabel: 'Get the course',
+	/** Secondary ask, for the buyer who needs sign-off first — the same
+	 *  `/boss/<slug>` letter the workshop's pricing card offers. */
+	bossLetterLabel: 'Letter for your boss',
+	imageLinkLabel: 'See the course',
+	/** Interpolated with the formatted discount, e.g. "$100" or "30%". */
+	saleClaim: (formatted: string) => `Save ${formatted} on this course right now.`,
+} as const
+
+/**
+ * The cohort's card for when the hero features the workshop instead. "Waitlist
+ * open" is the honest status: the last run ended, the next has no date, and
+ * the cohort page is where the waitlist lives.
+ */
+export const COURSES_NEXT_COHORT_CARD = {
+	badge: 'Waitlist open',
+	/** The cohorts shelf's label while this card leads it — "Past cohorts"
+	 *  would be a lie about the first row. */
+	shelfEyebrow: 'Cohorts',
+	fallbackBlurb:
+		'The flagship cohort. Join the waitlist on its page and you hear the moment the next dates land.',
 } as const
 
 /**

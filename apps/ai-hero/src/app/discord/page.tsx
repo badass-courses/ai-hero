@@ -3,7 +3,12 @@ import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import { ContributorImage } from '@/components/contributor'
 import LayoutClient from '@/components/layout-client'
+import { env } from '@/env.mjs'
 import { getDiscordAccount } from '@/lib/discord-query'
+import {
+	requestOAuthAccountLink,
+	switchOAuthAccountLogin,
+} from '@/lib/oauth-link-actions'
 import { getServerAuthSession } from '@/server/auth'
 
 import { DiscordAccessAction } from './discord-access-action'
@@ -24,13 +29,14 @@ export const metadata: Metadata = {
 export default async function Discord({
 	searchParams,
 }: {
-	searchParams: Promise<{ error?: string }>
+	searchParams: Promise<{ error?: string; link?: string }>
 }) {
 	await headers()
-	const { error } = await searchParams
+	const { error, link } = await searchParams
 	const discordAccessState = await getDiscordAccessState({
 		getSession: getServerAuthSession,
 		findDiscordAccount: getDiscordAccount,
+		linkResult: link,
 	})
 
 	return (
@@ -48,7 +54,12 @@ export default async function Discord({
 					</div>
 				)}
 
-				<DiscordAccessAction state={discordAccessState} />
+				<DiscordAccessAction
+					state={discordAccessState}
+					requestLink={requestOAuthAccountLink}
+					switchLogin={switchOAuthAccountLogin}
+					supportEmail={env.NEXT_PUBLIC_SUPPORT_EMAIL}
+				/>
 			</main>
 		</LayoutClient>
 	)

@@ -58,6 +58,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				summary: post.fields?.summary ?? null,
 				yDoc: post.fields?.yDoc ?? null,
 				coverImage: post.fields?.coverImage,
+				icon: post.fields?.icon,
 			},
 		}
 	},
@@ -85,6 +86,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				coverImage: resource.fields.coverImage?.url
 					? resource.fields.coverImage
 					: null,
+				icon: resource.fields.icon?.url ? resource.fields.icon : null,
 			},
 			tags: resource.tags || [],
 		}
@@ -114,6 +116,7 @@ export const postFormConfig: ResourceFormConfig<Post, typeof PostSchema> = {
 				coverImage: resource.fields.coverImage?.url
 					? resource.fields.coverImage
 					: null,
+				icon: resource.fields.icon?.url ? resource.fields.icon : null,
 			},
 			tags: resource.tags || [],
 		}

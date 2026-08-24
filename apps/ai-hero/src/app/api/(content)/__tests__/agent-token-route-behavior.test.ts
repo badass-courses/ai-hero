@@ -3,6 +3,17 @@ import { resolve } from 'node:path'
 import { NextRequest } from 'next/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Route handlers are invoked here as plain functions, outside Next's request
+// pipeline, so there is no static generation store for revalidateTag to find.
+// In production every caller reaches these routes through an actual Next.js
+// request, where that store exists — most matrix rows never hit this because
+// their mocked resource types skip the revalidateTag branch, but
+// `/api/products PUT` calls it unconditionally on every successful update.
+vi.mock('next/cache', () => ({
+	revalidatePath: vi.fn(),
+	revalidateTag: vi.fn(),
+}))
+
 const mocks = vi.hoisted(() => ({
 	adapterCreateProduct: vi.fn(),
 	adapterGetContentResource: vi.fn(),

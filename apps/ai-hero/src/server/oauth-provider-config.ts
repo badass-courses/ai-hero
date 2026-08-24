@@ -5,7 +5,12 @@ export function getGithubProviderConfig({
 	clientId: string
 	clientSecret: string
 }) {
-	return { clientId, clientSecret }
+	return {
+		clientId,
+		clientSecret,
+		issuer: 'https://github.com/login/oauth',
+		allowDangerousEmailAccountLinking: true,
+	}
 }
 
 export function getDiscordProviderConfig({
@@ -18,6 +23,7 @@ export function getDiscordProviderConfig({
 	return {
 		clientId,
 		clientSecret,
+		allowDangerousEmailAccountLinking: true,
 		authorization:
 			'https://discord.com/api/oauth2/authorize?scope=identify+email+guilds.join+guilds',
 	}

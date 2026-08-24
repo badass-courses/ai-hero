@@ -22,6 +22,7 @@ export const SKILLS_WORKFLOW_EMAIL_ZERO_KIT_SEQUENCE = '2757199' as const
  * finishing the course used to mean falling off the list entirely.
  */
 export const SHADOW_NEWSLETTER_KIT_SEQUENCE = '2625552' as const
+export const SHADOW_NEWSLETTER_BACKFILL_KIT_TAG = '22309615' as const
 
 export type SkillsNewsletterPathEntryInput = {
 	kitSubscriberId: string

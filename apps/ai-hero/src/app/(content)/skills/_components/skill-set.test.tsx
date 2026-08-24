@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 import { SkillSet, type SkillSetGroup } from './skill-set'
 
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 const group: SkillSetGroup = {
 	id: 'section_1',
@@ -54,4 +54,39 @@ test('a group holding only articles offers nothing to start with', () => {
 	)
 
 	expect(html).not.toContain('Start with')
+})
+
+test('a skill without an icon renders no image slot at all', () => {
+	// Explicit product call (2026-08-24): hide the slot rather than fill it
+	// with a placeholder — iconless rows keep their pre-icon shape.
+	const html = markup()
+
+	expect(html).not.toContain('<img')
+	expect(html).not.toContain('bg-stripes')
+})
+
+test('a skill with an icon renders it as a decorative image', () => {
+	// next-cloudinary resolves its cloud name at render time.
+	vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'test-cloud')
+	const html = renderToStaticMarkup(
+		<SkillSet
+			groups={[
+				{
+					...group,
+					items: [
+						{
+							slug: 'skills-ask-matt',
+							title: 'The /ask-matt Skill',
+							kind: 'skill',
+							iconUrl: 'https://res.cloudinary.com/x/icon.png',
+						},
+					],
+				},
+			]}
+		/>,
+	)
+
+	expect(html).toContain('<img')
+	expect(html).toContain('alt=""')
+	expect(html).not.toContain('bg-stripes')
 })

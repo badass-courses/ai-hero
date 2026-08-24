@@ -24,6 +24,10 @@ import {
 } from '@coursebuilder/commerce-next/post-purchase/subscription-welcome-page'
 import { WelcomePage } from '@coursebuilder/commerce-next/post-purchase/welcome-page'
 import { convertToSerializeForNextResponse } from '@coursebuilder/commerce-next/utils/serialize-for-next-response'
+import {
+	PostPurchaseDiscordAccess,
+	withoutDiscordProvider,
+} from './welcome-discord-entry'
 import { PurchaseUserTransfer } from '@coursebuilder/core/schemas'
 import { PurchaseInfoSchema } from '@coursebuilder/core/schemas/purchase-info'
 import { isString } from '@coursebuilder/nodash'
@@ -150,7 +154,7 @@ const Welcome = async (props: {
 			purchase,
 			existingPurchase,
 			product,
-			providers = {},
+			providers = [],
 			productResources,
 		} = await getPurchaseDetailsForWelcome(searchParams)
 
@@ -182,13 +186,16 @@ const Welcome = async (props: {
 		return (
 			<LayoutClient withContainer>
 				<div className="">
+					<PostPurchaseDiscordAccess
+						isDiscordConnected={isDiscordConnected}
+					/>
 					<WelcomePage
 						product={product}
 						productResources={productResources}
 						purchase={purchase}
 						existingPurchase={existingPurchase}
 						upgrade={upgrade}
-						providers={providers}
+						providers={withoutDiscordProvider(providers)}
 						isGithubConnected={isGithubConnected}
 						isDiscordConnected={isDiscordConnected}
 						redemptionsLeft={redemptionsLeft}

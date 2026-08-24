@@ -18,6 +18,7 @@ import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
 import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
+import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
 
@@ -32,6 +33,7 @@ import { cohortEntitlementSyncWorkflow } from './functions/cohort-entitlement-sy
 import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
+import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
@@ -61,7 +63,9 @@ import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
+import { workshopInterestSync } from './functions/workshop-interest-sync'
 import { computeVideoSplitPoints } from './functions/split_video'
+import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
@@ -71,71 +75,86 @@ import {
 	videoResourceDetached,
 } from './functions/video-resource-attached'
 
+// Vercel Preview/Development deployments auto-register into Inngest's shared
+// branch environment, which runs every cron in this list against the
+// production database (they share DATABASE_URL) without production-only
+// secrets. Registering an empty manifest from those deployments archives the
+// branch environment's functions instead. VERCEL_ENV is unset in local dev,
+// so the Inngest dev server still sees the full list.
+const isVercelNonProduction =
+	process.env.VERCEL_ENV !== undefined && process.env.VERCEL_ENV !== 'production'
+
+const allFunctions = [
+	...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
+		inngest.createFunction(config, trigger, handler),
+	),
+	userCreated,
+	userSignupAdminEmail,
+	aiCodingDictionaryIndex,
+	postmarkWebhook,
+	archivePurchaseReconciliation,
+	imageResourceCreated,
+	emailSendBroadcast,
+	performCodeExtraction,
+	getOrCreateConcept,
+	computeVideoSplitPoints,
+	discordAccountLinked,
+	addSubscriptionRoleDiscord,
+	removePurchaseRoleDiscord,
+	postPurchaseWorkflow,
+	teamPurchaseFulfillmentWorkflow,
+	postPurchaseDiscordRole,
+	postPurchaseWelcomeEmail,
+	buyerPurchaseBenefitFollowup,
+	teamSeatRedemptionBenefitFollowup,
+	productTransferWorkflow,
+	apiProductTransferWorkflow,
+	cohortEntitlementSyncWorkflow,
+	cohortEntitlementSyncUser,
+	syncPurchaseTags,
+	addPurchasesConvertkit,
+	stripeSubscriptionCheckoutSessionComplete,
+	persistPurchaseGeo,
+	createUserOrganizations,
+	ensurePersonalOrganizationWorkflow,
+	videoResourceAttached,
+	videoResourceDetached,
+	addDiscordRoleWorkflow,
+	grantLegendDiscordRole,
+	sendWorkshopAccessEmails,
+	refundEntitlements,
+	grantCouponEntitlements,
+	grantCouponEntitlementsForPurchase,
+	createPPPCreditCouponsForPurchasers,
+	calendarSync,
+	postEventPurchase,
+	handleRefundAndRemoveFromCalendar,
+	sendLiveEventWelcomeEmail,
+	shortlinkAttribution,
+	signupAttribution,
+	eventReminderBroadcast,
+	cohortReminderBroadcast,
+	contentReadRetention,
+	contentResourceIndexRequested,
+	courseSyncDetectionPoller,
+	typesensePopularitySync,
+	valuePathEmailExecutor,
+	learnerFlowReconciler,
+	googleAdsConversionUpload,
+	invoiceShortfallReconciliation,
+	syncGithubSourcedPosts,
+	skillChangelogBroadcast,
+	skillsNewsletterPathEntry,
+	workshopInterestSync,
+	skillsNewsletterConfirmationReconciler,
+	notifyOnPostCreated,
+	generateArtwork,
+	pickVariant,
+	skipNotification,
+	retryHandler,
+]
+
 export const inngestConfig = {
 	client: inngest,
-	functions: [
-		...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
-			inngest.createFunction(config, trigger, handler),
-		),
-		userCreated,
-		userSignupAdminEmail,
-		aiCodingDictionaryIndex,
-		postmarkWebhook,
-		archivePurchaseReconciliation,
-		imageResourceCreated,
-		emailSendBroadcast,
-		performCodeExtraction,
-		getOrCreateConcept,
-		computeVideoSplitPoints,
-		discordAccountLinked,
-		addSubscriptionRoleDiscord,
-		removePurchaseRoleDiscord,
-		postPurchaseWorkflow,
-		postPurchaseDiscordRole,
-		postPurchaseWelcomeEmail,
-		buyerPurchaseBenefitFollowup,
-		teamSeatRedemptionBenefitFollowup,
-		productTransferWorkflow,
-		apiProductTransferWorkflow,
-		cohortEntitlementSyncWorkflow,
-		cohortEntitlementSyncUser,
-		syncPurchaseTags,
-		addPurchasesConvertkit,
-		stripeSubscriptionCheckoutSessionComplete,
-		createUserOrganizations,
-		ensurePersonalOrganizationWorkflow,
-		videoResourceAttached,
-		videoResourceDetached,
-		addDiscordRoleWorkflow,
-		grantLegendDiscordRole,
-		sendWorkshopAccessEmails,
-		refundEntitlements,
-		grantCouponEntitlements,
-		grantCouponEntitlementsForPurchase,
-		createPPPCreditCouponsForPurchasers,
-		calendarSync,
-		postEventPurchase,
-		handleRefundAndRemoveFromCalendar,
-		sendLiveEventWelcomeEmail,
-		shortlinkAttribution,
-		signupAttribution,
-		eventReminderBroadcast,
-		cohortReminderBroadcast,
-		contentReadRetention,
-		courseSyncDetectionPoller,
-		typesensePopularitySync,
-		valuePathEmailExecutor,
-		learnerFlowReconciler,
-		googleAdsConversionUpload,
-		invoiceShortfallReconciliation,
-		syncGithubSourcedPosts,
-		skillChangelogBroadcast,
-		skillsNewsletterPathEntry,
-		skillsNewsletterConfirmationReconciler,
-		notifyOnPostCreated,
-		generateArtwork,
-		pickVariant,
-		skipNotification,
-		retryHandler,
-	],
+	functions: isVercelNonProduction ? [] : allFunctions,
 }

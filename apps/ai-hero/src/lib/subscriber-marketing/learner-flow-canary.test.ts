@@ -17,6 +17,8 @@ class CanaryRepository implements LearnerFlowCanaryRepository {
 	states = new Map<string, ContactState>()
 	intents = new Map<string, SideEffectIntent>()
 	certificateShares = new Set<string>()
+	kitCleanupEmails: string[] = []
+	kitCleanupError?: Error
 	contactSequence = 0
 
 	async findContactById(id: string) {
@@ -62,6 +64,12 @@ class CanaryRepository implements LearnerFlowCanaryRepository {
 		const updated = { ...current, ...patch }
 		this.intents.set(id, updated)
 		return updated
+	}
+
+	async unsubscribeSyntheticKitSubscriber(email: string) {
+		if (this.kitCleanupError) throw this.kitCleanupError
+		this.kitCleanupEmails.push(email)
+		return { status: 'cancelled' as const, readbackAttempts: 1 }
 	}
 
 	async deleteLearnerFlowFixtureContact(contactId: string) {
@@ -351,9 +359,11 @@ describe('learner-flow canary', () => {
 		})
 		expect(result).toMatchObject({
 			action: 'self-reset',
+			kitCleanup: { status: 'cancelled' },
 			postDeleteReadback: { total: 0 },
 			seeded: { intentStatus: 'pending' },
 		})
+		expect(repository.kitCleanupEmails).toHaveLength(1)
 		expect(Array.from(repository.contacts.values())[0]?.id).not.toBe(created.contactId)
 	})
 
@@ -379,14 +389,31 @@ describe('learner-flow canary', () => {
 		})
 		expect(first).toMatchObject({
 			deleted: 1,
+			kitCleanup: { cancelled: 1 },
 			postDeleteReadback: { total: 0 },
 		})
 		expect(second).toMatchObject({
 			deleted: 0,
 			postDeleteReadback: { total: 0 },
 		})
+		expect(repository.kitCleanupEmails).toHaveLength(1)
 		expect(await inspectLearnerFlowCanary({ repository, now })).toMatchObject({
 			lifecycle: 'absent',
 		})
+	})
+
+	it('keeps database residue when Kit cleanup fails', async () => {
+		const repository = new CanaryRepository()
+		const seeded = await seedLearnerFlowCanary({
+			repository,
+			allowWrite: true,
+			now,
+		})
+		if (!seeded.contactId) throw new Error('Canary seed did not create a contact')
+		repository.kitCleanupError = new Error('provider unavailable')
+		await expect(
+			cleanupLearnerFlowCanary({ repository, allowWrite: true }),
+		).rejects.toThrow('provider unavailable')
+		expect(repository.contacts.has(seeded.contactId)).toBe(true)
 	})
 })

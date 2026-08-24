@@ -64,6 +64,7 @@ export type LearnerFlowDrillReceiptPhase =
 	| 'zombie-identical-payload-detected'
 	| 'zombie-healed'
 	| 'cleanup'
+	| 'cleanup-failed'
 	| 'failed'
 
 export type LearnerFlowDrillRunnerPorts = {
@@ -115,6 +116,7 @@ export async function runLearnerFlowDrill(args: {
 	let driftFixtures: LearnerFlowDrillFixture[] = []
 	let zombieFixtures: LearnerFlowDrillFixture[] = []
 	let failure: unknown
+	let cleanupFailure: unknown
 	const pollMilliseconds = args.pollMilliseconds ?? 60_000
 	// The receipt timestamp, not polling latency, is the one-hour SLA clock.
 	// The extra wait margin only allows Axiom ingestion and the read-only poll.
@@ -169,20 +171,29 @@ export async function runLearnerFlowDrill(args: {
 				pollMilliseconds,
 				timeoutMilliseconds: observationTimeout,
 				predicate: async (observation) => {
-					const run = observation.runs.find(
+					const repairRun = observation.runs.find(
 						(item) =>
-							numberField(item.payload.repairedCompletionFacts) >=
+							isRepairRun(item) &&
+							repairCount(item, 'completionFactsRepaired') >=
 								driftFixtures.length &&
-							numberField(item.payload.created) >= driftFixtures.length &&
-							numberField(item.payload.served) >= driftFixtures.length,
+							repairCount(item, 'intentsCreated') >= driftFixtures.length,
 					)
-					if (!run || !withinDetectionSla(inducedAt, run.observedAt)) {
+					if (
+						!repairRun ||
+						!withinDetectionSla(inducedAt, repairRun.observedAt)
+					) {
 						return undefined
 					}
+					const executorRun = laterExecutorRun(
+						observation.runs,
+						repairRun.observedAt,
+						driftFixtures.length,
+					)
+					if (!executorRun) return undefined
 					const readbacks =
 						await args.ports.readFixtureReadbacks(driftFixtures)
 					return readbacks.every(fixtureHealed)
-						? { observation, run, readbacks }
+						? { observation, repairRun, executorRun, readbacks }
 						: undefined
 				},
 			})
@@ -192,9 +203,10 @@ export async function runLearnerFlowDrill(args: {
 					runId: args.runId,
 					phase: 'drift-detected-and-healed',
 					inducedAt,
-					detectedAt: evidence.run.observedAt,
-					healedAt: evidence.run.observedAt,
-					reconcilerReceiptEvidence: evidence.run,
+					detectedAt: evidence.repairRun.observedAt,
+					healedAt: evidence.executorRun.observedAt,
+					repairReceiptEvidence: evidence.repairRun,
+					executorReceiptEvidence: evidence.executorRun,
 					fixtureReadbacks: evidence.readbacks,
 				}),
 			)
@@ -237,8 +249,7 @@ export async function runLearnerFlowDrill(args: {
 					const run = observation.runs.find(
 						(item) =>
 							item.observedAt >= inducedAt &&
-							numberField(item.payload.suppressedFixtureStarved) >=
-								zombieFixtures.length,
+							isRepairRun(item),
 					)
 					const alarm = observation.pulse?.alarms.find(
 						(item) =>
@@ -284,8 +295,7 @@ export async function runLearnerFlowDrill(args: {
 					const postInductionSuppressedRuns = observation.runs.filter(
 						(item) =>
 							item.observedAt >= inducedAt &&
-							numberField(item.payload.suppressedFixtureStarved) >=
-								zombieFixtures.length,
+							isRepairRun(item),
 					)
 					return alarm && postInductionSuppressedRuns.length >= 4
 						? {
@@ -327,17 +337,23 @@ export async function runLearnerFlowDrill(args: {
 					observationMarginMilliseconds: observationTimeout,
 				}),
 				predicate: async (observation) => {
-					const run = observation.runs.find(
+					const repairRun = observation.runs.find(
 						(item) =>
 							item.observedAt >= (suppressionExpiresAt ?? inducedAt) &&
-							numberField(item.payload.suppressedFixtureStarved) === 0 &&
-							numberField(item.payload.served) >= zombieFixtures.length,
+							isRepairRun(item) &&
+							repairCount(item, 'intentsCreated') >= zombieFixtures.length,
 					)
-					if (!run) return undefined
+					if (!repairRun) return undefined
+					const executorRun = laterExecutorRun(
+						observation.runs,
+						repairRun.observedAt,
+						zombieFixtures.length,
+					)
+					if (!executorRun) return undefined
 					const readbacks =
 						await args.ports.readFixtureReadbacks(zombieFixtures)
 					return readbacks.every(fixtureHealed)
-						? { observation, run, readbacks }
+						? { observation, repairRun, executorRun, readbacks }
 						: undefined
 				},
 			})
@@ -348,8 +364,9 @@ export async function runLearnerFlowDrill(args: {
 					phase: 'zombie-healed',
 					inducedAt,
 					suppressionExpiresAt,
-					healedAt: healed.run.observedAt,
-					reconcilerReceiptEvidence: healed.run,
+					healedAt: healed.executorRun.observedAt,
+					repairReceiptEvidence: healed.repairRun,
+					executorReceiptEvidence: healed.executorRun,
 					fixtureReadbacks: healed.readbacks,
 					alarmProofContract: zombieAlarmProofContract,
 				}),
@@ -372,23 +389,48 @@ export async function runLearnerFlowDrill(args: {
 			}),
 		)
 	} finally {
-		const cleanup = await cleanupLearnerFlowDrillFixtures({
-			repository: args.ports.repository,
-			allowWrite: true,
-		})
-		receipts.push(
-			await args.ports.writeReceipt('cleanup', {
-				mode: 'learner-flow-drill',
-				runId: args.runId,
-				phase: 'cleanup',
-				cleanedAt: args.ports.now(),
-				cleanup,
-			}),
-		)
-		actor.send({ type: 'CLEANED' })
-		actor.stop()
+		try {
+			const cleanup = await cleanupLearnerFlowDrillFixtures({
+				repository: args.ports.repository,
+				allowWrite: true,
+			})
+			receipts.push(
+				await args.ports.writeReceipt('cleanup', {
+					mode: 'learner-flow-drill',
+					runId: args.runId,
+					phase: 'cleanup',
+					cleanedAt: args.ports.now(),
+					cleanup,
+				}),
+			)
+			actor.send({ type: 'CLEANED' })
+		} catch (error) {
+			cleanupFailure = error
+			const cleanupError =
+				error instanceof Error ? error.message : String(error)
+			actor.send({ type: 'CLEANUP_FAILED', error: cleanupError })
+			try {
+				receipts.push(
+					await args.ports.writeReceipt('cleanup-failed', {
+						mode: 'learner-flow-drill',
+						runId: args.runId,
+						phase: 'cleanup-failed',
+						failedAt: args.ports.now(),
+						error: cleanupError,
+					}),
+				)
+			} catch (receiptError) {
+				cleanupFailure = new AggregateError(
+					[error, receiptError],
+					'Learner-flow drill cleanup and cleanup receipt failed',
+				)
+			}
+		} finally {
+			actor.stop()
+		}
 	}
 	if (failure) throw failure
+	if (cleanupFailure) throw cleanupFailure
 	const completedAt = args.ports.now()
 	return {
 		mode: 'learner-flow-drill',
@@ -441,7 +483,7 @@ export function parseLearnerFlowDrillAxiomOutput(
 						: undefined
 			if (
 				!payload ||
-				payload.loop !== 'reconciler' ||
+				!isLearnerFlowAggregatePayload(payload) ||
 				!observedAt ||
 				Number.isNaN(Date.parse(observedAt))
 			) {
@@ -533,6 +575,54 @@ function fixtureHealed(item: LearnerFlowDrillFixtureReadback) {
 			item.nextIntentId &&
 			item.nextIntentStatus === 'completed' &&
 			item.nextIntentCompletedAt,
+	)
+}
+
+function isLearnerFlowAggregatePayload(payload: Record<string, unknown>) {
+	return (
+		payload.loop === 'repair' ||
+		payload.loop === 'reconciler' ||
+		payload.loop === 'executor' ||
+		payload.event === 'subscriber_funnel.drip_run_completed' ||
+		payload.event === 'subscriber_funnel.email_executor_run_completed'
+	)
+}
+
+function isRepairRun(run: LearnerFlowDrillReconcilerRun) {
+	return (
+		run.payload.loop === 'repair' ||
+		run.payload.loop === 'reconciler' ||
+		run.payload.event === 'subscriber_funnel.drip_run_completed'
+	)
+}
+
+function isExecutorRun(run: LearnerFlowDrillReconcilerRun) {
+	return (
+		run.payload.loop === 'executor' ||
+		run.payload.event === 'subscriber_funnel.email_executor_run_completed'
+	)
+}
+
+function repairCount(run: LearnerFlowDrillReconcilerRun, key: string) {
+	const counts = isRecord(run.payload.counts) ? run.payload.counts : undefined
+	return numberField(counts?.[key])
+}
+
+function executorCompleted(run: LearnerFlowDrillReconcilerRun) {
+	const counts = isRecord(run.payload.counts) ? run.payload.counts : undefined
+	return numberField(counts?.completed ?? run.payload.completed)
+}
+
+function laterExecutorRun(
+	runs: LearnerFlowDrillReconcilerRun[],
+	repairObservedAt: string,
+	minimumCompleted: number,
+) {
+	return runs.find(
+		(run) =>
+			isExecutorRun(run) &&
+			run.observedAt >= repairObservedAt &&
+			executorCompleted(run) >= minimumCompleted,
 	)
 }
 

@@ -62,3 +62,30 @@ export async function getCachedTopicTag(slug: string): Promise<Tag | null> {
 	const parsed = TagSchema.safeParse(result)
 	return parsed.success ? parsed.data : null
 }
+
+async function getTopicSlugs() {
+	const rows = await db.query.tag.findMany()
+	const slugs = new Set<string>()
+
+	for (const row of rows) {
+		const parsed = TagSchema.safeParse(row)
+		if (!parsed.success) continue
+		if (parsed.data.fields.contexts?.includes('skill-phase')) continue
+		if (parsed.data.fields.slug) slugs.add(parsed.data.fields.slug)
+	}
+
+	return [...slugs]
+}
+
+const _getCachedTopicSlugs = unstable_cache(
+	async () => getTopicSlugs(),
+	['topic-slugs-v1'],
+	{
+		revalidate: 3600,
+		tags: ['tags'],
+	},
+)
+
+export async function getCachedTopicSlugs() {
+	return _getCachedTopicSlugs()
+}

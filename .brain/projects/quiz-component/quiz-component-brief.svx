@@ -1,7 +1,7 @@
 ---
 title: "Quiz Component for the Crash Course"
 type: "brief"
-status: "active"
+status: "done"
 created_at: "2026-07-24"
 privacy: "private"
 ---
@@ -11,6 +11,9 @@ privacy: "private"
 ## Finish line
 
 Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
+**Reached 2026-08-08** — the last condition closed with
+[Document the quiz entry point](./document-the-quiz-entry-point.svx)
+(`apps/ai-hero/docs/quiz.md`). All eleven steps are closed.
 
 - Matt authors `<Quiz><QuizQuestion data={{ … }} /></Quiz>` **inline** in an AI
   Coding Crash Course lesson body, with the question, choices, `correct`, and the
@@ -20,10 +23,13 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   course-sync path unchanged, with no manifest schema change.
 - A learner — **including a logged-out one** — answers in the lesson body, and
   immediately sees whether they were right plus the authored explanation.
-- Each answer writes a `QuestionResponse` row carrying
-  `fields: { answer, correct }`, keyed by a minted survey session id
-  (`respondentKey` / `surveySessionId`), upgrading to `userId` /
-  `emailListSubscriberId` when identity resolves.
+- **A logged-in** learner's answer writes a `QuestionResponse` row carrying
+  `fields: { answer, correct }`, keyed by `respondentKey = user:<userId>` so one
+  person is one respondent across devices. Answering again replaces the row
+  rather than appending. *(Revised 2026-07-25 from "keyed by a minted survey
+  session id, upgrading when identity resolves" — see the gate-the-saving
+  decision in [Build the quiz answer endpoint](./build-the-answer-endpoint.svx).
+  Logged-out answers are graded but not stored.)*
 - Correct/incorrect rates are queryable per question without parsing lesson
   bodies, because course-sync derives a `question` content resource from each
   inline `QuizQuestion` and joins it to the lesson.
@@ -53,9 +59,12 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   `gradeAnswer` function. Distinct from scoring.
 - **scoring** — an aggregate result across a set of questions. Does not exist
   anywhere today and is not in the finish line.
-- **survey session id** — the minted anonymous identifier written to
-  `QuestionResponse.respondentKey` / `surveySessionId`. This effort is the first
-  writer of those columns, so it defines what they mean.
+- **respondent** — settled 2026-07-25: one *person*, not one browser.
+  `respondentKey` is `user:<userId>`, so the same learner on laptop and phone is
+  one respondent with one row per question. `surveySessionId` is written `null`;
+  the browser-session identifier it was going to hold was deleted along with the
+  anonymous path. *(Replaces the earlier "survey session id" term, which assumed
+  anonymous-primary identity.)*
 - **derived storage** — settled 2026-07-24: quiz content is authored inline in
   MDX and course-sync derives `question` content resources from it. Authoring is
   inline; storage is relational. Neither "inline" nor "content resource" alone
@@ -83,9 +92,11 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
 - What Joel said in the thread: the survey system already is quizzes; an MDX
   component may need wiring but "the hard bits are done/baked in"; it is data
   driven, content resources, over the same API.
-- Open tension to grill: Matt wants content inline in MDX, Joel wants content
-  resources over the API. Matt's last message suggests an API satisfies him, but
-  that has not been confirmed against his authoring loop.
+- ~~Open tension: inline MDX vs content resources over the API.~~ **Resolved**
+  by derived storage — Matt authors inline, course-sync derives the content
+  resources. Both positions turned out to be right about different layers.
+- Mid-effort calls (Joel, 2026-07-25): no Kit on the answer path, quizzes store
+  in our DB only; and login gates *saving*, not answering.
 - Skills to consult: `grill-me`, `herdr-orchestration`, `prototype`.
 - **Execution authorization (Joel, 2026-07-24): GRANTED AND FIRED.** The gate was
   one clickable prototype; Joel saw it and said "looks good to me" with no
@@ -144,6 +155,24 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   is overridden with `surveyMachine.provide({ guards })` rather than forked, so
   the `^1.0.5` pin stays put and pinned decision 6 survives intact.
 
+- [Build quiz question extraction into course-sync](./build-sync-question-extraction.svx)
+  — `feat/quiz-sync-extraction` / `d7262ba`. Real MDX AST parsing, `kind` widened
+  to `'question'`, removal by detachment so answer history survives. Caught that
+  duplicate ids must be unique **across** lessons, not within one — the id hash
+  has no lesson component, so the spec as written would have collided rows.
+- [Build the real Quiz component](./build-the-quiz-component.svx) —
+  `feat/quiz-component` / `e167e86`. `gradeAnswer` at `src/lib/quiz/`, guard
+  overridden via `.provide()` with no fork, zod schema that also rejects
+  answer-key typos, `shuffleChoices: false` as the shuffle escape hatch.
+
+- [Build the quiz answer endpoint](./build-the-answer-endpoint.svx) —
+  `791c777` (PR #26). Server grades from the question row and upserts one
+  `QuestionResponse` per learner per question. Identity collapsed to
+  `user:<userId>` after Joel's gate-the-saving call; answering stays open to
+  everyone, only saving needs a session. No Kit on the path. Three review rounds,
+  five real defects, the worst being a stale closure that wrote answers onto the
+  previous question's row.
+
 ## Latent
 
 - Whether quiz answers should feed the existing subscriber/segmentation
@@ -155,12 +184,10 @@ Pinned 2026-07-24 by [Pin the finish line](./pin-the-finish-line.svx).
   in a lesson body that Matt's agent rewrites.
 - Whether aggregate scoring ("you got 7 of 10") is ever wanted. Explicitly not in
   this finish line.
-- **`correct` silently forces choice shuffling.** `loadQuestion` shuffles whenever
-  `correct` or `shuffleChoices` is set, with no opt-out
-  (`packages/survey/src/survey-machine.ts:57-60`). Found while building the
-  prototype. Authored choice order is never honored on a graded question, so an
-  author writing "all of the above" last gets a surprise. Decide whether the real
-  component needs an escape hatch.
+- ~~`correct` silently forces choice shuffling.~~ **Resolved 2026-07-25** in
+  [Build the real Quiz component](./build-the-quiz-component.svx): authors opt out
+  with `shuffleChoices: false`; shuffling stays the default. The underlying
+  package behavior (`survey-machine.ts:57-60`) is untouched.
 - Dead surfaces found during the trace, to be cleaned up or logged separately:
   the commented-out published-state check on `/survey/[slug]`
   (`page.tsx:47-51`), `deleteSurvey` orphaning question resources and responses

@@ -37,5 +37,11 @@
 		"./node_modules/y-codemirror.next/dist/src/index.d.ts",
 		".next/dev/types/**/*.ts"
 	],
-	"exclude": ["node_modules", "tmp"]
+	"exclude": [
+		"node_modules",
+		"tmp",
+		"src/app/admin/globe/_data/city-centroids.json",
+		"src/app/admin/globe/_data/region-centroids.json",
+		"src/app/admin/globe/_data/us-zip-centroids.json"
+	]
 }

@@ -6,6 +6,7 @@ import {
 	DollarSignIcon,
 	FileText,
 	Flag,
+	Globe2,
 	Link2,
 	ListChecks,
 	Mail,
@@ -46,6 +47,10 @@ const AdminLayout = async ({ children }: { children: React.ReactNode }) => {
 											<NavItem href="/admin/video-dashboard">
 												<BarChart3 className="size-4" />
 												Video
+											</NavItem>
+											<NavItem href="/admin/globe">
+												<Globe2 className="size-4" />
+												Sales Globe
 											</NavItem>
 											<NavItem href="/admin/course-sync">
 												<RefreshCw className="size-4" />

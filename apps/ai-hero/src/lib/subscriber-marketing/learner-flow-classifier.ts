@@ -1,4 +1,3 @@
-import { isDueRetryableValuePathEmailIntent } from './value-path-email-executor'
 import { isCleanedLearnerFlowFixtureIntent } from './learner-flow-fixture'
 import {
 	isTerminalSkillsWorkflowEmailResourceId,
@@ -26,8 +25,8 @@ type CourseValuePathSlug = (typeof COURSE_VALUE_PATH_SLUGS)[number]
 export type LearnerFlowState = 'moving' | 'terminal' | 'stuck'
 export const LEARNER_FLOW_STUCK_CAUSES = [
 	'blocked-intent',
-	'failed-send',
-	'retryable-failed-overdue',
+	'provider-retries-exhausted',
+	'provider-permanent-failure',
 	'drip-starved',
 	'bounced',
 	'complained',
@@ -49,11 +48,24 @@ export type LearnerFlowClassification = {
 	unstickCommand?: string
 }
 
+export type LearnerFlowIntent = Pick<
+	SideEffectIntent,
+	| 'id'
+	| 'contactId'
+	| 'provider'
+	| 'type'
+	| 'status'
+	| 'completedAt'
+	| 'reviewReasons'
+	| 'metadata'
+	| 'createdAt'
+>
+
 export type LearnerFlowContactInput = {
 	contactId: string
 	contact?: Pick<ContactRecord, 'id' | 'email'>
 	contactState?: Pick<ContactState, 'humanReview' | 'lifecycle'>
-	intents: SideEffectIntent[]
+	intents: LearnerFlowIntent[]
 	entryEvents?: Pick<
 		ContactEventRecord,
 		'eventType' | 'occurredAt' | 'providerReference'
@@ -126,31 +138,27 @@ export function classifyLearnerFlowContact(
 			!isValuePathIntentCompleted(intent) && intent.status === 'failed',
 	)
 	if (failed) {
-		if (isDueRetryableValuePathEmailIntent(failed, input.now)) {
+		if (failed.metadata.retryable === true) {
+			return { state: 'moving', stage: emailResourceId(failed) ?? stage }
+		}
+		if (hasExhaustedTransientProviderRetries(failed)) {
 			return stuck({
 				stage: emailResourceId(failed) ?? stage,
-				cause: 'retryable-failed-overdue',
+				cause: 'provider-retries-exhausted',
 				contactId: input.contactId,
 				intentId: failed.id,
 				lastActivityAt,
 				now: input.now,
 			})
 		}
-		if (
-			failed.metadata.retryable === true &&
-			isScheduledRetry(failed, input.now)
-		) {
-			return { state: 'moving', stage: emailResourceId(failed) ?? stage }
-		}
-		if (failed.metadata.retryable !== true) {
-			return stuck({
-				stage: emailResourceId(failed) ?? stage,
-				cause: 'failed-send',
-				contactId: input.contactId,
-				lastActivityAt,
-				now: input.now,
-			})
-		}
+		return stuck({
+			stage: emailResourceId(failed) ?? stage,
+			cause: 'provider-permanent-failure',
+			contactId: input.contactId,
+			intentId: failed.id,
+			lastActivityAt,
+			now: input.now,
+		})
 	}
 
 	const completed = mostAdvancedCompletedIntent(pathIntents)
@@ -211,7 +219,7 @@ export function classifyLearnerFlowContact(
 	})
 }
 
-export function isCourseValuePathIntent(intent: SideEffectIntent) {
+export function isCourseValuePathIntent(intent: LearnerFlowIntent) {
 	if (isCleanedLearnerFlowFixtureIntent(intent)) return false
 	if (intent.provider !== 'kit' || intent.type !== 'send-value-path-email') {
 		return false
@@ -246,15 +254,13 @@ function unstickCommand(cause: LearnerFlowStuckCause, contactId: string) {
 	if (cause === 'blocked-intent') {
 		return `${operator} value-path-intent-replan --contact-ids ${contactId} --allow-write`
 	}
-	if (cause === 'retryable-failed-overdue') {
-		return `${operator} value-path-email-executor --allow-write --mode scoped-live --allow-scoped-live --use-gate-d-allowlist`
-	}
 	if (
 		cause === 'bounced' ||
 		cause === 'complained' ||
 		cause === 'unsubscribed' ||
 		cause === 'human-review-parked' ||
-		cause === 'failed-send'
+		cause === 'provider-retries-exhausted' ||
+		cause === 'provider-permanent-failure'
 	) {
 		return `tier-2: ask Joel (${cause}; contact ${contactId})`
 	}
@@ -264,18 +270,18 @@ function unstickCommand(cause: LearnerFlowStuckCause, contactId: string) {
 	return `tier-2: ask Joel (classifier-gap; contact ${contactId})`
 }
 
-function isCompletedTerminalIntent(intent: SideEffectIntent) {
+function isCompletedTerminalIntent(intent: LearnerFlowIntent) {
 	return (
 		isValuePathIntentCompleted(intent) &&
 		isTerminalSkillsWorkflowEmailResourceId(emailResourceId(intent))
 	)
 }
 
-function mostAdvancedCompletedIntent(intents: SideEffectIntent[]) {
+function mostAdvancedCompletedIntent(intents: LearnerFlowIntent[]) {
 	return mostAdvancedIntent(intents.filter(isValuePathIntentCompleted))
 }
 
-function mostAdvancedIntent(intents: SideEffectIntent[]) {
+function mostAdvancedIntent(intents: LearnerFlowIntent[]) {
 	return [...intents].sort((left, right) => {
 		const stageDifference = emailStepNumber(right) - emailStepNumber(left)
 		if (stageDifference !== 0) return stageDifference
@@ -283,14 +289,14 @@ function mostAdvancedIntent(intents: SideEffectIntent[]) {
 	})[0]
 }
 
-function latestPath(intents: SideEffectIntent[]): CourseValuePathSlug | undefined {
+function latestPath(intents: LearnerFlowIntent[]): CourseValuePathSlug | undefined {
 	const latest = [...intents].sort((left, right) =>
 		activityAt(right).localeCompare(activityAt(left)),
 	)[0]
 	return latest ? valuePathSlug(latest) : undefined
 }
 
-function valuePathSlug(intent: SideEffectIntent): CourseValuePathSlug | undefined {
+function valuePathSlug(intent: LearnerFlowIntent): CourseValuePathSlug | undefined {
 	const value = intent.metadata.valuePathSlug
 	if (COURSE_VALUE_PATH_SLUGS.includes(value as CourseValuePathSlug)) {
 		return value as CourseValuePathSlug
@@ -301,7 +307,7 @@ function valuePathSlug(intent: SideEffectIntent): CourseValuePathSlug | undefine
 	)
 }
 
-function emailResourceId(intent?: SideEffectIntent) {
+function emailResourceId(intent?: LearnerFlowIntent) {
 	const value = intent?.metadata.emailResourceId
 	return typeof value === 'string' && value.length > 0 ? value : undefined
 }
@@ -325,22 +331,22 @@ function firstEmailResourceId(providerReference: string) {
 		: `${path}.email-0`
 }
 
-function emailStepNumber(intent: SideEffectIntent) {
+function emailStepNumber(intent: LearnerFlowIntent) {
 	const match = emailResourceId(intent)?.match(/(?:team-)?email-(\d+)$/)
 	return match ? Number(match[1]) : -1
 }
 
-function latestActivityAt(intents: SideEffectIntent[]) {
+function latestActivityAt(intents: LearnerFlowIntent[]) {
 	const timestamps = intents.map(activityAt).filter(Boolean).sort()
 	return timestamps[timestamps.length - 1]
 }
 
-function activityAt(intent: SideEffectIntent) {
+function activityAt(intent: LearnerFlowIntent) {
 	return valuePathIntentCompletedAt(intent) ??
 		(validDate(intent.createdAt) ? intent.createdAt : '')
 }
 
-function hasSignal(intent: SideEffectIntent, signal: string) {
+function hasSignal(intent: LearnerFlowIntent, signal: string) {
 	if (intent.reviewReasons.includes(signal)) return true
 	if (intent.metadata[signal] === true) return true
 	const providerResult = intent.metadata.providerResult
@@ -351,16 +357,28 @@ function hasSignal(intent: SideEffectIntent, signal: string) {
 	)
 }
 
-function isScheduledRetry(intent: SideEffectIntent, now: string) {
-	const nextRetryAt = intent.metadata.nextRetryAt
+const TRANSIENT_PROVIDER_RETRY_REASONS = new Set([
+	'kit-retry-later',
+	'kit-timeout',
+	'kit-invalid-json-response',
+	'kit-rate-limited',
+	'kit-5xx',
+])
+
+function hasExhaustedTransientProviderRetries(intent: LearnerFlowIntent) {
+	const retryAttemptCount = numberField(intent.metadata.retryAttemptCount)
+	const maxRetryAttempts = numberField(intent.metadata.maxRetryAttempts)
+	const retryReason = intent.metadata.retryReason
 	return (
-		typeof nextRetryAt === 'string' &&
-		validDate(nextRetryAt) &&
-		new Date(nextRetryAt) > new Date(now)
+		retryAttemptCount !== undefined &&
+		maxRetryAttempts !== undefined &&
+		retryAttemptCount >= maxRetryAttempts &&
+		typeof retryReason === 'string' &&
+		TRANSIENT_PROVIDER_RETRY_REASONS.has(retryReason)
 	)
 }
 
-function hasRecentCourseProgress(intents: SideEffectIntent[], now: string) {
+function hasRecentCourseProgress(intents: LearnerFlowIntent[], now: string) {
 	return intents.some(
 		(intent) =>
 			(intent.status === 'pending' || isValuePathIntentCompleted(intent)) &&
@@ -380,7 +398,7 @@ function hasBlockingHumanReview(input: LearnerFlowContactInput) {
 	)
 }
 
-function exceedsMovementTolerance(intent: SideEffectIntent, now: string) {
+function exceedsMovementTolerance(intent: LearnerFlowIntent, now: string) {
 	const lastActivityAt = activityAt(intent)
 	return (
 		!lastActivityAt ||

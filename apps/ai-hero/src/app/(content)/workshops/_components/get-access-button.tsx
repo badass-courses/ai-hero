@@ -29,7 +29,9 @@ export default function GetAccessButton({
 
 	return (
 		<Button asChild className={className}>
-			<Link href={getResourcePath('workshop', moduleSlug, 'view')}>
+			{/* data-get-access lets the lesson-controls row detect this growing
+			    button and drop the adjacent double border (see LessonControls). */}
+			<Link data-get-access="" href={getResourcePath('workshop', moduleSlug, 'view')}>
 				Get Full Access
 			</Link>
 		</Button>

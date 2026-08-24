@@ -1,3 +1,7 @@
+/**
+ * Inline lesson quiz. How the whole system works — authoring contract, question
+ * identity, where answers land, sharp edges — is documented in docs/quiz.md.
+ */
 import * as React from 'react'
 import { log } from '@/server/logger'
 

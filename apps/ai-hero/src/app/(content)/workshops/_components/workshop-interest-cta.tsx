@@ -31,10 +31,14 @@ export const WorkshopInterestCta = ({
 	workshopSlug,
 	workshopTitle,
 	className,
+	forceVisible = false,
 }: {
 	workshopSlug: string
 	workshopTitle?: string
 	className?: string
+	/** DEV-ONLY escape hatch for the state-preview fixture: keeps the card
+	 * rendered even when the current subscriber already expressed interest. */
+	forceVisible?: boolean
 }) => {
 	const router = useRouter()
 	const { subscriber, isResolved } = useCtaGate()
@@ -57,7 +61,7 @@ export const WorkshopInterestCta = ({
 	// `done` is different and deliberately still renders. That is a confirmation
 	// of a click made a second ago, and an action that produces no visible
 	// result reads as an action that failed.
-	if (alreadyInterested && !done) return null
+	if (alreadyInterested && !done && !forceVisible) return null
 
 	const handleFormSuccess = (sub?: Subscriber) => {
 		if (sub) {

@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidateTag } from "next/cache";
+import { revalidateTag, unstable_cache } from "next/cache";
 import { courseBuilderAdapter, db } from "@/db";
 import { contentResource, contentResourceResource } from "@/db/schema";
 import { NewPage, Page, PageSchema } from "@/lib/pages";
@@ -12,6 +12,8 @@ import slugify from "@sindresorhus/slugify";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { v4 } from "uuid";
 import { z } from "zod";
+
+import { retryTransientDatabaseRead } from "./transient-database-read";
 
 export async function getPages(): Promise<Page[]> {
   const { ability } = await getServerAuthSession();
@@ -147,4 +149,35 @@ export async function getPage(slugOrId: string) {
   }
 
   return pageParsed.data;
+}
+
+const _getCachedPage = unstable_cache(
+  async (slugOrId: string) => retryTransientDatabaseRead(() => getPage(slugOrId)),
+  ["pages-v1"],
+  {
+    revalidate: 3600,
+    tags: ["pages"],
+  },
+);
+
+/** Public CMS page loader for static and ISR surfaces. */
+export async function getCachedPage(slugOrId: string) {
+  const result = await _getCachedPage(slugOrId);
+  if (!result) return null;
+
+  // The cache round-trip serializes Dates to ISO strings; every date field in
+  // the schema is `z.coerce.date()`, so the re-parse restores them. No other
+  // reviving — `fields.publishedAt` is `z.string().datetime()` and converting
+  // it to a Date failed the parse, silently swapping published pages for
+  // their fallbacks (the homepage rendered the retired `landing-page` row).
+  const parsed = PageSchema.safeParse(result);
+  if (!parsed.success) {
+    void log.error("page.cached.parse.error", {
+      scope: "page",
+      slugOrId,
+      issues: parsed.error.issues.slice(0, 5),
+    });
+    return null;
+  }
+  return parsed.data;
 }

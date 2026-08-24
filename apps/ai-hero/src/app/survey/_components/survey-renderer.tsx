@@ -1,6 +1,6 @@
 import React from 'react'
 import { CheckCircle } from 'lucide-react'
-import Markdown from 'react-markdown'
+import { Markdown } from '@/components/markdown'
 
 import {
 	OfferMachineEvent,

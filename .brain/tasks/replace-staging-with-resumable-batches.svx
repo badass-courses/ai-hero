@@ -1,0 +1,79 @@
+---
+title: Replace course staging with resumable batches
+assignee: "sync-batches"
+status: closed
+closed_at: "2026-08-21"
+---
+
+# Mission
+
+Replace the 70-step asset-freeze loop with small, durable, resumable batches. Preserve the proven sync contract and review gate.
+
+# Current failure
+
+- One poll froze 35 of 70 assets, then Inngest stopped requesting continuations.
+- Persisted poll state remained `staging` with no source revision or control-plane run.
+- Later polls skipped because the two-hour staging marker looked active.
+- Event ingestion accepted run-now events that never dispatched. Direct function invocation now exists on main.
+
+# Required shape
+
+- Process at most 10 assets per invocation or durable batch step.
+- Persist a cursor or derive progress from frozen-asset receipts so restart is deterministic.
+- A repeated batch is idempotent.
+- A crash leaves enough state for the next invocation to continue without operator SQL.
+- Completion stages exactly one source revision and one control-plane run.
+- Existing hold, release, review, preview, apply, verification, and target-contract behavior stays intact.
+- Terminal failure and stale recovery are explicit states, not time-based guesses alone.
+
+# State model
+
+```text
+idle --REVISION.START--> batching --BATCHES.OK--> staging
+  ^                            ^                    |
+  |                            |                    v
+  |                     recovering <-- restore -- legacy staging / batching
+  |                                                 |
+  +-- applied <-- applying <-- awaiting-apply <-- preview
+
+batching | staging | applying --retryable failure--> failed --retry--> batching
+batching | staging | applying --terminal failure---------------------> held
+held --OPERATOR.RELEASE--> idle
+```
+
+- One durable batch step receives at most 10 stable source video IDs.
+- Frozen-asset receipts are the cursor. Replay starts from the manifest order and reuses each receipt.
+- `recovering` is explicit and immediate. It replaces the two-hour staging guess.
+- Stage idempotency still creates exactly one source revision and control-plane run.
+
+# Work
+
+1. Claim this brief by setting `assignee`.
+2. Read the current poller, control plane, persistence schema, tests, and replacement design in the support Brain if available.
+3. Sketch the minimal lifecycle before editing. Use XState only for essential temporal state. Keep pure decisions separate from Effectful or provider boundaries.
+4. Implement the smallest production-ready batch design on this branch.
+5. Coordinate with the pronto worker through pi-intercom. Consume its real Inngest response and run evidence. Avoid duplicating its route work.
+6. Commit branch changes as `shitratgit[bot]`. Do not merge or push main.
+
+# Guardrails
+
+- No production mutation or deployment.
+- No new second scheduler.
+- Preserve existing frozen receipts and revision idempotency.
+- Keep each code affordance deep. Delete accidental lifecycle branches when the batch model makes them obsolete.
+
+# Result
+
+- The poller groups stable manifest video IDs into durable batches of at most 10.
+- Frozen-asset receipts are the replay cursor. A restarted poll replays manifest order and reuses completed receipts.
+- The lifecycle now distinguishes `batching`, `recovering`, and `staging`. Legacy `staging` restores through `recovering` without a two-hour delay.
+- The existing stage idempotency key still owns the single source revision and control-plane run.
+- No database migration is required. `CourseSyncPollState.status` is already a string column; existing `staging` rows recover under the new model.
+- The run-now route remains owned by the pronto worker and is not changed here.
+
+# Done
+
+- Tests prove interruption after a partial batch, replay, continuation, final staging, and no duplicate assets or runs.
+- Existing focused course-sync tests pass.
+- Typecheck, lint, and diff check pass.
+- Branch commit, state model, migration notes, validation, risks, and integration order are reported through Herdr and pi-intercom.

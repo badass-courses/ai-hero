@@ -109,6 +109,38 @@ export const {
 	entitlementTypes,
 } = getCourseBuilderSchema(mysqlTable)
 
+export const checkoutLoginHandoff = mysqlTable(
+	'CheckoutLoginHandoff',
+	{
+		nonceHash: varchar('nonceHash', { length: 64 }).notNull().primaryKey(),
+		browserSessionHash: varchar('browserSessionHash', { length: 64 }).notNull(),
+		country: varchar('country', { length: 2 }).notNull(),
+		productId: varchar('productId', { length: 255 }).notNull(),
+		quantity: int('quantity').notNull(),
+		pppSelected: boolean('pppSelected').notNull(),
+		state: varchar('state', { length: 32 }).notNull(),
+		boundUserId: varchar('boundUserId', { length: 255 }),
+		claimId: varchar('claimId', { length: 64 }),
+		claimExpiresAt: timestamp('claimExpiresAt', { mode: 'date', fsp: 3 }),
+		providerSessionId: varchar('providerSessionId', { length: 255 }),
+		checkoutRedirect: text('checkoutRedirect'),
+		failureCode: varchar('failureCode', { length: 255 }),
+		issuedAt: timestamp('issuedAt', { mode: 'date', fsp: 3 }).notNull(),
+		expiresAt: timestamp('expiresAt', { mode: 'date', fsp: 3 }).notNull(),
+		completedAt: timestamp('completedAt', { mode: 'date', fsp: 3 }),
+		updatedAt: timestamp('updatedAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		expiresAtIdx: index('CheckoutLoginHandoff_expiresAt_idx').on(
+			table.expiresAt,
+		),
+		stateIdx: index('CheckoutLoginHandoff_state_idx').on(table.state),
+	}),
+)
+
 /**
  * Draft-only Course Video Manager -> AI Hero control-plane records.
  * The binding is server-created and immutable; public callers never write target IDs.
@@ -187,6 +219,34 @@ export const courseSyncSourceRevisionAsset = mysqlTable(
 	}),
 )
 
+export const courseSyncFrozenAssetReceipt = mysqlTable(
+	'CourseSyncFrozenAssetReceipt',
+	{
+		receiptKey: varchar('receiptKey', { length: 64 }).notNull().primaryKey(),
+		bindingId: varchar('bindingId', { length: 255 }).notNull(),
+		courseVersionId: varchar('courseVersionId', { length: 255 }).notNull(),
+		sourceVideoId: varchar('sourceVideoId', { length: 255 }).notNull(),
+		relativePath: varchar('relativePath', { length: 1000 }).notNull(),
+		providerRevision: varchar('providerRevision', { length: 255 }).notNull(),
+		providerContentHash: varchar('providerContentHash', { length: 255 }),
+		producerSha256: varchar('producerSha256', { length: 64 }).notNull(),
+		bytes: bigint('bytes', { mode: 'number' }).notNull(),
+		snapshotUri: varchar('snapshotUri', { length: 1000 }),
+		muxAssetId: varchar('muxAssetId', { length: 255 }).notNull(),
+		muxPlaybackId: varchar('muxPlaybackId', { length: 255 }),
+		duration: double('duration'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
+	},
+	(table) => ({
+		bindingAssetIdx: index('CourseSyncFrozenAssetReceipt_binding_asset_idx').on(
+			table.bindingId,
+			table.producerSha256,
+			table.bytes,
+		),
+	}),
+)
+
 export const courseSyncRun = mysqlTable(
 	'CourseSyncRun',
 	{
@@ -254,6 +314,7 @@ export const courseSyncPollState = mysqlTable('CourseSyncPollState', {
 	consecutiveFailures: int('consecutiveFailures').notNull().default(0),
 	controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
 	failureClass: varchar('failureClass', { length: 100 }),
+	applyPolicyOverride: varchar('applyPolicyOverride', { length: 32 }),
 	updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
 })
 
@@ -338,18 +399,28 @@ export const shortlinkClickRelations = relations(shortlinkClick, ({ one }) => ({
 /**
  * Shortlink attribution tracking for signups/purchases
  */
-export const shortlinkAttribution = mysqlTable('ShortlinkAttribution', {
-	id: varchar('id', { length: 255 })
-		.notNull()
-		.primaryKey()
-		.$defaultFn(() => guid()),
-	shortlinkId: varchar('shortlinkId', { length: 255 }).notNull(),
-	userId: varchar('userId', { length: 255 }),
-	email: varchar('email', { length: 255 }),
-	type: varchar('type', { length: 50 }).notNull(),
-	metadata: text('metadata'),
-	createdAt: timestamp('createdAt').defaultNow().notNull(),
-})
+export const shortlinkAttribution = mysqlTable(
+	'ShortlinkAttribution',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		shortlinkId: varchar('shortlinkId', { length: 255 }).notNull(),
+		userId: varchar('userId', { length: 255 }),
+		email: varchar('email', { length: 255 }),
+		type: varchar('type', { length: 50 }).notNull(),
+		metadata: text('metadata'),
+		createdAt: timestamp('createdAt').defaultNow().notNull(),
+	},
+	(table) => ({
+		// Serves the signup dedupe lookup in createShortlinkAttribution and, via
+		// the shortlinkId prefix, the shortlink stats join and delete-by-shortlink.
+		shortlinkEmailTypeIdx: index(
+			'ShortlinkAttribution_shortlink_email_type_idx',
+		).on(table.shortlinkId, table.email, table.type),
+	}),
+)
 
 export const shortlinkAttributionRelations = relations(
 	shortlinkAttribution,
@@ -577,6 +648,11 @@ export const contactEvent = mysqlTable(
 			table.providerEventId,
 		),
 		occurredAtIdx: index('ContactEvent_occurredAt_idx').on(table.occurredAt),
+		// Serves the value-path enrollment scan:
+		// eventType = ? AND providerReference IN (...) — previously a full scan.
+		eventTypeProviderReferenceIdx: index(
+			'ContactEvent_eventType_providerReference_idx',
+		).on(table.eventType, table.providerReference),
 	}),
 )
 
@@ -688,6 +764,14 @@ export const sideEffectIntent = mysqlTable(
 		),
 		contactIdIdx: index('SideEffectIntent_contactId_idx').on(table.contactId),
 		statusIdx: index('SideEffectIntent_status_idx').on(table.status),
+		// Every value-path reader filters provider + type together; the executor
+		// poll additionally filters status IN ('pending','failed') so the status
+		// column rides the same index and completed rows are never examined.
+		providerTypeStatusIdx: index('SideEffectIntent_provider_type_status_idx').on(
+			table.provider,
+			table.type,
+			table.status,
+		),
 	}),
 )
 

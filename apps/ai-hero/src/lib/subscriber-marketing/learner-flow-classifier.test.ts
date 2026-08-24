@@ -102,20 +102,6 @@ describe('learner-flow classifier', () => {
 
 	it.each([
 		['blocked-intent', intent({ status: 'blocked' })],
-		[
-			'failed-send',
-			intent({ status: 'failed', metadata: { retryable: false } }),
-		],
-		[
-			'retryable-failed-overdue',
-			intent({
-				status: 'failed',
-				metadata: {
-					retryable: true,
-					nextRetryAt: '2026-07-15T11:00:00.000Z',
-				},
-			}),
-		],
 		['bounced', intent({ status: 'blocked', reviewReasons: ['bounced'] })],
 		[
 			'complained',
@@ -129,6 +115,71 @@ describe('learner-flow classifier', () => {
 		const result = classify({ contactId: 'contact-1', intents: [fixture] })
 		expect(result).toMatchObject({ state: 'stuck', cause })
 		expect(result.unstickCommand).toBeTruthy()
+	})
+
+	it('keeps scheduled and due retryable failures in the executor-owned queue', () => {
+		for (const nextRetryAt of [
+			'2026-07-15T11:00:00.000Z',
+			'2026-07-15T13:00:00.000Z',
+		]) {
+			expect(
+				classify({
+					contactId: 'contact-1',
+					intents: [
+						intent({
+							status: 'failed',
+							metadata: { retryable: true, nextRetryAt },
+						}),
+					],
+				}),
+			).toMatchObject({ state: 'moving' })
+		}
+	})
+
+	it('reports exhausted transient retries as a distinct tier-2 cause', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			intents: [
+				intent({
+					status: 'failed',
+					metadata: {
+						retryable: false,
+						retryReason: 'kit-rate-limited',
+						retryAttemptCount: 5,
+						maxRetryAttempts: 5,
+					},
+				}),
+			],
+		})
+		expect(result).toMatchObject({
+			state: 'stuck',
+			cause: 'provider-retries-exhausted',
+			intentId: 'intent-1',
+			unstickCommand:
+				'tier-2: ask Joel (provider-retries-exhausted; contact contact-1)',
+		})
+	})
+
+	it('keeps permanent provider failures distinct from exhausted retries', () => {
+		const result = classify({
+			contactId: 'contact-1',
+			intents: [
+				intent({
+					status: 'failed',
+					metadata: {
+						retryable: false,
+						retryReason: 'kit-permanent-error',
+						retryAttemptCount: 1,
+						maxRetryAttempts: 5,
+					},
+				}),
+			],
+		})
+		expect(result).toMatchObject({
+			state: 'stuck',
+			cause: 'provider-permanent-failure',
+			intentId: 'intent-1',
+		})
 	})
 
 	it('keeps a progressing contact moving despite the human-review companion', () => {

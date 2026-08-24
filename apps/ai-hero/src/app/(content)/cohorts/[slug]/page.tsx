@@ -34,7 +34,7 @@ import { formatDiscount } from '@/utils/discount-formatter'
 import { formatInTimeZone } from 'date-fns-tz'
 import { eq } from 'drizzle-orm'
 import { CheckCircle } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'

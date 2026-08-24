@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { db } from '@/db'
+import { closeDatabasePool, db } from '@/db'
 import {
 	contact,
 	contactEvent,
@@ -46,6 +46,7 @@ import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
 } from '@/lib/subscriber-marketing/learner-flow-classifier'
+import { getLearnerFlowAggregateSummary } from '@/lib/subscriber-marketing/learner-flow-summary'
 import {
 	cleanupLearnerFlowDrillFixtures,
 	createLearnerFlowDrillFixtures,
@@ -61,6 +62,7 @@ import {
 	type LearnerFlowDrillObservation,
 } from '@/lib/subscriber-marketing/learner-flow-drill-runner'
 import { DrizzleOperatorLookupRepository } from '@/lib/subscriber-marketing/drizzle-operator-lookup-repository'
+import { unsubscribeSyntheticKitSubscriber } from '@/lib/subscriber-marketing/kit-synthetic-subscriber-cleanup'
 import { DrizzlePurchasePreviewRepository } from '@/lib/subscriber-marketing/drizzle-purchase-preview-repository'
 import { previewMatchedPurchaserValuePaths } from '@/lib/subscriber-marketing/matched-purchaser-value-path-preview'
 import {
@@ -369,6 +371,8 @@ if (command === 'lookup') {
 				repository,
 				contactId: requireFlag(args, '--contact-id'),
 				allowWrite,
+				unsubscribeSyntheticKitSubscriber:
+					unsubscribeLearnerFlowSyntheticKitSubscriber,
 			})
 		: await createLearnerFlowStuckFixture({
 				repository,
@@ -528,11 +532,30 @@ if (command === 'lookup') {
 	)
 	console.log(JSON.stringify({ ...result, receiptPath }, null, 2))
 } else if (command === 'learner-flow-stuck-list') {
-	const result = await buildLearnerFlowStuckList()
-	if (args.includes('--json')) {
-		console.log(JSON.stringify(result, null, 2))
+	if (args.includes('--summary-only')) {
+		try {
+			const summary = await getLearnerFlowAggregateSummary()
+			console.log(
+				JSON.stringify(
+					{
+						mode: 'read-only' as const,
+						writes: { database: false, provider: false },
+						...summary,
+					},
+					null,
+					2,
+				),
+			)
+		} finally {
+			await closeDatabasePool()
+		}
 	} else {
-		console.log(formatLearnerFlowStuckList(result))
+		const result = await buildLearnerFlowStuckList()
+		if (args.includes('--json')) {
+			console.log(JSON.stringify(result, null, 2))
+		} else {
+			console.log(formatLearnerFlowStuckList(result))
+		}
 	}
 } else if (command === 'learner-flow-unstick') {
 	const allowWrite = args.includes('--allow-write')
@@ -1161,9 +1184,6 @@ async function buildLearnerFlowUnstick(args: {
 	const blockedIntentIds = blockedItems.flatMap((item) =>
 		item.intentId ? [item.intentId] : [],
 	)
-	const retryIntentIds = partition.tier1
-		.filter((item) => item.action === 'retry-transient-failure')
-		.flatMap((item) => (item.intentId ? [item.intentId] : []))
 	const dripItems = partition.tier1.filter(
 		(item) => item.action === 'nudge-drip-progression' && item.intentId,
 	)
@@ -1198,7 +1218,7 @@ async function buildLearnerFlowUnstick(args: {
 				now: generatedAt,
 			}),
 	)
-	const requiresGateD = retryIntentIds.length > 0 || dripContactIds.length > 0
+	const requiresGateD = dripContactIds.length > 0
 	// Reading the active authorization is safe and required for an honest
 	// dry-run. The old allow-write guard made every drip recovery preview report
 	// planned: 0 without actually invoking the planner.
@@ -1213,37 +1233,6 @@ async function buildLearnerFlowUnstick(args: {
 			now: generatedAt,
 		})
 		: undefined
-	const retryLimit = allowlist?.maxSendsPerRun ?? 25
-	const retryableIntentIds = retryIntentIds.slice(0, retryLimit)
-	const retryResults =
-		allowlist && retryableIntentIds.length > 0
-			? await executePendingValuePathEmailIntents({
-				repository,
-				emailListProvider: (await import('@/coursebuilder/email-list-provider'))
-					.emailListProvider,
-				now: generatedAt,
-				config: {
-					mode: allowlist.mode,
-					limit: retryableIntentIds.length,
-					allowWrite: args.allowWrite,
-					intentIds: retryableIntentIds,
-					baseUrl:
-						process.env.NEXT_PUBLIC_URL ??
-						process.env.NEXT_PUBLIC_SITE_URL ??
-						'https://www.aihero.dev',
-					pathTokenSecret: process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
-					answerPages: await getValuePathAnswerPages(),
-					allowlistedContactIds: allowlist.contactIds,
-					allowlistedKitSubscriberIds: allowlist.kitSubscriberIds,
-					allowlistedEmails: allowlist.emails,
-					enabledValuePathSlugs: allowlist.pathSlugs,
-					verifiedEmailResourceIds: allowlist.emailResourceIds,
-					verifiedKitSequenceIds: allowlist.kitSequenceIds,
-					allowedActions: allowlist.allowedActions,
-					retryPolicy: allowlist.retryPolicy,
-				},
-			})
-			: []
 	const completedIntents = (
 		await Promise.all(
 			dripContactIds.map((contactId) =>
@@ -1305,11 +1294,9 @@ async function buildLearnerFlowUnstick(args: {
 		writes: {
 			database: Boolean(
 				args.allowWrite &&
-					(replan?.counts.replanned ||
-						retryResults.length ||
-						(drip?.counts.planned ?? 0) > 0),
+					(replan?.counts.replanned || (drip?.counts.planned ?? 0) > 0),
 			),
-			provider: Boolean(args.allowWrite && (retryResults.length || signupGapReplay)),
+			provider: Boolean(args.allowWrite && signupGapReplay),
 		},
 		counts: stuckList.counts,
 		causeCounts: stuckList.causeCounts,
@@ -1317,24 +1304,6 @@ async function buildLearnerFlowUnstick(args: {
 			tier1: {
 				stuckItems: partition.tier1.length,
 				replan: replan?.counts ?? { contacts: 0, blockedIntentsFound: 0, replanned: 0, wouldReplan: 0 },
-				retry: {
-					eligible: retryIntentIds.length,
-					previewed: args.allowWrite ? 0 : retryResults.length,
-					planned: retryResults.filter((result) => result.status === 'planned')
-						.length,
-					executed: args.allowWrite ? retryResults.length : 0,
-					completed: retryResults.filter(
-						(result) => result.status === 'completed',
-					).length,
-					deferred: retryIntentIds.length - retryableIntentIds.length,
-					results: retryResults.map((result) => ({
-						intentId: result.intentId,
-						status: result.status,
-						...('reviewReasons' in result
-							? { reviewReasons: result.reviewReasons }
-							: {}),
-					})),
-				},
 				drip: {
 					contactCount: dripContactIds.length,
 					uniqueContactCount: new Set(dripContactIds).size,
@@ -1380,7 +1349,7 @@ function formatLearnerFlowUnstick(
 		`Learner flow unstick (${result.allowWrite ? 'allow-write' : 'dry-run'})`,
 		`Generated: ${result.generatedAt}`,
 		`Counts: total=${result.counts.total} moving=${result.counts.moving} terminal=${result.counts.terminal} stuck=${result.counts.stuck}`,
-		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} retry-previewed=${result.tiers.tier1.retry.previewed} retry-planned=${result.tiers.tier1.retry.planned} retry-completed=${result.tiers.tier1.retry.completed}/${result.tiers.tier1.retry.eligible} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
+		`Tier 1 auto: stuck=${result.tiers.tier1.stuckItems} replanned=${result.tiers.tier1.replan.replanned} would-replan=${result.tiers.tier1.replan.wouldReplan} drip-planned=${result.tiers.tier1.drip.planned} signup-gap-status=${result.tiers.tier1.signupGap.status} signup-gap-replayable=${result.tiers.tier1.signupGap.replayable} signup-gap-emitted=${result.tiers.tier1.signupGap.emitted}`,
 		`Tier 2 ask Joel: ${result.tiers.tier2.ask.length}`,
 	]
 	for (const item of result.tiers.tier2.ask) {
@@ -2970,6 +2939,17 @@ async function createCaptureRepository() {
 	return new DrizzleCaptureMarketingRepository(db)
 }
 
+function unsubscribeLearnerFlowSyntheticKitSubscriber(email: string) {
+	const apiKey =
+		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
+	if (!apiKey) {
+		throw new Error(
+			'Synthetic Kit subscriber cleanup requires CONVERTKIT_V4_API_KEY or CONVERTKIT_API_KEY',
+		)
+	}
+	return unsubscribeSyntheticKitSubscriber({ email, apiKey })
+}
+
 async function createLearnerFlowDrillRepository(): Promise<
 	DrizzleCaptureMarketingRepository & LearnerFlowDrillRepository
 > {
@@ -3088,7 +3068,8 @@ async function queryLearnerFlowDrillReconcilerRuns(since: string) {
 	const apl = [
 		"['vercel']",
 		"| where ['vercel.projectName'] == 'ai-hero'",
-		"  and tostring(['message']) contains '\"event\":\"subscriber_funnel.drip_run_completed\"'",
+		"  and (tostring(['message']) contains '\"event\":\"subscriber_funnel.drip_run_completed\"'",
+		"    or tostring(['message']) contains '\"event\":\"subscriber_funnel.email_executor_run_completed\"')",
 		"| extend payload = parse_json(tostring(['message']))",
 		'| project _time, payload',
 		'| sort by _time asc',
@@ -3170,6 +3151,8 @@ async function createLearnerFlowCanaryRepository(): Promise<
 > {
 	const repository = await createCaptureRepository()
 	return Object.assign(repository, {
+		unsubscribeSyntheticKitSubscriber:
+			unsubscribeLearnerFlowSyntheticKitSubscriber,
 		findLearnerFlowCanaryContacts: async () => {
 			const rows = await db
 				.select({ id: contact.id })
@@ -3428,7 +3411,7 @@ function printUsageAndExit(): never {
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-canary --cleanup [--allow-write]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill [--dry-run] [--receipt .brain/data/learner-flow/receipts/receipt.json]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-completed-at-backfill --allow-write [--receipt .brain/data/learner-flow/receipts/receipt.json]
-  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json]
+  pnpm --filter ai-hero subscriber-marketing:operator learner-flow-stuck-list [--json|--summary-only]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator learner-flow-unstick --allow-write [--json] [--signup-gap-form-id 9376133]
   pnpm --filter ai-hero subscriber-marketing:operator value-path-email-executor --allow-write --mode allowlisted-test --allowlisted-email joel+test@example.com --limit 1 [--intent-id <id>] [--provider-pacing-ms 1500]

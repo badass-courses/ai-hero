@@ -1,6 +1,24 @@
 # AI Hero analytics reporting semantics
 
-Updated: 2026-06-23
+Updated: 2026-08-18
+
+## Agent contract
+
+`GET /api/analytics` with no query parameters returns a versioned machine contract under `schema` plus direct operating guidance under `agent_instructions`.
+
+The first contract covers the revenue surfaces most likely to be compared or paginated:
+
+- `summary`
+- `revenue/daily`
+- `revenue/products`
+- `revenue/countries`
+- `purchases/recent`
+
+Agents must use the same `range` and `productId` when comparing surfaces. Summary revenue is `data.totalRevenue`. Daily revenue is `data[].revenue`. Revenue amounts use USD major units.
+
+`purchases/recent` is ordered by `createdAt DESC, id DESC` and defaults to `range=30d`. Use `range=all` when historical purchases are required. The 100-row limit is a per-page cap, not a total cap. Read `meta.pagination.totalMatchingRows` for the full matching purchase count. Follow `_links.next.href` until it is absent, or increment with `meta.pagination.nextOffset` until it is `null`. `meta.totalRows` and `meta.pagination.returnedRows` are the current page size.
+
+Successful revenue surface responses include their available schema. All successful responses include a normalized self link and filter-preserving next actions. Paginated responses also include standard `_links.next` and `_links.previous` links when available. Re-query before reporting live launch numbers because separate requests can observe different purchases.
 
 ## Traffic range behavior
 

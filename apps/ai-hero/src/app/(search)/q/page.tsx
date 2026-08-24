@@ -2,7 +2,8 @@ import LayoutClient from '@/components/layout-client'
 
 import Search from './_components/search'
 
-export const dynamic = 'force-dynamic'
+export const revalidate = 3600
+export const dynamic = 'force-static'
 
 export default async function SearchPage() {
 	return (

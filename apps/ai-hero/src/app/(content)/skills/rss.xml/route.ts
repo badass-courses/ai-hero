@@ -1,12 +1,15 @@
 import config from '@/config'
 import { env } from '@/env.mjs'
-import { getList } from '@/lib/lists-query'
-import { getSkillChangelogEntries } from '@/lib/skill-changelog-query'
+import { getCachedList } from '@/lib/lists-query'
+import { getCachedSkillChangelogEntries } from '@/lib/skill-changelog-query'
 import { SKILLS_LIST_ID } from '@/lib/skills-content'
 import { Feed } from 'feed'
 
 const MAX_ITEMS = 50
 const CHANGELOG_FETCH_LIMIT = 100
+
+export const revalidate = 3600
+export const dynamic = 'force-static'
 
 type FeedItem = {
 	id: string
@@ -35,8 +38,8 @@ function contentTimestamp(...values: unknown[]): Date {
 
 async function generateRSS() {
 	const [changelog, skillsList] = await Promise.all([
-		getSkillChangelogEntries({ limit: CHANGELOG_FETCH_LIMIT }),
-		getList(SKILLS_LIST_ID),
+		getCachedSkillChangelogEntries({ limit: CHANGELOG_FETCH_LIMIT }),
+		getCachedList(SKILLS_LIST_ID),
 	])
 
 	const items: FeedItem[] = []
@@ -119,7 +122,7 @@ export async function GET() {
 	return new Response(await generateRSS(), {
 		headers: {
 			'Content-Type': 'text/xml; charset=utf-8',
-			'Cache-Control': 's-maxage=1, stale-while-revalidate',
+			'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
 		},
 	})
 }

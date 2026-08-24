@@ -16,10 +16,53 @@ export type Promo = {
 	/** The promo headline. Keep it short for one line on mobile. */
 	message: string
 	href: string
+	/** Resource id used to suppress owned offers in the global nav. */
+	resourceId?: string
+	/** Compact copy for the nav's single gold action. */
+	navLabel?: string
+	/** Direct page path so the nav can hide itself on the sold page. */
+	navHref?: string
+	/** Optional ISO instant before which this promo stays hidden. */
+	startsAt?: string
+}
+
+export const CRASH_COURSE_PRODUCT_ID = 'product-ma254'
+export const CRASH_COURSE_RESOURCE_ID = 'workshop-2ozd9'
+export const CRASH_COURSE_PROMO_STARTS_AT = '2026-08-17T07:00:00.000Z'
+
+const PRODUCT_PROMO_STARTS_AT: Readonly<Record<string, string>> = {
+	[CRASH_COURSE_PRODUCT_ID]: CRASH_COURSE_PROMO_STARTS_AT,
+}
+
+export function isPromoActive(
+	promo: Promo | null,
+	now: Date = new Date(),
+): promo is Promo {
+	if (!promo) return false
+	if (!promo.startsAt) return true
+	return now.getTime() >= new Date(promo.startsAt).getTime()
+}
+
+export function isProductPromoActive(
+	productId: string | null | undefined,
+	now: Date = new Date(),
+): boolean {
+	if (!productId) return true
+	const startsAt = PRODUCT_PROMO_STARTS_AT[productId]
+	if (!startsAt) return true
+	return now.getTime() >= new Date(startsAt).getTime()
 }
 
 /**
- * Manual override. Set to a Promo to feature it site-wide (wins over the
- * latest-post fallback); leave `null` to fall back automatically.
+ * Manual override. It becomes visible at midnight Pacific on launch day.
+ * Before then the site keeps the latest-post fallback.
  */
-export const FEATURED_PROMO: Promo | null = null
+export const FEATURED_PROMO: Promo = {
+	label: 'New',
+	message: 'AI Coding Crash Course is open. $199 through August 24.',
+	href: '/s/crash-course',
+	resourceId: CRASH_COURSE_RESOURCE_ID,
+	navLabel: 'Save $100',
+	navHref: '/workshops/ai-coding-crash-course',
+	startsAt: CRASH_COURSE_PROMO_STARTS_AT,
+}

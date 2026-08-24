@@ -143,17 +143,28 @@ export function useScrollToActive(currentLessonSlug?: string) {
 				return
 			}
 
-			// Wait a bit more for accordion animation to fully complete
-			setTimeout(() => {
+			// Wait a bit more for accordion animation to fully complete. Only one
+			// timer in this chain is ever pending, so `pollTimeoutId` tracks them
+			// all and unmount cancels whichever step is in flight.
+			pollTimeoutId = setTimeout(() => {
 				performScroll()
 			}, 150)
 
+			/**
+			 * Scroll, then VERIFY with fresh geometry and re-attempt if the element
+			 * still isn't visible. The geometry moves under this hook — the section
+			 * accordion animates open (scrollHeight grows for ~300ms) and the sticky
+			 * sidebar's measured height lands post-hydration — so a target computed
+			 * from one snapshot can be stale by the time it's applied. The previous
+			 * version scrolled once, clamped to that snapshot's maxScroll, and its
+			 * "reset" retries re-asserted the same stale number: on the last lesson
+			 * of a section that reliably parked the active row below the fold.
+			 */
 			function performScroll() {
 				if (!scrollAreaViewport || !resourceToScrollTo) {
 					return
 				}
 
-				// Check if element is already visible in viewport
 				const viewportRect = scrollAreaViewport.getBoundingClientRect()
 				const resourceRect = resourceToScrollTo.getBoundingClientRect()
 
@@ -165,84 +176,49 @@ export function useScrollToActive(currentLessonSlug?: string) {
 					console.debug(
 						'[useScrollToActive] Element already visible, skipping scroll',
 					)
-					return
-				}
-
-				// Calculate position: element's top relative to viewport's top
-				const offsetFromViewportTop = resourceRect.top - viewportRect.top
-				const currentScrollTop = scrollAreaViewport.scrollTop
-
-				// Calculate absolute position in scrollable content
-				// If currentScrollTop is 0 (reset), use offsetFromViewportTop directly
-				// Otherwise, add current scroll position
-				const absolutePosition =
-					currentScrollTop === 0 && offsetFromViewportTop > 0
-						? offsetFromViewportTop
-						: currentScrollTop + offsetFromViewportTop
-
-				// Target scroll position with some padding from top
-				const targetScrollTop = Math.max(0, absolutePosition - 16)
-				const scrollHeight = scrollAreaViewport.scrollHeight
-				const clientHeight = scrollAreaViewport.clientHeight
-				const maxScroll = Math.max(0, scrollHeight - clientHeight)
-				const finalScrollTop = Math.min(targetScrollTop, maxScroll)
-
-				console.debug('[useScrollToActive] Scrolling', {
-					offsetFromViewportTop,
-					currentScrollTop,
-					absolutePosition,
-					targetScrollTop,
-					scrollHeight,
-					clientHeight,
-					maxScroll,
-					finalScrollTop,
-					retryCount,
-					willScroll: finalScrollTop > 0,
-				})
-
-				// Only scroll if we have a valid scroll position
-				if (finalScrollTop <= 0 && targetScrollTop > 0) {
-					console.warn(
-						'[useScrollToActive] Cannot scroll - maxScroll is 0 or negative',
-						{ scrollHeight, clientHeight, maxScroll, targetScrollTop },
-					)
-					// Mark as processed even if we can't scroll
 					lastSlugRef.current = slugToScrollTo
 					return
 				}
 
-				// Set scrollTop directly
-				scrollAreaViewport.scrollTop = finalScrollTop
-
-				console.debug(
-					'[useScrollToActive] Set scrollTop to',
-					finalScrollTop,
-					'actual:',
-					scrollAreaViewport.scrollTop,
+				// Element's position in the scrollable content, padded from the top
+				const offsetFromViewportTop = resourceRect.top - viewportRect.top
+				const targetScrollTop = Math.max(
+					0,
+					scrollAreaViewport.scrollTop + offsetFromViewportTop - 16,
 				)
+				const maxScroll = Math.max(
+					0,
+					scrollAreaViewport.scrollHeight - scrollAreaViewport.clientHeight,
+				)
+				scrollAreaViewport.scrollTop = Math.min(targetScrollTop, maxScroll)
 
-				// Mark this slug as processed after successful scroll
-				lastSlugRef.current = slugToScrollTo
-
-				// Multiple retries to handle accordion resets
-				const retries = [100, 300, 500]
-				retries.forEach((delay) => {
-					setTimeout(() => {
-						if (
-							scrollAreaViewport &&
-							Math.abs(scrollAreaViewport.scrollTop - finalScrollTop) > 10
-						) {
-							console.debug(
-								`[useScrollToActive] Scroll position was reset after ${delay}ms, retrying`,
-								{
-									expected: finalScrollTop,
-									actual: scrollAreaViewport.scrollTop,
-								},
-							)
-							scrollAreaViewport.scrollTop = finalScrollTop
-						}
-					}, delay)
+				console.debug('[useScrollToActive] Scrolled', {
+					targetScrollTop,
+					maxScroll,
+					actual: scrollAreaViewport.scrollTop,
+					retryCount,
 				})
+
+				// Give layout a beat to settle, then re-check for real. Not visible
+				// yet (accordion still opening, container resized, Radix reset the
+				// scroll) → run the whole attempt again with current geometry.
+				pollTimeoutId = setTimeout(() => {
+					if (!scrollAreaViewport || !resourceToScrollTo) return
+					const vr = scrollAreaViewport.getBoundingClientRect()
+					const rr = resourceToScrollTo.getBoundingClientRect()
+					const settled = rr.top >= vr.top && rr.bottom <= vr.bottom
+					if (!settled && retryCount < maxRetries) {
+						retryCount++
+						attemptScroll()
+						return
+					}
+					if (!settled) {
+						console.debug(
+							'[useScrollToActive] Gave up before element became visible',
+						)
+					}
+					lastSlugRef.current = slugToScrollTo
+				}, 200)
 			}
 		}
 

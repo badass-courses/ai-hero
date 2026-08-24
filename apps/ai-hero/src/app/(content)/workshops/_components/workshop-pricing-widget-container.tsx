@@ -4,6 +4,7 @@ import * as React from 'react'
 import type { ProductPricingFeature } from '@/components/commerce/product-pricing-features'
 import { ConversionIntentButton } from '@/components/cta/conversion-intent-button'
 import { ConversionIntentForm } from '@/components/cta/conversion-intent-form'
+import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { env } from '@/env.mjs'
 import { track } from '@/utils/analytics'
 import { formatInTimeZone } from 'date-fns-tz'
@@ -125,7 +126,11 @@ export const WorkshopPricingWidgetContainer: React.FC<
 		currentQuantityAvailable <= 0 &&
 		!couponFromCode?.fields?.bypassSoldOut
 
-	// Determine enrollment state
+	// Determine enrollment state. The three non-open states share the band-card
+	// language of the pre-launch waitlist (`workshop-interest-cta.tsx`): a
+	// status badge, a short ask, one sentence of why — because to the reader
+	// they are the same situation (can't buy now, leave your address) arrived
+	// at for different reasons.
 	const getEnrollmentState = () => {
 		// Bypass sold out if coupon allows
 		if (couponFromCode?.fields?.bypassSoldOut === true) {
@@ -136,8 +141,10 @@ export const WorkshopPricingWidgetContainer: React.FC<
 		if (isSoldOut) {
 			return {
 				type: 'sold-out' as const,
-				title: 'Sold Out',
-				subtitle: 'Join the waitlist to be notified if spots become available.',
+				badge: 'Sold out',
+				title: 'Every seat is taken',
+				subtitle:
+					'Join the waitlist and we’ll email you if a spot opens up.',
 			}
 		}
 
@@ -157,31 +164,46 @@ export const WorkshopPricingWidgetContainer: React.FC<
 
 			return {
 				type: 'not-open' as const,
-				title: `Enrollment opens ${enrollmentOpenDateString}`,
-				subtitle: 'Join the waitlist to be notified when enrollment opens.',
+				badge: openEnrollment
+					? `Opens ${formatInTimeZone(new Date(openEnrollment), tz, 'MMM d')}`
+					: 'Opens soon',
+				title: 'Enrollment opens soon',
+				subtitle: enrollmentOpenDateString
+					? `Doors open ${enrollmentOpenDateString}. Join the waitlist and the email arrives the moment they do.`
+					: 'Join the waitlist and the email arrives the moment doors open.',
 			}
 		}
 
 		// Enrollment is closed
 		return {
 			type: 'closed' as const,
-			title: 'Enrollment is closed',
-			subtitle: 'Join the waitlist to be notified when enrollment opens again.',
+			badge: 'Enrollment closed',
+			title: 'Missed this round?',
+			subtitle:
+				'Join the waitlist and we’ll let you know when enrollment opens again.',
 		}
 	}
 
 	const enrollmentState = getEnrollmentState()
 
+	// The card's control, in the interest-cta's own vocabulary: 44px controls at
+	// 9px radius, gold submit, and a skeleton that holds the footprint while the
+	// session resolves.
 	const renderWaitlistForm = () => {
 		if (!product) return null
 
 		if (waitlistResult) {
 			return (
-				<p className="mt-5 inline-flex items-center text-center text-lg font-medium">
-					<CheckCircle className="text-primary mr-2 size-5" />
+				<p
+					className={cn(
+						TYPE.meta,
+						'text-primary flex items-start gap-2 text-balance',
+					)}
+				>
+					<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
 					{waitlistResult === 'joined'
-						? 'You are on the waitlist'
-						: 'Check your inbox to confirm'}
+						? 'You’re on the waitlist. We’ll email you the moment a seat opens.'
+						: 'Check your inbox to confirm your spot on the waitlist.'}
 				</p>
 			)
 		}
@@ -189,7 +211,9 @@ export const WorkshopPricingWidgetContainer: React.FC<
 		// Hold the control's footprint until the session answers, so a signed-in
 		// visitor never sees the email form flash in before the one-click button.
 		if (sessionStatus === 'loading') {
-			return <div className="bg-muted mt-5 h-12 w-full animate-pulse" />
+			return (
+				<div className="bg-muted h-11 w-full animate-pulse rounded-[9px]" />
+			)
 		}
 
 		// The intent carries the Kit field, form, source and tag — the same
@@ -208,8 +232,8 @@ export const WorkshopPricingWidgetContainer: React.FC<
 				<ConversionIntentButton
 					intent={intent}
 					surface="workshop-page"
-					label="Join Waitlist"
-					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring relative z-10 mt-5 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-[9px] px-5 text-base font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+					label="Join the waitlist"
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background relative z-10 inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-[9px] px-[18px] text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
 					onSuccess={({ confirmationRequired }) => {
 						track('waitlist_joined', {
 							product_name: product.name,
@@ -226,27 +250,39 @@ export const WorkshopPricingWidgetContainer: React.FC<
 		}
 
 		return (
-			<ConversionIntentForm
-				intent={intent}
-				surface="workshop-page"
-				actionLabel="Join Waitlist"
-				className="relative z-10 mt-5 flex w-full flex-col items-center justify-center gap-2 [&_button]:mt-1 [&_button]:h-12 [&_button]:w-full [&_button]:text-base [&_input]:h-12 [&_input]:text-lg"
-				successMessage={
-					<p className="inline-flex items-center text-center text-lg font-medium">
-						<CheckCircle className="text-primary mr-2 size-5" /> You are on the
-						waitlist
-					</p>
-				}
-				onSuccess={(subscriber, email) => {
-					if (subscriber && product) {
-						track('waitlist_joined', {
-							product_name: product.name,
-							product_id: product.id,
-							email: email,
-						})
+			<div>
+				<ConversionIntentForm
+					intent={intent}
+					surface="workshop-page"
+					actionLabel="Join the waitlist"
+					className="[&_button]:bg-accent-fill [&_button]:text-accent-fill-foreground [&_button]:hover:bg-accent-fill-hover [&_button]:shadow-none [&_input]:border-input [&_input]:bg-background [&_input]:text-foreground grid w-full grid-cols-1 gap-2.5 [&_button]:h-[50px] desk:[&_button]:h-11 [&_button]:w-full [&_button]:rounded-[9px] [&_button]:border-0 [&_button]:px-[18px] [&_button]:text-sm [&_button]:font-bold [&_input]:h-12 desk:[&_input]:h-11 [&_input]:min-w-0 [&_input]:rounded-[9px] [&_input]:border [&_input]:px-3.5 [&_input]:text-sm [&_input]:placeholder:text-[color:var(--ah-fg-subtle)] [&_label]:sr-only"
+					successMessage={
+						<p
+							className={cn(
+								TYPE.meta,
+								'text-primary flex items-start gap-2 text-balance',
+							)}
+						>
+							<CheckCircle className="mt-0.5 h-4 w-4 shrink-0" /> You’re on the
+							waitlist.
+						</p>
 					}
-				}}
-			/>
+					onSuccess={(subscriber) => {
+						if (subscriber && product) {
+							// No email in the payload — track() forwards params to a
+							// third-party analytics store, and an address is PII.
+							track('waitlist_joined', {
+								product_name: product.name,
+								product_id: product.id,
+								method: 'form',
+							})
+						}
+					}}
+				/>
+				<p className={cn(TYPE.metaSm, 'mt-3 text-[color:var(--ah-fg-subtle)]')}>
+					No spam. Unsubscribe anytime.
+				</p>
+			</div>
 		)
 	}
 
@@ -261,10 +297,18 @@ export const WorkshopPricingWidgetContainer: React.FC<
 
 	const cancelUrl = pathname ? `${env.NEXT_PUBLIC_URL}${pathname}` : ''
 
+	// "/workshops/<slug>" → "/boss/<slug>": the shareable approval letter for
+	// this workshop. The route falls back to the generic letter for slugs
+	// without one of their own, so the link is always safe to offer.
+	const workshopSlug = pathname?.match(/^\/workshops\/([^/]+)$/)?.[1]
+	const teamLetterHref = workshopSlug ? `/boss/${workshopSlug}` : undefined
+
 	return (
 		<>
 			{enrollmentState.type === 'open' || allowPurchase ? (
-				<div className={cn('px-5', className)}>
+				// The card fills its column edge-to-edge and pads itself — see the
+				// sidebar shell's note on why the shell carries no padding.
+				<div className={cn('h-full', className)}>
 					<PricingWidget
 						workshops={workshops}
 						product={product}
@@ -273,6 +317,7 @@ export const WorkshopPricingWidgetContainer: React.FC<
 						pricingDataLoader={pricingDataLoader}
 						hasPurchasedCurrentProduct={hasPurchasedCurrentProduct}
 						prependFeatures={prependFeatures}
+						teamLetterHref={teamLetterHref}
 						pricingWidgetOptions={{
 							withImage: false,
 							withGuaranteeBadge: true,
@@ -285,16 +330,39 @@ export const WorkshopPricingWidgetContainer: React.FC<
 					/>
 				</div>
 			) : (
-				<div className={cn('p-5', className)}>
-					<div className="flex flex-col items-center justify-center gap-2 text-center">
-						<p className="text-balance text-lg font-semibold">
-							{enrollmentState.title}
-						</p>
-						<p className="text-foreground/80 text-balance text-sm">
-							{enrollmentState.subtitle}
-						</p>
+				// Sold out / not-open-yet / closed: the waitlist band card on the
+				// hatched ground — the same object the pre-launch interest card is,
+				// because it is the same ask. The ground runs the column's full
+				// height for the same reason it does there.
+				<div
+					className={cn(
+						'bg-muted bg-stripes-muted flex h-full flex-col p-5 sm:p-6',
+						className,
+					)}
+				>
+					<div className="border-border flex flex-col gap-4 rounded-lg border bg-[color:var(--ah-band)] px-5 py-6 sm:px-6">
+						<div className="flex flex-col gap-1.5">
+							<p>
+								<span
+									className={cn(TYPE.badge, BADGE_NEUTRAL, 'inline-block')}
+								>
+									{enrollmentState.badge}
+								</span>
+							</p>
+							<h3 className={cn(TYPE.panelTitle, 'text-balance font-sans')}>
+								{enrollmentState.title}
+							</h3>
+							<p
+								className={cn(
+									TYPE.metaProse,
+									'text-pretty text-[color:var(--ah-fg-muted)]',
+								)}
+							>
+								{enrollmentState.subtitle}
+							</p>
+						</div>
+						{renderWaitlistForm()}
 					</div>
-					{renderWaitlistForm()}
 				</div>
 			)}
 		</>

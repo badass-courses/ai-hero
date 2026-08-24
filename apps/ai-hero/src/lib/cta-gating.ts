@@ -38,6 +38,8 @@ import type { Subscriber } from '@/schemas/subscriber'
 export type CtaGatingSubscriber = {
 	state?: string | null
 	fields?: Record<string, unknown> | null
+	/** Whether the server can identify this reader without exposing the value. */
+	hasIdentity?: boolean
 }
 
 type MaybeSubscriber = CtaGatingSubscriber | null | undefined

@@ -3,7 +3,12 @@ import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
+import { CHECKOUT_LOGIN_BROWSER_COOKIE } from '@/lib/checkout-login-browser-session'
+import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
+import { createLoggedInCheckoutSession } from '@/lib/logged-in-checkout-provider'
+import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -32,7 +37,7 @@ export default async function LoginPage({
 	const { session } = await getServerAuthSession()
 	const user = session?.user
 	const headersList = await headers()
-	const countryCode =
+	const trustedCountry =
 		headersList.get('x-vercel-ip-country') ||
 		process.env.DEFAULT_COUNTRY ||
 		'US'
@@ -74,14 +79,52 @@ export default async function LoginPage({
 		rawSubscriberId: cookieStore.get('ck_subscriber_id')?.value,
 	})
 
-	const stripe = await stripeProvider.createCheckoutSession(
-		{
-			...checkoutParams,
-			userId: user?.id,
-			...(organizationId && { organizationId }),
-			...checkoutAttribution,
-		},
-		courseBuilderAdapter,
-	)
-	return redirect(stripe.redirect)
+	const pricing = await resolveLoggedInCheckoutPricing({
+		adapter: courseBuilderAdapter,
+		handoffStore: checkoutLoginHandoffStore,
+		verifiedUserId: user.id,
+		checkoutParams,
+		checkoutHandoffToken:
+			typeof rawSearchParams.checkoutHandoff === 'string'
+				? rawSearchParams.checkoutHandoff
+				: undefined,
+		browserSession: cookieStore.get(CHECKOUT_LOGIN_BROWSER_COOKIE)?.value,
+		trustedCountry,
+		handoffSecret: env.NEXTAUTH_SECRET,
+	})
+	if (pricing.kind === 'completed') {
+		return redirect(pricing.redirect)
+	}
+	if (pricing.kind === 'rejected') {
+		return redirect(
+			`/subscribe/error?reason=${encodeURIComponent(pricing.reason)}`,
+		)
+	}
+
+	const authorizedCheckoutParams = {
+		...checkoutParams,
+		userId: user.id,
+		country: pricing.country,
+		couponId: pricing.couponId,
+		usedCouponId: pricing.usedCouponId,
+		...(organizationId && { organizationId }),
+		...checkoutAttribution,
+	}
+
+	const providerResult = await createLoggedInCheckoutSession({
+		provider: stripeProvider,
+		adapter: courseBuilderAdapter,
+		handoffStore: checkoutLoginHandoffStore,
+		claim: pricing.claim,
+		handoffPayload: pricing.checkoutHandoff.valid
+			? pricing.checkoutHandoff.payload
+			: undefined,
+		checkoutParams: authorizedCheckoutParams,
+	})
+	if (providerResult.kind === 'failure') {
+		return redirect(
+			`/subscribe/error?reason=${encodeURIComponent(providerResult.failure.code)}`,
+		)
+	}
+	return redirect(providerResult.redirect)
 }

@@ -1,5 +1,5 @@
 import LayoutClient from '@/components/layout-client'
-import ReactMarkdown from 'react-markdown'
+import { Markdown as ReactMarkdown } from '@/components/markdown'
 
 const PrivacyPage = () => (
 	<LayoutClient withContainer>

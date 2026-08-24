@@ -9,7 +9,10 @@ import { DraftTestimonial } from '@/components/landing/draft-testimonial'
 import { Hero as LandingHero } from '@/components/landing/hero'
 import { HomepageLiveStreams } from '@/components/landing/homepage-live-streams'
 import { Manifesto } from '@/components/landing/manifesto'
-import { NewsletterSection } from '@/components/landing/newsletter-section'
+import {
+	PersonalizedNewsletterSection,
+	PersonalizedSlimNewsletterForm,
+} from '@/components/landing/personalized-newsletter-section'
 import { ProofGrid, ProofQuote } from '@/components/landing/proof-grid'
 import { SkillsCourseCta } from '@/components/landing/skills-course-cta'
 import { Prose } from '@/components/landing/prose'
@@ -22,14 +25,10 @@ import { SectionHeader } from '@/components/landing/section-header'
 import { SectionLink } from '@/components/landing/section-link'
 import { SkillsShowcase } from '@/components/landing/skills-showcase'
 import { SplitRow } from '@/components/landing/split-row'
-import { SlimNewsletterForm } from '@/components/landing/slim-newsletter-form'
 import { TestimonialDivider } from '@/components/landing/testimonial-divider'
 import { TopicsGrid, TopicsGridColumn } from '@/components/landing/topics-grid'
 import { UpcomingCohort } from '@/components/landing/upcoming-cohort'
 import { SubscriberCount } from '@/components/subscriber-count'
-import type { SkillsNewsletterStatus } from '@/app/(content)/skills/_components/skills-newsletter'
-import { hasStartedFreeCourse, isOnEmailList } from '@/lib/cta-gating'
-import { getSubscriberForGating } from '@/lib/subscriber-gate'
 import { compileMDX } from '@/utils/compile-mdx'
 
 /**
@@ -59,24 +58,6 @@ export async function LandingBody({
 		)
 	}
 
-	// Who is reading, as far as the asks on this page are concerned.
-	//
-	// The homepage renders per request (`page.tsx` awaits `searchParams`), so
-	// this is resolved on the server and the ask a reader has already answered
-	// never reaches their browser at all — no form that flashes and disappears,
-	// no space reserved for one, nothing to hydrate.
-	const subscriber = await getSubscriberForGating()
-	const courseStatus: SkillsNewsletterStatus = hasStartedFreeCourse(subscriber)
-		? 'subscribed'
-		: isOnEmailList(subscriber)
-			? 'tag-me'
-			: 'show-form'
-	// Both homepage asks are the SAME offer wearing different layouts —
-	// `SlimNewsletterForm` posts to `SKILLS_FORM_ID` with the skills interest
-	// fields, exactly as the course CTA does. So one fact decides both, and the
-	// panel around them: has this reader already started the free course.
-	const askAnswered = courseStatus === 'subscribed'
-
 	const components = {
 		Hero,
 		Resource,
@@ -89,11 +70,11 @@ export async function LandingBody({
 		// chrome — an eyebrow, a headline, a subtitle — around whichever CTA the
 		// body puts in it, and on its own it is a bordered box making a promise
 		// with no way to accept it.
-		NewsletterSection: askAnswered ? () => null : NewsletterSection,
-		NewsletterCta: () => (askAnswered ? null : <SlimNewsletterForm />),
+		NewsletterSection: PersonalizedNewsletterSection,
+		NewsletterCta: PersonalizedSlimNewsletterForm,
 		// The same ask, pointed at the free 7-day course rather than the general
 		// list. Both are registered so a section can choose which offer it makes.
-		CourseCta: () => <SkillsCourseCta status={courseStatus} />,
+		CourseCta: SkillsCourseCta,
 		Testimonial: DraftTestimonial,
 		TestimonialDivider,
 		ProofGrid,

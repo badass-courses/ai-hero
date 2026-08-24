@@ -1,5 +1,9 @@
 import { db } from '@/db'
 import { accounts, users } from '@/db/schema'
+import {
+	getPlaybackPrefsForUser,
+	setPlaybackPrefsForUser,
+} from '@/lib/playback-prefs-query'
 import { getServerAuthSession } from '@/server/auth'
 import {
 	createTRPCRouter,
@@ -65,5 +69,19 @@ export const usersRouter = createTRPCRouter({
 			}
 
 			return { name: input.name }
+		}),
+	getPlaybackPrefs: protectedProcedure.query(async ({ ctx }) => {
+		return getPlaybackPrefsForUser(ctx.session.user.id)
+	}),
+	setPlaybackPrefs: protectedProcedure
+		.input(
+			z.object({
+				allowLowResolution: z.boolean(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			return setPlaybackPrefsForUser(ctx.session.user.id, {
+				allowLowResolution: input.allowLowResolution,
+			})
 		}),
 })

@@ -1,4 +1,7 @@
+'use client'
+
 import * as React from 'react'
+import { api } from '@/trpc/react'
 
 import * as SkillsNewsletter from '@/app/(content)/skills/_components/skills-newsletter'
 import type { SkillsNewsletterStatus } from '@/app/(content)/skills/_components/skills-newsletter'
@@ -19,29 +22,38 @@ import type { SkillsNewsletterStatus } from '@/app/(content)/skills/_components/
  * signs up here and one who signs up there end up in the same place; a second
  * bespoke form would have meant two ways into one course.
  *
- * `status` is resolved by the caller, on the server.
- *
- * It used to be hardcoded to `show-form` on the grounds that reading the
- * subscriber cookie would make the route dynamic and "the homepage is the one
- * page on the site that must stay cacheable". The homepage has not been
- * cacheable for some time — `app/page.tsx` awaits `searchParams`, so it is
- * rendered per request and is absent from the prerender manifest. The cost that
- * argument was avoiding is already being paid, and paying it bought nothing:
- * a reader who finished the course was still asked to start it.
- *
- * Defaults to `show-form` so a caller that cannot resolve a subscriber (a
- * genuinely static surface, a preview route) still renders the ask rather than
- * hiding it from everyone.
+ * When the caller does not provide `status`, a client query resolves the
+ * subscriber state after hydration. This keeps the homepage static without
+ * showing the wrong call to action in its cached HTML.
  *
  * Resized to the button/input radius step: the shared `SkillsNewsletter.Form`
  * ships `h-14`/`h-16` for the full-page front door, which at homepage scale
  * reads as a different site's form.
  */
 export function SkillsCourseCta({
-	status = 'show-form',
+	status: forcedStatus,
 }: {
 	status?: SkillsNewsletterStatus
 } = {}) {
+	const { data, status: queryStatus } =
+		api.ability.getSkillsCourseCtaState.useQuery(undefined, {
+			enabled: forcedStatus === undefined,
+			staleTime: 5 * 60 * 1000,
+			refetchOnWindowFocus: false,
+			retry: 1,
+		})
+	const resolvedStatus: SkillsNewsletterStatus | undefined = data
+		? data.state === 'subscribed'
+			? 'subscribed'
+			: data.state === 'fresh'
+				? 'show-form'
+				: 'tag-me'
+		: undefined
+	const status = forcedStatus ?? resolvedStatus
+
+	if (forcedStatus === undefined && queryStatus !== 'success') return null
+	if (!status) return null
+
 	return (
 		<SkillsNewsletter.Root
 			status={status}

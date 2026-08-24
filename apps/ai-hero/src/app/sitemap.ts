@@ -3,7 +3,11 @@ import { db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getSkillChangelogEntries } from '@/lib/skill-changelog-query'
+import { retryTransientDatabaseRead } from '@/lib/transient-database-read'
 import { sql } from 'drizzle-orm'
+import { unstable_cache } from 'next/cache'
+
+export const revalidate = 3600
 
 interface SitemapEntry {
 	url: string
@@ -44,7 +48,7 @@ const stableLastModified = contentTimestamp(
 	'2026-05-16',
 )
 
-export default async function sitemap(): Promise<SitemapEntry[]> {
+async function buildSitemap(): Promise<SitemapEntry[]> {
 	const workshopItems = await db.execute(sql`
     SELECT DISTINCT
       workshop.id AS workshop_id,
@@ -297,4 +301,21 @@ export default async function sitemap(): Promise<SitemapEntry[]> {
 	)
 
 	return sitemapEntries
+}
+
+const _getCachedSitemap = unstable_cache(
+	async () => retryTransientDatabaseRead(buildSitemap),
+	['public-sitemap-v1'],
+	{
+		revalidate: 3600,
+		tags: ['posts', 'lists', 'tags', 'skill-changelog', 'ai-coding-dictionary'],
+	},
+)
+
+export default async function sitemap(): Promise<SitemapEntry[]> {
+	const entries = await _getCachedSitemap()
+	return entries.map((entry) => ({
+		...entry,
+		lastModified: new Date(entry.lastModified),
+	}))
 }

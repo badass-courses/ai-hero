@@ -12,6 +12,12 @@ function functionSource(name: string, nextName: string) {
 	return source.slice(start, end)
 }
 
+function commandSource(command: string, nextCommand: string) {
+	const start = source.indexOf(`command === '${command}'`)
+	const end = source.indexOf(`command === '${nextCommand}'`, start)
+	return source.slice(start, end)
+}
+
 describe('subscriber marketing operator reliability contracts', () => {
 	it('reports Gate D from the live learner-flow cohort during rolling enrollment', () => {
 		const gateStatus = functionSource(
@@ -25,16 +31,34 @@ describe('subscriber marketing operator reliability contracts', () => {
 		expect(gateStatus).toContain('byContact')
 	})
 
-	it('runs retry intents through the no-write executor during unstick preview', () => {
+	it('routes summary-only through the bounded aggregate reader', () => {
+		const stuckList = commandSource(
+			'learner-flow-stuck-list',
+			'learner-flow-unstick',
+		)
+		expect(stuckList).toContain("args.includes('--summary-only')")
+		expect(stuckList).toContain('getLearnerFlowAggregateSummary()')
+		expect(stuckList.indexOf('getLearnerFlowAggregateSummary()')).toBeLessThan(
+			stuckList.indexOf('buildLearnerFlowStuckList()'),
+		)
+		expect(stuckList).not.toContain('stuck: _customerRows')
+		expect(stuckList).toContain('finally {')
+		expect(stuckList).toContain('await closeDatabasePool()')
+		expect(stuckList.indexOf('console.log')).toBeLessThan(
+			stuckList.indexOf('await closeDatabasePool()'),
+		)
+		expect(source).not.toContain('process.exit(0)')
+	})
+
+	it('keeps retry sends out of the broad learner-flow unstick command', () => {
 		const unstick = functionSource(
 			'buildLearnerFlowUnstick',
 			'buildValuePathGateDPreview',
 		)
-		expect(unstick).toContain('allowlist && retryableIntentIds.length > 0')
+		expect(unstick).not.toContain('retryIntentIds')
+		expect(unstick).not.toContain('retryableIntentIds')
+		expect(unstick).not.toContain('executePendingValuePathEmailIntents')
 		expect(unstick).toContain('allowWrite: args.allowWrite')
-		expect(unstick).toContain("result.status === 'planned'")
-		expect(unstick).not.toContain(
-			'args.allowWrite && allowlist && retryableIntentIds.length > 0',
-		)
+		expect(source).toContain("command === 'value-path-email-executor'")
 	})
 })

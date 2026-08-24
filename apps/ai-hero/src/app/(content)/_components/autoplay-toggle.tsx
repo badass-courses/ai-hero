@@ -6,7 +6,14 @@ import { useMuxPlayer } from '@/hooks/use-mux-player'
 import { Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-export function AutoPlayToggle({ className }: { className?: string }) {
+export function AutoPlayToggle({
+	className,
+	id = 'autoplay-toggle',
+}: {
+	className?: string
+	/** Unique per instance — the toggle can render both under the video and in the player chrome. */
+	id?: string
+}) {
 	const { muxPlayerRef, playerPrefs, setPlayerPrefs } = useMuxPlayer()
 
 	const handleAutoplayChange = React.useCallback(
@@ -28,11 +35,11 @@ export function AutoPlayToggle({ className }: { className?: string }) {
 			<Switch
 				className={cn('')}
 				aria-label={`Turn Autoplay ${playerPrefs.autoplay ? 'off' : 'on'}`}
-				id="autoplay-toggle"
+				id={id}
 				checked={playerPrefs.autoplay}
 				onCheckedChange={handleAutoplayChange}
 			/>
-			<Label htmlFor="autoplay-toggle">Autoplay</Label>
+			<Label htmlFor={id}>Autoplay</Label>
 		</div>
 	)
 }

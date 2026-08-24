@@ -15,7 +15,6 @@ import Balancer from 'react-wrap-balancer'
 import { Button, Input, Label } from '@coursebuilder/ui'
 
 export type LoginTemplateProps = {
-	csrfToken: string
 	providers: Record<string, Provider> | null
 	image?: React.ReactElement
 	title?: string
@@ -25,7 +24,6 @@ export type LoginTemplateProps = {
 }
 
 export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
-	csrfToken,
 	providers = {},
 	image,
 	title,
@@ -35,8 +33,9 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 }) => {
 	const {
 		register,
-		formState: { errors },
-	} = useForm()
+		handleSubmit,
+		formState: { isSubmitting },
+	} = useForm<{ email: string }>()
 
 	const searchParams = useSearchParams()
 
@@ -82,6 +81,14 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 	const githubProvider = providers?.github
 	const discordProvider = providers?.discord
 	const emailProvider = providers?.postmark
+	const submitEmailSignIn = handleSubmit(async ({ email }) => {
+		if (!emailProvider) return
+
+		await signIn(emailProvider.id, {
+			email: email.trim(),
+			callbackUrl,
+		})
+	})
 
 	return (
 		<main data-login-template="" className={className}>
@@ -191,16 +198,10 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 					</div>
 				)}
 				{emailProvider ? (
-					<form data-form="" method="POST" action={emailProvider.signinUrl}>
+					<form data-form="" method="post" onSubmit={submitEmailSignIn}>
 						<Label data-label="" htmlFor="email">
 							Email address
 						</Label>
-						<input
-							name="callbackUrl"
-							type="hidden"
-							defaultValue={callbackUrl}
-						/>
-						<input name="csrfToken" type="hidden" defaultValue={csrfToken} />
 						<div data-input-container="">
 							<div data-icon="">
 								{/* <svg
@@ -229,9 +230,12 @@ export const Login: React.FC<React.PropsWithChildren<LoginTemplateProps>> = ({
 						<Button
 							type="submit"
 							data-button=""
+							disabled={isSubmitting}
 							className="relative overflow-hidden"
 						>
-							<span>Email me a login link</span>
+							<span>
+								{isSubmitting ? 'Sending login link…' : 'Email me a login link'}
+							</span>
 							<div
 								style={{
 									backgroundSize: '200% 100%',

@@ -347,6 +347,58 @@ export async function getAllWorkshops() {
 	return parsedWorkshops.data
 }
 
+/**
+ * Request-independent workshop rows for prerendered public surfaces.
+ *
+ * Keep this separate from `getAllWorkshops`: that loader expands visibility for
+ * editors after reading their session. A cached call to it would mix private
+ * workshop rows into anonymous HTML.
+ */
+export const getCachedPublicWorkshops = unstable_cache(
+	async () => getPublicWorkshops(),
+	['public-workshops-v1'],
+	{ revalidate: 3600, tags: ['workshop', 'workshops'] },
+)
+
+export async function getPublicWorkshops() {
+	const workshops = await db.query.contentResource.findMany({
+		where: and(
+			eq(contentResource.type, 'workshop'),
+			eq(
+				sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+				'public',
+			),
+		),
+		with: {
+			resources: {
+				with: {
+					resource: {
+						with: {
+							resources: {
+								with: { resource: true },
+								orderBy: asc(contentResourceResource.position),
+							},
+						},
+					},
+				},
+				orderBy: asc(contentResourceResource.position),
+			},
+		},
+		orderBy: desc(contentResource.createdAt),
+	})
+
+	const parsedWorkshops = z.array(WorkshopSchema).safeParse(workshops)
+	if (!parsedWorkshops.success) {
+		void log.error('workshop.parse.error', {
+			scope: 'public',
+			error: parsedWorkshops.error.message,
+		})
+		return []
+	}
+
+	return parsedWorkshops.data
+}
+
 export const addResourceToWorkshop = async ({
 	resource,
 	workshopId,

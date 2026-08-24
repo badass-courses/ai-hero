@@ -1,0 +1,225 @@
+---
+title: Review the best valid price after login fix
+status: ready-for-rereview
+branch: worker/ppp-login-price
+issue: AIH-245
+privacy: private
+---
+
+# Review the best valid price after login fix
+
+## Final review scope
+
+The fixes now span two isolated worker branches:
+
+- AI Hero: `96cbb425b48dc2d104712d66eb29efdc62db55c2` on `worker/ppp-login-price`
+- Course Builder: `960d15e094fc59efc91f21bf185fb969a683ce15` on `worker/checkout-provider-idempotency`
+
+AI Hero carries the exact Course Builder runtime change as a pnpm patch against `@coursebuilder/core@2.0.3`. This keeps the app commit deployable without publishing a package during this security fix. Course Builder also has the source change and a patch changeset for the next Core release.
+
+Do not merge or deploy `3f30ec4`, `6ebf76a`, or `41991b3` without `96cbb42`.
+
+## Review history
+
+1. `3f30ec4` preserved query country. Review blocked caller-controlled country trust.
+2. `6ebf76a` signed country and checkout scope. Review blocked replay and transfer.
+3. `41991b3` added durable one-time claims and browser/user binding. Review blocked false provider completion, missing Stripe idempotency, and the absent real MySQL race test.
+4. `96cbb42` and Course Builder `960d15e` close those provider and database gates.
+
+## Trusted handoff
+
+`/subscribe/verify-login` ignores query country and signs the trusted Vercel country with a 10-minute HMAC handoff. The payload binds:
+
+- version
+- country
+- PPP intent
+- product ID
+- quantity
+- issue and expiry timestamps
+- random nonce
+
+The browser also receives a 256-bit `__Host-aih_checkout_login_session` cookie with `HttpOnly`, `Secure`, `SameSite=Lax`, host-only scope, path `/`, and a 15-minute lifetime. Only its domain-separated hash is stored.
+
+The first authenticated claim binds the verified user ID. Another browser or user cannot claim or replay the handoff.
+
+## Durable lifecycle
+
+The reviewed lifecycle is:
+
+```text
+issued ──claim──> consuming ──verified provider success──> completed
+                         ├──retryable failure──> failed_retryable ──retry──> consuming
+                         └──terminal failure──> failed_terminal
+consuming with expired 30-second lease ──same user/browser──> consuming
+issued | failed_retryable ──handoff expiry──> expired / deleted
+```
+
+Claim remains one atomic conditional MySQL update. The predicate binds nonce hash, browser hash, signed scope, expiry, state, claim lease, and user. Only one concurrent connection can win.
+
+A 30-second claim lease permits process-loss recovery. The recovery uses the same provider idempotency key, so reclaim cannot create a second Stripe Checkout Session.
+
+Completed rows store both:
+
+- verified Stripe Checkout Session ID
+- verified `https://checkout.stripe.com` redirect
+
+Sequential replay returns only that exact receipt. `failed_terminal`, `completed`, and `expired` have no outgoing lifecycle transition.
+
+## Typed provider result
+
+Course Builder now has an additive Stripe-specific result method:
+
+```text
+success { providerSessionId, redirect }
+failure { code, retryable }
+```
+
+The legacy redirect method remains for existing consumers. The AI Hero money path uses only the typed method.
+
+Course Builder no longer forces AI Hero to infer success from a redirect. A provider or pricing failure cannot disguise the AI Hero base or error URL as checkout success.
+
+AI Hero also validates a successful receipt before completion:
+
+- session ID starts with `cs_`
+- URL uses HTTPS
+- URL host is exactly `checkout.stripe.com`
+
+An invalid success receipt becomes terminal failure and is never stored as completed.
+
+## Provider idempotency and recovery
+
+The provider idempotency key is derived from the durable nonce hash:
+
+```text
+aih-login-checkout:<64-character nonce hash>
+```
+
+It is stable across claim IDs and retries. Course Builder passes it to:
+
+```ts
+stripe.checkout.sessions.create(params, { idempotencyKey })
+```
+
+Provider customer, coupon, and promotion mutations use stable operation-specific suffixes. Their expiry timestamps derive from the signed handoff issue time, so retries send identical Stripe parameters.
+
+Recovery behavior:
+
+- Ambiguous timeout after Stripe commit retries with the same key and receives the same session.
+- Typed retryable failures release the durable claim.
+- Typed terminal failures close the lifecycle.
+- Completion-write failure releases the claim when possible.
+- If the database cannot record the release, lease expiry permits recovery.
+- Retry reconciles the same Stripe operation, then stores the existing session ID and redirect.
+
+## Real MySQL and Drizzle proof
+
+`checkout-login-handoff-store.mysql.test.ts` runs the manual migration against disposable `mysql:8.4` and creates separate production-shaped mysql2/Drizzle connections.
+
+It proves:
+
+- the manual DDL applies
+- timestamp(3) and boolean values round-trip exactly
+- one row issues
+- two separate connections race and exactly one acquires
+- the loser reports replay without a second claim
+- one completion stores session ID plus redirect
+- same-user, same-browser sequential reuse returns the exact receipt
+- cross-user and cross-browser attempts fail
+- retryable failure permits same-user, same-browser reclaim
+- stale consuming lease permits process-loss recovery
+- expired handoffs cannot claim
+- affected-row handling yields one winner and zero losers
+
+The first disposable run exposed a seven-hour local timestamp drift. The production mysql2 pool now sets `timezone: 'Z'`, matching Vercel and PlanetScale UTC behavior. The exact timestamp assertions then passed.
+
+The container and local Colima VM were stopped after the test. No shared or production database was touched.
+
+## Pricing rules preserved
+
+- Turkey PPP remains `$89.70` and beats the current `$99` alumni price.
+- Thailand PPP remains `$104.65`; the current `$99` alumni price wins.
+- Forged Turkey query country does not alter a US checkout.
+- PPP and alumni do not stack.
+- When PPP wins, alumni entitlement is not consumed.
+- Stripe country, restricted-purchase country, pricing candidate, and provenance use the verified country and selected best valid price.
+
+## Verification receipts
+
+### Course Builder `960d15e`
+
+- New typed/idempotency contract tests: 4 passed.
+- Checkout regression group: 42 passed.
+- Full Core test suite: 25 files, 317 tests passed.
+- Core TypeScript check: passed.
+- Core build: passed.
+- Commit hook monorepo checks: 33 tasks passed.
+- GitNexus staged scope: 5 files, 34 symbols, low detected change risk.
+- GitNexus warned that the shared interfaces have a critical blast radius; the implementation kept legacy contracts and made the new API additive.
+
+### AI Hero `96cbb42`
+
+- Targeted commerce/security suite: 11 files, 128 tests passed.
+- Disposable MySQL/Drizzle integration: 1 file, 3 tests passed.
+- AI Hero type check: passed.
+- ESLint on all changed TypeScript and TSX files: passed.
+- Frozen offline install with the Core patch: passed.
+- Source diff check: passed. The nested pnpm patch has its own diff markers, so `.gitattributes` disables outer whitespace interpretation for `patches/*.patch`.
+- `pi-notes brain check`: passed.
+
+## Manual PlanetScale migration
+
+`apps/ai-hero/src/db/migrations/20260819_ai_hero_checkout_login_handoff.sql` is reviewed additive DDL. It is not in Drizzle's generated journal. `pnpm db:migrate` will not apply it.
+
+The table contains:
+
+- nonce and browser hashes
+- signed checkout scope
+- lifecycle state
+- user and claim binding
+- claim lease expiry
+- provider session ID
+- verified checkout redirect
+- bounded failure code
+- millisecond issue, expiry, completion, and update timestamps
+- primary key on nonce hash
+- expiry and state indexes
+
+The table is safe to retain during application rollback.
+
+## Exact deployment order
+
+Main auto-deploys. Database must land first.
+
+1. Create a PlanetScale migration branch.
+2. Apply `20260819_ai_hero_checkout_login_handoff.sql` to that branch.
+3. Create and review a safe-migration deploy request.
+4. Deploy the additive table.
+5. Read back `SHOW CREATE TABLE AI_CheckoutLoginHandoff` or equivalent `information_schema` rows.
+6. Verify every reviewed column, the nonce primary key, `timestamp(3)`, and expiry/state indexes.
+7. Only after the DB readback, merge/deploy AI Hero through `96cbb425b48dc2d104712d66eb29efdc62db55c2` and its later Brain receipt commit.
+8. Merge Course Builder `960d15e094fc59efc91f21bf185fb969a683ce15` to the Core 2.x maintenance branch and publish the patch release through its normal release process. This source merge can happen before step 7, but the AI Hero runtime does not depend on publication because it carries the exact reviewed patch.
+9. After the Core release exists, replace the temporary pnpm patch with the released package in a separate verified AI Hero cleanup.
+
+Do not merge AI Hero before step 6.
+
+## Production readback gates
+
+After deployment, use explicit launch approval and do not take payment.
+
+1. Migration readback proves the production table shape.
+2. Turkey positive produces one `$89.70` Stripe session with `TR`, PPP provenance, and no alumni consumption.
+3. Sequential callback reuse returns the same session ID and URL.
+4. Concurrent callback reuse creates one provider operation.
+5. Another browser and another user cannot claim or replay.
+6. Injected ambiguous timeout recovers the same provider session with the same idempotency key.
+7. Injected completion-write failure recovers and stores the original session.
+8. Thailand current policy chooses `$99` alumni over `$104.65` PPP without stacking.
+9. Forged Turkey query remains US without an authentic unused handoff.
+10. Tampering, expiry, scope mismatch, inactive PPP, terminal provider failure, and invalid provider receipt never reach completed state.
+11. Slow login just before expiry succeeds; expired login gives a restart path without silently changing price.
+
+Send the required non-blocking Matt heads-up before or at ship. Do not tell affected customers AIH-245 is fixed until migration, Turkey, replay, ambiguous timeout, completion recovery, and US tamper gates pass.
+
+## Production state
+
+No production, PlanetScale, Stripe, coupon, checkout, Front, customer, payment, package publication, push, merge, or deployment mutation ran from these worktrees.

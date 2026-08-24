@@ -11,7 +11,6 @@ export type LearnerFlowActionTier = "tier-1-auto" | "tier-2-ask";
 
 export type LearnerFlowUnstickAction =
   | "replan-blocked-intent"
-  | "retry-transient-failure"
   | "nudge-drip-progression"
   | "ask-joel";
 
@@ -71,7 +70,6 @@ export function learnerFlowActionTier(
 ): LearnerFlowActionTier {
   switch (cause) {
     case "blocked-intent":
-    case "retryable-failed-overdue":
     case "drip-starved":
       return "tier-1-auto";
     default:
@@ -85,8 +83,6 @@ export function learnerFlowUnstickAction(
   switch (cause) {
     case "blocked-intent":
       return "replan-blocked-intent";
-    case "retryable-failed-overdue":
-      return "retry-transient-failure";
     case "drip-starved":
       return "nudge-drip-progression";
     default:

@@ -3,8 +3,9 @@ title: "Build quiz question extraction into course-sync"
 type: "step"
 kind: "task"
 interaction: "AFK"
-status: "open"
-assignee: ""
+status: "closed"
+assignee: "sync-worker (flagg, herdr pane w2S:p9, 2026-07-25)"
+closed_at: "2026-07-25"
 parent: "./quiz-component-brief.svx"
 blockers: []
 created_at: "2026-07-24"
@@ -69,4 +70,57 @@ with stable ids, a re-sync is a no-op, a missing or duplicate id fails the sync
 with a message naming the lesson, and removing a question from a body does not
 destroy collected answers.
 
-## Result
+## Result (2026-07-25)
+
+Built on `feat/quiz-sync-extraction`, commit `d7262ba` (7 files, +563).
+Reviewed and independently re-verified by the steering session.
+
+**Parsing: real AST, not a regex.** `@mdx-js/mdx` `createProcessor` produces the
+MDX AST; the extractor walks the ESTree of the `data` attribute and evaluates
+only static literals. Dynamic expressions, object spreads, computed property
+names, methods, and sparse arrays all throw rather than being silently mangled
+(`quiz-question-extraction.ts:27-70`). Extracted objects are then validated
+against `QuestionResourceSchema`. This is the durable choice the step asked for.
+
+**Id derivation follows the existing scheme.** `targetResourceId`'s `kind` widened
+to `'section' | 'lesson' | 'question'`; questions hash as
+`(bindingId, 'question', <author-supplied id>)`, never the question text.
+
+**The worker corrected the spec.** The step asked for duplicate-id detection
+*within a lesson*. It implemented detection *across all lessons*, and that is
+required rather than merely stricter: the id hash has no lesson component, so two
+questions in different lessons sharing an authored id would collide onto one
+resource row. The spec as written would have shipped that hole. The error names
+both lessons.
+
+**Removal is by relation detachment.** Question rows survive, so
+`QuestionResponse` history is preserved.
+
+**Verification.** Steering ran the tests directly: 16 passed across
+`quiz-question-extraction.test.ts` (5) and `control-plane.test.ts` (11). Worker
+reported 855 passing across the full suite, typecheck and course-sync ESLint
+clean. Tests cover parsing, id derivation, replay idempotency, removal, rollback,
+restoration, and the loud-failure paths.
+
+The v3 manifest schema is unchanged, as required.
+
+**Review round (PR #24, merged as `1a646a6`).** Macroscope and CodeRabbit found
+four real defects the steering review had missed:
+
+1. **Spreads were silently skipped.** `dataExpression` only inspected
+   `mdxJsxAttribute`, so `<QuizQuestion {...props} />` rendered a real question
+   while extraction produced nothing — and a spread after an explicit `data`
+   attribute overrode the props at runtime while sync persisted the earlier
+   literal. This is exactly the silent-drop failure the task file named as the
+   worst possible outcome, and it shipped anyway. Now rejected loudly at sync,
+   with two tests.
+2. `create` hard-coded `detached: false` instead of honoring `item.detached`,
+   making a recreated-but-removed question visible again.
+3. Rollback defaulted `detached` to false when a plan item was missing. Now
+   throws `ROLLBACK_PLAN_ITEM_MISSING`.
+4. `expectedRelations` filtered tombstones by the new parent when tombstones are
+   written under the old one, aborting any restore that also moved a resource.
+
+Fixing (3) introduced a fifth: the mid-loop throw left rollback state partially
+mutated. Resolved by preflighting every receipt lookup before the mutation loop.
+Final state: 28 course-sync tests pass, all reviewers green.

@@ -127,6 +127,72 @@ export default async function CourseSyncHistoryDetailPage({
 				</dl>
 			</section>
 
+			{history.failureSummary && (
+				<section className="border-b bg-amber-50 px-8 py-8 text-amber-950 sm:px-16">
+					<h2 className="text-xl font-semibold">
+						Course sync {history.outcome === 'failed' ? 'failed' : 'held'}
+					</h2>
+					<dl className="mt-5 grid gap-5 lg:grid-cols-2">
+						<div>
+							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+								Actual
+							</dt>
+							<dd className="mt-1 text-sm">
+								{history.failureSummary.actual.join('; ')}
+							</dd>
+						</div>
+						<div>
+							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+								Expected
+							</dt>
+							<dd className="mt-1 text-sm">
+								{history.failureSummary.expected.join('; ')}
+							</dd>
+						</div>
+						<div>
+							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+								Retryable
+							</dt>
+							<dd className="mt-1 text-sm">
+								{history.failureSummary.retryable ? 'yes' : 'no'}
+							</dd>
+						</div>
+						<div>
+							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+								Side effects
+							</dt>
+							<dd className="mt-1 text-sm">
+								Source assets read:{' '}
+								{history.failureSummary.sideEffects.sourceAssetsRead.precision}{' '}
+								{history.failureSummary.sideEffects.sourceAssetsRead.count}; Mux
+								assets created:{' '}
+								{history.failureSummary.sideEffects.muxAssetsCreated.precision}{' '}
+								{history.failureSummary.sideEffects.muxAssetsCreated.count};
+								target writes: {history.failureSummary.sideEffects.targetWrites}
+							</dd>
+						</div>
+						<div>
+							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+								Current sync run
+							</dt>
+							<dd className="mt-1 font-mono text-sm">
+								{history.failureSummary.currentRunCreated
+									? 'created'
+									: 'not created'}
+							</dd>
+						</div>
+						<div>
+							<dt className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+								Previous applied run
+							</dt>
+							<dd className="mt-1 break-all font-mono text-sm">
+								{history.failureSummary.previousAppliedRunId ?? 'none'}
+							</dd>
+						</div>
+					</dl>
+				</section>
+			)}
+
 			<section>
 				<div className="px-8 py-10 sm:px-16">
 					<h2 className="text-3xl font-medium leading-tight tracking-tight">

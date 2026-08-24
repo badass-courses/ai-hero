@@ -70,21 +70,29 @@ export async function getAllPosts(): Promise<Post[]> {
 			},
 		})
 
-		const postsParsed = z.array(PostSchema).safeParse(posts)
-		if (!postsParsed.success) {
-			await log.error('post.parse.error', {
-				scope: 'all',
-				error: postsParsed.error.message,
-			})
-			return []
+		// A malformed draft must not erase every valid slug from
+		// `generateStaticParams`. Parse each row independently, as the list
+		// loader does, so valid public posts still prerender.
+		const postsParsed: Post[] = []
+		for (const post of posts) {
+			const result = PostSchema.safeParse(post)
+			if (result.success) {
+				postsParsed.push(result.data)
+			} else {
+				void log.error('post.parse.error', {
+					postId: post.id,
+					scope: 'all',
+					error: result.error.message,
+				})
+			}
 		}
 
 		await log.info('post.query.success', {
 			scope: 'all',
-			count: postsParsed.data.length,
+			count: postsParsed.length,
 		})
 
-		return postsParsed.data
+		return postsParsed
 	} catch (error) {
 		await log.error('post.query.error', {
 			scope: 'all',
@@ -439,6 +447,32 @@ function githubSourceFieldOverrides(
 		: { githubSourceSha: null }
 }
 
+/**
+ * A cover replaced through the editor/REST save paths is a hand-uploaded
+ * image — the FAL pipeline bypasses these paths (pick-variant writes via the
+ * adapter directly) and stamps `source: 'generated'` itself. A changed url
+ * therefore always means 'uploaded'; an unchanged or absent cover keeps
+ * whatever source it already carries, so the flag cannot drift.
+ */
+function coverImageSourceOverride(
+	incomingFields: PostUpdate['fields'],
+	currentPost: Post,
+): Record<string, unknown> {
+	const incoming = incomingFields.coverImage
+	if (!incoming?.url) return {}
+	if (incoming.url !== currentPost.fields.coverImage?.url) {
+		return { coverImage: { ...incoming, source: 'uploaded' } }
+	}
+	// Unchanged url: a caller resubmitting just { url, alt } (the REST API)
+	// must not strip the stored label via the plain input.fields spread.
+	return {
+		coverImage: {
+			...incoming,
+			source: incoming.source ?? currentPost.fields.coverImage?.source,
+		},
+	}
+}
+
 export async function updatePost(
 	input: PostUpdate,
 	action: 'save' | 'publish' | 'archive' | 'unpublish' = 'save',
@@ -527,6 +561,7 @@ export async function updatePost(
 					slug: postSlug,
 					...githubOverrides,
 					...publishedAtOverride,
+					...coverImageSourceOverride(input.fields, currentPost),
 				},
 			},
 			action,
@@ -555,6 +590,7 @@ export async function updatePost(
 				slug: postSlug,
 				...githubOverrides,
 				...publishedAtOverride,
+				...coverImageSourceOverride(input.fields, currentPost),
 			},
 		})
 
@@ -1197,6 +1233,7 @@ export async function writePostUpdateToDatabase(input: {
 				timeToRead,
 				slug: postSlug,
 				...githubOverrides,
+				...coverImageSourceOverride(postUpdate.fields, currentPost),
 			},
 		})
 		void log.info('post.update.db.success', {
@@ -1408,6 +1445,11 @@ function getErrorStack(error: unknown) {
 
 function reviveDates(obj: any): any {
 	if (obj === null || obj === undefined) return obj
+	// On an unstable_cache MISS the live (non-JSON-roundtripped) result comes
+	// through here with real Date instances; the object branch below would
+	// flatten one to {} (no enumerable keys) — e.g. the og:image cache-buster
+	// rendered as "[object Object]".
+	if (obj instanceof Date) return obj
 	if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(obj)) {
 		const d = new Date(obj)
 		return isNaN(d.getTime()) ? obj : d

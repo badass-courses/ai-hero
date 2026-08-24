@@ -1388,3 +1388,33 @@ pre .ah-code-inline {
 		animation: none;
 	}
 }
+
+/*
+ * YouTube-web-style bottom bar on coarse pointers (phones/tablets).
+ * Learner feedback: bar buttons too small on ipad/phone. A floating
+ * center cluster covered the screencast content, so play/pause lives
+ * bottom-left in the bar like YouTube's mobile-web player (gerwig
+ * hides it under 470px — re-enable it), sized for touch. No seek
+ * buttons: double-tapping the corners seeks, like everyone expects.
+ * Vars are media-chrome's documented sizing/visibility API and
+ * inherit through the mux-player shadow DOM.
+ */
+@media (pointer: coarse) {
+	/*
+	 * Scoped to players inside the gesture shell (learner-facing lesson,
+	 * post, and MDX players) — hero/marketing/CMS-preview players keep
+	 * stock sizing. Control visibility (hide gerwig's centered play,
+	 * re-enable the bottom play button) is set as inline style on the
+	 * media-controller element by PlayerGestureShell: gerwig's
+	 * exportparts does not expose a "controller" part, so no page-level
+	 * ::part rule can reach it, and inherited values lose to the theme's
+	 * own shadow rules.
+	 */
+	[data-player-gesture-shell] mux-player {
+		--media-control-height: 28px;
+		--media-control-padding: 9px;
+		/* keep the timeline slim (YouTube-style); just a grabbable thumb */
+		--media-range-thumb-width: 14px;
+		--media-range-thumb-height: 14px;
+	}
+}

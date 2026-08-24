@@ -4,7 +4,38 @@ import type {
 	CourseSyncRunState,
 } from '@ai-hero/course-sync-schema'
 
-export const AI_HERO_DRAFT_SYNC_BINDING = {
+export type CourseSyncBinding = {
+	contractVersion: 4
+	bindingId: string
+	sourceCourseId: string
+	productId: string
+	anchorWorkshopId: string
+	targetContract: {
+		product: {
+			type: 'self-paced'
+			state: 'published'
+			visibility: 'public'
+		}
+		workshop: {
+			type: 'workshop'
+			state: 'published'
+			visibility: 'public'
+		}
+		relation: { position: 0; exclusiveProduct: true }
+	}
+	managedChildContract: {
+		state: 'draft'
+		visibility: 'unlisted'
+	}
+	applyPolicy: 'bounded-auto' | 'operator'
+	sectionMappingPolicy: 'sections-in-anchor-workshop'
+	assetConnector: 'dropbox-shared-link'
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK'
+	status: 'active' | 'suspended' | 'revoked'
+}
+
+/** The only stored v1 value that may be migrated in place. */
+export const AI_HERO_COURSE_SYNC_BINDING_V1 = {
 	bindingId: 'csb_ai_coding_crash_course',
 	sourceCourseId: '50385098-a712-486f-b777-1f76ef31e9e5',
 	productId: 'product-ma254',
@@ -16,21 +47,92 @@ export const AI_HERO_DRAFT_SYNC_BINDING = {
 	assetConnector: 'dropbox-shared-link',
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
 	status: 'active',
-} as const satisfies CourseSyncBinding
+} as const
 
-export type CourseSyncBinding = {
-	bindingId: string
-	sourceCourseId: string
-	productId: string
-	anchorWorkshopId: string
-	productType: 'self-paced'
-	requiredState: 'draft'
-	requiredVisibility: 'unlisted'
-	sectionMappingPolicy: 'sections-in-anchor-workshop'
-	assetConnector: 'dropbox-shared-link'
-	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK'
-	status: 'active' | 'suspended' | 'revoked'
-}
+export const AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR = {
+	contractVersion: 2,
+	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
+	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
+	productId: AI_HERO_COURSE_SYNC_BINDING_V1.productId,
+	anchorWorkshopId: AI_HERO_COURSE_SYNC_BINDING_V1.anchorWorkshopId,
+	targetContract: {
+		product: {
+			type: 'self-paced',
+			state: 'published',
+			visibility: 'public',
+		},
+		workshop: {
+			type: 'workshop',
+			state: 'published',
+			visibility: 'unlisted',
+		},
+		relation: { position: 0, exclusiveProduct: true },
+	},
+	managedChildContract: { state: 'draft', visibility: 'unlisted' },
+	applyPolicy: 'operator',
+	sectionMappingPolicy: 'sections-in-anchor-workshop',
+	assetConnector: 'dropbox-shared-link',
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
+	status: 'active',
+} as const
+
+/**
+ * The stored v3 value from before the Crash Course launch published the
+ * anchor workshop. Only this exact literal may migrate to v4.
+ */
+export const AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED = {
+	contractVersion: 3,
+	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
+	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
+	productId: AI_HERO_COURSE_SYNC_BINDING_V1.productId,
+	anchorWorkshopId: AI_HERO_COURSE_SYNC_BINDING_V1.anchorWorkshopId,
+	targetContract: {
+		product: {
+			type: 'self-paced',
+			state: 'published',
+			visibility: 'public',
+		},
+		workshop: {
+			type: 'workshop',
+			state: 'published',
+			visibility: 'unlisted',
+		},
+		relation: { position: 0, exclusiveProduct: true },
+	},
+	managedChildContract: { state: 'draft', visibility: 'unlisted' },
+	applyPolicy: 'bounded-auto',
+	sectionMappingPolicy: 'sections-in-anchor-workshop',
+	assetConnector: 'dropbox-shared-link',
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
+	status: 'active',
+} as const
+
+export const AI_HERO_COURSE_SYNC_BINDING = {
+	contractVersion: 4,
+	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
+	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
+	productId: AI_HERO_COURSE_SYNC_BINDING_V1.productId,
+	anchorWorkshopId: AI_HERO_COURSE_SYNC_BINDING_V1.anchorWorkshopId,
+	targetContract: {
+		product: {
+			type: 'self-paced',
+			state: 'published',
+			visibility: 'public',
+		},
+		workshop: {
+			type: 'workshop',
+			state: 'published',
+			visibility: 'public',
+		},
+		relation: { position: 0, exclusiveProduct: true },
+	},
+	managedChildContract: { state: 'draft', visibility: 'unlisted' },
+	applyPolicy: 'bounded-auto',
+	sectionMappingPolicy: 'sections-in-anchor-workshop',
+	assetConnector: 'dropbox-shared-link',
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
+	status: 'active',
+} as const satisfies CourseSyncBinding
 
 export type FrozenSourceAsset = {
 	sourceVideoId: string
@@ -43,6 +145,10 @@ export type FrozenSourceAsset = {
 	muxAssetId: string | null
 	muxPlaybackId: string | null
 	duration: number | null
+	freezeEffects?: {
+		sourceAssetsRead: number
+		muxAssetsCreated: number
+	}
 }
 
 export type SourceRevisionRecord = {
@@ -58,9 +164,18 @@ export type SourceRevisionRecord = {
 }
 
 export type ResourcePlanItem = {
-	sourceKind: 'section' | 'lesson' | 'question' | 'video'
+	sourceKind: 'section' | 'lesson' | 'solution' | 'question' | 'video'
 	sourceId: string
 	targetResourceId: string
+	/**
+	 * Present when the 2026-08-17 repair's manual `solution_*` resource is the
+	 * physical target for a deterministic `sync_solution_*` lineage id.
+	 */
+	solutionAdoption?: {
+		canonicalTargetResourceId: string
+		baselineVersionId: string
+		createBaselineVersion: boolean
+	}
 	parentResourceId: string
 	position: number
 	detached: boolean
@@ -70,6 +185,7 @@ export type ResourcePlanItem = {
 	action: CourseSyncResourceAction
 	fields: Record<string, unknown>
 	previousVersionId: string | null
+	previousFieldsSha256: string | null
 }
 
 export type MediaPlanItem = {
@@ -115,6 +231,23 @@ export type TargetResourceSnapshot = {
 	resourceId: string
 	currentVersionId: string | null
 	fields: Record<string, unknown>
+}
+
+export type SolutionResourceAdoptionCandidate = {
+	canonicalTargetResourceId: string
+	lessonResourceId: string
+	solutionVideoResourceId: string
+	sourceLessonId: string
+}
+
+export type SolutionResourceAdoption = {
+	canonicalTargetResourceId: string
+	resourceId: string
+	lessonResourceId: string
+	solutionVideoResourceId: string
+	currentVersionId: string | null
+	fields: Record<string, unknown>
+	position: number
 }
 
 export type ResolvedDropboxAsset = {
@@ -192,6 +325,13 @@ export interface CourseSyncPersistence {
 		producerSha256: string,
 		bytes: number,
 	): Promise<FrozenSourceAsset | null>
+	findFrozenAssetReceipt(receiptKey: string): Promise<FrozenSourceAsset | null>
+	saveFrozenAssetReceipt(input: {
+		receiptKey: string
+		bindingId: string
+		courseVersionId: string
+		asset: FrozenSourceAsset
+	}): Promise<FrozenSourceAsset>
 	createStaged(input: {
 		revision: SourceRevisionRecord
 		run: SyncRunRecord
@@ -199,6 +339,10 @@ export interface CourseSyncPersistence {
 	getRun(runId: string): Promise<SyncRunRecord | null>
 	getRevision(sourceRevisionId: string): Promise<SourceRevisionRecord | null>
 	getLastAppliedRun(bindingId: string): Promise<SyncRunRecord | null>
+	findSolutionResourceAdoptions(
+		bindingId: string,
+		candidates: ReadonlyArray<SolutionResourceAdoptionCandidate>,
+	): Promise<ReadonlyMap<string, SolutionResourceAdoption>>
 	getTargetResources(
 		resourceIds: ReadonlyArray<string>,
 	): Promise<ReadonlyMap<string, TargetResourceSnapshot>>
@@ -217,6 +361,7 @@ export interface CourseSyncPersistence {
 	): Promise<SyncRunRecord>
 	rollbackAtomically(input: {
 		runId: string
+		bindingId: string
 		idempotencyKey: string
 		compensatingRunId: string
 		createdById: string

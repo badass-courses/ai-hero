@@ -1,5 +1,6 @@
 import * as React from 'react'
 import Link from 'next/link'
+import { CldImage } from '@/components/cld-image'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
 import { SKILLS_SET_SECTION } from '@/lib/skills-content'
 import { invocationName } from '@/components/skills/skill-meta'
@@ -11,6 +12,8 @@ export type SkillSetItem = {
 	slug: string
 	title: string
 	description?: string
+	/** The skill post's `fields.icon.url` — absent renders no icon slot. */
+	iconUrl?: string
 	/**
 	 * A skill is something you type; an article is something you read. The list
 	 * holds both (a "what these skills are" piece belongs with the skills it
@@ -194,7 +197,7 @@ function GroupRung({
  * left-aligned first line, and the one row you cannot invoke says so before
  * you read its title rather than after you try.
  */
-function SkillRow({ slug, title, description, kind }: SkillSetItem) {
+function SkillRow({ slug, title, description, iconUrl, kind }: SkillSetItem) {
 	return (
 		<Link
 			href={`/${slug}`}
@@ -204,6 +207,20 @@ function SkillRow({ slug, title, description, kind }: SkillSetItem) {
 			prefetch={false}
 			className="group border-border hover:bg-muted/60 focus-visible:ring-ring flex items-center gap-4 border-b py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset md:-mx-4 md:px-4"
 		>
+			{kind === 'skill' && iconUrl ? (
+				// The skill's mark, top-aligned with the command it belongs to. The
+				// title carries the row's meaning, so the image is decorative
+				// (alt="" via the title). No icon → no slot: Vojta chose hiding over
+				// the bg-stripes placeholder (2026-08-24), so an iconless row keeps
+				// its pre-icon shape rather than announcing the gap.
+				<CldImage
+					src={iconUrl}
+					alt=""
+					width={48}
+					height={48}
+					className="mt-0.5 size-6 shrink-0 self-start rounded-[6px]"
+				/>
+			) : null}
 			<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 				{kind === 'skill' ? (
 					<span

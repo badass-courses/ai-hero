@@ -12,7 +12,6 @@ import { classifyLearnerFlowContact } from './learner-flow-classifier'
 import {
 	buildLearnerFlowReconcilerPlan,
 	evaluateLearnerFlowReconcilerBrake,
-	LEARNER_FLOW_RECONCILER_CONFIG,
 	reconcileLearnerFlow,
 	type LearnerFlowReconcilerCandidate,
 	type LearnerFlowReconcilerRepository,
@@ -89,6 +88,67 @@ function rollingAllowlist(): GateDRuntimeAllowlist {
 		allowedActions: ['advance-by-daily-drip', 'send-path-emails'],
 		createdAt: now,
 	}
+}
+
+function riskyReplanCandidates(count: number): LearnerFlowReconcilerCandidate[] {
+	return Array.from({ length: count }, (_, index) => ({
+		contactId: `contact-${index}`,
+		intentId: `intent-${index}`,
+		action: 'replan-blocked-intent',
+		cause: 'blocked-intent',
+		stage: 'ai-hero-skills-workflow.email-2',
+		lastActivityAt: now,
+	}))
+}
+
+function emailSevenAllowlist(): GateDRuntimeAllowlist {
+	return {
+		...rollingAllowlist(),
+		emailResourceIds: [
+			'ai-hero-skills-workflow.email-1',
+			'ai-hero-skills-workflow.email-7',
+		],
+		kitSequenceIds: ['2757200', '2831545'],
+	}
+}
+
+async function createEmailSixReconcilerFixture() {
+	const repository = new InMemorySubscriberMarketingRepository()
+	const captured = await dryRunSubscriberMarketingFixture({
+		repository,
+		fixture: codingWorkflowFixture,
+		now: '2026-07-15T20:00:00.000Z',
+	})
+	repository.sideEffectIntents.clear()
+	const completed = repository.createSideEffectIntent({
+		...courseIntent({
+			contactId: captured.contact.id,
+			id: 'completed-email-6',
+			status: 'completed',
+			completedAt: '2026-07-15T20:00:00.000Z',
+			emailResourceId: 'ai-hero-skills-workflow.email-6',
+			kitSequenceId: '2757205',
+		}),
+		metadata: {
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-6',
+			kitSequenceId: '2757205',
+			kitSubscriberId: '4089521940',
+			completedAt: '2026-07-15T20:00:00.000Z',
+		},
+	})
+	const reconcilerRepository = Object.assign(repository, {
+		findSkillsWorkflowLearnerFlowRecords: () => [
+			{
+				contactId: captured.contact.id,
+				contact: captured.contact,
+				contactState: captured.contactState,
+				intents: [completed],
+				entryEvents: [],
+			},
+		],
+	})
+	return { captured, completed, reconcilerRepository, repository }
 }
 
 class BrakeOnlyRepository implements LearnerFlowReconcilerRepository {
@@ -222,42 +282,127 @@ describe('learner flow reconciler', () => {
 		})
 		expect(
 			evaluateLearnerFlowReconcilerBrake({
-				planned: plan.counts.planned,
 				cohortSize: plan.cohort.contacts,
+				candidates: plan.candidates,
 			}),
-		).toMatchObject({ status: 'clear', cap: 150 })
+		).toMatchObject({ status: 'clear', repairCap: 150 })
 	})
 
-	it('does not brake a healthy big day that exceeds the cap (2026-07-18 incident)', () => {
-		// 172 planned for 1,006 learners = 17.1%, under the 25% wall. The cap
-		// slice serves 150 oldest-first and defers 22; braking here stalled 172
-		// real learners for an hour.
+	it('keeps the repair ratio brake below the evidence-backed wall', () => {
 		expect(
-			evaluateLearnerFlowReconcilerBrake({ planned: 172, cohortSize: 1006 }),
-		).toMatchObject({ status: 'clear', cap: 150 })
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: 1006,
+				candidates: riskyReplanCandidates(172),
+			}),
+		).toMatchObject({ status: 'clear', repairCap: 150 })
 		expect(
-			evaluateLearnerFlowReconcilerBrake({ planned: 300, cohortSize: 1006 }),
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: 1006,
+				candidates: riskyReplanCandidates(300),
+			}),
 		).toMatchObject({ status: 'tripped' })
 	})
 
-	it('does not ratio-brake a large oldest-first drip backlog', () => {
+	it('does not ratio-brake a large routine drip backlog', () => {
 		const candidates = Array.from({ length: 456 }, (_, index) => ({
 			contactId: `contact-${index}`,
 			intentId: `intent-${index}`,
 			action: 'nudge-drip-progression' as const,
 			cause: 'drip-starved' as const,
 			stage: 'ai-hero-skills-workflow.email-6',
-			stuckAgeHours: 24 + index,
 			lastActivityAt: now,
 		})) satisfies LearnerFlowReconcilerCandidate[]
 
 		expect(
 			evaluateLearnerFlowReconcilerBrake({
-				planned: candidates.length,
 				cohortSize: 1028,
 				candidates,
 			}),
-		).toMatchObject({ status: 'clear', cap: 150 })
+		).toMatchObject({
+			status: 'clear',
+			repairToCohortRatio: 0,
+			repairCap: 150,
+		})
+	})
+
+	it('ratio-brakes a large risky replan anomaly', () => {
+		const candidates = riskyReplanCandidates(300)
+
+		expect(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: 1000,
+				candidates,
+			}),
+		).toMatchObject({
+			status: 'tripped',
+			repairToCohortRatio: 0.3,
+		})
+	})
+
+	it('queues email-7 from email-6 when the live flag is enabled', async () => {
+		const { reconcilerRepository, repository } =
+			await createEmailSixReconcilerFixture()
+		const receipt = await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist: emailSevenAllowlist(),
+			email7LiveEnabled: true,
+			now,
+			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
+		})
+		const emailSeven = Array.from(repository.sideEffectIntents.values()).find(
+			(intent) =>
+				intent.metadata.emailResourceId ===
+				'ai-hero-skills-workflow.email-7',
+		)
+
+		expect(emailSeven).toMatchObject({ status: 'pending' })
+		expect(receipt).toMatchObject({
+			status: 'ok',
+			workSeen: 1,
+			workDone: 1,
+			counts: {
+				intentsCreated: 1,
+				noop: 0,
+				blocked: 0,
+				notDue: 0,
+				failed: 0,
+			},
+			blockedReasons: {},
+		})
+	})
+
+	it('reports the exact email-7 blocker when the live flag is disabled', async () => {
+		const { reconcilerRepository, repository } =
+			await createEmailSixReconcilerFixture()
+		const receipt = await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist: emailSevenAllowlist(),
+			email7LiveEnabled: false,
+			now,
+			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
+		})
+
+		expect(
+			Array.from(repository.sideEffectIntents.values()).some(
+				(intent) =>
+					intent.metadata.emailResourceId ===
+					'ai-hero-skills-workflow.email-7',
+			),
+		).toBe(false)
+		expect(receipt).toMatchObject({
+			status: 'degraded',
+			workSeen: 1,
+			workDone: 0,
+			counts: {
+				intentsCreated: 0,
+				deferred: 1,
+				noop: 0,
+				blocked: 1,
+				notDue: 0,
+				failed: 0,
+			},
+			blockedReasons: { 'email-7-copy-approval-required': 1 },
+		})
 	})
 
 	it('brakes the 313 false-stuck wolf before every write', async () => {
@@ -282,38 +427,36 @@ describe('learner flow reconciler', () => {
 			}
 		})
 		const repository = new BrakeOnlyRepository(records)
-		let providerWrites = 0
 		const receipt = await reconcileLearnerFlow({
 			repository,
 			allowlist: rollingAllowlist(),
-			emailListProvider: {
-				subscribeToList: async () => {
-					providerWrites += 1
-					return { success: true }
-				},
-			},
-			executorConfig: {},
+			email7LiveEnabled: false,
 			now,
 		})
 		expect(receipt).toMatchObject({
-			brake: 'tripped',
+			receiptVersion: 2,
+			loop: 'repair',
+			status: 'blocked',
+			brake: { status: 'tripped' },
 			workSeen: 313,
 			workDone: 0,
-			deferred: 313,
-			tier2: 1,
-			dmPriority: 'high',
+			counts: {
+				deferred: 313,
+				tier2: 1,
+				permanentProviderFailures: 1,
+			},
 		})
-		expect(receipt.dmLine).toContain('failed-send=1')
-		expect(receipt.brakeReasons).toContain(
-			'planned-ratio-37.7%-exceeds-25.0%',
+		expect(receipt.failureReasons).toContain(
+			'tier2:provider-permanent-failure',
 		)
-		expect(receipt.plannedToCohortRatio).toBeCloseTo(313 / 830)
+		expect(receipt.brake.reasons).toContain(
+			'repair-ratio-37.7%-exceeds-25.0%',
+		)
 		expect(repository.includeCanary).toBe(true)
 		expect(repository.writeAttempts).toBe(0)
-		expect(providerWrites).toBe(0)
 	})
 
-	it('repairs a completed drift fixture with both stamps absent, then serves its next step', async () => {
+	it('repairs drift and queues the next pending intent without a provider call', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const captured = await dryRunSubscriberMarketingFixture({
 			repository,
@@ -374,40 +517,11 @@ describe('learner flow reconciler', () => {
 		const receipt = await reconcileLearnerFlow({
 			repository: reconcilerRepository,
 			allowlist,
-			emailListProvider: {
-				subscribeToList: async () => ({ success: true }),
-			},
-			executorConfig: {
-				mode: 'scoped-live',
-				baseUrl: 'https://www.aihero.dev',
-				pathTokenSecret: 'test-secret',
-				answerPages: [
-					{
-						id: 'answer-email-1',
-						type: 'value-path-page',
-						fields: {
-							kind: 'answer',
-							slug: 'answer-email-1',
-							sequenceId: 'ai-hero-skills-workflow',
-							emailId: 'email-1',
-							optionValue: 'continue',
-						},
-					},
-				],
-				allowlistedContactIds: [],
-				allowlistedKitSubscriberIds: [],
-				allowlistedEmails: [],
-				enabledValuePathSlugs: ['ai-hero-skills-workflow'],
-				verifiedEmailResourceIds: [
-					'ai-hero-skills-workflow.email-1',
-				],
-				verifiedKitSequenceIds: ['2757200'],
-				allowedActions: ['send-path-emails'],
-			},
+			email7LiveEnabled: true,
 			now,
 			config: {
-				sendCap: 150,
-				maxPlannedToCohortRatio: 1,
+				repairCap: 1,
+				maxRepairToCohortRatio: 1,
 			},
 		})
 		const repaired = repository.sideEffectIntents.get(driftIntent.id)!
@@ -422,13 +536,16 @@ describe('learner flow reconciler', () => {
 		expect(repaired.metadata.completedAt).toBe(
 			'2026-07-15T20:00:00.000Z',
 		)
-		expect(next?.status).toBe('completed')
+		expect(next?.status).toBe('pending')
 		expect(receipt).toMatchObject({
-			brake: 'clear',
-			repairedCompletionFacts: 1,
-			created: 1,
-			served: 1,
-			starved: 1,
+			status: 'ok',
+			brake: { status: 'clear' },
+			workSeen: 1,
+			workDone: 1,
+			counts: {
+				completionFactsRepaired: 1,
+				intentsCreated: 1,
+			},
 		})
 	})
 
@@ -483,19 +600,14 @@ describe('learner flow reconciler', () => {
 		const receipt = await reconcileLearnerFlow({
 			repository,
 			allowlist: rollingAllowlist(),
-			emailListProvider: {
-				subscribeToList: async () => ({ success: true }),
-			},
-			executorConfig: {},
+			email7LiveEnabled: false,
 			now,
 		})
 		expect(receipt).toMatchObject({
-			workSeen: 1,
+			workSeen: 0,
 			workDone: 0,
-			planned: 0,
-			starved: 1,
-			suppressedFixtureStarved: 1,
-			zeroPlanWhileStarved: true,
+			status: 'ok',
+			counts: { intentsCreated: 0 },
 		})
 		expect(repository.writeAttempts).toBe(0)
 	})
@@ -615,7 +727,7 @@ describe('learner flow reconciler', () => {
 		})
 	})
 
-	it('defers one failed learner and continues planning the rest', async () => {
+	it('leaves deferred learner work for the executor instead of sending inline', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		const first = await dryRunSubscriberMarketingFixture({
 			repository,
@@ -706,18 +818,112 @@ describe('learner flow reconciler', () => {
 		const receipt = await reconcileLearnerFlow({
 			repository: reconcilerRepository,
 			allowlist,
-			emailListProvider: {
-				subscribeToList: async () => ({ success: true }),
-			},
-			executorConfig: {},
+			email7LiveEnabled: true,
 			now,
+			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
 		})
 		expect(receipt).toMatchObject({
-			brake: 'clear',
-			deferred: 1,
-			writeFailedDeferred: 1,
+			brake: { status: 'clear' },
+			status: 'degraded',
+			counts: { deferred: 1, writeFailed: 1 },
 		})
-		expect(receipt.dmLine).toContain('1 deferred (1 write-failed)')
+	})
+
+	it('accounts for each selected drip as created, noop, blocked, not-due, or failed', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const fixtures = await Promise.all(
+			['created', 'noop', 'blocked', 'failed'].map((kind, index) =>
+				dryRunSubscriberMarketingFixture({
+					repository,
+					fixture: {
+						...codingWorkflowFixture,
+						providerEventId: `fixture-event-${kind}`,
+						externalId: `fixture-contact-${kind}`,
+						email: `${kind}-${index}@example.com`,
+					},
+					now: '2026-07-15T20:00:00.000Z',
+				}),
+			),
+		)
+		repository.sideEffectIntents.clear()
+		const completed = fixtures.map((fixture, index) => {
+			const emailSix = index === 2
+			return repository.createSideEffectIntent({
+				...courseIntent({
+					contactId: fixture.contact.id,
+					id: `completed-${index}`,
+					status: 'completed',
+					completedAt: '2026-07-15T20:00:00.000Z',
+					emailResourceId: emailSix
+						? 'ai-hero-skills-workflow.email-6'
+						: 'ai-hero-skills-workflow.email-0',
+					kitSequenceId: emailSix ? '2757205' : '2757199',
+				}),
+				metadata: {
+					valuePathSlug: 'ai-hero-skills-workflow',
+					emailResourceId: emailSix
+						? 'ai-hero-skills-workflow.email-6'
+						: 'ai-hero-skills-workflow.email-0',
+					kitSequenceId: emailSix ? '2757205' : '2757199',
+					kitSubscriberId: `kit-${index}`,
+					completedAt: '2026-07-15T20:00:00.000Z',
+				},
+			})
+		})
+		repository.createSideEffectIntent({
+			...courseIntent({
+				contactId: fixtures[1]!.contact.id,
+				id: 'existing-email-1',
+				emailResourceId: 'ai-hero-skills-workflow.email-1',
+				kitSequenceId: '2757200',
+			}),
+			idempotencyKey: `contact:${fixtures[1]!.contact.id}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-1`,
+		})
+		const createContactEvent = repository.createContactEvent.bind(repository)
+		repository.createContactEvent = (input) => {
+			if (input.contactId === fixtures[3]!.contact.id) {
+				throw new Error('simulated receipt accounting failure')
+			}
+			return createContactEvent(input)
+		}
+		const reconcilerRepository = Object.assign(repository, {
+			findSkillsWorkflowLearnerFlowRecords: () =>
+				fixtures.map((fixture, index) => ({
+					contactId: fixture.contact.id,
+					contact: fixture.contact,
+					contactState: fixture.contactState,
+					intents: [completed[index]!],
+					entryEvents: [],
+				})),
+		})
+		const receipt = await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist: emailSevenAllowlist(),
+			email7LiveEnabled: false,
+			now,
+			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
+		})
+		const accounted =
+			receipt.counts.intentsCreated +
+			receipt.counts.noop +
+			receipt.counts.blocked +
+			receipt.counts.notDue +
+			receipt.counts.failed
+
+		expect(receipt).toMatchObject({
+			workSeen: 4,
+			counts: {
+				intentsCreated: 1,
+				noop: 1,
+				blocked: 1,
+				notDue: 0,
+				failed: 1,
+				writeFailed: 1,
+				deferred: 2,
+			},
+			blockedReasons: { 'email-7-copy-approval-required': 1 },
+		})
+		expect(accounted).toBe(receipt.workSeen)
 	})
 
 	it('registers one hourly reconciler and removes the old hourly planner binding', async () => {
@@ -737,6 +943,11 @@ describe('learner flow reconciler', () => {
 		expect(functionSource).toMatch(/id: ["']learner-flow-reconciler["']/u)
 		expect(functionSource).toMatch(/cron: ["']0 \* \* \* \*["']/u)
 		expect(functionSource).toContain('concurrency: 1')
+		expect(functionSource).toContain('parseEmail7LiveEnabled')
+		expect(functionSource).toContain(
+			'process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED',
+		)
+		expect(functionSource).toContain('email7LiveEnabled')
 		expect(configSource).toContain('learnerFlowReconciler')
 		expect(configSource).not.toContain('valuePathDripProgression')
 	})

@@ -356,6 +356,8 @@ export function createPostBindings({
 					coverImage: values.fields.coverImage?.url
 						? values.fields.coverImage
 						: null,
+					// Same clearing rule as coverImage.
+					icon: values.fields.icon?.url ? values.fields.icon : null,
 				},
 				// updatePost does not persist tags — tag writes happen immediately
 				// via the tags binding below (addTagToPost / removeTagFromPost).

@@ -23,6 +23,8 @@ class DrillRepository implements LearnerFlowDrillRepository {
 	contacts = new Map<string, ContactRecord>()
 	states = new Map<string, ContactState>()
 	intents = new Map<string, SideEffectIntent>()
+	kitCleanupEmails: string[] = []
+	kitCleanupError?: Error
 	contactSequence = 0
 
 	async findContactById(id: string) {
@@ -83,6 +85,12 @@ class DrillRepository implements LearnerFlowDrillRepository {
 		return Array.from(this.contacts.values()).filter((contact) =>
 			isLearnerFlowDrillEmail(contact.email),
 		)
+	}
+
+	async unsubscribeSyntheticKitSubscriber(email: string) {
+		if (this.kitCleanupError) throw this.kitCleanupError
+		this.kitCleanupEmails.push(email)
+		return { status: 'cancelled' as const, readbackAttempts: 1 }
 	}
 
 	async deleteLearnerFlowFixtureContact(contactId: string) {
@@ -270,6 +278,12 @@ describe('learner flow induced-failure drill', () => {
 			allowWrite: true,
 		})
 		expect(result.deleted).toBe(6)
+		expect(result.kitCleanup).toEqual({
+			cancelled: 6,
+			alreadyCancelled: 0,
+			notFound: 0,
+		})
+		expect(repository.kitCleanupEmails).toHaveLength(6)
 		if (!result.postDeleteReadbacks) {
 			throw new Error('Cleanup did not return post-delete readbacks')
 		}
@@ -280,7 +294,7 @@ describe('learner flow induced-failure drill', () => {
 		expect(repository.contacts.size).toBe(0)
 	})
 
-	it('parses only post-induction reconciler receipts and current Pulse evidence', () => {
+	it('parses post-induction repair and executor receipts with Pulse evidence', () => {
 		const axiom = parseLearnerFlowDrillAxiomOutput(
 			JSON.stringify({
 				matches: [
@@ -292,15 +306,15 @@ describe('learner flow induced-failure drill', () => {
 						_time: '2026-07-18T01:30:00.000Z',
 						data: {
 							payload: {
-								loop: 'reconciler',
-								planned: 0,
-								starved: 3,
+								loop: 'repair',
+								receiptVersion: 2,
+								counts: { intentsCreated: 3 },
 							},
 						},
 					},
 					{
 						_time: '2026-07-18T01:31:00.000Z',
-						payload: { loop: 'executor' },
+						payload: { loop: 'executor', counts: { completed: 3 } },
 					},
 				],
 			}),
@@ -309,7 +323,15 @@ describe('learner flow induced-failure drill', () => {
 		expect(axiom).toEqual([
 			{
 				observedAt: '2026-07-18T01:30:00.000Z',
-				payload: { loop: 'reconciler', planned: 0, starved: 3 },
+				payload: {
+					loop: 'repair',
+					receiptVersion: 2,
+					counts: { intentsCreated: 3 },
+				},
+			},
+			{
+				observedAt: '2026-07-18T01:31:00.000Z',
+				payload: { loop: 'executor', counts: { completed: 3 } },
 			},
 		])
 
@@ -370,9 +392,18 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T02:00:10.000Z',
 						payload: {
-							repairedCompletionFacts: 3,
-							created: 3,
-							served: 3,
+							loop: 'repair',
+							counts: {
+								completionFactsRepaired: 3,
+								intentsCreated: 3,
+							},
+						},
+					},
+					{
+						observedAt: '2026-07-18T02:00:20.000Z',
+						payload: {
+							loop: 'executor',
+							counts: { completed: 3 },
 						},
 					},
 				],
@@ -382,10 +413,8 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T03:00:10.000Z',
 						payload: {
-							zeroPlanWhileStarved: false,
-							planned: 9,
-							served: 9,
-							suppressedFixtureStarved: 3,
+							loop: 'repair',
+							counts: { intentsCreated: 9 },
 						},
 					},
 				],
@@ -410,9 +439,8 @@ describe('learner flow induced-failure drill', () => {
 				].map((observedAt) => ({
 					observedAt,
 					payload: {
-						planned: 9,
-						served: 9,
-						suppressedFixtureStarved: 3,
+						loop: 'repair',
+						counts: { intentsCreated: 9 },
 					},
 				})),
 				pulse: {
@@ -432,8 +460,15 @@ describe('learner flow induced-failure drill', () => {
 					{
 						observedAt: '2026-07-18T09:00:10.000Z',
 						payload: {
-							suppressedFixtureStarved: 0,
-							served: 3,
+							loop: 'repair',
+							counts: { intentsCreated: 3 },
+						},
+					},
+					{
+						observedAt: '2026-07-18T09:00:20.000Z',
+						payload: {
+							loop: 'executor',
+							counts: { completed: 3 },
 						},
 					},
 				],
@@ -528,13 +563,15 @@ describe('learner flow induced-failure drill', () => {
 				ports: {
 					repository,
 					observe: async () => ({
-						runs: [
-							{
-								observedAt: '2026-07-18T02:06:00.000Z',
-								payload: {
-									repairedCompletionFacts: 3,
-									created: 3,
-									served: 3,
+							runs: [
+								{
+									observedAt: '2026-07-18T02:06:00.000Z',
+									payload: {
+										loop: 'repair',
+										counts: {
+											completionFactsRepaired: 3,
+											intentsCreated: 3,
+										},
 								},
 							},
 						],
@@ -563,6 +600,40 @@ describe('learner flow induced-failure drill', () => {
 		).rejects.toThrow('Timed out waiting for learner-flow drill evidence')
 		expect(phases).toEqual(['drift-induced', 'failed', 'cleanup'])
 		expect(repository.contacts.size).toBe(0)
+	})
+
+	it('preserves the original failure and records cleanup failure', async () => {
+		const repository = new DrillRepository()
+		repository.kitCleanupError = new Error('Kit cleanup unavailable')
+		const phases: string[] = []
+		let clock = Date.parse(now)
+		await expect(
+			runLearnerFlowDrill({
+				ports: {
+					repository,
+					observe: async () => ({ runs: [] }),
+					readFixtureReadbacks: async () => [],
+					writeReceipt: async (phase) => {
+						phases.push(phase)
+						return `/receipts/${phase}.json`
+					},
+					sleep: async (milliseconds) => {
+						clock += milliseconds
+					},
+					now: () => new Date(clock).toISOString(),
+				},
+				runId: 'run-cleanup-failure',
+				scenario: 'drift',
+				pollMilliseconds: 2,
+				observationTimeoutMilliseconds: 1,
+			}),
+		).rejects.toThrow('Timed out waiting for learner-flow drill evidence')
+		expect(phases).toEqual([
+			'drift-induced',
+			'failed',
+			'cleanup-failed',
+		])
+		expect(repository.contacts.size).toBe(3)
 	})
 
 	it('models both scenarios through cleanup as one explicit lifecycle', () => {

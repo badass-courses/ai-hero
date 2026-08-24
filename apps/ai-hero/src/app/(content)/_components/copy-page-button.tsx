@@ -29,10 +29,15 @@ export function CopyPageButton({
 	markdown,
 	sourceUrl,
 	className,
+	labelClassName,
 	variant = 'outline',
 	size = 'default',
+	'aria-label': ariaLabel,
 	...rest
-}: CopySource & ButtonProps) {
+}: CopySource & {
+	/** Classes for the "Copy page" label span — pass `hidden sm:grid` for an icon-only button on mobile (the icon's flip to a check still signals the copy). */
+	labelClassName?: string
+} & ButtonProps) {
 	const [copied, setCopied] = useState(false)
 	const prefersReducedMotion = useReducedMotion()
 
@@ -104,6 +109,9 @@ export function CopyPageButton({
 			variant={variant}
 			size={size}
 			aria-live="polite"
+			// When the visible label is hidden (icon-only mobile), the copied
+			// confirmation must land in the accessible name instead.
+			aria-label={ariaLabel ? (copied ? 'Copied!' : ariaLabel) : undefined}
 			className={cn('cursor-pointer', className)}
 			{...rest}
 		>
@@ -123,7 +131,7 @@ export function CopyPageButton({
 					</motion.span>
 				</AnimatePresence>
 			</span>
-			<span className="relative grid">
+			<span className={cn('relative grid', labelClassName)}>
 				<span
 					aria-hidden="true"
 					className="invisible col-start-1 row-start-1 whitespace-nowrap"
