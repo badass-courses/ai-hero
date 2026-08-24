@@ -142,6 +142,47 @@ export const checkoutLoginHandoff = mysqlTable(
 )
 
 /**
+ * Durable outbox for purchase-transfer lifecycle events (AIH-223).
+ * A committed ownership change always writes a row here in the same
+ * transaction; the Inngest publish happens after commit and records its
+ * outcome, so a failed publish stays visible instead of vanishing.
+ */
+export const purchaseTransferOutbox = mysqlTable(
+	'PurchaseTransferOutbox',
+	{
+		id: varchar('id', { length: 191 }).notNull().primaryKey(),
+		purchaseUserTransferId: varchar('purchaseUserTransferId', {
+			length: 191,
+		}).notNull(),
+		purchaseId: varchar('purchaseId', { length: 191 }).notNull(),
+		sourceUserId: varchar('sourceUserId', { length: 191 }).notNull(),
+		targetUserId: varchar('targetUserId', { length: 191 }).notNull(),
+		eventName: varchar('eventName', { length: 255 }).notNull(),
+		payload: json('payload').notNull(),
+		status: varchar('status', { length: 32 }).notNull().default('PENDING'),
+		attempts: int('attempts').notNull().default(0),
+		lastError: text('lastError'),
+		createdAt: timestamp('createdAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.notNull(),
+		publishedAt: timestamp('publishedAt', { mode: 'date', fsp: 3 }),
+		updatedAt: timestamp('updatedAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		// One outbox row per transfer event: a resumed or replayed accept
+		// upserts into this key instead of creating a duplicate row.
+		transferEventUq: uniqueIndex('PurchaseTransferOutbox_transfer_event_uq').on(
+			table.purchaseUserTransferId,
+			table.eventName,
+		),
+		statusIdx: index('PurchaseTransferOutbox_status_idx').on(table.status),
+	}),
+)
+
+/**
  * Draft-only Course Video Manager -> AI Hero control-plane records.
  * The binding is server-created and immutable; public callers never write target IDs.
  */

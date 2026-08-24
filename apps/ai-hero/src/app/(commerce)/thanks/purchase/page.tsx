@@ -283,9 +283,10 @@ async function PurchaseThanksPageLoaded({
 		return redirect('/welcome?purchaseId=' + purchase.id)
 	}
 
+	// Session-only authority: an anonymous post-purchase visitor sees no
+	// transfer management until the signed purchase capability lands (AIH-223).
 	const purchaseUserTransfers = await getPurchaseTransferForPurchaseId({
 		id: purchase.id,
-		sourceUserId: purchase.userId || undefined,
 	})
 	let description: React.ReactElement | null = null
 	let title = `Thank you for purchasing ${stripeProductName}`
