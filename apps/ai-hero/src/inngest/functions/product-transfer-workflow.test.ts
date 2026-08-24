@@ -39,6 +39,8 @@ type World = {
 	learnerRoleAdded: boolean
 	discordRoleRemovals: number
 	guidCounter: number
+	/** Simulates a product whose Discord role entitlement type is not seeded. */
+	discordTypeMissing: boolean
 }
 
 type Predicate =
@@ -141,6 +143,8 @@ const mocks = vi.hoisted(() => {
 
 const PURCHASE_ID = 'purchase_1'
 const PRODUCT_ID = 'product_1'
+/** The single workshop attached to cohort_1; content access is keyed to it. */
+const WORKSHOP_ID = 'workshop_1'
 const { CONTENT_TYPE, DISCORD_TYPE } = mocks
 
 const sourceContentRow = (n: number): EntitlementRow => ({
@@ -149,8 +153,10 @@ const sourceContentRow = (n: number): EntitlementRow => ({
 	entitlementType: CONTENT_TYPE,
 	sourceType: 'PURCHASE',
 	sourceId: PURCHASE_ID,
-	metadata: { contentIds: ['cohort_1'] },
+	metadata: { contentIds: [WORKSHOP_ID] },
 	deletedAt: null,
+	organizationId: 'org_a',
+	organizationMembershipId: 'member_a',
 })
 
 const sourceDiscordRow = (): EntitlementRow => ({
@@ -196,6 +202,7 @@ function freshWorld(overrides: Partial<World> = {}): World {
 		learnerRoleAdded: false,
 		discordRoleRemovals: 0,
 		guidCounter: 0,
+		discordTypeMissing: false,
 		...overrides,
 	}
 }
@@ -234,9 +241,16 @@ vi.mock('@/db', () => ({
 				// Type ids equal their names so archive detection (which compares
 				// the stored entitlementType against 'cohort_content_access') is
 				// exercised for real.
-				findFirst: vi.fn(async ({ where }: { where: Predicate }) =>
-					where.op === 'eq' ? { id: where.val, name: where.val } : null,
-				),
+				findFirst: vi.fn(async ({ where }: { where: Predicate }) => {
+					if (where.op !== 'eq') return null
+					if (
+						where.val === mocks.DISCORD_TYPE &&
+						mocks.state.world.discordTypeMissing
+					) {
+						return null
+					}
+					return { id: where.val, name: where.val }
+				}),
 			},
 			purchases: {
 				findFirst: vi.fn(async () => ({ ...mocks.state.world.purchase })),
@@ -283,6 +297,8 @@ vi.mock('@/db/schema', () => ({
 		'sourceType',
 		'sourceId',
 		'deletedAt',
+		'organizationId',
+		'organizationMembershipId',
 	]),
 	entitlementTypes: mocks.columns('entitlementTypes', ['id', 'name']),
 	organizationMemberships: mocks.columns('organizationMemberships', [
@@ -324,7 +340,15 @@ vi.mock('@/inngest/config/product-types', () => ({
 	gatherResourceContexts: vi.fn(async () => [
 		{ resourceId: 'cohort_1', resourceType: 'cohort', productType: 'cohort' },
 	]),
-	getResourceData: vi.fn(async () => ({ id: 'cohort_1', type: 'cohort' })),
+	getResourceData: vi.fn(async () => ({
+		id: 'cohort_1',
+		type: 'cohort',
+		resources: [
+			{ resource: { id: 'workshop_1', type: 'workshop' } },
+			// Cohorts also attach reminder emails; those never become access.
+			{ resource: { id: 'email_1', type: 'email' } },
+		],
+	})),
 	PRODUCT_TYPE_CONFIG: {
 		cohort: {
 			logPrefix: 'cohort',
@@ -426,42 +450,58 @@ beforeEach(() => {
 		mocks.state.world.discordRoleRemovals += 1
 		return { removed: true }
 	})
-	// Mirrors the real createResourceEntitlements: one row per resource,
-	// skipped when the user already holds an active one for this purchase.
+	// Mirrors the real createResourceEntitlements: one content row per
+	// workshop child of the cohort, skipped when the user already holds ANY
+	// active row of that type listing the workshop — regardless of which
+	// purchase, coupon, or subscription sourced it (hasExistingEntitlement
+	// has no source filter). Rows land in the org/membership passed in.
 	mocks.createResourceEntitlements.mockImplementation(
 		async (
 			_productType: string,
-			resource: { id: string },
+			resource: {
+				id: string
+				resources?: Array<{ resource?: { id: string; type?: string } }>
+			},
 			context: {
 				user: { id: string }
 				purchase: { id: string }
+				organizationId: string
+				orgMembership: { id: string }
 				contentAccessEntitlementType: { id: string }
 			},
 		) => {
 			const world = mocks.state.world
-			const existing = world.entitlements.find(
-				(row) =>
-					row.userId === context.user.id &&
-					row.entitlementType === context.contentAccessEntitlementType.id &&
-					row.sourceType === 'PURCHASE' &&
-					row.sourceId === context.purchase.id &&
-					row.deletedAt === null &&
-					(row.metadata?.contentIds as string[] | undefined)?.includes(
-						resource.id,
-					),
-			)
-			if (existing) return []
-			const row: EntitlementRow = {
-				id: `tgt_content_${world.guidCounter++}`,
-				userId: context.user.id,
-				entitlementType: context.contentAccessEntitlementType.id,
-				sourceType: 'PURCHASE',
-				sourceId: context.purchase.id,
-				metadata: { contentIds: [resource.id] },
-				deletedAt: null,
+			const created: EntitlementRow[] = []
+			const children = (resource.resources ?? [])
+				.map((item) => item.resource)
+				.filter((child) => child?.type === 'workshop')
+			for (const child of children) {
+				if (!child) continue
+				const existing = world.entitlements.find(
+					(row) =>
+						row.userId === context.user.id &&
+						row.entitlementType === context.contentAccessEntitlementType.id &&
+						row.deletedAt === null &&
+						(row.metadata?.contentIds as string[] | undefined)?.includes(
+							child.id,
+						),
+				)
+				if (existing) continue
+				const row: EntitlementRow = {
+					id: `tgt_content_${world.guidCounter++}`,
+					userId: context.user.id,
+					entitlementType: context.contentAccessEntitlementType.id,
+					sourceType: 'PURCHASE',
+					sourceId: context.purchase.id,
+					metadata: { contentIds: [child.id] },
+					deletedAt: null,
+					organizationId: context.organizationId,
+					organizationMembershipId: context.orgMembership.id,
+				}
+				world.entitlements.push(row)
+				created.push(row)
 			}
-			world.entitlements.push(row)
-			return [row]
+			return created
 		},
 	)
 	mocks.createEntitlement.mockImplementation(
@@ -500,7 +540,10 @@ describe('duplicate events', () => {
 
 		const { harness, result } = await runWorkflow()
 
-		expect(result).toMatchObject({ replayed: true, transferState: 'COMPLETED' })
+		expect(result).toMatchObject({
+			replayed: true,
+			transferState: 'COMPLETED',
+		})
 		expect(harness.executed).toEqual([
 			'log transfer initiated',
 			'check transfer replay state',
@@ -685,12 +728,204 @@ describe('non-transferable product types', () => {
 	})
 })
 
+/** Active content rows for the target that list the transferred workshop. */
+function targetContentRowsFor(resourceId: string) {
+	return mocks.state.world.entitlements.filter(
+		(row) =>
+			row.userId === 'user_b' &&
+			row.entitlementType === CONTENT_TYPE &&
+			row.deletedAt === null &&
+			(row.metadata?.contentIds as string[] | undefined)?.includes(resourceId),
+	)
+}
+
+/** Access the target already holds to workshop_1 from an unrelated purchase. */
+const preExistingTargetAccessRow = (): EntitlementRow => ({
+	id: 'tgt_existing_other_purchase',
+	userId: 'user_b',
+	entitlementType: CONTENT_TYPE,
+	sourceType: 'PURCHASE',
+	sourceId: 'purchase_other',
+	metadata: { contentIds: [WORKSHOP_ID] },
+	deletedAt: null,
+	organizationId: 'org_team',
+	organizationMembershipId: 'member_team',
+})
+
+describe('pre-existing target access', () => {
+	it('converges to COMPLETED on the existing access without minting a duplicate content entitlement', async () => {
+		mocks.state.world = freshWorld({
+			entitlements: [
+				sourceContentRow(0),
+				sourceDiscordRow(),
+				preExistingTargetAccessRow(),
+			],
+		})
+
+		await runWorkflow()
+
+		const world = mocks.state.world
+		expect(world.transferState).toBe('COMPLETED')
+		expect(world.completedWrites).toBe(1)
+		// createResourceEntitlements skipped the duplicate, so the only content
+		// row for workshop_1 is the pre-existing one from the other purchase.
+		expect(mocks.createResourceEntitlements).toHaveBeenCalledTimes(1)
+		const contentRows = targetContentRowsFor(WORKSHOP_ID)
+		expect(contentRows.map((row) => row.id)).toEqual([
+			'tgt_existing_other_purchase',
+		])
+		// No content row sourced from the transferred purchase was minted.
+		expect(
+			activeRowsFor('user_b').filter(
+				(row) => row.entitlementType === CONTENT_TYPE,
+			),
+		).toEqual([])
+		// The Discord role entitlement is still granted from this purchase.
+		expect(activeRowsFor('user_b').map((row) => row.entitlementType)).toEqual([
+			DISCORD_TYPE,
+		])
+		expect(activeIds('user_a')).toEqual([])
+	})
+
+	it('converges even when existing access is the only row the target holds (no Discord type seeded)', async () => {
+		// Nothing is minted from the current purchase at all, so a gate that
+		// demands a row with sourceId = current purchase would strand the
+		// transfer at VERIFIED forever.
+		mocks.state.world = freshWorld({
+			discordTypeMissing: true,
+			entitlements: [sourceContentRow(0), preExistingTargetAccessRow()],
+		})
+
+		await runWorkflow()
+
+		const world = mocks.state.world
+		expect(world.transferState).toBe('COMPLETED')
+		expect(world.completedWrites).toBe(1)
+		expect(activeRowsFor('user_b')).toEqual([])
+		expect(targetContentRowsFor(WORKSHOP_ID).map((row) => row.id)).toEqual([
+			'tgt_existing_other_purchase',
+		])
+		expect(activeIds('user_a')).toEqual([])
+	})
+
+	it('a retry after a crash past the entitlement step still reaches COMPLETED with one content row', async () => {
+		mocks.state.world = freshWorld({
+			entitlements: [
+				sourceContentRow(0),
+				sourceDiscordRow(),
+				preExistingTargetAccessRow(),
+			],
+		})
+		const first = createStepHarness()
+		first.control.crashAfter = 'add entitlements to target user'
+		await expect(
+			handleProductTransfer({
+				event,
+				step: first.step,
+				db: createAdapter(),
+				transferSource: 'ui',
+			}),
+		).rejects.toThrow('worker crashed')
+		expect(mocks.state.world.transferState).toBe('VERIFIED')
+		const rowCount = mocks.state.world.entitlements.length
+
+		// Fresh delivery re-runs the whole machinery against the half-done world.
+		await runWorkflow()
+		expect(mocks.state.world.transferState).toBe('COMPLETED')
+		expect(mocks.state.world.completedWrites).toBe(1)
+		expect(targetContentRowsFor(WORKSHOP_ID).map((row) => row.id)).toEqual([
+			'tgt_existing_other_purchase',
+		])
+		expect(mocks.state.world.entitlements).toHaveLength(rowCount)
+
+		// The original run resumes from its memo and stays a no-op.
+		first.control.crashAfter = null
+		await handleProductTransfer({
+			event,
+			step: first.step,
+			db: createAdapter(),
+			transferSource: 'ui',
+		})
+		expect(mocks.state.world.completedWrites).toBe(1)
+		expect(mocks.state.world.entitlements).toHaveLength(rowCount)
+	})
+
+	it('existing access covering a different workshop does not satisfy the transferred one', async () => {
+		mocks.state.world = freshWorld({
+			entitlements: [
+				sourceContentRow(0),
+				sourceDiscordRow(),
+				{
+					...preExistingTargetAccessRow(),
+					metadata: { contentIds: ['workshop_other'] },
+				},
+			],
+		})
+		// Minting is lost, so nothing covers workshop_1.
+		mocks.createResourceEntitlements.mockImplementation(async () => [])
+		await expect(runWorkflow()).rejects.toThrow(/target_entitlements_missing/)
+		expect(mocks.state.world.transferState).toBe('VERIFIED')
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'purchase_transfer.completion_invariants_failed',
+			expect.objectContaining({
+				missingAccess: [
+					{ entitlementTypeId: CONTENT_TYPE, resourceId: WORKSHOP_ID },
+				],
+			}),
+		)
+	})
+})
+
 describe('completion gate', () => {
 	it('refuses COMPLETED while the target has no active entitlements', async () => {
+		// No target access seeded anywhere: freshWorld holds source rows only.
+		expect(activeRowsFor('user_b')).toEqual([])
 		mocks.createResourceEntitlements.mockImplementation(async () => [])
 		mocks.createEntitlement.mockImplementation(async () => {})
 		await expect(runWorkflow()).rejects.toThrow(
 			/Transfer completion invariants failed.*target_entitlements_missing/,
+		)
+		expect(mocks.state.world.transferState).toBe('VERIFIED')
+		expect(mocks.state.world.completedWrites).toBe(0)
+	})
+
+	it('refuses COMPLETED when the current-purchase entitlement landed in the wrong organization', async () => {
+		const base = mocks.createResourceEntitlements.getMockImplementation()!
+		mocks.createResourceEntitlements.mockImplementation(
+			async (productType, resource, context) =>
+				base(productType, resource, {
+					...context,
+					organizationId: 'org_stale',
+				}),
+		)
+		await expect(runWorkflow()).rejects.toThrow(
+			/target_entitlement_wrong_organization/,
+		)
+		expect(mocks.state.world.transferState).toBe('VERIFIED')
+		expect(mocks.state.world.completedWrites).toBe(0)
+		// The misplaced row also fails the access requirement: it never counts.
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'purchase_transfer.completion_invariants_failed',
+			expect.objectContaining({
+				failures: expect.arrayContaining([
+					'target_entitlement_wrong_organization',
+					'target_entitlements_missing',
+				]),
+			}),
+		)
+	})
+
+	it('refuses COMPLETED when the current-purchase entitlement landed on the wrong membership', async () => {
+		const base = mocks.createResourceEntitlements.getMockImplementation()!
+		mocks.createResourceEntitlements.mockImplementation(
+			async (productType, resource, context) =>
+				base(productType, resource, {
+					...context,
+					orgMembership: { id: 'member_stale' },
+				}),
+		)
+		await expect(runWorkflow()).rejects.toThrow(
+			/target_entitlement_wrong_membership/,
 		)
 		expect(mocks.state.world.transferState).toBe('VERIFIED')
 		expect(mocks.state.world.completedWrites).toBe(0)

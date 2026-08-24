@@ -23,7 +23,13 @@ import {
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import { ensurePersonalOrganization } from '@/lib/personal-organization-service'
 import { getWorkshop } from '@/lib/workshops-query'
-import { verifyTransferCompletionInvariants } from '@/purchase-transfer/transfer-completion'
+import {
+	listRequiredContentResourceIds,
+	readContentIds,
+	verifyTransferCompletionInvariants,
+	type RequiredTargetAccess,
+	type TargetEntitlementRow,
+} from '@/purchase-transfer/transfer-completion'
 import {
 	isTerminalTransferState,
 	type TransferState,
@@ -279,7 +285,7 @@ const transferArchivePurchaseEntitlements = async (
 				sourceUserId: sourceUser.id,
 				targetUserId: targetUser.id,
 			})
-			return { transferred: 0 }
+			return { transferred: 0, entitlementTypeIds: [] as string[] }
 		}
 
 		await db.transaction(async (tx) => {
@@ -315,6 +321,13 @@ const transferArchivePurchaseEntitlements = async (
 		return {
 			transferred: archiveEntitlements.length,
 			entitlementIds: archiveEntitlements.map((entitlement) => entitlement.id),
+			// Entitlement types moved; the completion gate requires an active
+			// archive-derived target row for each one.
+			entitlementTypeIds: Array.from(
+				new Set(
+					archiveEntitlements.map((entitlement) => entitlement.entitlementType),
+				),
+			),
 		}
 	})
 }
@@ -640,7 +653,16 @@ export async function handleProductTransfer({
 
 	// Set by the archive branch; narrows the archive completion invariant
 	// to exactly the entitlement set that branch moves.
-	let archiveTransferResult: { transferred: number } | null = null
+	let archiveTransferResult: {
+		transferred: number
+		entitlementTypeIds?: string[]
+	} | null = null
+
+	// Every (entitlement type, resource) pair this transfer had to grant the
+	// target. Built from memoized step results only, so a retry rebuilds the
+	// same list. The completion gate verifies access per entry instead of
+	// counting rows.
+	const requiredTargetAccess: RequiredTargetAccess[] = []
 
 	if (
 		hasEntitlementWork &&
@@ -742,6 +764,11 @@ export async function handleProductTransfer({
 				targetMembership: targetUserOrgMembership,
 			})
 
+			for (const entitlementTypeId of archiveTransferResult?.entitlementTypeIds ??
+				[]) {
+				requiredTargetAccess.push({ entitlementTypeId, resourceId: null })
+			}
+
 			await transferCouponEntitlements(
 				step,
 				purchase,
@@ -834,6 +861,22 @@ export async function handleProductTransfer({
 					},
 				)
 
+				for (const resourceId of listRequiredContentResourceIds(
+					assuredProductType,
+					primaryResourceData,
+				)) {
+					requiredTargetAccess.push({
+						entitlementTypeId: contentAccessEntitlementType.id,
+						resourceId,
+					})
+				}
+				if (discordRoleEntitlementType) {
+					requiredTargetAccess.push({
+						entitlementTypeId: discordRoleEntitlementType.id,
+						resourceId: null,
+					})
+				}
+
 				await removeEntitlementsFromSource(
 					step,
 					assuredConfig,
@@ -896,6 +939,16 @@ export async function handleProductTransfer({
 						transferSource,
 					})
 					continue
+				}
+
+				for (const resourceId of listRequiredContentResourceIds(
+					context.productType,
+					resourceData,
+				)) {
+					requiredTargetAccess.push({
+						entitlementTypeId: contentAccessEntitlementType.id,
+						resourceId,
+					})
 				}
 
 				// Remove content access entitlements from source user for this resource
@@ -989,14 +1042,60 @@ export async function handleProductTransfer({
 					.filter(Boolean)
 			: []
 
-		const activeTargetEntitlementRows = await db.query.entitlements.findMany({
-			where: and(
-				eq(entitlements.userId, targetUser.id),
-				eq(entitlements.sourceType, EntitlementSourceType.PURCHASE),
-				eq(entitlements.sourceId, purchase.id),
-				isNull(entitlements.deletedAt),
-			),
+		const expectedMembershipId = completionContext?.membershipId ?? null
+
+		// Current-purchase rows for the target only count when they belong to
+		// the expected organization and membership. The unfiltered query names
+		// anything the filter excluded so the failure is specific.
+		const currentPurchaseTargetWhere = [
+			eq(entitlements.userId, targetUser.id),
+			eq(entitlements.sourceType, EntitlementSourceType.PURCHASE),
+			eq(entitlements.sourceId, purchase.id),
+			isNull(entitlements.deletedAt),
+		]
+		const verifiedTargetEntitlementRows =
+			expectedOrganizationId && expectedMembershipId
+				? await db.query.entitlements.findMany({
+						where: and(
+							...currentPurchaseTargetWhere,
+							eq(entitlements.organizationId, expectedOrganizationId),
+							eq(entitlements.organizationMembershipId, expectedMembershipId),
+						),
+					})
+				: []
+		const allTargetEntitlementRows = await db.query.entitlements.findMany({
+			where: and(...currentPurchaseTargetWhere),
 		})
+		const verifiedIds = new Set(
+			verifiedTargetEntitlementRows.map((row: any) => row.id),
+		)
+		const misplacedTargetEntitlementRows = allTargetEntitlementRows.filter(
+			(row: any) => !verifiedIds.has(row.id),
+		)
+
+		// Access the target already held from another source (another
+		// purchase, coupon, subscription). `createResourceEntitlements` skips
+		// minting in that case, so completion must recognise it. The match
+		// mirrors `hasExistingEntitlement`: same user, same type, active,
+		// resource listed in metadata.contentIds; no source filter.
+		const requiredTypeIds = new Set(
+			requiredTargetAccess.map((requirement) => requirement.entitlementTypeId),
+		)
+		const existingTargetAccessRows = requiredTypeIds.size
+			? (
+					await db.query.entitlements.findMany({
+						where: and(
+							eq(entitlements.userId, targetUser.id),
+							isNull(entitlements.deletedAt),
+						),
+					})
+				).filter(
+					(row: any) =>
+						row.sourceId !== purchase.id &&
+						requiredTypeIds.has(row.entitlementType),
+				)
+			: []
+
 		const activeSourceEntitlementRows = await db.query.entitlements.findMany({
 			where: and(
 				eq(entitlements.userId, sourceUser.id),
@@ -1018,7 +1117,21 @@ export async function handleProductTransfer({
 						}),
 					)
 				: rows
-		const activeTargetEntitlements = scopeToPath(activeTargetEntitlementRows)
+		const toTargetRow = (row: any): TargetEntitlementRow => ({
+			id: row.id,
+			entitlementTypeId: row.entitlementType,
+			sourceId: row.sourceId ?? null,
+			organizationId: row.organizationId ?? null,
+			organizationMembershipId: row.organizationMembershipId ?? null,
+			contentIds: readContentIds(row.metadata),
+		})
+		const activeTargetEntitlements = scopeToPath(
+			verifiedTargetEntitlementRows,
+		).map(toTargetRow)
+		const misplacedTargetEntitlements = scopeToPath(
+			misplacedTargetEntitlementRows,
+		).map(toTargetRow)
+		const existingTargetAccess = existingTargetAccessRows.map(toTargetRow)
 		const activeSourceEntitlements = scopeToPath(activeSourceEntitlementRows)
 
 		const verdict = verifyTransferCompletionInvariants({
@@ -1032,11 +1145,15 @@ export async function handleProductTransfer({
 			targetUserId: targetUser.id,
 			sourceUserId: sourceUser.id,
 			expectedOrganizationId,
+			expectedMembershipId,
 			targetMembership: membership
 				? { id: membership.id, organizationId: membership.organizationId }
 				: null,
 			targetMembershipRoleNames,
-			activeTargetEntitlementCount: activeTargetEntitlements.length,
+			requiredTargetAccess,
+			activeTargetEntitlements,
+			misplacedTargetEntitlements,
+			existingTargetAccess,
 			activeSourceEntitlementCount: activeSourceEntitlements.length,
 			requiresOrganizationChecks: Boolean(completionContext),
 			// Archive transfers with nothing to move (transferred 0) have no
@@ -1053,6 +1170,8 @@ export async function handleProductTransfer({
 				purchaseId: purchase.id,
 				purchaseUserTransferId: event.data.purchaseUserTransferId,
 				failures: verdict.failures,
+				missingAccess: verdict.missingAccess,
+				requiredTargetAccess,
 				transferSource,
 			})
 			throw new Error(
