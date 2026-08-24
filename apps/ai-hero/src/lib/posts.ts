@@ -122,7 +122,7 @@ export const PostSchema = ContentResourceSchema.merge(
 					alt: z.string().optional(),
 				})
 				.nullish(),
-			// Skill-only small mark shown on catalog rows and the sidebar.
+			// Skill-only small mark shown on the /skills catalog rows.
 			// Same editor semantics as coverImage: '' when empty, null to clear.
 			icon: z
 				.object({

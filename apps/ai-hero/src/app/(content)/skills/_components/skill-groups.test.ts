@@ -51,18 +51,25 @@ describe('toSkillGroups', () => {
 		;(emptyIcon.resource.fields as any).icon = { url: '' }
 		const clearedIcon = skill('skills-plan-this')
 		;(clearedIcon.resource.fields as any).icon = null
+		// Raw JSON can hold what PostSchema would reject (e.g. written via the
+		// passthrough /api/resources) — next/image throws on a src it cannot
+		// parse, so a junk url must not reach the catalog.
+		const junkIcon = skill('skills-review-this')
+		;(junkIcon.resource.fields as any).icon = { url: 'not-a-url' }
 
 		const [group] = toSkillGroups([
 			section('section_1', 'Getting Started', [
 				withIcon,
 				emptyIcon,
 				clearedIcon,
+				junkIcon,
 				skill('skills-ship-it'),
 			]),
 		])
 
 		expect(group?.items.map((item) => item.iconUrl)).toEqual([
 			'https://res.cloudinary.com/x/icon.png',
+			undefined,
 			undefined,
 			undefined,
 			undefined,

@@ -9,9 +9,10 @@ privacy: "private"
 # Add an icon image field to skill posts
 
 Add `fields.icon` (`{ url, alt? }`, mirroring `coverImage`) to posts, editable only
-when `postType === 'skill'`, rendered on the `/skills` catalog rows and the hub
-sidebar Skills group. First PR scope: schema + editor + catalog + sidebar. Later:
-skill post page install panel, prev/next pager, learn-map `SkillCard`.
+when `postType === 'skill'`, rendered on the `/skills` catalog rows. First PR
+scope: schema + editor + catalog. Later: hub sidebar Skills group (via the shared
+`SeriesLessons` renderer), skill post page install panel, prev/next pager,
+learn-map `SkillCard`.
 
 Branch: `feat/skill-post-icon` off main `b34d4a3`. Vojta approved the design
 2026-08-24.

@@ -68,10 +68,10 @@ function buildTabsWithPostType(currentPostType: string | undefined) {
 			label: postTypeLabel(value),
 		})),
 	}
-	// Skill-only: a small mark rendered on /skills catalog rows and the hub
-	// sidebar. A separate tab because the kit's `condition` is tab-level only;
+	// Skill-only: a small mark rendered on the /skills catalog rows. A
+	// separate tab because the kit's `condition` is tab-level only;
 	// it reacts to the live postType select, so flipping a post to 'skill'
-	// reveals it without a reload. Missing icons render bg-stripes on-site.
+	// reveals it without a reload. Iconless skills render no slot on-site.
 	const skillIconTab: FieldTab = {
 		label: 'Icon',
 		condition: (values) => values?.fields?.postType === 'skill',
