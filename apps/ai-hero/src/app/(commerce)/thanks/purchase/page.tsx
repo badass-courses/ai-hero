@@ -8,6 +8,7 @@ import Spinner from '@/components/spinner'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
+import { isCheckoutSessionOwner } from '@/lib/checkout-owner-resolution'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
@@ -279,7 +280,14 @@ async function PurchaseThanksPageLoaded({
 		redemptionsLeft,
 	} = result
 
-	if (email === token?.session?.user?.email) {
+	if (
+		isCheckoutSessionOwner({
+			purchaseUserId: purchase.userId ?? null,
+			purchaseEmail: email ?? null,
+			sessionUserId: token?.session?.user?.id ?? null,
+			sessionUserEmail: token?.session?.user?.email ?? null,
+		})
+	) {
 		return redirect('/welcome?purchaseId=' + purchase.id)
 	}
 

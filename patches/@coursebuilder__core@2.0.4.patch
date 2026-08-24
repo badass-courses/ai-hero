@@ -1,0 +1,72 @@
+diff --git a/dist/chunk-BXD2MDJD.js b/dist/chunk-BXD2MDJD.js
+index 63aafd7736bc208e2c0b1fffbffd240df5b8bef0..621502aff6b840e010eea3df8a6e2f446c8eb67e 100644
+--- a/dist/chunk-BXD2MDJD.js
++++ b/dist/chunk-BXD2MDJD.js
+@@ -78,6 +78,19 @@ var stripeCheckoutSessionCompletedHandler = /* @__PURE__ */ __name(async ({ even
+     return await parsePurchaseInfoFromCheckoutSession(checkoutSession, db);
+   });
+   const { user, isNewUser } = await step.run("load the user", async () => {
++    // CHECKOUT_OWNER_IDENTITY_GUARD_V1
++    // A signed-in checkout stamps metadata.userId when the session is
++    // created. That verified user stays the canonical purchase owner even
++    // when the Stripe billing/contact email differs; the billing email
++    // stays on the Stripe customer record only. This lookup must run
++    // before any findOrCreateUser call on the billing email.
++    const checkoutMetadataUserId = checkoutSession.metadata?.userId;
++    if (checkoutMetadataUserId) {
++      const checkoutMetadataUser = await db.getUserById(checkoutMetadataUserId);
++      if (checkoutMetadataUser) {
++        return { user: checkoutMetadataUser, isNewUser: false };
++      }
++    }
+     if (!purchaseInfo.email) {
+       throw new Error("purchaseInfo.email is null");
+     }
+diff --git a/dist/inngest/index.cjs b/dist/inngest/index.cjs
+index 85e36efeb4c19bb6e4a37a6d890d3436c513f225..0da3c60e4117422f92e0fa09e631e0058572251d 100644
+--- a/dist/inngest/index.cjs
++++ b/dist/inngest/index.cjs
+@@ -6292,6 +6292,19 @@ var stripeCheckoutSessionCompletedHandler = /* @__PURE__ */ __name(async ({ even
+     return await parsePurchaseInfoFromCheckoutSession(checkoutSession, db);
+   });
+   const { user, isNewUser } = await step.run("load the user", async () => {
++    // CHECKOUT_OWNER_IDENTITY_GUARD_V1
++    // A signed-in checkout stamps metadata.userId when the session is
++    // created. That verified user stays the canonical purchase owner even
++    // when the Stripe billing/contact email differs; the billing email
++    // stays on the Stripe customer record only. This lookup must run
++    // before any findOrCreateUser call on the billing email.
++    const checkoutMetadataUserId = checkoutSession.metadata?.userId;
++    if (checkoutMetadataUserId) {
++      const checkoutMetadataUser = await db.getUserById(checkoutMetadataUserId);
++      if (checkoutMetadataUser) {
++        return { user: checkoutMetadataUser, isNewUser: false };
++      }
++    }
+     if (!purchaseInfo.email) {
+       throw new Error("purchaseInfo.email is null");
+     }
+diff --git a/dist/inngest/stripe/event-checkout-session-completed.cjs b/dist/inngest/stripe/event-checkout-session-completed.cjs
+index 34d7424b2fb6e78fd1227f0f69dad3fb26391b7a..0af522bc152013580f33f824d2aa41eb47cf0c7c 100644
+--- a/dist/inngest/stripe/event-checkout-session-completed.cjs
++++ b/dist/inngest/stripe/event-checkout-session-completed.cjs
+@@ -5498,6 +5498,19 @@ var stripeCheckoutSessionCompletedHandler = /* @__PURE__ */ __name(async ({ even
+     return await parsePurchaseInfoFromCheckoutSession(checkoutSession, db);
+   });
+   const { user, isNewUser } = await step.run("load the user", async () => {
++    // CHECKOUT_OWNER_IDENTITY_GUARD_V1
++    // A signed-in checkout stamps metadata.userId when the session is
++    // created. That verified user stays the canonical purchase owner even
++    // when the Stripe billing/contact email differs; the billing email
++    // stays on the Stripe customer record only. This lookup must run
++    // before any findOrCreateUser call on the billing email.
++    const checkoutMetadataUserId = checkoutSession.metadata?.userId;
++    if (checkoutMetadataUserId) {
++      const checkoutMetadataUser = await db.getUserById(checkoutMetadataUserId);
++      if (checkoutMetadataUser) {
++        return { user: checkoutMetadataUser, isNewUser: false };
++      }
++    }
+     if (!purchaseInfo.email) {
+       throw new Error("purchaseInfo.email is null");
+     }
