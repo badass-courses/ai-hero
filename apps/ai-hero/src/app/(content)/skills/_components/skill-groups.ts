@@ -43,10 +43,23 @@ function toSkillItem(item: ListItem) {
 	const fields = item.resource?.fields
 	const slug = stringField(fields, 'slug')
 	if (!slug) return null
+	// fields.icon is `{ url, alt? }` (see PostSchema); the editor stores '' when
+	// empty and null when cleared. `fields` is raw JSON though — a malformed
+	// url written past PostSchema (e.g. via the passthrough /api/resources)
+	// would make next/image throw and take the whole /skills page with it, so
+	// only urls an <img> can actually load count (same http(s)/rooted-path
+	// heuristic as the kit's ImageField).
+	const icon = fields?.icon as { url?: unknown } | null | undefined
+	const iconUrl =
+		typeof icon?.url === 'string' &&
+		(/^https?:\/\//i.test(icon.url) || icon.url.startsWith('/'))
+			? icon.url
+			: undefined
 	return {
 		slug,
 		title: stringField(fields, 'title') ?? slug,
 		description: stringField(fields, 'description'),
+		iconUrl,
 		kind:
 			stringField(fields, 'postType') === 'skill'
 				? ('skill' as const)

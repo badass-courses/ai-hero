@@ -122,6 +122,14 @@ export const PostSchema = ContentResourceSchema.merge(
 					alt: z.string().optional(),
 				})
 				.nullish(),
+			// Skill-only small mark shown on the /skills catalog rows.
+			// Same editor semantics as coverImage: '' when empty, null to clear.
+			icon: z
+				.object({
+					url: z.string().url().or(z.literal('')),
+					alt: z.string().optional(),
+				})
+				.nullish(),
 			_artwork: z
 				.object({
 					batchId: z.string().optional(),
@@ -152,6 +160,12 @@ export const PostUpdateSchema = z.object({
 		githubSource: z.string().nullish(),
 		thumbnailTime: z.number().nullish(),
 		coverImage: z
+			.object({
+				url: z.string().url().or(z.literal('')),
+				alt: z.string().optional(),
+			})
+			.nullish(),
+		icon: z
 			.object({
 				url: z.string().url().or(z.literal('')),
 				alt: z.string().optional(),
