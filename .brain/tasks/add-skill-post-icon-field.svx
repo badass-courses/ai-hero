@@ -20,9 +20,13 @@ Branch: `feat/skill-post-icon` off main `b34d4a3`. Vojta approved the design
 ## State (2026-08-24)
 
 Implemented and green (115 tests around posts/skills/cms pass): both schemas,
-the three save-mapping sites, a reactive skill-only "Icon" tab in the post
-editor (kit `FieldTab.condition` on `fields.postType`), and the `/skills`
-catalog render (24px `CldImage`, decorative `alt=""`). **Iconless skills render
+the three save-mapping sites, a skill-only Icon image field in the post editor,
+and the `/skills` catalog render (24px `CldImage`, decorative `alt=""`).
+Editor placement (Vojta, 2026-08-24): the Icon field lives on the **SEO tab
+directly below Cover Image** — a separate Icon tab was rejected as one field
+alone in a tab. It is gated statically on the post's current `postType` (the
+kit's reactive `condition` is tab-level only), so a post flipped to 'skill'
+shows it after reopening the editor. **Iconless skills render
 no slot at all** — Vojta rejected the stripes placeholder after seeing it live.
 Not yet done: sidebar icons (the accordion rows go through the shared
 `SeriesLessons` renderer used by every workshop/guide list — deferred as a
