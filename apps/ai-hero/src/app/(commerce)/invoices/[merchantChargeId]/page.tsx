@@ -9,20 +9,26 @@ import LayoutClient from '@/components/layout-client'
 import { courseBuilderAdapter, db } from '@/db'
 import { coupon } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { canViewPurchaseInvoice, getTeamPurchasesForMember } from '@/lib/team-purchases'
+import { drizzleInvoiceSettingsDataSource } from '@/lib/invoice-settings'
+import {
+	canViewPurchaseInvoice,
+	getTeamPurchasesForMember,
+} from '@/lib/team-purchases'
 import {
 	cancelPurchaseTransfer,
 	getPurchaseTransferForPurchaseId,
 	initiatePurchaseTransfer,
 } from '@/purchase-transfer/purchase-transfer-actions'
 import { getServerAuthSession } from '@/server/auth'
+import {
+	InvoiceDetailsDisplay,
+	InvoiceDetailsEditor,
+} from './_components/invoice-details-editor'
 import { format, fromUnixTime } from 'date-fns'
 import { eq } from 'drizzle-orm'
 import { ChevronLeft, MailIcon } from 'lucide-react'
 import Stripe from 'stripe'
 
-import { InvoiceCustomName } from '@coursebuilder/commerce-next/invoices/invoice-custom-name'
-import { InvoiceCustomText } from '@coursebuilder/commerce-next/invoices/invoice-custom-text'
 import { InvoicePrintButton } from '@coursebuilder/commerce-next/invoices/invoice-print-button'
 import * as PurchaseTransfer from '@coursebuilder/commerce-next/post-purchase/purchase-transfer'
 import { Button } from '@coursebuilder/ui'
@@ -128,18 +134,23 @@ const Invoice = async (props: {
 	}
 
 	const isPurchaseOwner = viewerUserId === chargeDetails.result.purchaseUserId
-	const purchaseUserTransfers =
-		isPurchaseOwner
-			? await getPurchaseTransferForPurchaseId({
-					id: chargeDetails.result.purchaseId,
-				})
-			: []
+	const purchaseUserTransfers = isPurchaseOwner
+		? await getPurchaseTransferForPurchaseId({
+				id: chargeDetails.result.purchaseId,
+			})
+		: []
 
 	if (chargeDetails?.state !== 'SUCCESS') {
 		return null
 	}
 
 	const { charge, product, bulkCoupon, quantity } = chargeDetails.result
+
+	const savedInvoiceSettings =
+		await drizzleInvoiceSettingsDataSource.loadSettings(
+			chargeDetails.result.purchaseId,
+			params.merchantChargeId,
+		)
 
 	const customer = charge.customer as Stripe.Customer
 	const formatUsd = (amount: number) => {
@@ -187,137 +198,136 @@ const Invoice = async (props: {
 							)}
 						</div>
 					</div>
-					<div className="rounded-t-md border bg-white pr-12 text-gray-900 print:break-inside-avoid print:border-none print:pr-0 print:shadow-none">
-						<div className="px-10 py-16 print:py-8">
-							<div className="flex w-full grid-cols-3 flex-col items-start justify-between gap-8 sm:grid sm:gap-5">
-								<div className="col-span-2 flex items-center">
-									<span className="font-text pl-2 text-2xl font-bold">
-										<Logo className="w-40 text-black" />
-									</span>
-								</div>
-								<div>
-									<h2 className="mb-2 text-xs uppercase text-gray-500">From</h2>
-									<span className="font-semibold">{productName}</span>
-									<br />
-									co Skill Recordings Inc.
-									<br />
-									12333 Sowden Rd
-									<br />
-									Ste. B, PMB #97429
-									<br />
-									Houston, TX 77080-2059
-									<br />
-									972-992-5951
-								</div>
-							</div>
-							<div className="grid grid-cols-3 gap-5 pb-64 print:pb-10">
-								<div className="col-span-2">
-									<p className="mb-2 text-2xl font-bold">Invoice</p>
-									Invoice ID: <strong>{params.merchantChargeId}</strong>
-									<br />
-									Created: <strong>{date}</strong>
-									<br />
-									Status:{' '}
-									<strong>
-										{charge.status === 'succeeded'
-											? charge.refunded
-												? 'Refunded'
-												: 'Paid'
-											: 'Pending'}
-									</strong>
-								</div>
-								<div className="pt-12">
-									<h2 className="mb-2 text-xs uppercase text-gray-500">
-										Invoice For
-									</h2>
-									<div>
-										<Suspense>
-											<InvoiceCustomName
-												defaultName={`${charge.billing_details.name}\n${charge.billing_details.email}`}
-											/>
-										</Suspense>
-										{/* <br />
-                  {charge.billing_details.address?.city}
-                  <br />
-                  {charge.billing_details.address?.postal_code}
-                  <br />
-                  {charge.billing_details.address?.country} */}
+					<InvoiceDetailsEditor
+						merchantChargeId={params.merchantChargeId}
+						initialSettings={savedInvoiceSettings}
+						defaultRecipient={[
+							charge.billing_details.name,
+							charge.billing_details.email,
+						]
+							.filter(Boolean)
+							.join('\n')}
+					>
+						<div className="rounded-t-md border bg-white pr-12 text-gray-900 print:break-inside-avoid print:border-none print:pr-0 print:shadow-none">
+							<div className="px-10 py-16 print:py-8">
+								<div className="flex w-full grid-cols-3 flex-col items-start justify-between gap-8 sm:grid sm:gap-5">
+									<div className="col-span-2 flex items-center">
+										<span className="font-text pl-2 text-2xl font-bold">
+											<Logo className="w-40 text-black" />
+										</span>
 									</div>
-									<Suspense>
-										<InvoiceCustomText />
-									</Suspense>
+									<div>
+										<h2 className="mb-2 text-xs uppercase text-gray-500">
+											From
+										</h2>
+										<span className="font-semibold">{productName}</span>
+										<br />
+										co Skill Recordings Inc.
+										<br />
+										12333 Sowden Rd
+										<br />
+										Ste. B, PMB #97429
+										<br />
+										Houston, TX 77080-2059
+										<br />
+										972-992-5951
+									</div>
 								</div>
-							</div>
-							<h2 className="sr-only">Purchase details</h2>
-							<table className="w-full table-auto text-left print:break-inside-avoid">
-								<thead className="table-header-group">
-									<tr className="table-row">
-										<th scope="col">Description</th>
-										<th scope="col">Unit Price</th>
-										<th scope="col">Quantity</th>
-										<th scope="col" className="text-right">
-											Amount
-										</th>
-									</tr>
-								</thead>
-								<tbody className="print:text-xs">
-									{quantity ? (
+								<div className="grid grid-cols-3 gap-5 pb-64 print:pb-10">
+									<div className="col-span-2">
+										<p className="mb-2 text-2xl font-bold">Invoice</p>
+										Invoice ID: <strong>{params.merchantChargeId}</strong>
+										<br />
+										Created: <strong>{date}</strong>
+										<br />
+										Status:{' '}
+										<strong>
+											{charge.status === 'succeeded'
+												? charge.refunded
+													? 'Refunded'
+													: 'Paid'
+												: 'Pending'}
+										</strong>
+									</div>
+									<div className="pt-12">
+										<h2 className="mb-2 text-xs uppercase text-gray-500">
+											Invoice For
+										</h2>
+										<InvoiceDetailsDisplay />
+									</div>
+								</div>
+								<h2 className="sr-only">Purchase details</h2>
+								<table className="w-full table-auto text-left print:break-inside-avoid">
+									<thead className="table-header-group">
 										<tr className="table-row">
-											<td className="pr-5">{product.name}</td>
-											<td className="pr-5">
-												{charge.currency.toUpperCase()}{' '}
-												{formatUsd(charge.amount / 100 / quantity)}
-											</td>
-											<td className="pr-5">{quantity}</td>
-											<td className="text-right">
-												{amount === null
-													? `${charge.currency.toUpperCase()} 0.00`
-													: `${charge.currency.toUpperCase()} ${formatUsd(
-															amount + amountRefunded,
-														)}`}
-											</td>
+											<th scope="col">Description</th>
+											<th scope="col">Unit Price</th>
+											<th scope="col">Quantity</th>
+											<th scope="col" className="text-right">
+												Amount
+											</th>
 										</tr>
-									) : (
-										<tr className="table-row">
-											<td>{product.name}</td>
-											<td>
-												{charge.currency.toUpperCase()}{' '}
-												{formatUsd(charge.amount / 100)}
-											</td>
-											<td>1</td>
-											<td className="text-right">
-												{amount === null
-													? `${charge.currency.toUpperCase()} 0.00`
-													: `${charge.currency.toUpperCase()} ${formatUsd(
-															amount + amountRefunded,
-														)}`}
-											</td>
-										</tr>
-									)}
-									{amountRefunded > 0 && (
-										<tr className="table-row">
-											<td className="text-red-600">Partial Refund</td>
-											<td></td>
-											<td></td>
-											<td className="text-right text-red-600">
-												{charge.currency.toUpperCase()} -
-												{formatUsd(amountRefunded)}
-											</td>
-										</tr>
-									)}
-								</tbody>
-							</table>
-							<div className="flex flex-col items-end py-16 print:py-6">
-								<div>
-									<span className="mr-3">Total</span>
-									<strong className="text-lg">
-										{charge.currency.toUpperCase()} {formatUsd(amount)}
-									</strong>
+									</thead>
+									<tbody className="print:text-xs">
+										{quantity ? (
+											<tr className="table-row">
+												<td className="pr-5">{product.name}</td>
+												<td className="pr-5">
+													{charge.currency.toUpperCase()}{' '}
+													{formatUsd(charge.amount / 100 / quantity)}
+												</td>
+												<td className="pr-5">{quantity}</td>
+												<td className="text-right">
+													{amount === null
+														? `${charge.currency.toUpperCase()} 0.00`
+														: `${charge.currency.toUpperCase()} ${formatUsd(
+																amount + amountRefunded,
+															)}`}
+												</td>
+											</tr>
+										) : (
+											<tr className="table-row">
+												<td>{product.name}</td>
+												<td>
+													{charge.currency.toUpperCase()}{' '}
+													{formatUsd(charge.amount / 100)}
+												</td>
+												<td>1</td>
+												<td className="text-right">
+													{amount === null
+														? `${charge.currency.toUpperCase()} 0.00`
+														: `${charge.currency.toUpperCase()} ${formatUsd(
+																amount + amountRefunded,
+															)}`}
+												</td>
+											</tr>
+										)}
+										{amountRefunded > 0 && (
+											<tr className="table-row">
+												<td className="text-red-600">Partial Refund</td>
+												<td></td>
+												<td></td>
+												<td className="text-right text-red-600">
+													{charge.currency.toUpperCase()} -
+													{formatUsd(amountRefunded)}
+												</td>
+											</tr>
+										)}
+									</tbody>
+								</table>
+								<div className="flex flex-col items-end py-16 print:py-6">
+									<div>
+										<span className="mr-3">Total</span>
+										<strong className="text-lg">
+											{charge.currency.toUpperCase()} {formatUsd(amount)}
+										</strong>
+									</div>
 								</div>
 							</div>
 						</div>
-					</div>
-					{isPurchaseOwner && !bulkCoupon &&
+					</InvoiceDetailsEditor>
+					{isPurchaseOwner &&
+					!bulkCoupon &&
 					purchaseUserTransfers.length > 0 ? (
 						<div className="py-16 print:hidden">
 							<div>
