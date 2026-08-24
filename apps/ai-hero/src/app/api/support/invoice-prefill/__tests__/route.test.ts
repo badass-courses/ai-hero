@@ -73,7 +73,23 @@ vi.mock('@/lib/invoice-settings', async (importOriginal) => {
 		async insertSupportReceipt(receipt) {
 			store.receipts.push(receipt)
 		},
+		async findPrefilledReceiptByRequestKey(requestKey) {
+			return (
+				store.receipts.find(
+					(r) => r.outcome === 'prefilled' && r.requestKey === requestKey,
+				) ?? null
+			)
+		},
 		async commitVerifiedSettings(settings, successReceipt) {
+			if (
+				successReceipt?.requestKey &&
+				store.receipts.some(
+					(r) =>
+						r.requestKey !== null && r.requestKey === successReceipt.requestKey,
+				)
+			) {
+				return { verified: false, replay: true }
+			}
 			const key = settingsKey(settings.purchaseId, settings.merchantChargeId)
 			const previous = store.rows.get(key)
 			store.rows.set(key, settings)
@@ -84,11 +100,10 @@ vi.mock('@/lib/invoice-settings', async (importOriginal) => {
 			if (!readback || !original.settingsValuesMatch(settings, readback)) {
 				if (previous) store.rows.set(key, previous)
 				else store.rows.delete(key)
-				return { verified: false, readback }
+				return { verified: false, replay: false, readback }
 			}
-			const receipt = successReceipt ? successReceipt(readback) : null
-			if (receipt) store.receipts.push(receipt)
-			return { verified: true, readback, receipt }
+			if (successReceipt) store.receipts.push(successReceipt)
+			return { verified: true, readback, receipt: successReceipt ?? null }
 		},
 	}
 	return { ...original, drizzleInvoiceSettingsDataSource: dataSource }
@@ -275,6 +290,72 @@ describe('POST /api/support/invoice-prefill', () => {
 		expect(store.receipts).toHaveLength(1)
 		expect(store.receipts[0]?.outcome).toBe('readback_mismatch')
 		expect(store.receipts[0]?.readbackMatched).toBe(false)
+	})
+
+	it('answers 409 to an exact replay inside the HMAC window without overwriting newer values', async () => {
+		const first = await POST(signedRequest(requestBody()))
+		expect(first.status).toBe(200)
+		const firstPayload = await first.json()
+
+		// The customer saves their own edit after the prefill.
+		const key = settingsKey('purchase_1', 'mch_123')
+		const current = store.rows.get(key)!
+		store.rows.set(key, {
+			...current,
+			recipientName: 'Ada Byron',
+			notes: 'newer',
+			source: 'owner',
+			updatedByUserId: 'user_1',
+			supportOperatorId: null,
+		})
+
+		// Same body, freshly signed: still inside the five-minute window.
+		const replay = await POST(signedRequest(requestBody()))
+		expect(replay.status).toBe(409)
+		const payload = await replay.json()
+		expect(payload.success).toBe(false)
+		expect(payload.replayed).toBe(true)
+		expect(payload.originalReceiptId).toBe(firstPayload.receiptId)
+		expect(payload.invoiceUrl).toBeUndefined()
+
+		const row = store.rows.get(key)
+		expect(row?.recipientName).toBe('Ada Byron')
+		expect(row?.notes).toBe('newer')
+		expect(row?.source).toBe('owner')
+		expect(
+			store.receipts.filter((r) => r.outcome === 'prefilled'),
+		).toHaveLength(1)
+		expect(store.receipts.filter((r) => r.outcome === 'replayed')).toHaveLength(
+			1,
+		)
+	})
+
+	it('answers 409 to a replay the same way every time', async () => {
+		expect((await POST(signedRequest(requestBody()))).status).toBe(200)
+		expect((await POST(signedRequest(requestBody()))).status).toBe(409)
+		expect((await POST(signedRequest(requestBody()))).status).toBe(409)
+		expect(
+			store.receipts.filter((r) => r.outcome === 'prefilled'),
+		).toHaveLength(1)
+	})
+
+	it('treats a different conversation from the same run as a new request', async () => {
+		expect((await POST(signedRequest(requestBody()))).status).toBe(200)
+		const response = await POST(
+			signedRequest(
+				requestBody({
+					audit: {
+						...AUDIT,
+						conversationId: 'cnv_front_2',
+						expectedInboundId: 'msg_inbound_10',
+					},
+				}),
+			),
+		)
+		expect(response.status).toBe(200)
+		expect(
+			store.receipts.filter((r) => r.outcome === 'prefilled'),
+		).toHaveLength(2)
 	})
 
 	it('rejects unexpected fields in settings', async () => {

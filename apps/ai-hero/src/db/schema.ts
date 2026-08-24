@@ -1040,6 +1040,10 @@ export const invoiceSettings = mysqlTable(
  * that reached a resolved purchase (AIH-259). Carries identifiers, audit
  * metadata, the caller-supplied input hash, and the outcome. Never billing
  * values.
+ *
+ * `requestKey` is set only on `prefilled` receipts and is unique, which makes
+ * it the atomic replay guard for an exact signed request (MySQL unique
+ * indexes ignore NULLs, so every other outcome stays retryable).
  */
 export const supportInvoicePrefillReceipts = mysqlTable(
 	'SupportInvoicePrefillReceipt',
@@ -1053,11 +1057,13 @@ export const supportInvoicePrefillReceipts = mysqlTable(
 		approvalReference: varchar('approvalReference', { length: 255 }).notNull(),
 		expectedInboundId: varchar('expectedInboundId', { length: 255 }).notNull(),
 		inputHash: varchar('inputHash', { length: 64 }).notNull(),
+		requestKey: varchar('requestKey', { length: 64 }),
 		outcome: varchar('outcome', { length: 40 }).notNull(),
 		readbackMatched: boolean('readbackMatched'),
 		createdAt: timestamp('createdAt', { fsp: 3 }).defaultNow().notNull(),
 	},
 	(table) => ({
 		purchaseIdx: index('sipr_purchase_idx').on(table.purchaseId),
+		requestKeyIdx: uniqueIndex('sipr_request_key_uidx').on(table.requestKey),
 	}),
 )

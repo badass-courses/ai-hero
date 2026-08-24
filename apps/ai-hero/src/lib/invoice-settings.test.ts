@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
 	applySupportInvoicePrefill,
 	computeInvoiceSettingsInputHash,
+	computeSupportPrefillRequestKey,
 	describeInvoiceSettingsForLog,
+	isSupportPrefillRequestKeyCollision,
 	saveInvoiceSettingsForViewer,
 	settingsValuesMatch,
+	SUPPORT_PREFILL_REQUEST_KEY_INDEX,
 	type InvoiceSettings,
 	type InvoiceSettingsDataSource,
 	type SupportPrefillAudit,
@@ -16,6 +19,11 @@ type StoreOptions = {
 	purchases?: { merchantChargeId: string; id: string; userId: string | null }[]
 	managedPurchaseIds?: Record<string, string[]>
 	corruptReadback?: boolean
+	/**
+	 * Simulate losing a race: the pre-check sees no prior success receipt, but
+	 * the unique index inside the commit already holds the request key.
+	 */
+	hidePrefilledFromPrecheck?: boolean
 }
 
 function settingsKey(purchaseId: string, merchantChargeId: string) {
@@ -54,10 +62,29 @@ function memoryDataSource(options: StoreOptions = {}) {
 		async insertSupportReceipt(receipt) {
 			receipts.push(receipt)
 		},
-		// Mirrors the drizzle transaction: the write only survives when the
-		// readback matches; otherwise the prior row (or absence) is restored
-		// and nothing else from this call is persisted.
+		async findPrefilledReceiptByRequestKey(requestKey) {
+			if (options.hidePrefilledFromPrecheck) return null
+			return (
+				receipts.find(
+					(r) => r.outcome === 'prefilled' && r.requestKey === requestKey,
+				) ?? null
+			)
+		},
+		// Mirrors the drizzle transaction: the success receipt claims its
+		// unique request key first (a duplicate abandons the call with nothing
+		// written); the write only survives when the readback matches,
+		// otherwise the prior row (or absence) is restored and the claim is
+		// released.
 		async commitVerifiedSettings(settings, successReceipt) {
+			if (
+				successReceipt?.requestKey &&
+				receipts.some(
+					(r) =>
+						r.requestKey !== null && r.requestKey === successReceipt.requestKey,
+				)
+			) {
+				return { verified: false, replay: true }
+			}
 			const key = settingsKey(settings.purchaseId, settings.merchantChargeId)
 			const previous = rows.get(key)
 			rows.set(key, settings)
@@ -68,11 +95,10 @@ function memoryDataSource(options: StoreOptions = {}) {
 			if (!readback || !settingsValuesMatch(settings, readback)) {
 				if (previous) rows.set(key, previous)
 				else rows.delete(key)
-				return { verified: false, readback }
+				return { verified: false, replay: false, readback }
 			}
-			const receipt = successReceipt ? successReceipt(readback) : null
-			if (receipt) receipts.push(receipt)
-			return { verified: true, readback, receipt }
+			if (successReceipt) receipts.push(successReceipt)
+			return { verified: true, readback, receipt: successReceipt ?? null }
 		},
 	}
 	return { dataSource, rows, receipts }
@@ -460,6 +486,219 @@ describe('applySupportInvoicePrefill', () => {
 		expect(result.state).toBe('readback_mismatch')
 		expect(rows.size).toBe(0)
 		expect(receipts).toHaveLength(1)
+	})
+})
+
+describe('computeSupportPrefillRequestKey', () => {
+	const base = {
+		purchaseId: PURCHASE_ID,
+		merchantChargeId: CHARGE,
+		audit: audit(),
+	}
+
+	it('is deterministic for the same signed request', () => {
+		expect(computeSupportPrefillRequestKey(base)).toBe(
+			computeSupportPrefillRequestKey({ ...base, audit: audit() }),
+		)
+		expect(computeSupportPrefillRequestKey(base)).toMatch(/^[0-9a-f]{64}$/)
+	})
+
+	it('binds purchase, charge, every audit field, and the input hash', () => {
+		const original = computeSupportPrefillRequestKey(base)
+		const variants = [
+			{ ...base, purchaseId: 'purchase_2' },
+			{ ...base, merchantChargeId: 'mch_456' },
+			{ ...base, audit: audit({ runId: 'run_other' }) },
+			{ ...base, audit: audit({ conversationId: 'cnv_front_2' }) },
+			{ ...base, audit: audit({ operatorId: 'operator_bob' }) },
+			{ ...base, audit: audit({ approvalReference: 'approval_778' }) },
+			{ ...base, audit: audit({ expectedInboundId: 'msg_inbound_10' }) },
+			{ ...base, audit: audit({ inputHash: 'b'.repeat(64) }) },
+		]
+		for (const variant of variants) {
+			expect(computeSupportPrefillRequestKey(variant)).not.toBe(original)
+		}
+	})
+
+	it('contains no billing values', () => {
+		const key = computeSupportPrefillRequestKey(base)
+		for (const value of BILLING_VALUES) expect(key).not.toContain(value)
+	})
+})
+
+describe('isSupportPrefillRequestKeyCollision', () => {
+	const dupMessage = `Duplicate entry 'abc' for key 'AI_SupportInvoicePrefillReceipt.${SUPPORT_PREFILL_REQUEST_KEY_INDEX}'`
+
+	it('recognizes a mysql2 duplicate on the request-key index', () => {
+		expect(
+			isSupportPrefillRequestKeyCollision(
+				Object.assign(new Error(dupMessage), {
+					code: 'ER_DUP_ENTRY',
+					errno: 1062,
+					sqlMessage: dupMessage,
+				}),
+			),
+		).toBe(true)
+	})
+
+	it('walks the cause chain', () => {
+		const inner = Object.assign(new Error(dupMessage), { errno: 1062 })
+		expect(
+			isSupportPrefillRequestKeyCollision(
+				new Error('query failed', { cause: inner }),
+			),
+		).toBe(true)
+	})
+
+	it('ignores duplicates on other keys and non-duplicate errors', () => {
+		expect(
+			isSupportPrefillRequestKeyCollision(
+				Object.assign(
+					new Error(
+						"Duplicate entry 'sipr_x' for key 'AI_SupportInvoicePrefillReceipt.PRIMARY'",
+					),
+					{ code: 'ER_DUP_ENTRY', errno: 1062 },
+				),
+			),
+		).toBe(false)
+		expect(
+			isSupportPrefillRequestKeyCollision(
+				Object.assign(new Error(dupMessage), { code: 'ER_LOCK_DEADLOCK' }),
+			),
+		).toBe(false)
+		expect(isSupportPrefillRequestKeyCollision(null)).toBe(false)
+	})
+})
+
+describe('applySupportInvoicePrefill replay', () => {
+	const request = () => ({
+		purchaseId: PURCHASE_ID,
+		merchantChargeId: CHARGE,
+		input: INPUT,
+		audit: audit(),
+	})
+
+	it('records the request key only on the prefilled receipt', async () => {
+		const { dataSource, receipts } = memoryDataSource({ purchases: PURCHASES })
+		await applySupportInvoicePrefill(request(), dataSource)
+		expect(receipts[0]?.requestKey).toBe(
+			computeSupportPrefillRequestKey(request()),
+		)
+	})
+
+	it('refuses an exact replay without overwriting newer owner values, and adds no second success receipt', async () => {
+		const { dataSource, rows, receipts } = memoryDataSource({
+			purchases: PURCHASES,
+		})
+		const first = await applySupportInvoicePrefill(request(), dataSource)
+		expect(first.state).toBe('prefilled')
+		if (first.state !== 'prefilled') return
+
+		// The customer edits their invoice after the prefill landed.
+		const ownerSave = await saveInvoiceSettingsForViewer(
+			{
+				merchantChargeId: CHARGE,
+				viewerUserId: OWNER,
+				input: { recipientName: 'Ada Byron', notes: 'newer' },
+			},
+			dataSource,
+		)
+		expect(ownerSave.state).toBe('saved')
+
+		// The same signed request is delivered again inside the HMAC window.
+		const replay = await applySupportInvoicePrefill(request(), dataSource)
+		expect(replay.state).toBe('replayed')
+		if (replay.state !== 'replayed') return
+		expect('invoicePath' in replay).toBe(false)
+		expect(replay.originalReceiptId).toBe(first.receipt.id)
+
+		const row = rows.get(settingsKey(PURCHASE_ID, CHARGE))
+		expect(row?.recipientName).toBe('Ada Byron')
+		expect(row?.notes).toBe('newer')
+		expect(row?.source).toBe('owner')
+
+		expect(receipts.filter((r) => r.outcome === 'prefilled')).toHaveLength(1)
+		expect(receipts.filter((r) => r.outcome === 'replayed')).toHaveLength(1)
+		expect(replay.receipt.requestKey).toBeNull()
+		expect(JSON.stringify(receipts)).not.toContain('Ada')
+	})
+
+	it('is refused at the commit boundary when the pre-check misses the prior success', async () => {
+		const { dataSource, rows, receipts } = memoryDataSource({
+			purchases: PURCHASES,
+			hidePrefilledFromPrecheck: true,
+		})
+		const first = await applySupportInvoicePrefill(request(), dataSource)
+		expect(first.state).toBe('prefilled')
+		rows.set(settingsKey(PURCHASE_ID, CHARGE), existingOwnerRow())
+
+		const replay = await applySupportInvoicePrefill(request(), dataSource)
+		expect(replay.state).toBe('replayed')
+		if (replay.state !== 'replayed') return
+		// The pre-check cannot see the original here, so it is reported as unknown.
+		expect(replay.originalReceiptId).toBeNull()
+		expect(rows.get(settingsKey(PURCHASE_ID, CHARGE))).toEqual(
+			existingOwnerRow(),
+		)
+		expect(receipts.filter((r) => r.outcome === 'prefilled')).toHaveLength(1)
+	})
+
+	it('is not a replay when the same run prefills a different conversation', async () => {
+		const { dataSource, receipts } = memoryDataSource({ purchases: PURCHASES })
+		expect(
+			(await applySupportInvoicePrefill(request(), dataSource)).state,
+		).toBe('prefilled')
+		const second = await applySupportInvoicePrefill(
+			{
+				...request(),
+				audit: audit({
+					conversationId: 'cnv_front_2',
+					expectedInboundId: 'msg_inbound_10',
+				}),
+			},
+			dataSource,
+		)
+		expect(second.state).toBe('prefilled')
+		expect(receipts.filter((r) => r.outcome === 'prefilled')).toHaveLength(2)
+	})
+
+	it('is not a replay when the same audit block carries different settings', async () => {
+		const { dataSource, rows } = memoryDataSource({ purchases: PURCHASES })
+		expect(
+			(await applySupportInvoicePrefill(request(), dataSource)).state,
+		).toBe('prefilled')
+		const corrected = { ...INPUT, taxId: 'GB999999999' }
+		const second = await applySupportInvoicePrefill(
+			{
+				...request(),
+				input: corrected,
+				audit: audit({ inputHash: computeInvoiceSettingsInputHash(corrected) }),
+			},
+			dataSource,
+		)
+		expect(second.state).toBe('prefilled')
+		expect(rows.get(settingsKey(PURCHASE_ID, CHARGE))?.taxId).toBe(
+			'GB999999999',
+		)
+	})
+
+	it('allows an honest retry after a rolled-back readback mismatch', async () => {
+		const options: StoreOptions = {
+			purchases: PURCHASES,
+			corruptReadback: true,
+		}
+		const { dataSource, receipts } = memoryDataSource(options)
+		expect(
+			(await applySupportInvoicePrefill(request(), dataSource)).state,
+		).toBe('readback_mismatch')
+		options.corruptReadback = false
+		expect(
+			(await applySupportInvoicePrefill(request(), dataSource)).state,
+		).toBe('prefilled')
+		expect(receipts.map((r) => r.outcome)).toEqual([
+			'readback_mismatch',
+			'prefilled',
+		])
 	})
 })
 

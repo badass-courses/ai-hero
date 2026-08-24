@@ -20,7 +20,9 @@ import { z } from 'zod'
  * expected inbound message, input hash), and the server recomputes the
  * canonical settings hash before any write. The link is only returned after
  * the saved row is read back and matches the requested values. Every attempt
- * that reaches a resolved purchase leaves a redacted audit receipt. The link
+ * that reaches a resolved purchase leaves a redacted audit receipt. An exact
+ * replay of an already-applied request (same body re-signed inside the
+ * five-minute HMAC window) answers 409 and never touches settings. The link
  * and all logging carry identifiers only, never billing values.
  *
  * Authenticated with the same HMAC-SHA256 signature scheme as the main
@@ -56,6 +58,8 @@ const REJECTION_STATUS: Record<string, number> = {
 	invalid: 422,
 	input_hash_mismatch: 422,
 	purchase_charge_mismatch: 409,
+	// The exact signed request was already applied; settings untouched.
+	replayed: 409,
 	// A readback mismatch is a server-side persistence failure, not a caller
 	// error, so it must surface as a 5xx.
 	readback_mismatch: 500,
@@ -109,10 +113,19 @@ export const POST = withSkill(async (request: NextRequest) => {
 			merchantChargeId,
 			state: result.state,
 			...auditForLog,
+			...(result.state === 'replayed'
+				? { originalReceiptId: result.originalReceiptId }
+				: {}),
 		})
 		const status = REJECTION_STATUS[result.state] ?? 500
 		return NextResponse.json(
-			{ success: false, error: result.error },
+			{
+				success: false,
+				error: result.error,
+				...(result.state === 'replayed'
+					? { replayed: true, originalReceiptId: result.originalReceiptId }
+					: {}),
+			},
 			{ status },
 		)
 	}

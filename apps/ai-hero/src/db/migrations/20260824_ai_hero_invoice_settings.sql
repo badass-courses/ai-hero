@@ -24,6 +24,11 @@ CREATE TABLE `AI_InvoiceSettings` (
 
 -- Audit receipts for support invoice prefill attempts. Identifiers and
 -- outcomes only; never raw billing values.
+--
+-- `requestKey` is set only on `prefilled` receipts. Its UNIQUE index is the
+-- atomic replay guard: an exact replay of an applied signed request cannot
+-- claim a second success receipt, so it cannot write settings. NULLs are
+-- ignored by MySQL unique indexes, so other outcomes stay retryable.
 CREATE TABLE `AI_SupportInvoicePrefillReceipt` (
   `id` varchar(191) NOT NULL,
   `purchaseId` varchar(255) NOT NULL,
@@ -34,9 +39,11 @@ CREATE TABLE `AI_SupportInvoicePrefillReceipt` (
   `approvalReference` varchar(255) NOT NULL,
   `expectedInboundId` varchar(255) NOT NULL,
   `inputHash` varchar(64) NOT NULL,
+  `requestKey` varchar(64) NULL,
   `outcome` varchar(40) NOT NULL,
   `readbackMatched` boolean NULL,
   `createdAt` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  INDEX `sipr_purchase_idx` (`purchaseId`)
+  INDEX `sipr_purchase_idx` (`purchaseId`),
+  UNIQUE INDEX `sipr_request_key_uidx` (`requestKey`)
 );

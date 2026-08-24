@@ -71,6 +71,7 @@ export type SupportPrefillAudit = {
 
 export type SupportPrefillOutcome =
 	| 'prefilled'
+	| 'replayed'
 	| 'readback_mismatch'
 	| 'input_hash_mismatch'
 	| 'purchase_charge_mismatch'
@@ -86,6 +87,14 @@ export type SupportPrefillReceipt = {
 	approvalReference: string
 	expectedInboundId: string
 	inputHash: string
+	/**
+	 * {@link computeSupportPrefillRequestKey} of the signed request. Set only
+	 * on `prefilled` receipts, where a unique index makes it the atomic replay
+	 * guard: an exact replay of an applied request cannot claim a second
+	 * success receipt, so it cannot write settings either. Null on every
+	 * other outcome so guard failures and rolled-back writes stay retryable.
+	 */
+	requestKey: string | null
 	outcome: SupportPrefillOutcome
 	readbackMatched: boolean | null
 }
@@ -103,18 +112,32 @@ export type InvoiceSettingsDataSource = {
 	loadManagedTeamPurchases(viewerUserId: string): Promise<{ id: string }[]>
 	/**
 	 * Persist a receipt outside any settings transaction. Used for guard
-	 * failures and for a readback mismatch after its write was rolled back.
+	 * failures, replays, and a readback mismatch after its write was rolled
+	 * back.
 	 */
 	insertSupportReceipt(receipt: SupportPrefillReceipt): Promise<void>
+	/**
+	 * The `prefilled` receipt that already claimed this request key, if any.
+	 * A cheap pre-check that gives replays a stable answer; the unique index
+	 * inside {@link commitVerifiedSettings} is the guard that actually holds
+	 * under concurrency.
+	 */
+	findPrefilledReceiptByRequestKey(
+		requestKey: string,
+	): Promise<SupportPrefillReceipt | null>
 	/**
 	 * The only write path for settings. Upserts, reads back, and commits only
 	 * when the readback matches what was written. On mismatch the write is
 	 * rolled back so no unverified values persist. When `successReceipt` is
-	 * given it is inserted in the same transaction as the verified write.
+	 * given it is inserted in the same transaction, BEFORE the settings
+	 * upsert, so its unique `requestKey` is claimed atomically with the
+	 * write: a duplicate key means the exact request was already applied,
+	 * the transaction is abandoned without touching settings, and the result
+	 * is `{ verified: false, replay: true }`.
 	 */
 	commitVerifiedSettings(
 		settings: InvoiceSettings,
-		successReceipt?: (readback: InvoiceSettings) => SupportPrefillReceipt,
+		successReceipt?: SupportPrefillReceipt,
 	): Promise<CommitVerifiedSettingsResult>
 }
 
@@ -124,7 +147,8 @@ export type CommitVerifiedSettingsResult =
 			readback: InvoiceSettings
 			receipt: SupportPrefillReceipt | null
 	  }
-	| { verified: false; readback: InvoiceSettings | null }
+	| { verified: false; replay: false; readback: InvoiceSettings | null }
+	| { verified: false; replay: true }
 
 export type SaveInvoiceSettingsResult =
 	| { state: 'saved'; settings: InvoiceSettings }
@@ -195,6 +219,40 @@ export function computeInvoiceSettingsInputHash(
 		normalize(input.address),
 		normalize(input.taxId),
 		normalize(input.notes),
+	])
+	return createHash('sha256').update(canonical).digest('hex')
+}
+
+/**
+ * Deterministic key for one exact signed support prefill request: sha256 hex
+ * of the JSON array [version, purchaseId, merchantChargeId, runId,
+ * conversationId, operatorId, approvalReference, expectedInboundId,
+ * inputHash]. `inputHash` alone only binds the settings values, and `runId`
+ * alone is too coarse because one support run can prefill several
+ * conversations; this key binds the purchase, the charge, every audit field,
+ * and (through the verified `inputHash`) the settings values. The same body
+ * re-signed with a fresh timestamp inside the five-minute HMAC window yields
+ * the same key, which is the point: it is the same request.
+ */
+export function computeSupportPrefillRequestKey({
+	purchaseId,
+	merchantChargeId,
+	audit,
+}: {
+	purchaseId: string
+	merchantChargeId: string
+	audit: SupportPrefillAudit
+}): string {
+	const canonical = JSON.stringify([
+		'support-invoice-prefill.v1',
+		purchaseId,
+		merchantChargeId,
+		audit.runId,
+		audit.conversationId,
+		audit.operatorId,
+		audit.approvalReference,
+		audit.expectedInboundId,
+		audit.inputHash,
 	])
 	return createHash('sha256').update(canonical).digest('hex')
 }
@@ -287,6 +345,17 @@ export type SupportPrefillResult =
 			error: string
 			receipt: SupportPrefillReceipt
 	  }
+	| {
+			/**
+			 * The exact signed request was already applied. Settings were not
+			 * touched (a newer owner or support save wins) and no second
+			 * `prefilled` receipt exists; `originalReceiptId` names the first.
+			 */
+			state: 'replayed'
+			error: string
+			receipt: SupportPrefillReceipt
+			originalReceiptId: string | null
+	  }
 
 /**
  * Support prefill seam. Caller identity is established by the HMAC-signed
@@ -294,7 +363,10 @@ export type SupportPrefillResult =
  * charge; the write only happens when both agree with the stored purchase
  * and the caller-supplied input hash matches the server-computed canonical
  * hash. Persists the settings, reads them back, and only returns the direct
- * invoice link once the readback matches what was requested. Every attempt
+ * invoice link once the readback matches what was requested. An exact replay
+ * of an already-applied request (same purchase, charge, audit block, and
+ * settings hash) is refused without touching settings, so a re-delivered
+ * request inside the HMAC window cannot overwrite newer values. Every attempt
  * that reached a resolved purchase leaves a redacted audit receipt. The
  * link carries only the merchant charge id, never billing values.
  */
@@ -332,6 +404,7 @@ export async function applySupportInvoicePrefill(
 		approvalReference: audit.approvalReference,
 		expectedInboundId: audit.expectedInboundId,
 		inputHash: audit.inputHash,
+		requestKey: null,
 	}
 
 	if (
@@ -368,17 +441,57 @@ export async function applySupportInvoicePrefill(
 		}
 	}
 
+	const requestKey = computeSupportPrefillRequestKey({
+		purchaseId,
+		merchantChargeId,
+		audit,
+	})
+
+	const replayed = async (
+		originalReceiptId: string | null,
+	): Promise<SupportPrefillResult> => {
+		const receipt: SupportPrefillReceipt = {
+			id: `sipr_${guid()}`,
+			...baseReceipt,
+			outcome: 'replayed',
+			readbackMatched: null,
+		}
+		await dataSource.insertSupportReceipt(receipt)
+		return {
+			state: 'replayed',
+			error: 'This request was already applied',
+			receipt,
+			originalReceiptId,
+		}
+	}
+
+	const alreadyApplied =
+		await dataSource.findPrefilledReceiptByRequestKey(requestKey)
+	if (alreadyApplied) {
+		return replayed(alreadyApplied.id)
+	}
+
 	const next = toStoredShape(purchase.id, merchantChargeId, parsed.data, {
 		source: 'support',
 		supportOperatorId: audit.operatorId,
 	})
 
-	const committed = await dataSource.commitVerifiedSettings(next, () => ({
+	const committed = await dataSource.commitVerifiedSettings(next, {
 		id: `sipr_${guid()}`,
 		...baseReceipt,
+		requestKey,
 		outcome: 'prefilled',
 		readbackMatched: true,
-	}))
+	})
+
+	if (!committed.verified && committed.replay) {
+		// Lost the race to an identical request that committed between the
+		// pre-check and our claim. The unique index refused the second success
+		// receipt, so nothing of ours was written.
+		const original =
+			await dataSource.findPrefilledReceiptByRequestKey(requestKey)
+		return replayed(original?.id ?? null)
+	}
 
 	if (!committed.verified) {
 		// The settings write was rolled back; the receipt must still land, so
@@ -416,6 +529,42 @@ class ReadbackMismatchRollback extends Error {
 	}
 }
 
+export const SUPPORT_PREFILL_REQUEST_KEY_INDEX = 'sipr_request_key_uidx'
+
+type MysqlErrorLike = {
+	cause?: unknown
+	code?: unknown
+	errno?: unknown
+	message?: unknown
+	sqlMessage?: unknown
+}
+
+/**
+ * True when `error` (or anything in its `cause` chain) is a MySQL duplicate
+ * key error on the receipt request-key unique index. Any other duplicate
+ * (for example a PRIMARY collision) is not a replay and must propagate.
+ */
+export function isSupportPrefillRequestKeyCollision(error: unknown): boolean {
+	let current: unknown = error
+	for (
+		let depth = 0;
+		depth < 5 && current && typeof current === 'object';
+		depth++
+	) {
+		const candidate = current as MysqlErrorLike
+		const isDuplicate =
+			candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062
+		const message = [candidate.message, candidate.sqlMessage]
+			.filter((value): value is string => typeof value === 'string')
+			.join(' ')
+		if (isDuplicate && message.includes(SUPPORT_PREFILL_REQUEST_KEY_INDEX)) {
+			return true
+		}
+		current = candidate.cause
+	}
+	return false
+}
+
 function rowToSettings(row: {
 	purchaseId: string
 	merchantChargeId: string
@@ -439,6 +588,36 @@ function rowToSettings(row: {
 		source: row.source === 'support' ? 'support' : 'owner',
 		updatedByUserId: row.updatedByUserId,
 		supportOperatorId: row.supportOperatorId,
+	}
+}
+
+function rowToReceipt(row: {
+	id: string
+	purchaseId: string
+	merchantChargeId: string
+	runId: string
+	conversationId: string
+	operatorId: string
+	approvalReference: string
+	expectedInboundId: string
+	inputHash: string
+	requestKey: string | null
+	outcome: string
+	readbackMatched: boolean | null
+}): SupportPrefillReceipt {
+	return {
+		id: row.id,
+		purchaseId: row.purchaseId,
+		merchantChargeId: row.merchantChargeId,
+		runId: row.runId,
+		conversationId: row.conversationId,
+		operatorId: row.operatorId,
+		approvalReference: row.approvalReference,
+		expectedInboundId: row.expectedInboundId,
+		inputHash: row.inputHash,
+		requestKey: row.requestKey,
+		outcome: row.outcome as SupportPrefillOutcome,
+		readbackMatched: row.readbackMatched,
 	}
 }
 
@@ -499,6 +678,19 @@ export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 		await db.insert(supportInvoicePrefillReceipts).values(receipt)
 	},
 
+	async findPrefilledReceiptByRequestKey(requestKey) {
+		const { db } = await import('@/db')
+		const { supportInvoicePrefillReceipts } = await import('@/db/schema')
+		const { and, eq } = await import('drizzle-orm')
+		const row = await db.query.supportInvoicePrefillReceipts.findFirst({
+			where: and(
+				eq(supportInvoicePrefillReceipts.requestKey, requestKey),
+				eq(supportInvoicePrefillReceipts.outcome, 'prefilled'),
+			),
+		})
+		return row ? rowToReceipt(row) : null
+	},
+
 	async commitVerifiedSettings(settings, successReceipt) {
 		const { db } = await import('@/db')
 		const { invoiceSettings, supportInvoicePrefillReceipts } =
@@ -508,6 +700,14 @@ export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 		try {
 			return await db.transaction(
 				async (tx): Promise<CommitVerifiedSettingsResult> => {
+					// Claim the request key first. A duplicate aborts the transaction
+					// before the settings upsert runs; a later readback mismatch rolls
+					// the claim back with the write so an honest retry is allowed.
+					if (successReceipt) {
+						await tx
+							.insert(supportInvoicePrefillReceipts)
+							.values(successReceipt)
+					}
 					await tx
 						.insert(invoiceSettings)
 						.values(values)
@@ -533,16 +733,15 @@ export const drizzleInvoiceSettingsDataSource: InvoiceSettingsDataSource = {
 					if (!readback || !settingsValuesMatch(settings, readback)) {
 						throw new ReadbackMismatchRollback(readback)
 					}
-					const receipt = successReceipt ? successReceipt(readback) : null
-					if (receipt) {
-						await tx.insert(supportInvoicePrefillReceipts).values(receipt)
-					}
-					return { verified: true, readback, receipt }
+					return { verified: true, readback, receipt: successReceipt ?? null }
 				},
 			)
 		} catch (error) {
 			if (error instanceof ReadbackMismatchRollback) {
-				return { verified: false, readback: error.readback }
+				return { verified: false, replay: false, readback: error.readback }
+			}
+			if (successReceipt && isSupportPrefillRequestKeyCollision(error)) {
+				return { verified: false, replay: true }
 			}
 			throw error
 		}
