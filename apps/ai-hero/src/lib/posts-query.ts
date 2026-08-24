@@ -459,9 +459,18 @@ function coverImageSourceOverride(
 	currentPost: Post,
 ): Record<string, unknown> {
 	const incoming = incomingFields.coverImage
-	return incoming?.url && incoming.url !== currentPost.fields.coverImage?.url
-		? { coverImage: { ...incoming, source: 'uploaded' } }
-		: {}
+	if (!incoming?.url) return {}
+	if (incoming.url !== currentPost.fields.coverImage?.url) {
+		return { coverImage: { ...incoming, source: 'uploaded' } }
+	}
+	// Unchanged url: a caller resubmitting just { url, alt } (the REST API)
+	// must not strip the stored label via the plain input.fields spread.
+	return {
+		coverImage: {
+			...incoming,
+			source: incoming.source ?? currentPost.fields.coverImage?.source,
+		},
+	}
 }
 
 export async function updatePost(
