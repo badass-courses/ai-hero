@@ -43,7 +43,6 @@ const PurchaseTransferPage = async (props: {
 											purchaseTransfer &&
 											(await acceptPurchaseTransfer({
 												purchaseUserTransferId: params.purchaseTransferId,
-												email: user.email,
 											}))
 										revalidatePath(`/transfer/${params.purchaseTransferId}`)
 										redirect(`/transfer/${params.purchaseTransferId}`)
