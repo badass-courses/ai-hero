@@ -1416,6 +1416,11 @@ function getErrorStack(error: unknown) {
 
 function reviveDates(obj: any): any {
 	if (obj === null || obj === undefined) return obj
+	// On an unstable_cache MISS the live (non-JSON-roundtripped) result comes
+	// through here with real Date instances; the object branch below would
+	// flatten one to {} (no enumerable keys) — e.g. the og:image cache-buster
+	// rendered as "[object Object]".
+	if (obj instanceof Date) return obj
 	if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(obj)) {
 		const d = new Date(obj)
 		return isNaN(d.getTime()) ? obj : d
