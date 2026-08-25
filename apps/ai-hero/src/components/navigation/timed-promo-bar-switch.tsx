@@ -34,7 +34,7 @@ export function getActivationDelayMs(
 	activeWindow: string | PromoWindow,
 	nowMs: number = Date.now(),
 ): number | null {
-	const { startsAt, endsAt } =
+	const { startsAt, endsAt }: PromoWindow =
 		typeof activeWindow === 'string' ? { startsAt: activeWindow } : activeWindow
 
 	const next = [startsAt, endsAt]
