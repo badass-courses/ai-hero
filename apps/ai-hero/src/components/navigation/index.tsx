@@ -192,10 +192,7 @@ const FreeCourseCta = ({
 	subscriberResolved: boolean
 }) => {
 	const cohortOffer = useCohortOffer()
-	const featuredPromoActive = useTimedActivation(
-		FEATURED_PROMO.startsAt,
-		false,
-	)
+	const featuredPromoActive = useTimedActivation(FEATURED_PROMO, false)
 	const activeOffer =
 		featuredPromoActive &&
 		FEATURED_PROMO.resourceId &&

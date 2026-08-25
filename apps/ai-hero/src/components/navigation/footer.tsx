@@ -103,14 +103,21 @@ function LearnColumn() {
 		...navData.learn.freeTutorials.items,
 	]
 
-	if (courses.length === 0 && tutorials.length === 0) {
-		return null
-	}
-
 	return (
 		<div>
 			<Eyebrow>Learn</Eyebrow>
 			<ul className={cn(linkListClass, dimSiblingsOnHover)}>
+				<li>
+					<Link
+						href="/workshops/ai-coding-crash-course"
+						className={linkClass}
+						onClick={() =>
+							trackFooterClick('AI Coding Crash Course', 'course')
+						}
+					>
+						AI Coding Crash Course
+					</Link>
+				</li>
 				{courses.map((course) => (
 					<li key={course.href}>
 						<Link
