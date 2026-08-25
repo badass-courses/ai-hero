@@ -15,7 +15,9 @@ import { Share } from '@/components/share'
 import { courseBuilderAdapter } from '@/db'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import { getCachedAllLists, getCachedListForPost } from '@/lib/lists-query'
+import { CldImage } from '@/components/cld-image'
 import { type Post } from '@/lib/posts'
+import { skillIconUrl } from '@/lib/skill-icon'
 import { getAllPosts, getCachedPostOrList } from '@/lib/posts-query'
 import { resolvePostCta } from '@/lib/post-cta'
 import { PostStructuredData } from '@/lib/structured-data'
@@ -570,21 +572,60 @@ async function PostBody({
 	)
 }
 
-function PostTitle({ post }: { post: Post }) {
+/**
+ * The title, and — on a skill that has one — its mark beside it.
+ *
+ * The icon is the same asset the /skills catalog rows show, at the size the
+ * page can afford: it is how a skill is recognised in the catalog, so landing
+ * on the skill itself should confirm the same mark rather than drop it. It is
+ * decorative — the h1 beside it already says what this is. No icon renders no
+ * slot at all, so an iconless skill keeps its exact pre-icon head, the same
+ * call taken for the catalog rows (2026-08-24).
+ *
+ * The flex row IS the h1, so the icon's box is measured in the title's own
+ * type: `h-[1lh]` is exactly one title line and `em` tracks the three
+ * breakpoints (2rem → 2.5rem → 2.75rem) without a second set of overrides.
+ *
+ * Centering in that line box is not quite centering on the line: the reader
+ * sees the CAPS (~0.72em tall, so their midpoint is 0.36em above the
+ * baseline), and at `leading-[1.06]` that midpoint measures ~0.02em above the
+ * line box's. Hence the `-mt-[0.02em]` — small, but it is the difference
+ * between centered on the letterforms and centered on their metrics box.
+ * Measured against the rendered h1 rather than derived; re-measure if
+ * `TYPE.article`'s leading changes.
+ */
+function PostTitle({ post, iconUrl }: { post: Post; iconUrl?: string }) {
+	const title = (
+		<ReactMarkdown
+			components={{
+				p: ({ children }) => children,
+				code: ({ children }) => (
+					<code className="bg-muted/80 rounded-[4px] px-1 text-[85%]">
+						{children}
+					</code>
+				),
+			}}
+		>
+			{post?.fields?.title}
+		</ReactMarkdown>
+	)
+
+	if (!iconUrl) {
+		return <h1 className={cn(TYPE.article, 'text-balance')}>{title}</h1>
+	}
+
 	return (
-		<h1 className={cn(TYPE.article, 'text-balance')}>
-			<ReactMarkdown
-				components={{
-					p: ({ children }) => children,
-					code: ({ children }) => (
-						<code className="bg-muted/80 rounded-[4px] px-1 text-[85%]">
-							{children}
-						</code>
-					),
-				}}
-			>
-				{post?.fields?.title}
-			</ReactMarkdown>
+		<h1 className={cn(TYPE.article, 'flex items-start gap-4')}>
+			<span className="-mt-[0.02em] flex h-[1lh] shrink-0 items-center">
+				<CldImage
+					src={iconUrl}
+					alt=""
+					width={96}
+					height={96}
+					className="size-10 rounded-[11px] sm:size-12"
+				/>
+			</span>
+			<span className="min-w-0 text-balance">{title}</span>
 		</h1>
 	)
 }
@@ -706,7 +747,10 @@ async function PostHead({
 							{metaLine && <span className={EYEBROW}>{metaLine}</span>}
 						</div>
 					)}
-					<PostTitle post={post} />
+					<PostTitle
+						post={post}
+						iconUrl={isSkillPost ? skillIconUrl(post.fields) : undefined}
+					/>
 					{post.fields?.description && (
 						<p
 							className={cn(

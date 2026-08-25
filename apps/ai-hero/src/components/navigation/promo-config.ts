@@ -24,6 +24,20 @@ export type Promo = {
 	navHref?: string
 	/** Optional ISO instant before which this promo stays hidden. */
 	startsAt?: string
+	/**
+	 * Optional ISO instant at which this promo retires itself.
+	 *
+	 * REQUIRED on any message that makes a dated or priced claim. Without it a
+	 * promo is a standing assertion: on 2026-08-25 the bar was still saying
+	 * "$199 through August 24" — the intro coupon had expired at 06:59:59Z and
+	 * the course was back to $299, and nothing in the config knew. One stale
+	 * string became three wrong claims, because `FEATURED_PROMO` also drives
+	 * the nav's gold CTA and the search palette.
+	 *
+	 * A promo with no expiry is fine — but only when its copy stays true
+	 * indefinitely, which in practice means naming no price and no date.
+	 */
+	endsAt?: string
 }
 
 export const CRASH_COURSE_PRODUCT_ID = 'product-ma254'
@@ -39,8 +53,10 @@ export function isPromoActive(
 	now: Date = new Date(),
 ): promo is Promo {
 	if (!promo) return false
-	if (!promo.startsAt) return true
-	return now.getTime() >= new Date(promo.startsAt).getTime()
+	const at = now.getTime()
+	if (promo.startsAt && at < new Date(promo.startsAt).getTime()) return false
+	if (promo.endsAt && at >= new Date(promo.endsAt).getTime()) return false
+	return true
 }
 
 export function isProductPromoActive(
@@ -56,13 +72,21 @@ export function isProductPromoActive(
 /**
  * Manual override. It becomes visible at midnight Pacific on launch day.
  * Before then the site keeps the latest-post fallback.
+ *
+ * Deliberately says nothing about price or dates. It used to carry the intro
+ * offer ("$199 through August 24", nav "Save $100"), which stopped being true
+ * the moment the default $100-off coupon lapsed at 2026-08-25T06:59:59Z — see
+ * `endsAt` above. The course is $299 now; the bar's job after a launch is to
+ * point at the thing, and the product page is where the price is authoritative
+ * and always current. Re-adding a priced claim here means adding an `endsAt`
+ * with it.
  */
 export const FEATURED_PROMO: Promo = {
 	label: 'New',
-	message: 'AI Coding Crash Course is open. $199 through August 24.',
+	message: 'AI Coding Crash Course is out now.',
 	href: '/s/crash-course',
 	resourceId: CRASH_COURSE_RESOURCE_ID,
-	navLabel: 'Save $100',
+	navLabel: 'Get the course',
 	navHref: '/workshops/ai-coding-crash-course',
 	startsAt: CRASH_COURSE_PROMO_STARTS_AT,
 }
