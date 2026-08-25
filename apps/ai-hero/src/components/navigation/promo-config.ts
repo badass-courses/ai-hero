@@ -48,6 +48,13 @@ const PRODUCT_PROMO_STARTS_AT: Readonly<Record<string, string>> = {
 	[CRASH_COURSE_PRODUCT_ID]: CRASH_COURSE_PROMO_STARTS_AT,
 }
 
+/**
+ * Is this promo inside its live window right now?
+ *
+ * Both bounds are optional and the window is half-open: live from `startsAt`
+ * inclusive until `endsAt` exclusive. A promo with neither bound is always
+ * live, which is only safe for copy that names no price and no date.
+ */
 export function isPromoActive(
 	promo: Promo | null,
 	now: Date = new Date(),

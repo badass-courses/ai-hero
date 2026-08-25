@@ -45,9 +45,8 @@ function toSkillItem(item: ListItem) {
 	const fields = item.resource?.fields
 	const slug = stringField(fields, 'slug')
 	if (!slug) return null
-	// fields.icon is `{ url, alt? }` (see PostSchema); the editor stores '' when
-	// empty and null when cleared. Guarded by the shared helper — the skill
-	// page head reads the same field and must agree with this row.
+	// The editor stores '' for an untouched icon and null for a cleared one;
+	// `skillIconUrl` is what decides which of those counts as an icon.
 	const iconUrl = skillIconUrl(fields)
 	return {
 		slug,

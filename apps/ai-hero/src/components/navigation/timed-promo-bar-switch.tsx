@@ -92,6 +92,11 @@ export function useTimedActivation(
 	return active
 }
 
+/**
+ * Renders `featured` while the promo is inside its window and `fallback`
+ * otherwise, re-deciding in the browser as each bound passes so a tab left
+ * open across a boundary does not keep showing retired copy.
+ */
 export function TimedPromoBarSwitch({
 	startsAt,
 	endsAt,
