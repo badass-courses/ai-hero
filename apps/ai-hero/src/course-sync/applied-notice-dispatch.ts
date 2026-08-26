@@ -53,6 +53,7 @@ export async function requestCourseSyncAppliedNotice(input: {
 		await log.error('course_sync.applied_notice.dispatch_failed', {
 			bindingId,
 			controlPlaneRunId: input.controlPlaneRunId,
+			requestedBy: input.requestedBy,
 			attempts: DISPATCH_ATTEMPTS,
 			error:
 				lastError instanceof Error ? lastError.message : String(lastError),

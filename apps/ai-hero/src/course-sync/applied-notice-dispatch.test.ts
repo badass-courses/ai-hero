@@ -61,6 +61,7 @@ describe('course sync applied notice dispatch', () => {
 			expect.objectContaining({
 				bindingId: 'csb_ai_coding_crash_course',
 				controlPlaneRunId: 'csr_run_1',
+				requestedBy: 'operator',
 				attempts: 3,
 			}),
 		)
