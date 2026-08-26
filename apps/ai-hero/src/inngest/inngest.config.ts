@@ -34,6 +34,7 @@ import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
+import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
@@ -136,6 +137,7 @@ const allFunctions = [
 	cohortReminderBroadcast,
 	contentReadRetention,
 	contentResourceIndexRequested,
+	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
 	typesensePopularitySync,
 	valuePathEmailExecutor,

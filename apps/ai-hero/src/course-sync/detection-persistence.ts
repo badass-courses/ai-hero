@@ -174,7 +174,13 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 	})
 }
 
+// A notice is claimed per lifecycle state, not per caller. Both the poller and
+// an operator apply reach the same applied state, so both deliver through the
+// same claim and the reader sees exactly one message.
+export type CourseSyncNotificationKind = 'review' | 'applied'
+
 export type CourseSyncReviewNotificationReceiptInput = {
+	kind?: CourseSyncNotificationKind
 	bindingId: string
 	courseVersionId: string
 	providerRevision: string
@@ -185,28 +191,31 @@ export type CourseSyncReviewNotificationReceiptInput = {
 }
 
 function courseSyncReviewNotificationReceipt(input: {
+	kind?: CourseSyncNotificationKind
 	bindingId: string
 	courseVersionId: string
 	planSha256: string
 }) {
+	const kind = input.kind ?? 'review'
 	const notificationKey = sha256(
 		stableJson({
-			kind: 'review',
+			kind,
 			bindingId: input.bindingId,
 			courseVersionId: input.courseVersionId,
 			planSha256: input.planSha256,
 		}),
 	)
 	return {
+		kind,
 		notificationKey,
-		receiptId: `cspl_review_notice_${notificationKey}`,
+		receiptId: `cspl_${kind}_notice_${notificationKey}`,
 	}
 }
 
 export async function claimCourseSyncReviewNotification(
 	input: CourseSyncReviewNotificationReceiptInput,
 ): Promise<boolean> {
-	const { notificationKey, receiptId } =
+	const { kind, notificationKey, receiptId } =
 		courseSyncReviewNotificationReceipt(input)
 	return db.transaction(async (trx) => {
 		await trx
@@ -260,7 +269,7 @@ export async function claimCourseSyncReviewNotification(
 			outcome: 'started',
 			failureClass: null,
 			metadata: {
-				kind: 'review',
+				kind,
 				notificationKey,
 				planSha256: input.planSha256,
 				deliveryAttempts: 1,

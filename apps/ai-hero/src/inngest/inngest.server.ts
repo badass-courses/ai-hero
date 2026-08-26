@@ -145,6 +145,10 @@ import {
 	SlackArtworkSkipRequested,
 } from './events/artwork'
 import {
+	COURSE_SYNC_APPLIED_NOTICE_EVENT,
+	type CourseSyncAppliedNoticeRequested,
+} from './events/course-sync-applied-notice'
+import {
 	COURSE_SYNC_POLL_REQUESTED_EVENT,
 	type CourseSyncPollRequested,
 } from './events/course-sync-poll'
@@ -190,6 +194,7 @@ export type Events = {
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
 	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested
+	[COURSE_SYNC_APPLIED_NOTICE_EVENT]: CourseSyncAppliedNoticeRequested
 	[COURSE_SYNC_POLL_REQUESTED_EVENT]: CourseSyncPollRequested
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
