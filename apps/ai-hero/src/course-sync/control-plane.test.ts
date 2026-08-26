@@ -897,7 +897,7 @@ describe('draft course sync control plane', () => {
 		expect(afterRollback.previewed.resourceCounts.create).toBe(0)
 	})
 
-	it('rejects a reviewed topology change before any apply write', async () => {
+	it('refuses an out-of-band plan mutation before any apply write', async () => {
 		const changedExportHashes = new Set([
 			...Array.from({ length: 11 }, (_, index) => index * 2 + 1),
 			...Array.from({ length: 8 }, (_, index) => index + 23),
@@ -932,34 +932,29 @@ describe('draft course sync control plane', () => {
 		const changedItem = run?.plan?.resources[0]
 		if (!run?.plan || !changedItem) throw new Error('policy plan missing')
 		changedItem.position += 1
-		const before = structuredClone({
-			runs: [...testHarness.persistence.runs],
-			resources: [...testHarness.persistence.resources],
-			versions: [...testHarness.persistence.versions],
-			relations: [...testHarness.persistence.relations],
-			receipts: testHarness.persistence.receipts,
-			currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
-		})
+		const courseContent = () =>
+			structuredClone({
+				resources: [...testHarness.persistence.resources],
+				versions: [...testHarness.persistence.versions],
+				relations: [...testHarness.persistence.relations],
+				receipts: testHarness.persistence.receipts,
+				currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
+			})
+		const before = courseContent()
 
 		await expect(
 			testHarness.controlPlane.apply({
 				runId: current.staged.runId,
 				idempotencyKey: 'apply-policy-reparent',
 			}),
-		).rejects.toMatchObject({
-			code: 'LAUNCH_APPLY_POLICY_VIOLATION',
-			retryable: false,
-		})
+		).rejects.toMatchObject({ code: 'APPLY_CONCURRENCY_CONFLICT' })
+		expect(courseContent()).toEqual(before)
 		expect(
-			structuredClone({
-				runs: [...testHarness.persistence.runs],
-				resources: [...testHarness.persistence.resources],
-				versions: [...testHarness.persistence.versions],
-				relations: [...testHarness.persistence.relations],
-				receipts: testHarness.persistence.receipts,
-				currentAppliedRunId: testHarness.persistence.currentAppliedRunId,
-			}),
-		).toEqual(before)
+			testHarness.persistence.runs.get(current.staged.runId),
+		).toMatchObject({
+			state: 'failed',
+			failureCode: 'APPLY_CONCURRENCY_CONFLICT',
+		})
 	})
 
 	it('freezes and stream-verifies a baseline v3 revision into one workshop', async () => {
@@ -1208,7 +1203,7 @@ describe('draft course sync control plane', () => {
 		).toBe(expectedKey)
 	})
 
-	it('blocks relation reordering under the supervised launch policy', async () => {
+	it('applies relation reordering from the source manifest', async () => {
 		const testHarness = harness()
 		const first = await stagedAndPreviewed(testHarness)
 		await applyDirectly(testHarness, first.staged.runId, 'apply-v1')
@@ -1230,14 +1225,11 @@ describe('draft course sync control plane', () => {
 				runId: second.staged.runId,
 				idempotencyKey: 'apply-reordered',
 			}),
-		).rejects.toMatchObject({
-			code: 'LAUNCH_APPLY_POLICY_VIOLATION',
-			retryable: false,
-		})
+		).resolves.toMatchObject({ state: 'applied' })
 		expect(
 			testHarness.persistence.relations.get(lessonOne.targetResourceId)
 				?.position,
-		).toBe(0)
+		).toBe(7)
 	})
 
 	it('restores updated fields, preserves retained fields, and tombstones created resources', async () => {
@@ -1636,7 +1628,7 @@ describe('draft course sync control plane', () => {
 		expect(testHarness.persistence.receipts).toHaveLength(466)
 	})
 
-	it('extracts questions, replays without churn, and blocks detach changes', async () => {
+	it('extracts questions, replays without churn, and detaches removed questions', async () => {
 		const quizBody = `
 <Quiz>
   <QuizQuestion data={{
@@ -1721,13 +1713,10 @@ describe('draft course sync control plane', () => {
 				runId: second.staged.runId,
 				idempotencyKey: 'apply-quiz-v2',
 			}),
-		).rejects.toMatchObject({
-			code: 'LAUNCH_APPLY_POLICY_VIOLATION',
-			retryable: false,
-		})
+		).resolves.toMatchObject({ state: 'applied' })
 		expect(testHarness.persistence.resources.has(questionId)).toBe(true)
 		expect(testHarness.persistence.relations.get(questionId)?.detached).toBe(
-			false,
+			true,
 		)
 	})
 

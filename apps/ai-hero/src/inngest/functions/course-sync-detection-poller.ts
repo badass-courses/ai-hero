@@ -4,6 +4,7 @@ import {
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
 	failCourseSyncReviewNotification,
+	getCourseSyncPlanChanges,
 	getCourseSyncPollState,
 	getCourseSyncRevisionHead,
 	saveCourseSyncPollState,
@@ -21,6 +22,10 @@ import {
 	type CourseSyncStepResult,
 } from '@/course-sync/errors'
 import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
+import {
+	COURSE_SYNC_AUTHOR_NAME,
+	narrateCourseSyncApply,
+} from '@/course-sync/narrate'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { env } from '@/env.mjs'
 import {
@@ -41,9 +46,25 @@ async function notifyCourseSync(notification: CourseSyncNotification) {
 			503,
 		)
 	}
+	// Only an applied sync gets a written summary. Reviews and failures keep
+	// their deterministic wording because those messages are read under
+	// pressure and must not vary.
+	const narration =
+		notification.kind === 'success'
+			? await narrateCourseSyncApply({
+					courseName: notification.courseName,
+					authorName: COURSE_SYNC_AUTHOR_NAME,
+					changes: await getCourseSyncPlanChanges(
+						notification.controlPlaneRunId,
+					),
+					resourceCounts: notification.resourceCounts,
+					mediaUpdated: notification.mediaCount,
+					structureCounts: notification.structureCounts,
+				})
+			: null
 	await slackProvider.sendNotification({
 		channel,
-		...buildCourseSyncNotificationPayload(notification),
+		...buildCourseSyncNotificationPayload(notification, narration),
 	})
 }
 

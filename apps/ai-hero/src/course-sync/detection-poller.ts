@@ -149,6 +149,8 @@ export type CourseSyncNotification =
 	  }
 
 export const COURSE_SYNC_SLACK_USERNAME = 'AI Hero Course Sync'
+/** Marks agent-written prose so humans can tell it from generated facts. */
+export const SHITRAT_MARK = 'SR \u{1F400}'
 export const COURSE_SYNC_SLACK_ICON_EMOJI = ':repeat:'
 
 export type CourseSyncSlackNotificationPayload = {
@@ -419,6 +421,7 @@ function compactFailureReason(reason: string) {
 
 export function buildCourseSyncNotificationPayload(
 	notification: CourseSyncNotification,
+	narration?: string | null,
 ): CourseSyncSlackNotificationPayload {
 	const versionLabel = courseSyncVersionLabel(
 		notification.courseVersionId,
@@ -430,7 +433,9 @@ export function buildCourseSyncNotificationPayload(
 
 	if (notification.kind === 'success') {
 		const durationMinutes = Math.floor(notification.durationSeconds / 60)
-		const text = `Synced ${versionLabel} into the bound workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min. ${permalink}`
+		const facts = `Synced ${versionLabel} into the bound workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min.`
+		const headline = narration?.trim() ? `${narration.trim()} ${SHITRAT_MARK}` : facts
+		const text = `${headline} ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
 			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,

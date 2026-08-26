@@ -8,7 +8,7 @@ import {
 	type SyncPlan,
 } from './types'
 import {
-	assertCourseSyncLaunchApplyPolicy,
+	summarizeCourseSyncPlanChanges,
 	assertManagedChildRelations,
 	chunkCourseSyncWrites,
 	courseSyncRollbackPointer,
@@ -128,61 +128,14 @@ describe('course sync persistence invariants', () => {
 		expect(migration).not.toMatch(/IF NOT EXISTS/i)
 	})
 
-	it('accepts the topology-preserving managed inventory regardless of update distribution', () => {
-		expect(() => assertCourseSyncLaunchApplyPolicy(launchPlan())).not.toThrow()
-		expect(() =>
-			assertCourseSyncLaunchApplyPolicy(currentManifestPlan()),
-		).not.toThrow()
-	})
-
-	it('returns a typed bounded-auto decision without weakening apply enforcement', () => {
+	it('treats the source manifest as authoritative for every plan shape', () => {
+		expect(evaluateCourseSyncBoundedAutoApply(launchPlan())).toEqual({
+			eligible: true,
+			planSha256: 'b'.repeat(64),
+		})
 		expect(evaluateCourseSyncBoundedAutoApply(currentManifestPlan())).toEqual({
 			eligible: true,
 			planSha256: 'b'.repeat(64),
-		})
-		const atBudget = currentManifestPlan()
-		for (const resource of atBudget.resources) resource.action = 'retain'
-		for (const resource of atBudget.resources.slice(0, 50)) {
-			resource.action = 'update'
-		}
-		for (const media of atBudget.media) media.action = 'retain'
-		for (const media of atBudget.media.slice(0, 25)) media.action = 'update'
-		expect(evaluateCourseSyncBoundedAutoApply(atBudget)).toEqual({
-			eligible: true,
-			planSha256: 'b'.repeat(64),
-		})
-
-		const overBudget = currentManifestPlan()
-		for (const resource of overBudget.resources) resource.action = 'retain'
-		for (const resource of overBudget.resources.slice(0, 51)) {
-			resource.action = 'update'
-		}
-		expect(evaluateCourseSyncBoundedAutoApply(overBudget)).toEqual({
-			eligible: false,
-			planSha256: 'b'.repeat(64),
-			reason: 'change-budget-exceeded',
-			failureCode: 'BOUNDED_AUTO_CHANGE_BUDGET_EXCEEDED',
-		})
-
-		const overMediaBudget = currentManifestPlan()
-		for (const media of overMediaBudget.media) media.action = 'retain'
-		for (const media of overMediaBudget.media.slice(0, 26)) {
-			media.action = 'update'
-		}
-		expect(evaluateCourseSyncBoundedAutoApply(overMediaBudget)).toEqual({
-			eligible: false,
-			planSha256: 'b'.repeat(64),
-			reason: 'change-budget-exceeded',
-			failureCode: 'BOUNDED_AUTO_CHANGE_BUDGET_EXCEEDED',
-		})
-
-		const unsafe = currentManifestPlan()
-		unsafe.resources[0]!.detached = true
-		expect(evaluateCourseSyncBoundedAutoApply(unsafe)).toEqual({
-			eligible: false,
-			planSha256: 'b'.repeat(64),
-			reason: 'launch-policy-violation',
-			failureCode: 'LAUNCH_APPLY_POLICY_VIOLATION',
 		})
 	})
 
@@ -216,53 +169,54 @@ describe('course sync persistence invariants', () => {
 			},
 		],
 		[
-			'wrong resource count',
+			'added resources beyond the launch inventory',
 			(plan: SyncPlan) => {
-				plan.resources = plan.resources.slice(1)
+				plan.resources = [
+					...plan.resources,
+					{ ...plan.resources[0]!, action: 'create' },
+				]
 			},
 		],
 		[
-			'missing retained question',
+			'every resource updated at once',
 			(plan: SyncPlan) => {
-				const questionIndex = plan.resources.findIndex(
-					(resource) => resource.sourceKind === 'question',
-				)
-				plan.resources = plan.resources.filter(
-					(_resource, index) => index !== questionIndex,
-				)
+				for (const resource of plan.resources) resource.action = 'update'
 			},
 		],
-		[
-			'wrong media count',
-			(plan: SyncPlan) => {
-				plan.media = plan.media.slice(1)
-			},
-		],
-		[
-			'unready media',
-			(plan: SyncPlan) => {
-				plan.media[0]!.muxPlaybackId = ''
-			},
-		],
-		[
-			'zero-duration media',
-			(plan: SyncPlan) => {
-				plan.media[0]!.duration = 0
-			},
-		],
-	] as const)(
-		'rejects %s outside the supervised launch shape before apply',
-		(_label, mutate) => {
-			const plan = launchPlan()
-			mutate(plan)
-			expect(() => assertCourseSyncLaunchApplyPolicy(plan)).toThrowError(
-				expect.objectContaining({
-					code: 'LAUNCH_APPLY_POLICY_VIOLATION',
-					retryable: false,
-				}),
-			)
-		},
-	)
+	] as const)('applies %s without an operator gate', (_label, mutate) => {
+		const plan = launchPlan()
+		mutate(plan)
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
+			eligible: true,
+			planSha256: 'b'.repeat(64),
+		})
+	})
+
+	it('summarizes only the changed resources for the human notice', () => {
+		const plan = currentManifestPlan()
+		for (const resource of plan.resources) resource.action = 'retain'
+		const created = plan.resources[0]!
+		created.action = 'create'
+		created.fields = { title: 'More Exercises' }
+		const moved = plan.resources[1]!
+		moved.action = 'update'
+		moved.fields = { title: 'Setting Up the Project' }
+		moved.position += 3
+
+		const changes = summarizeCourseSyncPlanChanges(plan)
+
+		expect(changes).toHaveLength(2)
+		expect(changes[0]).toMatchObject({
+			action: 'create',
+			title: 'More Exercises',
+			detached: false,
+		})
+		expect(changes[1]).toMatchObject({
+			action: 'update',
+			title: 'Setting Up the Project',
+			moved: true,
+		})
+	})
 
 	it('restores previous fields into both the rollback version and denormalized pointer', () => {
 		const appliedFields = {

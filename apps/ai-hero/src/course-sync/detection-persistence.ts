@@ -23,6 +23,10 @@ import type {
 } from './detection-poller'
 import { CourseSyncError } from './errors'
 import { courseSyncApplyPolicyOverride } from './poll-policy'
+import {
+	summarizeCourseSyncPlanChanges,
+	type CourseSyncPlanChange,
+} from './persistence-invariants'
 import { canAutomaticallySaveCourseSyncPollState } from './poll-state-guard'
 import {
 	releasedCourseSyncPollState,
@@ -577,4 +581,20 @@ export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
 	} else {
 		await log.info(event, attributes)
 	}
+}
+
+/**
+ * The full stored plan carries resource titles and every source kind; the
+ * public run summary deliberately does not. Read it here so the written
+ * notice can name what changed without widening the API contract.
+ */
+export async function getCourseSyncPlanChanges(
+	runId: string,
+): Promise<CourseSyncPlanChange[]> {
+	const [row] = await db
+		.select({ plan: courseSyncRun.plan })
+		.from(courseSyncRun)
+		.where(eq(courseSyncRun.runId, runId))
+		.limit(1)
+	return row?.plan ? summarizeCourseSyncPlanChanges(row.plan) : []
 }
