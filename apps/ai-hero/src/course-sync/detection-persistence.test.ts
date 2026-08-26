@@ -6,6 +6,7 @@ const dbMock = vi.hoisted(() => ({ transaction: vi.fn() }))
 vi.mock('@/db', () => ({ db: dbMock }))
 vi.mock('@/server/logger', () => ({ log: { info: vi.fn() } }))
 
+import { sha256, stableJson } from './control-plane'
 import {
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
@@ -122,6 +123,19 @@ describe('course-sync revision head persistence', () => {
 				planSha256: 'a'.repeat(64),
 			},
 		})
+		// Review receipts already exist in production. A caller that omits the
+		// kind must land on the same row it landed on before the applied kind
+		// existed, or every open review re-notifies.
+		expect(storedValues[0]?.id).toBe(
+			`cspl_review_notice_${sha256(
+				stableJson({
+					kind: 'review',
+					bindingId: input.bindingId,
+					courseVersionId: input.courseVersionId,
+					planSha256: input.planSha256,
+				}),
+			)}`,
+		)
 	})
 
 	it('preserves a locked operator override across automatic failure saves', async () => {

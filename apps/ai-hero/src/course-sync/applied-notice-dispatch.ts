@@ -14,17 +14,19 @@ export async function requestCourseSyncAppliedNotice(input: {
 	requestedBy: 'operator' | 'poller' | 'backfill'
 	bindingId?: string
 }): Promise<void> {
+	const bindingId = input.bindingId ?? AI_HERO_COURSE_SYNC_BINDING.bindingId
 	try {
 		await inngest.send({
 			name: COURSE_SYNC_APPLIED_NOTICE_EVENT,
 			data: {
-				bindingId: input.bindingId ?? AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				bindingId,
 				controlPlaneRunId: input.controlPlaneRunId,
 				requestedBy: input.requestedBy,
 			},
 		})
 	} catch (error) {
 		await log.error('course_sync.applied_notice.dispatch_failed', {
+			bindingId,
 			controlPlaneRunId: input.controlPlaneRunId,
 			error: error instanceof Error ? error.message : String(error),
 		})

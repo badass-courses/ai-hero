@@ -190,6 +190,7 @@ export async function deliverCourseSyncAppliedNotice(
 			failureClass: 'APPLIED_NOTICE_DELIVERY_FAILED',
 		})
 		await log.error('course_sync.applied_notice.failed', {
+			bindingId: input.bindingId,
 			controlPlaneRunId: notification.controlPlaneRunId,
 			error: error instanceof Error ? error.message : String(error),
 		})
