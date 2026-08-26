@@ -1,3 +1,4 @@
+import { log } from '@/server/logger'
 import { gateway } from '@ai-sdk/gateway'
 import { generateText } from 'ai'
 
@@ -15,7 +16,7 @@ const MAX_LISTED_CHANGES = 40
  * prose rather than loaded from a skill file so the deployed function has no
  * runtime dependency on the operator's machine.
  */
-const NARRATION_SYSTEM_PROMPT = `You write one short Slack notice telling Joel what changed in his course after an automatic sync applied it.
+const NARRATION_SYSTEM_PROMPT = `You write one short Slack notice for the team that runs an online course. It says what changed in the course after an automatic sync applied it. The person who wrote the changes is named in the input. Credit only that person.
 
 Voice:
 - Plain words. Concrete nouns. Real numbers instead of adjectives.
@@ -89,7 +90,15 @@ export async function narrateCourseSyncApply(
 		})
 		const narration = text.trim()
 		return narration.length > 0 ? narration : null
-	} catch {
+	} catch (error) {
+		// The deterministic facts line still goes out. Record why the written
+		// one did not, so a broken gateway is visible instead of silent.
+		await log.error('course_sync.narration.failed', {
+			courseName: facts.courseName,
+			changeCount: facts.changes.length,
+			model: NARRATION_MODEL,
+			message: error instanceof Error ? error.message : String(error),
+		})
 		return null
 	}
 }

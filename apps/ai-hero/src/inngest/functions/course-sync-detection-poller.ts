@@ -54,9 +54,12 @@ async function notifyCourseSync(notification: CourseSyncNotification) {
 			? await narrateCourseSyncApply({
 					courseName: notification.courseName,
 					authorName: COURSE_SYNC_AUTHOR_NAME,
+					// The plan read is part of the optional narration, so a failed
+					// read must degrade to the deterministic line rather than throw
+					// and cost an applied sync its only notification.
 					changes: await getCourseSyncPlanChanges(
 						notification.controlPlaneRunId,
-					),
+					).catch(() => []),
 					resourceCounts: notification.resourceCounts,
 					mediaUpdated: notification.mediaCount,
 					structureCounts: notification.structureCounts,

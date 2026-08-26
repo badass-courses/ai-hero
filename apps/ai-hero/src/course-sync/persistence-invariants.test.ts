@@ -218,6 +218,25 @@ describe('course sync persistence invariants', () => {
 		})
 	})
 
+	it('reports a detachment only when this plan performs it', () => {
+		const plan = currentManifestPlan()
+		for (const resource of plan.resources) resource.action = 'retain'
+		const detaching = plan.resources[0]!
+		detaching.action = 'update'
+		detaching.detached = true
+		detaching.previousDetached = false
+		const alreadyDetached = plan.resources[1]!
+		alreadyDetached.action = 'update'
+		alreadyDetached.detached = true
+		alreadyDetached.previousDetached = true
+
+		const changes = summarizeCourseSyncPlanChanges(plan)
+
+		expect(changes).toHaveLength(2)
+		expect(changes[0]?.detached).toBe(true)
+		expect(changes[1]?.detached).toBe(false)
+	})
+
 	it('restores previous fields into both the rollback version and denormalized pointer', () => {
 		const appliedFields = {
 			title: 'Applied title',

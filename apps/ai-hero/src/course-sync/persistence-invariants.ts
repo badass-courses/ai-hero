@@ -64,7 +64,7 @@ export function summarizeCourseSyncPlanChanges(
 				item.action !== 'create' &&
 				(item.previousParentResourceId !== item.parentResourceId ||
 					item.previousPosition !== item.position),
-			detached: item.detached === true,
+			detached: item.detached === true && item.previousDetached !== true,
 		}))
 }
 
