@@ -588,5 +588,14 @@ export type JourneyView = {
 	readonly aggregate: EvergreenOfferJourneyAggregate
 	readonly operationalStatus: JourneyOperationalStatus
 	readonly nextOpenSlots: readonly MessageSlot[]
+	readonly intents: readonly {
+		readonly intent: SideEffectIntent
+		readonly status: 'pending' | 'applied' | 'refused' | 'ambiguous' | 'missed'
+	}[]
+	readonly wakes: readonly {
+		readonly wake: ScheduleWakeIntent
+		readonly status: 'pending' | 'applied'
+	}[]
+	readonly transitionReceipts: readonly TransitionReceipt[]
 	readonly evidenceVersion: string
 }

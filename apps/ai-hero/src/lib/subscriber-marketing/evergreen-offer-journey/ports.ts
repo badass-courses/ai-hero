@@ -9,7 +9,6 @@ import type {
 	IssueCouponIntent,
 	JourneyDecision,
 	JourneyDecisionResult,
-	JourneyDomainEvent,
 	JourneyView,
 	ScheduleWakeIntent,
 	SideEffectIntent,
@@ -27,6 +26,11 @@ import type {
 export type JourneyCommandError =
 	| { readonly type: 'JourneyDecodeFailure'; readonly reason: string }
 	| { readonly type: 'JourneyVersionConflict'; readonly journeyId: JourneyId }
+	| {
+			readonly type: 'JourneyConstraintViolation'
+			readonly journeyId: JourneyId
+			readonly reason: string
+	  }
 	| { readonly type: 'JourneyCommitUnavailable'; readonly reason: string }
 	| { readonly type: 'AuthorityUnavailable'; readonly reason: string }
 	| { readonly type: 'AuthorityInconsistent'; readonly reason: string }
@@ -43,13 +47,12 @@ export type EffectApplicationError =
 	| { readonly type: 'EffectAmbiguous'; readonly reason: string }
 
 export type JourneyLedgerCommit = {
-	readonly stimulusId: StimulusId
+	readonly stimulus: EvergreenOfferStimulus
 	readonly expectedVersion: number | null
-	readonly next: EvergreenOfferJourneyAggregate
-	readonly events: readonly JourneyDomainEvent[]
-	readonly sideEffectIntents: readonly SideEffectIntent[]
-	readonly wakeIntents: readonly ScheduleWakeIntent[]
-	readonly transitionReceipt: TransitionReceipt
+	readonly currentFacts: EligibilityFacts
+	readonly definition: DecideEvergreenOfferJourneyInput['definition']
+	readonly decidedAt: IsoInstant
+	readonly decision: Extract<JourneyDecision, { type: 'Accepted' }>
 }
 
 export type CommittedJourneyDecision = {
@@ -74,9 +77,11 @@ export interface JourneyLedger {
 	readonly commit: (
 		commit: JourneyLedgerCommit,
 	) => Effect.Effect<CommittedJourneyDecision, JourneyCommandError>
-	readonly inspect: (
-		journeyId: JourneyId,
-	) => Effect.Effect<JourneyView, JourneyQueryError>
+	readonly inspect: (args: {
+		readonly journeyId: JourneyId
+		readonly now: IsoInstant
+		readonly automationControl: 'Enabled' | 'Stopped'
+	}) => Effect.Effect<JourneyView, JourneyQueryError>
 }
 
 export interface JourneyClock {

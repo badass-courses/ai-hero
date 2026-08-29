@@ -2,12 +2,20 @@ import type {
 	EvergreenOfferJourneyAggregate,
 	JourneyOperationalStatus,
 	JourneyView,
+	ScheduleWakeIntent,
+	SideEffectIntent,
+	TransitionReceipt,
 } from './domain'
-import type { IntentKey, IsoInstant } from './primitives'
+import type { IsoInstant } from './primitives'
 
 export type IntentOperationalEvidence = {
-	readonly idempotencyKey: IntentKey
-	readonly status: 'pending' | 'applied' | 'refused' | 'ambiguous'
+	readonly intent: SideEffectIntent
+	readonly status: 'pending' | 'applied' | 'refused' | 'ambiguous' | 'missed'
+}
+
+export type WakeOperationalEvidence = {
+	readonly wake: ScheduleWakeIntent
+	readonly status: 'pending' | 'applied'
 }
 
 export function inspectEvergreenOfferJourney(args: {
@@ -15,6 +23,8 @@ export function inspectEvergreenOfferJourney(args: {
 	now: IsoInstant
 	automationControl: 'Enabled' | 'Stopped'
 	intentEvidence: readonly IntentOperationalEvidence[]
+	wakeEvidence?: readonly WakeOperationalEvidence[]
+	transitionReceipts?: readonly TransitionReceipt[]
 	evidenceVersion: string
 }): JourneyView {
 	const final = isFinal(args.aggregate)
@@ -33,6 +43,9 @@ export function inspectEvergreenOfferJourney(args: {
 						Date.parse(slot.dueAt) <= Date.parse(args.now) &&
 						Date.parse(slot.windowEndsAt) > Date.parse(args.now),
 				),
+		intents: args.intentEvidence,
+		wakes: args.wakeEvidence ?? [],
+		transitionReceipts: args.transitionReceipts ?? [],
 		evidenceVersion: args.evidenceVersion,
 	}
 }

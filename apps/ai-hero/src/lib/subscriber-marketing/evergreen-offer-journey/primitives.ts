@@ -22,7 +22,11 @@ export type PrimitiveParseError = {
 	readonly type: 'PrimitiveParseError'
 	readonly field: string
 	readonly value: string
-	readonly reason: 'blank' | 'invalid-iso-instant' | 'invalid-iana-time-zone'
+	readonly reason:
+		| 'blank'
+		| 'invalid-iso-instant'
+		| 'invalid-iana-time-zone'
+		| 'invalid-journey-id'
 }
 
 export type ParseResult<Value> =
@@ -66,6 +70,27 @@ export function parseCouponId(value: string) {
 
 export function parseEntryFactId(value: string) {
 	return parseNonBlankBrand<'EntryFactId'>({ field: 'entryFactId', value })
+}
+
+export function parseIntentKey(value: string) {
+	return parseNonBlankBrand<'IntentKey'>({ field: 'intentKey', value })
+}
+
+export function parseJourneyId(value: string): ParseResult<JourneyId> {
+	const parsed = parseNonBlankBrand<'JourneyId'>({ field: 'journeyId', value })
+	if (!parsed.ok) return parsed
+	if (!parsed.value.startsWith('evergreen-offer:')) {
+		return {
+			ok: false,
+			error: {
+				type: 'PrimitiveParseError',
+				field: 'journeyId',
+				value,
+				reason: 'invalid-journey-id',
+			},
+		}
+	}
+	return parsed
 }
 
 export function parseMessageSlotId(value: string) {
