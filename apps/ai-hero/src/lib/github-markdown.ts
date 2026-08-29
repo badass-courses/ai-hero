@@ -23,6 +23,8 @@ export type GithubMarkdownFileRef = {
 	revalidate?: number
 	/** Cache tags applied to a raw-host fetch. */
 	tags?: string[]
+	/** Abort signal applied to a raw-host fetch. */
+	signal?: AbortSignal
 	/** Skip the contents API for a public source that raw GitHub can serve. */
 	transport?: 'api-first' | 'raw-only'
 }
@@ -88,12 +90,19 @@ export function parseGithubSource(
 }
 
 async function fetchFromRawHost(ref: GithubMarkdownFileRef): Promise<string> {
-	const { owner, repo, path, ref: gitRef, revalidate, tags } = ref
+	const { owner, repo, path, ref: gitRef, revalidate, tags, signal } = ref
 	const next =
 		revalidate !== undefined || tags?.length
 			? {
 					...(revalidate !== undefined ? { revalidate } : {}),
 					...(tags?.length ? { tags } : {}),
+				}
+			: undefined
+	const init =
+		next || signal
+			? {
+					...(next ? { next } : {}),
+					...(signal ? { signal } : {}),
 				}
 			: undefined
 
@@ -102,7 +111,7 @@ async function fetchFromRawHost(ref: GithubMarkdownFileRef): Promise<string> {
 			.split('/')
 			.map(encodeURIComponent)
 			.join('/')}`,
-		next ? { next } : undefined,
+		init,
 	)
 
 	if (!response.ok) {

@@ -36,6 +36,7 @@ describe('fetchGithubMarkdownFile', () => {
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValue(new Response('# Dictionary', { status: 200 }))
+		const signal = new AbortController().signal
 		vi.stubGlobal('fetch', fetchMock)
 
 		const markdown = await fetchGithubMarkdownFile({
@@ -43,6 +44,7 @@ describe('fetchGithubMarkdownFile', () => {
 			transport: 'raw-only',
 			revalidate: 3600,
 			tags: ['ai-coding-dictionary'],
+			signal,
 		})
 
 		expect(markdown).toBe('# Dictionary')
@@ -54,6 +56,7 @@ describe('fetchGithubMarkdownFile', () => {
 					revalidate: 3600,
 					tags: ['ai-coding-dictionary'],
 				},
+				signal,
 			},
 		)
 	})

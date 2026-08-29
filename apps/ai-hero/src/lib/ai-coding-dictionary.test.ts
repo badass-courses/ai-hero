@@ -67,6 +67,12 @@ function urlOf(input: unknown) {
 	return typeof input === 'string' ? input : String(input)
 }
 
+function signalOf(init: unknown) {
+	return typeof init === 'object' && init && 'signal' in init
+		? (init as { signal?: AbortSignal }).signal
+		: undefined
+}
+
 describe('AI Coding Dictionary GitHub source', () => {
 	beforeEach(() => {
 		githubMocks.getBranch.mockReset().mockRejectedValue({ status: 403 })
@@ -76,6 +82,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 
 	afterEach(() => {
 		vi.unstubAllGlobals()
+		vi.restoreAllMocks()
 	})
 
 	it('loads one coherent raw snapshot with frontmatter and a truthful update date', async () => {
@@ -136,6 +143,72 @@ describe('AI Coding Dictionary GitHub source', () => {
 				},
 			})
 		}
+	})
+
+	it('aborts a stalled frontmatter read and falls back to the README entry', async () => {
+		const controller = new AbortController()
+		const timeoutSpy = vi
+			.spyOn(AbortSignal, 'timeout')
+			.mockReturnValue(controller.signal)
+		const fetchMock = vi.fn(async (input: unknown, init?: unknown) => {
+			const url = urlOf(input)
+
+			if (url.endsWith('/commits/main.atom')) {
+				return new Response(commitFeed, { status: 200 })
+			}
+			if (url.endsWith(`/${COMMIT_SHA}/README.md`)) {
+				return new Response(readme, { status: 200 })
+			}
+			if (url.endsWith(`/${COMMIT_SHA}/dictionary/AI.md`)) {
+				return new Response(aiFrontmatter, { status: 200 })
+			}
+			if (url.endsWith(`/${COMMIT_SHA}/dictionary/Model.md`)) {
+				const signal = signalOf(init)
+				if (!signal) {
+					throw new Error('frontmatter request had no bounded signal')
+				}
+
+				return new Promise<Response>((_resolve, reject) => {
+					signal.addEventListener(
+						'abort',
+						() => reject(signal.reason ?? new Error('aborted')),
+						{ once: true },
+					)
+				})
+			}
+
+			throw new Error(`Unexpected fetch: ${url}`)
+		})
+		vi.stubGlobal('fetch', fetchMock)
+
+		const dictionaryPromise = getAiCodingDictionary()
+		await vi.waitFor(() => {
+			expect(
+				fetchMock.mock.calls.some(([input]) =>
+					urlOf(input).endsWith(`/${COMMIT_SHA}/dictionary/Model.md`),
+				),
+			).toBe(true)
+		})
+		controller.abort(new DOMException('frontmatter timed out', 'TimeoutError'))
+
+		await expect(dictionaryPromise).resolves.toMatchObject({
+			updatedAt: UPDATED_AT,
+			entries: [
+				{
+					title: 'AI',
+					description: 'Frontmatter description for AI',
+					aliases: ['Artificial intelligence', 'AI system'],
+				},
+				{
+					title: 'Model',
+					description: 'README fallback description for Model.',
+					aliases: [],
+					rawBody: 'README fallback description for Model.',
+				},
+			],
+		})
+		expect(timeoutSpy).toHaveBeenCalledTimes(2)
+		expect(timeoutSpy).toHaveBeenCalledWith(5000)
 	})
 
 	it('fails instead of publishing a made-up source date', async () => {

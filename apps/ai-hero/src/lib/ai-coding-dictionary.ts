@@ -5,6 +5,7 @@ const DICTIONARY_OWNER = 'mattpocock'
 const DICTIONARY_REPO = 'dictionary-of-ai-coding'
 const DICTIONARY_REF = 'main'
 const DICTIONARY_REVALIDATE_SECONDS = 3600
+const DICTIONARY_FRONTMATTER_TIMEOUT_MS = 5000
 const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 export type DictionarySection = {
@@ -72,7 +73,11 @@ export function getAiCodingDictionaryOgImageUrl(title?: string) {
 	return `/api/og?title=${encodeURIComponent(title)}`
 }
 
-async function getGithubMarkdownFile(path: string, commitSha: string) {
+async function getGithubMarkdownFile(
+	path: string,
+	commitSha: string,
+	signal?: AbortSignal,
+) {
 	return fetchGithubMarkdownFile({
 		owner: DICTIONARY_OWNER,
 		repo: DICTIONARY_REPO,
@@ -80,6 +85,7 @@ async function getGithubMarkdownFile(path: string, commitSha: string) {
 		ref: commitSha,
 		revalidate: DICTIONARY_REVALIDATE_SECONDS,
 		tags: [DICTIONARY_CACHE_TAG],
+		signal,
 		transport: 'raw-only',
 	})
 }
@@ -210,7 +216,11 @@ async function getDictionarySourceFrontmatter(
 				frontmatterByPath.set(
 					path,
 					parseDictionaryFrontmatter(
-						await getGithubMarkdownFile(path, commitSha),
+						await getGithubMarkdownFile(
+							path,
+							commitSha,
+							AbortSignal.timeout(DICTIONARY_FRONTMATTER_TIMEOUT_MS),
+						),
 					),
 				)
 			} catch {
