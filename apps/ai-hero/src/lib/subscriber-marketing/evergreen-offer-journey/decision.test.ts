@@ -780,6 +780,15 @@ describe('evergreen offer journey production core', () => {
 
 		expect(purchased.next.phase).toBe('customer')
 		expect(purchased.sideEffectIntents).toHaveLength(0)
+		expect(
+			inspectEvergreenOfferJourney({
+				aggregate: purchased.next,
+				now: b1Wake.dueAt,
+				automationControl: 'Enabled',
+				intentEvidence: [],
+				evidenceVersion: 'facts-v1',
+			}).nextOpenSlots,
+		).toEqual([])
 	})
 
 	it('halts effects without rewriting actor state when global control is stopped', () => {

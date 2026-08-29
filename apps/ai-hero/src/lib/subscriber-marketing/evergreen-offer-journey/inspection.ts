@@ -17,20 +17,32 @@ export function inspectEvergreenOfferJourney(args: {
 	intentEvidence: readonly IntentOperationalEvidence[]
 	evidenceVersion: string
 }): JourneyView {
+	const final = isFinal(args.aggregate)
 	return {
 		aggregate: args.aggregate,
 		operationalStatus: operationalStatus(args),
-		nextOpenSlots: [
-			...args.aggregate.messagePlan.bridge,
-			...args.aggregate.messagePlan.pitch,
-		].filter(
-			(slot) =>
-				(slot.status === 'Scheduled' || slot.status === 'IntentCommitted') &&
-				Date.parse(slot.dueAt) <= Date.parse(args.now) &&
-				Date.parse(slot.windowEndsAt) > Date.parse(args.now),
-		),
+		nextOpenSlots: final
+			? []
+			: [
+					...args.aggregate.messagePlan.bridge,
+					...args.aggregate.messagePlan.pitch,
+				].filter(
+					(slot) =>
+						(slot.status === 'Scheduled' ||
+							slot.status === 'IntentCommitted') &&
+						Date.parse(slot.dueAt) <= Date.parse(args.now) &&
+						Date.parse(slot.windowEndsAt) > Date.parse(args.now),
+				),
 		evidenceVersion: args.evidenceVersion,
 	}
+}
+
+function isFinal(aggregate: EvergreenOfferJourneyAggregate) {
+	return (
+		aggregate.phase === 'customer' ||
+		aggregate.phase === 'stopped' ||
+		aggregate.phase === 'complete'
+	)
 }
 
 function operationalStatus(args: {
