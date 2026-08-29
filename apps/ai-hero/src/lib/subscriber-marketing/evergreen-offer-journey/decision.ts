@@ -37,11 +37,16 @@ import {
 export function decideEvergreenOfferJourney(
 	input: DecideEvergreenOfferJourneyInput,
 ): JourneyDecisionResult {
-	const definitionError = validateDefinition(input.definition)
-	if (definitionError) {
-		return decisionError('InvariantViolation', definitionError)
+	if (!input.snapshot) {
+		const definitionError = validateDefinition(input.definition)
+		return definitionError
+			? decisionError('InvariantViolation', definitionError)
+			: startJourney(input)
 	}
-	if (!input.snapshot) return startJourney(input)
+	const pinnedDefinitionError = validateDefinition(input.snapshot.definition)
+	if (pinnedDefinitionError) {
+		return decisionError('InvariantViolation', pinnedDefinitionError)
+	}
 	if (input.stimulus.type === 'CourseCompleted') {
 		return ignored('JourneyAlreadyStarted', input.snapshot)
 	}
@@ -56,9 +61,9 @@ export function decideEvergreenOfferJourney(
 	}
 	if (
 		input.snapshot.messagePlan.definitionVersion !==
-			input.definition.definitionVersion ||
+			input.snapshot.definition.definitionVersion ||
 		input.snapshot.messagePlan.messagePlanSourceHash !==
-			input.definition.messagePlanSourceHash
+			input.snapshot.definition.messagePlanSourceHash
 	) {
 		return decisionError(
 			'InvariantViolation',
@@ -68,7 +73,11 @@ export function decideEvergreenOfferJourney(
 	if (isFinal(input.snapshot)) return ignored('JourneyFinal', input.snapshot)
 	const activeInput: DecideEvergreenOfferJourneyInput & {
 		snapshot: ActiveJourneyAggregate
-	} = { ...input, snapshot: input.snapshot }
+	} = {
+		...input,
+		definition: input.snapshot.definition,
+		snapshot: input.snapshot,
+	}
 
 	const hardStop = hardStopFromInput(activeInput)
 	if (hardStop) return hardStop
@@ -146,6 +155,7 @@ function startJourney(
 		valuePathId: input.stimulus.valuePathId,
 		completedAt: input.stimulus.completedAt,
 		deadlineTimeZone: input.stimulus.deadlineTimeZone,
+		definition: input.definition,
 		messagePlan: scheduled.value.messagePlan,
 		version: 1,
 		phase: 'bridge.running',
@@ -279,6 +289,30 @@ function handleWake(
 			openingAt: issueAt,
 			timeZone: current.deadlineTimeZone.timeZone,
 		})
+		if (Date.parse(input.now) >= Date.parse(expiresAt)) {
+			const stoppedPhase = requirePhase(current.phase, { type: 'STOP' })
+			if (!stoppedPhase.ok) return stoppedPhase
+			const exit: JourneyExit = {
+				type: 'PermanentFailure',
+				observedAt: input.now,
+				reason: 'Coupon issue window expired before application',
+			}
+			return accepted({
+				input,
+				from: input.snapshot.phase,
+				next: {
+					...current,
+					phase: 'stopped',
+					coupon: null,
+					exit,
+					version: current.version + 1,
+				},
+				events: [
+					...expired.events,
+					event('JourneyExited', input.now, { reason: exit.type }),
+				],
+			})
+		}
 		const idempotencyKey = couponIntentKey(current.journeyId)
 		const next: ActiveJourneyAggregate = {
 			...current,
@@ -818,19 +852,16 @@ function hardStopFromInput(
 			}
 		}
 	}
-	if (stimulus.type !== 'WakeDue') return undefined
-	if (input.currentFacts.automationControl.type === 'Stopped') {
+	if (
+		input.currentFacts.automationControl.type === 'Stopped' &&
+		(stimulus.type === 'WakeDue' || stimulus.type === 'VerifiedUserObserved')
+	) {
 		return {
 			ok: true,
 			decision: {
 				type: 'Ignored',
-				reason: 'EntryIneligible',
+				reason: 'AutomationHalted',
 				current: input.snapshot,
-				eligibility: {
-					type: 'Ineligible',
-					reason: 'AutomationStopped',
-					evidenceVersion: input.currentFacts.evidenceVersion,
-				},
 			},
 		}
 	}

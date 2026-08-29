@@ -17,6 +17,7 @@ import type {
 	ScheduleWakeIntent,
 } from './domain'
 import { EVERGREEN_OFFER_PRODUCT_ID } from './domain'
+import { inspectEvergreenOfferJourney } from './inspection'
 import { transitionJourneyPhase } from './phase-machine'
 import {
 	couponBindingIntentKey,
@@ -76,12 +77,13 @@ function decide(args: {
 	stimulus: EvergreenOfferStimulus
 	now: string
 	currentFacts?: EligibilityFacts
+	definition?: EvergreenOfferJourneyDefinition
 }) {
 	return decideEvergreenOfferJourney({
 		snapshot: args.snapshot,
 		stimulus: args.stimulus,
 		currentFacts: args.currentFacts ?? facts(),
-		definition,
+		definition: args.definition ?? definition,
 		now: instant(args.now),
 	})
 }
@@ -96,7 +98,10 @@ function startJourney() {
 	)
 }
 
-function issueCoupon(snapshot: EvergreenOfferJourneyAggregate) {
+function issueCoupon(
+	snapshot: EvergreenOfferJourneyAggregate,
+	runtimeDefinition: EvergreenOfferJourneyDefinition = definition,
+) {
 	const couponWake = startJourney().wakeIntents.find(
 		(intent) => intent.purpose.type === 'CouponIssue',
 	)
@@ -141,6 +146,7 @@ function issueCoupon(snapshot: EvergreenOfferJourneyAggregate) {
 				coupon,
 			},
 			now: coupon.issuedAt,
+			definition: runtimeDefinition,
 		}),
 	)
 	return { awaiting, pitched, coupon }
@@ -188,6 +194,14 @@ describe('evergreen offer journey production core', () => {
 		expect(fallback.ok && fallback.value.timeZone).toBe(
 			'America/Los_Angeles',
 		)
+	})
+
+	it('accepts only ISO instants with an explicit time-zone designator', () => {
+		expect(parseIsoInstant('2026-09-10T09:00:00-07:00').ok).toBe(true)
+		expect(parseIsoInstant('2026-09-10T16:00:00Z').ok).toBe(true)
+		expect(parseIsoInstant('2026-09-10').ok).toBe(false)
+		expect(parseIsoInstant('2026-09-10T09:00:00').ok).toBe(false)
+		expect(parseIsoInstant('Thu, 10 Sep 2026 16:00:00 GMT').ok).toBe(false)
 	})
 
 	it('rejects message definitions that collapse independent slot identity', () => {
@@ -250,6 +264,27 @@ describe('evergreen offer journey production core', () => {
 				(intent) => intent.purpose.type === 'CouponIssue',
 			)?.dueAt,
 		).toBe('2026-09-10T16:00:00.000Z')
+	})
+
+	it('inspection reports only slots whose delivery window is open now', () => {
+		const started = startJourney()
+		const beforeB1 = inspectEvergreenOfferJourney({
+			aggregate: started.next,
+			now: completedAt,
+			automationControl: 'Enabled',
+			intentEvidence: [],
+			evidenceVersion: 'facts-v1',
+		})
+		const atB1 = inspectEvergreenOfferJourney({
+			aggregate: started.next,
+			now: started.next.messagePlan.bridge[0].dueAt,
+			automationControl: 'Enabled',
+			intentEvidence: [],
+			evidenceVersion: 'facts-v1',
+		})
+
+		expect(beforeB1.nextOpenSlots).toEqual([])
+		expect(atB1.nextOpenSlots.map((slot) => slot.slotId)).toEqual(['B1'])
 	})
 
 	it('lets B2 send on schedule after an ambiguous B1 receipt', () => {
@@ -405,6 +440,34 @@ describe('evergreen offer journey production core', () => {
 		}
 	})
 
+	it('closes instead of issuing a coupon after the offer window expired', () => {
+		const started = startJourney()
+		const couponWake = started.wakeIntents.find(
+			(intent) => intent.purpose.type === 'CouponIssue',
+		)!
+		const closed = accepted(
+			decide({
+				snapshot: started.next,
+				stimulus: wakeStimulus(
+					started.next,
+					couponWake,
+					'expired-coupon-wake',
+				),
+				now: '2026-09-15T07:00:00.000Z',
+			}),
+		)
+
+		expect(closed.next.phase).toBe('stopped')
+		expect(closed.sideEffectIntents).toEqual([])
+		if (closed.next.phase === 'stopped') {
+			expect(closed.next.exit).toEqual({
+				type: 'PermanentFailure',
+				observedAt: '2026-09-15T07:00:00.000Z',
+				reason: 'Coupon issue window expired before application',
+			})
+		}
+	})
+
 	it('rejects a contact refusal for an effect the journey did not commit', () => {
 		const started = startJourney()
 		const couponWake = started.wakeIntents.find(
@@ -452,6 +515,64 @@ describe('evergreen offer journey production core', () => {
 		expect(pitched.next.phase).toBe('pitch.running')
 		expect(pitched.next.messagePlan.pitch).toHaveLength(5)
 		expect(pitched.wakeIntents).toHaveLength(6)
+	})
+
+	it('uses the definition pinned at entry when pitch slots are created', () => {
+		const started = startJourney()
+		const tamperedDefinition: EvergreenOfferJourneyDefinition = {
+			...definition,
+			pitch: [
+				{
+					...definition.pitch[0],
+					presentation: {
+						...definition.pitch[0].presentation,
+						subjectId: 'unreviewed_subject',
+					},
+				},
+				definition.pitch[1],
+				definition.pitch[2],
+				definition.pitch[3],
+				definition.pitch[4],
+			],
+		}
+		const { pitched } = issueCoupon(started.next, tamperedDefinition)
+
+		expect(pitched.next.messagePlan.pitch[0]!.presentation.subjectId).toBe(
+			'p1_subject_direct',
+		)
+		expect(pitched.next.definition).toEqual(definition)
+	})
+
+	it('does not commit coupon binding work while global automation is stopped', () => {
+		const started = startJourney()
+		const { pitched } = issueCoupon(started.next)
+		const result = decide({
+			snapshot: pitched.next,
+			stimulus: {
+				type: 'VerifiedUserObserved',
+				stimulusId: value(parseStimulusId('stimulus_halted_verified_user')),
+				journeyId: pitched.next.journeyId,
+				verifiedUserId: value(parseVerifiedUserId('user_halted')),
+				observedAt: instant('2026-09-10T17:00:00.000Z'),
+				sourceReference: 'user:user_halted',
+			},
+			now: '2026-09-10T17:00:00.000Z',
+			currentFacts: facts({
+				automationControl: {
+					type: 'Stopped',
+					version: 'control-v2',
+					reason: 'operator stop',
+				},
+			}),
+		})
+
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		expect(result.decision).toEqual({
+			type: 'Ignored',
+			reason: 'AutomationHalted',
+			current: pitched.next,
+		})
 	})
 
 	it('commits one verified-user binding intent before accepting its receipt', () => {

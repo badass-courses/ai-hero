@@ -354,6 +354,7 @@ export type JourneyBase = {
 	readonly valuePathId: string
 	readonly completedAt: IsoInstant
 	readonly deadlineTimeZone: DeadlineTimeZoneEvidence
+	readonly definition: EvergreenOfferJourneyDefinition
 	readonly messagePlan: SelectedMessagePlan
 	readonly version: number
 }
@@ -540,6 +541,7 @@ export type JourneyDecision =
 			readonly type: 'Ignored'
 			readonly reason:
 				| 'EntryIneligible'
+				| 'AutomationHalted'
 				| 'JourneyAlreadyStarted'
 				| 'JourneyFinal'
 				| 'StimulusForAnotherJourney'

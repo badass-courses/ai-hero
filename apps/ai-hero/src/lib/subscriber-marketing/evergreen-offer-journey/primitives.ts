@@ -91,7 +91,8 @@ export function parseVerifiedUserId(value: string) {
 }
 
 export function parseIsoInstant(value: string): ParseResult<IsoInstant> {
-	if (value.trim().length === 0) {
+	const candidate = value.trim()
+	if (candidate.length === 0) {
 		return {
 			ok: false,
 			error: {
@@ -102,7 +103,11 @@ export function parseIsoInstant(value: string): ParseResult<IsoInstant> {
 			},
 		}
 	}
-	const timestamp = Date.parse(value)
+	const explicitIsoInstant =
+		/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/
+	const timestamp = explicitIsoInstant.test(candidate)
+		? Date.parse(candidate)
+		: Number.NaN
 	if (!Number.isFinite(timestamp)) {
 		return {
 			ok: false,

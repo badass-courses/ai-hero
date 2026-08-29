@@ -26,6 +26,7 @@ export function inspectEvergreenOfferJourney(args: {
 		].filter(
 			(slot) =>
 				(slot.status === 'Scheduled' || slot.status === 'IntentCommitted') &&
+				Date.parse(slot.dueAt) <= Date.parse(args.now) &&
 				Date.parse(slot.windowEndsAt) > Date.parse(args.now),
 		),
 		evidenceVersion: args.evidenceVersion,
