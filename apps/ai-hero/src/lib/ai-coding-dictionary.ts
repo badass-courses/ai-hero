@@ -1,11 +1,11 @@
 import { unstable_cache } from 'next/cache'
 import { fetchGithubMarkdownFile } from '@/lib/github-markdown'
-import { Octokit } from '@octokit/rest'
 
 const DICTIONARY_OWNER = 'mattpocock'
 const DICTIONARY_REPO = 'dictionary-of-ai-coding'
 const DICTIONARY_REF = 'main'
 const DICTIONARY_REVALIDATE_SECONDS = 3600
+const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 export type DictionarySection = {
 	title: string
@@ -40,6 +40,11 @@ type DictionaryFrontmatter = {
 	aliases: string[]
 }
 
+type DictionarySourceRef = {
+	commitSha: string
+	updatedAt: string
+}
+
 function toValidIsoDate(value: unknown): string | null {
 	if (!value) return null
 
@@ -47,11 +52,6 @@ function toValidIsoDate(value: unknown): string | null {
 
 	return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
-
-const octokit = new Octokit({
-	auth: process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined,
-	userAgent: 'ai-hero-dictionary/1.0.0',
-})
 
 export const AI_CODING_DICTIONARY_REVALIDATE_SECONDS =
 	DICTIONARY_REVALIDATE_SECONDS
@@ -72,35 +72,65 @@ export function getAiCodingDictionaryOgImageUrl(title?: string) {
 	return `/api/og?title=${encodeURIComponent(title)}`
 }
 
-async function getGithubMarkdownFile(path: string) {
+async function getGithubMarkdownFile(path: string, commitSha: string) {
 	return fetchGithubMarkdownFile({
 		owner: DICTIONARY_OWNER,
 		repo: DICTIONARY_REPO,
 		path,
-		ref: DICTIONARY_REF,
+		ref: commitSha,
 		revalidate: DICTIONARY_REVALIDATE_SECONDS,
+		tags: [DICTIONARY_CACHE_TAG],
+		transport: 'raw-only',
 	})
 }
 
-async function getReadmeMarkdown() {
-	return getGithubMarkdownFile('README.md')
+async function getReadmeMarkdown(commitSha: string) {
+	return getGithubMarkdownFile('README.md', commitSha)
 }
 
-async function getDictionaryRefUpdatedAt() {
-	try {
-		const response = await octokit.rest.repos.getBranch({
-			owner: DICTIONARY_OWNER,
-			repo: DICTIONARY_REPO,
-			branch: DICTIONARY_REF,
-		})
+function parseDictionaryCommitFeed(
+	atomFeed: string,
+): DictionarySourceRef | null {
+	const commitSha = atomFeed.match(
+		/<entry>[\s\S]*?<id>[^<]*Commit\/([0-9a-f]{40})<\/id>/i,
+	)?.[1]
+	const updatedAt = toValidIsoDate(
+		atomFeed.match(/<feed\b[\s\S]*?<updated>([^<]+)<\/updated>/i)?.[1],
+	)
 
-		return (
-			toValidIsoDate(response.data.commit.commit.committer?.date) ??
-			toValidIsoDate(response.data.commit.commit.author?.date)
-		)
-	} catch {
-		return null
+	return commitSha && updatedAt ? { commitSha, updatedAt } : null
+}
+
+/**
+ * The public Atom feed gives us both the current commit and its real date
+ * without spending GitHub API quota. Raw files are pinned to that commit so
+ * README content and entry frontmatter always come from one snapshot.
+ */
+async function getDictionarySourceRef(): Promise<DictionarySourceRef> {
+	const response = await fetch(
+		`${AI_CODING_DICTIONARY_SOURCE_URL}/commits/${encodeURIComponent(
+			DICTIONARY_REF,
+		)}.atom`,
+		{
+			next: {
+				revalidate: DICTIONARY_REVALIDATE_SECONDS,
+				tags: [DICTIONARY_CACHE_TAG],
+			},
+		},
+	)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch GitHub commit feed: ${response.status}`)
 	}
+
+	const sourceRef = parseDictionaryCommitFeed(await response.text())
+	if (!sourceRef) {
+		throw new Error(
+			'GitHub commit feed did not contain a valid commit and update date',
+		)
+	}
+
+	return sourceRef
 }
 
 function titleToDictionaryPath(title: string) {
@@ -158,57 +188,34 @@ function getDescription(markdown: string) {
 		: description
 }
 
-async function getDictionarySourceFrontmatter() {
-	let dictionaryFiles: Array<{ path?: string; type?: string }> = []
+function getDictionaryEntryPaths(readme: string) {
+	const sectionStart = readme.search(/^## Section \d+/m)
+	const content = sectionStart >= 0 ? readme.slice(sectionStart) : readme
+	const paths = [...content.matchAll(/^###\s+(.+)$/gm)].map((match) =>
+		titleToDictionaryPath(match[1]?.trim() ?? ''),
+	)
 
-	try {
-		const response = await octokit.rest.git.getTree({
-			owner: DICTIONARY_OWNER,
-			repo: DICTIONARY_REPO,
-			tree_sha: DICTIONARY_REF,
-			recursive: 'true',
-		})
+	return [...new Set(paths.filter((path) => path !== 'dictionary/.md'))]
+}
 
-		dictionaryFiles = response.data.tree.filter(
-			(item) =>
-				item.type === 'blob' &&
-				item.path?.startsWith('dictionary/') &&
-				item.path.endsWith('.md'),
-		)
-	} catch (error) {
-		const status =
-			typeof error === 'object' && error && 'status' in error
-				? Number(error.status)
-				: undefined
-
-		if (status !== 403) {
-			throw error
-		}
-	}
-
+async function getDictionarySourceFrontmatter(
+	readme: string,
+	commitSha: string,
+) {
 	const frontmatterByPath = new Map<string, DictionaryFrontmatter>()
 
 	await Promise.all(
-		dictionaryFiles.map(async (file) => {
-			if (!file.path) return
-
+		getDictionaryEntryPaths(readme).map(async (path) => {
 			try {
-				const rawUrl = `https://raw.githubusercontent.com/${DICTIONARY_OWNER}/${DICTIONARY_REPO}/${DICTIONARY_REF}/${file.path
-					.split('/')
-					.map(encodeURIComponent)
-					.join('/')}`
-				const sourceResponse = await fetch(rawUrl, {
-					next: { revalidate: DICTIONARY_REVALIDATE_SECONDS },
-					signal: AbortSignal.timeout(5000),
-				})
-
-				if (!sourceResponse.ok) return
-
 				frontmatterByPath.set(
-					file.path,
-					parseDictionaryFrontmatter(await sourceResponse.text()),
+					path,
+					parseDictionaryFrontmatter(
+						await getGithubMarkdownFile(path, commitSha),
+					),
 				)
 			} catch {
+				// The README still contains a useful description and body when an
+				// individual frontmatter file is temporarily unavailable.
 				return
 			}
 		}),
@@ -372,25 +379,22 @@ function parseDictionaryReadme(
 }
 
 async function loadDictionary(): Promise<DictionaryData> {
-	const [readme, frontmatterByPath, refUpdatedAt] = await Promise.all([
-		getReadmeMarkdown(),
-		getDictionarySourceFrontmatter(),
-		getDictionaryRefUpdatedAt(),
-	])
-
-	return parseDictionaryReadme(
+	const sourceRef = await getDictionarySourceRef()
+	const readme = await getReadmeMarkdown(sourceRef.commitSha)
+	const frontmatterByPath = await getDictionarySourceFrontmatter(
 		readme,
-		frontmatterByPath,
-		refUpdatedAt ?? '1970-01-01T00:00:00.000Z',
+		sourceRef.commitSha,
 	)
+
+	return parseDictionaryReadme(readme, frontmatterByPath, sourceRef.updatedAt)
 }
 
 export const getAiCodingDictionary = unstable_cache(
 	loadDictionary,
-	['ai-coding-dictionary-github-readme-v1'],
+	['ai-coding-dictionary-github-readme-v2'],
 	{
 		revalidate: DICTIONARY_REVALIDATE_SECONDS,
-		tags: ['ai-coding-dictionary'],
+		tags: [DICTIONARY_CACHE_TAG],
 	},
 )
 
