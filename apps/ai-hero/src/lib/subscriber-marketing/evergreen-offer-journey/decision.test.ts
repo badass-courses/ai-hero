@@ -10,6 +10,7 @@ import type {
 	DecideEvergreenOfferJourneyInput,
 	EligibilityFacts,
 	EvergreenOfferJourneyAggregate,
+	EvergreenOfferJourneyDefinition,
 	EvergreenOfferStimulus,
 	IssuedCoupon,
 	JourneyDecision,
@@ -18,6 +19,7 @@ import type {
 import { EVERGREEN_OFFER_PRODUCT_ID } from './domain'
 import { transitionJourneyPhase } from './phase-machine'
 import {
+	couponBindingIntentKey,
 	couponIntentKey,
 	parseContactId,
 	parseCouponId,
@@ -25,6 +27,8 @@ import {
 	parseIanaTimeZone,
 	parseIsoInstant,
 	parseStimulusId,
+	parseVerifiedUserId,
+	shadowIntentKey,
 	type ParseResult,
 } from './primitives'
 
@@ -186,6 +190,51 @@ describe('evergreen offer journey production core', () => {
 		)
 	})
 
+	it('rejects message definitions that collapse independent slot identity', () => {
+		const duplicateDefinition: EvergreenOfferJourneyDefinition = {
+			...definition,
+			bridge: [
+				definition.bridge[0],
+				{ ...definition.bridge[1], slotId: definition.bridge[0].slotId },
+				definition.bridge[2],
+			],
+		}
+		const result = decideEvergreenOfferJourney({
+			snapshot: null,
+			stimulus: courseCompleted(),
+			currentFacts: facts(),
+			definition: duplicateDefinition,
+			now: completedAt,
+		})
+
+		expect(result).toEqual({
+			ok: false,
+			error: {
+				type: 'InvariantViolation',
+				reason: 'Journey definition contains duplicate message slot IDs',
+			},
+		})
+	})
+
+	it('rejects entry authority for a different contact', () => {
+		const result = decide({
+			snapshot: null,
+			stimulus: courseCompleted(),
+			now: completedAt,
+			currentFacts: facts({
+				contactId: value(parseContactId('contact_other')),
+			}),
+		})
+
+		expect(result).toEqual({
+			ok: false,
+			error: {
+				type: 'InvariantViolation',
+				reason: 'Current authority belongs to another entry contact',
+			},
+		})
+	})
+
 	it('starts one independent bridge plan and one coupon wake', () => {
 		const started = startJourney()
 
@@ -267,6 +316,51 @@ describe('evergreen offer journey production core', () => {
 		])
 	})
 
+	it('corrects a missed in-flight slot when a late provider receipt proves delivery', () => {
+		const started = startJourney()
+		const b1Wake = started.wakeIntents[0]!
+		const b2Wake = started.wakeIntents[1]!
+		const b1 = accepted(
+			decide({
+				snapshot: started.next,
+				stimulus: wakeStimulus(started.next, b1Wake, 'b1-in-flight'),
+				now: b1Wake.dueAt,
+			}),
+		)
+		const b1Intent = b1.sideEffectIntents[0]
+		if (!b1Intent || b1Intent.type !== 'SendMessage') {
+			throw new Error('B1 intent missing')
+		}
+		const b2 = accepted(
+			decide({
+				snapshot: b1.next,
+				stimulus: wakeStimulus(b1.next, b2Wake, 'b2-after-in-flight'),
+				now: b2Wake.dueAt,
+			}),
+		)
+		expect(b2.next.messagePlan.bridge[0].status).toBe('Missed')
+		const lateReceipt = accepted(
+			decide({
+				snapshot: b2.next,
+				stimulus: {
+					type: 'DeliverySettled',
+					stimulusId: value(parseStimulusId('stimulus_b1_late_applied')),
+					journeyId: b2.next.journeyId,
+					slotId: b1Intent.slotId,
+					intentKey: b1Intent.idempotencyKey,
+					settledAt: instant('2026-09-06T16:00:05.000Z'),
+					outcome: {
+						type: 'Applied',
+						providerReceiptId: 'provider_receipt_late_b1',
+					},
+				},
+				now: '2026-09-06T16:00:05.000Z',
+			}),
+		)
+
+		expect(lateReceipt.next.messagePlan.bridge[0].status).toBe('Applied')
+	})
+
 	it('suppresses a duplicate message wake after one intent was committed', () => {
 		const started = startJourney()
 		const b1Wake = started.wakeIntents[0]!
@@ -292,6 +386,60 @@ describe('evergreen offer journey production core', () => {
 		})
 	})
 
+	it('does not issue a coupon before its committed Thursday wake', () => {
+		const started = startJourney()
+		const couponWake = started.wakeIntents.find(
+			(intent) => intent.purpose.type === 'CouponIssue',
+		)!
+		const early = decide({
+			snapshot: started.next,
+			stimulus: wakeStimulus(started.next, couponWake, 'early-coupon-wake'),
+			now: '2026-09-10T15:59:59.000Z',
+		})
+
+		expect(early.ok).toBe(true)
+		if (!early.ok) return
+		expect(early.decision.type).toBe('Ignored')
+		if (early.decision.type === 'Ignored') {
+			expect(early.decision.reason).toBe('SlotNotOpen')
+		}
+	})
+
+	it('rejects a contact refusal for an effect the journey did not commit', () => {
+		const started = startJourney()
+		const couponWake = started.wakeIntents.find(
+			(intent) => intent.purpose.type === 'CouponIssue',
+		)!
+		const awaiting = accepted(
+			decide({
+				snapshot: started.next,
+				stimulus: wakeStimulus(started.next, couponWake, 'coupon-for-refusal'),
+				now: couponWake.dueAt,
+			}),
+		)
+		const result = decide({
+			snapshot: awaiting.next,
+			stimulus: {
+				type: 'PermanentEffectRefusal',
+				stimulusId: value(parseStimulusId('stimulus_wrong_refusal')),
+				journeyId: awaiting.next.journeyId,
+				intentKey: shadowIntentKey(awaiting.next.journeyId),
+				observedAt: instant('2026-09-10T16:00:05.000Z'),
+				scope: 'Contact',
+				reason: 'wrong effect',
+			},
+			now: '2026-09-10T16:00:05.000Z',
+		})
+
+		expect(result).toEqual({
+			ok: false,
+			error: {
+				type: 'InvariantViolation',
+				reason: 'Contact refusal does not match a committed journey intent',
+			},
+		})
+	})
+
 	it('issues the coupon from its wake even when bridge slots were missed', () => {
 		const started = startJourney()
 		const { awaiting, pitched, coupon } = issueCoupon(started.next)
@@ -304,6 +452,58 @@ describe('evergreen offer journey production core', () => {
 		expect(pitched.next.phase).toBe('pitch.running')
 		expect(pitched.next.messagePlan.pitch).toHaveLength(5)
 		expect(pitched.wakeIntents).toHaveLength(6)
+	})
+
+	it('commits one verified-user binding intent before accepting its receipt', () => {
+		const started = startJourney()
+		const { pitched, coupon } = issueCoupon(started.next)
+		const verifiedUserId = value(parseVerifiedUserId('user_verified_test'))
+		const observed = accepted(
+			decide({
+				snapshot: pitched.next,
+				stimulus: {
+					type: 'VerifiedUserObserved',
+					stimulusId: value(parseStimulusId('stimulus_verified_user')),
+					journeyId: pitched.next.journeyId,
+					verifiedUserId,
+					observedAt: instant('2026-09-10T17:00:00.000Z'),
+					sourceReference: 'user:user_verified_test',
+				},
+				now: '2026-09-10T17:00:00.000Z',
+			}),
+		)
+		const bindIntent = observed.sideEffectIntents[0]
+		expect(bindIntent).toEqual(
+			expect.objectContaining({
+				type: 'BindCoupon',
+				verifiedUserId,
+			}),
+		)
+		const intentKey = couponBindingIntentKey({
+			journeyId: pitched.next.journeyId,
+			verifiedUserId,
+		})
+		const bound = accepted(
+			decide({
+				snapshot: observed.next,
+				stimulus: {
+					type: 'CouponBoundToUser',
+					stimulusId: value(parseStimulusId('stimulus_coupon_bound')),
+					journeyId: observed.next.journeyId,
+					intentKey,
+					couponId: coupon.couponId,
+					verifiedUserId,
+					boundAt: instant('2026-09-10T17:00:05.000Z'),
+				},
+				now: '2026-09-10T17:00:05.000Z',
+			}),
+		)
+
+		expect(bound.next.coupon?.binding).toEqual({
+			type: 'BoundToVerifiedUser',
+			verifiedUserId,
+			boundAt: '2026-09-10T17:00:05.000Z',
+		})
 	})
 
 	it('lets P3 send on schedule after a message-local P2 refusal', () => {
@@ -386,6 +586,57 @@ describe('evergreen offer journey production core', () => {
 		])
 	})
 
+	it('lets fresh purchase authority win over a pending provider receipt', () => {
+		const started = startJourney()
+		const b1Wake = started.wakeIntents[0]!
+		const committed = accepted(
+			decide({
+				snapshot: started.next,
+				stimulus: wakeStimulus(started.next, b1Wake, 'b1-before-purchase'),
+				now: b1Wake.dueAt,
+			}),
+		)
+		const intent = committed.sideEffectIntents[0]
+		if (!intent || intent.type !== 'SendMessage') {
+			throw new Error('B1 send intent missing')
+		}
+		const purchased = accepted(
+			decide({
+				snapshot: committed.next,
+				stimulus: {
+					type: 'DeliverySettled',
+					stimulusId: value(parseStimulusId('stimulus_late_b1_receipt')),
+					journeyId: committed.next.journeyId,
+					slotId: intent.slotId,
+					intentKey: intent.idempotencyKey,
+					settledAt: instant('2026-09-05T16:02:00.000Z'),
+					outcome: {
+						type: 'Applied',
+						providerReceiptId: 'provider_receipt_b1',
+					},
+				},
+				now: '2026-09-05T16:02:00.000Z',
+				currentFacts: facts({
+					purchase: {
+						purchaseId: 'purchase_before_receipt',
+						offerProductFamily: 'ai-coding-crash-course',
+						sourceProductId: EVERGREEN_OFFER_PRODUCT_ID,
+						purchasedAt: instant('2026-09-05T16:01:00.000Z'),
+						sourceReference: 'purchase:purchase_before_receipt',
+					},
+				}),
+			}),
+		)
+
+		expect(purchased.next.phase).toBe('customer')
+		expect(purchased.events).toEqual([
+			expect.objectContaining({
+				type: 'JourneyExited',
+				details: { reason: 'Purchased' },
+			}),
+		])
+	})
+
 	it('stops future work when current purchase authority reports ownership', () => {
 		const started = startJourney()
 		const b1Wake = started.wakeIntents[0]!
@@ -397,7 +648,8 @@ describe('evergreen offer journey production core', () => {
 				currentFacts: facts({
 					purchase: {
 						purchaseId: 'purchase_test',
-						productId: EVERGREEN_OFFER_PRODUCT_ID,
+						offerProductFamily: 'ai-coding-crash-course',
+						sourceProductId: EVERGREEN_OFFER_PRODUCT_ID,
 						purchasedAt: instant('2026-09-05T15:59:00.000Z'),
 						sourceReference: 'purchase:purchase_test',
 					},

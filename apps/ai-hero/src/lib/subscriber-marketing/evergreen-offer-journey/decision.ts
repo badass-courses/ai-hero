@@ -30,12 +30,17 @@ import {
 	messageIntentKey,
 	scheduleWakeId,
 	shadowIntentKey,
+	type IntentKey,
 	type IsoInstant,
 } from './primitives'
 
 export function decideEvergreenOfferJourney(
 	input: DecideEvergreenOfferJourneyInput,
 ): JourneyDecisionResult {
+	const definitionError = validateDefinition(input.definition)
+	if (definitionError) {
+		return decisionError('InvariantViolation', definitionError)
+	}
 	if (!input.snapshot) return startJourney(input)
 	if (input.stimulus.type === 'CourseCompleted') {
 		return ignored('JourneyAlreadyStarted', input.snapshot)
@@ -47,6 +52,17 @@ export function decideEvergreenOfferJourney(
 		return decisionError(
 			'InvariantViolation',
 			'Current authority belongs to another contact',
+		)
+	}
+	if (
+		input.snapshot.messagePlan.definitionVersion !==
+			input.definition.definitionVersion ||
+		input.snapshot.messagePlan.messagePlanSourceHash !==
+			input.definition.messagePlanSourceHash
+	) {
+		return decisionError(
+			'InvariantViolation',
+			'Runtime definition does not match the journey pinned at entry',
 		)
 	}
 	if (isFinal(input.snapshot)) return ignored('JourneyFinal', input.snapshot)
@@ -64,6 +80,8 @@ export function decideEvergreenOfferJourney(
 			return handleDeliverySettled(activeInput, input.stimulus)
 		case 'CouponIssued':
 			return handleCouponIssued(activeInput)
+		case 'VerifiedUserObserved':
+			return handleVerifiedUserObserved(activeInput)
 		case 'CouponBoundToUser':
 			return handleCouponBound(activeInput)
 		case 'ShadowNewsletterEntered':
@@ -90,6 +108,12 @@ function startJourney(
 ): JourneyDecisionResult {
 	if (input.stimulus.type !== 'CourseCompleted') {
 		return ignored('UnexpectedStimulusForPhase', null)
+	}
+	if (input.currentFacts.contactId !== input.stimulus.contactId) {
+		return decisionError(
+			'InvariantViolation',
+			'Current authority belongs to another entry contact',
+		)
 	}
 	const eligibility = decideEvergreenOfferEligibility(input.currentFacts)
 	if (eligibility.type === 'Ineligible') {
@@ -167,7 +191,7 @@ function handleWake(
 				'Message wake does not match the committed slot schedule',
 			)
 		}
-		if (expired.events.length > 0 && slot.status === 'Missed') {
+		if (expired.events.length > 0 && slot.status !== 'Scheduled') {
 			return accepted({
 				input,
 				from: input.snapshot.phase,
@@ -244,6 +268,9 @@ function handleWake(
 				'InvariantViolation',
 				'Coupon wake does not match the committed bridge schedule',
 			)
+		}
+		if (Date.parse(input.now) < Date.parse(stimulus.dueAt)) {
+			return ignored('SlotNotOpen', current)
 		}
 		const phase = requirePhase(current.phase, { type: 'COUPON_WAKE' })
 		if (!phase.ok) return phase
@@ -338,7 +365,10 @@ function handleDeliverySettled(
 		(candidate) => candidate.slotId === stimulus.slotId,
 	)
 	if (!slot) return ignored('UnknownSlot', input.snapshot)
-	if (slot.status !== 'IntentCommitted') {
+	if (
+		slot.status !== 'IntentCommitted' &&
+		!(slot.status === 'Missed' && slot.intentKey)
+	) {
 		return ignored('SlotAlreadySettled', input.snapshot)
 	}
 	if (slot.intentKey !== stimulus.intentKey) {
@@ -370,6 +400,7 @@ function handleDeliverySettled(
 			events: [
 				event('MessageSettled', input.now, {
 					slotId: slot.slotId,
+					intentKey: stimulus.intentKey,
 					outcome: stimulus.outcome.type,
 				}),
 				event('JourneyExited', input.now, { reason: exit.type }),
@@ -396,6 +427,7 @@ function handleDeliverySettled(
 		events: [
 			event('MessageSettled', input.now, {
 				slotId: slot.slotId,
+				intentKey: stimulus.intentKey,
 				outcome: stimulus.outcome.type,
 			}),
 		],
@@ -432,6 +464,12 @@ function handleCouponIssued(
 		return decisionError(
 			'InvariantViolation',
 			'Coupon receipt does not match the committed opening or time zone',
+		)
+	}
+	if (stimulus.coupon.binding.type !== 'AwaitingVerifiedUser') {
+		return decisionError(
+			'InvariantViolation',
+			'Coupon must enter the journey before verified-user binding',
 		)
 	}
 	if (
@@ -482,6 +520,78 @@ function handleCouponIssued(
 	})
 }
 
+function handleVerifiedUserObserved(
+	input: DecideEvergreenOfferJourneyInput & {
+		snapshot: ActiveJourneyAggregate
+	},
+): JourneyDecisionResult {
+	const stimulus = input.stimulus
+	if (
+		stimulus.type !== 'VerifiedUserObserved' ||
+		(input.snapshot.phase !== 'pitch.running' &&
+			input.snapshot.phase !== 'handoff.awaitingReceipt') ||
+		!input.snapshot.coupon
+	) {
+		return ignored('UnexpectedStimulusForPhase', input.snapshot)
+	}
+	const binding = input.snapshot.coupon.binding
+	if (binding.type === 'BoundToVerifiedUser') {
+		return binding.verifiedUserId === stimulus.verifiedUserId
+			? ignored('CouponAlreadyBound', input.snapshot)
+			: decisionError(
+					'InvariantViolation',
+					'Coupon is already bound to another verified user',
+				)
+	}
+	if (binding.type === 'BindingIntentCommitted') {
+		return binding.verifiedUserId === stimulus.verifiedUserId
+			? ignored('CouponBindingIntentAlreadyCommitted', input.snapshot)
+			: decisionError(
+					'InvariantViolation',
+					'Coupon binding is already committed for another verified user',
+				)
+	}
+	const idempotencyKey = couponBindingIntentKey({
+		journeyId: input.snapshot.journeyId,
+		verifiedUserId: stimulus.verifiedUserId,
+	})
+	const next: ActiveJourneyAggregate = {
+		...input.snapshot,
+		coupon: {
+			...input.snapshot.coupon,
+			binding: {
+				type: 'BindingIntentCommitted',
+				verifiedUserId: stimulus.verifiedUserId,
+				intentKey: idempotencyKey,
+				committedAt: input.now,
+			},
+		},
+		version: input.snapshot.version + 1,
+	}
+	return accepted({
+		input,
+		from: input.snapshot.phase,
+		next,
+		events: [
+			event('CouponBindingIntentCommitted', input.now, {
+				couponId: input.snapshot.coupon.couponId,
+				verifiedUserId: stimulus.verifiedUserId,
+				intentKey: idempotencyKey,
+			}),
+		],
+		sideEffectIntents: [
+			{
+				type: 'BindCoupon',
+				idempotencyKey,
+				journeyId: input.snapshot.journeyId,
+				couponId: input.snapshot.coupon.couponId,
+				contactId: input.snapshot.contactId,
+				verifiedUserId: stimulus.verifiedUserId,
+			},
+		],
+	})
+}
+
 function handleCouponBound(
 	input: DecideEvergreenOfferJourneyInput & {
 		snapshot: ActiveJourneyAggregate
@@ -500,6 +610,34 @@ function handleCouponBound(
 		return decisionError(
 			'InvariantViolation',
 			'Coupon binding receipt belongs to another coupon',
+		)
+	}
+	const binding = input.snapshot.coupon.binding
+	if (binding.type === 'AwaitingVerifiedUser') {
+		return decisionError(
+			'InvariantViolation',
+			'Coupon binding receipt arrived before its intent was committed',
+		)
+	}
+	if (binding.type === 'BoundToVerifiedUser') {
+		return binding.verifiedUserId === stimulus.verifiedUserId
+			? ignored('CouponAlreadyBound', input.snapshot)
+			: decisionError(
+					'InvariantViolation',
+					'Coupon is already bound to another verified user',
+				)
+	}
+	if (binding.verifiedUserId !== stimulus.verifiedUserId) {
+		return decisionError(
+			'InvariantViolation',
+			'Coupon binding receipt belongs to another verified user',
+		)
+	}
+	const expectedIntentKey = binding.intentKey
+	if (stimulus.intentKey !== expectedIntentKey) {
+		return decisionError(
+			'InvariantViolation',
+			'Coupon binding receipt does not match its semantic intent',
 		)
 	}
 	const next: ActiveJourneyAggregate = {
@@ -521,10 +659,7 @@ function handleCouponBound(
 		events: [
 			event('CouponBindingRecorded', input.now, {
 				couponId: stimulus.couponId,
-				bindingIntentKey: couponBindingIntentKey({
-					journeyId: input.snapshot.journeyId,
-					verifiedUserId: stimulus.verifiedUserId,
-				}),
+				bindingIntentKey: expectedIntentKey,
 			}),
 		],
 	})
@@ -580,6 +715,12 @@ function handlePermanentRefusal(
 		return ignored('UnexpectedStimulusForPhase', input.snapshot)
 	}
 	if (stimulus.scope === 'Contact') {
+		if (!contactRefusalMatchesCommittedIntent(input.snapshot, stimulus.intentKey)) {
+			return decisionError(
+				'InvariantViolation',
+				'Contact refusal does not match a committed journey intent',
+			)
+		}
 		return stopJourney(input, {
 			type: 'PermanentFailure',
 			observedAt: stimulus.observedAt,
@@ -593,8 +734,14 @@ function handlePermanentRefusal(
 	if (slot.status !== 'IntentCommitted') {
 		return ignored('SlotAlreadySettled', input.snapshot)
 	}
+	if (slot.intentKey !== stimulus.intentKey) {
+		return decisionError(
+			'InvariantViolation',
+			'Message refusal intent key does not match the committed slot intent',
+		)
+	}
 	const refused: MessageSlot = {
-		...slot,
+		...messageSlotBase(slot),
 		status: 'Refused',
 		intentKey: stimulus.intentKey,
 		settledAt: stimulus.observedAt,
@@ -607,6 +754,7 @@ function handlePermanentRefusal(
 		events: [
 			event('MessageSettled', input.now, {
 				slotId: stimulus.slotId,
+				intentKey: stimulus.intentKey,
 				outcome: 'MessageRefused',
 			}),
 		],
@@ -642,6 +790,34 @@ function hardStopFromInput(
 			reason: stimulus.reason,
 		})
 	}
+	if (input.currentFacts.purchase) {
+		return customerJourney(input, input.currentFacts.purchase)
+	}
+	if (input.currentFacts.delivery.type !== 'Eligible') {
+		switch (input.currentFacts.delivery.type) {
+			case 'Unsubscribed':
+				return stopJourney(input, {
+					type: 'Unsubscribed',
+					observedAt: input.now,
+				})
+			case 'Suppressed':
+				return stopJourney(input, {
+					type: 'Suppressed',
+					observedAt: input.now,
+					reason: input.currentFacts.delivery.evidence,
+				})
+			case 'Undeliverable':
+				return stopJourney(input, {
+					type: 'PermanentFailure',
+					observedAt: input.now,
+					reason: input.currentFacts.delivery.evidence,
+				})
+			default: {
+				const unreachable: never = input.currentFacts.delivery
+				return unreachable
+			}
+		}
+	}
 	if (stimulus.type !== 'WakeDue') return undefined
 	if (input.currentFacts.automationControl.type === 'Stopped') {
 		return {
@@ -658,34 +834,35 @@ function hardStopFromInput(
 			},
 		}
 	}
-	if (input.currentFacts.purchase) {
-		return customerJourney(input, input.currentFacts.purchase)
+	return undefined
+}
+
+function contactRefusalMatchesCommittedIntent(
+	aggregate: ActiveJourneyAggregate,
+	intentKey: IntentKey,
+) {
+	if (
+		aggregate.phase === 'coupon.awaitingReceipt' &&
+		intentKey === couponIntentKey(aggregate.journeyId)
+	) {
+		return true
 	}
-	switch (input.currentFacts.delivery.type) {
-		case 'Eligible':
-			return undefined
-		case 'Unsubscribed':
-			return stopJourney(input, {
-				type: 'Unsubscribed',
-				observedAt: input.now,
-			})
-		case 'Suppressed':
-			return stopJourney(input, {
-				type: 'Suppressed',
-				observedAt: input.now,
-				reason: input.currentFacts.delivery.evidence,
-			})
-		case 'Undeliverable':
-			return stopJourney(input, {
-				type: 'PermanentFailure',
-				observedAt: input.now,
-				reason: input.currentFacts.delivery.evidence,
-			})
-		default: {
-			const unreachable: never = input.currentFacts.delivery
-			return unreachable
-		}
+	if (
+		aggregate.phase === 'handoff.awaitingReceipt' &&
+		intentKey === shadowIntentKey(aggregate.journeyId)
+	) {
+		return true
 	}
+	if (
+		aggregate.coupon?.binding.type === 'BindingIntentCommitted' &&
+		aggregate.coupon.binding.intentKey === intentKey
+	) {
+		return true
+	}
+	return allSlots(aggregate).some(
+		(slot) =>
+			slot.status === 'IntentCommitted' && slot.intentKey === intentKey,
+	)
 }
 
 function customerJourney(
@@ -747,11 +924,32 @@ function stopJourney(
 	})
 }
 
+type MessageSlotBaseFields = Pick<
+	MessageSlot,
+	| 'slotId'
+	| 'contentResourceId'
+	| 'presentation'
+	| 'phase'
+	| 'dueAt'
+	| 'windowEndsAt'
+>
+
+function messageSlotBase(slot: MessageSlot): MessageSlotBaseFields {
+	return {
+		slotId: slot.slotId,
+		contentResourceId: slot.contentResourceId,
+		presentation: slot.presentation,
+		phase: slot.phase,
+		dueAt: slot.dueAt,
+		windowEndsAt: slot.windowEndsAt,
+	}
+}
+
 function settledSlot(slot: MessageSlot, stimulus: DeliverySettled): MessageSlot {
 	switch (stimulus.outcome.type) {
 		case 'Applied':
 			return {
-				...slot,
+				...messageSlotBase(slot),
 				status: 'Applied',
 				intentKey: stimulus.intentKey,
 				settledAt: stimulus.settledAt,
@@ -760,7 +958,7 @@ function settledSlot(slot: MessageSlot, stimulus: DeliverySettled): MessageSlot 
 		case 'MessageRefused':
 		case 'ContactUndeliverable':
 			return {
-				...slot,
+				...messageSlotBase(slot),
 				status: 'Refused',
 				intentKey: stimulus.intentKey,
 				settledAt: stimulus.settledAt,
@@ -768,7 +966,7 @@ function settledSlot(slot: MessageSlot, stimulus: DeliverySettled): MessageSlot 
 			}
 		case 'Ambiguous':
 			return {
-				...slot,
+				...messageSlotBase(slot),
 				status: 'Ambiguous',
 				intentKey: stimulus.intentKey,
 				settledAt: stimulus.settledAt,
@@ -796,10 +994,18 @@ function markExpiredSlots(
 			(slot.status === 'Scheduled' || slot.status === 'IntentCommitted') &&
 			Date.parse(now) >= Date.parse(slot.windowEndsAt)
 		) {
-			events.push(event('MessageMissed', now, { slotId: slot.slotId }))
+			events.push(
+				event('MessageMissed', now, {
+					slotId: slot.slotId,
+					intentKey:
+						slot.status === 'IntentCommitted' ? slot.intentKey : null,
+				}),
+			)
 			return {
-				...slot,
+				...messageSlotBase(slot),
 				status: 'Missed',
+				intentKey:
+					slot.status === 'IntentCommitted' ? slot.intentKey : null,
 				missedAt: now,
 				reason: 'DeliveryWindowClosed',
 			}
@@ -974,6 +1180,23 @@ function event<Type extends JourneyDomainEvent['type']>(
 		JourneyDomainEvent,
 		{ type: Type }
 	>
+}
+
+function validateDefinition(
+	definition: DecideEvergreenOfferJourneyInput['definition'],
+): string | null {
+	const messages = [...definition.bridge, ...definition.pitch]
+	const slotIds = messages.map((message) => message.slotId)
+	if (new Set(slotIds).size !== slotIds.length) {
+		return 'Journey definition contains duplicate message slot IDs'
+	}
+	const contentResourceIds = messages.map(
+		(message) => message.contentResourceId,
+	)
+	if (new Set(contentResourceIds).size !== contentResourceIds.length) {
+		return 'Journey definition contains duplicate content resource IDs'
+	}
+	return null
 }
 
 function isFinal(

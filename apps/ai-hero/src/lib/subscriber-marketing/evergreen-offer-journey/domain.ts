@@ -86,6 +86,12 @@ export type CouponTerms = {
 export type CouponBinding =
 	| { readonly type: 'AwaitingVerifiedUser' }
 	| {
+			readonly type: 'BindingIntentCommitted'
+			readonly verifiedUserId: VerifiedUserId
+			readonly intentKey: IntentKey
+			readonly committedAt: IsoInstant
+	  }
+	| {
 			readonly type: 'BoundToVerifiedUser'
 			readonly verifiedUserId: VerifiedUserId
 			readonly boundAt: IsoInstant
@@ -109,10 +115,20 @@ export type CouponIssued = {
 	readonly coupon: IssuedCoupon
 }
 
+export type VerifiedUserObserved = {
+	readonly type: 'VerifiedUserObserved'
+	readonly stimulusId: StimulusId
+	readonly journeyId: JourneyId
+	readonly verifiedUserId: VerifiedUserId
+	readonly observedAt: IsoInstant
+	readonly sourceReference: string
+}
+
 export type CouponBoundToUser = {
 	readonly type: 'CouponBoundToUser'
 	readonly stimulusId: StimulusId
 	readonly journeyId: JourneyId
+	readonly intentKey: IntentKey
 	readonly couponId: CouponId
 	readonly verifiedUserId: VerifiedUserId
 	readonly boundAt: IsoInstant
@@ -129,7 +145,8 @@ export type ShadowNewsletterEntered = {
 
 export type PurchaseFact = {
 	readonly purchaseId: string
-	readonly productId: string
+	readonly offerProductFamily: 'ai-coding-crash-course'
+	readonly sourceProductId: string
 	readonly purchasedAt: IsoInstant
 	readonly sourceReference: string
 }
@@ -187,6 +204,7 @@ export type EvergreenOfferStimulus =
 	| WakeDue
 	| DeliverySettled
 	| CouponIssued
+	| VerifiedUserObserved
 	| CouponBoundToUser
 	| ShadowNewsletterEntered
 	| PurchaseObserved
@@ -293,6 +311,7 @@ export type MessageSlot =
 	  })
 	| (MessageSlotBase & {
 			readonly status: 'Missed'
+			readonly intentKey: IntentKey | null
 			readonly missedAt: IsoInstant
 			readonly reason: 'DeliveryWindowClosed'
 	  })
@@ -453,12 +472,16 @@ export type JourneyDomainEvent =
 			readonly type: 'MessageSettled'
 			readonly details: {
 				readonly slotId: MessageSlotId
+				readonly intentKey: IntentKey
 				readonly outcome: DeliveryOutcome['type']
 			}
 	  })
 	| (JourneyDomainEventBase & {
 			readonly type: 'MessageMissed'
-			readonly details: { readonly slotId: MessageSlotId }
+			readonly details: {
+				readonly slotId: MessageSlotId
+				readonly intentKey: IntentKey | null
+			}
 	  })
 	| (JourneyDomainEventBase & {
 			readonly type: 'CouponIntentCommitted'
@@ -469,6 +492,14 @@ export type JourneyDomainEvent =
 			readonly details: {
 				readonly couponId: CouponId
 				readonly expiresAt: IsoInstant
+			}
+	  })
+	| (JourneyDomainEventBase & {
+			readonly type: 'CouponBindingIntentCommitted'
+			readonly details: {
+				readonly couponId: CouponId
+				readonly verifiedUserId: VerifiedUserId
+				readonly intentKey: IntentKey
 			}
 	  })
 	| (JourneyDomainEventBase & {
@@ -515,6 +546,8 @@ export type JourneyDecision =
 				| 'UnknownSlot'
 				| 'SlotAlreadySettled'
 				| 'SlotIntentAlreadyCommitted'
+				| 'CouponAlreadyBound'
+				| 'CouponBindingIntentAlreadyCommitted'
 				| 'SlotNotOpen'
 				| 'UnexpectedStimulusForPhase'
 			readonly current: EvergreenOfferJourneyAggregate | null
