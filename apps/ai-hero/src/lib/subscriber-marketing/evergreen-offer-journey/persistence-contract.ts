@@ -20,6 +20,8 @@ export const EVERGREEN_OFFER_JOURNEY_STIMULUS_FORMAT =
 	'evergreen-offer-journey.stimulus.v1' as const
 export const EVERGREEN_OFFER_JOURNEY_RECEIPT_FORMAT =
 	'evergreen-offer-journey.receipt.v1' as const
+export const EVERGREEN_OFFER_JOURNEY_COMMIT_FORMAT =
+	'evergreen-offer-journey.commit.v1' as const
 
 export type JourneySnapshotRecord = {
 	readonly format: typeof EVERGREEN_OFFER_JOURNEY_SNAPSHOT_FORMAT

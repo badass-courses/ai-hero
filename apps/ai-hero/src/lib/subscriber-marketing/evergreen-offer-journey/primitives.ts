@@ -115,6 +115,10 @@ export function parseVerifiedUserId(value: string) {
 	})
 }
 
+export function parseWakeId(value: string) {
+	return parseNonBlankBrand<'WakeId'>({ field: 'wakeId', value })
+}
+
 export function parseIsoInstant(value: string): ParseResult<IsoInstant> {
 	const candidate = value.trim()
 	if (candidate.length === 0) {

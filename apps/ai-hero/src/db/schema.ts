@@ -817,6 +817,12 @@ export const sideEffectIntent = mysqlTable(
 	}),
 )
 
+export {
+	evergreenOfferJourneyIntent,
+	evergreenOfferJourneyCommit,
+	evergreenOfferJourneyWake,
+} from './evergreen-offer-journey-schema'
+
 export const valuePathCertificateShare = mysqlTable(
 	'ValuePathCertificateShare',
 	{
