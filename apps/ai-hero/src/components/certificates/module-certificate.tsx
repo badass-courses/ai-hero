@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { CertificateShareActions } from '@/components/certificates/certificate-share-actions'
+import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { env } from '@/env.mjs'
 import { api } from '@/trpc/react'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -21,6 +21,7 @@ import {
 	DialogTitle,
 	DialogTrigger,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
@@ -34,54 +35,32 @@ const formSchema = z.object({
 	name: z.string().min(1),
 })
 
-export function buildCertificateApiUrl(input: {
-	baseUrl: string
-	resourceIdOrSlug: string
-	userId?: string
-}) {
-	const url = new URL('/api/certificates', input.baseUrl)
-	url.searchParams.set('resource', input.resourceIdOrSlug)
-	if (input.userId) url.searchParams.set('user', input.userId)
-	return url
-}
-
-export function certificateShareButtonLabel(input: {
-	variant: ModuleCertificateVariant
-	hasShareUrl: boolean
-	shouldRegenerate: boolean
-	isGenerating: boolean
-	fallback?: React.ReactNode
-}) {
-	if (input.isGenerating) return 'Generating...'
-	if (input.variant === 'crash-course' && input.hasShareUrl) {
-		return 'Share link ready'
-	}
-	if (input.hasShareUrl || input.shouldRegenerate) return 'Regenerate'
-	return input.fallback || 'Generate'
-}
-
-export type ModuleCertificateVariant = 'legacy' | 'crash-course'
-
 type ModuleCertificateContextType = {
 	resourceIdOrSlug: string
-	variant: ModuleCertificateVariant
 }
 
 type RootProps = {
 	className?: string
-	variant?: ModuleCertificateVariant
-	resourceIdOrSlug: string
-}
+} & ModuleCertificateContextType
 
 type InternalContextProps = {
 	onSubmit: (values: z.infer<typeof formSchema>) => Promise<void>
 	saveCertificateName: (name: string) => Promise<void>
-	generateShareUrl: () => Promise<void>
 	form: UseFormReturn<z.infer<typeof formSchema>>
 	session: Session | null
-	shareUrl?: string | null
-	shareUrlError: string | null
-	isGeneratingShare: boolean
+	certApiUrl: string
+	// cloudinary uploader
+	uploadToCloudinary: ReturnType<
+		typeof api.certificate.upload.useMutation
+	>['mutateAsync']
+	uploadToCloudinaryStatus: ReturnType<
+		typeof api.certificate.upload.useMutation
+	>['status']
+	cloudinaryUrlStatus: ReturnType<typeof api.certificate.get.useQuery>['status']
+	cloudinaryUrl?: { secure_url: string } | null
+	setCloudinaryUrlError: (error: string) => void
+	cloudinaryUrlError: string | null
+	refetchCloudinaryUrl: () => void
 }
 
 const ModuleCertificateContext = React.createContext<
@@ -112,14 +91,13 @@ export const useModuleCertificate = () => {
 
 const Root: React.FC<React.PropsWithChildren<RootProps>> = ({
 	children,
-	variant = 'legacy',
+	className,
 	...props
 }) => {
-	const [shareUrlError, setShareUrlError] = React.useState<string | null>(null)
-	const [crashCourseShareUrl, setCrashCourseShareUrl] = React.useState<
+	const [cloudinaryUrlError, setCloudinaryUrlError] = React.useState<
 		string | null
 	>(null)
-	const { data: session, update: updateSession } = useSession()
+	const { data: session, update: updateSession, status } = useSession()
 	const { mutateAsync: updateName } = api.users.updateName.useMutation()
 
 	const form = useForm<z.infer<typeof formSchema>>({
@@ -134,11 +112,7 @@ const Root: React.FC<React.PropsWithChildren<RootProps>> = ({
 	})
 
 	const userId = session?.user?.id
-	const certApiUrl = buildCertificateApiUrl({
-		baseUrl: env.NEXT_PUBLIC_URL,
-		resourceIdOrSlug: props.resourceIdOrSlug,
-		userId,
-	})
+	const certApiUrl = `${env.NEXT_PUBLIC_URL}/api/certificates?resource=${props.resourceIdOrSlug}&user=${userId}`
 
 	async function downloadCertificate() {
 		try {
@@ -201,46 +175,14 @@ const Root: React.FC<React.PropsWithChildren<RootProps>> = ({
 
 	const { mutateAsync: uploadToCloudinary, status: uploadToCloudinaryStatus } =
 		api.certificate.upload.useMutation()
+
 	const {
-		mutateAsync: ensureCrashCourseShare,
-		status: crashCourseShareStatus,
-	} = api.certificate.ensureCrashCourseShare.useMutation()
-	const { data: cloudinaryUrl, refetch: refetchCloudinaryUrl } =
-		api.certificate.get.useQuery(
-			{ resourceIdOrSlug: props.resourceIdOrSlug },
-			{ enabled: variant === 'legacy' },
-		)
-
-	async function generateShareUrl() {
-		setShareUrlError(null)
-		if (variant === 'crash-course') {
-			const result = await ensureCrashCourseShare()
-			if (!result.available) {
-				setShareUrlError(
-					'Your certificate is ready, but the share link could not be created. Try again.',
-				)
-				return
-			}
-			setCrashCourseShareUrl(result.permalink)
-			return
-		}
-
-		const result = await uploadToCloudinary({
-			imagePath: certApiUrl.toString(),
-			resourceIdOrSlug: props.resourceIdOrSlug,
-		})
-		if (result?.error) {
-			setShareUrlError(result.error)
-			return
-		}
-		await refetchCloudinaryUrl()
-	}
-
-	const shareUrl =
-		variant === 'crash-course' ? crashCourseShareUrl : cloudinaryUrl?.secure_url
-	const isGeneratingShare =
-		uploadToCloudinaryStatus === 'pending' ||
-		crashCourseShareStatus === 'pending'
+		data: cloudinaryUrl,
+		status: cloudinaryUrlStatus,
+		refetch: refetchCloudinaryUrl,
+	} = api.certificate.get.useQuery({
+		resourceIdOrSlug: props.resourceIdOrSlug,
+	})
 
 	return (
 		<ModuleCertificateProvider
@@ -248,12 +190,15 @@ const Root: React.FC<React.PropsWithChildren<RootProps>> = ({
 			form={form}
 			session={session}
 			saveCertificateName={saveCertificateName}
-			generateShareUrl={generateShareUrl}
-			shareUrl={shareUrl}
-			shareUrlError={shareUrlError}
-			isGeneratingShare={isGeneratingShare}
-			resourceIdOrSlug={props.resourceIdOrSlug}
-			variant={variant}
+			certApiUrl={certApiUrl}
+			uploadToCloudinary={uploadToCloudinary}
+			uploadToCloudinaryStatus={uploadToCloudinaryStatus}
+			cloudinaryUrl={cloudinaryUrl}
+			cloudinaryUrlStatus={cloudinaryUrlStatus}
+			cloudinaryUrlError={cloudinaryUrlError}
+			setCloudinaryUrlError={setCloudinaryUrlError}
+			refetchCloudinaryUrl={refetchCloudinaryUrl}
+			{...props}
 		>
 			<DialogRoot>{children}</DialogRoot>
 		</ModuleCertificateProvider>
@@ -322,7 +267,7 @@ const NameInput: React.FC<{ className?: string }> = ({ className }) => {
 		<FormField
 			control={form.control}
 			name="name"
-			render={({ field }) => {
+			render={({ field, fieldState }) => {
 				return (
 					<FormItem>
 						<FormLabel>Name on the certificate</FormLabel>
@@ -339,7 +284,7 @@ const NameInput: React.FC<{ className?: string }> = ({ className }) => {
 
 const DownloadButton: React.FC<
 	React.PropsWithChildren<{ className?: string }>
-> = ({ children }) => {
+> = ({ className, children }) => {
 	const { form, session } = useModuleCertificate()
 
 	return (
@@ -357,32 +302,38 @@ const DownloadButton: React.FC<
 
 const ShareUrl: React.FC<React.PropsWithChildren<{ className?: string }>> = ({
 	className,
+	children,
 }) => {
-	const { shareUrl, shareUrlError } = useModuleCertificate()
+	const { cloudinaryUrl, cloudinaryUrlError, cloudinaryUrlStatus } =
+		useModuleCertificate()
 
 	return (
-		<div className="relative flex w-full items-center">
-			<Input
-				className={cn('rounded-l-none border-l-0', className, {
-					'rounded-r-none border-r-0': shareUrl,
-				})}
-				type="url"
-				disabled={!shareUrl}
-				value={shareUrl || shareUrlError || ''}
-				readOnly
-			/>
-			{shareUrl ? (
-				<Button
-					type="button"
-					className="rounded-l-none"
-					size="icon"
-					variant="outline"
-					onClick={() => navigator.clipboard.writeText(shareUrl)}
-				>
-					<ClipboardCopyIcon className="h-4 w-4" />
-				</Button>
-			) : null}
-		</div>
+		<>
+			<div className="relative flex w-full items-center">
+				<Input
+					className={cn('rounded-l-none border-l-0', className, {
+						'rounded-r-none border-r-0': cloudinaryUrl?.secure_url,
+					})}
+					type="url"
+					disabled={!cloudinaryUrl?.secure_url}
+					value={cloudinaryUrl?.secure_url || cloudinaryUrlError || ''}
+					readOnly
+				/>
+				{cloudinaryUrl?.secure_url && (
+					<Button
+						type="button"
+						className="rounded-l-none"
+						size="icon"
+						variant="outline"
+						onClick={() => {
+							navigator.clipboard.writeText(cloudinaryUrl?.secure_url)
+						}}
+					>
+						<ClipboardCopyIcon className="h-4 w-4" />
+					</Button>
+				)}
+			</div>
+		</>
 	)
 }
 
@@ -390,22 +341,23 @@ const GenerateShareUrlButton: React.FC<
 	React.PropsWithChildren<{ className?: string }>
 > = ({ className, children }) => {
 	const {
+		certApiUrl,
+		resourceIdOrSlug,
+		cloudinaryUrl,
+		uploadToCloudinary,
+		uploadToCloudinaryStatus,
+		setCloudinaryUrlError,
+		refetchCloudinaryUrl,
 		form,
 		session,
 		saveCertificateName,
-		generateShareUrl,
-		shareUrl,
-		isGeneratingShare,
-		variant,
 	} = useModuleCertificate()
-	const hasShareUrl = Boolean(shareUrl)
-	const shouldRegenerate =
-		variant === 'legacy' &&
-		shouldRegenerateCertificateShare({
-			currentName: form.watch('name'),
-			savedName: session?.user?.name,
-			hasShareUrl,
-		})
+	const hasShareUrl = Boolean(cloudinaryUrl?.secure_url)
+	const shouldRegenerate = shouldRegenerateCertificateShare({
+		currentName: form.watch('name'),
+		savedName: session?.user?.name,
+		hasShareUrl,
+	})
 
 	return (
 		<Button
@@ -414,34 +366,33 @@ const GenerateShareUrlButton: React.FC<
 			disabled={
 				!session?.user.id ||
 				!form.formState.isValid ||
-				isGeneratingShare ||
-				(variant === 'crash-course' && hasShareUrl)
+				uploadToCloudinaryStatus === 'pending'
 			}
 			type="button"
 			onClick={async () => {
 				const isValid = await form.trigger('name')
 				if (!isValid) return
 
-				await saveCertificateName(form.getValues('name'))
-				await generateShareUrl()
+				const name = form.getValues('name')
+				await saveCertificateName(name)
+				const res = await uploadToCloudinary({
+					imagePath: certApiUrl,
+					resourceIdOrSlug: resourceIdOrSlug,
+				})
+				if (res.error) {
+					setCloudinaryUrlError(res.error)
+				} else {
+					refetchCloudinaryUrl()
+				}
 			}}
 		>
-			{certificateShareButtonLabel({
-				variant,
-				hasShareUrl,
-				shouldRegenerate,
-				isGenerating: isGeneratingShare,
-				fallback: children,
-			})}
+			{uploadToCloudinaryStatus === 'pending'
+				? 'Generating...'
+				: hasShareUrl || shouldRegenerate
+					? 'Regenerate'
+					: children || 'Generate'}
 		</Button>
 	)
-}
-
-const ShareActions = ({ courseName }: { courseName: string }) => {
-	const { shareUrl } = useModuleCertificate()
-	return shareUrl ? (
-		<CertificateShareActions courseName={courseName} permalink={shareUrl} />
-	) : null
 }
 
 export {
@@ -452,5 +403,4 @@ export {
 	DownloadButton,
 	ShareUrl,
 	GenerateShareUrlButton,
-	ShareActions,
 }

@@ -35,7 +35,6 @@ beforeEach(() => {
 	mocks.getPublicSkillsWorkflowCertificateShare.mockResolvedValue({
 		slug: 'opaque-public-certificate-slug-123',
 		learnerName: 'Joel Hooks',
-		resourceId: 'value-path:ai-hero-skills-workflow',
 		courseName: 'AI Hero Skills Workflow',
 		completedAt: new Date('2026-07-18T12:00:00.000Z'),
 	})
@@ -61,8 +60,8 @@ describe('certificate Open Graph image', () => {
 			expect.anything(),
 			expect.objectContaining({ width: 1200, height: 630 }),
 		)
-		expect(
-			JSON.stringify(mocks.imageResponse.mock.calls[0]?.[0]),
-		).not.toContain('contact-1')
+		expect(JSON.stringify(mocks.imageResponse.mock.calls[0]?.[0])).not.toContain(
+			'contact-1',
+		)
 	})
 })

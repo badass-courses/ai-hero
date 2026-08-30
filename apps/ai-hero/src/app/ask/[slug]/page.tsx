@@ -28,8 +28,9 @@ import {
 	readActiveGateDRuntimeAllowlist,
 	resolveGateDPreAuthorizedReviewReasons,
 } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
-import { CertificateShareActions } from '@/components/certificates/certificate-share-actions'
 import { Download, Plus } from 'lucide-react'
+
+import { CertificateShareActions } from './certificate-share-actions'
 
 export default async function ValuePathAnswerPage(props: {
 	params: Promise<{ slug: string }>
@@ -422,8 +423,7 @@ function CertificateTrophyPage({
 						</div>
 						<div className="max-w-[70ch] space-y-6">
 							<p className="text-xl font-medium leading-relaxed tracking-tight sm:text-2xl">
-								{answerPage.fields.headline ??
-									'Noted. Your certificate is ready.'}
+								{answerPage.fields.headline ?? 'Noted. Your certificate is ready.'}
 							</p>
 							{answerPage.fields.body ? (
 								<p className="text-base leading-relaxed opacity-80 sm:text-lg">

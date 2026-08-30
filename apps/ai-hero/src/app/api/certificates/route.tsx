@@ -11,17 +11,10 @@ import {
 	checkCohortCertificateEligibility,
 } from '@/lib/certificates'
 import {
-	isCrashCourseCertificateV1Enabled,
-	readCrashCourseCertificateGate,
-} from '@/lib/crash-course-certificate-gate'
-import { AI_CODING_CRASH_COURSE_FINAL_QUIZ } from '@/lib/crash-course-certificate-eligibility'
-import {
 	checkSkillsWorkflowValuePathCertificateEligibility,
 	isSkillsWorkflowCertificateResource,
 } from '@/lib/subscriber-marketing/value-path-certificates'
 import { getPublicSkillsWorkflowCertificateShare } from '@/lib/subscriber-marketing/value-path-certificate-shares'
-import { getServerAuthSession } from '@/server/auth'
-import { log } from '@/server/logger'
 import { format } from 'date-fns'
 import { and, eq, or, sql } from 'drizzle-orm'
 
@@ -51,12 +44,19 @@ export async function GET(request: Request) {
 				headers: { 'Content-Type': 'application/json' },
 			})
 		}
-		const requestedUserId = searchParams.get('user')
+		const userId = searchParams.get('user')
+		if (!publicShare && !userId) {
+			return new Response(JSON.stringify({ error: 'Missing user' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			})
+		}
+
 		const valuePathCertificate =
 			!publicShare &&
 			Boolean(
 				resourceSlugOrID &&
-				isSkillsWorkflowCertificateResource(resourceSlugOrID),
+					isSkillsWorkflowCertificateResource(resourceSlugOrID),
 			)
 		const resource =
 			publicShare || valuePathCertificate || !resourceSlugOrID
@@ -80,28 +80,6 @@ export async function GET(request: Request) {
 			})
 		}
 
-		const crashCourseGateEnabled = Boolean(
-			resource?.id === AI_CODING_CRASH_COURSE_FINAL_QUIZ.courseResourceId &&
-			isCrashCourseCertificateV1Enabled(),
-		)
-		let userId = requestedUserId
-		if (crashCourseGateEnabled) {
-			const { session } = await getServerAuthSession()
-			userId = session?.user?.id ?? null
-			if (!userId) {
-				return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-					status: 401,
-					headers: { 'Content-Type': 'application/json' },
-				})
-			}
-		}
-		if (!publicShare && !userId) {
-			return new Response(JSON.stringify({ error: 'Missing user' }), {
-				status: 400,
-				headers: { 'Content-Type': 'application/json' },
-			})
-		}
-
 		let isEligible = Boolean(publicShare)
 		let completedAt: Date | null | undefined = publicShare?.completedAt
 		let certificateTitle = publicShare?.courseName ?? resource?.fields?.title
@@ -112,45 +90,7 @@ export async function GET(request: Request) {
 				: 'Workshop'
 		let certificateName: string | null | undefined = publicShare?.learnerName
 
-		if (crashCourseGateEnabled && userId) {
-			const gate = await readCrashCourseCertificateGate({ userId })
-			if (gate.status === 'locked') {
-				return new Response(
-					JSON.stringify({
-						error: 'Certificate checkpoint incomplete',
-						reason: gate.reason,
-						correctAnswers: gate.correctAnswers,
-						requiredAnswers: gate.requiredAnswers,
-					}),
-					{
-						status: 422,
-						headers: { 'Content-Type': 'application/json' },
-					},
-				)
-			}
-			if (gate.status !== 'granted') {
-				await log.warn('certificate.crash_course.render_unavailable', {
-					userId,
-					reason:
-						gate.status === 'unavailable'
-							? gate.reason
-							: 'certificate-gate-disabled',
-				})
-				return new Response(
-					JSON.stringify({
-						error: 'Certificate check temporarily unavailable',
-					}),
-					{
-						status: 503,
-						headers: { 'Content-Type': 'application/json' },
-					},
-				)
-			}
-			isEligible = true
-			completedAt = gate.eligibility.completedAt
-			certificateTitle = 'AI Coding Crash Course'
-			certificateKind = 'Course'
-		} else if (valuePathCertificate) {
+		if (valuePathCertificate) {
 			const eligibility =
 				await checkSkillsWorkflowValuePathCertificateEligibility({
 					contactId: userId,
@@ -273,7 +213,7 @@ export async function GET(request: Request) {
 				headers:
 					publicShare && searchParams.get('download') === '1'
 						? {
-								'Content-Disposition': `attachment; filename="${certificateFilename(publicShare.learnerName, publicShare.courseName)}"`,
+								'Content-Disposition': `attachment; filename="${certificateFilename(publicShare.learnerName)}"`,
 							}
 						: undefined,
 				fonts: [
@@ -297,18 +237,10 @@ export async function GET(request: Request) {
 	}
 }
 
-function certificateFilename(learnerName: string, courseName: string) {
-	const safeName = filenamePart(learnerName) || 'ai-hero'
-	const safeCourse =
-		courseName === 'AI Hero Skills Workflow'
-			? 'skills-workflow'
-			: filenamePart(courseName) || 'course'
-	return `${safeName}-${safeCourse}-certificate.png`
-}
-
-function filenamePart(value: string) {
-	return value
+function certificateFilename(learnerName: string) {
+	const safeName = learnerName
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-|-$/g, '')
+	return `${safeName || 'ai-hero'}-skills-workflow-certificate.png`
 }

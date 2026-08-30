@@ -40,14 +40,11 @@ class MemoryShareRepository implements ValuePathCertificateShareRepository {
 		)
 	}
 
-	async findPublicBySlug(
-		slug: string,
-	): Promise<PublicValuePathCertificateShare | null> {
+	async findPublicBySlug(slug: string): Promise<PublicValuePathCertificateShare | null> {
 		const record = this.records.find((candidate) => candidate.slug === slug)
 		return record
 			? {
 					slug: record.slug,
-					resourceId: record.resourceId,
 					learnerName: record.learnerName,
 					courseName: record.courseName,
 					completedAt: record.completedAt,
@@ -109,10 +106,7 @@ describe('shareable Skills Workflow certificates', () => {
 	it('fails closed when eligibility or a public learner name is missing', async () => {
 		const repository = new MemoryShareRepository()
 		const ineligible = await ensureSkillsWorkflowCertificateShare({
-			eligibility: eligible({
-				eligible: false,
-				reason: 'value-path-not-complete',
-			}),
+			eligibility: eligible({ eligible: false, reason: 'value-path-not-complete' }),
 			repository,
 		})
 		const unnamed = await ensureSkillsWorkflowCertificateShare({
@@ -139,12 +133,12 @@ describe('shareable Skills Workflow certificates', () => {
 			repository,
 			createSlug: () => collisionSlug,
 		})
-		const slugs = [collisionSlug, 'fresh-opaque-slug-123456789012345']
+		const slugs = [
+			collisionSlug,
+			'fresh-opaque-slug-123456789012345',
+		]
 		const result = await ensureSkillsWorkflowCertificateShare({
-			eligibility: eligible({
-				contactId: 'contact-b',
-				learnerName: 'Matt Pocock',
-			}),
+			eligibility: eligible({ contactId: 'contact-b', learnerName: 'Matt Pocock' }),
 			repository,
 			createSlug: () => slugs.shift()!,
 		})
