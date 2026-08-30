@@ -25,7 +25,7 @@ import {
 
 const contactId = value(parseContactId('contact_persistence_codec'))
 const entryFactId = value(parseEntryFactId('entry_persistence_codec'))
-const completedAt = instant('2026-09-04T17:00:00.000Z')
+const exhaustedAt = instant('2026-09-04T17:00:00.000Z')
 const timeZone = value(parseIanaTimeZone('America/Los_Angeles'))
 
 function facts(
@@ -38,23 +38,23 @@ function facts(
 		existingJourneyId,
 		automationControl: { type: 'Enabled' as const, version: 'control-v1' },
 		evidenceVersion: 'facts-v1',
-		readAt: completedAt,
+		readAt: exhaustedAt,
 	}
 }
 
 function start() {
 	const deadlineTimeZone = deadlineTimeZoneEvidenceFromHeader({
 		headerValue: timeZone,
-		capturedAt: completedAt,
+		capturedAt: exhaustedAt,
 	})
 	if (!deadlineTimeZone.ok) throw new Error(deadlineTimeZone.error.detail)
 	const stimulus: EvergreenOfferStimulus = {
-		type: 'CourseCompleted',
+		type: 'CourseSequenceExhausted',
 		stimulusId: value(parseStimulusId('stimulus_persistence_codec')),
 		entryFactId,
 		contactId,
 		valuePathId: 'ai-hero-skills-workflow-individual-v1',
-		completedAt,
+		exhaustedAt,
 		deadlineTimeZone: deadlineTimeZone.value,
 		sourceReference: 'contact-event:persistence-codec',
 	}
@@ -63,7 +63,7 @@ function start() {
 		stimulus,
 		currentFacts: facts(),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
-		now: completedAt,
+		now: exhaustedAt,
 	})
 	if (!result.ok || result.decision.type !== 'Accepted') {
 		throw new Error('Expected accepted entry')
@@ -148,6 +148,11 @@ describe('evergreen journey persistence codecs', () => {
 			decision: entry.decision,
 		}
 		const evidence = journeyCommitEvidenceRecord(commit)
+		expect(evidence.stimulus).toMatchObject({
+			type: 'CourseSequenceExhausted',
+			exhaustedAt,
+		})
+		expect(evidence.stimulus).not.toHaveProperty('completedAt')
 		const expected = {
 			stimulusId: entry.stimulus.stimulusId,
 			stimulusType: entry.stimulus.type,
@@ -178,8 +183,35 @@ describe('evergreen journey persistence codecs', () => {
 		).toMatchObject({ ok: false })
 	})
 
+	it('rejects the retired completion stimulus at the commit boundary', () => {
+		const entry = start()
+		const commit = {
+			stimulus: entry.stimulus,
+			expectedVersion: null,
+			currentFacts: facts(),
+			definition: EVERGREEN_OFFER_JOURNEY_V1,
+			decidedAt: entry.decision.transitionReceipt.committedAt,
+			decision: entry.decision,
+		}
+		const evidence = journeyCommitEvidenceRecord(commit)
+		const legacy = JSON.parse(JSON.stringify(evidence))
+		legacy.stimulus.type = 'CourseCompleted'
+		legacy.stimulus.completedAt = legacy.stimulus.exhaustedAt
+		delete legacy.stimulus.exhaustedAt
+
+		expect(
+			validatePersistedCommitEvidenceEnvelope(legacy, {
+				stimulusId: entry.stimulus.stimulusId,
+				stimulusType: entry.stimulus.type,
+				journeyId: entry.decision.next.journeyId,
+				actorVersion: 1,
+				decidedAt: entry.decision.transitionReceipt.committedAt,
+			}),
+		).toMatchObject({ ok: false })
+	})
+
 	it.each([
-		'CourseCompleted',
+		'CourseSequenceExhausted',
 		'WakeDue',
 		'DeliverySettled',
 		'CouponIssued',

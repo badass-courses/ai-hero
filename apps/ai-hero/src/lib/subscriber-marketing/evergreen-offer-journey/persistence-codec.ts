@@ -157,12 +157,12 @@ const IssuedCouponSchema = z
 const StimulusSchema: z.ZodTypeAny = z.union([
 	z
 		.object({
-			type: z.literal('CourseCompleted'),
+			type: z.literal('CourseSequenceExhausted'),
 			stimulusId: StimulusId,
 			entryFactId: EntryFactId,
 			contactId: ContactId,
 			valuePathId: NonBlank,
-			completedAt: IsoInstant,
+			exhaustedAt: IsoInstant,
 			deadlineTimeZone: DeadlineTimeZone,
 			sourceReference: NonBlank,
 		})
@@ -617,7 +617,7 @@ export function validatePersistedCommitEvidenceEnvelope(
 		return failure('Commit evidence expected version does not match its row')
 	}
 	if (
-		record.stimulus.type !== 'CourseCompleted' &&
+		record.stimulus.type !== 'CourseSequenceExhausted' &&
 		record.stimulus.journeyId !== expected.journeyId
 	) {
 		return failure('Commit evidence journey identity does not match its row')

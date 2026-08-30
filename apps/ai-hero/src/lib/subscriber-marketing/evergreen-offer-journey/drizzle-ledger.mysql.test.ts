@@ -35,7 +35,7 @@ const mysqlServerUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!mysqlServerUrl)
 const contactId = value(parseContactId('contact_mysql_ledger'))
 const entryFactId = value(parseEntryFactId('entry_mysql_ledger'))
-const completedAt = instant('2026-09-04T17:00:00.000Z')
+const exhaustedAt = instant('2026-09-04T17:00:00.000Z')
 const timeZone = value(parseIanaTimeZone('America/Los_Angeles'))
 const tableNames = [
 	'AI_EvergreenOfferJourneyWake',
@@ -77,7 +77,7 @@ function facts(overrides: Partial<EligibilityFacts> = {}): EligibilityFacts {
 		existingJourneyId: null,
 		automationControl: { type: 'Enabled', version: 'control-v1' },
 		evidenceVersion: 'facts-v1',
-		readAt: completedAt,
+		readAt: exhaustedAt,
 		...overrides,
 	}
 }
@@ -85,16 +85,16 @@ function facts(overrides: Partial<EligibilityFacts> = {}): EligibilityFacts {
 function entry(stimulusName = 'stimulus_mysql_entry') {
 	const deadlineTimeZone = deadlineTimeZoneEvidenceFromHeader({
 		headerValue: timeZone,
-		capturedAt: completedAt,
+		capturedAt: exhaustedAt,
 	})
 	if (!deadlineTimeZone.ok) throw new Error(deadlineTimeZone.error.detail)
 	const stimulus: EvergreenOfferStimulus = {
-		type: 'CourseCompleted',
+		type: 'CourseSequenceExhausted',
 		stimulusId: value(parseStimulusId(stimulusName)),
 		entryFactId,
 		contactId,
 		valuePathId: 'ai-hero-skills-workflow-individual-v1',
-		completedAt,
+		exhaustedAt,
 		deadlineTimeZone: deadlineTimeZone.value,
 		sourceReference: `contact-event:${stimulusName}`,
 	}
@@ -103,7 +103,7 @@ function entry(stimulusName = 'stimulus_mysql_entry') {
 		stimulus,
 		currentFacts: facts(),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
-		now: completedAt,
+		now: exhaustedAt,
 	})
 	if (!result.ok || result.decision.type !== 'Accepted') {
 		throw new Error('Expected accepted entry')
@@ -281,7 +281,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 		const inspection = await Effect.runPromise(
 			second.ledger.inspect({
 				journeyId: start.decision.next.journeyId,
-				now: completedAt,
+				now: exhaustedAt,
 				automationControl: 'Enabled',
 			}),
 		)

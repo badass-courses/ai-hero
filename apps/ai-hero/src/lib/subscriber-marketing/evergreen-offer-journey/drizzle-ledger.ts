@@ -584,7 +584,7 @@ async function readCommittedDecision(
 	const next = restoreSnapshot(row.snapshot, row.journeyId, row.actorVersion)
 	if (
 		evidence.currentFacts.contactId !== next.contactId ||
-		(evidence.stimulus.type === 'CourseCompleted' &&
+		(evidence.stimulus.type === 'CourseSequenceExhausted' &&
 			evidence.stimulus.contactId !== next.contactId) ||
 		(row.actorVersion === 1
 			? evidence.currentFacts.existingJourneyId !== null

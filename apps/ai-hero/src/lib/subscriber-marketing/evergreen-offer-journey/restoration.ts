@@ -297,7 +297,7 @@ const JourneyBaseSchema = z
 		entryFactId: EntryFactIdSchema,
 		contactId: ContactIdSchema,
 		valuePathId: NonBlankString,
-		completedAt: IsoInstantSchema,
+		exhaustedAt: IsoInstantSchema,
 		deadlineTimeZone: DeadlineTimeZoneEvidenceSchema,
 		definition: EvergreenOfferJourneyDefinitionSchema,
 		messagePlan: SelectedMessagePlanSchema,
@@ -445,7 +445,7 @@ function validateAggregateInvariants(
 		}
 	}
 	const canonicalBridge = buildBridgeMessagePlan({
-		completedAt: aggregate.completedAt,
+		exhaustedAt: aggregate.exhaustedAt,
 		deadlineTimeZone: aggregate.deadlineTimeZone,
 		definition: aggregate.definition,
 	})
