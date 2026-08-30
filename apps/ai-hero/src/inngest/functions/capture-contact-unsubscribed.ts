@@ -18,10 +18,12 @@ export const captureContactUnsubscribed = inngest.createFunction(
 	},
 	{ event: CONTACT_UNSUBSCRIBED_EVENT },
 	async ({ event, step }) => {
+		// Only counts leave the step: the full summary's decisions/written
+		// arrays drag Drizzle record types through Jsonify.
 		const summary = await step.run(
 			'write contact-unsubscribed contact event',
 			async () => {
-				return writeContactUnsubscribedContactEvents({
+				const result = await writeContactUnsubscribedContactEvents({
 					repository: new DrizzleCaptureMarketingRepository(db),
 					rows: [
 						{
@@ -33,6 +35,7 @@ export const captureContactUnsubscribed = inngest.createFunction(
 						},
 					],
 				})
+				return { counts: result.counts }
 			},
 		)
 

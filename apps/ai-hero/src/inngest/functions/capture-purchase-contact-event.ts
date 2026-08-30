@@ -30,10 +30,25 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 		{ event: FULL_PRICE_COUPON_REDEEMED_EVENT },
 	],
 	async ({ event, step }) => {
+		// Both loads return hand-picked plain shapes: letting a full Drizzle
+		// row type escape step.run makes Inngest's Jsonify walk the entire
+		// relational schema type, which pushed the CI typecheck past the
+		// default heap limit.
 		const purchase = await step.run('load purchase', async () => {
-			return db.query.purchases.findFirst({
+			const row = await db.query.purchases.findFirst({
 				where: eq(purchasesTable.id, event.data.purchaseId),
 			})
+			if (!row) {
+				return null
+			}
+			return {
+				id: row.id,
+				userId: row.userId ?? null,
+				productId: row.productId,
+				status: row.status,
+				totalAmount: String(row.totalAmount),
+				purchasedAt: new Date(row.createdAt).toISOString(),
+			}
 		})
 		if (!purchase) {
 			await log.warn('contact_event.purchase_recorded.purchase_missing', {
@@ -45,9 +60,13 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 
 		const user = purchase.userId
 			? await step.run('load user', async () => {
-					return db.query.users.findFirst({
+					const row = await db.query.users.findFirst({
 						where: eq(usersTable.id, purchase.userId!),
 					})
+					if (!row) {
+						return null
+					}
+					return { email: row.email ?? null, name: row.name ?? null }
 				})
 			: null
 
@@ -61,16 +80,28 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			productId: purchase.productId,
 			status: purchase.status,
 			totalAmount: purchase.totalAmount,
-			purchasedAt: new Date(purchase.createdAt).toISOString(),
+			purchasedAt: purchase.purchasedAt,
 		}
 
+		// Only counts and the log string leave the step: the full summary's
+		// decisions/written arrays drag Drizzle record types through Jsonify.
 		const summary = await step.run(
 			'write purchase-recorded contact event',
 			async () => {
-				return writePurchaseRecordedContactEvents({
+				const result = await writePurchaseRecordedContactEvents({
 					repository: new DrizzleCaptureMarketingRepository(db),
 					rows: [source],
 				})
+				return {
+					counts: result.counts,
+					identityResolutionPath: result.decisions
+						.map((decision) =>
+							decision.status === 'eligible'
+								? decision.identityResolutionPath
+								: decision.reason,
+						)
+						.join(','),
+				}
 			},
 		)
 
@@ -79,13 +110,7 @@ export const capturePurchaseContactEvent = inngest.createFunction(
 			eventName: event.name,
 			written: summary.counts.written,
 			skippedByReason: summary.counts.skippedByReason,
-			identityResolutionPath: summary.decisions
-				.map((decision) =>
-					decision.status === 'eligible'
-						? decision.identityResolutionPath
-						: decision.reason,
-				)
-				.join(','),
+			identityResolutionPath: summary.identityResolutionPath,
 		})
 
 		return {
