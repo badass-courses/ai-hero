@@ -33,6 +33,7 @@ import {
 	type CourseSequenceExhaustionRecords,
 	type EmailCourseEntryEventRecord,
 } from './course-sequence-exhaustion'
+import { emitDrovrShadowFactSafely } from './drovr-shadow-emitter'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
 	canonicalCompletionForWrite,
@@ -232,6 +233,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				occurredAt: new Date(record.occurredAt),
 				createdAt: new Date(record.createdAt),
 			})
+			emitDrovrShadowFactSafely({ kind: 'contact-event', event: record })
 			return record
 		} catch (cause) {
 			// The semantic key is the durable replay boundary. A concurrent or
