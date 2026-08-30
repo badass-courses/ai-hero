@@ -1,4 +1,5 @@
 export * from './calendar'
+export * from './course-sequence-exhausted-adapter'
 export * from './decision'
 export * from './definition'
 export * from './domain'

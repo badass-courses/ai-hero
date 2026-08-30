@@ -1773,6 +1773,40 @@ describe('subscriber marketing value path click progression', () => {
 		return { repository, captured }
 	}
 
+	it('refuses a click-created terminal intent when sequence exhaustion is enabled', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const result = await recordValuePathAnswerProgression({
+			repository,
+			sequenceExhaustionEnabled: true,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-05-14T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				nextEmailId: 'email-7',
+				nextEmailResourceId: 'ai-hero-skills-workflow.email-7',
+			}),
+			now: '2026-05-14T11:05:00.000Z',
+		})
+
+		expect(result).toMatchObject({
+			status: 'skipped',
+			reason: 'terminal-progression-owned-by-email-course',
+			reviewReasons: ['terminal-progression-owned-by-email-course'],
+		})
+		expect(
+			Array.from(repository.sideEffectIntents.values()).some(
+				(intent) =>
+					intent.metadata.emailResourceId ===
+					'ai-hero-skills-workflow.email-7',
+			),
+		).toBe(false)
+	})
+
 	it('records answer click Contact Event, NextAction, and dry-run SideEffectIntent', async () => {
 		const { repository, captured } = await makeProgressionFixture()
 		const result = await recordValuePathAnswerProgression({

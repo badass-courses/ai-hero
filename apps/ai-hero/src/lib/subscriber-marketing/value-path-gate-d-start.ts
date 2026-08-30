@@ -2,6 +2,11 @@ import {
 	createLinkedActionRecords,
 	type CaptureMarketingRepository,
 } from './capture-contact-event'
+import {
+	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+	restoreEmailCourseEntryPayload,
+	type DeadlineTimeZoneEvidence,
+} from './course-sequence-exhaustion'
 import { CONTACT_EVENT_SCHEMA_VERSION, type Gate } from './types'
 import {
 	evaluateGateDRuntimeAllowlist,
@@ -25,6 +30,7 @@ export type ValuePathGateDStartRepository = Pick<
 	| 'createProviderIdentity'
 	| 'findContactEventBySemanticKey'
 	| 'createContactEvent'
+	| 'createEmailCourseEntryEvent'
 	| 'createNextAction'
 	| 'findSideEffectIntentByIdempotencyKey'
 	| 'createSideEffectIntent'
@@ -78,6 +84,7 @@ export async function startValuePathGateDActivation(args: {
 				contactId: candidate.contactId,
 				kitSubscriberId: candidate.kitSubscriberId,
 				email: candidate.email,
+				courseDeadlineTimeZone: candidate.courseDeadlineTimeZone,
 			}),
 		)
 	}
@@ -117,6 +124,7 @@ async function startValuePathGateDContact(args: {
 	contactId: string
 	kitSubscriberId?: string
 	email?: string
+	courseDeadlineTimeZone?: DeadlineTimeZoneEvidence
 }): Promise<ValuePathGateDStartContactResult> {
 	const contact = await args.repository.findContactById(args.contactId)
 	const state = contact
@@ -251,16 +259,16 @@ async function startValuePathGateDContact(args: {
 			updatedAt: args.now,
 		})
 	}
-	const event = await args.repository.createContactEvent({
+	const eventInput = {
 		contactId: contact.id,
 		providerIdentityId: identity.id,
-		provider: 'ai-hero',
+		provider: 'ai-hero' as const,
 		providerEventId: eventKey,
 		providerReference: `value-path:${args.valuePathSlug}`,
-		eventType: 'value-path.entered',
+		eventType: 'value-path.entered' as const,
 		occurredAt: args.now,
 		semanticIdempotencyKey: eventKey,
-		privacyLevel: 'internal',
+		privacyLevel: 'internal' as const,
 		identityEvidence: identity.evidence,
 		payloadSummary: {
 			summary: `Entered value path ${args.valuePathSlug} at ${args.emailResourceId}`,
@@ -270,11 +278,45 @@ async function startValuePathGateDContact(args: {
 				args.valuePathSlug,
 				args.emailResourceId,
 			],
-			restrictedPayloadStored: false,
+			restrictedPayloadStored: false as const,
 		},
 		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 		createdAt: args.now,
-	})
+	}
+	const courseEntryPayload = args.courseDeadlineTimeZone
+		? restoreEmailCourseEntryPayload({
+				format: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+				valuePathId: args.valuePathSlug,
+				emailResourceId: args.emailResourceId,
+				deadlineTimeZone: args.courseDeadlineTimeZone,
+			})
+		: undefined
+	let event
+	if (args.courseDeadlineTimeZone) {
+		if (!courseEntryPayload) {
+			return {
+				contactId: contact.id,
+				kitSubscriberId: args.kitSubscriberId,
+				status: 'blocked',
+				reviewReasons: ['course-entry-evidence-invalid'],
+			}
+		}
+		if (!args.repository.createEmailCourseEntryEvent) {
+			return {
+				contactId: contact.id,
+				kitSubscriberId: args.kitSubscriberId,
+				status: 'blocked',
+				reviewReasons: ['course-entry-evidence-store-unavailable'],
+			}
+		}
+		event = await args.repository.createEmailCourseEntryEvent({
+			...eventInput,
+			payloadFormat: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+			domainPayload: courseEntryPayload,
+		})
+	} else {
+		event = await args.repository.createContactEvent(eventInput)
+	}
 	const { nextAction, sideEffectIntents } = await createLinkedActionRecords(
 		args.repository,
 		() => {
@@ -315,6 +357,12 @@ async function startValuePathGateDContact(args: {
 							emailResourceId: args.emailResourceId,
 							kitSubscriberId: args.kitSubscriberId ?? null,
 							kitSequenceId: args.kitSequenceId,
+							...(args.courseDeadlineTimeZone
+								? {
+										courseEntryEventId: event.id,
+										courseDeadlineTimeZone: args.courseDeadlineTimeZone,
+									}
+								: {}),
 							providerResult: null,
 						},
 						createdAt: args.now,
