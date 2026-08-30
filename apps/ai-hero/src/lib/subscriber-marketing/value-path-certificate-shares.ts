@@ -6,14 +6,14 @@ import { nanoid } from 'nanoid'
 import type { ValuePathCertificateEligibility } from './value-path-certificates'
 import { SKILLS_WORKFLOW_CERTIFICATE_RESOURCE } from './value-path-certificates'
 
-export const SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME =
-	'AI Hero Skills Workflow'
+export const SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME = 'AI Hero Skills Workflow'
 export const SKILLS_WORKFLOW_CERTIFICATE_SHARE_PATH = '/certificates'
 export const SKILLS_WORKFLOW_FREE_COURSE_PATH =
 	'/skills/subscribe?utm_source=certificate&utm_medium=share&utm_campaign=skills-workflow-certificate'
 
 export type PublicValuePathCertificateShare = {
 	slug: string
+	resourceId: string
 	learnerName: string
 	courseName: string
 	completedAt: Date
@@ -74,6 +74,7 @@ const drizzleValuePathCertificateShareRepository: ValuePathCertificateShareRepos
 			const [record] = await db
 				.select({
 					slug: valuePathCertificateShare.slug,
+					resourceId: valuePathCertificateShare.resourceId,
 					learnerName: valuePathCertificateShare.learnerName,
 					courseName: valuePathCertificateShare.courseName,
 					completedAt: valuePathCertificateShare.completedAt,
@@ -88,6 +89,62 @@ const drizzleValuePathCertificateShareRepository: ValuePathCertificateShareRepos
 			await db.insert(valuePathCertificateShare).values(record)
 		},
 	}
+
+export async function ensureCertificateShare(input: {
+	ownerId: string
+	resourceId: string
+	learnerName: string
+	courseName: string
+	completedAt: Date
+	repository?: ValuePathCertificateShareRepository
+	createSlug?: () => string
+}): Promise<EnsureValuePathCertificateShareResult> {
+	const repository =
+		input.repository ?? drizzleValuePathCertificateShareRepository
+	const existing = await repository.findByContactAndResource({
+		contactId: input.ownerId,
+		resourceId: input.resourceId,
+	})
+	if (existing) {
+		return { available: true, created: false, share: toPublicShare(existing) }
+	}
+
+	const createSlug = input.createSlug ?? (() => nanoid(32))
+	let lastError: unknown
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const slug = createSlug()
+		if (!isOpaqueCertificateShareSlug(slug)) {
+			throw new Error('Generated certificate share slug is invalid')
+		}
+		const record: ValuePathCertificateShareRecord = {
+			slug,
+			contactId: input.ownerId,
+			resourceId: input.resourceId,
+			learnerName: input.learnerName,
+			courseName: input.courseName,
+			completedAt: input.completedAt,
+		}
+		try {
+			await repository.create(record)
+			return { available: true, created: true, share: toPublicShare(record) }
+		} catch (error) {
+			lastError = error
+			const concurrentlyCreated = await repository.findByContactAndResource({
+				contactId: input.ownerId,
+				resourceId: input.resourceId,
+			})
+			if (concurrentlyCreated) {
+				return {
+					available: true,
+					created: false,
+					share: toPublicShare(concurrentlyCreated),
+				}
+			}
+		}
+	}
+
+	throw lastError
+}
 
 export async function ensureSkillsWorkflowCertificateShare(input: {
 	eligibility: ValuePathCertificateEligibility
@@ -111,75 +168,41 @@ export async function ensureSkillsWorkflowCertificateShare(input: {
 		return { available: false, reason: 'completion-date-missing' }
 	}
 
-	const repository =
-		input.repository ?? drizzleValuePathCertificateShareRepository
-	const resourceId = SKILLS_WORKFLOW_CERTIFICATE_RESOURCE
-	const existing = await repository.findByContactAndResource({
-		contactId: input.eligibility.contactId,
-		resourceId,
+	return ensureCertificateShare({
+		ownerId: input.eligibility.contactId,
+		resourceId: SKILLS_WORKFLOW_CERTIFICATE_RESOURCE,
+		learnerName,
+		courseName: SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME,
+		completedAt: input.eligibility.completedAt,
+		repository: input.repository,
+		createSlug: input.createSlug,
 	})
-	if (existing) {
-		return { available: true, created: false, share: toPublicShare(existing) }
-	}
-
-	const createSlug = input.createSlug ?? (() => nanoid(32))
-	let lastError: unknown
-	for (let attempt = 0; attempt < 3; attempt++) {
-		const slug = createSlug()
-		if (!isOpaqueCertificateShareSlug(slug)) {
-			throw new Error('Generated certificate share slug is invalid')
-		}
-		const record: ValuePathCertificateShareRecord = {
-			slug,
-			contactId: input.eligibility.contactId,
-			resourceId,
-			learnerName,
-			courseName: SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME,
-			completedAt: input.eligibility.completedAt,
-		}
-		try {
-			await repository.create(record)
-			return { available: true, created: true, share: toPublicShare(record) }
-		} catch (error) {
-			lastError = error
-			const concurrentlyCreated =
-				await repository.findByContactAndResource({
-					contactId: input.eligibility.contactId,
-					resourceId,
-				})
-			if (concurrentlyCreated) {
-				return {
-					available: true,
-					created: false,
-					share: toPublicShare(concurrentlyCreated),
-				}
-			}
-		}
-	}
-
-	throw lastError
 }
 
 export async function getPublicSkillsWorkflowCertificateShare(
 	slug: string,
-	repository: ValuePathCertificateShareRepository =
-		drizzleValuePathCertificateShareRepository,
+	repository: ValuePathCertificateShareRepository = drizzleValuePathCertificateShareRepository,
 ) {
 	if (!isOpaqueCertificateShareSlug(slug)) return null
 	return repository.findPublicBySlug(slug)
+}
+
+export function buildCertificateShareUrl(input: {
+	slug: string
+	baseUrl?: string
+}) {
+	const path = `${SKILLS_WORKFLOW_CERTIFICATE_SHARE_PATH}/${encodeURIComponent(input.slug)}`
+	return input.baseUrl ? new URL(path, input.baseUrl).toString() : path
 }
 
 export function buildSkillsWorkflowCertificateShareUrl(input: {
 	slug: string
 	baseUrl?: string
 }) {
-	const path = `${SKILLS_WORKFLOW_CERTIFICATE_SHARE_PATH}/${encodeURIComponent(input.slug)}`
-	return input.baseUrl
-		? new URL(path, input.baseUrl).toString()
-		: path
+	return buildCertificateShareUrl(input)
 }
 
-export function buildSkillsWorkflowCertificateShareImageUrl(input: {
+export function buildCertificateShareImageUrl(input: {
 	slug: string
 	baseUrl?: string
 	download?: boolean
@@ -192,6 +215,14 @@ export function buildSkillsWorkflowCertificateShareImageUrl(input: {
 		: `${path}?${params}`
 }
 
+export function buildSkillsWorkflowCertificateShareImageUrl(input: {
+	slug: string
+	baseUrl?: string
+	download?: boolean
+}) {
+	return buildCertificateShareImageUrl(input)
+}
+
 export function isOpaqueCertificateShareSlug(slug: string) {
 	return /^[A-Za-z0-9_-]{20,64}$/.test(slug)
 }
@@ -201,6 +232,7 @@ function toPublicShare(
 ): PublicValuePathCertificateShare {
 	return {
 		slug: record.slug,
+		resourceId: record.resourceId,
 		learnerName: record.learnerName,
 		courseName: record.courseName,
 		completedAt: record.completedAt,

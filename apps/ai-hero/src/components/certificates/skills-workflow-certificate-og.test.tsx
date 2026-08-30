@@ -10,6 +10,7 @@ describe('Skills Workflow certificate OG renderer', () => {
 		const response = await renderSkillsWorkflowCertificateOpenGraphImage({
 			slug: 'opaque-public-certificate-slug-123',
 			learnerName: 'Joel Hooks',
+			resourceId: 'value-path:ai-hero-skills-workflow',
 			courseName: 'AI Hero Skills Workflow',
 			completedAt: new Date('2026-07-18T12:00:00.000Z'),
 		})

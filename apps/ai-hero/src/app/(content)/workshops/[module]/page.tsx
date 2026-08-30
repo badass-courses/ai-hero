@@ -22,6 +22,7 @@ import {
 	getFirstResourceSlug,
 	isCompletionTrackedResource,
 } from '@/lib/content-navigation'
+import { AI_CODING_CRASH_COURSE_FINAL_QUIZ } from '@/lib/crash-course-certificate-eligibility'
 import {
 	getCachedMinimalWorkshop,
 	getCachedWorkshopNavigation,
@@ -136,6 +137,10 @@ export default async function ModulePage(props: Props) {
 	const product = await getCachedWorkshopProduct(params.module)
 	const hasSelfPacedProduct = product?.type === 'self-paced'
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
+	const certificateVariant =
+		workshop.id === AI_CODING_CRASH_COURSE_FINAL_QUIZ.courseResourceId
+			? 'crash-course'
+			: 'lesson-progress'
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
 	// Code fences/inline code are stripped first so a body that merely *shows*
@@ -403,7 +408,13 @@ export default async function ModulePage(props: Props) {
 														wrapperClassName="overflow-hidden pb-0 hidden md:block"
 													/>
 													<div className="p-3">
-														<Certificate resourceSlugOrId={params.module} />
+														<Certificate
+															resourceSlugOrId={params.module}
+															variant={certificateVariant}
+															finalQuizLessonId={
+																AI_CODING_CRASH_COURSE_FINAL_QUIZ.targetLessonId
+															}
+														/>
 													</div>
 												</WorkshopSidebar>
 											)

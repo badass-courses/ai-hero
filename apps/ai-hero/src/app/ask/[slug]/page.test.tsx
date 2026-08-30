@@ -106,7 +106,10 @@ const answerPage = {
 beforeEach(() => {
 	vi.clearAllMocks()
 	vi.stubEnv('AI_HERO_VALUE_PATH_TOKEN_SECRET', 'test-value-path-token-secret')
-	mocks.verifyValuePathToken.mockReturnValue({ valid: true, payload: tokenPayload })
+	mocks.verifyValuePathToken.mockReturnValue({
+		valid: true,
+		payload: tokenPayload,
+	})
 	mocks.getValuePathAnswerPageBySlug.mockResolvedValue(answerPage)
 	mocks.readActiveGateDRuntimeAllowlist.mockResolvedValue({
 		passed: true,
@@ -142,6 +145,7 @@ beforeEach(() => {
 		share: {
 			slug: 'opaque-public-certificate-slug-123',
 			learnerName: 'Joel Hooks',
+			resourceId: 'value-path:ai-hero-skills-workflow',
 			courseName: 'AI Hero Skills Workflow',
 			completedAt: new Date('2026-07-18T00:00:00.000Z'),
 		},
@@ -314,7 +318,10 @@ describe('Email 7 certificate answer landing page', () => {
 
 		const page = await ValuePathAnswerPage({
 			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'team-signed-token', answer: 'other' }),
+			searchParams: Promise.resolve({
+				pt: 'team-signed-token',
+				answer: 'other',
+			}),
 		})
 		const markup = renderToStaticMarkup(page)
 
@@ -334,9 +341,7 @@ describe('Email 7 certificate answer landing page', () => {
 		})
 		const markup = renderToStaticMarkup(page)
 
-		expect(markup).toContain(
-			'data-value-path-certificate="share-unavailable"',
-		)
+		expect(markup).toContain('data-value-path-certificate="share-unavailable"')
 		expect(markup).toContain(
 			'Your certificate is ready, but the share page could not load.',
 		)

@@ -14,9 +14,7 @@ export function CertificateShareActions({
 	const xUrl = new URL('https://twitter.com/intent/tweet')
 	xUrl.searchParams.set('text', `I completed the ${courseName}.`)
 	xUrl.searchParams.set('url', permalink)
-	const linkedInUrl = new URL(
-		'https://www.linkedin.com/sharing/share-offsite/',
-	)
+	const linkedInUrl = new URL('https://www.linkedin.com/sharing/share-offsite/')
 	linkedInUrl.searchParams.set('url', permalink)
 
 	async function copyPermalink() {
@@ -53,11 +51,7 @@ export function CertificateShareActions({
 				<Linkedin aria-hidden="true" className="size-4" />
 				LinkedIn
 			</a>
-			<button
-				className={actionClassName}
-				type="button"
-				onClick={copyPermalink}
-			>
+			<button className={actionClassName} type="button" onClick={copyPermalink}>
 				{copied ? (
 					<Check aria-hidden="true" className="size-4" />
 				) : (
