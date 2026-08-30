@@ -2,6 +2,10 @@ import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
+import {
+	parseStashedDeadlineTimeZoneEvidence,
+	type DeadlineTimeZoneEvidence,
+} from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import type { OptInAttribution } from '@/lib/subscriber-marketing/opt-in-attribution'
 import { parseStashedOptInAttribution } from '@/lib/subscriber-marketing/opt-in-attribution-stash'
 
@@ -38,6 +42,7 @@ export type SignupGapPreviewCandidate = {
 	excludedSynthetic: boolean
 	exclusionReason?: 'synthetic-address'
 	optInAttribution?: OptInAttribution
+	deadlineTimeZone?: DeadlineTimeZoneEvidence
 }
 
 export type SignupGapPreview = {
@@ -247,6 +252,9 @@ export function buildSignupGapPreview(args: {
 
 		const excludedSynthetic = isSyntheticSignupGapEmail(email)
 		const optInAttribution = parseStashedOptInAttribution(subscriber.fields)
+		const deadlineTimeZone = parseStashedDeadlineTimeZoneEvidence(
+			subscriber.fields,
+		)
 		candidates.push({
 			kitSubscriberId: subscriber.kitSubscriberId,
 			email,
@@ -259,6 +267,7 @@ export function buildSignupGapPreview(args: {
 				? { exclusionReason: 'synthetic-address' as const }
 				: {}),
 			...(optInAttribution ? { optInAttribution } : {}),
+			...(deadlineTimeZone ? { deadlineTimeZone } : {}),
 		})
 	}
 
@@ -347,6 +356,9 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 				...(candidate.optInAttribution
 					? { optInAttribution: candidate.optInAttribution }
 					: {}),
+				...(candidate.deadlineTimeZone
+					? { deadlineTimeZone: candidate.deadlineTimeZone }
+					: {}),
 			},
 		})),
 	}
@@ -394,6 +406,9 @@ export async function replaySignupGap(args: {
 				subscribedAt: candidate.addedAt,
 				...(candidate.optInAttribution
 					? { optInAttribution: candidate.optInAttribution }
+					: {}),
+				...(candidate.deadlineTimeZone
+					? { deadlineTimeZone: candidate.deadlineTimeZone }
 					: {}),
 				signupGapLiveness: {
 					workSeen,

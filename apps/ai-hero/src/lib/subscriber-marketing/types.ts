@@ -73,6 +73,9 @@ export type NormalizedContactEvent = {
 	eventType: string
 	occurredAt: string
 	semanticIdempotencyKey: string
+	domainFactKey?: string | null
+	payloadFormat?: string | null
+	domainPayload?: unknown
 	privacyLevel: PrivacyLevel
 	identityEvidence: ContactIdentityEvidence
 	payloadSummary: PayloadSummary

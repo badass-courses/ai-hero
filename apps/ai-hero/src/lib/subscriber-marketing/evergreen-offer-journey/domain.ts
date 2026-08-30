@@ -1,9 +1,12 @@
+import {
+	COURSE_DEADLINE_FALLBACK_TIME_ZONE,
+	type DeadlineTimeZoneEvidence,
+} from '../course-sequence-exhaustion'
 import type {
 	ContactId,
 	ContentResourceId,
 	CouponId,
 	EntryFactId,
-	IanaTimeZone,
 	IntentKey,
 	IsoInstant,
 	JourneyId,
@@ -14,27 +17,15 @@ import type {
 	WakeId,
 } from './primitives'
 
+export type { DeadlineTimeZoneEvidence }
+
 export const EVERGREEN_OFFER_JOURNEY_SCHEMA_VERSION = 1 as const
 export const EVERGREEN_OFFER_PRODUCT_ID = 'product-ma254' as const
 export const EVERGREEN_OFFER_CURRENCY = 'USD' as const
 export const EVERGREEN_OFFER_AMOUNT_OFF_CENTS = 10_000 as const
 export const EVERGREEN_OFFER_MAX_USES = 1 as const
 export const EVERGREEN_OFFER_FALLBACK_TIME_ZONE =
-	'America/Los_Angeles' as const
-
-export type DeadlineTimeZoneEvidence =
-	| {
-			readonly type: 'BrowserEntryHeader'
-			readonly headerName: 'x-vercel-ip-timezone'
-			readonly timeZone: IanaTimeZone
-			readonly capturedAt: IsoInstant
-	  }
-	| {
-			readonly type: 'ExplicitFallback'
-			readonly reason: 'header-missing' | 'header-invalid' | 'legacy-entry'
-			readonly timeZone: IanaTimeZone
-			readonly capturedAt: IsoInstant
-	  }
+	COURSE_DEADLINE_FALLBACK_TIME_ZONE
 
 /**
  * The email-course progression reached its terminal intent.

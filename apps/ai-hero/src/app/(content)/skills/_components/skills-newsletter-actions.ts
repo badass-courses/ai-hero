@@ -1,8 +1,9 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { emailListProvider } from '@/coursebuilder/email-list-provider'
+import { env } from '@/env.mjs'
 import { setSubscriberCookie } from '@/lib/convertkit'
 import {
 	conversionIntentContract,
@@ -18,6 +19,12 @@ import { inngest } from '@/inngest/inngest.server'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
+import {
+	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
+	deadlineTimeZoneEvidenceFromHeader,
+	parseCourseSequenceExhaustionEnabled,
+	serializeDeadlineTimeZoneEvidenceForKit,
+} from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 
 import {
@@ -79,6 +86,8 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		const subscribed = SubscriberSchema.parse(
 			withConfirmedConversionFields(updated ?? subscriber!, contract.fields),
 		)
+		const courseEntryEvidence =
+			await captureAndStashCourseEntryEvidence(subscribed)
 		const optIn = await reconcileAiHeroEmailOptInWithKit({
 			email: subscribed.email_address!,
 			subscriberState: subscribed.state,
@@ -91,7 +100,11 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			}
 		}
 		await setSubscriberCookie(subscribed)
-		await sendSkillsNewsletterPathEntry(subscribed, source)
+		await sendSkillsNewsletterPathEntry(
+			subscribed,
+			source,
+			courseEntryEvidence,
+		)
 
 		// From the PARSED record, not the cookie: on the session path there may be
 		// no cookie record at all, and this is the id we actually enrolled.
@@ -116,7 +129,54 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 	}
 }
 
-async function sendSkillsNewsletterPathEntry(input: unknown, source: string) {
+async function captureAndStashCourseEntryEvidence(input: unknown) {
+	const subscriber = SubscriberSchema.parse(input)
+	const capturedAt = new Date().toISOString()
+	const headerStore = await headers()
+	const deadlineTimeZoneResult = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: headerStore.get('x-vercel-ip-timezone'),
+		capturedAt,
+	})
+	const deadlineTimeZone =
+		parseCourseSequenceExhaustionEnabled(
+			process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
+		) && deadlineTimeZoneResult.ok
+			? deadlineTimeZoneResult.value
+			: undefined
+	if (deadlineTimeZone) {
+		try {
+			const { setConvertkitSubscriberFields } =
+				await import('@coursebuilder/core/providers/convertkit')
+			await setConvertkitSubscriberFields({
+				subscriber: {
+					id: subscriber.id,
+					fields: subscriber.fields,
+				},
+				fields: {
+					[AIH_COURSE_ENTRY_EVIDENCE_FIELD]:
+						serializeDeadlineTimeZoneEvidenceForKit(deadlineTimeZone),
+				},
+				convertkitApiSecret: env.CONVERTKIT_API_SECRET,
+				convertkitApiKey: env.CONVERTKIT_API_KEY,
+			})
+		} catch (error) {
+			await log.error('skills.course-entry-evidence.stash.failed', {
+				formId: SKILLS_FORM_ID,
+				kitSubscriberId: String(subscriber.id),
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
+	}
+	return { capturedAt, deadlineTimeZone }
+}
+
+async function sendSkillsNewsletterPathEntry(
+	input: unknown,
+	source: string,
+	courseEntryEvidence: Awaited<
+		ReturnType<typeof captureAndStashCourseEntryEvidence>
+	>,
+) {
 	const subscriber = SubscriberSchema.parse(input)
 	if (!subscriber.email_address) {
 		throw new Error('Skills newsletter subscriber is missing an email address')
@@ -133,7 +193,10 @@ async function sendSkillsNewsletterPathEntry(input: unknown, source: string) {
 			name: subscriber.first_name ?? undefined,
 			formId: SKILLS_FORM_ID,
 			source,
-			subscribedAt: new Date().toISOString(),
+			subscribedAt: courseEntryEvidence.capturedAt,
+			...(courseEntryEvidence.deadlineTimeZone
+				? { deadlineTimeZone: courseEntryEvidence.deadlineTimeZone }
+				: {}),
 			optInAttribution,
 		},
 	}

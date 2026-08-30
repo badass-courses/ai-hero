@@ -290,6 +290,7 @@ export async function reconcileLearnerFlow(args: {
 	repository: LearnerFlowReconcilerRepository
 	allowlist: GateDRuntimeAllowlist
 	email7LiveEnabled: boolean
+	sequenceExhaustionEnabled?: boolean
 	now: string
 	config?: LearnerFlowReconcilerConfig
 }): Promise<LearnerFlowReconcilerReceipt> {
@@ -346,6 +347,7 @@ export async function reconcileLearnerFlow(args: {
 				completedIntents: dripIntents,
 				allowWrite: true,
 				email7LiveEnabled: args.email7LiveEnabled,
+				sequenceExhaustionEnabled: args.sequenceExhaustionEnabled,
 				now: args.now,
 			})
 		: emptyDripResult()

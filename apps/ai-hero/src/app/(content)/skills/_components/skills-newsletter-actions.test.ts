@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	cookieGet: vi.fn(),
+	headerGet: vi.fn(),
 	getServerAuthSession: vi.fn(),
 	getSubscriberFromCookie: vi.fn(),
 	inngestSend: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 	reconcile: vi.fn(),
 	revalidatePath: vi.fn(),
 	setSubscriberCookie: vi.fn(),
+	setSubscriberFields: vi.fn(),
 	subscribeToList: vi.fn(),
 }))
 
@@ -24,6 +26,20 @@ vi.mock('next/headers', () => ({
 	cookies: async () => ({
 		get: mocks.cookieGet,
 	}),
+	headers: async () => ({
+		get: mocks.headerGet,
+	}),
+}))
+
+vi.mock('@/env.mjs', () => ({
+	env: {
+		CONVERTKIT_API_SECRET: 'secret',
+		CONVERTKIT_API_KEY: 'key',
+	},
+}))
+
+vi.mock('@coursebuilder/core/providers/convertkit', () => ({
+	setConvertkitSubscriberFields: mocks.setSubscriberFields,
 }))
 
 vi.mock('@/coursebuilder/email-list-provider', () => ({
@@ -88,8 +104,17 @@ describe('tagSubscriberAsSkills', () => {
 		mocks.subscribeToList.mockResolvedValue(subscriber)
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
 		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.setSubscriberFields.mockResolvedValue(undefined)
 		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.headerGet.mockImplementation((name: string) =>
+			name === 'x-vercel-ip-timezone' ? 'Europe/London' : null,
+		)
 		mocks.getServerAuthSession.mockResolvedValue(null)
+		process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED = 'true'
+	})
+
+	afterEach(() => {
+		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
 	})
 
 	// A signed-in reader is identified without a Kit cookie. Before this they
@@ -137,6 +162,25 @@ describe('tagSubscriberAsSkills', () => {
 		expect(mocks.subscribeToList).not.toHaveBeenCalled()
 	})
 
+	it('stashes browser evidence before returning for Kit confirmation', async () => {
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toMatchObject({
+			success: false,
+			reason: 'confirmation-required',
+		})
+		expect(mocks.setSubscriberFields).toHaveBeenCalledWith(
+			expect.objectContaining({
+				fields: expect.objectContaining({
+					aih_course_entry_evidence: expect.stringContaining('Europe/London'),
+				}),
+			}),
+		)
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
 	it('emits course entry with the placement source when ft_attr is absent', async () => {
 		const result = await tagSubscriberAsSkills('skills-post')
 
@@ -153,6 +197,19 @@ describe('tagSubscriberAsSkills', () => {
 				data: expect.objectContaining({
 					source: 'aihero_skills_post',
 					optInAttribution: undefined,
+					deadlineTimeZone: {
+						type: 'BrowserEntryHeader',
+						headerName: 'x-vercel-ip-timezone',
+						timeZone: 'Europe/London',
+						capturedAt: expect.any(String),
+					},
+				}),
+			}),
+		)
+		expect(mocks.setSubscriberFields).toHaveBeenCalledWith(
+			expect.objectContaining({
+				fields: expect.objectContaining({
+					aih_course_entry_evidence: expect.stringContaining('Europe/London'),
 				}),
 			}),
 		)

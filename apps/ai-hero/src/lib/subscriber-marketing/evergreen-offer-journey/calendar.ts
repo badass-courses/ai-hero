@@ -1,19 +1,22 @@
 import { formatInTimeZone, zonedTimeToUtc } from 'date-fns-tz'
 
+import {
+	deadlineTimeZoneEvidenceFromHeader,
+	type DeadlineTimeZoneEvidence,
+} from '../course-sequence-exhaustion'
 import type {
-	DeadlineTimeZoneEvidence,
 	EvergreenOfferJourneyDefinition,
 	IssuedCoupon,
 	MessageSlot,
 	SelectedMessagePlan,
 } from './domain'
-import { EVERGREEN_OFFER_FALLBACK_TIME_ZONE } from './domain'
 import {
-	parseIanaTimeZone,
 	parseIsoInstant,
 	type IanaTimeZone,
 	type IsoInstant,
 } from './primitives'
+
+export { deadlineTimeZoneEvidenceFromHeader }
 
 const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
@@ -36,51 +39,6 @@ type JourneyScheduleFailure = {
 type ScheduleResult<Value> =
 	| { readonly ok: true; readonly value: Value }
 	| JourneyScheduleFailure
-
-export function deadlineTimeZoneEvidenceFromHeader(args: {
-	headerValue: string | null | undefined
-	capturedAt: string
-	existingLearner?: boolean
-}): ScheduleResult<DeadlineTimeZoneEvidence> {
-	const capturedAt = parseIsoInstant(args.capturedAt)
-	if (!capturedAt.ok) {
-		return scheduleError('InvalidInstant', 'capturedAt is not a valid instant')
-	}
-	const parsedHeader = args.headerValue
-		? parseIanaTimeZone(args.headerValue)
-		: null
-	if (parsedHeader?.ok) {
-		return {
-			ok: true,
-			value: {
-				type: 'BrowserEntryHeader',
-				headerName: 'x-vercel-ip-timezone',
-				timeZone: parsedHeader.value,
-				capturedAt: capturedAt.value,
-			},
-		}
-	}
-	const fallback = parseIanaTimeZone(EVERGREEN_OFFER_FALLBACK_TIME_ZONE)
-	if (!fallback.ok) {
-		return scheduleError(
-			'InvalidTimeZone',
-			'Evergreen fallback time zone is invalid',
-		)
-	}
-	return {
-		ok: true,
-		value: {
-			type: 'ExplicitFallback',
-			reason: args.existingLearner
-				? 'legacy-entry'
-				: args.headerValue
-					? 'header-invalid'
-					: 'header-missing',
-			timeZone: fallback.value,
-			capturedAt: capturedAt.value,
-		},
-	}
-}
 
 export function buildBridgeMessagePlan(args: {
 	exhaustedAt: IsoInstant
