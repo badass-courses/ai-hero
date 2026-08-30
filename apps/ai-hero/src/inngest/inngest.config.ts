@@ -62,6 +62,8 @@ import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
+import { captureContactUnsubscribed } from './functions/capture-contact-unsubscribed'
+import { capturePurchaseContactEvent } from './functions/capture-purchase-contact-event'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
 import { computeVideoSplitPoints } from './functions/split_video'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
@@ -141,6 +143,8 @@ const allFunctions = [
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,
+	capturePurchaseContactEvent,
+	captureContactUnsubscribed,
 	workshopInterestSync,
 	skillsNewsletterConfirmationReconciler,
 	notifyOnPostCreated,
