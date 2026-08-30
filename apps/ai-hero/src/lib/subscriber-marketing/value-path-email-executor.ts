@@ -1,5 +1,6 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
+import { emitDrovrShadowFactSafely } from './drovr-shadow-emitter'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
 	isContentCompleteSkillsWorkflowEmailResourceId,
@@ -280,17 +281,40 @@ export async function executeValuePathEmailIntent(args: {
 			fields: personalization.fields,
 		})
 		const completedAt = args.now ?? new Date().toISOString()
+		const completedMetadata = {
+			...intent.metadata,
+			providerResult: summarizeProviderResult(providerResult),
+			completedAt,
+		}
 		await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'completed',
 			completedAt,
 			gates,
 			reviewReasons: [],
-			metadata: {
-				...intent.metadata,
-				providerResult: summarizeProviderResult(providerResult),
+			metadata: completedMetadata,
+		})
+		emitDrovrShadowFactSafely({
+			kind: 'side-effect-intent-completed',
+			intent: {
+				...intent,
+				status: 'completed',
 				completedAt,
+				gates,
+				reviewReasons: [],
+				metadata: completedMetadata,
 			},
 		})
+		if (
+			metadata.valuePathSlug &&
+			isTerminalSkillsWorkflowEmailResourceId(metadata.emailResourceId)
+		) {
+			emitDrovrShadowFactSafely({
+				kind: 'course-completed',
+				contactId: intent.contactId,
+				valuePathSlug: metadata.valuePathSlug,
+				completedAt,
+			})
+		}
 		return {
 			status: 'completed',
 			intentId: intent.id,

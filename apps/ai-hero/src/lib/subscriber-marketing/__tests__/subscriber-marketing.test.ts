@@ -1828,7 +1828,14 @@ describe('subscriber marketing value path click progression', () => {
 			Array.from(repository.contactEvents.values()).find(
 				(event) => event.eventType === 'value-path.answer-selected',
 			),
-		).toMatchObject({ provider: 'ai-hero' })
+		).toMatchObject({
+			provider: 'ai-hero',
+			payloadSummary: {
+				keywords: expect.arrayContaining([
+					'ai-hero-skills-workflow.email-1',
+				]),
+			},
+		})
 		expect(
 			Array.from(repository.nextActions.values()).find(
 				(action) => action.type === 'advance-value-path',

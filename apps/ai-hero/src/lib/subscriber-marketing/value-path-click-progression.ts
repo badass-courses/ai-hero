@@ -305,6 +305,7 @@ export async function recordValuePathAnswerProgression(args: {
 				keywords: [
 					'value-path',
 					'answer-selected',
+					args.token.emailResourceId,
 					fields.sequenceId ?? args.token.sequenceId,
 					fields.optionValue ?? 'unknown-option',
 				].filter(Boolean),
