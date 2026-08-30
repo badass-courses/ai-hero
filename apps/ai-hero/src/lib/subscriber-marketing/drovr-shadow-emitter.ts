@@ -22,7 +22,7 @@ export type DrovrShadowEvent = {
 		| 'contact.created'
 		| 'value-path.answer-selected'
 		| 'email.completed'
-		| 'course.completed'
+		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
 		| 'purchase.recorded'
 	occurredAt: string
@@ -202,7 +202,7 @@ function mapCourseCompleted(
 	const completionBase = {
 		tenantId: DROVR_SHADOW_TENANT_ID,
 		contactId: fact.contactId,
-		type: 'course.completed' as const,
+		type: 'course.sequence-exhausted' as const,
 		occurredAt: fact.completedAt,
 		idempotencyKey: `aihero:completion:${fact.contactId}:${fact.valuePathSlug}`,
 	}
