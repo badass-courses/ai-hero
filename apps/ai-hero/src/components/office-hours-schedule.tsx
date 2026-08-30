@@ -18,18 +18,11 @@ import { cn } from '@coursebuilder/utils/cn'
 
 type OfficeHoursScheduleProps = {
 	sessions?: CohortOfficeHoursSession[]
-	cohortId?: string
 	variant?: 'lesson' | 'cohort'
 	showActions?: boolean | 'false' | 'true'
 	timeZone?: string
 	timeZoneLabel?: string
 	className?: string
-}
-
-type CohortOfficeHoursResource = {
-	fields?: {
-		officeHoursSessions?: CohortOfficeHoursSession[]
-	}
 }
 
 function formatLocalDate(date: string, timeZone: string | null) {
@@ -131,90 +124,14 @@ function downloadOfficeHoursIcs(sessions: CohortOfficeHoursSession[]) {
 	URL.revokeObjectURL(url)
 }
 
-function useOfficeHoursSessions(props: OfficeHoursScheduleProps): {
-	sessions: CohortOfficeHoursSession[]
-	isLoading: boolean
-} {
-	const [fetchedSessions, setFetchedSessions] = React.useState<
-		CohortOfficeHoursSession[]
-	>(props.sessions || [])
-	const [isLoading, setIsLoading] = React.useState(
-		!props.sessions && Boolean(props.cohortId),
-	)
-
-	React.useEffect(() => {
-		if (props.sessions) {
-			setFetchedSessions(props.sessions)
-			setIsLoading(false)
-		}
-	}, [props.sessions])
-
-	React.useEffect(() => {
-		if (props.sessions || !props.cohortId) return
-
-		const cohortId = props.cohortId
-		let isCancelled = false
-
-		const loadSessions = async () => {
-			setIsLoading(true)
-
-			try {
-				const response = await fetch(
-					`/api/resources?slugOrId=${encodeURIComponent(cohortId)}&type=cohort`,
-				)
-				if (!response.ok) {
-					throw new Error(
-						`Failed to load cohort office hours: ${response.status}`,
-					)
-				}
-
-				const resource = (await response.json()) as CohortOfficeHoursResource
-				if (!isCancelled) {
-					setFetchedSessions(resource.fields?.officeHoursSessions || [])
-				}
-			} catch (error) {
-				if (!isCancelled) {
-					console.error(error)
-					setFetchedSessions([])
-				}
-			} finally {
-				if (!isCancelled) {
-					setIsLoading(false)
-				}
-			}
-		}
-
-		void loadSessions()
-
-		return () => {
-			isCancelled = true
-		}
-	}, [props.cohortId, props.sessions])
-
-	return {
-		sessions: fetchedSessions,
-		isLoading,
-	}
-}
-
 export function OfficeHoursSchedule({
-	sessions: initialSessions,
-	cohortId,
+	sessions = [],
 	variant = 'lesson',
 	showActions = true,
 	timeZone: configuredTimeZone,
 	timeZoneLabel,
 	className,
 }: OfficeHoursScheduleProps) {
-	const { sessions, isLoading } = useOfficeHoursSessions({
-		sessions: initialSessions,
-		cohortId,
-		variant,
-		showActions,
-		timeZone: configuredTimeZone,
-		timeZoneLabel,
-		className,
-	})
 	const [detectedTimeZone, setDetectedTimeZone] = React.useState<string | null>(
 		configuredTimeZone || null,
 	)
@@ -247,7 +164,7 @@ export function OfficeHoursSchedule({
 	const timeRangeLabel = timeZoneLabel || undefined
 	const isDetectingTimeZone = !configuredTimeZone && !detectedTimeZone
 
-	if (isLoading || isDetectingTimeZone) {
+	if (isDetectingTimeZone) {
 		return (
 			<div
 				className={cn(
@@ -255,9 +172,7 @@ export function OfficeHoursSchedule({
 					className,
 				)}
 			>
-				{isLoading
-					? 'Loading office hours schedule…'
-					: 'Detecting your timezone…'}
+				Detecting your timezone…
 			</div>
 		)
 	}

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import type { DeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
+
 import type { ValuePathSendGateMode } from './value-path-send-gate'
 
 export const SKILLS_WORKFLOW_GATE_D_NAMESPACE = 'skills-workflow' as const
@@ -99,6 +101,7 @@ export type GateDAllowlistCandidate = {
 	emailHash?: string
 	domain?: string
 	scheduleEvidence?: GateDScheduleEvidence
+	courseDeadlineTimeZone?: DeadlineTimeZoneEvidence
 	rationale: string[]
 	blockers: string[]
 }

@@ -8,6 +8,7 @@ import {
 	index,
 	int,
 	json,
+	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -108,6 +109,79 @@ export const {
 	entitlementsRelations,
 	entitlementTypes,
 } = getCourseBuilderSchema(mysqlTable)
+
+export const checkoutLoginHandoff = mysqlTable(
+	'CheckoutLoginHandoff',
+	{
+		nonceHash: varchar('nonceHash', { length: 64 }).notNull().primaryKey(),
+		browserSessionHash: varchar('browserSessionHash', { length: 64 }).notNull(),
+		country: varchar('country', { length: 2 }).notNull(),
+		productId: varchar('productId', { length: 255 }).notNull(),
+		quantity: int('quantity').notNull(),
+		pppSelected: boolean('pppSelected').notNull(),
+		state: varchar('state', { length: 32 }).notNull(),
+		boundUserId: varchar('boundUserId', { length: 255 }),
+		claimId: varchar('claimId', { length: 64 }),
+		claimExpiresAt: timestamp('claimExpiresAt', { mode: 'date', fsp: 3 }),
+		providerSessionId: varchar('providerSessionId', { length: 255 }),
+		checkoutRedirect: text('checkoutRedirect'),
+		failureCode: varchar('failureCode', { length: 255 }),
+		issuedAt: timestamp('issuedAt', { mode: 'date', fsp: 3 }).notNull(),
+		expiresAt: timestamp('expiresAt', { mode: 'date', fsp: 3 }).notNull(),
+		completedAt: timestamp('completedAt', { mode: 'date', fsp: 3 }),
+		updatedAt: timestamp('updatedAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		expiresAtIdx: index('CheckoutLoginHandoff_expiresAt_idx').on(
+			table.expiresAt,
+		),
+		stateIdx: index('CheckoutLoginHandoff_state_idx').on(table.state),
+	}),
+)
+
+/**
+ * Durable outbox for purchase-transfer lifecycle events (AIH-223).
+ * A committed ownership change always writes a row here in the same
+ * transaction; the Inngest publish happens after commit and records its
+ * outcome, so a failed publish stays visible instead of vanishing.
+ */
+export const purchaseTransferOutbox = mysqlTable(
+	'PurchaseTransferOutbox',
+	{
+		id: varchar('id', { length: 191 }).notNull().primaryKey(),
+		purchaseUserTransferId: varchar('purchaseUserTransferId', {
+			length: 191,
+		}).notNull(),
+		purchaseId: varchar('purchaseId', { length: 191 }).notNull(),
+		sourceUserId: varchar('sourceUserId', { length: 191 }).notNull(),
+		targetUserId: varchar('targetUserId', { length: 191 }).notNull(),
+		eventName: varchar('eventName', { length: 255 }).notNull(),
+		payload: json('payload').notNull(),
+		status: varchar('status', { length: 32 }).notNull().default('PENDING'),
+		attempts: int('attempts').notNull().default(0),
+		lastError: text('lastError'),
+		createdAt: timestamp('createdAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.notNull(),
+		publishedAt: timestamp('publishedAt', { mode: 'date', fsp: 3 }),
+		updatedAt: timestamp('updatedAt', { mode: 'date', fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		// One outbox row per transfer event: a resumed or replayed accept
+		// upserts into this key instead of creating a duplicate row.
+		transferEventUq: uniqueIndex('PurchaseTransferOutbox_transfer_event_uq').on(
+			table.purchaseUserTransferId,
+			table.eventName,
+		),
+		statusIdx: index('PurchaseTransferOutbox_status_idx').on(table.status),
+	}),
+)
 
 /**
  * Draft-only Course Video Manager -> AI Hero control-plane records.
@@ -282,6 +356,7 @@ export const courseSyncPollState = mysqlTable('CourseSyncPollState', {
 	consecutiveFailures: int('consecutiveFailures').notNull().default(0),
 	controlPlaneRunId: varchar('controlPlaneRunId', { length: 255 }),
 	failureClass: varchar('failureClass', { length: 100 }),
+	applyPolicyOverride: varchar('applyPolicyOverride', { length: 32 }),
 	updatedAt: timestamp('updatedAt').defaultNow().onUpdateNow().notNull(),
 })
 
@@ -742,6 +817,12 @@ export const sideEffectIntent = mysqlTable(
 	}),
 )
 
+export {
+	evergreenOfferJourneyIntent,
+	evergreenOfferJourneyCommit,
+	evergreenOfferJourneyWake,
+} from './evergreen-offer-journey-schema'
+
 export const valuePathCertificateShare = mysqlTable(
 	'ValuePathCertificateShare',
 	{
@@ -964,5 +1045,72 @@ export const sideEffectIntentRelations = relations(
 			fields: [sideEffectIntent.nextActionId],
 			references: [nextAction.id],
 		}),
+	}),
+)
+
+/**
+ * Server-persisted invoice details (AIH-259). One row per purchase and
+ * merchant charge, edited by the purchase owner or a team manager on the
+ * invoice page, or prefilled through the guarded support seam. Values are
+ * billing details: they must never appear in URLs, logs, or analytics events.
+ *
+ * `updatedByUserId` is only ever an app user (owner/manager saves).
+ * Support writes leave it null and set `supportOperatorId` instead, since
+ * support operators are not app users.
+ */
+export const invoiceSettings = mysqlTable(
+	'InvoiceSettings',
+	{
+		purchaseId: varchar('purchaseId', { length: 255 }).notNull(),
+		merchantChargeId: varchar('merchantChargeId', { length: 255 }).notNull(),
+		recipientName: varchar('recipientName', { length: 255 }),
+		companyName: varchar('companyName', { length: 255 }),
+		address: text('address'),
+		taxId: varchar('taxId', { length: 100 }),
+		notes: text('notes'),
+		source: varchar('source', { length: 20 }).notNull().default('owner'),
+		updatedByUserId: varchar('updatedByUserId', { length: 255 }),
+		supportOperatorId: varchar('supportOperatorId', { length: 255 }),
+		createdAt: timestamp('createdAt', { fsp: 3 }).defaultNow().notNull(),
+		updatedAt: timestamp('updatedAt', { fsp: 3 })
+			.defaultNow()
+			.onUpdateNow()
+			.notNull(),
+	},
+	(table) => ({
+		pk: primaryKey({ columns: [table.purchaseId, table.merchantChargeId] }),
+	}),
+)
+
+/**
+ * Redacted audit receipt for every support-driven invoice prefill attempt
+ * that reached a resolved purchase (AIH-259). Carries identifiers, audit
+ * metadata, the caller-supplied input hash, and the outcome. Never billing
+ * values.
+ *
+ * `requestKey` is set only on `prefilled` receipts and is unique, which makes
+ * it the atomic replay guard for an exact signed request (MySQL unique
+ * indexes ignore NULLs, so every other outcome stays retryable).
+ */
+export const supportInvoicePrefillReceipts = mysqlTable(
+	'SupportInvoicePrefillReceipt',
+	{
+		id: varchar('id', { length: 191 }).notNull().primaryKey(),
+		purchaseId: varchar('purchaseId', { length: 255 }).notNull(),
+		merchantChargeId: varchar('merchantChargeId', { length: 255 }).notNull(),
+		runId: varchar('runId', { length: 255 }).notNull(),
+		conversationId: varchar('conversationId', { length: 255 }).notNull(),
+		operatorId: varchar('operatorId', { length: 255 }).notNull(),
+		approvalReference: varchar('approvalReference', { length: 255 }).notNull(),
+		expectedInboundId: varchar('expectedInboundId', { length: 255 }).notNull(),
+		inputHash: varchar('inputHash', { length: 64 }).notNull(),
+		requestKey: varchar('requestKey', { length: 64 }),
+		outcome: varchar('outcome', { length: 40 }).notNull(),
+		readbackMatched: boolean('readbackMatched'),
+		createdAt: timestamp('createdAt', { fsp: 3 }).defaultNow().notNull(),
+	},
+	(table) => ({
+		purchaseIdx: index('sipr_purchase_idx').on(table.purchaseId),
+		requestKeyIdx: uniqueIndex('sipr_request_key_uidx').on(table.requestKey),
 	}),
 )

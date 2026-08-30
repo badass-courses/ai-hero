@@ -8,6 +8,7 @@ export function getGithubProviderConfig({
 	return {
 		clientId,
 		clientSecret,
+		issuer: 'https://github.com/login/oauth',
 		allowDangerousEmailAccountLinking: true,
 	}
 }

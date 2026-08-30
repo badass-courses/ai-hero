@@ -18,11 +18,13 @@ allowBuilds:
   workerd: true
 
 overrides:
-  '@coursebuilder/core': '2.0.3'
-  # Core 2.0.3 was published with workspace protocols in its npm manifest.
-  # Resolve those two package-local dependencies to the versions in its pack artifact.
-  '@coursebuilder/core@2.0.3>@coursebuilder/email-templates': '1.0.8'
-  '@coursebuilder/core@2.0.3>@coursebuilder/nodash': '0.0.3'
+  '@coursebuilder/core': '2.0.4'
+  # Core 2.0.4 and adapter-drizzle 2.1.2 were published with workspace
+  # protocols in their npm manifests. Resolve those package-local
+  # dependencies to the versions in the pack artifacts.
+  '@coursebuilder/core@2.0.4>@coursebuilder/email-templates': '1.0.8'
+  '@coursebuilder/core@2.0.4>@coursebuilder/nodash': '0.0.3'
+  '@coursebuilder/adapter-drizzle@2.1.2>@coursebuilder/nodash': '0.0.3'
   '@internationalized/date': '3.12.2'
   '@types/react': '19.2.7'
   '@types/react-dom': '19.2.3'
@@ -40,3 +42,7 @@ packageExtensions:
     dependencies:
       '@codemirror/state': '^6.0.0'
       '@codemirror/view': '^6.0.0'
+
+patchedDependencies:
+  '@coursebuilder/adapter-drizzle@2.1.2': patches/@coursebuilder__adapter-drizzle@2.1.2.patch
+  '@coursebuilder/core@2.0.4': patches/@coursebuilder__core@2.0.4.patch

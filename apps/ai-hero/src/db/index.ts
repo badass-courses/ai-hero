@@ -1,5 +1,6 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { mysqlTable } from '@/db/mysql-table'
+import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { createDatabasePoolCloser } from '@/db/pool-lifecycle'
 import { env } from '@/env.mjs'
 import {
@@ -7,7 +8,7 @@ import {
 	type MySqlQueryResultHKT,
 } from 'drizzle-orm/mysql-core'
 import { drizzle, type MySql2PreparedQueryHKT } from 'drizzle-orm/mysql2'
-import mysql, { type Pool, type PoolConnection } from 'mysql2/promise'
+import mysql from 'mysql2/promise'
 
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 
@@ -23,41 +24,12 @@ interface TcpQueryResultHKT extends MySqlQueryResultHKT {
 	readonly type: TcpQueryResult
 }
 
-type QueryClient = Pool | PoolConnection
-
-const wrappedQueryClients = new WeakSet<QueryClient>()
-
-function preserveQueryResultShape<TClient extends QueryClient>(client: TClient) {
-	if (wrappedQueryClients.has(client)) return client
-	wrappedQueryClients.add(client)
-
-	const query = client.query.bind(client)
-	client.query = (async (...args: unknown[]) => {
-		const result = (await Reflect.apply(query, client, args)) as [
-			{ affectedRows?: number; insertId?: number } | unknown[],
-			unknown[],
-		]
-		const rowsOrHeader = result[0]
-
-		return Object.assign(result, {
-			insertId: Array.isArray(rowsOrHeader)
-				? ''
-				: String(rowsOrHeader.insertId ?? ''),
-			rows: Array.isArray(rowsOrHeader) ? rowsOrHeader : [],
-			rowsAffected: Array.isArray(rowsOrHeader)
-				? 0
-				: (rowsOrHeader.affectedRows ?? 0),
-		})
-	}) as TClient['query']
-
-	return client
-}
-
 const pool = preserveQueryResultShape(
 	mysql.createPool({
 		uri: env.DATABASE_URL,
 		connectionLimit: 2,
 		maxIdle: 2,
+		timezone: 'Z',
 		enableKeepAlive: true,
 	}),
 )

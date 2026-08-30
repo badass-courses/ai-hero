@@ -45,15 +45,21 @@ describe('ClientModuleProgressProvider', () => {
 		mocks.sessionStatus = 'unauthenticated'
 	})
 
-	it('does not request progress for an anonymous static shell', () => {
+	it('renders an empty static shell before the query resolves', () => {
 		const markup = renderToStaticMarkup(
 			<ClientModuleProgressProvider moduleIdOrSlug="workshop">
 				<ProgressProbe />
 			</ClientModuleProgressProvider>,
 		)
 
+		// The query always fires (see the comment on
+		// ClientModuleProgressProvider): subscriber-cookie learners are never
+		// next-auth-authenticated, so gating the fetch on session status hid
+		// their progress. There is no `enabled` field to assert on any more —
+		// only that the anonymous case resolves to nothing and the static
+		// shell renders empty.
 		expect(markup).toContain('>0<')
-		expect(mocks.queryOptions).toMatchObject({ enabled: false })
+		expect(mocks.queryOptions).not.toHaveProperty('enabled')
 	})
 
 	it('hydrates signed-in progress from the member query', () => {
@@ -70,6 +76,6 @@ describe('ClientModuleProgressProvider', () => {
 		)
 
 		expect(markup).toContain('>1<')
-		expect(mocks.queryOptions).toMatchObject({ enabled: true })
+		expect(mocks.queryOptions).not.toHaveProperty('enabled')
 	})
 })

@@ -18,6 +18,9 @@ describe('course sync poll machine', () => {
 	it('routes only eligible bounded-auto previews to applying', () => {
 		const eligible = actor(null, 0, 'bounded-auto')
 		eligible.send({ type: 'REVISION.START' })
+		expect(eligible.getSnapshot().value).toEqual({ active: 'batching' })
+		eligible.send({ type: 'BATCHES.OK' })
+		expect(eligible.getSnapshot().value).toEqual({ active: 'staging' })
 		eligible.send({
 			type: 'PREVIEW.EVALUATED',
 			boundedAutoEligible: true,
@@ -26,6 +29,7 @@ describe('course sync poll machine', () => {
 
 		const ineligible = actor(null, 0, 'bounded-auto')
 		ineligible.send({ type: 'REVISION.START' })
+		ineligible.send({ type: 'BATCHES.OK' })
 		ineligible.send({
 			type: 'PREVIEW.EVALUATED',
 			boundedAutoEligible: false,
@@ -38,6 +42,7 @@ describe('course sync poll machine', () => {
 	it('stops operator-policy previews at awaiting apply', () => {
 		const poll = actor(null)
 		poll.send({ type: 'REVISION.START' })
+		poll.send({ type: 'BATCHES.OK' })
 		poll.send({
 			type: 'PREVIEW.EVALUATED',
 			boundedAutoEligible: true,
@@ -87,6 +92,15 @@ describe('course sync poll machine', () => {
 		expect(second.getSnapshot().context.strikes).toBe(2)
 	})
 
+	it('recovers batching and legacy staging without a time guess', () => {
+		for (const persistedStatus of ['batching', 'staging']) {
+			const poll = actor(persistedStatus)
+			expect(poll.getSnapshot().value).toEqual({ active: 'recovering' })
+			poll.send({ type: 'REVISION.RESUME' })
+			expect(poll.getSnapshot().value).toEqual({ active: 'batching' })
+		}
+	})
+
 	it('requires operator release to leave held', () => {
 		const held = actor('held', 1)
 		held.send({ type: 'OPERATOR.RELEASE' })
@@ -98,6 +112,8 @@ describe('course sync poll machine', () => {
 		expect(new Set(courseSyncPollMachine.events)).toEqual(
 			new Set([
 				'REVISION.START',
+				'REVISION.RESUME',
+				'BATCHES.OK',
 				'PREVIEW.EVALUATED',
 				'APPLY.START',
 				'APPLY.OK',

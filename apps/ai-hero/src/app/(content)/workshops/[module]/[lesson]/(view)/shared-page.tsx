@@ -9,8 +9,8 @@ import PostToC from '@/app/(content)/posts/_components/post-toc'
 import UpNext from '@/app/(content)/workshops/_components/up-next'
 import { WorkshopPricing } from '@/app/(content)/workshops/_components/workshop-pricing-server'
 import { ContentReadTracker } from '@/components/content-read-tracker'
-import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { env } from '@/env.mjs'
+import { PlayerContainerSkeleton } from '@/components/player-skeleton'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
 import type { Lesson } from '@/lib/lessons'
@@ -91,6 +91,9 @@ export async function LessonPage({
 				{},
 				{
 					lessonId: lesson.id,
+					...(workshop && ability.canViewWorkshop
+						? { officeHoursWorkshopId: workshop.id }
+						: {}),
 					...(entries ? { dictionaryAutoLink: { entries, maxLinks: 3 } } : {}),
 				},
 			),
@@ -277,24 +280,26 @@ async function PlayerContainer({
 				aria-label="video"
 				className="dark relative flex flex-col items-center justify-center border-b bg-black text-white dark:text-white"
 			>
-				{thumbnailUrl && (
-					<Image
-						src={thumbnailUrl}
-						alt="thumbnail"
-						fill
-						className="blur-xs absolute inset-0 z-0 h-full w-full bg-cover opacity-20"
-						priority
-					/>
-				)}
-				{/* <div
-					className="absolute inset-0 z-0 h-full w-full bg-cover opacity-20 blur-xs"
-					style={{
-						backgroundImage: `url(${thumbnailUrl})`,
-					}}
-				/> */}
 				<Suspense
 					fallback={
-						<PlayerContainerSkeleton className="h-auto w-full bg-black md:max-h-[75svh]" />
+						/*
+						 * The blurred thumbnail lives inside the fallback so it exists
+						 * exactly while the player loads: rendered behind the (transparent)
+						 * skeleton, unmounted with it. As a permanent section backdrop it
+						 * leaked around the pillar-boxed player and read as a glitch.
+						 */
+						<>
+							{thumbnailUrl && (
+								<Image
+									src={thumbnailUrl}
+									alt=""
+									fill
+									className="blur-xs absolute inset-0 z-0 h-full w-full object-cover opacity-20"
+									priority
+								/>
+							)}
+							<PlayerContainerSkeleton className="z-10 h-auto w-full bg-transparent md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]" />
+						</>
 					}
 				>
 					<WorkshopPricing
@@ -314,7 +319,12 @@ async function PlayerContainer({
 					</WorkshopPricing>
 					<AuthedVideoPlayer
 						key={lesson.id}
-						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh]"
+						// The width cap mirrors the height cap: with only max-h, a short
+						// viewport clamps the height while the width stays full, the box
+						// stops being 16:9, and Safari/Chrome each mangle the mismatch
+						// (cropped video, cut-off controls). Height-capped + width-capped
+						// keeps the box a true 16:9 that always fits the viewport.
+						className="aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]"
 						muxPlaybackId={muxPlaybackId}
 						playbackPositionLoader={playbackPositionLoader}
 						// playbackIdLoader={playbackIdLoader}

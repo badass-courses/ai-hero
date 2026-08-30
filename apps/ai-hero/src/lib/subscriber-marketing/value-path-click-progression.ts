@@ -6,7 +6,14 @@ import type { ValuePathTokenPayload } from './path-token'
 import { CONTACT_EVENT_SCHEMA_VERSION } from './types'
 import { MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT } from './value-path-answer-click-verification'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
-import { getSkillsWorkflowEmailStep } from './skills-workflow-path'
+import {
+	getSkillsWorkflowEmailStep,
+	isTerminalSkillsWorkflowEmailResourceId,
+} from './skills-workflow-path'
+import {
+	parseCourseSequenceExhaustionEnabled,
+	restoreDeadlineTimeZoneEvidence,
+} from './course-sequence-exhaustion'
 import {
 	captureValuePathFinisherFields,
 	type ValuePathFinisherCaptureResult,
@@ -65,6 +72,7 @@ export async function recordValuePathAnswerProgression(args: {
 	sendGate?: ValuePathAnswerProgressionGateConfig
 	finisherFieldProvider?: ValuePathFinisherFieldProvider
 	acceptedReviewReasons?: string[]
+	sequenceExhaustionEnabled?: boolean
 	now?: string
 }): Promise<ValuePathAnswerProgressionResult> {
 	const now = args.now ?? new Date().toISOString()
@@ -92,6 +100,22 @@ export async function recordValuePathAnswerProgression(args: {
 	const capturesFinisher = Boolean(
 		fields.captureFieldKey || fields.captureDateFieldKey,
 	)
+	const sequenceExhaustionEnabled =
+		args.sequenceExhaustionEnabled ??
+		parseCourseSequenceExhaustionEnabled(
+			process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
+		)
+	if (
+		sequenceExhaustionEnabled &&
+		isTerminalSkillsWorkflowEmailResourceId(nextEmailResourceId)
+	) {
+		return {
+			status: 'skipped',
+			reason: 'terminal-progression-owned-by-email-course',
+			idempotentNoop: false,
+			reviewReasons: ['terminal-progression-owned-by-email-course'],
+		}
+	}
 	if (capturesFinisher && (!fields.emailId || !fields.sequenceId)) {
 		return {
 			status: 'skipped',
@@ -134,6 +158,16 @@ export async function recordValuePathAnswerProgression(args: {
 	const idempotencyKey = nextEmailResourceId
 		? `contact:${contact.id}:value-path:${args.token.valuePathResourceId}:email:${nextEmailResourceId}`
 		: undefined
+	const sourceIntent =
+		await args.repository.findSideEffectIntentByIdempotencyKey(
+			`contact:${contact.id}:value-path:${args.token.valuePathResourceId}:email:${args.token.emailResourceId}`,
+		)
+	const courseEntryEventId = stringField(
+		sourceIntent?.metadata.courseEntryEventId,
+	)
+	const courseDeadlineTimeZone = restoreDeadlineTimeZoneEvidence(
+		sourceIntent?.metadata.courseDeadlineTimeZone,
+	)
 	const finisherIdempotencyKey = capturesFinisher
 		? `${eventKey}:write-finisher-fields`
 		: undefined
@@ -511,6 +545,8 @@ export async function recordValuePathAnswerProgression(args: {
 								nextEmailId: fields.nextEmailId,
 								nextEmailResourceId,
 								kitSequenceId: stringField(fields.kitSequenceId) ?? null,
+								...(courseEntryEventId ? { courseEntryEventId } : {}),
+								...(courseDeadlineTimeZone ? { courseDeadlineTimeZone } : {}),
 								providerResult: null,
 							},
 							createdAt: now,

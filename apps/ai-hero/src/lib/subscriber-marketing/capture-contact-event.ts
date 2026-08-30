@@ -1,3 +1,8 @@
+import type {
+	CourseSequenceExhaustionCommitRequest,
+	CourseSequenceExhaustionCommitResult,
+	EmailCourseEntryEventRecord,
+} from './course-sequence-exhaustion'
 import { planInternalCaptureIntents } from './intent-planner'
 import { classifyContactEvent } from './signal-classifier'
 import { reduceContactState } from './state-reducer'
@@ -48,6 +53,11 @@ export type CaptureMarketingRepository = {
 			createdAt?: string
 		},
 	): MaybePromise<ContactEventRecord>
+	createEmailCourseEntryEvent?(
+		input: Omit<EmailCourseEntryEventRecord, 'id' | 'createdAt'> & {
+			createdAt?: string
+		},
+	): MaybePromise<EmailCourseEntryEventRecord>
 	findCurrentContactState(
 		contactId: string,
 	): MaybePromise<ContactState | undefined>
@@ -65,6 +75,9 @@ export type CaptureMarketingRepository = {
 	createNextActionWithSideEffectIntents?(
 		createRecords: () => LinkedActionRecords,
 	): MaybePromise<LinkedActionRecords>
+	commitCourseSequenceExhaustion?(
+		request: CourseSequenceExhaustionCommitRequest,
+	): MaybePromise<CourseSequenceExhaustionCommitResult>
 	findPendingValuePathEmailSideEffectIntents?(args: {
 		limit: number
 	}): MaybePromise<SideEffectIntent[]>

@@ -1,4 +1,9 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
+import {
+	deadlineTimeZoneEvidenceFromHeader,
+	restoreDeadlineTimeZoneEvidence,
+	type DeadlineTimeZoneEvidence,
+} from './course-sequence-exhaustion'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import type { OptInAttribution } from './opt-in-attribution'
@@ -31,6 +36,7 @@ export type SkillsNewsletterPathEntryInput = {
 	formId: number
 	source: string
 	subscribedAt: string
+	deadlineTimeZone?: DeadlineTimeZoneEvidence
 	optInAttribution?: OptInAttribution
 }
 
@@ -41,7 +47,9 @@ export type SkillsNewsletterPathEntryResult = {
 	entry: ValuePathGateDStartResult
 }
 
-function attributionWithSubscriptionTime(input: SkillsNewsletterPathEntryInput) {
+function attributionWithSubscriptionTime(
+	input: SkillsNewsletterPathEntryInput,
+) {
 	return input.optInAttribution
 		? { ...input.optInAttribution, subscribedAt: input.subscribedAt }
 		: undefined
@@ -52,6 +60,7 @@ export async function enterSkillsNewsletterSubscriber(args: {
 	allowlist: GateDRuntimeAllowlist
 	input: SkillsNewsletterPathEntryInput
 	allowWrite: boolean
+	sequenceExhaustionEnabled?: boolean
 }): Promise<SkillsNewsletterPathEntryResult> {
 	if (args.allowlist.authorizationMode !== 'rolling-public-enrollment') {
 		return blockedResult(args, 'rolling-public-enrollment-not-active')
@@ -73,6 +82,19 @@ export async function enterSkillsNewsletterSubscriber(args: {
 		}),
 	})
 
+	const fallbackDeadline = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: undefined,
+		capturedAt: args.input.subscribedAt,
+		existingLearner:
+			args.input.source === 'signup-gap-replay' ||
+			args.input.source === 'learner-flow-unstick' ||
+			args.input.source === 'kit-confirmation-reconciler',
+	})
+	const deadlineTimeZone = args.sequenceExhaustionEnabled
+		? (restoreDeadlineTimeZoneEvidence(args.input.deadlineTimeZone) ??
+			(fallbackDeadline.ok ? fallbackDeadline.value : undefined))
+		: undefined
+
 	const entry = await startValuePathGateDActivation({
 		repository: args.repository,
 		allowlist: {
@@ -82,6 +104,9 @@ export async function enterSkillsNewsletterSubscriber(args: {
 					contactId: capture.contact.id,
 					kitSubscriberId: args.input.kitSubscriberId,
 					email: args.input.email,
+					...(deadlineTimeZone
+						? { courseDeadlineTimeZone: deadlineTimeZone }
+						: {}),
 					rationale: ['Explicit Skills newsletter signup.'],
 					blockers: [],
 				},

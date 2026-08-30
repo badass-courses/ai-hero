@@ -51,6 +51,36 @@ describe('PostSchema artwork fields', () => {
 		expect(result.fields._artwork).toBeUndefined()
 	})
 
+	it('keeps coverImage.source through a parse — the strip-schema write-back must not erase it', () => {
+		const result = PostSchema.parse({
+			...baseResource,
+			fields: {
+				...baseFields,
+				coverImage: {
+					url: 'https://res.cloudinary.com/x/y.png',
+					source: 'uploaded',
+				},
+			},
+		})
+
+		expect(result.fields.coverImage?.source).toBe('uploaded')
+	})
+
+	it('rejects an unknown coverImage.source label', () => {
+		expect(() =>
+			PostSchema.parse({
+				...baseResource,
+				fields: {
+					...baseFields,
+					coverImage: {
+						url: 'https://res.cloudinary.com/x/y.png',
+						source: 'designed',
+					},
+				},
+			}),
+		).toThrow()
+	})
+
 	it('rejects a coverImage with a non-url string', () => {
 		expect(() =>
 			PostSchema.parse({
@@ -58,6 +88,64 @@ describe('PostSchema artwork fields', () => {
 				fields: { ...baseFields, coverImage: { url: 'not-a-url' } },
 			}),
 		).toThrow()
+	})
+})
+
+describe('PostSchema icon field', () => {
+	it('parses a skill post with an icon', () => {
+		const result = PostSchema.parse({
+			...baseResource,
+			fields: {
+				...baseFields,
+				postType: 'skill',
+				icon: { url: 'https://res.cloudinary.com/x/icon.png', alt: 'mark' },
+			},
+		})
+
+		expect(result.fields.icon?.url).toBe(
+			'https://res.cloudinary.com/x/icon.png',
+		)
+	})
+
+	it('accepts the editor empty ("") and cleared (null) states', () => {
+		expect(
+			PostSchema.parse({
+				...baseResource,
+				fields: { ...baseFields, icon: { url: '' } },
+			}).fields.icon?.url,
+		).toBe('')
+		expect(
+			PostSchema.parse({
+				...baseResource,
+				fields: { ...baseFields, icon: null },
+			}).fields.icon,
+		).toBeNull()
+	})
+
+	it('rejects an icon with a non-url string', () => {
+		expect(() =>
+			PostSchema.parse({
+				...baseResource,
+				fields: { ...baseFields, icon: { url: 'not-a-url' } },
+			}),
+		).toThrow()
+	})
+
+	it('accepts icon on update (so saves cannot erase it)', () => {
+		const result = PostUpdateSchema.parse({
+			id: 'post_123',
+			fields: {
+				postType: 'skill',
+				title: 'Test Post',
+				slug: 'test-post',
+				icon: { url: 'https://res.cloudinary.com/x/icon.png' },
+			},
+			tags: [],
+		})
+
+		expect(result.fields.icon?.url).toBe(
+			'https://res.cloudinary.com/x/icon.png',
+		)
 	})
 })
 

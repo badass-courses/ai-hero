@@ -25,7 +25,6 @@ import {
 	stableJson,
 } from './control-plane'
 import {
-	assertCourseSyncLaunchApplyPolicy,
 	chunkCourseSyncWrites,
 	courseSyncRollbackPointer,
 	resolveCourseSyncRollbackFields,
@@ -638,7 +637,6 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 	},
 
 	async applyAtomically({ runId, plan, idempotencyKey, createdById }) {
-		assertCourseSyncLaunchApplyPolicy(plan)
 		await db.transaction(async (trx) => {
 			// The binding row is the serialization lock for apply, preview-head
 			// changes, and rollback. Acquire it before every other mutable row.
@@ -1319,6 +1317,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					status: 'succeeded',
 					consecutiveFailures: 0,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: appliedAt,
 				})
 				.where(

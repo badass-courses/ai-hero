@@ -22,6 +22,11 @@ import type {
 	CourseSyncRevisionHead,
 } from './detection-poller'
 import { CourseSyncError } from './errors'
+import { courseSyncApplyPolicyOverride } from './poll-policy'
+import {
+	summarizeCourseSyncPlanChanges,
+	type CourseSyncPlanChange,
+} from './persistence-invariants'
 import { canAutomaticallySaveCourseSyncPollState } from './poll-state-guard'
 import {
 	releasedCourseSyncPollState,
@@ -96,6 +101,8 @@ export async function getCourseSyncPollState(
 		? {
 				...row,
 				status: row.status as CourseSyncPollState['status'],
+				applyPolicyOverride:
+					row.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 			}
 		: null
 }
@@ -112,17 +119,27 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 			.from(courseSyncPollState)
 			.where(eq(courseSyncPollState.bindingId, state.bindingId))
 			.for('update')
-		const currentState = current
+		const currentState: CourseSyncPollState | null = current
 			? {
 					...current,
 					status: current.status as CourseSyncPollState['status'],
+					applyPolicyOverride:
+						current.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 				}
 			: null
 		if (!canAutomaticallySaveCourseSyncPollState(currentState, state)) return
+		const nextState: CourseSyncPollState = {
+			...state,
+			applyPolicyOverride:
+				state.status === 'succeeded'
+					? null
+					: (courseSyncApplyPolicyOverride(currentState) ??
+						state.applyPolicyOverride),
+		}
 		if (
 			current?.status === 'awaiting-apply' &&
 			current.controlPlaneRunId &&
-			((state.status === 'staging' &&
+			(((state.status === 'batching' || state.status === 'staging') &&
 				(state.courseVersionId !== current.courseVersionId ||
 					state.providerRevision !== current.providerRevision)) ||
 				(state.status === 'awaiting-apply' &&
@@ -141,22 +158,29 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 		}
 		await trx
 			.insert(courseSyncPollState)
-			.values(state)
+			.values(nextState)
 			.onDuplicateKeyUpdate({
 				set: {
-					courseVersionId: state.courseVersionId,
-					providerRevision: state.providerRevision,
-					status: state.status,
-					consecutiveFailures: state.consecutiveFailures,
-					controlPlaneRunId: state.controlPlaneRunId,
-					failureClass: state.failureClass,
-					updatedAt: state.updatedAt,
+					courseVersionId: nextState.courseVersionId,
+					providerRevision: nextState.providerRevision,
+					status: nextState.status,
+					consecutiveFailures: nextState.consecutiveFailures,
+					controlPlaneRunId: nextState.controlPlaneRunId,
+					failureClass: nextState.failureClass,
+					applyPolicyOverride: nextState.applyPolicyOverride,
+					updatedAt: nextState.updatedAt,
 				},
 			})
 	})
 }
 
+// A notice is claimed per lifecycle state, not per caller. Both the poller and
+// an operator apply reach the same applied state, so both deliver through the
+// same claim and the reader sees exactly one message.
+export type CourseSyncNotificationKind = 'review' | 'applied'
+
 export type CourseSyncReviewNotificationReceiptInput = {
+	kind?: CourseSyncNotificationKind
 	bindingId: string
 	courseVersionId: string
 	providerRevision: string
@@ -167,28 +191,31 @@ export type CourseSyncReviewNotificationReceiptInput = {
 }
 
 function courseSyncReviewNotificationReceipt(input: {
+	kind?: CourseSyncNotificationKind
 	bindingId: string
 	courseVersionId: string
 	planSha256: string
 }) {
+	const kind = input.kind ?? 'review'
 	const notificationKey = sha256(
 		stableJson({
-			kind: 'review',
+			kind,
 			bindingId: input.bindingId,
 			courseVersionId: input.courseVersionId,
 			planSha256: input.planSha256,
 		}),
 	)
 	return {
+		kind,
 		notificationKey,
-		receiptId: `cspl_review_notice_${notificationKey}`,
+		receiptId: `cspl_${kind}_notice_${notificationKey}`,
 	}
 }
 
 export async function claimCourseSyncReviewNotification(
 	input: CourseSyncReviewNotificationReceiptInput,
 ): Promise<boolean> {
-	const { notificationKey, receiptId } =
+	const { kind, notificationKey, receiptId } =
 		courseSyncReviewNotificationReceipt(input)
 	return db.transaction(async (trx) => {
 		await trx
@@ -242,7 +269,7 @@ export async function claimCourseSyncReviewNotification(
 			outcome: 'started',
 			failureClass: null,
 			metadata: {
-				kind: 'review',
+				kind,
 				notificationKey,
 				planSha256: input.planSha256,
 				deliveryAttempts: 1,
@@ -387,10 +414,18 @@ export async function releaseCourseSyncPollHoldAtomically(
 			const releasedState = value as Omit<CourseSyncPollState, 'updatedAt'> & {
 				updatedAt: string | Date
 			}
-			return {
+			const replayedState: CourseSyncPollState = {
 				...releasedState,
+				status: releasedState.status,
+				applyPolicyOverride:
+					releasedState.applyPolicyOverride === 'operator'
+						? 'operator'
+						: releasedState.status === 'released'
+							? 'operator'
+							: null,
 				updatedAt: new Date(releasedState.updatedAt),
 			}
+			return replayedState
 		}
 
 		const [lockedState] = await trx
@@ -409,6 +444,8 @@ export async function releaseCourseSyncPollHoldAtomically(
 		const currentState: CourseSyncPollState = {
 			...lockedState,
 			status: lockedState.status as CourseSyncPollState['status'],
+			applyPolicyOverride:
+				lockedState.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 		}
 		const released = releasedCourseSyncPollState(currentState, input.occurredAt)
 
@@ -517,6 +554,7 @@ export async function releaseCourseSyncPollHoldAtomically(
 				consecutiveFailures: released.consecutiveFailures,
 				controlPlaneRunId: released.controlPlaneRunId,
 				failureClass: released.failureClass,
+				applyPolicyOverride: released.applyPolicyOverride,
 				updatedAt: released.updatedAt,
 			})
 			.where(
@@ -552,4 +590,20 @@ export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
 	} else {
 		await log.info(event, attributes)
 	}
+}
+
+/**
+ * The full stored plan carries resource titles and every source kind; the
+ * public run summary deliberately does not. Read it here so the written
+ * notice can name what changed without widening the API contract.
+ */
+export async function getCourseSyncPlanChanges(
+	runId: string,
+): Promise<CourseSyncPlanChange[]> {
+	const [row] = await db
+		.select({ plan: courseSyncRun.plan })
+		.from(courseSyncRun)
+		.where(eq(courseSyncRun.runId, runId))
+		.limit(1)
+	return row?.plan ? summarizeCourseSyncPlanChanges(row.plan) : []
 }

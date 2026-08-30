@@ -547,10 +547,11 @@ function LessonResource({
 		)
 	}
 
-	const subRowBase = cn(
-		'relative flex w-full min-w-0 items-center py-2 pr-10 text-[13px] tracking-[-0.005em] transition-colors',
-		indented ? 'pl-16' : 'pl-10',
-	)
+	// Left paddings here must track the regular rows' flat pl-4 (rowClasses
+	// above): the lesson link sits at pl-4 like its siblings, only the
+	// problem/solution sub-rows step in to pl-10.
+	const subRowBase =
+		'relative flex w-full min-w-0 items-center py-2 pl-10 pr-10 text-[13px] tracking-[-0.005em] transition-colors'
 	const subRowActive = 'bg-foreground/[0.03] dark:bg-foreground/[0.04]'
 	const subRowInactive =
 		'hover:bg-foreground/[0.02] dark:hover:bg-foreground/[0.03]'
@@ -570,10 +571,7 @@ function LessonResource({
 					<Link
 						href={lessonHref}
 						prefetch
-						className={cn(
-							'relative flex w-full min-w-0 items-center py-2.5 pr-12 transition-colors',
-							indented ? 'pl-10' : 'pl-4',
-						)}
+						className="relative flex w-full min-w-0 items-center py-2.5 pl-4 pr-12 transition-colors"
 					>
 						<span
 							className={cn(

@@ -18,6 +18,7 @@ import { postmarkWebhook } from '@/inngest/functions/postmark/postmarks-webhooks
 import { refundEntitlements } from '@/inngest/functions/refund/refund-entitlements'
 import { sendWorkshopAccessEmails } from '@/inngest/functions/send-workshop-access-emails'
 import { syncPurchaseTags } from '@/inngest/functions/sync-purchase-tags'
+import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purchase-fulfillment-workflow'
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
 
@@ -33,6 +34,7 @@ import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
+import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
@@ -66,6 +68,7 @@ import { captureContactUnsubscribed } from './functions/capture-contact-unsubscr
 import { capturePurchaseContactEvent } from './functions/capture-purchase-contact-event'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
 import { computeVideoSplitPoints } from './functions/split_video'
+import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
@@ -102,6 +105,7 @@ const allFunctions = [
 	addSubscriptionRoleDiscord,
 	removePurchaseRoleDiscord,
 	postPurchaseWorkflow,
+	teamPurchaseFulfillmentWorkflow,
 	postPurchaseDiscordRole,
 	postPurchaseWelcomeEmail,
 	buyerPurchaseBenefitFollowup,
@@ -113,6 +117,7 @@ const allFunctions = [
 	syncPurchaseTags,
 	addPurchasesConvertkit,
 	stripeSubscriptionCheckoutSessionComplete,
+	persistPurchaseGeo,
 	createUserOrganizations,
 	ensurePersonalOrganizationWorkflow,
 	videoResourceAttached,
@@ -134,6 +139,7 @@ const allFunctions = [
 	cohortReminderBroadcast,
 	contentReadRetention,
 	contentResourceIndexRequested,
+	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
 	typesensePopularitySync,
 	valuePathEmailExecutor,

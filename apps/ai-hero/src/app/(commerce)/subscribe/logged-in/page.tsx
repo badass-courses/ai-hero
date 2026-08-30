@@ -1,11 +1,14 @@
 import { ParsedUrlQuery } from 'querystring'
 import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
+import { CHECKOUT_LOGIN_BROWSER_COOKIE } from '@/lib/checkout-login-browser-session'
+import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
-import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
+import { createLoggedInCheckoutSession } from '@/lib/logged-in-checkout-provider'
+import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -34,7 +37,7 @@ export default async function LoginPage({
 	const { session } = await getServerAuthSession()
 	const user = session?.user
 	const headersList = await headers()
-	const countryCode =
+	const trustedCountry =
 		headersList.get('x-vercel-ip-country') ||
 		process.env.DEFAULT_COUNTRY ||
 		'US'
@@ -76,40 +79,52 @@ export default async function LoginPage({
 		rawSubscriberId: cookieStore.get('ck_subscriber_id')?.value,
 	})
 
-	const couponAuthorization = await authorizeExclusiveCouponSelection({
+	const pricing = await resolveLoggedInCheckoutPricing({
 		adapter: courseBuilderAdapter,
+		handoffStore: checkoutLoginHandoffStore,
 		verifiedUserId: user.id,
-		productId: checkoutParams.productId,
-		quantity: checkoutParams.quantity ?? 1,
-		requestedMerchantCouponId: checkoutParams.couponId,
-		requestedSiteCouponId: checkoutParams.usedCouponId,
+		checkoutParams,
+		checkoutHandoffToken:
+			typeof rawSearchParams.checkoutHandoff === 'string'
+				? rawSearchParams.checkoutHandoff
+				: undefined,
+		browserSession: cookieStore.get(CHECKOUT_LOGIN_BROWSER_COOKIE)?.value,
+		trustedCountry,
+		handoffSecret: env.NEXTAUTH_SECRET,
 	})
-	const serverComputedCoupon = !couponAuthorization.authorized
-		? await resolveServerComputedCheckoutCoupon({
-				adapter: courseBuilderAdapter,
-				productId: checkoutParams.productId,
-				quantity: checkoutParams.quantity ?? 1,
-				verifiedUserId: user.id,
-				country: countryCode,
-			})
-		: null
+	if (pricing.kind === 'completed') {
+		return redirect(pricing.redirect)
+	}
+	if (pricing.kind === 'rejected') {
+		return redirect(
+			`/subscribe/error?reason=${encodeURIComponent(pricing.reason)}`,
+		)
+	}
+
 	const authorizedCheckoutParams = {
 		...checkoutParams,
 		userId: user.id,
+		country: pricing.country,
+		couponId: pricing.couponId,
+		usedCouponId: pricing.usedCouponId,
 		...(organizationId && { organizationId }),
 		...checkoutAttribution,
-		...(couponAuthorization.entitlementCouponId && {
-			usedCouponId: couponAuthorization.entitlementCouponId,
-		}),
-		...(!couponAuthorization.authorized && {
-			couponId: serverComputedCoupon?.id,
-			usedCouponId: undefined,
-		}),
 	}
 
-	const stripe = await stripeProvider.createCheckoutSession(
-		authorizedCheckoutParams,
-		courseBuilderAdapter,
-	)
-	return redirect(stripe.redirect)
+	const providerResult = await createLoggedInCheckoutSession({
+		provider: stripeProvider,
+		adapter: courseBuilderAdapter,
+		handoffStore: checkoutLoginHandoffStore,
+		claim: pricing.claim,
+		handoffPayload: pricing.checkoutHandoff.valid
+			? pricing.checkoutHandoff.payload
+			: undefined,
+		checkoutParams: authorizedCheckoutParams,
+	})
+	if (providerResult.kind === 'failure') {
+		return redirect(
+			`/subscribe/error?reason=${encodeURIComponent(providerResult.failure.code)}`,
+		)
+	}
+	return redirect(providerResult.redirect)
 }

@@ -1,4 +1,13 @@
 import {
+	COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+	courseSequenceExhaustionFactKey,
+	restoreCourseSequenceExhaustedPayload,
+	restoreEmailCourseEntryPayload,
+	type CourseSequenceExhaustionCommitRequest,
+	type CourseSequenceExhaustionCommitResult,
+	type EmailCourseEntryEventRecord,
+} from './course-sequence-exhaustion'
+import {
 	resolveOrCreateIdentity,
 	type IdentityRepository,
 } from './identity-resolution'
@@ -36,6 +45,11 @@ export type MarketingRepository = IdentityRepository & {
 			createdAt?: string
 		},
 	): ContactEventRecord
+	createEmailCourseEntryEvent(
+		input: Omit<EmailCourseEntryEventRecord, 'id' | 'createdAt'> & {
+			createdAt?: string
+		},
+	): EmailCourseEntryEventRecord
 	findCurrentContactState(contactId: string): ContactState | undefined
 	upsertContactState(state: ContactState): ContactState
 	createStateTransition(input: Omit<StateTransition, 'id'>): StateTransition
@@ -44,6 +58,9 @@ export type MarketingRepository = IdentityRepository & {
 		idempotencyKey: string,
 	): SideEffectIntent | undefined
 	createSideEffectIntent(input: SideEffectIntent): SideEffectIntent
+	commitCourseSequenceExhaustion(
+		request: CourseSequenceExhaustionCommitRequest,
+	): CourseSequenceExhaustionCommitResult
 	findPendingValuePathEmailSideEffectIntents(args: {
 		limit: number
 	}): SideEffectIntent[]
@@ -59,7 +76,8 @@ export type MarketingRepository = IdentityRepository & {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		> & Pick<SideEffectIntent, 'completedAt'>,
+		> &
+			Pick<SideEffectIntent, 'completedAt'>,
 	): SideEffectIntent
 }
 
@@ -104,10 +122,16 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		return contact
 	}
 
-	updateContactOptInAttribution(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>) {
+	updateContactOptInAttribution(
+		contactId: string,
+		attribution: NonNullable<ContactRecord['optInAttribution']>,
+	) {
 		const current = this.contacts.get(contactId)
 		if (!current) throw new Error(`Missing contact ${contactId}`)
-		const updated = { ...current, optInAttribution: current.optInAttribution ?? attribution }
+		const updated = {
+			...current,
+			optInAttribution: current.optInAttribution ?? attribution,
+		}
 		this.contacts.set(contactId, updated)
 		return updated
 	}
@@ -151,6 +175,19 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		this.contactEvents.set(event.id, event)
 		return event
 	}
+	createEmailCourseEntryEvent(
+		input: Omit<EmailCourseEntryEventRecord, 'id' | 'createdAt'> & {
+			createdAt?: string
+		},
+	) {
+		const event: EmailCourseEntryEventRecord = {
+			id: this.id('event'),
+			createdAt: input.createdAt ?? new Date().toISOString(),
+			...input,
+		}
+		this.contactEvents.set(event.id, event)
+		return event
+	}
 	findCurrentContactState(contactId: string) {
 		return this.states.get(contactId)
 	}
@@ -166,6 +203,142 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	createNextAction(input: NextAction) {
 		this.nextActions.set(input.id, input)
 		return input
+	}
+	commitCourseSequenceExhaustion(
+		request: CourseSequenceExhaustionCommitRequest,
+	): CourseSequenceExhaustionCommitResult {
+		const payload = restoreCourseSequenceExhaustedPayload(
+			request.records.fact.domainPayload,
+		)
+		const source = this.sideEffectIntents.get(request.sourceIntentId)
+		const entry = this.contactEvents.get(request.courseEntryEventId)
+		const entryPayload = restoreEmailCourseEntryPayload(entry?.domainPayload)
+		if (
+			!payload ||
+			!source ||
+			!entry ||
+			source.id !== request.sourceIntentId ||
+			source.id !== payload.progression.from.intentId ||
+			source.status !== 'completed' ||
+			!source.completedAt ||
+			source.completedAt !== payload.progression.from.completedAt ||
+			source.idempotencyKey !== payload.progression.from.idempotencyKey ||
+			source.metadata.valuePathSlug !== payload.actor.valuePathId ||
+			source.metadata.emailResourceId !==
+				payload.progression.from.emailResourceId ||
+			source.contactId !== payload.actor.contactId ||
+			source.contactId !== request.records.fact.contactId ||
+			entry.id !== request.courseEntryEventId ||
+			entry.id !== payload.actor.courseEntryEventId ||
+			entry.contactId !== request.records.fact.contactId ||
+			entry.eventType !== 'value-path.entered' ||
+			request.records.fact.provider !== 'ai-hero' ||
+			request.records.fact.contactId !== payload.actor.contactId ||
+			request.records.fact.occurredAt !== payload.exhaustedAt ||
+			request.records.fact.domainFactKey !==
+				courseSequenceExhaustionFactKey({
+					contactId: payload.actor.contactId,
+					valuePathId: payload.actor.valuePathId,
+				}) ||
+			request.records.fact.semanticIdempotencyKey !==
+				request.records.fact.domainFactKey ||
+			request.records.nextAction.id !==
+				payload.progression.terminal.nextActionId ||
+			request.records.nextAction.eventId !== request.records.fact.id ||
+			request.records.nextAction.contactId !== payload.actor.contactId ||
+			request.records.terminalIntent.id !==
+				payload.progression.terminal.intentId ||
+			request.records.terminalIntent.nextActionId !==
+				request.records.nextAction.id ||
+			request.records.terminalIntent.contactId !== payload.actor.contactId ||
+			request.records.terminalIntent.provider !== 'kit' ||
+			request.records.terminalIntent.type !== 'send-value-path-email' ||
+			request.records.terminalIntent.status !== 'pending' ||
+			(entryPayload
+				? JSON.stringify(entryPayload.deadlineTimeZone) !==
+					JSON.stringify(payload.deadlineTimeZone)
+				: payload.deadlineTimeZone.type !== 'ExplicitFallback' ||
+					payload.deadlineTimeZone.reason !== 'legacy-entry')
+		) {
+			throw new Error('Sequence exhaustion source evidence is invalid')
+		}
+		const existingFact = Array.from(this.contactEvents.values()).find(
+			(event) => event.domainFactKey === request.records.fact.domainFactKey,
+		)
+		const existingIntent = this.findSideEffectIntentByIdempotencyKey(
+			request.records.terminalIntent.idempotencyKey,
+		)
+		if (!existingFact && existingIntent) {
+			return {
+				status: 'legacy-terminal-intent-without-fact',
+				terminalIntentId: existingIntent.id,
+			}
+		}
+		if (existingFact && !existingIntent) {
+			throw new Error('Sequence exhaustion fact exists without terminal intent')
+		}
+		if (existingFact && existingIntent) {
+			const action = this.nextActions.get(existingIntent.nextActionId)
+			const storedPayload = restoreCourseSequenceExhaustedPayload(
+				existingFact.domainPayload,
+			)
+			if (
+				!action ||
+				!storedPayload ||
+				existingFact.provider !== 'ai-hero' ||
+				existingFact.eventType !== 'course.sequence-exhausted' ||
+				existingFact.payloadFormat !==
+					COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+				!existingFact.domainFactKey ||
+				action.id !== storedPayload.progression.terminal.nextActionId ||
+				action.eventId !== existingFact.id ||
+				action.contactId !== storedPayload.actor.contactId ||
+				action.type !== 'advance-value-path' ||
+				action.status !== 'planned' ||
+				existingIntent.id !== storedPayload.progression.terminal.intentId ||
+				existingIntent.nextActionId !== action.id ||
+				existingIntent.contactId !== storedPayload.actor.contactId ||
+				existingIntent.provider !== 'kit' ||
+				existingIntent.type !== 'send-value-path-email' ||
+				!isSequenceExhaustionIntentStatus(existingIntent.status) ||
+				existingIntent.metadata.sequenceExhaustionFactId !== existingFact.id
+			) {
+				throw new Error('Stored sequence exhaustion pair is mismatched')
+			}
+			return {
+				status: 'replayed',
+				records: {
+					fact: {
+						...existingFact,
+						provider: 'ai-hero',
+						eventType: 'course.sequence-exhausted',
+						domainFactKey: existingFact.domainFactKey,
+						payloadFormat: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+						domainPayload: storedPayload,
+					},
+					nextAction: {
+						...action,
+						type: 'advance-value-path',
+						status: 'planned',
+					},
+					terminalIntent: {
+						...existingIntent,
+						provider: 'kit',
+						type: 'send-value-path-email',
+					},
+				},
+			}
+		}
+		const fact = request.records.fact
+		const action = request.records.nextAction
+		const terminalIntent = request.records.terminalIntent
+		this.contactEvents.set(fact.id, fact)
+		this.nextActions.set(action.id, action)
+		this.sideEffectIntents.set(terminalIntent.id, terminalIntent)
+		return {
+			status: 'committed',
+			records: request.records,
+		}
 	}
 	findSideEffectIntentByIdempotencyKey(idempotencyKey: string) {
 		return Array.from(this.sideEffectIntents.values()).find(
@@ -210,8 +383,7 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	findValuePathEmailSideEffectIntentsForScan() {
 		return Array.from(this.sideEffectIntents.values()).filter(
 			(intent) =>
-				intent.provider === 'kit' &&
-				intent.type === 'send-value-path-email',
+				intent.provider === 'kit' && intent.type === 'send-value-path-email',
 		)
 	}
 	findCompletedValuePathEmailSideEffectIntentsForRepair() {
@@ -234,7 +406,8 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		> & Pick<SideEffectIntent, 'completedAt'>,
+		> &
+			Pick<SideEffectIntent, 'completedAt'>,
 	) {
 		const existing = this.sideEffectIntents.get(id)
 		if (!existing) throw new Error(`Missing side effect intent ${id}`)
@@ -249,6 +422,17 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	newId(kind: string) {
 		return this.id(kind)
 	}
+}
+
+function isSequenceExhaustionIntentStatus(
+	status: SideEffectIntent['status'],
+) {
+	return (
+		status === 'pending' ||
+		status === 'completed' ||
+		status === 'failed' ||
+		status === 'blocked'
+	)
 }
 
 function isDueRetryableIntent(intent: SideEffectIntent, now: string) {

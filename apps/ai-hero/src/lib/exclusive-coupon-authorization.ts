@@ -140,7 +140,10 @@ export async function authorizeExclusiveCouponSelection({
 		requestedMerchantCouponId && !publicProvenance,
 	)
 
-	if (requestedMerchantCoupon?.type === 'ppp') {
+	if (
+		requestedMerchantCoupon?.type === 'ppp' &&
+		requestedMerchantCoupon.status === 1
+	) {
 		return {
 			authorized: false,
 			protectedMerchantCoupon,
