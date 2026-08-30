@@ -55,7 +55,8 @@ jobs:
       - name: Run guarded certificate evidence suite
         env:
           AIH_COURSE_CERTIFICATE_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
-        run: >-
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
-          src/lib/crash-course-certificate-eligibility.test.ts
-          src/lib/crash-course-certificate-eligibility.mysql.test.ts
+        run: |
+          pnpm --filter @ai-hero/course-sync-schema build
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts \
+            src/lib/crash-course-certificate-eligibility.test.ts \
+            src/lib/crash-course-certificate-eligibility.mysql.test.ts
