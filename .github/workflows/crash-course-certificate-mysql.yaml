@@ -8,7 +8,19 @@ on:
       - 'apps/ai-hero/package.json'
       - 'apps/ai-hero/src/db/schema.ts'
       - 'apps/ai-hero/src/db/mysql-query-client.ts'
-      - 'apps/ai-hero/src/lib/crash-course-certificate-eligibility*'
+      - 'apps/ai-hero/src/course-sync/**'
+      - 'apps/ai-hero/src/lib/quiz/**'
+      - 'apps/ai-hero/src/trpc/api/routers/quiz*'
+      - 'apps/ai-hero/src/components/mdx/quiz*'
+      - 'apps/ai-hero/src/lib/crash-course-certificate-*'
+      - 'apps/ai-hero/src/lib/subscriber-marketing/value-path-certificate-shares*'
+      - 'apps/ai-hero/src/trpc/api/routers/certificate*'
+      - 'apps/ai-hero/src/app/api/certificates/**'
+      - 'apps/ai-hero/src/app/certificates/**'
+      - 'apps/ai-hero/src/app/ask/**'
+      - 'apps/ai-hero/src/app/(content)/_components/module-certificate-container*'
+      - 'apps/ai-hero/src/app/(content)/workshops/**'
+      - 'apps/ai-hero/src/components/certificates/**'
   push:
     branches: [main]
     paths:
@@ -17,7 +29,19 @@ on:
       - 'apps/ai-hero/package.json'
       - 'apps/ai-hero/src/db/schema.ts'
       - 'apps/ai-hero/src/db/mysql-query-client.ts'
-      - 'apps/ai-hero/src/lib/crash-course-certificate-eligibility*'
+      - 'apps/ai-hero/src/course-sync/**'
+      - 'apps/ai-hero/src/lib/quiz/**'
+      - 'apps/ai-hero/src/trpc/api/routers/quiz*'
+      - 'apps/ai-hero/src/components/mdx/quiz*'
+      - 'apps/ai-hero/src/lib/crash-course-certificate-*'
+      - 'apps/ai-hero/src/lib/subscriber-marketing/value-path-certificate-shares*'
+      - 'apps/ai-hero/src/trpc/api/routers/certificate*'
+      - 'apps/ai-hero/src/app/api/certificates/**'
+      - 'apps/ai-hero/src/app/certificates/**'
+      - 'apps/ai-hero/src/app/ask/**'
+      - 'apps/ai-hero/src/app/(content)/_components/module-certificate-container*'
+      - 'apps/ai-hero/src/app/(content)/workshops/**'
+      - 'apps/ai-hero/src/components/certificates/**'
 
 jobs:
   mysql-contract:
@@ -59,4 +83,15 @@ jobs:
           pnpm --filter @ai-hero/course-sync-schema build
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts \
             src/lib/crash-course-certificate-eligibility.test.ts \
-            src/lib/crash-course-certificate-eligibility.mysql.test.ts
+            src/lib/crash-course-certificate-eligibility.mysql.test.ts \
+            src/lib/crash-course-certificate-gate.test.ts \
+            src/lib/crash-course-certificate-shares.test.ts \
+            src/lib/subscriber-marketing/value-path-certificate-shares.test.ts \
+            src/trpc/api/routers/certificate.test.ts \
+            src/app/api/certificates/route.test.tsx \
+            src/app/'(content)'/_components/module-certificate-container.test.tsx \
+            src/app/certificates/'[slug]'/page.test.tsx \
+            src/app/certificates/'[slug]'/og/route.test.tsx \
+            src/components/certificates/module-certificate.test.ts \
+            src/components/certificates/skills-workflow-certificate-og.test.tsx \
+            src/app/ask/'[slug]'/page.test.tsx
