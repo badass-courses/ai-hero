@@ -2,7 +2,6 @@ import { cache } from 'react'
 import type { Metadata } from 'next'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { CertificateShareActions } from '@/components/certificates/certificate-share-actions'
 import LayoutClient from '@/components/layout-client'
 import {
 	buildSkillsWorkflowCertificateShareImageUrl,
@@ -10,7 +9,6 @@ import {
 	getPublicSkillsWorkflowCertificateShare,
 	SKILLS_WORKFLOW_FREE_COURSE_PATH,
 } from '@/lib/subscriber-marketing/value-path-certificate-shares'
-import { SKILLS_WORKFLOW_CERTIFICATE_RESOURCE } from '@/lib/subscriber-marketing/value-path-certificates'
 import { format } from 'date-fns'
 import { ArrowRight } from 'lucide-react'
 
@@ -78,12 +76,6 @@ export default async function PublicCertificatePage({
 	const imageUrl = buildSkillsWorkflowCertificateShareImageUrl({
 		slug: share.slug,
 	})
-	const permalink = buildSkillsWorkflowCertificateShareUrl({
-		slug: share.slug,
-		baseUrl: process.env.NEXT_PUBLIC_URL ?? 'https://www.aihero.dev',
-	})
-	const isSkillsWorkflowCertificate =
-		share.resourceId === SKILLS_WORKFLOW_CERTIFICATE_RESOURCE
 
 	return (
 		<LayoutClient
@@ -127,39 +119,25 @@ export default async function PublicCertificatePage({
 					</div>
 				</section>
 
-				{isSkillsWorkflowCertificate ? (
-					<section>
-						<div className="grid gap-8 px-[18px] py-16 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24">
-							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-								Build yours
-							</p>
-							<div className="space-y-6">
-								<h2 className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
-									Build a workflow you can trust on real engineering work.
-								</h2>
-								<a
-									className="focus-visible:ring-ring focus-visible:ring-offset-background bg-primary text-primary-foreground inline-flex min-h-12 items-center justify-center gap-2 px-6 py-3 text-base font-semibold transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-									href={SKILLS_WORKFLOW_FREE_COURSE_PATH}
-								>
-									Start the free course
-									<ArrowRight aria-hidden="true" className="size-4" />
-								</a>
-							</div>
+				<section>
+					<div className="grid gap-8 px-[18px] py-16 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24">
+						<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
+							Build yours
+						</p>
+						<div className="space-y-6">
+							<h2 className="text-balance text-3xl font-medium leading-tight tracking-tight sm:text-4xl">
+								Build a workflow you can trust on real engineering work.
+							</h2>
+							<a
+								className="focus-visible:ring-ring focus-visible:ring-offset-background bg-primary text-primary-foreground inline-flex min-h-12 items-center justify-center gap-2 px-6 py-3 text-base font-semibold transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+								href={SKILLS_WORKFLOW_FREE_COURSE_PATH}
+							>
+								Start the free course
+								<ArrowRight aria-hidden="true" className="size-4" />
+							</a>
 						</div>
-					</section>
-				) : (
-					<section>
-						<div className="grid gap-8 px-[18px] py-16 sm:px-11 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-16 md:py-24">
-							<p className="font-mono text-[11px] font-medium uppercase tracking-wider opacity-60">
-								Share certificate
-							</p>
-							<CertificateShareActions
-								courseName={share.courseName}
-								permalink={permalink}
-							/>
-						</div>
-					</section>
-				)}
+					</div>
+				</section>
 			</main>
 		</LayoutClient>
 	)
