@@ -16,10 +16,16 @@ import { z } from 'zod'
 
 const AuthenticatedUserIdSchema = z.string().trim().min(1)
 
-const QuizQuestionFieldsSchema = z
+const QuizQuestionRequirementSchema = z
+	.object({ required: z.boolean().optional() })
+	.passthrough()
+
+const QuizQuestionLineageSchema = z
 	.object({
-		required: z.boolean().optional(),
 		courseSync: z.object({
+			bindingId: z.string().trim().min(1),
+			sourceCourseId: z.string().trim().min(1),
+			sourceLessonId: z.string().trim().min(1),
 			sourceQuestionId: z.string().trim().min(1),
 		}),
 	})
@@ -37,15 +43,39 @@ export const AI_CODING_CRASH_COURSE_FINAL_QUIZ = {
 	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING.sourceCourseId,
 	sourceLessonId: 'ai-coding-crash-course-certificate-quiz-v1',
 	targetLessonId: 'sync_lesson_800b577c51997b78aa74a65c',
-	requiredSourceQuestionIds: [
-		'agent-anatomy',
-		'nondeterminism-permissions',
-		'starting-context',
-		'afk-review',
-		'point-not-push',
-		'prune-sediment',
-		'massive-tasks',
-		'reroute',
+	requiredQuestions: [
+		{
+			sourceQuestionId: 'agent-anatomy',
+			targetQuestionId: 'sync_question_8d89a9d9b2b98ae1e57a0fb0',
+		},
+		{
+			sourceQuestionId: 'nondeterminism-permissions',
+			targetQuestionId: 'sync_question_4d75245b7a9d8f2ac9630ef8',
+		},
+		{
+			sourceQuestionId: 'starting-context',
+			targetQuestionId: 'sync_question_dcacf9a28e18cd8834c71f31',
+		},
+		{
+			sourceQuestionId: 'afk-review',
+			targetQuestionId: 'sync_question_a9af4e08988e96663c509477',
+		},
+		{
+			sourceQuestionId: 'point-not-push',
+			targetQuestionId: 'sync_question_b46a6cddfef2d6694dc952a7',
+		},
+		{
+			sourceQuestionId: 'prune-sediment',
+			targetQuestionId: 'sync_question_ea362a6c55dbf1f5d867da95',
+		},
+		{
+			sourceQuestionId: 'massive-tasks',
+			targetQuestionId: 'sync_question_fa0718aaecc71338bcd27a83',
+		},
+		{
+			sourceQuestionId: 'reroute',
+			targetQuestionId: 'sync_question_1a4a95d76ce1336a1e44b998',
+		},
 	],
 } as const
 
@@ -181,6 +211,15 @@ export function createDrizzleCrashCourseCertificateEvidenceRepository<
 					with: { resource: true },
 				})
 
+			const requiredDefinitionBySourceId = new Map<
+				string,
+				CrashCourseFinalQuizDefinition['requiredQuestions'][number]
+			>(
+				definition.requiredQuestions.map((question) => [
+					question.sourceQuestionId,
+					question,
+				]),
+			)
 			return {
 				lessonId: lesson.id,
 				questions: questionRelations
@@ -190,15 +229,34 @@ export function createDrizzleCrashCourseCertificateEvidenceRepository<
 							relation.resource.deletedAt === null,
 					)
 					.map((relation) => {
-						const parsed = QuizQuestionFieldsSchema.safeParse(
+						const requirement = QuizQuestionRequirementSchema.safeParse(
 							relation.resource.fields,
+						)
+						const lineage = QuizQuestionLineageSchema.safeParse(
+							relation.resource.fields,
+						)
+						const expectedQuestion = lineage.success
+							? requiredDefinitionBySourceId.get(
+									lineage.data.courseSync.sourceQuestionId,
+								)
+							: undefined
+						const identityMatches = Boolean(
+							lineage.success &&
+							expectedQuestion?.targetQuestionId === relation.resource.id &&
+							lineage.data.courseSync.bindingId === definition.bindingId &&
+							lineage.data.courseSync.sourceCourseId ===
+								definition.sourceCourseId &&
+							lineage.data.courseSync.sourceLessonId ===
+								definition.sourceLessonId,
 						)
 						return {
 							questionId: relation.resource.id,
-							sourceQuestionId: parsed.success
-								? parsed.data.courseSync.sourceQuestionId
-								: null,
-							required: parsed.success && parsed.data.required === true,
+							sourceQuestionId:
+								lineage.success && identityMatches
+									? lineage.data.courseSync.sourceQuestionId
+									: null,
+							required:
+								requirement.success && requirement.data.required === true,
 						}
 					}),
 			}
@@ -266,7 +324,9 @@ export async function checkCrashCourseCertificateEligibility(
 	const requiredQuestions = finalQuiz.questions.filter(
 		(question) => question.required,
 	)
-	const approvedQuestionIds = new Set(definition.requiredSourceQuestionIds)
+	const approvedQuestionIds = new Set(
+		definition.requiredQuestions.map((question) => question.sourceQuestionId),
+	)
 	const actualQuestionIds = new Set(
 		requiredQuestions.map((question) => question.sourceQuestionId),
 	)

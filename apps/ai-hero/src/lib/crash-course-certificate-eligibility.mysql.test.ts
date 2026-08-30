@@ -19,6 +19,32 @@ const userId = 'user-certificate-mysql'
 const lessonId = AI_CODING_CRASH_COURSE_FINAL_QUIZ.targetLessonId
 const sectionId = 'section-certificate-final'
 const now = new Date('2026-08-30T12:00:00.000Z')
+const invalidLineageScenarios = [
+	{
+		name: 'binding',
+		courseSync: {
+			bindingId: 'wrong-binding',
+			sourceCourseId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceCourseId,
+			sourceLessonId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
+		},
+	},
+	{
+		name: 'source course',
+		courseSync: {
+			bindingId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
+			sourceCourseId: 'wrong-course',
+			sourceLessonId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
+		},
+	},
+	{
+		name: 'source lesson',
+		courseSync: {
+			bindingId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
+			sourceCourseId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceCourseId,
+			sourceLessonId: 'wrong-lesson',
+		},
+	},
+] as const
 
 type IntegrationDatabase = ReturnType<typeof createIntegrationDatabase>
 
@@ -171,6 +197,85 @@ integration('Crash Course certificate MySQL evidence query', () => {
 		})
 	})
 
+	it('rejects a required question with a lookalike target ID', async () => {
+		await seedFinalQuiz(database)
+		const firstQuestion = AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions[0]
+		await database
+			.delete(schema.contentResourceResource)
+			.where(
+				and(
+					eq(schema.contentResourceResource.resourceOfId, lessonId),
+					eq(
+						schema.contentResourceResource.resourceId,
+						firstQuestion.targetQuestionId,
+					),
+				),
+			)
+		await database.insert(schema.contentResource).values(
+			resource('question-lookalike', 'question', {
+				required: true,
+				courseSync: {
+					bindingId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
+					sourceCourseId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceCourseId,
+					sourceLessonId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
+					sourceQuestionId: firstQuestion.sourceQuestionId,
+				},
+			}),
+		)
+		await database.insert(schema.contentResourceResource).values({
+			resourceOfId: lessonId,
+			resourceId: 'question-lookalike',
+			position: 0,
+		})
+
+		const result = await checkCrashCourseCertificateEligibility(
+			{ userId },
+			{
+				repository:
+					createDrizzleCrashCourseCertificateEvidenceRepository(database),
+			},
+		)
+
+		expect(result).toEqual({
+			eligible: false,
+			reason: 'final-quiz-question-set-mismatch',
+		})
+	})
+
+	it.each(invalidLineageScenarios)(
+		'rejects a required question with the wrong $name lineage',
+		async (scenario) => {
+			await seedFinalQuiz(database)
+			const firstQuestion =
+				AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions[0]
+			await database
+				.update(schema.contentResource)
+				.set({
+					fields: {
+						required: true,
+						courseSync: {
+							...scenario.courseSync,
+							sourceQuestionId: firstQuestion.sourceQuestionId,
+						},
+					},
+				})
+				.where(eq(schema.contentResource.id, firstQuestion.targetQuestionId))
+
+			const result = await checkCrashCourseCertificateEligibility(
+				{ userId },
+				{
+					repository:
+						createDrizzleCrashCourseCertificateEvidenceRepository(database),
+				},
+			)
+
+			expect(result).toEqual({
+				eligible: false,
+				reason: 'final-quiz-question-set-mismatch',
+			})
+		},
+	)
+
 	it('reads the related final quiz and latest authenticated answers', async () => {
 		await seedFinalQuiz(database)
 		await seedResponses(database)
@@ -197,9 +302,8 @@ integration('Crash Course certificate MySQL evidence query', () => {
 	it('denies eligibility after the latest saved answer becomes incorrect', async () => {
 		await seedFinalQuiz(database)
 		await seedResponses(database)
-		const firstQuestionId = questionId(
-			AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredSourceQuestionIds[0],
-		)
+		const firstQuestionId =
+			AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions[0].targetQuestionId
 		await database
 			.update(schema.questionResponse)
 			.set({
@@ -269,25 +373,24 @@ async function seedFinalQuiz(database: IntegrationDatabase) {
 				sourceLessonId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
 			},
 		}),
-		...AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredSourceQuestionIds.map(
-			(sourceQuestionId) =>
-				resource(questionId(sourceQuestionId), 'question', {
-					required: true,
-					courseSync: {
-						bindingId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
-						sourceCourseId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceCourseId,
-						sourceLessonId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
-						sourceQuestionId,
-					},
-				}),
+		...AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions.map((question) =>
+			resource(question.targetQuestionId, 'question', {
+				required: true,
+				courseSync: {
+					bindingId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
+					sourceCourseId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceCourseId,
+					sourceLessonId: AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
+					sourceQuestionId: question.sourceQuestionId,
+				},
+			}),
 		),
 	])
 	await database.insert(schema.contentResourceResource).values([
 		{ resourceOfId: sectionId, resourceId: lessonId, position: 0 },
-		...AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredSourceQuestionIds.map(
-			(sourceQuestionId, position) => ({
+		...AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions.map(
+			(question, position) => ({
 				resourceOfId: lessonId,
-				resourceId: questionId(sourceQuestionId),
+				resourceId: question.targetQuestionId,
 				position,
 			}),
 		),
@@ -296,11 +399,11 @@ async function seedFinalQuiz(database: IntegrationDatabase) {
 
 async function seedResponses(database: IntegrationDatabase) {
 	await database.insert(schema.questionResponse).values(
-		AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredSourceQuestionIds.map(
-			(sourceQuestionId, index) => ({
+		AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions.map(
+			(question, index) => ({
 				id: `response-${index}`,
 				surveyId: lessonId,
-				questionId: questionId(sourceQuestionId),
+				questionId: question.targetQuestionId,
 				respondentKey: `user:${userId}`,
 				surveySessionId: null,
 				userId,
@@ -326,8 +429,4 @@ function resource(
 		createdAt: now,
 		updatedAt: now,
 	}
-}
-
-function questionId(sourceQuestionId: string) {
-	return `question-${sourceQuestionId}`
 }

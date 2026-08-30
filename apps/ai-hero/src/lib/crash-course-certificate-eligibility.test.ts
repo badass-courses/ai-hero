@@ -10,13 +10,11 @@ import {
 } from './crash-course-certificate-eligibility'
 
 const requiredQuestions =
-	AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredSourceQuestionIds.map(
-		(sourceQuestionId) => ({
-			questionId: `question-${sourceQuestionId}`,
-			sourceQuestionId,
-			required: true,
-		}),
-	)
+	AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions.map((question) => ({
+		questionId: question.targetQuestionId,
+		sourceQuestionId: question.sourceQuestionId,
+		required: true,
+	}))
 
 const finalQuiz: CrashCourseFinalQuizEvidence = {
 	lessonId: 'lesson-final-quiz',
@@ -46,7 +44,7 @@ function repository(
 }
 
 describe('Crash Course certificate eligibility', () => {
-	it('pins the server-owned Course Sync lesson identity', () => {
+	it('pins the server-owned Course Sync lesson and question identities', () => {
 		expect(
 			targetResourceId(
 				AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
@@ -54,6 +52,15 @@ describe('Crash Course certificate eligibility', () => {
 				AI_CODING_CRASH_COURSE_FINAL_QUIZ.sourceLessonId,
 			),
 		).toBe(AI_CODING_CRASH_COURSE_FINAL_QUIZ.targetLessonId)
+		for (const question of AI_CODING_CRASH_COURSE_FINAL_QUIZ.requiredQuestions) {
+			expect(
+				targetResourceId(
+					AI_CODING_CRASH_COURSE_FINAL_QUIZ.bindingId,
+					'question',
+					question.sourceQuestionId,
+				),
+			).toBe(question.targetQuestionId)
+		}
 	})
 
 	it('fails before database reads when no authenticated user is present', async () => {
