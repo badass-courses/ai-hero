@@ -134,11 +134,17 @@ export function parseStimulusId(value: string) {
 export function parseIsoInstant(value: string): ParseResult<IsoInstant> {
   const candidate = value.trim();
   const explicitInstant =
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
-  const timestamp = explicitInstant.test(candidate)
-    ? Date.parse(candidate)
-    : Number.NaN;
-  if (!Number.isFinite(timestamp)) {
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+  const match = explicitInstant.exec(candidate);
+  const timestamp = match ? Date.parse(candidate) : Number.NaN;
+  const wallTime = match
+    ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.${(match[7] ?? "").padEnd(3, "0")}Z`
+    : null;
+  const hasExactCalendarTime =
+    wallTime !== null &&
+    Number.isFinite(Date.parse(wallTime)) &&
+    new Date(Date.parse(wallTime)).toISOString() === wallTime;
+  if (!Number.isFinite(timestamp) || !hasExactCalendarTime) {
     return {
       ok: false,
       error: {
@@ -150,7 +156,7 @@ export function parseIsoInstant(value: string): ParseResult<IsoInstant> {
     };
   }
 
-  // SAFETY: Date.parse accepted the explicit instant and normalization removes offsets.
+  // SAFETY: the parser accepted the exact calendar time and millisecond precision.
   return { ok: true, value: new Date(timestamp).toISOString() as IsoInstant };
 }
 

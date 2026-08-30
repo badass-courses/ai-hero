@@ -41,10 +41,21 @@ describe("email course primitives", () => {
     });
   });
 
-  it("accepts explicit instants and real IANA zones", () => {
-    expect(parseIsoInstant("2026-08-30T09:00:00-07:00")).toEqual({
+  it("rejects normalized calendar dates and sub-millisecond precision", () => {
+    expect(parseIsoInstant("2014-02-30T00:00:00Z")).toMatchObject({
+      ok: false,
+      error: { reason: "invalid-iso-instant" },
+    });
+    expect(parseIsoInstant("2026-08-30T09:00:00.0001Z")).toMatchObject({
+      ok: false,
+      error: { reason: "invalid-iso-instant" },
+    });
+  });
+
+  it("accepts exact explicit instants and real IANA zones", () => {
+    expect(parseIsoInstant("2026-08-30T09:00:00.1-07:00")).toEqual({
       ok: true,
-      value: "2026-08-30T16:00:00.000Z",
+      value: "2026-08-30T16:00:00.100Z",
     });
     expect(parseIanaTimeZone("America/Los_Angeles")).toEqual({
       ok: true,

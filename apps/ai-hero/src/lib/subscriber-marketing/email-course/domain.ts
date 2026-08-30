@@ -379,6 +379,7 @@ export type EmailCourseView = EmailCourseViewContext &
           FinalEmailCourseRun,
           { phase: "sequenceExhausted" }
         >;
+        /** Course planning is final, while the terminal outbox intent settles independently. */
         readonly currentIntent: CourseEmailIntent;
       }
     | {

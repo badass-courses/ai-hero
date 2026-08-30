@@ -83,6 +83,28 @@ describe("email course restoration", () => {
     });
   });
 
+  it("rejects persisted timestamps that Date would normalize or truncate", () => {
+    for (const startedAt of [
+      "2014-02-30T00:00:00.000Z",
+      "2026-08-30T16:00:00.0001Z",
+    ]) {
+      expect(
+        restoreEmailCourseRun(
+          {
+            ...runBase,
+            startedAt,
+            phase: "active.awaitingDelivery",
+            activeIntentId: "intent-0",
+          },
+          AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: { type: "CourseRunDecodeFailure" },
+      });
+    }
+  });
+
   it("settles terminal Email 7 after the planner reaches sequence exhaustion", () => {
     expect(
       restoreEmailCourseRun(
@@ -242,6 +264,41 @@ describe("email course restoration", () => {
         run: { runId, activeIntentId: "intent-0" },
         currentIntent: { runId, id: "intent-0", status: "Pending" },
         automationControl: { type: "Stopped", source: "Missing" },
+      },
+    });
+  });
+
+  it("keeps terminal Email 7 deliverable after course planning is exhausted", () => {
+    expect(
+      restoreEmailCourseView(
+        {
+          run: {
+            ...runBase,
+            phase: "sequenceExhausted",
+            exhaustionFactId: "fact-1",
+            exhaustedAt: "2026-08-30T16:00:00.000Z",
+            terminalIntentId: "intent-7",
+            terminalStepId: "individual.email-7",
+          },
+          currentIntent: {
+            ...pendingIntent,
+            id: "intent-7",
+            idempotencyKey:
+              "contact:contact-1:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-7",
+            stepId: "individual.email-7",
+            contentResourceId: "ai-hero-skills-workflow.email-7",
+            deliveryTargetId: "skills-workflow.individual.email-7",
+          },
+          communication: { type: "Allow" },
+          automationControl: null,
+        },
+        AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        run: { phase: "sequenceExhausted", terminalIntentId: "intent-7" },
+        currentIntent: { status: "Pending", id: "intent-7" },
       },
     });
   });
