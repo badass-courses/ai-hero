@@ -47,7 +47,7 @@ export function decideEvergreenOfferJourney(
 	if (pinnedDefinitionError) {
 		return decisionError('InvariantViolation', pinnedDefinitionError)
 	}
-	if (input.stimulus.type === 'CourseCompleted') {
+	if (input.stimulus.type === 'CourseSequenceExhausted') {
 		return ignored('JourneyAlreadyStarted', input.snapshot)
 	}
 	if (input.stimulus.journeyId !== input.snapshot.journeyId) {
@@ -115,7 +115,7 @@ export function decideEvergreenOfferJourney(
 function startJourney(
 	input: DecideEvergreenOfferJourneyInput,
 ): JourneyDecisionResult {
-	if (input.stimulus.type !== 'CourseCompleted') {
+	if (input.stimulus.type !== 'CourseSequenceExhausted') {
 		return ignored('UnexpectedStimulusForPhase', null)
 	}
 	if (input.currentFacts.contactId !== input.stimulus.contactId) {
@@ -139,7 +139,7 @@ function startJourney(
 	const phase = requirePhase('not_started', { type: 'START' })
 	if (!phase.ok) return phase
 	const scheduled = buildBridgeMessagePlan({
-		completedAt: input.stimulus.completedAt,
+		exhaustedAt: input.stimulus.exhaustedAt,
 		deadlineTimeZone: input.stimulus.deadlineTimeZone,
 		definition: input.definition,
 	})
@@ -153,7 +153,7 @@ function startJourney(
 		entryFactId: input.stimulus.entryFactId,
 		contactId: input.stimulus.contactId,
 		valuePathId: input.stimulus.valuePathId,
-		completedAt: input.stimulus.completedAt,
+		exhaustedAt: input.stimulus.exhaustedAt,
 		deadlineTimeZone: input.stimulus.deadlineTimeZone,
 		definition: input.definition,
 		messagePlan: scheduled.value.messagePlan,

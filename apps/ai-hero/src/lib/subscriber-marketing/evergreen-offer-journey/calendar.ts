@@ -83,7 +83,7 @@ export function deadlineTimeZoneEvidenceFromHeader(args: {
 }
 
 export function buildBridgeMessagePlan(args: {
-	completedAt: IsoInstant
+	exhaustedAt: IsoInstant
 	deadlineTimeZone: DeadlineTimeZoneEvidence
 	definition: EvergreenOfferJourneyDefinition
 }): ScheduleResult<{
@@ -91,7 +91,7 @@ export function buildBridgeMessagePlan(args: {
 	couponIssueAt: IsoInstant
 }> {
 	const timeZone = args.deadlineTimeZone.timeZone
-	const earliestB1 = new Date(Date.parse(args.completedAt) + 18 * HOUR_MS)
+	const earliestB1 = new Date(Date.parse(args.exhaustedAt) + 18 * HOUR_MS)
 	const b1Due = firstLocalNineAtOrAfter({
 		instant: earliestB1,
 		timeZone,

@@ -34,9 +34,9 @@ import {
 } from './primitives'
 
 const contactId = value(parseContactId('contact_test'))
-const entryFactId = value(parseEntryFactId('course_completed_test'))
+const entryFactId = value(parseEntryFactId('course_sequence_exhausted_test'))
 const timeZone = value(parseIanaTimeZone('America/Los_Angeles'))
-const completedAt = instant('2026-09-04T17:00:00.000Z')
+const exhaustedAt = instant('2026-09-04T17:00:00.000Z')
 const definition = EVERGREEN_OFFER_JOURNEY_V1
 
 function facts(
@@ -49,26 +49,26 @@ function facts(
 		existingJourneyId: null,
 		automationControl: { type: 'Enabled', version: 'control-v1' },
 		evidenceVersion: 'facts-v1',
-		readAt: completedAt,
+		readAt: exhaustedAt,
 		...overrides,
 	}
 }
 
-function courseCompleted(): EvergreenOfferStimulus {
+function courseSequenceExhausted(): EvergreenOfferStimulus {
 	const deadline = deadlineTimeZoneEvidenceFromHeader({
 		headerValue: timeZone,
-		capturedAt: completedAt,
+		capturedAt: exhaustedAt,
 	})
 	if (!deadline.ok) throw new Error(deadline.error.detail)
 	return {
-		type: 'CourseCompleted',
-		stimulusId: value(parseStimulusId('stimulus_course_completed')),
+		type: 'CourseSequenceExhausted',
+		stimulusId: value(parseStimulusId('stimulus_course_sequence_exhausted')),
 		entryFactId,
 		contactId,
 		valuePathId: 'ai-hero-skills-workflow-individual-v1',
-		completedAt,
+		exhaustedAt,
 		deadlineTimeZone: deadline.value,
-		sourceReference: 'contact-event:course_completed_test',
+		sourceReference: 'contact-event:course_sequence_exhausted_test',
 	}
 }
 
@@ -92,8 +92,8 @@ function startJourney() {
 	return accepted(
 		decide({
 			snapshot: null,
-			stimulus: courseCompleted(),
-			now: completedAt,
+			stimulus: courseSequenceExhausted(),
+			now: exhaustedAt,
 		}),
 	)
 }
@@ -181,11 +181,11 @@ describe('evergreen offer journey production core', () => {
 	it('captures exact browser time-zone evidence and explicit fallback evidence', () => {
 		const browser = deadlineTimeZoneEvidenceFromHeader({
 			headerValue: 'Asia/Tokyo',
-			capturedAt: completedAt,
+			capturedAt: exhaustedAt,
 		})
 		const fallback = deadlineTimeZoneEvidenceFromHeader({
 			headerValue: 'Not/AZone',
-			capturedAt: completedAt,
+			capturedAt: exhaustedAt,
 		})
 
 		expect(browser.ok && browser.value.type).toBe('BrowserEntryHeader')
@@ -215,10 +215,10 @@ describe('evergreen offer journey production core', () => {
 		}
 		const result = decideEvergreenOfferJourney({
 			snapshot: null,
-			stimulus: courseCompleted(),
+			stimulus: courseSequenceExhausted(),
 			currentFacts: facts(),
 			definition: duplicateDefinition,
-			now: completedAt,
+			now: exhaustedAt,
 		})
 
 		expect(result).toEqual({
@@ -233,8 +233,8 @@ describe('evergreen offer journey production core', () => {
 	it('rejects entry authority for a different contact', () => {
 		const result = decide({
 			snapshot: null,
-			stimulus: courseCompleted(),
-			now: completedAt,
+			stimulus: courseSequenceExhausted(),
+			now: exhaustedAt,
 			currentFacts: facts({
 				contactId: value(parseContactId('contact_other')),
 			}),
@@ -270,7 +270,7 @@ describe('evergreen offer journey production core', () => {
 		const started = startJourney()
 		const beforeB1 = inspectEvergreenOfferJourney({
 			aggregate: started.next,
-			now: completedAt,
+			now: exhaustedAt,
 			automationControl: 'Enabled',
 			intentEvidence: [],
 			evidenceVersion: 'facts-v1',

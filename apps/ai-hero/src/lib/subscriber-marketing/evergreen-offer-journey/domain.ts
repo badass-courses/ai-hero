@@ -36,13 +36,17 @@ export type DeadlineTimeZoneEvidence =
 			readonly capturedAt: IsoInstant
 	  }
 
-export type CourseCompleted = {
-	readonly type: 'CourseCompleted'
+/**
+ * The email-course progression reached its terminal intent.
+ * This does not assert learner completion or provider delivery.
+ */
+export type CourseSequenceExhausted = {
+	readonly type: 'CourseSequenceExhausted'
 	readonly stimulusId: StimulusId
 	readonly entryFactId: EntryFactId
 	readonly contactId: ContactId
 	readonly valuePathId: string
-	readonly completedAt: IsoInstant
+	readonly exhaustedAt: IsoInstant
 	readonly deadlineTimeZone: DeadlineTimeZoneEvidence
 	readonly sourceReference: string
 }
@@ -200,7 +204,7 @@ export type PermanentEffectRefusal =
 	| (PermanentEffectRefusalBase & { readonly scope: 'Contact' })
 
 export type EvergreenOfferStimulus =
-	| CourseCompleted
+	| CourseSequenceExhausted
 	| WakeDue
 	| DeliverySettled
 	| CouponIssued
@@ -352,7 +356,7 @@ export type JourneyBase = {
 	readonly entryFactId: EntryFactId
 	readonly contactId: ContactId
 	readonly valuePathId: string
-	readonly completedAt: IsoInstant
+	readonly exhaustedAt: IsoInstant
 	readonly deadlineTimeZone: DeadlineTimeZoneEvidence
 	readonly definition: EvergreenOfferJourneyDefinition
 	readonly messagePlan: SelectedMessagePlan

@@ -33,27 +33,27 @@ import {
 } from './primitives'
 
 const contactId = value(parseContactId('contact_ledger_test'))
-const entryFactId = value(parseEntryFactId('course_completed_ledger_test'))
-const completedAt = instant('2026-09-04T17:00:00.000Z')
+const entryFactId = value(parseEntryFactId('course_sequence_exhausted_ledger_test'))
+const exhaustedAt = instant('2026-09-04T17:00:00.000Z')
 const timeZone = value(parseIanaTimeZone('America/Los_Angeles'))
 
-function courseCompleted(
+function courseSequenceExhausted(
 	stimulus = 'stimulus_ledger_entry',
 ): EvergreenOfferStimulus {
 	const deadlineTimeZone = deadlineTimeZoneEvidenceFromHeader({
 		headerValue: timeZone,
-		capturedAt: completedAt,
+		capturedAt: exhaustedAt,
 	})
 	if (!deadlineTimeZone.ok) throw new Error(deadlineTimeZone.error.detail)
 	return {
-		type: 'CourseCompleted',
+		type: 'CourseSequenceExhausted',
 		stimulusId: value(parseStimulusId(stimulus)),
 		entryFactId,
 		contactId,
 		valuePathId: 'ai-hero-skills-workflow-individual-v1',
-		completedAt,
+		exhaustedAt,
 		deadlineTimeZone: deadlineTimeZone.value,
-		sourceReference: 'contact-event:course_completed_ledger_test',
+		sourceReference: 'contact-event:course_sequence_exhausted_ledger_test',
 	}
 }
 
@@ -65,19 +65,19 @@ function facts(overrides: Partial<EligibilityFacts> = {}): EligibilityFacts {
 		existingJourneyId: null,
 		automationControl: { type: 'Enabled', version: 'control-v1' },
 		evidenceVersion: 'facts-v1',
-		readAt: completedAt,
+		readAt: exhaustedAt,
 		...overrides,
 	}
 }
 
 function startDecision() {
-	const stimulus = courseCompleted()
+	const stimulus = courseSequenceExhausted()
 	const result = decideEvergreenOfferJourney({
 		snapshot: null,
 		stimulus,
 		currentFacts: facts(),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
-		now: completedAt,
+		now: exhaustedAt,
 	})
 	if (!result.ok || result.decision.type !== 'Accepted') {
 		throw new Error('Expected an accepted entry decision')
@@ -200,9 +200,10 @@ describe('evergreen offer journey restoration', () => {
 		const encoded = encodeEvergreenOfferJourneySnapshot(decision.next)
 		const restored = restoreEvergreenOfferJourneySnapshot(encoded)
 
-		expect(JSON.parse(encoded).format).toBe(
-			EVERGREEN_OFFER_JOURNEY_SNAPSHOT_FORMAT,
-		)
+		const persisted = JSON.parse(encoded)
+		expect(persisted.format).toBe(EVERGREEN_OFFER_JOURNEY_SNAPSHOT_FORMAT)
+		expect(persisted.aggregate.exhaustedAt).toBe(exhaustedAt)
+		expect(persisted.aggregate).not.toHaveProperty('completedAt')
 		expect(restored).toEqual({ ok: true, value: decision.next })
 	})
 
@@ -254,6 +255,22 @@ describe('evergreen offer journey restoration', () => {
 		})
 	})
 
+	it('rejects the retired completion name at the snapshot boundary', () => {
+		const { decision } = startDecision()
+		const legacy = JSON.parse(
+			encodeEvergreenOfferJourneySnapshot(decision.next),
+		)
+		legacy.aggregate.completedAt = legacy.aggregate.exhaustedAt
+		delete legacy.aggregate.exhaustedAt
+
+		expect(
+			restoreEvergreenOfferJourneySnapshot(JSON.stringify(legacy)),
+		).toMatchObject({
+			ok: false,
+			error: { type: 'JourneyDecodeFailure' },
+		})
+	})
+
 	it('rejects noncanonical fallback, schedules, and semantic intent keys', () => {
 		const { decision } = startDecision()
 		const encoded = encodeEvergreenOfferJourneySnapshot(decision.next)
@@ -262,7 +279,7 @@ describe('evergreen offer journey restoration', () => {
 			type: 'ExplicitFallback',
 			reason: 'header-missing',
 			timeZone: 'Europe/London',
-			capturedAt: completedAt,
+			capturedAt: exhaustedAt,
 		}
 		const overlap = JSON.parse(encoded)
 		overlap.aggregate.messagePlan.bridge[0].windowEndsAt =
@@ -722,7 +739,7 @@ describe('in-memory journey ledger contract', () => {
 		const view = await Effect.runPromise(
 			ledger.inspect({
 				journeyId: decision.next.journeyId,
-				now: completedAt,
+				now: exhaustedAt,
 				automationControl: 'Enabled',
 			}),
 		)
