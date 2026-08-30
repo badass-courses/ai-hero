@@ -1,0 +1,60 @@
+name: Crash Course Certificate MySQL
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/crash-course-certificate-mysql.yaml'
+      - 'pnpm-lock.yaml'
+      - 'apps/ai-hero/package.json'
+      - 'apps/ai-hero/src/db/schema.ts'
+      - 'apps/ai-hero/src/db/mysql-query-client.ts'
+      - 'apps/ai-hero/src/lib/crash-course-certificate-eligibility*'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/crash-course-certificate-mysql.yaml'
+      - 'pnpm-lock.yaml'
+      - 'apps/ai-hero/package.json'
+      - 'apps/ai-hero/src/db/schema.ts'
+      - 'apps/ai-hero/src/db/mysql-query-client.ts'
+      - 'apps/ai-hero/src/lib/crash-course-certificate-eligibility*'
+
+jobs:
+  mysql-contract:
+    name: MySQL contract
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: aih_test_password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -paih_test_password --silent"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run guarded certificate evidence suite
+        env:
+          AIH_COURSE_CERTIFICATE_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/lib/crash-course-certificate-eligibility.mysql.test.ts
