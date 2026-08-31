@@ -53,6 +53,7 @@ export const evergreenOfferJourneyIntent = mysqlTable(
 		intentType: varchar('intentType', { length: 64 }).notNull(),
 		intent: json('intent').$type<unknown>().notNull(),
 		status: varchar('status', { length: 32 }).notNull(),
+		availableAt: timestamp('availableAt', { mode: 'date', fsp: 3 }).notNull(),
 		settledByStimulusId: varchar('settledByStimulusId', { length: 500 }),
 		settledAt: timestamp('settledAt', { mode: 'date', fsp: 3 }),
 		createdAt: timestamp('createdAt', { mode: 'date', fsp: 3 })
@@ -70,7 +71,9 @@ export const evergreenOfferJourneyIntent = mysqlTable(
 		journeyIdIdx: index('EvergreenOfferJourneyIntent_journeyId_idx').on(
 			table.journeyId,
 		),
-		statusIdx: index('EvergreenOfferJourneyIntent_status_idx').on(table.status),
+		statusAvailableAtIdx: index(
+			'EvergreenOfferJourneyIntent_status_availableAt_idx',
+		).on(table.status, table.availableAt),
 		originatingStimulusIdx: index(
 			'EvergreenOfferJourneyIntent_originatingStimulus_idx',
 		).on(table.originatingStimulusId),

@@ -160,6 +160,16 @@ const EmailCourseEntryPayloadSchema: z.ZodType<
 		deadlineTimeZone: DeadlineTimeZoneEvidenceSchema,
 	})
 	.strict()
+const StoredCoursePayloadSchema = z
+	.object({
+		coursePayload: z
+			.object({
+				format: z.string().trim().min(1),
+				payload: z.unknown(),
+			})
+			.strict(),
+	})
+	.passthrough()
 const CourseSequenceExhaustedPayloadSchema: z.ZodType<
 	CourseSequenceExhaustedPayload,
 	z.ZodTypeDef,
@@ -332,6 +342,31 @@ export function restoreDeadlineTimeZoneEvidence(
 	const parsed = DeadlineTimeZoneEvidenceSchema.safeParse(input)
 	return parsed.success ? parsed.data : undefined
 }
+
+export function withCoursePayload(
+	payloadSummary: ContactEventRecord['payloadSummary'],
+	format: string,
+	payload: EmailCourseEntryPayload | CourseSequenceExhaustedPayload,
+) {
+	return {
+		...payloadSummary,
+		coursePayload: { format, payload },
+	}
+}
+
+/* oxlint-disable anti-slop(no-unknown-parameters) -- This is the JSON-column boundary; the outer and nested domain schemas parse it before use. */
+export function readCoursePayload(
+	value: unknown,
+): { format: string; payload: unknown } | undefined {
+	const restored = StoredCoursePayloadSchema.safeParse(value)
+	return restored.success
+		? {
+				format: restored.data.coursePayload.format,
+				payload: restored.data.coursePayload.payload,
+			}
+		: undefined
+}
+/* oxlint-enable anti-slop(no-unknown-parameters) */
 
 export function restoreEmailCourseEntryPayload(
 	input: unknown,

@@ -181,17 +181,25 @@ function sequenceDatabase(
 			emailResourceId: 'ai-hero-skills-workflow.email-6',
 		},
 	}
+	const entryPayload = {
+		format: 'email-course.entry.v1',
+		valuePathId: 'ai-hero-skills-workflow',
+		emailResourceId: 'ai-hero-skills-workflow.email-0',
+		deadlineTimeZone: request.records.fact.domainPayload.deadlineTimeZone,
+	}
 	const entryRow = {
 		...request.records.fact,
 		id: 'course-entry',
 		eventType: 'value-path.entered',
 		domainFactKey: null,
 		payloadFormat: 'email-course.entry.v1',
-		domainPayload: {
-			format: 'email-course.entry.v1',
-			valuePathId: 'ai-hero-skills-workflow',
-			emailResourceId: 'ai-hero-skills-workflow.email-0',
-			deadlineTimeZone: request.records.fact.domainPayload.deadlineTimeZone,
+		domainPayload: entryPayload,
+		payloadSummary: {
+			...request.records.fact.payloadSummary,
+			coursePayload: {
+				format: 'email-course.entry.v1',
+				payload: entryPayload,
+			},
 		},
 	}
 	const queues = new Map<unknown, unknown[][]>([
@@ -244,6 +252,17 @@ describe('DrizzleCaptureMarketingRepository collision handling', () => {
 			nextAction,
 			sideEffectIntent,
 		])
+		expect(committed[0]?.value).toMatchObject({
+			semanticIdempotencyKey:
+				'email-course.sequence-exhausted:contact-1:ai-hero-skills-workflow',
+			payloadSummary: {
+				coursePayload: {
+					format: 'email-course.sequence-exhausted.v1',
+				},
+			},
+		})
+		expect(committed[0]?.value).not.toHaveProperty('domainFactKey')
+		expect(committed[0]?.value).not.toHaveProperty('domainPayload')
 	})
 
 	it('rejects a payload that names a different source intent', async () => {

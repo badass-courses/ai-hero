@@ -11,9 +11,11 @@ import {
 	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
 	parseCourseSequenceExhaustionEnabled,
 	parseStashedDeadlineTimeZoneEvidence,
+	readCoursePayload,
 	restoreCourseSequenceExhaustedPayload,
 	restoreDeadlineTimeZoneEvidence,
 	serializeDeadlineTimeZoneEvidenceForKit,
+	withCoursePayload,
 } from './course-sequence-exhaustion'
 
 const capturedAt = '2026-08-30T02:00:00.000Z'
@@ -234,6 +236,26 @@ describe('course sequence exhaustion evidence', () => {
 		})
 	})
 
+	it('stores typed course payloads inside the existing summary JSON', () => {
+		const payload = restoreCourseSequenceExhaustedPayload(validPayload())
+		if (!payload) throw new Error('Expected valid sequence-exhausted payload')
+		const payloadSummary = withCoursePayload(
+			{
+				summary: 'Course sequence exhausted',
+				keywords: ['course', 'sequence-exhausted'],
+				restrictedPayloadStored: false,
+			},
+			COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+			payload,
+		)
+
+		expect(readCoursePayload(payloadSummary)).toEqual({
+			format: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+			payload,
+		})
+		expect(readCoursePayload({ coursePayload: { format: '' } })).toBeUndefined()
+	})
+
 	it('uses one deterministic fact key per contact and value path', () => {
 		expect(
 			courseSequenceExhaustionFactKey({
@@ -243,9 +265,10 @@ describe('course sequence exhaustion evidence', () => {
 		).toBe('email-course.sequence-exhausted:contact-1:ai-hero-skills-workflow')
 	})
 
-	it('keeps migration-only columns off the always-on Contact Event schema', () => {
-		expect('domainFactKey' in contactEvent).toBe(false)
-		expect('domainFactKey' in courseSequenceContactEvent).toBe(true)
+	it('reuses the always-on Contact Event schema without parallel fact columns', () => {
+		expect(courseSequenceContactEvent).toBe(contactEvent)
+		expect('domainFactKey' in courseSequenceContactEvent).toBe(false)
+		expect('domainPayload' in courseSequenceContactEvent).toBe(false)
 	})
 
 	it('keeps activation disabled unless the exact true value is present', () => {

@@ -247,7 +247,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 		})
 		migration = await fs.readFile(
 			new URL(
-				'../../../db/migrations/20260829_ai_hero_evergreen_offer_journey.sql',
+				'../../../db/migrations/20260831_ai_hero_email_course_evergreen_schema.sql',
 				import.meta.url,
 			),
 			'utf8',
@@ -677,17 +677,20 @@ integration('evergreen offer journey MySQL ledger', () => {
 		const intent = next.decision.sideEffectIntents[0]
 		const wakeId =
 			next.stimulus.type === 'WakeDue' ? next.stimulus.wakeId : null
-		if (!intent || !wakeId) throw new Error('Expected wake and message intent')
+		if (!intent || intent.type !== 'SendMessage' || !wakeId) {
+			throw new Error('Expected wake and message intent')
+		}
 		await adminPool.query(
 			`INSERT INTO \`AI_EvergreenOfferJourneyIntent\`
-			 (\`format\`, \`idempotencyKey\`, \`journeyId\`, \`originatingStimulusId\`, \`actorVersion\`, \`ordinal\`, \`intentType\`, \`intent\`, \`status\`)
-			 VALUES ('evergreen-offer-journey.intent.v1', ?, ?, ?, 1, 0, ?, ?, 'Pending')`,
+			 (\`format\`, \`idempotencyKey\`, \`journeyId\`, \`originatingStimulusId\`, \`actorVersion\`, \`ordinal\`, \`intentType\`, \`intent\`, \`status\`, \`availableAt\`)
+			 VALUES ('evergreen-offer-journey.intent.v1', ?, ?, ?, 1, 0, ?, ?, 'Pending', ?)`,
 			[
 				intent.idempotencyKey,
 				start.decision.next.journeyId,
 				start.stimulus.stimulusId,
 				intent.type,
 				JSON.stringify(intent),
+				new Date(intent.notBefore),
 			],
 		)
 
@@ -717,7 +720,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 			adminPool.query(
 				`INSERT INTO \`AI_EvergreenOfferJourneyIntent\`
 				 SELECT \`format\`, \`idempotencyKey\`, \`journeyId\`, \`originatingStimulusId\`, 99, 0,
-				        \`intentType\`, \`intent\`, \`status\`, \`settledByStimulusId\`, \`settledAt\`,
+				        \`intentType\`, \`intent\`, \`status\`, \`availableAt\`, \`settledByStimulusId\`, \`settledAt\`,
 				        \`createdAt\`, \`updatedAt\`
 				 FROM \`AI_EvergreenOfferJourneyIntent\`
 				 WHERE \`idempotencyKey\` = ?`,

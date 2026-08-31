@@ -26,8 +26,10 @@ import {
 	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
 	COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
 	courseSequenceExhaustionFactKey,
+	readCoursePayload,
 	restoreCourseSequenceExhaustedPayload,
 	restoreEmailCourseEntryPayload,
+	withCoursePayload,
 	type CourseSequenceExhaustionCommitRequest,
 	type CourseSequenceExhaustionCommitResult,
 	type CourseSequenceExhaustionRecords,
@@ -259,8 +261,14 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			...input,
 		}
 		try {
+			const { payloadFormat, domainPayload, ...baseRecord } = record
 			await this.database.insert(courseSequenceContactEvent).values({
-				...record,
+				...baseRecord,
+				payloadSummary: withCoursePayload(
+					record.payloadSummary,
+					payloadFormat,
+					domainPayload,
+				),
 				occurredAt: new Date(record.occurredAt),
 				createdAt: new Date(record.createdAt),
 			})
@@ -278,13 +286,14 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				)
 				.limit(1)
 			const existing = rows[0]
-			const restored = existing
-				? restoreEmailCourseEntryPayload(existing.domainPayload)
+			const stored = existing
+				? readCoursePayload(existing.payloadSummary)
 				: undefined
+			const restored = restoreEmailCourseEntryPayload(stored?.payload)
 			if (
 				!existing ||
 				!restored ||
-				existing.payloadFormat !== record.payloadFormat ||
+				stored?.format !== record.payloadFormat ||
 				JSON.stringify(restored) !== JSON.stringify(record.domainPayload)
 			) {
 				throw cause
@@ -383,8 +392,19 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					if (existing) return existing
 
 					const { fact, nextAction: action, terminalIntent } = request.records
+					const {
+						domainFactKey: _domainFactKey,
+						payloadFormat,
+						domainPayload,
+						...baseFact
+					} = fact
 					await transaction.insert(courseSequenceContactEvent).values({
-						...fact,
+						...baseFact,
+						payloadSummary: withCoursePayload(
+							fact.payloadSummary,
+							payloadFormat,
+							domainPayload,
+						),
 						occurredAt: new Date(fact.occurredAt),
 						createdAt: new Date(fact.createdAt),
 					})
@@ -1035,7 +1055,10 @@ async function validateSequenceExhaustionSource(
 	const payload = restoreCourseSequenceExhaustedPayload(
 		request.records.fact.domainPayload,
 	)
-	const entryPayload = restoreEmailCourseEntryPayload(entry?.domainPayload)
+	const entryStoredPayload = readCoursePayload(entry?.payloadSummary)
+	const entryPayload = restoreEmailCourseEntryPayload(
+		entryStoredPayload?.payload,
+	)
 	if (!source || !entry || !payload) {
 		throw new Error('Sequence exhaustion source evidence is missing or invalid')
 	}
@@ -1057,6 +1080,7 @@ async function validateSequenceExhaustionSource(
 		entry.id !== payload.actor.courseEntryEventId ||
 		entry.contactId !== payload.actor.contactId ||
 		entry.eventType !== 'value-path.entered' ||
+		entryStoredPayload?.format !== EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT ||
 		(entryPayload
 			? entryPayload.valuePathId !== payload.actor.valuePathId ||
 				JSON.stringify(entryPayload.deadlineTimeZone) !==
@@ -1117,7 +1141,7 @@ async function readSequenceExhaustionPair(
 		.from(courseSequenceContactEvent)
 		.where(
 			eq(
-				courseSequenceContactEvent.domainFactKey,
+				courseSequenceContactEvent.semanticIdempotencyKey,
 				request.records.fact.domainFactKey,
 			),
 		)
@@ -1144,18 +1168,19 @@ async function readSequenceExhaustionPair(
 	if (factRow && !intentRow) {
 		throw new Error('Sequence exhaustion fact exists without terminal intent')
 	}
-	const payload = restoreCourseSequenceExhaustedPayload(factRow.domainPayload)
+	const storedPayload = readCoursePayload(factRow.payloadSummary)
+	const payload = restoreCourseSequenceExhaustedPayload(storedPayload?.payload)
 	const intent = toSideEffectIntentRecord(intentRow)
 	if (
 		!payload ||
-		factRow.payloadFormat !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+		storedPayload?.format !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
 		factRow.eventType !== COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE ||
 		factRow.provider !== 'ai-hero' ||
 		factRow.contactId !== request.records.fact.contactId ||
 		factRow.contactId !== payload.actor.contactId ||
 		factRow.providerReference !== `value-path:${payload.actor.valuePathId}` ||
 		toIso(factRow.occurredAt) !== payload.exhaustedAt ||
-		factRow.domainFactKey !==
+		factRow.semanticIdempotencyKey !==
 			courseSequenceExhaustionFactKey({
 				contactId: payload.actor.contactId,
 				valuePathId: payload.actor.valuePathId,
@@ -1199,7 +1224,7 @@ async function readSequenceExhaustionPair(
 				...toContactEventRecord(factRow),
 				provider: 'ai-hero',
 				eventType: COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
-				domainFactKey: factRow.domainFactKey,
+				domainFactKey: factRow.semanticIdempotencyKey,
 				payloadFormat: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
 				domainPayload: payload,
 			},

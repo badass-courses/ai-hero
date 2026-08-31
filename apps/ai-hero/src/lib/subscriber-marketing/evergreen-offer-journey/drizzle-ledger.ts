@@ -329,6 +329,7 @@ async function commitInTransaction(
 				intentType: intent.type,
 				intent,
 				status: 'Pending',
+				availableAt: sideEffectIntentAvailableAt(intent, committedAt),
 				settledByStimulusId: null,
 				settledAt: null,
 				createdAt: committedAt,
@@ -362,6 +363,21 @@ async function commitInTransaction(
 	await settleExistingWakeRecord(transaction, candidate)
 
 	return committed(candidate.decision)
+}
+
+function sideEffectIntentAvailableAt(
+	intent: SideEffectIntent,
+	committedAt: Date,
+) {
+	switch (intent.type) {
+		case 'SendMessage':
+			return new Date(intent.notBefore)
+		case 'IssueCoupon':
+			return new Date(intent.issueAt)
+		case 'BindCoupon':
+		case 'EnterShadowNewsletter':
+			return committedAt
+	}
 }
 
 async function settleExistingIntentRecords(
