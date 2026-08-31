@@ -690,6 +690,9 @@ export const contactEvent = mysqlTable(
 			table.providerEventId,
 		),
 		occurredAtIdx: index('ContactEvent_occurredAt_idx').on(table.occurredAt),
+		eventTypeOccurredAtIdIdx: index(
+			'ContactEvent_eventType_occurredAt_id_idx',
+		).on(table.eventType, table.occurredAt, table.id),
 		// Serves the value-path enrollment scan:
 		// eventType = ? AND providerReference IN (...) — previously a full scan.
 		eventTypeProviderReferenceIdx: index(
@@ -791,6 +794,9 @@ export const sideEffectIntent = mysqlTable(
 		type: varchar('type', { length: 100 }).notNull(),
 		status: varchar('status', { length: 50 }).notNull(),
 		completedAt: timestamp('completedAt', { fsp: 3 }),
+		courseRunId: varchar('courseRunId', { length: 500 }),
+		availableAt: timestamp('availableAt', { mode: 'date', fsp: 3 }),
+		activeSlot: varchar('activeSlot', { length: 32 }),
 		idempotencyKey: varchar('idempotencyKey', { length: 500 }).notNull(),
 		gates: json('gates').$type<Record<string, unknown>[]>().notNull(),
 		reviewReasons: json('reviewReasons').$type<string[]>().notNull(),
@@ -814,8 +820,16 @@ export const sideEffectIntent = mysqlTable(
 			table.type,
 			table.status,
 		),
+		providerTypeStatusAvailableAtIdx: index(
+			'SideEffectIntent_provider_type_status_availableAt_idx',
+		).on(table.provider, table.type, table.status, table.availableAt),
+		courseRunActiveSlotUq: uniqueIndex(
+			'SideEffectIntent_courseRun_activeSlot_uq',
+		).on(table.courseRunId, table.activeSlot),
 	}),
 )
+
+export { automationControl, emailCourseCommit } from './email-course-schema'
 
 export {
 	evergreenOfferJourneyIntent,

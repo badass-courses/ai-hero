@@ -25,7 +25,7 @@ import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 
 const mysqlServerUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!mysqlServerUrl)
-const now = '2026-08-03T00:00:00.000Z'
+const now = '2026-08-03T00:00:00.789Z'
 const completedAt = '2026-08-01T00:00:00.000Z'
 const schema = {
 	contact,
@@ -122,7 +122,7 @@ integration('course sequence exhaustion MySQL contract', () => {
 			'../../db/migrations/20260504_ai_hero_subscriber_marketing_gate_a.sql',
 			'../../db/migrations/20260714_ai_hero_optin_attribution.sql',
 			'../../db/migrations/20260717_ai_hero_side_effect_intent_completed_at.sql',
-			'../../db/migrations/20260830_ai_hero_course_sequence_exhaustion.sql',
+			'../../db/migrations/20260831_ai_hero_email_course_evergreen_schema.sql',
 		]) {
 			const sql = await fs.readFile(new URL(migrationPath, import.meta.url), 'utf8')
 			await pool.query(sql)
@@ -196,14 +196,17 @@ integration('course sequence exhaustion MySQL contract', () => {
 		expect(intents).toHaveLength(1)
 		expect(actions).toHaveLength(1)
 		expect(intents[0]?.nextActionId).toBe(actions[0]?.id)
-		const domainPayload =
-			typeof facts[0]?.domainPayload === 'string'
-				? JSON.parse(facts[0].domainPayload)
-				: facts[0]?.domainPayload
-		expect(domainPayload).toMatchObject({
-			deadlineTimeZone: {
-				type: 'BrowserEntryHeader',
-				timeZone: 'Asia/Tokyo',
+		const payloadSummary =
+			typeof facts[0]?.payloadSummary === 'string'
+				? JSON.parse(facts[0].payloadSummary)
+				: facts[0]?.payloadSummary
+		expect(payloadSummary?.coursePayload).toMatchObject({
+			format: 'email-course.sequence-exhausted.v1',
+			payload: {
+				deadlineTimeZone: {
+					type: 'BrowserEntryHeader',
+					timeZone: 'Asia/Tokyo',
+				},
 			},
 		})
 
@@ -296,25 +299,26 @@ async function seedCourseFrontier(pool: Pool) {
 	await pool.query(
 		`INSERT INTO AI_ContactEvent
 		(id, contactId, providerIdentityId, provider, providerEventId,
-		 providerReference, eventType, semanticIdempotencyKey, payloadFormat,
-		 domainPayload, privacyLevel, identityEvidence, payloadSummary,
-		 schemaVersion, occurredAt, createdAt)
+		 providerReference, eventType, semanticIdempotencyKey, privacyLevel,
+		 identityEvidence, payloadSummary, schemaVersion, occurredAt, createdAt)
 		VALUES ('course-entry', 'contact-1', 'identity-1', 'ai-hero',
 		 'course-entry', 'value-path:ai-hero-skills-workflow',
-		 'value-path.entered', 'course-entry', ?, ?, 'internal', ?, ?, 1, ?, ?)`,
+		 'value-path.entered', 'course-entry', 'internal', ?, ?, 1, ?, ?)`,
 		[
-			EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
-			JSON.stringify({
-				format: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
-				valuePathId: 'ai-hero-skills-workflow',
-				emailResourceId: 'ai-hero-skills-workflow.email-0',
-				deadlineTimeZone: deadline,
-			}),
 			JSON.stringify({ source: 'ai-hero', strength: 'strong' }),
 			JSON.stringify({
 				summary: 'Entered course',
 				keywords: ['value-path', 'entered'],
 				restrictedPayloadStored: false,
+				coursePayload: {
+					format: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+					payload: {
+						format: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+						valuePathId: 'ai-hero-skills-workflow',
+						emailResourceId: 'ai-hero-skills-workflow.email-0',
+						deadlineTimeZone: deadline,
+					},
+				},
 			}),
 			new Date(completedAt),
 			new Date(completedAt),
