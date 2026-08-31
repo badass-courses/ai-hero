@@ -244,13 +244,15 @@ describe('course sequence exhaustion evidence', () => {
 			domainPayload: _domainPayload,
 			...persistedEvent
 		} = event
+		const persistedPayload = restoreCourseSequenceExhaustedPayload(validPayload())
+		if (!persistedPayload) throw new Error('Expected persisted payload')
 		expect(
 			courseSequenceExhaustedStimulusFromContactEvent({
 				...persistedEvent,
 				payloadSummary: withCoursePayload(
 					persistedEvent.payloadSummary,
 					COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
-					validPayload(),
+					persistedPayload,
 				),
 			}),
 		).toEqual(expected)
