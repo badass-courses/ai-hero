@@ -60,14 +60,23 @@ export type CourseSequenceExhaustedPayload = {
 			readonly emailResourceId: string
 			readonly completedAt: IsoInstant
 		}
-		readonly trigger: {
-			readonly type: 'DailyDripDue'
-			readonly evaluatedAt: IsoInstant
-			readonly reason:
-				| 'local-day-9am-due'
-				| 'fallback-24h-due'
-				| 'fixture-cadence-due'
-		}
+		readonly trigger:
+			| {
+					readonly type: 'DailyDripDue'
+					readonly evaluatedAt: IsoInstant
+					readonly reason:
+						| 'local-day-9am-due'
+						| 'fallback-24h-due'
+						| 'fixture-cadence-due'
+			  }
+			| {
+					readonly type: 'DeliverySettled'
+					readonly evaluatedAt: IsoInstant
+					readonly plannedAvailableAt: IsoInstant
+					readonly policy:
+						| 'EighteenHourFloorThenLocalNine'
+						| 'ExplicitTwentyFourHourFallback'
+			  }
 		readonly terminal: {
 			readonly intentId: string
 			readonly idempotencyKey: string
@@ -200,17 +209,30 @@ const CourseSequenceExhaustedPayloadSchema: z.ZodType<
 							completedAt: IsoInstantSchema,
 						})
 						.strict(),
-					trigger: z
-						.object({
-							type: z.literal('DailyDripDue'),
-							evaluatedAt: IsoInstantSchema,
-							reason: z.enum([
-								'local-day-9am-due',
-								'fallback-24h-due',
-								'fixture-cadence-due',
-							]),
-						})
-						.strict(),
+					trigger: z.discriminatedUnion('type', [
+						z
+							.object({
+								type: z.literal('DailyDripDue'),
+								evaluatedAt: IsoInstantSchema,
+								reason: z.enum([
+									'local-day-9am-due',
+									'fallback-24h-due',
+									'fixture-cadence-due',
+								]),
+							})
+							.strict(),
+						z
+							.object({
+								type: z.literal('DeliverySettled'),
+								evaluatedAt: IsoInstantSchema,
+								plannedAvailableAt: IsoInstantSchema,
+								policy: z.enum([
+									'EighteenHourFloorThenLocalNine',
+									'ExplicitTwentyFourHourFallback',
+								]),
+							})
+							.strict(),
+					]),
 					terminal: z
 						.object({
 							intentId: z.string().trim().min(1),

@@ -7,7 +7,7 @@ import type {
   DeliverableCourseEmailIntent,
   DeliveryOutcome,
   EmailCourseDecision,
-  EmailCourseRun,
+  EmailCoursePlanningState,
   EmailCourseStimulus,
   EmailCourseView,
   ScheduleEvidence,
@@ -103,6 +103,7 @@ export type EmailCourseInspection =
 export type EmailCourseCommit = {
   readonly stimulus: EmailCourseStimulus;
   readonly expectedVersion: number | null;
+  readonly previous: EmailCoursePlanningState | null;
   readonly definition: EmailCourseDefinition;
   readonly automationControl: AutomationControl;
   readonly communication: CommunicationDecision;
@@ -134,7 +135,7 @@ export type CourseScheduleDecision = {
 export interface EmailCourseLedger {
   readonly load: (
     runId: CourseRunId,
-  ) => Effect.Effect<EmailCourseRun | null, EmailCourseCommandError>;
+  ) => Effect.Effect<EmailCoursePlanningState | null, EmailCourseCommandError>;
   readonly findCommittedStimulus: (
     stimulusId: StimulusId,
   ) => Effect.Effect<AdvanceEmailCourseResult | null, EmailCourseCommandError>;

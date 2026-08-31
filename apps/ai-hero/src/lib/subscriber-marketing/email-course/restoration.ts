@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-parameters -- Every unknown here is persisted JSON decoded immediately by a named Zod schema. */
 import { z } from "zod";
 
 import type { EmailCourseDefinition } from "./definition";
@@ -8,6 +9,7 @@ import {
   type AutomationControl,
   type CommunicationDecision,
   type CourseEmailIntent,
+  type EmailCourseDecision,
   type EmailCourseRun,
   type EmailCourseView,
 } from "./domain";
@@ -26,18 +28,7 @@ import {
   parseIanaTimeZone,
   parseIntentId,
   parseIsoInstant,
-  type ContactId,
-  type ContentResourceId,
-  type CourseId,
-  type CourseIntentKey,
-  type CoursePathId,
-  type CourseRunId,
   type CourseStepId,
-  type DeliveryTargetId,
-  type EventId,
-  type IanaTimeZone,
-  type IntentId,
-  type IsoInstant,
   type ParseResult,
 } from "./primitives";
 
@@ -56,6 +47,10 @@ export type CourseEmailIntentRestorationResult =
 
 export type EmailCourseViewRestorationResult =
   | { readonly ok: true; readonly value: EmailCourseView }
+  | { readonly ok: false; readonly error: EmailCourseRestorationError };
+
+export type EmailCourseDecisionRestorationResult =
+  | { readonly ok: true; readonly value: EmailCourseDecision }
   | { readonly ok: false; readonly error: EmailCourseRestorationError };
 
 const ContactIdSchema = parsedString(parseContactId);
@@ -114,6 +109,23 @@ const CommunicationStoppedOutcomeSchema = z.object({
   reason: CommunicationStopReasonSchema,
   stoppedAt: IsoInstantSchema,
 });
+const TransientFailureOutcomeSchema = z.object({
+  type: z.literal("TransientFailure"),
+  reason: NonBlank,
+  failedAt: IsoInstantSchema,
+});
+const AmbiguousOutcomeSchema = z.object({
+  type: z.literal("Ambiguous"),
+  reason: NonBlank,
+  observedAt: IsoInstantSchema,
+});
+const DeliveryOutcomeSchema = z.discriminatedUnion("type", [
+  AppliedOutcomeSchema,
+  TransientFailureOutcomeSchema,
+  PermanentRefusalOutcomeSchema,
+  AmbiguousOutcomeSchema,
+  CommunicationStoppedOutcomeSchema,
+]);
 
 const IntentIdentitySchema = {
   id: IntentIdSchema,
@@ -147,7 +159,11 @@ const HeldIntentSchema = z.object({
   availableAt: IsoInstantSchema,
   activeSlot: z.literal(EMAIL_COURSE_ACTIVE_SLOT),
   attempt: z.number().int().nonnegative(),
-  reason: z.enum(["AmbiguousDeliveryOutcome", "CommunicationStopped"]),
+  reason: z.enum([
+    "AmbiguousDeliveryOutcome",
+    "AutomationStopped",
+    "CommunicationStopped",
+  ]),
 });
 const SettledIntentSchema = z.object({
   status: z.literal("Settled"),
@@ -190,6 +206,10 @@ const ActiveRunSchema = <Phase extends ActiveEmailCourseRun["phase"]>(
 
 const CourseStopReasonSchema = z.discriminatedUnion("type", [
   z.object({
+    type: z.literal("AutomationStopped"),
+    reason: NonBlank,
+  }),
+  z.object({
     type: z.literal("CommunicationStopped"),
     reason: CommunicationStopReasonSchema,
   }),
@@ -216,6 +236,89 @@ const EmailCourseRunSchema = z.discriminatedUnion("phase", [
     phase: z.literal("stopped"),
     reason: CourseStopReasonSchema,
     stoppedAt: IsoInstantSchema,
+  }),
+]);
+
+const EmailCourseDomainEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("CourseRunStarted"),
+    runId: CourseRunIdSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("AnswerObserved"),
+    answerEventId: EventIdSchema,
+    selectedPathId: CoursePathIdSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("NextEmailPlanned"),
+    intentId: IntentIdSchema,
+    stepId: CourseStepIdSchema,
+    availableAt: IsoInstantSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("NextEmailAccelerated"),
+    intentId: IntentIdSchema,
+    answerEventId: EventIdSchema,
+    availableAt: IsoInstantSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("NextEmailRouteChanged"),
+    intentId: IntentIdSchema,
+    fromStepId: CourseStepIdSchema,
+    toStepId: CourseStepIdSchema,
+    answerEventId: EventIdSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("DeliveryRecorded"),
+    intentId: IntentIdSchema,
+    outcome: DeliveryOutcomeSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("CourseSequenceExhausted"),
+    factId: EventIdSchema,
+    terminalIntentId: IntentIdSchema,
+    terminalStepId: CourseStepIdSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+  z.object({
+    type: z.literal("CourseRunStopped"),
+    reason: CourseStopReasonSchema,
+    occurredAt: IsoInstantSchema,
+  }),
+]);
+
+const EmailCourseOutboxChangeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("Plan"), intent: PendingIntentSchema }),
+  z.object({ type: z.literal("Accelerate"), intent: PendingIntentSchema }),
+  z.object({
+    type: z.literal("ReplaceRoute"),
+    expectedIntentId: IntentIdSchema,
+    replacement: PendingIntentSchema,
+  }),
+  z.object({ type: z.literal("Settle"), intent: SettledIntentSchema }),
+  z.object({
+    type: z.literal("ScheduleRetry"),
+    intent: RetryWaitingIntentSchema,
+  }),
+  z.object({ type: z.literal("Hold"), intent: HeldIntentSchema }),
+]);
+
+const EmailCourseDecisionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("Accepted"),
+    next: EmailCourseRunSchema,
+    events: z.array(EmailCourseDomainEventSchema),
+    outboxChanges: z.array(EmailCourseOutboxChangeSchema),
+  }),
+  z.object({
+    type: z.literal("Ignored"),
+    reason: z.enum(["DuplicateStimulus", "LateAnswer"]),
   }),
 ]);
 
@@ -303,6 +406,33 @@ export function restoreCourseEmailIntent(
     return decodeFailure("Intent does not match the course definition");
   }
   return { ok: true, value: intent };
+}
+
+export function restoreEmailCourseDecision(
+  input: unknown,
+  definition: EmailCourseDefinition,
+): EmailCourseDecisionRestorationResult {
+  const restored = EmailCourseDecisionSchema.safeParse(input);
+  if (!restored.success) {
+    return decodeFailure(
+      restored.error.issues[0]?.message ?? "Invalid course decision",
+    );
+  }
+  if (restored.data.type === "Ignored") {
+    return { ok: true, value: restored.data };
+  }
+  const restoredRun = restoreEmailCourseRun(restored.data.next, definition);
+  if (!restoredRun.ok) return restoredRun;
+  for (const change of restored.data.outboxChanges) {
+    const intent =
+      change.type === "ReplaceRoute" ? change.replacement : change.intent;
+    const restoredIntent = restoreCourseEmailIntent(intent, definition);
+    if (!restoredIntent.ok) return restoredIntent;
+  }
+  return {
+    ok: true,
+    value: { ...restored.data, next: restoredRun.value },
+  };
 }
 
 export function restoreAutomationControl(
@@ -434,6 +564,13 @@ export function restoreEmailCourseView(
   ) {
     return decodeFailure("Stopped run conflicts with communication safety");
   }
+  if (
+    run.reason.type === "AutomationStopped" &&
+    (context.automationControl.type !== "Stopped" ||
+      context.automationControl.reason !== run.reason.reason)
+  ) {
+    return decodeFailure("Stopped run conflicts with automation control");
+  }
   return { ok: true, value: { ...context, run, currentIntent } };
 }
 
@@ -466,9 +603,8 @@ function parsedString<Value extends string>(
   });
 }
 
-function decodeFailure(reason: string): {
-  readonly ok: false;
-  readonly error: EmailCourseRestorationError;
-} {
+function decodeFailure(
+  reason: string,
+): Extract<EmailCourseRestorationResult, { readonly ok: false }> {
   return { ok: false, error: { type: "CourseRunDecodeFailure", reason } };
 }
