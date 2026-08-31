@@ -13,7 +13,7 @@ const receipt: DrovrParityTransitionReceipt = {
 	contactId: 'contact-parity',
 	journeyId: 'value-path-skills-course',
 	journeyVersion: 1,
-	fromState: 'entry',
+	fromState: 'email0.pending',
 	toState: 'email0.pending',
 	cause: 'journey.started',
 	intentsEmitted: 1,

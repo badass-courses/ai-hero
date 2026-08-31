@@ -165,12 +165,50 @@ describe("advanceEmailCourse service", () => {
         contactId,
         journeyId: "value-path-skills-course",
         journeyVersion: 1,
-        fromState: "entry",
+        fromState: "email0.pending",
         toState: "email0.pending",
         cause: "journey.started",
         intentsEmitted: 1,
         at: now,
       }),
+    ]);
+  });
+
+  it("pushes settlement and drip-next parity transitions after one commit", async () => {
+    const { ledger, commits } = memoryLedger();
+    const pushed: Array<{ fromState: string; toState: string }> = [];
+    const advance = createAdvanceEmailCourse(
+      dependencies({
+        ledger,
+        sink: {
+          push: (receipt) => Effect.sync(() => void pushed.push(receipt)),
+        },
+      }),
+    );
+
+    await Effect.runPromise(advance({ stimulus: signup() }));
+    const email0 = nextIntent(commits[0]!);
+    if (!email0) throw new Error("Expected Email 0 intent");
+    await Effect.runPromise(
+      advance({
+        stimulus: {
+          type: "DeliverySettled",
+          stimulusId: value(parseStimulusId("settle-email-0-service")),
+          runId,
+          intentId: email0.id,
+          outcome: {
+            type: "Applied",
+            deliveryReceiptId: "delivery-email-0-service",
+            appliedAt: now,
+          },
+          occurredAt: now,
+        },
+      }),
+    );
+
+    expect(pushed.slice(1)).toMatchObject([
+      { fromState: "email0.pending", toState: "email0.waiting" },
+      { fromState: "email0.waiting", toState: "email1.pending" },
     ]);
   });
 

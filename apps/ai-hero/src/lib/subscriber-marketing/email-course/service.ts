@@ -7,7 +7,7 @@ import type {
   EmailCoursePlanningState,
 } from "./domain";
 import {
-  normalizeEmailCourseTransitionReceipt,
+  normalizeEmailCourseTransitionReceipts,
   type DrovrParityReceiptSink,
 } from "./parity-receipt";
 import { deriveCourseRunId } from "./primitives";
@@ -127,13 +127,17 @@ export function createAdvanceEmailCourse(
           if (!committed.committed || committed.decision.type !== "Accepted") {
             return Effect.succeed(committed);
           }
-          const parityReceipt = normalizeEmailCourseTransitionReceipt({
+          const parityReceipts = normalizeEmailCourseTransitionReceipts({
             definition,
             previous,
             stimulus: command.stimulus,
             decision: committed.decision,
           });
-          return dependencies.parityReceiptSink.push(parityReceipt).pipe(
+          return Effect.gen(function* () {
+            for (const receipt of parityReceipts) {
+              yield* dependencies.parityReceiptSink.push(receipt);
+            }
+          }).pipe(
             Effect.catchAllCause(() => Effect.void),
             Effect.as(committed),
           );
