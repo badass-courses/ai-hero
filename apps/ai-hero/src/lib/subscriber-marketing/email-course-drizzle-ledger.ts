@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 import * as databaseSchema from '@/db/schema'
 import { contactEvent, emailCourseCommit, sideEffectIntent } from '@/db/schema'
 import { and, desc, eq, sql } from 'drizzle-orm'
-import type { MySql2Database } from 'drizzle-orm/mysql2'
+import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { Effect } from 'effect'
 import type { FieldPacket, ResultSetHeader } from 'mysql2/promise'
 import { z } from 'zod'
@@ -20,6 +20,7 @@ import {
 } from './course-sequence-exhaustion'
 import type {
 	CourseEmailIntent,
+	EmailCourseDecision,
 	EmailCourseDomainEvent,
 	EmailCourseOutboxChange,
 	EmailCoursePlanningState,
@@ -49,14 +50,18 @@ const OUTBOX_PAYLOAD_FORMAT = 'email-course.intent.v1' as const
 const OUTBOX_PROVIDER = 'email-course' as const
 const OUTBOX_TYPE = 'send-course-email' as const
 
-export type EmailCourseDatabase = MySql2Database<typeof databaseSchema>
+export type EmailCourseDatabase = MySqlDatabase<any, any, typeof databaseSchema>
 type EmailCourseTransaction = Parameters<
 	Parameters<EmailCourseDatabase['transaction']>[0]
 >[0]
 type EmailCourseQueryExecutor = EmailCourseDatabase | EmailCourseTransaction
 type CommitRow = typeof emailCourseCommit.$inferSelect
 type OutboxRow = typeof sideEffectIntent.$inferSelect
-type WriteReceipt = ResultSetHeader | [ResultSetHeader, FieldPacket[]]
+type WriteReceipt =
+	| ResultSetHeader
+	| [ResultSetHeader, FieldPacket[]]
+	| { rowsAffected: number }
+type EmailCoursePersistenceMode = 'authoritative' | 'shadow'
 
 const OutboxPayloadSchema = z
 	.object({
@@ -77,6 +82,13 @@ const CommitReceiptSchema = z
 			.strict(),
 	})
 	.strict()
+const WriteReceiptSchema = z.union([
+	z
+		.tuple([z.object({ affectedRows: z.number() }), z.unknown()])
+		.transform(([header]) => header.affectedRows),
+	z.object({ rowsAffected: z.number() }).transform((row) => row.rowsAffected),
+	z.object({ affectedRows: z.number() }).transform((row) => row.affectedRows),
+])
 const TransactionRaceErrorSchema = z
 	.object({
 		code: z.string().optional(),
@@ -95,9 +107,24 @@ export function createDrizzleEmailCourseLedger(
 	database: EmailCourseDatabase,
 	definition: EmailCourseDefinition,
 ): EmailCourseLedger {
+	return createEmailCourseLedger(database, definition, 'authoritative')
+}
+
+export function createDrizzleEmailCourseShadowLedger(
+	database: EmailCourseDatabase,
+	definition: EmailCourseDefinition,
+): EmailCourseLedger {
+	return createEmailCourseLedger(database, definition, 'shadow')
+}
+
+function createEmailCourseLedger(
+	database: EmailCourseDatabase,
+	definition: EmailCourseDefinition,
+	mode: EmailCoursePersistenceMode,
+): EmailCourseLedger {
 	const load: EmailCourseLedger['load'] = (runId) =>
 		Effect.tryPromise({
-			try: () => loadState(database, definition, runId),
+			try: () => loadState(database, definition, runId, mode),
 			catch: commandError,
 		})
 
@@ -123,7 +150,7 @@ export function createDrizzleEmailCourseLedger(
 				for (let attempt = 0; attempt < 3; attempt += 1) {
 					try {
 						return await database.transaction((transaction) =>
-							commitInTransaction(transaction, definition, candidate),
+							commitInTransaction(transaction, definition, candidate, mode),
 						)
 					} catch (cause) {
 						const existing = await database.query.emailCourseCommit.findFirst({
@@ -162,6 +189,7 @@ async function commitInTransaction(
 	transaction: EmailCourseTransaction,
 	definition: EmailCourseDefinition,
 	candidate: EmailCourseCommit,
+	mode: EmailCoursePersistenceMode,
 ): Promise<AdvanceEmailCourseResult> {
 	const runId = candidate.decision.next.runId
 	// Lock before any consistent read. A pre-lock read would pin a stale
@@ -196,7 +224,9 @@ async function commitInTransaction(
 		throw constraint(candidate, 'Actor version is not the next version')
 	}
 
-	const current = head ? await loadState(transaction, definition, runId) : null
+	const current = head
+		? await loadState(transaction, definition, runId, mode)
+		: null
 	if (!jsonDeepEqual(current, candidate.previous)) {
 		throw new EmailCourseLedgerAbort({
 			type: 'CourseRunVersionConflict',
@@ -204,10 +234,12 @@ async function commitInTransaction(
 		})
 	}
 
-	for (const change of candidate.decision.outboxChanges) {
-		await applyOutboxChange(transaction, candidate, change)
+	if (mode === 'authoritative') {
+		for (const change of candidate.decision.outboxChanges) {
+			await applyOutboxChange(transaction, candidate, change)
+		}
+		await commitSequenceExhaustionFact(transaction, candidate)
 	}
-	await commitSequenceExhaustionFact(transaction, candidate)
 
 	const result: AdvanceEmailCourseResult = {
 		decision: candidate.decision,
@@ -472,6 +504,7 @@ async function loadState(
 	database: EmailCourseQueryExecutor,
 	definition: EmailCourseDefinition,
 	runId: CourseRunId,
+	mode: EmailCoursePersistenceMode,
 ): Promise<EmailCoursePlanningState | null> {
 	const head = await database.query.emailCourseCommit.findFirst({
 		where: eq(emailCourseCommit.runId, runId),
@@ -492,6 +525,12 @@ async function loadState(
 	const currentIntentId = activeIntentId(restoredRun.value)
 	if (!currentIntentId) {
 		return { run: restoredRun.value, currentIntent: null }
+	}
+	if (mode === 'shadow') {
+		return {
+			run: restoredRun.value,
+			currentIntent: restoreShadowIntent(head, definition, currentIntentId),
+		}
 	}
 	const row = await database.query.sideEffectIntent.findFirst({
 		where: eq(sideEffectIntent.id, currentIntentId),
@@ -574,6 +613,47 @@ function readCommittedDecision(
 	}
 }
 
+function restoreShadowIntent(
+	row: CommitRow,
+	definition: EmailCourseDefinition,
+	expectedIntentId: IntentId,
+): CourseEmailIntent {
+	const decision = restoreEmailCourseDecision(row.decision, definition)
+	if (!decision.ok || decision.value.type !== 'Accepted') {
+		throw new EmailCourseLedgerAbort({
+			type: 'CourseRunDecodeFailure',
+			reason: `Shadow commit decision is invalid: ${row.runId}`,
+		})
+	}
+	const currentIntent = decisionCurrentIntent(decision.value)
+	if (!currentIntent || currentIntent.id !== expectedIntentId) {
+		throw new EmailCourseLedgerAbort({
+			type: 'CourseRunDecodeFailure',
+			reason: `Shadow commit current intent disagrees with its snapshot: ${row.runId}`,
+		})
+	}
+	return currentIntent
+}
+
+function decisionCurrentIntent(
+	decision: Extract<EmailCourseDecision, { type: 'Accepted' }>,
+): CourseEmailIntent | null {
+	for (const change of decision.outboxChanges.toReversed()) {
+		switch (change.type) {
+			case 'Plan':
+				return change.intent
+			case 'ReplaceRoute':
+				return change.replacement
+			case 'Accelerate':
+			case 'ScheduleRetry':
+			case 'Hold':
+			case 'Settle':
+				return change.intent
+		}
+	}
+	return null
+}
+
 function restoreOutboxRow(
 	row: OutboxRow,
 	definition: EmailCourseDefinition,
@@ -620,11 +700,12 @@ async function requireSingleWrite(
 	reason: string,
 ): Promise<void> {
 	const receipt = await write
-	if (writtenRows(receipt) !== 1) throw constraint(candidate, reason)
+	if (parseWrittenRows(receipt) !== 1) throw constraint(candidate, reason)
 }
 
-function writtenRows(receipt: WriteReceipt): number {
-	return Array.isArray(receipt) ? receipt[0].affectedRows : receipt.affectedRows
+function parseWrittenRows(receipt: WriteReceipt): number {
+	const parsed = WriteReceiptSchema.safeParse(receipt)
+	return parsed.success ? parsed.data : 0
 }
 
 function nextActionId(runId: CourseRunId): string {

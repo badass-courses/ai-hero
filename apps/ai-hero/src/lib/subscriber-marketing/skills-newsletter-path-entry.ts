@@ -47,6 +47,13 @@ export type SkillsNewsletterPathEntryResult = {
 	entry: ValuePathGateDStartResult
 }
 
+export type SkillsNewsletterShadowObserver = (observation: {
+	contactId: string
+	courseEntryEventId: string
+	subscribedAt: string
+	deadlineTimeZone?: DeadlineTimeZoneEvidence
+}) => Promise<unknown>
+
 function attributionWithSubscriptionTime(
 	input: SkillsNewsletterPathEntryInput,
 ) {
@@ -61,6 +68,7 @@ export async function enterSkillsNewsletterSubscriber(args: {
 	input: SkillsNewsletterPathEntryInput
 	allowWrite: boolean
 	sequenceExhaustionEnabled?: boolean
+	shadowObserver?: SkillsNewsletterShadowObserver
 }): Promise<SkillsNewsletterPathEntryResult> {
 	if (args.allowlist.authorizationMode !== 'rolling-public-enrollment') {
 		return blockedResult(args, 'rolling-public-enrollment-not-active')
@@ -119,11 +127,35 @@ export async function enterSkillsNewsletterSubscriber(args: {
 		now: args.input.subscribedAt,
 	})
 	const result = entry.results[0]
-	return {
+	const output = {
 		status: result?.status ?? 'blocked',
 		contactId: capture.contact.id,
 		captureEventId: capture.contactEvent.id,
 		entry,
+	} satisfies SkillsNewsletterPathEntryResult
+	if (
+		output.status !== 'blocked' &&
+		result?.contactEventId &&
+		args.shadowObserver
+	) {
+		await observeShadowWithoutThrow(args.shadowObserver, {
+			contactId: output.contactId,
+			courseEntryEventId: result.contactEventId,
+			subscribedAt: args.input.subscribedAt,
+			...(deadlineTimeZone ? { deadlineTimeZone } : {}),
+		})
+	}
+	return output
+}
+
+async function observeShadowWithoutThrow(
+	observer: SkillsNewsletterShadowObserver,
+	observation: Parameters<SkillsNewsletterShadowObserver>[0],
+): Promise<void> {
+	try {
+		await observer(observation)
+	} catch {
+		// Shadow state and parity cannot alter the committed production entry.
 	}
 }
 

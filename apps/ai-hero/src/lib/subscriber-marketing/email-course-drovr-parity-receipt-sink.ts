@@ -18,7 +18,7 @@ type DrovrParityConfig = {
 	readonly apiKey?: string
 }
 
-type DrovrParityOptions = {
+export type DrovrParityOptions = {
 	readonly config?: DrovrParityConfig
 	readonly fetch?: typeof fetch
 	readonly warn?: typeof log.warn

@@ -64,6 +64,7 @@ import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
+import { emailCourseShadowAnswer } from './functions/email-course-shadow-answer'
 import { captureContactUnsubscribed } from './functions/capture-contact-unsubscribed'
 import { capturePurchaseContactEvent } from './functions/capture-purchase-contact-event'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
@@ -85,7 +86,8 @@ import {
 // branch environment's functions instead. VERCEL_ENV is unset in local dev,
 // so the Inngest dev server still sees the full list.
 const isVercelNonProduction =
-	process.env.VERCEL_ENV !== undefined && process.env.VERCEL_ENV !== 'production'
+	process.env.VERCEL_ENV !== undefined &&
+	process.env.VERCEL_ENV !== 'production'
 
 const allFunctions = [
 	...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
@@ -149,6 +151,7 @@ const allFunctions = [
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,
+	emailCourseShadowAnswer,
 	capturePurchaseContactEvent,
 	captureContactUnsubscribed,
 	workshopInterestSync,
