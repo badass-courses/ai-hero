@@ -89,27 +89,29 @@ export const SKILLS_HERO = {
 } as const
 
 /**
+ * Approved wayfinding copy for every website entry and confirmation surface.
+ * Keep these sentences exact so learners get one account-location and pacing
+ * explanation wherever they enter the email course.
+ */
+export const SKILLS_COURSE_WAYFINDING = {
+	heroCtaLabel: 'Start the free email course',
+	location:
+		'This is a seven-lesson email course. The lesson is the email itself. It will not appear under Courses in your AI Hero account.',
+	signup:
+		'This is a seven-lesson email course. Lesson 1 arrives as soon as you sign up. The lesson is the email itself. It will not appear under Courses in your AI Hero account.',
+	progression:
+		'Answer the question at the end if you want the next lesson in a few minutes. Otherwise, the next lesson arrives automatically after at least 18 hours.',
+} as const
+
+/**
  * The free email course, as the HEAD's side panel (`Skills Page.dc.html`
- * § HEAD). Shorter and more specific than `SkillsCourseCta`'s copy, which is
- * written for a full-width strip under a post.
+ * § HEAD). The account-location and pacing copy stays shared with the other
+ * website entry points above.
  */
 export const SKILLS_COURSE_PANEL = {
 	heading: 'Learn how I actually engineer with these',
-	/**
-	 * Three lengths, swapped at the same container steps as the hero's layout
-	 * (`skills-hero.tsx`), never truncated at runtime. A sentence that gets
-	 * shorter because the column did is a different sentence, and picking which
-	 * clause survives is an editorial call — `text-overflow` makes it at random.
-	 */
-	body: {
-		/** ≥1080px of hero container: the full argument. */
-		full: 'A free email course on the practices these skills came out of: the judgement calls that keep the output at your standard, not just the commands.',
-		/** 940–1080px: the contrast survives, the setup goes. */
-		mid: 'A free email course on the practices these skills came out of: the judgement calls, not just the commands.',
-		/** Under 940px, including mobile: the claim alone. */
-		short:
-			'A free email course on the practices these skills came out of.',
-	},
+	body: SKILLS_COURSE_WAYFINDING.signup,
+	progression: SKILLS_COURSE_WAYFINDING.progression,
 	ctaLabel: 'Start the email course',
 	note: 'No spam. Unsubscribe any time.',
 	href: '/skills/subscribe',

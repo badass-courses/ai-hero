@@ -4,6 +4,7 @@ import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { ProofQuote } from '@/components/landing/proof-grid'
 import { TYPE } from '@/components/landing/type'
 import { SubscriberCount } from '@/components/subscriber-count'
+import { SKILLS_COURSE_WAYFINDING } from '@/lib/skills-content'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -160,7 +161,7 @@ function Hero({
 				{/* This route's one eyebrow: a scope and a price the headline does not
 				    carry. In full ink rather than accent — a rare mark that still
 				    whispers fails as text while occupying the slot. */}
-				<p className={TYPE.eyebrow}>Free 7-day email course</p>
+				<p className={TYPE.eyebrow}>Free seven-lesson email course</p>
 				<h1
 					className={cn(
 						TYPE.displayLanding,
@@ -183,15 +184,15 @@ function Hero({
 					Build a repeatable workflow for working with coding agents without
 					giving up your engineering standards.
 				</p>
-				<p
+				<div
 					className={cn(
 						TYPE.body,
-						'max-w-[44ch] text-pretty text-[color:var(--ah-fg-muted)]',
+						'max-w-[52ch] space-y-3 text-pretty text-[color:var(--ah-fg-muted)]',
 					)}
 				>
-					One practical lesson each day. Learn the skill, try it on real work,
-					and finish the week with a workflow you can reuse.
-				</p>
+					<p>{SKILLS_COURSE_WAYFINDING.signup}</p>
+					<p>{SKILLS_COURSE_WAYFINDING.progression}</p>
+				</div>
 				<HeroStats />
 			</div>
 
@@ -331,8 +332,8 @@ function Curriculum() {
 					'mb-[38px] max-w-[62ch] text-pretty text-[color:var(--ah-fg-muted)]',
 				)}
 			>
-				Each day is one skill and one small exercise on work you already have.
-				Nothing here is theory you can't run the same afternoon.
+				Each lesson is one skill and one small exercise on work you already
+				have. Nothing here is theory you can't run the same afternoon.
 			</p>
 
 			<ol className="border-border bg-border grid gap-px overflow-hidden rounded-lg border md:grid-cols-2">
@@ -356,7 +357,7 @@ function Curriculum() {
 						    under the 17.5px intro that introduces them. */}
 						<div className="min-w-0">
 							<h3 className={cn(TYPE.subhead, 'mb-1.5 text-pretty')}>
-								<span className="sr-only">Day {index + 1}: </span>
+								<span className="sr-only">Lesson {index + 1}: </span>
 								{day.title}
 							</h3>
 							<p
@@ -374,7 +375,7 @@ function Curriculum() {
 				    surface so the grid closes on a different note than it ran. */}
 				<li className="flex flex-col justify-center bg-[color:var(--ah-band)] px-6 pb-[26px] pt-6">
 					<p className={cn(TYPE.groupLabel, 'text-primary mb-[11px]')}>
-						Day 7, what you'll have
+						Lesson 7, what you'll have
 					</p>
 					<p
 						className={cn(
@@ -466,8 +467,8 @@ function ClosingCta({
 						'max-w-[52ch] text-pretty text-[color:var(--ah-fg-muted)]',
 					)}
 				>
-					Seven days, then you're on the AI Hero list for new skills and Matt's
-					coding letters. Leave any time.
+					Seven lessons, then you're on the AI Hero list for new skills and
+					Matt's coding letters. Leave any time.
 				</p>
 			</div>
 			<SkillsNewsletter.Root

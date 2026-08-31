@@ -28,7 +28,7 @@ Top-of-page header. Stacks left-side text against a right-side video or image.
 | `videoResourceId` | `string` | Post slug, post id, or videoResource id. Falls back to `/landing/hero@2x.png` if absent. |
 | `variant`         | `'home' \| 'page'` | `home` (default) is the full masthead: eyebrow, two actions, and the stat trio. `page` is words only, for pages that make their own offer immediately below — `/courses` passes it. |
 | `eyebrow`         | `string` | The mono label above the `h1`. Defaults to "Real AI Engineering · by Matt Pocock". `home` only. |
-| `ctaLabel` / `ctaHref` | `string` | The gold action. Defaults to the free 7-day course at `/skills/subscribe`. |
+| `ctaLabel` / `ctaHref` | `string` | The gold action. Defaults to the free seven-lesson email course at `/skills/subscribe`. |
 | `secondaryCtaLabel` / `secondaryCtaHref` | `string` | The outline action. Defaults to "Browse the skills" → `/skills`. |
 
 The stat trio is not authored: two of the three numbers are live (list size via
