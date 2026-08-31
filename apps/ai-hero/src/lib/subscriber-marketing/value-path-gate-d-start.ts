@@ -357,9 +357,9 @@ async function startValuePathGateDContact(args: {
 							emailResourceId: args.emailResourceId,
 							kitSubscriberId: args.kitSubscriberId ?? null,
 							kitSequenceId: args.kitSequenceId,
+							courseEntryEventId: event.id,
 							...(args.courseDeadlineTimeZone
 								? {
-										courseEntryEventId: event.id,
 										courseDeadlineTimeZone: args.courseDeadlineTimeZone,
 									}
 								: {}),
