@@ -53,7 +53,7 @@ export function createAdvanceEmailCourse(
   ): Effect.Effect<AdvanceEmailCourseResult, EmailCourseCommandError> =>
     Effect.gen(function* () {
       const replay = yield* dependencies.ledger.findCommittedStimulus(
-        command.stimulus.stimulusId,
+        command.stimulus,
       );
       if (replay) return replay;
 

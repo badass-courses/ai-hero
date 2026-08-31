@@ -129,6 +129,11 @@ export type CourseSequenceExhaustionCommitResult =
 			readonly status: 'legacy-terminal-intent-without-fact'
 			readonly terminalIntentId: string
 	  }
+	| {
+			readonly status: 'email-course-authority-present'
+			readonly factId: string
+			readonly terminalIntentId: string
+	  }
 
 const IsoInstantSchema = parsedString(parseIsoInstant)
 const IanaTimeZoneSchema = parsedString(parseIanaTimeZone)

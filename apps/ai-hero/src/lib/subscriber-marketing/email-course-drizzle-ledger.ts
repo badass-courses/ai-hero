@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 
 import * as databaseSchema from '@/db/schema'
 import { contactEvent, emailCourseCommit, sideEffectIntent } from '@/db/schema'
@@ -23,6 +24,7 @@ import type {
 	EmailCourseOutboxChange,
 	EmailCoursePlanningState,
 	EmailCourseRun,
+	EmailCourseStimulus,
 } from './email-course/domain'
 import {
 	restoreCourseEmailIntent,
@@ -36,7 +38,11 @@ import type {
 	EmailCourseLedger,
 } from './email-course/ports'
 import type { EmailCourseDefinition } from './email-course/definition'
-import type { CourseRunId, IntentId } from './email-course/primitives'
+import {
+	deriveCourseRunId,
+	type CourseRunId,
+	type IntentId,
+} from './email-course/primitives'
 
 const COMMIT_RECEIPT_FORMAT = 'email-course.advance-result.v1' as const
 const OUTBOX_PAYLOAD_FORMAT = 'email-course.intent.v1' as const
@@ -56,6 +62,19 @@ const OutboxPayloadSchema = z
 	.object({
 		format: z.literal(OUTBOX_PAYLOAD_FORMAT),
 		intent: z.unknown(),
+	})
+	.strict()
+const CommitReceiptSchema = z
+	.object({
+		format: z.literal(COMMIT_RECEIPT_FORMAT),
+		stimulusFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+		result: z
+			.object({
+				decision: z.unknown(),
+				committed: z.literal(true),
+				replayedStimulus: z.literal(false),
+			})
+			.strict(),
 	})
 	.strict()
 const TransactionRaceErrorSchema = z
@@ -83,14 +102,16 @@ export function createDrizzleEmailCourseLedger(
 		})
 
 	const findCommittedStimulus: EmailCourseLedger['findCommittedStimulus'] = (
-		stimulusId,
+		stimulus,
 	) =>
 		Effect.tryPromise({
 			try: async () => {
 				const row = await database.query.emailCourseCommit.findFirst({
-					where: eq(emailCourseCommit.stimulusId, stimulusId),
+					where: eq(emailCourseCommit.stimulusId, stimulus.stimulusId),
 				})
-				return row ? replayed(readCommittedDecision(row, definition)) : null
+				return row
+					? replayed(readCommittedDecision(row, definition, stimulus))
+					: null
 			},
 			catch: commandError,
 		})
@@ -112,7 +133,9 @@ export function createDrizzleEmailCourseLedger(
 							),
 						})
 						if (existing) {
-							return replayed(readCommittedDecision(existing, definition))
+							return replayed(
+								readCommittedDecision(existing, definition, candidate.stimulus),
+							)
 						}
 						if (isRetryableTransactionRace(cause) && attempt < 2) continue
 						throw cause
@@ -149,7 +172,11 @@ async function commitInTransaction(
 	const existing = await transaction.query.emailCourseCommit.findFirst({
 		where: eq(emailCourseCommit.stimulusId, candidate.stimulus.stimulusId),
 	})
-	if (existing) return replayed(readCommittedDecision(existing, definition))
+	if (existing) {
+		return replayed(
+			readCommittedDecision(existing, definition, candidate.stimulus),
+		)
+	}
 
 	const head = await transaction.query.emailCourseCommit.findFirst({
 		where: eq(emailCourseCommit.runId, runId),
@@ -194,7 +221,11 @@ async function commitInTransaction(
 		snapshot: candidate.decision.next,
 		decision: candidate.decision,
 		events: candidate.decision.events,
-		receipt: { format: COMMIT_RECEIPT_FORMAT, result },
+		receipt: {
+			format: COMMIT_RECEIPT_FORMAT,
+			stimulusFingerprint: stimulusFingerprint(candidate.stimulus),
+			result,
+		},
 		decidedAt: new Date(candidate.decidedAt),
 		committedAt: new Date(candidate.decidedAt),
 	})
@@ -449,6 +480,15 @@ async function loadState(
 	if (!head) return null
 	const restoredRun = restoreEmailCourseRun(head.snapshot, definition)
 	if (!restoredRun.ok) throw new EmailCourseLedgerAbort(restoredRun.error)
+	if (
+		restoredRun.value.runId !== head.runId ||
+		restoredRun.value.actorVersion !== head.actorVersion
+	) {
+		throw new EmailCourseLedgerAbort({
+			type: 'CourseRunDecodeFailure',
+			reason: `Commit row identity disagrees with its snapshot: ${head.runId}`,
+		})
+	}
 	const currentIntentId = activeIntentId(restoredRun.value)
 	if (!currentIntentId) {
 		return { run: restoredRun.value, currentIntent: null }
@@ -471,9 +511,48 @@ async function loadState(
 function readCommittedDecision(
 	row: CommitRow,
 	definition: EmailCourseDefinition,
+	stimulus: EmailCourseStimulus,
 ): AdvanceEmailCourseResult {
+	const runId = stimulusRunId(stimulus)
+	const receipt = CommitReceiptSchema.safeParse(row.receipt)
 	const decision = restoreEmailCourseDecision(row.decision, definition)
+	const snapshot = restoreEmailCourseRun(row.snapshot, definition)
 	if (!decision.ok) throw new EmailCourseLedgerAbort(decision.error)
+	if (!snapshot.ok) throw new EmailCourseLedgerAbort(snapshot.error)
+	if (!receipt.success || decision.value.type !== 'Accepted') {
+		throw committedIdentityMismatch(runId)
+	}
+	const receiptDecision = restoreEmailCourseDecision(
+		receipt.data.result.decision,
+		definition,
+	)
+	if (!receiptDecision.ok) {
+		throw new EmailCourseLedgerAbort(receiptDecision.error)
+	}
+	const mismatch: string[] = []
+	if (receiptDecision.value.type !== 'Accepted') {
+		mismatch.push('receipt-decision-not-accepted')
+	}
+	if (row.runId !== runId) mismatch.push('row-run-id')
+	if (row.stimulusId !== stimulus.stimulusId) mismatch.push('row-stimulus-id')
+	if (row.actorVersion !== decision.value.next.actorVersion) {
+		mismatch.push('row-actor-version')
+	}
+	if (receipt.data.stimulusFingerprint !== stimulusFingerprint(stimulus)) {
+		mismatch.push('stimulus-fingerprint')
+	}
+	if (!isDeepStrictEqual(snapshot.value, decision.value.next)) {
+		mismatch.push('row-snapshot')
+	}
+	if (!isDeepStrictEqual(row.events, decision.value.events)) {
+		mismatch.push('row-events')
+	}
+	if (!isDeepStrictEqual(receiptDecision.value, decision.value)) {
+		mismatch.push('receipt-decision')
+	}
+	if (mismatch.length > 0) {
+		throw committedIdentityMismatch(runId, mismatch.join(','))
+	}
 	return {
 		decision: decision.value,
 		committed: true,
@@ -556,6 +635,104 @@ function canonicalSecond(value: string): Date {
 	return date
 }
 
+function committedIdentityMismatch(runId: CourseRunId, detail?: string) {
+	return new EmailCourseLedgerAbort({
+		type: 'CourseRunConstraintViolation',
+		runId,
+		reason: `Committed stimulus identity or receipt disagrees with its row${
+			detail ? `: ${detail}` : ''
+		}`,
+	})
+}
+
+function stimulusRunId(stimulus: EmailCourseStimulus): CourseRunId {
+	return stimulus.type === 'ExplicitSignup'
+		? deriveCourseRunId({
+				courseId: stimulus.courseId,
+				entryEventId: stimulus.entryEventId,
+			})
+		: stimulus.runId
+}
+
+function stimulusFingerprint(stimulus: EmailCourseStimulus): string {
+	const identity = (() => {
+		switch (stimulus.type) {
+			case 'ExplicitSignup':
+				return [
+					stimulus.type,
+					stimulus.stimulusId,
+					stimulus.contactId,
+					stimulus.courseId,
+					stimulus.entryEventId,
+					...scheduleEvidenceIdentity(stimulus.scheduleEvidence),
+					stimulus.occurredAt,
+				]
+			case 'DeliverySettled':
+				return [
+					stimulus.type,
+					stimulus.stimulusId,
+					stimulus.runId,
+					stimulus.intentId,
+					...deliveryOutcomeIdentity(stimulus.outcome),
+					stimulus.occurredAt,
+				]
+			case 'AnswerSelected':
+				return [
+					stimulus.type,
+					stimulus.stimulusId,
+					stimulus.runId,
+					stimulus.answerEventId,
+					stimulus.sentStepId,
+					stimulus.selectedPathId,
+					stimulus.selectedNextStepId,
+					stimulus.occurredAt,
+				]
+			case 'RepairRequested':
+				return [
+					stimulus.type,
+					stimulus.stimulusId,
+					stimulus.runId,
+					stimulus.reason,
+					stimulus.occurredAt,
+				]
+		}
+	})()
+	return createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
+function scheduleEvidenceIdentity(
+	evidence: Extract<
+		EmailCourseStimulus,
+		{ type: 'ExplicitSignup' }
+	>['scheduleEvidence'],
+) {
+	return evidence.type === 'BrowserEntryHeader'
+		? [
+				evidence.type,
+				evidence.headerName,
+				evidence.timeZone,
+				evidence.capturedAt,
+			]
+		: [evidence.type, evidence.reason, evidence.timeZone, evidence.capturedAt]
+}
+
+function deliveryOutcomeIdentity(
+	outcome: Extract<EmailCourseStimulus, { type: 'DeliverySettled' }>['outcome'],
+) {
+	switch (outcome.type) {
+		case 'Applied':
+			return [outcome.type, outcome.deliveryReceiptId, outcome.appliedAt]
+		case 'TransientFailure':
+			return [outcome.type, outcome.reason, outcome.failedAt]
+		case 'PermanentRefusal':
+			return [outcome.type, outcome.reason, outcome.refusedAt]
+		case 'Ambiguous':
+			return [outcome.type, outcome.reason, outcome.observedAt]
+		case 'CommunicationStopped':
+			return [outcome.type, outcome.reason, outcome.stoppedAt]
+	}
+}
+
 function replayed(result: AdvanceEmailCourseResult): AdvanceEmailCourseResult {
 	return { ...result, committed: false, replayedStimulus: true }
 }
@@ -601,7 +778,7 @@ function jsonDeepEqual(
 	left: EmailCoursePlanningState | null,
 	right: EmailCoursePlanningState | null,
 ): boolean {
-	return JSON.stringify(left) === JSON.stringify(right)
+	return isDeepStrictEqual(left, right)
 }
 
 function errorMessage(cause: unknown): string {

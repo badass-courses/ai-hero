@@ -95,8 +95,8 @@ function memoryLedger(options: { conflicts?: number } = {}) {
   const commits: EmailCourseCommit[] = [];
   const ledger: EmailCourseLedger = {
     load: () => Effect.succeed(state),
-    findCommittedStimulus: (stimulusId) => {
-      const result = committed.get(stimulusId);
+    findCommittedStimulus: (stimulus) => {
+      const result = committed.get(stimulus.stimulusId);
       return Effect.succeed(
         result
           ? {

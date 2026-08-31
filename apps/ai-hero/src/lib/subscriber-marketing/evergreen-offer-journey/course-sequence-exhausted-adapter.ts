@@ -2,6 +2,7 @@ import {
 	COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
 	COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
 	courseSequenceExhaustionFactKey,
+	readCoursePayload,
 	restoreCourseSequenceExhaustedPayload,
 } from '../course-sequence-exhaustion'
 import type { ContactEventRecord } from '../types'
@@ -17,23 +18,27 @@ export function courseSequenceExhaustedStimulusFromContactEvent(
 ):
 	| { readonly ok: true; readonly value: CourseSequenceExhausted }
 	| { readonly ok: false; readonly reason: string } {
+	const storedPayload = readCoursePayload(event.payloadSummary)
+	const payloadFormat = event.payloadFormat ?? storedPayload?.format
+	const domainFactKey = event.domainFactKey ?? event.semanticIdempotencyKey
+	const domainPayload = event.domainPayload ?? storedPayload?.payload
 	if (
 		event.eventType !== COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE ||
-		event.payloadFormat !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
-		!event.domainFactKey
+		payloadFormat !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+		!domainFactKey
 	) {
 		return { ok: false, reason: 'not-sequence-exhaustion-fact' }
 	}
-	const payload = restoreCourseSequenceExhaustedPayload(event.domainPayload)
+	const payload = restoreCourseSequenceExhaustedPayload(domainPayload)
 	if (
 		!payload ||
 		payload.actor.contactId !== event.contactId ||
-		event.domainFactKey !==
+		domainFactKey !==
 			courseSequenceExhaustionFactKey({
 				contactId: payload.actor.contactId,
 				valuePathId: payload.actor.valuePathId,
 			}) ||
-		event.semanticIdempotencyKey !== event.domainFactKey
+		event.semanticIdempotencyKey !== domainFactKey
 	) {
 		return { ok: false, reason: 'invalid-sequence-exhaustion-payload' }
 	}

@@ -16,6 +16,7 @@ import type {
 	EmailCoursePlanningState,
 	EmailCourseStimulus,
 } from './email-course/domain'
+import { DrizzleCaptureMarketingRepository } from './drizzle-capture-repository'
 import { createDrizzleEmailCourseLedger } from './email-course-drizzle-ledger'
 import type { DrovrParityReceiptSink } from './email-course/parity-receipt'
 import {
@@ -38,6 +39,9 @@ import type {
 } from './email-course/ports'
 import { createEmailCourseScheduler } from './email-course/scheduler'
 import { createAdvanceEmailCourse } from './email-course/service'
+import type { SideEffectIntent } from './types'
+import { progressValuePathDrips } from './value-path-drip-progression'
+import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 
 const mysqlServerUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!mysqlServerUrl)
@@ -58,6 +62,7 @@ integration('Email Course MySQL ledger', () => {
 	let pool: Pool
 	let databaseName: string
 	let ledger: ReturnType<typeof createDrizzleEmailCourseLedger>
+	let legacyRepository: DrizzleCaptureMarketingRepository
 	let advance: ReturnType<typeof createAdvanceEmailCourse>
 
 	beforeAll(async () => {
@@ -103,6 +108,7 @@ integration('Email Course MySQL ledger', () => {
 			database,
 			AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
 		)
+		legacyRepository = new DrizzleCaptureMarketingRepository(database)
 		advance = createAdvanceEmailCourse({
 			ledger,
 			definitions: definitionRegistry(),
@@ -195,6 +201,68 @@ integration('Email Course MySQL ledger', () => {
 		expect(commits).toHaveLength(1)
 		expect(active).toHaveLength(1)
 		expect(active[0]?.activeSlot).toBe('next')
+	})
+
+	it('rejects a reused stimulus ID with a different command fingerprint', async () => {
+		const original = signup()
+		await Effect.runPromise(advance({ stimulus: original }))
+		const collision: EmailCourseStimulus = {
+			...original,
+			contactId: value(parseContactId('different-contact-same-stimulus')),
+		}
+		const result = await Effect.runPromise(
+			Effect.either(advance({ stimulus: collision })),
+		)
+
+		expect(result).toMatchObject({
+			_tag: 'Left',
+			left: {
+				type: 'CourseRunConstraintViolation',
+				runId,
+				reason: expect.stringContaining(
+					'Committed stimulus identity or receipt disagrees with its row',
+				),
+			},
+		})
+		expect(await activeIntents(pool)).toHaveLength(1)
+	})
+
+	it('rejects persisted snapshot identity drift', async () => {
+		await Effect.runPromise(advance({ stimulus: signup() }))
+		await pool.query(
+			"UPDATE AI_EmailCourseCommit SET snapshot = JSON_SET(snapshot, '$.actorVersion', 99) WHERE runId = ?",
+			[runId],
+		)
+		const result = await Effect.runPromise(Effect.either(ledger.load(runId)))
+
+		expect(Either.isLeft(result)).toBe(true)
+		if (Either.isLeft(result)) {
+			expect(result.left).toMatchObject({
+				type: 'CourseRunDecodeFailure',
+				reason: expect.stringContaining('row identity'),
+			})
+		}
+	})
+
+	it('rejects a replay whose persisted fingerprint drifted', async () => {
+		const stimulus = signup()
+		await Effect.runPromise(advance({ stimulus }))
+		await pool.query(
+			"UPDATE AI_EmailCourseCommit SET receipt = JSON_SET(receipt, '$.stimulusFingerprint', ?) WHERE runId = ?",
+			['0'.repeat(64), runId],
+		)
+		const result = await Effect.runPromise(Effect.either(advance({ stimulus })))
+
+		expect(result).toMatchObject({
+			_tag: 'Left',
+			left: {
+				type: 'CourseRunConstraintViolation',
+				runId,
+				reason: expect.stringContaining(
+					'Committed stimulus identity or receipt disagrees with its row',
+				),
+			},
+		})
 	})
 
 	it('repaths the unsent next intent without leaving the old route active', async () => {
@@ -322,15 +390,15 @@ integration('Email Course MySQL ledger', () => {
 		for (let position = 0; position <= 6; position += 1) {
 			const state = await requireState(ledger)
 			if (position === 6) beforeTerminal = state
+			const appliedAt =
+				position === 6
+					? instant('2026-09-08T16:00:00.789Z')
+					: instant(
+							`2026-09-${String(position + 2).padStart(2, '0')}T16:00:00.000Z`,
+						)
 			await Effect.runPromise(
 				advance({
-					stimulus: delivery(
-						state,
-						`delivery-terminal-${position}`,
-						instant(
-							`2026-09-${String(position + 2).padStart(2, '0')}T16:00:00.000Z`,
-						),
-					),
+					stimulus: delivery(state, `delivery-terminal-${position}`, appliedAt),
 				}),
 			)
 		}
@@ -360,13 +428,50 @@ integration('Email Course MySQL ledger', () => {
 			triggerPolicy: 'ExplicitTwentyFourHourFallback',
 		})
 
+		const legacySource = legacyEmailSixIntent()
+		await pool.query(
+			`INSERT INTO AI_SideEffectIntent
+			 (id, nextActionId, contactId, provider, type, status, completedAt,
+			  idempotencyKey, gates, reviewReasons, metadata, createdAt)
+			 VALUES (?, ?, ?, 'kit', 'send-value-path-email', 'completed', ?, ?, '[]', '[]', ?, ?)`,
+			[
+				legacySource.id,
+				legacySource.nextActionId,
+				legacySource.contactId,
+				new Date(legacySource.completedAt!),
+				legacySource.idempotencyKey,
+				JSON.stringify(legacySource.metadata),
+				new Date(legacySource.createdAt),
+			],
+		)
+		const compatibility = await progressValuePathDrips({
+			repository: legacyRepository,
+			allowlist: legacyAllowlist(),
+			completedIntents: [legacySource],
+			allowWrite: true,
+			email7LiveEnabled: true,
+			sequenceExhaustionEnabled: true,
+			now: '2026-09-10T16:00:00.000Z',
+		})
+		expect(compatibility).toMatchObject({
+			counts: { idempotentNoop: 1 },
+			results: [
+				{
+					status: 'idempotent-noop',
+					reviewReasons: ['email-course-authority-present'],
+					contactEventId: facts[0]?.id,
+					sideEffectIntentId: state.currentIntent?.id,
+				},
+			],
+		})
+
 		if (!beforeTerminal) throw new Error('Expected Email 6 state')
 		const replay = await Effect.runPromise(
 			advance({
 				stimulus: delivery(
 					beforeTerminal,
 					'delivery-terminal-6',
-					instant('2026-09-08T16:00:00.000Z'),
+					instant('2026-09-08T16:00:00.789Z'),
 				),
 			}),
 		)
@@ -391,7 +496,56 @@ function noParity(): DrovrParityReceiptSink {
 	return { push: () => Effect.void }
 }
 
-function signup(): EmailCourseStimulus {
+function legacyAllowlist(): GateDRuntimeAllowlist {
+	return {
+		activationId: 'email-course-compatibility-test',
+		status: 'active',
+		killSwitch: false,
+		mode: 'scoped-live',
+		authorizationMode: 'rolling-public-enrollment',
+		pathSlugs: ['ai-hero-skills-workflow'],
+		contactIds: [contactId],
+		kitSubscriberIds: ['kit-mysql-course'],
+		emails: ['learner@example.com'],
+		emailHashes: [],
+		emailResourceIds: ['ai-hero-skills-workflow.email-7'],
+		kitSequenceIds: ['2831545'],
+		candidates: [],
+		allowedActions: ['advance-by-daily-drip', 'send-path-emails'],
+		createdAt: startedAt,
+	}
+}
+
+function legacyEmailSixIntent(): SideEffectIntent {
+	return {
+		id: 'legacy-email-6-intent',
+		nextActionId: 'legacy-email-6-action',
+		contactId,
+		provider: 'kit',
+		type: 'send-value-path-email',
+		status: 'completed',
+		completedAt: '2026-09-08T16:00:00.789Z',
+		idempotencyKey: 'legacy-email-6-key',
+		gates: [],
+		reviewReasons: [],
+		metadata: {
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-6',
+			kitSequenceId: '2757205',
+			kitSubscriberId: 'kit-mysql-course',
+			courseEntryEventId: entryEventId,
+			courseDeadlineTimeZone: {
+				type: 'ExplicitFallback',
+				reason: 'header-missing',
+				timeZone: 'America/Los_Angeles',
+				capturedAt: startedAt,
+			},
+		},
+		createdAt: '2026-09-08T16:00:00.789Z',
+	}
+}
+
+function signup(): Extract<EmailCourseStimulus, { type: 'ExplicitSignup' }> {
 	return {
 		type: 'ExplicitSignup',
 		stimulusId: value(parseStimulusId('signup-mysql-course')),
@@ -506,6 +660,15 @@ async function seedEntry(pool: Pool) {
 		],
 	)
 	await pool.query(
+		`INSERT INTO AI_ContactState
+		 (id, contactId, lifecycle, primaryBucket, allBuckets, whySignals,
+		  whoSignals, confidence, rationale, reviewSignals, humanReview,
+		  lastEventId, schemaVersion, updatedAt)
+		 VALUES ('state-mysql-course', ?, 'nurture-ready', 'other-unclear',
+		  '[]', '[]', '[]', 1, '[]', '[]', false, ?, 1, ?)`,
+		[contactId, entryEventId, new Date(startedAt)],
+	)
+	await pool.query(
 		`INSERT INTO AI_ContactEvent
      (id, contactId, providerIdentityId, provider, providerEventId,
       providerReference, eventType, semanticIdempotencyKey, privacyLevel,
@@ -523,6 +686,20 @@ async function seedEntry(pool: Pool) {
 				summary: 'Entered Email Course',
 				keywords: ['value-path', 'entered'],
 				restrictedPayloadStored: false,
+				coursePayload: {
+					format: 'email-course.entry.v1',
+					payload: {
+						format: 'email-course.entry.v1',
+						valuePathId: 'ai-hero-skills-workflow',
+						emailResourceId: 'ai-hero-skills-workflow.email-0',
+						deadlineTimeZone: {
+							type: 'ExplicitFallback',
+							reason: 'header-missing',
+							timeZone: 'America/Los_Angeles',
+							capturedAt: startedAt,
+						},
+					},
+				},
 			}),
 			new Date(startedAt),
 			new Date(startedAt),

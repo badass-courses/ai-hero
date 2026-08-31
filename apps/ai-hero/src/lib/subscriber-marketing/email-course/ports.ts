@@ -18,7 +18,6 @@ import type {
   CourseIntentClaimId,
   CourseRunId,
   IsoInstant,
-  StimulusId,
 } from "./primitives";
 
 export type EmailCourseCommandError =
@@ -137,7 +136,7 @@ export interface EmailCourseLedger {
     runId: CourseRunId,
   ) => Effect.Effect<EmailCoursePlanningState | null, EmailCourseCommandError>;
   readonly findCommittedStimulus: (
-    stimulusId: StimulusId,
+    stimulus: EmailCourseStimulus,
   ) => Effect.Effect<AdvanceEmailCourseResult | null, EmailCourseCommandError>;
   readonly commit: (
     commit: EmailCourseCommit,

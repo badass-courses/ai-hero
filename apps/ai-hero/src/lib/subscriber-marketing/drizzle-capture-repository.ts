@@ -35,6 +35,8 @@ import {
 	type CourseSequenceExhaustionRecords,
 	type EmailCourseEntryEventRecord,
 } from './course-sequence-exhaustion'
+import { AI_HERO_SKILLS_WORKFLOW_COURSE_V1 } from './email-course/definition'
+import { restoreCourseEmailIntent } from './email-course/restoration'
 import { emitDrovrShadowFactSafely } from './drovr-shadow-emitter'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
@@ -1171,6 +1173,50 @@ async function readSequenceExhaustionPair(
 	const storedPayload = readCoursePayload(factRow.payloadSummary)
 	const payload = restoreCourseSequenceExhaustedPayload(storedPayload?.payload)
 	const intent = toSideEffectIntentRecord(intentRow)
+	const emailCourseIntent =
+		intent.metadata.format === 'email-course.intent.v1'
+			? restoreCourseEmailIntent(
+					intent.metadata.intent,
+					AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
+				)
+			: null
+	if (emailCourseIntent) {
+		if (
+			!payload ||
+			storedPayload?.format !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+			!emailCourseIntent.ok ||
+			factRow.eventType !== COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE ||
+			factRow.provider !== 'ai-hero' ||
+			factRow.contactId !== payload.actor.contactId ||
+			factRow.providerReference !==
+				`email-course:${emailCourseIntent.value.runId}` ||
+			canonicalSecondIso(factRow.occurredAt) !==
+				canonicalSecondIso(payload.exhaustedAt) ||
+			factRow.semanticIdempotencyKey !==
+				courseSequenceExhaustionFactKey({
+					contactId: payload.actor.contactId,
+					valuePathId: payload.actor.valuePathId,
+				}) ||
+			payload.progression.terminal.intentId !== intent.id ||
+			payload.progression.terminal.idempotencyKey !== intent.idempotencyKey ||
+			payload.progression.terminal.nextActionId !== intent.nextActionId ||
+			intent.contactId !== payload.actor.contactId ||
+			emailCourseIntent.value.id !== intent.id ||
+			emailCourseIntent.value.contactId !== payload.actor.contactId ||
+			emailCourseIntent.value.pathId !== payload.actor.valuePathId ||
+			emailCourseIntent.value.contentResourceId !==
+				payload.progression.terminal.emailResourceId
+		) {
+			throw new Error(
+				'Stored Email Course sequence exhaustion pair is corrupt or mismatched',
+			)
+		}
+		return {
+			status: 'email-course-authority-present',
+			factId: factRow.id,
+			terminalIntentId: intent.id,
+		}
+	}
 	if (
 		!payload ||
 		storedPayload?.format !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
@@ -1414,4 +1460,10 @@ function toIso(value: string | Date) {
 	return value instanceof Date
 		? value.toISOString()
 		: new Date(value).toISOString()
+}
+
+function canonicalSecondIso(value: string | Date) {
+	const date = new Date(value)
+	date.setUTCMilliseconds(0)
+	return date.toISOString()
 }

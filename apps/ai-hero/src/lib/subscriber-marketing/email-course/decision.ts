@@ -68,6 +68,24 @@ export function decideEmailCourse(
   if (input.stimulus.type === "RepairRequested") {
     return failure("Repair stimuli are not normal course planning");
   }
+  if (
+    input.stimulus.type === "DeliverySettled" &&
+    input.stimulus.outcome.type === "Applied" &&
+    state.run.phase !== "sequenceExhausted"
+  ) {
+    if (input.automationControl.type === "Stopped") {
+      return settleAppliedThenStop(state, input.stimulus, {
+        type: "AutomationStopped",
+        reason: input.automationControl.reason,
+      });
+    }
+    if (input.communication.type === "Stop") {
+      return settleAppliedThenStop(state, input.stimulus, {
+        type: "CommunicationStopped",
+        reason: input.communication.reason,
+      });
+    }
+  }
   if (isFinalWithoutSettleableIntent(state, input.stimulus)) {
     return { ok: true, decision: { type: "Ignored", reason: "LateAnswer" } };
   }
@@ -404,6 +422,42 @@ function applyDelivery(
     outboxChanges: [
       { type: "Settle", intent: settled },
       { type: "Plan", intent: nextIntent },
+    ],
+  });
+}
+
+function settleAppliedThenStop(
+  state: EmailCoursePlanningState,
+  stimulus: Extract<EmailCourseStimulus, { type: "DeliverySettled" }>,
+  reason: CourseStopReason,
+): DecideEmailCourseResult {
+  if (stimulus.outcome.type !== "Applied") {
+    return failure("Expected applied delivery before hard stop");
+  }
+  const current = activeIntent(state.currentIntent);
+  if (!current || current.id !== stimulus.intentId) {
+    return failure("Applied delivery does not match the active intent");
+  }
+  return accepted({
+    next: stoppedRun(state.run, reason, stimulus.occurredAt),
+    events: [
+      {
+        type: "DeliveryRecorded",
+        intentId: current.id,
+        outcome: stimulus.outcome,
+        occurredAt: stimulus.occurredAt,
+      },
+      stoppedEvent(reason, stimulus.occurredAt),
+    ],
+    outboxChanges: [
+      {
+        type: "Settle",
+        intent: settledIntent(
+          current,
+          stimulus.outcome,
+          stimulus.outcome.appliedAt,
+        ),
+      },
     ],
   });
 }

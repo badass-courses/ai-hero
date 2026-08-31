@@ -193,6 +193,74 @@ describe("decideEmailCourse", () => {
     });
   });
 
+  it.each([
+    {
+      name: "automation control stops",
+      automationControl: {
+        type: "Stopped" as const,
+        source: "Persisted" as const,
+        version: "control-v2",
+        reason: "operator-stop",
+        stoppedAt: occurredAt,
+      },
+      communication: allow,
+      expectedReason: { type: "AutomationStopped", reason: "operator-stop" },
+    },
+    {
+      name: "communication safety stops",
+      automationControl: enabled,
+      communication: { type: "Stop" as const, reason: "Unsubscribed" as const },
+      expectedReason: {
+        type: "CommunicationStopped",
+        reason: "Unsubscribed",
+      },
+    },
+  ])("settles an applied delivery before $name the next plan", (scenario) => {
+    const state = activeAt(0);
+    const outcome = {
+      type: "Applied" as const,
+      deliveryReceiptId: "provider-receipt-before-stop",
+      appliedAt: occurredAt,
+    };
+    const result = decideEmailCourse({
+      definition: AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
+      state,
+      stimulus: {
+        type: "DeliverySettled",
+        stimulusId: value(parseStimulusId(`delivery-stop-${scenario.name}`)),
+        runId,
+        intentId: state.currentIntent!.id,
+        outcome,
+        occurredAt,
+      },
+      automationControl: scenario.automationControl,
+      communication: scenario.communication,
+      schedule: null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      decision: {
+        type: "Accepted",
+        next: { phase: "stopped", reason: scenario.expectedReason },
+        events: [
+          { type: "DeliveryRecorded", outcome },
+          { type: "CourseRunStopped", reason: scenario.expectedReason },
+        ],
+        outboxChanges: [
+          {
+            type: "Settle",
+            intent: {
+              status: "Settled",
+              outcome,
+              activeSlot: null,
+            },
+          },
+        ],
+      },
+    });
+  });
+
   it("repaths the unsent next intent and accelerates it to now", () => {
     const state = activeAt(1, 2, "active.awaitingNextDue");
     const selectedPathId = value(
