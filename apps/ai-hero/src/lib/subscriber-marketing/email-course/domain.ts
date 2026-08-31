@@ -161,7 +161,10 @@ export type HeldCourseEmailIntent = CourseEmailIntentIdentity & {
   readonly availableAt: IsoInstant;
   readonly activeSlot: typeof EMAIL_COURSE_ACTIVE_SLOT;
   readonly attempt: number;
-  readonly reason: "AmbiguousDeliveryOutcome" | "CommunicationStopped";
+  readonly reason:
+    | "AmbiguousDeliveryOutcome"
+    | "AutomationStopped"
+    | "CommunicationStopped";
 };
 
 export type DeliverableCourseEmailIntent =
@@ -185,6 +188,11 @@ export type SettledCourseEmailIntent = CourseEmailIntentIdentity & {
 export type CourseEmailIntent =
   | ActiveCourseEmailIntent
   | SettledCourseEmailIntent;
+
+export type EmailCoursePlanningState = {
+  readonly run: EmailCourseRun;
+  readonly currentIntent: CourseEmailIntent | null;
+};
 
 export type EmailCourseRunBase = {
   readonly schemaVersion: typeof EMAIL_COURSE_SCHEMA_VERSION;
@@ -215,6 +223,10 @@ export type ActiveEmailCourseRun = EmailCourseRunBase &
   );
 
 export type CourseStopReason =
+  | {
+      readonly type: "AutomationStopped";
+      readonly reason: string;
+    }
   | {
       readonly type: "CommunicationStopped";
       readonly reason: CommunicationStopReason;
@@ -303,8 +315,7 @@ export type EmailCourseOutboxChange =
     }
   | {
       readonly type: "Accelerate";
-      readonly intentId: IntentId;
-      readonly availableAt: IsoInstant;
+      readonly intent: PendingCourseEmailIntent;
     }
   | {
       readonly type: "ReplaceRoute";
@@ -313,23 +324,15 @@ export type EmailCourseOutboxChange =
     }
   | {
       readonly type: "Settle";
-      readonly intentId: IntentId;
-      readonly outcome: Extract<
-        DeliveryOutcome,
-        { type: "Applied" | "PermanentRefusal" | "CommunicationStopped" }
-      >;
-      readonly settledAt: IsoInstant;
+      readonly intent: SettledCourseEmailIntent;
     }
   | {
       readonly type: "ScheduleRetry";
-      readonly intentId: IntentId;
-      readonly availableAt: IsoInstant;
-      readonly reason: string;
+      readonly intent: RetryWaitingCourseEmailIntent;
     }
   | {
       readonly type: "Hold";
-      readonly intentId: IntentId;
-      readonly reason: HeldCourseEmailIntent["reason"];
+      readonly intent: HeldCourseEmailIntent;
     };
 
 export type EmailCourseDecision =

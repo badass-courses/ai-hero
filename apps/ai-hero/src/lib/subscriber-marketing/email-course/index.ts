@@ -1,4 +1,6 @@
 export { EmailCourseService } from "./ports";
+export { advanceEmailCourse, createAdvanceEmailCourse } from "./service";
+export type { AdvanceEmailCourseDependencies } from "./service";
 export type {
   AdvanceEmailCourseCommand,
   AdvanceEmailCourseResult,

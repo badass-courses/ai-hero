@@ -221,10 +221,10 @@ describe('course sequence exhaustion evidence', () => {
 			createdAt: '2026-09-04T17:00:00.000Z',
 		}
 
-		expect(courseSequenceExhaustedStimulusFromContactEvent(event)).toEqual({
-			ok: true,
+		const expected = {
+			ok: true as const,
 			value: {
-				type: 'CourseSequenceExhausted',
+				type: 'CourseSequenceExhausted' as const,
 				stimulusId: 'sequence-fact-1',
 				entryFactId: 'sequence-fact-1',
 				contactId: 'contact-1',
@@ -233,7 +233,29 @@ describe('course sequence exhaustion evidence', () => {
 				deadlineTimeZone: validPayload().deadlineTimeZone,
 				sourceReference: 'side-effect-intent:email-6-intent',
 			},
-		})
+		}
+		expect(courseSequenceExhaustedStimulusFromContactEvent(event)).toEqual(
+			expected,
+		)
+
+		const {
+			domainFactKey: _domainFactKey,
+			payloadFormat: _payloadFormat,
+			domainPayload: _domainPayload,
+			...persistedEvent
+		} = event
+		const persistedPayload = restoreCourseSequenceExhaustedPayload(validPayload())
+		if (!persistedPayload) throw new Error('Expected persisted payload')
+		expect(
+			courseSequenceExhaustedStimulusFromContactEvent({
+				...persistedEvent,
+				payloadSummary: withCoursePayload(
+					persistedEvent.payloadSummary,
+					COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+					persistedPayload,
+				),
+			}),
+		).toEqual(expected)
 	})
 
 	it('stores typed course payloads inside the existing summary JSON', () => {

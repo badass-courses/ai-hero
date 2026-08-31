@@ -775,6 +775,19 @@ async function commitTerminalSequenceExhaustion(args: {
 		courseEntryEventId,
 		records,
 	})
+	if (committed.status === 'email-course-authority-present') {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'idempotent-noop',
+			reviewReasons: ['email-course-authority-present'],
+			advisoryReasons: args.advisoryReasons,
+			contactEventId: committed.factId,
+			sideEffectIntentId: committed.terminalIntentId,
+		}
+	}
 	if (committed.status === 'legacy-terminal-intent-without-fact') {
 		return {
 			contactId: args.contact.id,
