@@ -538,6 +538,20 @@ function readCommittedDecision(
 	if (row.actorVersion !== decision.value.next.actorVersion) {
 		mismatch.push('row-actor-version')
 	}
+	const receiptRunId =
+		receiptDecision.value.type === 'Accepted'
+			? receiptDecision.value.next.runId
+			: null
+	if (
+		snapshot.value.runId !== row.runId ||
+		decision.value.next.runId !== row.runId ||
+		receiptRunId !== row.runId
+	) {
+		mismatch.push('restored-run-id')
+	}
+	if (snapshot.value.actorVersion !== row.actorVersion) {
+		mismatch.push('snapshot-actor-version')
+	}
 	if (receipt.data.stimulusFingerprint !== stimulusFingerprint(stimulus)) {
 		mismatch.push('stimulus-fingerprint')
 	}

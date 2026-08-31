@@ -47,6 +47,30 @@ const schedule: CourseScheduleDecision = {
   policy: "ExplicitTwentyFourHourFallback",
 };
 
+function terminalState(): EmailCoursePlanningState {
+  const active = activeAt(7, 8);
+  if (!active.currentIntent) throw new Error("Expected terminal intent");
+  return {
+    run: {
+      schemaVersion: 1,
+      runId,
+      contactId,
+      courseId,
+      definitionVersion: AI_HERO_SKILLS_WORKFLOW_COURSE_V1.version,
+      entryEventId,
+      scheduleEvidence: fallback,
+      actorVersion: 8,
+      startedAt: occurredAt,
+      phase: "sequenceExhausted",
+      exhaustionFactId: value(parseEventId("terminal-fact-decision")),
+      exhaustedAt: occurredAt,
+      terminalIntentId: active.currentIntent.id,
+      terminalStepId: active.currentIntent.stepId,
+    },
+    currentIntent: active.currentIntent,
+  };
+}
+
 function signup(stimulusName = "signup-decision"): EmailCourseStimulus {
   return {
     type: "ExplicitSignup",
@@ -259,6 +283,68 @@ describe("decideEmailCourse", () => {
         ],
       },
     });
+  });
+
+  it.each([
+    {
+      name: "automation control stops",
+      automationControl: {
+        type: "Stopped" as const,
+        source: "Persisted" as const,
+        version: "control-v2",
+        reason: "operator-stop",
+        stoppedAt: occurredAt,
+      },
+      communication: allow,
+    },
+    {
+      name: "communication safety stops",
+      automationControl: enabled,
+      communication: { type: "Stop" as const, reason: "Unsubscribed" as const },
+    },
+  ])("settles terminal Email 7 before $name", (scenario) => {
+    const state = terminalState();
+    const outcome = {
+      type: "Applied" as const,
+      deliveryReceiptId: "provider-receipt-terminal-stop",
+      appliedAt: occurredAt,
+    };
+    const result = decideEmailCourse({
+      definition: AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
+      state,
+      stimulus: {
+        type: "DeliverySettled",
+        stimulusId: value(parseStimulusId(`terminal-stop-${scenario.name}`)),
+        runId,
+        intentId: state.currentIntent!.id,
+        outcome,
+        occurredAt,
+      },
+      automationControl: scenario.automationControl,
+      communication: scenario.communication,
+      schedule: null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      decision: {
+        type: "Accepted",
+        next: { phase: "sequenceExhausted", actorVersion: 9 },
+        events: [{ type: "DeliveryRecorded", outcome }],
+        outboxChanges: [
+          {
+            type: "Settle",
+            intent: { status: "Settled", outcome, activeSlot: null },
+          },
+        ],
+      },
+    });
+    if (!result.ok || result.decision.type !== "Accepted") {
+      throw new Error("Expected terminal settlement");
+    }
+    expect(
+      result.decision.events.some((event) => event.type === "CourseRunStopped"),
+    ).toBe(false);
   });
 
   it("repaths the unsent next intent and accelerates it to now", () => {

@@ -70,8 +70,7 @@ export function decideEmailCourse(
   }
   if (
     input.stimulus.type === "DeliverySettled" &&
-    input.stimulus.outcome.type === "Applied" &&
-    state.run.phase !== "sequenceExhausted"
+    input.stimulus.outcome.type === "Applied"
   ) {
     if (input.automationControl.type === "Stopped") {
       return settleAppliedThenStop(state, input.stimulus, {
@@ -438,8 +437,11 @@ function settleAppliedThenStop(
   if (!current || current.id !== stimulus.intentId) {
     return failure("Applied delivery does not match the active intent");
   }
+  const terminal = state.run.phase === "sequenceExhausted";
   return accepted({
-    next: stoppedRun(state.run, reason, stimulus.occurredAt),
+    next: terminal
+      ? { ...state.run, actorVersion: state.run.actorVersion + 1 }
+      : stoppedRun(state.run, reason, stimulus.occurredAt),
     events: [
       {
         type: "DeliveryRecorded",
@@ -447,7 +449,7 @@ function settleAppliedThenStop(
         outcome: stimulus.outcome,
         occurredAt: stimulus.occurredAt,
       },
-      stoppedEvent(reason, stimulus.occurredAt),
+      ...(terminal ? [] : [stoppedEvent(reason, stimulus.occurredAt)]),
     ],
     outboxChanges: [
       {

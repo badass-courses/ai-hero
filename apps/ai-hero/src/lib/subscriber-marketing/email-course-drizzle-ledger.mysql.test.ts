@@ -244,6 +244,53 @@ integration('Email Course MySQL ledger', () => {
 		}
 	})
 
+	it('rejects a self-consistent replay graph copied to another run identity', async () => {
+		const stimulus = signup()
+		await Effect.runPromise(advance({ stimulus }))
+		const otherEntryEventId = 'other-entry-replay'
+		const otherRunId = `email-course:skills-workflow:${otherEntryEventId}`
+		await pool.query(
+			`UPDATE AI_EmailCourseCommit SET
+			 snapshot = JSON_SET(snapshot,
+			   '$.runId', ?, '$.entryEventId', ?),
+			 decision = JSON_SET(decision,
+			   '$.next.runId', ?, '$.next.entryEventId', ?,
+			   '$.events[0].runId', ?,
+			   '$.outboxChanges[0].intent.runId', ?),
+			 events = JSON_SET(events, '$[0].runId', ?),
+			 receipt = JSON_SET(receipt,
+			   '$.result.decision.next.runId', ?,
+			   '$.result.decision.next.entryEventId', ?,
+			   '$.result.decision.events[0].runId', ?,
+			   '$.result.decision.outboxChanges[0].intent.runId', ?)
+			 WHERE runId = ?`,
+			[
+				otherRunId,
+				otherEntryEventId,
+				otherRunId,
+				otherEntryEventId,
+				otherRunId,
+				otherRunId,
+				otherRunId,
+				otherRunId,
+				otherEntryEventId,
+				otherRunId,
+				otherRunId,
+				runId,
+			],
+		)
+		const result = await Effect.runPromise(Effect.either(advance({ stimulus })))
+
+		expect(result).toMatchObject({
+			_tag: 'Left',
+			left: {
+				type: 'CourseRunConstraintViolation',
+				runId,
+				reason: expect.stringContaining('restored-run-id'),
+			},
+		})
+	})
+
 	it('rejects a replay whose persisted fingerprint drifted', async () => {
 		const stimulus = signup()
 		await Effect.runPromise(advance({ stimulus }))
