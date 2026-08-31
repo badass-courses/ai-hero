@@ -8,6 +8,7 @@ import {
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
 import { getSkillEntries } from '@/lib/skills-query'
+import { SKILLS_COURSE_WAYFINDING } from '@/lib/skills-content'
 import { log } from '@/server/logger'
 import { eq, or, sql } from 'drizzle-orm'
 import { ArrowRight } from 'lucide-react'
@@ -130,7 +131,7 @@ export async function Hero({
 	videoResourceId,
 	variant = 'home',
 	eyebrow = 'Real AI Engineering · by Matt Pocock',
-	ctaLabel = 'Start the free 7-day course',
+	ctaLabel = SKILLS_COURSE_WAYFINDING.heroCtaLabel,
 	ctaHref = '/skills/subscribe',
 	secondaryCtaLabel = 'Browse the skills',
 	secondaryCtaHref = '/skills',
