@@ -4,7 +4,7 @@ import crypto from 'node:crypto'
 import { cache } from 'react'
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { courseBuilderAdapter, db } from '@/db'
+import { courseBuilderAdapter, db, type DbExecutor } from '@/db'
 import {
 	contentContributions,
 	contentResource,
@@ -317,7 +317,37 @@ export async function getPosts(): Promise<Post[]> {
 	return postsParsed.data
 }
 
-export async function createPost(input: NewPostInput) {
+export async function executePostCreationSideEffects(post: Post) {
+	try {
+		await upsertPostToTypeSense(post, 'save')
+		await log.info('post.typesense.indexed', {
+			postId: post.id,
+			action: 'save',
+		})
+	} catch (error) {
+		await log.error('post.typesense.index.failed', {
+			error: getErrorMessage(error),
+			stack: getErrorStack(error),
+			postId: post.id,
+		})
+	}
+
+	await inngest.send({
+		id: `post-created:${post.id}`,
+		name: RESOURCE_CREATED_EVENT,
+		data: { id: post.id, type: post.type ?? 'post' },
+	})
+
+	revalidateTag('posts', 'max')
+}
+
+export async function createPost(
+	input: NewPostInput,
+	options?: {
+		tx?: DbExecutor
+		deferSideEffects?: boolean
+	},
+) {
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
 	if (!user || !ability.can('create', 'Content')) {
@@ -344,8 +374,10 @@ export async function createPost(input: NewPostInput) {
 		},
 	}
 
+	const dbContext = options?.tx || db
+
 	try {
-		await db.insert(contentResource).values(postValues)
+		await dbContext.insert(contentResource).values(postValues)
 		await log.info('post.create.success', {
 			postId: newPostId,
 			userId: user.id,
@@ -361,11 +393,30 @@ export async function createPost(input: NewPostInput) {
 		throw error
 	}
 
-	const post = await getPost(newPostId)
+	const postRow = await dbContext.query.contentResource.findFirst({
+		where: eq(contentResource.id, newPostId),
+		with: {
+			resources: {
+				with: {
+					resource: true,
+				},
+				orderBy: asc(contentResourceResource.position),
+			},
+			tags: {
+				with: {
+					tag: true,
+				},
+				orderBy: asc(contentResourceTagTable.position),
+			},
+		},
+	})
+	const postParsed = PostSchema.safeParse(postRow)
+	const post = postParsed.success ? postParsed.data : null
+
 	if (post) {
 		if (input?.videoResourceId) {
 			try {
-				await db
+				await dbContext
 					.insert(contentResourceResource)
 					.values({ resourceOfId: post.id, resourceId: input.videoResourceId })
 				await log.info('post.video.attached', {
@@ -382,27 +433,10 @@ export async function createPost(input: NewPostInput) {
 			}
 		}
 
-		try {
-			await upsertPostToTypeSense(post, 'save')
-			await log.info('post.typesense.indexed', {
-				postId: post.id,
-				action: 'save',
-			})
-		} catch (error) {
-			await log.error('post.typesense.index.failed', {
-				error: getErrorMessage(error),
-				stack: getErrorStack(error),
-				postId: post.id,
-			})
+		if (!options?.deferSideEffects) {
+			await executePostCreationSideEffects(post)
 		}
 
-		await inngest.send({
-			id: `post-created:${post.id}`,
-			name: RESOURCE_CREATED_EVENT,
-			data: { id: post.id, type: post.type ?? 'post' },
-		})
-
-		revalidateTag('posts', 'max')
 		return post
 	} else {
 		await log.error('post.create.notfound', {

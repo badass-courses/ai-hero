@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidateTag, unstable_cache } from 'next/cache'
-import { courseBuilderAdapter, db } from '@/db'
+import { courseBuilderAdapter, db, type DbExecutor } from '@/db'
 import {
 	contentResource,
 	contentResourceResource,
@@ -578,8 +578,37 @@ export async function getAllLessons(): Promise<Lesson[]> {
 	return parsed
 }
 
+export async function executeLessonCreationSideEffects(lesson: Lesson) {
+	try {
+		await log.debug('lesson.typesense.index', {
+			lessonId: lesson.id,
+			slug: lesson.fields.slug,
+			action: 'save',
+		})
+		await upsertPostToTypeSense(lesson, 'save')
+		await log.info('lesson.typesense.indexed', {
+			lessonId: lesson.id,
+			slug: lesson.fields.slug,
+			action: 'save',
+		})
+	} catch (error) {
+		await log.error('lesson.typesense.error', {
+			lessonId: lesson.id,
+			slug: lesson.fields.slug,
+			action: 'save',
+			error: getErrorMessage(error),
+			stack: getErrorStack(error),
+		})
+		// Continue even if TypeSense indexing fails
+	}
+}
+
 export async function writeNewLessonToDatabase(
 	input: NewLessonInput,
+	options?: {
+		tx?: DbExecutor
+		deferSideEffects?: boolean
+	},
 ): Promise<Lesson> {
 	try {
 		await log.debug('lesson.create', {
@@ -629,8 +658,7 @@ export async function writeNewLessonToDatabase(
 		}
 
 		try {
-			// Wrap database operations in a transaction
-			const lesson = await db.transaction(async (tx) => {
+			const createLessonInContext = async (txContext: any) => {
 				// Step 2: Create the core lesson
 				await log.debug('lesson.create', {
 					stage: 'core.start',
@@ -638,18 +666,18 @@ export async function writeNewLessonToDatabase(
 					slug: lessonSlug,
 					videoResourceId,
 				})
-				const lesson = await createCoreLesson({
+				const createdLesson = await createCoreLesson({
 					newLessonId,
 					title,
 					lessonGuid,
 					lessonType,
 					createdById,
-					tx, // Pass transaction context
+					tx: txContext, // Pass transaction context
 				})
 				await log.info('lesson.create', {
 					stage: 'core.created',
-					lessonId: lesson.id,
-					slug: lesson.fields.slug,
+					lessonId: createdLesson.id,
+					slug: createdLesson.fields.slug,
 					videoResourceId,
 				})
 
@@ -657,48 +685,33 @@ export async function writeNewLessonToDatabase(
 				if (videoResourceId) {
 					await log.debug('lesson.create.video-linked', {
 						stage: 'start',
-						lessonId: lesson.id,
-						slug: lesson.fields.slug,
+						lessonId: createdLesson.id,
+						slug: createdLesson.fields.slug,
 						videoResourceId,
 					})
-					await tx.insert(contentResourceResource).values({
-						resourceOfId: lesson.id,
+					await txContext.insert(contentResourceResource).values({
+						resourceOfId: createdLesson.id,
 						resourceId: videoResourceId,
 						position: 0,
 					})
 					await log.info('lesson.create.video-linked', {
 						stage: 'complete',
-						lessonId: lesson.id,
-						slug: lesson.fields.slug,
+						lessonId: createdLesson.id,
+						slug: createdLesson.fields.slug,
 						videoResourceId,
 					})
 				}
 
-				return lesson
-			})
+				return createdLesson
+			}
+
+			const lesson = options?.tx
+				? await createLessonInContext(options.tx)
+				: await db.transaction(createLessonInContext)
 
 			// Step 4: Index the lesson in Typesense (outside transaction since it's a separate system)
-			try {
-				await log.debug('lesson.typesense.index', {
-					lessonId: lesson.id,
-					slug: lesson.fields.slug,
-					action: 'save',
-				})
-				await upsertPostToTypeSense(lesson, 'save')
-				await log.info('lesson.typesense.indexed', {
-					lessonId: lesson.id,
-					slug: lesson.fields.slug,
-					action: 'save',
-				})
-			} catch (error) {
-				await log.error('lesson.typesense.error', {
-					lessonId: lesson.id,
-					slug: lesson.fields.slug,
-					action: 'save',
-					error: getErrorMessage(error),
-					stack: getErrorStack(error),
-				})
-				// Continue even if TypeSense indexing fails
+			if (!options?.deferSideEffects) {
+				await executeLessonCreationSideEffects(lesson)
 			}
 
 			return lesson
@@ -748,7 +761,7 @@ async function createCoreLesson({
 	lessonGuid: string
 	lessonType: string
 	createdById: string
-	tx?: any // Transaction context
+	tx?: DbExecutor // Transaction context
 }): Promise<Lesson> {
 	const lessonSlug = `${slugify(title)}~${lessonGuid}`
 
@@ -819,7 +832,7 @@ async function createCoreLesson({
 		if (!lessonParsed.success) {
 			await log.error('lesson.parse.error', {
 				lessonId: newLessonId,
-				slug: lesson.fields.slug,
+				slug: (lesson.fields as Record<string, any> | null)?.slug,
 				error: formatZodError(lessonParsed.error),
 				source: 'createCoreLesson',
 			})

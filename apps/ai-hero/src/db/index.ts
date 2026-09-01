@@ -49,6 +49,9 @@ export const db = drizzle(pool, {
 	typeof schema
 >
 
+export type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+export type DbExecutor = typeof db | DbTransaction
+
 export const courseBuilderAdapter = DrizzleAdapter<
 	MySqlDatabase<any, any, any>
 >(db, mysqlTable, stripeProvider)
