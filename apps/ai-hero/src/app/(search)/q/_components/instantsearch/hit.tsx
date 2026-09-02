@@ -64,7 +64,7 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 				<div className="relative flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:gap-8 sm:px-14 sm:py-10">
 					<div
 						className={cn(
-							'relative aspect-video w-full shrink-0 overflow-hidden sm:w-60',
+							'relative aspect-video w-full shrink-0 overflow-hidden rounded-lg sm:w-60',
 							hit.image ? 'bg-muted' : 'bg-stripes',
 						)}
 					>
