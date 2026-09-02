@@ -76,7 +76,7 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 									fill
 									deliveryType={isRemoteUrl(hit.image) ? 'fetch' : undefined}
 									sizes="(min-width: 640px) 240px, 100vw"
-									className="object-cover transition-transform duration-500 ease-in-out group-hover:scale-105"
+									className="object-cover"
 								/>
 								{/* {isGeneratedImage && (
 									<span
