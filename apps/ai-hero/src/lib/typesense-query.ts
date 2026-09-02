@@ -3,6 +3,7 @@
 import { db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
+import { deriveResourceType } from '@/lib/typesense-resource-type'
 import { log } from '@/server/logger'
 import { and, desc, eq, isNotNull } from 'drizzle-orm'
 import { revalidateTag, unstable_cache } from 'next/cache'
@@ -69,13 +70,6 @@ function readImageUrl(obj: unknown, key: string): string | undefined {
 		if (typeof url === 'string' && url.length > 0) return url
 	}
 	return undefined
-}
-
-function deriveResourceType(resource: ContentResource): string {
-	const fields = resource?.fields as Record<string, any> | null | undefined
-	if (fields?.postType) return fields.postType
-	if (fields?.type) return fields.type
-	return resource.type
 }
 
 async function deriveResourceImage(
