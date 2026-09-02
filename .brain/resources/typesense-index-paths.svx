@@ -59,3 +59,26 @@ keeps serving the old value indefinitely. `/posts` is entirely Typesense-backed
 (`posts/page.tsx` → `(search)/q/_components/search` → `hit.tsx` rendering
 `hit.image` or `bg-stripes`), so a stale index reads as missing or outdated
 artwork on the catalog. See [[add-skill-post-icon-field]].
+
+## Reindexing is not enough — bust the Next caches too
+
+Confirmed live 2026-09-02. After Typesense held the correct images, the
+production page still served the old ones, and kept flip-flopping between
+old and new as different edges expired. Two Next layers sit in front of the
+index, both keyed to nothing Typesense knows about:
+
+- `getCachedPostsGraph` — `unstable_cache`, `revalidate: 3600`, tag
+  `posts-graph` (`src/lib/posts-graph.ts`). Carries `image` per node, and
+  survives page regeneration, so a freshly regenerated page can still hold
+  hour-old artwork.
+- `/posts` itself — `dynamic = 'force-static'` with `revalidate = 3600`, and
+  its hits are server-rendered by `InstantSearchNext`, so the SSR markup
+  bakes in whatever the index held at generation time.
+
+`curl -sD- https://www.aihero.dev/posts` and grepping the Cloudinary `v…`
+version segment tells you what the edge is actually serving; `x-vercel-cache`
+plus `age` tells you why. The fix is
+`GET /api/revalidate?tag=posts-graph&secret=$INNGEST_SIGNING_KEY` (the route
+only accepts tags, never paths). Expect one `STALE` response while the
+background regeneration runs, then `HIT` with fresh URLs. **Any Typesense
+reindex that changes what `/posts` displays must be followed by that call.**
