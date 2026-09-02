@@ -36,7 +36,7 @@ export default function Hit({ hit }: { hit: TypesenseResource }) {
 				initial="initial"
 				whileHover="hover"
 				animate="initial"
-				className="border-border group relative -mt-px block border-y"
+				className="border-border group relative block border-t"
 			>
 				<motion.div
 					aria-hidden

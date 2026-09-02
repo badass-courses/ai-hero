@@ -14,7 +14,7 @@ import Hit from './instantsearch/hit'
 // radius — so the list does not reflow when real results replace it.
 function SkeletonItem() {
 	return (
-		<li className="border-border -mt-px block animate-pulse border-y">
+		<li className="border-border block animate-pulse border-t">
 			<div className="relative flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:gap-8 sm:px-14 sm:py-10">
 				<div className="bg-muted aspect-video w-full shrink-0 rounded-lg sm:w-60" />
 				<div className="flex flex-1 flex-col gap-2.5">
@@ -87,7 +87,7 @@ export function InfiniteHits() {
 		return (
 			<div aria-live="polite" aria-busy>
 				<span className="sr-only">Loading results...</span>
-				<ul>
+				<ul className="border-border border-b">
 					{Array.from({ length: 5 }).map((_, i) => (
 						<SkeletonItem key={i} />
 					))}
@@ -98,7 +98,7 @@ export function InfiniteHits() {
 
 	return (
 		<div>
-			<ul>
+			<ul className="border-border border-b">
 				{items.map((item) => (
 					<Hit key={item.objectID} hit={item} />
 				))}
