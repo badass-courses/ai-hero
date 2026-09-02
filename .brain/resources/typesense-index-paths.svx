@@ -29,6 +29,24 @@ facet on `/posts` and `/q`. Both now go through one `deriveResourceType`
 helper. **Any field added to one path must be checked against the other** —
 emplace makes divergence silent, not loud.
 
+### `fields.type` is not a resource type
+
+The save path's original fallback chain ended `fields.postType → fields.type →
+resource.type`, and the first attempt at sharing it carried `fields.type`
+along. That is wrong, and the mistake is easy to repeat: on a `list`,
+`fields.type` is the list's *flavour* — `nextUp | tutorial | workshop`
+(`ListTypeSchema`, `src/lib/lists.ts:12`) — not its resource type. Two live
+lists carry `fields.type: 'workshop'`, including
+`ai-engineering-crash-course~pniml`, and `getResourcePath('workshop', slug)`
+routes to `/workshops/<slug>` where a list belongs at `/<slug>`. Indexed type
+feeds hit URLs, so this class of error produces broken links, not just a wrong
+facet.
+
+`deriveResourceType` now lives in its own dependency-free module
+(`src/lib/typesense-resource-type.ts`) with `typesense-resource-type.test.ts`
+pinning the list cases — `typesense-query.ts` drags in the db and next-auth,
+so a helper inside it cannot be unit-tested.
+
 ## Collections
 
 `content_production` (live) and `content_joel_dev` sit in the same Typesense
