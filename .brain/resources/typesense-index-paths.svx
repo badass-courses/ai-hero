@@ -1,0 +1,84 @@
+---
+title: "Typesense has two index paths, and they used to disagree"
+type: "resource"
+status: "active"
+created_at: "2026-09-02"
+tags:
+  - typesense
+  - search
+  - content
+---
+
+# Typesense has two index paths, and they used to disagree
+
+`src/lib/typesense-query.ts` writes to Typesense from two places, and they are
+not interchangeable:
+
+- **`upsertPostToTypeSense(resource, action)`** — the singular save path, fired
+  by the `content-resource-index-requested` Inngest function. Writes the full
+  document: `summary`, `tags`, `parentResources`, `published_at_timestamp`.
+- **`indexAllContentToTypeSense(resources, deleteFirst)`** — the bulk path used
+  by `pnpm index-typesense` (`src/scripts/index-content.ts`). Writes a narrower
+  document with `action: 'emplace'`, so fields it omits survive on existing
+  docs; fields it *does* send overwrite whatever the save path wrote.
+
+Until 2026-09-02 the bulk path set `type: resource.type` while the save path
+preferred `fields.postType`. A bulk reindex therefore silently flattened every
+skill post from `type: 'skill'` to `type: 'post'`, breaking the `type:=skill`
+facet on `/posts` and `/q`. Both now go through one `deriveResourceType`
+helper. **Any field added to one path must be checked against the other** —
+emplace makes divergence silent, not loud.
+
+## Collections
+
+`content_production` (live) and `content_joel_dev` sit in the same Typesense
+cloud instance, selected by `NEXT_PUBLIC_TYPESENSE_COLLECTION_NAME`. Local
+`.env` points at the dev collection, so a bulk reindex of production means
+overriding that env var — there is no other guard.
+
+## The bulk script does not run outside Next
+
+`pnpm index-typesense` fails on plain `tsx`, for two reasons that have nothing
+to do with Typesense:
+
+1. `server-only` is not an installed package — Next aliases it internally. Node
+   resolves it and throws `ERR_MODULE_NOT_FOUND`.
+2. `index-content.ts` imports `ai-coding-dictionary-typesense.ts` at module
+   scope, which pulls in the browser `typesense-instantsearch-adapter`; its CJS
+   default export is not a constructor under Node ESM.
+
+Both are import-graph problems, so they bite even when the run never touches
+the dictionary branch. Reindexing a subset today means a throwaway script that
+imports only `indexAllContentToTypeSense`.
+
+## Direct `fields` writes never reindex
+
+Images, and any other `fields` JSON written straight to MySQL rather than
+through `updatePost`, do not fire `CONTENT_RESOURCE_INDEX_REQUESTED`, so search
+keeps serving the old value indefinitely. `/posts` is entirely Typesense-backed
+(`posts/page.tsx` → `(search)/q/_components/search` → `hit.tsx` rendering
+`hit.image` or `bg-stripes`), so a stale index reads as missing or outdated
+artwork on the catalog. See [[add-skill-post-icon-field]].
+
+## Reindexing is not enough — bust the Next caches too
+
+Confirmed live 2026-09-02. After Typesense held the correct images, the
+production page still served the old ones, and kept flip-flopping between
+old and new as different edges expired. Two Next layers sit in front of the
+index, both keyed to nothing Typesense knows about:
+
+- `getCachedPostsGraph` — `unstable_cache`, `revalidate: 3600`, tag
+  `posts-graph` (`src/lib/posts-graph.ts`). Carries `image` per node, and
+  survives page regeneration, so a freshly regenerated page can still hold
+  hour-old artwork.
+- `/posts` itself — `dynamic = 'force-static'` with `revalidate = 3600`, and
+  its hits are server-rendered by `InstantSearchNext`, so the SSR markup
+  bakes in whatever the index held at generation time.
+
+`curl -sD- https://www.aihero.dev/posts` and grepping the Cloudinary `v…`
+version segment tells you what the edge is actually serving; `x-vercel-cache`
+plus `age` tells you why. The fix is
+`GET /api/revalidate?tag=posts-graph&secret=$INNGEST_SIGNING_KEY` (the route
+only accepts tags, never paths). Expect one `STALE` response while the
+background regeneration runs, then `HIT` with fresh URLs. **Any Typesense
+reindex that changes what `/posts` displays must be followed by that call.**

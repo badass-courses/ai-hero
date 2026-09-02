@@ -71,6 +71,13 @@ function readImageUrl(obj: unknown, key: string): string | undefined {
 	return undefined
 }
 
+function deriveResourceType(resource: ContentResource): string {
+	const fields = resource?.fields as Record<string, any> | null | undefined
+	if (fields?.postType) return fields.postType
+	if (fields?.type) return fields.type
+	return resource.type
+}
+
 async function deriveResourceImage(
 	post: ContentResource,
 ): Promise<string | undefined> {
@@ -233,12 +240,7 @@ export async function upsertPostToTypeSense(
 			description: post.fields?.body || '',
 			summary: post.fields?.description || '',
 			image,
-			type:
-				post?.fields && 'postType' in post.fields
-					? post.fields.postType
-					: post?.fields && 'type' in post.fields
-						? post.fields.type
-						: post.type,
+			type: deriveResourceType(post),
 			visibility: post.fields?.visibility,
 			state: post.fields?.state,
 			created_at_timestamp: post.createdAt?.getTime() ?? Date.now(),
@@ -426,7 +428,7 @@ export async function indexAllContentToTypeSense(
 			slug: resource?.fields?.slug,
 			description: resource?.fields?.body || resource?.fields?.description,
 			image,
-			type: resource.type,
+			type: deriveResourceType(resource),
 			visibility: resource?.fields?.visibility,
 			state: resource?.fields?.state,
 			created_at_timestamp: resource.createdAt?.getTime() ?? now,
