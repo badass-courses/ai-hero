@@ -12,6 +12,7 @@ import type { buildSkillsCourseLessonOneEmail } from './lesson-one-email'
 const POSTMARK_API_URL = 'https://api.postmarkapp.com'
 const POSTMARK_TAG = 'skills-lesson-one-recovery'
 const POSTMARK_RECOVERY_METADATA_KEY = 'recovery_key'
+const POSTMARK_CONTENT_HASH_METADATA_KEY = 'content_hash'
 
 const postmarkMessageSchema = z.object({
 	MessageID: z.string().min(1),
@@ -48,9 +49,11 @@ export function createPostmarkSkillsLessonOneRecoveryProvider(args: {
 		async findByRecoveryKey({
 			recipient,
 			providerRecoveryKey,
+			emailContentHash,
 		}: {
 			recipient: string
 			providerRecoveryKey: string
+			emailContentHash: string
 		}): Promise<RecoveryProviderMessage | null> {
 			const url = new URL('/messages/outbound', POSTMARK_API_URL)
 			url.searchParams.set('count', '10')
@@ -70,7 +73,10 @@ export function createPostmarkSkillsLessonOneRecoveryProvider(args: {
 			const matching = parsed.data.Messages.find(
 				(message) =>
 					message.Metadata?.[POSTMARK_RECOVERY_METADATA_KEY] ===
-						providerRecoveryKey && messageRecipients(message).includes(recipient),
+						providerRecoveryKey &&
+					message.Metadata?.[POSTMARK_CONTENT_HASH_METADATA_KEY] ===
+						emailContentHash &&
+					messageRecipients(message).includes(recipient),
 			)
 			return matching ? toProviderMessage(matching) : null
 		},
@@ -78,10 +84,12 @@ export function createPostmarkSkillsLessonOneRecoveryProvider(args: {
 		async send({
 			recipient,
 			providerRecoveryKey,
+			emailContentHash,
 			email,
 		}: {
 			recipient: string
 			providerRecoveryKey: string
+			emailContentHash: string
 			email: ReturnType<typeof buildSkillsCourseLessonOneEmail>
 		}): Promise<RecoveryProviderSendResult> {
 			const htmlBody = await render(
@@ -107,6 +115,7 @@ export function createPostmarkSkillsLessonOneRecoveryProvider(args: {
 						Tag: POSTMARK_TAG,
 						Metadata: {
 							[POSTMARK_RECOVERY_METADATA_KEY]: providerRecoveryKey,
+							[POSTMARK_CONTENT_HASH_METADATA_KEY]: emailContentHash,
 						},
 					}),
 				})
@@ -124,6 +133,12 @@ export function createPostmarkSkillsLessonOneRecoveryProvider(args: {
 			if (!parsed.success) {
 				return { state: 'ambiguous', reason: 'postmark-response-invalid' }
 			}
+			if (response.status >= 500) {
+				return {
+					state: 'ambiguous',
+					reason: `postmark-http-${response.status}`,
+				}
+			}
 			if (!response.ok || parsed.data.ErrorCode !== 0) {
 				const failureCode =
 					parsed.data.ErrorCode !== 0
@@ -132,7 +147,7 @@ export function createPostmarkSkillsLessonOneRecoveryProvider(args: {
 				return {
 					state: 'rejected',
 					reason: `postmark-${failureCode}`,
-					retryable: response.status === 429 || response.status >= 500,
+					retryable: response.status === 429,
 				}
 			}
 			if (!parsed.data.MessageID) {
@@ -175,5 +190,7 @@ function toProviderMessage(
 		recipient: messageRecipients(message)[0] ?? '',
 		providerRecoveryKey:
 			message.Metadata?.[POSTMARK_RECOVERY_METADATA_KEY] ?? '',
+		emailContentHash:
+			message.Metadata?.[POSTMARK_CONTENT_HASH_METADATA_KEY] ?? '',
 	}
 }

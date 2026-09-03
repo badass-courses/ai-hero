@@ -18,36 +18,46 @@ function jsonResponse(body: unknown, status = 200) {
 	})
 }
 
+function createProvider(fetchMock: typeof fetch) {
+	return createPostmarkSkillsLessonOneRecoveryProvider({
+		apiKey: 'test-key',
+		from: 'AI Hero <support@example.com>',
+		replyTo: 'support@example.com',
+		fetch: fetchMock,
+	})
+}
+
 describe('Postmark Skills lesson one recovery provider', () => {
-	it('writes a recovery key and returns the accepted message id', async () => {
-		const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-			const body = JSON.parse(String(init?.body))
-			expect(body.To).toBe('learner@example.com')
-			expect(body.Tag).toBe('skills-lesson-one-recovery')
-			expect(body.Metadata).toEqual({ recovery_key: 'recovery_hash' })
-			return jsonResponse({
-				ErrorCode: 0,
-				Message: 'OK',
-				MessageID: 'message_1',
-			})
-		})
-		const provider = createPostmarkSkillsLessonOneRecoveryProvider({
-			apiKey: 'test-key',
-			from: 'AI Hero <support@example.com>',
-			replyTo: 'support@example.com',
-			fetch: fetchMock,
-		})
+	it('writes recovery and content metadata and returns the accepted message id', async () => {
+		const fetchMock = vi.fn(
+			async (_url: string | URL | Request, init?: RequestInit) => {
+				const body = JSON.parse(String(init?.body))
+				expect(body.To).toBe('learner@example.com')
+				expect(body.Tag).toBe('skills-lesson-one-recovery')
+				expect(body.Metadata).toEqual({
+					recovery_key: 'recovery_hash',
+					content_hash: 'content_hash',
+				})
+				return jsonResponse({
+					ErrorCode: 0,
+					Message: 'OK',
+					MessageID: 'message_1',
+				})
+			},
+		)
+		const provider = createProvider(fetchMock)
 
 		const result = await provider.send({
 			recipient: 'learner@example.com',
 			providerRecoveryKey: 'recovery_hash',
+			emailContentHash: 'content_hash',
 			email: EMAIL,
 		})
 
 		expect(result).toEqual({ state: 'accepted', messageId: 'message_1' })
 	})
 
-	it('finds an exact provider message by recipient, tag, and recovery metadata', async () => {
+	it('queries one Postmark metadata field and locally matches the content hash', async () => {
 		const fetchMock = vi.fn(async (request: string | URL | Request) => {
 			const url = new URL(request.toString())
 			expect(url.searchParams.get('recipient')).toBe('learner@example.com')
@@ -57,27 +67,36 @@ describe('Postmark Skills lesson one recovery provider', () => {
 			expect(url.searchParams.get('metadata_recovery_key')).toBe(
 				'recovery_hash',
 			)
+			expect(url.searchParams.get('metadata_content_hash')).toBeNull()
 			return jsonResponse({
 				Messages: [
+					{
+						MessageID: 'wrong_content',
+						Status: 'Sent',
+						Recipients: ['learner@example.com'],
+						Metadata: {
+							recovery_key: 'recovery_hash',
+							content_hash: 'different_content',
+						},
+					},
 					{
 						MessageID: 'message_1',
 						Status: 'Sent',
 						Recipients: ['learner@example.com'],
-						Metadata: { recovery_key: 'recovery_hash' },
+						Metadata: {
+							recovery_key: 'recovery_hash',
+							content_hash: 'content_hash',
+						},
 					},
 				],
 			})
 		})
-		const provider = createPostmarkSkillsLessonOneRecoveryProvider({
-			apiKey: 'test-key',
-			from: 'AI Hero <support@example.com>',
-			replyTo: 'support@example.com',
-			fetch: fetchMock,
-		})
+		const provider = createProvider(fetchMock)
 
 		const result = await provider.findByRecoveryKey({
 			recipient: 'learner@example.com',
 			providerRecoveryKey: 'recovery_hash',
+			emailContentHash: 'content_hash',
 		})
 
 		expect(result).toEqual({
@@ -85,29 +104,48 @@ describe('Postmark Skills lesson one recovery provider', () => {
 			status: 'Sent',
 			recipient: 'learner@example.com',
 			providerRecoveryKey: 'recovery_hash',
+			emailContentHash: 'content_hash',
 		})
 	})
 
 	it('marks HTTP 429 as a retryable rejection', async () => {
-		const provider = createPostmarkSkillsLessonOneRecoveryProvider({
-			apiKey: 'test-key',
-			from: 'AI Hero <support@example.com>',
-			replyTo: 'support@example.com',
-			fetch: vi.fn(async () =>
+		const provider = createProvider(
+			vi.fn(async () =>
 				jsonResponse({ ErrorCode: 429, Message: 'rate limited' }, 429),
 			),
-		})
+		)
 
 		await expect(
 			provider.send({
 				recipient: 'learner@example.com',
 				providerRecoveryKey: 'recovery_hash',
+				emailContentHash: 'content_hash',
 				email: EMAIL,
 			}),
 		).resolves.toEqual({
 			state: 'rejected',
 			reason: 'postmark-429',
 			retryable: true,
+		})
+	})
+
+	it('treats an HTTP 5xx response as ambiguous and unsafe to retry', async () => {
+		const provider = createProvider(
+			vi.fn(async () =>
+				jsonResponse({ ErrorCode: 500, Message: 'server error' }, 500),
+			),
+		)
+
+		await expect(
+			provider.send({
+				recipient: 'learner@example.com',
+				providerRecoveryKey: 'recovery_hash',
+				emailContentHash: 'content_hash',
+				email: EMAIL,
+			}),
+		).resolves.toEqual({
+			state: 'ambiguous',
+			reason: 'postmark-http-500',
 		})
 	})
 })

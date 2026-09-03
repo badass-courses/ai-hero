@@ -214,6 +214,9 @@ function createProductionDependencies(
 					reviewReasons: [],
 					metadata: {
 						providerRecoveryKey: input.providerRecoveryKey,
+						recipientHash: input.recipientHash,
+						emailContentHash: input.emailContentHash,
+						sourceIntentId: input.sourceIntentId,
 						recoveryId: input.recoveryId,
 						kitSubscriberId: input.kitSubscriberId,
 						runId: input.audit.runId,
@@ -240,7 +243,13 @@ function createProductionDependencies(
 					.update(sideEffectIntent)
 					.set({
 						status: 'sending',
-						metadata: { ...intent.metadata, claimId, claimedAt },
+						reviewReasons: ['provider-delivery-state-unconfirmed'],
+						metadata: {
+							...intent.metadata,
+							claimId,
+							claimedAt,
+							automaticRetryAllowed: false,
+						},
 					})
 					.where(
 						and(
@@ -271,7 +280,7 @@ function createProductionDependencies(
 			},
 		},
 		email: {
-			async build({ contactId, kitSubscriberId }) {
+			async build({ contactId, kitSubscriberId, personalizationAt }) {
 				const pathTokenSecret = process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET
 				if (!pathTokenSecret) {
 					throw new Error('AI_HERO_VALUE_PATH_TOKEN_SECRET is not configured')
@@ -284,6 +293,7 @@ function createProductionDependencies(
 					answerPages: await getValuePathAnswerPages(),
 					baseUrl: env.NEXT_PUBLIC_URL,
 					pathTokenSecret,
+					now: personalizationAt,
 				})
 				if (!personalization.passed) {
 					throw new Error(personalization.reviewReasons.join(', '))

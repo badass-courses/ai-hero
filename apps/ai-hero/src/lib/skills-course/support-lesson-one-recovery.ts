@@ -63,6 +63,9 @@ export type RecoveryIntentInput = {
 	nextActionId: string
 	idempotencyKey: string
 	providerRecoveryKey: string
+	recipientHash: string
+	emailContentHash: string
+	sourceIntentId: string
 	recoveryId: string
 	kitSubscriberId: string
 	audit: SkillsLessonOneRecoveryAudit
@@ -81,6 +84,7 @@ export type RecoveryProviderMessage = {
 	status: string
 	recipient: string
 	providerRecoveryKey: string
+	emailContentHash: string
 }
 
 export type RecoveryProviderSendResult =
@@ -110,16 +114,19 @@ export type SkillsLessonOneRecoveryDependencies = {
 		build(args: {
 			contactId: string
 			kitSubscriberId: string
+			personalizationAt: string
 		}): Promise<ReturnType<typeof buildSkillsCourseLessonOneEmail>>
 	}
 	provider: {
 		findByRecoveryKey(args: {
 			recipient: string
 			providerRecoveryKey: string
+			emailContentHash: string
 		}): Promise<RecoveryProviderMessage | null>
 		send(args: {
 			recipient: string
 			providerRecoveryKey: string
+			emailContentHash: string
 			email: ReturnType<typeof buildSkillsCourseLessonOneEmail>
 		}): Promise<RecoveryProviderSendResult>
 		read(messageId: string): Promise<RecoveryProviderMessage | null>
@@ -135,6 +142,8 @@ export type SkillsLessonOneRecoveryResult =
 			operation: 'preview'
 			previewToken: string
 			previewExpiresAt: string
+			emailContentHash: string
+			message: ReturnType<typeof buildSkillsCourseLessonOneEmail>
 			intentState: SideEffectIntentStatus | 'not-created'
 		  }
 	| {
@@ -185,7 +194,19 @@ export async function runSupportSkillsLessonOneRecovery(args: {
 	command: SkillsLessonOneRecoveryCommand
 	dependencies: SkillsLessonOneRecoveryDependencies
 }): Promise<SkillsLessonOneRecoveryResult> {
-	const prepared = await prepareRecovery(args.command, args.dependencies)
+	const operationNow = args.dependencies.now()
+	const personalizationAt =
+		args.command.operation === 'apply'
+			? previewIssuedAt(args.command.previewToken)
+			: operationNow.toISOString()
+	if (!personalizationAt) {
+		return { state: 'blocked', reason: 'preview-token-invalid' }
+	}
+	const prepared = await prepareRecovery(
+		args.command,
+		args.dependencies,
+		personalizationAt,
+	)
 	if ('state' in prepared) return prepared
 
 	if (args.command.operation === 'preview') {
@@ -196,13 +217,15 @@ export async function runSupportSkillsLessonOneRecovery(args: {
 			command: args.command,
 			prepared,
 			secret: args.dependencies.previewSecret,
-			now: args.dependencies.now(),
+			now: operationNow,
 		})
 		return {
 			state: 'ready',
 			operation: 'preview',
 			previewToken: preview.token,
 			previewExpiresAt: preview.expiresAt,
+			emailContentHash: prepared.emailContentHash,
+			message: prepared.emailContent,
 			intentState: existing?.status ?? 'not-created',
 		}
 	}
@@ -216,7 +239,7 @@ export async function runSupportSkillsLessonOneRecovery(args: {
 			command: args.command,
 			prepared,
 			secret: args.dependencies.previewSecret,
-			now: args.dependencies.now(),
+			now: operationNow,
 			token: args.command.previewToken,
 		})
 	) {
@@ -228,12 +251,14 @@ export async function runSupportSkillsLessonOneRecovery(args: {
 
 type PreparedRecovery = {
 	email: string
+	recipientHash: string
 	kitSubscriberId: string
 	contactId: string
 	sourceIntentId: string
 	sourceNextActionId: string
 	idempotencyKey: string
 	providerRecoveryKey: string
+	emailContentHash: string
 	recoveryId: string
 	audit: SkillsLessonOneRecoveryAudit
 	emailContent: ReturnType<typeof buildSkillsCourseLessonOneEmail>
@@ -242,6 +267,7 @@ type PreparedRecovery = {
 async function prepareRecovery(
 	command: SkillsLessonOneRecoveryCommand,
 	dependencies: SkillsLessonOneRecoveryDependencies,
+	personalizationAt: string,
 ): Promise<PreparedRecovery | SkillsLessonOneRecoveryResult> {
 	const email = normalizeEmail(command.identity.email)
 	const subscriber = await dependencies.subscribers.findByEmail(email)
@@ -286,6 +312,7 @@ async function prepareRecovery(
 		emailContent = await dependencies.email.build({
 			contactId: context.contactId,
 			kitSubscriberId: command.identity.kitSubscriberId,
+			personalizationAt,
 		})
 	} catch {
 		return { state: 'blocked', reason: 'personalization-failed' }
@@ -297,9 +324,13 @@ async function prepareRecovery(
 		context.contactId,
 		command.recoveryId,
 	].join(':')
+	const emailContentHash = createHash('sha256')
+		.update(JSON.stringify(emailContent))
+		.digest('hex')
 
 	return {
 		email,
+		recipientHash: createHash('sha256').update(email).digest('hex'),
 		kitSubscriberId: command.identity.kitSubscriberId,
 		contactId: context.contactId,
 		sourceIntentId: context.sourceIntentId,
@@ -308,6 +339,7 @@ async function prepareRecovery(
 		providerRecoveryKey: createHash('sha256')
 			.update(idempotencyKey)
 			.digest('hex'),
+		emailContentHash,
 		recoveryId: command.recoveryId,
 		audit: command.audit,
 		emailContent,
@@ -326,6 +358,9 @@ async function applyRecovery(args: {
 			nextActionId: prepared.sourceNextActionId,
 			idempotencyKey: prepared.idempotencyKey,
 			providerRecoveryKey: prepared.providerRecoveryKey,
+			recipientHash: prepared.recipientHash,
+			emailContentHash: prepared.emailContentHash,
+			sourceIntentId: prepared.sourceIntentId,
 			recoveryId: prepared.recoveryId,
 			kitSubscriberId: prepared.kitSubscriberId,
 			audit: prepared.audit,
@@ -333,7 +368,7 @@ async function applyRecovery(args: {
 		})
 	}
 
-	if (metadataString(intent, 'providerRecoveryKey') !== prepared.providerRecoveryKey) {
+	if (!intentMatchesPrepared(intent, prepared)) {
 		return {
 			state: 'blocked',
 			reason: 'intent-idempotency-conflict',
@@ -347,6 +382,31 @@ async function applyRecovery(args: {
 		dependencies,
 	})
 	if (providerPreflight.state === 'failed') {
+		if (intent.status === 'completed') {
+			return {
+				state: 'pending',
+				operation: 'apply',
+				intentId: intent.id,
+				reason: 'provider-readback-pending',
+			}
+		}
+		if (intent.status === 'sending') {
+			return {
+				state: 'blocked',
+				reason: 'delivery-state-ambiguous',
+				intentId: intent.id,
+			}
+		}
+		if (
+			intent.status === 'blocked' ||
+			(intent.status === 'failed' && intent.metadata.retryable === false)
+		) {
+			return {
+				state: 'blocked',
+				reason: 'recovery-blocked',
+				intentId: intent.id,
+			}
+		}
 		intent = await dependencies.store.updateIntent(intent, {
 			status: 'failed',
 			completedAt: null,
@@ -371,6 +431,7 @@ async function applyRecovery(args: {
 			message: providerPreflight.message,
 			prepared,
 			dependencies,
+			operation: 'apply',
 			idempotent: true,
 		})
 	}
@@ -423,6 +484,7 @@ async function applyRecovery(args: {
 		sendResult = await dependencies.provider.send({
 			recipient: prepared.email,
 			providerRecoveryKey: prepared.providerRecoveryKey,
+			emailContentHash: prepared.emailContentHash,
 			email: prepared.emailContent,
 		})
 	} catch {
@@ -453,11 +515,16 @@ async function applyRecovery(args: {
 		intent = await dependencies.store.updateIntent(intent, {
 			status: 'blocked',
 			completedAt: null,
-			reviewReasons: ['provider-delivery-ambiguous'],
+			reviewReasons: [
+				'provider-delivery-ambiguous',
+				'fresh-operator-approval-required',
+			],
 			metadata: {
 				...intent.metadata,
 				blockedAt: dependencies.now().toISOString(),
 				deliveryAmbiguous: true,
+				automaticRetryAllowed: false,
+				freshApprovalRequired: true,
 				providerFailureReason: sendResult.reason,
 			},
 		})
@@ -499,6 +566,7 @@ async function applyRecovery(args: {
 		message,
 		prepared,
 		dependencies,
+		operation: 'apply',
 		idempotent: false,
 	})
 }
@@ -513,9 +581,25 @@ async function readbackRecovery(args: {
 	if (!intent) {
 		return { state: 'blocked', reason: 'provider-readback-missing' }
 	}
+	if (!intentAuthorityMatchesPrepared(intent, args.prepared)) {
+		return {
+			state: 'blocked',
+			reason: 'intent-idempotency-conflict',
+			intentId: intent.id,
+		}
+	}
+	const emailContentHash = metadataString(intent, 'emailContentHash')
+	if (!emailContentHash) {
+		return {
+			state: 'blocked',
+			reason: 'intent-idempotency-conflict',
+			intentId: intent.id,
+		}
+	}
+	const prepared = { ...args.prepared, emailContentHash }
 	const provider = await findProviderMessage({
 		intent,
-		prepared: args.prepared,
+		prepared,
 		dependencies: args.dependencies,
 	})
 	if (provider.state === 'failed' || !provider.message) {
@@ -526,21 +610,21 @@ async function readbackRecovery(args: {
 			reason: 'provider-readback-pending',
 		}
 	}
-	if (!providerMessageMatches(provider.message, args.prepared)) {
+	if (!providerMessageMatches(provider.message, prepared)) {
 		return {
 			state: 'blocked',
 			reason: 'provider-readback-mismatch',
 			intentId: intent.id,
 		}
 	}
-	return {
-		state: 'completed',
+	return completeFromProvider({
+		intent,
+		message: provider.message,
+		prepared,
+		dependencies: args.dependencies,
 		operation: 'readback',
-		intentId: intent.id,
-		providerMessageId: provider.message.messageId,
-		providerStatus: provider.message.status,
 		idempotent: true,
-	}
+	})
 }
 
 async function findProviderMessage(args: {
@@ -558,6 +642,7 @@ async function findProviderMessage(args: {
 			: await args.dependencies.provider.findByRecoveryKey({
 					recipient: args.prepared.email,
 					providerRecoveryKey: args.prepared.providerRecoveryKey,
+					emailContentHash: args.prepared.emailContentHash,
 				})
 		return { state: 'found', message }
 	} catch {
@@ -570,6 +655,7 @@ async function completeFromProvider(args: {
 	message: RecoveryProviderMessage
 	prepared: PreparedRecovery
 	dependencies: SkillsLessonOneRecoveryDependencies
+	operation: 'apply' | 'readback'
 	idempotent: boolean
 }): Promise<SkillsLessonOneRecoveryResult> {
 	if (!providerMessageMatches(args.message, args.prepared)) {
@@ -603,7 +689,7 @@ async function completeFromProvider(args: {
 	})
 	return {
 		state: 'completed',
-		operation: 'apply',
+		operation: args.operation,
 		intentId: completed.id,
 		providerMessageId: args.message.messageId,
 		providerStatus: args.message.status,
@@ -617,13 +703,59 @@ function providerMessageMatches(
 ) {
 	return (
 		normalizeEmail(message.recipient) === prepared.email &&
-		message.providerRecoveryKey === prepared.providerRecoveryKey
+		message.providerRecoveryKey === prepared.providerRecoveryKey &&
+		message.emailContentHash === prepared.emailContentHash
+	)
+}
+
+function intentMatchesPrepared(
+	intent: RecoveryIntent,
+	prepared: PreparedRecovery,
+) {
+	return (
+		intentAuthorityMatchesPrepared(intent, prepared) &&
+		metadataString(intent, 'emailContentHash') === prepared.emailContentHash
+	)
+}
+
+function intentAuthorityMatchesPrepared(
+	intent: RecoveryIntent,
+	prepared: PreparedRecovery,
+) {
+	const expectedMetadata: Record<string, string> = {
+		providerRecoveryKey: prepared.providerRecoveryKey,
+		recipientHash: prepared.recipientHash,
+		sourceIntentId: prepared.sourceIntentId,
+		recoveryId: prepared.recoveryId,
+		kitSubscriberId: prepared.kitSubscriberId,
+		runId: prepared.audit.runId,
+		conversationId: prepared.audit.conversationId,
+		operatorId: prepared.audit.operatorId,
+		approvalReference: prepared.audit.approvalReference,
+		expectedInboundId: prepared.audit.expectedInboundId,
+	}
+	return Object.entries(expectedMetadata).every(
+		([key, value]) => metadataString(intent, key) === value,
 	)
 }
 
 function metadataString(intent: RecoveryIntent, key: string) {
 	const value = intent.metadata[key]
 	return typeof value === 'string' ? value : undefined
+}
+
+function previewIssuedAt(token: string) {
+	const [expiresAtValue, signature, extra] = token.split('.')
+	const expiresAtMs = Number(expiresAtValue)
+	if (
+		!signature ||
+		extra ||
+		!Number.isSafeInteger(expiresAtMs) ||
+		expiresAtMs < PREVIEW_TTL_MS
+	) {
+		return null
+	}
+	return new Date(expiresAtMs - PREVIEW_TTL_MS).toISOString()
 }
 
 function createPreviewToken(args: {
@@ -669,9 +801,12 @@ function signPreviewBinding(args: {
 	const binding = JSON.stringify({
 		expiresAtMs: args.expiresAtMs,
 		email: args.prepared.email,
+		recipientHash: args.prepared.recipientHash,
+		emailContentHash: args.prepared.emailContentHash,
 		kitSubscriberId: args.prepared.kitSubscriberId,
 		contactId: args.prepared.contactId,
 		sourceIntentId: args.prepared.sourceIntentId,
+		sourceNextActionId: args.prepared.sourceNextActionId,
 		recoveryId: args.command.recoveryId,
 		audit: args.command.audit,
 	})

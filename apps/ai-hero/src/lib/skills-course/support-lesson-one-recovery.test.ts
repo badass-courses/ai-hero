@@ -80,6 +80,16 @@ function createHarness() {
 					completedAt: null,
 					metadata: {
 						providerRecoveryKey: input.providerRecoveryKey,
+						recipientHash: input.recipientHash,
+						emailContentHash: input.emailContentHash,
+						sourceIntentId: input.sourceIntentId,
+						recoveryId: input.recoveryId,
+						kitSubscriberId: input.kitSubscriberId,
+						runId: input.audit.runId,
+						conversationId: input.audit.conversationId,
+						operatorId: input.audit.operatorId,
+						approvalReference: input.audit.approvalReference,
+						expectedInboundId: input.audit.expectedInboundId,
 					},
 				}
 				return intent
@@ -159,6 +169,8 @@ describe('support Skills lesson one recovery', () => {
 		const result = await preview(harness)
 
 		expect(result.intentState).toBe('not-created')
+		expect(result.emailContentHash).toMatch(/^[0-9a-f]{64}$/)
+		expect(result.message).toEqual(EMAIL)
 		expect(result.previewToken).toMatch(/^\d+\.[0-9a-f]{64}$/)
 		expect(harness.writes).toEqual([])
 		expect(harness.send).not.toHaveBeenCalled()
@@ -211,6 +223,24 @@ describe('support Skills lesson one recovery', () => {
 		expect(harness.writes).toEqual([])
 	})
 
+	it('rebuilds expiring answer links at the preview time during apply', async () => {
+		let currentNow = FIXED_NOW
+		harness.dependencies.now = () => currentNow
+		vi.mocked(harness.dependencies.email.build).mockImplementation(
+			async ({ personalizationAt }) => ({
+				...EMAIL,
+				body: `${EMAIL.body}\nGenerated at ${personalizationAt}`,
+			}),
+		)
+		const prepared = await preview(harness)
+		currentNow = new Date(FIXED_NOW.getTime() + 60_000)
+
+		const result = await apply(harness, prepared.previewToken)
+
+		expect(result.state).toBe('pending')
+		expect(harness.send).toHaveBeenCalledTimes(1)
+	})
+
 	it('persists and claims the intent before sending, then completes after exact provider readback', async () => {
 		const prepared = await preview(harness)
 		harness.read.mockImplementationOnce(async (messageId) => ({
@@ -220,6 +250,7 @@ describe('support Skills lesson one recovery', () => {
 			providerRecoveryKey: String(
 				harness.getIntent()?.metadata.providerRecoveryKey,
 			),
+			emailContentHash: prepared.emailContentHash,
 		}))
 
 		const result = await apply(harness, prepared.previewToken)
@@ -251,6 +282,7 @@ describe('support Skills lesson one recovery', () => {
 			status: 'Sent',
 			recipient: IDENTITY.email,
 			providerRecoveryKey: recoveryKey,
+			emailContentHash: prepared.emailContentHash,
 		})
 
 		const replay = await apply(harness, prepared.previewToken)
@@ -296,5 +328,210 @@ describe('support Skills lesson one recovery', () => {
 			reason: 'delivery-state-ambiguous',
 		})
 		expect(harness.getIntent()?.status).toBe('blocked')
+		expect(harness.getIntent()?.metadata).toMatchObject({
+			automaticRetryAllowed: false,
+			freshApprovalRequired: true,
+		})
+	})
+
+	it('does not downgrade sending state when provider readback is unavailable', async () => {
+		const prepared = await preview(harness)
+		await apply(harness, prepared.previewToken)
+		harness.findByRecoveryKey.mockRejectedValueOnce(new Error('readback down'))
+
+		const result = await apply(harness, prepared.previewToken)
+
+		expect(result).toMatchObject({
+			state: 'blocked',
+			reason: 'delivery-state-ambiguous',
+		})
+		expect(harness.getIntent()?.status).toBe('sending')
+		expect(harness.send).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not downgrade completed state when provider readback is unavailable', async () => {
+		const prepared = await preview(harness)
+		await apply(harness, prepared.previewToken)
+		const current = harness.getIntent()
+		if (!current) throw new Error('Expected intent')
+		harness.setIntent({ ...current, status: 'completed' })
+		harness.read.mockRejectedValueOnce(new Error('readback down'))
+
+		const result = await apply(harness, prepared.previewToken)
+
+		expect(result).toMatchObject({
+			state: 'pending',
+			reason: 'provider-readback-pending',
+		})
+		expect(harness.getIntent()?.status).toBe('completed')
+		expect(harness.send).toHaveBeenCalledTimes(1)
+	})
+
+	it('never downgrades ambiguous delivery after a provider readback outage', async () => {
+		const prepared = await preview(harness)
+		harness.send.mockResolvedValueOnce({
+			state: 'ambiguous',
+			reason: 'postmark-network-failure',
+		})
+		await apply(harness, prepared.previewToken)
+
+		harness.findByRecoveryKey.mockRejectedValueOnce(new Error('readback down'))
+		const duringOutage = await apply(harness, prepared.previewToken)
+		expect(duringOutage).toMatchObject({
+			state: 'blocked',
+			reason: 'recovery-blocked',
+		})
+		expect(harness.getIntent()?.status).toBe('blocked')
+
+		const afterOutage = await apply(harness, prepared.previewToken)
+		expect(afterOutage).toMatchObject({
+			state: 'blocked',
+			reason: 'recovery-blocked',
+		})
+		expect(harness.send).toHaveBeenCalledTimes(1)
+	})
+
+	it('persists completion when a later readback finds the exact provider message', async () => {
+		const prepared = await preview(harness)
+		const first = await apply(harness, prepared.previewToken)
+		expect(first.state).toBe('pending')
+		harness.setProviderMessage({
+			messageId: 'message_1',
+			status: 'Sent',
+			recipient: IDENTITY.email,
+			providerRecoveryKey: String(
+				harness.getIntent()?.metadata.providerRecoveryKey,
+			),
+			emailContentHash: prepared.emailContentHash,
+		})
+
+		const result = await runSupportSkillsLessonOneRecovery({
+			command: { ...previewCommand(), operation: 'readback' },
+			dependencies: harness.dependencies,
+		})
+
+		expect(result).toMatchObject({
+			state: 'completed',
+			operation: 'readback',
+			providerMessageId: 'message_1',
+		})
+		expect(harness.getIntent()?.status).toBe('completed')
+	})
+
+	it('rejects apply when personalized message content changed after preview', async () => {
+		const prepared = await preview(harness)
+		vi.mocked(harness.dependencies.email.build).mockResolvedValueOnce({
+			...EMAIL,
+			body: `${EMAIL.body}\nchanged`,
+		})
+
+		const result = await apply(harness, prepared.previewToken)
+
+		expect(result).toEqual({
+			state: 'blocked',
+			reason: 'preview-token-invalid',
+		})
+		expect(harness.send).not.toHaveBeenCalled()
+	})
+
+	it('blocks provider readback when the content hash does not match the preview', async () => {
+		const prepared = await preview(harness)
+		await apply(harness, prepared.previewToken)
+		harness.setProviderMessage({
+			messageId: 'message_1',
+			status: 'Sent',
+			recipient: IDENTITY.email,
+			providerRecoveryKey: String(
+				harness.getIntent()?.metadata.providerRecoveryKey,
+			),
+			emailContentHash: 'different-content',
+		})
+
+		const result = await runSupportSkillsLessonOneRecovery({
+			command: { ...previewCommand(), operation: 'readback' },
+			dependencies: harness.dependencies,
+		})
+
+		expect(result).toMatchObject({
+			state: 'blocked',
+			reason: 'provider-readback-mismatch',
+		})
+		expect(harness.getIntent()?.status).toBe('sending')
+	})
+
+	it('rejects reuse of a recovery id under different operator authority', async () => {
+		const prepared = await preview(harness)
+		await apply(harness, prepared.previewToken)
+		const changedCommand: SkillsLessonOneRecoveryCommand = {
+			...previewCommand(),
+			operation: 'preview',
+			audit: { ...AUDIT, approvalReference: 'different-approval' },
+		}
+		const changedPreview = await runSupportSkillsLessonOneRecovery({
+			command: changedCommand,
+			dependencies: harness.dependencies,
+		})
+		if (changedPreview.state !== 'ready') throw new Error('Expected preview')
+
+		const result = await runSupportSkillsLessonOneRecovery({
+			command: {
+				...changedCommand,
+				operation: 'apply',
+				allowWrite: true,
+				previewToken: changedPreview.previewToken,
+			},
+			dependencies: harness.dependencies,
+		})
+
+		expect(result).toMatchObject({
+			state: 'blocked',
+			reason: 'intent-idempotency-conflict',
+		})
+		expect(harness.send).toHaveBeenCalledTimes(1)
+	})
+
+	it('rejects reuse of a recovery id for a different recipient identity', async () => {
+		const prepared = await preview(harness)
+		await apply(harness, prepared.previewToken)
+		vi.mocked(harness.dependencies.subscribers.findByEmail).mockResolvedValue({
+			state: 'found',
+			id: 'kit_42',
+			email: 'other@example.com',
+			subscriberState: 'active',
+		})
+		vi.mocked(harness.dependencies.store.findContext).mockResolvedValue({
+			contactId: 'contact_41',
+			sourceIntentId: 'source_intent_1',
+			sourceNextActionId: 'source_action_1',
+		})
+		const otherCommand: SkillsLessonOneRecoveryCommand = {
+			...previewCommand(),
+			operation: 'preview',
+			identity: {
+				email: 'other@example.com',
+				kitSubscriberId: 'kit_42',
+			},
+		}
+		const otherPreview = await runSupportSkillsLessonOneRecovery({
+			command: otherCommand,
+			dependencies: harness.dependencies,
+		})
+		if (otherPreview.state !== 'ready') throw new Error('Expected preview')
+
+		const result = await runSupportSkillsLessonOneRecovery({
+			command: {
+				...otherCommand,
+				operation: 'apply',
+				allowWrite: true,
+				previewToken: otherPreview.previewToken,
+			},
+			dependencies: harness.dependencies,
+		})
+
+		expect(result).toMatchObject({
+			state: 'blocked',
+			reason: 'intent-idempotency-conflict',
+		})
+		expect(harness.send).toHaveBeenCalledTimes(1)
 	})
 })

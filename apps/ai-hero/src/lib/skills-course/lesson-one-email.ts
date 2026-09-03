@@ -4,7 +4,7 @@ type AnswerLink = {
 }
 
 export const SKILLS_COURSE_LESSON_ONE_SUBJECT =
-	'Your first AI Skills lesson — sent again'
+	'Your first AI Skills lesson, sent again'
 export const SKILLS_COURSE_LESSON_ONE_PREVIEW =
 	'Choose the AI workflow path that fits your work.'
 
