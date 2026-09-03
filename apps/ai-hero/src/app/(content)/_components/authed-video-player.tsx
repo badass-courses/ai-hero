@@ -202,7 +202,6 @@ export function AuthedVideoPlayer({
 			const value = target.volume || 1
 			setPlayerPrefs({ volume: value })
 		},
-		onLoadedMetadata: bindVideoQuality,
 		onLoadedData: () => {
 			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
 			handleTextTrackChange(playerRef, setPlayerPrefs)
@@ -270,6 +269,10 @@ export function AuthedVideoPlayer({
 				className="h-full w-full"
 				{...playerProps}
 				{...props}
+				onLoadedMetadata={(event) => {
+					bindVideoQuality()
+					props.onLoadedMetadata?.(event)
+				}}
 			/>
 		</PlayerGestureShell>
 	) : null

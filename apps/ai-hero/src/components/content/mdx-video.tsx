@@ -102,8 +102,11 @@ export default function MDXVideo({
 				thumbnailTime={thumbnailTime}
 				poster={poster}
 				playsInline
-				onLoadedMetadata={bindVideoQuality}
 				{...props}
+				onLoadedMetadata={(event) => {
+					bindVideoQuality()
+					props?.onLoadedMetadata?.(event)
+				}}
 			/>
 		</PlayerGestureShell>
 	)
