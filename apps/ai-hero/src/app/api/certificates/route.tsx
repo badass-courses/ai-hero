@@ -10,6 +10,7 @@ import {
 	checkCertificateEligibility,
 	checkCohortCertificateEligibility,
 } from '@/lib/certificates'
+import { certificateTitleFor } from '@/lib/certificate-title'
 import {
 	checkSkillsWorkflowValuePathCertificateEligibility,
 	isSkillsWorkflowCertificateResource,
@@ -82,7 +83,8 @@ export async function GET(request: Request) {
 
 		let isEligible = Boolean(publicShare)
 		let completedAt: Date | null | undefined = publicShare?.completedAt
-		let certificateTitle = publicShare?.courseName ?? resource?.fields?.title
+		let certificateTitle =
+			publicShare?.courseName ?? certificateTitleFor(resource?.fields?.title)
 		let certificateKind = publicShare
 			? 'Course'
 			: resource?.type === 'cohort'

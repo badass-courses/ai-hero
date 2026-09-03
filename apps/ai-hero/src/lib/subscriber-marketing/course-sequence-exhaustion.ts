@@ -60,14 +60,23 @@ export type CourseSequenceExhaustedPayload = {
 			readonly emailResourceId: string
 			readonly completedAt: IsoInstant
 		}
-		readonly trigger: {
-			readonly type: 'DailyDripDue'
-			readonly evaluatedAt: IsoInstant
-			readonly reason:
-				| 'local-day-9am-due'
-				| 'fallback-24h-due'
-				| 'fixture-cadence-due'
-		}
+		readonly trigger:
+			| {
+					readonly type: 'DailyDripDue'
+					readonly evaluatedAt: IsoInstant
+					readonly reason:
+						| 'local-day-9am-due'
+						| 'fallback-24h-due'
+						| 'fixture-cadence-due'
+			  }
+			| {
+					readonly type: 'DeliverySettled'
+					readonly evaluatedAt: IsoInstant
+					readonly plannedAvailableAt: IsoInstant
+					readonly policy:
+						| 'EighteenHourFloorThenLocalNine'
+						| 'ExplicitTwentyFourHourFallback'
+			  }
 		readonly terminal: {
 			readonly intentId: string
 			readonly idempotencyKey: string
@@ -120,6 +129,11 @@ export type CourseSequenceExhaustionCommitResult =
 			readonly status: 'legacy-terminal-intent-without-fact'
 			readonly terminalIntentId: string
 	  }
+	| {
+			readonly status: 'email-course-authority-present'
+			readonly factId: string
+			readonly terminalIntentId: string
+	  }
 
 const IsoInstantSchema = parsedString(parseIsoInstant)
 const IanaTimeZoneSchema = parsedString(parseIanaTimeZone)
@@ -160,6 +174,16 @@ const EmailCourseEntryPayloadSchema: z.ZodType<
 		deadlineTimeZone: DeadlineTimeZoneEvidenceSchema,
 	})
 	.strict()
+const StoredCoursePayloadSchema = z
+	.object({
+		coursePayload: z
+			.object({
+				format: z.string().trim().min(1),
+				payload: z.unknown(),
+			})
+			.strict(),
+	})
+	.passthrough()
 const CourseSequenceExhaustedPayloadSchema: z.ZodType<
 	CourseSequenceExhaustedPayload,
 	z.ZodTypeDef,
@@ -190,17 +214,30 @@ const CourseSequenceExhaustedPayloadSchema: z.ZodType<
 							completedAt: IsoInstantSchema,
 						})
 						.strict(),
-					trigger: z
-						.object({
-							type: z.literal('DailyDripDue'),
-							evaluatedAt: IsoInstantSchema,
-							reason: z.enum([
-								'local-day-9am-due',
-								'fallback-24h-due',
-								'fixture-cadence-due',
-							]),
-						})
-						.strict(),
+					trigger: z.discriminatedUnion('type', [
+						z
+							.object({
+								type: z.literal('DailyDripDue'),
+								evaluatedAt: IsoInstantSchema,
+								reason: z.enum([
+									'local-day-9am-due',
+									'fallback-24h-due',
+									'fixture-cadence-due',
+								]),
+							})
+							.strict(),
+						z
+							.object({
+								type: z.literal('DeliverySettled'),
+								evaluatedAt: IsoInstantSchema,
+								plannedAvailableAt: IsoInstantSchema,
+								policy: z.enum([
+									'EighteenHourFloorThenLocalNine',
+									'ExplicitTwentyFourHourFallback',
+								]),
+							})
+							.strict(),
+					]),
 					terminal: z
 						.object({
 							intentId: z.string().trim().min(1),
@@ -332,6 +369,31 @@ export function restoreDeadlineTimeZoneEvidence(
 	const parsed = DeadlineTimeZoneEvidenceSchema.safeParse(input)
 	return parsed.success ? parsed.data : undefined
 }
+
+export function withCoursePayload(
+	payloadSummary: ContactEventRecord['payloadSummary'],
+	format: string,
+	payload: EmailCourseEntryPayload | CourseSequenceExhaustedPayload,
+) {
+	return {
+		...payloadSummary,
+		coursePayload: { format, payload },
+	}
+}
+
+/* oxlint-disable anti-slop(no-unknown-parameters) -- This is the JSON-column boundary; the outer and nested domain schemas parse it before use. */
+export function readCoursePayload(
+	value: unknown,
+): { format: string; payload: unknown } | undefined {
+	const restored = StoredCoursePayloadSchema.safeParse(value)
+	return restored.success
+		? {
+				format: restored.data.coursePayload.format,
+				payload: restored.data.coursePayload.payload,
+			}
+		: undefined
+}
+/* oxlint-enable anti-slop(no-unknown-parameters) */
 
 export function restoreEmailCourseEntryPayload(
 	input: unknown,

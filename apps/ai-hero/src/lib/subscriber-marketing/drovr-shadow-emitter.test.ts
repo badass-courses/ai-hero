@@ -147,7 +147,7 @@ describe('drovr shadow fact mapper', () => {
 				tenantId: 'org-aihero-shadow',
 				contactId: 'contact-1',
 				journeyId: 'value-path-skills-course',
-				type: 'course.completed',
+				type: 'course.sequence-exhausted',
 				occurredAt,
 				idempotencyKey:
 					'aihero:completion:contact-1:ai-hero-skills-workflow',
@@ -156,7 +156,7 @@ describe('drovr shadow fact mapper', () => {
 				tenantId: 'org-aihero-shadow',
 				contactId: 'contact-1',
 				journeyId: 'crash-course-evergreen-offer',
-				type: 'course.completed',
+				type: 'course.sequence-exhausted',
 				occurredAt,
 				idempotencyKey:
 					'aihero:completion:contact-1:ai-hero-skills-workflow',

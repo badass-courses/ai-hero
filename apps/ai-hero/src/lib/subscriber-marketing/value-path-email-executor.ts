@@ -41,7 +41,8 @@ export type ValuePathEmailExecutorRepository = {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		> & Pick<SideEffectIntent, 'completedAt'>,
+		> &
+			Pick<SideEffectIntent, 'completedAt'>,
 	): Promise<SideEffectIntent> | SideEffectIntent
 }
 
@@ -86,11 +87,19 @@ export type ValuePathEmailExecutionResult =
 
 const DEFAULT_MAX_RETRY_ATTEMPTS = 5
 
+export type ValuePathEmailShadowObserver = (observation: {
+	courseEntryEventId: string
+	legacyIntentId: string
+	emailResourceId: string
+	completedAt: string
+}) => Promise<unknown>
+
 export async function executePendingValuePathEmailIntents(args: {
 	repository: ValuePathEmailExecutorRepository
 	emailListProvider: ValuePathEmailListProvider
 	config?: ValuePathEmailExecutorConfig
 	now?: string
+	shadowObserver?: ValuePathEmailShadowObserver
 }): Promise<ValuePathEmailExecutionResult[]> {
 	const intents =
 		await args.repository.findPendingValuePathEmailSideEffectIntents({
@@ -130,6 +139,7 @@ export async function executeValuePathEmailIntent(args: {
 	intent: SideEffectIntent
 	config?: ValuePathEmailExecutorConfig
 	now?: string
+	shadowObserver?: ValuePathEmailShadowObserver
 }): Promise<ValuePathEmailExecutionResult> {
 	const intent = args.intent
 	if (intent.provider !== 'kit' || intent.type !== 'send-value-path-email') {
@@ -293,6 +303,18 @@ export async function executeValuePathEmailIntent(args: {
 			reviewReasons: [],
 			metadata: completedMetadata,
 		})
+		if (
+			args.shadowObserver &&
+			metadata.courseEntryEventId &&
+			metadata.emailResourceId
+		) {
+			await observeShadowWithoutThrow(args.shadowObserver, {
+				courseEntryEventId: metadata.courseEntryEventId,
+				legacyIntentId: intent.id,
+				emailResourceId: metadata.emailResourceId,
+				completedAt,
+			})
+		}
 		emitDrovrShadowFactSafely({
 			kind: 'side-effect-intent-completed',
 			intent: {
@@ -644,10 +666,22 @@ function sleep(ms: number) {
 function parseValuePathEmailIntentMetadata(metadata: Record<string, unknown>) {
 	return {
 		mode: parseExecutorMode(stringField(metadata.mode)),
+		courseEntryEventId: stringField(metadata.courseEntryEventId),
 		valuePathSlug: stringField(metadata.valuePathSlug),
 		emailResourceId: stringField(metadata.emailResourceId),
 		kitSequenceId: stringField(metadata.kitSequenceId),
 		kitSubscriberId: stringField(metadata.kitSubscriberId),
+	}
+}
+
+async function observeShadowWithoutThrow(
+	observer: ValuePathEmailShadowObserver,
+	observation: Parameters<ValuePathEmailShadowObserver>[0],
+): Promise<void> {
+	try {
+		await observer(observation)
+	} catch {
+		// Shadow state and parity cannot alter the committed production delivery.
 	}
 }
 

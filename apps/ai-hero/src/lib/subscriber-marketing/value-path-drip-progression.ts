@@ -633,7 +633,19 @@ async function commitTerminalSequenceExhaustion(args: {
 		? parseIsoInstant(completedAt)
 		: undefined
 	const parsedExhaustedAt = parseIsoInstant(args.now)
-	if (!deadlineTimeZone || !parsedCompletedAt?.ok || !parsedExhaustedAt.ok) {
+	const storedExhaustedAt = parsedExhaustedAt.ok
+		? parseIsoInstant(
+				new Date(
+					Math.floor(Date.parse(parsedExhaustedAt.value) / 1000) * 1000,
+				).toISOString(),
+			)
+		: undefined
+	if (
+		!deadlineTimeZone ||
+		!parsedCompletedAt?.ok ||
+		!parsedExhaustedAt.ok ||
+		!storedExhaustedAt?.ok
+	) {
 		return {
 			contactId: args.contact.id,
 			fromEmailResourceId: args.fromEmailResourceId,
@@ -660,7 +672,7 @@ async function commitTerminalSequenceExhaustion(args: {
 			valuePathId: args.nextValuePathSlug,
 			courseEntryEventId,
 		},
-		exhaustedAt: parsedExhaustedAt.value,
+		exhaustedAt: storedExhaustedAt.value,
 		deadlineTimeZone,
 		progression: {
 			from: {
@@ -695,7 +707,7 @@ async function commitTerminalSequenceExhaustion(args: {
 			providerEventId: factKey,
 			providerReference: `value-path:${args.nextValuePathSlug}`,
 			eventType: COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
-			occurredAt: args.now,
+			occurredAt: storedExhaustedAt.value,
 			semanticIdempotencyKey: factKey,
 			domainFactKey: factKey,
 			payloadFormat: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
@@ -763,6 +775,19 @@ async function commitTerminalSequenceExhaustion(args: {
 		courseEntryEventId,
 		records,
 	})
+	if (committed.status === 'email-course-authority-present') {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'idempotent-noop',
+			reviewReasons: ['email-course-authority-present'],
+			advisoryReasons: args.advisoryReasons,
+			contactEventId: committed.factId,
+			sideEffectIntentId: committed.terminalIntentId,
+		}
+	}
 	if (committed.status === 'legacy-terminal-intent-without-fact') {
 		return {
 			contactId: args.contact.id,

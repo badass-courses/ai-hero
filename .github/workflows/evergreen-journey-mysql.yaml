@@ -14,6 +14,8 @@ on:
       - "apps/ai-hero/src/lib/mysql-primary-key-retry.ts"
       - "apps/ai-hero/src/lib/team-purchase-mysql-test-guard.ts"
       - "apps/ai-hero/src/lib/subscriber-marketing/evergreen-offer-journey/**"
+      - "apps/ai-hero/src/lib/subscriber-marketing/email-course/**"
+      - "apps/ai-hero/src/lib/subscriber-marketing/email-course*"
       - "apps/ai-hero/src/lib/subscriber-marketing/course-sequence-exhaustion*"
       - "apps/ai-hero/src/lib/subscriber-marketing/drizzle-capture-repository*"
       - "apps/ai-hero/src/lib/subscriber-marketing/value-path-drip-progression.ts"
@@ -31,6 +33,8 @@ on:
       - "apps/ai-hero/src/lib/mysql-primary-key-retry.ts"
       - "apps/ai-hero/src/lib/team-purchase-mysql-test-guard.ts"
       - "apps/ai-hero/src/lib/subscriber-marketing/evergreen-offer-journey/**"
+      - "apps/ai-hero/src/lib/subscriber-marketing/email-course/**"
+      - "apps/ai-hero/src/lib/subscriber-marketing/email-course*"
       - "apps/ai-hero/src/lib/subscriber-marketing/course-sequence-exhaustion*"
       - "apps/ai-hero/src/lib/subscriber-marketing/drizzle-capture-repository*"
       - "apps/ai-hero/src/lib/subscriber-marketing/value-path-drip-progression.ts"
@@ -75,3 +79,4 @@ jobs:
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/drizzle-ledger.mysql.test.ts
           src/lib/subscriber-marketing/course-sequence-exhaustion.mysql.test.ts
+          src/lib/subscriber-marketing/email-course-drizzle-ledger.mysql.test.ts

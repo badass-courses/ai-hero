@@ -15,6 +15,27 @@ import { useModuleProgress } from './module-progress-provider'
  * placard — a drawing of the reward where the sidebar needs a report of the
  * distance to it. Unlocking swaps the lock for the Get Certificate action.
  */
+/**
+ * The certificate dialog's contents: name, download, share URL. Every place
+ * the certificate can be claimed from (sidebar tile, completion overlay,
+ * actions bar) opens the same dialog, so the learner learns one flow.
+ */
+export const CertificateDialog = () => (
+	<ModuleCertificate.Dialog>
+		<ModuleCertificate.NameInput />
+		<ModuleCertificate.DownloadButton />
+		<div>
+			<p className="pb-1 text-sm font-medium">
+				Share URL (can be used on LinkedIn, etc.)
+			</p>
+			<div className="flex items-center">
+				<ModuleCertificate.GenerateShareUrlButton />
+				<ModuleCertificate.ShareUrl />
+			</div>
+		</div>
+	</ModuleCertificate.Dialog>
+)
+
 export const Certificate = ({
 	resourceSlugOrId,
 }: {
@@ -63,19 +84,7 @@ export const Certificate = ({
 					Get Certificate
 				</ModuleCertificate.Trigger>
 			</div>
-			<ModuleCertificate.Dialog>
-				<ModuleCertificate.NameInput />
-				<ModuleCertificate.DownloadButton />
-				<div>
-					<p className="pb-1 text-sm font-medium">
-						Share URL (can be used on LinkedIn, etc.)
-					</p>
-					<div className="flex items-center">
-						<ModuleCertificate.GenerateShareUrlButton />
-						<ModuleCertificate.ShareUrl />
-					</div>
-				</div>
-			</ModuleCertificate.Dialog>
+			<CertificateDialog />
 		</ModuleCertificate.Root>
 	) : (
 		<div className="border-border flex flex-col gap-2.5 rounded-[11px] border p-4">

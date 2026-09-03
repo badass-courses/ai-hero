@@ -1,9 +1,67 @@
 'use client'
 
 import * as CohortCertificate from '@/components/certificates/cohort-certificate'
+import { TYPE } from '@/components/landing/type'
+import type { CohortNavigation } from '@/lib/cohort-navigation'
+import { api } from '@/trpc/react'
 import { Lock, LockKeyhole } from 'lucide-react'
+import { useSession } from 'next-auth/react'
 
 import { Button } from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
+
+/** The cohort certificate dialog's contents, shared by every entry point. */
+export const CohortCertificateDialog = () => (
+	<CohortCertificate.Dialog>
+		<CohortCertificate.NameInput />
+		<CohortCertificate.DownloadButton />
+		<div>
+			<p className={cn(TYPE.meta, 'pb-1')}>
+				Share URL (can be used on LinkedIn, etc.)
+			</p>
+			<div className="flex items-center">
+				<CohortCertificate.GenerateShareUrlButton />
+				<CohortCertificate.ShareUrl />
+			</div>
+		</div>
+	</CohortCertificate.Dialog>
+)
+
+/**
+ * Whether the signed-in learner may claim this cohort's certificate. The
+ * lesson page only knows its own workshop's progress, so the cohort-wide
+ * answer is a server read.
+ */
+export function useCohortCertificateEligibility(
+	cohort: CohortNavigation | null,
+) {
+	const { status } = useSession()
+	const { data } = api.certificate.cohortEligibility.useQuery(
+		{ cohortId: cohort?.id ?? '' },
+		{ enabled: status === 'authenticated' && Boolean(cohort?.id) },
+	)
+	return Boolean(data?.eligible)
+}
+
+/**
+ * "Get your cohort certificate" for the moment the last workshop ends. The
+ * caller decides eligibility (see `useCohortCertificateEligibility`) so it
+ * can also arrange the buttons around it.
+ */
+export const CohortCertificateAction = ({
+	cohort,
+	className,
+}: {
+	cohort: CohortNavigation
+	className?: string
+}) => (
+	<CohortCertificate.Root resourceIdOrSlug={cohort.slug}>
+		<CohortCertificate.Trigger className={className}>
+			Get your {cohort.title} certificate
+		</CohortCertificate.Trigger>
+		<CohortCertificateDialog />
+	</CohortCertificate.Root>
+)
 
 export const Certificate = ({
 	resourceSlugOrId,
@@ -24,19 +82,7 @@ export const Certificate = ({
 				</Button>
 				<Bg />
 			</CohortCertificate.Trigger>
-			<CohortCertificate.Dialog>
-				<CohortCertificate.NameInput />
-				<CohortCertificate.DownloadButton />
-				<div>
-					<p className="pb-1 text-sm font-medium">
-						Share URL (can be used on LinkedIn, etc.)
-					</p>
-					<div className="flex items-center">
-						<CohortCertificate.GenerateShareUrlButton />
-						<CohortCertificate.ShareUrl />
-					</div>
-				</div>
-			</CohortCertificate.Dialog>
+			<CohortCertificateDialog />
 		</CohortCertificate.Root>
 	) : (
 		<div className="bg-background aspect-842/595 relative flex h-fit w-full flex-col items-center justify-center border-y text-sm">

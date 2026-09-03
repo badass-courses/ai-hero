@@ -4,6 +4,7 @@ import { Metadata } from 'next/types'
 import { Email } from '@/app/(email-list)/_components/email'
 import { Signature } from '@/app/(email-list)/_components/signature'
 import LayoutClient from '@/components/layout-client'
+import { SKILLS_COURSE_WAYFINDING } from '@/lib/skills-content'
 
 export const metadata: Metadata = {
 	title: 'Confirm your subscription',
@@ -29,13 +30,17 @@ export default async function ConfirmSubscriptionPage({
 					</h1>
 					<div className="prose dark:prose-invert sm:prose-lg prose-p:text-balance mx-auto leading-relaxed opacity-80">
 						{isCourseFlow ? (
-							<p>
-								Your first lesson is on its way to{' '}
-								<Suspense>
-									<Email />
-								</Suspense>
-								. It usually arrives within a few minutes.
-							</p>
+							<>
+								<p>
+									Your first lesson is on its way to{' '}
+									<Suspense>
+										<Email />
+									</Suspense>
+									. It usually arrives within a few minutes.
+								</p>
+								<p>{SKILLS_COURSE_WAYFINDING.location}</p>
+								<p>{SKILLS_COURSE_WAYFINDING.progression}</p>
+							</>
 						) : (
 							<p>
 								We sent an email to{' '}
