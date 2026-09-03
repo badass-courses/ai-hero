@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
 import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
 import { api } from '@/trpc/react'
 import type {
@@ -52,6 +53,7 @@ export default function MDXVideo({
 
 	const playbackId = muxPlaybackId ?? data?.muxPlaybackId
 	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
+	const bindVideoQuality = useVideoQualityPref(playerRef)
 
 	// Only show the loading state while the fallback query is actually running.
 	if (!muxPlaybackId && status === 'pending')
@@ -100,6 +102,7 @@ export default function MDXVideo({
 				thumbnailTime={thumbnailTime}
 				poster={poster}
 				playsInline
+				onLoadedMetadata={bindVideoQuality}
 				{...props}
 			/>
 		</PlayerGestureShell>
