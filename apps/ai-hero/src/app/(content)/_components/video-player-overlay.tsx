@@ -48,7 +48,10 @@ import { revalidateModuleLesson } from '../actions'
 import { CopyProblemPromptButton } from '../workshops/_components/copy-problem-prompt-button'
 import { VideoOverlayWorkshopPricing } from '../workshops/_components/video-overlay-pricing-widget'
 import type { WorkshopPageProps } from '../workshops/_components/workshop-page-props'
+import * as ModuleCertificate from '@/components/certificates/module-certificate'
+
 import { handleSetLessonComplete } from './authed-video-player'
+import { CertificateDialog } from './module-certificate-container'
 import { useModuleProgress } from './module-progress-provider'
 
 export const CompletedLessonOverlay: React.FC<{
@@ -252,7 +255,50 @@ export const CompletedModuleOverlay: React.FC<{
 				: getResourcePath('workshop', nextWorkshop.slug, 'view')
 			: null
 
-	return (
+	// The certificate is claimed here, at the moment it's earned. Before this
+	// the only mention was a sidebar tile on the landing page, so a learner who
+	// finished on the lesson page never learned one existed. Primary when the
+	// workshop is the end of the road; when a next workshop follows, that stays
+	// the primary action and the certificate sits beside it.
+	const replayButton = (
+		<Button
+			className="rounded-md border border-white/20 bg-white/10 hover:bg-white/20"
+			variant="outline"
+			type="button"
+			onClick={() => {
+				if (playerRef.current) {
+					playerRef.current.play()
+				}
+			}}
+		>
+			Replay
+		</Button>
+	)
+	const actions =
+		nextWorkshop && nextWorkshopHref ? (
+			<>
+				{replayButton}
+				{moduleSlug && (
+					<ModuleCertificate.Trigger className="rounded-md border border-white/20 bg-white/10 text-white hover:bg-white/20">
+						Get your certificate
+					</ModuleCertificate.Trigger>
+				)}
+				<Button asChild variant="default">
+					<Link href={nextWorkshopHref}>Continue to {nextWorkshop.title}</Link>
+				</Button>
+			</>
+		) : (
+			<>
+				{replayButton}
+				{moduleSlug && (
+					<ModuleCertificate.Trigger className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover rounded-md font-bold">
+						Get your certificate
+					</ModuleCertificate.Trigger>
+				)}
+			</>
+		)
+
+	const overlay = (
 		<div
 			aria-live="polite"
 			className="absolute left-0 top-0 z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-2 bg-gray-900/80 p-5 text-lg text-white backdrop-blur-md sm:gap-5 xl:gap-5"
@@ -263,26 +309,8 @@ export const CompletedModuleOverlay: React.FC<{
 				{moduleType}.
 			</p>
 			<span id="rewardId" />
-			<div className="flex w-full items-center justify-center gap-3">
-				<Button
-					className="rounded-md border border-white/20 bg-white/10 hover:bg-white/20"
-					variant="outline"
-					type="button"
-					onClick={() => {
-						if (playerRef.current) {
-							playerRef.current.play()
-						}
-					}}
-				>
-					Replay
-				</Button>
-				{nextWorkshop && nextWorkshopHref && (
-					<Button asChild variant="default">
-						<Link href={nextWorkshopHref}>
-							Continue to {nextWorkshop.title}
-						</Link>
-					</Button>
-				)}
+			<div className="flex w-full flex-wrap items-center justify-center gap-3">
+				{actions}
 			</div>
 			<Button
 				type="button"
@@ -297,6 +325,14 @@ export const CompletedModuleOverlay: React.FC<{
 				<XMarkIcon aria-hidden="true" className="h-4 w-4" />
 			</Button>
 		</div>
+	)
+
+	if (!moduleSlug) return overlay
+	return (
+		<ModuleCertificate.Root resourceIdOrSlug={moduleSlug}>
+			{overlay}
+			<CertificateDialog />
+		</ModuleCertificate.Root>
 	)
 }
 
