@@ -31,6 +31,7 @@ import {
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { Github } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
+import { format } from 'date-fns'
 import readingTime from 'reading-time'
 
 import { ContentResourceResource } from '@coursebuilder/core/schemas'
@@ -640,6 +641,12 @@ function getReadingLabel(body: string | null | undefined) {
 	return `${minutes} min read`
 }
 
+/** "Updated Aug 29, 2026" — the row's last save, so edits show as edits. */
+function getUpdatedLabel(updatedAt: Date | null | undefined) {
+	if (!updatedAt) return null
+	return `Updated ${format(updatedAt, 'MMM d, yyyy')}`
+}
+
 /** mm:ss, the way a player reports a runtime. */
 function formatRuntime(seconds: number) {
 	const whole = Math.round(seconds)
@@ -704,6 +711,7 @@ async function PostHead({
 				? `${videoMinutes} min video`
 				: null
 			: getReadingLabel(post.fields?.body),
+		getUpdatedLabel(post.updatedAt),
 	]
 		.filter(Boolean)
 		.join(' · ')
