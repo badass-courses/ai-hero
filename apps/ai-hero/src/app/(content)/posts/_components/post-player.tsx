@@ -8,6 +8,7 @@ import Spinner from '@/components/spinner'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
 import {
 	handleTextTrackChange,
 	setPreferredTextTrack,
@@ -62,6 +63,7 @@ export function PostPlayer({
 		contentType: 'post',
 	})
 	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
+	const bindVideoQuality = useVideoQualityPref(playerRef)
 	const chapters = videoResource?.chapters ?? null
 	useMuxChapters(playerRef, chapters)
 	const searchParams = useSearchParams()
@@ -100,6 +102,7 @@ export function PostPlayer({
 			const value = target.volume || 1
 			setPlayerPrefs({ volume: value })
 		},
+		onLoadedMetadata: bindVideoQuality,
 		onLoadedData: () => {
 			dispatchVideoPlayerOverlay({ type: 'HIDDEN' })
 			handleTextTrackChange(playerRef, setPlayerPrefs)
@@ -224,6 +227,7 @@ export function SimplePostPlayer({
 
 	const localRef = React.useRef<MuxPlayerRefAttributes | null>(null)
 	const playerRef = ref ?? localRef
+	const bindVideoQuality = useVideoQualityPref(playerRef)
 	useMuxChapters(playerRef, videoResource?.chapters ?? null)
 
 	const playerProps = {
@@ -235,6 +239,7 @@ export function SimplePostPlayer({
 		playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
 		maxResolution: '2160p',
 		minResolution,
+		onLoadedMetadata: bindVideoQuality,
 	} as MuxPlayerProps
 
 	const playbackId =
