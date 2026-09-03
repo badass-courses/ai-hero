@@ -54,6 +54,10 @@ import type { WorkshopPageProps } from '../workshops/_components/workshop-page-p
 import * as ModuleCertificate from '@/components/certificates/module-certificate'
 
 import { handleSetLessonComplete } from './authed-video-player'
+import {
+	CohortCertificateAction,
+	useCohortCertificateEligibility,
+} from './cohort-certificate-container'
 import { CertificateDialog } from './module-certificate-container'
 import { useModuleProgress } from './module-progress-provider'
 
@@ -264,6 +268,14 @@ export const CompletedModuleOverlay: React.FC<{
 		cohortNavigation,
 		moduleNavigation?.id,
 	)
+	// The last workshop of a cohort is where the cohort certificate is earned.
+	// Its eligibility is a server read; when it comes back positive the cohort
+	// certificate takes the gold slot and the workshop's own drops to outline.
+	const isLastCohortWorkshop = Boolean(cohortNavigation && !nextWorkshop)
+	const canClaimCohortCertificate =
+		useCohortCertificateEligibility(
+			isLastCohortWorkshop ? cohortNavigation : null,
+		) && Boolean(cohortNavigation)
 	const nextWorkshopHref =
 		nextWorkshop && isWorkshopAvailable(nextWorkshop)
 			? nextWorkshop.firstLesson
@@ -310,9 +322,21 @@ export const CompletedModuleOverlay: React.FC<{
 			<>
 				{replayButton}
 				{moduleSlug && (
-					<ModuleCertificate.Trigger className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover rounded-md font-bold">
+					<ModuleCertificate.Trigger
+						className={
+							canClaimCohortCertificate
+								? 'rounded-md border border-white/20 bg-white/10 text-white hover:bg-white/20'
+								: 'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover rounded-md font-bold'
+						}
+					>
 						Get your certificate
 					</ModuleCertificate.Trigger>
+				)}
+				{canClaimCohortCertificate && cohortNavigation && (
+					<CohortCertificateAction
+						cohort={cohortNavigation}
+						className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover rounded-md font-bold"
+					/>
 				)}
 			</>
 		)
