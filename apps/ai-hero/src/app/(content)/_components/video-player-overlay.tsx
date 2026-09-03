@@ -13,7 +13,10 @@ import {
 	getNextCohortWorkshop,
 	isWorkshopAvailable,
 } from '@/lib/cohort-navigation'
-import { findParentLessonForSolution } from '@/lib/content-navigation'
+import {
+	findParentLessonForSolution,
+	getModuleCompletionState,
+} from '@/lib/content-navigation'
 import { setProgressForResource } from '@/lib/progress'
 import { MinimalWorkshop } from '@/lib/workshops'
 import type { Subscriber } from '@/schemas/subscriber'
@@ -86,7 +89,23 @@ export const CompletedLessonOverlay: React.FC<{
 
 	const percentCompleted = moduleProgress?.percentCompleted || 0
 
-	return nextLesson && !action.isModuleComplete ? (
+	// Decide "is the workshop finished" from live progress, not from the
+	// snapshot the ended handler captured. That snapshot can lag the durable
+	// state and has shown a learner "Up Next: <lesson 1>" beside "6/6
+	// completed" on the last lesson, which also hides the certificate.
+	const resourceToComplete =
+		resource?.type === 'solution'
+			? prevLesson || findParentLessonForSolution(workshopNavigation, resource.id)
+			: resource
+	const isModuleComplete =
+		action.isModuleComplete ||
+		getModuleCompletionState({
+			navigation: workshopNavigation,
+			completedLessons: moduleProgress?.completedLessons,
+			resourceIdToMarkComplete: resourceToComplete?.id,
+		}).isModuleComplete
+
+	return nextLesson && !isModuleComplete ? (
 		<div
 			aria-live="polite"
 			className="bg-background/80 absolute left-0 top-0 z-40 flex aspect-video h-full w-full flex-col items-center justify-center gap-3 p-5 text-lg text-white backdrop-blur-md sm:gap-5 lg:gap-10"
