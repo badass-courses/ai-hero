@@ -15,6 +15,9 @@ describe('certificateTitleFor', () => {
 			'AI Coding Crash Course',
 		)
 		expect(certificateTitleFor('Daylight Patterns')).toBe('Daylight Patterns')
+		expect(certificateTitleFor('Day 2.5: Advanced Patterns')).toBe(
+			'Day 2.5: Advanced Patterns',
+		)
 		expect(certificateTitleFor(undefined)).toBe('')
 	})
 })

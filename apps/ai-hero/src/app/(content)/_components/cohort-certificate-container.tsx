@@ -1,12 +1,14 @@
 'use client'
 
 import * as CohortCertificate from '@/components/certificates/cohort-certificate'
+import { TYPE } from '@/components/landing/type'
 import type { CohortNavigation } from '@/lib/cohort-navigation'
 import { api } from '@/trpc/react'
 import { Lock, LockKeyhole } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 
 import { Button } from '@coursebuilder/ui'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 /** The cohort certificate dialog's contents, shared by every entry point. */
 export const CohortCertificateDialog = () => (
@@ -14,7 +16,7 @@ export const CohortCertificateDialog = () => (
 		<CohortCertificate.NameInput />
 		<CohortCertificate.DownloadButton />
 		<div>
-			<p className="pb-1 text-sm font-medium">
+			<p className={cn(TYPE.meta, 'pb-1')}>
 				Share URL (can be used on LinkedIn, etc.)
 			</p>
 			<div className="flex items-center">

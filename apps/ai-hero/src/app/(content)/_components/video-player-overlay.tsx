@@ -101,13 +101,16 @@ export const CompletedLessonOverlay: React.FC<{
 		resource?.type === 'solution'
 			? prevLesson || findParentLessonForSolution(workshopNavigation, resource.id)
 			: resource
+	// Without navigation there is no lesson list to check against, and an empty
+	// list would read as "everything done"; keep the handler's answer then.
 	const isModuleComplete =
 		action.isModuleComplete ||
-		getModuleCompletionState({
-			navigation: workshopNavigation,
-			completedLessons: moduleProgress?.completedLessons,
-			resourceIdToMarkComplete: resourceToComplete?.id,
-		}).isModuleComplete
+		(Boolean(workshopNavigation) &&
+			getModuleCompletionState({
+				navigation: workshopNavigation,
+				completedLessons: moduleProgress?.completedLessons,
+				resourceIdToMarkComplete: resourceToComplete?.id,
+			}).isModuleComplete)
 
 	return nextLesson && !isModuleComplete ? (
 		<div
@@ -222,6 +225,7 @@ export const CompletedModuleOverlay: React.FC<{
 	const moduleNavigation = useWorkshopNavigation()
 	const { moduleProgress, addLessonProgress } = useModuleProgress()
 	const [isPending, startTransition] = React.useTransition()
+	const utils = api.useUtils()
 	const isCurrentLessonCompleted = Boolean(
 		moduleProgress?.completedLessons?.some(
 			(p) => p.resourceId === resource?.id && p.completedAt,
@@ -253,6 +257,9 @@ export const CompletedModuleOverlay: React.FC<{
 					resourceToComplete.type as 'lesson' | 'exercise' | 'solution',
 				)
 			}
+			// The cohort eligibility read may have raced this write; ask again
+			// now that the final lesson is persisted.
+			await utils.certificate.cohortEligibility.invalidate()
 		})
 	}, []) // Empty deps array to only run once on mount
 
