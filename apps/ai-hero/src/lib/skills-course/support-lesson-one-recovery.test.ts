@@ -213,15 +213,18 @@ describe('support Skills lesson one recovery', () => {
 		expect(harness.writes).toEqual([])
 	})
 
-	it('requires the exact unexpired preview before apply', async () => {
-		const result = await apply(harness, '1.not-the-preview')
+	it.each(['1.not-the-preview', '9007199254740991.not-the-preview'])(
+		'requires an exact, valid-date, unexpired preview before apply',
+		async (previewToken) => {
+			const result = await apply(harness, previewToken)
 
-		expect(result).toEqual({
-			state: 'blocked',
-			reason: 'preview-token-invalid',
-		})
-		expect(harness.writes).toEqual([])
-	})
+			expect(result).toEqual({
+				state: 'blocked',
+				reason: 'preview-token-invalid',
+			})
+			expect(harness.writes).toEqual([])
+		},
+	)
 
 	it('rebuilds expiring answer links at the preview time during apply', async () => {
 		let currentNow = FIXED_NOW

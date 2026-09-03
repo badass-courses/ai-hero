@@ -755,7 +755,8 @@ function previewIssuedAt(token: string) {
 	) {
 		return null
 	}
-	return new Date(expiresAtMs - PREVIEW_TTL_MS).toISOString()
+	const issuedAt = new Date(expiresAtMs - PREVIEW_TTL_MS)
+	return Number.isFinite(issuedAt.getTime()) ? issuedAt.toISOString() : null
 }
 
 function createPreviewToken(args: {
