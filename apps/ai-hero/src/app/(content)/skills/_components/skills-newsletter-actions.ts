@@ -26,6 +26,7 @@ import {
 	serializeDeadlineTimeZoneEvidenceForKit,
 } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
+import { issueSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
 
 import {
 	SKILLS_FORM_ID,
@@ -100,6 +101,16 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			}
 		}
 		await setSubscriberCookie(subscribed)
+		try {
+			await issueSkillsCourseRecoveryToken({
+				kitSubscriberId: String(subscribed.id),
+				email: subscribed.email_address!,
+			})
+		} catch {
+			await log.warn('skills.course.recovery_token_issue_failed', {
+				outcome: 'not-issued',
+			})
+		}
 		await sendSkillsNewsletterPathEntry(
 			subscribed,
 			source,

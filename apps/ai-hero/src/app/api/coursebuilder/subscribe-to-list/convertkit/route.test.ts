@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
 	const recordSignupAttribution = vi.fn().mockResolvedValue('captured')
 	const createShortlinkAttribution = vi.fn().mockResolvedValue(undefined)
 	const inngestSend = vi.fn().mockResolvedValue(undefined)
+	const issueRecoveryToken = vi.fn().mockResolvedValue(undefined)
 	const reconcile = vi.fn()
 	const cookieGet = vi.fn()
 	const log = {
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => {
 		recordSignupAttribution,
 		createShortlinkAttribution,
 		inngestSend,
+		issueRecoveryToken,
 		reconcile,
 		cookieGet,
 		log,
@@ -59,6 +61,11 @@ vi.mock('@/lib/signup-attribution', () => ({
 vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
 	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
 }))
+
+vi.mock(
+	'@/lib/subscriber-marketing/skills-course-recovery-token.server',
+	() => ({ issueSkillsCourseRecoveryToken: mocks.issueRecoveryToken }),
+)
 
 vi.mock('@/server/logger', () => ({
 	log: mocks.log,
@@ -145,6 +152,7 @@ beforeEach(() => {
 	mocks.recordSignupAttribution.mockResolvedValue('captured')
 	mocks.createShortlinkAttribution.mockResolvedValue(undefined)
 	mocks.inngestSend.mockResolvedValue(undefined)
+	mocks.issueRecoveryToken.mockResolvedValue(undefined)
 	mocks.cookieGet.mockImplementation((name: string) => {
 		if (name === 'ft_attr') {
 			return {
@@ -191,7 +199,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
-	it('keeps Skills Inngest send and still writes the lean attribution row', async () => {
+	it('keeps Skills Inngest send without minting recovery authorization from public signup', async () => {
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 99,
@@ -211,6 +219,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		)
 
 		expect(response.status).toBe(200)
+		expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
 				name: 'skills-newsletter/subscribed',
