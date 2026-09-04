@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aihero-status-tracer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-10",
+  "workers_dev": true,
+  "preview_urls": true,
+  "vars": {
+    "TRACER_ENABLED": "false",
+    "STATUS_AUTOMATION_ENABLED": "false",
+    "STATUS_PUBLIC_WRITES_ENABLED": "false",
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "INCIDENTS",
+        "class_name": "IncidentStore",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["IncidentStore"],
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
+}

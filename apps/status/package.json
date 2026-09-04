@@ -1,0 +1,29 @@
+{
+  "name": "@ai-hero/status",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "wrangler dev",
+    "format": "oxfmt --write . '!worker-configuration.d.ts'",
+    "format:check": "oxfmt --check . '!worker-configuration.d.ts'",
+    "lint": "oxlint src test vitest.config.ts",
+    "test": "vitest run",
+    "typecheck": "wrangler types --check --strict-vars false && tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.3.0",
+    "effect": "4.0.0-beta.99",
+    "xstate": "5.32.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.21.0",
+    "oxfmt": "0.59.0",
+    "oxlint": "1.74.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10",
+    "wrangler": "4.120.1"
+  }
+}
