@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	enterSkillsNewsletterSubscriber: vi.fn(),
+	shadowObserveSignup: vi.fn(),
 	readActiveGateDRuntimeAllowlist: vi.fn(),
 	subscribeToKitListWithoutFields: vi.fn(),
 	log: {
@@ -39,6 +40,12 @@ vi.mock('@/inngest/inngest.server', () => ({
 
 vi.mock('@/lib/subscriber-marketing/drizzle-capture-repository', () => ({
 	DrizzleCaptureMarketingRepository: class {},
+}))
+
+vi.mock('@/lib/subscriber-marketing/email-course-shadow-runtime', () => ({
+	createEmailCourseShadowRuntime: () => ({
+		observeSignup: mocks.shadowObserveSignup,
+	}),
 }))
 
 vi.mock('@/lib/subscriber-marketing/skills-newsletter-path-entry', () => ({
@@ -192,6 +199,19 @@ describe('skills newsletter path entry', () => {
 			throttle: { limit: 1, period: '2s' },
 		})
 		expect(PAUSED_SEQUENCE_MAX_PROVIDER_CALLS).toBe(2 * (fn.config.retries + 1))
+	})
+
+	it('passes the isolated shadow observer beside the production entry', async () => {
+		const { step } = createDurableStep()
+
+		await runAttempt(step, 0)
+
+		expect(mocks.enterSkillsNewsletterSubscriber).toHaveBeenCalledWith(
+			expect.objectContaining({
+				shadowObserver: mocks.shadowObserveSignup,
+				allowWrite: true,
+			}),
+		)
 	})
 
 	it('persists the sequence probe before running the fallback tag step', async () => {

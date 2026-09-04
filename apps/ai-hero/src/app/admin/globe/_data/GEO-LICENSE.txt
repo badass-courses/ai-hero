@@ -1,0 +1,16 @@
+Finer globe coordinates are projections of GeoNames dumps.
+
+US ZIP centroids: GeoNames US postal codes
+http://download.geonames.org/export/zip/US.zip
+
+City and region centroids: GeoNames cities with population >= 15,000
+https://download.geonames.org/export/dump/cities15000.zip
+plus admin1CodesASCII.txt for subdivision names.
+
+License: Creative Commons Attribution 4.0
+https://creativecommons.org/licenses/by/4.0/
+https://www.geonames.org/
+
+Country centroids remain a world-countries 5.1.0 projection. See CENTROIDS-LICENSE.txt.
+
+This directory stores cca2, postal, city, region, latitude, and longitude only.

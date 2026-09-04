@@ -451,8 +451,9 @@ describe('value path email executor', () => {
 		)
 	})
 
-	it('writes canonical and rollback stamps in the same completion update', async () => {
+	it('keeps the completed production result when the shadow observer fails', async () => {
 		const updateSideEffectIntent = vi.fn()
+		const shadowObserver = vi.fn().mockRejectedValue(new Error('shadow down'))
 		const completedAt = '2026-07-17T12:00:00.000Z'
 		const result = await executeValuePathEmailIntent({
 			repository: {
@@ -474,8 +475,18 @@ describe('value path email executor', () => {
 			emailListProvider: {
 				subscribeToList: vi.fn().mockResolvedValue({ subscriptionId: 'kit-1' }),
 			},
-			intent: valuePathIntent(),
+			intent: valuePathIntent({
+				metadata: {
+					mode: 'scoped-live',
+					valuePathSlug: 'ai-hero-skills-workflow',
+					emailResourceId: 'ai-hero-skills-workflow.email-6',
+					kitSequenceId: '2757205',
+					kitSubscriberId: 'kit-1',
+					courseEntryEventId: 'entry-event-1',
+				},
+			}),
 			now: completedAt,
+			shadowObserver,
 			config: {
 				mode: 'scoped-live',
 				allowWrite: true,
@@ -489,6 +500,12 @@ describe('value path email executor', () => {
 			},
 		})
 		expect(result.status).toBe('completed')
+		expect(shadowObserver).toHaveBeenCalledWith({
+			courseEntryEventId: 'entry-event-1',
+			legacyIntentId: 'intent-1',
+			emailResourceId: 'ai-hero-skills-workflow.email-6',
+			completedAt,
+		})
 		expect(updateSideEffectIntent).toHaveBeenCalledWith(
 			'intent-1',
 			expect.objectContaining({

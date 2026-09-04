@@ -13,12 +13,18 @@ import {
 import { USER_CREATED_EVENT } from '@/inngest/events/user-created'
 import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
-import {
-	getDiscordRefreshFailureKind,
-	getNextAuthErrorLogLevel,
-} from '@/server/auth-log-policy'
+import { authLogger } from '@/server/auth-logger'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
-import { log, serializeError } from '@/server/logger'
+import { refreshDiscordAccessToken } from '@/server/discord-token-refresh'
+import {
+	claimDiscordRefresh,
+	getDiscordRefreshClaimExpiresAt,
+	isDiscordTokenExpired,
+	persistDiscordRefreshResult,
+	type DiscordAccountCredentials,
+	type DiscordCredentialUpdate,
+} from '@/server/discord-token-refresh-persistence'
+import { log } from '@/server/logger'
 import {
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
@@ -46,42 +52,6 @@ import NextAuth, { type DefaultSession, type NextAuthConfig } from 'next-auth'
 import { userSchema } from '@coursebuilder/core/schemas'
 
 type Role = 'admin' | 'user' | string
-
-function getOAuthLogData({
-	provider,
-	userId = null,
-	accountId = null,
-	action,
-}: {
-	provider: string
-	userId?: string | null
-	accountId?: string | null
-	action: string
-}) {
-	return {
-		provider,
-		userId,
-		accountId,
-		action,
-	}
-}
-
-function getDiscordLogData({
-	userId = null,
-	accountId = null,
-	action,
-}: {
-	userId?: string | null
-	accountId?: string | null
-	action: string
-}) {
-	return getOAuthLogData({
-		provider: 'discord',
-		userId,
-		accountId,
-		action,
-	})
-}
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -138,85 +108,6 @@ declare module 'next-auth' {
 			updatedAt: Date | null
 			deletedAt: Date | null
 		}[]
-	}
-}
-
-async function refreshDiscordToken(account: {
-	refresh_token: string | null
-	providerAccountId?: string | null
-	userId?: string | null
-}) {
-	try {
-		if (!account.refresh_token) throw new Error('No refresh token')
-
-		const myHeaders = new Headers()
-		myHeaders.append('Content-Type', 'application/x-www-form-urlencoded')
-
-		const urlencoded = new URLSearchParams()
-		if (
-			env.DISCORD_CLIENT_ID === undefined ||
-			env.DISCORD_CLIENT_SECRET === undefined
-		) {
-			throw new Error('Discord client ID and secret are not set')
-		}
-		urlencoded.append('client_id', env.DISCORD_CLIENT_ID)
-		urlencoded.append('client_secret', env.DISCORD_CLIENT_SECRET)
-		urlencoded.append('grant_type', 'refresh_token')
-		urlencoded.append('refresh_token', account.refresh_token)
-
-		const requestOptions = {
-			method: 'POST',
-			headers: myHeaders,
-			body: urlencoded,
-		}
-
-		const response = await fetch(
-			'https://discord.com/api/oauth2/token',
-			requestOptions,
-		)
-
-		const responseBody = (await response.json().catch(() => null)) as {
-			error?: unknown
-			access_token?: unknown
-			expires_in?: unknown
-			refresh_token?: unknown
-		} | null
-		if (!response.ok) {
-			const errorCode =
-				typeof responseBody?.error === 'string' ? responseBody.error : null
-			const failureKind = getDiscordRefreshFailureKind(
-				response.status,
-				errorCode,
-			)
-			if (failureKind === 'user-must-relink') {
-				return { error: failureKind }
-			}
-			throw new Error(`HTTP error! status: ${response.status}`)
-		}
-		if (
-			typeof responseBody?.access_token !== 'string' ||
-			typeof responseBody.expires_in !== 'number'
-		) {
-			throw new Error('Discord refresh response was invalid')
-		}
-
-		return {
-			access_token: responseBody.access_token,
-			expires_in: responseBody.expires_in,
-			...(typeof responseBody.refresh_token === 'string' && {
-				refresh_token: responseBody.refresh_token,
-			}),
-		}
-	} catch (error) {
-		void log.error('auth.discord.token-refresh', {
-			...getDiscordLogData({
-				userId: account.userId ?? null,
-				accountId: account.providerAccountId ?? null,
-				action: 'failed',
-			}),
-			error: error instanceof Error ? error.message : String(error),
-		})
-		return { error: 'refresh-failed' as const }
 	}
 }
 
@@ -312,32 +203,7 @@ const postSignInInvitationHandler = createPostSignInInvitationHandler({
  * @see https://next-auth.js.org/configuration/options
  */
 export const authOptions: NextAuthConfig = {
-	logger: {
-		error: (error) => {
-			const serialized = serializeError(error)
-			const data = {
-				error: serialized,
-				errorName: serialized.name ?? null,
-				errorMessage: serialized.message,
-				errorCode:
-					typeof serialized.code === 'string' ||
-					typeof serialized.code === 'number'
-						? serialized.code
-						: null,
-				errorType: typeof serialized.type === 'string' ? serialized.type : null,
-			}
-			if (getNextAuthErrorLogLevel(serialized) === 'info') {
-				void log.info('auth.nextauth.expected', data)
-				return
-			}
-			void log.error('auth.nextauth.error', data)
-		},
-		warn: (code) => {
-			void log.warn('auth.nextauth.warn', {
-				code: String(code),
-			})
-		},
-	},
+	logger: authLogger,
 	events: {
 		createUser: async ({ user }) => {
 			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
@@ -388,77 +254,164 @@ export const authOptions: NextAuthConfig = {
 				(account) => account.provider === 'discord',
 			)
 
-			const isDiscordTokenExpired = Boolean(
-				discordAccount?.expires_at &&
-				discordAccount.expires_at * 1000 < Date.now(),
+			const nowMs = Date.now()
+			const discordTokenExpired = isDiscordTokenExpired(
+				discordAccount?.expires_at ?? null,
+				nowMs,
 			)
 
-			if (discordAccount && isDiscordTokenExpired) {
-				void log.info('auth.discord.token-refresh', {
-					...getDiscordLogData({
-						userId: user.id,
-						accountId: discordAccount.providerAccountId,
-						action: 'start',
-					}),
-					expiredAt: discordAccount.expires_at ?? null,
-				})
-				const refreshedToken = await refreshDiscordToken({
-					refresh_token: discordAccount.refresh_token,
-					providerAccountId: discordAccount.providerAccountId,
-					userId: user.id,
+			if (discordAccount && discordTokenExpired) {
+				const claimExpiresAt = getDiscordRefreshClaimExpiresAt(nowMs)
+				const expectedCredentials: DiscordAccountCredentials = {
+					accessToken: discordAccount.access_token,
+					refreshToken: discordAccount.refresh_token,
+					expiresAt: discordAccount.expires_at,
+				}
+				const accountIdentityCondition = and(
+					eq(
+						accounts.providerAccountId,
+						discordAccount.providerAccountId,
+					),
+					eq(accounts.provider, 'discord'),
+					eq(accounts.userId, user.id),
+				)
+				const expectedRefreshTokenCondition =
+					expectedCredentials.refreshToken !== null
+						? eq(accounts.refresh_token, expectedCredentials.refreshToken)
+						: isNull(accounts.refresh_token)
+				const expectedExpiryCondition =
+					expectedCredentials.expiresAt !== null
+						? eq(accounts.expires_at, expectedCredentials.expiresAt)
+						: isNull(accounts.expires_at)
+				const readCredentials = async () => {
+					const current = await db.query.accounts.findFirst({
+						where: accountIdentityCondition,
+						columns: {
+							access_token: true,
+							refresh_token: true,
+							expires_at: true,
+						},
+					})
+					return current
+						? {
+								accessToken: current.access_token,
+								refreshToken: current.refresh_token,
+								expiresAt: current.expires_at,
+							}
+						: null
+				}
+				const toDatabaseUpdate = (update: DiscordCredentialUpdate) => ({
+					...(update.accessToken !== undefined
+						? { access_token: update.accessToken }
+						: {}),
+					...(update.refreshToken !== undefined
+						? { refresh_token: update.refreshToken }
+						: {}),
+					...(update.expiresAt !== undefined
+						? { expires_at: update.expiresAt }
+						: {}),
 				})
 
-				if (
-					'access_token' in refreshedToken &&
-					'expires_in' in refreshedToken &&
-					'refresh_token' in refreshedToken
-				) {
-					await db
-						.update(accounts)
-						.set({
-							access_token: refreshedToken.access_token,
-							expires_at: Math.floor(
-								Date.now() / 1000 + refreshedToken.expires_in,
-							),
-							refresh_token: refreshedToken.refresh_token,
-						})
-						.where(
-							and(
-								eq(
-									accounts.providerAccountId,
-									discordAccount.providerAccountId,
+				const claim = await claimDiscordRefresh({
+					expected: expectedCredentials,
+					claimExpiresAt,
+					claim: async () => {
+						const result = await db
+							.update(accounts)
+							.set({ expires_at: claimExpiresAt })
+							.where(
+								and(
+									accountIdentityCondition,
+									expectedRefreshTokenCondition,
+									expectedExpiryCondition,
 								),
-								eq(accounts.provider, 'discord'),
-								eq(accounts.userId, user.id),
-							),
-						)
-				} else if (
-					'error' in refreshedToken &&
-					refreshedToken.error === 'user-must-relink'
-				) {
+							)
+						return result.rowsAffected
+					},
+					read: readCredentials,
+				})
+				if (claim.status === 'stale-result') {
 					void log.info('auth.discord.token-refresh', {
-						...getDiscordLogData({
-							userId: user.id,
-							accountId: discordAccount.providerAccountId,
-							action: 'user-must-relink',
-						}),
+						provider: 'discord',
+						action: 'stale-result',
+						providerOutcome: 'not-requested',
+						databaseOutcome: claim.databaseOutcome,
 					})
-					await db
-						.update(accounts)
-						.set({
-							access_token: null,
-							expires_at: null,
+				} else {
+					void log.info('auth.discord.token-refresh', {
+						provider: 'discord',
+						action: 'started',
+						databaseOutcome: claim.databaseOutcome,
+					})
+					const refreshedToken = await refreshDiscordAccessToken({
+						clientId: env.DISCORD_CLIENT_ID,
+						clientSecret: env.DISCORD_CLIENT_SECRET,
+						refreshToken: discordAccount.refresh_token,
+					})
+					const persistence = await persistDiscordRefreshResult({
+						result: refreshedToken,
+						expected: expectedCredentials,
+						nowSeconds: Math.floor(Date.now() / 1000),
+						writeClaimed: async (update) => {
+							const result = await db
+								.update(accounts)
+								.set(toDatabaseUpdate(update))
+								.where(
+									and(
+										accountIdentityCondition,
+										expectedRefreshTokenCondition,
+										eq(accounts.expires_at, claimExpiresAt),
+									),
+								)
+							return result.rowsAffected
+						},
+						recoverCleared: async (update) => {
+							const result = await db
+								.update(accounts)
+								.set(toDatabaseUpdate(update))
+								.where(
+									and(
+										accountIdentityCondition,
+										isNull(accounts.access_token),
+										isNull(accounts.refresh_token),
+										isNull(accounts.expires_at),
+									),
+								)
+							return result.rowsAffected
+						},
+						read: readCredentials,
+					})
+
+					const logFields = {
+						provider: 'discord',
+						action: persistence.action,
+						providerOutcome: persistence.providerOutcome,
+						databaseOutcome: persistence.databaseOutcome,
+						attempts: refreshedToken.attempts,
+					}
+					if (persistence.action === 'failed') {
+						void log.error('auth.discord.token-refresh', {
+							...logFields,
+							reasonCode:
+								refreshedToken.status === 'failed'
+									? refreshedToken.reasonCode
+									: 'provider-rejected',
+							lastStatus:
+								refreshedToken.status === 'failed'
+									? refreshedToken.lastStatus
+									: null,
 						})
-						.where(
-							and(
-								eq(
-									accounts.providerAccountId,
-									discordAccount.providerAccountId,
-								),
-								eq(accounts.provider, 'discord'),
-								eq(accounts.userId, user.id),
-							),
-						)
+					} else {
+						void log.info('auth.discord.token-refresh', {
+							...logFields,
+							...(refreshedToken.status !== 'refreshed'
+								? { reasonCode: refreshedToken.reasonCode }
+								: {}),
+							...(refreshedToken.status === 'failed'
+								? { lastStatus: refreshedToken.lastStatus }
+								: {}),
+						})
+					}
 				}
 			}
 

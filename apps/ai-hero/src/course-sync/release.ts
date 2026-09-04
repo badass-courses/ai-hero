@@ -49,6 +49,7 @@ export function releasedCourseSyncPollState(
 		consecutiveFailures: 0,
 		controlPlaneRunId: null,
 		failureClass: null,
+		applyPolicyOverride: 'operator',
 		updatedAt: occurredAt,
 	}
 }

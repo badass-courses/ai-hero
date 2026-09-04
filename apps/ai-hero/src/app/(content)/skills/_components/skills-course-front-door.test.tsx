@@ -33,5 +33,11 @@ describe('Skills course confirmation', () => {
 
 		expect(markup).toContain('You’re in.')
 		expect(markup).toContain('Lesson one is on its way to your inbox.')
+		expect(markup).toContain(
+			'This is a seven-lesson email course. The lesson is the email itself. It will not appear under Courses in your AI Hero account.',
+		)
+		expect(markup).toContain(
+			'Answer the question at the end if you want the next lesson in a few minutes. Otherwise, the next lesson arrives automatically after at least 18 hours.',
+		)
 	})
 })

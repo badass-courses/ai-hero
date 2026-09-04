@@ -9,7 +9,6 @@ import {
 
 import { CourseSyncError, asCourseSyncError } from './errors'
 import {
-	assertCourseSyncLaunchApplyPolicy,
 	evaluateCourseSyncBoundedAutoApply,
 } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
@@ -428,7 +427,7 @@ export function createCourseSyncControlPlane(
 		dependencies.makeId ?? ((prefix: string) => `${prefix}_${randomUUID()}`)
 	const persistence = dependencies.persistence
 
-	const requireBinding = async (bindingId: string) => {
+	const assertServerBindingId = (bindingId: string) => {
 		if (bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId) {
 			throw new CourseSyncError(
 				'BINDING_NOT_FOUND',
@@ -436,6 +435,15 @@ export function createCourseSyncControlPlane(
 				404,
 			)
 		}
+	}
+
+	const ensureServerBinding = async (bindingId: string) => {
+		assertServerBindingId(bindingId)
+		return persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
+	}
+
+	const requireBinding = async (bindingId: string) => {
+		assertServerBindingId(bindingId)
 		await persistence.assertTarget(AI_HERO_COURSE_SYNC_BINDING)
 		const binding = await persistence.ensureBinding(AI_HERO_COURSE_SYNC_BINDING)
 		if (binding.status !== 'active') {
@@ -756,6 +764,10 @@ export function createCourseSyncControlPlane(
 	}
 
 	return {
+		async ensureBinding(bindingId: string) {
+			return publicBinding(await ensureServerBinding(bindingId))
+		},
+
 		async getBinding(bindingId: string) {
 			return publicBinding(await requireBinding(bindingId))
 		},
@@ -1079,7 +1091,6 @@ export function createCourseSyncControlPlane(
 					{ category: 'internal', retryable: false },
 				)
 			}
-			assertCourseSyncLaunchApplyPolicy(run.plan)
 			return publicRun(run)
 		},
 
@@ -1121,7 +1132,6 @@ export function createCourseSyncControlPlane(
 					409,
 				)
 			}
-			assertCourseSyncLaunchApplyPolicy(run.plan)
 			await requireBinding(run.bindingId)
 			try {
 				return publicRun(

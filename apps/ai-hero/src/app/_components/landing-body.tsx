@@ -72,7 +72,7 @@ export async function LandingBody({
 		// with no way to accept it.
 		NewsletterSection: PersonalizedNewsletterSection,
 		NewsletterCta: PersonalizedSlimNewsletterForm,
-		// The same ask, pointed at the free 7-day course rather than the general
+		// The same ask, pointed at the free seven-lesson email course rather than
 		// list. Both are registered so a section can choose which offer it makes.
 		CourseCta: SkillsCourseCta,
 		Testimonial: DraftTestimonial,

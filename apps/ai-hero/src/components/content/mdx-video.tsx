@@ -4,6 +4,9 @@ import * as React from 'react'
 import Image from 'next/image'
 import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
+import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
+import { muxMinResolutionForPrefs } from '@/lib/mux-player-prefs'
 import { api } from '@/trpc/react'
 import type {
 	MuxPlayerProps,
@@ -36,6 +39,8 @@ export default function MDXVideo({
 	className?: string
 	props?: MuxPlayerProps
 }) {
+	const { playerPrefs } = useMuxPlayer()
+	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const { data, status } = api.videoResources.get.useQuery(
 		{ videoResourceId: resourceId },
 		{ enabled: !muxPlaybackId },
@@ -48,6 +53,7 @@ export default function MDXVideo({
 
 	const playbackId = muxPlaybackId ?? data?.muxPlaybackId
 	const playerRef = React.useRef<MuxPlayerRefAttributes>(null)
+	const bindVideoQuality = useVideoQualityPref(playerRef)
 
 	// Only show the loading state while the fallback query is actually running.
 	if (!muxPlaybackId && status === 'pending')
@@ -90,13 +96,17 @@ export default function MDXVideo({
 				backwardSeekOffset={5}
 				playbackRates={[0.75, 1, 1.25, 1.5, 1.75, 2]}
 				maxResolution="2160p"
-				minResolution="540p"
+				minResolution={minResolution}
 				accentColor="#DD9637"
 				playbackId={playbackId}
 				thumbnailTime={thumbnailTime}
 				poster={poster}
 				playsInline
 				{...props}
+				onLoadedMetadata={(event) => {
+					bindVideoQuality()
+					props?.onLoadedMetadata?.(event)
+				}}
 			/>
 		</PlayerGestureShell>
 	)

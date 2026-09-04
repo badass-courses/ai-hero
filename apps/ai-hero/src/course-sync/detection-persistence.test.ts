@@ -6,6 +6,7 @@ const dbMock = vi.hoisted(() => ({ transaction: vi.fn() }))
 vi.mock('@/db', () => ({ db: dbMock }))
 vi.mock('@/server/logger', () => ({ log: { info: vi.fn() } }))
 
+import { sha256, stableJson } from './control-plane'
 import {
 	claimCourseSyncReviewNotification,
 	completeCourseSyncReviewNotification,
@@ -26,6 +27,7 @@ function pollState(
 		consecutiveFailures: status === 'held' ? 1 : 0,
 		controlPlaneRunId: 'run-1',
 		failureClass: status === 'held' ? 'APPLIED_RUN_ROLLED_BACK' : null,
+		applyPolicyOverride: null,
 		updatedAt: new Date(updatedAt),
 	}
 }
@@ -121,6 +123,60 @@ describe('course-sync revision head persistence', () => {
 				planSha256: 'a'.repeat(64),
 			},
 		})
+		// Review receipts already exist in production. A caller that omits the
+		// kind must land on the same row it landed on before the applied kind
+		// existed, or every open review re-notifies.
+		expect(storedValues[0]?.id).toBe(
+			`cspl_review_notice_${sha256(
+				stableJson({
+					kind: 'review',
+					bindingId: input.bindingId,
+					courseVersionId: input.courseVersionId,
+					planSha256: input.planSha256,
+				}),
+			)}`,
+		)
+	})
+
+	it('preserves a locked operator override across automatic failure saves', async () => {
+		const current = {
+			...pollState('failed', '2026-08-21T18:01:00.000Z'),
+			applyPolicyOverride: 'operator' as const,
+		}
+		const lockedRows = [
+			[{ bindingId: 'csb_ai_coding_crash_course' }],
+			[current],
+		]
+		const values = vi.fn(() => ({
+			onDuplicateKeyUpdate: vi.fn(async () => undefined),
+		}))
+		const trx = {
+			select: vi.fn(() => {
+				const rows = lockedRows.shift() ?? []
+				const query = {
+					from: vi.fn(),
+					where: vi.fn(),
+					for: vi.fn(async () => rows),
+				}
+				query.from.mockReturnValue(query)
+				query.where.mockReturnValue(query)
+				return query
+			}),
+			insert: vi.fn(() => ({ values })),
+		}
+		dbMock.transaction.mockImplementationOnce(
+			async (run: (transaction: typeof trx) => Promise<void>) => run(trx),
+		)
+
+		await saveCourseSyncPollState({
+			...current,
+			applyPolicyOverride: null,
+			updatedAt: new Date('2026-08-21T18:02:00.000Z'),
+		})
+
+		expect(values).toHaveBeenCalledWith(
+			expect.objectContaining({ applyPolicyOverride: 'operator' }),
+		)
 	})
 
 	it('keeps a rollback hold when a stale succeeded save acquires the lock later', async () => {

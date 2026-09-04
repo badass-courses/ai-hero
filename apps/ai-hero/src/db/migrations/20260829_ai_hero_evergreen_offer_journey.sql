@@ -1,0 +1,5 @@
+-- Superseded before deployment by
+-- 20260831_ai_hero_email_course_evergreen_schema.sql.
+--
+-- The replacement installs the final dormant Evergreen tables in the same
+-- reviewed PlanetScale deploy request as the Email Course authority schema.

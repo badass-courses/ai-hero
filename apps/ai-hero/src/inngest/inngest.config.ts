@@ -34,6 +34,7 @@ import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
+import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
@@ -63,8 +64,12 @@ import { signupAttribution } from './functions/signup-attribution'
 import { skillChangelogBroadcast } from './functions/skill-changelog-broadcast'
 import { skillsNewsletterConfirmationReconciler } from './functions/skills-newsletter-confirmation-reconciler'
 import { skillsNewsletterPathEntry } from './functions/skills-newsletter-path-entry'
+import { emailCourseShadowAnswer } from './functions/email-course-shadow-answer'
+import { captureContactUnsubscribed } from './functions/capture-contact-unsubscribed'
+import { capturePurchaseContactEvent } from './functions/capture-purchase-contact-event'
 import { workshopInterestSync } from './functions/workshop-interest-sync'
 import { computeVideoSplitPoints } from './functions/split_video'
+import { persistPurchaseGeo } from './functions/persist-purchase-geo'
 import { stripeSubscriptionCheckoutSessionComplete } from './functions/stripe/event-subscription-checkout-session-completed'
 import { typesensePopularitySync } from './functions/typesense-popularity-sync'
 import { learnerFlowReconciler } from './functions/learner-flow-reconciler'
@@ -81,7 +86,8 @@ import {
 // branch environment's functions instead. VERCEL_ENV is unset in local dev,
 // so the Inngest dev server still sees the full list.
 const isVercelNonProduction =
-	process.env.VERCEL_ENV !== undefined && process.env.VERCEL_ENV !== 'production'
+	process.env.VERCEL_ENV !== undefined &&
+	process.env.VERCEL_ENV !== 'production'
 
 const allFunctions = [
 	...courseBuilderCoreFunctions.map(({ config, trigger, handler }) =>
@@ -113,6 +119,7 @@ const allFunctions = [
 	syncPurchaseTags,
 	addPurchasesConvertkit,
 	stripeSubscriptionCheckoutSessionComplete,
+	persistPurchaseGeo,
 	createUserOrganizations,
 	ensurePersonalOrganizationWorkflow,
 	videoResourceAttached,
@@ -134,6 +141,7 @@ const allFunctions = [
 	cohortReminderBroadcast,
 	contentReadRetention,
 	contentResourceIndexRequested,
+	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
 	typesensePopularitySync,
 	valuePathEmailExecutor,
@@ -143,6 +151,9 @@ const allFunctions = [
 	syncGithubSourcedPosts,
 	skillChangelogBroadcast,
 	skillsNewsletterPathEntry,
+	emailCourseShadowAnswer,
+	capturePurchaseContactEvent,
+	captureContactUnsubscribed,
 	workshopInterestSync,
 	skillsNewsletterConfirmationReconciler,
 	notifyOnPostCreated,

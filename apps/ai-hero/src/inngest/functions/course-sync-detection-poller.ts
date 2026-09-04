@@ -1,4 +1,7 @@
-import { slackProvider } from '@/coursebuilder/slack-provider'
+import {
+	deliverCourseSyncAppliedNotice,
+	sendCourseSyncSlackPayload,
+} from '@/course-sync/applied-notice'
 import {
 	appendCourseSyncPollLog,
 	claimCourseSyncReviewNotification,
@@ -20,29 +23,36 @@ import {
 	unwrapCourseSyncStepResult,
 	type CourseSyncStepResult,
 } from '@/course-sync/errors'
+import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
+import { AI_HERO_COURSE_SYNC_BINDING } from '@/course-sync/types'
 import { env } from '@/env.mjs'
 import {
 	getDropboxSyncConfig,
 	readDropboxCourseManifest,
 } from '@/lib/dropbox-course-sync'
 
+import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
 import { inngest } from '../inngest.server'
 
 async function notifyCourseSync(notification: CourseSyncNotification) {
-	const channel =
-		env.COURSE_SYNC_SLACK_CHANNEL_ID ?? slackProvider.defaultChannelId
-	if (!channel) {
-		throw new CourseSyncError(
-			'COURSE_SYNC_NOTIFICATION_NOT_CONFIGURED',
-			'No course-sync Slack channel is configured.',
-			503,
-		)
+	// Applied is a state, not an event of this poller. Every caller that moves a
+	// run to applied delivers through the same claimed path, so an operator
+	// apply and a poller apply produce one identical notice.
+	if (notification.kind === 'success') {
+		await deliverCourseSyncAppliedNotice({
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			controlPlaneRunId: notification.controlPlaneRunId,
+			pollRunId: notification.runId,
+			notification,
+		})
+		return
 	}
-	await slackProvider.sendNotification({
-		channel,
-		...buildCourseSyncNotificationPayload(notification),
-	})
+	// Reviews and failures keep their deterministic wording because those
+	// messages are read under pressure and must not vary.
+	await sendCourseSyncSlackPayload(
+		buildCourseSyncNotificationPayload(notification, null),
+	)
 }
 
 function originalFailureRunId(event: unknown, fallback: string) {
@@ -98,7 +108,10 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 			)
 		},
 	},
-	{ cron: 'TZ=UTC */30 * * * *' },
+	[
+		{ cron: 'TZ=UTC */30 * * * *' },
+		{ event: COURSE_SYNC_POLL_REQUESTED_EVENT },
+	],
 	async ({ step, runId }) => {
 		async function runTypedStep<T>(
 			id: string,
@@ -154,6 +167,11 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				)
 				return state ? { ...state, updatedAt: new Date(state.updatedAt) } : null
 			},
+			ensureBinding: async (bindingId) => {
+				await runTypedStep('ensure-course-sync-binding', () =>
+					courseSyncControlPlane.ensureBinding(bindingId),
+				)
+			},
 			savePollState: async (state) => {
 				await runTypedStep('save-course-sync-poll-state', () =>
 					saveCourseSyncPollState({
@@ -170,9 +188,14 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					}),
 				)
 			},
-			freezeAsset: (input) =>
-				runTypedStep(`freeze-asset-${input.sourceVideoId}`, () =>
-					courseSyncControlPlane.freezeAsset(input),
+			freezeAssetBatch: (input) =>
+				runTypedStep(
+					`freeze-assets-batch-${String(input.batchNumber).padStart(3, '0')}`,
+					() =>
+						freezeCourseSyncAssetBatch(
+							input,
+							courseSyncControlPlane.freezeAsset,
+						),
 				),
 			stage: (input) =>
 				runTypedStep('stage-course-sync-revision', () =>

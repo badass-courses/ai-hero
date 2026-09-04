@@ -38,8 +38,9 @@ function postTypeLabel(value: string) {
 
 /**
  * postManifest's tabs with a `fields.postType` selector inserted right after
- * the slug field on the Content tab (call-site spread — the shared manifest
- * in @coursebuilder/ui stays untouched).
+ * the slug field on the Content tab, and — for skill posts — an Icon image
+ * field under the SEO tab's Cover Image (call-site spread — the shared
+ * manifest in @coursebuilder/ui stays untouched).
  *
  * Options are the restricted allowlist, plus the post's CURRENT postType when
  * it falls outside it (legacy 'tip'/'course'/'playlist' posts exist in prod)
@@ -67,16 +68,40 @@ function buildTabsWithPostType(currentPostType: string | undefined) {
 			label: postTypeLabel(value),
 		})),
 	}
-	return postManifest.tabs.map((tab) =>
-		tab.label === 'Content'
-			? {
-					...tab,
-					fields: tab.fields.flatMap((field): FieldSpec[] =>
-						field.kind === 'slug' ? [field, postTypeField] : [field],
-					),
-				}
-			: tab,
-	)
+	// Skill-only: a small mark rendered on the /skills catalog rows. It sits
+	// under the Cover Image on the SEO tab (Vojta, 2026-08-24 — same kind of
+	// field, same home; a separate Icon tab was one field alone in a tab).
+	// Gated on the post's CURRENT type, like the tabs themselves — the kit's
+	// reactive `condition` is tab-level only, so a post flipped to 'skill'
+	// shows the field after reopening the editor. Iconless skills render no
+	// slot on-site.
+	const skillIconField: FieldSpec = {
+		kind: 'image',
+		name: 'fields.icon.url',
+		label: 'Icon',
+		altName: 'fields.icon.alt',
+	}
+	return postManifest.tabs.map((tab) => {
+		if (tab.label === 'Content') {
+			return {
+				...tab,
+				fields: tab.fields.flatMap((field): FieldSpec[] =>
+					field.kind === 'slug' ? [field, postTypeField] : [field],
+				),
+			}
+		}
+		if (tab.label === 'SEO' && currentPostType === 'skill') {
+			return {
+				...tab,
+				fields: tab.fields.flatMap((field): FieldSpec[] =>
+					field.kind === 'image' && field.name === 'fields.coverImage.url'
+						? [field, skillIconField]
+						: [field],
+				),
+			}
+		}
+		return tab
+	})
 }
 
 export type EditPostClientProps = {

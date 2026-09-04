@@ -250,6 +250,7 @@ export const drizzleCourseSyncHistorySource: CourseSyncHistorySource = {
 export type CourseSyncHistoryOutcome =
 	| 'applied'
 	| 'applying'
+	| 'batching'
 	| 'awaiting-apply'
 	| 'failed'
 	| 'held'
@@ -396,6 +397,8 @@ function overallOutcome(input: {
 					outcome: 'failed',
 					failureClass: input.state.failureClass,
 				}
+			case 'batching':
+				return { outcome: 'batching', failureClass: null }
 			case 'released':
 			case 'staging':
 				return { outcome: 'staging', failureClass: null }

@@ -6,6 +6,7 @@ import { DM_Sans, JetBrains_Mono, Source_Serif_4 } from 'next/font/google'
 import Script from 'next/script'
 import { FeedbackInsert } from '@/components/feedback-widget/feedback-insert'
 import { FirstTouchCapture } from '@/components/first-touch-capture'
+import { GuardedCouponProvider } from '@/components/guarded-coupon-provider'
 import { Party } from '@/components/party'
 import { Providers } from '@/components/providers'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -18,6 +19,7 @@ import { SiteStructuredData } from '@/lib/structured-data'
 import { NavCtaProvider } from '@/components/navigation/nav-cta-context'
 import { PromoBar } from '@/components/navigation/promo-bar'
 import { PromoBarSlot } from '@/components/navigation/promo-bar-slot'
+import { PlaybackPrefHydrator } from '@/hooks/playback-pref-hydrator'
 import { TRPCReactProvider } from '@/trpc/react'
 import { ourFileRouter } from '@/uploadthing/core'
 import { GoogleAnalytics } from '@next/third-parties/google'
@@ -27,7 +29,6 @@ import { AxiomWebVitals } from 'next-axiom'
 import { NuqsAdapter } from 'nuqs/adapters/next/app'
 import { extractRouterConfig } from 'uploadthing/server'
 
-import { CouponProvider } from '@coursebuilder/commerce-next/coupons/coupon-context'
 import { getCouponForCode } from '@coursebuilder/core/pricing/props-for-commerce'
 import { Toaster } from '@coursebuilder/ui/primitives/toaster'
 
@@ -141,6 +142,7 @@ export default async function RootLayout({
 					/>
 					<FeedbackInsert />
 					<TRPCReactProvider>
+						<PlaybackPrefHydrator />
 						<NuqsAdapter>
 							<Party />
 							<ThemeProvider
@@ -159,7 +161,7 @@ export default async function RootLayout({
 									 */
 									routerConfig={extractRouterConfig(ourFileRouter)}
 								/>
-								<CouponProvider
+								<GuardedCouponProvider
 									getCouponForCode={async (couponCodeOrId: string | null) => {
 										'use server'
 										return getCouponForCode(
@@ -183,7 +185,7 @@ export default async function RootLayout({
 										</PromoBarSlot>
 										{children}
 									</NavCtaProvider>
-								</CouponProvider>
+								</GuardedCouponProvider>
 							</ThemeProvider>
 						</NuqsAdapter>
 					</TRPCReactProvider>

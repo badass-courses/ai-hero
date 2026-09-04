@@ -1,4 +1,5 @@
 import { courseBuilderAdapter } from '@/db'
+import { checkCohortCertificateEligibility } from '@/lib/certificates'
 import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -12,6 +13,18 @@ const clResourceSchema = z.object({
 })
 
 export const certificateRouter = createTRPCRouter({
+	/** Has the signed-in learner finished every workshop in this cohort? */
+	cohortEligibility: publicProcedure
+		.input(z.object({ cohortId: z.string() }))
+		.query(async ({ input }) => {
+			const { session } = await getServerAuthSession()
+			if (!session?.user?.id) return { eligible: false }
+			const { hasCompletedCohort } = await checkCohortCertificateEligibility(
+				input.cohortId,
+				session.user.id,
+			)
+			return { eligible: hasCompletedCohort }
+		}),
 	valuePathEligibility: publicProcedure
 		.input(
 			z.object({
