@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { createWorkshopBindings } from '@/lib/cms/workshop-bindings'
 import { WorkshopSchema, type Workshop } from '@/lib/workshops'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
@@ -32,6 +33,8 @@ export function EditWorkshopClient({
 		return createResourceEditor({
 			manifest: {
 				...workshopManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(workshopManifest.media),
 				schema: WorkshopSchema,
 			},
 			bindings: createWorkshopBindings({
