@@ -64,7 +64,7 @@ describe('resendSkillsCourseLessonOne', () => {
 		expect(mocks.getSubscriberByEmail).toHaveBeenCalledWith(
 			'learner@example.com',
 		)
-		expect(mocks.readRecoveryToken).not.toHaveBeenCalled()
+		expect(mocks.readRecoveryToken).toHaveBeenCalledTimes(1)
 		expect(mocks.inngestSend).toHaveBeenCalledWith({
 			id: expect.stringMatching(/^skills-course-lesson-one-recovery:/),
 			name: 'skills-course/lesson-one-recovery.requested',
@@ -110,6 +110,37 @@ describe('resendSkillsCourseLessonOne', () => {
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
 				data: expect.objectContaining({ source: 'signed-recovery-token' }),
+			}),
+		)
+	})
+
+	it('uses a valid recovery token instead of a different signed-in account', async () => {
+		mocks.readRecoveryToken.mockResolvedValue({
+			valid: true,
+			payload: {
+				kitSubscriberId: '52',
+				email: 'course-reader@example.com',
+			},
+		})
+		mocks.getSubscriberByEmail.mockResolvedValue({
+			id: 52,
+			email_address: 'course-reader@example.com',
+			state: 'active',
+		})
+
+		await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+			success: true,
+		})
+		expect(mocks.getSubscriberByEmail).toHaveBeenCalledWith(
+			'course-reader@example.com',
+		)
+		expect(mocks.getServerAuthSession).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({
+					kitSubscriberId: '52',
+					source: 'signed-recovery-token',
+				}),
 			}),
 		)
 	})

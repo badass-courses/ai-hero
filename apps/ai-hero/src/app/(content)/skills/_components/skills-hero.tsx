@@ -222,10 +222,8 @@ function Stats({ stars }: { stars: number | null }) {
  * was a click spent to reach the same two inputs, and the whole reason the CTA
  * left the rail was that the ask should BE the thing you do.
  *
- * The body ships as three constants swapped at the same container steps as the
- * layout, rather than being truncated at runtime — see `SKILLS_COURSE_PANEL`.
- * Exactly one of the three is visible at any width; the other two are
- * `hidden`, so the sentence a reader gets is a sentence someone wrote.
+ * The body uses the approved account-location and pacing copy from
+ * `SKILLS_COURSE_PANEL`, so the explanation does not change with viewport size.
  */
 function CourseCta() {
 	return (
@@ -248,22 +246,15 @@ function CourseCta() {
 					<h2 className={cn(TYPE.subhead, 'mb-2')}>
 						{SKILLS_COURSE_PANEL.heading}
 					</h2>
-					<p
+					<div
 						className={cn(
 							TYPE.metaProse,
-							'max-w-[46ch] text-pretty text-[color:var(--ah-fg-muted)]',
+							'max-w-[52ch] space-y-2 text-pretty text-[color:var(--ah-fg-muted)]',
 						)}
 					>
-						<span className="@[1080px]:inline hidden">
-							{SKILLS_COURSE_PANEL.body.full}
-						</span>
-						<span className="@[940px]:inline @[1080px]:hidden hidden">
-							{SKILLS_COURSE_PANEL.body.mid}
-						</span>
-						<span className="@[940px]:hidden">
-							{SKILLS_COURSE_PANEL.body.short}
-						</span>
-					</p>
+						<p>{SKILLS_COURSE_PANEL.body}</p>
+						<p>{SKILLS_COURSE_PANEL.progression}</p>
+					</div>
 				</div>
 			</div>
 			<SkillsCourseForm />

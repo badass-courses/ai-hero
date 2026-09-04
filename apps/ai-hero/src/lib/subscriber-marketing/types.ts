@@ -17,6 +17,7 @@ export type SideEffectIntentStatus =
 	| 'gated'
 	| 'blocked'
 	| 'pending'
+	| 'sending'
 	| 'completed'
 	| 'failed'
 	| 'skipped'
@@ -73,6 +74,9 @@ export type NormalizedContactEvent = {
 	eventType: string
 	occurredAt: string
 	semanticIdempotencyKey: string
+	domainFactKey?: string | null
+	payloadFormat?: string | null
+	domainPayload?: unknown
 	privacyLevel: PrivacyLevel
 	identityEvidence: ContactIdentityEvidence
 	payloadSummary: PayloadSummary
@@ -216,13 +220,14 @@ export type SideEffectIntent = {
 	id: string
 	nextActionId: string
 	contactId: string
-	provider: 'dry-run' | 'kit'
+	provider: 'dry-run' | 'kit' | 'postmark'
 	type:
 		| 'none'
 		| 'human-review'
 		| 'preview-shadow-field-sync'
 		| 'write-value-path-finisher-fields'
 		| 'send-value-path-email'
+		| 'send-skills-course-lesson-one-recovery'
 	status: SideEffectIntentStatus
 	completedAt?: string | null
 	idempotencyKey: string

@@ -11,6 +11,12 @@ import { inngest } from '@/inngest/inngest.server'
 import { createShortlinkAttribution } from '@/lib/shortlinks-query'
 import { recordSignupAttribution } from '@/lib/signup-attribution'
 import { reconcileAiHeroEmailOptInWithKit } from '@/lib/subscriber-marketing/ai-hero-email-opt-in.server'
+import {
+	AIH_COURSE_ENTRY_EVIDENCE_FIELD,
+	deadlineTimeZoneEvidenceFromHeader,
+	parseCourseSequenceExhaustionEnabled,
+	serializeDeadlineTimeZoneEvidenceForKit,
+} from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
@@ -127,6 +133,18 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						outcome: 'not-issued',
 					})
 				}
+				const subscribedAt = new Date().toISOString()
+				const sequenceExhaustionEnabled = parseCourseSequenceExhaustionEnabled(
+					process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
+				)
+				const deadlineTimeZoneResult = deadlineTimeZoneEvidenceFromHeader({
+					headerValue: req.headers.get('x-vercel-ip-timezone'),
+					capturedAt: subscribedAt,
+				})
+				const deadlineTimeZone =
+					sequenceExhaustionEnabled && deadlineTimeZoneResult.ok
+						? deadlineTimeZoneResult.value
+						: undefined
 				const optIn = await reconcileAiHeroEmailOptInWithKit({
 					email: subscriberEmail,
 					subscriberState: subscriber.state,
@@ -143,13 +161,26 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 					const serialized = optInAttribution
 						? serializeOptInAttributionForKit(optInAttribution)
 						: undefined
-					if (serialized) {
+					const serializedCourseEntryEvidence = deadlineTimeZone
+						? serializeDeadlineTimeZoneEvidenceForKit(deadlineTimeZone)
+						: undefined
+					if (serialized || serializedCourseEntryEvidence) {
 						try {
 							const { setConvertkitSubscriberFields } =
 								await import('@coursebuilder/core/providers/convertkit')
 							await setConvertkitSubscriberFields({
 								subscriber: { id: subscriber.id, fields: subscriber.fields },
-								fields: { [AIH_OPTIN_ATTRIBUTION_FIELD]: serialized },
+								fields: {
+									...(serialized
+										? { [AIH_OPTIN_ATTRIBUTION_FIELD]: serialized }
+										: {}),
+									...(serializedCourseEntryEvidence
+										? {
+												[AIH_COURSE_ENTRY_EVIDENCE_FIELD]:
+													serializedCourseEntryEvidence,
+											}
+										: {}),
+								},
 								convertkitApiSecret: env.CONVERTKIT_API_SECRET,
 								convertkitApiKey: env.CONVERTKIT_API_KEY,
 							})
@@ -188,7 +219,8 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 							name: subscriber.first_name ?? undefined,
 							formId: 9376133,
 							source: body.fields?.source ?? 'aihero_skills_page',
-							subscribedAt: new Date().toISOString(),
+							subscribedAt,
+							...(deadlineTimeZone ? { deadlineTimeZone } : {}),
 							optInAttribution,
 						},
 					}

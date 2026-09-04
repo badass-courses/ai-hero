@@ -30,6 +30,14 @@ vi.mock('@/lib/posts-query', () => ({
 	getCachedPostOrList: getCachedPostOrListMock,
 }))
 
+// [slug]/route.ts imports getCachedAllLists for generateStaticParams (not
+// exercised here). Left unmocked, it pulls in lists-query.ts's real
+// `@/server/auth` import, and next-auth cannot resolve `next/server` under
+// vitest — which fails the whole file at LOAD, not on an assertion.
+vi.mock('@/lib/lists-query', () => ({
+	getCachedAllLists: vi.fn(),
+}))
+
 vi.mock('@/lib/tutorials-query', () => ({
 	getTutorial: getTutorialMock,
 }))

@@ -116,7 +116,18 @@ export const PostSchema = ContentResourceSchema.merge(
 			featured: FeaturedSchema.optional(),
 			// The editor's Cover Image input holds '' when empty, and clearing
 			// the image persists `coverImage: null` — accept both (optional field).
+			// `source: 'uploaded'` marks hand-made covers (vs FAL-generated) —
+			// og:image serves those raw instead of the composed /api/og card.
 			coverImage: z
+				.object({
+					url: z.string().url().or(z.literal('')),
+					alt: z.string().optional(),
+					source: z.enum(['uploaded', 'generated']).optional(),
+				})
+				.nullish(),
+			// Skill-only small mark shown on the /skills catalog rows.
+			// Same editor semantics as coverImage: '' when empty, null to clear.
+			icon: z
 				.object({
 					url: z.string().url().or(z.literal('')),
 					alt: z.string().optional(),
@@ -152,6 +163,13 @@ export const PostUpdateSchema = z.object({
 		githubSource: z.string().nullish(),
 		thumbnailTime: z.number().nullish(),
 		coverImage: z
+			.object({
+				url: z.string().url().or(z.literal('')),
+				alt: z.string().optional(),
+				source: z.enum(['uploaded', 'generated']).optional(),
+			})
+			.nullish(),
+		icon: z
 			.object({
 				url: z.string().url().or(z.literal('')),
 				alt: z.string().optional(),

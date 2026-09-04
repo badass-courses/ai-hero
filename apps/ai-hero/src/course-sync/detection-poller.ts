@@ -6,6 +6,12 @@ import {
 } from '@ai-hero/course-sync-schema'
 
 import type { CourseSyncBoundedAutoApplyDecision } from './persistence-invariants'
+import {
+	courseSyncFreezeBatches,
+	type CourseSyncFreezeBatchInput,
+	type CourseSyncFreezeProgress,
+	type CourseSyncFrozenAssetBatch,
+} from './freeze-batches'
 import type { FrozenSourceAsset } from './types'
 
 import { CourseSyncError, asCourseSyncError } from './errors'
@@ -13,6 +19,7 @@ import {
 	startCourseSyncPollLifecycle,
 	type CourseSyncPollLifecycleActor,
 } from './poll-machine'
+import { courseSyncApplyPolicyOverride } from './poll-policy'
 import { AI_HERO_COURSE_SYNC_BINDING } from './types'
 
 export const COURSE_SYNC_WORKSHOP_EDIT_URL =
@@ -35,6 +42,7 @@ export type CourseSyncPollState = {
 	courseVersionId: string
 	providerRevision: string
 	status:
+		| 'batching'
 		| 'staging'
 		| 'awaiting-apply'
 		| 'applying'
@@ -45,6 +53,7 @@ export type CourseSyncPollState = {
 	consecutiveFailures: number
 	controlPlaneRunId: string | null
 	failureClass: string | null
+	applyPolicyOverride: 'operator' | null
 	updatedAt: Date
 }
 
@@ -140,6 +149,8 @@ export type CourseSyncNotification =
 	  }
 
 export const COURSE_SYNC_SLACK_USERNAME = 'AI Hero Course Sync'
+/** Marks agent-written prose so humans can tell it from generated facts. */
+export const SHITRAT_MARK = 'SR \u{1F400}'
 export const COURSE_SYNC_SLACK_ICON_EMOJI = ':repeat:'
 
 export type CourseSyncSlackNotificationPayload = {
@@ -160,13 +171,12 @@ export type CourseSyncDetectionPollerDependencies = {
 	getRevisionHead(bindingId: string): Promise<CourseSyncRevisionHead | null>
 	getRun(runId: string): Promise<CourseSyncRunSummary>
 	getPollState(bindingId: string): Promise<CourseSyncPollState | null>
+	ensureBinding(bindingId: string): Promise<void>
 	savePollState(state: CourseSyncPollState): Promise<void>
 	appendLog(input: CourseSyncPollLogInput): Promise<void>
-	freezeAsset(input: {
-		bindingId: string
-		manifest: CourseJsonDocumentV3
-		sourceVideoId: string
-	}): Promise<FrozenSourceAsset>
+	freezeAssetBatch(
+		input: CourseSyncFreezeBatchInput,
+	): Promise<CourseSyncFrozenAssetBatch>
 	stage(input: {
 		bindingId: string
 		idempotencyKey: string
@@ -265,6 +275,13 @@ function isLegacyAppliedHead(
 	)
 }
 
+function effectiveApplyPolicy(state: CourseSyncPollState | null) {
+	return (
+		courseSyncApplyPolicyOverride(state) ??
+		AI_HERO_COURSE_SYNC_BINDING.applyPolicy
+	)
+}
+
 export function courseSyncFailureClass(error: unknown) {
 	return error instanceof CourseSyncError
 		? error.code
@@ -275,6 +292,24 @@ export function courseSyncFailureClass(error: unknown) {
 
 export function isNonRetryableCourseSyncFailure(failure: CourseSyncError) {
 	return failure.retryable === false
+}
+
+function freezeProgressFromFailure(
+	failure: CourseSyncError,
+): CourseSyncFreezeProgress | null {
+	const progress = failure.details?.freezeProgress
+	if (!progress || typeof progress !== 'object') return null
+	const candidate = progress as Partial<CourseSyncFreezeProgress>
+	if (
+		typeof candidate.sourceAssetsRead !== 'number' ||
+		typeof candidate.muxAssetsCreated !== 'number' ||
+		(candidate.precision !== 'exact' &&
+			candidate.precision !== 'at-least' &&
+			candidate.precision !== 'unknown')
+	) {
+		return null
+	}
+	return candidate as CourseSyncFreezeProgress
 }
 
 function safeFailureSummary(input: {
@@ -386,6 +421,7 @@ function compactFailureReason(reason: string) {
 
 export function buildCourseSyncNotificationPayload(
 	notification: CourseSyncNotification,
+	narration?: string | null,
 ): CourseSyncSlackNotificationPayload {
 	const versionLabel = courseSyncVersionLabel(
 		notification.courseVersionId,
@@ -397,7 +433,9 @@ export function buildCourseSyncNotificationPayload(
 
 	if (notification.kind === 'success') {
 		const durationMinutes = Math.floor(notification.durationSeconds / 60)
-		const text = `Synced ${versionLabel} into the bound workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min. ${permalink}`
+		const facts = `Synced ${versionLabel} into the bound workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min.`
+		const headline = narration?.trim() ? `${narration.trim()} ${SHITRAT_MARK}` : facts
+		const text = `${headline} ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
 			icon_emoji: COURSE_SYNC_SLACK_ICON_EMOJI,
@@ -611,7 +649,7 @@ export async function recordCourseSyncPollFailure(
 	const lifecycle = startCourseSyncPollLifecycle({
 		pollStatus: state?.status ?? null,
 		strikes: state?.consecutiveFailures ?? 0,
-		applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+		applyPolicy: effectiveApplyPolicy(state),
 	})
 	if (
 		lifecycle.getSnapshot().matches({ active: 'idle' }) ||
@@ -660,6 +698,7 @@ export async function recordCourseSyncPollFailure(
 		consecutiveFailures: strikes,
 		controlPlaneRunId: state?.controlPlaneRunId ?? null,
 		failureClass: failureKind,
+		applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 		updatedAt: occurredAt,
 	})
 	// Strike one always retries on its own; only page humans when the run
@@ -731,7 +770,7 @@ export function createCourseSyncDetectionPoller(
 		let sourceAssetsRead = 0
 		let muxAssetsCreated = 0
 		let freezeProgressKnown = true
-		let freezeInFlight = false
+		let freezeBatchInFlight = false
 
 		const notifyReview = async (
 			syncRun: CourseSyncRunSummary,
@@ -870,10 +909,8 @@ export function createCourseSyncDetectionPoller(
 			})
 
 			activeStage = 'compare'
-			const [head, state] = await Promise.all([
-				dependencies.getRevisionHead(bindingId),
-				dependencies.getPollState(bindingId),
-			])
+			const head = await dependencies.getRevisionHead(bindingId)
+			const state = await dependencies.getPollState(bindingId)
 			previousState = state
 			const headMatchesRevision =
 				head?.courseVersionId === courseVersionId &&
@@ -903,7 +940,7 @@ export function createCourseSyncDetectionPoller(
 					state?.status === 'held' || observedBefore
 						? (state?.consecutiveFailures ?? 0)
 						: 0,
-				applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+				applyPolicy: effectiveApplyPolicy(state),
 			})
 			const appliedAlready =
 				(observedBefore && state?.status === 'succeeded') ||
@@ -938,6 +975,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: clock(),
 				})
 				await log({
@@ -971,6 +1009,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'awaiting-apply',
+						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 						updatedAt: clock(),
 					})
 					await notifyReview(currentRun, 'awaiting-operator-apply')
@@ -998,6 +1037,7 @@ export function createCourseSyncDetectionPoller(
 						status: 'succeeded',
 						consecutiveFailures: 0,
 						failureClass: null,
+						applyPolicyOverride: null,
 						updatedAt: clock(),
 					})
 					await log({
@@ -1024,6 +1064,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'applying',
+						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 						updatedAt: clock(),
 					})
 					await log({
@@ -1095,6 +1136,7 @@ export function createCourseSyncDetectionPoller(
 						status: held ? 'held' : 'failed',
 						consecutiveFailures: lifecycle.getSnapshot().context.strikes,
 						failureClass,
+						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 						updatedAt: clock(),
 					}
 					await log({
@@ -1178,25 +1220,8 @@ export function createCourseSyncDetectionPoller(
 				}
 			}
 
-			const stagingMarkerFresh =
-				observedBefore &&
-				state?.status === 'staging' &&
-				clock().getTime() - state.updatedAt.getTime() < 2 * 60 * 60 * 1000
-			if (stagingMarkerFresh) {
-				await log({
-					bindingId,
-					courseVersionId,
-					providerRevision,
-					runId,
-					controlPlaneRunId,
-					stage: 'stage',
-					outcome: 'skipped',
-					metadata: { reason: 'freeze-sweep-in-progress' },
-				})
-				return { outcome: 'in-progress', courseVersionId, runId }
-			}
-
 			if (lifecycle.getSnapshot().matches({ active: 'held' })) {
+				await dependencies.ensureBinding(bindingId)
 				await log({
 					bindingId,
 					courseVersionId,
@@ -1239,8 +1264,54 @@ export function createCourseSyncDetectionPoller(
 				})
 			}
 
-			lifecycle.send({ type: 'REVISION.START' })
+			const resuming =
+				observedBefore &&
+				(state?.status === 'batching' || state?.status === 'staging')
+			lifecycle.send({
+				type: resuming ? 'REVISION.RESUME' : 'REVISION.START',
+			})
 			activeStage = 'stage'
+			await dependencies.savePollState({
+				bindingId,
+				courseVersionId,
+				providerRevision,
+				status: 'batching',
+				consecutiveFailures: retry ? 1 : 0,
+				controlPlaneRunId: observedBefore
+					? (state?.controlPlaneRunId ?? null)
+					: null,
+				failureClass: null,
+				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+				updatedAt: clock(),
+			})
+			await log({
+				bindingId,
+				courseVersionId,
+				providerRevision,
+				runId,
+				stage: 'stage',
+				outcome: 'started',
+				metadata: { mode: 'resumable-batches', resuming },
+			})
+			const frozenAssets: FrozenSourceAsset[] = []
+			const freezeBatches = courseSyncFreezeBatches(
+				courseJsonVideos(detected.manifest).map((video) => video.id),
+			)
+			for (const [batchNumber, sourceVideoIds] of freezeBatches.entries()) {
+				freezeBatchInFlight = true
+				const batch = await dependencies.freezeAssetBatch({
+					bindingId,
+					manifest: detected.manifest,
+					batchNumber,
+					sourceVideoIds,
+				})
+				freezeBatchInFlight = false
+				sourceAssetsRead += batch.progress.sourceAssetsRead
+				muxAssetsCreated += batch.progress.muxAssetsCreated
+				if (batch.progress.precision !== 'exact') freezeProgressKnown = false
+				frozenAssets.push(...batch.assets)
+			}
+			lifecycle.send({ type: 'BATCHES.OK' })
 			await dependencies.savePollState({
 				bindingId,
 				courseVersionId,
@@ -1251,33 +1322,9 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
+				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 				updatedAt: clock(),
 			})
-			await log({
-				bindingId,
-				courseVersionId,
-				providerRevision,
-				runId,
-				stage: 'stage',
-				outcome: 'started',
-			})
-			const frozenAssets: FrozenSourceAsset[] = []
-			for (const video of courseJsonVideos(detected.manifest)) {
-				freezeInFlight = true
-				const asset = await dependencies.freezeAsset({
-					bindingId,
-					manifest: detected.manifest,
-					sourceVideoId: video.id,
-				})
-				freezeInFlight = false
-				if (asset.freezeEffects) {
-					sourceAssetsRead += asset.freezeEffects.sourceAssetsRead
-					muxAssetsCreated += asset.freezeEffects.muxAssetsCreated
-				} else {
-					freezeProgressKnown = false
-				}
-				frozenAssets.push(asset)
-			}
 			let syncRun = await dependencies.stage({
 				bindingId,
 				idempotencyKey: `course-sync-poll:${courseVersionId}:${providerRevision}`,
@@ -1306,6 +1353,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId,
 					failureClass: null,
+					applyPolicyOverride: null,
 					updatedAt: clock(),
 				})
 				await log({
@@ -1385,6 +1433,7 @@ export function createCourseSyncDetectionPoller(
 						consecutiveFailures: 0,
 						controlPlaneRunId: syncRun.runId,
 						failureClass: null,
+						applyPolicyOverride: 'operator',
 						updatedAt: clock(),
 					})
 					await notifyReview(
@@ -1410,6 +1459,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId: syncRun.runId,
 					failureClass: null,
+					applyPolicyOverride: courseSyncApplyPolicyOverride(state),
 					updatedAt: clock(),
 				})
 				await log({
@@ -1500,6 +1550,7 @@ export function createCourseSyncDetectionPoller(
 				consecutiveFailures: 0,
 				controlPlaneRunId,
 				failureClass: null,
+				applyPolicyOverride: null,
 				updatedAt: clock(),
 			})
 			return {
@@ -1543,7 +1594,7 @@ export function createCourseSyncDetectionPoller(
 			lifecycle ??= startCourseSyncPollLifecycle({
 				pollStatus: previousState?.status ?? null,
 				strikes: previousState?.consecutiveFailures ?? 0,
-				applyPolicy: AI_HERO_COURSE_SYNC_BINDING.applyPolicy,
+				applyPolicy: effectiveApplyPolicy(previousState),
 			})
 			if (
 				lifecycle.getSnapshot().matches({ active: 'idle' }) ||
@@ -1557,6 +1608,7 @@ export function createCourseSyncDetectionPoller(
 			const strikes = lifecycle.getSnapshot().context.strikes
 			const held = lifecycle.getSnapshot().matches({ active: 'held' })
 			const transitionedToHeld = held && previousState?.status !== 'held'
+			const interruptedBatchProgress = freezeProgressFromFailure(failure)
 			const summary = safeFailureSummary({
 				failure,
 				code: kind,
@@ -1564,13 +1616,19 @@ export function createCourseSyncDetectionPoller(
 				controlPlaneRunId,
 				previousAppliedRunId,
 				freezeProgress: {
-					sourceAssetsRead,
-					muxAssetsCreated,
-					precision: freezeInFlight
-						? 'at-least'
-						: freezeProgressKnown
-							? 'exact'
-							: 'unknown',
+					sourceAssetsRead:
+						sourceAssetsRead +
+						(interruptedBatchProgress?.sourceAssetsRead ?? 0),
+					muxAssetsCreated:
+						muxAssetsCreated +
+						(interruptedBatchProgress?.muxAssetsCreated ?? 0),
+					precision: !freezeProgressKnown
+						? 'unknown'
+						: interruptedBatchProgress
+							? interruptedBatchProgress.precision
+							: freezeBatchInFlight
+								? 'at-least'
+								: 'exact',
 				},
 			})
 			await log({
@@ -1612,6 +1670,7 @@ export function createCourseSyncDetectionPoller(
 				consecutiveFailures: strikes,
 				controlPlaneRunId,
 				failureClass: kind,
+				applyPolicyOverride: courseSyncApplyPolicyOverride(previousState),
 				updatedAt: clock(),
 			})
 			if (transitionedToHeld) {

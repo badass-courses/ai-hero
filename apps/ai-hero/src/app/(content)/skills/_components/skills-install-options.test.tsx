@@ -11,9 +11,9 @@ describe('SkillsInstallOptions', () => {
 		const portableCommand = 'npx skills@latest add mattpocock/skills'
 		const claudeCommand = 'claude plugins install mattpocock-skills'
 
-		expect(markup).toContain('Get the skills')
+		expect(markup).toContain('Install the skills')
 		expect(markup).not.toContain('Choose how you want updates')
-		expect(markup).toContain('Update later with')
+		expect(markup).toContain('Update with')
 		expect(markup).toContain('npx skills update')
 		expect(markup.indexOf(portableCommand)).toBeLessThan(
 			markup.indexOf(claudeCommand),

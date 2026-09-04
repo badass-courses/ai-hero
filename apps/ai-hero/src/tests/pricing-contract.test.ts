@@ -108,7 +108,7 @@ const pppCoupons: ReadonlyMap<
 type Credit =
 	| { kind: 'none' }
 	| { kind: 'irrelevant'; amount: 3700 | 4500 }
-	| { kind: 'exclusive'; amount: 19000 | 20000 }
+	| { kind: 'exclusive'; amount: 19000 | 19435 | 20000 }
 	| { kind: 'ordinary'; amount: 2000 | 20000 }
 
 function creditRecords(credit: Credit) {
@@ -374,7 +374,7 @@ async function checkout({
 	return { payments, payload, result }
 }
 
-describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
+describe('@coursebuilder/core 2.0.4 AI Hero pricing contract', () => {
 	it('keeps the public intro checkout at $199', async () => {
 		const { payments, payload, result } = await checkout({
 			country: 'US',
@@ -447,6 +447,59 @@ describe('@coursebuilder/core 2.0.3 AI Hero pricing contract', () => {
 		})
 		expect(payload?.metadata?.provenanceIds).toContain(CREDIT_SITE_COUPON_ID)
 	})
+
+	it.each([
+		{
+			comparison: 'below',
+			country: 'TR',
+			alumniCredit: 20000 as const,
+			loggedOutTotalCents: '8970',
+			loggedInTotalCents: '8970',
+			loggedInCandidate: 'ppp',
+		},
+		{
+			comparison: 'equal to',
+			country: 'TH',
+			// Current $299 pricing has no PPP tier exactly equal to $99. This
+			// synthetic entitlement makes the equality boundary explicit.
+			alumniCredit: 19435 as const,
+			loggedOutTotalCents: '10465',
+			loggedInTotalCents: '10465',
+			loggedInCandidate: 'credit',
+		},
+		{
+			comparison: 'above',
+			country: 'TH',
+			alumniCredit: 20000 as const,
+			loggedOutTotalCents: '10465',
+			loggedInTotalCents: '9900',
+			loggedInCandidate: 'credit',
+		},
+	] as const)(
+		'keeps the lower valid price when $country PPP is $comparison alumni pricing, logged out and logged in',
+		async ({
+			country,
+			alumniCredit,
+			loggedOutTotalCents,
+			loggedInTotalCents,
+			loggedInCandidate,
+		}) => {
+			const loggedOut = await checkout({ country, user: false })
+			const loggedIn = await checkout({
+				country,
+				credit: { kind: 'exclusive', amount: alumniCredit },
+			})
+
+			expect(loggedOut.payload?.metadata).toMatchObject({
+				expectedTotalCents: loggedOutTotalCents,
+				pricingCandidate: 'ppp',
+			})
+			expect(loggedIn.payload?.metadata).toMatchObject({
+				expectedTotalCents: loggedInTotalCents,
+				pricingCandidate: loggedInCandidate,
+			})
+		}
+	)
 
 	it.each([
 		{ country: 'TR', alumniCredit: 20000 as const, totalCents: '8970' },

@@ -8,6 +8,8 @@ import { kitWriteRetrySchedule } from '@/coursebuilder/kit-write-retry'
 import { SKILLS_NEWSLETTER_SUBSCRIBED_EVENT } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { createEmailCourseShadowRuntime } from '@/lib/subscriber-marketing/email-course-shadow-runtime'
+import { parseCourseSequenceExhaustionEnabled } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import {
 	enterSkillsNewsletterSubscriber,
 	SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
@@ -126,9 +128,15 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			})
 			const result = await enterSkillsNewsletterSubscriber({
 				repository: new DrizzleCaptureMarketingRepository(db),
+				shadowObserver: createEmailCourseShadowRuntime({
+					database: db,
+				}).observeSignup,
 				allowlist: allowlistDecision.allowlist,
 				input: event.data,
 				allowWrite: true,
+				sequenceExhaustionEnabled: parseCourseSequenceExhaustionEnabled(
+					process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
+				),
 			})
 			await log.info('subscriber_funnel.entry_result', {
 				funnel: 'skills-newsletter', eventId: event.id,

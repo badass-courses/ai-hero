@@ -1773,6 +1773,39 @@ describe('subscriber marketing value path click progression', () => {
 		return { repository, captured }
 	}
 
+	it('refuses a click-created terminal intent when sequence exhaustion is enabled', async () => {
+		const { repository, captured } = await makeProgressionFixture()
+		const result = await recordValuePathAnswerProgression({
+			repository,
+			sequenceExhaustionEnabled: true,
+			token: {
+				contactId: captured.contact.id,
+				kitSubscriberId: 'kit_123',
+				valuePathResourceId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-6',
+				sequenceId: 'ai-hero-skills-workflow',
+				expiresAt: '2026-05-14T12:00:00.000Z',
+			},
+			answerPage: makeAnswerPage({
+				nextEmailId: 'email-7',
+				nextEmailResourceId: 'ai-hero-skills-workflow.email-7',
+			}),
+			now: '2026-05-14T11:05:00.000Z',
+		})
+
+		expect(result).toMatchObject({
+			status: 'skipped',
+			reason: 'terminal-progression-owned-by-email-course',
+			reviewReasons: ['terminal-progression-owned-by-email-course'],
+		})
+		expect(
+			Array.from(repository.sideEffectIntents.values()).some(
+				(intent) =>
+					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
+			),
+		).toBe(false)
+	})
+
 	it('records answer click Contact Event, NextAction, and dry-run SideEffectIntent', async () => {
 		const { repository, captured } = await makeProgressionFixture()
 		const result = await recordValuePathAnswerProgression({
@@ -1794,7 +1827,12 @@ describe('subscriber marketing value path click progression', () => {
 			Array.from(repository.contactEvents.values()).find(
 				(event) => event.eventType === 'value-path.answer-selected',
 			),
-		).toMatchObject({ provider: 'ai-hero' })
+		).toMatchObject({
+			provider: 'ai-hero',
+			payloadSummary: {
+				keywords: expect.arrayContaining(['ai-hero-skills-workflow.email-1']),
+			},
+		})
 		expect(
 			Array.from(repository.nextActions.values()).find(
 				(action) => action.type === 'advance-value-path',
@@ -5620,6 +5658,27 @@ describe('Skills Newsletter Path Entry', () => {
 		})
 	})
 
+	it('keeps the production signup result when the shadow observer fails', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const shadowObserver = vi.fn().mockRejectedValue(new Error('shadow down'))
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist,
+			input,
+			allowWrite: true,
+			shadowObserver,
+		})
+
+		expect(result.status).toBe('planned')
+		expect(result.entry.counts.created).toBe(1)
+		expect(shadowObserver).toHaveBeenCalledOnce()
+		expect(
+			await repository.findSideEffectIntentByIdempotencyKey(
+				`contact:${result.contactId}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0`,
+			),
+		).toMatchObject({ status: 'pending', provider: 'kit' })
+	})
+
 	it('replans blocked email intents back to pending for executor re-evaluation', async () => {
 		const repository = new InMemorySubscriberMarketingRepository()
 		repository.createSideEffectIntent({
@@ -5733,6 +5792,7 @@ describe('Skills Newsletter Path Entry', () => {
 			metadata: {
 				activationId: 'skills-workflow:rolling-public',
 				kitSequenceId: '2757199',
+				courseEntryEventId: expect.any(String),
 			},
 		})
 	})

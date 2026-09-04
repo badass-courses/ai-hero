@@ -1,0 +1,281 @@
+diff --git a/dist/chunk-I72VK22W.js b/dist/chunk-I72VK22W.js
+index c9bb499b0dfa23a7280d7f7c312fd4b0ec60da55..b4b156686bf9b6ccb7f152f61cf31f36947046c5 100644
+--- a/dist/chunk-I72VK22W.js
++++ b/dist/chunk-I72VK22W.js
+@@ -6116,27 +6116,29 @@ function mySqlDrizzleAdapter(client, tableFn = defaultMySqlTableFn, paymentProvi
+           const existingMerchantCharge = merchantChargeSchema.nullable().parse(await client.query.merchantCharge.findFirst({
+             where: eq(merchantCharge.identifier, stripeChargeId)
+           }) || null);
++          // CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1
++          // This identity check must run before any existing-Purchase return.
++          if (existingMerchantCharge && (existingMerchantCharge.identifier !== stripeChargeId || existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1: existing merchant charge does not match checkout");
++          }
+           const existingPurchaseForCharge = existingMerchantCharge ? await client.query.purchases.findFirst({
+-            where: eq(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+-            with: {
+-              user: true,
+-              product: true,
+-              bulkCoupon: true
+-            }
++            where: eq(purchaseTable.merchantChargeId, existingMerchantCharge.id)
+           }) : null;
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${v4()}`;
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${v4()}`;
+           const purchaseId2 = `purch_${v4()}`;
+-          const newMerchantCharge = await client.insert(merchantCharge).values({
+-            id: merchantChargeId,
+-            userId,
+-            identifier: stripeChargeId,
+-            merchantAccountId,
+-            merchantProductId,
+-            merchantCustomerId
+-          });
++          if (!existingMerchantCharge) {
++            await client.insert(merchantCharge).values({
++              id: merchantChargeId,
++              userId,
++              identifier: stripeChargeId,
++              merchantAccountId,
++              merchantProductId,
++              merchantCustomerId
++            });
++          }
+           const existingPurchase = purchaseSchema.nullable().parse(await client.query.purchases.findFirst({
+             where: and(eq(purchaseTable.productId, productId), eq(purchaseTable.userId, userId), inArray(purchaseTable.status, [
+               "Valid",
+@@ -6207,12 +6209,20 @@ function mySqlDrizzleAdapter(client, tableFn = defaultMySqlTableFn, paymentProvi
+               couponToUpdate = await client.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${v4()}`;
+-          await client.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await client.query.merchantSession.findFirst({
++            where: eq(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${v4()}`;
++          if (!existingMerchantSession) {
++            await client.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await client.query.merchantCoupon.findFirst({
+             where: eq(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+@@ -6274,7 +6284,8 @@ function mySqlDrizzleAdapter(client, tableFn = defaultMySqlTableFn, paymentProvi
+             stripeChargeId: options.stripeChargeId,
+             userId: options.userId
+           });
+-          trx.rollback();
++          // Throwing from the transaction callback rolls it back and preserves
++          // the actionable error instead of replacing it with "Rollback".
+           throw error;
+         }
+       });
+diff --git a/dist/lib/mysql/index.cjs b/dist/lib/mysql/index.cjs
+index e5c2823481009f448a6076fa0ebd6f68cfafb26d..c7d0ccba735491042545ca5a14f6b303c7d128a6 100644
+--- a/dist/lib/mysql/index.cjs
++++ b/dist/lib/mysql/index.cjs
+@@ -13939,27 +13939,29 @@ function mySqlDrizzleAdapter(client, tableFn = import_mysql_core52.mysqlTable, p
+           const existingMerchantCharge = merchantChargeSchema.nullable().parse(await client.query.merchantCharge.findFirst({
+             where: (0, import_drizzle_orm47.eq)(merchantCharge.identifier, stripeChargeId)
+           }) || null);
++          // CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1
++          // This identity check must run before any existing-Purchase return.
++          if (existingMerchantCharge && (existingMerchantCharge.identifier !== stripeChargeId || existingMerchantCharge.userId !== userId || existingMerchantCharge.merchantAccountId !== merchantAccountId || existingMerchantCharge.merchantProductId !== merchantProductId || existingMerchantCharge.merchantCustomerId !== merchantCustomerId)) {
++            throw new Error("CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1: existing merchant charge does not match checkout");
++          }
+           const existingPurchaseForCharge = existingMerchantCharge ? await client.query.purchases.findFirst({
+-            where: (0, import_drizzle_orm47.eq)(purchaseTable.merchantChargeId, existingMerchantCharge.id),
+-            with: {
+-              user: true,
+-              product: true,
+-              bulkCoupon: true
+-            }
++            where: (0, import_drizzle_orm47.eq)(purchaseTable.merchantChargeId, existingMerchantCharge.id)
+           }) : null;
+           if (existingPurchaseForCharge) {
+             return existingPurchaseForCharge.id;
+           }
+-          const merchantChargeId = `mc_${(0, import_uuid.v4)()}`;
++          const merchantChargeId = existingMerchantCharge?.id ?? `mc_${(0, import_uuid.v4)()}`;
+           const purchaseId2 = `purch_${(0, import_uuid.v4)()}`;
+-          const newMerchantCharge = await client.insert(merchantCharge).values({
+-            id: merchantChargeId,
+-            userId,
+-            identifier: stripeChargeId,
+-            merchantAccountId,
+-            merchantProductId,
+-            merchantCustomerId
+-          });
++          if (!existingMerchantCharge) {
++            await client.insert(merchantCharge).values({
++              id: merchantChargeId,
++              userId,
++              identifier: stripeChargeId,
++              merchantAccountId,
++              merchantProductId,
++              merchantCustomerId
++            });
++          }
+           const existingPurchase = purchaseSchema.nullable().parse(await client.query.purchases.findFirst({
+             where: (0, import_drizzle_orm47.and)((0, import_drizzle_orm47.eq)(purchaseTable.productId, productId), (0, import_drizzle_orm47.eq)(purchaseTable.userId, userId), (0, import_drizzle_orm47.inArray)(purchaseTable.status, [
+               "Valid",
+@@ -14030,12 +14032,20 @@ function mySqlDrizzleAdapter(client, tableFn = import_mysql_core52.mysqlTable, p
+               couponToUpdate = await client.insert(coupon).values(bulkCouponValues);
+             }
+           }
+-          const merchantSessionId = `ms_${(0, import_uuid.v4)()}`;
+-          await client.insert(merchantSession).values({
+-            id: merchantSessionId,
+-            identifier: checkoutSessionId,
+-            merchantAccountId
++          const existingMerchantSession = await client.query.merchantSession.findFirst({
++            where: (0, import_drizzle_orm47.eq)(merchantSession.identifier, checkoutSessionId)
+           });
++          if (existingMerchantSession && existingMerchantSession.merchantAccountId !== merchantAccountId) {
++            throw new Error("Existing merchant session does not match checkout");
++          }
++          const merchantSessionId = existingMerchantSession?.id ?? `ms_${(0, import_uuid.v4)()}`;
++          if (!existingMerchantSession) {
++            await client.insert(merchantSession).values({
++              id: merchantSessionId,
++              identifier: checkoutSessionId,
++              merchantAccountId
++            });
++          }
+           const merchantCouponUsed = stripeCouponId ? await client.query.merchantCoupon.findFirst({
+             where: (0, import_drizzle_orm47.eq)(merchantCoupon.identifier, stripeCouponId)
+           }) : null;
+@@ -14097,7 +14107,8 @@ function mySqlDrizzleAdapter(client, tableFn = import_mysql_core52.mysqlTable, p
+             stripeChargeId: options.stripeChargeId,
+             userId: options.userId
+           });
+-          trx.rollback();
++          // Throwing from the transaction callback rolls it back and preserves
++          // the actionable error instead of replacing it with "Rollback".
+           throw error;
+         }
+       });
+diff --git a/src/lib/mysql/index.ts b/src/lib/mysql/index.ts
+index e51ab3d6ad9c49e7ef4a1189a436e4371cf26da2..85f0ef77472b6268c2fc398154c323733cf2cae8 100644
+--- a/src/lib/mysql/index.ts
++++ b/src/lib/mysql/index.ts
+@@ -1004,17 +1004,27 @@ export function mySqlDrizzleAdapter(
+ 						})) || null,
+ 					)
+ 
++					// CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1
++					// This identity check must run before any existing-Purchase return.
++					if (
++						existingMerchantCharge &&
++						(existingMerchantCharge.identifier !== stripeChargeId ||
++							existingMerchantCharge.userId !== userId ||
++							existingMerchantCharge.merchantAccountId !== merchantAccountId ||
++							existingMerchantCharge.merchantProductId !== merchantProductId ||
++							existingMerchantCharge.merchantCustomerId !== merchantCustomerId)
++					) {
++						throw new Error(
++							'CHECKOUT_RECOVERY_CHARGE_IDENTITY_GUARD_V1: existing merchant charge does not match checkout',
++						)
++					}
++
+ 					const existingPurchaseForCharge = existingMerchantCharge
+ 						? await client.query.purchases.findFirst({
+ 								where: eq(
+ 									purchaseTable.merchantChargeId,
+ 									existingMerchantCharge.id,
+ 								),
+-								with: {
+-									user: true,
+-									product: true,
+-									bulkCoupon: true,
+-								},
+ 							})
+ 						: null
+ 
+@@ -1022,17 +1032,19 @@ export function mySqlDrizzleAdapter(
+ 						return existingPurchaseForCharge.id
+ 					}
+ 
+-					const merchantChargeId = `mc_${v4()}`
++					const merchantChargeId = existingMerchantCharge?.id ?? `mc_${v4()}`
+ 					const purchaseId = `purch_${v4()}`
+ 
+-					const newMerchantCharge = await client.insert(merchantCharge).values({
+-						id: merchantChargeId,
+-						userId,
+-						identifier: stripeChargeId,
+-						merchantAccountId,
+-						merchantProductId,
+-						merchantCustomerId,
+-					})
++					if (!existingMerchantCharge) {
++						await client.insert(merchantCharge).values({
++							id: merchantChargeId,
++							userId,
++							identifier: stripeChargeId,
++							merchantAccountId,
++							merchantProductId,
++							merchantCustomerId,
++						})
++					}
+ 
+ 					const existingPurchase = purchaseSchema.nullable().parse(
+ 						(await client.query.purchases.findFirst({
+@@ -1163,14 +1175,26 @@ export function mySqlDrizzleAdapter(
+ 						}
+ 					}
+ 
+-					// create a new merchant session
+-					const merchantSessionId = `ms_${v4()}`
+-
+-					await client.insert(merchantSession).values({
+-						id: merchantSessionId,
+-						identifier: checkoutSessionId,
+-						merchantAccountId,
+-					})
++					const existingMerchantSession =
++						await client.query.merchantSession.findFirst({
++							where: eq(merchantSession.identifier, checkoutSessionId),
++						})
++					if (
++						existingMerchantSession &&
++						existingMerchantSession.merchantAccountId !== merchantAccountId
++					) {
++						throw new Error('Existing merchant session does not match checkout')
++					}
++					const merchantSessionId =
++						existingMerchantSession?.id ?? `ms_${v4()}`
++
++					if (!existingMerchantSession) {
++						await client.insert(merchantSession).values({
++							id: merchantSessionId,
++							identifier: checkoutSessionId,
++							merchantAccountId,
++						})
++					}
+ 
+ 					const merchantCouponUsed = stripeCouponId
+ 						? await client.query.merchantCoupon.findFirst({
+@@ -1251,7 +1275,8 @@ export function mySqlDrizzleAdapter(
+ 						stripeChargeId: options.stripeChargeId,
+ 						userId: options.userId,
+ 					})
+-					trx.rollback()
++					// Throwing from the transaction callback rolls it back and preserves
++					// the actionable error instead of replacing it with "Rollback".
+ 					throw error
+ 				}
+ 			})

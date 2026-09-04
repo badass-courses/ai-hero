@@ -1,0 +1,8 @@
+NASA Black Marble / Blue Marble derived textures from three-globe example images.
+
+- earth-night.jpg
+- earth-topology.png
+
+Source: https://unpkg.com/three-globe/example/img/
+Upstream: NASA Visible Earth, public domain.
+https://visibleearth.nasa.gov/

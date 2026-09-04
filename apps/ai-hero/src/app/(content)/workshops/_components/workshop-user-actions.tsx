@@ -21,6 +21,9 @@ import {
 } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import * as ModuleCertificate from '@/components/certificates/module-certificate'
+
+import { CertificateDialog } from '../../_components/module-certificate-container'
 import { useModuleProgress } from '../../_components/module-progress-provider'
 import { useWorkshopAbility } from './use-workshop-ability'
 import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
@@ -62,6 +65,24 @@ export function StartLearningWorkshopButton({
 
 	if (status !== 'success') return <StartLearningWorkshopButtonSkeleton />
 
+	// Finished: the bar's one gold object becomes the reward. "Continue" to a
+	// course you've completed is a dead end, and the sidebar tile alone was
+	// missed by learners who never came back to this page. Every lesson done
+	// means the viewer had access, whatever the ability says now (a lapsed
+	// cohort, an admin without a purchase), so this outranks the access states.
+	if (moduleProgress?.percentCompleted === 100) {
+		return (
+			<ModuleCertificate.Root resourceIdOrSlug={moduleSlug}>
+				<ModuleCertificate.Trigger
+					className={cn(WORKSHOP_CTA_BUTTON, 'h-[46px]', className)}
+				>
+					Get your certificate
+				</ModuleCertificate.Trigger>
+				<CertificateDialog />
+			</ModuleCertificate.Root>
+		)
+	}
+
 	if (isPendingOpenAccess && workshop?.fields?.startsAt) {
 		const formattedDate = formatInTimeZone(
 			new Date(workshop?.fields?.startsAt || ''),
@@ -99,6 +120,7 @@ export function StartLearningWorkshopButton({
 	if (!isWorkshopInProgress && !firstLessonSlug) {
 		return null
 	}
+
 
 	return (
 		<Button size="lg" className={cn(WORKSHOP_CTA_BUTTON, className)} asChild>

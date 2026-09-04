@@ -166,7 +166,6 @@ const Welcome = async (props: {
 
 		const purchaseUserTransfers = await getPurchaseTransferForPurchaseId({
 			id: purchase.id,
-			sourceUserId: session?.user?.id,
 		})
 
 		const isTransferAvailable =

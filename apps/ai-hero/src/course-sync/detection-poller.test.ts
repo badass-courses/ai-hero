@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CourseSyncError } from './errors'
 import {
+	freezeCourseSyncAssetBatch,
+	type FreezeCourseSyncAsset,
+} from './freeze-batches'
+import {
 	buildCourseSyncNotificationPayload,
 	createCourseSyncDetectionPoller,
 	recordCourseSyncPollFailure,
@@ -105,8 +109,9 @@ function harness(input?: {
 	readManifest?: CourseSyncDetectionPollerDependencies['readManifest']
 	apply?: CourseSyncDetectionPollerDependencies['apply']
 	getRun?: CourseSyncDetectionPollerDependencies['getRun']
+	ensureBinding?: CourseSyncDetectionPollerDependencies['ensureBinding']
 	stage?: CourseSyncDetectionPollerDependencies['stage']
-	freezeAsset?: CourseSyncDetectionPollerDependencies['freezeAsset']
+	freezeAsset?: FreezeCourseSyncAsset
 	appendLog?: CourseSyncDetectionPollerDependencies['appendLog']
 	evaluateBoundedAutoApply?: CourseSyncDetectionPollerDependencies['evaluateBoundedAutoApply']
 	claimReviewNotification?: CourseSyncDetectionPollerDependencies['claimReviewNotification']
@@ -133,6 +138,10 @@ function harness(input?: {
 				head ? run(head.runState, { runId: head.runId }) : run('previewed')),
 	)
 	const freezeAsset = vi.fn(input?.freezeAsset ?? (async () => frozenAsset))
+	const freezeAssetBatch = vi.fn((batchInput) =>
+		freezeCourseSyncAssetBatch(batchInput, freezeAsset),
+	)
+	const ensureBinding = vi.fn(input?.ensureBinding ?? (async () => undefined))
 	const evaluateBoundedAutoApply = vi.fn(
 		input?.evaluateBoundedAutoApply ??
 			(async () => ({
@@ -190,7 +199,8 @@ function harness(input?: {
 		getRevisionHead: async () => head,
 		getRun,
 		getPollState: async () => state,
-		freezeAsset,
+		ensureBinding,
+		freezeAssetBatch,
 		savePollState: async (next) => {
 			state = next
 		},
@@ -211,7 +221,9 @@ function harness(input?: {
 	}
 	return {
 		poll: createCourseSyncDetectionPoller(dependencies),
+		ensureBinding,
 		freezeAsset,
+		freezeAssetBatch,
 		stage,
 		preview,
 		apply,
@@ -320,6 +332,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0,
 			controlPlaneRunId: 'sync-run-2',
 			failureClass: null,
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T17:30:00.000Z'),
 		}
 		const test = harness({
@@ -400,6 +413,7 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({
 			status: 'awaiting-apply',
 			controlPlaneRunId: 'sync-run-2',
+			applyPolicyOverride: 'operator',
 		})
 		expect(test.notifications).toEqual([
 			expect.objectContaining({
@@ -463,6 +477,7 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({
 			status: 'succeeded',
 			controlPlaneRunId: 'sync-run-2',
+			applyPolicyOverride: null,
 		})
 		expect(test.notifications).toEqual([
 			expect.objectContaining({ kind: 'success' }),
@@ -551,6 +566,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 0,
 				controlPlaneRunId: 'sync-run-2',
 				failureClass: null,
+				applyPolicyOverride: 'operator',
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			}
 			const test = harness({
@@ -665,6 +681,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 1,
 				controlPlaneRunId: null,
 				failureClass: 'MUX_API_FAILED',
+				applyPolicyOverride: null,
 				updatedAt: new Date('2026-07-24T15:00:00.000Z'),
 			},
 		})
@@ -735,6 +752,7 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 2,
 				controlPlaneRunId: 'sync-run-2',
 				failureClass: 'Error',
+				applyPolicyOverride: null,
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
 			},
 			appendLog: async (entry) => {
@@ -760,7 +778,8 @@ describe('course sync detection poller', () => {
 		)
 	})
 
-	it('does not let a new revision bypass an operator hold', async () => {
+	it('migrates the server binding without letting a new revision bypass an operator hold', async () => {
+		const order: string[] = []
 		const test = harness({
 			state: {
 				bindingId: 'csb_ai_coding_crash_course',
@@ -770,7 +789,16 @@ describe('course sync detection poller', () => {
 				consecutiveFailures: 2,
 				controlPlaneRunId: 'sync-run-1',
 				failureClass: 'Error',
+				applyPolicyOverride: null,
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			ensureBinding: async () => {
+				order.push('ensure-binding')
+			},
+			appendLog: async (entry) => {
+				if (entry.stage === 'hold' && entry.outcome === 'held') {
+					order.push('hold-log')
+				}
 			},
 		})
 
@@ -779,42 +807,280 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 			controlPlaneRunId: null,
 		})
+		expect(test.ensureBinding).toHaveBeenCalledOnce()
+		expect(order).toEqual(['ensure-binding', 'hold-log'])
 		expect(test.freezeAsset).not.toHaveBeenCalled()
 		expect(test.stage).not.toHaveBeenCalled()
 		expect(test.notifications).toHaveLength(0)
 	})
 
-	it('skips a queued tick while a fresh staging marker exists', async () => {
+	it('preserves operator review across a released strike-one retry', async () => {
+		let failOnce = true
 		const test = harness({
 			state: {
 				bindingId: 'csb_ai_coding_crash_course',
 				courseVersionId: 'version-2',
 				providerRevision: 'dropbox-rev-2',
-				status: 'staging',
+				status: 'released',
 				consecutiveFailures: 0,
 				controlPlaneRunId: null,
 				failureClass: null,
+				applyPolicyOverride: 'operator',
 				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			freezeAsset: async () => {
+				if (failOnce) {
+					failOnce = false
+					throw new Error('injected strike one')
+				}
+				return frozenAsset
+			},
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+
+		await expect(test.poll('released-strike-one')).resolves.toMatchObject({
+			outcome: 'failed',
+			consecutiveFailures: 1,
+		})
+		expect(test.state()).toMatchObject({
+			status: 'failed',
+			applyPolicyOverride: 'operator',
+		})
+
+		await expect(test.poll('released-retry')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		expect(test.preview).toHaveBeenCalledOnce()
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply',
+			applyPolicyOverride: 'operator',
+		})
+
+		test.setHead({
+			courseVersionId: 'version-2',
+			providerRevision: 'dropbox-rev-2',
+			runId: 'sync-run-2',
+			runState: 'applied',
+		})
+		await expect(test.poll('released-applied-by-operator')).resolves.toMatchObject({
+			outcome: 'no-op',
+		})
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			applyPolicyOverride: null,
+		})
+	})
+
+	it('consumes operator review after a verified staging no-op', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-2',
+				providerRevision: 'dropbox-rev-2',
+				status: 'released',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				applyPolicyOverride: 'operator',
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			stage: async () => run('applied', { noOp: true }),
+		})
+
+		await expect(test.poll('released-no-op')).resolves.toMatchObject({
+			outcome: 'no-op',
+		})
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			applyPolicyOverride: null,
+		})
+	})
+
+	it('requires operator review after release and across superseding revisions', async () => {
+		const test = harness({
+			state: {
+				bindingId: 'csb_ai_coding_crash_course',
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				status: 'released',
+				consecutiveFailures: 0,
+				controlPlaneRunId: null,
+				failureClass: null,
+				applyPolicyOverride: 'operator',
+				updatedAt: new Date('2026-07-24T17:00:00.000Z'),
+			},
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+
+		await expect(test.poll('released-revision')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.stage).toHaveBeenCalledOnce()
+		expect(test.preview).toHaveBeenCalledOnce()
+		expect(test.evaluateBoundedAutoApply).toHaveBeenCalledOnce()
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply',
+			consecutiveFailures: 0,
+		})
+
+		const superseding = harness({
+			manifest: { ...manifest, courseVersionId: 'version-3' },
+			state: test.state(),
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
+		})
+		await expect(superseding.poll('superseding-revision')).resolves.toMatchObject(
+			{ outcome: 'awaiting-apply', courseVersionId: 'version-3' },
+		)
+		expect(superseding.stage).toHaveBeenCalledOnce()
+		expect(superseding.apply).not.toHaveBeenCalled()
+		expect(superseding.verifyApplied).not.toHaveBeenCalled()
+		expect(superseding.state()).toMatchObject({
+			courseVersionId: 'version-3',
+			status: 'awaiting-apply',
+		})
+	})
+
+	it('continues after an interrupted batch sequence without duplicate assets or runs', async () => {
+		const firstLesson = manifest.sections[0]!.lessons[0]!
+		if (firstLesson.type !== 'explainer') throw new Error('fixture mismatch')
+		const sourceVideoIds = Array.from(
+			{ length: 12 },
+			(_, index) => `video-${index + 1}`,
+		)
+		const batchManifest: CourseJsonDocumentV3 = {
+			...manifest,
+			sections: [
+				{
+					...manifest.sections[0]!,
+					lessons: sourceVideoIds.map((sourceVideoId, index) => ({
+						...firstLesson,
+						id: `lesson-${index + 1}`,
+						explainer: {
+							...firstLesson.explainer,
+							id: sourceVideoId,
+							relativePath: `${sourceVideoId}.mp4`,
+							sha256: String(index + 1).padStart(64, 'a'),
+						},
+					})),
+				},
+			],
+		}
+		const receipts = new Map<string, typeof frozenAsset>()
+		const muxCreates: string[] = []
+		let interrupt = true
+		const test = harness({
+			manifest: batchManifest,
+			freezeAsset: async ({ sourceVideoId }) => {
+				const receipt = receipts.get(sourceVideoId)
+				if (receipt) {
+					return {
+						...receipt,
+						freezeEffects: { sourceAssetsRead: 0, muxAssetsCreated: 0 },
+					}
+				}
+				if (sourceVideoId === 'video-4' && interrupt) {
+					interrupt = false
+					throw new Error('injected interruption')
+				}
+				const asset = {
+					...frozenAsset,
+					sourceVideoId,
+					relativePath: `${sourceVideoId}.mp4`,
+					muxAssetId: `mux-${sourceVideoId}`,
+					muxPlaybackId: `playback-${sourceVideoId}`,
+				}
+				receipts.set(sourceVideoId, asset)
+				muxCreates.push(sourceVideoId)
+				return asset
 			},
 		})
 
-		await expect(test.poll('poll-queued')).resolves.toEqual({
-			outcome: 'in-progress',
-			courseVersionId: 'version-2',
-			runId: 'poll-queued',
+		await expect(test.poll('poll-interrupted')).resolves.toMatchObject({
+			outcome: 'failed',
+			consecutiveFailures: 1,
 		})
-		expect(test.freezeAsset).not.toHaveBeenCalled()
 		expect(test.stage).not.toHaveBeenCalled()
-		expect(test.logs).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					stage: 'stage',
-					outcome: 'skipped',
-					metadata: { reason: 'freeze-sweep-in-progress' },
+		expect(test.logs).toContainEqual(
+			expect.objectContaining({
+				outcome: 'failed',
+				metadata: expect.objectContaining({
+					failureSummary: expect.objectContaining({
+						sideEffects: expect.objectContaining({
+							muxAssetsCreated: { count: 3, precision: 'at-least' },
+						}),
+					}),
 				}),
-			]),
+			}),
+		)
+
+		await expect(test.poll('poll-continued')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
+		})
+		const durableBatchSizes = test.freezeAssetBatch.mock.calls.map(
+			([input]) => input.sourceVideoIds.length,
+		)
+		expect(durableBatchSizes).toHaveLength(16)
+		expect(new Set(durableBatchSizes)).toEqual(new Set([1]))
+		expect(muxCreates).toEqual(sourceVideoIds)
+		expect(new Set(muxCreates).size).toBe(12)
+		expect(test.stage).toHaveBeenCalledOnce()
+		const stagedAssets = test.stage.mock.calls[0]![0].frozenAssets
+		expect(stagedAssets.map((asset) => asset.sourceVideoId)).toEqual(
+			sourceVideoIds,
+		)
+		expect(new Set(stagedAssets.map((asset) => asset.sourceVideoId)).size).toBe(
+			12,
 		)
 	})
+
+	it.each(['batching', 'staging'] as const)(
+		'resumes a persisted %s marker immediately from frozen receipts',
+		async (status) => {
+			const test = harness({
+				state: {
+					bindingId: 'csb_ai_coding_crash_course',
+					courseVersionId: 'version-2',
+					providerRevision: 'dropbox-rev-2',
+					status,
+					consecutiveFailures: 0,
+					controlPlaneRunId: null,
+					failureClass: null,
+					applyPolicyOverride: null,
+					updatedAt: new Date('2026-07-24T17:59:59.000Z'),
+				},
+			})
+
+			await expect(test.poll(`poll-resume-${status}`)).resolves.toMatchObject({
+				outcome: 'awaiting-apply',
+				courseVersionId: 'version-2',
+			})
+			expect(test.freezeAsset).toHaveBeenCalledOnce()
+			expect(test.stage).toHaveBeenCalledOnce()
+			expect(test.logs).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						stage: 'stage',
+						outcome: 'started',
+						metadata: { mode: 'resumable-batches', resuming: true },
+					}),
+				]),
+			)
+		},
+	)
 
 	it('pages once when a killed run transitions into held', async () => {
 		const initialState: CourseSyncPollState = {
@@ -825,6 +1091,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0,
 			controlPlaneRunId: null,
 			failureClass: null,
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
 		const test = failureHarness(initialState)
@@ -868,6 +1135,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0,
 			controlPlaneRunId: null,
 			failureClass: null,
+			applyPolicyOverride: 'operator',
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
 		const test = failureHarness(releasedState)
@@ -897,6 +1165,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 			controlPlaneRunId: null,
 			failureClass: 'POLL_RUN_KILLED',
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		})
 
@@ -930,6 +1199,7 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 2,
 			controlPlaneRunId: null,
 			failureClass: 'POLL_RUN_KILLED',
+			applyPolicyOverride: null,
 			updatedAt: new Date('2026-07-24T18:00:00.000Z'),
 		}
 		const test = failureHarness(heldState)

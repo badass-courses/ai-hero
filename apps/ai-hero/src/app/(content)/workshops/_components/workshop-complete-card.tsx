@@ -16,6 +16,10 @@ import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
+import {
+	CohortCertificateAction,
+	useCohortCertificateEligibility,
+} from '../../_components/cohort-certificate-container'
 import { useModuleProgress } from '../../_components/module-progress-provider'
 import { useCohortNavigation } from './cohort-navigation-provider'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
@@ -69,6 +73,12 @@ export function WorkshopCompleteCard({
 	React.useEffect(() => {
 		if (nextHref && isNextAvailable) router.prefetch(nextHref)
 	}, [router, nextHref, isNextAvailable])
+
+	// Past the last workshop the card's action is the cohort certificate, once
+	// the server confirms every workshop is done.
+	const canClaimCohortCertificate = useCohortCertificateEligibility(
+		nextWorkshop ? null : cohortNavigation,
+	)
 
 	if (!cohortNavigation) return null
 
@@ -124,6 +134,13 @@ export function WorkshopCompleteCard({
 						<ArrowRight className="ml-2 hidden size-4 sm:block" />
 					</Link>
 				</Button>
+			)}
+
+			{!nextWorkshop && canClaimCohortCertificate && (
+				<CohortCertificateAction
+					cohort={cohortNavigation}
+					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover mt-6 h-11 w-full rounded-[9px] px-5 font-bold sm:w-auto"
+				/>
 			)}
 
 			{nextWorkshop && !isNextAvailable && (

@@ -1,3 +1,8 @@
+import { TYPE } from '@/components/landing/type'
+import { SKILLS_COURSE_WAYFINDING } from '@/lib/skills-content'
+
+import { cn } from '@coursebuilder/utils/cn'
+
 import { SkillsCourseRestartButton } from './skills-course-restart-button'
 
 export function SkillsCourseConfirmed({
@@ -21,6 +26,12 @@ export function SkillsCourseConfirmed({
 						inbox, send a fresh copy.
 					</>
 				)}
+			</p>
+			<p className={cn(TYPE.metaProse, 'text-foreground/75')}>
+				{SKILLS_COURSE_WAYFINDING.location}
+			</p>
+			<p className={cn(TYPE.metaProse, 'text-foreground/75')}>
+				{SKILLS_COURSE_WAYFINDING.progression}
 			</p>
 			<SkillsCourseRestartButton source={source} />
 		</div>

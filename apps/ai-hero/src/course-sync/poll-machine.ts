@@ -10,6 +10,8 @@ export type CourseSyncPollMachineInput = {
 
 export type CourseSyncPollMachineEvent =
 	| { type: 'REVISION.START' }
+	| { type: 'REVISION.RESUME' }
+	| { type: 'BATCHES.OK' }
 	| { type: 'PREVIEW.EVALUATED'; boundedAutoEligible: boolean }
 	| { type: 'APPLY.START' }
 	| { type: 'APPLY.OK' }
@@ -31,6 +33,7 @@ export const courseSyncPollMachine = setup({
 		wasAwaitingApply: ({ context }) => context.pollStatus === 'awaiting-apply',
 		wasApplying: ({ context }) => context.pollStatus === 'applying',
 		wasFailed: ({ context }) => context.pollStatus === 'failed',
+		wasBatching: ({ context }) => context.pollStatus === 'batching',
 		wasStaging: ({ context }) => context.pollStatus === 'staging',
 		boundedAutoApply: ({ context, event }) =>
 			context.applyPolicy === 'bounded-auto' &&
@@ -58,7 +61,14 @@ export const courseSyncPollMachine = setup({
 				},
 				{ guard: 'wasApplying', target: '#courseSyncPoll.active.applying' },
 				{ guard: 'wasFailed', target: '#courseSyncPoll.active.failed' },
-				{ guard: 'wasStaging', target: '#courseSyncPoll.active.staging' },
+				{
+					guard: 'wasBatching',
+					target: '#courseSyncPoll.active.recovering',
+				},
+				{
+					guard: 'wasStaging',
+					target: '#courseSyncPoll.active.recovering',
+				},
 				{ target: '#courseSyncPoll.active.idle' },
 			],
 		},
@@ -66,7 +76,41 @@ export const courseSyncPollMachine = setup({
 			initial: 'idle',
 			states: {
 				idle: {
-					on: { 'REVISION.START': 'staging' },
+					on: { 'REVISION.START': 'batching' },
+				},
+				recovering: {
+					on: {
+						'REVISION.RESUME': 'batching',
+						'FAIL.NON_RETRYABLE': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
+						'FAIL.RETRYABLE': [
+							{
+								guard: 'hasTransientStrike',
+								target: 'held',
+								actions: 'incrementStrike',
+							},
+							{ target: 'failed', actions: 'incrementStrike' },
+						],
+					},
+				},
+				batching: {
+					on: {
+						'BATCHES.OK': 'staging',
+						'FAIL.NON_RETRYABLE': {
+							target: 'held',
+							actions: 'incrementStrike',
+						},
+						'FAIL.RETRYABLE': [
+							{
+								guard: 'hasTransientStrike',
+								target: 'held',
+								actions: 'incrementStrike',
+							},
+							{ target: 'failed', actions: 'incrementStrike' },
+						],
+					},
 				},
 				staging: {
 					on: {
@@ -136,7 +180,7 @@ export const courseSyncPollMachine = setup({
 					},
 				},
 				failed: {
-					on: { 'REVISION.START': 'staging' },
+					on: { 'REVISION.START': 'batching' },
 				},
 				held: {
 					on: {

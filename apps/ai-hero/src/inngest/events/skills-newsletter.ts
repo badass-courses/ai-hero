@@ -1,3 +1,4 @@
+import type { DeadlineTimeZoneEvidence } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import type { OptInAttribution } from '@/lib/subscriber-marketing/opt-in-attribution'
 
 export const SKILLS_NEWSLETTER_SUBSCRIBED_EVENT =
@@ -21,6 +22,7 @@ export type SkillsNewsletterSubscribed = {
 		formId: number
 		source: string
 		subscribedAt: string
+		deadlineTimeZone?: DeadlineTimeZoneEvidence
 		signupGapLiveness?: {
 			workSeen: number
 			workDone: number

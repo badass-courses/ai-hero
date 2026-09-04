@@ -69,28 +69,28 @@ export async function resendSkillsCourseLessonOne() {
 }
 
 async function resolveAuthorizedRecovery(): Promise<AuthorizedRecovery | null> {
-	const auth = await getServerAuthSession().catch(() => null)
-	const sessionEmail = auth?.session?.user?.email
-	if (sessionEmail) {
-		const subscriber = await resolveSubscriberByEmail(sessionEmail)
-		return subscriber
-			? {
-					subscriber,
-					source: SKILLS_COURSE_RECOVERY_SOURCE.authenticatedSession,
-				}
-			: null
+	const token = await readSkillsCourseRecoveryToken().catch(() => null)
+	if (token?.valid) {
+		const subscriber = await resolveSubscriberByEmail(token.payload.email)
+		if (!subscriber || String(subscriber.id) !== token.payload.kitSubscriberId) {
+			return null
+		}
+		return {
+			subscriber,
+			source: SKILLS_COURSE_RECOVERY_SOURCE.signedRecoveryToken,
+		}
 	}
 
-	const token = await readSkillsCourseRecoveryToken()
-	if (!token.valid) return null
-	const subscriber = await resolveSubscriberByEmail(token.payload.email)
-	if (!subscriber || String(subscriber.id) !== token.payload.kitSubscriberId) {
-		return null
-	}
-	return {
-		subscriber,
-		source: SKILLS_COURSE_RECOVERY_SOURCE.signedRecoveryToken,
-	}
+	const auth = await getServerAuthSession().catch(() => null)
+	const sessionEmail = auth?.session?.user?.email
+	if (!sessionEmail) return null
+	const subscriber = await resolveSubscriberByEmail(sessionEmail)
+	return subscriber
+		? {
+				subscriber,
+				source: SKILLS_COURSE_RECOVERY_SOURCE.authenticatedSession,
+			}
+		: null
 }
 
 async function resolveSubscriberByEmail(email: string) {

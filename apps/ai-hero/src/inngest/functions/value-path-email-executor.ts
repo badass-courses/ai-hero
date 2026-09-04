@@ -4,6 +4,7 @@ import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { createEmailCourseShadowRuntime } from '@/lib/subscriber-marketing/email-course-shadow-runtime'
 import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import {
 	getValuePathAnswerPages,
@@ -84,6 +85,9 @@ export const valuePathEmailExecutor = inngest.createFunction(
 				repository: new DrizzleCaptureMarketingRepository(db),
 				emailListProvider,
 				config,
+				shadowObserver: createEmailCourseShadowRuntime({
+					database: db,
+				}).observeDelivery,
 			}),
 		)
 		for (const result of results) {
