@@ -166,6 +166,31 @@ describe('createGithubSourceReader', () => {
 		expect(anonymousFallback).toHaveBeenCalledTimes(2)
 	})
 
+	it('does not serve stale anonymous content after a source is deleted', async () => {
+		let now = 0
+		const notFound = githubError(404)
+		const anonymousFallback = vi
+			.fn()
+			.mockResolvedValueOnce('known-good README')
+			.mockRejectedValue(notFound)
+		const read = createGithubSourceReader({ now: () => now })
+		const options = {
+			cacheKey: 'readme:deleted-anonymous-source',
+			operation: 'readme' as const,
+			authMode: 'anonymous' as const,
+			request: vi.fn(),
+			anonymousFallback,
+			cacheFallback: true,
+			cacheTtlMs: 100,
+			staleTtlMs: 1_000,
+		}
+
+		await expect(read(options)).resolves.toBe('known-good README')
+		now = 200
+		await expect(read(options)).rejects.toBe(notFound)
+		expect(anonymousFallback).toHaveBeenCalledTimes(2)
+	})
+
 	it('honors a short Retry-After delay inside the wait budget', async () => {
 		const sleep = vi.fn().mockResolvedValue(undefined)
 		const request = vi
@@ -381,5 +406,18 @@ describe('mapWithConcurrency', () => {
 
 		expect(peak).toBe(3)
 		expect(results).toEqual(Array.from({ length: 12 }, (_, index) => index * 2))
+	})
+
+	it('maps explicit undefined inputs without leaving sparse results', async () => {
+		const mapper = vi.fn(async (value: number | undefined, index: number) =>
+			value === undefined ? `missing-${index}` : String(value),
+		)
+
+		const results = await mapWithConcurrency([1, undefined, 3], 2, mapper)
+
+		expect(mapper).toHaveBeenCalledTimes(3)
+		expect(mapper).toHaveBeenNthCalledWith(2, undefined, 1)
+		expect(results).toEqual(['1', 'missing-1', '3'])
+		expect(Object.keys(results)).toEqual(['0', '1', '2'])
 	})
 })

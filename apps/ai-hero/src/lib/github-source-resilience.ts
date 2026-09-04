@@ -272,7 +272,12 @@ export function createGithubSourceReader(
 					return value
 				} catch (error) {
 					const status = getGithubSourceErrorStatus(error)
-					if (cached && cachedAgeMs !== null && cachedAgeMs <= staleTtlMs) {
+					if (
+						cached &&
+						cachedAgeMs !== null &&
+						cachedAgeMs <= staleTtlMs &&
+						isGithubSourceDegradableError(error)
+					) {
 						emitRead('stale_fallback', status, 0)
 						// SAFETY: one cache key is owned by one typed source-read call site.
 						return cached.value as T
@@ -377,8 +382,7 @@ export async function mapWithConcurrency<Input, Output>(
 		while (nextIndex < items.length) {
 			const index = nextIndex
 			nextIndex += 1
-			const item = items[index]
-			if (item === undefined) continue
+			const item = items[index] as Input
 			results[index] = await map(item, index)
 		}
 	}
