@@ -199,7 +199,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
-	it('keeps Skills Inngest send and still writes the lean attribution row', async () => {
+	it('keeps Skills Inngest send without minting recovery authorization from public signup', async () => {
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 99,
@@ -219,10 +219,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		)
 
 		expect(response.status).toBe(200)
-		expect(mocks.issueRecoveryToken).toHaveBeenCalledWith({
-			kitSubscriberId: '99',
-			email: 'skills@example.com',
-		})
+		expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
 				name: 'skills-newsletter/subscribed',
@@ -245,34 +242,6 @@ describe('subscribe-to-list convertkit route attribution', () => {
 			kitSubscriberId: 99,
 			rawCookie: expect.any(String),
 		})
-	})
-
-	it('keeps path entry when recovery token issuance fails', async () => {
-		mocks.courseBuilderPOST.mockResolvedValue(
-			subscriberResponse({
-				id: 99,
-				email_address: 'skills@example.com',
-				state: 'active',
-				fields: {},
-			}),
-		)
-		mocks.reconcile.mockResolvedValue({ status: 'active' })
-		mocks.issueRecoveryToken.mockRejectedValue(new Error('token unavailable'))
-
-		const response = await POST(
-			request({
-				email: 'skills@example.com',
-				listId: 9376133,
-				fields: { source: 'aihero_skills_page' },
-			}),
-		)
-
-		expect(response.status).toBe(200)
-		expect(mocks.inngestSend).toHaveBeenCalledTimes(1)
-		expect(mocks.log.warn).toHaveBeenCalledWith(
-			'skills.course.recovery_token_issue_failed',
-			{ outcome: 'not-issued' },
-		)
 	})
 
 	it('keeps course-entry evidence inactive until the rollout flag is enabled', async () => {

@@ -22,7 +22,6 @@ import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
 	serializeOptInAttributionForKit,
 } from '@/lib/subscriber-marketing/opt-in-attribution-stash'
-import { issueSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
 import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
@@ -123,16 +122,6 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 
 		if (Number(body.listId) === 9376133) {
 			try {
-				try {
-					await issueSkillsCourseRecoveryToken({
-						kitSubscriberId: String(subscriber.id),
-						email: subscriberEmail,
-					})
-				} catch {
-					await log.warn('skills.course.recovery_token_issue_failed', {
-						outcome: 'not-issued',
-					})
-				}
 				const subscribedAt = new Date().toISOString()
 				const sequenceExhaustionEnabled = parseCourseSequenceExhaustionEnabled(
 					process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
