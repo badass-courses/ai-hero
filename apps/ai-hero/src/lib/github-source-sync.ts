@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
+import { getGithubSourceErrorStatus } from '@/lib/github-source-resilience'
 import {
 	fetchGithubMarkdownFile,
 	parseGithubSource,
@@ -95,14 +96,20 @@ export async function syncPostFromGithubSource(
 	const slug = getStringField(fields, 'slug')
 
 	if (!source) {
-		return { id: resource.id, slug, status: 'skipped', reason: 'no githubSource' }
+		return {
+			id: resource.id,
+			slug,
+			status: 'skipped',
+			reason: 'no githubSource',
+		}
 	}
 
 	const refInfo = parseGithubSource(source)
 	if (!refInfo) {
 		await log.warn('github-source.sync.invalid-source', {
 			id: resource.id,
-			source,
+			slug,
+			sourceConfigured: true,
 		})
 		return {
 			id: resource.id,
@@ -160,22 +167,26 @@ export async function syncPostFromGithubSource(
 		await log.info('github-source.sync.updated', {
 			id: resource.id,
 			slug,
-			source,
+			sourceKind: 'github-markdown',
 		})
 
 		return { id: resource.id, slug, status: 'updated' }
 	} catch (error) {
+		const status = getGithubSourceErrorStatus(error)
 		await log.error('github-source.sync.failed', {
 			id: resource.id,
 			slug,
-			source,
-			error: error instanceof Error ? error.message : String(error),
+			sourceKind: 'github-markdown',
+			status,
+			errorCategory: status ? 'github-http-error' : 'github-source-error',
 		})
 		return {
 			id: resource.id,
 			slug,
 			status: 'error',
-			reason: error instanceof Error ? error.message : 'unknown error',
+			reason: status
+				? `github source request failed (${status})`
+				: 'github source request failed',
 		}
 	}
 }

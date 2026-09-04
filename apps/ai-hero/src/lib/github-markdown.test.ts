@@ -61,7 +61,7 @@ describe('fetchGithubMarkdownFile', () => {
 		)
 	})
 
-	it('keeps the API-first 403 fallback for other GitHub markdown sources', async () => {
+	it('uses the raw host for anonymous GitHub markdown sources', async () => {
 		githubMocks.getContent.mockRejectedValue({ status: 403 })
 		const fetchMock = vi
 			.fn()
@@ -69,7 +69,7 @@ describe('fetchGithubMarkdownFile', () => {
 		vi.stubGlobal('fetch', fetchMock)
 
 		await expect(fetchGithubMarkdownFile(ref)).resolves.toBe('# Fallback')
-		expect(githubMocks.getContent).toHaveBeenCalledOnce()
+		expect(githubMocks.getContent).not.toHaveBeenCalled()
 		expect(fetchMock).toHaveBeenCalledOnce()
 	})
 })
