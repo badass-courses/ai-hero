@@ -3,7 +3,7 @@ import {
 	evergreenOfferJourneyAttempt as attempts,
 	evergreenOfferJourneyIntent as intents,
 } from '@/db/evergreen-offer-journey-schema'
-import { and, asc, eq, inArray, lte, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { z } from 'zod'
 import {
@@ -37,6 +37,26 @@ const recoveryInput = z
 	.object({ now: time, limit: z.number().int().min(1).max(100) })
 	.strict()
 
+const recoveryCursor = z
+	.object({
+		leaseExpiresAt: z.string().datetime({ precision: 3 }),
+		idempotencyKey: AttemptIdentity.shape.idempotencyKey,
+	})
+	.strict()
+const recordedCursor = recoveryCursor
+	.extend({
+		status: z.enum(['Accepted', 'KnownNotApplied']),
+	})
+	.strict()
+export type RecoveryCursor = z.infer<typeof recoveryCursor>
+export type RecordedOutcomeRecoveryCursor = z.infer<typeof recordedCursor>
+const recoveryPageInput = recoveryInput
+	.extend({ after: recoveryCursor.optional() })
+	.strict()
+const recordedPageInput = recoveryInput
+	.extend({ after: recordedCursor.optional() })
+	.strict()
+
 /** Dormant persistence only. A claim is NOT reusable control/authority permission.
  * The future executor must reread both immediately before I/O and source each
  * operation's now from the shared Clock, never a cached claim-time value. No method retries,
@@ -61,7 +81,144 @@ export function createDrizzleJourneyAttempts(
 			}),
 		})
 	}
+	function recoveryPage(input: z.infer<typeof recoveryPageInput>) {
+		return run(async () => {
+			const request = recoveryPageInput.parse(input)
+			const after = request.after
+			const rows = await database
+				.select()
+				.from(attempts)
+				.where(
+					and(
+						or(
+							and(
+								eq(attempts.status, 'Claimed'),
+								lte(attempts.leaseExpiresAt, request.now),
+							),
+							eq(attempts.status, 'HeldUncertain'),
+						),
+						after
+							? or(
+									gt(attempts.leaseExpiresAt, new Date(after.leaseExpiresAt)),
+									and(
+										eq(attempts.leaseExpiresAt, new Date(after.leaseExpiresAt)),
+										gt(attempts.idempotencyKey, after.idempotencyKey),
+									),
+								)
+							: undefined,
+					),
+				)
+				.orderBy(asc(attempts.leaseExpiresAt), asc(attempts.idempotencyKey))
+				.limit(request.limit)
+			const candidates = rows.map((row) => ({
+				evidence: decodeAttempt(row),
+				state: 'HeldUncertain' as const,
+			}))
+			const last = candidates.at(-1)?.evidence
+			return {
+				candidates,
+				scanned: rows.length,
+				end: rows.length < request.limit,
+				nextCursor: last
+					? recoveryCursor.parse({
+							leaseExpiresAt: last.leaseExpiresAt.toISOString(),
+							idempotencyKey: last.idempotencyKey,
+						})
+					: (after ?? null),
+			}
+		})
+	}
+	function recordedOutcomeRecoveryPage(
+		input: z.infer<typeof recordedPageInput>,
+	) {
+		return run(async () => {
+			const request = recordedPageInput.parse(input)
+			const after = request.after
+			return database.transaction(async (tx) => {
+				const rows = await tx
+					.select({ attempt: attempts, intentRow: intents })
+					.from(attempts)
+					.innerJoin(
+						intents,
+						eq(intents.idempotencyKey, attempts.idempotencyKey),
+					)
+					.where(
+						and(
+							inArray(attempts.status, ['Accepted', 'KnownNotApplied']),
+							or(
+								eq(intents.status, 'Pending'),
+								and(
+									eq(intents.status, 'Missed'),
+									eq(intents.intentType, 'SendMessage'),
+								),
+							),
+							after
+								? or(
+										gt(attempts.status, after.status),
+										and(
+											eq(attempts.status, after.status),
+											or(
+												gt(
+													attempts.leaseExpiresAt,
+													new Date(after.leaseExpiresAt),
+												),
+												and(
+													eq(
+														attempts.leaseExpiresAt,
+														new Date(after.leaseExpiresAt),
+													),
+													gt(attempts.idempotencyKey, after.idempotencyKey),
+												),
+											),
+										),
+									)
+								: undefined,
+						),
+					)
+					.orderBy(
+						asc(attempts.status),
+						asc(attempts.leaseExpiresAt),
+						asc(attempts.idempotencyKey),
+					)
+					.limit(request.limit)
+				const candidates = []
+				for (const row of rows) {
+					const evidence = decodeAttempt(row.attempt)
+					const intent = await readIntentForAttempt(
+						tx as unknown as EvergreenOfferJourneyTransaction,
+						row.intentRow,
+					)
+					if (
+						evidence.journeyId !== intent.journeyId ||
+						evidence.idempotencyKey !== intent.idempotencyKey
+					)
+						throw new AttemptRefusal('Recorded attempt ownership mismatch')
+					candidates.push({ evidence, intent })
+				}
+				const last = candidates.at(-1)?.evidence
+				return {
+					candidates,
+					scanned: rows.length,
+					end: rows.length < request.limit,
+					nextCursor: last
+						? recordedCursor.parse({
+								status: last.status,
+								leaseExpiresAt: last.leaseExpiresAt.toISOString(),
+								idempotencyKey: last.idempotencyKey,
+							})
+						: (after ?? null),
+				}
+			})
+		})
+	}
 	return {
+		/** Evidence pages, never claims. Continue even when a consumer cannot settle a row.
+		 * Uncertain order is (leaseExpiresAt, idempotencyKey); recorded order adds status first.
+		 * end means this query was short, NOT permanent exhaustion. Restart scans periodically:
+		 * late rows/status changes may move behind a cursor. No durable high-water guarantee.
+		 */
+		recoveryPage,
+		recordedOutcomeRecoveryPage,
 		claim(input: z.infer<typeof claimInput>) {
 			return run(async () => {
 				const request = claimInput.parse(input)
@@ -147,80 +304,19 @@ export function createDrizzleJourneyAttempts(
 				),
 			)
 		},
-		/** Bounded evidence query, not a scanner or an execution queue. */
+		/** Compatibility: same first-page array, backed by the paged query. */
 		recovery(input: z.infer<typeof recoveryInput>) {
-			return run(async () => {
-				const request = recoveryInput.parse(input)
-				const rows = await database
-					.select()
-					.from(attempts)
-					.where(
-						or(
-							and(
-								eq(attempts.status, 'Claimed'),
-								lte(attempts.leaseExpiresAt, request.now),
-							),
-							eq(attempts.status, 'HeldUncertain'),
-						),
-					)
-					.orderBy(asc(attempts.leaseExpiresAt), asc(attempts.idempotencyKey))
-					.limit(request.limit)
-				return rows.map((row) => ({
-					evidence: decodeAttempt(row),
-					state: 'HeldUncertain' as const,
-				}))
-			})
+			return Effect.map(recoveryPage(input), (page) => page.candidates)
 		},
 		/** Recorded provider outcome awaiting domain settlement, NEVER reapplication.
 		 * Missed SendMessage slots permit truthful late DeliverySettled correction.
 		 * Other effect types retain their existing Pending-only settlement policy.
 		 */
 		recordedOutcomeRecovery(input: z.infer<typeof recoveryInput>) {
-			return run(async () => {
-				const request = recoveryInput.parse(input)
-				return database.transaction(async (tx) => {
-					const rows = await tx
-						.select({ attempt: attempts, intentRow: intents })
-						.from(attempts)
-						.innerJoin(
-							intents,
-							eq(intents.idempotencyKey, attempts.idempotencyKey),
-						)
-						.where(
-							and(
-								inArray(attempts.status, ['Accepted', 'KnownNotApplied']),
-								or(
-									eq(intents.status, 'Pending'),
-									and(
-										eq(intents.status, 'Missed'),
-										eq(intents.intentType, 'SendMessage'),
-									),
-								),
-							),
-						)
-						.orderBy(
-							asc(attempts.status),
-							asc(attempts.leaseExpiresAt),
-							asc(attempts.idempotencyKey),
-						)
-						.limit(request.limit)
-					const recovered = []
-					for (const row of rows) {
-						const evidence = decodeAttempt(row.attempt)
-						const intent = await readIntentForAttempt(
-							tx as unknown as EvergreenOfferJourneyTransaction,
-							row.intentRow,
-						)
-						if (
-							evidence.journeyId !== intent.journeyId ||
-							evidence.idempotencyKey !== intent.idempotencyKey
-						)
-							throw new AttemptRefusal('Recorded attempt ownership mismatch')
-						recovered.push({ evidence, intent })
-					}
-					return recovered
-				})
-			})
+			return Effect.map(
+				recordedOutcomeRecoveryPage(input),
+				(page) => page.candidates,
+			)
 		},
 	}
 

@@ -784,6 +784,187 @@ integration('evergreen offer journey MySQL ledger', () => {
 		},
 	)
 
+	it.each(['uncertain', 'recorded'] as const)(
+		'continues %s recovery past a retained full page using SQL order and ties',
+		async (kind) => {
+			const seeded = []
+			for (let i = 0; i < (kind === 'recorded' ? 5 : 4); i++) {
+				const start = entry(`page-entry-${i}`, {
+					contactId: value(parseContactId(`page-contact-${i}`)),
+					entryFactId: value(parseEntryFactId(`page-fact-${i}`)),
+				})
+				await Effect.runPromise(first.ledger.commit(start.commit))
+				const wake = wakeCommit(start.decision.next, 0, `page-wake-${i}`)
+				await Effect.runPromise(first.ledger.commit(wake))
+				const intent = wake.decision.sideEffectIntents[0]
+				if (!intent || intent.type !== 'SendMessage')
+					throw new Error('Expected message')
+				const now = new Date(intent.notBefore)
+				// Accepted rows sort before KnownNotApplied even when their lease is later.
+				const leaseExpiresAt = new Date(
+					now.getTime() + (i < 2 ? 120_000 : 60_000),
+				)
+				const claim = await Effect.runPromise(
+					first.attempts.claim({
+						idempotencyKey: intent.idempotencyKey,
+						journeyId: intent.journeyId,
+						now,
+						leaseExpiresAt,
+					}),
+				)
+				if (claim.type !== 'Claimed') throw new Error('Expected claim')
+				const evidence =
+					i === 4
+						? claim.evidence
+						: kind === 'recorded'
+							? await Effect.runPromise(
+									first.attempts.settle({
+										idempotencyKey: intent.idempotencyKey,
+										journeyId: intent.journeyId,
+										claimToken: claim.evidence.claimToken,
+										now,
+										outcome:
+											i < 2
+												? {
+														type: 'Accepted',
+														providerReceiptId: `page-receipt-${i}`,
+														appliedAt: now.toISOString(),
+													}
+												: {
+														type: 'KnownNotApplied',
+														reason: 'ProviderRefused',
+													},
+									}),
+								)
+							: i % 2 === 0
+								? await Effect.runPromise(
+										first.attempts.settle({
+											idempotencyKey: intent.idempotencyKey,
+											journeyId: intent.journeyId,
+											claimToken: claim.evidence.claimToken,
+											now,
+											outcome: { type: 'HeldUncertain', reason: 'Unknown' },
+										}),
+									)
+								: claim.evidence
+				seeded.push({ evidence, intent })
+			}
+			const input = { now: new Date('2027-01-01T00:00:00.000Z'), limit: 2 }
+			const expected = seeded
+				.filter(
+					(row) => kind !== 'recorded' || row.evidence.status !== 'Claimed',
+				)
+				.sort((a, b) => {
+					if (kind === 'recorded' && a.evidence.status !== b.evidence.status)
+						return a.evidence.status < b.evidence.status ? -1 : 1
+					return (
+						a.evidence.leaseExpiresAt.getTime() -
+							b.evidence.leaseExpiresAt.getTime() ||
+						(a.evidence.idempotencyKey < b.evidence.idempotencyKey ? -1 : 1)
+					)
+				})
+				.map((row) => row.evidence.idempotencyKey)
+			if (kind === 'uncertain') {
+				const page = await Effect.runPromise(first.attempts.recoveryPage(input))
+				expect(
+					page.candidates.map((row) => row.evidence.idempotencyKey),
+				).toEqual(expected.slice(0, 2))
+				expect(page.end).toBe(false)
+				if (!page.nextCursor) throw new Error('Missing cursor')
+				// Keep every first-page row unresolved. Continuation is reader evidence, not settlement.
+				const next = await Effect.runPromise(
+					second.attempts.recoveryPage({ ...input, after: page.nextCursor }),
+				)
+				expect(
+					next.candidates.map((row) => row.evidence.idempotencyKey),
+				).toEqual(expected.slice(2))
+				if (!next.nextCursor) throw new Error('Missing cursor')
+				expect(
+					await Effect.runPromise(
+						first.attempts.recoveryPage({ ...input, after: next.nextCursor }),
+					),
+				).toMatchObject({ candidates: [], end: true })
+				expect(await Effect.runPromise(first.attempts.recovery(input))).toEqual(
+					page.candidates,
+				)
+			} else {
+				const page = await Effect.runPromise(
+					first.attempts.recordedOutcomeRecoveryPage(input),
+				)
+				expect(
+					page.candidates.map((row) => row.evidence.idempotencyKey),
+				).toEqual(expected.slice(0, 2))
+				expect(page.end).toBe(false)
+				if (!page.nextCursor) throw new Error('Missing cursor')
+				const next = await Effect.runPromise(
+					second.attempts.recordedOutcomeRecoveryPage({
+						...input,
+						after: page.nextCursor,
+					}),
+				)
+				expect(
+					next.candidates.map((row) => row.evidence.idempotencyKey),
+				).toEqual(expected.slice(2))
+				for (const candidate of [...page.candidates, ...next.candidates])
+					expect(candidate.intent).toEqual(
+						seeded.find(
+							(row) =>
+								row.intent.idempotencyKey === candidate.intent.idempotencyKey,
+						)?.intent,
+					)
+				if (!next.nextCursor) throw new Error('Missing cursor')
+				expect(
+					await Effect.runPromise(
+						first.attempts.recordedOutcomeRecoveryPage({
+							...input,
+							after: next.nextCursor,
+						}),
+					),
+				).toMatchObject({ candidates: [], end: true })
+				expect(
+					await Effect.runPromise(
+						first.attempts.recordedOutcomeRecovery(input),
+					),
+				).toEqual(page.candidates)
+				// A newly reconciled acceptance sorts behind the saved KnownNotApplied cursor.
+				// Revisit the start, not an everlasting high-water mark.
+				const late = seeded[4]!.evidence
+				await Effect.runPromise(
+					first.attempts.reconcileAccepted({
+						idempotencyKey: late.idempotencyKey,
+						journeyId: late.journeyId,
+						claimToken: late.claimToken,
+						now: input.now,
+						outcome: {
+							type: 'Accepted',
+							providerReceiptId: 'late-receipt',
+							appliedAt: late.claimedAt.toISOString(),
+						},
+					}),
+				)
+				expect(
+					(
+						await Effect.runPromise(
+							first.attempts.recordedOutcomeRecoveryPage({
+								...input,
+								after: next.nextCursor,
+							}),
+						)
+					).candidates,
+				).toEqual([])
+				expect(
+					(
+						await Effect.runPromise(
+							first.attempts.recordedOutcomeRecoveryPage({
+								...input,
+								limit: 100,
+							}),
+						)
+					).candidates.map((row) => row.evidence.idempotencyKey),
+				).toContain(late.idempotencyKey)
+			}
+		},
+	)
 	it('refuses expired fresh intent claims and unbounded recovery', async () => {
 		const start = entry()
 		await Effect.runPromise(first.ledger.commit(start.commit))

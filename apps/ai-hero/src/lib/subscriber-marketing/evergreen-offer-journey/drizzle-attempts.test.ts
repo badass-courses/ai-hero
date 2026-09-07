@@ -1,4 +1,6 @@
 import { Effect, Either } from 'effect'
+import type { SQL } from 'drizzle-orm'
+import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { expect, it, vi } from 'vitest'
 import { createDrizzleJourneyAttempts } from './drizzle-attempts'
 import type { EvergreenOfferJourneyDatabase } from './drizzle-ledger'
@@ -67,6 +69,167 @@ it.each([
 	},
 )
 
+it.each(['recoveryPage', 'recordedOutcomeRecoveryPage'] as const)(
+	'%s validates cursor and page bounds before database access',
+	async (method) => {
+		const select = vi.fn()
+		const transaction = vi.fn()
+		const repository = createDrizzleJourneyAttempts({
+			select,
+			transaction,
+		} as unknown as EvergreenOfferJourneyDatabase)
+		const cursor = {
+			leaseExpiresAt: '2026-09-04T17:01:00.000Z',
+			idempotencyKey: 'intent-one',
+		}
+		const valid =
+			method === 'recordedOutcomeRecoveryPage'
+				? { ...cursor, status: 'Accepted' }
+				: cursor
+		for (const after of [
+			null,
+			{},
+			{ ...valid, leaseExpiresAt: 'invalid' },
+			{ ...valid, leaseExpiresAt: '2026-09-04T17:01:00Z' },
+			{ ...valid, idempotencyKey: ' bad ' },
+			{ ...valid, idempotencyKey: '*' },
+			{ ...valid, extra: true },
+			{ ...valid, status: 'Unknown' },
+		]) {
+			const input = {
+				now: new Date(),
+				limit: 1,
+				after,
+			} as unknown as Parameters<
+				typeof repository.recordedOutcomeRecoveryPage
+			>[0]
+			const result =
+				method === 'recoveryPage'
+					? await Effect.runPromise(
+							Effect.either(repository.recoveryPage(input)),
+						)
+					: await Effect.runPromise(
+							Effect.either(repository.recordedOutcomeRecoveryPage(input)),
+						)
+			expect(result._tag === 'Left' && result.left.type).toBe('AttemptRefused')
+		}
+		for (const limit of [0, 101, 1.1]) {
+			const result =
+				method === 'recoveryPage'
+					? await Effect.runPromise(
+							Effect.either(
+								repository.recoveryPage({ now: new Date(), limit }),
+							),
+						)
+					: await Effect.runPromise(
+							Effect.either(
+								repository.recordedOutcomeRecoveryPage({
+									now: new Date(),
+									limit,
+								}),
+							),
+						)
+			expect(result._tag).toBe('Left')
+		}
+		expect(select).not.toHaveBeenCalled()
+		expect(transaction).not.toHaveBeenCalled()
+	},
+)
+
+it('empty pages preserve continuation and array compatibility without extra queries', async () => {
+	const limit = vi.fn(async () => [])
+	const where = () => ({ orderBy: () => ({ limit }) })
+	const tx = {
+		select: () => ({ from: () => ({ where, innerJoin: () => ({ where }) }) }),
+	}
+	const repository = createDrizzleJourneyAttempts({
+		...tx,
+		transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
+	} as unknown as EvergreenOfferJourneyDatabase)
+	const input = { now: new Date(), limit: 2 }
+	const cursor = {
+		leaseExpiresAt: '2026-09-04T17:01:00.000Z',
+		idempotencyKey: 'intent-one',
+	}
+	expect(
+		await Effect.runPromise(
+			repository.recoveryPage({ ...input, after: cursor }),
+		),
+	).toEqual({ candidates: [], scanned: 0, end: true, nextCursor: cursor })
+	const recorded = { ...cursor, status: 'Accepted' as const }
+	expect(
+		await Effect.runPromise(
+			repository.recordedOutcomeRecoveryPage({ ...input, after: recorded }),
+		),
+	).toEqual({ candidates: [], scanned: 0, end: true, nextCursor: recorded })
+	expect(await Effect.runPromise(repository.recoveryPage(input))).toMatchObject(
+		{ nextCursor: null, end: true },
+	)
+	expect(
+		await Effect.runPromise(repository.recordedOutcomeRecoveryPage(input)),
+	).toMatchObject({ nextCursor: null, end: true })
+	expect(await Effect.runPromise(repository.recovery(input))).toEqual([])
+	expect(
+		await Effect.runPromise(repository.recordedOutcomeRecovery(input)),
+	).toEqual([])
+	expect(limit).toHaveBeenCalledTimes(6)
+})
+
+it('parameterizes continuation in the exact per-method SQL sort order', async () => {
+	const dialect = new MySqlDialect()
+	const orders: string[][] = []
+	const predicates: ReturnType<typeof dialect.sqlToQuery>[] = []
+	const where = (condition: SQL) => {
+		predicates.push(dialect.sqlToQuery(condition))
+		return {
+			orderBy: (...columns: SQL[]) => {
+				orders.push(columns.map((column) => dialect.sqlToQuery(column).sql))
+				return { limit: async () => [] }
+			},
+		}
+	}
+	const tx = {
+		select: () => ({ from: () => ({ where, innerJoin: () => ({ where }) }) }),
+	}
+	const repository = createDrizzleJourneyAttempts({
+		...tx,
+		transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
+	} as unknown as EvergreenOfferJourneyDatabase)
+	const after = {
+		leaseExpiresAt: '2026-09-04T17:01:00.000Z',
+		idempotencyKey: "intent-'quoted",
+	}
+	await Effect.runPromise(
+		repository.recoveryPage({ now: new Date(), limit: 2, after }),
+	)
+	await Effect.runPromise(
+		repository.recordedOutcomeRecoveryPage({
+			now: new Date(),
+			limit: 2,
+			after: { ...after, status: 'Accepted' },
+		}),
+	)
+	expect(orders[0]?.map((part) => part.split('.').at(-1))).toEqual([
+		'`leaseExpiresAt` asc',
+		'`idempotencyKey` asc',
+	])
+	expect(orders[1]?.map((part) => part.split('.').at(-1))).toEqual([
+		'`status` asc',
+		'`leaseExpiresAt` asc',
+		'`idempotencyKey` asc',
+	])
+	for (const query of predicates) {
+		expect(query.sql).not.toContain(after.idempotencyKey)
+		expect(query.params).toContain(after.idempotencyKey)
+		expect(query.sql).toContain('`leaseExpiresAt` > ?')
+		expect(query.sql).toContain('`leaseExpiresAt` = ?')
+		expect(query.sql).toContain('`idempotencyKey` > ?')
+		expect(query.sql).not.toMatch(/offset/i)
+	}
+	expect(predicates[0]?.sql).not.toContain('`status` > ?')
+	expect(predicates[1]?.sql).toContain('`status` > ?')
+})
+
 it('reads uncertain recovery in one statement, without a second-select duplicate race', async () => {
 	const row = {
 		format: 'evergreen-offer-journey.attempt.v1',
@@ -93,4 +256,16 @@ it('reads uncertain recovery in one statement, without a second-select duplicate
 	expect(select).toHaveBeenCalledTimes(1)
 	expect(result).toHaveLength(1)
 	expect(result[0]?.evidence.idempotencyKey).toBe(row.idempotencyKey)
+	const page = await Effect.runPromise(
+		repository.recoveryPage({ now: row.leaseExpiresAt, limit: 1 }),
+	)
+	expect(page).toEqual({
+		candidates: result,
+		scanned: 1,
+		end: false,
+		nextCursor: {
+			leaseExpiresAt: row.leaseExpiresAt.toISOString(),
+			idempotencyKey: row.idempotencyKey,
+		},
+	})
 })
