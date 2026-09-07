@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type { SendMessageIntent } from './domain'
-import { createKitDeliveryPort } from './kit-delivery'
+import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
 import {
 	parseContactId,
 	parseIntentKey,
@@ -58,6 +58,7 @@ function setup(
 		.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 		.mockResolvedValue(response({ subscriber })),
 	bindings: unknown = [binding],
+	overrides: Partial<KitDeliveryOptions> = {},
 ) {
 	return {
 		fetcher,
@@ -71,6 +72,7 @@ function setup(
 			}),
 			now: () => '2026-09-07T11:00:00.000Z',
 			timeoutMs: 50,
+			...overrides,
 		}),
 	}
 }
@@ -78,6 +80,164 @@ const outcome = (adapter: ReturnType<typeof createKitDeliveryPort>) =>
 	Effect.runPromise(Effect.either(adapter.apply(intent)))
 afterEach(() => {
 	vi.useRealTimers()
+})
+
+describe('selected review regressions', () => {
+	it('classifies resolver throw before POST as transient', async () => {
+		const { adapter, fetcher } = setup(undefined, undefined, {
+			resolveIdentity: async () => {
+				throw new Error('unavailable')
+			},
+		})
+		expect(await outcome(adapter)).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectTransientUnavailable' },
+		})
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+	it('classifies resolver timeout before POST as transient', async () => {
+		vi.useFakeTimers()
+		const { adapter, fetcher } = setup(undefined, undefined, {
+			resolveIdentity: () => new Promise(() => {}),
+		})
+		const pending = outcome(adapter)
+		await vi.advanceTimersByTimeAsync(100)
+		expect(await pending).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectTransientUnavailable' },
+		})
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+	it('classifies pre-POST clock throw as transient, post-POST throw as ambiguous', async () => {
+		for (const postAttempted of [false, true]) {
+			let calls = 0
+			const { adapter, fetcher } = setup(undefined, undefined, {
+				now: () => {
+					if (postAttempted && calls++ === 0) return '2026-09-07T11:00:00.000Z'
+					throw new Error('clock unavailable')
+				},
+			})
+			expect(await outcome(adapter)).toMatchObject({
+				_tag: 'Left',
+				left: {
+					type: postAttempted
+						? 'EffectAmbiguous'
+						: 'EffectTransientUnavailable',
+				},
+			})
+			expect(fetcher).toHaveBeenCalledTimes(postAttempted ? 1 : 0)
+		}
+	})
+	it.each([
+		['2026-09-07T11:59:59.999Z', true],
+		['2026-09-07T12:00:00.000Z', false],
+	] as const)('honors exclusive notAfter at %s', async (now, accepted) => {
+		const { adapter, fetcher } = setup(undefined, undefined, { now: () => now })
+		expect(Either.isRight(await outcome(adapter))).toBe(accepted)
+		expect(fetcher).toHaveBeenCalledTimes(accepted ? 1 : 0)
+	})
+	it('accepts identity/status despite irrelevant provider strings', async () => {
+		const { adapter } = setup(
+			vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(
+					response({
+						subscriber: {
+							...subscriber,
+							email_address: 'odd@exam_ple.test',
+							created_at: 'provider timestamp',
+							added_at: 'no offset',
+							fields: 'future representation',
+						},
+					}),
+				),
+		)
+		expect(Either.isRight(await outcome(adapter))).toBe(true)
+	})
+	it('detaches nested caller bindings and function options at construction', async () => {
+		const mutableBinding = { ...binding, readback: { ...binding.readback } }
+		const mutableBindings = [mutableBinding]
+		const originalFetch = vi
+			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+			.mockResolvedValue(response({ subscriber }))
+		const options: KitDeliveryOptions = {
+			bindings: mutableBindings,
+			apiKey: 'test-only',
+			fetch: originalFetch,
+			resolveIdentity: async () => ({
+				contactId: intent.contactId,
+				subscriberId: 42,
+			}),
+			now: () => '2026-09-07T11:00:00.000Z',
+		}
+		const adapter = createKitDeliveryPort(options)
+		mutableBinding.sequenceId = 18
+		mutableBinding.readback.sequenceId = 18
+		mutableBinding.contentResourceId =
+			EVERGREEN_OFFER_JOURNEY_V1.bridge[1].contentResourceId
+		Object.assign(options, {
+			fetch: vi.fn(),
+			apiKey: 'changed',
+			now: () => 'invalid',
+		})
+		expect(Either.isRight(await outcome(adapter))).toBe(true)
+		expect(originalFetch).toHaveBeenCalledWith(
+			'https://api.kit.com/v4/sequences/17/subscribers/42',
+			expect.objectContaining({
+				headers: expect.objectContaining({ 'X-Kit-Api-Key': 'test-only' }),
+			}),
+		)
+	})
+	it('detaches approved presentation from later caller mutation', async () => {
+		const { adapter, fetcher } = setup()
+		const originalSubject = message.presentation.subjectId
+		try {
+			Object.assign(message.presentation, {
+				subjectId: 'mutated-after-factory',
+			})
+			expect(await outcome(adapter)).toMatchObject({
+				_tag: 'Left',
+				left: { type: 'EffectPermanentRefusal' },
+			})
+			expect(fetcher).not.toHaveBeenCalled()
+		} finally {
+			Object.assign(message.presentation, { subjectId: originalSubject })
+		}
+	})
+	it('keeps throwing binding getters inside a typed refusal', async () => {
+		const badBinding = Object.defineProperty({}, 'contentResourceId', {
+			get() {
+				throw new Error('bad source')
+			},
+		})
+		const { adapter, fetcher } = setup(undefined, [badBinding])
+		expect(await outcome(adapter)).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectPermanentRefusal' },
+		})
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+	it('does not repair an invalid construction snapshot through later mutation', async () => {
+		const bindings: unknown[] = []
+		const { adapter, fetcher } = setup(undefined, bindings)
+		bindings.push(binding)
+		expect(await outcome(adapter)).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectPermanentRefusal' },
+		})
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+	it('rejects changed presentation rather than sharing the fixture object', async () => {
+		const { adapter, fetcher } = setup()
+		const changed = {
+			...intent,
+			presentation: { ...intent.presentation, subjectId: 'other' },
+		}
+		expect(
+			await Effect.runPromise(Effect.either(adapter.apply(changed))),
+		).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal' } })
+		expect(fetcher).not.toHaveBeenCalled()
+	})
 })
 
 describe('dormant Kit delivery', () => {
@@ -142,7 +302,6 @@ describe('dormant Kit delivery', () => {
 	it.each([
 		{},
 		{ subscriber: { ...subscriber, id: 43 } },
-		{ subscriber, sequence_id: 18 },
 		{ subscriber: { ...subscriber, state: 'cancelled' } },
 	])('holds malformed or mismatched success', async (body) => {
 		const { adapter } = setup(
@@ -272,6 +431,44 @@ const page = (ids: number[], more = false, cursor = '') => ({
 	pagination: { has_next_page: more, end_cursor: cursor },
 })
 describe('read-only reconciliation', () => {
+	it('finds target despite unrelated subscriber address/timestamp strings', async () => {
+		const body = {
+			...page([41, 42]),
+			subscribers: [
+				{
+					id: 41,
+					state: 'active',
+					email_address: 'odd@exam_ple.test',
+					added_at: 'not-iso',
+				},
+				{ id: 42, state: 'active' },
+			],
+		}
+		const { adapter } = setup(
+			vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(response(body, 200)),
+		)
+		expect(await Effect.runPromise(adapter.reconcile(intent))).toMatchObject({
+			type: 'Present',
+		})
+	})
+	it.each([
+		{
+			subscribers: [{ id: '42', state: 'active' }],
+			pagination: { has_next_page: false, end_cursor: '' },
+		},
+		{ ...page([]), pagination: { has_next_page: true, end_cursor: 12 } },
+	])('keeps malformed identity/cursor unknown', async (body) => {
+		const { adapter } = setup(
+			vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(response(body, 200)),
+		)
+		expect(await Effect.runPromise(adapter.reconcile(intent))).toMatchObject({
+			type: 'Unknown',
+		})
+	})
 	it.each([
 		[page([42]), 'Present'],
 		[page([]), 'Absent'],
@@ -305,19 +502,20 @@ describe('read-only reconciliation', () => {
 			fetcher.mock.calls.every(([, options]) => options?.method === 'GET'),
 		).toBe(true)
 	})
-	it.each([page([], true, 'next'), {}, { ...page([]), truncated: true }])(
-		'does not infer absence from incomplete evidence',
-		async (body) => {
-			const { adapter } = setup(
-				vi
-					.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
-					.mockResolvedValue(response(body, 200)),
-			)
-			expect(
-				await Effect.runPromise(adapter.reconcile(intent, 1)),
-			).toMatchObject({ type: 'Unknown' })
-		},
-	)
+	it.each([
+		page([], true, 'next'),
+		{},
+		{ ...page([]), pagination: { has_next_page: 'false', end_cursor: '' } },
+	])('does not infer absence from incomplete evidence', async (body) => {
+		const { adapter } = setup(
+			vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(response(body, 200)),
+		)
+		expect(await Effect.runPromise(adapter.reconcile(intent, 1))).toMatchObject(
+			{ type: 'Unknown' },
+		)
+	})
 	it('unavailable membership is unknown, not an invitation to resend', async () => {
 		const { adapter, fetcher } = setup(
 			vi

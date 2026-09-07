@@ -26,21 +26,15 @@ const identitySchema = z.object({
 })
 const subscriberSchema = z.object({
 	id: providerId,
-	first_name: z.string().nullable(),
-	email_address: z.string().email(),
+	// Only these facts bind membership; other provider fields are not authority here.
 	state: z.enum(['active', 'cancelled', 'bounced', 'complained', 'inactive']),
-	created_at: z.string().datetime({ offset: true }),
-	added_at: z.string().datetime({ offset: true }),
-	fields: z.record(z.unknown()),
 })
 const enrollmentSchema = z.object({
 	subscriber: subscriberSchema,
-	sequence_id: providerId.optional(),
 })
 const pageSchema = z.object({
 	subscribers: z.array(subscriberSchema).max(100),
 	pagination: z.object({ has_next_page: z.boolean(), end_cursor: z.string() }),
-	truncated: z.literal(false).optional(),
 })
 
 export type KitDeliveryOptions = {
@@ -66,6 +60,10 @@ const refusal = (reason: string): EffectApplicationError => ({
 	type: 'EffectPermanentRefusal',
 	reason,
 })
+const transient = (reason: string): EffectApplicationError => ({
+	type: 'EffectTransientUnavailable',
+	reason,
+})
 const ambiguous = (reason: string): EffectApplicationError => ({
 	type: 'EffectAmbiguous',
 	reason,
@@ -73,7 +71,7 @@ const ambiguous = (reason: string): EffectApplicationError => ({
 const messages = [
 	...EVERGREEN_OFFER_JOURNEY_V1.bridge,
 	...EVERGREEN_OFFER_JOURNEY_V1.pitch,
-]
+].map((message) => ({ ...message, presentation: { ...message.presentation } }))
 
 /**
  * Dormant adapter: no env reads, default transport, registration, scheduling, or retries.
@@ -83,13 +81,23 @@ const messages = [
  * and /list-subscribers-for-a-sequence (Kit v4).
  */
 export function createKitDeliveryPort(
-	options: KitDeliveryOptions,
+	suppliedOptions: KitDeliveryOptions,
 ): DeliveryPort & {
 	readonly reconcile: (
 		intent: SendMessageIntent,
 		maxPages?: number,
 	) => Effect.Effect<KitMembership>
 } {
+	// Capture dependencies and detach schema-decoded nested binding data once.
+	// Invalid input stays a typed apply refusal, never a throwing factory.
+	const options = { ...suppliedOptions }
+	const decoded = (() => {
+		try {
+			return z.array(bindingSchema).safeParse(options.bindings)
+		} catch {
+			return { success: false } as const
+		}
+	})()
 	const timeoutMs = options.timeoutMs ?? 5000
 	const bounded = <A>(
 		work: (signal: AbortSignal) => Promise<A>,
@@ -121,7 +129,6 @@ export function createKitDeliveryPort(
 			) {
 				return yield* Effect.fail(refusal('unapproved-message-binding'))
 			}
-			const decoded = z.array(bindingSchema).safeParse(options.bindings)
 			if (!decoded.success)
 				return yield* Effect.fail(refusal('invalid-sequence-readback'))
 			const bindings = decoded.data
@@ -147,7 +154,7 @@ export function createKitDeliveryPort(
 				return yield* Effect.fail(refusal('missing-sequence-binding'))
 			const rawIdentity = yield* bounded(
 				() => options.resolveIdentity(intent.contactId),
-				refusal('identity-unavailable'),
+				transient('identity-unavailable'),
 			)
 			const identity = identitySchema.safeParse(rawIdentity)
 			if (!identity.success || identity.data.contactId !== intent.contactId) {
@@ -163,7 +170,7 @@ export function createKitDeliveryPort(
 	const currentTime = () =>
 		Effect.try({
 			try: () => options.now(),
-			catch: () => refusal('clock-unavailable'),
+			catch: () => transient('clock-unavailable'),
 		}).pipe(
 			Effect.flatMap((value) => {
 				const parsed = parseIsoInstant(value)
@@ -184,7 +191,7 @@ export function createKitDeliveryPort(
 					!from.ok ||
 					!until.ok ||
 					Date.parse(startedAt) < Date.parse(from.value) ||
-					Date.parse(startedAt) > Date.parse(until.value)
+					Date.parse(startedAt) >= Date.parse(until.value)
 				) {
 					return yield* Effect.fail(refusal('outside-message-window'))
 				}
@@ -210,9 +217,7 @@ export function createKitDeliveryPort(
 					if (
 						!decoded.success ||
 						decoded.data.subscriber.id !== prepared.subscriberId ||
-						decoded.data.subscriber.state !== 'active' ||
-						(decoded.data.sequence_id !== undefined &&
-							decoded.data.sequence_id !== prepared.sequenceId)
+						decoded.data.subscriber.state !== 'active'
 					)
 						return { type: 'Mismatch' } as const
 					return { type: 'Accepted', status: response.status } as const
