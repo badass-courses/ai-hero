@@ -10,6 +10,7 @@ import type {
 import type { JourneyLedger } from './ports'
 import { makeInMemoryJourneyLedger } from './in-memory-ledger'
 import {
+	deriveJourneyId,
 	parseContactId,
 	parseEntryFactId,
 	parseIanaTimeZone,
@@ -141,7 +142,9 @@ describe('Evergreen application service', () => {
 		const missingControl = await Effect.runPromise(
 			Effect.either(service.advance(stimulus)),
 		)
-		expect(Either.isLeft(missingControl)).toBe(true)
+		expect(Either.isLeft(missingControl) && missingControl.left.type).toBe(
+			'AuthorityInconsistent',
+		)
 		const validAuthorityService = createEvergreenOfferJourneyService({
 			ledger,
 			authority: { currentFacts: () => Effect.succeed(facts()) },
@@ -296,7 +299,7 @@ describe('Evergreen application service', () => {
 		},
 	)
 
-	it('commits concurrent duplicate entry only once and inspection never writes', async () => {
+	it('replays duplicate entry only once and inspection never writes', async () => {
 		const ledger = makeInMemoryJourneyLedger()
 		const service = createEvergreenOfferJourneyService({
 			ledger,
@@ -410,6 +413,218 @@ describe('Evergreen application service', () => {
 			committed: false,
 			decision: { type: 'Ignored', reason: 'AutomationHalted' },
 		})
+		expect(ledger.records()).toEqual(before)
+	})
+
+	it.each([
+		{ type: 'JourneyDecodeFailure', reason: 'Unsupported snapshot format' },
+		{ type: 'JourneyCommitUnavailable', reason: 'Ledger read offline' },
+	] as const)(
+		'preserves useful load failure evidence in inspect: $type',
+		async (error) => {
+			const service = createEvergreenOfferJourneyService({
+				ledger: {
+					...makeInMemoryJourneyLedger(),
+					load: () => Effect.fail(error),
+				},
+				authority: { currentFacts: () => Effect.succeed(facts()) },
+				clock: { now: Effect.succeed(at) },
+				definition: EVERGREEN_OFFER_JOURNEY_V1,
+			})
+			const result = await Effect.runPromise(
+				Effect.either(service.inspect(deriveJourneyId(stimulus.entryFactId))),
+			)
+			expect(Either.isLeft(result) && result.left).toEqual(
+				error.type === 'JourneyDecodeFailure'
+					? error
+					: {
+							type: 'JourneyQueryUnavailable',
+							reason: `${error.type}: ${error.reason}`,
+						},
+			)
+		},
+	)
+
+	it.each([
+		{ type: 'JourneyDecodeFailure', reason: 'Corrupt inspection row' },
+		{ type: 'JourneyQueryUnavailable', reason: 'Inspection store offline' },
+	] as const)('preserves the ledger inspect error: $type', async (error) => {
+		const ledger = makeInMemoryJourneyLedger()
+		const service = createEvergreenOfferJourneyService({
+			ledger: { ...ledger, inspect: () => Effect.fail(error) },
+			authority: {
+				currentFacts: ({ journeyId }) =>
+					Effect.succeed(facts({ existingJourneyId: journeyId })),
+			},
+			clock: { now: Effect.succeed(at) },
+			definition: EVERGREEN_OFFER_JOURNEY_V1,
+		})
+		await Effect.runPromise(service.advance(stimulus))
+		const before = ledger.records()
+		const result = await Effect.runPromise(
+			Effect.either(service.inspect(deriveJourneyId(stimulus.entryFactId))),
+		)
+		expect(Either.isLeft(result) && result.left).toEqual(error)
+		expect(ledger.records()).toEqual(before)
+	})
+
+	it('preserves JourneyNotFound without reading authority', async () => {
+		const journeyId = deriveJourneyId(stimulus.entryFactId)
+		const service = createEvergreenOfferJourneyService({
+			ledger: makeInMemoryJourneyLedger(),
+			authority: {
+				currentFacts: () => Effect.die('Unexpected authority read'),
+			},
+			clock: { now: Effect.succeed(at) },
+			definition: EVERGREEN_OFFER_JOURNEY_V1,
+		})
+		const result = await Effect.runPromise(
+			Effect.either(service.inspect(journeyId)),
+		)
+		expect(Either.isLeft(result) && result.left).toEqual({
+			type: 'JourneyNotFound',
+			journeyId,
+		})
+	})
+
+	it.each(['authority', 'clock'] as const)(
+		'keeps %s failure reasons when inspect must map them',
+		async (stage) => {
+			const ledger = makeInMemoryJourneyLedger()
+			let inspecting = false
+			const service = createEvergreenOfferJourneyService({
+				ledger,
+				authority: {
+					currentFacts: ({ journeyId }) =>
+						inspecting && stage === 'authority'
+							? Effect.fail({
+									type: 'AuthorityUnavailable' as const,
+									reason: 'Authority store offline',
+								})
+							: Effect.succeed(facts({ existingJourneyId: journeyId })),
+				},
+				clock: {
+					now: Effect.suspend(() =>
+						inspecting && stage === 'clock'
+							? Effect.fail({
+									type: 'ClockUnavailable' as const,
+									reason: 'Time source offline',
+								})
+							: Effect.succeed(at),
+					),
+				},
+				definition: EVERGREEN_OFFER_JOURNEY_V1,
+			})
+			await Effect.runPromise(service.advance(stimulus))
+			inspecting = true
+			const result = await Effect.runPromise(
+				Effect.either(service.inspect(deriveJourneyId(stimulus.entryFactId))),
+			)
+			expect(Either.isLeft(result) && result.left).toEqual({
+				type: 'JourneyQueryUnavailable',
+				reason:
+					stage === 'authority'
+						? 'AuthorityUnavailable: Authority store offline'
+						: 'AuthorityUnavailable: Clock unavailable: Time source offline',
+			})
+		},
+	)
+
+	it.each(['contact', 'journey', 'missing-journey', 'control'] as const)(
+		'rejects inconsistent %s authority for due work',
+		async (mismatch) => {
+			const ledger = makeInMemoryJourneyLedger()
+			let current: Partial<EligibilityFacts> = {}
+			const service = createEvergreenOfferJourneyService({
+				ledger,
+				authority: {
+					currentFacts: ({ journeyId }) =>
+						Effect.succeed(facts({ existingJourneyId: journeyId, ...current })),
+				},
+				clock: { now: Effect.succeed(at) },
+				definition: EVERGREEN_OFFER_JOURNEY_V1,
+			})
+			const start = await Effect.runPromise(service.advance(stimulus))
+			if (start.decision.type !== 'Accepted') throw new Error('Expected entry')
+			const wake = start.decision.wakeIntents[0]!
+			current =
+				mismatch === 'contact'
+					? { contactId: value(parseContactId('another')) }
+					: mismatch === 'journey'
+						? {
+								existingJourneyId: deriveJourneyId(
+									value(parseEntryFactId('another-entry')),
+								),
+							}
+						: mismatch === 'missing-journey'
+							? { existingJourneyId: null }
+							: ({
+									automationControl: undefined,
+								} as unknown as Partial<EligibilityFacts>)
+			const before = ledger.records()
+			const result = await Effect.runPromise(
+				Effect.either(
+					service.advance({
+						type: 'WakeDue',
+						stimulusId: value(parseStimulusId('mismatched-wake')),
+						journeyId: wake.journeyId,
+						wakeId: wake.wakeId,
+						dueAt: wake.dueAt,
+						purpose: wake.purpose,
+					}),
+				),
+			)
+			expect(Either.isLeft(result) && result.left.type).toBe(
+				'AuthorityInconsistent',
+			)
+			expect(ledger.records()).toEqual(before)
+		},
+	)
+
+	it('rejects changed due evidence under a committed wake stimulus ID', async () => {
+		const ledger = makeInMemoryJourneyLedger()
+		let now = at
+		const service = createEvergreenOfferJourneyService({
+			ledger,
+			authority: {
+				currentFacts: ({ journeyId }) =>
+					Effect.succeed(facts({ existingJourneyId: journeyId })),
+			},
+			clock: { now: Effect.sync(() => now) },
+			definition: EVERGREEN_OFFER_JOURNEY_V1,
+		})
+		const start = await Effect.runPromise(service.advance(stimulus))
+		if (start.decision.type !== 'Accepted') throw new Error('Expected entry')
+		const wake = start.decision.wakeIntents[0]!
+		const due: Extract<EvergreenOfferStimulus, { type: 'WakeDue' }> = {
+			type: 'WakeDue',
+			stimulusId: value(parseStimulusId('bound-wake')),
+			journeyId: wake.journeyId,
+			wakeId: wake.wakeId,
+			dueAt: wake.dueAt,
+			purpose: wake.purpose,
+		}
+		now = wake.dueAt
+		const first = await Effect.runPromise(service.advance(due))
+		expect(first.committed).toBe(true)
+		const replay = await Effect.runPromise(service.advance(due))
+		expect(replay).toEqual({
+			...first,
+			committed: false,
+			replayedStimulus: true,
+		})
+		const before = ledger.records()
+		for (const altered of [
+			{ ...due, dueAt: at },
+			{ ...due, purpose: start.decision.wakeIntents[1]!.purpose },
+		]) {
+			const result = await Effect.runPromise(
+				Effect.either(service.advance(altered)),
+			)
+			expect(Either.isLeft(result) && result.left.type).toBe(
+				'JourneyDecodeFailure',
+			)
+		}
 		expect(ledger.records()).toEqual(before)
 	})
 

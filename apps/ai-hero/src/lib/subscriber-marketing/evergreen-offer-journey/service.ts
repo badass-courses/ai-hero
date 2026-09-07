@@ -18,6 +18,9 @@ import { deriveJourneyId } from './primitives'
  * Commits decisions and their operational receipts, never provider work.
  * OfferAuthority owns current purchase, delivery and automation-control reads.
  * Missing control is an invalid authority response and fails closed.
+ * Returned decisions, including replayed intents, are historical evidence.
+ * Never execute effects from this return value. Execute only through durable
+ * outbox claims with current authority checked immediately before application.
  */
 export function createEvergreenOfferJourneyService(dependencies: {
 	readonly ledger: JourneyLedger
@@ -50,9 +53,9 @@ export function createEvergreenOfferJourneyService(dependencies: {
 			return restored.value
 		})
 	const readClock = clock.now.pipe(
-		Effect.mapError(() => ({
+		Effect.mapError((error) => ({
 			type: 'AuthorityUnavailable' as const,
-			reason: 'Clock unavailable',
+			reason: `Clock unavailable: ${error.reason}`,
 		})),
 	)
 
@@ -162,9 +165,17 @@ export function createEvergreenOfferJourneyService(dependencies: {
 			})
 		}).pipe(
 			Effect.mapError((error) =>
-				error.type === 'JourneyNotFound'
+				error.type === 'JourneyNotFound' ||
+				error.type === 'JourneyDecodeFailure' ||
+				error.type === 'JourneyQueryUnavailable'
 					? error
-					: { type: 'JourneyQueryUnavailable' as const, reason: error.type },
+					: {
+							type: 'JourneyQueryUnavailable' as const,
+							reason:
+								'reason' in error
+									? `${error.type}: ${error.reason}`
+									: error.type,
+						},
 			),
 		)
 	return { advance, inspect }
