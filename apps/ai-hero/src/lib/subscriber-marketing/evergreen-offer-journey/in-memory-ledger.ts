@@ -111,6 +111,31 @@ export function makeInMemoryJourneyLedger(
 				wakeIds: new Set(wakes.map((record) => record.wakeId)),
 			})
 			if (validationFailure) return Effect.fail(validationFailure)
+			if (candidate.expectedVersion === null) {
+				for (const snapshot of snapshots) {
+					const prior = restoreEvergreenOfferJourneySnapshot(
+						snapshot.snapshotJson,
+					)
+					if (!prior.ok)
+						return Effect.fail(
+							constraintFailure(
+								candidate,
+								'Existing admission evidence cannot be restored',
+							),
+						)
+					if (
+						prior.value.contactId === candidate.decision.next.contactId &&
+						prior.value.journeyId !== candidate.decision.next.journeyId
+					) {
+						return Effect.fail(
+							constraintFailure(
+								candidate,
+								'Contact already admitted to an evergreen v1 journey',
+							),
+						)
+					}
+				}
+			}
 			const nextSnapshot = journeySnapshotRecord(candidate.decision.next)
 			const restoredCandidate = restoreEvergreenOfferJourneySnapshot(
 				nextSnapshot.snapshotJson,

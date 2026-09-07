@@ -832,6 +832,7 @@ export const sideEffectIntent = mysqlTable(
 export { automationControl, emailCourseCommit } from './email-course-schema'
 
 export {
+	evergreenOfferJourneyAttempt,
 	evergreenOfferJourneyIntent,
 	evergreenOfferJourneyCommit,
 	evergreenOfferJourneyWake,
