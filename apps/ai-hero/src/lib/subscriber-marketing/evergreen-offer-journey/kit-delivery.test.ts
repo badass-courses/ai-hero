@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type { SendMessageIntent } from './domain'
-import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
+import {
+	KIT_ALREADY_MEMBER_REASON,
+	createKitDeliveryPort,
+	type KitDeliveryOptions,
+} from './kit-delivery'
 import {
 	parseContactId,
 	parseIntentKey,
@@ -247,34 +251,43 @@ describe('selected review regressions', () => {
 })
 
 describe('dormant Kit delivery', () => {
-	it.each([
-		[200, 'already-member'],
-		[201, 'added'],
-	] as const)(
-		'binds %s enrollment, not inbox delivery',
-		async (status, marker) => {
-			const { adapter, fetcher } = setup(
-				vi
-					.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
-					.mockResolvedValue(response({ subscriber }, status)),
-			)
-			const result = await outcome(adapter)
-			expect(Either.isRight(result)).toBe(true)
-			if (Either.isRight(result))
-				expect(result.right.providerReceiptId).toBe(
-					`kit:sequence:17:subscriber:42:${marker}`,
-				)
-			expect(fetcher).toHaveBeenCalledTimes(1)
-			expect(fetcher).toHaveBeenCalledWith(
-				'https://api.kit.com/v4/sequences/17/subscribers/42',
-				expect.objectContaining({
-					method: 'POST',
-					body: '{}',
-					redirect: 'error',
-				}),
-			)
-		},
-	)
+	it('binds a 201 enrollment acknowledgement at the port clock, not inbox delivery', async () => {
+		const { adapter, fetcher } = setup(
+			vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(response({ subscriber }, 201)),
+		)
+		const result = await outcome(adapter)
+		expect(Either.isRight(result) && result.right).toEqual({
+			providerReceiptId: 'kit:sequence:17:subscriber:42:added',
+			// The port's own clock after the response; Kit's added_at is not used here.
+			appliedAt: '2026-09-07T11:00:00.000Z',
+		})
+		expect(fetcher).toHaveBeenCalledTimes(1)
+		expect(fetcher).toHaveBeenCalledWith(
+			'https://api.kit.com/v4/sequences/17/subscribers/42',
+			expect.objectContaining({
+				method: 'POST',
+				body: '{}',
+				redirect: 'error',
+			}),
+		)
+	})
+	it('holds a 200 already-member answer as unknown application, never a fresh receipt', async () => {
+		const { adapter, fetcher } = setup(
+			vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(response({ subscriber }, 200)),
+		)
+		const result = await outcome(adapter)
+		// Exact: a request did leave, so no `requestIssued: false` proof may ride along.
+		expect(Either.isLeft(result) && result.left).toEqual({
+			type: 'EffectAmbiguous',
+			reason: KIT_ALREADY_MEMBER_REASON,
+		})
+		expect(fetcher).toHaveBeenCalledTimes(1)
+		expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+	})
 	it.each([401, 403, 404, 422])(
 		'refuses known HTTP %s without retry',
 		async (status) => {

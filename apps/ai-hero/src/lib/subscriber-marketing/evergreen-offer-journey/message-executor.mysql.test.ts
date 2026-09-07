@@ -66,6 +66,9 @@ const entry: CourseSequenceExhausted = {
 }
 const plus = (instant: string, ms: number) =>
 	value(parseIsoInstant(new Date(Date.parse(instant) + ms).toISOString()))
+const unpaged = <Item, Error>(
+	page: Effect.Effect<{ readonly results: readonly Item[] }, Error>,
+) => Effect.map(page, (loaded) => loaded.results)
 
 function createConnection(uri: string) {
 	const pool = mysqlQueryClient.preserveQueryResultShape(
@@ -146,15 +149,21 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 			...overrides,
 		})
 
-	async function persistedB1Intent(): Promise<SendMessageIntent> {
+	const persistedB1Intent = () => persistedIntent(0)
+	/** Wakes bridge slot `index` at its due instant and returns its persisted intent. */
+	async function persistedIntent(index: number): Promise<SendMessageIntent> {
 		const started = await Effect.runPromise(service().advance(entry))
 		if (started.decision.type !== 'Accepted') throw new Error('Expected entry')
-		const wake = started.decision.wakeIntents[0]!
+		const wake = started.decision.wakeIntents[index]!
 		now = wake.dueAt
 		const woke = await Effect.runPromise(
 			service().advance({
 				type: 'WakeDue',
-				stimulusId: value(parseStimulusId('due_mysql_executor')),
+				stimulusId: value(
+					parseStimulusId(
+						index === 0 ? 'due_mysql_executor' : `due_mysql_executor_${index}`,
+					),
+				),
 				journeyId: wake.journeyId,
 				wakeId: wake.wakeId,
 				dueAt: wake.dueAt,
@@ -320,7 +329,7 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 
 		now = plus(now, 120_000)
 		const recovered = await Effect.runPromise(
-			executor(second).settleRecordedOutcomes({ limit: 10 }),
+			unpaged(executor(second).settleRecordedOutcomes({ limit: 10 })),
 		)
 		const attempt = await attemptRow(intent)
 		expect(recovered).toEqual([
@@ -341,7 +350,7 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 		).toMatchObject({ status: 'Applied', providerReceiptId: 'fake:accepted' })
 		expect(
 			await Effect.runPromise(
-				executor(second).settleRecordedOutcomes({ limit: 10 }),
+				unpaged(executor(second).settleRecordedOutcomes({ limit: 10 })),
 			),
 		).toEqual([])
 		expect(applied).toHaveLength(1)
@@ -372,7 +381,7 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 			sideEffects: 'none',
 		})
 		const absent = await Effect.runPromise(
-			executor(second).reconcileHeld({ limit: 10 }),
+			unpaged(executor(second).reconcileHeld({ limit: 10 })),
 		)
 		expect(absent[0]?.result).toEqual({
 			type: 'AbsentHeld',
@@ -388,7 +397,7 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 			observedAt: now,
 		}
 		const prior = await Effect.runPromise(
-			executor(second).reconcileHeld({ limit: 10 }),
+			unpaged(executor(second).reconcileHeld({ limit: 10 })),
 		)
 		expect(prior[0]?.result).toMatchObject({
 			type: 'MembershipHeld',
@@ -404,7 +413,7 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 			observedAt: now,
 		}
 		const present = await Effect.runPromise(
-			executor(second).reconcileHeld({ limit: 10 }),
+			unpaged(executor(second).reconcileHeld({ limit: 10 })),
 		)
 		expect(present[0]).toMatchObject({
 			result: {
@@ -424,9 +433,169 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 		expect(
 			Either.isRight(
 				await Effect.runPromise(
-					Effect.either(executor(second).reconcileHeld({ limit: 10 })),
+					Effect.either(unpaged(executor(second).reconcileHeld({ limit: 10 }))),
 				),
 			),
 		).toBe(true)
+	})
+	it('pages held claims past a retained first page through the real attempt store', async () => {
+		const intents: SendMessageIntent[] = []
+		for (const index of [0, 1, 2]) {
+			const intent = await persistedIntent(index)
+			intents.push(intent)
+			const claimed = await Effect.runPromise(
+				first.attempts.claim({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+					now: new Date(now),
+					leaseExpiresAt: new Date(Date.parse(now) + 1_000),
+				}),
+			)
+			if (claimed.type !== 'Claimed') throw new Error('Expected claim')
+		}
+		const keys = intents.map((intent) => intent.idempotencyKey)
+		now = plus(now, 5_000)
+		const page = await Effect.runPromise(
+			executor(second).reconcileHeld({ limit: 2 }),
+		)
+		expect(page.results.map((item) => item.idempotencyKey)).toEqual([
+			keys[0],
+			keys[1],
+		])
+		expect(page.results.map((item) => item.result.type)).toEqual([
+			'AbsentHeld',
+			'AbsentHeld',
+		])
+		expect(page).toMatchObject({
+			scanned: 2,
+			end: false,
+			nextCursor: { idempotencyKey: keys[1] },
+		})
+		if (!page.nextCursor) throw new Error('Expected a cursor')
+		// The retained first page is re-read without a cursor; with it, later rows surface.
+		expect(
+			(
+				await Effect.runPromise(executor(second).reconcileHeld({ limit: 2 }))
+			).results.map((item) => item.idempotencyKey),
+		).toEqual([keys[0], keys[1]])
+		const continued = await Effect.runPromise(
+			executor(second).reconcileHeld({ limit: 2, after: page.nextCursor }),
+		)
+		expect(continued.results.map((item) => item.idempotencyKey)).toEqual([
+			keys[2],
+		])
+		expect(continued).toMatchObject({
+			scanned: 1,
+			end: true,
+			nextCursor: { idempotencyKey: keys[2] },
+		})
+		if (!continued.nextCursor) throw new Error('Expected a cursor')
+		expect(
+			await Effect.runPromise(
+				executor(second).reconcileHeld({
+					limit: 2,
+					after: continued.nextCursor,
+				}),
+			),
+		).toEqual({
+			results: [],
+			scanned: 0,
+			end: true,
+			nextCursor: continued.nextCursor,
+		})
+		for (const intent of intents)
+			expect(await attemptRow(intent)).toMatchObject({ status: 'Claimed' })
+		expect(applied).toHaveLength(0)
+	})
+
+	it('pages recorded outcomes past a retained first page through the real attempt store', async () => {
+		const crashing: Pick<EvergreenOfferJourneyService, 'advance'> = {
+			advance: () =>
+				Effect.fail({
+					type: 'JourneyCommitUnavailable' as const,
+					reason: 'process died',
+				}),
+		}
+		const intents: SendMessageIntent[] = []
+		for (const index of [0, 1, 2]) {
+			const intent = await persistedIntent(index)
+			intents.push(intent)
+			expect(
+				await Effect.runPromise(
+					executor(first, { service: crashing }).execute({
+						idempotencyKey: intent.idempotencyKey,
+						journeyId: intent.journeyId,
+					}),
+				),
+			).toMatchObject({
+				type: 'Applied',
+				settlement: { type: 'Failed', error: 'JourneyCommitUnavailable' },
+			})
+		}
+		const keys = intents.map((intent) => intent.idempotencyKey)
+		now = plus(now, 120_000)
+		const stuck = await Effect.runPromise(
+			executor(second, { service: crashing }).settleRecordedOutcomes({
+				limit: 2,
+			}),
+		)
+		expect(stuck.results.map((item) => item.idempotencyKey)).toEqual([
+			keys[0],
+			keys[1],
+		])
+		expect(stuck.results.map((item) => item.settlement.type)).toEqual([
+			'Failed',
+			'Failed',
+		])
+		expect(stuck).toMatchObject({
+			scanned: 2,
+			end: false,
+			nextCursor: { status: 'Accepted', idempotencyKey: keys[1] },
+		})
+		if (!stuck.nextCursor) throw new Error('Expected a cursor')
+		const later = await Effect.runPromise(
+			executor(second).settleRecordedOutcomes({
+				limit: 2,
+				after: stuck.nextCursor,
+			}),
+		)
+		const third = await attemptRow(intents[2]!)
+		expect(later.results).toEqual([
+			{
+				idempotencyKey: keys[2],
+				journeyId: intents[2]!.journeyId,
+				attemptStatus: 'Accepted',
+				settlement: {
+					type: 'Committed',
+					stimulusId: `${keys[2]}:attempt:${third?.claimToken}:delivery-settled`,
+				},
+			},
+		])
+		expect(later).toMatchObject({ scanned: 1, end: true })
+		expect(await intentRow(intents[2]!)).toMatchObject({ status: 'Applied' })
+		expect(await intentRow(intents[0]!)).not.toMatchObject({
+			status: 'Applied',
+		})
+		// A restart from no cursor settles the rows the retained page left behind.
+		const restart = await Effect.runPromise(
+			executor(second).settleRecordedOutcomes({ limit: 2 }),
+		)
+		expect(
+			restart.results.map((item) => [
+				item.idempotencyKey,
+				item.settlement.type,
+			]),
+		).toEqual([
+			[keys[0], 'Committed'],
+			[keys[1], 'Committed'],
+		])
+		expect(
+			await Effect.runPromise(
+				unpaged(executor(second).settleRecordedOutcomes({ limit: 10 })),
+			),
+		).toEqual([])
+		for (const intent of intents)
+			expect(await intentRow(intent)).toMatchObject({ status: 'Applied' })
+		expect(applied).toHaveLength(3)
 	})
 })

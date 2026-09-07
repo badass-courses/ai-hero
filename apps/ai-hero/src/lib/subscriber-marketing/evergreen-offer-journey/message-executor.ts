@@ -13,7 +13,11 @@ import type {
 	MessageSlot,
 	SendMessageIntent,
 } from './domain'
-import type { createDrizzleJourneyAttempts } from './drizzle-attempts'
+import type {
+	RecordedOutcomeRecoveryCursor,
+	RecoveryCursor,
+	createDrizzleJourneyAttempts,
+} from './drizzle-attempts'
 import type { createKitDeliveryPort } from './kit-delivery'
 import { restoreEvergreenOfferAuthority } from './persistence-codec'
 import type {
@@ -246,6 +250,29 @@ export type HeldReconciliation = {
 	readonly sideEffects: 'none' | 'attempt-recorded'
 }
 
+/**
+ * One bounded recovery page. The attempt boundary orders and cuts the page; the
+ * executor reports one item per candidate it could act on and never loops over
+ * history. Consumer contract:
+ * - `limit` is 1..100 per invocation; the boundary refuses anything else as a typed error.
+ * - Continue by passing `nextCursor` back unchanged. Advance past every returned item,
+ *   including AbsentHeld, UnknownHeld, Declined and Failed ones, or the same retained
+ *   rows are re-read forever and later rows starve.
+ * - `end` means this query came back short, not permanent exhaustion. Restart from no
+ *   cursor periodically: status changes and late rows can move behind a cursor.
+ * - Each invocation reads a fresh `now`; keep it non-decreasing across pages.
+ * - A malformed row fails the whole page as a typed error. Nothing is quarantined or
+ *   deleted; an operator holds the page until the row is repaired.
+ */
+export type RecoveryPage<Cursor, Item> = {
+	readonly results: readonly Item[]
+	/** Rows the boundary scanned on this page, including rows with no result. */
+	readonly scanned: number
+	/** Null only when an initial page was empty. An empty continuation keeps its input. */
+	readonly nextCursor: Cursor | null
+	readonly end: boolean
+}
+
 export interface MessageIntentExecutor {
 	/** One durable claim, one apply, truthful settlement. Never reapplies. */
 	readonly execute: (
@@ -254,14 +281,19 @@ export interface MessageIntentExecutor {
 	/** Submits already recorded Accepted/KnownNotApplied evidence to the domain. No provider work. */
 	readonly settleRecordedOutcomes: (input: {
 		readonly limit: number
+		readonly after?: RecordedOutcomeRecoveryCursor
 	}) => Effect.Effect<
-		readonly RecordedOutcomeSettlement[],
+		RecoveryPage<RecordedOutcomeRecoveryCursor, RecordedOutcomeSettlement>,
 		MessageExecutorError
 	>
 	/** GET-only reconciliation of expired claims and held attempts. Never resends. */
 	readonly reconcileHeld: (input: {
 		readonly limit: number
-	}) => Effect.Effect<readonly HeldReconciliation[], MessageExecutorError>
+		readonly after?: RecoveryCursor
+	}) => Effect.Effect<
+		RecoveryPage<RecoveryCursor, HeldReconciliation>,
+		MessageExecutorError
+	>
 }
 
 const DEFAULT_LEASE_MS = 60_000
@@ -806,15 +838,19 @@ export function createMessageIntentExecutor(
 		(input) =>
 			Effect.gen(function* () {
 				const now = yield* readClock('none')
-				const recovered = yield* attempts
-					.recordedOutcomeRecovery({ now: new Date(now), limit: input.limit })
+				const page = yield* attempts
+					.recordedOutcomeRecoveryPage({
+						now: new Date(now),
+						limit: input.limit,
+						...(input.after ? { after: input.after } : {}),
+					})
 					.pipe(
 						Effect.mapError((error) =>
 							failure(error.type, error.reason, 'none'),
 						),
 					)
 				const results: RecordedOutcomeSettlement[] = []
-				for (const { evidence, intent } of recovered) {
+				for (const { evidence, intent } of page.candidates) {
 					const outcome = evidence.outcome
 					if (!outcome || outcome.type === 'HeldUncertain') continue
 					if (intent.type !== 'SendMessage') {
@@ -838,21 +874,32 @@ export function createMessageIntentExecutor(
 						settlement,
 					})
 				}
-				return results
+				return {
+					results,
+					scanned: page.scanned,
+					nextCursor: page.nextCursor,
+					end: page.end,
+				}
 			})
 
 	const reconcileHeld: MessageIntentExecutor['reconcileHeld'] = (input) =>
 		Effect.gen(function* () {
 			const now = yield* readClock('none')
-			const held = yield* attempts
-				.recovery({ now: new Date(now), limit: input.limit })
+			const page = yield* attempts
+				.recoveryPage({
+					now: new Date(now),
+					limit: input.limit,
+					...(input.after ? { after: input.after } : {}),
+				})
 				.pipe(
 					Effect.mapError((error) => failure(error.type, error.reason, 'none')),
 				)
 			const results: HeldReconciliation[] = []
-			for (const { evidence } of held) {
+			for (const { evidence } of page.candidates) {
 				const journeyId = parseJourneyId(evidence.journeyId)
 				const idempotencyKey = parseIntentKey(evidence.idempotencyKey)
+				// The boundary already validated both; a failure here is still scanned,
+				// so the cursor moves past it instead of re-reading it forever.
 				if (!journeyId.ok || !idempotencyKey.ok) continue
 				const item = (
 					result: HeldReconciliation['result'],
@@ -977,7 +1024,12 @@ export function createMessageIntentExecutor(
 					),
 				)
 			}
-			return results
+			return {
+				results,
+				scanned: page.scanned,
+				nextCursor: page.nextCursor,
+				end: page.end,
+			}
 		})
 
 	return { execute, settleRecordedOutcomes, reconcileHeld }

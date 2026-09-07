@@ -18,7 +18,10 @@ import type {
 	SideEffectIntent,
 } from './domain'
 import { makeInMemoryJourneyLedger } from './in-memory-ledger'
-import { createKitDeliveryPort } from './kit-delivery'
+import {
+	KIT_ALREADY_MEMBER_REASON,
+	createKitDeliveryPort,
+} from './kit-delivery'
 import {
 	createKitMembershipReconciliation,
 	createMessageIntentExecutor,
@@ -85,6 +88,10 @@ function baseFacts(): EligibilityFacts {
 }
 const plus = (instant: string, ms: number) =>
 	value(parseIsoInstant(new Date(Date.parse(instant) + ms).toISOString()))
+/** Existing cases only need the page's results; paging itself is covered separately. */
+const unpaged = <Item, Error>(
+	page: Effect.Effect<{ readonly results: readonly Item[] }, Error>,
+) => Effect.map(page, (loaded) => loaded.results)
 
 class Refusal extends Error {}
 /** Mirrors the Drizzle attempt boundary rules over the in-memory ledger's intent rows. */
@@ -155,6 +162,22 @@ function makeFakeAttempts(
 		rows.set(request.idempotencyKey, next)
 		return next
 	}
+	/** Same page bounds, order and keyset continuation as the Drizzle boundary. */
+	function pageLimit(limit: number) {
+		if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+			throw new Refusal('Recovery page limit must be an integer from 1 to 100')
+	}
+	const compare = (left: string | number, right: string | number) =>
+		left < right ? -1 : left > right ? 1 : 0
+	const byLeaseThenKey = (left: AttemptEvidence, right: AttemptEvidence) =>
+		compare(left.leaseExpiresAt.getTime(), right.leaseExpiresAt.getTime()) ||
+		compare(left.idempotencyKey, right.idempotencyKey)
+	const afterLeaseAndKey = (
+		row: AttemptEvidence,
+		after: { leaseExpiresAt: string; idempotencyKey: string },
+	) =>
+		compare(row.leaseExpiresAt.getTime(), Date.parse(after.leaseExpiresAt)) ||
+		compare(row.idempotencyKey, after.idempotencyKey)
 	return {
 		rows,
 		claim: (input) =>
@@ -200,36 +223,101 @@ function makeFakeAttempts(
 			}),
 		settle: (input) => run(() => settle(input, false)),
 		reconcileAccepted: (input) => run(() => settle(input, true)),
+		recoveryPage,
+		recordedOutcomeRecoveryPage,
 		recovery: (input) =>
-			run(() =>
-				[...rows.values()]
-					.filter(
-						(row) =>
-							(row.status === 'Claimed' && row.leaseExpiresAt <= input.now) ||
-							row.status === 'HeldUncertain',
-					)
-					.slice(0, input.limit)
-					.map((evidence) => ({ evidence, state: 'HeldUncertain' as const })),
-			),
+			Effect.map(recoveryPage(input), (page) => page.candidates),
 		recordedOutcomeRecovery: (input) =>
-			run(() => {
-				const recovered: {
-					evidence: AttemptEvidence
-					intent: SideEffectIntent
-				}[] = []
-				for (const evidence of rows.values()) {
-					if (!['Accepted', 'KnownNotApplied'].includes(evidence.status))
-						continue
-					const row = intentRow(evidence.idempotencyKey)
-					if (!row) continue
-					if (
-						row.status === 'Pending' ||
-						(row.status === 'Missed' && row.intent.type === 'SendMessage')
-					)
-						recovered.push({ evidence, intent: row.intent })
-				}
-				return recovered.slice(0, input.limit)
-			}),
+			Effect.map(recordedOutcomeRecoveryPage(input), (page) => page.candidates),
+	}
+
+	function recoveryPage(input: {
+		now: Date
+		limit: number
+		after?: { leaseExpiresAt: string; idempotencyKey: string }
+	}) {
+		return run(() => {
+			pageLimit(input.limit)
+			const after = input.after
+			const page = [...rows.values()]
+				.filter(
+					(row) =>
+						(row.status === 'Claimed' && row.leaseExpiresAt <= input.now) ||
+						row.status === 'HeldUncertain',
+				)
+				.filter((row) => !after || afterLeaseAndKey(row, after) > 0)
+				.sort(byLeaseThenKey)
+				.slice(0, input.limit)
+			const candidates = page.map((evidence) => ({
+				evidence,
+				state: 'HeldUncertain' as const,
+			}))
+			const last = candidates.at(-1)?.evidence
+			return {
+				candidates,
+				scanned: page.length,
+				end: page.length < input.limit,
+				nextCursor: last
+					? {
+							leaseExpiresAt: last.leaseExpiresAt.toISOString(),
+							idempotencyKey: last.idempotencyKey,
+						}
+					: (after ?? null),
+			}
+		})
+	}
+	function recordedOutcomeRecoveryPage(input: {
+		now: Date
+		limit: number
+		after?: {
+			status: 'Accepted' | 'KnownNotApplied'
+			leaseExpiresAt: string
+			idempotencyKey: string
+		}
+	}) {
+		return run(() => {
+			pageLimit(input.limit)
+			const after = input.after
+			const page: {
+				evidence: AttemptEvidence
+				intent: SideEffectIntent
+			}[] = []
+			const recorded = [...rows.values()]
+				.filter((row) => ['Accepted', 'KnownNotApplied'].includes(row.status))
+				.filter(
+					(row) =>
+						!after ||
+						compare(row.status, after.status) > 0 ||
+						(row.status === after.status && afterLeaseAndKey(row, after) > 0),
+				)
+				.sort(
+					(left, right) =>
+						compare(left.status, right.status) || byLeaseThenKey(left, right),
+				)
+			for (const evidence of recorded) {
+				const row = intentRow(evidence.idempotencyKey)
+				if (!row) continue
+				if (
+					row.status === 'Pending' ||
+					(row.status === 'Missed' && row.intent.type === 'SendMessage')
+				)
+					page.push({ evidence, intent: row.intent })
+				if (page.length === input.limit) break
+			}
+			const last = page.at(-1)?.evidence
+			return {
+				candidates: page,
+				scanned: page.length,
+				end: page.length < input.limit,
+				nextCursor: last
+					? {
+							status: last.status as 'Accepted' | 'KnownNotApplied',
+							leaseExpiresAt: last.leaseExpiresAt.toISOString(),
+							idempotencyKey: last.idempotencyKey,
+						}
+					: (after ?? null),
+			}
+		})
 	}
 }
 
@@ -487,7 +575,7 @@ describe('SendMessage intent executor', () => {
 		})
 		expect(h.applied).toHaveLength(0)
 		const absent = await Effect.runPromise(
-			h.executor.reconcileHeld({ limit: 10 }),
+			unpaged(h.executor.reconcileHeld({ limit: 10 })),
 		)
 		expect(absent).toEqual([
 			{
@@ -499,7 +587,7 @@ describe('SendMessage intent executor', () => {
 		])
 		h.setMembership({ type: 'Unknown', reason: 'membership-page-cap' })
 		const unknown = await Effect.runPromise(
-			h.executor.reconcileHeld({ limit: 10 }),
+			unpaged(h.executor.reconcileHeld({ limit: 10 })),
 		)
 		expect(unknown[0]?.result).toEqual({
 			type: 'UnknownHeld',
@@ -534,7 +622,7 @@ describe('SendMessage intent executor', () => {
 			observedAt: h.now,
 		})
 		const recovered = await Effect.runPromise(
-			h.executor.reconcileHeld({ limit: 10 }),
+			unpaged(h.executor.reconcileHeld({ limit: 10 })),
 		)
 		expect(recovered).toEqual([
 			{
@@ -563,7 +651,7 @@ describe('SendMessage intent executor', () => {
 			settledAt: addedAt,
 		})
 		expect(
-			await Effect.runPromise(h.executor.reconcileHeld({ limit: 10 })),
+			await Effect.runPromise(unpaged(h.executor.reconcileHeld({ limit: 10 }))),
 		).toEqual([])
 	})
 
@@ -612,7 +700,7 @@ describe('SendMessage intent executor', () => {
 				observedAt: h.now,
 			})
 			const held = await Effect.runPromise(
-				h.executor.reconcileHeld({ limit: 10 }),
+				unpaged(h.executor.reconcileHeld({ limit: 10 })),
 			)
 			expect(held[0]).toMatchObject({
 				result: addedAt
@@ -647,7 +735,7 @@ describe('SendMessage intent executor', () => {
 			observedAt: h.now,
 		})
 		const result = await Effect.runPromise(
-			h.executor.reconcileHeld({ limit: 10 }),
+			unpaged(h.executor.reconcileHeld({ limit: 10 })),
 		)
 		expect(result[0]?.result).toMatchObject({
 			type: 'ReconciledAccepted',
@@ -686,7 +774,7 @@ describe('SendMessage intent executor', () => {
 		})
 		h.now = plus(h.now, 60_000)
 		const settled = await Effect.runPromise(
-			h.executor.settleRecordedOutcomes({ limit: 10 }),
+			unpaged(h.executor.settleRecordedOutcomes({ limit: 10 })),
 		)
 		const attempt = h.attempts.rows.get(intent.idempotencyKey)!
 		expect(settled).toEqual([
@@ -711,7 +799,9 @@ describe('SendMessage intent executor', () => {
 		expect(h.intentRecord(intent)?.status).toBe('Applied')
 		expect(h.slot(intent).status).toBe('Applied')
 		expect(
-			await Effect.runPromise(h.executor.settleRecordedOutcomes({ limit: 10 })),
+			await Effect.runPromise(
+				unpaged(h.executor.settleRecordedOutcomes({ limit: 10 })),
+			),
 		).toEqual([])
 		expect(h.applied).toHaveLength(1)
 	})
@@ -820,7 +910,9 @@ describe('SendMessage intent executor', () => {
 			state: 'HeldUncertain',
 			sideEffects: 'none',
 		})
-		const held = await Effect.runPromise(h.executor.reconcileHeld({ limit: 5 }))
+		const held = await Effect.runPromise(
+			unpaged(h.executor.reconcileHeld({ limit: 5 })),
+		)
 		expect(held[0]?.result).toEqual({
 			type: 'AbsentHeld',
 			meaning: 'not-resend-permission',
@@ -937,7 +1029,9 @@ describe('SendMessage intent executor', () => {
 			status: 'Claimed',
 			claimedAt: new Date(claimAt),
 		})
-		const held = await Effect.runPromise(h.executor.reconcileHeld({ limit: 5 }))
+		const held = await Effect.runPromise(
+			unpaged(h.executor.reconcileHeld({ limit: 5 })),
+		)
 		expect(held[0]?.result.type).toBe('AbsentHeld')
 
 		// A second slot: the window closes between claim and apply on the fresh clock.
@@ -1010,7 +1104,7 @@ describe('SendMessage intent executor', () => {
 		expect(h.intentRecord(intent)?.status).toBe('Missed')
 		expect(h.slot(intent).status).toBe('Missed')
 		const settled = await Effect.runPromise(
-			h.executor.settleRecordedOutcomes({ limit: 10 }),
+			unpaged(h.executor.settleRecordedOutcomes({ limit: 10 })),
 		)
 		expect(settled[0]?.settlement).toMatchObject({ type: 'Committed' })
 		expect(h.intentRecord(intent)?.status).toBe('Applied')
@@ -1060,7 +1154,9 @@ describe('SendMessage intent executor', () => {
 		})
 		expect(h.applied).toHaveLength(1)
 		expect(
-			await Effect.runPromise(h.executor.settleRecordedOutcomes({ limit: 10 })),
+			await Effect.runPromise(
+				unpaged(h.executor.settleRecordedOutcomes({ limit: 10 })),
+			),
 		).toEqual([])
 
 		h.setDelivery(async () =>
@@ -1197,7 +1293,9 @@ describe('SendMessage intent executor', () => {
 			type: 'AlreadyAttempted',
 			state: 'HeldUncertain',
 		})
-		const held = await Effect.runPromise(h.executor.reconcileHeld({ limit: 5 }))
+		const held = await Effect.runPromise(
+			unpaged(h.executor.reconcileHeld({ limit: 5 })),
+		)
 		expect(held[0]?.result.type).toBe('AbsentHeld')
 		expect(h.applied).toHaveLength(2)
 	})
@@ -1334,6 +1432,212 @@ describe('SendMessage intent executor', () => {
 		expect(h.attempts.rows.size).toBe(0)
 	})
 
+	it('pages held claims past a retained first page with bounded cursors', async () => {
+		const h = harness()
+		const intents: SendMessageIntent[] = []
+		for (const index of [0, 1, 2]) {
+			const intent = await h.wake(index)
+			intents.push(intent)
+			await Effect.runPromise(
+				h.attempts.claim({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+					now: new Date(h.now),
+					leaseExpiresAt: new Date(Date.parse(h.now) + 1_000),
+				}),
+			)
+		}
+		const keys = intents.map((intent) => intent.idempotencyKey)
+		h.now = plus(h.now, 5_000)
+		const first = await Effect.runPromise(
+			h.executor.reconcileHeld({ limit: 2 }),
+		)
+		expect(first.results.map((item) => item.idempotencyKey)).toEqual([
+			keys[0],
+			keys[1],
+		])
+		expect(first.results.map((item) => item.result.type)).toEqual([
+			'AbsentHeld',
+			'AbsentHeld',
+		])
+		expect(first).toMatchObject({
+			scanned: 2,
+			end: false,
+			nextCursor: {
+				leaseExpiresAt: h.attempts.rows
+					.get(keys[1]!)!
+					.leaseExpiresAt.toISOString(),
+				idempotencyKey: keys[1],
+			},
+		})
+		// Without the cursor the retained rows come back again: the starvation itself.
+		expect(
+			(
+				await Effect.runPromise(h.executor.reconcileHeld({ limit: 2 }))
+			).results.map((item) => item.idempotencyKey),
+		).toEqual([keys[0], keys[1]])
+		const second = await Effect.runPromise(
+			h.executor.reconcileHeld({ limit: 2, after: first.nextCursor! }),
+		)
+		expect(second.results.map((item) => item.idempotencyKey)).toEqual([keys[2]])
+		expect(second).toMatchObject({
+			scanned: 1,
+			end: true,
+			nextCursor: { idempotencyKey: keys[2] },
+		})
+		// An empty continuation keeps its cursor; end is this query, not history.
+		const third = await Effect.runPromise(
+			h.executor.reconcileHeld({ limit: 2, after: second.nextCursor! }),
+		)
+		expect(third).toEqual({
+			results: [],
+			scanned: 0,
+			end: true,
+			nextCursor: second.nextCursor,
+		})
+		expect([...h.attempts.rows.values()].map((row) => row.status)).toEqual([
+			'Claimed',
+			'Claimed',
+			'Claimed',
+		])
+		expect(h.inspections).toHaveLength(5)
+		expect(h.applied).toHaveLength(0)
+	})
+
+	it('pages recorded outcomes past a retained first page and settles the later row', async () => {
+		const h = harness()
+		const crashing: Pick<EvergreenOfferJourneyService, 'advance'> = {
+			advance: () =>
+				Effect.fail({
+					type: 'JourneyCommitUnavailable' as const,
+					reason: 'process died',
+				}),
+		}
+		const broken = h.build({ service: crashing })
+		const intents: SendMessageIntent[] = []
+		for (const index of [0, 1, 2]) {
+			const intent = await h.wake(index)
+			intents.push(intent)
+			expect(await h.execute(intent, broken)).toMatchObject({
+				type: 'Applied',
+				settlement: { type: 'Failed', error: 'JourneyCommitUnavailable' },
+			})
+		}
+		const keys = intents.map((intent) => intent.idempotencyKey)
+		h.now = plus(h.now, 1_000)
+		// The first page keeps failing to settle; it is still advanced past.
+		const stuck = await Effect.runPromise(
+			broken.settleRecordedOutcomes({ limit: 2 }),
+		)
+		expect(stuck.results.map((item) => item.idempotencyKey)).toEqual([
+			keys[0],
+			keys[1],
+		])
+		expect(stuck.results.map((item) => item.settlement.type)).toEqual([
+			'Failed',
+			'Failed',
+		])
+		expect(stuck).toMatchObject({
+			scanned: 2,
+			end: false,
+			nextCursor: { status: 'Accepted', idempotencyKey: keys[1] },
+		})
+		const later = await Effect.runPromise(
+			h.executor.settleRecordedOutcomes({ limit: 2, after: stuck.nextCursor! }),
+		)
+		expect(later.results).toEqual([
+			{
+				idempotencyKey: keys[2],
+				journeyId: intents[2]!.journeyId,
+				attemptStatus: 'Accepted',
+				settlement: {
+					type: 'Committed',
+					stimulusId: `${keys[2]}:attempt:${h.attempts.rows.get(keys[2]!)!.claimToken}:delivery-settled`,
+				},
+			},
+		])
+		expect(later).toMatchObject({ scanned: 1, end: true })
+		expect(h.intentRecord(intents[2]!)?.status).toBe('Applied')
+		expect(h.intentRecord(intents[0]!)?.status).not.toBe('Applied')
+		// Restarting from no cursor reaches the rows the retained page left behind.
+		const restart = await Effect.runPromise(
+			h.executor.settleRecordedOutcomes({ limit: 2 }),
+		)
+		expect(
+			restart.results.map((item) => [
+				item.idempotencyKey,
+				item.settlement.type,
+			]),
+		).toEqual([
+			[keys[0], 'Committed'],
+			[keys[1], 'Committed'],
+		])
+		expect(
+			await Effect.runPromise(
+				unpaged(h.executor.settleRecordedOutcomes({ limit: 10 })),
+			),
+		).toEqual([])
+		expect(intents.map((intent) => h.intentRecord(intent)?.status)).toEqual([
+			'Applied',
+			'Applied',
+			'Applied',
+		])
+		expect(h.applied).toHaveLength(3)
+	})
+
+	it('fails a recovery page closed as a typed error, never an empty page', async () => {
+		const h = harness()
+		const poisoned = h.build({
+			attempts: {
+				...h.attempts,
+				recoveryPage: () =>
+					Effect.fail({
+						type: 'AttemptUnavailable' as const,
+						reason: 'Attempt boundary rejected or unavailable',
+					}),
+				recordedOutcomeRecoveryPage: () =>
+					Effect.fail({
+						type: 'AttemptRefused' as const,
+						reason: 'Recorded attempt ownership mismatch',
+					}),
+			},
+		})
+		expect(
+			await Effect.runPromise(
+				Effect.either(poisoned.reconcileHeld({ limit: 5 })),
+			),
+		).toMatchObject({
+			_tag: 'Left',
+			left: {
+				type: 'AttemptUnavailable',
+				reason: 'Attempt boundary rejected or unavailable',
+				sideEffects: 'none',
+			},
+		})
+		expect(
+			await Effect.runPromise(
+				Effect.either(poisoned.settleRecordedOutcomes({ limit: 5 })),
+			),
+		).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'AttemptRefused', sideEffects: 'none' },
+		})
+		// Page bounds are refused before any row is read.
+		for (const limit of [0, 101]) {
+			expect(
+				await Effect.runPromise(
+					Effect.either(h.executor.reconcileHeld({ limit })),
+				),
+			).toMatchObject({ _tag: 'Left', left: { type: 'AttemptRefused' } })
+			expect(
+				await Effect.runPromise(
+					Effect.either(h.executor.settleRecordedOutcomes({ limit })),
+				),
+			).toMatchObject({ _tag: 'Left', left: { type: 'AttemptRefused' } })
+		}
+		expect(h.inspections).toHaveLength(0)
+	})
+
 	/** Real Kit port over a mocked transport. `membershipAddedAt` feeds the GET page. */
 	function kitHarness(
 		h: ReturnType<typeof harness>,
@@ -1364,7 +1668,7 @@ describe('SendMessage intent executor', () => {
 							JSON.stringify({
 								subscriber: { id: 42, state: 'active', added_at: '2020-01-01' },
 							}),
-							{ status: options.enrollmentStatus ?? 200 },
+							{ status: options.enrollmentStatus ?? 201 },
 						),
 		)
 		const kit = createKitDeliveryPort({
@@ -1400,28 +1704,88 @@ describe('SendMessage intent executor', () => {
 		return { fetcher, executor, posts }
 	}
 
-	it('treats a real Kit 200 already-member acknowledgement as acceptance at the local clock (known gap), not inbox delivery', async () => {
+	it('records a real Kit 201 acknowledgement at the port clock as acceptance, not inbox delivery', async () => {
 		const h = harness()
 		const intent = await h.wake(0)
-		const { fetcher, executor } = kitHarness(h, intent)
+		const { fetcher, executor, posts } = kitHarness(h, intent, {
+			enrollmentStatus: 201,
+		})
 		const result = await h.execute(intent, executor)
-		// Truth test: Kit answered 200 (already a member, added 2020-01-01) and the port
-		// stamps appliedAt from its clock. The executor cannot distinguish this from a
-		// fresh enrollment through the DeliveryPort contract. See the report.
+		// appliedAt is the port's clock read after Kit's 201, not Kit's added_at.
 		expect(result).toMatchObject({
 			type: 'Applied',
 			meaning: 'provider-accepted-not-inbox-delivery',
-			providerReceiptId: 'kit:sequence:17:subscriber:42:already-member',
+			providerReceiptId: 'kit:sequence:17:subscriber:42:added',
 			appliedAt: h.now,
 			applyInvocations: 1,
 			settlement: { type: 'Committed' },
 		})
+		expect(posts()).toBe(1)
 		expect(fetcher).toHaveBeenCalledTimes(1)
-		expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
 		expect(h.slot(intent)).toMatchObject({
 			status: 'Applied',
-			providerReceiptId: 'kit:sequence:17:subscriber:42:already-member',
+			providerReceiptId: 'kit:sequence:17:subscriber:42:added',
 		})
+	})
+
+	it('holds a real Kit 200 already-member answer uncertain after one POST, then binds only the provider added_at by GET', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const claimAt = h.now
+		let addedAt: unknown = '2020-01-01T00:00:00Z'
+		const { fetcher, executor, posts } = kitHarness(h, intent, {
+			enrollmentStatus: 200,
+			membershipAddedAt: () => addedAt,
+		})
+		const result = await h.execute(intent, executor)
+		// 200 means the subscriber was already a member. Application of this intent is
+		// unknown, so no fresh acceptance time exists and nothing is settled.
+		expect(result).toEqual({
+			type: 'HeldUncertain',
+			cause: 'EffectAmbiguous',
+			detail: KIT_ALREADY_MEMBER_REASON,
+			applyInvocations: 1,
+			providerRequest: 'unknown',
+			sideEffects: 'attempt-recorded',
+			settlement: 'none',
+		})
+		expect(posts()).toBe(1)
+		expect(fetcher).toHaveBeenCalledTimes(1)
+		expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({
+			status: 'HeldUncertain',
+			outcome: { type: 'HeldUncertain', reason: 'Unknown' },
+		})
+		expect(h.slot(intent).status).toBe('IntentCommitted')
+		expect(h.intentRecord(intent)?.status).toBe('Pending')
+		// The provider instant that explains the 200 predates this claim: held as evidence.
+		h.now = plus(claimAt, 5_000)
+		const prior = await Effect.runPromise(executor.reconcileHeld({ limit: 5 }))
+		expect(prior.results[0]?.result).toEqual({
+			type: 'MembershipHeld',
+			reason: 'PrecedesClaim',
+			addedAt: '2020-01-01T00:00:00.000Z',
+			observedAt: h.now,
+		})
+		expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe(
+			'HeldUncertain',
+		)
+		expect(h.slot(intent).status).toBe('IntentCommitted')
+		// Only a provider instant inside this claim and window settles, at that instant.
+		addedAt = plus(claimAt, 750)
+		const bound = await Effect.runPromise(executor.reconcileHeld({ limit: 5 }))
+		expect(bound.results[0]?.result).toMatchObject({
+			type: 'ReconciledAccepted',
+			addedAt: plus(claimAt, 750),
+			observedAt: h.now,
+			settlement: { type: 'Committed' },
+		})
+		expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toMatchObject({
+			type: 'Accepted',
+			appliedAt: plus(claimAt, 750),
+		})
+		expect(h.slot(intent)).toMatchObject({ status: 'Applied' })
+		expect(posts()).toBe(1)
+		expect(fetcher).toHaveBeenCalledTimes(3)
 	})
 
 	it('reconciles a held claim through Kit GET only when the provider added_at binds to the claim', async () => {
@@ -1443,14 +1807,16 @@ describe('SendMessage intent executor', () => {
 		h.now = plus(claimAt, 5_000)
 		// No usable provider instant: presence alone cannot be bound.
 		expect(
-			(await Effect.runPromise(executor.reconcileHeld({ limit: 5 })))[0]
-				?.result,
+			(
+				await Effect.runPromise(unpaged(executor.reconcileHeld({ limit: 5 })))
+			)[0]?.result,
 		).toEqual({ type: 'UnknownHeld', reason: 'membership-added-at-unknown' })
 		// Real membership from before this claim stays held as evidence.
 		addedAt = '2020-01-01T00:00:00Z'
 		expect(
-			(await Effect.runPromise(executor.reconcileHeld({ limit: 5 })))[0]
-				?.result,
+			(
+				await Effect.runPromise(unpaged(executor.reconcileHeld({ limit: 5 })))
+			)[0]?.result,
 		).toEqual({
 			type: 'MembershipHeld',
 			reason: 'PrecedesClaim',
@@ -1461,7 +1827,7 @@ describe('SendMessage intent executor', () => {
 		// The provider instant inside this claim and window is the acceptance time.
 		addedAt = plus(claimAt, 1_250)
 		const reconciled = await Effect.runPromise(
-			executor.reconcileHeld({ limit: 5 }),
+			unpaged(executor.reconcileHeld({ limit: 5 })),
 		)
 		expect(reconciled[0]?.result).toMatchObject({
 			type: 'ReconciledAccepted',
@@ -1601,7 +1967,7 @@ describe('SendMessage intent executor', () => {
 		expect(h.slot(intent).status).toBe('Applied')
 		expect(h.applied).toHaveLength(1)
 		expect(
-			await Effect.runPromise(h.executor.reconcileHeld({ limit: 5 })),
+			await Effect.runPromise(unpaged(h.executor.reconcileHeld({ limit: 5 }))),
 		).toEqual([])
 	})
 })
