@@ -1,4 +1,9 @@
 import { Effect } from 'effect'
+import { createCouponReceiptReader } from './coupon-receipt-reader'
+import {
+	validatePersistedCommitEvidenceEnvelope,
+	EVERGREEN_OFFER_JOURNEY_COMMIT_EVIDENCE_FORMAT,
+} from './persistence-codec'
 import { describe, expect, it } from 'vitest'
 import { authorizeExclusiveCouponSelection } from '../../exclusive-coupon-authorization'
 import { deadlineTimeZoneEvidenceFromHeader } from './calendar'
@@ -103,6 +108,9 @@ function fixture() {
 		user: structuredClone(user),
 		failAfterInsert: false,
 		failBindingUpdate: false,
+		responseLost: false,
+		transactions: 0,
+		committedResults: new Array<unknown>(),
 		clock: '2026-09-10T17:00:00.000Z',
 		coupons: () => coupons,
 		grants: () => grants,
@@ -112,6 +120,7 @@ function fixture() {
 			_id: string,
 			work: (tx: CouponTransaction) => Promise<A>,
 		) => {
+			state.transactions++
 			const task = queue.then(async () => {
 				const pendingCoupons = structuredClone(coupons)
 				const pendingGrants = structuredClone(grants)
@@ -145,6 +154,8 @@ function fixture() {
 				})
 				coupons = pendingCoupons
 				grants = pendingGrants
+				state.committedResults.push(structuredClone(result))
+				if (state.responseLost) throw new Error('committed-response-lost')
 				return result
 			})
 			queue = task.then(
@@ -160,11 +171,355 @@ function fixture() {
 		readVerifiedOwner: async () => proof,
 		now: () => state.clock,
 	}
-	return { state, options, authority: createCouponAuthority(options) }
+	const reads = { calls: 0 }
+	const reader = createCouponReceiptReader({
+		getCoupon: async (id) => {
+			reads.calls++
+			return structuredClone(coupons.get(id) ?? null)
+		},
+		getCreditTypeId: async () => {
+			reads.calls++
+			return 'credit-type-fixture'
+		},
+		listCouponEntitlements: async (id) => {
+			reads.calls++
+			return structuredClone(
+				[...grants.values()].filter((grant) => grant.sourceId === id),
+			)
+		},
+	})
+	return {
+		state,
+		options,
+		reader,
+		reads,
+		authority: createCouponAuthority(options),
+	}
 }
 const result = <A>(effect: Effect.Effect<A, unknown>) =>
 	Effect.runPromise(Effect.either(effect))
 const permanent = { _tag: 'Left', left: { type: 'EffectPermanentRefusal' } }
+
+describe('historical receipt recovery, not authorization', () => {
+	it.each(['expired', 'consumed', 'revoked-coupon', 'revoked-grant'])(
+		'inspection never widens the exclusive authorizer for %s',
+		async (stateName) => {
+			const { authority, reader, state } = fixture()
+			await Effect.runPromise(authority.issue(issue))
+			await Effect.runPromise(authority.bind(bind))
+			const row = state.coupons().get(bind.couponId)
+			if (!row) throw new Error('missing coupon')
+			if (stateName === 'expired') state.clock = issue.expiresAt
+			if (stateName === 'consumed') row.usedCount = 1
+			if (stateName === 'revoked-coupon') row.status = 0
+			if (stateName === 'revoked-grant')
+				for (const grant of state.grants().values())
+					grant.deletedAt = new Date(state.clock)
+			expect(
+				await Effect.runPromise(reader.inspectBinding(bind)),
+			).toMatchObject({ type: 'Recorded' })
+			const gate = await authorizeExclusiveCouponSelection({
+				adapter: {
+					getCoupon: async () => row,
+					getMerchantCoupon: async () => state.merchant,
+					getEntitlementTypeByName: async () => ({ id: 'credit-type-fixture' }),
+					getEntitlementsForUser: async () => [...state.grants().values()],
+				},
+				verifiedUserId,
+				quantity: 1,
+				productId: issue.terms.productId,
+				requestedSiteCouponId: bind.couponId,
+				requestedMerchantCouponId: evidence.id,
+				now: new Date(state.clock),
+			})
+			expect(gate.authorized).toBe(false)
+		},
+	)
+	it.each([1205, 1213])(
+		'unproven code %s and nested rollback causes stay Ambiguous, with no retries',
+		async (errno) => {
+			const { options } = fixture()
+			const driver = Object.assign(new Error('unproven rollback'), {
+				errno,
+				code: errno === 1205 ? 'ER_LOCK_WAIT_TIMEOUT' : 'ER_LOCK_DEADLOCK',
+			})
+			for (const error of [
+				driver,
+				new Error('commit/rollback response lost', { cause: driver }),
+			]) {
+				let calls = 0
+				const authority = createCouponAuthority({
+					...options,
+					store: {
+						withContactLock: async () => {
+							calls++
+							throw error
+						},
+					},
+				})
+				expect(await result(authority.issue(issue))).toMatchObject({
+					_tag: 'Left',
+					left: { type: 'EffectAmbiguous' },
+				})
+				expect(calls).toBe(1)
+			}
+		},
+	)
+	it('missing/unavailable rows and contradictory original issue evidence never grant retry permission', async () => {
+		const { authority, reader, state } = fixture()
+		expect(await Effect.runPromise(reader.inspectIssue(issue))).toMatchObject({
+			type: 'Unknown',
+		})
+		await Effect.runPromise(authority.issue(issue))
+		expect(
+			await Effect.runPromise(
+				reader.inspectIssue({
+					...issue,
+					contactId: value(parseContactId('wrong-owner')),
+				}),
+			),
+		).toMatchObject({ type: 'Unknown' })
+		const unavailable = createCouponReceiptReader({
+			getCoupon: async () => {
+				throw new Error('read lost')
+			},
+			getCreditTypeId: async () => null,
+			listCouponEntitlements: async () => [],
+		})
+		expect(
+			await Effect.runPromise(unavailable.inspectIssue(issue)),
+		).toMatchObject({ type: 'Unknown' })
+		expect(state.coupons().size).toBe(1)
+		expect(state.grants().size).toBe(0)
+	})
+	it('recovers lost issue response after expiry with original receipt and no write', async () => {
+		const { authority, reader, reads, state } = fixture()
+		state.responseLost = true
+		expect(await result(authority.issue(issue))).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectAmbiguous' },
+		})
+		state.clock = issue.expiresAt
+		const before = structuredClone([...state.coupons()])
+		const transactions = state.transactions
+		const recovered = await Effect.runPromise(reader.inspectIssue(issue))
+		expect(recovered).toMatchObject({
+			type: 'Recorded',
+			receipt: state.committedResults[0],
+			operationObservedAt: { type: 'Known', at: '2026-09-10T17:00:00.000Z' },
+		})
+		expect(state.transactions).toBe(transactions)
+		expect(reads.calls).toBe(1)
+		expect([...state.coupons()]).toEqual(before)
+	})
+	it('recovers original issue after binding and coherent revoked/consumed binding evidence without resurrection', async () => {
+		const { authority, reader, state } = fixture()
+		const originalIssue = await Effect.runPromise(authority.issue(issue))
+		state.responseLost = true
+		expect(await result(authority.bind(bind))).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectAmbiguous' },
+		})
+		const row = state.coupons().get(bind.couponId)
+		if (!row) throw new Error('missing')
+		row.usedCount = 1
+		row.status = 0
+		state.clock = issue.expiresAt
+		for (const grant of state.grants().values())
+			grant.deletedAt = new Date(state.clock)
+		const before = structuredClone({
+			coupons: [...state.coupons()],
+			grants: [...state.grants()],
+			transactions: state.transactions,
+		})
+		const issueHistory = await Effect.runPromise(reader.inspectIssue(issue))
+		const bindHistory = await Effect.runPromise(reader.inspectBinding(bind))
+		expect(issueHistory).toMatchObject({
+			type: 'Recorded',
+			receipt: originalIssue,
+		})
+		expect(bindHistory).toMatchObject({
+			type: 'Recorded',
+			receipt: state.committedResults[1],
+			current: { couponStatus: 0, usedCount: 1, grantDeletedAt: state.clock },
+		})
+		expect({
+			coupons: [...state.coupons()],
+			grants: [...state.grants()],
+			transactions: state.transactions,
+		}).toEqual(before)
+		if (issueHistory.type !== 'Recorded') throw new Error('missing history')
+		const issueStimulus = {
+			type: 'CouponIssued',
+			stimulusId: 'recovered-issue',
+			journeyId,
+			intentKey: issue.idempotencyKey,
+			coupon: issueHistory.receipt.coupon,
+		}
+		if (
+			bindHistory.type !== 'Recorded' ||
+			bindHistory.receipt.coupon.binding.type !== 'BoundToVerifiedUser'
+		)
+			throw new Error('missing binding history')
+		const boundStimulus = {
+			type: 'CouponBoundToUser',
+			stimulusId: 'recovered-binding',
+			journeyId,
+			intentKey: bind.idempotencyKey,
+			couponId: bindHistory.receipt.coupon.couponId,
+			verifiedUserId: bindHistory.receipt.coupon.binding.verifiedUserId,
+			boundAt: bindHistory.receipt.coupon.binding.boundAt,
+		}
+		for (const stimulus of [issueStimulus, boundStimulus]) {
+			const decoded = validatePersistedCommitEvidenceEnvelope(
+				{
+					format: EVERGREEN_OFFER_JOURNEY_COMMIT_EVIDENCE_FORMAT,
+					expectedVersion: 1,
+					stimulus,
+					currentFacts: {
+						contactId: issue.contactId,
+						purchase: null,
+						delivery: { type: 'Eligible' },
+						existingJourneyId: journeyId,
+						automationControl: { type: 'Enabled', version: 'fixture' },
+						evidenceVersion: 'fixture',
+						readAt: issue.expiresAt,
+					},
+					definition: EVERGREEN_OFFER_JOURNEY_V1,
+					decidedAt: issue.expiresAt,
+				},
+				{
+					stimulusId: stimulus.stimulusId,
+					stimulusType: stimulus.type,
+					journeyId,
+					actorVersion: 2,
+					decidedAt: issue.expiresAt,
+				},
+			)
+			if (!decoded.ok) throw new Error(JSON.stringify(decoded.error))
+			expect(decoded.value.stimulus).toEqual(stimulus)
+		}
+		const gate = await authorizeExclusiveCouponSelection({
+			adapter: {
+				getCoupon: async () => row,
+				getMerchantCoupon: async () => state.merchant,
+				getEntitlementTypeByName: async () => ({ id: 'credit-type-fixture' }),
+				getEntitlementsForUser: async () => [...state.grants().values()],
+			},
+			verifiedUserId,
+			quantity: 1,
+			productId: issue.terms.productId,
+			requestedSiteCouponId: bind.couponId,
+			requestedMerchantCouponId: evidence.id,
+			now: new Date(state.clock),
+		})
+		expect(gate.authorized).toBe(false)
+		expect(await result(authority.issue(issue))).toMatchObject(permanent)
+		expect(await result(authority.bind(bind))).toMatchObject(permanent)
+	})
+	it.each([
+		'missing-grant',
+		'wrong-grant-owner',
+		'wrong-coupon-owner',
+		'malformed-observation',
+	])('reports Unknown for %s', async (scenario) => {
+		const { authority, reader, state } = fixture()
+		await Effect.runPromise(authority.issue(issue))
+		await Effect.runPromise(authority.bind(bind))
+		if (scenario === 'missing-grant') state.grants().clear()
+		if (scenario === 'wrong-grant-owner')
+			for (const grant of state.grants().values()) grant.userId = 'wrong'
+		const row = state.coupons().get(bind.couponId)
+		if (!row) throw new Error('missing')
+		if (scenario === 'wrong-coupon-owner')
+			row.fields = {
+				exclusive: true,
+				evergreenOffer: {
+					format: 1,
+					issue: { ...issue, contactId: 'wrong' },
+					binding: { type: 'AwaitingVerifiedUser' },
+				},
+			}
+		if (scenario === 'malformed-observation')
+			row.fields = {
+				exclusive: true,
+				evergreenOffer: {
+					format: 1,
+					issue,
+					operationObservedAt: 'bad',
+					binding: { type: 'AwaitingVerifiedUser' },
+				},
+			}
+		expect(await Effect.runPromise(reader.inspectBinding(bind))).toMatchObject({
+			type: 'Unknown',
+		})
+	})
+	it('labels missing legacy observation Unknown, never backfills it, and replay retains new observation', async () => {
+		const { authority, reader, state } = fixture()
+		await Effect.runPromise(authority.issue(issue))
+		state.clock = '2026-09-11T00:00:00.000Z'
+		await Effect.runPromise(authority.issue(issue))
+		expect(await Effect.runPromise(reader.inspectIssue(issue))).toMatchObject({
+			type: 'Recorded',
+			operationObservedAt: { type: 'Known', at: '2026-09-10T17:00:00.000Z' },
+		})
+		const row = state.coupons().get(bind.couponId)
+		if (!row) throw new Error('missing')
+		row.fields = {
+			exclusive: true,
+			evergreenOffer: {
+				format: 1,
+				issue,
+				binding: { type: 'AwaitingVerifiedUser' },
+			},
+		}
+		expect(await Effect.runPromise(reader.inspectIssue(issue))).toMatchObject({
+			type: 'Recorded',
+			operationObservedAt: { type: 'Unknown' },
+		})
+		expect(row.createdAt.toISOString()).toBe(issue.issueAt)
+		await Effect.runPromise(authority.bind(bind))
+		expect(await Effect.runPromise(reader.inspectBinding(bind))).toMatchObject({
+			type: 'Recorded',
+			operationObservedAt: { type: 'Unknown' },
+		})
+	})
+	it('refuses a new INSERT readback that loses the operation observation', async () => {
+		const { options, state } = fixture()
+		const faulty: CouponCommerceStore = {
+			withContactLock: (id, work) =>
+				options.store.withContactLock(id, (tx) =>
+					work({
+						...tx,
+						insertCoupon: (row) =>
+							tx.insertCoupon({
+								...row,
+								fields: {
+									exclusive: true,
+									evergreenOffer: {
+										format: 1,
+										issue,
+										binding: { type: 'AwaitingVerifiedUser' },
+									},
+								},
+							}),
+					}),
+				),
+		}
+		expect(
+			await result(
+				createCouponAuthority({ ...options, store: faulty }).issue(issue),
+			),
+		).toMatchObject({
+			_tag: 'Left',
+			left: {
+				type: 'EffectPermanentRefusal',
+				reason: 'coupon-observation-readback-conflict',
+			},
+		})
+		expect(state.coupons().size).toBe(0)
+	})
+})
 
 describe('dormant coupon authority', () => {
 	it('issues exact canonical terms/timestamps and one coupon under replay/concurrency', async () => {
@@ -223,7 +578,9 @@ describe('dormant coupon authority', () => {
 		'status',
 	])('refuses mismatched merchant %s', async (field) => {
 		const { authority, state } = fixture()
-		Object.assign(state.merchant, { [field]: field === 'status' ? 0 : 'wrong' })
+		Object.assign(state.merchant, {
+			[field]: field === 'status' ? 0 : 'wrong',
+		})
 		expect(await result(authority.issue(issue))).toMatchObject(permanent)
 		expect(state.coupons().size).toBe(0)
 	})

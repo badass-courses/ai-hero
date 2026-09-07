@@ -16,6 +16,7 @@ import {
 import {
 	couponCommerceSchema,
 	createMySqlCouponCommerceStore,
+	createMySqlCouponReceiptReadStore,
 	type CouponCommerceDatabase,
 } from './coupon-authority-mysql'
 import {
@@ -29,6 +30,7 @@ import {
 	type ParseResult,
 } from './primitives'
 import type { BindCouponIntent, IssueCouponIntent } from './domain'
+import { createCouponReceiptReader } from './coupon-receipt-reader'
 
 const serverUrl = process.env.AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
@@ -183,6 +185,217 @@ integration('coupon authority disposable MySQL', () => {
 		expect(rows[0]?.createdAt.toISOString()).toBe(issue.issueAt)
 		expect(rows[0]?.expires?.toISOString()).toBe(issue.expiresAt)
 		expect(grants[0]?.expiresAt?.toISOString()).toBe(issue.expiresAt)
+	})
+	it('recovers committed issue with lost response after window using SELECT only', async () => {
+		let committed: unknown
+		const lostResponseStore: CouponCommerceStore = {
+			withContactLock: async (id, work) => {
+				committed = await store.withContactLock(id, work)
+				throw new Error('commit succeeded; response lost')
+			},
+		}
+		const outcome = await Effect.runPromise(
+			Effect.either(
+				createCouponAuthority({ ...options(), store: lostResponseStore }).issue(
+					issue,
+				),
+			),
+		)
+		expect(outcome).toMatchObject({
+			_tag: 'Left',
+			left: { type: 'EffectAmbiguous' },
+		})
+		if (!pool) throw new Error('missing pool')
+		const statements: string[] = []
+		const readDb = drizzle(pool, {
+			schema: couponCommerceSchema,
+			mode: 'default',
+			logger: {
+				logQuery: (query) => {
+					statements.push(query)
+				},
+			},
+		})
+		const reader = createCouponReceiptReader(
+			createMySqlCouponReceiptReadStore(readDb),
+		)
+		const before = await database.select().from(couponCommerceSchema.coupon)
+		// Mutating entry point is closed; inspection has no current-eligibility clock.
+		const expired = createCouponAuthority({
+			...options(),
+			now: () => issue.expiresAt,
+		})
+		expect(
+			await Effect.runPromise(Effect.either(expired.issue(issue))),
+		).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal' } })
+		expect(await Effect.runPromise(reader.inspectIssue(issue))).toMatchObject({
+			type: 'Recorded',
+			receipt: committed,
+			operationObservedAt: { type: 'Known', at: '2026-09-10T17:00:00.000Z' },
+		})
+		expect(statements).toHaveLength(1)
+		expect(
+			statements.every(
+				(query) => /^select\b/i.test(query) && !/for update/i.test(query),
+			),
+		).toBe(true)
+		expect(await database.select().from(couponCommerceSchema.coupon)).toEqual(
+			before,
+		)
+		expect(before[0]?.createdAt.toISOString()).toBe(issue.issueAt)
+		expect(
+			await database.select().from(couponCommerceSchema.entitlements),
+		).toHaveLength(0)
+	})
+	it('recovers lost bind plus original ISSUE after consumption/revocation; no writes or renewed authority', async () => {
+		const originalIssue = await Effect.runPromise(
+			createCouponAuthority(options()).issue(issue),
+		)
+		let originalBinding: unknown
+		const lostResponseStore: CouponCommerceStore = {
+			withContactLock: async (id, work) => {
+				originalBinding = await store.withContactLock(id, work)
+				throw new Error('bind committed; response lost')
+			},
+		}
+		expect(
+			await Effect.runPromise(
+				Effect.either(
+					createCouponAuthority({
+						...options(),
+						store: lostResponseStore,
+					}).bind(bind),
+				),
+			),
+		).toMatchObject({ _tag: 'Left', left: { type: 'EffectAmbiguous' } })
+		if (!pool) throw new Error('missing pool')
+		await pool.query('UPDATE AI_Coupon SET usedCount=1, status=0 WHERE id=?', [
+			bind.couponId,
+		])
+		await pool.query('UPDATE AI_Entitlement SET deletedAt=? WHERE sourceId=?', [
+			new Date(issue.expiresAt),
+			bind.couponId,
+		])
+		const coupons = await database.select().from(couponCommerceSchema.coupon)
+		const grants = await database
+			.select()
+			.from(couponCommerceSchema.entitlements)
+		const statements: string[] = []
+		const readDb = drizzle(pool, {
+			schema: couponCommerceSchema,
+			mode: 'default',
+			logger: {
+				logQuery: (query) => {
+					statements.push(query)
+				},
+			},
+		})
+		const reader = createCouponReceiptReader(
+			createMySqlCouponReceiptReadStore(readDb),
+		)
+		expect(await Effect.runPromise(reader.inspectBinding(bind))).toMatchObject({
+			type: 'Recorded',
+			receipt: originalBinding,
+			current: {
+				couponStatus: 0,
+				usedCount: 1,
+				grantDeletedAt: issue.expiresAt,
+			},
+		})
+		expect(await Effect.runPromise(reader.inspectIssue(issue))).toMatchObject({
+			type: 'Recorded',
+			receipt: originalIssue,
+		})
+		expect(statements).toHaveLength(4)
+		expect(
+			statements.every(
+				(query) => /^select\b/i.test(query) && !/for update/i.test(query),
+			),
+		).toBe(true)
+		expect(await database.select().from(couponCommerceSchema.coupon)).toEqual(
+			coupons,
+		)
+		expect(
+			await database.select().from(couponCommerceSchema.entitlements),
+		).toEqual(grants)
+		const merchants = await database
+			.select()
+			.from(couponCommerceSchema.merchantCoupon)
+		const gate = await authorizeExclusiveCouponSelection({
+			adapter: {
+				getCoupon: async () => coupons[0] ?? null,
+				getMerchantCoupon: async () => merchants[0] ?? null,
+				getEntitlementTypeByName: async () => ({ id: 'mysql-credit-type' }),
+				getEntitlementsForUser: async () => grants,
+			},
+			verifiedUserId: userId,
+			quantity: 1,
+			productId: issue.terms.productId,
+			requestedSiteCouponId: bind.couponId,
+			requestedMerchantCouponId: evidence.id,
+			now: new Date(issue.expiresAt),
+		})
+		expect(gate.authorized).toBe(false)
+		await pool.query('UPDATE AI_Entitlement SET userId=? WHERE sourceId=?', [
+			'wrong-owner',
+			bind.couponId,
+		])
+		expect(await Effect.runPromise(reader.inspectBinding(bind))).toMatchObject({
+			type: 'Unknown',
+		})
+		await pool.query('DELETE FROM AI_Entitlement WHERE sourceId=?', [
+			bind.couponId,
+		])
+		expect(await Effect.runPromise(reader.inspectBinding(bind))).toMatchObject({
+			type: 'Unknown',
+		})
+	})
+	it('classifies actual 1205 as transient only AFTER Drizzle rolls back an earlier coupon INSERT', async () => {
+		if (!pool) throw new Error('missing pool')
+		const blocker = await pool.getConnection()
+		const writer = await pool.getConnection()
+		try {
+			await blocker.beginTransaction()
+			await blocker.query('SELECT id FROM AI_User WHERE id=? FOR UPDATE', [
+				userId,
+			])
+			await writer.query('SET SESSION innodb_lock_wait_timeout=1')
+			const isolatedStore = createMySqlCouponCommerceStore(
+				drizzle(writer, { schema: couponCommerceSchema, mode: 'default' }),
+			)
+			let insertedThenWaited = false
+			const contention: CouponCommerceStore = {
+				withContactLock: (id, work) =>
+					isolatedStore.withContactLock(id, async (tx) => {
+						const receipt = await work(tx)
+						insertedThenWaited = (await tx.getCoupon(bind.couponId)) !== null
+						await tx.getUser(userId)
+						return receipt
+					}),
+			}
+			const outcome = await Effect.runPromise(
+				Effect.either(
+					createCouponAuthority({ ...options(), store: contention }).issue(
+						issue,
+					),
+				),
+			)
+			expect(insertedThenWaited).toBe(true)
+			expect(outcome).toMatchObject({
+				_tag: 'Left',
+				left: {
+					type: 'EffectTransientUnavailable',
+					reason: 'commerce-transaction-rolled-back',
+				},
+			})
+			expect(
+				await database.select().from(couponCommerceSchema.coupon),
+			).toHaveLength(0)
+		} finally {
+			await blocker.rollback()
+			blocker.release()
+			writer.release()
+		}
 	})
 	it('rolls back transaction failure after insert with no orphan coupon', async () => {
 		const failingStore: CouponCommerceStore = {

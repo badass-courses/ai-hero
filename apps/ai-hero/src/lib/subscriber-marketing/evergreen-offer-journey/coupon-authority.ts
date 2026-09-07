@@ -89,6 +89,8 @@ const metadataSchema = z.object({
 	evergreenOffer: z.object({
 		format: z.literal(1),
 		issue: issueSchema,
+		// Optional for existing rows; this is an observation before INSERT, not commit time.
+		operationObservedAt: z.string().optional(),
 		binding: bindingSchema,
 	}),
 })
@@ -140,10 +142,10 @@ function value<A>(parsed: ParseResult<A>): A {
 export function semanticCouponId(intentKey: string): string {
 	return `eoj-coupon:${createHash('sha256').update(intentKey).digest('hex')}`
 }
-function entitlementId(couponId: string): string {
+export function entitlementId(couponId: string): string {
 	return `eoj-credit:${createHash('sha256').update(couponId).digest('hex')}`
 }
-function decodeIssue(input: unknown): IssueCouponIntent {
+export function decodeIssue(input: unknown): IssueCouponIntent {
 	const parsed = issueSchema.safeParse(input)
 	if (!parsed.success) return refuseCoupon('invalid-issue-intent')
 	const source = parsed.data
@@ -168,7 +170,8 @@ function decodeIssue(input: unknown): IssueCouponIntent {
 		deadlineTimeZone: zone,
 	}
 }
-function readCoupon(row: CommerceCouponRow) {
+/** Structural historical evidence only. Never an active-coupon authorization check. */
+export function readCouponEvidence(row: CommerceCouponRow) {
 	const parsed = metadataSchema.safeParse(row.fields)
 	if (!parsed.success) return refuseCoupon('coupon-not-owned-by-journey')
 	const issue = decodeIssue(parsed.data.evergreenOffer.issue)
@@ -181,8 +184,9 @@ function readCoupon(row: CommerceCouponRow) {
 		row.amountDiscount !== issue.terms.amountOffCents ||
 		row.percentageDiscount !== null ||
 		row.maxUses !== issue.terms.maxUses ||
-		row.status !== 1 ||
-		row.usedCount !== 0 ||
+		!Number.isInteger(row.status) ||
+		!Number.isInteger(row.usedCount) ||
+		row.usedCount < 0 ||
 		row.createdAt.toISOString() !== issue.issueAt ||
 		row.expires?.toISOString() !== issue.expiresAt
 	) {
@@ -205,7 +209,24 @@ function readCoupon(row: CommerceCouponRow) {
 						boundAt: value(parseIsoInstant(binding.boundAt)),
 					},
 	}
-	return { issue, coupon, binding }
+	const observed = parsed.data.evergreenOffer.operationObservedAt
+	const operationObservedAt =
+		observed === undefined ? undefined : value(parseIsoInstant(observed))
+	if (
+		operationObservedAt !== undefined &&
+		(Date.parse(operationObservedAt) < Date.parse(issue.issueAt) ||
+			Date.parse(operationObservedAt) >= Date.parse(issue.expiresAt))
+	) {
+		return refuseCoupon('invalid-operation-observation')
+	}
+	return { issue, coupon, binding, operationObservedAt }
+}
+
+function readCoupon(row: CommerceCouponRow) {
+	// Mutating issue/bind still require current availability, independent of history.
+	if (row.status !== 1 || row.usedCount !== 0)
+		return refuseCoupon('coupon-state-or-terms-conflict')
+	return readCouponEvidence(row)
 }
 
 /** Dormant commerce adapter. No default DB, auth reader, provider call, pricing, or runtime registration. */
@@ -279,7 +300,10 @@ export function createCouponAuthority(
 					const id = semanticCouponId(issue.idempotencyKey)
 					let row = await tx.getCoupon(id)
 					if (!row) {
-						checkWindow(issue.issueAt, issue.expiresAt)
+						const operationObservedAt = checkWindow(
+							issue.issueAt,
+							issue.expiresAt,
+						)
 						row = {
 							id,
 							organizationId: null,
@@ -291,6 +315,7 @@ export function createCouponAuthority(
 								evergreenOffer: {
 									format: 1,
 									issue,
+									operationObservedAt,
 									binding: { type: 'AwaitingVerifiedUser' },
 								},
 							},
@@ -306,6 +331,11 @@ export function createCouponAuthority(
 						await tx.insertCoupon(row)
 						row = await tx.getCoupon(id)
 						if (!row) return refuseCoupon('coupon-insert-readback-missing')
+						if (
+							readCouponEvidence(row).operationObservedAt !==
+							operationObservedAt
+						)
+							return refuseCoupon('coupon-observation-readback-conflict')
 					}
 					const persisted = readCoupon(row)
 					if (
@@ -456,6 +486,7 @@ export function createCouponAuthority(
 							evergreenOffer: {
 								format: 1,
 								issue: persisted.issue,
+								operationObservedAt: persisted.operationObservedAt,
 								binding: {
 									type: 'BoundToVerifiedUser',
 									verifiedUserId: userId,
@@ -474,6 +505,7 @@ export function createCouponAuthority(
 							final.binding.verifiedUserId !== userId ||
 							final.binding.entitlementId !== id ||
 							final.binding.boundAt !== boundAt ||
+							final.operationObservedAt !== persisted.operationObservedAt ||
 							JSON.stringify(final.issue) !== JSON.stringify(persisted.issue)
 						)
 							return refuseCoupon('binding-readback-conflict')
