@@ -15,6 +15,7 @@ import type { LearnerFlowCohortRecord } from './learner-flow-cohort'
 import { classifyLearnerFlowContact } from './learner-flow-classifier'
 import {
 	buildLearnerFlowReconcilerPlan,
+	buildBoundedLearnerFlowReconcilerPlan,
 	evaluateLearnerFlowReconcilerBrake,
 	reconcileLearnerFlow,
 	type LearnerFlowReconcilerCandidate,
@@ -94,7 +95,9 @@ function rollingAllowlist(): GateDRuntimeAllowlist {
 	}
 }
 
-function riskyReplanCandidates(count: number): LearnerFlowReconcilerCandidate[] {
+function riskyReplanCandidates(
+	count: number,
+): LearnerFlowReconcilerCandidate[] {
 	return Array.from({ length: count }, (_, index) => ({
 		contactId: `contact-${index}`,
 		intentId: `intent-${index}`,
@@ -295,8 +298,7 @@ describe('learner flow reconciler', () => {
 						contactId,
 						id: `intent-${index}`,
 						status: index < 60 ? 'completed' : 'pending',
-						completedAt:
-							index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
+						completedAt: index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
 						emailResourceId:
 							index < 60
 								? 'ai-hero-skills-workflow.email-6'
@@ -388,8 +390,7 @@ describe('learner flow reconciler', () => {
 		})
 		const emailSeven = Array.from(repository.sideEffectIntents.values()).find(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-7',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 		)
 
 		expect(emailSeven).toMatchObject({ status: 'pending' })
@@ -438,8 +439,7 @@ describe('learner flow reconciler', () => {
 		)
 		const intents = Array.from(repository.sideEffectIntents.values()).filter(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-7',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 		)
 
 		expect(first.counts.intentsCreated).toBe(1)
@@ -553,8 +553,7 @@ describe('learner flow reconciler', () => {
 		expect(
 			Array.from(repository.sideEffectIntents.values()).some(
 				(intent) =>
-					intent.metadata.emailResourceId ===
-					'ai-hero-skills-workflow.email-7',
+					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 			),
 		).toBe(false)
 		expect(receipt).toMatchObject({
@@ -614,12 +613,8 @@ describe('learner flow reconciler', () => {
 				permanentProviderFailures: 1,
 			},
 		})
-		expect(receipt.failureReasons).toContain(
-			'tier2:provider-permanent-failure',
-		)
-		expect(receipt.brake.reasons).toContain(
-			'repair-ratio-37.7%-exceeds-25.0%',
-		)
+		expect(receipt.failureReasons).toContain('tier2:provider-permanent-failure')
+		expect(receipt.brake.reasons).toContain('repair-ratio-37.7%-exceeds-25.0%')
 		expect(repository.includeCanary).toBe(true)
 		expect(repository.writeAttempts).toBe(0)
 	})
@@ -695,15 +690,12 @@ describe('learner flow reconciler', () => {
 		const repaired = repository.sideEffectIntents.get(driftIntent.id)!
 		const next = Array.from(repository.sideEffectIntents.values()).find(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-1',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-1',
 		)
 		expect(driftIntent.completedAt).toBeNull()
 		expect(driftIntent.metadata.completedAt).toBeUndefined()
 		expect(repaired.completedAt).toBe('2026-07-15T20:00:00.000Z')
-		expect(repaired.metadata.completedAt).toBe(
-			'2026-07-15T20:00:00.000Z',
-		)
+		expect(repaired.metadata.completedAt).toBe('2026-07-15T20:00:00.000Z')
 		expect(next?.status).toBe('pending')
 		expect(receipt).toMatchObject({
 			status: 'ok',
@@ -745,8 +737,7 @@ describe('learner flow reconciler', () => {
 				contactId: 'zombie-contact',
 				contact: {
 					id: 'zombie-contact',
-					email:
-						'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
+					email: 'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
 					lifecycle: 'nurture-ready',
 					isProvisional: true,
 					createdAt: completedAt,
@@ -1119,4 +1110,81 @@ describe('learner flow reconciler', () => {
 		expect(configSource).toContain('learnerFlowReconciler')
 		expect(configSource).not.toContain('valuePathDripProgression')
 	})
+})
+
+describe('bounded repair plan', () => {
+	it('matches full classification above 100k intents without retaining lifetime detail', async () => {
+		const records: LearnerFlowCohortRecord[] = Array.from(
+			{ length: 100_001 },
+			(_, index) => {
+				const contactId = `contact-${String(index).padStart(6, '0')}`
+				return {
+					contactId,
+					entryEvents: [],
+					intents: [
+						courseIntent({
+							contactId,
+							id: `intent-${index}`,
+							status: index % 3 ? 'completed' : 'blocked',
+							createdAt: '2026-07-01T00:00:00.000Z',
+							...(index % 3 ? { completedAt: '2026-07-01T00:00:00.000Z' } : {}),
+						}),
+					],
+				}
+			},
+		)
+		const full = await buildLearnerFlowReconcilerPlan({
+			repository: {
+				findSkillsWorkflowLearnerFlowRecords: () => records,
+			},
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		let pages = 0
+		const bounded = await buildBoundedLearnerFlowReconcilerPlan({
+			repository: {
+				findSkillsWorkflowLearnerFlowRecords: () => {
+					throw new Error('unbounded read')
+				},
+				async *findSkillsWorkflowLearnerFlowRepairRecordPages() {
+					for (let offset = 0; offset < records.length; offset += 137) {
+						pages++
+						yield records.slice(offset, offset + 137)
+					}
+				},
+			},
+			allowlist: rollingAllowlist(),
+			now,
+			repairCap: 150,
+		})
+		expect(pages).toBe(730)
+		expect(full.records).toHaveLength(100_001)
+		expect(full.candidates.length).toBeGreaterThan(150)
+		expect(bounded.riskyRepairCount).toBeGreaterThan(150)
+		expect(bounded.cohort).toEqual(full.cohort)
+		expect(bounded.counts).toEqual(full.counts)
+		expect(bounded.causeCounts).toEqual(full.causeCounts)
+		expect(bounded.tier2).toEqual(full.tier2)
+		expect(bounded.suppressedFixtureStarved).toEqual(
+			full.suppressedFixtureStarved,
+		)
+		expect(bounded.candidates).toEqual(full.candidates.slice(0, 151))
+		expect(bounded.records.length).toBeLessThanOrEqual(151)
+		expect(bounded.riskyRepairCount).toBe(
+			full.candidates.filter((c) => c.action !== 'nudge-drip-progression')
+				.length,
+		)
+		expect(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: bounded.cohort.contacts,
+				candidates: bounded.candidates,
+				riskyRepairCount: bounded.riskyRepairCount,
+			}),
+		).toEqual(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: full.cohort.contacts,
+				candidates: full.candidates,
+			}),
+		)
+	}, 30_000)
 })

@@ -41,7 +41,7 @@ import {
 	learnerFlowCanaryEmailSql,
 	learnerFlowDrillEmailSql,
 } from '@/lib/subscriber-marketing/learner-flow-canary-exclusion'
-import { queryLearnerFlowCohort } from '@/lib/subscriber-marketing/learner-flow-cohort'
+import { queryLearnerFlowCohort, queryLearnerFlowCohortMembership } from '@/lib/subscriber-marketing/learner-flow-cohort'
 import {
 	classifyLearnerFlowContact,
 	type LearnerFlowStuckCause,
@@ -150,9 +150,9 @@ import {
 	type SkillsFormSubscriberEvidence,
 } from '@/lib/subscriber-marketing/value-path-gate-d-candidates'
 import { startValuePathGateDActivation } from '@/lib/subscriber-marketing/value-path-gate-d-start'
+import { summarizeGateDStatus } from '@/lib/subscriber-marketing/value-path-gate-d-summary'
 import { previewValuePathForContactSnapshot } from '@/lib/subscriber-marketing/value-path-planner'
 import {
-	evaluateValuePathMovement,
 	resolveGateDRunState,
 } from '@/lib/subscriber-marketing/value-path-run-state'
 import {
@@ -1633,94 +1633,14 @@ async function buildValuePathGateDStatus() {
 	const activationContactIds = allowlist?.contactIds ?? []
 	const repository = await createCaptureRepository()
 	const cohort = allowlist
-		? await queryLearnerFlowCohort({ repository, allowlist })
+		? await queryLearnerFlowCohortMembership({ repository, allowlist })
 		: undefined
 	const contactIds = cohort?.contactIds ?? []
-	const [intents, events] = contactIds.length
-		? await Promise.all([
-				db
-					.select()
-					.from(sideEffectIntent)
-					.where(
-						and(
-							inArray(sideEffectIntent.contactId, contactIds),
-							eq(sideEffectIntent.type, 'send-value-path-email'),
-						),
-					),
-				db
-					.select()
-					.from(contactEvent)
-					.where(inArray(contactEvent.contactId, contactIds)),
-			])
-		: [[], []]
-	const byContact = contactIds.map((contactId) => {
-		const contactIntents = intents
-			.filter((intent) => intent.contactId === contactId)
-			.sort((a, b) => Number(a.createdAt) - Number(b.createdAt))
-		const contactEvents = events
-			.filter((event) => event.contactId === contactId)
-			.sort((a, b) => Number(a.occurredAt) - Number(b.occurredAt))
-		const answerClicks = contactEvents.filter(
-			(event) => event.eventType === 'value-path.answer-selected',
-		)
-		const drips = contactEvents.filter(
-			(event) => event.eventType === 'value-path.drip-progressed',
-		)
-		const blocked = contactIntents.filter(
-			(intent) => intent.status === 'blocked',
-		)
-		const lastIntent = contactIntents[contactIntents.length - 1]
-		const completedPath = contactIntents.some(
-			(intent) =>
-				isValuePathIntentCompleted(intent) &&
-				isTerminalValuePathEmailResourceId(
-					String(intent.metadata?.emailResourceId ?? ''),
-				),
-		)
-		return {
-			contactId,
-			completedPath,
-			lastEmailResourceId: lastIntent?.metadata?.emailResourceId,
-			lastKitSequenceId: lastIntent?.metadata?.kitSequenceId,
-			lastStatus: lastIntent?.status,
-			answerClicks: answerClicks.length,
-			drips: drips.length,
-			blocked: blocked.map((intent) => ({
-				intentId: intent.id,
-				emailResourceId: intent.metadata?.emailResourceId,
-				kitSequenceId: intent.metadata?.kitSequenceId,
-				reviewReasons: intent.reviewReasons,
-			})),
-		}
-	})
-	const grouped: Record<string, number> = {}
-	for (const intent of intents) {
-		const completionStatus = isValuePathIntentCompleted(intent)
-			? 'completed'
-			: intent.status
-		const key = `${completionStatus}:${intent.metadata?.emailResourceId}:${intent.metadata?.kitSequenceId}`
-		grouped[key] = (grouped[key] ?? 0) + 1
-	}
-	const eventTypes: Record<string, number> = {}
-	for (const event of events) {
-		eventTypes[event.eventType] = (eventTypes[event.eventType] ?? 0) + 1
-	}
+	const summary = await summarizeGateDStatus({ repository, contactIds, now: checkedAt })
+	const { byContact, grouped, eventTypes, retrying, currentStepDistribution, completedPathCount, persistedBlockedReasons, movement } = summary
 	const computedDrip = allowlist && cohort
 		? await buildComputedGateDDripStatus(allowlist, cohort)
 		: null
-	const retrying = summarizeRetryingValuePathIntents(
-		intents.filter((intent) => !isValuePathIntentCompleted(intent)),
-		checkedAt,
-	)
-	const currentStepDistribution = countByValues(
-		byContact.map((contact) => String(contact.lastEmailResourceId ?? 'none')),
-	)
-	const completedPathCount = byContact.filter(
-		(contact) => contact.completedPath,
-	).length
-	const persistedBlockedReasons = countReviewReasons(
-		intents.filter((intent) => intent.status === 'blocked'),
-	)
 	const hardBlockers = mergeReasonCounts(
 		persistedBlockedReasons,
 		computedDrip?.blockedReasons ?? {},
@@ -1736,20 +1656,6 @@ async function buildValuePathGateDStatus() {
 		'kit-sequence-missing',
 		'value-path-step-missing',
 	])
-	const movement = evaluateValuePathMovement({
-		intents: intents.map((intent) => ({
-			createdAt: intent.createdAt,
-			completedAt: intent.completedAt,
-			metadata: intent.metadata ?? undefined,
-		})),
-		events: events.map((event) => ({
-			eventType: event.eventType,
-			occurredAt: event.occurredAt,
-		})),
-		participants: contactIds.length,
-		completedPathCount,
-		now: checkedAt,
-	})
 	const runState = resolveGateDRunState({
 		authorizationPassed: allowlistDecision.passed,
 		authorizationReviewReasons: allowlistDecision.reviewReasons,
@@ -1757,10 +1663,7 @@ async function buildValuePathGateDStatus() {
 		retryableDue: retrying.retryableDue,
 		retryableWaiting: retrying.retryableWaiting,
 		nextRetryAt: retrying.nextRetryAt,
-		pending: intents.filter(
-			(intent) =>
-				intent.status === 'pending' && !isValuePathIntentCompleted(intent),
-		).length,
+		pending: summary.totals.pending,
 		dueSends: computedDrip?.counts.planned ?? 0,
 		participants: contactIds.length,
 		completedPathCount,
@@ -1816,17 +1719,7 @@ async function buildValuePathGateDStatus() {
 					updatedAt: allowlist.updatedAt,
 				}
 			: null,
-		totals: {
-			contacts: contactIds.length,
-			intents: intents.length,
-			pending: intents.filter(
-				(intent) =>
-					intent.status === 'pending' && !isValuePathIntentCompleted(intent),
-			).length,
-			completed: intents.filter(isValuePathIntentCompleted).length,
-			blocked: intents.filter((intent) => intent.status === 'blocked').length,
-			stale: intents.filter((intent) => intent.status === 'stale').length,
-		},
+		totals: summary.totals,
 		computed: {
 			state: runState.state,
 			plainLanguage: runState.plainLanguage,
@@ -2001,7 +1894,7 @@ async function buildValuePathDripProgress(args: {
 
 async function buildComputedGateDDripStatus(
 	allowlist: GateDRuntimeAllowlist,
-	cohort: Awaited<ReturnType<typeof queryLearnerFlowCohort>>,
+	cohort: Pick<Awaited<ReturnType<typeof queryLearnerFlowCohort>>, 'source' | 'contactIds' | 'liveRecordsScanned'>,
 ) {
 	const repository = await createCaptureRepository()
 	const minAgeHours = Number(
@@ -2063,43 +1956,6 @@ async function buildComputedGateDDripStatus(
 	}
 }
 
-function summarizeRetryingValuePathIntents(
-	intents: Array<{
-		status: string
-		reviewReasons: string[]
-		metadata: Record<string, unknown>
-	}>,
-	now: string,
-) {
-	const retryable = intents.filter(
-		(intent) =>
-			intent.status === 'failed' && intent.metadata.retryable === true,
-	)
-	const retryableDue = retryable.filter((intent) => {
-		const nextRetryAt = stringField(intent.metadata.nextRetryAt)
-		return !nextRetryAt || nextRetryAt <= now
-	})
-	const retryableWaiting = retryable.filter((intent) => {
-		const nextRetryAt = stringField(intent.metadata.nextRetryAt)
-		return Boolean(nextRetryAt && nextRetryAt > now)
-	})
-	const hardFailed = intents.filter(
-		(intent) =>
-			intent.status === 'failed' && intent.metadata.retryable !== true,
-	)
-	const retryTimes = retryableWaiting
-		.map((intent) => stringField(intent.metadata.nextRetryAt))
-		.filter((value): value is string => Boolean(value))
-		.sort()
-	return {
-		retryableDue: retryableDue.length,
-		retryableWaiting: retryableWaiting.length,
-		nextRetryAt: retryTimes[0],
-		hardFailed: hardFailed.length,
-		hardFailedReasons: countReviewReasons(hardFailed),
-	}
-}
-
 function countReviewReasons(
 	items: Array<{ reviewReasons?: readonly string[] }>,
 ) {
@@ -2134,10 +1990,6 @@ function countByValues(values: readonly string[]) {
 	const counts: Record<string, number> = {}
 	for (const value of values) counts[value] = (counts[value] ?? 0) + 1
 	return counts
-}
-
-function isTerminalValuePathEmailResourceId(value: string) {
-	return isTerminalSkillsWorkflowEmailResourceId(value)
 }
 
 function coversFullSkillsWorkflowPath(allowlist: GateDRuntimeAllowlist) {

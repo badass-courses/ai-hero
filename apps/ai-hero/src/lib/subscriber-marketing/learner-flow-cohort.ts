@@ -15,9 +15,40 @@ export type LearnerFlowCohortRecord = {
 }
 
 export type LearnerFlowCohortRepository = {
+	/** Full repair evidence, bounded contact pages; never monitoring projections. */
+	findSkillsWorkflowLearnerFlowRepairRecordPages?(options?: {
+		includeCanary?: boolean
+	}): AsyncIterable<LearnerFlowCohortRecord[]>
 	findSkillsWorkflowLearnerFlowRecords(options?: {
 		includeCanary?: boolean
 	}): Promise<LearnerFlowCohortRecord[]> | LearnerFlowCohortRecord[]
+}
+
+/** Status needs membership counts, not retained repair records. */
+export async function queryLearnerFlowCohortMembership(args: {
+	repository: {
+		findSkillsWorkflowLearnerFlowMembership(options?: {
+			includeCanary?: boolean
+		}): Promise<string[]>
+	}
+	allowlist: Pick<GateDRuntimeAllowlist, 'authorizationMode' | 'contactIds'>
+	includeCanary?: boolean
+}) {
+	const liveIds = await args.repository.findSkillsWorkflowLearnerFlowMembership(
+		{ includeCanary: args.includeCanary },
+	)
+	const rolling =
+		args.allowlist.authorizationMode === 'rolling-public-enrollment'
+	const approved = new Set(args.allowlist.contactIds)
+	return {
+		source: rolling
+			? ('live-rolling-learner-flow' as const)
+			: ('live-finish-approved-path' as const),
+		contactIds: Array.from(
+			new Set(rolling ? liveIds : liveIds.filter((id) => approved.has(id))),
+		),
+		liveRecordsScanned: liveIds.length,
+	}
 }
 
 /**
@@ -33,15 +64,18 @@ export async function queryLearnerFlowCohort(args: {
 	allowlist: Pick<GateDRuntimeAllowlist, 'authorizationMode' | 'contactIds'>
 	includeCanary?: boolean
 }) {
-	const liveRecords = await args.repository.findSkillsWorkflowLearnerFlowRecords({
-		includeCanary: args.includeCanary,
-	})
+	const liveRecords =
+		await args.repository.findSkillsWorkflowLearnerFlowRecords({
+			includeCanary: args.includeCanary,
+		})
 	const approved = new Set(args.allowlist.contactIds)
 	const records =
 		args.allowlist.authorizationMode === 'rolling-public-enrollment'
 			? liveRecords
 			: liveRecords.filter((record) => approved.has(record.contactId))
-	const contactIds = Array.from(new Set(records.map((record) => record.contactId)))
+	const contactIds = Array.from(
+		new Set(records.map((record) => record.contactId)),
+	)
 	return {
 		source:
 			args.allowlist.authorizationMode === 'rolling-public-enrollment'
