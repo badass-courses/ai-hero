@@ -302,6 +302,31 @@ integration('evergreen offer journey MySQL ledger', () => {
 		])
 	})
 
+	it('rejects same-ID replay with altered source evidence on lookup and commit', async () => {
+		const start = entry()
+		await Effect.runPromise(first.ledger.commit(start.commit))
+		const altered = {
+			...start.stimulus,
+			sourceReference: 'contact-event:other',
+		}
+		const lookup = await Effect.runPromise(
+			Effect.either(
+				second.ledger.findCommittedStimulus(start.stimulus.stimulusId, altered),
+			),
+		)
+		expect(Either.isLeft(lookup) && lookup.left.type).toBe(
+			'JourneyDecodeFailure',
+		)
+		const replay = await Effect.runPromise(
+			Effect.either(
+				second.ledger.commit({ ...start.commit, stimulus: altered }),
+			),
+		)
+		expect(Either.isLeft(replay) && replay.left.type).toBe(
+			'JourneyDecodeFailure',
+		)
+	})
+
 	it('commits a duplicate stimulus once across separate connections', async () => {
 		const start = entry('stimulus_mysql_duplicate')
 		const results = await Promise.all([

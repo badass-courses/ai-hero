@@ -33,7 +33,9 @@ import {
 } from './primitives'
 
 const contactId = value(parseContactId('contact_ledger_test'))
-const entryFactId = value(parseEntryFactId('course_sequence_exhausted_ledger_test'))
+const entryFactId = value(
+	parseEntryFactId('course_sequence_exhausted_ledger_test'),
+)
 const exhaustedAt = instant('2026-09-04T17:00:00.000Z')
 const timeZone = value(parseIanaTimeZone('America/Los_Angeles'))
 
@@ -401,6 +403,29 @@ describe('in-memory journey ledger contract', () => {
 		})
 		expect(ledger.records().snapshots).toHaveLength(1)
 		expect(ledger.records().events).toHaveLength(decision.events.length)
+	})
+
+	it('rejects changed evidence even when the stimulus ID already committed', async () => {
+		const ledger = makeInMemoryJourneyLedger()
+		const { stimulus, decision } = startDecision()
+		if (stimulus.type !== 'CourseSequenceExhausted')
+			throw new Error('Expected entry')
+		const commit = ledgerCommit({ stimulus, decision, expectedVersion: null })
+		await Effect.runPromise(ledger.commit(commit))
+		const altered = { ...stimulus, sourceReference: 'contact-event:other' }
+		const lookup = await Effect.runPromise(
+			Effect.either(ledger.findCommittedStimulus(stimulus.stimulusId, altered)),
+		)
+		expect(Either.isLeft(lookup) && lookup.left.type).toBe(
+			'JourneyDecodeFailure',
+		)
+		const replay = await Effect.runPromise(
+			Effect.either(ledger.commit({ ...commit, stimulus: altered })),
+		)
+		expect(Either.isLeft(replay) && replay.left.type).toBe(
+			'JourneyDecodeFailure',
+		)
+		expect(ledger.records().stimuli).toHaveLength(1)
 	})
 
 	it('rejects decisions and wakes that do not match the committed stimulus', async () => {

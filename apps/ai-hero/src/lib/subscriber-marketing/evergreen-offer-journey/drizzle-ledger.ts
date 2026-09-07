@@ -154,13 +154,16 @@ export function createDrizzleJourneyLedger(
 
 	const findCommittedStimulus: JourneyLedger['findCommittedStimulus'] = (
 		stimulusId,
+		expectedStimulus,
 	) =>
 		Effect.tryPromise({
 			try: async () => {
 				const row = await database.query.evergreenOfferJourneyCommit.findFirst({
 					where: eq(evergreenOfferJourneyCommit.stimulusId, stimulusId),
 				})
-				return row ? readCommittedDecision(database, row) : null
+				return row
+					? readCommittedDecision(database, row, expectedStimulus)
+					: null
 			},
 			catch: (cause) => commandError(cause),
 		})
@@ -184,7 +187,11 @@ export function createDrizzleJourneyLedger(
 								),
 							})
 						if (replay) {
-							const committed = await readCommittedDecision(database, replay)
+							const committed = await readCommittedDecision(
+								database,
+								replay,
+								candidate.stimulus,
+							)
 							return replayed(committed.decision)
 						}
 						if (!isMysqlDuplicateEntryError(cause)) throw cause
@@ -239,7 +246,11 @@ async function commitInTransaction(
 			),
 		})
 	if (existingStimulus) {
-		const committed = await readCommittedDecision(transaction, existingStimulus)
+		const committed = await readCommittedDecision(
+			transaction,
+			existingStimulus,
+			candidate.stimulus,
+		)
 		return replayed(committed.decision)
 	}
 
@@ -594,9 +605,13 @@ async function loadAggregate(
 async function readCommittedDecision(
 	database: Pick<JourneyDatabase, 'query'>,
 	row: StoredCommit,
+	expectedStimulus?: JourneyLedgerCommit['stimulus'],
 ): Promise<CommittedJourneyDecision> {
 	const rowIdentity = commitIdentity(row)
 	const evidence = rowIdentity.evidence
+	if (expectedStimulus && !jsonDeepEqual(evidence.stimulus, expectedStimulus)) {
+		decodeFailure('Stimulus ID is already bound to different evidence')
+	}
 	const next = restoreSnapshot(row.snapshot, row.journeyId, row.actorVersion)
 	if (
 		evidence.currentFacts.contactId !== next.contactId ||

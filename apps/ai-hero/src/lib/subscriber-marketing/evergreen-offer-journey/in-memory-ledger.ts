@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 
 import { decideEvergreenOfferJourney } from './decision'
 import { inspectEvergreenOfferJourney } from './inspection'
+import { sameJourneyStimulus } from './persistence-codec'
 import {
 	EVERGREEN_OFFER_JOURNEY_EVENT_FORMAT,
 	EVERGREEN_OFFER_JOURNEY_INTENT_FORMAT,
@@ -60,12 +61,21 @@ export function makeInMemoryJourneyLedger(
 
 	const findCommittedStimulus: JourneyLedger['findCommittedStimulus'] = (
 		stimulusId,
+		expectedStimulus,
 	) =>
-		Effect.sync(() => {
-			const decision = stimuli.find(
-				(record) => record.stimulusId === stimulusId,
-			)?.decision
-			return decision ? structuredClone(decision) : null
+		Effect.suspend(() => {
+			const record = stimuli.find((record) => record.stimulusId === stimulusId)
+			if (
+				record &&
+				expectedStimulus &&
+				!sameJourneyStimulus(record.stimulus, expectedStimulus)
+			) {
+				return Effect.fail({
+					type: 'JourneyDecodeFailure' as const,
+					reason: 'Stimulus ID is already bound to different evidence',
+				})
+			}
+			return Effect.succeed(record ? structuredClone(record.decision) : null)
 		})
 
 	const commit: JourneyLedger['commit'] = (candidateInput) =>
@@ -75,6 +85,12 @@ export function makeInMemoryJourneyLedger(
 				(record) => record.stimulusId === candidate.stimulus.stimulusId,
 			)
 			if (replay) {
+				if (!sameJourneyStimulus(replay.stimulus, candidate.stimulus)) {
+					return Effect.fail({
+						type: 'JourneyDecodeFailure' as const,
+						reason: 'Stimulus ID is already bound to different evidence',
+					})
+				}
 				return Effect.succeed(
 					structuredClone({
 						decision: replay.decision.decision,

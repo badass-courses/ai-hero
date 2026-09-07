@@ -73,6 +73,8 @@ export interface JourneyLedger {
 	>
 	readonly findCommittedStimulus: (
 		stimulusId: StimulusId,
+		/** Command replay must bind the full stimulus, not just its ID. */
+		expectedStimulus?: EvergreenOfferStimulus,
 	) => Effect.Effect<CommittedJourneyDecision | null, JourneyCommandError>
 	readonly commit: (
 		commit: JourneyLedgerCommit,
