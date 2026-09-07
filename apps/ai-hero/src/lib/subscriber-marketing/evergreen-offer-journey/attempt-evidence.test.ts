@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { decodeAttempt, attemptStateAt } from './attempt-evidence'
+import {
+	decodeAttempt,
+	attemptStateAt,
+	refusalObservation,
+	ObservedKnownNotAppliedOutcome,
+} from './attempt-evidence'
 
 const row = {
 	format: 'evergreen-offer-journey.attempt.v1',
@@ -12,6 +17,53 @@ const row = {
 	outcome: null,
 }
 describe('provider attempt evidence', () => {
+	it('preserves legacy unknown and exact observed refusal times without inventing one', () => {
+		const outcome = {
+			type: 'KnownNotApplied' as const,
+			reason: 'ProviderRefused' as const,
+		}
+		const legacy = decodeAttempt({ ...row, status: outcome.type, outcome })
+		expect(legacy.outcome).toEqual(outcome)
+		expect(refusalObservation(outcome)).toEqual({ type: 'Unknown' })
+		expect(ObservedKnownNotAppliedOutcome.safeParse(outcome).success).toBe(
+			false,
+		)
+		const current = { ...outcome, observedAt: '2026-09-04T17:00:00.123Z' }
+		expect(
+			decodeAttempt({ ...row, status: outcome.type, outcome: current }).outcome,
+		).toEqual(current)
+		expect(refusalObservation(current)).toEqual({
+			type: 'Known',
+			observedAt: current.observedAt,
+		})
+		for (const observedAt of [
+			null,
+			'',
+			'not-a-time',
+			'2026-09-04T17:00:00Z',
+			'2026-09-04T17:00:00.123+00:00',
+			'2026-09-04T16:59:59.999Z',
+		]) {
+			expect(() =>
+				decodeAttempt({
+					...row,
+					status: outcome.type,
+					outcome: { ...outcome, observedAt },
+				}),
+			).toThrow()
+		}
+		expect(() =>
+			decodeAttempt({
+				...row,
+				status: 'HeldUncertain',
+				outcome: {
+					type: 'HeldUncertain',
+					reason: 'Unknown',
+					observedAt: current.observedAt,
+				},
+			}),
+		).toThrow()
+	})
 	it('projects crashed or expired claims as held, never retryable', () => {
 		const claim = decodeAttempt(row)
 		expect(attemptStateAt(claim, new Date('2026-09-04T17:00:30Z'))).toBe(

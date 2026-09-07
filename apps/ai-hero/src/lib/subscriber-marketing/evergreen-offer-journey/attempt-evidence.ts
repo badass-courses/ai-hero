@@ -22,6 +22,32 @@ export const AcceptedOutcome = z
 	})
 	.strict()
 export type AcceptedOutcome = z.infer<typeof AcceptedOutcome>
+/** Optional only for historical storage. Never infer an absent observation. */
+export const KnownNotAppliedOutcome = z
+	.object({
+		type: z.literal('KnownNotApplied'),
+		reason: z.enum(['PreflightRefused', 'ProviderRefused']),
+		observedAt: z.string().datetime({ precision: 3 }).optional(),
+	})
+	.strict()
+export type KnownNotAppliedOutcome = z.infer<typeof KnownNotAppliedOutcome>
+/** New refusal callers supply the actual observation, not recovery time. */
+export const ObservedKnownNotAppliedOutcome = KnownNotAppliedOutcome.required({
+	observedAt: true,
+})
+export type ObservedKnownNotAppliedOutcome = z.infer<
+	typeof ObservedKnownNotAppliedOutcome
+>
+export function refusalObservation(
+	outcome: KnownNotAppliedOutcome,
+):
+	| { readonly type: 'Known'; readonly observedAt: string }
+	| { readonly type: 'Unknown' } {
+	const parsed = KnownNotAppliedOutcome.parse(outcome)
+	return parsed.observedAt === undefined
+		? { type: 'Unknown' }
+		: { type: 'Known', observedAt: parsed.observedAt }
+}
 export const AttemptOutcome = z.discriminatedUnion('type', [
 	AcceptedOutcome,
 	z
@@ -30,12 +56,7 @@ export const AttemptOutcome = z.discriminatedUnion('type', [
 			reason: z.enum(['Timeout', 'Cancelled', 'Unknown']),
 		})
 		.strict(),
-	z
-		.object({
-			type: z.literal('KnownNotApplied'),
-			reason: z.enum(['PreflightRefused', 'ProviderRefused']),
-		})
-		.strict(),
+	KnownNotAppliedOutcome,
 ])
 export type AttemptOutcome = z.infer<typeof AttemptOutcome>
 
@@ -54,7 +75,10 @@ const Attempt = AttemptIdentity.extend({
 				? row.outcome !== null
 				: row.outcome?.type !== row.status) ||
 			(row.outcome?.type === 'Accepted' &&
-				new Date(row.outcome.appliedAt) < row.claimedAt)
+				new Date(row.outcome.appliedAt) < row.claimedAt) ||
+			(row.outcome?.type === 'KnownNotApplied' &&
+				row.outcome.observedAt !== undefined &&
+				new Date(row.outcome.observedAt) < row.claimedAt)
 		) {
 			ctx.addIssue({ code: 'custom', message: 'Inconsistent attempt evidence' })
 		}

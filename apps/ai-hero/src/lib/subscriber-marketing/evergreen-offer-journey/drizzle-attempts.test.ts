@@ -3,7 +3,92 @@ import type { SQL } from 'drizzle-orm'
 import { MySqlDialect } from 'drizzle-orm/mysql-core'
 import { expect, it, vi } from 'vitest'
 import { createDrizzleJourneyAttempts } from './drizzle-attempts'
+import { decodeAttempt } from './attempt-evidence'
 import type { EvergreenOfferJourneyDatabase } from './drizzle-ledger'
+
+it('requires a bounded observation on new refusals and never rewrites the first observation', async () => {
+	const identity = {
+		idempotencyKey: 'intent-observed',
+		journeyId: 'journey-observed',
+		claimToken: 'dcbf2377-2c3f-4b12-b67e-a732352f17ad',
+	}
+	let stored = decodeAttempt({
+		...identity,
+		format: 'evergreen-offer-journey.attempt.v1',
+		status: 'Claimed',
+		claimedAt: new Date('2026-09-04T17:00:00.000Z'),
+		leaseExpiresAt: new Date('2026-09-04T17:01:00.000Z'),
+		outcome: null,
+	})
+	const update = vi.fn(() => ({
+		set: (patch: unknown) => ({
+			where: async () => {
+				stored = decodeAttempt({ ...stored, ...(patch as object) })
+			},
+		}),
+	}))
+	const tx = {
+		execute: async () => [],
+		query: { evergreenOfferJourneyAttempt: { findFirst: async () => stored } },
+		update,
+	}
+	const repository = createDrizzleJourneyAttempts({
+		transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
+	} as unknown as EvergreenOfferJourneyDatabase)
+	const now = new Date('2026-09-04T17:00:00.500Z')
+	for (const observedAt of [
+		undefined,
+		'bad',
+		'2026-09-04T16:59:59.999Z',
+		'2026-09-04T17:00:00.501Z',
+	]) {
+		const result = await Effect.runPromise(
+			Effect.either(
+				repository.settle({
+					...identity,
+					now,
+					outcome: {
+						type: 'KnownNotApplied',
+						reason: 'ProviderRefused',
+						...(observedAt === undefined ? {} : { observedAt }),
+					},
+				}),
+			),
+		)
+		expect(Either.isLeft(result)).toBe(true)
+	}
+	expect(update).not.toHaveBeenCalled()
+	const outcome = {
+		type: 'KnownNotApplied' as const,
+		reason: 'ProviderRefused' as const,
+		observedAt: now.toISOString(),
+	}
+	const first = await Effect.runPromise(
+		repository.settle({ ...identity, now, outcome }),
+	)
+	expect(first.outcome).toEqual(outcome)
+	expect(
+		await Effect.runPromise(
+			repository.settle({ ...identity, now: new Date('2027-01-01'), outcome }),
+		),
+	).toEqual(first)
+	for (const changed of [
+		{ ...outcome, observedAt: '2026-09-04T17:00:00.499Z' },
+		{ type: 'KnownNotApplied' as const, reason: 'ProviderRefused' as const },
+	]) {
+		expect(
+			Either.isLeft(
+				await Effect.runPromise(
+					Effect.either(
+						repository.settle({ ...identity, now, outcome: changed }),
+					),
+				),
+			),
+		).toBe(true)
+	}
+	expect(update).toHaveBeenCalledOnce()
+	expect(stored).toEqual(first)
+})
 
 it.each([
 	{ type: 'HeldUncertain', reason: 'Cancelled' },
@@ -68,6 +153,48 @@ it.each([
 		expect(update).not.toHaveBeenCalled()
 	},
 )
+
+it('refuses to rewrite a legacy refusal with an observed one, without an UPDATE', async () => {
+	const identity = {
+		idempotencyKey: 'intent-legacy',
+		journeyId: 'journey-legacy',
+		claimToken: 'dcbf2377-2c3f-4b12-b67e-a732352f17ad',
+	}
+	const row = decodeAttempt({
+		...identity,
+		format: 'evergreen-offer-journey.attempt.v1',
+		status: 'KnownNotApplied',
+		claimedAt: new Date('2026-09-04T17:00:00.000Z'),
+		leaseExpiresAt: new Date('2026-09-04T17:01:00.000Z'),
+		outcome: { type: 'KnownNotApplied', reason: 'ProviderRefused' },
+	})
+	const update = vi.fn(() => {
+		throw new Error('Unexpected write')
+	})
+	const tx = {
+		execute: async () => [],
+		query: { evergreenOfferJourneyAttempt: { findFirst: async () => row } },
+		update,
+	}
+	const repository = createDrizzleJourneyAttempts({
+		transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
+	} as unknown as EvergreenOfferJourneyDatabase)
+	const result = await Effect.runPromise(
+		Effect.either(
+			repository.settle({
+				...identity,
+				now: new Date('2026-09-04T17:00:30.000Z'),
+				outcome: {
+					type: 'KnownNotApplied',
+					reason: 'ProviderRefused',
+					observedAt: '2026-09-04T17:00:10.000Z',
+				},
+			}),
+		),
+	)
+	expect(Either.isLeft(result) && result.left.type).toBe('AttemptRefused')
+	expect(update).not.toHaveBeenCalled()
+})
 
 it.each(['recoveryPage', 'recordedOutcomeRecoveryPage'] as const)(
 	'%s validates cursor and page bounds before database access',
