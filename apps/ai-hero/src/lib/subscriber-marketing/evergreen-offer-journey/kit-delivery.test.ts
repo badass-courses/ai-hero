@@ -431,6 +431,54 @@ const page = (ids: number[], more = false, cursor = '') => ({
 	pagination: { has_next_page: more, end_cursor: cursor },
 })
 describe('read-only reconciliation', () => {
+	it.each([
+		['2026-09-07T11:00:00Z', '2026-09-07T11:00:00.000Z'],
+		['2026-09-07T04:00:00.125-07:00', '2026-09-07T11:00:00.125Z'],
+		['2026-09-07T16:30:00.1+05:30', '2026-09-07T11:00:00.100Z'],
+		['2026-09-07T11:00:00.123456Z', '2026-09-07T11:00:00.123Z'],
+		// Prior/outside-slot membership stays real evidence, not proof of this attempt.
+		['2026-09-01T00:00:00Z', '2026-09-01T00:00:00.000Z'],
+		['2026-09-07T13:00:00Z', '2026-09-07T13:00:00.000Z'],
+		[undefined, null],
+		[null, null],
+		['', null],
+		['not-a-date', null],
+		['2026-09-07T11:00:00', null],
+		['2026-02-30T11:00:00Z', null],
+		['2026-09-07T11:00:00+25:00', null],
+		[1788782400000, null],
+		[{ at: '2026-09-07T11:00:00Z' }, null],
+	])(
+		'retains actual added_at %j as %j without an observation-time fallback',
+		async (added_at, expected) => {
+			const fetcher = vi
+				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+				.mockResolvedValue(
+					response(
+						{
+							...page([42]),
+							subscribers: [{ ...subscriber, added_at }],
+						},
+						200,
+					),
+				)
+			const now = vi.fn(() => {
+				throw new Error('reconcile must not invent clock evidence')
+			})
+			const { adapter } = setup(fetcher, [binding], { now })
+			expect(await Effect.runPromise(adapter.reconcile(intent))).toEqual({
+				type: 'Present',
+				meaning: 'sequence-membership-only',
+				addedAt: expected,
+			})
+			expect(now).not.toHaveBeenCalled()
+			expect(fetcher).toHaveBeenCalledTimes(1)
+			expect(fetcher).toHaveBeenCalledWith(
+				'https://api.kit.com/v4/sequences/17/subscribers?status=all&per_page=100',
+				expect.objectContaining({ method: 'GET' }),
+			)
+		},
+	)
 	it('finds target despite unrelated subscriber address/timestamp strings', async () => {
 		const body = {
 			...page([41, 42]),
@@ -449,8 +497,10 @@ describe('read-only reconciliation', () => {
 				.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 				.mockResolvedValue(response(body, 200)),
 		)
-		expect(await Effect.runPromise(adapter.reconcile(intent))).toMatchObject({
+		expect(await Effect.runPromise(adapter.reconcile(intent))).toEqual({
 			type: 'Present',
+			meaning: 'sequence-membership-only',
+			addedAt: null,
 		})
 	})
 	it.each([
@@ -496,7 +546,11 @@ describe('read-only reconciliation', () => {
 			.mockResolvedValueOnce(response(page([42]), 200))
 		expect(
 			await Effect.runPromise(setup(fetcher).adapter.reconcile(intent)),
-		).toMatchObject({ type: 'Present' })
+		).toEqual({
+			type: 'Present',
+			meaning: 'sequence-membership-only',
+			addedAt: '2026-09-07T11:00:00.000Z',
+		})
 		expect(fetcher).toHaveBeenCalledTimes(2)
 		expect(
 			fetcher.mock.calls.every(([, options]) => options?.method === 'GET'),
