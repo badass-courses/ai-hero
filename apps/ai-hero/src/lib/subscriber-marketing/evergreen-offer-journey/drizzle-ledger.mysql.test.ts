@@ -651,6 +651,113 @@ integration('evergreen offer journey MySQL ledger', () => {
 		).toEqual([])
 	})
 
+	it.each(['legacy', 'observed'] as const)(
+		'preserves %s refusal JSON through replay and paged recovery',
+		async (kind) => {
+			const start = entry()
+			await Effect.runPromise(first.ledger.commit(start.commit))
+			const wake = wakeCommit(start.decision.next, 0, 'observation-wake')
+			await Effect.runPromise(first.ledger.commit(wake))
+			const intent = wake.decision.sideEffectIntents[0]
+			if (!intent || intent.type !== 'SendMessage')
+				throw new Error('Expected message')
+			const now = new Date(intent.notBefore)
+			const leaseExpiresAt = new Date(now.getTime() + 60_000)
+			const identity: {
+				idempotencyKey: string
+				journeyId: string
+				claimToken: string
+			} = {
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				claimToken: randomUUID(),
+			}
+			let outcome: {
+				type: 'KnownNotApplied'
+				reason: 'ProviderRefused' | 'PreflightRefused'
+				observedAt?: string
+			} = { type: 'KnownNotApplied', reason: 'ProviderRefused' }
+			if (kind === 'legacy') {
+				// Historical fixture only: old writer stored this valid v1 JSON without a timestamp.
+				await adminPool.query(
+					'INSERT INTO AI_EvergreenOfferJourneyAttempt (idempotencyKey,journeyId,claimToken,format,status,claimedAt,leaseExpiresAt,outcome) VALUES (?,?,?,?,?,?,?,?)',
+					[
+						identity.idempotencyKey,
+						identity.journeyId,
+						identity.claimToken,
+						'evergreen-offer-journey.attempt.v1',
+						'KnownNotApplied',
+						now,
+						leaseExpiresAt,
+						JSON.stringify(outcome),
+					],
+				)
+			} else {
+				const claim = await Effect.runPromise(
+					first.attempts.claim({
+						idempotencyKey: intent.idempotencyKey,
+						journeyId: intent.journeyId,
+						now,
+						leaseExpiresAt,
+					}),
+				)
+				if (claim.type !== 'Claimed') throw new Error('Expected claim')
+				identity.claimToken = claim.evidence.claimToken
+				const results = await Promise.all(
+					[0, 1].map((offset) =>
+						Effect.runPromise(
+							Effect.either(
+								(offset === 0 ? first : second).attempts.settle({
+									...identity,
+									now: new Date(now.getTime() + 2),
+									outcome: {
+										...outcome,
+										observedAt: new Date(now.getTime() + offset).toISOString(),
+									},
+								}),
+							),
+						),
+					),
+				)
+				expect(results.filter(Either.isRight)).toHaveLength(1)
+				expect(results.filter(Either.isLeft)).toHaveLength(1)
+				const winner = results.find(Either.isRight)
+				if (!winner || winner.right.outcome?.type !== 'KnownNotApplied')
+					throw new Error('Expected recorded refusal')
+				outcome = winner.right.outcome
+				expect(outcome.observedAt).toBeDefined()
+			}
+			const [before] = await adminPool.query<RowDataPacket[]>(
+				'SELECT outcome FROM AI_EvergreenOfferJourneyAttempt WHERE idempotencyKey = ?',
+				[identity.idempotencyKey],
+			)
+			const replay = await Effect.runPromise(
+				second.attempts.settle({
+					...identity,
+					now: new Date('2027-01-01'),
+					outcome,
+				}),
+			)
+			expect(replay.outcome).toEqual(outcome)
+			const page = await Effect.runPromise(
+				second.attempts.recordedOutcomeRecoveryPage({
+					now: new Date('2027-01-01'),
+					limit: 1,
+				}),
+			)
+			expect(page.candidates).toHaveLength(1)
+			expect(page.candidates[0]?.evidence.outcome).toEqual(outcome)
+			if (kind === 'legacy')
+				expect(page.candidates[0]?.evidence.outcome).not.toHaveProperty(
+					'observedAt',
+				)
+			const [after] = await adminPool.query<RowDataPacket[]>(
+				'SELECT outcome FROM AI_EvergreenOfferJourneyAttempt WHERE idempotencyKey = ?',
+				[identity.idempotencyKey],
+			)
+			expect(after).toEqual(before)
+		},
+	)
 	it.each(['Accepted', 'HeldUncertain', 'KnownNotApplied'] as const)(
 		'never reclaims an explicit %s outcome',
 		async (status) => {
@@ -679,7 +786,11 @@ integration('evergreen offer journey MySQL ledger', () => {
 						}
 					: status === 'HeldUncertain'
 						? { type: status, reason: 'Cancelled' as const }
-						: { type: status, reason: 'ProviderRefused' as const }
+						: {
+								type: status,
+								reason: 'ProviderRefused' as const,
+								observedAt: now.toISOString(),
+							}
 			const settlement = {
 				idempotencyKey: intent.idempotencyKey,
 				journeyId: intent.journeyId,
@@ -754,6 +865,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 				: {
 						type: 'KnownNotApplied' as const,
 						reason: 'ProviderRefused' as const,
+						observedAt: now.toISOString(),
 					}
 			const identity = {
 				idempotencyKey: intent.idempotencyKey,
@@ -891,6 +1003,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 												: {
 														type: 'KnownNotApplied',
 														reason: 'ProviderRefused',
+														observedAt: now.toISOString(),
 													},
 									}),
 								)
