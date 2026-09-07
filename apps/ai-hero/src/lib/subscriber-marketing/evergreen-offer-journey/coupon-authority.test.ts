@@ -125,6 +125,7 @@ function fixture() {
 				const pendingCoupons = structuredClone(coupons)
 				const pendingGrants = structuredClone(grants)
 				const result = await work({
+					lockedContact: { id: issue.contactId, email: user.email },
 					getMerchantCoupon: async () => structuredClone(state.merchant),
 					getCoupon: async (id) =>
 						structuredClone(pendingCoupons.get(id) ?? null),
@@ -199,6 +200,41 @@ function fixture() {
 const result = <A>(effect: Effect.Effect<A, unknown>) =>
 	Effect.runPromise(Effect.either(effect))
 const permanent = { _tag: 'Left', left: { type: 'EffectPermanentRefusal' } }
+
+describe('locked verified-owner callback', () => {
+	it('locks User before invoking proof and passes immutable identity snapshots', async () => {
+		const f = fixture()
+		const order: string[] = []
+		const authority = createCouponAuthority({
+			...f.options,
+			store: {
+				withContactLock: (id, work) => f.options.store.withContactLock(id, tx => work({
+					...tx,
+					getUser: async id => { order.push('user-lock'); return tx.getUser(id) },
+				})),
+			},
+			readVerifiedOwner: async input => {
+				order.push('proof')
+				expect(input.lockedUser).toEqual({ id: user.id, email: user.email, emailVerified: user.emailVerified!.toISOString() })
+				expect(input.lockedContact).toEqual({ id: issue.contactId, email: user.email })
+				expect(Object.isFrozen(input.lockedUser)).toBe(true)
+				expect(Object.isFrozen(input.lockedContact)).toBe(true)
+				expect(input.couponId).toBe(bind.couponId)
+				return proof
+			},
+		})
+		await Effect.runPromise(authority.issue(issue))
+		await Effect.runPromise(authority.bind(bind))
+		expect(order).toEqual(['user-lock', 'proof'])
+	})
+	it('translates proof read failure to transient unavailable, not missing proof or ambiguous grant', async () => {
+		const f = fixture()
+		await Effect.runPromise(f.authority.issue(issue))
+		const authority = createCouponAuthority({ ...f.options, readVerifiedOwner: async () => { throw new Error('db offline') } })
+		expect(await result(authority.bind(bind))).toMatchObject({ _tag: 'Left', left: { type: 'EffectTransientUnavailable', reason: 'verified-owner-proof-unavailable' } })
+		expect(f.state.grants().size).toBe(0)
+	})
+})
 
 describe('historical receipt recovery, not authorization', () => {
 	it.each(['expired', 'consumed', 'revoked-coupon', 'revoked-grant'])(
