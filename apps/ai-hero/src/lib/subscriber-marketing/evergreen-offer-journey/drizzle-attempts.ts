@@ -284,7 +284,11 @@ export function createDrizzleJourneyAttempts(
 				})
 			})
 		},
-		/** Live owner only. Expired/cancelled/crashed attempts stay held. */
+		/** Live owner only. New KnownNotApplied writes require actual observedAt.
+		 * An exact legacy outcome replay can return stored evidence without rewriting it.
+		 * Compatible readers must ship before writers emit the optional JSON field.
+		 * Expired/cancelled/crashed attempts stay held.
+		 */
 		settle(input: z.infer<typeof settlementInput>) {
 			return run(() => settle(settlementInput.parse(input), false))
 		},
@@ -345,6 +349,15 @@ export function createDrizzleJourneyAttempts(
 				JSON.stringify(evidence.outcome) === JSON.stringify(request.outcome)
 			)
 				return evidence
+			if (
+				request.outcome.type === 'KnownNotApplied' &&
+				(request.outcome.observedAt === undefined ||
+					new Date(request.outcome.observedAt) < evidence.claimedAt ||
+					new Date(request.outcome.observedAt) > request.now)
+			)
+				throw new AttemptRefusal(
+					'Refusal observation is missing or outside claim evidence',
+				)
 			const state = attemptStateAt(evidence, request.now)
 			if (
 				reconcile
