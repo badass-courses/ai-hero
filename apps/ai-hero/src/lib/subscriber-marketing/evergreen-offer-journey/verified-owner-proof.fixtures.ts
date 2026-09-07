@@ -377,8 +377,8 @@ export function corruptCanonicalOrigin(
 			f.commit.snapshot = {}
 			break
 		case 'decision-ignored':
+			// Isolate saved-decision rejection; null snapshot has its own probe.
 			f.commit.decision = { type: 'Ignored', reason: 'JourneyFinal' }
-			f.commit.snapshot = null
 			break
 		case 'missing-bind-decision':
 			decision.sideEffectIntents = []

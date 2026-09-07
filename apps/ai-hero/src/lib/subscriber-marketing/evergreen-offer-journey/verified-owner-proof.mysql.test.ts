@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { contact, contactEvent, providerIdentity, users } from '@/db/schema'
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { createDrizzleJourneyLedger } from './drizzle-ledger'
@@ -33,6 +33,47 @@ import {
 
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
+
+function corruptionCommit(
+	commit: typeof journeySchema.evergreenOfferJourneyCommit.$inferSelect,
+) {
+	// Drizzle bypasses the JSON encoder for JS null. Explicit SQL expression
+	// stores JSON null in the NOT NULL JSON column without weakening its schema.
+	return {
+		...commit,
+		snapshot:
+			commit.snapshot === null ? sql`cast(${'null'} as json)` : commit.snapshot,
+	}
+}
+
+// Compilation only: drizzle.mock creates no connection and executes no SQL.
+// Retain the SQL-NULL control separately from the representable JSON-null probe.
+describe('owner proof corruption SQL encoding', () => {
+	const database = drizzle.mock({ schema: journeySchema, mode: 'planetscale' })
+	it('plain JS null is a SQL NULL bind parameter, not encoded JSON', () => {
+		const query = database
+			.update(journeySchema.evergreenOfferJourneyCommit)
+			.set({ snapshot: null })
+			.toSQL()
+		expect(query.params).toEqual([null])
+	})
+	it('encodes the null-snapshot corruption as JSON null, never SQL NULL', () => {
+		const f = ownerProofFixture()
+		corruptCanonicalOrigin(f, 'null-snapshot')
+		const query = database
+			.update(journeySchema.evergreenOfferJourneyCommit)
+			.set(corruptionCommit(f.commit))
+			.toSQL()
+		expect(query.sql).toContain('cast(? as json)')
+		expect(query.params).toContain('null')
+		// admissionContactId is legitimately SQL NULL; only snapshot must be JSON.
+		const snapshotOnly = database
+			.update(journeySchema.evergreenOfferJourneyCommit)
+			.set({ snapshot: corruptionCommit(f.commit).snapshot })
+			.toSQL()
+		expect(snapshotOnly.params).toEqual(['null'])
+	})
+})
 const schema = {
 	...journeySchema,
 	contact,
@@ -159,6 +200,20 @@ integration('owner proof disposable MySQL', () => {
 		)
 		expect(plan[0]?.key).toBe('PRIMARY')
 	})
+	it('schema rejects SQL NULL without changing the valid canonical snapshot', async () => {
+		await expect(
+			database
+				.update(journeySchema.evergreenOfferJourneyCommit)
+				.set({ snapshot: null })
+				.where(
+					eq(
+						journeySchema.evergreenOfferJourneyCommit.stimulusId,
+						f.commit.stimulusId,
+					),
+				),
+		).rejects.toMatchObject({ code: 'ER_BAD_NULL_ERROR' })
+		expect(await reader()(f.input)).not.toBeNull()
+	})
 	it.each(
 		canonicalOriginProbes.filter(
 			(p) => p !== 'missing-normalized-bind' && p !== 'extra-normalized-wake',
@@ -167,13 +222,34 @@ integration('owner proof disposable MySQL', () => {
 		expect(await reader()(f.input)).not.toBeNull()
 		const stimulusId = f.commit.stimulusId
 		const claimId = f.rows[1]!.id
+		const originalSnapshot = structuredClone(f.commit.snapshot)
 		corruptCanonicalOrigin(f, probe)
 		await database
 			.update(journeySchema.evergreenOfferJourneyCommit)
-			.set(f.commit)
+			.set(corruptionCommit(f.commit))
 			.where(
 				eq(journeySchema.evergreenOfferJourneyCommit.stimulusId, stimulusId),
 			)
+		if (probe === 'null-snapshot' || probe === 'decision-ignored') {
+			const [stored] = await database
+				.select({
+					snapshot: journeySchema.evergreenOfferJourneyCommit.snapshot,
+					isSqlNull: sql<number>`${journeySchema.evergreenOfferJourneyCommit.snapshot} is null`,
+					jsonType: sql<string>`json_type(${journeySchema.evergreenOfferJourneyCommit.snapshot})`,
+				})
+				.from(journeySchema.evergreenOfferJourneyCommit)
+				.where(
+					eq(journeySchema.evergreenOfferJourneyCommit.stimulusId, stimulusId),
+				)
+			expect(stored?.isSqlNull).toBe(0)
+			if (probe === 'null-snapshot') {
+				expect(stored?.jsonType).toBe('NULL')
+				expect(stored?.snapshot).toBeNull()
+			} else {
+				expect(stored?.jsonType).toBe('OBJECT')
+				expect(stored?.snapshot).toEqual(originalSnapshot)
+			}
+		}
 		await database
 			.update(journeySchema.evergreenOfferJourneyIntent)
 			.set(f.intentRow)
