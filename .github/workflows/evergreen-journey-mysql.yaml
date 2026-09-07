@@ -81,7 +81,9 @@ jobs:
           src/lib/subscriber-marketing/evergreen-offer-journey/drizzle-ledger.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/current-authority-repository.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority.mysql.test.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey/verified-owner-proof.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/coupon-executor.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/bounded-readers.mysql.test.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey/message-executor.mysql.test.ts
           src/lib/subscriber-marketing/course-sequence-exhaustion.mysql.test.ts
           src/lib/subscriber-marketing/email-course-drizzle-ledger.mysql.test.ts

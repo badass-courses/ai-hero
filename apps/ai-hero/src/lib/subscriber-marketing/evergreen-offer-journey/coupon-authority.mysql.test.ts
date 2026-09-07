@@ -44,7 +44,7 @@ const tables = [
 ]
 // Mirrors only the six commerce tables used here, including their uniqueness boundaries.
 const ddl = [
-	'CREATE TABLE AI_Contact (id varchar(255) NOT NULL PRIMARY KEY)',
+	'CREATE TABLE AI_Contact (id varchar(255) NOT NULL PRIMARY KEY, email varchar(255))',
 	'CREATE TABLE AI_MerchantCoupon (id varchar(191) NOT NULL PRIMARY KEY, identifier varchar(191) UNIQUE, organizationId varchar(191), status int NOT NULL DEFAULT 0, merchantAccountId varchar(191) NOT NULL, percentageDiscount decimal(3,2), amountDiscount int, type varchar(191))',
 	'CREATE TABLE AI_Coupon (id varchar(191) NOT NULL PRIMARY KEY, organizationId varchar(191), code varchar(191) UNIQUE, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), expires timestamp(3) NULL, fields json, maxUses int NOT NULL DEFAULT -1, `default` boolean NOT NULL DEFAULT false, merchantCouponId varchar(191), status int NOT NULL DEFAULT 0, usedCount int NOT NULL DEFAULT 0, percentageDiscount decimal(3,2), amountDiscount int, restrictedToProductId varchar(191), INDEX Coupon_id_code_index(id,code))',
 	'CREATE TABLE AI_User (id varchar(255) NOT NULL PRIMARY KEY, name varchar(255), role varchar(191) NOT NULL DEFAULT "user", email varchar(255) NOT NULL UNIQUE, fields json, emailVerified timestamp(3) NULL, image varchar(255), createdAt timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3))',
@@ -142,7 +142,7 @@ integration('coupon authority disposable MySQL', () => {
 	beforeEach(async () => {
 		if (!pool) throw new Error('missing pool')
 		for (const table of tables) await pool.query(`DELETE FROM \`${table}\``)
-		await pool.query('INSERT INTO AI_Contact(id) VALUES (?)', [contactId])
+		await pool.query('INSERT INTO AI_Contact(id,email) VALUES (?,?)', [contactId, 'fixture@example.test'])
 		await database.insert(couponCommerceSchema.merchantCoupon).values({
 			id: evidence.id,
 			identifier: evidence.identifier,
@@ -159,6 +159,30 @@ integration('coupon authority disposable MySQL', () => {
 		await database
 			.insert(couponCommerceSchema.entitlementTypes)
 			.values({ id: 'mysql-credit-type', name: 'apply_special_credit' })
+	})
+	it('holds the User lock across proof and grant; concurrent email invalidation blocks, then future bind refuses', async () => {
+		if (!pool) throw new Error('missing pool')
+		const other = await pool.getConnection()
+		try {
+			await other.query('SET SESSION innodb_lock_wait_timeout = 1')
+			let callbacks = 0
+			const authority = createCouponAuthority({
+				...options(),
+				readVerifiedOwner: async input => {
+					callbacks++
+					expect(input.lockedContact).toEqual({ id: contactId, email: 'fixture@example.test' })
+					expect(input.lockedUser.emailVerified).toBe('2026-09-01T00:00:00.000Z')
+					await expect(other.query('UPDATE AI_User SET email = ?, emailVerified = NULL WHERE id = ?', ['changed@example.test', userId])).rejects.toMatchObject({ code: 'ER_LOCK_WAIT_TIMEOUT' })
+					return options().readVerifiedOwner!(input)
+				},
+			})
+			await Effect.runPromise(authority.issue(issue))
+			await Effect.runPromise(authority.bind(bind))
+			await other.query('UPDATE AI_User SET email = ?, emailVerified = NULL WHERE id = ?', ['changed@example.test', userId])
+			expect(await Effect.runPromise(Effect.either(authority.bind(bind)))).toMatchObject({ _tag: 'Left', left: { type: 'EffectPermanentRefusal', reason: 'verified-owner-proof-mismatch' } })
+			expect(callbacks).toBe(1)
+			expect(await database.select().from(couponCommerceSchema.entitlements)).toHaveLength(1)
+		} finally { other.release() }
 	})
 	it('serializes concurrent issuance and binding into one persisted coupon and entitlement', async () => {
 		const authority = createCouponAuthority(options())

@@ -79,9 +79,11 @@ const refusal = (reason: string): EffectApplicationError => ({
 	type: 'EffectPermanentRefusal',
 	reason,
 })
-const transient = (reason: string): EffectApplicationError => ({
+/** Only for failures strictly before any request leaves the process (identity, clock). */
+const notAttempted = (reason: string): EffectApplicationError => ({
 	type: 'EffectTransientUnavailable',
 	reason,
+	requestIssued: false,
 })
 const ambiguous = (reason: string): EffectApplicationError => ({
 	type: 'EffectAmbiguous',
@@ -91,6 +93,13 @@ const messages = [
 	...EVERGREEN_OFFER_JOURNEY_V1.bridge,
 	...EVERGREEN_OFFER_JOURNEY_V1.pitch,
 ].map((message) => ({ ...message, presentation: { ...message.presentation } }))
+
+/**
+ * Kit answered 200 (already a member) to the enrollment POST. Application of this
+ * intent is unknown: membership predates the request. Hold, then reconcile by GET.
+ */
+export const KIT_ALREADY_MEMBER_REASON =
+	'kit-already-member-application-unknown-reconcile-membership' as const
 
 /**
  * Dormant adapter: no env reads, default transport, registration, scheduling, or retries.
@@ -173,7 +182,7 @@ export function createKitDeliveryPort(
 				return yield* Effect.fail(refusal('missing-sequence-binding'))
 			const rawIdentity = yield* bounded(
 				() => options.resolveIdentity(intent.contactId),
-				transient('identity-unavailable'),
+				notAttempted('identity-unavailable'),
 			)
 			const identity = identitySchema.safeParse(rawIdentity)
 			if (!identity.success || identity.data.contactId !== intent.contactId) {
@@ -189,7 +198,7 @@ export function createKitDeliveryPort(
 	const currentTime = () =>
 		Effect.try({
 			try: () => options.now(),
-			catch: () => transient('clock-unavailable'),
+			catch: () => notAttempted('clock-unavailable'),
 		}).pipe(
 			Effect.flatMap((value) => {
 				const parsed = parseIsoInstant(value)
@@ -253,12 +262,19 @@ export function createKitDeliveryPort(
 							: ambiguous(`kit-enrollment-http-${result.status}`),
 					)
 				}
+				if (result.status === 200)
+					// Kit says the subscriber was already in the sequence. Whether THIS intent
+					// applied anything is unknown, so no fresh appliedAt may be minted. The
+					// executor holds it; GET-only reconciliation binds the real added_at.
+					return yield* Effect.fail(ambiguous(KIT_ALREADY_MEMBER_REASON))
+				// 201: Kit acknowledged a new enrollment. appliedAt is this port's clock read
+				// after the response, not Kit's added_at and never inbox delivery.
 				const appliedAt = yield* currentTime().pipe(
 					Effect.mapError(() => ambiguous('kit-accepted-clock-unavailable')),
 				)
 				return {
 					appliedAt,
-					providerReceiptId: `kit:sequence:${prepared.sequenceId}:subscriber:${prepared.subscriberId}:${result.status === 200 ? 'already-member' : 'added'}`,
+					providerReceiptId: `kit:sequence:${prepared.sequenceId}:subscriber:${prepared.subscriberId}:added`,
 				}
 			}),
 		reconcile: (intent, maxPages = 3) =>

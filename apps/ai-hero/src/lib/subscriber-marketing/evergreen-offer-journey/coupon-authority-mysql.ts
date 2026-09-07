@@ -38,12 +38,13 @@ export function createMySqlCouponCommerceStore(
 					try {
 						// Existing PK row serializes issue/bind, including the initially absent coupon.
 						const owner = await tx
-							.select({ id: contact.id })
+							.select({ id: contact.id, email: contact.email })
 							.from(contact)
 							.where(eq(contact.id, contactId))
 							.for('update')
 						if (owner.length !== 1) return refuseCoupon('contact-not-found')
 						return await work({
+							lockedContact: Object.freeze({ ...owner[0]! }),
 							getMerchantCoupon: async (id) =>
 								(
 									await tx
