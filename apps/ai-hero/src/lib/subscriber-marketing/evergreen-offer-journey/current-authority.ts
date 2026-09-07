@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { z } from "zod";
 
-import {
-  DEFAULT_EMAIL_PREFERENCE_KEY,
-  emailPreferenceDefinitionByKey,
-} from "@/coursebuilder/email-preferences";
+import type { AppEmailPreferenceDefinition } from "@/coursebuilder/email-preferences";
 import { ACTIVE_PURCHASE_STATUSES } from "@/lib/crash-course-purchaser-tag";
 import { restoreAutomationControl } from "../email-course/restoration";
 import {
@@ -77,7 +74,7 @@ export type CurrentPurchaseRow = {
   createdAt: Date | null;
   via: "direct" | "entitlement";
   beneficiaryUserId: string;
-  effectiveProductId: string;
+  effectiveProductId: string | null;
   sourceType?: string;
   entitlementId?: string;
 };
@@ -420,16 +417,37 @@ export function createCurrentOfferAuthority(args: {
   };
 }
 
-/** Uses raw current provider state, never preference helpers' defaultSubscribed. */
+/**
+ * getSubscriber must return the RAW subscriber, as Course Builder's provider does.
+ * A transport returning Kit's { subscriber } envelope must unwrap it first; mixed
+ * raw/envelope shapes are rejected. Never infer identity or state from a default.
+ *
+ * Inject the owning definition from coursebuilder/email-preferences.ts. Its
+ * newsletter defaultSubscribed:true is existing app policy, not missing-state
+ * evidence. Only a known active subscriber can use the absent-field default.
+ */
 export function createKitCurrentCommunicationReader(args: {
   getSubscriber: (subscriberId: string) => Promise<unknown>;
+  preference: Pick<AppEmailPreferenceDefinition, "field" | "defaultSubscribed">;
   now: () => Date;
 }): CurrentCommunicationReader {
   return {
     read: async (identity) => {
+      const definition = z
+        .object({
+          field: Text.refine((value) => value.trim() === value),
+          defaultSubscribed: z.boolean(),
+        })
+        .safeParse(args.preference);
+      if (!definition.success)
+        return unavailable(
+          "Current email preference definition is unavailable",
+        );
+      const preference = definition.data;
       const result = await args.getSubscriber(identity.subscriberId);
       const parsed = z
         .object({
+          subscriber: z.never().optional(),
           id: z.union([z.number().int().positive(), Text]),
           email_address: z.string().email(),
           state: Text,
@@ -460,8 +478,6 @@ export function createKitCurrentCommunicationReader(args: {
           normalizedEmail(identity.email)
       )
         return inconsistent("Provider subscriber identity mismatch");
-      const preference =
-        emailPreferenceDefinitionByKey[DEFAULT_EMAIL_PREFERENCE_KEY];
       const raw = subscriber.fields?.[preference.field]?.trim().toLowerCase();
       let delivery: EligibilityFacts["delivery"];
       if (subscriber.state === "cancelled" || raw === "unsubscribed")
@@ -477,8 +493,14 @@ export function createKitCurrentCommunicationReader(args: {
           type: "Undeliverable",
           evidence: `current-provider-${subscriber.state}`,
         };
-      else if (subscriber.state === "active" && raw === "subscribed")
-        delivery = { type: "Eligible" };
+      else if (subscriber.state === "active" && (raw === "subscribed" || !raw))
+        delivery =
+          raw === "subscribed" || preference.defaultSubscribed
+            ? { type: "Eligible" }
+            : {
+                type: "Unsubscribed",
+                evidence: "app-preference-default-unsubscribed",
+              };
       else
         return unavailable(
           "Provider communication status is unknown or unconfirmed",
@@ -488,7 +510,7 @@ export function createKitCurrentCommunicationReader(args: {
         email: normalizedEmail(subscriber.email_address),
         delivery,
         readAt: instant(args.now()),
-        evidence: `kit-current:${subscriber.state}:${raw ?? "unset"}`,
+        evidence: `kit-current:${subscriber.state}:${raw || `app-default:${preference.field}:${preference.defaultSubscribed}`}`,
       };
     },
   };

@@ -153,6 +153,9 @@ integration("current authority isolated MySQL reads", () => {
   });
   it("excludes non-target and refunded purchases, then observes Restricted target ownership", async () => {
     await pool!.query(
+      `INSERT INTO ${table(schema.contentResourceProduct)} VALUES ('course', 'product-ma254')`,
+    );
+    await pool!.query(
       `INSERT INTO ${table(schema.purchases)} VALUES ('other', 'user', 'other-product', 'Valid', NOW(3)), ('target', 'user', 'product-ma254', 'Refunded', NOW(3))`,
     );
     expect(await repository.readPurchases("user", new Date())).toEqual([]);
@@ -163,41 +166,83 @@ integration("current authority isolated MySQL reads", () => {
       { id: "target", via: "direct", effectiveProductId: "product-ma254" },
     ]);
   });
-  it("reads current team content access with its source purchase, excluding deleted/expired access", async () => {
-    await pool!.query(
-      `INSERT INTO ${table(schema.purchases)} VALUES ('purchase', 'buyer', 'source-bundle', 'Valid', NOW(3))`,
-    );
-    await pool!.query(
-      `INSERT INTO ${table(schema.organizationMemberships)} VALUES ('member', 'recipient', 'org')`,
-    );
-    await pool!.query(
-      `INSERT INTO ${table(schema.contentResourceProduct)} VALUES ('course', 'product-ma254')`,
-    );
-    await pool!.query(
-      `INSERT INTO ${table(schema.entitlements)} VALUES ('access', null, 'org', 'member', 'PURCHASE', 'purchase', ?, null, null)`,
-      [JSON.stringify({ contentIds: ["course"] })],
-    );
-    expect(
-      await repository.readPurchases("recipient", new Date()),
-    ).toMatchObject([
-      {
-        id: "purchase",
-        productId: "source-bundle",
-        beneficiaryUserId: "recipient",
-        via: "entitlement",
-      },
-    ]);
-    await pool!.query(
-      `UPDATE ${table(schema.entitlements)} SET expiresAt = '2026-01-01 00:00:00.000'`,
-    );
-    expect(
-      await repository.readPurchases("recipient", new Date("2026-09-07")),
-    ).toEqual([]);
-    await pool!.query(
-      `UPDATE ${table(schema.entitlements)} SET expiresAt = null, deletedAt = NOW(3)`,
-    );
-    expect(await repository.readPurchases("recipient", new Date())).toEqual([]);
+  it.each([null, "different-org", "org"])(
+    "reads team ownership by membership alone for org %s, excluding deleted/expired access",
+    async (organizationId) => {
+      await pool!.query(
+        `INSERT INTO ${table(schema.purchases)} VALUES ('purchase', 'buyer', 'source-bundle', 'Valid', NOW(3))`,
+      );
+      await pool!.query(
+        `INSERT INTO ${table(schema.organizationMemberships)} VALUES ('member', 'recipient', 'org')`,
+      );
+      await pool!.query(
+        `INSERT INTO ${table(schema.contentResourceProduct)} VALUES ('course', 'product-ma254')`,
+      );
+      await pool!.query(
+        `INSERT INTO ${table(schema.entitlements)} VALUES ('access', null, ?, 'member', 'PURCHASE', 'purchase', ?, null, null)`,
+        [organizationId, JSON.stringify({ contentIds: ["course"] })],
+      );
+      expect(
+        await repository.readPurchases("recipient", new Date()),
+      ).toMatchObject([
+        {
+          id: "purchase",
+          productId: "source-bundle",
+          beneficiaryUserId: "recipient",
+          via: "entitlement",
+        },
+      ]);
+      await pool!.query(
+        `UPDATE ${table(schema.entitlements)} SET expiresAt = '2026-01-01 00:00:00.000'`,
+      );
+      expect(
+        await repository.readPurchases("recipient", new Date("2026-09-07")),
+      ).toEqual([]);
+      await pool!.query(
+        `UPDATE ${table(schema.entitlements)} SET expiresAt = null, deletedAt = NOW(3)`,
+      );
+      expect(await repository.readPurchases("recipient", new Date())).toEqual(
+        [],
+      );
+    },
+  );
+  it("holds absent target resource mapping rather than returning no purchase", async () => {
+    await expect(
+      repository.readPurchases("recipient", new Date()),
+    ).rejects.toThrow("resource mapping");
   });
+  it.each(["missing-purchase", "missing-resource"])(
+    "keeps %s source evidence visible instead of returning no ownership",
+    async (scenario) => {
+      await pool!.query(
+        `INSERT INTO ${table(schema.organizationMemberships)} VALUES ('member','recipient','org')`,
+      );
+      await pool!.query(
+        `INSERT INTO ${table(schema.contentResourceProduct)} VALUES ('course','product-ma254')`,
+      );
+      if (scenario === "missing-resource")
+        await pool!.query(
+          `INSERT INTO ${table(schema.purchases)} VALUES ('purchase','buyer','product-ma254','Valid',NOW(3))`,
+        );
+      await pool!.query(
+        `INSERT INTO ${table(schema.entitlements)} VALUES ('access',null,null,'member','PURCHASE','purchase',?,null,null)`,
+        [
+          JSON.stringify({
+            contentIds: [
+              scenario === "missing-resource" ? "unmapped-course" : "course",
+            ],
+          }),
+        ],
+      );
+      const rows = await repository.readPurchases("recipient", new Date());
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject(
+        scenario === "missing-resource"
+          ? { id: "purchase", effectiveProductId: null }
+          : { id: null, effectiveProductId: "product-ma254" },
+      );
+    },
+  );
   it("returns both canonical facts and only the latest head for each indexed ID", async () => {
     await pool!.query(
       `INSERT INTO ${table(schema.contactEvent)} VALUES ('one', 'contact', 'course.sequence-exhausted', 'key-one', '{}'), ('two', 'contact', 'course.sequence-exhausted', 'key-two', '{}'), ('other', 'contact', 'other', 'other', '{}')`,

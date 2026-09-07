@@ -1,4 +1,8 @@
 import { Effect, Either } from "effect";
+import {
+  emailPreferenceDefinitionByKey,
+  DEFAULT_EMAIL_PREFERENCE_KEY,
+} from "@/coursebuilder/email-preferences";
 import { describe, expect, it, vi } from "vitest";
 import {
   createCurrentOfferAuthority,
@@ -8,6 +12,7 @@ import {
 } from "./current-authority";
 import {
   parseContactId,
+  parseJourneyId,
   parseEntryFactId,
   parseIsoInstant,
   parseStimulusId,
@@ -84,7 +89,14 @@ function exhaustion(path = "ai-hero-skills-workflow"): ExhaustionRow {
     },
   };
 }
-function fixture() {
+type Preference = Parameters<
+  typeof createKitCurrentCommunicationReader
+>[0]["preference"];
+function fixture(
+  preference: Preference = emailPreferenceDefinitionByKey[
+    DEFAULT_EMAIL_PREFERENCE_KEY
+  ],
+) {
   const repository: CurrentAuthorityRepository = {
     readControl: vi.fn(async () => ({
       automationId: "evergreen-test",
@@ -117,6 +129,7 @@ function fixture() {
   );
   const communication = createKitCurrentCommunicationReader({
     getSubscriber,
+    preference,
     now: () => at,
   });
   const authority = createCurrentOfferAuthority({
@@ -125,7 +138,7 @@ function fixture() {
     communication,
     now: () => at,
   });
-  return { repository, getSubscriber, authority };
+  return { repository, getSubscriber, authority, communication };
 }
 const run = (authority: ReturnType<typeof createCurrentOfferAuthority>) =>
   Effect.runPromise(
@@ -224,7 +237,7 @@ describe("current Evergreen authority", () => {
     expect(Either.isRight(result)).toBe(true);
     if (Either.isRight(result)) expect(result.right.delivery.type).toBe(type);
   });
-  it.each(["inactive", "unknown", "active"])(
+  it.each(["inactive", "unknown"])(
     "never defaults incomplete %s provider evidence to subscribed",
     async (state) => {
       const f = fixture();
@@ -240,6 +253,11 @@ describe("current Evergreen authority", () => {
   it("preserves local suppression as a veto, not an allow source", async () => {
     const f = fixture();
     const rows = await f.repository.readIdentity(contactId);
+    f.getSubscriber.mockResolvedValue({
+      id: 123,
+      email_address: "student@example.com",
+      state: "active",
+    });
     rows.states[0]!.lifecycle = "suppressed";
     f.repository.readIdentity = async () => rows;
     const result = await run(f.authority);
@@ -247,11 +265,12 @@ describe("current Evergreen authority", () => {
       expect(result.right.delivery.type).toBe("Suppressed");
     else throw new Error(result.left.type);
   });
-  it.each(["user", "link", "provider", "missing-state"])(
+  it.each(["user", "link", "provider", "missing-state", "stale"])(
     "rejects conflicting or incomplete %s identity",
     async (mode) => {
       const f = fixture();
       const rows = await f.repository.readIdentity(contactId);
+      if (mode === "stale") rows.states[0]!.lifecycle = "stale";
       if (mode === "user") rows.users[0]!.email = "other@example.com";
       if (mode === "link") rows.links.push({ contactId, userId: "other" });
       if (mode === "provider")
@@ -301,6 +320,9 @@ describe("current Evergreen authority", () => {
         entitlementId: "grant",
       },
       { beneficiaryUserId: "other-user" },
+      { id: null },
+      { effectiveProductId: null },
+      { status: "Refunded" },
     ]) {
       const f = fixture();
       f.repository.readPurchases = async () => [
@@ -406,6 +428,16 @@ describe("current Evergreen authority", () => {
       ),
     );
     expect(Either.isRight(same)).toBe(true);
+    const wrongId = parseJourneyId("evergreen-offer:wrong-source");
+    if (!wrongId.ok) throw new Error("bad fixture");
+    const wrong = await Effect.runPromise(
+      Effect.either(
+        f.authority.currentFacts({ contactId, journeyId: wrongId.value }),
+      ),
+    );
+    expect(Either.isLeft(wrong) && wrong.left.type).toBe(
+      "AuthorityInconsistent",
+    );
     f.repository.readJourneyHeads = async () => [
       {
         journeyId: aggregate.journeyId,
@@ -419,6 +451,111 @@ describe("current Evergreen authority", () => {
       },
     ];
     expect(Either.isLeft(await run(f.authority))).toBe(true);
+  });
+  it.each([undefined, null, "", "  "])(
+    "uses the documented newsletter default for active subscriber preference %s",
+    async (value) => {
+      const f = fixture();
+      f.getSubscriber.mockResolvedValue({
+        id: 123,
+        email_address: "student@example.com",
+        state: "active",
+        fields: value === undefined ? {} : { pref_newsletter: value },
+      });
+      const result = await run(f.authority);
+      expect(Either.isRight(result) && result.right.delivery.type).toBe(
+        "Eligible",
+      );
+    },
+  );
+  it("denies absent preference when the injected app definition defaults false", async () => {
+    const f = fixture({ field: "pref_newsletter", defaultSubscribed: false });
+    f.getSubscriber.mockResolvedValue({
+      id: 123,
+      email_address: "student@example.com",
+      state: "active",
+    });
+    const result = await run(f.authority);
+    expect(Either.isRight(result) && result.right.delivery.type).toBe(
+      "Unsubscribed",
+    );
+  });
+  it.each([
+    undefined,
+    {},
+    { field: "pref_newsletter" },
+    { field: "pref_newsletter", defaultSubscribed: "true" },
+    { field: "", defaultSubscribed: true },
+    { field: " pref_newsletter", defaultSubscribed: true },
+  ])("holds malformed preference definition %j", async (value) => {
+    const f = fixture();
+    const communication = createKitCurrentCommunicationReader({
+      getSubscriber: f.getSubscriber,
+      now: () => at,
+      preference: value as Preference,
+    });
+    await expect(
+      communication.read({ subscriberId: "123", email: "student@example.com" }),
+    ).rejects.toThrow();
+  });
+  it.each([
+    {},
+    { state: "unknown" },
+    { state: "inactive" },
+    { state: "active", fields: { pref_newsletter: "maybe" } },
+  ])("does not default unresolved provider evidence %j", async (override) => {
+    const f = fixture();
+    f.getSubscriber.mockResolvedValue({
+      id: 123,
+      email_address: "student@example.com",
+      ...override,
+    });
+    expect(Either.isLeft(await run(f.authority))).toBe(true);
+  });
+  it.each(["envelope", "mixed"])(
+    "rejects the unsupported %s subscriber input contract",
+    async (mode) => {
+      const f = fixture();
+      const raw = {
+        id: 123,
+        email_address: "student@example.com",
+        state: "active",
+        fields: { pref_newsletter: "subscribed" },
+      };
+      f.getSubscriber.mockResolvedValue(
+        mode === "envelope"
+          ? { subscriber: raw }
+          : { ...raw, subscriber: { ...raw, id: 999 } },
+      );
+      expect(Either.isLeft(await run(f.authority))).toBe(true);
+    },
+  );
+  it.each(["2026-09-07T18:59:59.000Z", "2026-09-07T19:00:01.000Z"])(
+    "rejects stale/future communication readAt %s",
+    async (readAt) => {
+      const f = fixture();
+      const read = f.communication.read;
+      f.communication.read = async (identity) => ({
+        ...(await read(identity)),
+        readAt,
+      });
+      const result = await run(f.authority);
+      expect(Either.isLeft(result)).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("student@example.com");
+    },
+  );
+  it("rejects an exact supplied journey ID absent from canonical heads", async () => {
+    const f = fixture(),
+      journeyId = parseJourneyId("evergreen-offer:other");
+    if (!journeyId.ok) throw new Error("bad fixture");
+    const result = await Effect.runPromise(
+      Effect.either(
+        f.authority.currentFacts({ contactId, journeyId: journeyId.value }),
+      ),
+    );
+    expect(Either.isLeft(result) && result.left.type).toBe(
+      "AuthorityInconsistent",
+    );
   });
   it("does not ignore unsupported provider suppression evidence", async () => {
     const f = fixture();

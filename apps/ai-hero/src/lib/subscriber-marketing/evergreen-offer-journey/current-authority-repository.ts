@@ -1,4 +1,14 @@
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  isNotNull,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { MySql2Database } from "drizzle-orm/mysql2";
 import * as schema from "@/db/schema";
 import { automationControl } from "@/db/email-course-schema";
@@ -177,7 +187,14 @@ export function createDrizzleCurrentAuthorityRepository(
           beneficiaryUserId: userId,
           effectiveProductId: EVERGREEN_OFFER_PRODUCT_ID,
         }));
-      // Match current content access as hasResourceEntitlement does: direct or
+      const resources = await database
+        .select({ resourceId: contentResourceProduct.resourceId })
+        .from(contentResourceProduct)
+        .where(eq(contentResourceProduct.productId, EVERGREEN_OFFER_PRODUCT_ID))
+        .limit(1);
+      if (!resources.length)
+        throw new Error("Target product resource mapping unavailable");
+      // Match hasEntitlementForResource (entitlements-query.ts): direct or
       // membership ownership, nondeleted, nonexpired, metadata.contentIds.
       // Keep a missing/nonpurchase source visible rather than invent a purchase.
       const accessFields = {
@@ -198,37 +215,41 @@ export function createDrizzleCurrentAuthorityRepository(
         isNull(entitlements.deletedAt),
         or(isNull(entitlements.expiresAt), gt(entitlements.expiresAt, now)),
       );
+      // Preserve target-source access when its resource mapping is missing.
+      // A NULL effectiveProductId is held by the authority, never a no-owner result.
+      // Other source products require an actual target resource match; do not
+      // invent a bundle list. Partial mapping completeness remains a hookup gate.
+      const relevant = or(
+        isNotNull(contentResourceProduct.resourceId),
+        eq(purchases.productId, EVERGREEN_OFFER_PRODUCT_ID),
+      );
       const [personal, member] = await Promise.all([
         database
           .select(accessFields)
           .from(entitlements)
-          .innerJoin(contentResourceProduct, targetContent)
+          .leftJoin(contentResourceProduct, targetContent)
           .leftJoin(purchases, sourcePurchase)
-          .where(and(eq(entitlements.userId, userId), active))
+          .where(and(eq(entitlements.userId, userId), active, relevant))
           .limit(1),
-        // Scope by beneficiary and organization, not an OR across all access.
-        // Allocation persists organizationId together with memberId. The source
-        // schema lacks a membership userId index: EXPLAIN/index readiness is a
-        // hookup gate; LIMIT bounds results, not database execution work.
+        // Ownership is membership ID alone, including NULL/different org IDs.
+        // Neither membership userId nor entitlement membershipId has a declared
+        // index: query-plan/index readiness remains a hookup gate. LIMIT bounds
+        // results, not execution work.
         database
           .select(accessFields)
           .from(organizationMemberships)
           .innerJoin(
             entitlements,
-            and(
-              eq(
-                entitlements.organizationId,
-                organizationMemberships.organizationId,
-              ),
-              eq(
-                entitlements.organizationMembershipId,
-                organizationMemberships.id,
-              ),
+            eq(
+              entitlements.organizationMembershipId,
+              organizationMemberships.id,
             ),
           )
-          .innerJoin(contentResourceProduct, targetContent)
+          .leftJoin(contentResourceProduct, targetContent)
           .leftJoin(purchases, sourcePurchase)
-          .where(and(eq(organizationMemberships.userId, userId), active))
+          .where(
+            and(eq(organizationMemberships.userId, userId), active, relevant),
+          )
           .limit(1),
       ]);
       return [...personal, ...member].map(

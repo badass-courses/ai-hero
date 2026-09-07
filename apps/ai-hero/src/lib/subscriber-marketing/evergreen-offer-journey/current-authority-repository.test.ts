@@ -5,8 +5,10 @@ import * as schema from "@/db/schema";
 import { createDrizzleCurrentAuthorityRepository } from "./current-authority-repository";
 
 function fixture() {
-  const query = vi.fn(async (_options: { sql: string }, _params: unknown[]) => [
-    [],
+  const query = vi.fn(async (options: { sql: string }, _params: unknown[]) => [
+    options.sql.includes("from `AI_ContentResourceProduct`")
+      ? [["course"]]
+      : [],
     [],
   ]);
   // HTTP/SQL-free mysql2 boundary: Drizzle still builds and executes its real SELECTs.
@@ -63,7 +65,7 @@ describe("current authority SELECT boundaries", () => {
       "user-test",
       new Date("2026-09-07T19:00:00.000Z"),
     );
-    expect(f.query.mock.calls).toHaveLength(3);
+    expect(f.query.mock.calls).toHaveLength(4);
     const direct = f.query.mock.calls[0]!;
     expect(direct[1]).toEqual([
       "user-test",
@@ -72,7 +74,8 @@ describe("current authority SELECT boundaries", () => {
       "Restricted",
       1,
     ]);
-    for (const [statement, params] of f.query.mock.calls.slice(1)) {
+    expect(f.query.mock.calls[1]![1]).toEqual(["product-ma254", 1]);
+    for (const [statement, params] of f.query.mock.calls.slice(2)) {
       expect(statement.sql).toContain("JSON_CONTAINS");
       expect(statement.sql).toContain("deletedAt` is null");
       expect(statement.sql).toContain("expiresAt` > ?");
@@ -81,10 +84,10 @@ describe("current authority SELECT boundaries", () => {
       expect(params).toContain("product-ma254");
       expect(params.at(-1)).toBe(1);
     }
-    expect(f.query.mock.calls[2]![0].sql).toContain(
+    expect(f.query.mock.calls[3]![0].sql).toContain(
       "organizationMembershipId` =",
     );
-    expect(f.query.mock.calls[2]![0].sql).toContain("organizationId` =");
+    expect(f.query.mock.calls[3]![0].sql).not.toContain("organizationId` =");
     expect(
       f.query.mock.calls.every(([statement]) =>
         /^select /i.test(statement.sql),
