@@ -7,7 +7,6 @@ import VideoPlayerOverlay from '@/app/(content)/_components/video-player-overlay
 import { Transcript } from '@/app/(content)/_components/video-transcript-renderer'
 import PostToC from '@/app/(content)/posts/_components/post-toc'
 import UpNext from '@/app/(content)/workshops/_components/up-next'
-import { WorkshopPricing } from '@/app/(content)/workshops/_components/workshop-pricing-server'
 import { ContentReadTracker } from '@/components/content-read-tracker'
 import { env } from '@/env.mjs'
 import { PlayerContainerSkeleton } from '@/components/player-skeleton'
@@ -36,7 +35,6 @@ import { LessonBody } from '../../../_components/lesson-body'
 export async function LessonPage({
 	lesson,
 	problem,
-	searchParams,
 	params,
 	lessonType = 'lesson',
 	workshop,
@@ -109,7 +107,6 @@ export async function LessonPage({
 			/>
 			<PlayerContainer
 				lesson={lesson}
-				searchParams={searchParams}
 				params={params}
 				lessonType={lessonType}
 				workshop={workshop}
@@ -225,14 +222,12 @@ async function TranscriptContainer({
 async function PlayerContainer({
 	lesson,
 	lessonType = 'lesson',
-	searchParams,
 	params,
 	workshop,
 	ability,
 }: {
 	lesson: Lesson | null
 	lessonType?: 'lesson' | 'exercise' | 'solution'
-	searchParams: { [key: string]: string | string[] | undefined }
 	params: { module: string; lesson: string }
 	workshop: MinimalWorkshop | null
 	ability: Omit<AbilityForResource, 'canView'> & {
@@ -302,21 +297,15 @@ async function PlayerContainer({
 						</>
 					}
 				>
-					<WorkshopPricing
+					{/* LessonPage already redirects denied viewers. Authorized overlay
+					    states (including completion) do not need commerce data. */}
+					<VideoPlayerOverlay
+						resource={lesson}
+						abilityLoader={abilityLoader}
+						moduleType="workshop"
 						moduleSlug={params.module}
-						searchParams={searchParams}
-					>
-						{(pricingProps) => (
-							<VideoPlayerOverlay
-								resource={lesson}
-								abilityLoader={abilityLoader}
-								pricingProps={pricingProps}
-								moduleType="workshop"
-								moduleSlug={params.module}
-								workshop={workshop}
-							/>
-						)}
-					</WorkshopPricing>
+						workshop={workshop}
+					/>
 					<AuthedVideoPlayer
 						key={lesson.id}
 						// The width cap mirrors the height cap: with only max-h, a short
