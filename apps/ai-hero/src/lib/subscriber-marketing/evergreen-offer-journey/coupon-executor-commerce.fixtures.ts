@@ -32,7 +32,7 @@ export const commerceTables = [
 	'AI_Contact',
 ]
 export const commerceDdl = [
-	'CREATE TABLE AI_Contact (id varchar(255) NOT NULL PRIMARY KEY)',
+	'CREATE TABLE AI_Contact (id varchar(255) NOT NULL PRIMARY KEY, email varchar(255))',
 	'CREATE TABLE AI_MerchantCoupon (id varchar(191) NOT NULL PRIMARY KEY, identifier varchar(191) UNIQUE, organizationId varchar(191), status int NOT NULL DEFAULT 0, merchantAccountId varchar(191) NOT NULL, percentageDiscount decimal(3,2), amountDiscount int, type varchar(191))',
 	'CREATE TABLE AI_Coupon (id varchar(191) NOT NULL PRIMARY KEY, organizationId varchar(191), code varchar(191) UNIQUE, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), expires timestamp(3) NULL, fields json, maxUses int NOT NULL DEFAULT -1, `default` boolean NOT NULL DEFAULT false, merchantCouponId varchar(191), status int NOT NULL DEFAULT 0, usedCount int NOT NULL DEFAULT 0, percentageDiscount decimal(3,2), amountDiscount int, restrictedToProductId varchar(191), INDEX Coupon_id_code_index(id,code))',
 	'CREATE TABLE AI_User (id varchar(255) NOT NULL PRIMARY KEY, name varchar(255), role varchar(191) NOT NULL DEFAULT "user", email varchar(255) NOT NULL UNIQUE, fields json, emailVerified timestamp(3) NULL, image varchar(255), createdAt timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3))',
@@ -71,7 +71,11 @@ export async function realCommerceFixture(
 		type: 'special',
 		sourceReference: 'synthetic-merchant-evidence-not-provider-proof',
 	}
-	await pool.query('INSERT INTO AI_Contact(id) VALUES (?)', [f.issue.contactId])
+	const syntheticEmail = 'real-commerce@example.test'
+	await pool.query('INSERT INTO AI_Contact(id, email) VALUES (?, ?)', [
+		f.issue.contactId,
+		syntheticEmail,
+	])
 	await database.insert(couponCommerceSchema.merchantCoupon).values({
 		id: merchant.id,
 		identifier: merchant.identifier,
@@ -82,7 +86,7 @@ export async function realCommerceFixture(
 	})
 	await database.insert(couponCommerceSchema.users).values({
 		id: userId,
-		email: 'real-commerce@example.test',
+		email: syntheticEmail,
 		emailVerified: new Date(f.issue.issueAt),
 	})
 	await database
@@ -110,14 +114,31 @@ export async function realCommerceFixture(
 		store,
 		merchantCouponEvidence: merchant,
 		now: f.getNow,
-		readVerifiedOwner: async () => ({
-			type: 'VerifiedUserObserved',
-			journeyId: f.issue.journeyId,
-			contactId: f.issue.contactId,
-			verifiedUserId: userId,
-			observedAt: f.issue.issueAt,
-			sourceReference: 'synthetic-verified-owner-evidence-not-auth-proof',
-		}),
+		readVerifiedOwner: async (query) => {
+			expect(query.contactId).toBe(f.issue.contactId)
+			expect(query.journeyId).toBe(f.issue.journeyId)
+			expect(query.verifiedUserId).toBe(userId)
+			expect(query.lockedContact).toEqual({
+				id: f.issue.contactId,
+				email: syntheticEmail,
+			})
+			expect(query.lockedUser).toEqual({
+				id: userId,
+				email: syntheticEmail,
+				emailVerified: f.issue.issueAt,
+			})
+			expect(Object.isFrozen(query.lockedContact)).toBe(true)
+			expect(Object.isFrozen(query.lockedUser)).toBe(true)
+			// Only synthetic evidence, after asserting the real locked snapshots.
+			return {
+				type: 'VerifiedUserObserved',
+				journeyId: f.issue.journeyId,
+				contactId: f.issue.contactId,
+				verifiedUserId: userId,
+				observedAt: f.issue.issueAt,
+				sourceReference: 'synthetic-verified-owner-evidence-not-auth-proof',
+			}
+		},
 	})
 	const reader = createCouponReceiptReader(
 		createMySqlCouponReceiptReadStore(database),

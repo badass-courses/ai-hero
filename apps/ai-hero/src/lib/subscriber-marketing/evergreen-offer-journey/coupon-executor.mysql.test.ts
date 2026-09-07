@@ -385,11 +385,45 @@ integration('coupon executor guarded durable integration', () => {
 		async (conflict) => {
 			if (!real) throw new Error('Missing real store')
 			const f = await realCommerceFixture(pool, real)
+			const operationAt = f.getNow()
 			f.fault.loseResponse = true
 			expect(
 				(await Effect.runPromise(f.executor.execute(f.request))).type,
 			).toBe('Held')
+			// Held alone also describes setup failure. Prove actual commerce first.
+			expect(f.calls).toEqual({ issue: 1, bind: 0, commits: 1 })
+			expect(f.committed).toHaveLength(1)
+			const committedRows = await f.snapshot()
+			expect(committedRows.coupons).toHaveLength(1)
+			expect(committedRows.grants).toHaveLength(0)
 			const original = await f.attempt(f.issue.idempotencyKey)
+			expect(original.status).toBe('Claimed')
+			expect(original.outcome).toBeNull()
+			expect(original.claimToken).toMatch(/^[0-9a-f-]{36}$/i)
+			expect(original.claimedAt.toISOString()).toBe(operationAt)
+			expect(operationAt > f.issue.issueAt).toBe(true)
+			const history = await Effect.runPromise(f.reader.inspectIssue(f.issue))
+			if (history.type !== 'Recorded')
+				throw new Error('Missing pre-corruption issue history')
+			expect(history.receipt).toEqual(f.committed[0])
+			expect(history.operationObservedAt).toEqual({
+				type: 'Known',
+				at: operationAt,
+			})
+			expect(f.stimuli).toHaveLength(0)
+			const view = await Effect.runPromise(
+				f.ledger.inspect({
+					journeyId: f.issue.journeyId,
+					now: f.getNow(),
+					automationControl: 'Enabled',
+				}),
+			)
+			expect(view.aggregate.phase).toBe('coupon.awaitingReceipt')
+			expect(
+				view.intents.find(
+					(row) => row.intent.idempotencyKey === f.issue.idempotencyKey,
+				)?.status,
+			).toBe('pending')
 			f.setNow(new Date(original.leaseExpiresAt.getTime() + 1).toISOString())
 			if (conflict === 'receipt') {
 				const rows = await f.snapshot()
