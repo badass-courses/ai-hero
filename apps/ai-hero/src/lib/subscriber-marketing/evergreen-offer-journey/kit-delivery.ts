@@ -79,9 +79,11 @@ const refusal = (reason: string): EffectApplicationError => ({
 	type: 'EffectPermanentRefusal',
 	reason,
 })
-const transient = (reason: string): EffectApplicationError => ({
+/** Only for failures strictly before any request leaves the process (identity, clock). */
+const notAttempted = (reason: string): EffectApplicationError => ({
 	type: 'EffectTransientUnavailable',
 	reason,
+	requestIssued: false,
 })
 const ambiguous = (reason: string): EffectApplicationError => ({
 	type: 'EffectAmbiguous',
@@ -173,7 +175,7 @@ export function createKitDeliveryPort(
 				return yield* Effect.fail(refusal('missing-sequence-binding'))
 			const rawIdentity = yield* bounded(
 				() => options.resolveIdentity(intent.contactId),
-				transient('identity-unavailable'),
+				notAttempted('identity-unavailable'),
 			)
 			const identity = identitySchema.safeParse(rawIdentity)
 			if (!identity.success || identity.data.contactId !== intent.contactId) {
@@ -189,7 +191,7 @@ export function createKitDeliveryPort(
 	const currentTime = () =>
 		Effect.try({
 			try: () => options.now(),
-			catch: () => transient('clock-unavailable'),
+			catch: () => notAttempted('clock-unavailable'),
 		}).pipe(
 			Effect.flatMap((value) => {
 				const parsed = parseIsoInstant(value)

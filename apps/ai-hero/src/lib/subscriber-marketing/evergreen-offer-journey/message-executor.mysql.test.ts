@@ -380,21 +380,44 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 		})
 		expect(await attemptRow(intent)).toMatchObject({ status: 'Claimed' })
 
+		// Real provider membership that predates this claim is held, never retimed.
 		membership = {
 			type: 'Present',
 			providerReceiptId: 'kit:sequence-membership-observed:b1',
+			addedAt: plus(claimed.evidence.claimedAt.toISOString(), -1),
+			observedAt: now,
+		}
+		const prior = await Effect.runPromise(
+			executor(second).reconcileHeld({ limit: 10 }),
+		)
+		expect(prior[0]?.result).toMatchObject({
+			type: 'MembershipHeld',
+			reason: 'PrecedesClaim',
+		})
+		expect(await attemptRow(intent)).toMatchObject({ status: 'Claimed' })
+
+		const addedAt = plus(claimed.evidence.claimedAt.toISOString(), 1_000)
+		membership = {
+			type: 'Present',
+			providerReceiptId: 'kit:sequence-membership-observed:b1',
+			addedAt,
 			observedAt: now,
 		}
 		const present = await Effect.runPromise(
 			executor(second).reconcileHeld({ limit: 10 }),
 		)
 		expect(present[0]).toMatchObject({
-			result: { type: 'ReconciledAccepted', settlement: { type: 'Committed' } },
+			result: {
+				type: 'ReconciledAccepted',
+				addedAt,
+				settlement: { type: 'Committed' },
+			},
 			sideEffects: 'attempt-recorded',
 		})
 		expect(await attemptRow(intent)).toMatchObject({
 			status: 'Accepted',
 			claimToken: claimed.evidence.claimToken,
+			outcome: { type: 'Accepted', appliedAt: addedAt },
 		})
 		expect(await intentRow(intent)).toMatchObject({ status: 'Applied' })
 		expect(applied).toHaveLength(0)

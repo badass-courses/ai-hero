@@ -91,7 +91,11 @@ describe('selected review regressions', () => {
 		})
 		expect(await outcome(adapter)).toMatchObject({
 			_tag: 'Left',
-			left: { type: 'EffectTransientUnavailable' },
+			left: {
+				type: 'EffectTransientUnavailable',
+				reason: 'identity-unavailable',
+				requestIssued: false,
+			},
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 	})
@@ -104,7 +108,7 @@ describe('selected review regressions', () => {
 		await vi.advanceTimersByTimeAsync(100)
 		expect(await pending).toMatchObject({
 			_tag: 'Left',
-			left: { type: 'EffectTransientUnavailable' },
+			left: { type: 'EffectTransientUnavailable', requestIssued: false },
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 	})
@@ -117,14 +121,16 @@ describe('selected review regressions', () => {
 					throw new Error('clock unavailable')
 				},
 			})
-			expect(await outcome(adapter)).toMatchObject({
+			const result = await outcome(adapter)
+			expect(result).toMatchObject({
 				_tag: 'Left',
-				left: {
-					type: postAttempted
-						? 'EffectAmbiguous'
-						: 'EffectTransientUnavailable',
-				},
+				left: postAttempted
+					? { type: 'EffectAmbiguous' }
+					: { type: 'EffectTransientUnavailable', requestIssued: false },
 			})
+			// No-request proof never rides on an outcome produced after the POST.
+			if (postAttempted && Either.isLeft(result))
+				expect(result.left).not.toHaveProperty('requestIssued')
 			expect(fetcher).toHaveBeenCalledTimes(postAttempted ? 1 : 0)
 		}
 	})

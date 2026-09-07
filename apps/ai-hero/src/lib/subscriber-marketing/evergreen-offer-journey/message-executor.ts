@@ -43,6 +43,13 @@ export type DeliveryMembershipEvidence =
 			readonly type: 'Present'
 			/** Read-only membership observation. Must never be manufactured from a send. */
 			readonly providerReceiptId: string
+			/**
+			 * The provider's own membership instant, or null when the provider did not
+			 * supply a usable one. Never the observation time. Only this instant may
+			 * bind presence to a specific claim.
+			 */
+			readonly addedAt: IsoInstant | null
+			/** When the read happened. Audit only; never recorded as acceptance time. */
 			readonly observedAt: IsoInstant
 	  }
 	| {
@@ -124,6 +131,18 @@ export type DomainSettlement =
 			readonly error: JourneyCommandError['type']
 	  }
 
+/**
+ * Claimed, then stopped before any provider request with nothing truthful to settle.
+ * No attempt outcome is written: the claim stays owned until its lease lapses and
+ * then surfaces in recovery as honestly held. Never KnownNotApplied, never a resend.
+ */
+export type AbandonReason =
+	| 'LeaseExpiredBeforeApply'
+	| 'AutomationStoppedAfterClaim'
+	| 'NotYetDueAfterClaim'
+	| 'WindowClosedAfterClaim'
+	| 'ProvenNoRequestFailuresExhausted'
+
 export type MessageExecutionResult =
 	| {
 			readonly type: 'NotClaimed'
@@ -136,9 +155,12 @@ export type MessageExecutionResult =
 			readonly sideEffects: 'none'
 	  }
 	| {
-			/** Claimed, then the lease expired before apply. No provider call. The claim surfaces as held. */
 			readonly type: 'Abandoned'
-			readonly reason: 'LeaseExpiredBeforeApply'
+			readonly reason: AbandonReason
+			readonly detail: string
+			/** Apply invocations made under this claim; each one proved no request left. */
+			readonly applyInvocations: number
+			readonly providerRequest: 'none'
 			readonly sideEffects: 'claimed'
 	  }
 	| {
@@ -146,6 +168,7 @@ export type MessageExecutionResult =
 			readonly meaning: 'provider-accepted-not-inbox-delivery'
 			readonly providerReceiptId: string
 			readonly appliedAt: IsoInstant
+			readonly applyInvocations: number
 			readonly sideEffects: 'attempt-recorded'
 			readonly settlement: DomainSettlement
 	  }
@@ -153,12 +176,19 @@ export type MessageExecutionResult =
 			readonly type: 'Refused'
 			readonly refusal: 'PreflightRefused' | 'ProviderRefused'
 			readonly detail: string
+			readonly applyInvocations: number
+			/** 'none' is proven; 'unknown' means the port refused without proof either way. */
+			readonly providerRequest: 'none' | 'unknown'
 			readonly sideEffects: 'attempt-recorded'
 			readonly settlement: DomainSettlement
 	  }
 	| {
 			readonly type: 'HeldUncertain'
+			readonly cause: 'EffectAmbiguous' | 'EffectTransientUnavailable'
 			readonly detail: string
+			readonly applyInvocations: number
+			/** The provider may have received a request; nothing proves otherwise. */
+			readonly providerRequest: 'unknown'
 			readonly sideEffects: 'provider-called' | 'attempt-recorded'
 			readonly settlement: 'none'
 	  }
@@ -192,10 +222,23 @@ export type HeldReconciliation = {
 		| {
 				readonly type: 'ReconciledAccepted'
 				readonly providerReceiptId: string
+				/** The provider's membership instant, recorded as the acceptance time. */
+				readonly addedAt: IsoInstant
 				readonly observedAt: IsoInstant
 				readonly settlement: DomainSettlement
 		  }
 		| { readonly type: 'AbsentHeld'; readonly meaning: 'not-resend-permission' }
+		| {
+				/** Membership is real but its instant does not bind to this claim. Nothing written. */
+				readonly type: 'MembershipHeld'
+				readonly reason:
+					| 'PrecedesClaim'
+					| 'PrecedesWindow'
+					| 'AfterWindow'
+					| 'InFuture'
+				readonly addedAt: IsoInstant
+				readonly observedAt: IsoInstant
+		  }
 		| { readonly type: 'UnknownHeld'; readonly reason: string }
 		| { readonly type: 'UnsupportedIntentType' }
 		| { readonly type: 'IntentUnavailable'; readonly reason: string }
@@ -223,6 +266,12 @@ export interface MessageIntentExecutor {
 
 const DEFAULT_LEASE_MS = 60_000
 const MAX_LEASE_MS = 300_000
+/**
+ * Apply invocations allowed under one still-owned claim. A second invocation happens
+ * only when the first proved no request left the process (`requestIssued: false`),
+ * so at most one mutating provider request can ever leave per claim.
+ */
+const MAX_APPLY_INVOCATIONS = 2
 const REFUSAL_REASONS = {
 	PreflightRefused: 'executor-preflight-refused',
 	ProviderRefused: 'provider-refused',
@@ -230,10 +279,15 @@ const REFUSAL_REASONS = {
 
 /**
  * Dormant SendMessage executor. No scheduler, no admission reader, no other intent types.
- * Order: canonical intent read, preflight, durable claim, fresh authority and clock,
- * one DeliveryPort.apply, attempt settlement, then DeliverySettled through the service.
+ * Order: canonical intent read, preflight, durable claim, then per apply invocation a
+ * fresh authority, clock, control, window and lease check, DeliveryPort.apply, attempt
+ * settlement, then DeliverySettled through the service.
  * Provider acceptance is enrollment acknowledgement, never inbox delivery.
- * KnownNotApplied is not retry permission: one semantic intent gets at most one attempt.
+ * KnownNotApplied is not retry permission: one semantic intent gets at most one attempt,
+ * and within that attempt at most one provider request. A second apply invocation is
+ * allowed only after a typed proof that the first issued no request. Stops, not-yet-due,
+ * closed windows and exhausted no-request failures after the claim abandon without
+ * writing an outcome, so the claim stays honestly held instead of a counterfeit refusal.
  */
 export function createMessageIntentExecutor(
 	dependencies: MessageExecutorDependencies,
@@ -594,47 +648,142 @@ export function createMessageIntentExecutor(
 					sideEffects: 'none',
 				} as const
 			const evidence = claim.evidence
-
-			// Fresh authority, control and clock immediately before the only apply.
-			const fresh = yield* readFacts(
-				{ contactId: intent.contactId, journeyId: intent.journeyId },
-				'claimed',
-			)
-			const applyAt = yield* readClock('claimed')
-			if (new Date(applyAt) >= evidence.leaseExpiresAt)
-				return {
+			const abandoned = (
+				reason: AbandonReason,
+				detail: string,
+				applyInvocations: number,
+			) =>
+				({
 					type: 'Abandoned',
-					reason: 'LeaseExpiredBeforeApply',
+					reason,
+					detail,
+					applyInvocations,
+					providerRequest: 'none',
 					sideEffects: 'claimed',
-				} as const
-			const refusal = controlBlock(fresh) ?? windowBlock(intent, applyAt)
-			if (refusal) {
+				}) as const
+
+			let applyInvocations = 0
+			let lastNoRequest = ''
+			while (true) {
+				// Fresh authority, control, clock, window and lease before every apply invocation.
+				// Nothing from the claim or an earlier invocation is reused.
+				const fresh = yield* readFacts(
+					{ contactId: intent.contactId, journeyId: intent.journeyId },
+					'claimed',
+				)
+				const applyAt = yield* readClock('claimed')
+				if (new Date(applyAt) >= evidence.leaseExpiresAt)
+					return abandoned(
+						'LeaseExpiredBeforeApply',
+						lastNoRequest || 'lease-expired',
+						applyInvocations,
+					)
+				const control = controlBlock(fresh)
+				if (control === 'AutomationStopped')
+					// A stop is a pause in the domain, never a refusal. Hold, do not settle.
+					return abandoned(
+						'AutomationStoppedAfterClaim',
+						control,
+						applyInvocations,
+					)
+				if (control) {
+					// Purchase and ineligibility are terminal facts the domain refuses on.
+					const outcome = {
+						type: 'KnownNotApplied',
+						reason: 'PreflightRefused',
+					} as const
+					yield* recordOutcome(evidence, outcome, 'claimed')
+					const settlement = yield* settleDomain(
+						intent,
+						evidence.claimToken,
+						outcome,
+					)
+					return {
+						type: 'Refused',
+						refusal: 'PreflightRefused',
+						detail: control,
+						applyInvocations,
+						providerRequest: 'none',
+						sideEffects: 'attempt-recorded',
+						settlement,
+					} as const
+				}
+				const window = windowBlock(intent, applyAt)
+				if (window === 'NotYetDue')
+					return abandoned('NotYetDueAfterClaim', window, applyInvocations)
+				if (window === 'WindowClosed')
+					// The domain marks a closed window Missed on its next wake; no refusal is faked.
+					return abandoned('WindowClosedAfterClaim', window, applyInvocations)
+
+				applyInvocations++
+				const applied = yield* Effect.either(delivery.apply(intent))
+				if (Either.isRight(applied)) {
+					const outcome: AcceptedOutcome = {
+						type: 'Accepted',
+						providerReceiptId: applied.right.providerReceiptId,
+						appliedAt: applied.right.appliedAt,
+					}
+					yield* recordOutcome(evidence, outcome, 'provider-called')
+					const settlement = yield* settleDomain(
+						intent,
+						evidence.claimToken,
+						outcome,
+					)
+					return {
+						type: 'Applied',
+						meaning: 'provider-accepted-not-inbox-delivery',
+						providerReceiptId: outcome.providerReceiptId,
+						appliedAt: outcome.appliedAt as IsoInstant,
+						applyInvocations,
+						sideEffects: 'attempt-recorded',
+						settlement,
+					} as const
+				}
+				const error = applied.left
+				if (
+					error.type === 'EffectTransientUnavailable' &&
+					error.requestIssued === false
+				) {
+					// Proven: no request left the process. Another invocation is safe while the
+					// claim is still owned and every fresh check passes again.
+					lastNoRequest = error.reason
+					if (applyInvocations < MAX_APPLY_INVOCATIONS) continue
+					return abandoned(
+						'ProvenNoRequestFailuresExhausted',
+						error.reason,
+						applyInvocations,
+					)
+				}
+				if (error.type !== 'EffectPermanentRefusal') {
+					// Ambiguous, or transient without proof of no request: the provider may have
+					// received it. Hold the claim as uncertain; never retry, never refuse.
+					const recorded = yield* Effect.either(
+						recordOutcome(
+							evidence,
+							{ type: 'HeldUncertain', reason: 'Unknown' },
+							'provider-called',
+						),
+					)
+					return {
+						type: 'HeldUncertain',
+						cause: error.type,
+						detail:
+							error.type === 'EffectAmbiguous'
+								? error.reason
+								: `unproven-no-request:${error.reason}`,
+						applyInvocations,
+						providerRequest: 'unknown',
+						sideEffects: Either.isRight(recorded)
+							? 'attempt-recorded'
+							: 'provider-called',
+						settlement: 'none',
+					} as const
+				}
+				// Permanent refusal: no acceptance, and one attempt per intent grants no retry.
 				const outcome = {
 					type: 'KnownNotApplied',
-					reason: 'PreflightRefused',
+					reason: 'ProviderRefused',
 				} as const
-				yield* recordOutcome(evidence, outcome, 'claimed')
-				const settlement = yield* settleDomain(
-					intent,
-					evidence.claimToken,
-					outcome,
-				)
-				return {
-					type: 'Refused',
-					refusal: 'PreflightRefused',
-					detail: refusal,
-					sideEffects: 'attempt-recorded',
-					settlement,
-				} as const
-			}
-
-			const applied = yield* Effect.either(delivery.apply(intent))
-			if (Either.isRight(applied)) {
-				const outcome: AcceptedOutcome = {
-					type: 'Accepted',
-					providerReceiptId: applied.right.providerReceiptId,
-					appliedAt: applied.right.appliedAt,
-				}
 				yield* recordOutcome(evidence, outcome, 'provider-called')
 				const settlement = yield* settleDomain(
 					intent,
@@ -642,54 +791,15 @@ export function createMessageIntentExecutor(
 					outcome,
 				)
 				return {
-					type: 'Applied',
-					meaning: 'provider-accepted-not-inbox-delivery',
-					providerReceiptId: outcome.providerReceiptId,
-					appliedAt: outcome.appliedAt as IsoInstant,
+					type: 'Refused',
+					refusal: 'ProviderRefused',
+					detail: error.reason,
+					applyInvocations,
+					providerRequest: 'unknown',
 					sideEffects: 'attempt-recorded',
 					settlement,
 				} as const
 			}
-			const error = applied.left
-			if (error.type === 'EffectAmbiguous') {
-				const recorded = yield* Effect.either(
-					recordOutcome(
-						evidence,
-						{ type: 'HeldUncertain', reason: 'Unknown' },
-						'provider-called',
-					),
-				)
-				return {
-					type: 'HeldUncertain',
-					detail: error.reason,
-					sideEffects: Either.isRight(recorded)
-						? 'attempt-recorded'
-						: 'provider-called',
-					settlement: 'none',
-				} as const
-			}
-			// Permanent refusal and pre-request transient failure both mean no acceptance.
-			// One attempt per intent: neither grants a second apply.
-			const outcome = {
-				type: 'KnownNotApplied',
-				reason:
-					error.type === 'EffectPermanentRefusal'
-						? 'ProviderRefused'
-						: 'PreflightRefused',
-			} as const
-			yield* recordOutcome(evidence, outcome, 'provider-called')
-			const settlement = yield* settleDomain(
-				intent,
-				evidence.claimToken,
-				outcome,
-			)
-			return {
-				type: 'Refused',
-				refusal: outcome.reason,
-				detail: error.reason,
-				sideEffects: 'attempt-recorded',
-				settlement,
-			} as const
 		})
 
 	const settleRecordedOutcomes: MessageIntentExecutor['settleRecordedOutcomes'] =
@@ -795,12 +905,45 @@ export function createMessageIntentExecutor(
 					results.push(item({ type: 'UnknownHeld', reason: membership.reason }))
 					continue
 				}
+				if (membership.addedAt === null) {
+					// Presence without a provider instant cannot be bound to this claim.
+					results.push(
+						item({
+							type: 'UnknownHeld',
+							reason: 'membership-added-at-unknown',
+						}),
+					)
+					continue
+				}
+				const recordedAt = yield* readClock('none')
+				const addedAt = Date.parse(membership.addedAt)
+				const held =
+					addedAt < evidence.claimedAt.getTime()
+						? 'PrecedesClaim'
+						: addedAt < Date.parse(intent.notBefore)
+							? 'PrecedesWindow'
+							: addedAt >= Date.parse(intent.notAfter)
+								? 'AfterWindow'
+								: addedAt > Date.parse(recordedAt)
+									? 'InFuture'
+									: null
+				if (held) {
+					// Real membership from another path or time. Kept as evidence, never retimed.
+					results.push(
+						item({
+							type: 'MembershipHeld',
+							reason: held,
+							addedAt: membership.addedAt,
+							observedAt: membership.observedAt,
+						}),
+					)
+					continue
+				}
 				const outcome: AcceptedOutcome = {
 					type: 'Accepted',
 					providerReceiptId: membership.providerReceiptId,
-					appliedAt: membership.observedAt,
+					appliedAt: membership.addedAt,
 				}
-				const recordedAt = yield* readClock('none')
 				const recorded = yield* Effect.either(
 					attempts.reconcileAccepted({
 						idempotencyKey: evidence.idempotencyKey,
@@ -826,6 +969,7 @@ export function createMessageIntentExecutor(
 						{
 							type: 'ReconciledAccepted',
 							providerReceiptId: outcome.providerReceiptId,
+							addedAt: membership.addedAt,
 							observedAt: membership.observedAt,
 							settlement,
 						},
@@ -844,9 +988,10 @@ function notClaimed(reason: NotClaimedReason): MessageExecutionResult {
 }
 
 /**
- * Adapts the existing Kit port's GET-only membership read. Kit membership carries
- * no acceptance timestamp through that port, so the recorded instant is the
- * observation time and the receipt names it as an observation, never a send.
+ * Adapts the existing Kit port's GET-only membership read. The provider's `added_at`
+ * (already normalised by the port, null when unusable) is passed through untouched as
+ * `addedAt`; the shared clock only stamps `observedAt` for audit. The receipt names an
+ * observation, never a send.
  */
 export function createKitMembershipReconciliation(args: {
 	readonly port: Pick<ReturnType<typeof createKitDeliveryPort>, 'reconcile'>
@@ -864,6 +1009,7 @@ export function createKitMembershipReconciliation(args: {
 				return {
 					type: 'Present',
 					providerReceiptId: `kit:sequence-membership-observed:${intent.contentResourceId}`,
+					addedAt: membership.addedAt,
 					observedAt: observedAt.right,
 				} as const
 			}),
