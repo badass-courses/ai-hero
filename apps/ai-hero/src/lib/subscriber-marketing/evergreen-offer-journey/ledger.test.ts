@@ -348,6 +348,51 @@ describe('evergreen offer journey restoration', () => {
 })
 
 describe('in-memory journey ledger contract', () => {
+	it('rejects a second path-derived journey for the same contact, including seeded prior state', async () => {
+		const ledger = makeInMemoryJourneyLedger()
+		const first = startDecision()
+		await Effect.runPromise(
+			ledger.commit(ledgerCommit({ ...first, expectedVersion: null })),
+		)
+		if (first.stimulus.type !== 'CourseSequenceExhausted')
+			throw new Error('Expected entry')
+		const stimulus = {
+			...first.stimulus,
+			stimulusId: value(parseStimulusId('second-path-stimulus')),
+			entryFactId: value(parseEntryFactId('second-path-fact')),
+			valuePathId: 'ai-hero-skills-workflow-team-v1',
+		}
+		const result = decideEvergreenOfferJourney({
+			snapshot: null,
+			stimulus,
+			currentFacts: facts(),
+			definition: EVERGREEN_OFFER_JOURNEY_V1,
+			now: exhaustedAt,
+		})
+		if (!result.ok || result.decision.type !== 'Accepted')
+			throw new Error('Expected accepted pure decision')
+		const before = ledger.records()
+		for (const target of [
+			ledger,
+			makeInMemoryJourneyLedger({ seed: before }),
+		]) {
+			const refused = await Effect.runPromise(
+				Effect.either(
+					target.commit(
+						ledgerCommit({
+							stimulus,
+							decision: result.decision,
+							expectedVersion: null,
+						}),
+					),
+				),
+			)
+			expect(Either.isLeft(refused) && refused.left.type).toBe(
+				'JourneyConstraintViolation',
+			)
+			expect(target.records()).toEqual(before)
+		}
+	})
 	it('commits and restores one aggregate through the snapshot codec', async () => {
 		const ledger = makeInMemoryJourneyLedger()
 		const { stimulus, decision } = startDecision()

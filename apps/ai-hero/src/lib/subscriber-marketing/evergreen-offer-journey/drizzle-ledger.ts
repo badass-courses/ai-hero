@@ -195,6 +195,26 @@ export function createDrizzleJourneyLedger(
 							return replayed(committed.decision)
 						}
 						if (!isMysqlDuplicateEntryError(cause)) throw cause
+						if (candidate.expectedVersion === null) {
+							const reservation =
+								await database.query.evergreenOfferJourneyCommit.findFirst({
+									where: eq(
+										evergreenOfferJourneyCommit.admissionContactId,
+										candidate.decision.next.contactId,
+									),
+								})
+							if (
+								reservation &&
+								reservation.journeyId !== candidate.decision.next.journeyId
+							) {
+								throw new JourneyLedgerAbort(
+									constraintFailure(
+										candidate,
+										'Contact already admitted to an evergreen v1 journey',
+									),
+								)
+							}
+						}
 						const latest =
 							await database.query.evergreenOfferJourneyCommit.findFirst({
 								where: eq(
@@ -232,6 +252,33 @@ export function createDrizzleJourneyLedger(
 		})
 
 	return { load, findCommittedStimulus, commit, inspect }
+}
+
+/** Internal persistence seam for pre-effect claims; uses the full canonical codec. */
+export async function readIntentForAttempt(
+	transaction: EvergreenOfferJourneyTransaction,
+	row: typeof evergreenOfferJourneyIntent.$inferSelect,
+): Promise<SideEffectIntent> {
+	const origin = await transaction.query.evergreenOfferJourneyCommit.findFirst({
+		where: eq(
+			evergreenOfferJourneyCommit.stimulusId,
+			row.originatingStimulusId,
+		),
+	})
+	if (!origin) return decodeFailure('Attempt intent has no canonical origin')
+	const decision = acceptedDecision(
+		(await readCommittedDecision(transaction, origin)).decision,
+	)
+	const intent = decision.sideEffectIntents.find(
+		(intent) => intent.idempotencyKey === row.idempotencyKey,
+	)
+	if (
+		!intent ||
+		intent.journeyId !== row.journeyId ||
+		!jsonDeepEqual(intent, row.intent)
+	)
+		return decodeFailure('Attempt intent disagrees with canonical origin')
+	return intent
 }
 
 async function commitInTransaction(
@@ -310,6 +357,25 @@ async function commitInTransaction(
 	})
 	if (validationFailure) throw new JourneyLedgerAbort(validationFailure)
 
+	if (candidate.expectedVersion === null) {
+		// Bounded indexed check: an unreserved legacy initial row makes admission
+		// unsafe. Backfill requires a separately approved stopped migration.
+		const legacy =
+			await transaction.query.evergreenOfferJourneyCommit.findFirst({
+				where: and(
+					isNull(evergreenOfferJourneyCommit.admissionContactId),
+					eq(evergreenOfferJourneyCommit.actorVersion, 1),
+				),
+			})
+		if (legacy)
+			throw new JourneyLedgerAbort(
+				constraintFailure(
+					candidate,
+					'Legacy initial journey admission requires reconciliation',
+				),
+			)
+	}
+
 	const snapshot = snapshotValue(candidate.decision.next)
 	const actorVersion = candidate.decision.next.version
 	const committedAt = new Date(candidate.decision.transitionReceipt.committedAt)
@@ -318,6 +384,10 @@ async function commitInTransaction(
 		stimulusId: candidate.stimulus.stimulusId,
 		journeyId,
 		actorVersion,
+		admissionContactId:
+			candidate.expectedVersion === null
+				? candidate.decision.next.contactId
+				: null,
 		stimulusType: candidate.stimulus.type,
 		commitEvidence: journeyCommitEvidenceRecord(candidate),
 		decision: candidate.decision,
@@ -613,6 +683,14 @@ async function readCommittedDecision(
 		decodeFailure('Stimulus ID is already bound to different evidence')
 	}
 	const next = restoreSnapshot(row.snapshot, row.journeyId, row.actorVersion)
+	if (
+		row.admissionContactId !== null &&
+		(row.actorVersion !== 1 || row.admissionContactId !== next.contactId)
+	) {
+		decodeFailure(
+			'Admission reservation disagrees with initial journey identity',
+		)
+	}
 	if (
 		evidence.currentFacts.contactId !== next.contactId ||
 		(evidence.stimulus.type === 'CourseSequenceExhausted' &&

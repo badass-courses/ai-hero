@@ -21,6 +21,7 @@ import type {
 } from './domain'
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
 import { createDrizzleJourneyLedger } from './drizzle-ledger'
+import { createDrizzleJourneyAttempts } from './drizzle-attempts'
 import type { JourneyLedgerCommit } from './ports'
 import {
 	parseContactId,
@@ -38,6 +39,7 @@ const entryFactId = value(parseEntryFactId('entry_mysql_ledger'))
 const exhaustedAt = instant('2026-09-04T17:00:00.000Z')
 const timeZone = value(parseIanaTimeZone('America/Los_Angeles'))
 const tableNames = [
+	'AI_EvergreenOfferJourneyAttempt',
 	'AI_EvergreenOfferJourneyWake',
 	'AI_EvergreenOfferJourneyIntent',
 	'AI_EvergreenOfferJourneyCommit',
@@ -82,7 +84,11 @@ function facts(overrides: Partial<EligibilityFacts> = {}): EligibilityFacts {
 	}
 }
 
-function entry(stimulusName = 'stimulus_mysql_entry') {
+function entry(
+	stimulusName = 'stimulus_mysql_entry',
+	identity = { contactId, entryFactId },
+	valuePathId = 'ai-hero-skills-workflow-individual-v1',
+) {
 	const deadlineTimeZone = deadlineTimeZoneEvidenceFromHeader({
 		headerValue: timeZone,
 		capturedAt: exhaustedAt,
@@ -91,9 +97,9 @@ function entry(stimulusName = 'stimulus_mysql_entry') {
 	const stimulus: EvergreenOfferStimulus = {
 		type: 'CourseSequenceExhausted',
 		stimulusId: value(parseStimulusId(stimulusName)),
-		entryFactId,
-		contactId,
-		valuePathId: 'ai-hero-skills-workflow-individual-v1',
+		entryFactId: identity.entryFactId,
+		contactId: identity.contactId,
+		valuePathId,
 		exhaustedAt,
 		deadlineTimeZone: deadlineTimeZone.value,
 		sourceReference: `contact-event:${stimulusName}`,
@@ -101,7 +107,7 @@ function entry(stimulusName = 'stimulus_mysql_entry') {
 	const result = decideEvergreenOfferJourney({
 		snapshot: null,
 		stimulus,
-		currentFacts: facts(),
+		currentFacts: facts({ contactId: identity.contactId }),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
 		now: exhaustedAt,
 	})
@@ -111,7 +117,10 @@ function entry(stimulusName = 'stimulus_mysql_entry') {
 	return {
 		stimulus,
 		decision: result.decision,
-		commit: commitRecord(stimulus, result.decision, null),
+		commit: {
+			...commitRecord(stimulus, result.decision, null),
+			currentFacts: facts({ contactId: identity.contactId }),
+		},
 	}
 }
 
@@ -212,6 +221,7 @@ function createConnection(uri: string) {
 	return {
 		pool,
 		ledger: createDrizzleJourneyLedger(database),
+		attempts: createDrizzleJourneyAttempts(database),
 	}
 }
 
@@ -253,6 +263,15 @@ integration('evergreen offer journey MySQL ledger', () => {
 			'utf8',
 		)
 		await adminPool.query(migration)
+		await adminPool.query(
+			await fs.readFile(
+				new URL(
+					'../../../db/migrations/20260907_evergreen_admission_attempts.sql',
+					import.meta.url,
+				),
+				'utf8',
+			),
+		)
 		first = createConnection(databaseUrl.toString())
 		second = createConnection(databaseUrl.toString())
 	})
@@ -338,6 +357,306 @@ integration('evergreen offer journey MySQL ledger', () => {
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(1)
 	})
 
+	it('atomically admits only one initial journey per contact across distinct entry facts', async () => {
+		const a = entry('entry-path-a')
+		const b = entry(
+			'entry-path-b',
+			{ contactId, entryFactId: value(parseEntryFactId('other-path-fact')) },
+			'ai-hero-skills-workflow-team-v1',
+		)
+		const outcomes = await Promise.all(
+			[first.ledger.commit(a.commit), second.ledger.commit(b.commit)].map(
+				(effect) => Effect.runPromise(Effect.either(effect)),
+			),
+		)
+		expect(outcomes.filter(Either.isRight)).toHaveLength(1)
+		expect(
+			outcomes.filter(Either.isLeft).map((result) => result.left.type),
+		).toEqual(['JourneyConstraintViolation'])
+		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(1)
+		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyWake')).toBe(
+			a.decision.wakeIntents.length,
+		)
+	})
+
+	it('admits different contacts independently', async () => {
+		const a = entry('independent-a')
+		const b = entry('independent-b', {
+			contactId: value(parseContactId('other-contact')),
+			entryFactId: value(parseEntryFactId('other-entry')),
+		})
+		const results = await Promise.all([
+			Effect.runPromise(first.ledger.commit(a.commit)),
+			Effect.runPromise(second.ledger.commit(b.commit)),
+		])
+		expect(results.every((result) => result.committed)).toBe(true)
+	})
+
+	it('fails closed for unreserved legacy initial rows while preserving reads/replay', async () => {
+		const start = entry()
+		await Effect.runPromise(first.ledger.commit(start.commit))
+		await adminPool.query(
+			'UPDATE AI_EvergreenOfferJourneyCommit SET admissionContactId = NULL',
+		)
+		expect(
+			await Effect.runPromise(first.ledger.load(start.decision.next.journeyId)),
+		).toEqual(start.decision.next)
+		expect(
+			(await Effect.runPromise(second.ledger.commit(start.commit)))
+				.replayedStimulus,
+		).toBe(true)
+		const next = entry('legacy-blocked', {
+			contactId,
+			entryFactId: value(parseEntryFactId('legacy-other')),
+		})
+		const result = await Effect.runPromise(
+			Effect.either(first.ledger.commit(next.commit)),
+		)
+		expect(Either.isLeft(result) && result.left.type).toBe(
+			'JourneyConstraintViolation',
+		)
+	})
+
+	it('installs unique admission/token keys and bounded recovery indexes', async () => {
+		const [rows] = await adminPool.query<
+			Array<
+				RowDataPacket & {
+					INDEX_NAME: string
+					NON_UNIQUE: number
+					columnNames: string
+				}
+			>
+		>(
+			`SELECT INDEX_NAME, NON_UNIQUE, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columnNames FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('AI_EvergreenOfferJourneyCommit', 'AI_EvergreenOfferJourneyAttempt') GROUP BY TABLE_NAME, INDEX_NAME, NON_UNIQUE`,
+		)
+		expect(rows).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					INDEX_NAME: 'EvergreenOfferJourneyCommit_admission_contact_uq',
+					NON_UNIQUE: 0,
+					columnNames: 'admissionContactId',
+				}),
+				expect.objectContaining({
+					INDEX_NAME: 'EvergreenOfferJourneyCommit_legacy_admission_idx',
+					columnNames: 'admissionContactId,actorVersion',
+				}),
+				expect.objectContaining({
+					INDEX_NAME: 'EvergreenOfferJourneyAttempt_token_uq',
+					NON_UNIQUE: 0,
+					columnNames: 'claimToken',
+				}),
+				expect.objectContaining({
+					INDEX_NAME: 'EvergreenOfferJourneyAttempt_recovery_idx',
+					columnNames: 'status,leaseExpiresAt,idempotencyKey',
+				}),
+			]),
+		)
+	})
+
+	it('claims once across connections and never reclaims after crash, lease or window expiry', async () => {
+		const start = entry()
+		await Effect.runPromise(first.ledger.commit(start.commit))
+		const wake = wakeCommit(start.decision.next, 0, 'attempt-wake')
+		await Effect.runPromise(first.ledger.commit(wake))
+		const intent = wake.decision.sideEffectIntents[0]
+		if (!intent || intent.type !== 'SendMessage')
+			throw new Error('Expected message')
+		const now = new Date(intent.notBefore)
+		const leaseExpiresAt = new Date(now.getTime() + 60_000)
+		const request = {
+			idempotencyKey: intent.idempotencyKey,
+			journeyId: intent.journeyId,
+			now,
+			leaseExpiresAt,
+		}
+		const results = await Promise.all([
+			Effect.runPromise(first.attempts.claim(request)),
+			Effect.runPromise(second.attempts.claim(request)),
+		])
+		expect(results.filter((result) => result.type === 'Claimed')).toHaveLength(
+			1,
+		)
+		expect(
+			results.filter((result) => result.type === 'AlreadyAttempted'),
+		).toHaveLength(1)
+		const winner = results.find((result) => result.type === 'Claimed')
+		if (!winner || winner.type !== 'Claimed') throw new Error('No winner')
+		for (const expired of [
+			leaseExpiresAt,
+			new Date(intent.notAfter),
+			new Date('2027-01-01'),
+		]) {
+			expect(
+				await Effect.runPromise(
+					second.attempts.claim({
+						...request,
+						now: expired,
+						leaseExpiresAt: new Date(expired.getTime() + 60_000),
+					}),
+				),
+			).toEqual({ type: 'AlreadyAttempted', state: 'HeldUncertain' })
+		}
+		const identity = {
+			idempotencyKey: intent.idempotencyKey,
+			journeyId: intent.journeyId,
+			claimToken: winner.evidence.claimToken,
+		}
+		const outcome = {
+			type: 'Accepted' as const,
+			providerReceiptId: 'provider-ack',
+			appliedAt: new Date(now.getTime() + 1000).toISOString(),
+		}
+		for (const mismatch of [
+			{ claimToken: randomUUID() },
+			{ journeyId: 'wrong-journey' },
+			{ idempotencyKey: 'wrong-intent' },
+		]) {
+			const refused = await Effect.runPromise(
+				Effect.either(
+					first.attempts.settle({
+						...identity,
+						...mismatch,
+						outcome,
+						now: new Date(now.getTime() + 2000),
+					}),
+				),
+			)
+			expect(Either.isLeft(refused) && refused.left.type).toBe('AttemptRefused')
+		}
+		const expiredSettlement = await Effect.runPromise(
+			Effect.either(
+				first.attempts.settle({ ...identity, outcome, now: leaseExpiresAt }),
+			),
+		)
+		expect(
+			Either.isLeft(expiredSettlement) && expiredSettlement.left.type,
+		).toBe('AttemptRefused')
+		const recovery = await Effect.runPromise(
+			second.attempts.recovery({ now: leaseExpiresAt, limit: 1 }),
+		)
+		expect(recovery).toHaveLength(1)
+		expect(recovery[0]?.state).toBe('HeldUncertain')
+		const reconciled = await Effect.runPromise(
+			second.attempts.reconcileAccepted({
+				...identity,
+				outcome,
+				now: leaseExpiresAt,
+			}),
+		)
+		expect(reconciled.status).toBe('Accepted')
+		expect(
+			await Effect.runPromise(
+				first.attempts.reconcileAccepted({
+					...identity,
+					outcome,
+					now: leaseExpiresAt,
+				}),
+			),
+		).toEqual(reconciled)
+		expect(await intentStatus(adminPool, intent.idempotencyKey)).toBe('Pending')
+		expect(
+			await Effect.runPromise(
+				first.attempts.recovery({ now: leaseExpiresAt, limit: 1 }),
+			),
+		).toEqual([])
+	})
+
+	it.each(['Accepted', 'HeldUncertain', 'KnownNotApplied'] as const)(
+		'never reclaims an explicit %s outcome',
+		async (status) => {
+			const start = entry()
+			await Effect.runPromise(first.ledger.commit(start.commit))
+			const wake = wakeCommit(start.decision.next, 0, 'held-wake')
+			await Effect.runPromise(first.ledger.commit(wake))
+			const intent = wake.decision.sideEffectIntents[0]
+			if (!intent || intent.type !== 'SendMessage')
+				throw new Error('Expected message')
+			const now = new Date(intent.notBefore)
+			const request = {
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				now,
+				leaseExpiresAt: new Date(now.getTime() + 60_000),
+			}
+			const claim = await Effect.runPromise(first.attempts.claim(request))
+			if (claim.type !== 'Claimed') throw new Error('Expected claim')
+			const outcome =
+				status === 'Accepted'
+					? {
+							type: status,
+							providerReceiptId: 'accepted-receipt',
+							appliedAt: now.toISOString(),
+						}
+					: status === 'HeldUncertain'
+						? { type: status, reason: 'Cancelled' as const }
+						: { type: status, reason: 'ProviderRefused' as const }
+			const settlement = {
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				claimToken: claim.evidence.claimToken,
+				now,
+				outcome,
+			}
+			const settled = await Effect.runPromise(first.attempts.settle(settlement))
+			if (status === 'Accepted') {
+				expect(
+					await Effect.runPromise(second.attempts.settle(settlement)),
+				).toEqual(settled)
+				const mismatch = await Effect.runPromise(
+					Effect.either(
+						second.attempts.settle({
+							...settlement,
+							outcome: {
+								type: 'Accepted',
+								providerReceiptId: 'conflicting',
+								appliedAt: now.toISOString(),
+							},
+						}),
+					),
+				)
+				expect(Either.isLeft(mismatch) && mismatch.left.type).toBe(
+					'AttemptRefused',
+				)
+			}
+			expect(await Effect.runPromise(second.attempts.claim(request))).toEqual({
+				type: 'AlreadyAttempted',
+				state: status,
+			})
+			expect(
+				await countRows(adminPool, 'AI_EvergreenOfferJourneyAttempt'),
+			).toBe(1)
+		},
+	)
+
+	it('refuses expired fresh intent claims and unbounded recovery', async () => {
+		const start = entry()
+		await Effect.runPromise(first.ledger.commit(start.commit))
+		const wake = wakeCommit(start.decision.next, 0, 'expired-wake')
+		await Effect.runPromise(first.ledger.commit(wake))
+		const intent = wake.decision.sideEffectIntents[0]
+		if (!intent || intent.type !== 'SendMessage')
+			throw new Error('Expected message')
+		const now = new Date(intent.notAfter)
+		const result = await Effect.runPromise(
+			Effect.either(
+				first.attempts.claim({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+					now,
+					leaseExpiresAt: new Date(now.getTime() + 60_000),
+				}),
+			),
+		)
+		expect(Either.isLeft(result) && result.left.type).toBe('AttemptRefused')
+		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyAttempt')).toBe(
+			0,
+		)
+		const recovery = await Effect.runPromise(
+			Effect.either(first.attempts.recovery({ now, limit: 101 })),
+		)
+		expect(Either.isLeft(recovery)).toBe(true)
+	})
+
 	it.each(deliveryScenarios)(
 		'persists $name settlement evidence',
 		async (scenario) => {
@@ -376,7 +695,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 			`SELECT TABLE_NAME, COLUMN_NAME
 			 FROM information_schema.COLUMNS
 			 WHERE TABLE_SCHEMA = DATABASE()
-			   AND TABLE_NAME IN (?, ?, ?)
+			   AND TABLE_NAME IN (?, ?, ?, ?)
 			   AND COLUMN_NAME = 'format'`,
 			[...tableNames],
 		)
@@ -765,6 +1084,13 @@ integration('evergreen offer journey MySQL ledger', () => {
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyCommit')).toBe(0)
 		expect(await countRows(adminPool, 'AI_EvergreenOfferJourneyIntent')).toBe(0)
 		await adminPool.query(migration)
+		expect(
+			(
+				await Effect.runPromise(
+					first.ledger.commit(entry('after-rollback').commit),
+				)
+			).committed,
+		).toBe(true)
 	})
 
 	it('hard-stops mutation when the current commit is corrupt', async () => {
