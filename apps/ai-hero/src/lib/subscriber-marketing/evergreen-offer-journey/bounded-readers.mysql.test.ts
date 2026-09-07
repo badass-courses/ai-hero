@@ -15,6 +15,7 @@ import {
 	fixtureEntry,
 	fixtureWake,
 	sourceFixture,
+	currentCourseSourceFixture,
 } from './bounded-readers.fixtures'
 
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
@@ -135,6 +136,28 @@ integration('bounded reader MySQL contract', () => {
 		)
 		expect(Number(count[0]?.total)).toBe(0)
 	})
+	it('round-trips the current writer DeliverySettled payload through source SQL and canonical restoration', async () => {
+		const row = currentCourseSourceFixture()
+		await connected.database.insert(contactEvent).values(row)
+		const page = await Effect.runPromise(
+			connected.readers.source({
+				now: new Date(row.payloadSummary.coursePayload.payload.exhaustedAt),
+				limit: 10,
+			}),
+		)
+		expect(page.scanned).toBe(1)
+		expect(page.held).toEqual([])
+		expect(page.candidates).toHaveLength(1)
+		expect(page.candidates[0]).toMatchObject({
+			entryFactId: row.id,
+			contactId: row.contactId,
+			exhaustedAt: '2026-09-04T17:00:00.789Z',
+		})
+		expect(page.nextCursor).toEqual({
+			id: row.id,
+			at: '2026-09-04T17:00:00.000Z',
+		})
+	})
 	it('uses the source event-time index without scanning unrelated event history', async () => {
 		const row = sourceFixture()
 		await connected.database.insert(contactEvent).values(row)
@@ -215,6 +238,7 @@ integration('bounded reader MySQL contract', () => {
 		const expired = await Effect.runPromise(
 			connected.readers.intents({ now: new Date(intent.notAfter), limit: 100 }),
 		)
+		expect(expired.candidates.length).toBeGreaterThan(0)
 		expect(
 			expired.candidates.every((candidate) => candidate.window === 'Expired'),
 		).toBe(true)
