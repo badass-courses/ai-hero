@@ -79,5 +79,6 @@ jobs:
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/drizzle-ledger.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/current-authority-repository.mysql.test.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey/message-executor.mysql.test.ts
           src/lib/subscriber-marketing/course-sequence-exhaustion.mysql.test.ts
           src/lib/subscriber-marketing/email-course-drizzle-ledger.mysql.test.ts
