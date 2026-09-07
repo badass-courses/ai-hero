@@ -1,9 +1,11 @@
 import { Effect, Either } from 'effect'
 
-import type {
-	AcceptedOutcome,
-	AttemptEvidence,
-	AttemptOutcome,
+import {
+	refusalObservation,
+	type AcceptedOutcome,
+	type AttemptEvidence,
+	type AttemptOutcome,
+	type ObservedKnownNotAppliedOutcome,
 } from './attempt-evidence'
 import type {
 	DeliveryOutcome,
@@ -127,6 +129,16 @@ export type DomainSettlement =
 			readonly type: 'Unsettled'
 			readonly stimulusId: StimulusId
 			readonly reason: string
+	  }
+	| {
+			/**
+			 * A stored refusal with no recorded observation instant (legacy row). No
+			 * substitute time exists, so no stimulus is built. Held until an operator
+			 * decides; nothing is repaired or rewritten.
+			 */
+			readonly type: 'EvidenceGap'
+			readonly stimulusId: StimulusId
+			readonly reason: 'refusal-observation-missing'
 	  }
 	| {
 			/** Command failure; the recorded attempt outcome remains for recovery. */
@@ -526,8 +538,10 @@ export function createMessageIntentExecutor(
 
 	/**
 	 * Submits one DeliverySettled receipt bound to the exact attempt token. Accepted
-	 * receipts settle at the recorded acceptance instant, so replays are byte-identical.
-	 * Refusals carry no recorded instant; an earlier commit under the same stimulus ID wins.
+	 * receipts settle at the recorded acceptance instant and refusals at the recorded
+	 * observation instant, so live and recovery replays are byte-identical and no clock
+	 * is read here. A legacy refusal without an observation is an evidence gap: an
+	 * existing commit under the exact stimulus ID is reported, otherwise nothing is built.
 	 */
 	const settleDomain = (
 		intent: SendMessageIntent,
@@ -547,10 +561,17 @@ export function createMessageIntentExecutor(
 				} as const
 			if (existing.right)
 				return { type: 'AlreadyCommitted', stimulusId } as const
-			const settledAt =
+			const observation =
 				outcome.type === 'Accepted'
-					? (outcome.appliedAt as IsoInstant)
-					: yield* readClock('attempt-recorded')
+					? ({ type: 'Known', observedAt: outcome.appliedAt } as const)
+					: refusalObservation(outcome)
+			if (observation.type === 'Unknown')
+				return {
+					type: 'EvidenceGap',
+					stimulusId,
+					reason: 'refusal-observation-missing',
+				} as const
+			const settledAt = observation.observedAt as IsoInstant
 			const stimulus: DeliverySettled = {
 				type: 'DeliverySettled',
 				stimulusId,
@@ -593,12 +614,23 @@ export function createMessageIntentExecutor(
 				: ({ type: 'Committed', stimulusId } as const)
 		})
 
+	/**
+	 * Outcomes this executor may write. A refusal must carry the instant it was actually
+	 * observed; the storage-compatible settle signature would accept a legacy shape, so
+	 * the narrower type here is what stops an unobserved refusal from compiling.
+	 */
+	type WrittenOutcome =
+		| AcceptedOutcome
+		| ObservedKnownNotAppliedOutcome
+		| Extract<AttemptOutcome, { type: 'HeldUncertain' }>
+
 	const recordOutcome = (
 		evidence: AttemptEvidence,
-		outcome: AttemptOutcome,
+		outcome: WrittenOutcome,
 		sideEffects: SideEffectDisclosure,
 	) =>
 		Effect.gen(function* () {
+			// Fresh clock for settle validation, read after any observation was sampled.
 			const now = yield* readClock(sideEffects)
 			const identity = {
 				idempotencyKey: evidence.idempotencyKey,
@@ -720,10 +752,12 @@ export function createMessageIntentExecutor(
 					)
 				if (control) {
 					// Purchase and ineligibility are terminal facts the domain refuses on.
-					const outcome = {
+					// The observation instant is sampled once, when the refusal is observed.
+					const outcome: ObservedKnownNotAppliedOutcome = {
 						type: 'KnownNotApplied',
 						reason: 'PreflightRefused',
-					} as const
+						observedAt: yield* readClock('claimed'),
+					}
 					yield* recordOutcome(evidence, outcome, 'claimed')
 					const settlement = yield* settleDomain(
 						intent,
@@ -812,10 +846,14 @@ export function createMessageIntentExecutor(
 					} as const
 				}
 				// Permanent refusal: no acceptance, and one attempt per intent grants no retry.
-				const outcome = {
+				// The observation instant is sampled once, after the provider's answer. If the
+				// clock is unavailable here no time is manufactured: the executor fails with
+				// `provider-called` disclosed and the claim stays held, never refused.
+				const outcome: ObservedKnownNotAppliedOutcome = {
 					type: 'KnownNotApplied',
 					reason: 'ProviderRefused',
-				} as const
+					observedAt: yield* readClock('provider-called'),
+				}
 				yield* recordOutcome(evidence, outcome, 'provider-called')
 				const settlement = yield* settleDomain(
 					intent,

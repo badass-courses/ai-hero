@@ -139,6 +139,16 @@ function makeFakeAttempts(
 			JSON.stringify(evidence.outcome) === JSON.stringify(request.outcome)
 		)
 			return evidence
+		// Mirrors the boundary: a new refusal write needs an actual bounded observation.
+		if (
+			request.outcome.type === 'KnownNotApplied' &&
+			(request.outcome.observedAt === undefined ||
+				new Date(request.outcome.observedAt) < evidence.claimedAt ||
+				new Date(request.outcome.observedAt) > request.now)
+		)
+			throw new Refusal(
+				'Refusal observation is missing or outside claim evidence',
+			)
 		const state = attemptStateAt(evidence, request.now)
 		if (
 			reconcile
@@ -843,10 +853,15 @@ describe('SendMessage intent executor', () => {
 				},
 			})
 			expect(h.applied).toHaveLength(0)
-			expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({
-				status: 'KnownNotApplied',
-				outcome: { type: 'KnownNotApplied', reason: 'PreflightRefused' },
+			// The refusal carries the instant it was observed, sampled from the clock.
+			expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toEqual({
+				type: 'KnownNotApplied',
+				reason: 'PreflightRefused',
+				observedAt: h.now,
 			})
+			expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe(
+				'KnownNotApplied',
+			)
 			// The ledger records the refused intent, but the domain exits the journey
 			// on the fact instead of settling the slot.
 			expect(h.intentRecord(intent)?.status).toBe('Refused')
@@ -1197,12 +1212,24 @@ describe('SendMessage intent executor', () => {
 		})
 		expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({
 			status: 'KnownNotApplied',
-			outcome: { type: 'KnownNotApplied', reason: 'ProviderRefused' },
+			outcome: {
+				type: 'KnownNotApplied',
+				reason: 'ProviderRefused',
+				observedAt: h.now,
+			},
 		})
+		// The slot settles at the stored observation, which is what was committed.
 		expect(h.slot(intent)).toMatchObject({
 			status: 'Refused',
 			reason: 'provider-refused',
+			settledAt: h.now,
 		})
+		expect(
+			h.ledger
+				.records()
+				.stimuli.find((record) => record.stimulusId.includes(':attempt:'))
+				?.stimulus,
+		).toMatchObject({ type: 'DeliverySettled', settledAt: h.now })
 		expect(h.intentRecord(intent)?.status).toBe('Refused')
 		h.setDelivery(async () =>
 			Either.right({ providerReceiptId: 'fake:retry', appliedAt: h.now }),
@@ -1211,6 +1238,287 @@ describe('SendMessage intent executor', () => {
 			type: 'NotClaimed',
 			reason: 'IntentNotPending',
 		})
+		expect(h.applied).toHaveLength(1)
+	})
+
+	it('holds, never refuses, when the clock fails after a provider refusal', async () => {
+		const h = harness({ leaseMs: 1_000 })
+		const intent = await h.wake(0)
+		h.setDelivery(async () =>
+			Either.left({
+				type: 'EffectPermanentRefusal',
+				reason: 'kit-enrollment-http-422',
+			}),
+		)
+		// Clock works until the provider has answered, then fails at the observation.
+		const executor = h.build({
+			clock: {
+				now: Effect.suspend(() =>
+					h.applied.length > 0
+						? Effect.fail({ type: 'ClockUnavailable' as const, reason: 'skew' })
+						: Effect.succeed(h.now),
+				),
+			},
+		})
+		expect(
+			await Effect.runPromise(
+				Effect.either(executor.execute(h.target(intent))),
+			),
+		).toEqual(
+			Either.left({
+				type: 'ClockUnavailable',
+				reason: 'skew',
+				sideEffects: 'provider-called',
+			}),
+		)
+		expect(h.applied).toHaveLength(1)
+		// No manufactured instant: nothing recorded, nothing settled, claim still held.
+		expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({
+			status: 'Claimed',
+			outcome: null,
+		})
+		expect(h.intentRecord(intent)?.status).toBe('Pending')
+		expect(
+			h.ledger
+				.records()
+				.stimuli.some((record) => record.stimulusId.includes(':attempt:')),
+		).toBe(false)
+		h.now = plus(h.now, 5_000)
+		expect(await h.execute(intent)).toEqual({
+			type: 'AlreadyAttempted',
+			state: 'HeldUncertain',
+			sideEffects: 'none',
+		})
+		expect(
+			(await Effect.runPromise(h.executor.reconcileHeld({ limit: 5 })))
+				.results[0]?.result.type,
+		).toBe('AbsentHeld')
+		expect(h.applied).toHaveLength(1)
+	})
+
+	it('fake attempt store refuses unobserved, out-of-bound and conflicting refusal writes, and never rewrites a legacy row', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const claimed = await Effect.runPromise(
+			h.attempts.claim({
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				now: new Date(h.now),
+				leaseExpiresAt: new Date(Date.parse(h.now) + 60_000),
+			}),
+		)
+		if (claimed.type !== 'Claimed') throw new Error('Expected claim')
+		const identity = {
+			idempotencyKey: intent.idempotencyKey,
+			journeyId: intent.journeyId,
+			claimToken: claimed.evidence.claimToken,
+		}
+		const now = new Date(plus(h.now, 500))
+		const refusal = {
+			type: 'KnownNotApplied',
+			reason: 'ProviderRefused',
+		} as const
+		const settle = (outcome: AttemptOutcome, at = now) =>
+			Effect.runPromise(
+				Effect.either(h.attempts.settle({ ...identity, now: at, outcome })),
+			)
+		for (const outcome of [
+			refusal,
+			{ ...refusal, observedAt: plus(h.now, -1) },
+			{ ...refusal, observedAt: plus(h.now, 501) },
+		]) {
+			const result = await settle(outcome)
+			expect(Either.isLeft(result) && result.left).toEqual({
+				type: 'AttemptRefused',
+				reason: 'Refusal observation is missing or outside claim evidence',
+			})
+		}
+		expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe('Claimed')
+		const observed = { ...refusal, observedAt: plus(h.now, 250) }
+		const first = await settle(observed)
+		expect(Either.isRight(first) && first.right.outcome).toEqual(observed)
+		// Exact replay reads the saved evidence; a different instant loses to the first.
+		expect(await settle(observed, new Date(plus(h.now, 90_000)))).toEqual(first)
+		for (const conflicting of [
+			{ ...refusal, observedAt: plus(h.now, 251) },
+			refusal,
+		]) {
+			expect(Either.isLeft(await settle(conflicting))).toBe(true)
+		}
+		expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toEqual(
+			observed,
+		)
+		// A legacy row (no observation) replays exactly and refuses an observed rewrite.
+		const legacy = decodeAttempt({
+			...h.attempts.rows.get(intent.idempotencyKey)!,
+			outcome: refusal,
+		})
+		h.attempts.rows.set(intent.idempotencyKey, legacy)
+		expect(await settle(refusal)).toEqual(Either.right(legacy))
+		expect(Either.isLeft(await settle(observed))).toBe(true)
+		expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(legacy)
+	})
+
+	it('holds a legacy refusal without an observation as an evidence gap: no stimulus, no substitute time', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const claimed = await Effect.runPromise(
+			h.attempts.claim({
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				now: new Date(h.now),
+				leaseExpiresAt: new Date(Date.parse(h.now) + 60_000),
+			}),
+		)
+		if (claimed.type !== 'Claimed') throw new Error('Expected claim')
+		// A row written before observations existed: status and outcome, no instant.
+		const legacy = decodeAttempt({
+			...claimed.evidence,
+			status: 'KnownNotApplied',
+			outcome: { type: 'KnownNotApplied', reason: 'ProviderRefused' },
+		})
+		h.attempts.rows.set(intent.idempotencyKey, legacy)
+		const advances: unknown[] = []
+		const recording: Pick<EvergreenOfferJourneyService, 'advance'> = {
+			advance: (stimulus) =>
+				Effect.suspend(() => {
+					advances.push(stimulus)
+					return h.service.advance(stimulus)
+				}),
+		}
+		h.now = plus(h.now, 120_000)
+		const before = h.clockReads
+		const page = await Effect.runPromise(
+			h.build({ service: recording }).settleRecordedOutcomes({ limit: 10 }),
+		)
+		const stimulusId = `${intent.idempotencyKey}:attempt:${legacy.claimToken}:delivery-settled`
+		expect(page.results).toEqual([
+			{
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				attemptStatus: 'KnownNotApplied',
+				settlement: {
+					type: 'EvidenceGap',
+					stimulusId,
+					reason: 'refusal-observation-missing',
+				},
+			},
+		])
+		expect(page).toMatchObject({ scanned: 1, end: true })
+		expect(advances).toHaveLength(0)
+		// Only the page's own clock read; none for a settlement instant.
+		expect(h.clockReads - before).toBe(1)
+		expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(legacy)
+		expect(h.intentRecord(intent)?.status).toBe('Pending')
+		expect(h.slot(intent).status).toBe('IntentCommitted')
+		expect(
+			h.ledger
+				.records()
+				.stimuli.some((record) => record.stimulusId === stimulusId),
+		).toBe(false)
+		// A receipt already committed under the exact stimulus ID is reported as is.
+		const receipt = await Effect.runPromise(
+			h.ledger.findCommittedStimulus(entry.stimulusId),
+		)
+		if (!receipt) throw new Error('Expected the entry receipt')
+		const committed = await Effect.runPromise(
+			h
+				.build({
+					service: recording,
+					ledger: {
+						...h.ledger,
+						findCommittedStimulus: (id: string) =>
+							Effect.succeed(id === stimulusId ? receipt : null),
+					},
+				})
+				.settleRecordedOutcomes({ limit: 10 }),
+		)
+		expect(committed.results[0]?.settlement).toEqual({
+			type: 'AlreadyCommitted',
+			stimulusId,
+		})
+		expect(advances).toHaveLength(0)
+		expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(legacy)
+	})
+
+	it('replays a crashed refusal with a byte-identical stimulus at the stored observation, not the recovery clock', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const observedAt = h.now
+		h.setDelivery(async () =>
+			Either.left({
+				type: 'EffectPermanentRefusal',
+				reason: 'kit-enrollment-http-422',
+			}),
+		)
+		const stimuli: unknown[] = []
+		const crashing: Pick<EvergreenOfferJourneyService, 'advance'> = {
+			advance: (stimulus) =>
+				Effect.suspend(() => {
+					stimuli.push(stimulus)
+					return Effect.fail({
+						type: 'JourneyCommitUnavailable' as const,
+						reason: 'process died',
+					})
+				}),
+		}
+		expect(
+			await h.execute(intent, h.build({ service: crashing })),
+		).toMatchObject({
+			type: 'Refused',
+			refusal: 'ProviderRefused',
+			settlement: { type: 'Failed', error: 'JourneyCommitUnavailable' },
+		})
+		expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toEqual({
+			type: 'KnownNotApplied',
+			reason: 'ProviderRefused',
+			observedAt,
+		})
+		expect(h.intentRecord(intent)?.status).toBe('Pending')
+		const recording: Pick<EvergreenOfferJourneyService, 'advance'> = {
+			advance: (stimulus) =>
+				Effect.suspend(() => {
+					stimuli.push(stimulus)
+					return h.service.advance(stimulus)
+				}),
+		}
+		h.now = plus(observedAt, 90_000)
+		const recovered = await Effect.runPromise(
+			unpaged(
+				h.build({ service: recording }).settleRecordedOutcomes({ limit: 10 }),
+			),
+		)
+		expect(recovered).toEqual([
+			{
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				attemptStatus: 'KnownNotApplied',
+				settlement: {
+					type: 'Committed',
+					stimulusId: `${intent.idempotencyKey}:attempt:${h.attempts.rows.get(intent.idempotencyKey)!.claimToken}:delivery-settled`,
+				},
+			},
+		])
+		// Live and recovery built the same full payload despite the clock moving on.
+		expect(stimuli).toHaveLength(2)
+		expect(stimuli[1]).toEqual(stimuli[0])
+		expect(stimuli[0]).toMatchObject({
+			type: 'DeliverySettled',
+			settledAt: observedAt,
+			outcome: { type: 'MessageRefused', reason: 'provider-refused' },
+		})
+		expect(h.slot(intent)).toMatchObject({
+			status: 'Refused',
+			settledAt: observedAt,
+		})
+		expect(
+			await Effect.runPromise(
+				unpaged(
+					h.build({ service: recording }).settleRecordedOutcomes({ limit: 10 }),
+				),
+			),
+		).toEqual([])
+		expect(stimuli).toHaveLength(2)
 		expect(h.applied).toHaveLength(1)
 	})
 

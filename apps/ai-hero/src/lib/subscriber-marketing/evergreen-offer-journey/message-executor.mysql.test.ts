@@ -598,4 +598,134 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 			expect(await intentRow(intent)).toMatchObject({ status: 'Applied' })
 		expect(applied).toHaveLength(3)
 	})
+	it('stores the observed instant of a live permanent refusal and reads it back unchanged', async () => {
+		const intent = await persistedB1Intent()
+		let posts = 0
+		const refusing: DeliveryPort = {
+			apply: () =>
+				Effect.suspend(() => {
+					posts++
+					return Effect.fail({
+						type: 'EffectPermanentRefusal' as const,
+						reason: 'kit-enrollment-http-422',
+					})
+				}),
+		}
+		const observedAt = now
+		const result = await Effect.runPromise(
+			executor(first, { delivery: refusing }).execute({
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+			}),
+		)
+		expect(result).toMatchObject({
+			type: 'Refused',
+			refusal: 'ProviderRefused',
+			applyInvocations: 1,
+			settlement: { type: 'Committed' },
+		})
+		expect(posts).toBe(1)
+		const row = await attemptRow(intent)
+		expect(row).toMatchObject({
+			status: 'KnownNotApplied',
+			outcome: {
+				type: 'KnownNotApplied',
+				reason: 'ProviderRefused',
+				observedAt,
+			},
+		})
+		expect(await intentRow(intent)).toMatchObject({ status: 'Refused' })
+		const loaded = await Effect.runPromise(second.ledger.load(intent.journeyId))
+		expect(
+			loaded?.messagePlan.bridge.find((slot) => slot.slotId === intent.slotId),
+		).toMatchObject({ status: 'Refused', settledAt: observedAt })
+		// Read back through the other connection's page decoder: same bytes, no rewrite.
+		now = plus(now, 120_000)
+		expect(
+			await Effect.runPromise(
+				unpaged(executor(second).settleRecordedOutcomes({ limit: 10 })),
+			),
+		).toEqual([])
+		expect(await attemptRow(intent)).toEqual(row)
+		expect(
+			await Effect.runPromise(
+				executor(second, { delivery: refusing }).execute({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+				}),
+			),
+		).toEqual({
+			type: 'NotClaimed',
+			reason: 'IntentNotPending',
+			sideEffects: 'none',
+		})
+		expect(posts).toBe(1)
+	})
+
+	it('recovers a crashed permanent refusal at the stored observation, not the recovery clock', async () => {
+		const intent = await persistedB1Intent()
+		const refusing: DeliveryPort = {
+			apply: () =>
+				Effect.fail({
+					type: 'EffectPermanentRefusal' as const,
+					reason: 'kit-enrollment-http-422',
+				}),
+		}
+		const crashing: Pick<EvergreenOfferJourneyService, 'advance'> = {
+			advance: () =>
+				Effect.fail({
+					type: 'JourneyCommitUnavailable' as const,
+					reason: 'process died',
+				}),
+		}
+		const observedAt = now
+		expect(
+			await Effect.runPromise(
+				executor(first, { delivery: refusing, service: crashing }).execute({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+				}),
+			),
+		).toMatchObject({
+			type: 'Refused',
+			settlement: { type: 'Failed', error: 'JourneyCommitUnavailable' },
+		})
+		const row = await attemptRow(intent)
+		expect(row).toMatchObject({
+			status: 'KnownNotApplied',
+			outcome: {
+				type: 'KnownNotApplied',
+				reason: 'ProviderRefused',
+				observedAt,
+			},
+		})
+		expect(await intentRow(intent)).toMatchObject({ status: 'Pending' })
+		now = plus(now, 120_000)
+		const recovered = await Effect.runPromise(
+			unpaged(executor(second).settleRecordedOutcomes({ limit: 10 })),
+		)
+		expect(recovered).toEqual([
+			{
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				attemptStatus: 'KnownNotApplied',
+				settlement: {
+					type: 'Committed',
+					stimulusId: `${intent.idempotencyKey}:attempt:${row?.claimToken}:delivery-settled`,
+				},
+			},
+		])
+		expect(await intentRow(intent)).toMatchObject({ status: 'Refused' })
+		const loaded = await Effect.runPromise(second.ledger.load(intent.journeyId))
+		expect(
+			loaded?.messagePlan.bridge.find((slot) => slot.slotId === intent.slotId),
+		).toMatchObject({ status: 'Refused', settledAt: observedAt })
+		expect(await attemptRow(intent)).toEqual(row)
+		expect(
+			await Effect.runPromise(
+				unpaged(executor(second).settleRecordedOutcomes({ limit: 10 })),
+			),
+		).toEqual([])
+		expect(applied).toHaveLength(0)
+	})
 })

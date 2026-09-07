@@ -154,6 +154,48 @@ it.each([
 	},
 )
 
+it('refuses to rewrite a legacy refusal with an observed one, without an UPDATE', async () => {
+	const identity = {
+		idempotencyKey: 'intent-legacy',
+		journeyId: 'journey-legacy',
+		claimToken: 'dcbf2377-2c3f-4b12-b67e-a732352f17ad',
+	}
+	const row = decodeAttempt({
+		...identity,
+		format: 'evergreen-offer-journey.attempt.v1',
+		status: 'KnownNotApplied',
+		claimedAt: new Date('2026-09-04T17:00:00.000Z'),
+		leaseExpiresAt: new Date('2026-09-04T17:01:00.000Z'),
+		outcome: { type: 'KnownNotApplied', reason: 'ProviderRefused' },
+	})
+	const update = vi.fn(() => {
+		throw new Error('Unexpected write')
+	})
+	const tx = {
+		execute: async () => [],
+		query: { evergreenOfferJourneyAttempt: { findFirst: async () => row } },
+		update,
+	}
+	const repository = createDrizzleJourneyAttempts({
+		transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
+	} as unknown as EvergreenOfferJourneyDatabase)
+	const result = await Effect.runPromise(
+		Effect.either(
+			repository.settle({
+				...identity,
+				now: new Date('2026-09-04T17:00:30.000Z'),
+				outcome: {
+					type: 'KnownNotApplied',
+					reason: 'ProviderRefused',
+					observedAt: '2026-09-04T17:00:10.000Z',
+				},
+			}),
+		),
+	)
+	expect(Either.isLeft(result) && result.left.type).toBe('AttemptRefused')
+	expect(update).not.toHaveBeenCalled()
+})
+
 it.each(['recoveryPage', 'recordedOutcomeRecoveryPage'] as const)(
 	'%s validates cursor and page bounds before database access',
 	async (method) => {
