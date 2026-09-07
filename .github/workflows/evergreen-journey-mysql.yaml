@@ -75,9 +75,11 @@ jobs:
       - name: Run guarded journey and course persistence suite
         env:
           AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
+          AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
         run: >-
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/drizzle-ledger.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/current-authority-repository.mysql.test.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority.mysql.test.ts
           src/lib/subscriber-marketing/course-sequence-exhaustion.mysql.test.ts
           src/lib/subscriber-marketing/email-course-drizzle-ledger.mysql.test.ts
