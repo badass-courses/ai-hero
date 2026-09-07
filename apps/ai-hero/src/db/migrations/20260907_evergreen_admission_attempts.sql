@@ -18,4 +18,4 @@ CREATE TABLE `AI_EvergreenOfferJourneyAttempt` (
   PRIMARY KEY (`idempotencyKey`),
   UNIQUE KEY `EvergreenOfferJourneyAttempt_token_uq` (`claimToken`),
   KEY `EvergreenOfferJourneyAttempt_recovery_idx` (`status`, `leaseExpiresAt`, `idempotencyKey`)
-);
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;

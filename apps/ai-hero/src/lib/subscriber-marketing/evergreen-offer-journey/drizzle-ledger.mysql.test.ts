@@ -169,6 +169,7 @@ function deliveryCommit(
 		type: 'Applied',
 		providerReceiptId: `provider:${stimulusName}`,
 	},
+	observedAt = intent.notBefore,
 ) {
 	const stimulus: EvergreenOfferStimulus = {
 		type: 'DeliverySettled',
@@ -184,7 +185,7 @@ function deliveryCommit(
 		stimulus,
 		currentFacts: facts({ existingJourneyId: current.journeyId }),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
-		now: stimulus.settledAt,
+		now: observedAt,
 	})
 	if (!result.ok || result.decision.type !== 'Accepted') {
 		throw new Error('Expected accepted delivery receipt')
@@ -245,7 +246,7 @@ integration('evergreen offer journey MySQL ledger', () => {
 		})
 		databaseName = `aih_evergreen_journey_test_${randomUUID().replaceAll('-', '')}`
 		await serverPool.query(
-			`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin`,
+			`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`,
 		)
 		const databaseUrl = new URL(safeServerUrl)
 		databaseUrl.pathname = `/${databaseName}`
@@ -415,6 +416,37 @@ integration('evergreen offer journey MySQL ledger', () => {
 		expect(Either.isLeft(result) && result.left.type).toBe(
 			'JourneyConstraintViolation',
 		)
+	})
+
+	it('declares binary table and identity-column collation despite ai_ci database defaults', async () => {
+		const [defaults] = await adminPool.query<
+			Array<RowDataPacket & { collationName: string }>
+		>(
+			'SELECT DEFAULT_COLLATION_NAME AS collationName FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()',
+		)
+		expect(defaults[0]?.collationName).toBe('utf8mb4_0900_ai_ci')
+		const [tables] = await adminPool.query<
+			Array<RowDataPacket & { TABLE_COLLATION: string }>
+		>(
+			'SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+			['AI_EvergreenOfferJourneyAttempt'],
+		)
+		expect(tables[0]?.TABLE_COLLATION).toBe('utf8mb4_bin')
+		const [columns] = await adminPool.query<
+			Array<RowDataPacket & { COLLATION_NAME: string }>
+		>(
+			'SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME IN (?, ?, ?)',
+			[
+				'AI_EvergreenOfferJourneyAttempt',
+				'idempotencyKey',
+				'journeyId',
+				'claimToken',
+			],
+		)
+		expect(columns).toHaveLength(3)
+		expect(
+			columns.every((column) => column.COLLATION_NAME === 'utf8mb4_bin'),
+		).toBe(true)
 	})
 
 	it('installs unique admission/token keys and bounded recovery indexes', async () => {
@@ -598,26 +630,29 @@ integration('evergreen offer journey MySQL ledger', () => {
 				outcome,
 			}
 			const settled = await Effect.runPromise(first.attempts.settle(settlement))
-			if (status === 'Accepted') {
-				expect(
-					await Effect.runPromise(second.attempts.settle(settlement)),
-				).toEqual(settled)
-				const mismatch = await Effect.runPromise(
-					Effect.either(
-						second.attempts.settle({
-							...settlement,
-							outcome: {
-								type: 'Accepted',
-								providerReceiptId: 'conflicting',
-								appliedAt: now.toISOString(),
-							},
-						}),
-					),
-				)
-				expect(Either.isLeft(mismatch) && mismatch.left.type).toBe(
-					'AttemptRefused',
-				)
-			}
+			expect(
+				await Effect.runPromise(
+					second.attempts.settle({
+						...settlement,
+						now: request.leaseExpiresAt,
+					}),
+				),
+			).toEqual(settled)
+			const mismatch = await Effect.runPromise(
+				Effect.either(
+					second.attempts.settle({
+						...settlement,
+						outcome: {
+							type: 'Accepted',
+							providerReceiptId: 'conflicting',
+							appliedAt: now.toISOString(),
+						},
+					}),
+				),
+			)
+			expect(Either.isLeft(mismatch) && mismatch.left.type).toBe(
+				'AttemptRefused',
+			)
 			expect(await Effect.runPromise(second.attempts.claim(request))).toEqual({
 				type: 'AlreadyAttempted',
 				state: status,
@@ -625,6 +660,127 @@ integration('evergreen offer journey MySQL ledger', () => {
 			expect(
 				await countRows(adminPool, 'AI_EvergreenOfferJourneyAttempt'),
 			).toBe(1)
+		},
+	)
+
+	it.each([
+		{ accepted: true, missed: false },
+		{ accepted: false, missed: false },
+		{ accepted: true, missed: true },
+		{ accepted: false, missed: true },
+	])(
+		'recovers recorded outcome without reapplication: %j',
+		async ({ accepted, missed }) => {
+			const start = entry()
+			await Effect.runPromise(first.ledger.commit(start.commit))
+			const wake = wakeCommit(start.decision.next, 0, 'recorded-wake')
+			await Effect.runPromise(first.ledger.commit(wake))
+			const intent = wake.decision.sideEffectIntents[0]
+			if (!intent || intent.type !== 'SendMessage')
+				throw new Error('Expected message')
+			const now = new Date(intent.notBefore)
+			const request = {
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				now,
+				leaseExpiresAt: new Date(now.getTime() + 60_000),
+			}
+			const claim = await Effect.runPromise(first.attempts.claim(request))
+			if (claim.type !== 'Claimed') throw new Error('Expected claim')
+			const outcome = accepted
+				? {
+						type: 'Accepted' as const,
+						providerReceiptId: 'CaseSensitiveReceipt',
+						appliedAt: now.toISOString(),
+					}
+				: {
+						type: 'KnownNotApplied' as const,
+						reason: 'ProviderRefused' as const,
+					}
+			const identity = {
+				idempotencyKey: intent.idempotencyKey,
+				journeyId: intent.journeyId,
+				claimToken: claim.evidence.claimToken,
+			}
+			await Effect.runPromise(
+				first.attempts.settle({ ...identity, now, outcome }),
+			)
+			const wrongCase = await Effect.runPromise(
+				Effect.either(
+					second.attempts.claim({
+						...request,
+						idempotencyKey: intent.idempotencyKey.toUpperCase(),
+					}),
+				),
+			)
+			expect(Either.isLeft(wrongCase) && wrongCase.left.type).toBe(
+				'AttemptRefused',
+			)
+			if (accepted) {
+				const receiptCase = await Effect.runPromise(
+					Effect.either(
+						second.attempts.settle({
+							...identity,
+							now,
+							outcome: {
+								type: 'Accepted',
+								providerReceiptId: 'casesensitivereceipt',
+								appliedAt: now.toISOString(),
+							},
+						}),
+					),
+				)
+				expect(Either.isLeft(receiptCase)).toBe(true)
+			}
+			let aggregate = wake.decision.next
+			let observedAt = now
+			if (missed) {
+				const next = wakeCommit(aggregate, 1, 'recorded-next-slot')
+				await Effect.runPromise(first.ledger.commit(next))
+				aggregate = next.decision.next
+				observedAt = new Date(next.decidedAt)
+			}
+			expect(await intentStatus(adminPool, intent.idempotencyKey)).toBe(
+				missed ? 'Missed' : 'Pending',
+			)
+			const recovered = await Effect.runPromise(
+				second.attempts.recordedOutcomeRecovery({ now: observedAt, limit: 1 }),
+			)
+			expect(recovered).toHaveLength(1)
+			expect(recovered[0]?.intent).toEqual(intent)
+			expect(recovered[0]?.evidence.outcome).toEqual(outcome)
+			await Effect.runPromise(
+				first.ledger.commit(
+					deliveryCommit(
+						aggregate,
+						intent,
+						'recorded-domain-settled',
+						accepted
+							? { type: 'Applied', providerReceiptId: 'CaseSensitiveReceipt' }
+							: { type: 'MessageRefused', reason: 'provider-refused' },
+						instant(observedAt.toISOString()),
+					),
+				),
+			)
+			expect(
+				await Effect.runPromise(
+					second.attempts.recordedOutcomeRecovery({
+						now: observedAt,
+						limit: 1,
+					}),
+				),
+			).toEqual([])
+			expect(
+				(
+					await Effect.runPromise(
+						second.attempts.claim({
+							...request,
+							now: observedAt,
+							leaseExpiresAt: new Date(observedAt.getTime() + 60_000),
+						}),
+					)
+				).type,
+			).toBe('AlreadyAttempted')
 		},
 	)
 

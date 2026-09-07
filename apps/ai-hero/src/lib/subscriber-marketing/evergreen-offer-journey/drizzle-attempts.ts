@@ -3,7 +3,7 @@ import {
 	evergreenOfferJourneyAttempt as attempts,
 	evergreenOfferJourneyIntent as intents,
 } from '@/db/evergreen-offer-journey-schema'
-import { and, asc, eq, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, lte, or, sql } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { z } from 'zod'
 import {
@@ -38,7 +38,8 @@ const recoveryInput = z
 	.strict()
 
 /** Dormant persistence only. A claim is NOT reusable control/authority permission.
- * The future executor must reread both immediately before I/O. No method retries,
+ * The future executor must reread both immediately before I/O and source each
+ * operation's now from the shared Clock, never a cached claim-time value. No method retries,
  * reclaims, renews, calls providers, or marks a journey intent as sent.
  */
 export function createDrizzleJourneyAttempts(
@@ -154,30 +155,71 @@ export function createDrizzleJourneyAttempts(
 					.select()
 					.from(attempts)
 					.where(
-						and(
-							eq(attempts.status, 'Claimed'),
-							lte(attempts.leaseExpiresAt, request.now),
+						or(
+							and(
+								eq(attempts.status, 'Claimed'),
+								lte(attempts.leaseExpiresAt, request.now),
+							),
+							eq(attempts.status, 'HeldUncertain'),
 						),
 					)
 					.orderBy(asc(attempts.leaseExpiresAt), asc(attempts.idempotencyKey))
 					.limit(request.limit)
-				const remaining = request.limit - rows.length
-				if (remaining > 0)
-					rows.push(
-						...(await database
-							.select()
-							.from(attempts)
-							.where(eq(attempts.status, 'HeldUncertain'))
-							.orderBy(
-								asc(attempts.leaseExpiresAt),
-								asc(attempts.idempotencyKey),
-							)
-							.limit(remaining)),
-					)
 				return rows.map((row) => ({
 					evidence: decodeAttempt(row),
 					state: 'HeldUncertain' as const,
 				}))
+			})
+		},
+		/** Recorded provider outcome awaiting domain settlement, NEVER reapplication.
+		 * Missed SendMessage slots permit truthful late DeliverySettled correction.
+		 * Other effect types retain their existing Pending-only settlement policy.
+		 */
+		recordedOutcomeRecovery(input: z.infer<typeof recoveryInput>) {
+			return run(async () => {
+				const request = recoveryInput.parse(input)
+				return database.transaction(async (tx) => {
+					const rows = await tx
+						.select({ attempt: attempts, intentRow: intents })
+						.from(attempts)
+						.innerJoin(
+							intents,
+							eq(intents.idempotencyKey, attempts.idempotencyKey),
+						)
+						.where(
+							and(
+								inArray(attempts.status, ['Accepted', 'KnownNotApplied']),
+								or(
+									eq(intents.status, 'Pending'),
+									and(
+										eq(intents.status, 'Missed'),
+										eq(intents.intentType, 'SendMessage'),
+									),
+								),
+							),
+						)
+						.orderBy(
+							asc(attempts.status),
+							asc(attempts.leaseExpiresAt),
+							asc(attempts.idempotencyKey),
+						)
+						.limit(request.limit)
+					const recovered = []
+					for (const row of rows) {
+						const evidence = decodeAttempt(row.attempt)
+						const intent = await readIntentForAttempt(
+							tx as unknown as EvergreenOfferJourneyTransaction,
+							row.intentRow,
+						)
+						if (
+							evidence.journeyId !== intent.journeyId ||
+							evidence.idempotencyKey !== intent.idempotencyKey
+						)
+							throw new AttemptRefusal('Recorded attempt ownership mismatch')
+						recovered.push({ evidence, intent })
+					}
+					return recovered
+				})
 			})
 		},
 	}
@@ -203,7 +245,7 @@ export function createDrizzleJourneyAttempts(
 			if (request.now < evidence.claimedAt)
 				throw new AttemptRefusal('Settlement predates claim')
 			if (
-				evidence.status === 'Accepted' &&
+				evidence.status === request.outcome.type &&
 				JSON.stringify(evidence.outcome) === JSON.stringify(request.outcome)
 			)
 				return evidence
