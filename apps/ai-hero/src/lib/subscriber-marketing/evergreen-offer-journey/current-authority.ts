@@ -13,6 +13,7 @@ import {
   restoreCourseSequenceExhaustedPayload,
 } from "../course-sequence-exhaustion";
 import { SKILLS_WORKFLOW_PATH_SLUGS } from "../skills-workflow-path";
+import { AI_HERO_UNSUBSCRIBED_TAG_ID } from "../ai-hero-email-opt-in";
 import { EVERGREEN_OFFER_PRODUCT_ID, type EligibilityFacts } from "./domain";
 import type { JourneyCommandError, OfferAuthority } from "./ports";
 import {
@@ -417,6 +418,127 @@ export function createCurrentOfferAuthority(args: {
   };
 }
 
+export type CurrentSubscriberTagsPageRequest = {
+  subscriberId: string;
+  after: string | null;
+  limit: 100;
+};
+/**
+ * Application-owned evidence from an unfiltered subscriber-tag page read.
+ * The caller unwraps provider/CLI envelopes, binds the actual requested subscriber
+ * and cursor, stamps the read interval, and reports BOTH transport truncation and
+ * provider pagination. Never synthesize a complete page from a missing wrapper.
+ */
+export type CurrentSubscriberTagsPageEvidence = {
+  subscriberId: string;
+  after: string | null;
+  tags: readonly { id: string | number }[];
+  readStartedAt: string;
+  readAt: string;
+  truncated: boolean;
+  pagination:
+    | { hasNextPage: true; nextCursor: string }
+    | { hasNextPage: false; nextCursor: null };
+};
+type CurrentSubscriberTagsPageReader = (
+  request: CurrentSubscriberTagsPageRequest,
+) => Promise<unknown>;
+
+/** A bounded read, with no retries: incomplete evidence is never absence. */
+async function readCurrentExclusionTags(args: {
+  subscriberId: string;
+  exclusionTagId: typeof AI_HERO_UNSUBSCRIBED_TAG_ID;
+  getSubscriberTagsPage: CurrentSubscriberTagsPageReader;
+  now: () => Date;
+}): Promise<{ type: "Excluded" | "Absent"; evidence: string }> {
+  if (
+    args.exclusionTagId !== AI_HERO_UNSUBSCRIBED_TAG_ID ||
+    typeof args.getSubscriberTagsPage !== "function"
+  )
+    return unavailable(
+      "Current exclusion tag reader or approved configuration is unavailable",
+    );
+  let after: string | null = null;
+  const cursors = new Set<string>();
+  const evidence = createHash("sha256");
+  for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+    const startedAt = instant(args.now());
+    const rawPage = await args.getSubscriberTagsPage({
+      subscriberId: args.subscriberId,
+      after,
+      limit: 100,
+    });
+    const completedAt = instant(args.now());
+    const parsed = z
+      .object({
+        subscriberId: Text,
+        after: Text.nullable(),
+        tags: z
+          .array(
+            z.object({
+              id: z.union([
+                z.string().regex(/^[1-9][0-9]*$/),
+                z.number().int().positive().safe(),
+              ]),
+            }),
+          )
+          .max(100),
+        readStartedAt: Text,
+        readAt: Text,
+      })
+      .safeParse(rawPage);
+    if (!parsed.success)
+      return unavailable("Current subscriber tag evidence is malformed");
+    const page = parsed.data;
+    const sourceStart = parseIsoInstant(page.readStartedAt),
+      sourceEnd = parseIsoInstant(page.readAt);
+    if (page.subscriberId !== args.subscriberId || page.after !== after)
+      return inconsistent(
+        "Subscriber tag page does not match the requested identity/cursor",
+      );
+    if (
+      !sourceStart.ok ||
+      !sourceEnd.ok ||
+      sourceStart.value < startedAt ||
+      sourceEnd.value < sourceStart.value ||
+      sourceEnd.value > completedAt
+    )
+      return unavailable("Subscriber tag evidence is stale or from the future");
+    evidence.update(JSON.stringify(page));
+    // A bound, fresh positive hit can deny before pagination completeness is known.
+    if (page.tags.some((tag) => String(tag.id) === args.exclusionTagId))
+      return {
+        type: "Excluded",
+        evidence: `current-exclusion:${evidence.digest("hex")}`,
+      };
+    const coverage = z
+      .object({
+        truncated: z.literal(false),
+        pagination: z.discriminatedUnion("hasNextPage", [
+          z.object({ hasNextPage: z.literal(false), nextCursor: z.null() }),
+          z.object({ hasNextPage: z.literal(true), nextCursor: Text }),
+        ]),
+      })
+      .safeParse(rawPage);
+    if (!coverage.success)
+      return unavailable(
+        "Subscriber tag pagination or truncation evidence is incomplete",
+      );
+    evidence.update(JSON.stringify(coverage.data));
+    if (!coverage.data.pagination.hasNextPage)
+      return {
+        type: "Absent",
+        evidence: `current-exclusion-absent:${evidence.digest("hex")}`,
+      };
+    const next = coverage.data.pagination.nextCursor;
+    if (cursors.has(next))
+      return unavailable("Subscriber tag pagination repeated a cursor");
+    cursors.add(next);
+    after = next;
+  }
+  return unavailable("Subscriber tag pagination exceeded the bounded read");
+}
+
 /**
  * getSubscriber must return the RAW subscriber, as Course Builder's provider does.
  * A transport returning Kit's { subscriber } envelope must unwrap it first; mixed
@@ -424,11 +546,15 @@ export function createCurrentOfferAuthority(args: {
  *
  * Inject the owning definition from coursebuilder/email-preferences.ts. Its
  * newsletter defaultSubscribed:true is existing app policy, not missing-state
- * evidence. Only a known active subscriber can use the absent-field default.
+ * evidence. Only a known active subscriber can use the absent/null/blank-field
+ * default. Eligible additionally requires a fresh, complete unfiltered tag scan
+ * (at most ten pages of 100) against the app's all-updates unsubscribe tag.
  */
 export function createKitCurrentCommunicationReader(args: {
   getSubscriber: (subscriberId: string) => Promise<unknown>;
   preference: Pick<AppEmailPreferenceDefinition, "field" | "defaultSubscribed">;
+  getSubscriberTagsPage: CurrentSubscriberTagsPageReader;
+  exclusionTagId: typeof AI_HERO_UNSUBSCRIBED_TAG_ID;
   now: () => Date;
 }): CurrentCommunicationReader {
   return {
@@ -505,12 +631,27 @@ export function createKitCurrentCommunicationReader(args: {
         return unavailable(
           "Provider communication status is unknown or unconfirmed",
         );
+      let tagEvidence = "already-denied";
+      if (delivery.type === "Eligible") {
+        const exclusion = await readCurrentExclusionTags({
+          subscriberId: String(subscriber.id),
+          exclusionTagId: args.exclusionTagId,
+          getSubscriberTagsPage: args.getSubscriberTagsPage,
+          now: args.now,
+        });
+        tagEvidence = exclusion.evidence;
+        if (exclusion.type === "Excluded")
+          delivery = {
+            type: "Unsubscribed",
+            evidence: "current-provider-all-updates-exclusion",
+          };
+      }
       return {
         subscriberId: String(subscriber.id),
         email: normalizedEmail(subscriber.email_address),
         delivery,
         readAt: instant(args.now()),
-        evidence: `kit-current:${subscriber.state}:${raw || `app-default:${preference.field}:${preference.defaultSubscribed}`}`,
+        evidence: `kit-current:${subscriber.state}:${raw || `app-default:${preference.field}:${preference.defaultSubscribed}`}:${tagEvidence}`,
       };
     },
   };

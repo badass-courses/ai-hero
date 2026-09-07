@@ -1,4 +1,5 @@
 import { Effect, Either } from "effect";
+import { AI_HERO_UNSUBSCRIBED_TAG_ID } from "../ai-hero-email-opt-in";
 import {
   emailPreferenceDefinitionByKey,
   DEFAULT_EMAIL_PREFERENCE_KEY,
@@ -127,8 +128,25 @@ function fixture(
       fields: { pref_newsletter: "subscribed" },
     }),
   );
+  const getSubscriberTagsPage = vi.fn(
+    async (request: {
+      subscriberId: string;
+      after: string | null;
+      limit: number;
+    }): Promise<unknown> => ({
+      subscriberId: request.subscriberId,
+      after: request.after,
+      tags: [],
+      readStartedAt: at.toISOString(),
+      readAt: at.toISOString(),
+      truncated: false,
+      pagination: { hasNextPage: false, nextCursor: null },
+    }),
+  );
   const communication = createKitCurrentCommunicationReader({
     getSubscriber,
+    getSubscriberTagsPage,
+    exclusionTagId: AI_HERO_UNSUBSCRIBED_TAG_ID,
     preference,
     now: () => at,
   });
@@ -138,7 +156,13 @@ function fixture(
     communication,
     now: () => at,
   });
-  return { repository, getSubscriber, authority, communication };
+  return {
+    repository,
+    getSubscriber,
+    getSubscriberTagsPage,
+    authority,
+    communication,
+  };
 }
 const run = (authority: ReturnType<typeof createCurrentOfferAuthority>) =>
   Effect.runPromise(
@@ -493,6 +517,8 @@ describe("current Evergreen authority", () => {
       getSubscriber: f.getSubscriber,
       now: () => at,
       preference: value as Preference,
+      getSubscriberTagsPage: f.getSubscriberTagsPage,
+      exclusionTagId: AI_HERO_UNSUBSCRIBED_TAG_ID,
     });
     await expect(
       communication.read({ subscriberId: "123", email: "student@example.com" }),
@@ -556,6 +582,173 @@ describe("current Evergreen authority", () => {
     expect(Either.isLeft(result) && result.left.type).toBe(
       "AuthorityInconsistent",
     );
+  });
+  it("requires complete current exclusion-tag evidence for active/null preferences", async () => {
+    const f = fixture();
+    f.getSubscriber.mockResolvedValue({
+      id: 123,
+      email_address: "student@example.com",
+      state: "active",
+      fields: { pref_newsletter: null },
+    });
+    const result = await run(f.authority);
+    expect(Either.isRight(result) && result.right.delivery.type).toBe(
+      "Eligible",
+    );
+    expect(f.getSubscriberTagsPage).toHaveBeenCalledWith({
+      subscriberId: "123",
+      after: null,
+      limit: 100,
+    });
+  });
+  it.each([AI_HERO_UNSUBSCRIBED_TAG_ID, Number(AI_HERO_UNSUBSCRIBED_TAG_ID)])(
+    "denies exclusion %s immediately, even on an incomplete truncated page",
+    async (tagId) => {
+      const f = fixture();
+      f.getSubscriberTagsPage.mockResolvedValue({
+        subscriberId: "123",
+        after: null,
+        tags: [{ id: tagId }],
+        readStartedAt: at.toISOString(),
+        readAt: at.toISOString(),
+        truncated: true,
+      });
+      const result = await run(f.authority);
+      expect(Either.isRight(result) && result.right.delivery.type).toBe(
+        "Unsubscribed",
+      );
+      expect(f.getSubscriberTagsPage).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each([false, true])(
+    "scans every page before absence or a later exclusion hit (%s)",
+    async (excludedOnLastPage) => {
+      const f = fixture();
+      f.getSubscriberTagsPage.mockImplementation(async (request) => ({
+        subscriberId: request.subscriberId,
+        after: request.after,
+        tags: [
+          {
+            id:
+              excludedOnLastPage && request.after !== null
+                ? AI_HERO_UNSUBSCRIBED_TAG_ID
+                : "42",
+          },
+        ],
+        readStartedAt: at.toISOString(),
+        readAt: at.toISOString(),
+        truncated: false,
+        pagination:
+          request.after === null
+            ? { hasNextPage: true, nextCursor: "next" }
+            : { hasNextPage: false, nextCursor: null },
+      }));
+      const result = await run(f.authority);
+      expect(Either.isRight(result) && result.right.delivery.type).toBe(
+        excludedOnLastPage ? "Unsubscribed" : "Eligible",
+      );
+      expect(
+        f.getSubscriberTagsPage.mock.calls.map(([request]) => request.after),
+      ).toEqual([null, "next"]);
+    },
+  );
+  it.each([
+    { subscriberId: "other" },
+    { after: "wrong" },
+    { truncated: true },
+    { truncated: undefined },
+    { pagination: undefined },
+    { pagination: { hasNextPage: true, nextCursor: null } },
+    { pagination: { hasNextPage: false, nextCursor: "next" } },
+    { readStartedAt: "2026-09-07T18:59:59.000Z" },
+    { readAt: "2026-09-07T19:00:01.000Z" },
+    { tags: undefined },
+    { readAt: undefined },
+    { tags: Array.from({ length: 101 }, (_, id) => ({ id: String(id + 1) })) },
+  ])("holds incomplete or mismatched tag evidence %j", async (override) => {
+    const f = fixture();
+    const base = await f.getSubscriberTagsPage({
+      subscriberId: "123",
+      after: null,
+      limit: 100,
+    });
+    f.getSubscriberTagsPage.mockResolvedValue({
+      ...(base as object),
+      ...override,
+    });
+    expect(Either.isLeft(await run(f.authority))).toBe(true);
+  });
+  it.each(["reader", "config", "wrong-config", "failure"])(
+    "does not allow without usable tag %s",
+    async (mode) => {
+      const f = fixture();
+      const args = {
+        getSubscriber: f.getSubscriber,
+        preference:
+          emailPreferenceDefinitionByKey[DEFAULT_EMAIL_PREFERENCE_KEY],
+        now: () => at,
+        getSubscriberTagsPage:
+          mode === "reader" ? undefined : f.getSubscriberTagsPage,
+        exclusionTagId:
+          mode === "config"
+            ? undefined
+            : mode === "wrong-config"
+              ? "other"
+              : AI_HERO_UNSUBSCRIBED_TAG_ID,
+      };
+      if (mode === "failure")
+        f.getSubscriberTagsPage.mockRejectedValue(
+          new Error("private tag payload"),
+        );
+      const communication = createKitCurrentCommunicationReader(
+        args as Parameters<typeof createKitCurrentCommunicationReader>[0],
+      );
+      const authority = createCurrentOfferAuthority({
+        repository: f.repository,
+        communication,
+        now: () => at,
+        automationId: "evergreen-test",
+      });
+      const result = await run(authority);
+      expect(Either.isLeft(result)).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("private tag payload");
+    },
+  );
+  it.each(["cycle", "exhaustion"])(
+    "holds tag pagination %s instead of assuming absence",
+    async (mode) => {
+      const f = fixture();
+      let count = 0;
+      f.getSubscriberTagsPage.mockImplementation(async (request) => ({
+        subscriberId: request.subscriberId,
+        after: request.after,
+        tags: [],
+        readStartedAt: at.toISOString(),
+        readAt: at.toISOString(),
+        truncated: false,
+        pagination: {
+          hasNextPage: true,
+          nextCursor: mode === "cycle" ? "same" : String(++count),
+        },
+      }));
+      expect(Either.isLeft(await run(f.authority))).toBe(true);
+      expect(f.getSubscriberTagsPage.mock.calls.length).toBeLessThanOrEqual(10);
+    },
+  );
+  it("does not need tag absence to honor an explicit unsubscribe", async () => {
+    const f = fixture();
+    f.getSubscriber.mockResolvedValue({
+      id: 123,
+      email_address: "student@example.com",
+      state: "active",
+      fields: { pref_newsletter: "unsubscribed" },
+    });
+    f.getSubscriberTagsPage.mockRejectedValue(new Error("must not read"));
+    const result = await run(f.authority);
+    expect(Either.isRight(result) && result.right.delivery.type).toBe(
+      "Unsubscribed",
+    );
+    expect(f.getSubscriberTagsPage).not.toHaveBeenCalled();
   });
   it("does not ignore unsupported provider suppression evidence", async () => {
     const f = fixture();
