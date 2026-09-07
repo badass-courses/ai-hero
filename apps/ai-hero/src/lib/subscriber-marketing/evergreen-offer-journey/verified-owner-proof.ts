@@ -1,10 +1,7 @@
 import { contactEvent, providerIdentity } from '@/db/schema'
-import {
-	evergreenOfferJourneyCommit as commits,
-	evergreenOfferJourneyIntent as intents,
-} from '@/db/evergreen-offer-journey-schema'
+import { evergreenOfferJourneyIntent as intents } from '@/db/evergreen-offer-journey-schema'
 import { eq } from 'drizzle-orm'
-import type { MySql2Database } from 'drizzle-orm/mysql2'
+import { Effect } from 'effect'
 import type { VerifiedCouponOwnerQuery } from './coupon-authority'
 import {
 	couponBindingIntentKey,
@@ -12,15 +9,9 @@ import {
 	parseVerifiedUserId,
 } from './primitives'
 import {
-	restorePersistedDomainEvents,
-	restorePersistedTransitionReceipt,
-	restorePersistedSideEffectIntent,
-	validatePersistedCommitEvidenceEnvelope,
-} from './persistence-codec'
-import {
-	EVERGREEN_OFFER_JOURNEY_COMMIT_FORMAT,
-	EVERGREEN_OFFER_JOURNEY_INTENT_FORMAT,
-} from './persistence-contract'
+	readCanonicalIntentOrigin,
+	type EvergreenOfferJourneyDatabase,
+} from './drizzle-ledger'
 import {
 	EMAIL_TOKEN_LOGIN_OBSERVED,
 	OFFER_CLAIM_OBSERVED,
@@ -48,13 +39,12 @@ export type VerifiedOwnerProof = {
 	readonly observedAt: string
 	readonly sourceReference: string
 }
-// Narrow SELECT-only store. No current User/Contact/ContactLink queries: those
-// identities must be passed from the coupon transaction's locked rows.
+// No current User/Contact/ContactLink queries: those identities are supplied by
+// the coupon transaction's locked rows. Canonical history uses the owning ledger
+// query contract, not a substitute validator or a caller-asserted proof object.
 export interface VerifiedOwnerEvidenceReadStore {
+	readonly canonical: Parameters<typeof readCanonicalIntentOrigin>[0]
 	readonly intent: (key: string) => Promise<typeof intents.$inferSelect | null>
-	readonly commit: (
-		stimulusId: string,
-	) => Promise<typeof commits.$inferSelect | null>
 	readonly event: (
 		id: string,
 	) => Promise<typeof contactEvent.$inferSelect | null>
@@ -63,23 +53,16 @@ export interface VerifiedOwnerEvidenceReadStore {
 	) => Promise<typeof providerIdentity.$inferSelect | null>
 }
 export function createMySqlVerifiedOwnerEvidenceReadStore(
-	database: Pick<MySql2Database, 'select'>,
+	database: EvergreenOfferJourneyDatabase,
 ): VerifiedOwnerEvidenceReadStore {
 	return {
+		canonical: database,
 		intent: async (key) =>
 			(
 				await database
 					.select()
 					.from(intents)
 					.where(eq(intents.idempotencyKey, key))
-					.limit(1)
-			)[0] ?? null,
-		commit: async (id) =>
-			(
-				await database
-					.select()
-					.from(commits)
-					.where(eq(commits.stimulusId, id))
 					.limit(1)
 			)[0] ?? null,
 		event: async (id) =>
@@ -101,7 +84,6 @@ export function createMySqlVerifiedOwnerEvidenceReadStore(
 	}
 }
 function sameIdentityEnvelope(actual: unknown, expected: unknown): boolean {
-	// Strict JSON comparison independent of key order, including unexpected keys.
 	const sorted = (input: unknown): string =>
 		JSON.stringify(input, (_key, value: unknown) =>
 			value && typeof value === 'object' && !Array.isArray(value)
@@ -149,92 +131,34 @@ export function createVerifiedOwnerProofReader(options: {
 			!input.lockedUser.emailVerified
 		)
 			return null
-		// Claim key includes attestation ID, which is not known here. Resolve via
-		// deterministic BindCoupon PK -> originating commit -> exact source PK.
 		const intentKey = couponBindingIntentKey({
 			journeyId: journey.value,
 			verifiedUserId: user.value,
 		})
-		const intentRow = await read(() => options.store.intent(intentKey))
+		const row = await read(() => options.store.intent(intentKey))
+		if (!row || row.idempotencyKey !== intentKey) return null
+		// Same restoration/recomputation used by durable attempt admission: exact
+		// saved decision, snapshots, predecessor, normalized records and receipts.
+		// The ledger makes indexed origin/predecessor/version queries; no locking,
+		// recursive proof callbacks or whole-history first-match scans.
+		const restored = await read(() =>
+			Effect.runPromise(
+				Effect.either(readCanonicalIntentOrigin(options.store.canonical, row)),
+			),
+		)
+		if (restored._tag === 'Left') {
+			if (restored.left.type === 'JourneyDecodeFailure') return null
+			throw new VerifiedOwnerProofUnavailable()
+		}
+		const { intent, stimulus, decidedAt } = restored.right
 		if (
-			!intentRow ||
-			intentRow.format !== EVERGREEN_OFFER_JOURNEY_INTENT_FORMAT ||
-			intentRow.idempotencyKey !== intentKey ||
-			intentRow.journeyId !== input.journeyId ||
-			intentRow.intentType !== 'BindCoupon'
-		)
-			return null
-		const intent = restorePersistedSideEffectIntent(intentRow.intent)
-		if (
-			!intent.ok ||
-			intent.value.type !== 'BindCoupon' ||
-			intent.value.idempotencyKey !== intentKey ||
-			intent.value.journeyId !== input.journeyId ||
-			intent.value.contactId !== input.contactId ||
-			intent.value.verifiedUserId !== input.verifiedUserId ||
-			intent.value.couponId !== input.couponId
-		)
-			return null
-		const commit = await read(() =>
-			options.store.commit(intentRow.originatingStimulusId),
-		)
-		if (
-			!commit ||
-			commit.format !== EVERGREEN_OFFER_JOURNEY_COMMIT_FORMAT ||
-			commit.stimulusId !== intentRow.originatingStimulusId ||
-			commit.journeyId !== input.journeyId ||
-			commit.actorVersion !== intentRow.actorVersion ||
-			!Number.isFinite(commit.decidedAt.getTime())
-		)
-			return null
-		const restored = validatePersistedCommitEvidenceEnvelope(
-			commit.commitEvidence,
-			{
-				stimulusId: commit.stimulusId,
-				stimulusType: commit.stimulusType,
-				journeyId: commit.journeyId,
-				actorVersion: commit.actorVersion,
-				decidedAt: commit.decidedAt.toISOString(),
-			},
-		)
-		if (
-			!restored.ok ||
-			restored.value.stimulus.type !== 'VerifiedUserObserved' ||
-			restored.value.currentFacts.contactId !== input.contactId ||
-			restored.value.currentFacts.existingJourneyId !== input.journeyId ||
-			intentRow.ordinal !== 0 ||
-			commit.committedAt.getTime() !== commit.decidedAt.getTime() ||
-			intentRow.createdAt.getTime() !== commit.decidedAt.getTime() ||
-			intentRow.availableAt.getTime() !== commit.decidedAt.getTime()
-		)
-			return null
-		const events = restorePersistedDomainEvents(commit.events)
-		const receipt = restorePersistedTransitionReceipt(commit.receipt)
-		if (
-			!events.ok ||
-			events.value.length !== 1 ||
-			!receipt.ok ||
-			receipt.value.stimulusId !== commit.stimulusId ||
-			receipt.value.journeyId !== input.journeyId ||
-			receipt.value.committedAt !== commit.decidedAt.toISOString() ||
-			!['pitch.running', 'handoff.awaitingReceipt'].includes(
-				receipt.value.from,
-			) ||
-			receipt.value.from !== receipt.value.to
-		)
-			return null
-		const bound = events.value[0]
-		if (
-			!bound ||
-			bound.type !== 'CouponBindingIntentCommitted' ||
-			bound.details.couponId !== input.couponId ||
-			bound.details.verifiedUserId !== input.verifiedUserId ||
-			bound.details.intentKey !== intentKey ||
-			bound.occurredAt !== receipt.value.committedAt
-		)
-			return null
-		const stimulus = restored.value.stimulus
-		if (
+			intent.type !== 'BindCoupon' ||
+			intent.idempotencyKey !== intentKey ||
+			intent.journeyId !== input.journeyId ||
+			intent.contactId !== input.contactId ||
+			intent.verifiedUserId !== input.verifiedUserId ||
+			intent.couponId !== input.couponId ||
+			stimulus.type !== 'VerifiedUserObserved' ||
 			stimulus.verifiedUserId !== input.verifiedUserId ||
 			stimulus.journeyId !== input.journeyId
 		)
@@ -286,7 +210,7 @@ export function createVerifiedOwnerProofReader(options: {
 			...identity,
 			provider: 'kit',
 		})
-		for (const [row, eventType, semanticKey, at] of [
+		for (const [event, eventType, semanticKey, at] of [
 			[
 				claimRow,
 				OFFER_CLAIM_OBSERVED,
@@ -301,16 +225,16 @@ export function createVerifiedOwnerProofReader(options: {
 			],
 		] as const) {
 			if (
-				row.contactId !== input.contactId ||
-				row.provider !== 'ai-hero' ||
-				row.schemaVersion !== 1 ||
-				row.eventType !== eventType ||
-				row.semanticIdempotencyKey !== semanticKey ||
-				row.providerEventId !== semanticKey ||
-				row.providerReference !== `ai-hero:${semanticKey}` ||
-				row.privacyLevel !== 'restricted' ||
-				!sameIdentityEnvelope(row.identityEvidence, expectedIdentity) ||
-				row.occurredAt.getTime() !== Math.floor(Date.parse(at) / 1000) * 1000
+				event.contactId !== input.contactId ||
+				event.provider !== 'ai-hero' ||
+				event.schemaVersion !== 1 ||
+				event.eventType !== eventType ||
+				event.semanticIdempotencyKey !== semanticKey ||
+				event.providerEventId !== semanticKey ||
+				event.providerReference !== `ai-hero:${semanticKey}` ||
+				event.privacyLevel !== 'restricted' ||
+				!sameIdentityEnvelope(event.identityEvidence, expectedIdentity) ||
+				event.occurredAt.getTime() !== Math.floor(Date.parse(at) / 1000) * 1000
 			)
 				return null
 		}
@@ -322,8 +246,8 @@ export function createVerifiedOwnerProofReader(options: {
 			!(
 				verified <= loginObserved &&
 				loginObserved <= claimObserved &&
-				claimObserved <= commit.decidedAt.getTime() &&
-				commit.decidedAt.getTime() <= now
+				claimObserved <= Date.parse(decidedAt) &&
+				Date.parse(decidedAt) <= now
 			) ||
 			login.data.emailFingerprint !==
 				emailFingerprint(options.secret, input.lockedUser.email) ||

@@ -3,6 +3,10 @@ import fs from 'node:fs/promises'
 import { contact, contactEvent, providerIdentity, users } from '@/db/schema'
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import { eq } from 'drizzle-orm'
+import { Effect } from 'effect'
+import { preserveQueryResultShape } from '@/db/mysql-query-client'
+import { createDrizzleJourneyLedger } from './drizzle-ledger'
+import { createCouponAuthority } from './coupon-authority'
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -12,7 +16,11 @@ import {
 	createVerifiedOwnerProofReader,
 	VerifiedOwnerProofUnavailable,
 } from './verified-owner-proof'
-import { ownerProofFixture } from './verified-owner-proof.fixtures'
+import {
+	ownerProofFixture,
+	canonicalOriginProbes,
+	corruptCanonicalOrigin,
+} from './verified-owner-proof.fixtures'
 import {
 	couponCommerceSchema,
 	createMySqlCouponCommerceStore,
@@ -74,9 +82,17 @@ integration('owner proof disposable MySQL', () => {
 		await pool.query(
 			'CREATE TABLE AI_User (id varchar(255) PRIMARY KEY, name varchar(255), role varchar(191) NOT NULL DEFAULT "user", email varchar(255) NOT NULL UNIQUE, fields json, emailVerified timestamp(3) NULL, image varchar(255), createdAt timestamp(3) DEFAULT CURRENT_TIMESTAMP(3))',
 		)
-		database = drizzle(pool, {
+		// Existing commerce schema subset, disposable fixtures only.
+		for (const ddl of [
+			'CREATE TABLE AI_MerchantCoupon (id varchar(191) NOT NULL PRIMARY KEY, identifier varchar(191) UNIQUE, organizationId varchar(191), status int NOT NULL DEFAULT 0, merchantAccountId varchar(191) NOT NULL, percentageDiscount decimal(3,2), amountDiscount int, type varchar(191))',
+			'CREATE TABLE AI_Coupon (id varchar(191) NOT NULL PRIMARY KEY, organizationId varchar(191), code varchar(191) UNIQUE, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), expires timestamp(3) NULL, fields json, maxUses int NOT NULL DEFAULT -1, `default` boolean NOT NULL DEFAULT false, merchantCouponId varchar(191), status int NOT NULL DEFAULT 0, usedCount int NOT NULL DEFAULT 0, percentageDiscount decimal(3,2), amountDiscount int, restrictedToProductId varchar(191))',
+			'CREATE TABLE AI_EntitlementType (id varchar(191) NOT NULL PRIMARY KEY, name varchar(255) NOT NULL UNIQUE, description text)',
+			'CREATE TABLE AI_Entitlement (id varchar(191) NOT NULL PRIMARY KEY, entitlementType varchar(255) NOT NULL, userId varchar(191), organizationId varchar(191), organizationMembershipId varchar(191), sourceType varchar(255) NOT NULL, sourceId varchar(191) NOT NULL, metadata json, expiresAt timestamp(3) NULL, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updatedAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), deletedAt timestamp(3) NULL, INDEX source_idx(sourceType,sourceId))',
+		])
+			await pool.query(ddl)
+		database = drizzle(preserveQueryResultShape(pool), {
 			schema,
-			mode: 'default',
+			mode: 'planetscale',
 			logger: {
 				logQuery: (query) => {
 					statements.push(query)
@@ -91,6 +107,11 @@ integration('owner proof disposable MySQL', () => {
 	})
 	beforeEach(async () => {
 		for (const table of [
+			'AI_Entitlement',
+			'AI_Coupon',
+			'AI_MerchantCoupon',
+			'AI_EntitlementType',
+			'AI_EvergreenOfferJourneyWake',
 			'AI_EvergreenOfferJourneyIntent',
 			'AI_EvergreenOfferJourneyCommit',
 			'AI_ContactEvent',
@@ -110,12 +131,11 @@ integration('owner proof disposable MySQL', () => {
 		})
 		await database.insert(providerIdentity).values(f.identity)
 		await database.insert(contactEvent).values(f.rows)
-		await database
-			.insert(journeySchema.evergreenOfferJourneyCommit)
-			.values(f.commit)
-		await database
-			.insert(journeySchema.evergreenOfferJourneyIntent)
-			.values(f.intentRow)
+		const ledger = createDrizzleJourneyLedger(database)
+		for (const candidate of f.candidates) {
+			const committed = await Effect.runPromise(ledger.commit(candidate))
+			expect(committed.committed).toBe(true)
+		}
 		statements.length = 0
 	})
 	const reader = () =>
@@ -124,14 +144,13 @@ integration('owner proof disposable MySQL', () => {
 			secret: f.secret,
 			now: () => f.now,
 		})
-	it('uses five bounded exact indexed SELECTs, no live identity/ContactLink query and no writes', async () => {
+	it('uses canonical history SELECTs, no live identity/ContactLink query and no writes', async () => {
 		expect(await reader()(f.input)).toMatchObject({
 			sourceReference: 'contact-event:proof-claim-event',
 		})
-		expect(statements).toHaveLength(5)
+		expect(statements).toHaveLength(8)
 		for (const query of statements) {
 			expect(query).toMatch(/^select\b/i)
-			expect(query).toMatch(/limit \?/i)
 			expect(query).not.toMatch(/for update|ContactLink|AI_User|`AI_Contact`/i)
 		}
 		const [plan] = await pool.query<RowDataPacket[]>(
@@ -139,6 +158,78 @@ integration('owner proof disposable MySQL', () => {
 			['proof-claim-event'],
 		)
 		expect(plan[0]?.key).toBe('PRIMARY')
+	})
+	it.each(
+		canonicalOriginProbes.filter(
+			(p) => p !== 'missing-normalized-bind' && p !== 'extra-normalized-wake',
+		),
+	)('real ledger history rejects corruption: %s', async (probe) => {
+		expect(await reader()(f.input)).not.toBeNull()
+		const stimulusId = f.commit.stimulusId
+		const claimId = f.rows[1]!.id
+		corruptCanonicalOrigin(f, probe)
+		await database
+			.update(journeySchema.evergreenOfferJourneyCommit)
+			.set(f.commit)
+			.where(
+				eq(journeySchema.evergreenOfferJourneyCommit.stimulusId, stimulusId),
+			)
+		await database
+			.update(journeySchema.evergreenOfferJourneyIntent)
+			.set(f.intentRow)
+			.where(
+				eq(
+					journeySchema.evergreenOfferJourneyIntent.idempotencyKey,
+					f.intentRow.idempotencyKey,
+				),
+			)
+		await database
+			.update(contactEvent)
+			.set(f.rows[1]!)
+			.where(eq(contactEvent.id, claimId))
+		expect(await reader()(f.input)).toBeNull()
+	})
+	it('real ledger -> real proof -> coupon bind grants once with the original expiry', async () => {
+		const commerce = drizzle(pool, {
+			schema: couponCommerceSchema,
+			mode: 'default',
+		})
+		const merchant = {
+			id: 'proof-merchant',
+			identifier: 'proof-provider',
+			merchantAccountId: 'proof-account',
+			amountDiscount: 10000,
+			status: 1,
+			type: 'special',
+		}
+		await commerce.insert(couponCommerceSchema.merchantCoupon).values(merchant)
+		await commerce
+			.insert(couponCommerceSchema.entitlementTypes)
+			.values({ id: 'proof-credit', name: 'apply_special_credit' })
+		const authority = createCouponAuthority({
+			store: createMySqlCouponCommerceStore(commerce),
+			now: () => f.now,
+			merchantCouponEvidence: {
+				id: merchant.id,
+				identifier: merchant.identifier,
+				merchantAccountId: merchant.merchantAccountId,
+				currency: 'USD',
+				amountOffCents: 10000,
+				type: 'special',
+				sourceReference: 'synthetic-merchant-readback',
+			},
+			readVerifiedOwner: reader(),
+		})
+		const issued = await Effect.runPromise(authority.issue(f.issueIntent))
+		expect(issued.coupon.couponId).toBe(f.input.couponId)
+		const first = await Effect.runPromise(authority.bind(f.bindIntent))
+		expect(await Effect.runPromise(authority.bind(f.bindIntent))).toEqual(first)
+		const grants = await commerce
+			.select()
+			.from(couponCommerceSchema.entitlements)
+		expect(grants).toHaveLength(1)
+		expect(grants[0]?.userId).toBe(f.input.verifiedUserId)
+		expect(grants[0]?.expiresAt?.toISOString()).toBe(f.issueIntent.expiresAt)
 	})
 	it('refuses a second immutable attestation for the same token/contact, even with a different session', async () => {
 		const second = emailTokenLoginEventRow({
@@ -223,7 +314,9 @@ integration('owner proof disposable MySQL', () => {
 		await broken.end()
 		{
 			const read = createVerifiedOwnerProofReader({
-				store: createMySqlVerifiedOwnerEvidenceReadStore(drizzle(broken)),
+				store: createMySqlVerifiedOwnerEvidenceReadStore(
+					drizzle(broken, { schema, mode: 'planetscale' }),
+				),
 				secret: f.secret,
 				now: () => f.now,
 			})

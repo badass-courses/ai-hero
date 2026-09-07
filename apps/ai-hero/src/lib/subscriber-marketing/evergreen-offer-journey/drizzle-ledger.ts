@@ -259,6 +259,34 @@ export async function readIntentForAttempt(
 	transaction: EvergreenOfferJourneyTransaction,
 	row: typeof evergreenOfferJourneyIntent.$inferSelect,
 ): Promise<SideEffectIntent> {
+	return (await readIntentOrigin(transaction, row)).intent
+}
+
+/** Read-only canonical origin, shared with attempt admission. No effect replay,
+ * locks or provider callbacks. Decode failure is distinct from read unavailable.
+ */
+export function readCanonicalIntentOrigin(
+	database:
+		| EvergreenOfferJourneyDatabase
+		| Pick<EvergreenOfferJourneyTransaction, 'query'>,
+	row: typeof evergreenOfferJourneyIntent.$inferSelect,
+) {
+	// Same Drizzle query-builder generic erasure as createDrizzleJourneyLedger;
+	// only query methods are available to this read-only implementation.
+	const reader = database as unknown as Pick<
+		EvergreenOfferJourneyTransaction,
+		'query'
+	>
+	return Effect.tryPromise({
+		try: () => readIntentOrigin(reader, row),
+		catch: commandReadError,
+	})
+}
+
+async function readIntentOrigin(
+	transaction: Pick<EvergreenOfferJourneyTransaction, 'query'>,
+	row: typeof evergreenOfferJourneyIntent.$inferSelect,
+) {
 	const origin = await transaction.query.evergreenOfferJourneyCommit.findFirst({
 		where: eq(
 			evergreenOfferJourneyCommit.stimulusId,
@@ -278,7 +306,11 @@ export async function readIntentForAttempt(
 		!jsonDeepEqual(intent, row.intent)
 	)
 		return decodeFailure('Attempt intent disagrees with canonical origin')
-	return intent
+	return {
+		intent,
+		stimulus: commitIdentity(origin).evidence.stimulus,
+		decidedAt: origin.decidedAt.toISOString(),
+	}
 }
 
 async function commitInTransaction(

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { ownerProofFixture } from './verified-owner-proof.fixtures'
+import {
+	ownerProofFixture,
+	canonicalOriginProbes,
+	corruptCanonicalOrigin,
+} from './verified-owner-proof.fixtures'
+import { Effect } from 'effect'
+import { readCanonicalIntentOrigin } from './drizzle-ledger'
 import {
 	createVerifiedOwnerProofReader,
 	VerifiedOwnerProofUnavailable,
@@ -17,7 +23,50 @@ const login = (f: Fixture) => f.rows[0]!.payloadSummary
 const claim = (f: Fixture) => f.rows[1]!.payloadSummary
 
 describe('exact dormant verified owner proof', () => {
-	it('restores an identity-bound canonical bind origin and two linked event records with five exact reads', async () => {
+	it('every generated history intent restores through the owning canonical reader, including settlement evidence', async () => {
+		const f = ownerProofFixture()
+		for (const row of f.allIntents) {
+			const result = await Effect.runPromise(
+				Effect.either(readCanonicalIntentOrigin(f.store.canonical, row)),
+			)
+			expect(result).toMatchObject({
+				_tag: 'Right',
+				right: { intent: row.intent },
+			})
+		}
+	})
+	it.each(canonicalOriginProbes)(
+		'rejects independent review probe: %s',
+		async (probe) => {
+			const f = ownerProofFixture()
+			expect(await run(f)).not.toBeNull()
+			corruptCanonicalOrigin(f, probe)
+			expect(await run(f)).toBeNull()
+		},
+	)
+	it.each([
+		'joint-coupon-json-transplant',
+		'coherent-receipt-corruption',
+	] as const)(
+		'pure recomputation, not just saved-JSON agreement, defeats %s',
+		async (probe) => {
+			const f = ownerProofFixture()
+			corruptCanonicalOrigin(f, probe)
+			const result = await Effect.runPromise(
+				Effect.either(
+					readCanonicalIntentOrigin(f.store.canonical, f.intentRow),
+				),
+			)
+			expect(result).toMatchObject({
+				_tag: 'Left',
+				left: {
+					type: 'JourneyDecodeFailure',
+					reason: expect.stringContaining('does not reproduce'),
+				},
+			})
+		},
+	)
+	it('restores an identity-bound canonical bind origin and two linked event records with canonical predecessor/normalized reads', async () => {
 		const f = ownerProofFixture()
 		expect(await run(f)).toEqual({
 			type: 'VerifiedUserObserved',
@@ -30,6 +79,9 @@ describe('exact dormant verified owner proof', () => {
 		expect(f.calls).toEqual([
 			`intent:${f.intentRow.idempotencyKey}`,
 			'commit:proof-claim-event',
+			'predecessor:3',
+			'normalized-intents',
+			'normalized-wakes',
 			'event:proof-claim-event',
 			'event:proof-login-event',
 			'identity:proof-kit-identity',
@@ -349,7 +401,7 @@ describe('exact dormant verified owner proof', () => {
 		)
 		expect(await run(f)).toBeNull()
 	})
-	it.each(['intent', 'commit', 'event', 'identity'] as const)(
+	it.each(['intent', 'event', 'identity'] as const)(
 		'raises typed unavailable for %s read failure, without leaking details',
 		async (method) => {
 			const f = ownerProofFixture()
@@ -365,6 +417,31 @@ describe('exact dormant verified owner proof', () => {
 			)
 		},
 	)
+	it('canonical query failure is typed unavailable, not decode/absence', async () => {
+		const f = ownerProofFixture()
+		f.store = {
+			...f.store,
+			canonical: {
+				query: {
+					evergreenOfferJourneyCommit: {
+						findFirst: async () => {
+							throw new Error('private database detail')
+						},
+						findMany: async () => [],
+					},
+					evergreenOfferJourneyIntent: {
+						findFirst: async () => undefined,
+						findMany: async () => [],
+					},
+					evergreenOfferJourneyWake: {
+						findFirst: async () => undefined,
+						findMany: async () => [],
+					},
+				},
+			},
+		}
+		await expect(run(f)).rejects.toBeInstanceOf(VerifiedOwnerProofUnavailable)
+	})
 	it('rejects arbitrary sourceReference even when the user matches', async () => {
 		const f = ownerProofFixture()
 		const evidence = f.commit.commitEvidence as {
