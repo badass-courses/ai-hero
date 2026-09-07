@@ -417,6 +417,130 @@ describe("Kit communication GET transport", () => {
       expect(f.http).not.toHaveBeenCalled();
     },
   );
+  it.each([true, undefined, null, "false"])(
+    "cannot establish absence from initial previous-page evidence %s",
+    async (hasPrevious) => {
+      const f = fixture();
+      f.http.mockImplementation(async (url) =>
+        response(
+          url.includes("/tags")
+            ? {
+                tags: [],
+                pagination: {
+                  has_previous_page: hasPrevious,
+                  has_next_page: false,
+                  start_cursor: "later-page",
+                  end_cursor: "last-page",
+                  per_page: 100,
+                },
+              }
+            : { subscriber },
+          url,
+        ),
+      );
+      const reader = createKitCurrentCommunicationReader({
+        ...f.transport,
+        now: f.now,
+        preference: emailPreferenceDefinitionByKey.newsletter,
+        exclusionTagId: AI_HERO_UNSUBSCRIBED_TAG_ID,
+      });
+      await expect(
+        reader.read({ subscriberId: "123", email: "student@example.com" }),
+      ).rejects.toBeInstanceOf(KitCommunicationUnavailable);
+      expect(f.http.mock.calls.map(([url]) => url)).toEqual([
+        "https://api.kit.com/v4/subscribers/123",
+        "https://api.kit.com/v4/subscribers/123/tags?per_page=100",
+      ]);
+    },
+  );
+  it("preserves continuation with previous pages and a valid terminal nonnull cursor", async () => {
+    const f = fixture();
+    f.http.mockImplementation(async (url) =>
+      response(
+        {
+          ...page,
+          pagination: {
+            ...page.pagination,
+            has_previous_page: true,
+            has_next_page: false,
+            end_cursor: "last",
+          },
+        },
+        url,
+      ),
+    );
+    const result = await f.transport.getSubscriberTagsPage({
+      ...request,
+      after: "prior",
+    });
+    expect(result).toMatchObject({
+      after: "prior",
+      truncated: false,
+      pagination: { hasNextPage: false, nextCursor: null },
+    });
+  });
+  it.each(["131073", "not-a-length"])(
+    "cancels an OPEN body rejected by Content-Length %s",
+    async (length) => {
+      const f = fixture();
+      let cancelled = 0;
+      f.http.mockImplementation(async (url) => {
+        const r = new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled++;
+            },
+          }),
+          {
+            headers: {
+              "content-type": "application/json",
+              "content-length": length,
+            },
+          },
+        );
+        Object.defineProperties(r, {
+          url: { value: url },
+          type: { value: "basic" },
+        });
+        return r;
+      });
+      await expect(f.transport.getSubscriber("123")).rejects.toBeInstanceOf(
+        KitCommunicationUnavailable,
+      );
+      expect(cancelled).toBe(1);
+    },
+  );
+  it("disposes an open response arriving after the request deadline", async () => {
+    const f = fixture({ timeoutMs: 10 });
+    let finish!: (response: Response) => void;
+    let requested = "";
+    let cancelled = 0;
+    f.http.mockImplementation(async (url) => {
+      requested = url;
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    });
+    await expect(f.transport.getSubscriber("123")).rejects.toBeInstanceOf(
+      KitCommunicationUnavailable,
+    );
+    const late = new Response(
+      new ReadableStream({
+        cancel() {
+          cancelled++;
+        },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+    Object.defineProperties(late, {
+      url: { value: requested },
+      type: { value: "basic" },
+    });
+    finish(late);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(cancelled).toBe(1);
+    expect(f.http).toHaveBeenCalledTimes(1);
+  });
   it.each(["clear", "excluded", "incomplete"])(
     "composes with unchanged authority reader: %s",
     async (mode) => {

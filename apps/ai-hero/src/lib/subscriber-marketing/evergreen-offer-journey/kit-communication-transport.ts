@@ -28,6 +28,7 @@ const SubscriberEnvelope = z
 const TagsEnvelope = z.object({
   tags: z.array(z.object({ id: ProviderId })).max(100),
   pagination: z.object({
+    has_previous_page: z.boolean(),
     has_next_page: z.boolean(),
     end_cursor: Cursor.nullable(),
   }),
@@ -83,7 +84,7 @@ async function readJson(
       !Number.isSafeInteger(length) ||
       length! > MAX_BODY_BYTES)
   )
-    return unavailable();
+    return rejectResponse(response);
   if (!response.body) return unavailable();
   const reader = response.body.getReader();
   const cancel = () => {
@@ -175,6 +176,7 @@ export function createKitCommunicationTransport(options: {
             signal,
           });
           if (
+            signal.aborted ||
             response.status !== 200 ||
             response.redirected !== false ||
             !["basic", "cors"].includes(response.type) ||
@@ -244,6 +246,8 @@ export function createKitCommunicationTransport(options: {
         const body = TagsEnvelope.safeParse(input);
         if (
           !body.success ||
+          // A terminal page is not full-list coverage if the initial prefix was skipped.
+          (after === null && body.data.pagination.has_previous_page) ||
           (body.data.pagination.has_next_page &&
             (!body.data.pagination.end_cursor ||
               body.data.pagination.end_cursor === after))
