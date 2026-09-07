@@ -29,6 +29,7 @@ import {
 	parseIanaTimeZone,
 	parseIsoInstant,
 	parseStimulusId,
+	scheduleWakeId,
 	type ParseResult,
 } from './primitives'
 
@@ -131,26 +132,26 @@ function wakeCommit(
 ) {
 	const wake = current.messagePlan.bridge[wakeIndex]
 	if (!wake) throw new Error(`Missing bridge slot ${wakeIndex}`)
-	const scheduled = entry().decision.wakeIntents.find(
-		(candidate) =>
-			candidate.purpose.type === 'MessageSlot' &&
-			candidate.purpose.slotId === wake.slotId,
-	)
-	if (!scheduled) throw new Error(`Missing wake ${wake.slotId}`)
 	const stimulus: EvergreenOfferStimulus = {
 		type: 'WakeDue',
 		stimulusId: value(parseStimulusId(stimulusName)),
 		journeyId: current.journeyId,
-		wakeId: scheduled.wakeId,
-		dueAt: scheduled.dueAt,
-		purpose: scheduled.purpose,
+		wakeId: scheduleWakeId({
+			journeyId: current.journeyId,
+			semanticStepId: `message:${wake.slotId}`,
+		}),
+		dueAt: wake.dueAt,
+		purpose: { type: 'MessageSlot', slotId: wake.slotId },
 	}
 	const result = decideEvergreenOfferJourney({
 		snapshot: current,
 		stimulus,
-		currentFacts: facts({ existingJourneyId: current.journeyId }),
+		currentFacts: facts({
+			contactId: current.contactId,
+			existingJourneyId: current.journeyId,
+		}),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
-		now: scheduled.dueAt,
+		now: wake.dueAt,
 	})
 	if (!result.ok || result.decision.type !== 'Accepted') {
 		throw new Error('Expected accepted wake')
@@ -183,7 +184,10 @@ function deliveryCommit(
 	const result = decideEvergreenOfferJourney({
 		snapshot: current,
 		stimulus,
-		currentFacts: facts({ existingJourneyId: current.journeyId }),
+		currentFacts: facts({
+			contactId: current.contactId,
+			existingJourneyId: current.journeyId,
+		}),
 		definition: EVERGREEN_OFFER_JOURNEY_V1,
 		now: observedAt,
 	})
@@ -202,6 +206,7 @@ function commitRecord(
 		stimulus,
 		expectedVersion,
 		currentFacts: facts({
+			contactId: decision.next.contactId,
 			existingJourneyId:
 				expectedVersion === null ? null : decision.next.journeyId,
 		}),
@@ -210,6 +215,59 @@ function commitRecord(
 		decision,
 	}
 }
+
+// Pure fixture checks run without MySQL so identity mistakes cannot hide in skips.
+it.each(['default', 'custom'] as const)(
+	'preserves %s journey identity in wake and delivery fixtures',
+	(kind) => {
+		const identity =
+			kind === 'default'
+				? { contactId, entryFactId }
+				: {
+						contactId: value(parseContactId('page-contact-fixture')),
+						entryFactId: value(parseEntryFactId('page-fact-fixture')),
+					}
+		const start = entry('fixture-entry', identity)
+		const scheduled = start.decision.wakeIntents.find(
+			(candidate) =>
+				candidate.purpose.type === 'MessageSlot' &&
+				candidate.purpose.slotId ===
+					start.decision.next.messagePlan.bridge[0]?.slotId,
+		)
+		if (!scheduled) throw new Error('Missing scheduled wake')
+		const wake = wakeCommit(start.decision.next, 0, 'fixture-wake')
+		expect(wake.stimulus).toMatchObject({
+			wakeId: scheduled.wakeId,
+			dueAt: scheduled.dueAt,
+			purpose: scheduled.purpose,
+		})
+		expect(wake.currentFacts).toEqual(
+			facts({
+				contactId: identity.contactId,
+				existingJourneyId: start.decision.next.journeyId,
+			}),
+		)
+		const intent = wake.decision.sideEffectIntents[0]
+		if (!intent || intent.type !== 'SendMessage')
+			throw new Error('Missing fixture message')
+		const delivery = deliveryCommit(
+			wake.decision.next,
+			intent,
+			'fixture-delivery',
+		)
+		expect(delivery.currentFacts).toEqual(
+			facts({
+				contactId: identity.contactId,
+				existingJourneyId: start.decision.next.journeyId,
+			}),
+		)
+		expect(delivery.decision.next.contactId).toBe(identity.contactId)
+		if (kind === 'default')
+			expect(wake.currentFacts).toEqual(
+				facts({ existingJourneyId: start.decision.next.journeyId }),
+			)
+	},
+)
 
 function createConnection(uri: string) {
 	const pool = mysqlQueryClient.preserveQueryResultShape(
