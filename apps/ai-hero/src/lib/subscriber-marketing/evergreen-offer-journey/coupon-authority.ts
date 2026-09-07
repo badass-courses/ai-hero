@@ -32,6 +32,8 @@ export type CommerceUserRow = typeof users.$inferSelect
 
 /** Transaction methods must all use the same connection and commit atomically. */
 export interface CouponTransaction {
+	/** Snapshot of the Contact row already locked by withContactLock. */
+	readonly lockedContact: Readonly<{ id: string; email: string | null }>
 	readonly getMerchantCoupon: (
 		id: string,
 	) => Promise<CommerceMerchantCouponRow | null>
@@ -115,6 +117,14 @@ export type VerifiedCouponOwnerQuery = {
 	readonly contactId: string
 	readonly journeyId: string
 	readonly verifiedUserId: string
+	readonly couponId: string
+	readonly lockedContact: Readonly<{ id: string; email: string | null }>
+	/** Immutable primitives copied AFTER getUser FOR UPDATE, held through commit. */
+	readonly lockedUser: Readonly<{
+		id: string
+		email: string
+		emailVerified: string | null
+	}>
 }
 export type CouponAuthorityOptions = {
 	readonly store: CouponCommerceStore
@@ -374,12 +384,28 @@ export function createCouponAuthority(
 						await checkMerchant(tx, row.merchantCouponId ?? '')
 						if (!options.readVerifiedOwner)
 							return refuseCoupon('verified-owner-proof-required')
+						const user = await tx.getUser(userId)
+						if (
+							!user ||
+							user.id !== userId ||
+							tx.lockedContact.id !== intent.contactId ||
+							!user.emailVerified ||
+							!Number.isFinite(user.emailVerified.getTime())
+						)
+							return refuseCoupon('verified-owner-proof-mismatch')
 						let rawProof: unknown
 						try {
 							rawProof = await options.readVerifiedOwner({
 								contactId: intent.contactId,
 								journeyId,
 								verifiedUserId: userId,
+								couponId: row.id,
+								lockedContact: Object.freeze({ ...tx.lockedContact }),
+								lockedUser: Object.freeze({
+									id: user.id,
+									email: user.email,
+									emailVerified: user.emailVerified.toISOString(),
+								}),
 							})
 						} catch {
 							throw new CouponAuthorityFailure({
@@ -388,7 +414,6 @@ export function createCouponAuthority(
 							})
 						}
 						const proof = proofSchema.safeParse(rawProof)
-						const user = await tx.getUser(userId)
 						if (
 							!proof.success ||
 							proof.data.contactId !== intent.contactId ||
