@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type { SendMessageIntent } from './domain'
 import type { DeliveryPort, EffectApplicationError } from './ports'
-import { parseContactId, parseIsoInstant } from './primitives'
+import { parseContactId, parseIsoInstant, type IsoInstant } from './primitives'
 
 const providerId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const bindingSchema = z.object({
@@ -33,7 +33,10 @@ const enrollmentSchema = z.object({
 	subscriber: subscriberSchema,
 })
 const pageSchema = z.object({
-	subscribers: z.array(subscriberSchema).max(100),
+	// Keep malformed/missing time separate from the fact of membership. GET only.
+	subscribers: z
+		.array(subscriberSchema.extend({ added_at: z.unknown().optional() }))
+		.max(100),
 	pagination: z.object({ has_next_page: z.boolean(), end_cursor: z.string() }),
 })
 
@@ -48,8 +51,24 @@ export type KitDeliveryOptions = {
 	readonly timeoutMs?: number
 }
 
+const membershipTimestamp = z.string().datetime({ offset: true })
+function membershipAddedAt(input: unknown): IsoInstant | null {
+	const date = membershipTimestamp.safeParse(input)
+	if (!date.success) return null
+	const parsed = parseIsoInstant(date.data)
+	return parsed.ok ? parsed.value : null
+}
+
 export type KitMembership =
-	| { readonly type: 'Present'; readonly meaning: 'sequence-membership-only' }
+	| {
+			readonly type: 'Present'
+			readonly meaning: 'sequence-membership-only'
+			/** Provider added_at in UTC milliseconds; null means unknown, never observed now.
+			 * Presence does not prove this attempt: callers must compare claimedAt and slot
+			 * bounds. Unknown, prior, or outside-window evidence must be held, not retimed.
+			 */
+			readonly addedAt: IsoInstant | null
+	  }
 	| {
 			readonly type: 'Absent'
 			readonly meaning: 'complete-read-not-resend-permission'
@@ -275,14 +294,14 @@ export function createKitDeliveryPort(
 							type: 'Unknown',
 							reason: 'invalid-membership-page',
 						} as const
-					if (
-						decoded.data.subscribers.some(
-							(subscriber) => subscriber.id === prepared.subscriberId,
-						)
+					const member = decoded.data.subscribers.find(
+						(subscriber) => subscriber.id === prepared.subscriberId,
 					)
+					if (member)
 						return {
 							type: 'Present',
 							meaning: 'sequence-membership-only',
+							addedAt: membershipAddedAt(member.added_at),
 						} as const
 					if (!decoded.data.pagination.has_next_page)
 						return {
