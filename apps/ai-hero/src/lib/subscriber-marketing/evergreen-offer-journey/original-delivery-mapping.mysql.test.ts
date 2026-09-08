@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { createBridgeRuntime, type BridgeRuntimeDependencies } from './bridge-runtime'
+import { createBoundedJourneyReaders } from './bounded-readers'
 import fs from 'node:fs/promises'
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import { contactEvent, providerIdentity } from '@/db/schema'
@@ -337,6 +339,34 @@ integration(
 			await admin?.end()
 			if (databaseName) await server.query(`DROP DATABASE \`${databaseName}\``)
 			await server?.end()
+		})
+		function runtime(connection = first) {
+			const service = createEvergreenOfferJourneyService({ ledger: connection.ledger, clock, authority, definition: EVERGREEN_OFFER_JOURNEY_V1 })
+			// Coupon dispatch is intentionally outside this message integration fixture.
+			const unexpected = () => { throw new Error('Unexpected coupon dispatch in message runtime test') }
+			const coupons = { execute: unexpected, recoverRecordedPage: unexpected, recoverUncertainPage: unexpected } as BridgeRuntimeDependencies['coupons']
+			return createBridgeRuntime({ clock, service, coupons, messages: front({ connection }), readers: createBoundedJourneyReaders(connection.database, connection.ledger), control: () => Effect.succeed({ type: 'Enabled', generation: 'runtime-fixture' }) })
+		}
+		it('runtime outbox page uses real claims/mapping and remains idempotent across independent runtimes', async () => {
+			const request = { generation: 'runtime-fixture', lane: 'intents' as const }
+			const results = await Promise.all([Effect.runPromise(runtime().tick(request)), Effect.runPromise(runtime().tick(request))])
+			expect(results.some((r) => r.reason === 'Message:Applied')).toBe(true)
+			expect(posts).toBe(1)
+			expect((await row()).status).toBe('Accepted')
+			await Effect.runPromise(runtime().tick(request))
+			expect(posts).toBe(1)
+		})
+		it('runtime pause on lost outcome survives restart and recovery never posts again', async () => {
+			failOutcome = true
+			const result = await Effect.runPromise(runtime().tick({ generation: 'runtime-fixture', lane: 'intents' }))
+			expect(result.type).toBe('Paused')
+			expect(posts).toBe(1)
+			failOutcome = false
+			now = new Date(Date.parse(now) + 120_000).toISOString()
+			const recovery = await Effect.runPromise(runtime().messageUncertain('runtime-fixture', {}))
+			expect(recovery.type).toBe('RecoveryPage')
+			expect(posts).toBe(1)
+			expect(gets.length).toBeGreaterThan(0)
 		})
 		it('commits and independently verifies exact receipt before one fake HTTP POST', async () => {
 			expect(await Effect.runPromise(front().execute(target()))).toMatchObject({
