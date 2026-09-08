@@ -16,6 +16,7 @@ import type { MySqlDatabase } from "drizzle-orm/mysql-core";
 import { automationControl } from "@/db/email-course-schema";
 import { and, eq, asc } from "drizzle-orm";
 import { Effect } from "effect";
+import * as revisionDelivery from "@/lib/subscriber-marketing/evergreen-offer-journey/revision-delivery";
 import { Auth } from "@auth/core";
 import Postmark from "@auth/core/providers/postmark";
 import { DrizzleAdapter } from "@coursebuilder/adapter-drizzle";
@@ -78,6 +79,8 @@ describe.skipIf(!serverUrl)(
       name: string,
       f: ReturnType<typeof pilotFixture>,
       now: Date;
+    const actualDelivery = revisionDelivery.createRevisionDelivery;
+    let deliveries: unknown[];
     let posts: number,
       puts: number,
       reads: string[],
@@ -127,6 +130,21 @@ describe.skipIf(!serverUrl)(
         await pool.query(ddl);
     });
     beforeEach(async () => {
+      deliveries = [];
+      vi.spyOn(revisionDelivery, "createRevisionDelivery").mockImplementation(
+        (input) => {
+          const real = actualDelivery(input);
+          return {
+            ...real,
+            execute: (target) =>
+              Effect.tap(real.execute(target), (value) =>
+                Effect.sync(() => {
+                  deliveries.push(value);
+                }),
+              ),
+          };
+        },
+      );
       f = pilotFixture();
       now = new Date(f.entry.decidedAt);
       vi.useFakeTimers({ toFake: ["Date"] });
@@ -254,6 +272,7 @@ describe.skipIf(!serverUrl)(
       );
     });
     afterEach(() => {
+      vi.restoreAllMocks();
       vi.useRealTimers();
       vi.unstubAllEnvs();
       vi.unstubAllGlobals();
@@ -285,7 +304,10 @@ describe.skipIf(!serverUrl)(
         const wake = await scan("wakes"),
           intent = await scan("intents");
         expect(wake, JSON.stringify(wake)).toMatchObject({ type: "Progress" });
-        expect(intent, JSON.stringify(intent)).toMatchObject({
+        expect(
+          intent,
+          JSON.stringify({ intent, deliveries, posts, puts }),
+        ).toMatchObject({
           type: "Progress",
         });
         const state = await snapshot();
