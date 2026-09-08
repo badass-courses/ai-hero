@@ -6,7 +6,7 @@ import { CONTACT_EMAIL_STALE_SQL } from './contact-email-key-contract'
 export function integrityExpressionAst(source: string): unknown {
 	const tokens: string[] = []
 	const pattern =
-		/\s+|`(?:``|[^`])*`|'(?:''|[^'])*'|<>|!=|[(),]|[a-zA-Z_][a-zA-Z_0-9]*|\d+/gy
+		/\s+|`(?:``|[^`])*`|\\'[^'\\]*\\'|'(?:''|[^'])*'|<>|!=|[(),]|[a-zA-Z_][a-zA-Z_0-9]*|\d+/gy
 	let at = 0
 	while (at < source.length) {
 		pattern.lastIndex = at
@@ -52,19 +52,30 @@ export function integrityExpressionAst(source: string): unknown {
 			requireToken('(')
 			const e = expression()
 			requireToken('as')
+			if (peek() === 'char') {
+				take()
+				requireToken('charset')
+			}
 			requireToken('binary')
 			requireToken(')')
 			return ['cast', e, 'binary']
 		}
 		if (lower === '_utf8mb4' || lower === '_ascii' || lower === '_binary') {
-			if (!tokens[i]?.startsWith("'"))
+			if (!tokens[i]?.startsWith("'") && !tokens[i]?.startsWith("\\'"))
 				throw new Error('Invalid charset literal')
 			return atom()
 		}
+		if (t.startsWith("\\'")) return ['literal', t.slice(2, -2)]
 		if (t.startsWith("'"))
 			return ['literal', t.slice(1, -1).replaceAll("''", "'")]
 		if (/^\d+$/.test(t)) return ['number', Number(t)]
-		const name = lower.replace(/^`|`$/g, '')
+		const rawName = lower.replace(/^`|`$/g, '')
+		const name =
+			rawName === 'length'
+				? 'octet_length'
+				: rawName === 'substr'
+					? 'substring'
+					: rawName
 		if (peek() === '(') {
 			if (
 				!['left', 'octet_length', 'replace', 'substring', 'sha2'].includes(name)

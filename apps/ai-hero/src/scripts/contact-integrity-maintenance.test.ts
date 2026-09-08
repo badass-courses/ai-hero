@@ -161,6 +161,23 @@ describe('generated guard structural comparison', () => {
 			),
 		)
 	})
+	it('matches native byte-length/substr/CHAR CHARSET BINARY metadata aliases and escaped literal delimiters', () => {
+		expect(
+			integrityExpressionAst(String.raw`length(substr(emailKey,4)) <> 0`),
+		).toEqual(
+			integrityExpressionAst('OCTET_LENGTH(SUBSTRING(emailKey,4)) <> 0'),
+		)
+		expect(
+			integrityExpressionAst(
+				String.raw`cast(_utf8mb4\'v1:\' as char charset binary)`,
+			),
+		).toEqual(integrityExpressionAst("BINARY 'v1:'"))
+		expect(
+			integrityExpressionAst(
+				String.raw`cast(_utf8mb4\'v0:\' as char charset binary)`,
+			),
+		).not.toEqual(integrityExpressionAst("BINARY 'v1:'"))
+	})
 	it('does not erase precedence or version changes', () => {
 		expect(
 			integrityExpressionAst(
