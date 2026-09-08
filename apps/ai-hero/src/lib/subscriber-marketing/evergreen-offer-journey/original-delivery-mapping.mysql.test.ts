@@ -36,7 +36,12 @@ import type { IsoInstant } from './primitives'
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
 function connect(uri: string, readOnly = false) {
-	const raw = mysql.createPool({ uri, connectionLimit: 2, timezone: 'Z' })
+	// Wrap the underlying driver before instrumenting it. Wrapping the proxy
+	// itself replaces raw.query with a captured, already-instrumented query and
+	// counts each driver call twice.
+	const raw = preserveQueryResultShape(
+		mysql.createPool({ uri, connectionLimit: 2, timezone: 'Z' }),
+	)
 	const queries: string[] = []
 	const guarded = new Proxy(raw, {
 		get(target, key) {
@@ -62,7 +67,7 @@ function connect(uri: string, readOnly = false) {
 			}
 		},
 	})
-	const database = drizzle(preserveQueryResultShape(guarded), {
+	const database = drizzle(guarded, {
 		schema: journeySchema,
 		mode: 'planetscale',
 	})
@@ -446,8 +451,12 @@ integration(
 			const attempt = await row(),
 				before = await second.store.event(mappingIdentity(attempt).id)
 			expect(await Effect.runPromise(front().execute(target()))).toMatchObject({
-				type: 'AlreadyAttempted',
+				type: 'NotClaimed',
+				reason: 'IntentNotPending',
+				sideEffects: 'none',
 			})
+			expect(posts).toBe(1)
+			expect(await row()).toEqual(attempt)
 			expect(await second.store.event(mappingIdentity(attempt).id)).toEqual(
 				before,
 			)
@@ -523,6 +532,18 @@ integration(
 			expect(posts).toBe(1)
 			const before = await row()
 			now = new Date(before.leaseExpiresAt.getTime() + 1000).toISOString()
+			const savedBefore = await second.store.event(mappingIdentity(before).id)
+			const savedCore = readMappingEventRow(savedBefore, {
+				sourceEventId: 'mapping-source',
+				providerIdentityId: 'identity-mapping-source',
+			})
+			expect(savedCore.sequenceId).toBe(manifest().messages[0]!.sequenceId)
+			expect(
+				await Effect.runPromise(map(second.store).reader.read(before)),
+			).toMatchObject({
+				sequenceId: savedCore.sequenceId,
+				claimToken: before.claimToken,
+			})
 			const changed = structuredClone(manifest())
 			changed.messages[0]!.sequenceId += 99
 			const held = await Effect.runPromise(
@@ -532,16 +553,24 @@ integration(
 					selected: changed,
 				}).reconcileHeld({ limit: 20 }),
 			)
-			expect(JSON.stringify(held)).toContain('OriginalMappingMismatch')
+			// Existing recovery folds missing, invalid and mismatching evidence into
+			// one hold reason. Do not invent a new production result for this test.
+			expect(JSON.stringify(held)).toContain('OriginalMappingUnavailable')
 			expect(gets).toHaveLength(0)
 			expect(await row()).toEqual(before)
-			await Effect.runPromise(
+			const recovered = await Effect.runPromise(
 				front({ connection: second, writer: false }).reconcileHeld({
 					limit: 20,
 				}),
 			)
+			expect(JSON.stringify(recovered)).toContain('ReconciledAccepted')
 			expect(gets).toHaveLength(1)
+			expect(gets[0]).toContain(`/sequences/${savedCore.sequenceId}/`)
 			expect(posts).toBe(1)
+			expect((await row()).status).toBe('Accepted')
+			expect(await second.store.event(mappingIdentity(before).id)).toEqual(
+				savedBefore,
+			)
 		})
 		it.each(['missing', 'foreign', 'conflicting'] as const)(
 			'real recorded-outcome candidate %s holds on read-only connection',
