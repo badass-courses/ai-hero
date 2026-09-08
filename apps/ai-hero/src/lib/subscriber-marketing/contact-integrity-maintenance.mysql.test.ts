@@ -109,6 +109,10 @@ suite('Contact integrity maintenance native disposable CI', () => {
 		const [rows] = await pool.query<RowDataPacket[]>(
 			"SELECT GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND COLUMN_NAME='emailKeyStale'",
 		)
+		expect(
+			() => integrityExpressionAst(rows[0]!.GENERATION_EXPRESSION),
+			String(rows[0]!.GENERATION_EXPRESSION),
+		).not.toThrow()
 		expect(integrityExpressionAst(rows[0]!.GENERATION_EXPRESSION)).toEqual(
 			integrityExpressionAst(CONTACT_EMAIL_STALE_SQL),
 		)

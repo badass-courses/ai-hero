@@ -6,14 +6,14 @@ import { CONTACT_EMAIL_STALE_SQL } from './contact-email-key-contract'
 export function integrityExpressionAst(source: string): unknown {
 	const tokens: string[] = []
 	const pattern =
-		/\s+|`(?:``|[^`])*`|'(?:''|[^'])*'|<>|[(),]|[a-zA-Z_][a-zA-Z_0-9]*|\d+/gy
+		/\s+|`(?:``|[^`])*`|'(?:''|[^'])*'|<>|!=|[(),]|[a-zA-Z_][a-zA-Z_0-9]*|\d+/gy
 	let at = 0
 	while (at < source.length) {
 		pattern.lastIndex = at
 		const m = pattern.exec(source)
 		if (!m) throw new Error('Unsupported expression')
 		at = pattern.lastIndex
-		if (!/^\s+$/.test(m[0])) tokens.push(m[0])
+		if (!/^\s+$/.test(m[0])) tokens.push(m[0] === '!=' ? '<>' : m[0])
 	}
 	let i = 0
 	const peek = () => tokens[i]?.toLowerCase()

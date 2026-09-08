@@ -240,8 +240,26 @@ export async function runMaintenanceCli(
 						destroy: () => connection.destroy(),
 					}
 				})
+			const connection = await connect(config)
+			try {
+				const principal = z
+					.array(z.object({ principal: z.string() }))
+					.length(1)
+					.parse(
+						await connection.query(
+							"SELECT SUBSTRING_INDEX(CURRENT_USER(),'@',1) principal",
+							[],
+							Math.min(options.maxMs, 10000),
+						),
+					)
+				if (principal[0]!.principal !== config.user)
+					throw new Error('Actual dedicated principal mismatch')
+			} catch {
+				connection.destroy()
+				throw new Error('Dedicated principal unavailable')
+			}
 			const result = await Effect.runPromise(
-				maintainContactIntegrity(await connect(config), options),
+				maintainContactIntegrity(connection, options),
 			)
 			if (stateFd !== undefined)
 				writeFileSync(
@@ -260,7 +278,7 @@ export async function runMaintenanceCli(
 				output: {
 					version: 1,
 					target,
-					approvalReferenceRecorded: true,
+					approvalReferenceSupplied: true,
 					approvalGranted: false,
 					...publicMaintenanceResult(result),
 				},

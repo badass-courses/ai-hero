@@ -7,7 +7,7 @@ import { integrityExpressionAst } from '../lib/subscriber-marketing/contact-main
 import { CONTACT_EMAIL_STALE_SQL } from '../lib/subscriber-marketing/contact-email-key-contract'
 
 describe('offline maintenance CLI and dedicated boundary', () => {
-	it.each([[], ['--help'], ['--mode', 'plan']].map(args=>[args]))(
+	it.each([[], ['--help'], ['--mode', 'plan']].map((args) => [args]))(
 		'help/plan %j never read credentials or construct a database',
 		async (args) => {
 			const connect = vi.fn(async () => {
@@ -23,46 +23,48 @@ describe('offline maintenance CLI and dedicated boundary', () => {
 			expect(readCredential).not.toHaveBeenCalled()
 		},
 	)
-	it.each([
-		['--mode', 'inspect'],
-		['--mode', 'apply', '--target', 'prod', '--credential-fd', '3'],
+	it.each(
 		[
-			'--mode',
-			'dry-run',
-			'--target',
-			'prod',
-			'--approval-ref',
-			'packet-5',
-			'--credential-fd',
-			'3',
-		],
-		[
-			'--mode',
-			'verify',
-			'--target',
-			'prod',
-			'--approval-ref',
-			'packet-5',
-			'--credential-fd',
-			'0',
-			'--acknowledge-approval',
-		],
-		[
-			'--mode',
-			'verify',
-			'--target',
-			'prod',
-			'--approval-ref',
-			'packet-5',
-			'--credential-fd',
-			'3',
-			'--acknowledge-approval',
-			'--state-in',
-			'private-state.json',
-		],
-		['--mode', 'inspect', '--password', 'synthetic-secret'],
-		['--mode', 'inspect', '--mode', 'plan'],
-	].map(args=>[args]))(
+			['--mode', 'inspect'],
+			['--mode', 'apply', '--target', 'prod', '--credential-fd', '3'],
+			[
+				'--mode',
+				'dry-run',
+				'--target',
+				'prod',
+				'--approval-ref',
+				'packet-5',
+				'--credential-fd',
+				'3',
+			],
+			[
+				'--mode',
+				'verify',
+				'--target',
+				'prod',
+				'--approval-ref',
+				'packet-5',
+				'--credential-fd',
+				'0',
+				'--acknowledge-approval',
+			],
+			[
+				'--mode',
+				'verify',
+				'--target',
+				'prod',
+				'--approval-ref',
+				'packet-5',
+				'--credential-fd',
+				'3',
+				'--acknowledge-approval',
+				'--state-in',
+				'private-state.json',
+			],
+			['--mode', 'inspect', '--password', 'synthetic-secret'],
+			['--mode', 'inspect', '--mode', 'plan'],
+		].map((args) => [args]),
+	)(
 		'refuses missing/invalid authority shape before connection %j',
 		async (args) => {
 			const connect = vi.fn(async () => {
@@ -119,6 +121,17 @@ describe('offline maintenance CLI and dedicated boundary', () => {
 			expect(JSON.stringify(r.output)).not.toContain('synthetic-secret')
 		},
 	)
+	it('refuses an authenticated principal that differs from the dedicated requested account', async () => {
+		const query = vi.fn(async () => [{ principal: 'application-user' }]),
+			destroy = vi.fn()
+		const r = await runMaintenanceCli(flags, {
+			readCredential: () => JSON.stringify(credential),
+			connect: async () => ({ query, destroy }),
+		})
+		expect(r.exitCode).toBe(2)
+		expect(query).toHaveBeenCalledTimes(1)
+		expect(destroy).toHaveBeenCalledTimes(1)
+	})
 	it('only reaches connector after dedicated explicit input, and redacts thrown credentials', async () => {
 		const connect = vi.fn(async () => {
 			throw new Error('synthetic-secret not-a-real-host.invalid')
