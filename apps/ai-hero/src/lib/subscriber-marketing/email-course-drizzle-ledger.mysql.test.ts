@@ -97,6 +97,7 @@ integration('Email Course MySQL ledger', () => {
 			'../../db/migrations/20260504_ai_hero_subscriber_marketing_gate_a.sql',
 			'../../db/migrations/20260714_ai_hero_optin_attribution.sql',
 			'../../db/migrations/20260717_ai_hero_side_effect_intent_completed_at.sql',
+			'../../db/migrations/plans/20260908_contact_email_equivalence.sql',
 			'../../db/migrations/20260831_ai_hero_email_course_evergreen_schema.sql',
 		]) {
 			const sql = await fs.readFile(
