@@ -21,6 +21,8 @@ import type {
 } from './domain'
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
 import { createDrizzleJourneyLedger } from './drizzle-ledger'
+import { calendarFlow } from './calendar-version.fixtures'
+import { EVERGREEN_OFFER_JOURNEY_V2 } from './definition'
 import { createDrizzleJourneyAttempts } from './drizzle-attempts'
 import type { JourneyLedgerCommit } from './ports'
 import {
@@ -347,6 +349,19 @@ integration('evergreen offer journey MySQL ledger', () => {
 		await adminPool.end()
 		await serverPool.query(`DROP DATABASE \`${databaseName}\``)
 		await serverPool.end()
+	})
+
+	it.each([EVERGREEN_OFFER_JOURNEY_V1, EVERGREEN_OFFER_JOURNEY_V2])('roundtrips pinned $definitionVersion wake/coupon/terminal flow through actual ledger', async definition => {
+		const flow = calendarFlow(definition, 'mysql-calendar')
+		for (const step of [flow.entry, flow.pending, flow.pitch, flow.terminal]) {
+			expect((await Effect.runPromise(first.ledger.commit(step))).committed).toBe(true)
+			expect(await Effect.runPromise(second.ledger.load(step.decision.next.journeyId))).toEqual(step.decision.next)
+			expect((await Effect.runPromise(second.ledger.commit(step))).replayedStimulus).toBe(true)
+		}
+		const inspected = await Effect.runPromise(second.ledger.inspect({ journeyId: flow.entry.decision.next.journeyId, now: flow.terminal.decidedAt, automationControl: 'Enabled' }))
+		expect(inspected.aggregate.coupon?.issuedAt).toBe(flow.wake.dueAt)
+		expect(inspected.aggregate.coupon?.expiresAt).toBe(flow.issued.coupon.expiresAt)
+		expect(inspected.aggregate.definition).toEqual(definition)
 	})
 
 	it('persists, restores, inspects, and replays one exact committed decision', async () => {
