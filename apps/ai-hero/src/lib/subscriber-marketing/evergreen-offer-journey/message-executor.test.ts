@@ -1217,7 +1217,7 @@ describe('revision delivery guards and dormant composition', () => {
 				{ type: 'Invalid', reason: 'InvalidBundle', registeredRevisions: [] },
 			],
 			[
-				[...definitions.map(bundle), bundle(EVERGREEN_OFFER_JOURNEY_V1)],
+				[...definitions.map(bundle), bundle(EVERGREEN_OFFER_JOURNEY_V1), bundle(EVERGREEN_OFFER_JOURNEY_V2)],
 				{ type: 'Invalid', reason: 'TooManyBundles', registeredRevisions: [] },
 			],
 		] as const) {

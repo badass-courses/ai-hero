@@ -1,5 +1,6 @@
 import { Effect, Either } from 'effect'
 import { isDeepStrictEqual } from 'node:util'
+import type { MessagePreparationGate } from './message-preparation-gate'
 import {
 	captureRevisionScope,
 	type DeliveryRevisionScope,
@@ -86,6 +87,7 @@ export type MessageExecutorDependencies = {
 	readonly attempts: JourneyAttempts
 	readonly delivery: DeliveryPort
 	readonly reconciliation: DeliveryReconciliation
+	readonly preparation?: MessagePreparationGate
 	/** Claim lease in milliseconds; the attempt boundary caps it at five minutes. */
 	readonly leaseMs?: number
 }
@@ -100,10 +102,13 @@ export type SideEffectDisclosure =
 	| 'claimed'
 	| 'mapping-persisted'
 	| 'mapping-may-have-persisted'
+	| 'preparation-persisted'
+	| 'fields-may-have-changed'
 	| 'provider-called'
 	| 'attempt-recorded'
 
 export type NotClaimedReason =
+	| 'PreparationUnavailable'
 	| 'MappingUnavailable'
 	| RevisionHoldReason
 	| 'JourneyNotFound'
@@ -165,6 +170,7 @@ export type DomainSettlement =
  * then surfaces in recovery as honestly held. Never KnownNotApplied, never a resend.
  */
 export type AbandonReason =
+	| 'PreparationHeld'
 	| 'MappingUnavailable'
 	| 'MappingConflict'
 	| 'RevisionChangedAfterClaim'
@@ -191,11 +197,14 @@ export type MessageExecutionResult =
 			readonly detail: string
 			/** Apply invocations made under this claim; each one proved no request left. */
 			readonly applyInvocations: number
-			readonly providerRequest: 'none'
+			/** fields-only never means enrollment or inbox delivery. */
+			readonly providerRequest: 'none' | 'fields-only'
 			readonly sideEffects:
 				| 'claimed'
 				| 'mapping-persisted'
 				| 'mapping-may-have-persisted'
+				| 'preparation-persisted'
+				| 'fields-may-have-changed'
 	  }
 	| {
 			readonly type: 'Applied'
@@ -212,7 +221,7 @@ export type MessageExecutionResult =
 			readonly detail: string
 			readonly applyInvocations: number
 			/** 'none' is proven; 'unknown' means the port refused without proof either way. */
-			readonly providerRequest: 'none' | 'unknown'
+			readonly providerRequest: 'none' | 'fields-only' | 'unknown'
 			readonly sideEffects: 'attempt-recorded'
 			readonly settlement: DomainSettlement
 	  }
@@ -739,6 +748,11 @@ export function createMessageIntentExecutor(
 			const revisionHold = revisionScope.check(canonical.aggregate, intent)
 			if (revisionHold) return notClaimed(revisionHold)
 			if (!revisionScope.hasWriter) return notClaimed('MappingUnavailable')
+			const requiresPreparation =
+				canonical.aggregate.definition.definitionVersion ===
+				'evergreen-offer-v3'
+			if (requiresPreparation && !dependencies.preparation)
+				return notClaimed('PreparationUnavailable')
 			if (status !== 'pending') return notClaimed('IntentNotPending')
 			if (isFinal(canonical.aggregate)) return notClaimed('JourneyNotActive')
 			const slot = slotBinding(canonical.aggregate, intent)
@@ -780,7 +794,9 @@ export function createMessageIntentExecutor(
 			let mappingSideEffects:
 				| 'claimed'
 				| 'mapping-persisted'
-				| 'mapping-may-have-persisted' = 'claimed'
+				| 'mapping-may-have-persisted'
+				| 'preparation-persisted'
+				| 'fields-may-have-changed' = 'claimed'
 			let originalReceipt: unknown = null
 			const abandoned = (
 				reason: AbandonReason,
@@ -792,7 +808,10 @@ export function createMessageIntentExecutor(
 					reason,
 					detail,
 					applyInvocations,
-					providerRequest: 'none',
+					providerRequest:
+						mappingSideEffects === 'fields-may-have-changed'
+							? 'fields-only'
+							: 'none',
 					sideEffects: mappingSideEffects,
 				}) as const
 
@@ -824,6 +843,40 @@ export function createMessageIntentExecutor(
 						applyInvocations,
 					)
 				originalReceipt = structuredClone(recordedMapping.receipt)
+				if (requiresPreparation) {
+					mappingSideEffects = 'preparation-persisted'
+					const prep = yield* Effect.tryPromise({
+						try: () => dependencies.preparation!.prepare(intent, evidence),
+						catch: () =>
+							failure(
+								'AuthorityUnavailable',
+								'Preparation unavailable',
+								'fields-may-have-changed',
+							),
+					})
+					if (prep.type === 'Held') {
+						if (prep.fieldsRequest === 'possible')
+							mappingSideEffects = 'fields-may-have-changed'
+						return abandoned('PreparationHeld', prep.reason, applyInvocations)
+					}
+					mappingSideEffects = 'fields-may-have-changed'
+					const reserved = yield* Effect.tryPromise({
+						try: () =>
+							dependencies.preparation!.reserveEnrollment(prep.snapshot),
+						catch: () =>
+							failure(
+								'AttemptUnavailable',
+								'Enrollment reservation unavailable',
+								'fields-may-have-changed',
+							),
+					})
+					if (!reserved)
+						return abandoned(
+							'PreparationHeld',
+							'EnrollmentReservationUnconfirmed',
+							applyInvocations,
+						)
+				}
 				// Fresh authority, control, clock, window and lease before every apply invocation.
 				// Nothing from the claim or an earlier invocation is reused.
 				const fresh = yield* readFacts(
@@ -872,7 +925,7 @@ export function createMessageIntentExecutor(
 						refusal: 'PreflightRefused',
 						detail: control,
 						applyInvocations,
-						providerRequest: 'none',
+						providerRequest: requiresPreparation ? 'fields-only' : 'none',
 						sideEffects: 'attempt-recorded',
 						settlement,
 					} as const
