@@ -16,6 +16,7 @@ import type { MySqlDatabase } from "drizzle-orm/mysql-core";
 import { automationControl } from "@/db/email-course-schema";
 import { and, eq, asc } from "drizzle-orm";
 import { Effect } from "effect";
+import { compileMessageTemplate } from "@/lib/subscriber-marketing/evergreen-offer-journey/message-preparation";
 import * as revisionDelivery from "@/lib/subscriber-marketing/evergreen-offer-journey/revision-delivery";
 import { Auth } from "@auth/core";
 import Postmark from "@auth/core/providers/postmark";
@@ -228,6 +229,17 @@ describe.skipIf(!serverUrl)(
       puts = 0;
       reads = [];
       fields = { pref_newsletter: "subscribed" };
+      // Synthetic account already has the reviewed field definitions. The real
+      // transport must refuse absent keys and must never provision them itself.
+      for (const template of f.config.templates) {
+        const compiled = compileMessageTemplate(template, {
+          FIRST_NAME: "synthetic",
+          REGULAR_PRICE: "synthetic",
+          DISCOUNT_AMOUNT: "synthetic",
+          DEADLINE_DISPLAY: "synthetic",
+        });
+        for (const key of Object.keys(compiled.fields)) fields[key] = "";
+      }
       vi.stubGlobal(
         "fetch",
         async (request: string | URL | Request, init?: RequestInit) => {
@@ -440,6 +452,24 @@ describe.skipIf(!serverUrl)(
       expect(new Set(commits.map((c) => c.journeyId))).toEqual(
         new Set([f.config.journeyId]),
       );
+    });
+    it("missing pre-existing field definitions stays held without a PUT or enrollment", async () => {
+      fields = { pref_newsletter: "subscribed" };
+      await scan("source");
+      now = new Date(f.now);
+      vi.setSystemTime(now);
+      await scan("wakes");
+      expect(await scan("intents")).toMatchObject({
+        type: "Paused",
+        reason: "Message:Abandoned",
+      });
+      expect(deliveries).toContainEqual(
+        expect.objectContaining({
+          type: "Abandoned",
+          detail: "FieldProjectionUnconfirmed",
+        }),
+      );
+      expect(puts + posts).toBe(0);
     });
     it("unrelated actual email login succeeds without adding an observation or claim", async () => {
       await handles().insert(schema.users).values({
