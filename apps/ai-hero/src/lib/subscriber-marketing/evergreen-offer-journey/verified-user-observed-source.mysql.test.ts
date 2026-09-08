@@ -84,6 +84,11 @@ suite("secure claim source disposable MySQL", () => {
     stopped = false,
     purchased = false,
     advances = 0;
+  const fixtureNow = () => {
+    const parsed = parseIsoInstant(now.toISOString());
+    if (!parsed.ok) throw new Error("Invalid fixture clock");
+    return parsed.value;
+  };
   const databaseFor = (p: Pool) =>
     drizzle(preserveQueryResultShape(p), {
       schema: { ...schema, ...journeySchema },
@@ -223,6 +228,8 @@ suite("secure claim source disposable MySQL", () => {
       currentFacts: () =>
         Effect.succeed({
           ...facts,
+          // This is a new authority read, not the historical issuance observation.
+          readAt: fixtureNow(),
           existingJourneyId: f.issueIntent.journeyId,
           purchase: purchased
             ? {
@@ -756,9 +763,7 @@ suite("secure claim source disposable MySQL", () => {
         }),
       ),
     ]);
-    expect(ticks.some((result) => result.reason === "Coupon:Committed")).toBe(
-      true,
-    );
+    expect(ticks.map((result) => result.reason)).toContain("Coupon:Committed");
     const grants = await database.select().from(schema.entitlements);
     expect(grants).toHaveLength(1);
     expect(grants[0]!.userId).toBe(first.captured.userId);
