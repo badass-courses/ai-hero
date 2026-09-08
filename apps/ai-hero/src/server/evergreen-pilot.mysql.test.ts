@@ -157,56 +157,46 @@ describe.skipIf(!serverUrl)(
         await pool.query(`DELETE FROM \`${t}\``);
       const db = handles();
       const row = sourceFixture("preparation-fixture");
-      await db
-        .insert(schema.contact)
-        .values({
-          id: row.contactId,
-          ...contactEmailWriteValues("pilot@example.test"),
-          userId: f.config.userId,
-          lifecycle: "new",
-        });
-      await db
-        .insert(schema.users)
-        .values({
-          id: f.config.userId,
-          email: "pilot@example.test",
-          name: "Synthetic Pilot",
-          emailVerified: now,
-        });
-      await db
-        .insert(schema.providerIdentity)
-        .values({
-          id: row.providerIdentityId,
-          contactId: row.contactId,
-          provider: "kit",
-          externalId: "123",
-          evidence: { source: "kit", strength: "strong" },
-        });
+      await db.insert(schema.contact).values({
+        id: row.contactId,
+        ...contactEmailWriteValues("pilot@example.test"),
+        userId: f.config.userId,
+        lifecycle: "new",
+      });
+      await db.insert(schema.users).values({
+        id: f.config.userId,
+        email: "pilot@example.test",
+        name: "Synthetic Pilot",
+        emailVerified: now,
+      });
+      await db.insert(schema.providerIdentity).values({
+        id: row.providerIdentityId,
+        contactId: row.contactId,
+        provider: "kit",
+        externalId: "123",
+        evidence: { source: "kit", strength: "strong" },
+      });
       await db.insert(schema.contactEvent).values(row);
       await pool.query(
         'INSERT INTO AI_ContactState (id,contactId,lifecycle,primaryBucket,allBuckets,whySignals,whoSignals,confidence,rationale,reviewSignals,lastEventId,schemaVersion) VALUES (?,?,"new","synthetic",JSON_ARRAY(),JSON_ARRAY(),JSON_ARRAY(),1,JSON_ARRAY(),JSON_ARRAY(),?,1)',
         ["pilot-state", row.contactId, row.id],
       );
-      await db
-        .insert(automationControl)
-        .values({
-          automationId: f.config.automationId,
-          control: {
-            type: "Enabled",
-            version: f.config.generation,
-            enabledAt: now.toISOString(),
-          },
-        });
-      await db
-        .insert(schema.merchantCoupon)
-        .values({
-          id: f.config.merchantCouponEvidence.id,
-          identifier: "synthetic",
-          merchantAccountId: "synthetic",
-          amountDiscount: 10000,
-          status: 1,
-          type: "special",
-        });
+      await db.insert(automationControl).values({
+        automationId: f.config.automationId,
+        control: {
+          type: "Enabled",
+          version: f.config.generation,
+          enabledAt: now.toISOString(),
+        },
+      });
+      await db.insert(schema.merchantCoupon).values({
+        id: f.config.merchantCouponEvidence.id,
+        identifier: "synthetic",
+        merchantAccountId: "synthetic",
+        amountDiscount: 10000,
+        status: 1,
+        type: "special",
+      });
       await db
         .insert(schema.entitlementTypes)
         .values({ id: "pilot-credit-type", name: "apply_special_credit" });
@@ -292,8 +282,12 @@ describe.skipIf(!serverUrl)(
         scanned: 1,
       });
       for (let n = 0; n < 20; n++) {
-        await scan("wakes");
-        await scan("intents");
+        const wake = await scan("wakes"),
+          intent = await scan("intents");
+        expect(wake, JSON.stringify(wake)).toMatchObject({ type: "Progress" });
+        expect(intent, JSON.stringify(intent)).toMatchObject({
+          type: "Progress",
+        });
         const state = await snapshot();
         if (state?.phase === "pitch.running" && state.coupon) return state;
         const next = (
@@ -317,9 +311,7 @@ describe.skipIf(!serverUrl)(
           vi.setSystemTime(now);
         }
       }
-      throw new Error(
-        `Pilot failed to reach pitch: ${JSON.stringify(await snapshot())}`,
-      );
+      throw new Error(`Pilot failed to reach pitch after 20 bounded steps`);
     }
     async function login(address = "pilot@example.test") {
       const a = adapter(),
@@ -428,13 +420,11 @@ describe.skipIf(!serverUrl)(
       );
     });
     it("unrelated actual email login succeeds without adding an observation or claim", async () => {
-      await handles()
-        .insert(schema.users)
-        .values({
-          id: "foreign-user",
-          email: "foreign@example.test",
-          emailVerified: now,
-        });
+      await handles().insert(schema.users).values({
+        id: "foreign-user",
+        email: "foreign@example.test",
+        emailVerified: now,
+      });
       const before = await handles().select().from(schema.contactEvent);
       const cookie = await login("foreign@example.test");
       expect((await evergreenPilotClaim(request(cookie))).status).toBe(401);

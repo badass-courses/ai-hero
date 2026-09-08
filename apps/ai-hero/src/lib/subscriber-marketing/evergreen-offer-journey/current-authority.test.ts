@@ -1,4 +1,5 @@
 import { Effect, Either } from "effect";
+import { encodeEvergreenOfferJourneySnapshot } from "./restoration";
 import { AI_HERO_UNSUBSCRIBED_TAG_ID } from "../ai-hero-email-opt-in";
 import {
   emailPreferenceDefinitionByKey,
@@ -432,11 +433,12 @@ describe("current Evergreen authority", () => {
       throw new Error("Bad head fixture");
     const aggregate = decision.decision.next;
     f.repository.readExhaustionFacts = async () => [exhaustion(), source];
+    // The real ledger persists the encoded envelope, not a naked aggregate.
     f.repository.readJourneyHeads = vi.fn(async () => [
       {
         journeyId: aggregate.journeyId,
         actorVersion: aggregate.version,
-        snapshot: aggregate,
+        snapshot: JSON.parse(encodeEvergreenOfferJourneySnapshot(aggregate)),
       },
     ]);
     const second = await run(f.authority);
@@ -452,6 +454,23 @@ describe("current Evergreen authority", () => {
       ),
     );
     expect(Either.isRight(same)).toBe(true);
+    const correctHeads = f.repository.readJourneyHeads;
+    for (const columns of [
+      { journeyId: aggregate.journeyId, actorVersion: aggregate.version + 1 },
+      {
+        journeyId: "evergreen-offer:wrong-source",
+        actorVersion: aggregate.version,
+      },
+    ]) {
+      f.repository.readJourneyHeads = async () => [
+        {
+          ...columns,
+          snapshot: JSON.parse(encodeEvergreenOfferJourneySnapshot(aggregate)),
+        },
+      ];
+      expect(Either.isLeft(await run(f.authority))).toBe(true);
+    }
+    f.repository.readJourneyHeads = correctHeads;
     const wrongId = parseJourneyId("evergreen-offer:wrong-source");
     if (!wrongId.ok) throw new Error("bad fixture");
     const wrong = await Effect.runPromise(

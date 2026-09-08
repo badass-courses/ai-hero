@@ -48,6 +48,7 @@ export const evergreenClaimMachine = setup({
 						: undefined,
 					body: input.csrf ? JSON.stringify({ csrf: input.csrf }) : undefined,
 				})
+				if (!result.ok) throw new Error('Claim unavailable')
 				return responseSchema.parse(await result.json())
 			},
 		),
@@ -121,7 +122,7 @@ export function EvergreenClaimPanel({
 	if (
 		pilotOnly &&
 		(state.matches('error') ||
-			['unavailable', 'verification-needed'].includes(state.context.status))
+			(state.matches('loading') && state.context.status === 'unavailable'))
 	)
 		return null
 	const busy = state.matches('loading') || state.matches('submitting')

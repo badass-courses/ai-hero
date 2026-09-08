@@ -21,10 +21,7 @@ import {
   parseEntryFactId,
   parseIsoInstant,
 } from "./primitives";
-import {
-  EVERGREEN_OFFER_JOURNEY_SNAPSHOT_FORMAT,
-  restoreEvergreenOfferJourneySnapshot,
-} from "./restoration";
+import { restoreEvergreenOfferJourneySnapshot } from "./restoration";
 
 const Text = z.string().min(1);
 const ControlRow = z.object({
@@ -308,16 +305,14 @@ export function createCurrentOfferAuthority(args: {
           for (const head of heads) {
             const source = expected.get(head.journeyId);
             const restored = restoreEvergreenOfferJourneySnapshot(
-              JSON.stringify({
-                format: EVERGREEN_OFFER_JOURNEY_SNAPSHOT_FORMAT,
-                journeyId: head.journeyId,
-                actorVersion: head.actorVersion,
-                aggregate: head.snapshot,
-              }),
+              // The real ledger column already contains the versioned envelope.
+              JSON.stringify(head.snapshot),
             );
             if (
               !source ||
               !restored.ok ||
+              restored.value.journeyId !== head.journeyId ||
+              restored.value.version !== head.actorVersion ||
               restored.value.contactId !== query.contactId ||
               restored.value.entryFactId !== source.entryId ||
               restored.value.valuePathId !== source.valuePathId
