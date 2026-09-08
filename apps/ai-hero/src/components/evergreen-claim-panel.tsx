@@ -111,14 +111,16 @@ export function EvergreenClaimPanel({
 		!/^\/products\/[a-z0-9-]+$/.test(productPath)
 	)
 		throw new Error('Invalid local claim route')
-	const [state, send] = useMachine(evergreenClaimMachine, { input: { endpoint } })
+	const [state, send] = useMachine(evergreenClaimMachine, {
+		input: { endpoint },
+	})
 	const busy = state.matches('loading') || state.matches('submitting')
 	const message = busy
 		? 'Checking your offer…'
 		: state.matches('error')
 			? 'Your offer is unavailable right now.'
 			: {
-					unavailable: 'No offer is available for this account right now.',
+					unavailable: 'We cannot confirm an offer for this account right now.',
 					'verification-needed': 'Sign in with your email to check your offer.',
 					ready: 'You can request your existing offer.',
 					pending: 'Your request is saved. Check its status before continuing.',
@@ -142,6 +144,21 @@ export function EvergreenClaimPanel({
 						Check status
 					</button>
 				)}
+				{!busy &&
+					['unavailable', 'verification-needed'].includes(
+						state.context.status,
+					) && (
+						<p className={TYPE.meta}>
+							Already signed in?{' '}
+							<a
+								className="underline"
+								href={`/api/auth/signout?callbackUrl=${encodeURIComponent(`/login?callbackUrl=${encodeURIComponent(productPath)}`)}`}
+							>
+								Sign out first
+							</a>
+							, then sign in by email to verify this account.
+						</p>
+					)}
 				<a
 					className={`${TYPE.meta} underline`}
 					href={`/login?callbackUrl=${encodeURIComponent(productPath)}`}

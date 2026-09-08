@@ -33,7 +33,7 @@ function fixture(enabled = true) {
         headers: { cookie: "authjs.session-token=real-session" },
       }),
     );
-  return { handler, claim, status, lookup, get };
+  return { handler, claim, status, lookup, get, now };
 }
 describe("account-only claim HTTP boundary", () => {
   it("GET resolves a real session and never mutates", async () => {
@@ -61,6 +61,48 @@ describe("account-only claim HTTP boundary", () => {
       userId: "user-1",
       sessionToken: "real-session",
     });
+  });
+  it("rejects expired CSRF even while the DB session remains current", async () => {
+    const f = fixture();
+    const { csrf } = await (await f.get()).json();
+    f.now.setTime(f.now.getTime() + 300000);
+    const response = await f.handler(
+      new Request(url, {
+        method: "POST",
+        headers: {
+          origin,
+          cookie: "authjs.session-token=real-session",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ csrf }),
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(f.claim).not.toHaveBeenCalled();
+  });
+  it("rejects a different valid account session using the first account CSRF", async () => {
+    const f = fixture();
+    const { csrf } = await (await f.get()).json();
+    f.lookup.mockResolvedValue({
+      session: {
+        userId: "other-user",
+        expires: new Date(f.now.getTime() + 600000),
+      },
+      user: { id: "other-user" },
+    });
+    const response = await f.handler(
+      new Request(url, {
+        method: "POST",
+        headers: {
+          origin,
+          cookie: "authjs.session-token=other-real-session",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ csrf }),
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(f.claim).not.toHaveBeenCalled();
   });
   it.each(["https://attacker.test", "null", ""])(
     "rejects origin %s",

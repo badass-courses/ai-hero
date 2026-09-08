@@ -324,6 +324,9 @@ suite("secure claim source disposable MySQL", () => {
     "coupon-used",
     "purchased",
     "coupon-revoked",
+    "coupon-expired",
+    "forwarded-generic-url",
+    "reused-old-login-evidence",
     "email-changed",
     "oauth-no-attestation",
   ])("holds %s without source or advance", async (mode) => {
@@ -347,6 +350,39 @@ suite("secure claim source disposable MySQL", () => {
         .insert(schema.contact)
         .values({ id: "old-writer", email: "proof@example.test" });
     if (mode === "stopped") stopped = true;
+    if (mode === "coupon-expired") {
+      now = new Date(f.issueIntent.expiresAt);
+      await database
+        .update(schema.sessions)
+        .set({ expires: new Date(now.getTime() + 3600000) });
+    }
+    if (mode === "forwarded-generic-url") {
+      await database
+        .insert(schema.users)
+        .values({
+          id: "other-user",
+          email: "other@example.test",
+          emailVerified: new Date(now),
+        });
+      await database
+        .insert(schema.sessions)
+        .values({
+          sessionToken: "other-session",
+          userId: "other-user",
+          expires: new Date(now.getTime() + 3600000),
+        });
+      s = { userId: "other-user", sessionToken: "other-session" };
+    }
+    if (mode === "reused-old-login-evidence") {
+      await database
+        .insert(schema.sessions)
+        .values({
+          sessionToken: "new-session-with-no-attestation",
+          userId: f.login.userId,
+          expires: new Date(now.getTime() + 3600000),
+        });
+      s = { ...s, sessionToken: "new-session-with-no-attestation" };
+    }
     if (mode === "purchased") purchased = true;
     if (mode === "coupon-revoked")
       await database.update(schema.coupon).set({ status: 0 });
