@@ -1,6 +1,12 @@
 import { isDeepStrictEqual } from 'node:util'
+import {
+	EVERGREEN_OFFER_JOURNEY_V1,
+	EVERGREEN_OFFER_JOURNEY_V2,
+	EVERGREEN_OFFER_JOURNEY_V3,
+} from './definition'
 import { Effect } from 'effect'
 import { z } from 'zod'
+import { normalizeEmail } from '../contact-email-equivalence'
 import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
 import {
 	createMessageIntentExecutor,
@@ -92,7 +98,7 @@ export function createRevisionDelivery(input: {
 		executor: MessageIntentExecutor
 	}[] = []
 	let reason: 'TooManyBundles' | 'DuplicateRevision' | 'InvalidBundle' | null =
-		input.bundles.length > 2 ? 'TooManyBundles' : null
+		input.bundles.length > 3 ? 'TooManyBundles' : null
 	for (const candidate of reason ? [] : input.bundles) {
 		const parsed = bundleSchema.safeParse({
 			manifest: candidate.manifest,
@@ -103,6 +109,16 @@ export function createRevisionDelivery(input: {
 			break
 		}
 		const bundle = freezeRevision(parsed.data)
+		if (
+			![
+				EVERGREEN_OFFER_JOURNEY_V1,
+				EVERGREEN_OFFER_JOURNEY_V2,
+				EVERGREEN_OFFER_JOURNEY_V3,
+			].some((d) => isDeepStrictEqual(revisionOf(d), bundle.manifest.revision))
+		) {
+			reason = 'InvalidBundle'
+			break
+		}
 		const keys = new Set(bundle.providerReadbacks.map((r) => r.sequenceId))
 		if (
 			keys.size !== 8 ||
@@ -140,9 +156,49 @@ export function createRevisionDelivery(input: {
 				originalMapping: candidate.originalMapping,
 				mappingWriter: candidate.mappingWriter,
 			},
-			delivery: port,
+			delivery: bundle.manifest.revision.definitionVersion==='evergreen-offer-v3'?{
+				apply:(intent)=>{
+					let expected:{subscriberId:number;email:string}|null=null
+					return createKitDeliveryPort({...kit,now,bindings:bundle.manifest.messages.map(m=>({contentResourceId:m.contentResourceId,sequenceId:m.sequenceId,readback:bundle.providerReadbacks.find(r=>r.sequenceId===m.sequenceId)!})),
+						resolveIdentity:async(contactId)=>{
+							expected=await deps.preparation?.identity(intent)??null
+							const current=z.object({contactId:z.string(),subscriberId:z.number()}).parse(await kit.resolveIdentity(contactId))
+							if(!expected||current.contactId!==intent.contactId||current.subscriberId!==expected.subscriberId)throw new Error('Prepared identity changed')
+							return current
+						},
+						fetch:async(url,init)=>{
+							const response=await kit.fetch(url,init)
+							if(init?.method==='GET'&&response.status===200){
+								const current=z.object({subscriber:z.object({id:z.number(),email_address:z.string()})}).parse(await response.clone().json()).subscriber
+								if(!expected||current.id!==expected.subscriberId||normalizeEmail(current.email_address)!==normalizeEmail(expected.email))throw new Error('Prepared provider email changed')
+							}
+							return response
+						},
+					}).apply(intent)
+				},
+			}:port,
 			reconciliation: createKitMembershipReconciliation({
-				port,
+				port:
+					bundle.manifest.revision.definitionVersion === 'evergreen-offer-v3'
+						? {
+								reconcile: (intent) =>
+									Effect.gen(function* () {
+										const allowed = yield* Effect.tryPromise({
+											try: () =>
+												deps.preparation?.mayReconcile(intent) ??
+												Promise.resolve(false),
+											catch: () => false,
+										}).pipe(Effect.catchAll(() => Effect.succeed(false)))
+										if (!allowed)
+											return {
+												type: 'Unknown' as const,
+												reason:
+													'Preparation does not prove enrollment was attempted',
+											}
+										return yield* port.reconcile(intent)
+									}),
+							}
+						: port,
 				clock: deps.clock,
 			}),
 		})
