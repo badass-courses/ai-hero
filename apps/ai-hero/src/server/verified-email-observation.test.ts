@@ -289,11 +289,16 @@ describe('actual installed Auth email callback observation', () => {
 		},
 	)
 	it.each([
-		{ raw: 'ΟΣ@example.test', admitted: false },
-		{ raw: 'İ@example.test', admitted: false },
+		{ raw: 'ΟΣ@example.test', admitted: true },
+		{ raw: 'İ@example.test', admitted: true },
+		{ raw: 'a!b/x@example.test', admitted: true },
+		{ raw: '"quoted"@example.test', admitted: true },
+		{ raw: '𐐀'.repeat(255), admitted: true },
+		{ raw: 'İ'.repeat(255), admitted: true },
+		{ raw: '𐐀'.repeat(256), admitted: false },
 		{ raw: 'K@example.test', admitted: true },
 	])(
-		'SDK auth survives observation syntax admission for $raw',
+		'SDK auth survives structural evidence bounds for $raw',
 		async ({ raw, admitted }) => {
 			const f = fixture({ email: raw }),
 				response = await f.run().response

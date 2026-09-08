@@ -49,6 +49,8 @@ export type EmailTokenLoginObservedPayload = z.infer<
 >
 export type OfferClaimObservedPayload = z.infer<typeof offerClaimObservedSchema>
 
+import { normalizeEmail } from '../contact-email-equivalence'
+
 function keyed(secret: string, domain: string, value: string): string {
 	if (!secret || !value) throw new Error('Missing fingerprint input')
 	return createHmac('sha256', secret)
@@ -56,7 +58,7 @@ function keyed(secret: string, domain: string, value: string): string {
 		.digest('hex')
 }
 export const emailFingerprint = (secret: string, email: string) =>
-	keyed(secret, 'aih:owner-proof:email:v1', email.trim().toLowerCase())
+	keyed(secret, 'aih:owner-proof:email:v1', normalizeEmail(email))
 export const sessionTokenHash = (secret: string, token: string) =>
 	keyed(secret, 'aih:owner-proof:session:v1', token)
 export const emailTokenHash = (secret: string, token: string) =>

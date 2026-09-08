@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { and, eq, getTableName, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { normalizeEmail, isNormalizedEmail } from '../contact-email-equivalence'
+import { lookupIndexedEmailContact } from '../contact-email-lookup'
 import {
 	contact,
 	users,
@@ -34,7 +36,11 @@ const instant = z.string().refine((value) => {
 export const emailObservationInputSchema = z
 	.object({
 		userId: z.string().min(1).max(255),
-		email: z.string().trim().toLowerCase().email().max(255),
+		email: z
+			.string()
+			.max(1020)
+			.refine(isNormalizedEmail)
+			.transform(normalizeEmail),
 		verifiedAt: instant,
 		acceptedToken: z.string().min(1).max(2048),
 		sessionToken: z.string().min(1).max(255),
@@ -146,24 +152,8 @@ export function createEmailTokenLoginObservationWriter(options: {
 				return hold('SerializationUnavailable')
 			try {
 				await options.transactions.run(async (tx) => {
-					// Compare normalized candidates BEFORE LIMIT 2: raw equality misses
-					// case/whitespace duplicates under binary collations. ICU whitespace
-					// plus BOM covers JS trim; JS rechecking below rejects false matches.
-					// Result count is bounded, not scan cost. Native serializable locking
-					// can cover broad scanned ranges. Production cost/compatibility is
-					// unproved; this writer remains unbound and disabled in auth.
-					const candidates = await tx
-						.select({ id: contact.id, email: contact.email })
-						.from(contact)
-						.where(
-							sql`lower(regexp_replace(${contact.email}, ${'^[\\s\\x{FEFF}]+|[\\s\\x{FEFF}]+$'}, '')) = ${capture.email}`,
-						)
-						.limit(2)
-						.for('update')
-					if (candidates.length !== 1) return hold('ContactUnavailable')
-					const owner = candidates[0]!
-					if (owner.email?.trim().toLowerCase() !== capture.email)
-						return hold('ContactUnavailable')
+					const owner = await lookupIndexedEmailContact(tx, capture.email)
+					if (!owner) return hold('ContactUnavailable')
 					const [currentUser] = await tx
 						.select({
 							id: users.id,
@@ -176,7 +166,8 @@ export function createEmailTokenLoginObservationWriter(options: {
 						.for('update')
 					if (
 						!currentUser ||
-						currentUser.email?.trim().toLowerCase() !== capture.email ||
+						typeof currentUser.email !== 'string' ||
+						normalizeEmail(currentUser.email) !== capture.email ||
 						currentUser.emailVerified?.toISOString() !== capture.verifiedAt
 					)
 						return hold('VerificationChanged')
@@ -238,10 +229,7 @@ export function createEmailTokenLoginObservationWriter(options: {
 						id,
 						payload,
 						identity: selected,
-						resolution: resolveOwnerContact(
-							candidates.map((c) => c.id),
-							owner.id,
-						),
+						resolution: resolveOwnerContact([owner.id], owner.id),
 					})
 					expected = { id, payload, identity: selected }
 					await tx.insert(contactEvent).values(row)

@@ -3,6 +3,10 @@ import { isDeepStrictEqual } from 'node:util'
 import type { AuthConfig } from '@auth/core'
 import type { Adapter } from '@auth/core/adapters'
 import { z } from 'zod'
+import {
+	isStoredEmail,
+	normalizeEmail,
+} from '@/lib/subscriber-marketing/contact-email-equivalence'
 
 /** Private request memory only. Never serialize/log this input; the writer
  * converts it to the accepted domain-separated fingerprints before storage. */
@@ -19,7 +23,11 @@ export type EmailObservationResult = {
 }
 type SignIn = NonNullable<NonNullable<AuthConfig['events']>['signIn']>
 const id = z.string().min(1).max(255)
-const email = z.string().trim().toLowerCase().email().max(320)
+const email = z
+	.string()
+	.max(510)
+	.refine(isStoredEmail)
+	.transform(normalizeEmail)
 const token = z.object({
 	identifier: email,
 	token: z.string().min(1).max(2048),
