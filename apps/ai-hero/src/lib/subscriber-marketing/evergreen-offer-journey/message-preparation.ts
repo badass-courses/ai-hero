@@ -152,14 +152,21 @@ export const escapeMessageValue = (value: string) =>
 				c
 			]!,
 	)
-export function checkedMessageUrl(raw: string): string {
+export function checkedMessageUrl(
+	raw: string,
+	reviewedToken?: MessageLinkToken,
+): string {
 	const u = new URL(raw)
+	const reviewedAsset =
+		reviewedToken !== undefined &&
+		(linkTokens as readonly string[]).includes(reviewedToken) &&
+		reviewedToken.endsWith('_IMAGE_URL')
 	if (
 		u.protocol !== 'https:' ||
 		u.username ||
 		u.password ||
 		u.hash ||
-		u.search ||
+		(u.search && !reviewedAsset) ||
 		u.href !== raw
 	)
 		throw new Error('Unreviewable message URL')
@@ -210,7 +217,10 @@ export function compileMessageTemplate(
 			continue
 		if (!Object.values(template.links).includes(url))
 			throw new Error('Unreviewed literal URL')
-		checkedMessageUrl(url)
+		const asset = Object.entries(template.links).find(
+			([token, value]) => value === url && token.endsWith('_IMAGE_URL'),
+		)
+		checkedMessageUrl(url, asset?.[0] as MessageLinkToken | undefined)
 	}
 	const namespace = preparationNamespace(template.revision, template.slot),
 		fields: Record<string, string> = {}
@@ -220,7 +230,9 @@ export function compileMessageTemplate(
 			if ((linkTokens as readonly string[]).includes(token)) {
 				const link = template.links[token as MessageLinkToken]
 				if (!link) throw new Error('Missing reviewed link')
-				return escapeMessageValue(checkedMessageUrl(link))
+				return escapeMessageValue(
+					checkedMessageUrl(link, token as MessageLinkToken),
+				)
 			}
 			const raw = values[token as DynamicMessageToken]
 			if (raw === undefined || raw.length > 4096)
