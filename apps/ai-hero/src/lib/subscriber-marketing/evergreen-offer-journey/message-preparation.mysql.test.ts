@@ -61,6 +61,7 @@ integration('native immutable preparation; synthetic Kit only', () => {
 	let f: ReturnType<typeof preparationFixture>,
 		now: string,
 		puts: number,
+		postProjectionReads: number,
 		posts: number,
 		mode: string,
 		profile: {
@@ -97,15 +98,17 @@ integration('native immutable preparation; synthetic Kit only', () => {
 				JSON.stringify({
 					subscriber: {
 						id: 123,
-						email_address:
-							mode === 'late-provider-identity'
-								? 'changed@example.test'
-								: f.snapshot.email,
+						email_address: f.snapshot.email,
 						state: 'active',
 					},
 				}),
 				{ status: 200 },
 			)
+		if (init?.method === 'GET' && puts > 0) {
+			postProjectionReads++
+			if (mode === 'late-provider-identity' && postProjectionReads > 1)
+				profile.email_address = 'changed@example.test'
+		}
 		if (init?.method === 'PUT') {
 			puts++
 			const body = JSON.parse(String(init.body))
@@ -193,6 +196,7 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		f = preparationFixture()
 		now = f.now
 		puts = 0
+		postProjectionReads = 0
 		posts = 0
 		mode = 'normal'
 		profile = {
@@ -218,15 +222,13 @@ integration('native immutable preparation; synthetic Kit only', () => {
 			evidence: { source: 'synthetic' },
 		})
 		const source = sourceFixture('preparation-fixture')
-		await db
-			.insert(providerIdentity)
-			.values({
-				id: source.providerIdentityId,
-				contactId: source.contactId,
-				provider: 'ai-hero',
-				externalId: 'synthetic-source',
-				evidence: { source: 'synthetic' },
-			})
+		await db.insert(providerIdentity).values({
+			id: source.providerIdentityId,
+			contactId: source.contactId,
+			provider: 'ai-hero',
+			externalId: 'synthetic-source',
+			evidence: { source: 'synthetic' },
+		})
 		await db.insert(contactEvent).values(source)
 		const ledger = createDrizzleJourneyLedger(db)
 		await Effect.runPromise(ledger.commit(f.entry))
@@ -444,21 +446,17 @@ integration('native immutable preparation; synthetic Kit only', () => {
 				amountDiscount: 10000,
 				restrictedToProductId: issue.terms.productId,
 			}
-			await db
-				.insert(coupon)
-				.values({
-					...row,
-					amountDiscount: kind === 'changed-coupon' ? 9999 : 10000,
-				})
+			await db.insert(coupon).values({
+				...row,
+				amountDiscount: kind === 'changed-coupon' ? 9999 : 10000,
+			})
 			if (kind !== 'missing-price')
-				await db
-					.insert(prices)
-					.values({
-						id: 'synthetic-public-price',
-						productId: issue.terms.productId,
-						unitAmount: '349.00',
-						status: 1,
-					})
+				await db.insert(prices).values({
+					id: 'synthetic-public-price',
+					productId: issue.terms.productId,
+					unitAmount: '349.00',
+					status: 1,
+				})
 			const pitch = calendarCommit(
 				flow.pending.decision.next,
 				{ ...flow.issued, coupon: readCouponEvidence(row).coupon },

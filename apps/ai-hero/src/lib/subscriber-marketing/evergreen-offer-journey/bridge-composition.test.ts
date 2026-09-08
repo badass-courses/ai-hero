@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
 	inspectBridgeConfiguration,
+	createBridgeComposition,
 	type BridgeConfiguration,
 } from './bridge-composition'
 import { syntheticRevisionScope } from './revision-delivery.fixtures'
@@ -36,6 +37,32 @@ function inspect(bundles: unknown) {
 	} as BridgeConfiguration)
 }
 describe('V3 required; separately reviewed historical revisions optional', () => {
+	it('disabled composition never dereferences clients or secrets', () => {
+		const input = new Proxy(
+			{ config: { type: 'Disabled' } },
+			{
+				get(target, key) {
+					if (key === 'config') return target.config
+					throw new Error('Unexpected dependency access')
+				},
+			},
+		) as Parameters<typeof createBridgeComposition>[0]
+		expect(createBridgeComposition(input)).toEqual({ type: 'Disabled' })
+	})
+	it('reviewed V3 without actual preparation bindings remains unavailable', () => {
+		const input = {
+			config: {
+				type: 'Configured',
+				generation: 'synthetic',
+				approvalReference: 'synthetic',
+				bundles: [bundle()],
+			},
+		} as unknown as Parameters<typeof createBridgeComposition>[0]
+		expect(createBridgeComposition(input)).toEqual({
+			type: 'Unavailable',
+			reason: 'MessagePreparationUnconfigured',
+		})
+	})
 	it('accepts V3 alone or with separately reviewed V1/V2', () => {
 		expect(
 			inspect([

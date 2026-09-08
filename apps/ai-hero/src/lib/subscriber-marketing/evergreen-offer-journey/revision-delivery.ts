@@ -6,7 +6,6 @@ import {
 } from './definition'
 import { Effect } from 'effect'
 import { z } from 'zod'
-import { normalizeEmail } from '../contact-email-equivalence'
 import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
 import {
 	createMessageIntentExecutor,
@@ -156,27 +155,43 @@ export function createRevisionDelivery(input: {
 				originalMapping: candidate.originalMapping,
 				mappingWriter: candidate.mappingWriter,
 			},
-			delivery: bundle.manifest.revision.definitionVersion==='evergreen-offer-v3'?{
-				apply:(intent)=>{
-					let expected:{subscriberId:number;email:string}|null=null
-					return createKitDeliveryPort({...kit,now,bindings:bundle.manifest.messages.map(m=>({contentResourceId:m.contentResourceId,sequenceId:m.sequenceId,readback:bundle.providerReadbacks.find(r=>r.sequenceId===m.sequenceId)!})),
-						resolveIdentity:async(contactId)=>{
-							expected=await deps.preparation?.identity(intent)??null
-							const current=z.object({contactId:z.string(),subscriberId:z.number()}).parse(await kit.resolveIdentity(contactId))
-							if(!expected||current.contactId!==intent.contactId||current.subscriberId!==expected.subscriberId)throw new Error('Prepared identity changed')
-							return current
-						},
-						fetch:async(url,init)=>{
-							const response=await kit.fetch(url,init)
-							if(init?.method==='GET'&&response.status===200){
-								const current=z.object({subscriber:z.object({id:z.number(),email_address:z.string()})}).parse(await response.clone().json()).subscriber
-								if(!expected||current.id!==expected.subscriberId||normalizeEmail(current.email_address)!==normalizeEmail(expected.email))throw new Error('Prepared provider email changed')
-							}
-							return response
-						},
-					}).apply(intent)
-				},
-			}:port,
+			delivery:
+				bundle.manifest.revision.definitionVersion === 'evergreen-offer-v3'
+					? {
+							apply: (intent) => {
+								let expected: { subscriberId: number; email: string } | null =
+									null
+								return createKitDeliveryPort({
+									...kit,
+									now,
+									bindings: bundle.manifest.messages.map((m) => ({
+										contentResourceId: m.contentResourceId,
+										sequenceId: m.sequenceId,
+										readback: bundle.providerReadbacks.find(
+											(r) => r.sequenceId === m.sequenceId,
+										)!,
+									})),
+									resolveIdentity: async (contactId) => {
+										expected =
+											(await deps.preparation?.identity(intent)) ?? null
+										const current = z
+											.object({
+												contactId: z.string(),
+												subscriberId: z.number(),
+											})
+											.parse(await kit.resolveIdentity(contactId))
+										if (
+											!expected ||
+											current.contactId !== intent.contactId ||
+											current.subscriberId !== expected.subscriberId
+										)
+											throw new Error('Prepared identity changed')
+										return current
+									},
+								}).apply(intent)
+							},
+						}
+					: port,
 			reconciliation: createKitMembershipReconciliation({
 				port:
 					bundle.manifest.revision.definitionVersion === 'evergreen-offer-v3'

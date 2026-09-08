@@ -18,7 +18,9 @@ export type MessagePreparationGate = {
 		| { type: 'Held'; reason: string; fieldsRequest: 'none' | 'possible' }
 	>
 	reserveEnrollment(snapshot: MessagePreparationSnapshot): Promise<boolean>
-	identity(intent: SendMessageIntent): Promise<{subscriberId:number;email:string}|null>
+	identity(
+		intent: SendMessageIntent,
+	): Promise<{ subscriberId: number; email: string } | null>
 	mayReconcile(intent: SendMessageIntent): Promise<boolean>
 }
 export function preparationMatchesIntent(
@@ -109,8 +111,14 @@ export function createMessagePreparationGate(options: {
 			)
 		},
 		async identity(intent) {
-			const s=await options.store.find(intent.idempotencyKey)
-			return s&&preparationMatchesIntent(s,intent)&&await options.store.read(s,'namespace')&&await options.store.read(s,'enrollment-requested')?{subscriberId:s.subscriberId,email:s.email}:null
+			const s = await options.store.find(intent.idempotencyKey)
+			return s &&
+				preparationMatchesIntent(s, intent) &&
+				(await options.store.read(s, 'namespace')) &&
+				(await options.store.read(s, 'enrollment-requested')) &&
+				(await options.fields.confirm(s))
+				? { subscriberId: s.subscriberId, email: s.email }
+				: null
 		},
 		async mayReconcile(intent) {
 			try {
