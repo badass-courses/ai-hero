@@ -337,18 +337,25 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			expect(await readback.select().from(contactEvent)).toEqual([])
 		},
 	)
-	it.each(['duplicate-case', 'duplicate-space'] as const)(
+	it.each([
+		'duplicate-case',
+		'duplicate-space',
+		'duplicate-tab',
+		'duplicate-bom',
+	] as const)(
 		'normalized %s is ambiguity, not a second first-match identity',
 		async (mode) => {
-			await database
-				.insert(contact)
-				.values({
-					id: 'normalized-duplicate',
-					email:
-						mode === 'duplicate-case'
-							? capture.email.toUpperCase()
-							: ` ${capture.email} `,
-				})
+			await database.insert(contact).values({
+				id: 'normalized-duplicate',
+				email:
+					mode === 'duplicate-case'
+						? capture.email.toUpperCase()
+						: mode === 'duplicate-space'
+							? ` ${capture.email} `
+							: mode === 'duplicate-tab'
+								? `\t${capture.email}\n`
+								: `\uFEFF${capture.email}\u00A0`,
+			})
 			expect(await writer()(capture)).toMatchObject({
 				type: 'Unavailable',
 				reason: 'ContactUnavailable',

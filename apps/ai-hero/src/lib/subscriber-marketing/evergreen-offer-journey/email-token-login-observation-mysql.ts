@@ -147,12 +147,18 @@ export function createEmailTokenLoginObservationWriter(options: {
 			try {
 				await db.transaction(
 					async (tx) => {
-						// Serializable indexed equality/range locking protects this selection
-						// point against duplicate candidates. It does not impose eternal uniqueness.
+						// Compare normalized candidates BEFORE LIMIT 2: raw equality misses
+						// case/whitespace duplicates under binary collations. ICU whitespace
+						// plus BOM covers JS trim; JS rechecking below rejects false matches.
+						// Result count is bounded, not scan cost. Native serializable locking
+						// can cover broad scanned ranges. Production cost/compatibility is
+						// unproved; this writer remains unbound and disabled in auth.
 						const candidates = await tx
 							.select({ id: contact.id, email: contact.email })
 							.from(contact)
-							.where(eq(contact.email, capture.email))
+							.where(
+								sql`lower(regexp_replace(${contact.email}, ${'^[\\s\\x{FEFF}]+|[\\s\\x{FEFF}]+$'}, '')) = ${capture.email}`,
+							)
 							.limit(2)
 							.for('update')
 						if (candidates.length !== 1) return hold('ContactUnavailable')
