@@ -1,4 +1,10 @@
 import { Effect, Either } from 'effect'
+import { isDeepStrictEqual } from 'node:util'
+import {
+	captureRevisionScope,
+	type DeliveryRevisionScope,
+	type RevisionHoldReason,
+} from './revision-scope'
 
 import {
 	refusalObservation,
@@ -72,6 +78,7 @@ export interface DeliveryReconciliation {
 }
 
 export type MessageExecutorDependencies = {
+	readonly revisionScope: DeliveryRevisionScope
 	readonly ledger: JourneyLedger
 	readonly service: Pick<EvergreenOfferJourneyService, 'advance'>
 	readonly authority: OfferAuthority
@@ -95,6 +102,7 @@ export type SideEffectDisclosure =
 	| 'attempt-recorded'
 
 export type NotClaimedReason =
+	| RevisionHoldReason
 	| 'JourneyNotFound'
 	| 'IntentNotFound'
 	| 'UnsupportedIntentType'
@@ -116,6 +124,7 @@ export type PreflightRefusalCode =
 	| 'NotYetDue'
 
 export type DomainSettlement =
+	| { readonly type: 'RevisionHeld'; readonly reason: RevisionHoldReason }
 	| { readonly type: 'Committed'; readonly stimulusId: StimulusId }
 	| { readonly type: 'AlreadyCommitted'; readonly stimulusId: StimulusId }
 	| {
@@ -153,6 +162,7 @@ export type DomainSettlement =
  * then surfaces in recovery as honestly held. Never KnownNotApplied, never a resend.
  */
 export type AbandonReason =
+	| 'RevisionChangedAfterClaim'
 	| 'LeaseExpiredBeforeApply'
 	| 'AutomationStoppedAfterClaim'
 	| 'NotYetDueAfterClaim'
@@ -345,6 +355,7 @@ export function createMessageIntentExecutor(
 		delivery,
 		reconciliation,
 	} = dependencies
+	const revisionScope = captureRevisionScope(dependencies.revisionScope)
 	const leaseMs = Math.min(
 		Math.max(1, Math.floor(dependencies.leaseMs ?? DEFAULT_LEASE_MS)),
 		MAX_LEASE_MS,
@@ -409,23 +420,24 @@ export function createMessageIntentExecutor(
 				),
 			)
 
-	type CanonicalIntent = {
-		readonly aggregate: EvergreenOfferJourneyAggregate
-		readonly facts: EligibilityFacts
-		readonly now: IsoInstant
-		readonly entry:
-			| {
-					readonly intent: SendMessageIntent
-					readonly status:
-						| 'pending'
-						| 'applied'
-						| 'refused'
-						| 'ambiguous'
-						| 'missed'
-			  }
-			| { readonly unsupported: true }
-			| null
-	}
+	type CanonicalIntent =
+		| { readonly revisionHeld: RevisionHoldReason }
+		| {
+				readonly aggregate: EvergreenOfferJourneyAggregate
+				readonly now: IsoInstant
+				readonly entry:
+					| {
+							readonly intent: SendMessageIntent
+							readonly status:
+								| 'pending'
+								| 'applied'
+								| 'refused'
+								| 'ambiguous'
+								| 'missed'
+					  }
+					| { readonly unsupported: true }
+					| null
+		  }
 
 	/** Canonical persisted intent through the existing ledger inspection codec. */
 	const readCanonicalIntent = (
@@ -434,16 +446,12 @@ export function createMessageIntentExecutor(
 		sideEffects: SideEffectDisclosure,
 	): Effect.Effect<CanonicalIntent, MessageExecutorError> =>
 		Effect.gen(function* () {
-			const facts = yield* readFacts(
-				{ contactId: aggregate.contactId, journeyId: aggregate.journeyId },
-				sideEffects,
-			)
 			const now = yield* readClock(sideEffects)
 			const view = yield* ledger
 				.inspect({
 					journeyId: aggregate.journeyId,
 					now,
-					automationControl: facts.automationControl.type,
+					automationControl: 'Stopped',
 				})
 				.pipe(
 					Effect.mapError((error) =>
@@ -457,16 +465,40 @@ export function createMessageIntentExecutor(
 			const found = view.intents.find(
 				(candidate) => candidate.intent.idempotencyKey === idempotencyKey,
 			)
+			if (found?.intent.type === 'SendMessage') {
+				const revisionHeld = revisionScope.check(view.aggregate, found.intent)
+				if (revisionHeld) return { revisionHeld }
+			}
 			return {
 				aggregate: view.aggregate,
-				facts,
 				now,
 				entry: !found
 					? null
 					: found.intent.type === 'SendMessage'
-						? { intent: found.intent, status: found.status }
+						? { intent: structuredClone(found.intent), status: found.status }
 						: { unsupported: true },
 			}
+		})
+
+	const checkCurrentScope = (
+		intent: SendMessageIntent,
+		now: IsoInstant,
+	): Effect.Effect<RevisionHoldReason | null> =>
+		Effect.gen(function* () {
+			const read = yield* Effect.either(
+				ledger.inspect({
+					journeyId: intent.journeyId,
+					now,
+					automationControl: 'Stopped',
+				}),
+			)
+			if (Either.isLeft(read)) return 'RevisionUnavailable' as const
+			const row = read.right.intents.find(
+				(row) => row.intent.idempotencyKey === intent.idempotencyKey,
+			)
+			if (!row || !isDeepStrictEqual(row.intent, intent))
+				return 'RevisionMismatch' as const
+			return revisionScope.check(read.right.aggregate, intent)
 		})
 
 	const activeSlots = (aggregate: EvergreenOfferJourneyAggregate) => [
@@ -549,6 +581,11 @@ export function createMessageIntentExecutor(
 		outcome: Exclude<AttemptOutcome, { type: 'HeldUncertain' }>,
 	): Effect.Effect<DomainSettlement, MessageExecutorError> =>
 		Effect.gen(function* () {
+			const scoped = yield* checkCurrentScope(
+				intent,
+				yield* readClock('attempt-recorded'),
+			)
+			if (scoped) return { type: 'RevisionHeld', reason: scoped } as const
 			const stimulusId = settlementStimulusId(intent, claimToken)
 			const existing = yield* Effect.either(
 				ledger.findCommittedStimulus(stimulusId),
@@ -671,6 +708,7 @@ export function createMessageIntentExecutor(
 				idempotencyKey.value,
 				'none',
 			)
+			if ('revisionHeld' in canonical) return notClaimed(canonical.revisionHeld)
 			if (!canonical.entry) return notClaimed('IntentNotFound')
 			if ('unsupported' in canonical.entry)
 				return notClaimed('UnsupportedIntentType')
@@ -680,6 +718,8 @@ export function createMessageIntentExecutor(
 				intent.contactId !== canonical.aggregate.contactId
 			)
 				return notClaimed('IntentOwnershipMismatch')
+			const revisionHold = revisionScope.check(canonical.aggregate, intent)
+			if (revisionHold) return notClaimed(revisionHold)
 			if (status !== 'pending') return notClaimed('IntentNotPending')
 			if (isFinal(canonical.aggregate)) return notClaimed('JourneyNotActive')
 			const slot = slotBinding(canonical.aggregate, intent)
@@ -689,12 +729,18 @@ export function createMessageIntentExecutor(
 				slot.intentKey !== intent.idempotencyKey
 			)
 				return notClaimed('SlotBindingMismatch')
-			const blocked = controlBlock(canonical.facts)
+			// Foreign/missing scopes never reach even an authority-provider read.
+			const facts = yield* readFacts(
+				{ contactId: intent.contactId, journeyId: intent.journeyId },
+				'none',
+			)
+			const now = yield* readClock('none')
+			const blocked = controlBlock(facts)
 			if (blocked) return notClaimed(blocked)
-			const window = windowBlock(intent, canonical.now)
+			const window = windowBlock(intent, now)
 			if (window) return notClaimed(window)
 
-			const claimedAt = new Date(canonical.now)
+			const claimedAt = new Date(now)
 			const claim = yield* attempts
 				.claim({
 					idempotencyKey: intent.idempotencyKey,
@@ -735,6 +781,14 @@ export function createMessageIntentExecutor(
 					{ contactId: intent.contactId, journeyId: intent.journeyId },
 					'claimed',
 				)
+				const scopeNow = yield* readClock('claimed')
+				const revisionHold = yield* checkCurrentScope(intent, scopeNow)
+				if (revisionHold)
+					return abandoned(
+						'RevisionChangedAfterClaim',
+						revisionHold,
+						applyInvocations,
+					)
 				const applyAt = yield* readClock('claimed')
 				if (new Date(applyAt) >= evidence.leaseExpiresAt)
 					return abandoned(
@@ -900,11 +954,19 @@ export function createMessageIntentExecutor(
 						})
 						continue
 					}
-					const settlement = yield* settleDomain(
+					const scoped = yield* checkCurrentScope(
 						intent,
-						evidence.claimToken,
-						outcome,
+						yield* readClock('none'),
 					)
+					const mapping =
+						!scoped && (yield* revisionScope.original(evidence, intent))
+					const settlement: RecordedOutcomeSettlement['settlement'] =
+						scoped || !mapping
+							? {
+									type: 'RevisionHeld',
+									reason: scoped ?? 'OriginalMappingUnavailable',
+								}
+							: yield* settleDomain(intent, evidence.claimToken, outcome)
 					results.push({
 						idempotencyKey: intent.idempotencyKey,
 						journeyId: intent.journeyId,
@@ -963,14 +1025,21 @@ export function createMessageIntentExecutor(
 				const canonical = yield* Effect.either(
 					readCanonicalIntent(snapshot.right, idempotencyKey.value, 'none'),
 				)
-				if (Either.isLeft(canonical) || !canonical.right.entry) {
+				if (Either.isLeft(canonical)) {
 					results.push(
-						item({
-							type: 'IntentUnavailable',
-							reason: Either.isLeft(canonical)
-								? canonical.left.type
-								: 'IntentNotFound',
-						}),
+						item({ type: 'IntentUnavailable', reason: canonical.left.type }),
+					)
+					continue
+				}
+				if ('revisionHeld' in canonical.right) {
+					results.push(
+						item({ type: 'UnknownHeld', reason: canonical.right.revisionHeld }),
+					)
+					continue
+				}
+				if (!canonical.right.entry) {
+					results.push(
+						item({ type: 'IntentUnavailable', reason: 'IntentNotFound' }),
 					)
 					continue
 				}
@@ -979,7 +1048,34 @@ export function createMessageIntentExecutor(
 					continue
 				}
 				const intent = canonical.right.entry.intent
+				const scoped = revisionScope.check(canonical.right.aggregate, intent)
+				if (scoped || !(yield* revisionScope.original(evidence, intent))) {
+					results.push(
+						item({
+							type: 'UnknownHeld',
+							reason: scoped ?? 'OriginalMappingUnavailable',
+						}),
+					)
+					continue
+				}
+				// Receipt I/O can yield. Recheck the original canonical intent before GET.
+				const beforeRead = yield* checkCurrentScope(
+					intent,
+					yield* readClock('none'),
+				)
+				if (beforeRead) {
+					results.push(item({ type: 'UnknownHeld', reason: beforeRead }))
+					continue
+				}
 				const membership = yield* reconciliation.inspect(intent)
+				const afterRead = yield* checkCurrentScope(
+					intent,
+					yield* readClock('none'),
+				)
+				if (afterRead) {
+					results.push(item({ type: 'UnknownHeld', reason: afterRead }))
+					continue
+				}
 				if (membership.type === 'Absent') {
 					results.push(
 						item({ type: 'AbsentHeld', meaning: 'not-resend-permission' }),
