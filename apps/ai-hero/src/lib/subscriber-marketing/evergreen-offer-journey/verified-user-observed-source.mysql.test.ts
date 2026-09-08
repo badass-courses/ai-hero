@@ -549,6 +549,7 @@ suite("secure claim source disposable MySQL", () => {
   async function actualLoginAndClaim(
     rawToken = "synthetic-token",
     resetEvidence = true,
+    expectedStatus: "ready" | "pending" = "ready",
   ) {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(now);
@@ -640,7 +641,7 @@ suite("secure claim source disposable MySQL", () => {
       const priorClaims = await claims();
       const get = await http(new Request(url, { headers: { cookie } }));
       const body = await get.json();
-      expect(body.status).toBe("ready");
+      expect(body.status).toBe(expectedStatus);
       expect(await claims()).toEqual(priorClaims);
       const post = await http(
         new Request(url, {
@@ -699,6 +700,17 @@ suite("secure claim source disposable MySQL", () => {
       );
     await Promise.all([post(), post()]);
     expect(await claims()).toEqual([saved]);
+    const bindingIntents = () =>
+      database
+        .select()
+        .from(journeySchema.evergreenOfferJourneyIntent)
+        .where(
+          eq(
+            journeySchema.evergreenOfferJourneyIntent.intentType,
+            "BindCoupon",
+          ),
+        );
+    expect(await bindingIntents()).toHaveLength(0); // source persisted despite producer advance failure
     const firstSweep = await Effect.runPromise(
       reconstructedRuntime().claimSource("claim-proof", {}),
     );
@@ -711,7 +723,9 @@ suite("secure claim source disposable MySQL", () => {
         reconstructedRuntime().claimSource("claim-proof", { after: high.id }),
       ),
     ).toMatchObject({ page: { scanned: 0, cursor: null } });
-    await actualLoginAndClaim(low.token, false);
+    expect(await bindingIntents()).toHaveLength(1);
+    // First sweep already planned binding. Pending is truthful, not a readiness failure.
+    await actualLoginAndClaim(low.token, false, "pending");
     expect((await claims()).map((row) => row.id).sort()).toEqual([
       low.id,
       high.id,
