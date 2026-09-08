@@ -1,4 +1,5 @@
 import { courseSequenceContactEvent } from '@/db/course-sequence-exhaustion-schema'
+import { contactEmailWriteValues } from './contact-email-equivalence'
 import {
 	contact,
 	contactEvent,
@@ -152,6 +153,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		const record: ContactRecord = { id: this.newId('contact'), ...input }
 		await this.database.insert(contact).values({
 			...record,
+			...contactEmailWriteValues(record.email),
 			createdAt: new Date(record.createdAt),
 			updatedAt: new Date(record.updatedAt),
 		})
@@ -1427,9 +1429,7 @@ function compactDefined(values: Record<string, unknown>) {
 	)
 }
 
-function isSequenceExhaustionIntentStatus(
-	status: SideEffectIntent['status'],
-) {
+function isSequenceExhaustionIntentStatus(status: SideEffectIntent['status']) {
 	return (
 		status === 'pending' ||
 		status === 'completed' ||

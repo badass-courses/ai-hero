@@ -19,6 +19,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/course-sequence-exhaustion*"
       - "apps/ai-hero/src/lib/subscriber-marketing/drizzle-capture-repository*"
       - "apps/ai-hero/src/lib/subscriber-marketing/value-path-drip-progression.ts"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-email-*"
   push:
     branches: [main]
     paths:
@@ -38,6 +39,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/course-sequence-exhaustion*"
       - "apps/ai-hero/src/lib/subscriber-marketing/drizzle-capture-repository*"
       - "apps/ai-hero/src/lib/subscriber-marketing/value-path-drip-progression.ts"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-email-*"
 
 jobs:
   mysql-contract:
@@ -90,3 +92,5 @@ jobs:
           src/lib/subscriber-marketing/evergreen-offer-journey/email-token-login-observation.mysql.test.ts
           src/lib/subscriber-marketing/course-sequence-exhaustion.mysql.test.ts
           src/lib/subscriber-marketing/email-course-drizzle-ledger.mysql.test.ts
+          src/lib/subscriber-marketing/contact-email-integrity.mysql.test.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey/verified-user-observed-source.mysql.test.ts

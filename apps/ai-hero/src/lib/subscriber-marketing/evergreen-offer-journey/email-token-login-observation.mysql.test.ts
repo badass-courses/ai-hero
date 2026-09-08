@@ -1,5 +1,11 @@
 import fs from 'node:fs/promises'
 import { randomUUID, createHash } from 'node:crypto'
+import {
+	contactEmailWriteValues,
+	emailEquivalenceKey,
+} from '../contact-email-equivalence'
+import { CONTACT_EMAIL_STALE_SQL } from '../contact-email-key-contract'
+import { DrizzleCaptureMarketingRepository } from '../drizzle-capture-repository'
 import { Auth } from '@auth/core'
 import Postmark from '@auth/core/providers/postmark'
 import {
@@ -103,6 +109,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			'20260504_ai_hero_subscriber_marketing_gate_a.sql',
 			'20260714_ai_hero_optin_attribution.sql',
 			'20260717_ai_hero_side_effect_intent_completed_at.sql',
+			'plans/20260908_contact_email_equivalence.sql',
 		])
 			await pool.query(
 				await fs.readFile(
@@ -140,9 +147,10 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		])
 			await database.delete(table)
 		now = at
-		await database
-			.insert(contact)
-			.values({ id: 'contact', email: 'learner@example.test' })
+		await database.insert(contact).values({
+			id: 'contact',
+			...contactEmailWriteValues('learner@example.test'),
+		})
 		await database.insert(providerIdentity).values({
 			id: 'kit',
 			contactId: 'contact',
@@ -216,15 +224,37 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			now: () => new Date(now),
 		})
 	it.each([
-		'none',
-		'set',
-		'begin',
-		'validation',
-		'rollback-failure',
-		'commit-ack-loss',
-	] as const)(
-		'actual SDK/adapter preserves auth with owned connection mode=%s',
-		async (mode) => {
+		...(
+			[
+				'none',
+				'set',
+				'begin',
+				'validation',
+				'rollback-failure',
+				'commit-ack-loss',
+			] as const
+		).map((mode) => ({ mode, label: 'baseline', raw: 'learner@example.test' })),
+		...[
+			{ label: 'non-Zod ASCII', raw: 'a!b/x@example.test' },
+			{ label: 'quoted ASCII', raw: '"quoted"@example.test' },
+			{ label: 'Greek sigma', raw: 'ΟΣ@example.test' },
+			{ label: 'dotted I', raw: 'İ@example.test' },
+			{ label: 'CJK', raw: '用户@例子.test' },
+			{
+				label: '255 codepoints 497 UTF16',
+				raw: '𐐀'.repeat(242) + '@example.test',
+			},
+			{
+				label: '255 raw expands to497',
+				raw: 'İ'.repeat(242) + '@example.test',
+			},
+		].map((row) => ({ ...row, mode: 'none' as const })),
+	])(
+		'actual SDK/adapter preserves auth: $mode / $label',
+		async ({ mode, raw }) => {
+			await database.update(contact).set(contactEmailWriteValues(raw))
+			await actualAdapter(database).updateUser!({ id: 'user', email: raw })
+			capture = { ...capture, email: raw }
 			const adapter = actualAdapter(database),
 				authSecret = 'synthetic-Auth-secret',
 				rawToken = 'synthetic-callback-token'
@@ -240,9 +270,10 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				order: string[] = []
 			const disposed: string[] = []
 			if (mode === 'validation' || mode === 'rollback-failure')
-				await database
-					.insert(contact)
-					.values({ id: 'sdk-duplicate', email: capture.email })
+				await database.insert(contact).values({
+					id: 'sdk-duplicate',
+					...contactEmailWriteValues(capture.email),
+				})
 			const transactions = ownedTransactions(pool, (lease) => ({
 				...lease,
 				async setSerializable() {
@@ -294,7 +325,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				},
 			})
 			const request = new Request(
-				`https://auth.example.test/api/auth/callback/postmark?email=${capture.email}&token=${rawToken}`,
+				`https://auth.example.test/api/auth/callback/postmark?email=${encodeURIComponent(capture.email)}&token=${rawToken}`,
 				{ method: 'POST' },
 			)
 			const response = await observer.run(request, () =>
@@ -332,6 +363,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				mode === 'none' || mode === 'validation' ? 'release' : 'destroy',
 			])
 			expect(observed).toHaveLength(1)
+			expect(observed[0]!.email).toBe(raw.trim().toLowerCase())
 			expect(response.headers.get('set-cookie')).toContain(
 				observed[0]!.sessionToken,
 			)
@@ -439,7 +471,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		async (mode) => {
 			await database.insert(contact).values({
 				id: 'normalized-duplicate',
-				email:
+				...contactEmailWriteValues(
 					mode === 'duplicate-case'
 						? capture.email.toUpperCase()
 						: mode === 'duplicate-space'
@@ -447,6 +479,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 							: mode === 'duplicate-tab'
 								? `\t${capture.email}\n`
 								: `\uFEFF${capture.email}\u00A0`,
+				),
 			})
 			expect(await writer()(capture)).toMatchObject({
 				type: 'Unavailable',
@@ -466,10 +499,10 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		expect(emailFingerprint(secret, raw)).toBe(
 			emailFingerprint(secret, normalized),
 		)
-		await database.update(contact).set({ email: normalized })
+		await database.update(contact).set(contactEmailWriteValues(normalized))
 		await database
 			.insert(contact)
-			.values({ id: 'unicode-duplicate', email: raw })
+			.values({ id: 'unicode-duplicate', ...contactEmailWriteValues(raw) })
 		await actualAdapter(database).updateUser!({
 			id: 'user',
 			email: normalized,
@@ -496,11 +529,16 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			}),
 		)
 		expect(await database.select().from(contact)).toHaveLength(2)
-		// Unsupported normalized email syntax holds before SQL; an admitted
-		// form MUST detect both candidates, even if SQL excluded the raw one.
+		expect(admitted).toBe(true)
+		const indexed = await database
+			.select({ id: contact.id })
+			.from(contact)
+			.where(eq(contact.emailKey, emailEquivalenceKey(normalized)))
+		expect(indexed).toHaveLength(2)
+		// Exact JS keys detect both candidates even when SQL LOWER omits one.
 		expect(await writer()(input)).toMatchObject({
 			type: 'Unavailable',
-			reason: admitted ? 'ContactUnavailable' : 'InvalidCapture',
+			reason: 'ContactUnavailable',
 		})
 		expect(await readback.select().from(contactEvent)).toEqual([])
 	})
@@ -539,10 +577,10 @@ integration('email login observation real adapter and disposable MySQL', () => {
 								: kind === 'kelvin'
 									? 'K@example.test'
 									: 'İ@example.test'
-				await database.update(contact).set({ email: ascii })
+				await database.update(contact).set(contactEmailWriteValues(ascii))
 				await database
 					.insert(contact)
-					.values({ id: 'profile-duplicate', email: raw })
+					.values({ id: 'profile-duplicate', ...contactEmailWriteValues(raw) })
 				await actualAdapter(database).updateUser!({
 					id: 'user',
 					email: ascii,
@@ -582,11 +620,22 @@ integration('email login observation real adapter and disposable MySQL', () => {
 						.where(sql`lower(${contact.email}) = ${ascii}`)
 					expect(candidates).toHaveLength(2)
 				}
-				expect(await writer()(input)).toMatchObject({
-					type: 'Unavailable',
-					reason: 'ContactUnavailable',
-				})
-				expect(await readback.select().from(contactEvent)).toEqual([])
+				const indexed = await database
+					.select({ id: contact.id })
+					.from(contact)
+					.where(eq(contact.emailKey, emailEquivalenceKey(ascii)))
+				expect(indexed).toHaveLength(kind === 'turkish-superset' ? 1 : 2)
+				if (kind === 'turkish-superset') {
+					// SQL's old false-positive does not merge distinct JS identities.
+					expect(await writer()(input)).toEqual({ type: 'Recorded' })
+					expect(await readback.select().from(contactEvent)).toHaveLength(1)
+				} else {
+					expect(await writer()(input)).toMatchObject({
+						type: 'Unavailable',
+						reason: 'ContactUnavailable',
+					})
+					expect(await readback.select().from(contactEvent)).toEqual([])
+				}
 			} finally {
 				await pool.query(
 					'ALTER TABLE AI_Contact MODIFY email varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL',
@@ -594,16 +643,190 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			}
 		},
 	)
+	it.each([
+		'legacy-insert',
+		'legacy-update',
+		'wrong-version',
+		'malformed-key',
+		'null-inconsistent',
+	] as const)(
+		'global guard refuses hidden %s before any key lookup or proof INSERT',
+		async (mode) => {
+			const projection = contactEmailWriteValues(capture.email)
+			if (mode === 'legacy-insert')
+				await pool.execute('INSERT INTO AI_Contact (id,email) VALUES (?,?)', [
+					'hidden',
+					capture.email,
+				])
+			else if (mode === 'legacy-update') {
+				await database.insert(contact).values({
+					id: 'hidden',
+					...contactEmailWriteValues('other@example.test'),
+				})
+				await pool.execute('UPDATE AI_Contact SET email=? WHERE id=?', [
+					capture.email,
+					'hidden',
+				])
+			} else
+				await database.insert(contact).values({
+					id: 'hidden',
+					...projection,
+					...(mode === 'wrong-version'
+						? { emailKey: projection.emailKey!.replace('v1:', 'v0:') }
+						: mode === 'malformed-key'
+							? { emailKey: 'v1:' + 'g'.repeat(64) }
+							: { email: null }),
+				})
+			const indexed = await database
+				.select({ id: contact.id })
+				.from(contact)
+				.where(eq(contact.emailKey, emailEquivalenceKey(capture.email)))
+			if (mode !== 'null-inconsistent') expect(indexed).toHaveLength(1)
+			const stale = await database
+				.select({ id: contact.id })
+				.from(contact)
+				.where(eq(contact.emailKeyStale, 1))
+			expect(stale.map((row) => row.id)).toEqual(['hidden'])
+			statements.length = 0
+			expect(await writer()(capture)).toMatchObject({
+				type: 'Unavailable',
+				reason: 'ContactUnavailable',
+			})
+			expect(
+				statements.some(
+					(query) =>
+						query.includes('`emailKeyStale`') && query.includes('for update'),
+				),
+			).toBe(true)
+			expect(statements.some((query) => query.includes('`emailKey` ='))).toBe(
+				false,
+			)
+			expect(
+				statements.some((query) =>
+					/^insert into `AI_ContactEvent`/i.test(query),
+				),
+			).toBe(false)
+			expect(await readback.select().from(contactEvent)).toEqual([])
+		},
+	)
+	it('partial backfill moves a hidden duplicate into its bucket, never merges IDs or authorizes proof', async () => {
+		await pool.execute('INSERT INTO AI_Contact (id,email) VALUES (?,?)', [
+			'partial',
+			capture.email,
+		])
+		expect(await writer()(capture)).toMatchObject({
+			type: 'Unavailable',
+			reason: 'ContactUnavailable',
+		})
+		await database
+			.update(contact)
+			.set(contactEmailWriteValues(capture.email))
+			.where(eq(contact.id, 'partial'))
+		expect(
+			await database
+				.select({ id: contact.id })
+				.from(contact)
+				.where(eq(contact.emailKeyStale, 1)),
+		).toEqual([])
+		expect(
+			await database
+				.select({ id: contact.id })
+				.from(contact)
+				.where(eq(contact.emailKey, emailEquivalenceKey(capture.email))),
+		).toHaveLength(2)
+		expect(await writer()(capture)).toMatchObject({
+			type: 'Unavailable',
+			reason: 'ContactUnavailable',
+		})
+		expect(await readback.select().from(contactEvent)).toEqual([])
+	})
+	it('repository INSERT and email-write values stay atomic; attribution leaves projection unchanged', async () => {
+		const repo = new DrizzleCaptureMarketingRepository(database),
+			raw = ' ΟΣ@EXAMPLE.TEST '
+		const row = await repo.createContact({
+			email: raw,
+			lifecycle: 'new',
+			isProvisional: false,
+			createdAt: at,
+			updatedAt: at,
+		})
+		const read = async () => {
+			const [value] = await database
+				.select()
+				.from(contact)
+				.where(eq(contact.id, row.id))
+			return value!
+		}
+		expect(await read()).toMatchObject({
+			...contactEmailWriteValues(raw),
+			emailKeyStale: 0,
+		})
+		await repo.updateContactOptInAttribution(row.id, {
+			capturedAt: at,
+			utmSource: 'fixture',
+		})
+		expect(await read()).toMatchObject({
+			...contactEmailWriteValues(raw),
+			emailKeyStale: 0,
+			optInAttribution: { capturedAt: at, utmSource: 'fixture' },
+		})
+		await database
+			.update(contact)
+			.set(contactEmailWriteValues('İ@example.test'))
+			.where(eq(contact.id, row.id))
+		expect(await read()).toMatchObject({
+			...contactEmailWriteValues('İ@example.test'),
+			emailKeyStale: 0,
+		})
+	})
+	it('a clean null-email row is not a stale projection', async () => {
+		await database
+			.insert(contact)
+			.values({ id: 'null', ...contactEmailWriteValues(null) })
+		expect(await writer()(capture)).toEqual({ type: 'Recorded' })
+	})
+	it('full candidate recomputation refuses a coherently wrong key (collision simulation)', async () => {
+		await database.update(contact).set({
+			...contactEmailWriteValues('other@example.test'),
+			emailKey: emailEquivalenceKey(capture.email),
+		})
+		expect(
+			await database
+				.select({ id: contact.id })
+				.from(contact)
+				.where(eq(contact.emailKeyStale, 1)),
+		).toEqual([])
+		expect(await writer()(capture)).toMatchObject({
+			type: 'Unavailable',
+			reason: 'ContactUnavailable',
+		})
+		expect(await readback.select().from(contactEvent)).toEqual([])
+	})
+	it('missing generated guard column holds before proof and retains owned cleanup', async () => {
+		await pool.query('ALTER TABLE AI_Contact DROP COLUMN emailKeyStale')
+		try {
+			expect(await writer()(capture)).toMatchObject({ type: 'Unavailable' })
+			expect(await readback.select().from(contactEvent)).toEqual([])
+			expect(statements.some((query) => query === 'rollback')).toBe(true)
+		} finally {
+			await pool.query(
+				`ALTER TABLE AI_Contact ADD COLUMN emailKeyStale int GENERATED ALWAYS AS (${CONTACT_EMAIL_STALE_SQL}) STORED, ADD INDEX Contact_emailKeyStale_idx(emailKeyStale)`,
+			)
+		}
+	})
 	it.each(['missing', 'duplicate', 'email-change'] as const)(
 		'holds %s Contact candidate',
 		async (mode) => {
 			if (mode === 'missing') await database.delete(contact)
 			if (mode === 'duplicate')
-				await database
-					.insert(contact)
-					.values({ id: 'duplicate', email: capture.email })
+				await database.insert(contact).values({
+					id: 'duplicate',
+					...contactEmailWriteValues(capture.email),
+				})
 			if (mode === 'email-change')
-				await database.update(contact).set({ email: 'other@example.test' })
+				await database
+					.update(contact)
+					.set(contactEmailWriteValues('other@example.test'))
 			expect(await writer()(capture)).toMatchObject({
 				type: 'Unavailable',
 				reason: 'ContactUnavailable',
@@ -964,9 +1187,22 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			expect(await writer()(capture)).toMatchObject({ type: 'Conflict' })
 		},
 	)
-	it.each(['duplicate-contact', 'user-revision', 'user-email'] as const)(
+	it.each([
+		'duplicate-contact',
+		'user-revision',
+		'user-email',
+		'legacy-stale-insert',
+		'valid-unrelated-insert',
+		'key-move-in',
+		'key-move-out',
+	] as const)(
 		'serializable selection blocks concurrent %s until COMMIT (native InnoDB only)',
 		async (mode) => {
+			if (mode === 'key-move-in')
+				await database.insert(contact).values({
+					id: 'mover',
+					...contactEmailWriteValues('other@example.test'),
+				})
 			let entered!: () => void, release!: () => void
 			const locked = new Promise<void>((resolve) => {
 					entered = resolve
@@ -997,10 +1233,50 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				await competing.query('SET SESSION innodb_lock_wait_timeout=1')
 				const query =
 					mode === 'duplicate-contact'
-						? "INSERT INTO AI_Contact (id,email) VALUES ('racer','learner@example.test')"
-						: mode === 'user-email'
-							? "UPDATE AI_User SET email='changed@example.test' WHERE id='user'"
-							: "UPDATE AI_User SET emailVerified='2026-09-08 04:31:00.789' WHERE id='user'"
+						? mysql.format(
+								'INSERT INTO AI_Contact (id,email,emailKey,emailKeySource) VALUES (?,?,?,?)',
+								[
+									'000-racer',
+									capture.email,
+									emailEquivalenceKey(capture.email),
+									contactEmailWriteValues(capture.email).emailKeySource,
+								],
+							)
+						: mode === 'legacy-stale-insert'
+							? "INSERT INTO AI_Contact (id,email) VALUES ('legacy','other@example.test')"
+							: mode === 'valid-unrelated-insert'
+								? mysql.format(
+										'INSERT INTO AI_Contact (id,email,emailKey,emailKeySource) VALUES (?,?,?,?)',
+										[
+											'zzzz-boundary',
+											'unrelated@example.test',
+											emailEquivalenceKey('unrelated@example.test'),
+											contactEmailWriteValues('unrelated@example.test')
+												.emailKeySource,
+										],
+									)
+								: mode === 'key-move-in' || mode === 'key-move-out'
+									? mysql.format(
+											'UPDATE AI_Contact SET email=?,emailKey=?,emailKeySource=? WHERE id=?',
+											mode === 'key-move-in'
+												? [
+														capture.email,
+														emailEquivalenceKey(capture.email),
+														contactEmailWriteValues(capture.email)
+															.emailKeySource,
+														'mover',
+													]
+												: [
+														'other@example.test',
+														emailEquivalenceKey('other@example.test'),
+														contactEmailWriteValues('other@example.test')
+															.emailKeySource,
+														'contact',
+													],
+										)
+									: mode === 'user-email'
+										? "UPDATE AI_User SET email='changed@example.test' WHERE id='user'"
+										: "UPDATE AI_User SET emailVerified='2026-09-08 04:31:00.789' WHERE id='user'"
 				await expect(competing.query(query)).rejects.toMatchObject({
 					errno: 1205,
 				})
@@ -1008,13 +1284,16 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				expect(await writing).toEqual({ type: 'Recorded' })
 				// The lock protects one point, NOT all future uniqueness/identity changes.
 				await competing.query(query)
-				expect(await writer()(capture)).toMatchObject({
-					type: 'Unavailable',
-					reason:
-						mode === 'duplicate-contact'
-							? 'ContactUnavailable'
-							: 'VerificationChanged',
-				})
+				if (mode === 'valid-unrelated-insert')
+					expect(await writer()(capture)).toEqual({ type: 'Recorded' })
+				else
+					expect(await writer()(capture)).toMatchObject({
+						type: 'Unavailable',
+						reason:
+							mode === 'user-email' || mode === 'user-revision'
+								? 'VerificationChanged'
+								: 'ContactUnavailable',
+					})
 				expect(await readback.select().from(contactEvent)).toHaveLength(1)
 			} finally {
 				release()
