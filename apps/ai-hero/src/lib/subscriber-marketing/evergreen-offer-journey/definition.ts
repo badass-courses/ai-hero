@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import type {
 	EvergreenOfferJourneyDefinition,
 	MessageDefinition,
@@ -124,6 +126,26 @@ export const EVERGREEN_OFFER_JOURNEY_V1 = {
 		exclusive: true,
 	},
 } as const satisfies EvergreenOfferJourneyDefinition
+
+// September 7 timing amendment. Source and all eight selected IDs verified by
+// the owning content generator; this binding does not imply render/launch approval.
+// V2 DELIVERY IS HELD: current DeliveryPort binds resource IDs, not revisions.
+// Future composition must bind this immutable content revision/hash to a reviewed
+// provider binding and fail closed on mismatch. Never globally remap shared IDs.
+export const EVERGREEN_OFFER_JOURNEY_V2 = {
+	...structuredClone(EVERGREEN_OFFER_JOURNEY_V1),
+	definitionVersion: 'evergreen-offer-v2',
+	messagePlanId: 'crash_course_evergreen_presentation_v2',
+	messagePlanSourceHash: '012196f2e8ff4badd599649b503ecfcb8053c28888ffdb4f0ca16b5e710298b5',
+	contentRevision: '1d938eef6d7c17edda218ed3a7922f6ba15c8ec9',
+	presentationReviewRevision: '9d92b3c836a2085676ffb258294fa1f891661167',
+} as const satisfies EvergreenOfferJourneyDefinition
+
+export function fridayDefinitionError(definition: EvergreenOfferJourneyDefinition): string | null {
+	return definition.definitionVersion === 'evergreen-offer-v2' && !isDeepStrictEqual(definition, EVERGREEN_OFFER_JOURNEY_V2)
+		? 'Friday definition does not match its reviewed content binding'
+		: null
+}
 
 function must<Value>(result: ParseResult<Value>): Value {
 	if (!result.ok) {
