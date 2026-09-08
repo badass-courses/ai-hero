@@ -1,3 +1,5 @@
+import { MESSAGE_PREPARATION_EVENT } from './evergreen-offer-journey/message-preparation'
+import { decodePreparationEvent } from './evergreen-offer-journey/message-preparation-store'
 import {
 	EMAIL_TOKEN_LOGIN_OBSERVED,
 	OFFER_CLAIM_OBSERVED,
@@ -264,12 +266,18 @@ export async function previewSubscriberMarketingReplay(args: {
 	}
 
 	const storedState = await args.repository.findCurrentContactState(contact.id)
+	if (
+		event.eventType === MESSAGE_PREPARATION_EVENT &&
+		!decodePreparationEvent({ ...event })
+	)
+		throw new Error('Malformed preparation evidence')
 	// Only these accepted internal facts bypass behavioral classification.
 	// Empty keywords alone do not neutralize the classifier's fallback.
 	if (
 		event.eventType === 'evergreen.delivery-mapping.recorded' ||
 		event.eventType === EMAIL_TOKEN_LOGIN_OBSERVED ||
-		event.eventType === OFFER_CLAIM_OBSERVED
+		event.eventType === OFFER_CLAIM_OBSERVED ||
+		event.eventType === MESSAGE_PREPARATION_EVENT
 	) {
 		return {
 			mode: 'non-behavioral-replay-preview',

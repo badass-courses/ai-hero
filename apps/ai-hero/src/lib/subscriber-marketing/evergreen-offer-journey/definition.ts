@@ -141,8 +141,22 @@ export const EVERGREEN_OFFER_JOURNEY_V2 = {
 	presentationReviewRevision: '9d92b3c836a2085676ffb258294fa1f891661167',
 } as const satisfies EvergreenOfferJourneyDefinition
 
+// Approved price-clarity revision. Only metadata lives here; private bodies remain
+// in the owning content repository. Historical definitions above are unchanged.
+export const EVERGREEN_OFFER_JOURNEY_V3 = {
+	...structuredClone(EVERGREEN_OFFER_JOURNEY_V2),
+	definitionVersion: 'evergreen-offer-v3',
+	messagePlanId: 'crash_course_evergreen_presentation_v3',
+	messagePlanSourceHash: 'f4fe18461ea2f0e6a1c0a803fb6ac0bda2bb59eceaa19151da99cfea6d7a412e',
+	contentRevision: 'e2dcb9f52edab599f195e6f05cd7b1b93e25ce3f',
+	presentationReviewRevision: 'e2dcb9f52edab599f195e6f05cd7b1b93e25ce3f',
+} as const satisfies EvergreenOfferJourneyDefinition
+
 export function fridayDefinitionError(definition: EvergreenOfferJourneyDefinition): string | null {
-	return definition.definitionVersion === 'evergreen-offer-v2' && !isDeepStrictEqual(definition, EVERGREEN_OFFER_JOURNEY_V2)
+	const expected = definition.definitionVersion === 'evergreen-offer-v3'
+		? EVERGREEN_OFFER_JOURNEY_V3
+		: definition.definitionVersion === 'evergreen-offer-v2' ? EVERGREEN_OFFER_JOURNEY_V2 : null
+	return expected && !isDeepStrictEqual(definition, expected)
 		? 'Friday definition does not match its reviewed content binding'
 		: null
 }

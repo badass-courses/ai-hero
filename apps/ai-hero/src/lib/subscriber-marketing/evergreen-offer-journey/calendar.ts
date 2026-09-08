@@ -268,7 +268,7 @@ function firstLocalNineAtOrAfter(args: {
  * version opts into Friday; all pre-change records retain Thursday semantics.
  */
 export function couponOpeningWeekday(definitionVersion: string): 4 | 5 {
-	return definitionVersion === 'evergreen-offer-v2' ? 5 : 4
+	return definitionVersion === 'evergreen-offer-v2' || definitionVersion === 'evergreen-offer-v3' ? 5 : 4
 }
 
 export function firstCouponOpeningAtLeast24HoursAfter(args: {
