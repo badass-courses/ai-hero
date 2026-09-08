@@ -1,6 +1,29 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { Auth } from "@auth/core";
+import Postmark from "@auth/core/providers/postmark";
+import { DrizzleAdapter } from "@coursebuilder/adapter-drizzle";
+import { mysqlTable } from "@/db/mysql-table";
+import type { MySqlDatabase } from "drizzle-orm/mysql-core";
+import { createEvergreenClaimHttp } from "@/server/evergreen-claim-http";
+import {
+  createVerifiedEmailObservation,
+  type EmailLoginCapture,
+} from "@/server/verified-email-observation";
+import {
+  createOAuthContainmentAdapter,
+  runWithOAuthContainmentRequest,
+} from "@/server/oauth-link-containment";
+import { createEmailTokenLoginObservationWriter } from "./email-token-login-observation-mysql";
 import fs from "node:fs/promises";
-import { beforeAll, beforeEach, afterAll, describe, it, expect } from "vitest";
+import {
+  beforeAll,
+  beforeEach,
+  afterAll,
+  describe,
+  it,
+  expect,
+  vi,
+} from "vitest";
 import mysql, { type Pool } from "mysql2/promise";
 import { drizzle } from "drizzle-orm/mysql2";
 import { eq } from "drizzle-orm";
@@ -37,6 +60,7 @@ suite("secure claim source disposable MySQL", () => {
   let f: ReturnType<typeof ownerProofFixture>;
   let api: ReturnType<typeof createVerifiedUserObservedSource>;
   let now: Date;
+  let commitFault: "none" | "before" | "after" = "none";
   let fault = false,
     stopped = false,
     purchased = false,
@@ -87,6 +111,9 @@ suite("secure claim source disposable MySQL", () => {
     await pool.query(
       "CREATE TABLE AI_Session (sessionToken varchar(255) PRIMARY KEY,userId varchar(255) NOT NULL,expires timestamp NOT NULL)",
     );
+    await pool.query(
+      "CREATE TABLE AI_VerificationToken (identifier varchar(255) NOT NULL,token varchar(255) NOT NULL,expires timestamp NOT NULL,createdAt timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),PRIMARY KEY(identifier,token))",
+    );
     database = databaseFor(pool);
   });
   afterAll(async () => {
@@ -97,6 +124,7 @@ suite("secure claim source disposable MySQL", () => {
   });
   beforeEach(async () => {
     for (const t of [
+      "AI_VerificationToken",
       "AI_Entitlement",
       "AI_Coupon",
       "AI_MerchantCoupon",
@@ -112,35 +140,30 @@ suite("secure claim source disposable MySQL", () => {
       "AI_EvergreenOfferJourneyCommit",
     ])
       await pool.query(`DELETE FROM \`${t}\``);
+    commitFault = "none";
     f = ownerProofFixture();
     now = new Date(f.now);
     fault = false;
     stopped = false;
     purchased = false;
     advances = 0;
-    await database
-      .insert(schema.contact)
-      .values({
-        id: f.identity.contactId,
-        ...contactEmailWriteValues("proof@example.test"),
-      });
+    await database.insert(schema.contact).values({
+      id: f.identity.contactId,
+      ...contactEmailWriteValues("proof@example.test"),
+    });
     await database.insert(schema.providerIdentity).values(f.identity);
     const { createdAt, ...login } = f.rows[0]!;
     await database.insert(schema.contactEvent).values(login);
-    await database
-      .insert(schema.users)
-      .values({
-        id: f.login.userId,
-        email: "proof@example.test",
-        emailVerified: new Date(f.login.verifiedAt),
-      });
-    await database
-      .insert(schema.sessions)
-      .values({
-        sessionToken: "synthetic-session",
-        userId: f.login.userId,
-        expires: new Date(now.getTime() + 3600000),
-      });
+    await database.insert(schema.users).values({
+      id: f.login.userId,
+      email: "proof@example.test",
+      emailVerified: new Date(f.login.verifiedAt),
+    });
+    await database.insert(schema.sessions).values({
+      sessionToken: "synthetic-session",
+      userId: f.login.userId,
+      expires: new Date(now.getTime() + 3600000),
+    });
     const ledger = createDrizzleJourneyLedger(database);
     for (const candidate of f.candidates.slice(0, 3))
       await Effect.runPromise(ledger.commit(candidate));
@@ -153,16 +176,14 @@ suite("secure claim source disposable MySQL", () => {
       type: "special",
       sourceReference: "synthetic-not-provider-proof",
     };
-    await database
-      .insert(schema.merchantCoupon)
-      .values({
-        id: merchant.id,
-        identifier: merchant.identifier,
-        merchantAccountId: merchant.merchantAccountId,
-        amountDiscount: merchant.amountOffCents,
-        status: 1,
-        type: "special",
-      });
+    await database.insert(schema.merchantCoupon).values({
+      id: merchant.id,
+      identifier: merchant.identifier,
+      merchantAccountId: merchant.merchantAccountId,
+      amountDiscount: merchant.amountOffCents,
+      status: 1,
+      type: "special",
+    });
     const commerce = drizzle(preserveQueryResultShape(pool), {
       schema: couponCommerceSchema,
       mode: "planetscale",
@@ -175,33 +196,24 @@ suite("secure claim source disposable MySQL", () => {
     });
     await Effect.runPromise(authority.issue(f.issueIntent));
     const facts = f.candidates[2]!.currentFacts;
-    const offerAuthority = {
+    const currentFacts = {
       currentFacts: () =>
         Effect.succeed({
           ...facts,
           existingJourneyId: f.issueIntent.journeyId,
-          purchase: purchased ? { type: "Purchased" as const } : facts.purchase,
+          purchase: purchased
+            ? {
+                purchaseId: "synthetic-purchase",
+                offerProductFamily: "ai-coding-crash-course" as const,
+                sourceProductId: "synthetic",
+                purchasedAt: f.issueIntent.issueAt,
+                sourceReference: "fixture:not-provider-proof",
+              }
+            : null,
           automationControl: stopped
             ? { type: "Stopped" as const, version: "stop", reason: "test" }
             : { type: "Enabled" as const, version: "test" },
         }),
-    };
-    // Purchase mutations are exercised through the valid original authority shape below.
-    const currentFacts = {
-      currentFacts: () =>
-        purchased
-          ? Effect.fail({
-              type: "AuthorityUnavailable" as const,
-              reason: "purchase-refusal-fixture",
-            })
-          : offerAuthority
-              .currentFacts()
-              .pipe(
-                Effect.map(({ purchase: _, ...rest }) => ({
-                  ...rest,
-                  purchase: null,
-                })),
-              ),
     };
     const service = createEvergreenOfferJourneyService({
       ledger,
@@ -216,9 +228,23 @@ suite("secure claim source disposable MySQL", () => {
       definition: f.candidates[0]!.definition,
     });
     api = createVerifiedUserObservedSource({
-      transactions: createOwnedEmailObservationTransactions(
-        createMySqlEmailObservationLeaseSource({ pool }),
-      ),
+      transactions: createOwnedEmailObservationTransactions({
+        async acquire() {
+          const lease = await createMySqlEmailObservationLeaseSource({
+            pool,
+          }).acquire();
+          return {
+            ...lease,
+            async commit() {
+              if (commitFault === "before")
+                throw new Error("commit unavailable");
+              await lease.commit();
+              if (commitFault === "after")
+                throw new Error("commit acknowledgement lost");
+            },
+          };
+        },
+      }),
       readback: databaseFor(second),
       ledger,
       authority: currentFacts,
@@ -293,6 +319,10 @@ suite("secure claim source disposable MySQL", () => {
     "stale",
     "stopped",
     "coupon-used",
+    "purchased",
+    "coupon-revoked",
+    "email-changed",
+    "oauth-no-attestation",
   ])("holds %s without source or advance", async (mode) => {
     let s = session();
     if (mode === "forged-user") s = { ...s, userId: "victim" };
@@ -305,22 +335,188 @@ suite("secure claim source disposable MySQL", () => {
         .update(schema.sessions)
         .set({ expires: new Date(now.getTime() - 1000) });
     if (mode === "duplicate")
-      await database
-        .insert(schema.contact)
-        .values({
-          id: "duplicate",
-          ...contactEmailWriteValues(" PROOF@example.test "),
-        });
+      await database.insert(schema.contact).values({
+        id: "duplicate",
+        ...contactEmailWriteValues(" PROOF@example.test "),
+      });
     if (mode === "stale")
       await database
         .insert(schema.contact)
         .values({ id: "old-writer", email: "proof@example.test" });
     if (mode === "stopped") stopped = true;
+    if (mode === "purchased") purchased = true;
+    if (mode === "coupon-revoked")
+      await database.update(schema.coupon).set({ status: 0 });
+    if (mode === "email-changed")
+      await database
+        .update(schema.users)
+        .set({ email: "other@example.test", emailVerified: null });
+    if (mode === "oauth-no-attestation") {
+      await database.delete(schema.contactEvent);
+      await database.update(schema.users).set({ emailVerified: new Date(now) });
+    }
     if (mode === "coupon-used")
       await database.update(schema.coupon).set({ usedCount: 1 });
     expect(await api.claim(s)).toBe("unavailable");
     expect(await claims()).toHaveLength(0);
     expect(advances).toBe(0);
+  });
+  it("bounded reader holds corrupted source and deleted login without replaying it", async () => {
+    fault = true;
+    await api.claim(session());
+    const saved = (await claims())[0]!;
+    await database
+      .update(schema.contactEvent)
+      .set({
+        payloadSummary: { ...saved.payloadSummary, unexpected: "forged" },
+      })
+      .where(eq(schema.contactEvent.id, saved.id));
+    let page = await createVerifiedUserObservedReader(database).page({
+      limit: 1,
+    });
+    expect(page.candidates).toHaveLength(0);
+    expect(page.held).toHaveLength(1);
+    await database
+      .update(schema.contactEvent)
+      .set({ payloadSummary: saved.payloadSummary })
+      .where(eq(schema.contactEvent.id, saved.id));
+    await database
+      .delete(schema.contactEvent)
+      .where(eq(schema.contactEvent.id, f.rows[0]!.id));
+    page = await createVerifiedUserObservedReader(database).page({ limit: 1 });
+    expect(page.candidates).toHaveLength(0);
+    expect(page.held).toHaveLength(1);
+    expect(
+      (
+        await createVerifiedUserObservedReader(database).page({
+          limit: 1,
+          after: page.cursor!,
+        })
+      ).candidates,
+    ).toHaveLength(0);
+  });
+  it.each(["before", "after"] as const)(
+    "independent committed readback resolves %s-COMMIT transport failure",
+    async (mode) => {
+      commitFault = mode;
+      expect(await api.claim(session())).toBe(
+        mode === "after" ? "pending" : "unavailable",
+      );
+      expect(await claims()).toHaveLength(mode === "after" ? 1 : 0);
+      expect(advances).toBe(mode === "after" ? 1 : 0);
+    },
+  );
+  it("actual pinned Auth callback session and SQL adapter cross the CSRF boundary without issuing a coupon", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    try {
+      await database.delete(schema.contactEvent);
+      await database.delete(schema.sessions);
+      const adapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
+        database,
+        mysqlTable,
+      );
+      const authSecret = "synthetic-auth-secret",
+        rawToken = "synthetic-token",
+        address = "proof@example.test";
+      await adapter.createVerificationToken!({
+        identifier: address,
+        token: createHash("sha256")
+          .update(rawToken + authSecret)
+          .digest("hex"),
+        expires: new Date(now.getTime() + 60000),
+      });
+      const captures: EmailLoginCapture[] = [],
+        outcomes: string[] = [];
+      const writer = createEmailTokenLoginObservationWriter({
+        database,
+        transactions: createOwnedEmailObservationTransactions(
+          createMySqlEmailObservationLeaseSource({ pool }),
+        ),
+        readbackDatabase: databaseFor(second),
+        secret: f.secret,
+        now: () => now,
+      });
+      const observer = createVerifiedEmailObservation({
+        enabled: true,
+        providerId: "postmark",
+        now: () => now,
+        writer: async (input) => {
+          captures.push(input);
+          const result = await writer(input);
+          outcomes.push(result.type);
+          return result;
+        },
+      });
+      const request = new Request(
+        `https://claim.example.test/api/auth/callback/postmark?email=${address}&token=${rawToken}`,
+        { method: "POST" },
+      );
+      const response = await observer.run(request, () =>
+        runWithOAuthContainmentRequest(request, () =>
+          Auth(request, {
+            adapter: observer.wrapAdapter(
+              createOAuthContainmentAdapter(adapter),
+            ),
+            secret: authSecret,
+            trustHost: true,
+            basePath: "/api/auth",
+            providers: [
+              Postmark({
+                apiKey: "synthetic",
+                from: "fixture@example.test",
+                sendVerificationRequest: async () => {
+                  throw new Error("Provider forbidden");
+                },
+              }),
+            ],
+            events: { signIn: observer.wrapSignIn(async () => {}) },
+            logger: { error: () => {}, warn: () => {}, debug: () => {} },
+          }),
+        ),
+      );
+      expect(response.status).toBe(302);
+      expect(outcomes).toEqual(["Recorded"]);
+      expect(captures).toHaveLength(1);
+      const captured = captures[0]!;
+      expect(response.headers.get("set-cookie")).toContain(
+        captured.sessionToken,
+      );
+      const http = createEvergreenClaimHttp({
+        enabled: true,
+        origin: "https://claim.example.test",
+        productPath: "/products/course",
+        secret: f.secret,
+        getSessionAndUser: adapter.getSessionAndUser!,
+        application: api,
+        now: () => now,
+      });
+      const cookie = `__Secure-authjs.session-token=${captured.sessionToken}`,
+        url = "https://claim.example.test/api/evergreen/claim";
+      const get = await http(new Request(url, { headers: { cookie } }));
+      const body = await get.json();
+      expect(body.status).toBe("ready");
+      expect(await claims()).toHaveLength(0);
+      const post = await http(
+        new Request(url, {
+          method: "POST",
+          headers: {
+            cookie,
+            Origin: "https://claim.example.test",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ csrf: body.csrf }),
+        }),
+      );
+      expect((await post.json()).status).toBe("pending");
+      expect(await claims()).toHaveLength(1);
+      const coupons = await database.select().from(schema.coupon);
+      expect(coupons).toHaveLength(1);
+      expect(coupons[0]!.usedCount).toBe(0);
+      expect(await database.select().from(schema.entitlements)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("concurrent claims preserve one source", async () => {
     const results = await Promise.all([
