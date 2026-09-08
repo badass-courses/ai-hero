@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { syntheticRevisionScope } from './revision-delivery.fixtures'
 import { Effect, Either } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -9,11 +10,19 @@ import {
 	type AttemptEvidence,
 	type AttemptOutcome,
 } from './attempt-evidence'
-import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
+import {
+	EVERGREEN_OFFER_JOURNEY_V1,
+	EVERGREEN_OFFER_JOURNEY_V2,
+} from './definition'
+import {
+	createRevisionDelivery,
+	PRODUCTION_DELIVERY_BUNDLES,
+} from './revision-delivery'
 import type {
 	CourseSequenceExhausted,
 	EligibilityFacts,
 	EvergreenOfferJourneyAggregate,
+	EvergreenOfferJourneyDefinition,
 	SendMessageIntent,
 	SideEffectIntent,
 } from './domain'
@@ -340,7 +349,13 @@ type DeliveryScript = (
 	>
 >
 
-function harness(options: { readonly leaseMs?: number } = {}) {
+function harness(
+	options: {
+		readonly leaseMs?: number
+		readonly definition?: EvergreenOfferJourneyDefinition
+		readonly entry?: CourseSequenceExhausted
+	} = {},
+) {
 	const ledger = makeInMemoryJourneyLedger()
 	let now: IsoInstant = at
 	let facts = baseFacts()
@@ -363,7 +378,7 @@ function harness(options: { readonly leaseMs?: number } = {}) {
 		ledger,
 		authority,
 		clock,
-		definition: EVERGREEN_OFFER_JOURNEY_V1,
+		definition: options.definition ?? EVERGREEN_OFFER_JOURNEY_V1,
 	})
 	const attempts = makeFakeAttempts(ledger)
 	const applied: SendMessageIntent[] = []
@@ -393,6 +408,7 @@ function harness(options: { readonly leaseMs?: number } = {}) {
 		overrides: Partial<Parameters<typeof createMessageIntentExecutor>[0]> = {},
 	) =>
 		createMessageIntentExecutor({
+			revisionScope: syntheticRevisionScope(options.definition),
 			ledger,
 			service,
 			authority,
@@ -405,7 +421,9 @@ function harness(options: { readonly leaseMs?: number } = {}) {
 		})
 	const executor = build()
 	async function start() {
-		const started = await Effect.runPromise(service.advance(entry))
+		const started = await Effect.runPromise(
+			service.advance(options.entry ?? entry),
+		)
 		if (started.decision.type !== 'Accepted') throw new Error('Expected entry')
 		return started.decision.wakeIntents
 	}
@@ -458,6 +476,7 @@ function harness(options: { readonly leaseMs?: number } = {}) {
 		ledger,
 		service,
 		authority,
+		clock,
 		attempts,
 		aggregate,
 		executor,
@@ -489,6 +508,640 @@ function harness(options: { readonly leaseMs?: number } = {}) {
 		},
 	}
 }
+
+describe('revision delivery guards and dormant composition', () => {
+	const definitions = [EVERGREEN_OFFER_JOURNEY_V1, EVERGREEN_OFFER_JOURNEY_V2]
+	function bundle(definition: EvergreenOfferJourneyDefinition) {
+		const scope = syntheticRevisionScope(definition)
+		return {
+			...scope,
+			providerReadbacks: scope.manifest.messages.map((m) => ({
+				sequenceId: m.sequenceId,
+				repeat: false as const,
+				emailCount: 1 as const,
+				published: true as const,
+				active: true as const,
+				hold: false as const,
+			})),
+		}
+	}
+	function composed(
+		h: ReturnType<typeof harness>,
+		bundles = definitions.map(bundle),
+		responseStatus = 201,
+		getAddedAt: string = h.now,
+	) {
+		const requests: string[] = []
+		const syntheticBodies: string[] = []
+		const front = createRevisionDelivery({
+			bundles,
+			dependencies: {
+				ledger: h.ledger,
+				service: h.service,
+				authority: h.authority,
+				clock: h.clock,
+				attempts: h.attempts,
+			},
+			now: () => h.now,
+			kit: {
+				apiKey: 'synthetic-no-network',
+				resolveIdentity: async (contactId) => ({ contactId, subscriberId: 91 }),
+				fetch: (async (url, options) => {
+					requests.push(String(url))
+					if (options?.method === 'GET')
+						return new Response(
+							JSON.stringify({
+								subscribers: [
+									{ id: 91, state: 'active', added_at: getAddedAt },
+								],
+								pagination: { has_next_page: false, end_cursor: '' },
+							}),
+							{ status: 200 },
+						)
+					if (responseStatus === 201 && String(url).includes('/1002/'))
+						syntheticBodies.push('SYNTHETIC Thursday B3')
+					if (responseStatus === 201 && String(url).includes('/2002/'))
+						syntheticBodies.push('SYNTHETIC Friday B3')
+					return new Response(
+						JSON.stringify({ subscriber: { id: 91, state: 'active' } }),
+						{ status: responseStatus },
+					)
+				}) as typeof fetch,
+			},
+		})
+		return { front, requests, syntheticBodies }
+	}
+	it.each(definitions)(
+		'blocks the other revision at the low-level executor: $definitionVersion',
+		async (definition) => {
+			const h = harness({ definition })
+			const intent = await h.wake(2)
+			const other = definitions.find(
+				(d) => d.definitionVersion !== definition.definitionVersion,
+			)!
+			expect(
+				await h.execute(
+					intent,
+					h.build({ revisionScope: syntheticRevisionScope(other) }),
+				),
+			).toMatchObject({ type: 'NotClaimed', reason: 'RevisionMismatch' })
+			expect(h.attempts.rows.size).toBe(0)
+			expect(h.applied).toHaveLength(0)
+		},
+	)
+	it.each([
+		'definitionVersion',
+		'messagePlanId',
+		'contentRevision',
+		'messagePlanSourceHash',
+		'presentationReviewRevision',
+	] as const)('compares the full tuple: %s', async (field) => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const scope = syntheticRevisionScope()
+		scope.manifest.revision[field] =
+			field === 'messagePlanSourceHash' ? 'f'.repeat(64) : 'wrong'
+		expect(
+			await h.execute(intent, h.build({ revisionScope: scope })),
+		).toMatchObject({ type: 'NotClaimed', reason: 'RevisionMismatch' })
+		expect(h.attempts.rows.size).toBe(0)
+		expect(h.applied).toHaveLength(0)
+	})
+	it('runtime absence cannot bypass the required scope', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		expect(
+			await h.execute(intent, h.build({ revisionScope: undefined as never })),
+		).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+		expect(h.attempts.rows.size).toBe(0)
+	})
+	it.each([false, true])(
+		'rechecks canonical revision after claim and before no-request retry: %s',
+		async (retry) => {
+			const h = harness()
+			const intent = await h.wake(0)
+			let reads = 0
+			const ledger: JourneyLedger = {
+				...h.ledger,
+				inspect: (query) =>
+					h.ledger.inspect(query).pipe(
+						Effect.map((view) => {
+							reads++
+							if (reads >= (retry ? 3 : 2))
+								return {
+									...view,
+									aggregate: {
+										...view.aggregate,
+										definition: {
+											...view.aggregate.definition,
+											contentRevision: 'changed',
+										},
+									},
+								}
+							return view
+						}),
+					),
+			}
+			h.setDelivery(async () =>
+				Either.left({
+					type: 'EffectTransientUnavailable',
+					reason: 'before-request',
+					requestIssued: false,
+				}),
+			)
+			expect(await h.execute(intent, h.build({ ledger }))).toMatchObject({
+				type: 'Abandoned',
+				reason: 'RevisionChangedAfterClaim',
+				applyInvocations: retry ? 1 : 0,
+			})
+			expect(h.applied).toHaveLength(retry ? 1 : 0)
+			expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toBeNull()
+			expect(h.intentRecord(intent)?.status).toBe('Pending')
+		},
+	)
+	it('frontdoor load cannot overrule contradictory canonical inspection', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const ledger: JourneyLedger = {
+			...h.ledger,
+			inspect: (query) =>
+				h.ledger.inspect(query).pipe(
+					Effect.map((view) => ({
+						...view,
+						aggregate: {
+							...view.aggregate,
+							messagePlan: {
+								...view.aggregate.messagePlan,
+								contentRevision: 'contradictory-plan',
+							},
+						},
+					})),
+				),
+		}
+		const { front, requests } = composed({
+			...h,
+			ledger: { ...h.ledger, ...ledger },
+		})
+		expect(
+			await Effect.runPromise(front.execute(h.target(intent))),
+		).toMatchObject({ type: 'NotClaimed', reason: 'RevisionMismatch' })
+		expect(requests).toHaveLength(0)
+		expect(h.attempts.rows.size).toBe(0)
+	})
+	it('does not apply an unmapped V2 using the registered V1 shared resource IDs', async () => {
+		const h = harness({ definition: EVERGREEN_OFFER_JOURNEY_V2 })
+		const intent = await h.wake(2)
+		const { front, requests } = composed(h, [
+			bundle(EVERGREEN_OFFER_JOURNEY_V1),
+		])
+		expect(
+			await Effect.runPromise(front.execute(h.target(intent))),
+		).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+		expect(requests).toHaveLength(0)
+		expect(h.attempts.rows.size).toBe(0)
+	})
+	it('holds canonical change during GET without recording membership acceptance', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		h.setDelivery(async () =>
+			Either.left({ type: 'EffectAmbiguous', reason: 'lost-response' }),
+		)
+		await h.execute(intent)
+		const addedAt = h.now
+		h.now = plus(h.now, 61_000)
+		const before = structuredClone(h.attempts.rows.get(intent.idempotencyKey))
+		let inspected = false
+		let gets = 0
+		const ledger: JourneyLedger = {
+			...h.ledger,
+			inspect: (query) =>
+				h.ledger.inspect(query).pipe(
+					Effect.map((view) =>
+						inspected
+							? {
+									...view,
+									aggregate: {
+										...view.aggregate,
+										definition: {
+											...view.aggregate.definition,
+											contentRevision: 'changed-during-get',
+										},
+									},
+								}
+							: view,
+					),
+				),
+		}
+		const reconciliation = {
+			inspect: () =>
+				Effect.sync(() => {
+					gets++
+					inspected = true
+					return {
+						type: 'Present' as const,
+						providerReceiptId: 'synthetic-get',
+						addedAt,
+						observedAt: h.now,
+					}
+				}),
+		}
+		const page = await Effect.runPromise(
+			h.build({ ledger, reconciliation }).reconcileHeld({ limit: 1 }),
+		)
+		expect(gets).toBe(1)
+		expect(page.results[0]?.result).toMatchObject({
+			type: 'UnknownHeld',
+			reason: 'RevisionMismatch',
+		})
+		expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(before)
+		expect(h.intentRecord(intent)?.status).toBe('Pending')
+	})
+	it('does not mistake a newer actor version for a new revision', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const ledger: JourneyLedger = {
+			...h.ledger,
+			inspect: (query) =>
+				h.ledger.inspect(query).pipe(
+					Effect.map((view) => ({
+						...view,
+						aggregate: {
+							...view.aggregate,
+							version: view.aggregate.version + 1,
+						},
+					})),
+				),
+		}
+		expect(await h.execute(intent, h.build({ ledger }))).toMatchObject({
+			type: 'Applied',
+		})
+		expect(h.applied).toHaveLength(1)
+	})
+	it.each(['wrong-revision', 'missing-original'] as const)(
+		'holds uncertain recovery without GET or writes: %s',
+		async (reason) => {
+			const h = harness()
+			const intent = await h.wake(0)
+			h.setDelivery(async () =>
+				Either.left({ type: 'EffectAmbiguous', reason: 'lost-response' }),
+			)
+			await h.execute(intent)
+			h.now = value(
+				parseIsoInstant(new Date(Date.parse(h.now) + 61_000).toISOString()),
+			)
+			const before = structuredClone(h.attempts.rows.get(intent.idempotencyKey))
+			const scope = syntheticRevisionScope(
+				reason === 'wrong-revision'
+					? EVERGREEN_OFFER_JOURNEY_V2
+					: EVERGREEN_OFFER_JOURNEY_V1,
+			)
+			const executor = h.build({
+				revisionScope:
+					reason === 'missing-original'
+						? { ...scope, originalMapping: null }
+						: scope,
+			})
+			const page = await Effect.runPromise(executor.reconcileHeld({ limit: 1 }))
+			expect(page.results[0]?.result).toMatchObject({
+				type: 'UnknownHeld',
+				reason:
+					reason === 'wrong-revision'
+						? 'RevisionMismatch'
+						: 'OriginalMappingUnavailable',
+			})
+			expect(page.scanned).toBe(1)
+			expect(page.nextCursor).not.toBeNull()
+			expect(h.inspections).toHaveLength(0)
+			expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(before)
+		},
+	)
+	it.each(['wrong-revision', 'missing-original'] as const)(
+		'holds recorded recovery without settlement: %s',
+		async (reason) => {
+			const h = harness()
+			const intent = await h.wake(0)
+			const claim = await Effect.runPromise(
+				h.attempts.claim({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+					now: new Date(h.now),
+					leaseExpiresAt: new Date(Date.parse(h.now) + 60_000),
+				}),
+			)
+			if (claim.type !== 'Claimed') throw new Error('Expected fresh claim')
+			await Effect.runPromise(
+				h.attempts.settle({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+					claimToken: claim.evidence.claimToken,
+					now: new Date(h.now),
+					outcome: {
+						type: 'Accepted',
+						providerReceiptId: 'synthetic-original',
+						appliedAt: h.now,
+					},
+				}),
+			)
+			expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe(
+				'Accepted',
+			)
+			const before = structuredClone(h.attempts.rows.get(intent.idempotencyKey))
+			const scope = syntheticRevisionScope(
+				reason === 'wrong-revision'
+					? EVERGREEN_OFFER_JOURNEY_V2
+					: EVERGREEN_OFFER_JOURNEY_V1,
+			)
+			const page = await Effect.runPromise(
+				h
+					.build({
+						revisionScope:
+							reason === 'missing-original'
+								? { ...scope, originalMapping: null }
+								: scope,
+					})
+					.settleRecordedOutcomes({ limit: 1 }),
+			)
+			expect(page.results[0]?.settlement).toMatchObject({
+				type: 'RevisionHeld',
+			})
+			expect(page.scanned).toBe(1)
+			expect(page.nextCursor).not.toBeNull()
+			expect(h.intentRecord(intent)?.status).toBe('Pending')
+			expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(before)
+		},
+	)
+	it.each(definitions)(
+		'selects B3 synthetic body/sequence by canonical revision: $definitionVersion',
+		async (definition) => {
+			const h = harness({ definition })
+			const intent = await h.wake(2)
+			const { front, requests, syntheticBodies } = composed(h)
+			const preview = await Effect.runPromise(front.preview(h.target(intent)))
+			expect(preview.type).toBe('Selected')
+			if (preview.type !== 'Selected')
+				throw new Error('Expected scoped manifest')
+			expect(preview.manifest.messages[2]?.bodySha256).toBe(
+				syntheticRevisionScope(definition).manifest.messages[2]?.bodySha256,
+			)
+			expect(
+				await Effect.runPromise(front.execute(h.target(intent))),
+			).toMatchObject({ type: 'Applied' })
+			expect(requests).toEqual([
+				`https://api.kit.com/v4/sequences/${definition.definitionVersion === 'evergreen-offer-v2' ? 2002 : 1002}/subscribers/91`,
+			])
+			expect(syntheticBodies).toEqual([
+				definition.definitionVersion === 'evergreen-offer-v2'
+					? 'SYNTHETIC Friday B3'
+					: 'SYNTHETIC Thursday B3',
+			])
+		},
+	)
+	it('freezes caller mapping and refuses duplicate/empty registration', async () => {
+		const h = harness()
+		const intent = await h.wake(2)
+		const bundles = definitions.map(bundle)
+		const { front, requests } = composed(h, bundles)
+		bundles[0]!.manifest.messages[2]!.sequenceId = 9999
+		bundles[0]!.manifest.messages[2]!.bodySha256 = 'f'.repeat(64)
+		expect(
+			await Effect.runPromise(front.execute(h.target(intent))),
+		).toMatchObject({ type: 'Applied' })
+		expect(requests[0]).toContain('/1002/')
+		for (const candidates of [
+			[],
+			[bundle(EVERGREEN_OFFER_JOURNEY_V1), bundle(EVERGREEN_OFFER_JOURNEY_V1)],
+		]) {
+			const held = composed(h, candidates)
+			expect(
+				await Effect.runPromise(held.front.execute(h.target(intent))),
+			).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+			expect(held.requests).toHaveLength(0)
+		}
+		expect(PRODUCTION_DELIVERY_BUNDLES).toHaveLength(0)
+	})
+	it.each([false, true])(
+		'advances global cursors past interleaved foreign rows without touching them, recorded=%s',
+		async (recorded) => {
+			const h = harness()
+			const foreign = harness({
+				definition: EVERGREEN_OFFER_JOURNEY_V2,
+				entry: {
+					...entry,
+					stimulusId: value(parseStimulusId('aaa-entry')),
+					entryFactId: value(parseEntryFactId('aaa-entry')),
+				},
+			})
+			const intent = await h.wake(0)
+			const other = await foreign.wake(0)
+			const ledger = {
+				...h.ledger,
+				load: (id: typeof intent.journeyId) =>
+					(id === other.journeyId ? foreign.ledger : h.ledger).load(id),
+				inspect: (query: Parameters<JourneyLedger['inspect']>[0]) =>
+					(query.journeyId === other.journeyId
+						? foreign.ledger
+						: h.ledger
+					).inspect(query),
+				records: () => {
+					const a = h.ledger.records()
+					const b = foreign.ledger.records()
+					return {
+						snapshots: [...a.snapshots, ...b.snapshots],
+						events: [...a.events, ...b.events],
+						intents: [...a.intents, ...b.intents],
+						wakes: [...a.wakes, ...b.wakes],
+						stimuli: [...a.stimuli, ...b.stimuli],
+						receipts: [...a.receipts, ...b.receipts],
+					}
+				},
+			}
+			const attempts = makeFakeAttempts(ledger)
+			for (const item of [intent, other]) {
+				const claim = await Effect.runPromise(
+					attempts.claim({
+						idempotencyKey: item.idempotencyKey,
+						journeyId: item.journeyId,
+						now: new Date(h.now),
+						leaseExpiresAt: new Date(Date.parse(h.now) + 60_000),
+					}),
+				)
+				if (claim.type !== 'Claimed') throw new Error('Expected fresh claim')
+				if (recorded)
+					await Effect.runPromise(
+						attempts.settle({
+							idempotencyKey: item.idempotencyKey,
+							journeyId: item.journeyId,
+							claimToken: claim.evidence.claimToken,
+							now: new Date(h.now),
+							outcome: {
+								type: 'Accepted',
+								providerReceiptId: 'synthetic-original',
+								appliedAt: h.now,
+							},
+						}),
+					)
+			}
+			h.now = plus(h.now, 61_000)
+			const before = structuredClone(attempts.rows.get(other.idempotencyKey))
+			const executor = h.build({ ledger, attempts })
+			if (recorded) {
+				const first = await Effect.runPromise(
+					executor.settleRecordedOutcomes({ limit: 1 }),
+				)
+				expect(first.results[0]?.journeyId).toBe(other.journeyId)
+				expect(first.results[0]?.settlement.type).toBe('RevisionHeld')
+				const second = await Effect.runPromise(
+					executor.settleRecordedOutcomes({
+						limit: 1,
+						after: first.nextCursor!,
+					}),
+				)
+				expect(second.results[0]?.journeyId).toBe(intent.journeyId)
+				expect(second.results[0]?.settlement.type).toBe('Committed')
+				expect(second.end).toBe(false)
+				const done = await Effect.runPromise(
+					executor.settleRecordedOutcomes({
+						limit: 1,
+						after: second.nextCursor!,
+					}),
+				)
+				expect(done).toMatchObject({ scanned: 0, end: true })
+			} else {
+				const first = await Effect.runPromise(
+					executor.reconcileHeld({ limit: 1 }),
+				)
+				expect(first.results[0]?.journeyId).toBe(other.journeyId)
+				expect(first.results[0]?.result).toMatchObject({
+					type: 'UnknownHeld',
+					reason: 'RevisionMismatch',
+				})
+				const second = await Effect.runPromise(
+					executor.reconcileHeld({ limit: 1, after: first.nextCursor! }),
+				)
+				expect(second.results[0]?.journeyId).toBe(intent.journeyId)
+				expect(second.results[0]?.result.type).toBe('AbsentHeld')
+				expect(second.end).toBe(false)
+				const done = await Effect.runPromise(
+					executor.reconcileHeld({ limit: 1, after: second.nextCursor! }),
+				)
+				expect(done).toMatchObject({ scanned: 0, end: true })
+				expect(h.inspections).toHaveLength(1)
+			}
+			expect(attempts.rows.get(other.idempotencyKey)).toEqual(before)
+			expect(foreign.intentRecord(other)?.status).toBe('Pending')
+		},
+	)
+	it('restarts into matching original bundle and GETs only its pinned sequence', async () => {
+		const h = harness()
+		const intent = await h.wake(2)
+		const originalAt = h.now
+		const first = composed(h, definitions.map(bundle), 200)
+		expect(
+			await Effect.runPromise(first.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'HeldUncertain' })
+		h.now = plus(h.now, 61_000)
+		const restarted = composed(h, definitions.map(bundle), 200, originalAt)
+		const result = await Effect.runPromise(
+			restarted.front.reconcileHeld({ limit: 10 }),
+		)
+		expect(result.type).toBe('Pages')
+		expect(restarted.requests).toHaveLength(1)
+		expect(restarted.requests[0]).toContain('/1002/subscribers?')
+		expect(h.attempts.rows.get(intent.idempotencyKey)?.outcome).toMatchObject({
+			type: 'Accepted',
+			appliedAt: originalAt,
+		})
+		expect(h.intentRecord(intent)?.status).toBe('Applied')
+		expect(first.requests).toHaveLength(1)
+	})
+	it('selects reordered raw revisions and rejects reordered duplicates', async () => {
+		const h = harness()
+		const intent = await h.wake(2)
+		const reordered = bundle(EVERGREEN_OFFER_JOURNEY_V1)
+		const r = reordered.manifest.revision
+		reordered.manifest.revision = {
+			presentationReviewRevision: r.presentationReviewRevision,
+			messagePlanSourceHash: r.messagePlanSourceHash,
+			contentRevision: r.contentRevision,
+			messagePlanId: r.messagePlanId,
+			definitionVersion: r.definitionVersion,
+		}
+		const good = composed(h, [reordered])
+		expect(good.front.registry().type).toBe('Configured')
+		expect(
+			await Effect.runPromise(good.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'Applied' })
+		expect(good.requests[0]).toContain('/1002/')
+		const duplicate = composed(h, [
+			bundle(EVERGREEN_OFFER_JOURNEY_V1),
+			reordered,
+		])
+		expect(duplicate.front.registry()).toEqual({
+			type: 'Invalid',
+			reason: 'DuplicateRevision',
+			registeredRevisions: [],
+		})
+		expect(
+			await Effect.runPromise(duplicate.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+		expect(duplicate.requests).toHaveLength(0)
+	})
+	it('reports bounded immutable registry diagnostics without partial configuration', async () => {
+		const h = harness()
+		const intent = await h.wake(2)
+		const invalid = bundle(EVERGREEN_OFFER_JOURNEY_V1)
+		invalid.manifest.messages[0]!.bodySha256 = 'private-invalid-input'
+		for (const [bundles, expected] of [
+			[[], { type: 'Unconfigured', registeredRevisions: [] }],
+			[
+				[bundle(EVERGREEN_OFFER_JOURNEY_V2), invalid],
+				{ type: 'Invalid', reason: 'InvalidBundle', registeredRevisions: [] },
+			],
+			[
+				[...definitions.map(bundle), bundle(EVERGREEN_OFFER_JOURNEY_V1)],
+				{ type: 'Invalid', reason: 'TooManyBundles', registeredRevisions: [] },
+			],
+		] as const) {
+			const held = composed(h, [...bundles])
+			expect(held.front.registry()).toEqual(expected)
+			expect(Object.isFrozen(held.front.registry())).toBe(true)
+			expect(
+				await Effect.runPromise(held.front.execute(h.target(intent))),
+			).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+			expect(held.requests).toHaveLength(0)
+		}
+		const inputs = definitions.map(bundle)
+		const good = composed(h, inputs)
+		const status = good.front.registry()
+		expect(status.type).toBe('Configured')
+		expect(status.registeredRevisions).toHaveLength(2)
+		expect(Object.isFrozen(status.registeredRevisions)).toBe(true)
+		expect(
+			Reflect.set(status.registeredRevisions[0]!, 'contentRevision', 'wrong'),
+		).toBe(false)
+		expect(Reflect.set(status, 'type', 'Invalid')).toBe(false)
+		inputs[0]!.manifest.revision.contentRevision = 'wrong'
+		inputs[0]!.manifest.messages[2]!.sequenceId = 9999
+		expect(good.front.registry()).toBe(status)
+		expect(status.registeredRevisions[0]?.contentRevision).toBe(
+			EVERGREEN_OFFER_JOURNEY_V1.contentRevision,
+		)
+		expect(
+			await Effect.runPromise(good.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'Applied' })
+		expect(good.requests[0]).toContain('/1002/')
+	})
+	it('preserves already-member uncertainty through composition', async () => {
+		const h = harness()
+		const intent = await h.wake(0)
+		const { front, requests } = composed(h, definitions.map(bundle), 200)
+		expect(
+			await Effect.runPromise(front.execute(h.target(intent))),
+		).toMatchObject({ type: 'HeldUncertain' })
+		expect(requests).toHaveLength(1)
+		expect(h.intentRecord(intent)?.status).toBe('Pending')
+	})
+})
 
 describe('SendMessage intent executor', () => {
 	it('claims, applies once and settles the persisted B1 intent truthfully', async () => {
@@ -1406,8 +2059,8 @@ describe('SendMessage intent executor', () => {
 		])
 		expect(page).toMatchObject({ scanned: 1, end: true })
 		expect(advances).toHaveLength(0)
-		// Only the page's own clock read; none for a settlement instant.
-		expect(h.clockReads - before).toBe(1)
+		// Page plus two canonical-scope inspections. None becomes a settlement instant.
+		expect(h.clockReads - before).toBe(3)
 		expect(h.attempts.rows.get(intent.idempotencyKey)).toEqual(legacy)
 		expect(h.intentRecord(intent)?.status).toBe('Pending')
 		expect(h.slot(intent).status).toBe('IntentCommitted')

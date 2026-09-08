@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { syntheticRevisionScope } from './revision-delivery.fixtures'
+import { EVERGREEN_OFFER_JOURNEY_V2 } from './definition'
 import fs from 'node:fs/promises'
 
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
@@ -138,6 +140,7 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 		overrides: Partial<Parameters<typeof createMessageIntentExecutor>[0]> = {},
 	) =>
 		createMessageIntentExecutor({
+			revisionScope: syntheticRevisionScope(),
 			ledger: connection.ledger,
 			service: service(),
 			authority,
@@ -250,6 +253,89 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 		await serverPool.query(`DROP DATABASE \`${databaseName}\``)
 		await serverPool.end()
 	})
+
+	it.each([false, true])(
+		'holds foreign and unattributed recovery across connections, recorded=%s',
+		async (recorded) => {
+			const intent = await persistedB1Intent()
+			const claimed = await Effect.runPromise(
+				first.attempts.claim({
+					idempotencyKey: intent.idempotencyKey,
+					journeyId: intent.journeyId,
+					now: new Date(now),
+					leaseExpiresAt: new Date(Date.parse(now) + 60_000),
+				}),
+			)
+			if (claimed.type !== 'Claimed') throw new Error('Expected fresh claim')
+			if (recorded)
+				await Effect.runPromise(
+					first.attempts.settle({
+						idempotencyKey: intent.idempotencyKey,
+						journeyId: intent.journeyId,
+						claimToken: claimed.evidence.claimToken,
+						now: new Date(now),
+						outcome: {
+							type: 'Accepted',
+							providerReceiptId: 'synthetic-original-receipt',
+							appliedAt: now,
+						},
+					}),
+				)
+			expect(await attemptRow(intent)).toMatchObject({
+				status: recorded ? 'Accepted' : 'Claimed',
+			})
+			now = plus(now, 120_000)
+			const before = await attemptRow(intent)
+			const beforeIntent = await intentRow(intent)
+			let reads = 0
+			for (const [revisionScope, reason] of [
+				[
+					syntheticRevisionScope(EVERGREEN_OFFER_JOURNEY_V2),
+					'RevisionMismatch',
+				],
+				[
+					{ ...syntheticRevisionScope(), originalMapping: null },
+					'OriginalMappingUnavailable',
+				],
+			] as const) {
+				const scoped = executor(second, {
+					revisionScope,
+					reconciliation: {
+						inspect: () =>
+							Effect.sync(() => {
+								reads++
+								return membership
+							}),
+					},
+				})
+				if (recorded) {
+					const page = await Effect.runPromise(
+						scoped.settleRecordedOutcomes({ limit: 1 }),
+					)
+					expect(page.scanned).toBe(1)
+					expect(page.nextCursor).not.toBeNull()
+					expect(page.results[0]?.settlement).toEqual({
+						type: 'RevisionHeld',
+						reason,
+					})
+				} else {
+					const page = await Effect.runPromise(
+						scoped.reconcileHeld({ limit: 1 }),
+					)
+					expect(page.scanned).toBe(1)
+					expect(page.nextCursor).not.toBeNull()
+					expect(page.results[0]?.result).toEqual({
+						type: 'UnknownHeld',
+						reason,
+					})
+				}
+				expect(await attemptRow(intent)).toEqual(before)
+				expect(await intentRow(intent)).toEqual(beforeIntent)
+			}
+			expect(reads).toBe(0)
+			expect(applied).toHaveLength(0)
+		},
+	)
 
 	it('lets exactly one of two executors on separate connections apply', async () => {
 		const intent = await persistedB1Intent()
