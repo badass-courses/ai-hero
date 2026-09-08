@@ -86,5 +86,6 @@ jobs:
           src/lib/subscriber-marketing/evergreen-offer-journey/bounded-readers.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/message-executor.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/original-delivery-mapping.mysql.test.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey/email-token-login-observation.mysql.test.ts
           src/lib/subscriber-marketing/course-sequence-exhaustion.mysql.test.ts
           src/lib/subscriber-marketing/email-course-drizzle-ledger.mysql.test.ts

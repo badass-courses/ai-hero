@@ -44,6 +44,7 @@ import {
 	getGithubProviderConfig,
 } from '@/server/oauth-provider-config'
 import { measureIfSlow } from '@/server/perf'
+import { createVerifiedEmailObservation } from '@/server/verified-email-observation'
 import DiscordProvider from '@auth/core/providers/discord'
 import GithubProvider from '@auth/core/providers/github'
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm'
@@ -111,8 +112,11 @@ declare module 'next-auth' {
 	}
 }
 
-const oauthContainmentAdapter =
-	createOAuthContainmentAdapter(courseBuilderAdapter)
+// Dormant: no writer/store is supplied to exported production auth.
+const emailObservation = createVerifiedEmailObservation({ enabled: false })
+const oauthContainmentAdapter = emailObservation.wrapAdapter(
+	createOAuthContainmentAdapter(courseBuilderAdapter),
+)
 
 const getSessionAndUser =
 	courseBuilderAdapter.getSessionAndUser?.bind(courseBuilderAdapter)
@@ -217,13 +221,13 @@ export const authOptions: NextAuthConfig = {
 				user: { id: user.id },
 			})
 		},
-		signIn: async (input) => {
+		signIn: emailObservation.wrapSignIn(async (input) => {
 			const verifiedLink = input.user.id
 				? takeVerifiedOAuthLink(input.user.id)
 				: null
 			if (verifiedLink) await triggerVerifiedOAuthRoleSync(verifiedLink)
 			await postSignInInvitationHandler(input)
-		},
+		}),
 		signOut: async () => {
 			const cookieStore = await cookies()
 			cookieStore.delete('organizationId')
@@ -525,16 +529,20 @@ const nextAuth = NextAuth(authOptions)
 
 export const { auth, signIn, signOut } = nextAuth
 export const GET = (request: Parameters<typeof nextAuth.handlers.GET>[0]) =>
-	runWithOAuthContainmentRequest(
-		request,
-		() => nextAuth.handlers.GET(request),
-		observeOAuthLinkCanary,
+	emailObservation.run(request, () =>
+		runWithOAuthContainmentRequest(
+			request,
+			() => nextAuth.handlers.GET(request),
+			observeOAuthLinkCanary,
+		),
 	)
 export const POST = (request: Parameters<typeof nextAuth.handlers.POST>[0]) =>
-	runWithOAuthContainmentRequest(
-		request,
-		() => nextAuth.handlers.POST(request),
-		observeOAuthLinkCanary,
+	emailObservation.run(request, () =>
+		runWithOAuthContainmentRequest(
+			request,
+			() => nextAuth.handlers.POST(request),
+			observeOAuthLinkCanary,
+		),
 	)
 
 export const getServerAuthSession = cache(async () => {
