@@ -3,8 +3,6 @@ import { createVerifiedUserObservedSource } from '@/lib/subscriber-marketing/eve
 
 /** Activation requires reviewed composition, not an environment-only toggle.
  * No database, provider, adapter or secret is acquired in the disabled branch. */
-export const EVERGREEN_CLAIM_ENABLED: boolean = false
-export const EVERGREEN_CLAIM_PRODUCT_PATH: string | null = null
 export function composeEvergreenClaim(
 	options:
 		| { enabled: false }
@@ -32,4 +30,4 @@ export function composeEvergreenClaim(
 		application: createVerifiedUserObservedSource(options.source),
 	})
 }
-export const evergreenClaimHandler = composeEvergreenClaim({ enabled: false })
+export { evergreenPilotClaim as evergreenClaimHandler } from './evergreen-pilot'

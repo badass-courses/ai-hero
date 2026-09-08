@@ -1,9 +1,4 @@
 import { ParsedUrlQuery } from 'querystring'
-import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
-import {
-	EVERGREEN_CLAIM_ENABLED,
-	EVERGREEN_CLAIM_PRODUCT_PATH,
-} from '@/server/evergreen-claim-composition'
 import * as React from 'react'
 import { Suspense } from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
@@ -94,13 +89,6 @@ export default async function ProductPage(props: {
 
 	return (
 		<div>
-			{EVERGREEN_CLAIM_ENABLED &&
-				EVERGREEN_CLAIM_PRODUCT_PATH === `/products/${params.slug}` && (
-					<EvergreenClaimPanel
-						endpoint="/api/evergreen/claim"
-						productPath={`/products/${params.slug}`}
-					/>
-				)}
 			<Suspense
 				fallback={
 					<div className="bg-muted flex h-9 w-full items-center justify-between px-1" />

@@ -102,18 +102,28 @@ export const evergreenClaimMachine = setup({
 export function EvergreenClaimPanel({
 	endpoint,
 	productPath,
+	pilotOnly = false,
 }: {
 	endpoint: string
 	productPath: string
+	pilotOnly?: boolean
 }) {
 	if (
 		!/^\/api\/[a-z0-9/-]+$/.test(endpoint) ||
-		!/^\/products\/[a-z0-9-]+$/.test(productPath)
+		!/^\/(products|workshops)\/[a-z0-9-]+$/.test(productPath)
 	)
 		throw new Error('Invalid local claim route')
 	const [state, send] = useMachine(evergreenClaimMachine, {
 		input: { endpoint },
 	})
+	// Static workshop HTML contains no private configuration. The uncached,
+	// authenticated GET decides whether this pilot affordance exists at all.
+	if (
+		pilotOnly &&
+		(state.matches('error') ||
+			['unavailable', 'verification-needed'].includes(state.context.status))
+	)
+		return null
 	const busy = state.matches('loading') || state.matches('submitting')
 	const message = busy
 		? 'Checking your offer…'

@@ -32,8 +32,9 @@ export function createEvergreenClaimHttp(options: {
 }) {
   const origin = new URL(options.origin).origin;
   if (
-    !options.productPath.startsWith("/products/") ||
-    /[?#\\]/.test(options.productPath)
+    !/^\/(products|workshops)\/[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(
+      options.productPath,
+    )
   )
     throw new Error("Invalid claim product path");
   if (options.enabled && !options.secret)

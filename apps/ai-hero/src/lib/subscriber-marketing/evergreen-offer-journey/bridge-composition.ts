@@ -120,6 +120,8 @@ export function inspectBridgeConfiguration(config: BridgeConfiguration) {
  */
 export function createBridgeComposition(input: {
 	config: BridgeConfiguration
+	/** Optional application admission boundary; never broadens domain authority. */
+	scope?: { contactId: string; entryFactId: string; journeyId: string }
 	database: Parameters<typeof createDrizzleJourneyLedger>[0]
 	commerceDatabase: Parameters<typeof createMySqlCouponCommerceStore>[0]
 	ownerReadDatabase: Parameters<
@@ -181,7 +183,7 @@ export function createBridgeComposition(input: {
 			reason: 'InvalidMessagePreparationBindings',
 		}
 	}
-	const authority = createCurrentOfferAuthority({
+	const currentAuthority = createCurrentOfferAuthority({
 		repository: createDrizzleCurrentAuthorityRepository(
 			input.authorityDatabase,
 		),
@@ -189,8 +191,19 @@ export function createBridgeComposition(input: {
 		communication: input.communication,
 		now: () => new Date(input.now()),
 	})
+	const authority: ReturnType<typeof createCurrentOfferAuthority> = {
+		currentFacts: (query) =>
+			input.scope &&
+			(query.contactId !== input.scope.contactId ||
+				(query.journeyId !== null && query.journeyId !== input.scope.journeyId))
+				? Effect.fail({
+						type: 'AuthorityUnavailable',
+						reason: 'Outside pilot scope',
+					})
+				: currentAuthority.currentFacts(query),
+	}
 	const ledger = createDrizzleJourneyLedger(input.database)
-	const attempts = createDrizzleJourneyAttempts(input.database)
+	const attempts = createDrizzleJourneyAttempts(input.database, input.scope)
 	const service = createEvergreenOfferJourneyService({
 		ledger,
 		authority,
@@ -255,7 +268,11 @@ export function createBridgeComposition(input: {
 			createMySqlCouponReceiptReadStore(input.commerceDatabase),
 		),
 	})
-	const readers = createBoundedJourneyReaders(input.database, ledger)
+	const readers = createBoundedJourneyReaders(
+		input.database,
+		ledger,
+		input.scope,
+	)
 	const runtime = createBridgeRuntime({
 		readers,
 		service,
@@ -263,13 +280,14 @@ export function createBridgeComposition(input: {
 		coupons,
 		clock: input.clock,
 		control: input.control,
-		claimSource: createVerifiedUserObservedReader(input.database),
+		claimSource: createVerifiedUserObservedReader(input.database, input.scope),
 	})
 	return {
 		type: 'Configured' as const,
 		runtime,
 		service,
 		ledger,
+		authority,
 		registry: messages.registry,
 	}
 }

@@ -44,7 +44,7 @@ import {
 	getGithubProviderConfig,
 } from '@/server/oauth-provider-config'
 import { measureIfSlow } from '@/server/perf'
-import { createVerifiedEmailObservation } from '@/server/verified-email-observation'
+import { createEvergreenPilotEmailObservation } from '@/server/evergreen-pilot'
 import DiscordProvider from '@auth/core/providers/discord'
 import GithubProvider from '@auth/core/providers/github'
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm'
@@ -112,8 +112,8 @@ declare module 'next-auth' {
 	}
 }
 
-// Dormant: no writer/store is supplied to exported production auth.
-const emailObservation = createVerifiedEmailObservation({ enabled: false })
+// Default off; only the explicitly configured pilot user can reach the writer.
+const emailObservation = createEvergreenPilotEmailObservation()
 const oauthContainmentAdapter = emailObservation.wrapAdapter(
 	createOAuthContainmentAdapter(courseBuilderAdapter),
 )

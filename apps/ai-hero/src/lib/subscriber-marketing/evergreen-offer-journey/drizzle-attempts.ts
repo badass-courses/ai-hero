@@ -64,6 +64,7 @@ const recordedPageInput = recoveryInput
  */
 export function createDrizzleJourneyAttempts(
 	database: EvergreenOfferJourneyDatabase,
+	scope?: { journeyId: string },
 ) {
 	function run<Value>(work: () => Promise<Value>) {
 		return Effect.tryPromise({
@@ -97,6 +98,7 @@ export function createDrizzleJourneyAttempts(
 							),
 							eq(attempts.status, 'HeldUncertain'),
 						),
+						scope ? eq(attempts.journeyId, scope.journeyId) : undefined,
 						after
 							? or(
 									gt(attempts.leaseExpiresAt, new Date(after.leaseExpiresAt)),
@@ -145,6 +147,7 @@ export function createDrizzleJourneyAttempts(
 					.where(
 						and(
 							inArray(attempts.status, ['Accepted', 'KnownNotApplied']),
+							scope ? eq(attempts.journeyId, scope.journeyId) : undefined,
 							or(
 								eq(intents.status, 'Pending'),
 								and(

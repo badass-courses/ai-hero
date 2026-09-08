@@ -95,6 +95,7 @@ const eventId = (key: string) =>
  * independent primary/autocommit pools. All raw auth input remains ephemeral. */
 export function createEmailTokenLoginObservationWriter(options: {
 	database: Database
+	scope?: { contactId: string; userId: string }
 	transactions: EmailObservationTransactions
 	readbackDatabase: Pick<Database, 'select'>
 	secret: string
@@ -117,6 +118,8 @@ export function createEmailTokenLoginObservationWriter(options: {
 			const parsed = emailObservationInputSchema.safeParse(input)
 			if (!parsed.success) return hold('InvalidCapture')
 			const capture = parsed.data
+			if (options.scope && capture.userId !== options.scope.userId)
+				return hold('ContactUnavailable')
 			const tokenHash = emailTokenHash(options.secret, capture.acceptedToken)
 			const sessionHash = sessionTokenHash(options.secret, capture.sessionToken)
 			const fingerprint = emailFingerprint(options.secret, capture.email)
@@ -153,7 +156,8 @@ export function createEmailTokenLoginObservationWriter(options: {
 			try {
 				await options.transactions.run(async (tx) => {
 					const owner = await lookupIndexedEmailContact(tx, capture.email)
-					if (!owner) return hold('ContactUnavailable')
+					if (!owner || (options.scope && owner.id !== options.scope.contactId))
+						return hold('ContactUnavailable')
 					const [currentUser] = await tx
 						.select({
 							id: users.id,

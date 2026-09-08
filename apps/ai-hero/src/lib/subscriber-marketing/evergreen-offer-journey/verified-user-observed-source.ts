@@ -80,6 +80,7 @@ const hold = (): never => {
  * URL/form selectors. Source commit precedes advance; recovery never grants. */
 export function createVerifiedUserObservedSource(options: {
   transactions: EmailObservationTransactions;
+  scope?: { contactId: string; userId: string; journeyId: string };
   readback: Pick<EvergreenOfferJourneyDatabase, "select">;
   ledger: JourneyLedger;
   authority: OfferAuthority;
@@ -97,6 +98,7 @@ export function createVerifiedUserObservedSource(options: {
         .limit(1)
     )[0];
   async function context(tx: WriteDb, session: Session) {
+    if (options.scope && session.userId !== options.scope.userId) return hold();
     // Preliminary email is a lookup hint only; locked User/session below decides.
     const preliminary = (
       await tx
@@ -110,7 +112,8 @@ export function createVerifiedUserObservedSource(options: {
       tx,
       normalizeEmail(preliminary.email),
     );
-    if (!owner) return hold();
+    if (!owner || (options.scope && owner.id !== options.scope.contactId))
+      return hold();
     const user = (
       await tx
         .select()
@@ -233,6 +236,7 @@ export function createVerifiedUserObservedSource(options: {
       !journey ||
       journey.version !== head[0]!.version ||
       journey.contactId !== owner.id ||
+      (options.scope && journey.journeyId !== options.scope.journeyId) ||
       (journey.phase !== "pitch.running" &&
         journey.phase !== "handoff.awaitingReceipt") ||
       !journey.coupon
@@ -407,6 +411,7 @@ export function createVerifiedUserObservedSource(options: {
  * Recovery still delegates current authority to advance/executor/proof reader. */
 export function createVerifiedUserObservedReader(
   database: Pick<EvergreenOfferJourneyDatabase, "select">,
+  scope?: { contactId: string; journeyId: string },
 ) {
   return {
     async page(input: { after?: string; limit: number }) {
@@ -422,6 +427,10 @@ export function createVerifiedUserObservedReader(
         .where(
           and(
             eq(contactEvent.eventType, OFFER_CLAIM_OBSERVED),
+            scope ? eq(contactEvent.contactId, scope.contactId) : undefined,
+            scope
+              ? sql`JSON_UNQUOTE(JSON_EXTRACT(${contactEvent.payloadSummary}, '$.journeyId')) = ${scope.journeyId}`
+              : undefined,
             input.after ? gt(contactEvent.id, input.after) : undefined,
           ),
         )

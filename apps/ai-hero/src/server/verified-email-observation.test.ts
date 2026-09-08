@@ -514,14 +514,12 @@ describe('request observer adapter and side-effect contracts', () => {
 			expect(f.captures).toEqual([])
 		}
 	})
-	it('production auth is wired through a disabled observer and imports no writer', async () => {
+	it('production auth uses the default-off scoped pilot observer and imports no writer', async () => {
 		const source = await fs.readFile(
 			new URL('./auth.ts', import.meta.url),
 			'utf8',
 		)
-		expect(source).toContain(
-			'createVerifiedEmailObservation({ enabled: false })',
-		)
+		expect(source).toContain('createEvergreenPilotEmailObservation()')
 		expect(source).toContain('emailObservation.wrapAdapter(')
 		expect(source).toContain('emailObservation.wrapSignIn(')
 		expect(source.match(/emailObservation\.run\(request/g)).toHaveLength(2)
