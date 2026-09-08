@@ -37,6 +37,7 @@ function fixture(
 		roundedRevision?: boolean
 		wrongSession?: boolean
 		userId?: string
+		email?: string
 		observer?: ReturnType<typeof createVerifiedEmailObservation>
 	} = {},
 ) {
@@ -44,9 +45,10 @@ function fixture(
 		captures: EmailLoginCapture[] = [],
 		codes: string[] = []
 	const userId = options.userId ?? 'user-fixture'
+	const address = options.email ?? email
 	let user: AdapterUser = {
 		id: userId,
-		email,
+		email: address,
 		emailVerified: null,
 		roles: [],
 		entitlements: [],
@@ -124,7 +126,7 @@ function fixture(
 				? null
 				: {
 						...data,
-						identifier: options.identifier ?? email,
+						identifier: options.identifier ?? address,
 						expires: new Date(Date.now() + (options.expired ? -1 : 60000)),
 					}
 		},
@@ -167,7 +169,9 @@ function fixture(
 		const hash = createHash('sha256')
 			.update(token + secret)
 			.digest('hex')
-		const request = new Request(callbackUrl, {
+		const url = new URL(callbackUrl)
+		url.searchParams.set('email', address)
+		const request = new Request(url, {
 			method: 'POST',
 			headers: options.sameUser
 				? { cookie: '__Secure-authjs.session-token=old-session' }
@@ -282,6 +286,25 @@ describe('actual installed Auth email callback observation', () => {
 			)
 			expect(f.captures).toEqual([])
 			expect(f.codes).toEqual(['capture-invalid'])
+		},
+	)
+	it.each([
+		{ raw: 'ΟΣ@example.test', admitted: false },
+		{ raw: 'İ@example.test', admitted: false },
+		{ raw: 'K@example.test', admitted: true },
+	])(
+		'SDK auth survives observation syntax admission for $raw',
+		async ({ raw, admitted }) => {
+			const f = fixture({ email: raw }),
+				response = await f.run().response
+			expect(response.status).toBe(302)
+			expect(response.headers.get('set-cookie')).toContain(
+				f.created!.sessionToken,
+			)
+			expect(f.captures).toHaveLength(admitted ? 1 : 0)
+			if (admitted) expect(f.captures[0]!.email).toBe(raw.trim().toLowerCase())
+			else expect(f.codes).toEqual(['capture-invalid'])
+			expect(fetch).not.toHaveBeenCalled()
 		},
 	)
 	it('one shared observer isolates parallel actual SDK invocations', async () => {

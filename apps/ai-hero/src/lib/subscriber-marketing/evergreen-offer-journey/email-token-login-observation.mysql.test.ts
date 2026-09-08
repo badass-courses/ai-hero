@@ -18,13 +18,16 @@ import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
-import { createEmailTokenLoginObservationWriter } from './email-token-login-observation-mysql'
-import { sessionTokenHash } from './verified-owner-evidence'
+import {
+	createEmailTokenLoginObservationWriter,
+	emailObservationInputSchema,
+} from './email-token-login-observation-mysql'
+import { sessionTokenHash, emailFingerprint } from './verified-owner-evidence'
 import {
 	createVerifiedEmailObservation,
 	type EmailLoginCapture,
@@ -363,6 +366,55 @@ integration('email login observation real adapter and disposable MySQL', () => {
 			expect(await readback.select().from(contactEvent)).toEqual([])
 		},
 	)
+	it.each([
+		{ label: 'greek-final-sigma', raw: 'ΟΣ@example.test' },
+		{ label: 'capital-dotted-I', raw: 'İ@example.test' },
+		{ label: 'kelvin-sign', raw: 'K@example.test' },
+	])('native SQL versus JS normalization: $label', async ({ label, raw }) => {
+		const normalized = raw.trim().toLowerCase()
+		// The accepted fingerprint codec permits these and gives the raw/JS
+		// normalized forms the same identity. Do not change that codec.
+		expect(emailFingerprint(secret, raw)).toBe(
+			emailFingerprint(secret, normalized),
+		)
+		await database.update(contact).set({ email: normalized })
+		await database
+			.insert(contact)
+			.values({ id: 'unicode-duplicate', email: raw })
+		await actualAdapter(database).updateUser!({
+			id: 'user',
+			email: normalized,
+			emailVerified: new Date(at),
+		})
+		const [probe] = await database
+			.select({ normalized: sql<string>`lower(${raw})` })
+			.from(contact)
+			.limit(1)
+		const sqlCandidates = await database
+			.select({ id: contact.id })
+			.from(contact)
+			.where(sql`lower(${contact.email}) = ${normalized}`)
+			.limit(2)
+		const input = { ...capture, email: normalized },
+			admitted = emailObservationInputSchema.safeParse(input).success
+		console.info(
+			'email-normalization-probe',
+			JSON.stringify({
+				label,
+				sqlLowerMatchesJs: probe!.normalized === normalized,
+				sqlCandidates: sqlCandidates.length,
+				producerAdmits: admitted,
+			}),
+		)
+		expect(await database.select().from(contact)).toHaveLength(2)
+		// Unsupported normalized email syntax holds before SQL; an admitted
+		// form MUST detect both candidates, even if SQL excluded the raw one.
+		expect(await writer()(input)).toMatchObject({
+			type: 'Unavailable',
+			reason: admitted ? 'ContactUnavailable' : 'InvalidCapture',
+		})
+		expect(await readback.select().from(contactEvent)).toEqual([])
+	})
 	it.each(['missing', 'duplicate', 'email-change'] as const)(
 		'holds %s Contact candidate',
 		async (mode) => {
