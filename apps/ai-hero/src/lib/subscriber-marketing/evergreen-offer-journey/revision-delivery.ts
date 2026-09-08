@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { Effect } from 'effect'
 import { z } from 'zod'
 import { createKitDeliveryPort, type KitDeliveryOptions } from './kit-delivery'
@@ -14,6 +15,7 @@ import {
 	revisionOf,
 	revisionScopeDataSchema,
 	type DeliveryRevisionScopeData,
+	type DeliveryRevision,
 	type OriginalDeliveryMappingReader,
 } from './revision-scope'
 import { parseJourneyId } from './primitives'
@@ -39,6 +41,27 @@ export type ReviewedDeliveryBundle = {
 	readonly providerReadbacks: readonly z.infer<typeof readbackSchema>[]
 	readonly originalMapping: OriginalDeliveryMappingReader | null
 }
+/** Ordered, lossless identity. Property insertion order is not revision identity. */
+export function deliveryRevisionKey(revision: DeliveryRevision): string {
+	return JSON.stringify([
+		revision.definitionVersion,
+		revision.messagePlanId,
+		revision.contentRevision,
+		revision.messagePlanSourceHash,
+		revision.presentationReviewRevision,
+	])
+}
+export type DeliveryRegistryStatus = {
+	readonly registeredRevisions: readonly Readonly<DeliveryRevision>[]
+} & (
+	| { readonly type: 'Unconfigured' }
+	| { readonly type: 'Configured' }
+	| {
+			readonly type: 'Invalid'
+			readonly reason: 'TooManyBundles' | 'DuplicateRevision' | 'InvalidBundle'
+	  }
+)
+
 /** Deliberately empty. Content metadata is NOT reviewed provider/body evidence. */
 export const PRODUCTION_DELIVERY_BUNDLES: readonly ReviewedDeliveryBundle[] =
 	Object.freeze([])
@@ -64,28 +87,35 @@ export function createRevisionDelivery(input: {
 		manifest: DeliveryRevisionScopeData
 		executor: MessageIntentExecutor
 	}[] = []
-	let valid = input.bundles.length <= 2
-	for (const candidate of input.bundles) {
+	let reason: 'TooManyBundles' | 'DuplicateRevision' | 'InvalidBundle' | null =
+		input.bundles.length > 2 ? 'TooManyBundles' : null
+	for (const candidate of reason ? [] : input.bundles) {
 		const parsed = bundleSchema.safeParse({
 			manifest: candidate.manifest,
 			providerReadbacks: candidate.providerReadbacks,
 		})
 		if (!parsed.success) {
-			valid = false
+			reason = 'InvalidBundle'
 			break
 		}
 		const bundle = freezeRevision(parsed.data)
 		const keys = new Set(bundle.providerReadbacks.map((r) => r.sequenceId))
 		if (
 			keys.size !== 8 ||
-			bundle.manifest.messages.some((m) => !keys.has(m.sequenceId)) ||
-			entries.some(
-				(e) =>
-					JSON.stringify(e.manifest.revision) ===
-					JSON.stringify(bundle.manifest.revision),
+			bundle.manifest.messages.some((m) => !keys.has(m.sequenceId))
+		) {
+			reason = 'InvalidBundle'
+			break
+		}
+		if (
+			entries.some((e) =>
+				isDeepStrictEqual(
+					revisionOf(e.manifest.revision),
+					revisionOf(bundle.manifest.revision),
+				),
 			)
 		) {
-			valid = false
+			reason = 'DuplicateRevision'
 			break
 		}
 		const port = createKitDeliveryPort({
@@ -112,8 +142,10 @@ export function createRevisionDelivery(input: {
 			}),
 		})
 		entries.push({
+			// New dormant cursor-key format: ordered tuple key plus artifact identity.
+			// No production cursors exist; this is not a live cursor migration.
 			key: JSON.stringify([
-				bundle.manifest.revision,
+				deliveryRevisionKey(bundle.manifest.revision),
 				bundle.manifest.bindingArtifactSha256,
 				bundle.manifest.bindingEvidenceId,
 			]),
@@ -121,16 +153,27 @@ export function createRevisionDelivery(input: {
 			executor,
 		})
 	}
-	if (!valid) entries.length = 0
+	if (reason) entries.length = 0
+	const status: DeliveryRegistryStatus = freezeRevision(
+		reason
+			? { type: 'Invalid', reason, registeredRevisions: [] }
+			: {
+					type: entries.length ? 'Configured' : 'Unconfigured',
+					registeredRevisions: entries.map((e) =>
+						revisionOf(e.manifest.revision),
+					),
+				},
+	)
 	const select = (target: MessageExecutionTarget) =>
 		Effect.gen(function* () {
 			const id = parseJourneyId(target.journeyId)
 			if (!id.ok) return null
 			const snapshot = yield* deps.ledger.load(id.value)
 			if (!snapshot) return null
-			const key = JSON.stringify(revisionOf(snapshot.definition))
+			const key = deliveryRevisionKey(snapshot.definition)
 			return (
-				entries.find((e) => JSON.stringify(e.manifest.revision) === key) ?? null
+				entries.find((e) => deliveryRevisionKey(e.manifest.revision) === key) ??
+				null
 			)
 		})
 	const execute = (target: MessageExecutionTarget) =>
@@ -224,5 +267,11 @@ export function createRevisionDelivery(input: {
 				})
 			return { type: 'Pages', pages } as const
 		})
-	return { execute, preview, settleRecordedOutcomes, reconcileHeld }
+	return {
+		registry: () => status,
+		execute,
+		preview,
+		settleRecordedOutcomes,
+		reconcileHeld,
+	}
 }

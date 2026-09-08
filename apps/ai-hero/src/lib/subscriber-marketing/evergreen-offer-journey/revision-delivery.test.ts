@@ -10,6 +10,7 @@ import {
 	parseIsoInstant,
 } from './primitives'
 import { syntheticRevisionScope } from './revision-delivery.fixtures'
+import { deliveryRevisionKey } from './revision-delivery'
 import { captureRevisionScope, originalMappingSchema } from './revision-scope'
 
 function value<T>(parsed: { ok: true; value: T } | { ok: false }): T {
@@ -38,6 +39,44 @@ const attempt = decodeAttempt({
 	leaseExpiresAt: new Date('2026-09-08T17:01:00.000Z'),
 	status: 'Claimed',
 	outcome: null,
+})
+
+describe('canonical revision keys', () => {
+	it('uses an explicit complete ordered tuple, independent of object property order', () => {
+		const r = syntheticRevisionScope().manifest.revision
+		const reordered = {
+			presentationReviewRevision: r.presentationReviewRevision,
+			contentRevision: r.contentRevision,
+			definitionVersion: r.definitionVersion,
+			messagePlanSourceHash: r.messagePlanSourceHash,
+			messagePlanId: r.messagePlanId,
+		}
+		expect(deliveryRevisionKey(reordered)).toBe(deliveryRevisionKey(r))
+		expect(JSON.parse(deliveryRevisionKey(r))).toEqual([
+			r.definitionVersion,
+			r.messagePlanId,
+			r.contentRevision,
+			r.messagePlanSourceHash,
+			r.presentationReviewRevision,
+		])
+		for (const field of Object.keys(r) as (keyof typeof r)[])
+			expect(
+				deliveryRevisionKey({ ...r, [field]: `${r[field]}:changed` }),
+			).not.toBe(deliveryRevisionKey(r))
+		expect(
+			deliveryRevisionKey({
+				...r,
+				definitionVersion: 'a:b',
+				messagePlanId: 'c',
+			}),
+		).not.toBe(
+			deliveryRevisionKey({
+				...r,
+				definitionVersion: 'a',
+				messagePlanId: 'b:c',
+			}),
+		)
+	})
 })
 
 describe('original-mapping receipt boundary', () => {

@@ -288,10 +288,16 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 			const before = await attemptRow(intent)
 			const beforeIntent = await intentRow(intent)
 			let reads = 0
-			for (const revisionScope of [
-				syntheticRevisionScope(EVERGREEN_OFFER_JOURNEY_V2),
-				{ ...syntheticRevisionScope(), originalMapping: null },
-			]) {
+			for (const [revisionScope, reason] of [
+				[
+					syntheticRevisionScope(EVERGREEN_OFFER_JOURNEY_V2),
+					'RevisionMismatch',
+				],
+				[
+					{ ...syntheticRevisionScope(), originalMapping: null },
+					'OriginalMappingUnavailable',
+				],
+			] as const) {
 				const scoped = executor(second, {
 					revisionScope,
 					reconciliation: {
@@ -308,14 +314,20 @@ integration('SendMessage executor over MySQL attempts and ledger', () => {
 					)
 					expect(page.scanned).toBe(1)
 					expect(page.nextCursor).not.toBeNull()
-					expect(page.results[0]?.settlement.type).toBe('RevisionHeld')
+					expect(page.results[0]?.settlement).toEqual({
+						type: 'RevisionHeld',
+						reason,
+					})
 				} else {
 					const page = await Effect.runPromise(
 						scoped.reconcileHeld({ limit: 1 }),
 					)
 					expect(page.scanned).toBe(1)
 					expect(page.nextCursor).not.toBeNull()
-					expect(page.results[0]?.result.type).toBe('UnknownHeld')
+					expect(page.results[0]?.result).toEqual({
+						type: 'UnknownHeld',
+						reason,
+					})
 				}
 				expect(await attemptRow(intent)).toEqual(before)
 				expect(await intentRow(intent)).toEqual(beforeIntent)

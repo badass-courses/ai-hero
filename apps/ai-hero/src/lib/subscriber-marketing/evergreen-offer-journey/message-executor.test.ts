@@ -1054,6 +1054,83 @@ describe('revision delivery guards and dormant composition', () => {
 		expect(h.intentRecord(intent)?.status).toBe('Applied')
 		expect(first.requests).toHaveLength(1)
 	})
+	it('selects reordered raw revisions and rejects reordered duplicates', async () => {
+		const h = harness()
+		const intent = await h.wake(2)
+		const reordered = bundle(EVERGREEN_OFFER_JOURNEY_V1)
+		const r = reordered.manifest.revision
+		reordered.manifest.revision = {
+			presentationReviewRevision: r.presentationReviewRevision,
+			messagePlanSourceHash: r.messagePlanSourceHash,
+			contentRevision: r.contentRevision,
+			messagePlanId: r.messagePlanId,
+			definitionVersion: r.definitionVersion,
+		}
+		const good = composed(h, [reordered])
+		expect(good.front.registry().type).toBe('Configured')
+		expect(
+			await Effect.runPromise(good.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'Applied' })
+		expect(good.requests[0]).toContain('/1002/')
+		const duplicate = composed(h, [
+			bundle(EVERGREEN_OFFER_JOURNEY_V1),
+			reordered,
+		])
+		expect(duplicate.front.registry()).toEqual({
+			type: 'Invalid',
+			reason: 'DuplicateRevision',
+			registeredRevisions: [],
+		})
+		expect(
+			await Effect.runPromise(duplicate.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+		expect(duplicate.requests).toHaveLength(0)
+	})
+	it('reports bounded immutable registry diagnostics without partial configuration', async () => {
+		const h = harness()
+		const intent = await h.wake(2)
+		const invalid = bundle(EVERGREEN_OFFER_JOURNEY_V1)
+		invalid.manifest.messages[0]!.bodySha256 = 'private-invalid-input'
+		for (const [bundles, expected] of [
+			[[], { type: 'Unconfigured', registeredRevisions: [] }],
+			[
+				[bundle(EVERGREEN_OFFER_JOURNEY_V2), invalid],
+				{ type: 'Invalid', reason: 'InvalidBundle', registeredRevisions: [] },
+			],
+			[
+				[...definitions.map(bundle), bundle(EVERGREEN_OFFER_JOURNEY_V1)],
+				{ type: 'Invalid', reason: 'TooManyBundles', registeredRevisions: [] },
+			],
+		] as const) {
+			const held = composed(h, [...bundles])
+			expect(held.front.registry()).toEqual(expected)
+			expect(Object.isFrozen(held.front.registry())).toBe(true)
+			expect(
+				await Effect.runPromise(held.front.execute(h.target(intent))),
+			).toMatchObject({ type: 'NotClaimed', reason: 'RevisionUnavailable' })
+			expect(held.requests).toHaveLength(0)
+		}
+		const inputs = definitions.map(bundle)
+		const good = composed(h, inputs)
+		const status = good.front.registry()
+		expect(status.type).toBe('Configured')
+		expect(status.registeredRevisions).toHaveLength(2)
+		expect(Object.isFrozen(status.registeredRevisions)).toBe(true)
+		expect(
+			Reflect.set(status.registeredRevisions[0]!, 'contentRevision', 'wrong'),
+		).toBe(false)
+		expect(Reflect.set(status, 'type', 'Invalid')).toBe(false)
+		inputs[0]!.manifest.revision.contentRevision = 'wrong'
+		inputs[0]!.manifest.messages[2]!.sequenceId = 9999
+		expect(good.front.registry()).toBe(status)
+		expect(status.registeredRevisions[0]?.contentRevision).toBe(
+			EVERGREEN_OFFER_JOURNEY_V1.contentRevision,
+		)
+		expect(
+			await Effect.runPromise(good.front.execute(h.target(intent))),
+		).toMatchObject({ type: 'Applied' })
+		expect(good.requests[0]).toContain('/1002/')
+	})
 	it('preserves already-member uncertainty through composition', async () => {
 		const h = harness()
 		const intent = await h.wake(0)
