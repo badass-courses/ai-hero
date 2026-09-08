@@ -124,7 +124,11 @@ export async function loadEvergreenPilot(config: EvergreenPilotConfiguration) {
             identity.providers[0]?.provider !== "kit"
           )
             throw new Error("Pilot identity unavailable");
-          return { contactId, subscriberId: identity.providers[0].externalId };
+          const rawId = identity.providers[0].externalId;
+          const subscriberId = Number(rawId);
+          if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(subscriberId))
+            throw new Error("Pilot subscriber ID unavailable");
+          return { contactId, subscriberId };
         },
       },
       messagePreparation: {
