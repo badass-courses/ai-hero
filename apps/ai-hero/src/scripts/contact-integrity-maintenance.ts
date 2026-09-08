@@ -17,22 +17,10 @@ import {
 	type MaintenanceConnection,
 } from '../lib/subscriber-marketing/contact-integrity-maintenance'
 
-const credentialsSchema = z
-	.object({
-		purpose: z.literal('contact-integrity-maintenance'),
-		target: z.string(),
-		host: z.string().min(1).max(253),
-		port: z.number().int().min(1).max(65535),
-		database: z.string().regex(/^[A-Za-z0-9_]+$/),
-		user: z.enum([
-			'aih_contact_maintenance_reader',
-			'aih_contact_maintenance_writer',
-		]),
-		password: z.string().min(1),
-		tls: z.boolean(),
-		ca: z.string().optional(),
-	})
-	.strict()
+import {
+	operatorCredentialsSchema as credentialsSchema,
+	validateProviderReceipt,
+} from './contact-maintenance-provider-receipt'
 const stateSchema = z
 	.object({
 		version: z.literal(1),
@@ -97,6 +85,8 @@ export async function runMaintenanceCli(
 					'--target',
 					'--approval-ref',
 					'--credential-fd',
+					'--provider-receipt-fd',
+					'--provider-receipt-sha256',
 					'--page-size',
 					'--max-rows',
 					'--max-writes',
@@ -145,7 +135,7 @@ export async function runMaintenanceCli(
 			maxMs: Number(flags.get('--max-ms') ?? 10000),
 		})
 		// Bounded inherited input; a pipe should be closed by its supplying operator.
-		const raw = (
+		const readBoundary =
 			dependencies.readCredential ??
 			((n) => {
 				const buffer = Buffer.alloc(16385)
@@ -158,11 +148,37 @@ export async function runMaintenanceCli(
 				if (size > 16384) throw new Error('Credential envelope too large')
 				return buffer.subarray(0, size).toString('utf8')
 			})
-		)(fd)
+		const raw = readBoundary(fd)
 		if (Buffer.byteLength(raw) > 16384)
 			throw new Error('Credential envelope too large')
 		const config = credentialsSchema.parse(JSON.parse(raw))
-		if (
+		let providerEvidence: ReturnType<typeof validateProviderReceipt> | undefined
+		if (config.provider === 'planetscale') {
+			const receiptFd = Number(flags.get('--provider-receipt-fd')),
+				pin = flags.get('--provider-receipt-sha256')
+			if (
+				!Number.isInteger(receiptFd) ||
+				receiptFd < 3 ||
+				receiptFd > 1024 ||
+				receiptFd === fd ||
+				!pin
+			)
+				throw new Error('Provider receipt boundary missing')
+			const receipt = readBoundary(receiptFd)
+			if (Buffer.byteLength(receipt) > 16384)
+				throw new Error('Receipt too large')
+			providerEvidence = validateProviderReceipt(receipt, pin, config, {
+				target,
+				approvalRef: approval,
+				mode,
+				maxMs: options.maxMs,
+			})
+		} else if (
+			flags.has('--provider-receipt-fd') ||
+			flags.has('--provider-receipt-sha256') ||
+			config.organization ||
+			config.branch ||
+			config.operatorRole ||
 			config.target !== target ||
 			config.user !==
 				(mode === 'apply'
@@ -190,6 +206,7 @@ export async function runMaintenanceCli(
 					config.port,
 					config.database,
 					config.user,
+					...(providerEvidence?.scope ?? []),
 				]),
 			)
 			.digest('hex')
@@ -240,20 +257,30 @@ export async function runMaintenanceCli(
 						destroy: () => connection.destroy(),
 					}
 				})
+			if (
+				providerEvidence &&
+				providerEvidence.validUntil <= Date.now() + options.maxMs
+			)
+				throw new Error('Provider receipt expired')
 			const connection = await connect(config)
 			try {
-				const principal = z
-					.array(z.object({ principal: z.string() }))
-					.length(1)
-					.parse(
-						await connection.query(
-							"SELECT SUBSTRING_INDEX(CURRENT_USER(),'@',1) principal",
-							[],
-							Math.min(options.maxMs, 10000),
-						),
-					)
-				if (principal[0]!.principal !== config.user)
-					throw new Error('Actual dedicated principal mismatch')
+				if (providerEvidence) {
+					if (providerEvidence.validUntil <= Date.now() + options.maxMs)
+						throw new Error('Provider receipt expired')
+				} else {
+					const principal = z
+						.array(z.object({ principal: z.string() }))
+						.length(1)
+						.parse(
+							await connection.query(
+								"SELECT SUBSTRING_INDEX(CURRENT_USER(),'@',1) principal",
+								[],
+								Math.min(options.maxMs, 10000),
+							),
+						)
+					if (principal[0]!.principal !== config.user)
+						throw new Error('Actual dedicated principal mismatch')
+				}
 			} catch {
 				connection.destroy()
 				throw new Error('Dedicated principal unavailable')
