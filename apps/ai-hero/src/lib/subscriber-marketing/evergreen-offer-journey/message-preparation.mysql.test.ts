@@ -5,11 +5,30 @@ import { drizzle } from 'drizzle-orm/mysql2'
 import { Effect } from 'effect'
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import * as schema from '@/db/evergreen-offer-journey-schema'
-import { contact, providerIdentity, contactEvent } from '@/db/schema'
+import {
+	contact,
+	providerIdentity,
+	contactEvent,
+	prices,
+	coupon,
+} from '@/db/schema'
+import { commerceDdl } from './coupon-executor-commerce.fixtures'
+import {
+	calendarFlow,
+	calendarCommit,
+	calendarStimulusId,
+} from './calendar-version.fixtures'
+import {
+	decodeIssue,
+	semanticCouponId,
+	readCouponEvidence,
+} from './coupon-authority'
+import { compileMessageTemplate } from './message-preparation'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
 import { contactEmailWriteValues } from '../contact-email-equivalence'
 import { preparationFixture } from './message-preparation.fixtures'
+import { sourceFixture } from './bounded-readers.fixtures'
 import {
 	createMySqlMessagePreparationStore,
 	preparationEventRow,
@@ -66,6 +85,8 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		const url = String(_url)
 		if (init?.method === 'POST') {
 			posts++
+			if (mode === 'enrollment-uncertain')
+				throw new Error('Synthetic lost enrollment response')
 			return new Response(
 				JSON.stringify({ subscriber: { id: 123, state: 'active' } }),
 				{ status: 201 },
@@ -76,7 +97,10 @@ integration('native immutable preparation; synthetic Kit only', () => {
 				JSON.stringify({
 					subscriber: {
 						id: 123,
-						email_address: f.snapshot.email,
+						email_address:
+							mode === 'late-provider-identity'
+								? 'changed@example.test'
+								: f.snapshot.email,
 						state: 'active',
 					},
 				}),
@@ -134,6 +158,12 @@ integration('native immutable preparation; synthetic Kit only', () => {
 					'utf8',
 				),
 			)
+		await admin.query(
+			commerceDdl.find((s) => s.startsWith('CREATE TABLE AI_Coupon '))!,
+		)
+		await admin.query(
+			'CREATE TABLE AI_Price (id varchar(191) PRIMARY KEY, productId varchar(191), organizationId varchar(191), nickname varchar(191), status int NOT NULL DEFAULT 0, unitAmount decimal(10,2) NOT NULL, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), fields json)',
+		)
 		writer = mysql.createPool({
 			uri: uri.toString(),
 			timezone: 'Z',
@@ -156,6 +186,8 @@ integration('native immutable preparation; synthetic Kit only', () => {
 			'AI_ContactEvent',
 			'AI_ProviderIdentity',
 			'AI_Contact',
+			'AI_Coupon',
+			'AI_Price',
 		])
 			await admin.query(`DELETE FROM \`${table}\``)
 		f = preparationFixture()
@@ -174,21 +206,28 @@ integration('native immutable preparation; synthetic Kit only', () => {
 				),
 			},
 		}
-		await db
-			.insert(contact)
-			.values({
-				id: f.intent.contactId,
-				...contactEmailWriteValues(f.snapshot.email),
-			})
+		await db.insert(contact).values({
+			id: f.intent.contactId,
+			...contactEmailWriteValues(f.snapshot.email),
+		})
+		await db.insert(providerIdentity).values({
+			id: f.snapshot.providerIdentityId,
+			contactId: f.intent.contactId,
+			provider: 'kit',
+			externalId: '123',
+			evidence: { source: 'synthetic' },
+		})
+		const source = sourceFixture('preparation-fixture')
 		await db
 			.insert(providerIdentity)
 			.values({
-				id: f.snapshot.providerIdentityId,
-				contactId: f.intent.contactId,
-				provider: 'kit',
-				externalId: '123',
+				id: source.providerIdentityId,
+				contactId: source.contactId,
+				provider: 'ai-hero',
+				externalId: 'synthetic-source',
 				evidence: { source: 'synthetic' },
 			})
+		await db.insert(contactEvent).values(source)
 		const ledger = createDrizzleJourneyLedger(db)
 		await Effect.runPromise(ledger.commit(f.entry))
 		await Effect.runPromise(ledger.commit(f.wake))
@@ -211,7 +250,11 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		).toEqual(f.snapshot)
 		expect(await s.find(f.intent.idempotencyKey)).toEqual(f.snapshot)
 		expect(await s.read(f.snapshot, 'namespace')).toBe(true)
-		expect(await db.select().from(contactEvent)).toHaveLength(2)
+		expect(
+			(await db.select().from(contactEvent)).filter(
+				(r) => r.eventType === 'evergreen.message_preparation.v1',
+			),
+		).toHaveLength(2)
 	})
 	it('conflicting values and subscriber changes cannot replace one intent', async () => {
 		const s = store()
@@ -250,6 +293,29 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		expect(outcomes.filter((x) => x === 'Claimed')).toHaveLength(1)
 		expect(outcomes.filter((x) => x === 'Exists')).toHaveLength(1)
 	})
+	it('lost INSERT acknowledgments require readback and never grant request ownership', async () => {
+		const lossy = new Proxy(db, {
+			get(target, key) {
+				if (key !== 'insert') return Reflect.get(target, key)
+				return (table: typeof contactEvent) => ({
+					values: async (values: typeof contactEvent.$inferInsert) => {
+						await target.insert(table).values(values)
+						throw new Error('Synthetic ACK loss after native commit')
+					},
+				})
+			},
+		})
+		const s = createMySqlMessagePreparationStore({
+			database: lossy,
+			readback: read,
+			now: () => now,
+		})
+		expect(await s.freeze(f.snapshot)).toEqual(f.snapshot)
+		expect(await s.claim(f.snapshot, 'fields-requested')).toBe('Exists')
+		expect(await store().read(f.snapshot, 'fields-requested')).toBe(true)
+		expect(puts).toBe(0)
+		expect(posts).toBe(0)
+	})
 	it('two slots cannot cross-overwrite, including a delayed old projection', async () => {
 		const s = store(),
 			namespace = preparationNamespace(f.snapshot.revision, 'B2'),
@@ -266,8 +332,23 @@ integration('native immutable preparation; synthetic Kit only', () => {
 			profile.fields,
 			Object.fromEntries(Object.keys(second.fields).map((k) => [k, null])),
 		)
+		const arrived = Promise.withResolvers<void>(),
+			release = Promise.withResolvers<void>()
+		const delayed = createMessageFieldsTransport({
+			apiSecret: 'synthetic',
+			fetch: async (url, init) => {
+				if (init?.method === 'PUT') {
+					arrived.resolve()
+					await release.promise
+				}
+				return http(url, init)
+			},
+		})
+		const old = delayed.project(f.snapshot)
+		await arrived.promise
 		await fields().project(second)
-		await fields().project(f.snapshot)
+		release.resolve()
+		await old
 		expect(await fields().confirm(second)).toBe(true)
 		expect(profile.fields.unrelated).toBe('preserve')
 	})
@@ -331,6 +412,123 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		expect(puts).toBe(1)
 		expect(posts).toBe(0)
 	})
+	it.each(['valid', 'missing-price', 'changed-coupon'])(
+		'native public-price and issued-coupon source: %s; no User/checkout source',
+		async (kind) => {
+			const flow = calendarFlow(
+					EVERGREEN_OFFER_JOURNEY_V3,
+					'preparation-fixture',
+				),
+				issue = decodeIssue(flow.intent)
+			const row = {
+				id: semanticCouponId(issue.idempotencyKey),
+				organizationId: null,
+				code: null,
+				createdAt: new Date(issue.issueAt),
+				expires: new Date(issue.expiresAt),
+				fields: {
+					exclusive: true,
+					evergreenOffer: {
+						format: 1,
+						issue,
+						operationObservedAt: issue.issueAt,
+						binding: { type: 'AwaitingVerifiedUser' },
+					},
+				},
+				maxUses: 1,
+				default: false,
+				merchantCouponId: 'synthetic-merchant',
+				status: 1,
+				usedCount: 0,
+				percentageDiscount: null,
+				amountDiscount: 10000,
+				restrictedToProductId: issue.terms.productId,
+			}
+			await db
+				.insert(coupon)
+				.values({
+					...row,
+					amountDiscount: kind === 'changed-coupon' ? 9999 : 10000,
+				})
+			if (kind !== 'missing-price')
+				await db
+					.insert(prices)
+					.values({
+						id: 'synthetic-public-price',
+						productId: issue.terms.productId,
+						unitAmount: '349.00',
+						status: 1,
+					})
+			const pitch = calendarCommit(
+				flow.pending.decision.next,
+				{ ...flow.issued, coupon: readCouponEvidence(row).coupon },
+				issue.issueAt,
+				EVERGREEN_OFFER_JOURNEY_V3,
+			)
+			const w = pitch.decision.wakeIntents.find(
+				(w) => w.purpose.type === 'MessageSlot',
+			)!
+			const wake = calendarCommit(
+				pitch.decision.next,
+				{
+					type: 'WakeDue',
+					stimulusId: calendarStimulusId('price-source-wake'),
+					journeyId: w.journeyId,
+					wakeId: w.wakeId,
+					purpose: w.purpose,
+					dueAt: w.dueAt,
+				},
+				w.dueAt,
+				EVERGREEN_OFFER_JOURNEY_V3,
+			)
+			const intent = wake.decision.sideEffectIntents.find(
+				(i) => i.type === 'SendMessage',
+			)!
+			if (intent.type !== 'SendMessage') throw new Error('Missing pitch intent')
+			now = wake.decidedAt
+			const keys = compileMessageTemplate(
+				f.templates.find((t) => t.slot === intent.slotId)!,
+				{
+					FIRST_NAME: 'there',
+					REGULAR_PRICE: 'x',
+					DISCOUNT_AMOUNT: 'x',
+					DEADLINE_DISPLAY: 'x',
+				},
+			).fields
+			Object.assign(
+				profile.fields,
+				Object.fromEntries(Object.keys(keys).map((k) => [k, null])),
+			)
+			const ledger = {
+				...createDrizzleJourneyLedger(db),
+				load: () => Effect.succeed(wake.decision.next),
+			}
+			const gate = createTrustedMessagePreparation({
+				database: db,
+				ledger,
+				templates: f.templates,
+				store: store(),
+				fields: fields(),
+				now: () => now,
+			})
+			const result = await gate.prepare(intent, {
+				claimToken: f.snapshot.claimToken,
+				claimedAt: new Date(now),
+			} as Parameters<typeof gate.prepare>[1])
+			if (kind === 'valid') {
+				expect(result, JSON.stringify(result)).toMatchObject({ type: 'Ready' })
+				if (result.type !== 'Ready') throw new Error('Expected ready')
+				expect(Object.values(result.snapshot.fields)).toContain('$349')
+				expect(Object.values(result.snapshot.fields)).toContain('$100')
+				expect(result.snapshot.authority.timeZone).toBe('America/Los_Angeles')
+				expect(result.snapshot.authority.expiresAt).toBe(issue.expiresAt)
+			} else {
+				expect(result.type).toBe('Held')
+				expect(puts).toBe(0)
+			}
+			expect(posts).toBe(0)
+		},
+	)
 	it('malformed persisted snapshot fails closed', async () => {
 		const row = preparationEventRow({
 			version: 1,
@@ -408,7 +606,7 @@ integration('native immutable preparation; synthetic Kit only', () => {
 				fetch: http,
 				resolveIdentity: async (contactId) => ({
 					contactId,
-					subscriberId: 123,
+					subscriberId: mode === 'late-app-identity' ? 456 : 123,
 				}),
 			},
 			now: () => now,
@@ -421,7 +619,8 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		)
 	}
 	it('actual owned executor prepares from app profile, then enrolls once; replay does not resend', async () => {
-		expect((await execute()).type).toBe('Applied')
+		const result = await execute()
+		expect(result, JSON.stringify(result)).toMatchObject({ type: 'Applied' })
 		expect(puts).toBe(1)
 		expect(posts).toBe(1)
 		await execute()
@@ -430,14 +629,27 @@ integration('native immutable preparation; synthetic Kit only', () => {
 		expect(frozen?.revision.definitionVersion).toBe('evergreen-offer-v3')
 		expect(frozen?.notAfter).toBe(f.intent.notAfter)
 	})
-	it.each(['partial', 'identity-change', 'expiry-change', 'control-change'])(
-		'actual executor refuses enrollment after %s',
-		async (value) => {
-			mode = value
-			const result = await execute()
-			expect(result.type).not.toBe('Applied')
-			expect(posts).toBe(0)
-			expect(puts).toBe(1)
-		},
-	)
+	it('lost enrollment response stays unknown and never resends or rebuilds its snapshot', async () => {
+		mode = 'enrollment-uncertain'
+		expect((await execute()).type).toBe('HeldUncertain')
+		const before = await store().find(f.intent.idempotencyKey)
+		await execute()
+		expect(posts).toBe(1)
+		expect(puts).toBe(1)
+		expect(await store().find(f.intent.idempotencyKey)).toEqual(before)
+	})
+	it.each([
+		'partial',
+		'identity-change',
+		'expiry-change',
+		'control-change',
+		'late-provider-identity',
+		'late-app-identity',
+	])('actual executor refuses enrollment after %s', async (value) => {
+		mode = value
+		const result = await execute()
+		expect(result.type).not.toBe('Applied')
+		expect(posts).toBe(0)
+		expect(puts).toBe(1)
+	})
 })
