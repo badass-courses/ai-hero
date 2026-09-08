@@ -3,12 +3,15 @@ import fs from "node:fs/promises";
 import mysql, { type Pool } from "mysql2/promise";
 import { drizzle } from "drizzle-orm/mysql2";
 import { Effect } from "effect";
-import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { beforeAll, beforeEach, afterAll, describe, it, expect } from "vitest";
 import * as journeySchema from "@/db/evergreen-offer-journey-schema";
 import { contactEvent, providerIdentity } from "@/db/schema";
 import { preserveQueryResultShape } from "@/db/mysql-query-client";
 import { validateMySqlIntegrationServerUrl } from "../../team-purchase-mysql-test-guard";
-import { commerceDdl } from "./coupon-executor-commerce.fixtures";
+import {
+  commerceDdl,
+  commerceTables,
+} from "./coupon-executor-commerce.fixtures";
 import {
   couponCommerceSchema,
   createMySqlCouponCommerceStore,
@@ -93,45 +96,55 @@ describe.skipIf(!serverUrl)(
       if (name) await server.query(`DROP DATABASE \`${name}\``);
       await server?.end();
     });
-    it("admits exact source once, delivers 3+5 claimed slots, issues original coupon and expires without new newsletter mutation", async () => {
-      const database = drizzle(pool, {
-        schema: journeySchema,
-        mode: "planetscale",
-      });
-      const commerce = drizzle(pool, {
-        schema: couponCommerceSchema,
-        mode: "planetscale",
-      });
-      const ledger = createDrizzleJourneyLedger(database),
-        attempts = createDrizzleJourneyAttempts(database);
-      const source = currentCourseSourceFixture(),
-        entry = restoreSourceCandidate(source)!;
-      await server.query("INSERT INTO AI_Contact (id,email) VALUES (?,?)", [
-        entry.contactId,
-        "runtime@example.test",
-      ]);
-      await database
-        .insert(providerIdentity)
-        .values({
+    beforeEach(async () => {
+      for (const table of [
+        "AI_EvergreenOfferJourneyAttempt",
+        "AI_EvergreenOfferJourneyWake",
+        "AI_EvergreenOfferJourneyIntent",
+        "AI_EvergreenOfferJourneyCommit",
+        "AI_ContactEvent",
+        "AI_ProviderIdentity",
+        ...commerceTables,
+      ])
+        await server.query(`DELETE FROM \`${table}\``);
+    });
+    it.each(["expiry", "purchase"] as const)(
+      "real source, 3+5 claimed slots, original coupon and %s exit without newsletter mutation",
+      async (exit) => {
+        const database = drizzle(pool, {
+          schema: journeySchema,
+          mode: "planetscale",
+        });
+        const commerce = drizzle(pool, {
+          schema: couponCommerceSchema,
+          mode: "planetscale",
+        });
+        const ledger = createDrizzleJourneyLedger(database),
+          attempts = createDrizzleJourneyAttempts(database);
+        const source = currentCourseSourceFixture(),
+          entry = restoreSourceCandidate(source)!;
+        await server.query("INSERT INTO AI_Contact (id,email) VALUES (?,?)", [
+          entry.contactId,
+          "runtime@example.test",
+        ]);
+        await database.insert(providerIdentity).values({
           id: source.providerIdentityId,
           contactId: entry.contactId,
           provider: "ai-hero",
           externalId: "runtime-test",
           evidence: { source: "synthetic" },
         });
-      await database.insert(contactEvent).values(source);
-      const merchant = {
-        id: "runtime-merchant",
-        identifier: "fixture",
-        merchantAccountId: "fixture-account",
-        currency: "USD",
-        amountOffCents: 10000,
-        type: "special",
-        sourceReference: "synthetic-not-provider-proof",
-      };
-      await commerce
-        .insert(couponCommerceSchema.merchantCoupon)
-        .values({
+        await database.insert(contactEvent).values(source);
+        const merchant = {
+          id: "runtime-merchant",
+          identifier: "fixture",
+          merchantAccountId: "fixture-account",
+          currency: "USD",
+          amountOffCents: 10000,
+          type: "special",
+          sourceReference: "synthetic-not-provider-proof",
+        };
+        await commerce.insert(couponCommerceSchema.merchantCoupon).values({
           id: merchant.id,
           identifier: merchant.identifier,
           merchantAccountId: merchant.merchantAccountId,
@@ -139,162 +152,180 @@ describe.skipIf(!serverUrl)(
           amountDiscount: 10000,
           type: "special",
         });
-      let now = entry.exhaustedAt;
-      const clock = {
-        now: Effect.sync(() => {
-          const result = parseIsoInstant(now);
-          if (!result.ok) throw new Error("Invalid fixture clock");
-          return result.value;
-        }),
-      };
-      const authority = {
-        currentFacts: ({
-          journeyId,
-        }: {
-          journeyId: EligibilityFacts["existingJourneyId"];
-        }) =>
-          Effect.succeed({
-            contactId: entry.contactId,
-            purchase: null,
-            delivery: { type: "Eligible" as const },
-            existingJourneyId: journeyId,
-            automationControl: { type: "Enabled" as const, version: "test" },
-            evidenceVersion: "fixture-current",
-            readAt: now,
+        let now = entry.exhaustedAt;
+        const clock = {
+          now: Effect.sync(() => {
+            const result = parseIsoInstant(now);
+            if (!result.ok) throw new Error("Invalid fixture clock");
+            return result.value;
           }),
-      };
-      const service = createEvergreenOfferJourneyService({
-        ledger,
-        authority,
-        clock,
-        definition: EVERGREEN_OFFER_JOURNEY_V2,
-      });
-      const mapping = createOriginalDeliveryMapping({
-        store: createMySqlOriginalMappingPersistence(database),
-        now: () => now,
-      });
-      const bundles = [
-        EVERGREEN_OFFER_JOURNEY_V1,
-        EVERGREEN_OFFER_JOURNEY_V2,
-      ].map((definition) => {
-        const manifest = syntheticRevisionScope(definition).manifest;
-        return {
-          manifest,
-          originalMapping: mapping.reader,
-          mappingWriter: mapping.writer,
-          providerReadbacks: manifest.messages.map((m) => ({
-            sequenceId: m.sequenceId,
-            repeat: false as const,
-            emailCount: 1 as const,
-            published: true as const,
-            active: true as const,
-            hold: false as const,
-          })),
         };
-      });
-      const posts: string[] = [];
-      const messages = createRevisionDelivery({
-        bundles,
-        dependencies: { ledger, attempts, authority, clock, service },
-        now: () => now,
-        kit: {
-          apiKey: "fixture-no-network",
-          resolveIdentity: async (contactId) => ({
-            contactId,
-            subscriberId: 91,
-          }),
-          fetch: (async (url, init) => {
-            expect(init?.method).toBe("POST");
-            posts.push(String(url));
-            return new Response(
-              JSON.stringify({ subscriber: { id: 91, state: "active" } }),
-              { status: 201 },
-            );
-          }) as typeof fetch,
-        },
-      });
-      expect(messages.registry().type).toBe("Configured");
-      const coupons = createCouponIntentExecutor({
-        ledger,
-        attempts,
-        service,
-        authority,
-        clock,
-        coupons: createCouponAuthority({
-          store: createMySqlCouponCommerceStore(commerce),
-          merchantCouponEvidence: merchant,
-          now: () => now,
-        }),
-        receipts: createCouponReceiptReader(
-          createMySqlCouponReceiptReadStore(commerce),
-        ),
-      });
-      const readers = createBoundedJourneyReaders(database, ledger);
-      const build = () =>
-        createBridgeRuntime({
-          readers,
-          messages,
-          coupons,
-          service,
+        let purchase: EligibilityFacts["purchase"] = null;
+        const authority = {
+          currentFacts: ({
+            journeyId,
+          }: {
+            journeyId: EligibilityFacts["existingJourneyId"];
+          }) =>
+            Effect.succeed({
+              contactId: entry.contactId,
+              purchase,
+              delivery: { type: "Eligible" as const },
+              existingJourneyId: journeyId,
+              automationControl: { type: "Enabled" as const, version: "test" },
+              evidenceVersion: "fixture-current",
+              readAt: now,
+            }),
+        };
+        const service = createEvergreenOfferJourneyService({
+          ledger,
+          authority,
           clock,
-          control: () =>
-            Effect.succeed({ type: "Enabled", generation: "fixture" }),
+          definition: EVERGREEN_OFFER_JOURNEY_V2,
         });
-      let runtime = build();
-      const sourceRequest = { generation: "fixture", lane: "source" as const };
-      expect((await Effect.runPromise(runtime.tick(sourceRequest))).type).toBe(
-        "Progress",
-      );
-      await Effect.runPromise(runtime.tick(sourceRequest));
-      const journeyId = deriveJourneyId(entry.entryFactId);
-      const entered = await Effect.runPromise(ledger.load(journeyId));
-      if (!entered || !("messagePlan" in entered))
-        throw new Error("Missing entered journey");
-      expect(entered.definition.definitionVersion).toBe("evergreen-offer-v2");
-      async function drain(lane: "wakes" | "intents") {
-        let request: BridgeTickRequest = { generation: "fixture", lane };
-        for (let page = 0; page < 32; page++) {
-          const result = await Effect.runPromise(runtime.tick(request));
-          if (result.reason === "ShadowHandoffExecutorUnavailable")
-            return result;
-          expect(result.type).toBe("Progress");
-          if (!result.continuation.after) return result;
-          request = result.continuation;
+        const mapping = createOriginalDeliveryMapping({
+          store: createMySqlOriginalMappingPersistence(database),
+          now: () => now,
+        });
+        const bundles = [
+          EVERGREEN_OFFER_JOURNEY_V1,
+          EVERGREEN_OFFER_JOURNEY_V2,
+        ].map((definition) => {
+          const manifest = syntheticRevisionScope(definition).manifest;
+          return {
+            manifest,
+            originalMapping: mapping.reader,
+            mappingWriter: mapping.writer,
+            providerReadbacks: manifest.messages.map((m) => ({
+              sequenceId: m.sequenceId,
+              repeat: false as const,
+              emailCount: 1 as const,
+              published: true as const,
+              active: true as const,
+              hold: false as const,
+            })),
+          };
+        });
+        const posts: string[] = [];
+        const messages = createRevisionDelivery({
+          bundles,
+          dependencies: { ledger, attempts, authority, clock, service },
+          now: () => now,
+          kit: {
+            apiKey: "fixture-no-network",
+            resolveIdentity: async (contactId) => ({
+              contactId,
+              subscriberId: 91,
+            }),
+            fetch: (async (url, init) => {
+              expect(init?.method).toBe("POST");
+              posts.push(String(url));
+              return new Response(
+                JSON.stringify({ subscriber: { id: 91, state: "active" } }),
+                { status: 201 },
+              );
+            }) as typeof fetch,
+          },
+        });
+        expect(messages.registry().type).toBe("Configured");
+        const coupons = createCouponIntentExecutor({
+          ledger,
+          attempts,
+          service,
+          authority,
+          clock,
+          coupons: createCouponAuthority({
+            store: createMySqlCouponCommerceStore(commerce),
+            merchantCouponEvidence: merchant,
+            now: () => now,
+          }),
+          receipts: createCouponReceiptReader(
+            createMySqlCouponReceiptReadStore(commerce),
+          ),
+        });
+        const readers = createBoundedJourneyReaders(database, ledger);
+        const build = () =>
+          createBridgeRuntime({
+            readers,
+            messages,
+            coupons,
+            service,
+            clock,
+            control: () =>
+              Effect.succeed({ type: "Enabled", generation: "fixture" }),
+          });
+        let runtime = build();
+        const sourceRequest = {
+          generation: "fixture",
+          lane: "source" as const,
+        };
+        expect(
+          (await Effect.runPromise(runtime.tick(sourceRequest))).type,
+        ).toBe("Progress");
+        await Effect.runPromise(runtime.tick(sourceRequest));
+        const journeyId = deriveJourneyId(entry.entryFactId);
+        const entered = await Effect.runPromise(ledger.load(journeyId));
+        if (!entered || !("messagePlan" in entered))
+          throw new Error("Missing entered journey");
+        expect(entered.definition.definitionVersion).toBe("evergreen-offer-v2");
+        async function drain(lane: "wakes" | "intents") {
+          let request: BridgeTickRequest = { generation: "fixture", lane };
+          for (let page = 0; page < 32; page++) {
+            const result = await Effect.runPromise(runtime.tick(request));
+            if (result.reason === "ShadowHandoffExecutorUnavailable")
+              return result;
+            expect(result.type).toBe("Progress");
+            if (!result.continuation.after) return result;
+            request = result.continuation;
+          }
+          throw new Error("Bounded fixture page budget exceeded");
         }
-        throw new Error("Bounded fixture page budget exceeded");
-      }
-      for (const slot of entered.messagePlan.bridge) {
-        now = slot.dueAt;
+        for (const slot of entered.messagePlan.bridge) {
+          now = slot.dueAt;
+          await drain("wakes");
+          await drain("intents");
+          runtime = build(); // restart; committed attempts, not process memory, prevent sends
+          await drain("intents");
+        }
+        expect(posts).toHaveLength(3);
+        now = entered.messagePlan.bridge[2].windowEndsAt;
         await drain("wakes");
         await drain("intents");
-        runtime = build(); // restart; committed attempts, not process memory, prevent sends
-        await drain("intents");
-      }
-      expect(posts).toHaveLength(3);
-      now = entered.messagePlan.bridge[2].windowEndsAt;
-      await drain("wakes");
-      await drain("intents");
-      const issued = await Effect.runPromise(ledger.load(journeyId));
-      if (!issued || !("coupon" in issued) || !issued.coupon)
-        throw new Error("Missing coupon receipt");
-      const expiry = issued.coupon.expiresAt;
-      for (const slot of issued.messagePlan.pitch) {
-        now = slot.dueAt;
+        const issued = await Effect.runPromise(ledger.load(journeyId));
+        if (!issued || !("coupon" in issued) || !issued.coupon)
+          throw new Error("Missing coupon receipt");
+        const expiry = issued.coupon.expiresAt;
+        for (const slot of issued.messagePlan.pitch) {
+          now = slot.dueAt;
+          await drain("wakes");
+          await drain("intents");
+        }
+        expect(posts).toHaveLength(8);
+        if (exit === "purchase")
+          purchase = {
+            purchaseId: "runtime-purchase",
+            offerProductFamily: "ai-coding-crash-course",
+            sourceProductId: "product-ma254",
+            purchasedAt: now,
+            sourceReference: "synthetic-purchase-not-provider-proof",
+          };
+        now = expiry;
         await drain("wakes");
-        await drain("intents");
-      }
-      expect(posts).toHaveLength(8);
-      now = expiry;
-      await drain("wakes");
-      const terminal = await Effect.runPromise(ledger.load(journeyId));
-      expect(terminal?.phase).toBe("handoff.awaitingReceipt");
-      expect((await drain("intents"))?.reason).toBe(
-        "ShadowHandoffExecutorUnavailable",
-      );
-      expect(posts).toHaveLength(8);
-      const rows = await commerce.select().from(couponCommerceSchema.coupon);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.expires?.toISOString()).toBe(expiry);
-    });
+        const terminal = await Effect.runPromise(ledger.load(journeyId));
+        expect(terminal?.phase).toBe(
+          exit === "expiry" ? "handoff.awaitingReceipt" : "customer",
+        );
+        const finalIntents = await drain("intents");
+        expect(finalIntents?.reason).toBe(
+          exit === "expiry"
+            ? "ShadowHandoffExecutorUnavailable"
+            : "RangeComplete",
+        );
+        expect(posts).toHaveLength(8);
+        const rows = await commerce.select().from(couponCommerceSchema.coupon);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.expires?.toISOString()).toBe(expiry);
+      },
+    );
   },
 );
