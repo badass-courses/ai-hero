@@ -38,6 +38,7 @@
 		"discord:backfill-legend": "tsx scripts/backfill-discord-legend-role.mts",
 		"subscriber-marketing:dry-run": "tsx src/scripts/subscriber-marketing-dry-run.ts",
 		"subscriber-marketing:operator": "tsx -r dotenv/config src/scripts/subscriber-marketing-operator.ts",
+		"evergreen-bridge:operator": "tsx src/scripts/evergreen-bridge-operator.ts",
 		"contact-events:backfill": "tsx -r dotenv/config src/scripts/backfill-contact-events.ts",
 		"ads:operator": "tsx -r dotenv/config src/scripts/ads-operator.ts",
 		"course-sync:funnel": "tsx -r dotenv/config src/scripts/course-sync-funnel.ts",
