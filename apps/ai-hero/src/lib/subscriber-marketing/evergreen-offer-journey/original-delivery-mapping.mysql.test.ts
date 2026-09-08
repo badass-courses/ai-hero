@@ -7,7 +7,7 @@ import { eq, sql as sqlBuilder } from 'drizzle-orm'
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import { drizzle } from 'drizzle-orm/mysql2'
 import { Effect, Either } from 'effect'
-import mysql, { type Pool } from 'mysql2/promise'
+import mysql, { type Pool, type PoolConnection } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { validateMySqlIntegrationServerUrl } from '../../team-purchase-mysql-test-guard'
 import {
@@ -43,31 +43,47 @@ function connect(uri: string, readOnly = false) {
 		mysql.createPool({ uri, connectionLimit: 2, timezone: 'Z' }),
 	)
 	const queries: string[] = []
-	const guarded = new Proxy(raw, {
-		get(target, key) {
-			const member = Reflect.get(target, key)
-			if (typeof member !== 'function') return member
-			return (...args: unknown[]) => {
-				if (key === 'query' || key === 'execute') {
-					const first = args[0]
-					const text =
-						typeof first === 'string'
-							? first
-							: first && typeof first === 'object' && 'sql' in first
-								? String(first.sql)
-								: ''
-					queries.push(text)
-					if (
-						readOnly &&
-						/\b(insert|update|delete)\b[\s\S]*AI_ContactEvent/i.test(text)
-					)
-						throw new Error('Recovery ContactEvent mutation denied')
+	const connections = new WeakMap<PoolConnection, PoolConnection>()
+	function guardConnection(connection: PoolConnection): PoolConnection {
+		const existing = connections.get(connection)
+		if (existing) return existing
+		// Shape the raw connection before wrapping, just like the pool. Cache both
+		// identities so reacquisition/re-entry cannot nest query instrumentation.
+		const guarded = guard(preserveQueryResultShape(connection))
+		connections.set(connection, guarded)
+		connections.set(guarded, guarded)
+		return guarded
+	}
+	function guard<T extends Pool | PoolConnection>(client: T): T {
+		return new Proxy(client, {
+			get(target, key) {
+				if (key === 'getConnection' && 'getConnection' in target) {
+					return async () => guardConnection(await target.getConnection())
 				}
-				return Reflect.apply(member, target, args)
-			}
-		},
-	})
-	const database = drizzle(guarded, {
+				const member = Reflect.get(target, key)
+				if (typeof member !== 'function') return member
+				return (...args: unknown[]) => {
+					if (key === 'query' || key === 'execute') {
+						const first = args[0]
+						const text =
+							typeof first === 'string'
+								? first
+								: first && typeof first === 'object' && 'sql' in first
+									? String(first.sql)
+									: ''
+						queries.push(text)
+						if (
+							readOnly &&
+							/\b(insert|update|delete)\b[\s\S]*AI_ContactEvent/i.test(text)
+						)
+							throw new Error('Recovery ContactEvent mutation denied')
+					}
+					return Reflect.apply(member, target, args)
+				}
+			},
+		})
+	}
+	const database = drizzle(guard(raw), {
 		schema: journeySchema,
 		mode: 'planetscale',
 	})
@@ -501,6 +517,24 @@ integration(
 						`/sequences/${manifest().messages[0]!.sequenceId}/`,
 					)
 				if (crash !== 'after-ack') expect(await row()).toEqual(before)
+				else {
+					// Valid historical evidence still permits real attempt/domain writes
+					// through guarded getConnection transactions, not a read-only facade.
+					expect((await row()).status).toBe('Accepted')
+					expect(
+						second.queries.some((q) =>
+							/update `AI_EvergreenOfferJourneyAttempt`/i.test(q),
+						),
+					).toBe(true)
+					expect(
+						second.queries.some((q) =>
+							/insert into `AI_EvergreenOfferJourneyCommit`/i.test(q),
+						),
+					).toBe(true)
+					expect(second.queries.some((q) => q.toLowerCase() === 'commit')).toBe(
+						true,
+					)
+				}
 				expect(await second.store.event(mappingIdentity(before).id)).toEqual(
 					receiptBefore,
 				)
@@ -705,6 +739,52 @@ integration(
 				).toHaveLength(0)
 			},
 		)
+		it.each([
+			"INSERT INTO AI_ContactEvent (id) VALUES ('bad')",
+			"UPDATE AI_ContactEvent SET id='bad'",
+			'DELETE FROM AI_ContactEvent',
+		])(
+			'transactional recovery guard rejects attempted %s',
+			async (statement) => {
+				const start = second.queries.length
+				await expect(
+					second.database.transaction(async (transaction) => {
+						await transaction.execute(sqlBuilder.raw(statement))
+					}),
+				).rejects.toThrow('Recovery ContactEvent mutation denied')
+				const attempted = second.queries.slice(start)
+				expect(
+					attempted.filter((q) =>
+						/\b(insert|update|delete)\b[\s\S]*AI_ContactEvent/i.test(q),
+					),
+				).toEqual([statement])
+				expect(
+					attempted.filter((q) => q.toLowerCase() === 'begin'),
+				).toHaveLength(1)
+				expect(
+					attempted.filter((q) => q.toLowerCase() === 'rollback'),
+				).toHaveLength(1)
+				expect(
+					attempted.filter((q) => q.toLowerCase() === 'commit'),
+				).toHaveLength(0)
+				// Sequential reacquisition must release correctly, preserve tuple-plus-
+				// PlanetScale result shape, and never accumulate instrumented wrappers.
+				for (let i = 0; i < 3; i++) {
+					const before = second.queries.length
+					const result = await second.database.transaction((transaction) =>
+						transaction.execute(sqlBuilder`SELECT 1 AS value`),
+					)
+					expect(result).toMatchObject({
+						rows: [{ value: 1 }],
+						rowsAffected: 0,
+					})
+					expect(result[0]).toEqual([{ value: 1 }])
+					expect(
+						second.queries.slice(before).map((q) => q.toLowerCase()),
+					).toEqual(['begin', 'select 1 as value', 'commit'])
+				}
+			},
+		)
 		it('read-only recovery connection really rejects ContactEvent INSERT UPDATE DELETE', async () => {
 			for (const sql of [
 				"INSERT INTO AI_ContactEvent (id) VALUES ('bad')",
@@ -715,7 +795,7 @@ integration(
 					Promise.resolve().then(() =>
 						second.database.execute(sqlBuilder.raw(sql)),
 					),
-				).rejects.toThrow()
+				).rejects.toThrow('Recovery ContactEvent mutation denied')
 			}
 			expect(
 				second.queries.filter((q) =>
