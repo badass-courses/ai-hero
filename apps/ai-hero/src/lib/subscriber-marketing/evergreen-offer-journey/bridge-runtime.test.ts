@@ -261,6 +261,83 @@ describe("bounded bridge runtime", () => {
       "Disabled",
     );
   });
+  it.each([
+    { type: "AlreadyAttempted", state: "HeldUncertain", sideEffects: "none" },
+    { type: "Applied", settlement: { type: "Failed" } },
+  ])(
+    "pauses on retained uncertainty or unsettled acceptance without a retry",
+    async (outcome) => {
+      const h = harness();
+      const candidate = {
+        intent: {
+          type: "SendMessage",
+          journeyId: deriveJourneyId(h.entry.entryFactId),
+          idempotencyKey: "fixture-message",
+        },
+      } as unknown as Effect.Effect.Success<
+        ReturnType<BridgeRuntimeDependencies["readers"]["intents"]>
+      >["candidates"][number];
+      const execute = vi.fn(() => Effect.succeed(outcome));
+      const runtime = createBridgeRuntime({
+        ...h.dependencies,
+        messages: {
+          ...h.messages,
+          execute,
+        } as unknown as BridgeRuntimeDependencies["messages"],
+        readers: {
+          ...h.dependencies.readers,
+          intents: () =>
+            Effect.succeed({
+              candidates: [candidate],
+              held: [],
+              scanned: 1,
+              nextCursor: { at: h.entry.exhaustedAt, id: "fixture-message" },
+              end: false,
+            }),
+        },
+      });
+      const result = await Effect.runPromise(
+        runtime.tick({ generation: "test-v1", lane: "intents" }),
+      );
+      expect(result.type).toBe("Paused");
+      expect(result.continuation.after?.id).toBe("fixture-message");
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("uses the actual claim reader keyset contract and exposes poison/unconfigured results", async () => {
+    const h = harness();
+    const page = vi.fn(async () => ({
+      type: "Scanned" as const,
+      candidates: [],
+      held: ["bad-claim"],
+      cursor: "bad-claim",
+    }));
+    const runtime = createBridgeRuntime({
+      ...h.dependencies,
+      claimSource: { page },
+    });
+    expect(
+      await Effect.runPromise(
+        runtime.claimSource("test-v1", { after: "prior" }),
+      ),
+    ).toMatchObject({
+      type: "RecoveryPage",
+      page: { type: "Held", reason: "InvalidClaimSource", cursor: "bad-claim" },
+    });
+    expect(page).toHaveBeenCalledWith({ after: "prior", limit: 1 });
+    expect(runtime.status()).toMatchObject({
+      lifecycle: "paused",
+      lastResult: { reason: "RecoveryPageRequiresInspection" },
+    });
+    expect(
+      await Effect.runPromise(
+        createBridgeRuntime(h.dependencies).claimSource("test-v1", {}),
+      ),
+    ).toMatchObject({
+      page: { type: "Unavailable", reason: "ClaimSourceUnconfigured" },
+    });
+    expect(h.messages.execute).not.toHaveBeenCalled();
+  });
   it("keeps default-off configuration pure and requires both reviewed revisions", () => {
     expect(inspectBridgeConfiguration({ type: "Disabled" })).toEqual({
       type: "Disabled",

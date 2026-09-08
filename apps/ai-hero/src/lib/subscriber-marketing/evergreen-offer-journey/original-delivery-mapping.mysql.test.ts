@@ -356,13 +356,13 @@ integration(
 			await Effect.runPromise(runtime().tick(request))
 			expect(posts).toBe(1)
 		})
-		it('runtime pause on lost outcome survives restart and recovery never posts again', async () => {
+		it('runtime unavailable after lost outcome survives restart and recovery never posts again', async () => {
 			failOutcome = true
 			const result = await Effect.runPromise(runtime().tick({ generation: 'runtime-fixture', lane: 'intents' }))
-			expect(result.type).toBe('Paused')
+			expect(result.type).toBe('Unavailable')
 			expect(posts).toBe(1)
 			failOutcome = false
-			now = new Date(Date.parse(now) + 120_000).toISOString()
+			now = new Date((await row()).leaseExpiresAt.getTime() + 1000).toISOString()
 			const recovery = await Effect.runPromise(runtime().messageUncertain('runtime-fixture', {}))
 			expect(recovery.type).toBe('RecoveryPage')
 			expect(posts).toBe(1)

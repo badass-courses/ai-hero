@@ -14,10 +14,7 @@ import type { VerifiedUserObserved } from "./domain";
 /** Structural binding to createVerifiedUserObservedReader().page at 8c8609a6.
  * Its owner supplies the actual reader; no inferred auth/session facts here. */
 export type BridgeClaimSource = {
-  page: (input: {
-    after?: string;
-    limit: number;
-  }) => Promise<{
+  page: (input: { after?: string; limit: number }) => Promise<{
     type: "Scanned";
     candidates: VerifiedUserObserved[];
     held: string[];
@@ -187,7 +184,9 @@ export function createBridgeRuntime(dependencies: BridgeRuntimeDependencies) {
           if (candidate.intent.type === "SendMessage") {
             const result = yield* d.messages.execute(target);
             const ok =
-              result.type === "Applied" || result.type === "AlreadyAttempted";
+              result.type === "Applied" &&
+              (result.settlement.type === "Committed" ||
+                result.settlement.type === "AlreadyCommitted");
             return answer(
               ok ? "Progress" : "Paused",
               `Message:${result.type}`,
@@ -271,9 +270,14 @@ export function createBridgeRuntime(dependencies: BridgeRuntimeDependencies) {
       );
       lastResult = {
         type: result.type,
-        reason: result.type === "Held" ? result.reason : "RecoveryPageRead",
+        reason:
+          result.type === "Held"
+            ? result.reason
+            : "RecoveryPageRequiresInspection",
       };
-      actor.send({ type: result.type === "Held" ? "PAUSE" : "DONE" });
+      // A page can contain an unresolved outcome. Never project page-read success
+      // as healthy execution; caller must inspect results and persist exact cursors.
+      actor.send({ type: "PAUSE" });
       return result;
     });
   }
