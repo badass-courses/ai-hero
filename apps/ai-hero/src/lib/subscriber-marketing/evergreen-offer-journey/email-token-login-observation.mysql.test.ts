@@ -506,9 +506,13 @@ integration('email login observation real adapter and disposable MySQL', () => {
 	})
 	it.each(
 		['utf8mb4_bin', 'utf8mb4_0900_ai_ci'].flatMap((collation) =>
-			['nbsp', 'ideographic-space', 'kelvin', 'turkish-superset'].map(
-				(kind) => ({ collation, kind }),
-			),
+			[
+				'nbsp',
+				'ideographic-space',
+				'vertical-tab',
+				'kelvin',
+				'turkish-superset',
+			].map((kind) => ({ collation, kind })),
 		),
 	)(
 		'normalized candidate hold with $collation / $kind',
@@ -530,9 +534,11 @@ integration('email login observation real adapter and disposable MySQL', () => {
 						? `\u00A0${ascii}\u00A0`
 						: kind === 'ideographic-space'
 							? `\u3000${ascii}\u3000`
-							: kind === 'kelvin'
-								? 'K@example.test'
-								: 'İ@example.test'
+							: kind === 'vertical-tab'
+								? `\u000B${ascii}\u000B`
+								: kind === 'kelvin'
+									? 'K@example.test'
+									: 'İ@example.test'
 				await database.update(contact).set({ email: ascii })
 				await database
 					.insert(contact)
@@ -544,6 +550,27 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				})
 				const input = { ...capture, email: ascii }
 				expect(emailObservationInputSchema.safeParse(input).success).toBe(true)
+				if (kind === 'vertical-tab') {
+					expect(raw.trim().toLowerCase()).toBe(ascii)
+					const stored = await database
+						.select({ email: contact.email })
+						.from(contact)
+					expect(stored).toHaveLength(2)
+					expect(stored).toEqual(
+						expect.arrayContaining([{ email: ascii }, { email: raw }]),
+					)
+					// Exercise the unchanged production predicate, not a proposed fix.
+					const normalized = sql<string>`lower(regexp_replace(${contact.email}, ${'^[\\s\\x{FEFF}]+|[\\s\\x{FEFF}]+$'}, ''))`
+					const candidates = await database
+						.select({ email: contact.email, normalized })
+						.from(contact)
+						.where(sql`${normalized} = ${ascii}`)
+					expect(candidates).toHaveLength(2)
+					expect(candidates.map((row) => row.normalized)).toEqual([
+						ascii,
+						ascii,
+					])
+				}
 				if (kind === 'turkish-superset') {
 					expect(raw.trim().toLowerCase()).not.toBe(ascii)
 					expect(emailFingerprint(secret, raw)).not.toBe(

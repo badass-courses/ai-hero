@@ -1,8 +1,20 @@
 import { describe, it, expect, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/mysql2'
 import * as schema from '@/db/evergreen-offer-journey-schema'
+import type { PoolConnection } from 'mysql2/promise'
+import { preserveQueryResultShape } from '@/db/mysql-query-client'
+
+vi.mock('@/db/mysql-query-client', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('@/db/mysql-query-client')>()
+	return {
+		...actual,
+		preserveQueryResultShape: vi.fn(actual.preserveQueryResultShape),
+	}
+})
 import {
 	createOwnedEmailObservationTransactions,
+	createMySqlEmailObservationLeaseSource,
 	type EmailObservationLease,
 } from './email-observation-transaction'
 
@@ -38,6 +50,25 @@ function fixture(fault?: 'set' | 'begin' | 'commit' | 'rollback') {
 	}
 }
 describe('observation-owned transaction lifecycle', () => {
+	it('construction failure after acquisition destroys once without releasing or replacing the error', async () => {
+		const failure = new Error('synthetic connection shaping failure')
+		const connection = { destroy: vi.fn(), release: vi.fn() }
+		// Only disposal is reachable: shaping throws before Drizzle uses the client.
+		const getConnection = vi.fn(
+			async () => connection as unknown as PoolConnection,
+		)
+		vi.mocked(preserveQueryResultShape).mockImplementationOnce(() => {
+			throw failure
+		})
+		const source = createMySqlEmailObservationLeaseSource({
+			pool: { getConnection },
+		})
+		await expect(source.acquire()).rejects.toBe(failure)
+		expect(getConnection).toHaveBeenCalledOnce()
+		expect(preserveQueryResultShape).toHaveBeenCalledWith(connection)
+		expect(connection.destroy).toHaveBeenCalledOnce()
+		expect(connection.release).not.toHaveBeenCalled()
+	})
 	it('starting → active → committing → clean: release only after acknowledged COMMIT', async () => {
 		const f = fixture(),
 			result = { recorded: true }
