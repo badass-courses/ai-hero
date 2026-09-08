@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { and, eq, gt, asc, sql, isNull } from "drizzle-orm";
+import { and, eq, gt, asc, desc, sql, isNull } from "drizzle-orm";
 import { Effect } from "effect";
 import {
   contactEvent,
@@ -8,6 +8,7 @@ import {
   users,
   sessions,
   coupon,
+  entitlements,
 } from "@/db/schema";
 import { evergreenOfferJourneyCommit } from "@/db/evergreen-offer-journey-schema";
 import { lookupIndexedEmailContact } from "../contact-email-lookup";
@@ -215,11 +216,22 @@ export function createVerifiedUserObservedSource(options: {
     });
     if (!decoded.ok || decoded.value.type !== "VerifiedUserObserved")
       return hold();
+    // Lock the journal head before canonical replay, retaining the transaction
+    // through source INSERT. The indexed descending range also locks its gap.
+    const head = await tx
+      .select({ version: evergreenOfferJourneyCommit.actorVersion })
+      .from(evergreenOfferJourneyCommit)
+      .where(eq(evergreenOfferJourneyCommit.journeyId, decoded.value.journeyId))
+      .orderBy(desc(evergreenOfferJourneyCommit.actorVersion))
+      .limit(1)
+      .for("update");
+    if (head.length !== 1) return hold();
     const journey = await Effect.runPromise(
       options.ledger.load(decoded.value.journeyId),
     );
     if (
       !journey ||
+      journey.version !== head[0]!.version ||
       journey.contactId !== owner.id ||
       (journey.phase !== "pitch.running" &&
         journey.phase !== "handoff.awaitingReceipt") ||
@@ -271,6 +283,35 @@ export function createVerifiedUserObservedSource(options: {
         binding.verifiedUserId !== user.id
       )
         return hold();
+    // Never present a historical binding as currently usable after revocation.
+    // The executor still owns the full credit-type and grant-authority proof.
+    const grants = await tx
+      .select()
+      .from(entitlements)
+      .where(
+        and(
+          eq(entitlements.sourceType, "COUPON"),
+          eq(entitlements.sourceId, realCoupon.id),
+        ),
+      )
+      .limit(2)
+      .for("update");
+    if (evidence.binding.type === "BoundToVerifiedUser") {
+      const grant = grants[0];
+      if (
+        grants.length !== 1 ||
+        !grant ||
+        grant.id !== evidence.binding.entitlementId ||
+        grant.userId !== user.id ||
+        grant.deletedAt !== null ||
+        grant.expiresAt?.toISOString() !== evidence.coupon.expiresAt
+      )
+        return hold();
+    } else if (
+      grants.length !== 0 ||
+      journey.coupon.binding.type === "BoundToVerifiedUser"
+    )
+      return hold();
     return { identity, resolution, journey, user, login, loginRow, now: fresh };
   }
   async function capture(session: Session, write: boolean) {

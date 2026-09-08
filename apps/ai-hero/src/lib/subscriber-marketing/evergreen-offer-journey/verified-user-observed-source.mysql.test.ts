@@ -60,6 +60,7 @@ suite("secure claim source disposable MySQL", () => {
   let f: ReturnType<typeof ownerProofFixture>;
   let api: ReturnType<typeof createVerifiedUserObservedSource>;
   let now: Date;
+  let beforeCommit: (() => Promise<void>) | undefined;
   let commitFault: "none" | "before" | "after" = "none";
   let fault = false,
     stopped = false,
@@ -140,6 +141,7 @@ suite("secure claim source disposable MySQL", () => {
       "AI_EvergreenOfferJourneyCommit",
     ])
       await pool.query(`DELETE FROM \`${t}\``);
+    beforeCommit = undefined;
     commitFault = "none";
     f = ownerProofFixture();
     now = new Date(f.now);
@@ -236,6 +238,7 @@ suite("secure claim source disposable MySQL", () => {
           return {
             ...lease,
             async commit() {
+              if (beforeCommit) await beforeCommit();
               if (commitFault === "before")
                 throw new Error("commit unavailable");
               await lease.commit();
@@ -518,6 +521,35 @@ suite("secure claim source disposable MySQL", () => {
       vi.useRealTimers();
     }
   });
+  it.each(["AI_User", "AI_Contact", "AI_EvergreenOfferJourneyCommit"])(
+    "holds %s locks through source commit on another physical connection",
+    async (table) => {
+      let entered!: () => void, release!: () => void;
+      const atCommit = new Promise<void>((r) => (entered = r)),
+        gate = new Promise<void>((r) => (release = r));
+      beforeCommit = async () => {
+        entered();
+        await gate;
+      };
+      const claim = api.claim(session());
+      await atCommit;
+      let completed = false;
+      const contender = second
+        .query(`SELECT * FROM ${table} FOR UPDATE`)
+        .then(() => {
+          completed = true;
+        });
+      try {
+        await new Promise((r) => setTimeout(r, 50));
+        expect(completed).toBe(false);
+      } finally {
+        release();
+        await claim;
+        await contender;
+      }
+      expect(await claims()).toHaveLength(1);
+    },
+  );
   it("concurrent claims preserve one source", async () => {
     const results = await Promise.all([
       api.claim(session()),

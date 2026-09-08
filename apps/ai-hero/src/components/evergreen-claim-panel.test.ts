@@ -1,7 +1,7 @@
 import {describe,it,expect,vi,afterEach} from 'vitest'
 import {createActor,waitFor} from 'xstate'
 import {evergreenClaimMachine} from './evergreen-claim-panel'
-afterEach(()=>vi.unstubAllGlobals())
+afterEach(()=>{vi.unstubAllGlobals()})
 describe('claim presentation state machine',()=>{
  it('only an explicit ready-state action POSTs; duplicate clicks and pending never automatically retry',async()=>{
   const calls:RequestInit[]=[]
