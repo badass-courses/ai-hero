@@ -19,7 +19,7 @@ describe('email observation persistence input and serialization gates', () => {
 			{ verifiedAt: '2026-09-08T00:00:00Z' },
 			{ verifiedAt: 'bad' },
 			{ userId: '' },
-			{ email: 'not-email' },
+			{ email: '\ud800' },
 			{ sessionToken: '' },
 			{ url: 'https://private.test' },
 		])
@@ -28,6 +28,30 @@ describe('email observation persistence input and serialization gates', () => {
 					.success,
 			).toBe(false)
 	})
+	it.each([
+		'a!b/x@example.test',
+		'"quoted"@example.test',
+		'ΟΣ@example.test',
+		'İ@example.test',
+		'用户@例子.test',
+		'𐐀'.repeat(255),
+		'İ'.repeat(255).toLowerCase(),
+	])(
+		'admits structurally representable evidence without new grammar: %s',
+		(email) => {
+			const parsed = emailObservationInputSchema.safeParse({
+				userId: 'user',
+				email,
+				verifiedAt: '2026-09-08T00:00:00.123Z',
+				acceptedToken: 'stored-token',
+				sessionToken: 'session',
+				sessionExpires: '2026-09-09T00:00:00.000Z',
+			})
+			expect(parsed.success).toBe(true)
+			if (parsed.success)
+				expect(parsed.data.email).toBe(email.trim().toLowerCase())
+		},
+	)
 	it('does not assume Vitess or unknown serialization matches native MySQL', () => {
 		expect(
 			supportsEmailObservationSerialization('8.0.43', [

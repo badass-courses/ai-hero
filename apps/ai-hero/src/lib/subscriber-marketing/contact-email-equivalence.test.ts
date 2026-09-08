@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { emailFingerprint } from './evergreen-offer-journey/verified-owner-evidence'
 import {
 	normalizeEmail,
+	assertEmailKeyRuntime,
 	emailEquivalenceKey,
 	contactEmailWriteValues,
 	isStoredEmail,
@@ -21,6 +22,26 @@ describe('exact Contact email projection', () => {
 			'utf8',
 		)
 		expect(plan).toContain(CONTACT_EMAIL_STALE_SQL)
+	})
+	it('pins normalization/HMAC/key goldens and refuses unproved runtime Unicode changes', () => {
+		expect(normalizeEmail(' ΟΣ@example.test ')).toBe('ος@example.test')
+		expect(normalizeEmail('İ@example.test')).toBe('i\u0307@example.test')
+		expect(normalizeEmail('K@example.test')).toBe('k@example.test')
+		expect(emailFingerprint('fixture', ' ΟΣ@example.test ')).toBe(
+			'fe971d86fb55dfdcadc75fd7da4849bb6d9edfa339ff771271c02b2fd2e06267',
+		)
+		expect(emailEquivalenceKey(' ΟΣ@example.test ')).toBe(
+			'v1:eb79e48f9e2d78cbd4a1e2e18a2bb5c24da8ed072117ef36c5ea26a39dd787b9',
+		)
+		expect(() =>
+			assertEmailKeyRuntime({ node: '24.18.0', unicode: '17.0' }),
+		).not.toThrow()
+		expect(() =>
+			assertEmailKeyRuntime({ node: '24.18.0', unicode: '16.0' }),
+		).toThrow()
+		expect(() =>
+			assertEmailKeyRuntime({ node: '22.0.0', unicode: '17.0' }),
+		).toThrow()
 	})
 	const whitespace =
 		'\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'

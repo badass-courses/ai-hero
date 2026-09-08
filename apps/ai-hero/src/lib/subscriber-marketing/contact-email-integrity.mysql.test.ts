@@ -1,6 +1,10 @@
 import fs from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
+import mysql, {
+	type Pool,
+	type RowDataPacket,
+	type ResultSetHeader,
+} from 'mysql2/promise'
 import { beforeAll, beforeEach, afterAll, describe, it, expect } from 'vitest'
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
 import { contactEmailWriteValues } from './contact-email-equivalence'
@@ -158,6 +162,91 @@ integration('native Contact generated integrity PLAN', () => {
 		for (const key of ['Contact_emailKey_idx', 'Contact_emailKeyStale_idx'])
 			expect(indexes.find((row) => row.Key_name === key)!.Non_unique).toBe(1)
 	})
+	it('raw-byte backfill CAS loses to a newer equivalent email and preserves its projection', async () => {
+		const oldRaw = ' Learner@example.test ',
+			freshRaw = 'LEARNER@example.test'
+		await pool.execute('INSERT INTO AI_Contact (id,email) VALUES (?,?)', [
+			'cas',
+			oldRaw,
+		])
+		const snapshot = contactEmailWriteValues(oldRaw),
+			fresh = contactEmailWriteValues(freshRaw)
+		await pool.execute(
+			'UPDATE AI_Contact SET email=?,emailKey=?,emailKeySource=? WHERE id=?',
+			[fresh.email, fresh.emailKey, fresh.emailKeySource, 'cas'],
+		)
+		const [result] = await pool.execute<ResultSetHeader>(
+			'UPDATE AI_Contact SET emailKey=?,emailKeySource=? WHERE id=? AND CAST(email AS BINARY) <=> CAST(? AS BINARY)',
+			[snapshot.emailKey, snapshot.emailKeySource, 'cas', oldRaw],
+		)
+		expect(result.affectedRows).toBe(0)
+		const [rows] = await pool.query<RowDataPacket[]>(
+			'SELECT email,emailKey,emailKeySource,emailKeyStale FROM AI_Contact WHERE id=?',
+			['cas'],
+		)
+		expect(rows[0]).toEqual({ ...fresh, emailKeyStale: 0 })
+		await pool.execute(
+			'INSERT INTO AI_Contact (id,email,emailKey,emailKeySource) VALUES (?,?,?,?)',
+			['null-cas', null, fresh.emailKey, fresh.emailKeySource],
+		)
+		const [nullResult] = await pool.execute<ResultSetHeader>(
+			'UPDATE AI_Contact SET emailKey=?,emailKeySource=? WHERE id=? AND CAST(email AS BINARY) <=> CAST(? AS BINARY)',
+			[null, null, 'null-cas', null],
+		)
+		expect(nullResult.affectedRows).toBe(1)
+		const [nullRows] = await pool.query<RowDataPacket[]>(
+			'SELECT emailKey,emailKeySource,emailKeyStale FROM AI_Contact WHERE id=?',
+			['null-cas'],
+		)
+		expect(nullRows[0]).toEqual({
+			emailKey: null,
+			emailKeySource: null,
+			emailKeyStale: 0,
+		})
+	})
+	it('large disposable EXPLAIN seeks both indexes, not a whole-index/table scan', async () => {
+		for (let start = 0; start < 6000; start += 500) {
+			const values = Array.from({ length: 500 }, (_, offset) => {
+				const id = `fixture-${start + offset}`,
+					projection = contactEmailWriteValues(`${id}@example.test`)
+				return [
+					id,
+					projection.email,
+					projection.emailKey,
+					projection.emailKeySource,
+				]
+			})
+			await pool.query(
+				'INSERT INTO AI_Contact (id,email,emailKey,emailKeySource) VALUES ?',
+				[values],
+			)
+		}
+		await pool.query('ANALYZE TABLE AI_Contact')
+		for (const [query, parameters, index] of [
+			[
+				'EXPLAIN SELECT id FROM AI_Contact WHERE emailKeyStale=1 LIMIT 1 FOR UPDATE',
+				[],
+				'Contact_emailKeyStale_idx',
+			],
+			[
+				'EXPLAIN SELECT id,email,emailKey,emailKeySource FROM AI_Contact WHERE emailKey=? LIMIT 2 FOR UPDATE',
+				[contactEmailWriteValues('fixture-3000@example.test').emailKey],
+				'Contact_emailKey_idx',
+			],
+		] as const) {
+			const [plan] = await pool.query<RowDataPacket[]>(query, [...parameters])
+			expect(plan).toHaveLength(1)
+			expect(['ref', 'range']).toContain(plan[0]!.type)
+			expect(plan[0]!.key).toBe(index)
+			expect(Number(plan[0]!.rows)).toBeLessThan(10)
+			console.info('contact-email-index-plan', {
+				index,
+				access: plan[0]!.type,
+				estimatedRows: plan[0]!.rows,
+				syntheticRows: 6000,
+			})
+		}
+	}, 15000)
 	it('raw-only UPDATE recomputes stale without any application helper', async () => {
 		await pool.execute(
 			'INSERT INTO AI_Contact (id,email,emailKey,emailKeySource) VALUES (?,?,?,?)',

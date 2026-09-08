@@ -8,9 +8,22 @@ import {
 export const normalizeEmail = (raw: string): string => raw.trim().toLowerCase()
 const sha256 = (value: string) =>
 	createHash('sha256').update(value, 'utf8').digest('hex')
-export const emailEquivalenceKey = (raw: string): string =>
-	CONTACT_EMAIL_KEY_PREFIX +
-	sha256(JSON.stringify([CONTACT_EMAIL_KEY_DOMAIN, normalizeEmail(raw)]))
+export function assertEmailKeyRuntime(
+	runtime: { node: string; unicode: string | undefined } = {
+		node: process.versions.node,
+		unicode: process.versions.unicode,
+	},
+): void {
+	if (runtime.node.split('.')[0] !== '24' || runtime.unicode !== '17.0')
+		throw new Error('Email key v1 requires Node 24 / Unicode 17.0')
+}
+export function emailEquivalenceKey(raw: string): string {
+	assertEmailKeyRuntime()
+	return (
+		CONTACT_EMAIL_KEY_PREFIX +
+		sha256(JSON.stringify([CONTACT_EMAIL_KEY_DOMAIN, normalizeEmail(raw)]))
+	)
+}
 export const emailRawSourceDigest = (raw: string): string => sha256(raw)
 
 function wellFormed(value: string): boolean {
