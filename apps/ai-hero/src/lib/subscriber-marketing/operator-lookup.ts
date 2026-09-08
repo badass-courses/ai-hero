@@ -1,3 +1,7 @@
+import {
+	EMAIL_TOKEN_LOGIN_OBSERVED,
+	OFFER_CLAIM_OBSERVED,
+} from './evergreen-offer-journey/verified-owner-evidence'
 import { planDryRunIntents } from './intent-planner'
 import { classifyContactEvent } from './signal-classifier'
 import { reduceContactState } from './state-reducer'
@@ -260,9 +264,13 @@ export async function previewSubscriberMarketingReplay(args: {
 	}
 
 	const storedState = await args.repository.findCurrentContactState(contact.id)
-	// Exact receipt type only. Empty keywords do not neutralize the classifier:
-	// its fallback previously fabricated a lifecycle/bucket change in this preview.
-	if (event.eventType === 'evergreen.delivery-mapping.recorded') {
+	// Only these accepted internal facts bypass behavioral classification.
+	// Empty keywords alone do not neutralize the classifier's fallback.
+	if (
+		event.eventType === 'evergreen.delivery-mapping.recorded' ||
+		event.eventType === EMAIL_TOKEN_LOGIN_OBSERVED ||
+		event.eventType === OFFER_CLAIM_OBSERVED
+	) {
 		return {
 			mode: 'non-behavioral-replay-preview',
 			contact,
