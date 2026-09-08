@@ -35,6 +35,12 @@ import {
 // Match the app's adapter generic; the runtime is the actual mysql2 database.
 const actualAdapter = (database: MySqlDatabase<any, any, any>) =>
 	DrizzleAdapter<MySqlDatabase<any, any, any>>(database, mysqlTable)
+import {
+	createOwnedEmailObservationTransactions,
+	createMySqlEmailObservationLeaseSource,
+	type EmailObservationLease,
+	type EmailObservationTransactions,
+} from './email-observation-transaction'
 const schema = {
 	...journeySchema,
 	contact,
@@ -175,91 +181,174 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		}
 		statements.length = 0
 	})
-	const writer = (db = database, read = readback) =>
+	function ownedTransactions(
+		client = pool,
+		decorate: (lease: EmailObservationLease) => EmailObservationLease = (
+			lease,
+		) => lease,
+	) {
+		const source = createMySqlEmailObservationLeaseSource({
+			pool: client,
+			logger: { logQuery: (query) => statements.push(query) },
+		})
+		return createOwnedEmailObservationTransactions({
+			async acquire() {
+				const lease = await source.acquire()
+				try {
+					return decorate(lease)
+				} catch (error) {
+					lease.destroy()
+					throw error
+				}
+			},
+		})
+	}
+	const writer = (
+		db = database,
+		read = readback,
+		transactions = ownedTransactions(),
+	) =>
 		createEmailTokenLoginObservationWriter({
 			database: db,
+			transactions,
 			readbackDatabase: read,
 			secret,
 			now: () => new Date(now),
 		})
-	it('actual SDK callback plus contained real adapter commits observation for the session in the response cookie', async () => {
-		const adapter = actualAdapter(database),
-			authSecret = 'synthetic-Auth-secret',
-			rawToken = 'synthetic-callback-token'
-		await adapter.createVerificationToken!({
-			identifier: capture.email,
-			token: createHash('sha256')
-				.update(rawToken + authSecret)
-				.digest('hex'),
-			expires: new Date(Date.now() + 60000),
-		})
-		const observed: EmailLoginCapture[] = [],
-			outcomes: string[] = [],
-			order: string[] = []
-		const persist = createEmailTokenLoginObservationWriter({
-			database,
-			readbackDatabase: readback,
-			secret,
-			now: () => new Date(),
-		})
-		const observer = createVerifiedEmailObservation({
-			enabled: true,
-			providerId: 'postmark',
-			now: () => new Date(),
-			writer: async (input) => {
-				order.push('observe')
-				observed.push(input)
-				const result = await persist(input)
-				outcomes.push(result.type)
-				return result
-			},
-		})
-		const request = new Request(
-			`https://auth.example.test/api/auth/callback/postmark?email=${capture.email}&token=${rawToken}`,
-			{ method: 'POST' },
-		)
-		const response = await observer.run(request, () =>
-			runWithOAuthContainmentRequest(request, () =>
-				Auth(request, {
-					adapter: observer.wrapAdapter(createOAuthContainmentAdapter(adapter)),
-					secret: authSecret,
-					trustHost: true,
-					basePath: '/api/auth',
-					providers: [
-						Postmark({
-							apiKey: 'synthetic',
-							from: 'fixture@example.test',
-							sendVerificationRequest: async () => {
-								throw new Error('No provider calls allowed')
-							},
-						}),
-					],
-					events: {
-						signIn: observer.wrapSignIn(async () => {
-							order.push('prior-signIn')
-						}),
-					},
-					logger: { error: () => {}, warn: () => {}, debug: () => {} },
-				}),
-			),
-		)
-		expect(response.status).toBe(302)
-		expect(order).toEqual(['prior-signIn', 'observe'])
-		expect(outcomes).toEqual(['Recorded'])
-		expect(observed).toHaveLength(1)
-		expect(response.headers.get('set-cookie')).toContain(
-			observed[0]!.sessionToken,
-		)
-		const [saved] = await readback.select().from(contactEvent)
-		expect(saved!.payloadSummary).toMatchObject({
-			verifiedAt: observed[0]!.verifiedAt,
-			sessionTokenHash: sessionTokenHash(secret, observed[0]!.sessionToken),
-		})
-	})
+	it.each([
+		'none',
+		'set',
+		'begin',
+		'validation',
+		'rollback-failure',
+		'commit-ack-loss',
+	] as const)(
+		'actual SDK/adapter preserves auth with owned connection mode=%s',
+		async (mode) => {
+			const adapter = actualAdapter(database),
+				authSecret = 'synthetic-Auth-secret',
+				rawToken = 'synthetic-callback-token'
+			await adapter.createVerificationToken!({
+				identifier: capture.email,
+				token: createHash('sha256')
+					.update(rawToken + authSecret)
+					.digest('hex'),
+				expires: new Date(Date.now() + 60000),
+			})
+			const observed: EmailLoginCapture[] = [],
+				outcomes: string[] = [],
+				order: string[] = []
+			const disposed: string[] = []
+			if (mode === 'validation' || mode === 'rollback-failure')
+				await database
+					.insert(contact)
+					.values({ id: 'sdk-duplicate', email: capture.email })
+			const transactions = ownedTransactions(pool, (lease) => ({
+				...lease,
+				async setSerializable() {
+					await lease.setSerializable()
+					if (mode === 'set')
+						throw new Error('synthetic SET acknowledgement loss')
+				},
+				async begin() {
+					await lease.begin()
+					if (mode === 'begin')
+						throw new Error('synthetic BEGIN acknowledgement loss')
+				},
+				async commit() {
+					await lease.commit()
+					if (mode === 'commit-ack-loss')
+						throw new Error('synthetic COMMIT acknowledgement loss')
+				},
+				async rollback() {
+					if (mode === 'rollback-failure')
+						throw new Error('synthetic rollback unavailable')
+					await lease.rollback()
+				},
+				release() {
+					disposed.push('release')
+					lease.release()
+				},
+				destroy() {
+					disposed.push('destroy')
+					lease.destroy()
+				},
+			}))
+			const persist = createEmailTokenLoginObservationWriter({
+				database,
+				transactions,
+				readbackDatabase: readback,
+				secret,
+				now: () => new Date(),
+			})
+			const observer = createVerifiedEmailObservation({
+				enabled: true,
+				providerId: 'postmark',
+				now: () => new Date(),
+				writer: async (input) => {
+					order.push('observe')
+					observed.push(input)
+					const result = await persist(input)
+					outcomes.push(result.type)
+					return result
+				},
+			})
+			const request = new Request(
+				`https://auth.example.test/api/auth/callback/postmark?email=${capture.email}&token=${rawToken}`,
+				{ method: 'POST' },
+			)
+			const response = await observer.run(request, () =>
+				runWithOAuthContainmentRequest(request, () =>
+					Auth(request, {
+						adapter: observer.wrapAdapter(
+							createOAuthContainmentAdapter(adapter),
+						),
+						secret: authSecret,
+						trustHost: true,
+						basePath: '/api/auth',
+						providers: [
+							Postmark({
+								apiKey: 'synthetic',
+								from: 'fixture@example.test',
+								sendVerificationRequest: async () => {
+									throw new Error('No provider calls allowed')
+								},
+							}),
+						],
+						events: {
+							signIn: observer.wrapSignIn(async () => {
+								order.push('prior-signIn')
+							}),
+						},
+						logger: { error: () => {}, warn: () => {}, debug: () => {} },
+					}),
+				),
+			)
+			expect(response.status).toBe(302)
+			expect(order).toEqual(['prior-signIn', 'observe'])
+			const recorded = mode === 'none' || mode === 'commit-ack-loss'
+			expect(outcomes).toEqual([recorded ? 'Recorded' : 'Unavailable'])
+			expect(disposed).toEqual([
+				mode === 'none' || mode === 'validation' ? 'release' : 'destroy',
+			])
+			expect(observed).toHaveLength(1)
+			expect(response.headers.get('set-cookie')).toContain(
+				observed[0]!.sessionToken,
+			)
+			const saved = await readback.select().from(contactEvent)
+			if (recorded) {
+				expect(saved).toHaveLength(1)
+				expect(saved[0]!.payloadSummary).toMatchObject({
+					verifiedAt: observed[0]!.verifiedAt,
+					sessionTokenHash: sessionTokenHash(secret, observed[0]!.sessionToken),
+				})
+			} else expect(saved).toEqual([])
+		},
+	)
 	it('records canonical first event from actual fsp3 User/session returns with COMMIT and independent readback', async () => {
 		expect(await writer()(capture)).toEqual({ type: 'Recorded' })
-		// Drizzle 0.36 executes begin/commit SQL through its logger, not the
-		// mysql2 beginTransaction()/commit() convenience methods.
+		// Owned connection logs its native control calls; Drizzle logs DML.
+		// No pooled Drizzle transaction is used.
 		expect(statements.map((s) => s.trim().toLowerCase())).toContain('begin')
 		expect(statements.map((s) => s.trim().toLowerCase())).toContain('commit')
 		expect(
@@ -415,6 +504,69 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		})
 		expect(await readback.select().from(contactEvent)).toEqual([])
 	})
+	it.each(
+		['utf8mb4_bin', 'utf8mb4_0900_ai_ci'].flatMap((collation) =>
+			['nbsp', 'ideographic-space', 'kelvin', 'turkish-superset'].map(
+				(kind) => ({ collation, kind }),
+			),
+		),
+	)(
+		'normalized candidate hold with $collation / $kind',
+		async ({ collation, kind }) => {
+			// Isolated fixture DDL only. Keep original binary cases; this adds the
+			// alternate declared-schema profile, not production concurrency proof.
+			await pool.query(
+				`ALTER TABLE AI_Contact MODIFY email varchar(255) CHARACTER SET utf8mb4 COLLATE ${collation} NULL`,
+			)
+			try {
+				const ascii =
+					kind === 'turkish-superset'
+						? 'i@example.test'
+						: kind === 'kelvin'
+							? 'k@example.test'
+							: capture.email
+				const raw =
+					kind === 'nbsp'
+						? `\u00A0${ascii}\u00A0`
+						: kind === 'ideographic-space'
+							? `\u3000${ascii}\u3000`
+							: kind === 'kelvin'
+								? 'K@example.test'
+								: 'İ@example.test'
+				await database.update(contact).set({ email: ascii })
+				await database
+					.insert(contact)
+					.values({ id: 'profile-duplicate', email: raw })
+				await actualAdapter(database).updateUser!({
+					id: 'user',
+					email: ascii,
+					emailVerified: new Date(at),
+				})
+				const input = { ...capture, email: ascii }
+				expect(emailObservationInputSchema.safeParse(input).success).toBe(true)
+				if (kind === 'turkish-superset') {
+					expect(raw.trim().toLowerCase()).not.toBe(ascii)
+					expect(emailFingerprint(secret, raw)).not.toBe(
+						emailFingerprint(secret, ascii),
+					)
+					const candidates = await database
+						.select({ id: contact.id })
+						.from(contact)
+						.where(sql`lower(${contact.email}) = ${ascii}`)
+					expect(candidates).toHaveLength(2)
+				}
+				expect(await writer()(input)).toMatchObject({
+					type: 'Unavailable',
+					reason: 'ContactUnavailable',
+				})
+				expect(await readback.select().from(contactEvent)).toEqual([])
+			} finally {
+				await pool.query(
+					'ALTER TABLE AI_Contact MODIFY email varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL',
+				)
+			}
+		},
+	)
 	it.each(['missing', 'duplicate', 'email-change'] as const)(
 		'holds %s Contact candidate',
 		async (mode) => {
@@ -494,22 +646,17 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		expect(await readback.select().from(contactEvent)).toEqual(before)
 	})
 	it('rollback before COMMIT and absent readback is not proof of persistence', async () => {
-		const db = new Proxy(database, {
-			get(target, key) {
-				if (key === 'transaction')
-					return (
-						callback: Parameters<typeof database.transaction>[0],
-						config: Parameters<typeof database.transaction>[1],
-					) =>
-						target.transaction(async (tx) => {
-							await callback(tx)
-							throw new Error('synthetic failure before COMMIT')
-						}, config)
-				const value = Reflect.get(target, key)
-				return typeof value === 'function' ? value.bind(target) : value
-			},
-		})
-		expect(await writer(db)(capture)).toMatchObject({
+		const owned = ownedTransactions()
+		const transactions: EmailObservationTransactions = {
+			run: (operation) =>
+				owned.run(async (db) => {
+					await operation(db)
+					throw new Error('synthetic failure before COMMIT')
+				}),
+		}
+		expect(
+			await writer(database, readback, transactions)(capture),
+		).toMatchObject({
 			type: 'Unavailable',
 			reason: 'ReadbackUnavailable',
 		})
@@ -519,54 +666,226 @@ integration('email login observation real adapter and disposable MySQL', () => {
 		)
 		expect(await readback.select().from(contactEvent)).toEqual([])
 	})
-	it('an unsupported version probe holds before transaction even with real InnoDB tables', async () => {
-		let calls = 0
-		const db = new Proxy(database, {
-			get(target, key) {
-				if (key === 'execute')
-					return (...args: Parameters<typeof database.execute>) =>
-						++calls === 1
-							? Promise.resolve([[{ version: '8.0.30-Vitess' }], []])
-							: target.execute(...args)
-				const value = Reflect.get(target, key)
-				return typeof value === 'function' ? value.bind(target) : value
-			},
-		})
-		expect(await writer(db)(capture)).toMatchObject({
-			type: 'Unavailable',
-			reason: 'SerializationUnavailable',
-		})
-		expect(statements.map((s) => s.trim().toLowerCase())).not.toContain('begin')
-		expect(await readback.select().from(contactEvent)).toEqual([])
-	})
-	function transactionProxy(after: (result: unknown) => Promise<void>) {
-		return new Proxy(database, {
-			get(target, key) {
-				if (key === 'transaction')
-					return async (
-						callback: Parameters<typeof database.transaction>[0],
-						config: Parameters<typeof database.transaction>[1],
-					) => {
-						const result = await target.transaction(callback, config)
-						await after(result)
-						return result
+	it.each(['8.0.30-Vitess', '8.0.23-PlanetScale', '8.0.46-unverified-proxy'])(
+		'unsupported version %s holds before transaction with real InnoDB tables',
+		async (version) => {
+			let calls = 0
+			const db = new Proxy(database, {
+				get(target, key) {
+					if (key === 'execute')
+						return (...args: Parameters<typeof database.execute>) =>
+							++calls === 1
+								? Promise.resolve([[{ version }], []])
+								: target.execute(...args)
+					const value = Reflect.get(target, key)
+					return typeof value === 'function' ? value.bind(target) : value
+				},
+			})
+			expect(await writer(db)(capture)).toMatchObject({
+				type: 'Unavailable',
+				reason: 'SerializationUnavailable',
+			})
+			expect(statements.map((s) => s.trim().toLowerCase())).not.toContain(
+				'begin',
+			)
+			expect(await readback.select().from(contactEvent)).toEqual([])
+		},
+	)
+	it.each([
+		'set',
+		'begin',
+		'callback',
+		'rollback',
+		'rollback-ack',
+		'commit',
+	] as const)(
+		'owned lease %s failure disposes once and does not deplete a size-one pool',
+		async (fault) => {
+			const limited = mysql.createPool({
+				uri,
+				timezone: 'Z',
+				connectionLimit: 1,
+				waitForConnections: false,
+				connectTimeout: 1000,
+			})
+			try {
+				for (let attempt = 0; attempt < 3; attempt++) {
+					const marker = `lease_probe_${fault}_${attempt}`,
+						failure = new Error(`synthetic ${fault}`),
+						validation = new Error('original validation'),
+						disposed: string[] = []
+					const transactions = ownedTransactions(limited, (lease) => ({
+						...lease,
+						async setSerializable() {
+							await lease.setSerializable()
+							if (fault === 'set') throw failure
+						},
+						async begin() {
+							await lease.begin()
+							if (fault === 'begin') {
+								await lease.database
+									.insert(users)
+									.values({ id: marker, email: `${marker}@example.test` })
+								throw failure
+							}
+						},
+						async commit() {
+							await lease.commit()
+							if (fault === 'commit') throw failure
+						},
+						async rollback() {
+							if (fault === 'rollback') throw failure
+							await lease.rollback()
+							if (fault === 'rollback-ack') throw failure
+						},
+						release() {
+							disposed.push('release')
+							lease.release()
+						},
+						destroy() {
+							disposed.push('destroy')
+							lease.destroy()
+						},
+					}))
+					await expect(
+						transactions.run(async (db) => {
+							await db
+								.insert(users)
+								.values({ id: marker, email: `${marker}@example.test` })
+							if (
+								fault === 'callback' ||
+								fault === 'rollback' ||
+								fault === 'rollback-ack'
+							)
+								throw validation
+						}),
+					).rejects.toBe(
+						fault === 'callback' ||
+							fault === 'rollback' ||
+							fault === 'rollback-ack'
+							? validation
+							: failure,
+					)
+					expect(disposed).toEqual([
+						fault === 'callback' ? 'release' : 'destroy',
+					])
+					// No queue: a leaked lease fails immediately instead of hanging.
+					const next = await limited.getConnection()
+					try {
+						await next.query({
+							sql: 'SET SESSION innodb_lock_wait_timeout=1',
+							timeout: 1000,
+						})
+						const rows = await database
+							.select({ id: users.id })
+							.from(users)
+							.where(eq(users.id, marker))
+						expect(rows).toHaveLength(fault === 'commit' ? 1 : 0)
+						// Reusing the rolled-back key also proves the abandoned write lock
+						// is gone, not just that a fresh connection can SELECT 1.
+						if (fault !== 'commit')
+							await next.query(
+								{
+									sql: 'INSERT INTO AI_User (id,email) VALUES (?,?)',
+									timeout: 2000,
+								},
+								[marker, `${marker}@example.test`],
+							)
+						await next.query(
+							{ sql: 'DELETE FROM AI_User WHERE id=?', timeout: 2000 },
+							[marker],
+						)
+						next.release()
+					} catch (error) {
+						next.destroy()
+						throw error
 					}
-				const value = Reflect.get(target, key)
-				return typeof value === 'function' ? value.bind(target) : value
-			},
+				}
+				expect(
+					statements.filter((s) =>
+						/^(?:update|delete|replace)\s+`?AI_ContactEvent`?/i.test(s),
+					),
+				).toEqual([])
+			} finally {
+				await limited.end()
+			}
+		},
+		15000,
+	)
+	it('pending COMMIT keeps exclusive ownership until acknowledgment; late success is read back', async () => {
+		const limited = mysql.createPool({
+			uri,
+			timezone: 'Z',
+			connectionLimit: 1,
+			waitForConnections: false,
+			connectTimeout: 1000,
 		})
+		let entered!: () => void, finish!: () => void
+		const committing = new Promise<void>((resolve) => {
+				entered = resolve
+			}),
+			gate = new Promise<void>((resolve) => {
+				finish = resolve
+			}),
+			disposed: string[] = []
+		const transactions = ownedTransactions(limited, (lease) => ({
+			...lease,
+			async commit() {
+				entered()
+				await gate
+				await lease.commit()
+			},
+			release() {
+				disposed.push('release')
+				lease.release()
+			},
+			destroy() {
+				disposed.push('destroy')
+				lease.destroy()
+			},
+		}))
+		const writing = writer(database, readback, transactions)(capture)
+		try {
+			await Promise.race([
+				committing,
+				writing.then(() => {
+					throw new Error('COMMIT phase not reached')
+				}),
+			])
+			expect(disposed).toEqual([])
+			await expect(limited.getConnection()).rejects.toThrow(
+				'No connections available',
+			)
+			finish()
+			expect(await writing).toEqual({ type: 'Recorded' })
+			expect(disposed).toEqual(['release'])
+			expect(await readback.select().from(contactEvent)).toHaveLength(1)
+			const next = await limited.getConnection()
+			next.release()
+		} finally {
+			finish()
+			await writing
+			await limited.end()
+		}
+	})
+	function commitAcknowledgementLoss() {
+		return ownedTransactions(pool, (lease) => ({
+			...lease,
+			async commit() {
+				await lease.commit()
+				throw new Error('synthetic lost COMMIT acknowledgement')
+			},
+		}))
 	}
 	it('unknown COMMIT acknowledgement counts only with exact independent saved row', async () => {
-		const db = transactionProxy(async () => {
-			throw new Error('synthetic lost COMMIT acknowledgement')
+		const transactions = commitAcknowledgementLoss()
+		expect(await writer(database, readback, transactions)(capture)).toEqual({
+			type: 'Recorded',
 		})
-		expect(await writer(db)(capture)).toEqual({ type: 'Recorded' })
 		expect(await readback.select().from(contactEvent)).toHaveLength(1)
 	})
 	it('unknown COMMIT and failed readback remains unavailable although row exists', async () => {
-		const db = transactionProxy(async () => {
-			throw new Error('synthetic lost COMMIT acknowledgement')
-		})
+		const transactions = commitAcknowledgementLoss()
 		const failingRead = new Proxy(readback, {
 			get(target, key) {
 				if (key === 'select')
@@ -576,7 +895,9 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				return Reflect.get(target, key)
 			},
 		})
-		expect(await writer(db, failingRead)(capture)).toMatchObject({
+		expect(
+			await writer(database, failingRead, transactions)(capture),
+		).toMatchObject({
 			type: 'Unavailable',
 		})
 		expect(await readback.select().from(contactEvent)).toHaveLength(1)
@@ -592,6 +913,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				await writer(
 					makeDatabase(freshPool),
 					makeDatabase(freshRead),
+					ownedTransactions(freshPool),
 				)(structuredClone(capture)),
 			).toEqual({ type: 'Recorded' })
 			expect(await readback.select().from(contactEvent)).toEqual(before)
@@ -625,24 +947,17 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				gate = new Promise<void>((resolve) => {
 					release = resolve
 				})
-			const db = new Proxy(database, {
-				get(target, key) {
-					if (key === 'transaction')
-						return (
-							callback: Parameters<typeof database.transaction>[0],
-							config: Parameters<typeof database.transaction>[1],
-						) =>
-							target.transaction(async (tx) => {
-								const result = await callback(tx)
-								entered()
-								await gate
-								return result
-							}, config)
-					const value = Reflect.get(target, key)
-					return typeof value === 'function' ? value.bind(target) : value
-				},
-			})
-			const writing = writer(db)(capture)
+			const owned = ownedTransactions()
+			const transactions: EmailObservationTransactions = {
+				run: (operation) =>
+					owned.run(async (db) => {
+						const result = await operation(db)
+						entered()
+						await gate
+						return result
+					}),
+			}
+			const writing = writer(database, readback, transactions)(capture)
 			// Race against completion too: setup/validation failure must not hang fixture.
 			await Promise.race([
 				locked,

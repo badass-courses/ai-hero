@@ -14,6 +14,7 @@ import type {
 	EmailObservationResult,
 } from '@/server/verified-email-observation'
 import type { EvergreenOfferJourneyDatabase } from './drizzle-ledger'
+import type { EmailObservationTransactions } from './email-observation-transaction'
 import {
 	emailFingerprint,
 	emailTokenHash,
@@ -47,16 +48,14 @@ export function supportsEmailObservationSerialization(
 	engines: readonly string[],
 ) {
 	return (
-		/^8\.(0|4)\.\d+(?:[-+].*)?$/.test(version) &&
-		!/vitess|tidb|mariadb|aurora/i.test(version) &&
+		// Necessary sanity checks only: a proxy can report a plain version too.
+		// Unknown decorations hold, including vendor/community/log suffixes.
+		/^8\.(0|4)\.\d+$/.test(version) &&
 		engines.length === 5 &&
 		engines.every((e) => e === 'InnoDB')
 	)
 }
-type Database = Pick<
-	EvergreenOfferJourneyDatabase,
-	'select' | 'insert' | 'execute' | 'transaction'
->
+type Database = Pick<EvergreenOfferJourneyDatabase, 'select' | 'execute'>
 type Reason =
 	| 'InvalidCapture'
 	| 'SerializationUnavailable'
@@ -90,6 +89,7 @@ const eventId = (key: string) =>
  * independent primary/autocommit pools. All raw auth input remains ephemeral. */
 export function createEmailTokenLoginObservationWriter(options: {
 	database: Database
+	transactions: EmailObservationTransactions
 	readbackDatabase: Pick<Database, 'select'>
 	secret: string
 	now: () => Date
@@ -145,110 +145,107 @@ export function createEmailTokenLoginObservationWriter(options: {
 			)
 				return hold('SerializationUnavailable')
 			try {
-				await db.transaction(
-					async (tx) => {
-						// Compare normalized candidates BEFORE LIMIT 2: raw equality misses
-						// case/whitespace duplicates under binary collations. ICU whitespace
-						// plus BOM covers JS trim; JS rechecking below rejects false matches.
-						// Result count is bounded, not scan cost. Native serializable locking
-						// can cover broad scanned ranges. Production cost/compatibility is
-						// unproved; this writer remains unbound and disabled in auth.
-						const candidates = await tx
-							.select({ id: contact.id, email: contact.email })
-							.from(contact)
-							.where(
-								sql`lower(regexp_replace(${contact.email}, ${'^[\\s\\x{FEFF}]+|[\\s\\x{FEFF}]+$'}, '')) = ${capture.email}`,
-							)
-							.limit(2)
-							.for('update')
-						if (candidates.length !== 1) return hold('ContactUnavailable')
-						const owner = candidates[0]!
-						if (owner.email?.trim().toLowerCase() !== capture.email)
-							return hold('ContactUnavailable')
-						const [currentUser] = await tx
-							.select({
-								id: users.id,
-								email: users.email,
-								emailVerified: users.emailVerified,
-							})
-							.from(users)
-							.where(eq(users.id, capture.userId))
-							.limit(1)
-							.for('update')
-						if (
-							!currentUser ||
-							currentUser.email?.trim().toLowerCase() !== capture.email ||
-							currentUser.emailVerified?.toISOString() !== capture.verifiedAt
+				await options.transactions.run(async (tx) => {
+					// Compare normalized candidates BEFORE LIMIT 2: raw equality misses
+					// case/whitespace duplicates under binary collations. ICU whitespace
+					// plus BOM covers JS trim; JS rechecking below rejects false matches.
+					// Result count is bounded, not scan cost. Native serializable locking
+					// can cover broad scanned ranges. Production cost/compatibility is
+					// unproved; this writer remains unbound and disabled in auth.
+					const candidates = await tx
+						.select({ id: contact.id, email: contact.email })
+						.from(contact)
+						.where(
+							sql`lower(regexp_replace(${contact.email}, ${'^[\\s\\x{FEFF}]+|[\\s\\x{FEFF}]+$'}, '')) = ${capture.email}`,
 						)
-							return hold('VerificationChanged')
-						const [currentSession] = await tx
-							.select({ userId: sessions.userId, expires: sessions.expires })
-							.from(sessions)
-							.where(eq(sessions.sessionToken, capture.sessionToken))
-							.limit(1)
-							.for('update')
-						if (
-							!currentSession ||
-							currentSession.userId !== capture.userId ||
-							currentSession.expires <= clock()
-						)
-							return hold('SessionUnavailable')
-						const identities = await tx
-							.select({
-								id: providerIdentity.id,
-								contactId: providerIdentity.contactId,
-								provider: providerIdentity.provider,
-								externalId: providerIdentity.externalId,
-							})
-							.from(providerIdentity)
-							.where(
-								and(
-									eq(providerIdentity.contactId, owner.id),
-									eq(providerIdentity.provider, 'kit'),
-								),
-							)
-							.limit(2)
-							.for('update')
-						if (identities.length !== 1) return hold('IdentityUnavailable')
-						const identity = identities[0]!
-						if (identity.contactId !== owner.id || identity.provider !== 'kit')
-							return hold('IdentityUnavailable')
-						const observedAt = clock().toISOString()
-						if (
-							capture.verifiedAt > observedAt ||
-							currentSession.expires <= new Date(observedAt)
-						)
-							return hold('VerificationChanged')
-						const payload = emailTokenLoginObservedSchema.parse({
-							version: 1,
-							userId: capture.userId,
-							contactId: owner.id,
-							emailFingerprint: fingerprint,
-							verifiedAt: capture.verifiedAt,
-							sessionTokenHash: sessionHash,
-							tokenHash,
-							mechanism: 'auth-email-callback',
-							observedAt,
+						.limit(2)
+						.for('update')
+					if (candidates.length !== 1) return hold('ContactUnavailable')
+					const owner = candidates[0]!
+					if (owner.email?.trim().toLowerCase() !== capture.email)
+						return hold('ContactUnavailable')
+					const [currentUser] = await tx
+						.select({
+							id: users.id,
+							email: users.email,
+							emailVerified: users.emailVerified,
 						})
-						const selected: OwnerProviderIdentity = {
-							...identity,
-							provider: 'kit',
-						}
-						const id = eventId(loginSemanticKey(payload))
-						const row = emailTokenLoginEventRow({
-							id,
-							payload,
-							identity: selected,
-							resolution: resolveOwnerContact(
-								candidates.map((c) => c.id),
-								owner.id,
+						.from(users)
+						.where(eq(users.id, capture.userId))
+						.limit(1)
+						.for('update')
+					if (
+						!currentUser ||
+						currentUser.email?.trim().toLowerCase() !== capture.email ||
+						currentUser.emailVerified?.toISOString() !== capture.verifiedAt
+					)
+						return hold('VerificationChanged')
+					const [currentSession] = await tx
+						.select({ userId: sessions.userId, expires: sessions.expires })
+						.from(sessions)
+						.where(eq(sessions.sessionToken, capture.sessionToken))
+						.limit(1)
+						.for('update')
+					if (
+						!currentSession ||
+						currentSession.userId !== capture.userId ||
+						currentSession.expires <= clock()
+					)
+						return hold('SessionUnavailable')
+					const identities = await tx
+						.select({
+							id: providerIdentity.id,
+							contactId: providerIdentity.contactId,
+							provider: providerIdentity.provider,
+							externalId: providerIdentity.externalId,
+						})
+						.from(providerIdentity)
+						.where(
+							and(
+								eq(providerIdentity.contactId, owner.id),
+								eq(providerIdentity.provider, 'kit'),
 							),
-						})
-						expected = { id, payload, identity: selected }
-						await tx.insert(contactEvent).values(row)
-					},
-					{ isolationLevel: 'serializable' },
-				)
+						)
+						.limit(2)
+						.for('update')
+					if (identities.length !== 1) return hold('IdentityUnavailable')
+					const identity = identities[0]!
+					if (identity.contactId !== owner.id || identity.provider !== 'kit')
+						return hold('IdentityUnavailable')
+					const observedAt = clock().toISOString()
+					if (
+						capture.verifiedAt > observedAt ||
+						currentSession.expires <= new Date(observedAt)
+					)
+						return hold('VerificationChanged')
+					const payload = emailTokenLoginObservedSchema.parse({
+						version: 1,
+						userId: capture.userId,
+						contactId: owner.id,
+						emailFingerprint: fingerprint,
+						verifiedAt: capture.verifiedAt,
+						sessionTokenHash: sessionHash,
+						tokenHash,
+						mechanism: 'auth-email-callback',
+						observedAt,
+					})
+					const selected: OwnerProviderIdentity = {
+						...identity,
+						provider: 'kit',
+					}
+					const id = eventId(loginSemanticKey(payload))
+					const row = emailTokenLoginEventRow({
+						id,
+						payload,
+						identity: selected,
+						resolution: resolveOwnerContact(
+							candidates.map((c) => c.id),
+							owner.id,
+						),
+					})
+					expected = { id, payload, identity: selected }
+					await tx.insert(contactEvent).values(row)
+				})
 			} catch (error) {
 				// A validation failure cannot borrow an earlier receipt. Only an attempted
 				// INSERT/COMMIT (including duplicate or unknown acknowledgment) may verify.

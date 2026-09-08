@@ -38,8 +38,17 @@ describe('email observation persistence input and serialization gates', () => {
 				'InnoDB',
 			]),
 		).toBe(true)
+		expect(
+			supportsEmailObservationSerialization('8.4.5', Array(5).fill('InnoDB')),
+		).toBe(true)
 		for (const version of [
 			'8.0.30-Vitess',
+			'8.0.23-PlanetScale',
+			'8.0.46-unverified-proxy',
+			'8.4.1+vendor',
+			'8.0.43-community',
+			'8.0.43-tidb',
+			'8.0.43-aurora',
 			'5.7.44',
 			'10.6.1-MariaDB',
 			'unknown',
