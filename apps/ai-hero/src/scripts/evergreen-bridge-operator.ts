@@ -14,7 +14,7 @@ export function inspectEvergreenBridge() {
     newsletterOwnership: "ExternalContinuity" as const,
     terminalHandoff: "HeldNotApplied" as const,
     requires: [
-      "ReviewedV1AndV2ProviderBindings",
+      "ReviewedV2ProviderBindingsWithOptionalV1",
       "CurrentAuthorityAndControl",
       "AcceptedSecureClaimReader",
       "ExactGenerationAndApproval",

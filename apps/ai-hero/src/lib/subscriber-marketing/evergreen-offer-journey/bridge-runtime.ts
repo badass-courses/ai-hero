@@ -9,18 +9,12 @@ import type {
 import type { createCouponIntentExecutor } from "./coupon-executor";
 import type { createRevisionDelivery } from "./revision-delivery";
 import type { EvergreenOfferJourneyService, JourneyClock } from "./ports";
-import type { VerifiedUserObserved } from "./domain";
+import type { createVerifiedUserObservedReader } from "./verified-user-observed-source";
 
-/** Structural binding to createVerifiedUserObservedReader().page at 8c8609a6.
- * Its owner supplies the actual reader; no inferred auth/session facts here. */
-export type BridgeClaimSource = {
-  page: (input: { after?: string; limit: number }) => Promise<{
-    type: "Scanned";
-    candidates: VerifiedUserObserved[];
-    held: string[];
-    cursor: string | null;
-  }>;
-};
+/** Accepted reader type; never inferred auth/session facts. */
+export type BridgeClaimSource = ReturnType<
+  typeof createVerifiedUserObservedReader
+>;
 import { parseStimulusId } from "./primitives";
 
 export const runtimeLanes = ["source", "wakes", "intents"] as const;

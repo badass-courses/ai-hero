@@ -37,6 +37,8 @@ const bundleSchema = z
 		providerReadbacks: z.array(readbackSchema).length(8),
 	})
 	.strict()
+export { bundleSchema as reviewedDeliveryBundleSchema }
+
 export type ReviewedDeliveryBundle = {
 	readonly manifest: DeliveryRevisionScopeData
 	readonly providerReadbacks: readonly z.infer<typeof readbackSchema>[]

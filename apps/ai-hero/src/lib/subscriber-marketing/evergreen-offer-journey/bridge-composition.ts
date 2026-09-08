@@ -1,10 +1,6 @@
 import { Effect } from "effect";
 import { createBoundedJourneyReaders } from "./bounded-readers";
-import {
-  createBridgeRuntime,
-  type BridgeControl,
-  type BridgeClaimSource,
-} from "./bridge-runtime";
+import { createBridgeRuntime, type BridgeControl } from "./bridge-runtime";
 import {
   createCouponAuthority,
   type CouponAuthorityOptions,
@@ -27,6 +23,7 @@ import {
 } from "./original-delivery-mapping-mysql";
 import {
   createRevisionDelivery,
+  reviewedDeliveryBundleSchema,
   type ReviewedDeliveryBundle,
 } from "./revision-delivery";
 import { createEvergreenOfferJourneyService } from "./service";
@@ -37,6 +34,7 @@ import {
 import type { JourneyClock } from "./ports";
 import { createCurrentOfferAuthority } from "./current-authority";
 import { createDrizzleCurrentAuthorityRepository } from "./current-authority-repository";
+import { createVerifiedUserObservedReader } from "./verified-user-observed-source";
 
 export type BridgeConfiguration =
   | { type: "Disabled" }
@@ -53,19 +51,43 @@ export type BridgeConfiguration =
 /** Pure configuration inspection. Does not build clients, readers or writers. */
 export function inspectBridgeConfiguration(config: BridgeConfiguration) {
   if (config.type === "Disabled") return { type: "Disabled" as const };
+  const parsed = config.bundles.map((bundle) =>
+    reviewedDeliveryBundleSchema.safeParse(bundle),
+  );
+  if (
+    parsed.some(
+      (bundle) =>
+        !bundle.success ||
+        new Set(bundle.data.providerReadbacks.map((r) => r.sequenceId)).size !==
+          8 ||
+        bundle.data.manifest.messages.some(
+          (message) =>
+            !bundle.data.providerReadbacks.some(
+              (r) => r.sequenceId === message.sequenceId,
+            ),
+        ),
+    )
+  )
+    return { type: "Unavailable" as const, reason: "InvalidReviewedBindings" };
   const versions = config.bundles.map(
     (b) => b.manifest.revision.definitionVersion,
   );
   if (
     !config.generation ||
     !config.approvalReference ||
-    versions.length !== 2 ||
-    !versions.includes(EVERGREEN_OFFER_JOURNEY_V1.definitionVersion) ||
+    versions.length < 1 ||
+    versions.length > 2 ||
+    new Set(versions).size !== versions.length ||
+    versions.some(
+      (version) =>
+        version !== EVERGREEN_OFFER_JOURNEY_V1.definitionVersion &&
+        version !== EVERGREEN_OFFER_JOURNEY_V2.definitionVersion,
+    ) ||
     !versions.includes(EVERGREEN_OFFER_JOURNEY_V2.definitionVersion)
   )
     return {
       type: "Unavailable" as const,
-      reason: "ExactReviewedRevisionPairRequired",
+      reason: "ReviewedV2RequiredWithOptionalV1",
     };
   return {
     type: "Configured" as const,
@@ -96,8 +118,6 @@ export function createBridgeComposition(input: {
   clock: JourneyClock;
   now: () => string;
   ownerProofSecret: string;
-  /** Actual secure source reader from the independently accepted claim lane. */
-  claimSource: BridgeClaimSource;
   merchantCouponEvidence: CouponAuthorityOptions["merchantCouponEvidence"];
   kit: Parameters<typeof createRevisionDelivery>[0]["kit"];
 }) {
@@ -166,7 +186,7 @@ export function createBridgeComposition(input: {
     coupons,
     clock: input.clock,
     control: input.control,
-    claimSource: input.claimSource,
+    claimSource: createVerifiedUserObservedReader(input.database),
   });
   return {
     type: "Configured" as const,

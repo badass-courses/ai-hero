@@ -34,10 +34,7 @@ import {
   createOriginalDeliveryMapping,
   createMySqlOriginalMappingPersistence,
 } from "./original-delivery-mapping-mysql";
-import {
-  EVERGREEN_OFFER_JOURNEY_V1,
-  EVERGREEN_OFFER_JOURNEY_V2,
-} from "./definition";
+import { EVERGREEN_OFFER_JOURNEY_V2 } from "./definition";
 import { createBridgeRuntime, type BridgeTickRequest } from "./bridge-runtime";
 import { deriveJourneyId, parseIsoInstant } from "./primitives";
 import type { EligibilityFacts } from "./domain";
@@ -187,10 +184,7 @@ describe.skipIf(!serverUrl)(
           store: createMySqlOriginalMappingPersistence(database),
           now: () => now,
         });
-        const bundles = [
-          EVERGREEN_OFFER_JOURNEY_V1,
-          EVERGREEN_OFFER_JOURNEY_V2,
-        ].map((definition) => {
+        const bundles = [EVERGREEN_OFFER_JOURNEY_V2].map((definition) => {
           const manifest = syntheticRevisionScope(definition).manifest;
           return {
             manifest,

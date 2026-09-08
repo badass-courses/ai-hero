@@ -6,7 +6,7 @@ import * as journeySchema from '@/db/evergreen-offer-journey-schema'
 import { contactEvent, providerIdentity } from '@/db/schema'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { eq, sql as sqlBuilder } from 'drizzle-orm'
-import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
+import { EVERGREEN_OFFER_JOURNEY_V1, EVERGREEN_OFFER_JOURNEY_V2 } from './definition'
 import { drizzle } from 'drizzle-orm/mysql2'
 import { Effect, Either } from 'effect'
 import mysql, { type Pool, type PoolConnection } from 'mysql2/promise'
@@ -341,13 +341,22 @@ integration(
 			if (databaseName) await server.query(`DROP DATABASE \`${databaseName}\``)
 			await server?.end()
 		})
-		function runtime(connection = first) {
+		function runtime(connection = first, selected = manifest()) {
 			const service = createEvergreenOfferJourneyService({ ledger: connection.ledger, clock, authority, definition: EVERGREEN_OFFER_JOURNEY_V1 })
 			// Coupon dispatch is intentionally outside this message integration fixture.
 			const unexpected = () => { throw new Error('Unexpected coupon dispatch in message runtime test') }
 			const coupons = { execute: unexpected, recoverRecordedPage: unexpected, recoverUncertainPage: unexpected } as BridgeRuntimeDependencies['coupons']
-			return createBridgeRuntime({ clock, service, coupons, messages: front({ connection }), readers: createBoundedJourneyReaders(connection.database, connection.ledger), control: () => Effect.succeed({ type: 'Enabled', generation: 'runtime-fixture' }) })
+			return createBridgeRuntime({ clock, service, coupons, messages: front({ connection, selected }), readers: createBoundedJourneyReaders(connection.database, connection.ledger), control: () => Effect.succeed({ type: 'Enabled', generation: 'runtime-fixture' }) })
 		}
+		it('V2-only runtime holds stored V1 before claims or provider calls and preserves history', async () => {
+			const before = await Effect.runPromise(first.ledger.load(intent.journeyId))
+			const result = await Effect.runPromise(runtime(first, syntheticRevisionScope(EVERGREEN_OFFER_JOURNEY_V2).manifest).tick({ generation: 'runtime-fixture', lane: 'intents' }))
+			expect(result).toMatchObject({ type: 'Paused', reason: 'Message:NotClaimed' })
+			expect(posts).toBe(0)
+			expect(gets).toEqual([])
+			expect(await Effect.runPromise(first.ledger.load(intent.journeyId))).toEqual(before)
+			expect(await first.database.select().from(journeySchema.evergreenOfferJourneyAttempt)).toHaveLength(0)
+		})
 		it('runtime outbox page uses real claims/mapping and remains idempotent across independent runtimes', async () => {
 			const request = { generation: 'runtime-fixture', lane: 'intents' as const }
 			const results = await Promise.all([Effect.runPromise(runtime().tick(request)), Effect.runPromise(runtime().tick(request))])
