@@ -17,6 +17,7 @@ import {
 	type DeliveryRevisionScopeData,
 	type DeliveryRevision,
 	type OriginalDeliveryMappingReader,
+	type OriginalDeliveryMappingWriter,
 } from './revision-scope'
 import { parseJourneyId } from './primitives'
 
@@ -40,6 +41,7 @@ export type ReviewedDeliveryBundle = {
 	readonly manifest: DeliveryRevisionScopeData
 	readonly providerReadbacks: readonly z.infer<typeof readbackSchema>[]
 	readonly originalMapping: OriginalDeliveryMappingReader | null
+	readonly mappingWriter?: OriginalDeliveryMappingWriter | null
 }
 /** Ordered, lossless identity. Property insertion order is not revision identity. */
 export function deliveryRevisionKey(revision: DeliveryRevision): string {
@@ -134,6 +136,7 @@ export function createRevisionDelivery(input: {
 			revisionScope: {
 				manifest: bundle.manifest,
 				originalMapping: candidate.originalMapping,
+				mappingWriter: candidate.mappingWriter,
 			},
 			delivery: port,
 			reconciliation: createKitMembershipReconciliation({

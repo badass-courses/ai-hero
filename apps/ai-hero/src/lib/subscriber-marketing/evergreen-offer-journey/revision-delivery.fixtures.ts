@@ -32,12 +32,13 @@ export function syntheticRevisionScope(
 			}),
 		),
 	}
-	return {
+	const storedManifest = structuredClone(manifest)
+	const scope: DeliveryRevisionScope = {
 		manifest,
 		originalMapping: {
 			read: (attempt) =>
 				Effect.sync(() => {
-					const selected = manifest.messages.find((m) =>
+					const selected = storedManifest.messages.find((m) =>
 						attempt.idempotencyKey.endsWith(`:message:${m.contentResourceId}`),
 					)
 					if (!selected) return null
@@ -48,13 +49,25 @@ export function syntheticRevisionScope(
 						journeyId: attempt.journeyId,
 						idempotencyKey: attempt.idempotencyKey,
 						claimToken: attempt.claimToken,
-						revision: manifest.revision,
-						bindingArtifactSha256: manifest.bindingArtifactSha256,
+						revision: storedManifest.revision,
+						bindingArtifactSha256: storedManifest.bindingArtifactSha256,
+						bindingEvidenceId: storedManifest.bindingEvidenceId,
 						contentResourceId: selected.contentResourceId,
 						bodySha256: selected.bodySha256,
 						sequenceId: selected.sequenceId,
 					}
 				}),
+		},
+	}
+	return {
+		...scope,
+		mappingWriter: {
+			record: ({ attempt }) =>
+				scope
+					.originalMapping!.read(attempt)
+					.pipe(
+						Effect.map((receipt) => ({ type: 'Verified' as const, receipt })),
+					),
 		},
 	}
 }
