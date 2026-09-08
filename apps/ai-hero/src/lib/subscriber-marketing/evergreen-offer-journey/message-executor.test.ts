@@ -509,6 +509,125 @@ function harness(
 	}
 }
 
+describe('mandatory original mapping before final apply checks', () => {
+	it('missing writer holds before claiming', async () => {
+		const h = harness(),
+			intent = await h.wake(0)
+		const scope = syntheticRevisionScope()
+		const result = await h.execute(
+			intent,
+			h.build({ revisionScope: { ...scope, mappingWriter: null } }),
+		)
+		expect(result).toEqual({
+			type: 'NotClaimed',
+			reason: 'MappingUnavailable',
+			sideEffects: 'none',
+		})
+		expect(h.applied).toHaveLength(0)
+		expect(h.attempts.rows.size).toBe(0)
+	})
+	it.each(['lease', 'window', 'control', 'scope'] as const)(
+		'rechecks %s after mapping I/O with truthful disclosure',
+		async (boundary) => {
+			const h = harness(),
+				intent = await h.wake(0),
+				scope = syntheticRevisionScope()
+			let scopeChanged = false
+			const writer = {
+				record: (
+					input: Parameters<
+						NonNullable<typeof scope.mappingWriter>['record']
+					>[0],
+				) =>
+					Effect.gen(function* () {
+						const receipt = yield* scope.originalMapping!.read(input.attempt)
+						if (boundary === 'lease')
+							h.now = value(
+								parseIsoInstant(
+									new Date(Date.parse(h.now) + 300001).toISOString(),
+								),
+							)
+						if (boundary === 'window') h.now = intent.notAfter
+						if (boundary === 'control')
+							h.setFacts({
+								automationControl: {
+									type: 'Stopped',
+									version: 'mapping-stop',
+									reason: 'operator',
+								},
+							})
+						if (boundary === 'scope') scopeChanged = true
+						return { type: 'Verified' as const, receipt }
+					}),
+			}
+			const result = await Effect.runPromise(
+				Effect.either(
+					h
+						.build({
+							revisionScope: { ...scope, mappingWriter: writer },
+							ledger: {
+								...h.ledger,
+								inspect: (input) =>
+									h.ledger.inspect(input).pipe(
+										Effect.map((view) =>
+											scopeChanged && view.aggregate
+												? {
+														...view,
+														aggregate: {
+															...view.aggregate,
+															definition: {
+																...view.aggregate.definition,
+																contentRevision: 'changed',
+															},
+														},
+													}
+												: view,
+										),
+									),
+							},
+						})
+						.execute(h.target(intent)),
+				),
+			)
+			expect(h.applied).toHaveLength(0)
+			if (Either.isRight(result))
+				expect(result.right).toMatchObject({
+					type: 'Abandoned',
+					sideEffects: 'mapping-persisted',
+				})
+			else expect(result.left.sideEffects).toBe('mapping-persisted')
+		},
+	)
+	it('unverifiable persistence holds without KnownNotApplied', async () => {
+		const h = harness(),
+			intent = await h.wake(0),
+			scope = syntheticRevisionScope()
+		const result = await h.execute(
+			intent,
+			h.build({
+				revisionScope: {
+					...scope,
+					mappingWriter: {
+						record: () =>
+							Effect.succeed({
+								type: 'Held',
+								reason: 'MappingUnavailable',
+								detail: 'readback lost',
+								sideEffects: 'mapping-may-have-persisted',
+							}),
+					},
+				},
+			}),
+		)
+		expect(result).toMatchObject({
+			type: 'Abandoned',
+			reason: 'MappingUnavailable',
+			sideEffects: 'mapping-may-have-persisted',
+		})
+		expect(h.applied).toHaveLength(0)
+	})
+})
+
 describe('revision delivery guards and dormant composition', () => {
 	const definitions = [EVERGREEN_OFFER_JOURNEY_V1, EVERGREEN_OFFER_JOURNEY_V2]
 	function bundle(definition: EvergreenOfferJourneyDefinition) {
@@ -1552,7 +1671,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'AutomationStopped',
 			applyInvocations: 0,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(h.applied).toHaveLength(0)
 		// No outcome written, no stimulus: the stop is a pause, not a refusal.
@@ -1690,7 +1809,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'lease-expired',
 			applyInvocations: 0,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(h.applied).toHaveLength(0)
 		expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({
@@ -1728,7 +1847,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'WindowClosed',
 			applyInvocations: 0,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(h.applied).toHaveLength(0)
 		expect(h.attempts.rows.get(second.idempotencyKey)).toMatchObject({
@@ -2230,7 +2349,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'identity-unavailable',
 			applyInvocations: 2,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(h.applied).toHaveLength(2)
 		expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({
@@ -2289,7 +2408,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'AutomationStopped',
 			applyInvocations: 1,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(h.applied).toHaveLength(1)
 		expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe('Claimed')
@@ -2310,7 +2429,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'clock-unavailable',
 			applyInvocations: 1,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(h.applied).toHaveLength(1)
 		expect(h.attempts.rows.get(intent.idempotencyKey)?.status).toBe('Claimed')
@@ -2839,7 +2958,7 @@ describe('SendMessage intent executor', () => {
 			detail: 'identity-unavailable',
 			applyInvocations: 2,
 			providerRequest: 'none',
-			sideEffects: 'claimed',
+			sideEffects: 'mapping-persisted',
 		})
 		expect(fetcher).not.toHaveBeenCalled()
 		expect(h.attempts.rows.get(intent.idempotencyKey)).toMatchObject({

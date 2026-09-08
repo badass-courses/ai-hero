@@ -51,22 +51,47 @@ export type OperatorLookupResult = {
 	}
 }
 
-export type ReplayPreviewResult = {
-	mode: 'replay-preview'
+export type NonBehavioralReplayPreview = {
+	mode: 'non-behavioral-replay-preview'
 	contact: ContactRecord
 	storedState?: ContactState
-	preview: DryRunInspection
+	preview: {
+		mode: 'non-behavioral'
+		contactEvent: ContactEventRecord
+		providerIdentity: OperatorProviderIdentitySnapshot
+		classification: null
+		nextAction: null
+		sideEffectIntents: readonly []
+	} & (
+		| { state: 'stored-state'; contactState: ContactState }
+		| { state: 'no-stored-state'; contactState: null }
+	)
 	diff: {
-		lifecycleChanged: boolean
-		primaryBucketChanged: boolean
-		humanReviewChanged: boolean
-		confidenceChanged: boolean
+		lifecycleChanged: false
+		primaryBucketChanged: false
+		humanReviewChanged: false
+		confidenceChanged: false
 	}
-	privacy: {
-		rawPayloadIncluded: false
-		payloadSummaryOnly: true
-	}
+	privacy: { rawPayloadIncluded: false; payloadSummaryOnly: true }
 }
+export type ReplayPreviewResult =
+	| NonBehavioralReplayPreview
+	| {
+			mode: 'replay-preview'
+			contact: ContactRecord
+			storedState?: ContactState
+			preview: DryRunInspection
+			diff: {
+				lifecycleChanged: boolean
+				primaryBucketChanged: boolean
+				humanReviewChanged: boolean
+				confidenceChanged: boolean
+			}
+			privacy: {
+				rawPayloadIncluded: false
+				payloadSummaryOnly: true
+			}
+	  }
 
 export type OperatorLookupRepository = {
 	findContactById(contactId: string): Promise<ContactRecord | undefined>
@@ -235,6 +260,36 @@ export async function previewSubscriberMarketingReplay(args: {
 	}
 
 	const storedState = await args.repository.findCurrentContactState(contact.id)
+	// Exact receipt type only. Empty keywords do not neutralize the classifier:
+	// its fallback previously fabricated a lifecycle/bucket change in this preview.
+	if (event.eventType === 'evergreen.delivery-mapping.recorded') {
+		return {
+			mode: 'non-behavioral-replay-preview',
+			contact,
+			storedState,
+			preview: {
+				mode: 'non-behavioral',
+				contactEvent: event,
+				providerIdentity: sanitizeProviderIdentity(providerIdentity),
+				classification: null,
+				nextAction: null,
+				sideEffectIntents: [],
+				...(storedState
+					? {
+							state: 'stored-state' as const,
+							contactState: structuredClone(storedState),
+						}
+					: { state: 'no-stored-state' as const, contactState: null }),
+			},
+			diff: {
+				lifecycleChanged: false,
+				primaryBucketChanged: false,
+				humanReviewChanged: false,
+				confidenceChanged: false,
+			},
+			privacy: { rawPayloadIncluded: false, payloadSummaryOnly: true },
+		}
+	}
 	const classification = classifyContactEvent(event)
 	const previewState = reduceContactState({
 		existingState: storedState,

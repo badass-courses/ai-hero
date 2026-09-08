@@ -4044,6 +4044,9 @@ describe('subscriber marketing Gate A spine', () => {
 				sideEffectIntents: Array.from(repository.sideEffectIntents.entries()),
 			}),
 		).toBe(before.snapshot)
+		expect(replay.mode).toBe('replay-preview')
+		if (replay.mode !== 'replay-preview')
+			throw new Error('Expected ordinary event preview')
 		expect(replay.preview.nextAction.status).toBe('blocked')
 		expect(
 			replay.preview.nextAction.gates.find(

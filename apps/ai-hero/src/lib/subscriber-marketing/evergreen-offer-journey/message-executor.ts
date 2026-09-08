@@ -98,10 +98,13 @@ export type MessageExecutionTarget = {
 export type SideEffectDisclosure =
 	| 'none'
 	| 'claimed'
+	| 'mapping-persisted'
+	| 'mapping-may-have-persisted'
 	| 'provider-called'
 	| 'attempt-recorded'
 
 export type NotClaimedReason =
+	| 'MappingUnavailable'
 	| RevisionHoldReason
 	| 'JourneyNotFound'
 	| 'IntentNotFound'
@@ -162,6 +165,8 @@ export type DomainSettlement =
  * then surfaces in recovery as honestly held. Never KnownNotApplied, never a resend.
  */
 export type AbandonReason =
+	| 'MappingUnavailable'
+	| 'MappingConflict'
 	| 'RevisionChangedAfterClaim'
 	| 'LeaseExpiredBeforeApply'
 	| 'AutomationStoppedAfterClaim'
@@ -187,7 +192,10 @@ export type MessageExecutionResult =
 			/** Apply invocations made under this claim; each one proved no request left. */
 			readonly applyInvocations: number
 			readonly providerRequest: 'none'
-			readonly sideEffects: 'claimed'
+			readonly sideEffects:
+				| 'claimed'
+				| 'mapping-persisted'
+				| 'mapping-may-have-persisted'
 	  }
 	| {
 			readonly type: 'Applied'
@@ -483,6 +491,7 @@ export function createMessageIntentExecutor(
 	const checkCurrentScope = (
 		intent: SendMessageIntent,
 		now: IsoInstant,
+		live = false,
 	): Effect.Effect<RevisionHoldReason | null> =>
 		Effect.gen(function* () {
 			const read = yield* Effect.either(
@@ -497,6 +506,15 @@ export function createMessageIntentExecutor(
 				(row) => row.intent.idempotencyKey === intent.idempotencyKey,
 			)
 			if (!row || !isDeepStrictEqual(row.intent, intent))
+				return 'RevisionMismatch' as const
+			if (
+				live &&
+				(!read.right.aggregate ||
+					isFinal(read.right.aggregate) ||
+					row.status !== 'pending' ||
+					slotBinding(read.right.aggregate, intent)?.status !==
+						'IntentCommitted')
+			)
 				return 'RevisionMismatch' as const
 			return revisionScope.check(read.right.aggregate, intent)
 		})
@@ -720,6 +738,7 @@ export function createMessageIntentExecutor(
 				return notClaimed('IntentOwnershipMismatch')
 			const revisionHold = revisionScope.check(canonical.aggregate, intent)
 			if (revisionHold) return notClaimed(revisionHold)
+			if (!revisionScope.hasWriter) return notClaimed('MappingUnavailable')
 			if (status !== 'pending') return notClaimed('IntentNotPending')
 			if (isFinal(canonical.aggregate)) return notClaimed('JourneyNotActive')
 			const slot = slotBinding(canonical.aggregate, intent)
@@ -758,6 +777,11 @@ export function createMessageIntentExecutor(
 					sideEffects: 'none',
 				} as const
 			const evidence = claim.evidence
+			let mappingSideEffects:
+				| 'claimed'
+				| 'mapping-persisted'
+				| 'mapping-may-have-persisted' = 'claimed'
+			let originalReceipt: unknown = null
 			const abandoned = (
 				reason: AbandonReason,
 				detail: string,
@@ -769,27 +793,52 @@ export function createMessageIntentExecutor(
 					detail,
 					applyInvocations,
 					providerRequest: 'none',
-					sideEffects: 'claimed',
+					sideEffects: mappingSideEffects,
 				}) as const
 
 			let applyInvocations = 0
 			let lastNoRequest = ''
 			while (true) {
+				// Receipt I/O belongs before ALL final checks, never after them.
+				const recordedMapping = yield* revisionScope.record(evidence, intent)
+				if (recordedMapping.type === 'Held') {
+					if (
+						mappingSideEffects !== 'mapping-persisted' &&
+						recordedMapping.sideEffects !== 'none'
+					)
+						mappingSideEffects = recordedMapping.sideEffects
+					return abandoned(
+						recordedMapping.reason,
+						recordedMapping.detail,
+						applyInvocations,
+					)
+				}
+				mappingSideEffects = 'mapping-persisted'
+				if (
+					originalReceipt !== null &&
+					!isDeepStrictEqual(originalReceipt, recordedMapping.receipt)
+				)
+					return abandoned(
+						'MappingConflict',
+						'Original receipt changed during retry',
+						applyInvocations,
+					)
+				originalReceipt = structuredClone(recordedMapping.receipt)
 				// Fresh authority, control, clock, window and lease before every apply invocation.
 				// Nothing from the claim or an earlier invocation is reused.
 				const fresh = yield* readFacts(
 					{ contactId: intent.contactId, journeyId: intent.journeyId },
-					'claimed',
+					mappingSideEffects,
 				)
-				const scopeNow = yield* readClock('claimed')
-				const revisionHold = yield* checkCurrentScope(intent, scopeNow)
+				const scopeNow = yield* readClock(mappingSideEffects)
+				const revisionHold = yield* checkCurrentScope(intent, scopeNow, true)
 				if (revisionHold)
 					return abandoned(
 						'RevisionChangedAfterClaim',
 						revisionHold,
 						applyInvocations,
 					)
-				const applyAt = yield* readClock('claimed')
+				const applyAt = yield* readClock(mappingSideEffects)
 				if (new Date(applyAt) >= evidence.leaseExpiresAt)
 					return abandoned(
 						'LeaseExpiredBeforeApply',
@@ -810,9 +859,9 @@ export function createMessageIntentExecutor(
 					const outcome: ObservedKnownNotAppliedOutcome = {
 						type: 'KnownNotApplied',
 						reason: 'PreflightRefused',
-						observedAt: yield* readClock('claimed'),
+						observedAt: yield* readClock(mappingSideEffects),
 					}
-					yield* recordOutcome(evidence, outcome, 'claimed')
+					yield* recordOutcome(evidence, outcome, mappingSideEffects)
 					const settlement = yield* settleDomain(
 						intent,
 						evidence.claimToken,
