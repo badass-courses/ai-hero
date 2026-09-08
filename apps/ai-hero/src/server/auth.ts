@@ -272,10 +272,7 @@ export const authOptions: NextAuthConfig = {
 					expiresAt: discordAccount.expires_at,
 				}
 				const accountIdentityCondition = and(
-					eq(
-						accounts.providerAccountId,
-						discordAccount.providerAccountId,
-					),
+					eq(accounts.providerAccountId, discordAccount.providerAccountId),
 					eq(accounts.provider, 'discord'),
 					eq(accounts.userId, user.id),
 				)
