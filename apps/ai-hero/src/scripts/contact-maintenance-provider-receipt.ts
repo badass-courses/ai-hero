@@ -44,7 +44,7 @@ export const operatorCredentialsSchema = z
 		target: z.string(),
 		host: z.string().min(1).max(253),
 		port: z.number().int().min(1).max(65535),
-		database: z.string().regex(/^[A-Za-z0-9_]+$/),
+		database: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
 		user: z.string().min(1).max(255),
 		password: z.string().min(1),
 		tls: z.boolean(),

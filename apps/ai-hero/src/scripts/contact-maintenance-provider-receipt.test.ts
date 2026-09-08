@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { describe, it, expect, vi } from 'vitest'
-import { validateProviderReceipt } from './contact-maintenance-provider-receipt'
+import {
+	operatorCredentialsSchema,
+	validateProviderReceipt,
+} from './contact-maintenance-provider-receipt'
 import { runMaintenanceCli } from './contact-integrity-maintenance'
 function fixture(mode = 'inspect') {
 	const now = Date.now(),
@@ -11,7 +14,7 @@ function fixture(mode = 'inspect') {
 		operatorRole: role,
 		target: 'pilot',
 		organization: 'fixture-org',
-		database: 'fixture_db',
+		database: 'fixture-db',
 		branch: 'main',
 		host: 'aws.connect.psdb.cloud',
 		port: 3306,
@@ -61,6 +64,15 @@ function fixture(mode = 'inspect') {
 	return { config, receipt, binding, encode, now }
 }
 describe('PlanetScale operator receipt boundary', () => {
+	it.each(['', 'a/b', 'a b', '`name`', 'a;b', 'a'.repeat(65)])(
+		'refuses malformed or overlong database name %s',
+		(database) => {
+			expect(
+				operatorCredentialsSchema.safeParse({ ...fixture().config, database })
+					.success,
+			).toBe(false)
+		},
+	)
 	it.each(['inspect', 'dry-run', 'apply', 'verify'])(
 		'accepts generated usernames for %s with exact pinned create/readback scope',
 		(mode) => {
