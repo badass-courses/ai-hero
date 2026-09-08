@@ -1,4 +1,6 @@
 import { createHmac, createHash } from 'node:crypto'
+import fs from 'node:fs/promises'
+import { CONTACT_EMAIL_STALE_SQL } from './contact-email-key-contract'
 import { describe, expect, it } from 'vitest'
 import { emailFingerprint } from './evergreen-offer-journey/verified-owner-evidence'
 import {
@@ -10,6 +12,16 @@ import {
 } from './contact-email-equivalence'
 
 describe('exact Contact email projection', () => {
+	it('keeps the migration PLAN identical to the versioned generated contract', async () => {
+		const plan = await fs.readFile(
+			new URL(
+				'../../db/migrations/plans/20260908_contact_email_equivalence.sql',
+				import.meta.url,
+			),
+			'utf8',
+		)
+		expect(plan).toContain(CONTACT_EMAIL_STALE_SQL)
+	})
 	const whitespace =
 		'\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
 	it('preserves exact JS normalization and legacy HMAC bytes across the identifier domain', () => {

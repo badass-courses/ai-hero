@@ -12,9 +12,8 @@ CASE
  WHEN emailKey IS NULL OR emailKeySource IS NULL THEN 1
  WHEN OCTET_LENGTH(emailKey) <> 67 OR OCTET_LENGTH(emailKeySource) <> 64 THEN 1
  WHEN BINARY LEFT(emailKey, 3) <> BINARY 'v1:' THEN 1
- WHEN UNHEX(SUBSTRING(emailKey, 4)) IS NULL OR UNHEX(emailKeySource) IS NULL THEN 1
- WHEN BINARY SUBSTRING(emailKey, 4) <> BINARY LOWER(HEX(UNHEX(SUBSTRING(emailKey, 4)))) THEN 1
- WHEN BINARY emailKeySource <> BINARY LOWER(HEX(UNHEX(emailKeySource))) THEN 1
+ WHEN OCTET_LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(SUBSTRING(emailKey, 4), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')) <> 0 THEN 1
+ WHEN OCTET_LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(emailKeySource, '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', '')) <> 0 THEN 1
  WHEN BINARY emailKeySource <> BINARY SHA2(CAST(email AS BINARY), 256) THEN 1
  ELSE 0 END
  ) STORED,
