@@ -1,3 +1,9 @@
+import { MESSAGE_PREPARATION_EVENT } from './evergreen-offer-journey/message-preparation'
+import { decodePreparationEvent } from './evergreen-offer-journey/message-preparation-store'
+import {
+	EMAIL_TOKEN_LOGIN_OBSERVED,
+	OFFER_CLAIM_OBSERVED,
+} from './evergreen-offer-journey/verified-owner-evidence'
 import { planDryRunIntents } from './intent-planner'
 import { classifyContactEvent } from './signal-classifier'
 import { reduceContactState } from './state-reducer'
@@ -51,22 +57,47 @@ export type OperatorLookupResult = {
 	}
 }
 
-export type ReplayPreviewResult = {
-	mode: 'replay-preview'
+export type NonBehavioralReplayPreview = {
+	mode: 'non-behavioral-replay-preview'
 	contact: ContactRecord
 	storedState?: ContactState
-	preview: DryRunInspection
+	preview: {
+		mode: 'non-behavioral'
+		contactEvent: ContactEventRecord
+		providerIdentity: OperatorProviderIdentitySnapshot
+		classification: null
+		nextAction: null
+		sideEffectIntents: readonly []
+	} & (
+		| { state: 'stored-state'; contactState: ContactState }
+		| { state: 'no-stored-state'; contactState: null }
+	)
 	diff: {
-		lifecycleChanged: boolean
-		primaryBucketChanged: boolean
-		humanReviewChanged: boolean
-		confidenceChanged: boolean
+		lifecycleChanged: false
+		primaryBucketChanged: false
+		humanReviewChanged: false
+		confidenceChanged: false
 	}
-	privacy: {
-		rawPayloadIncluded: false
-		payloadSummaryOnly: true
-	}
+	privacy: { rawPayloadIncluded: false; payloadSummaryOnly: true }
 }
+export type ReplayPreviewResult =
+	| NonBehavioralReplayPreview
+	| {
+			mode: 'replay-preview'
+			contact: ContactRecord
+			storedState?: ContactState
+			preview: DryRunInspection
+			diff: {
+				lifecycleChanged: boolean
+				primaryBucketChanged: boolean
+				humanReviewChanged: boolean
+				confidenceChanged: boolean
+			}
+			privacy: {
+				rawPayloadIncluded: false
+				payloadSummaryOnly: true
+			}
+	  }
 
 export type OperatorLookupRepository = {
 	findContactById(contactId: string): Promise<ContactRecord | undefined>
@@ -235,6 +266,46 @@ export async function previewSubscriberMarketingReplay(args: {
 	}
 
 	const storedState = await args.repository.findCurrentContactState(contact.id)
+	if (
+		event.eventType === MESSAGE_PREPARATION_EVENT &&
+		!decodePreparationEvent({ ...event })
+	)
+		throw new Error('Malformed preparation evidence')
+	// Only these accepted internal facts bypass behavioral classification.
+	// Empty keywords alone do not neutralize the classifier's fallback.
+	if (
+		event.eventType === 'evergreen.delivery-mapping.recorded' ||
+		event.eventType === EMAIL_TOKEN_LOGIN_OBSERVED ||
+		event.eventType === OFFER_CLAIM_OBSERVED ||
+		event.eventType === MESSAGE_PREPARATION_EVENT
+	) {
+		return {
+			mode: 'non-behavioral-replay-preview',
+			contact,
+			storedState,
+			preview: {
+				mode: 'non-behavioral',
+				contactEvent: event,
+				providerIdentity: sanitizeProviderIdentity(providerIdentity),
+				classification: null,
+				nextAction: null,
+				sideEffectIntents: [],
+				...(storedState
+					? {
+							state: 'stored-state' as const,
+							contactState: structuredClone(storedState),
+						}
+					: { state: 'no-stored-state' as const, contactState: null }),
+			},
+			diff: {
+				lifecycleChanged: false,
+				primaryBucketChanged: false,
+				humanReviewChanged: false,
+				confidenceChanged: false,
+			},
+			privacy: { rawPayloadIncluded: false, payloadSummaryOnly: true },
+		}
+	}
 	const classification = classifyContactEvent(event)
 	const previewState = reduceContactState({
 		existingState: storedState,

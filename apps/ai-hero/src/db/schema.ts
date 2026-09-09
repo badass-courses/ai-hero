@@ -1,8 +1,10 @@
 import { mysqlTable } from '@/db/mysql-table'
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
+import { CONTACT_EMAIL_STALE_SQL } from '@/lib/subscriber-marketing/contact-email-key-contract'
 import {
 	bigint,
 	boolean,
+	customType,
 	decimal,
 	double,
 	index,
@@ -579,6 +581,14 @@ export const contentRead = mysqlTable(
  * AI Hero Subscriber Marketing Automation Gate A durable shapes.
  * Logical names are intentionally unprefixed; mysqlTable adds AI_.
  */
+// Migration-dependent: apply and verify the additive PLAN before deploying
+// this table declaration. Existing unqualified Contact reads include these fields.
+const emailKeyColumn = customType<{ data: string }>({
+	dataType: () => 'varchar(67) CHARACTER SET ascii COLLATE ascii_bin',
+})
+const emailSourceColumn = customType<{ data: string }>({
+	dataType: () => 'varchar(64) CHARACTER SET ascii COLLATE ascii_bin',
+})
 export const contact = mysqlTable(
 	'Contact',
 	{
@@ -591,6 +601,12 @@ export const contact = mysqlTable(
 		name: varchar('name', { length: 255 }),
 		lifecycle: varchar('lifecycle', { length: 50 }).notNull().default('new'),
 		isProvisional: boolean('isProvisional').notNull().default(true),
+		emailKey: emailKeyColumn('emailKey'),
+		emailKeySource: emailSourceColumn('emailKeySource'),
+		emailKeyStale: int('emailKeyStale').generatedAlwaysAs(
+			sql.raw(CONTACT_EMAIL_STALE_SQL),
+			{ mode: 'stored' },
+		),
 		optInAttribution: json('optInAttribution').$type<Record<string, unknown>>(),
 		createdAt: timestamp('createdAt').defaultNow().notNull(),
 		updatedAt: timestamp('updatedAt').defaultNow().notNull(),
@@ -598,6 +614,10 @@ export const contact = mysqlTable(
 	(table) => ({
 		userIdIdx: index('Contact_userId_idx').on(table.userId),
 		emailIdx: index('Contact_email_idx').on(table.email),
+		emailKeyIdx: index('Contact_emailKey_idx').on(table.emailKey),
+		emailKeyStaleIdx: index('Contact_emailKeyStale_idx').on(
+			table.emailKeyStale,
+		),
 		lifecycleIdx: index('Contact_lifecycle_idx').on(table.lifecycle),
 	}),
 )
@@ -815,11 +835,9 @@ export const sideEffectIntent = mysqlTable(
 		// Every value-path reader filters provider + type together; the executor
 		// poll additionally filters status IN ('pending','failed') so the status
 		// column rides the same index and completed rows are never examined.
-		providerTypeStatusIdx: index('SideEffectIntent_provider_type_status_idx').on(
-			table.provider,
-			table.type,
-			table.status,
-		),
+		providerTypeStatusIdx: index(
+			'SideEffectIntent_provider_type_status_idx',
+		).on(table.provider, table.type, table.status),
 		providerTypeStatusAvailableAtIdx: index(
 			'SideEffectIntent_provider_type_status_availableAt_idx',
 		).on(table.provider, table.type, table.status, table.availableAt),
@@ -832,6 +850,7 @@ export const sideEffectIntent = mysqlTable(
 export { automationControl, emailCourseCommit } from './email-course-schema'
 
 export {
+	evergreenOfferJourneyAttempt,
 	evergreenOfferJourneyIntent,
 	evergreenOfferJourneyCommit,
 	evergreenOfferJourneyWake,

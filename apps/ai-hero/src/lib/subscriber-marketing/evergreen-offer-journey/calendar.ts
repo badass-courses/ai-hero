@@ -64,9 +64,10 @@ export function buildBridgeMessagePlan(args: {
 		time: '09:00:00',
 		timeZone,
 	})
-	const couponIssueAt = firstThursdayNineAtLeast24HoursAfter({
+	const couponIssueAt = firstCouponOpeningAtLeast24HoursAfter({
 		instant: b3Due,
 		timeZone,
+		definitionVersion: args.definition.definitionVersion,
 	})
 	const b1 = toIsoInstant(b1Due)
 	const b2 = toIsoInstant(b2Due)
@@ -150,7 +151,7 @@ export function addPitchMessagePlan(args: {
 	if (expiry.getTime() !== expectedExpiry.getTime()) {
 		return scheduleError(
 			'InvalidCouponWindow',
-			'Coupon expiry does not match Monday 23:59:59 in the pinned time zone',
+			'Coupon expiry must be four local days after opening at 23:59:59 in the pinned time zone',
 		)
 	}
 	const rawInstants = [p1, p2, p3, p4, p5, expiry]
@@ -263,9 +264,17 @@ function firstLocalNineAtOrAfter(args: {
 	})
 }
 
-function firstThursdayNineAtLeast24HoursAfter(args: {
+/** Definition versions were historically free strings. Only the explicit new
+ * version opts into Friday; all pre-change records retain Thursday semantics.
+ */
+export function couponOpeningWeekday(definitionVersion: string): 4 | 5 {
+	return definitionVersion === 'evergreen-offer-v2' || definitionVersion === 'evergreen-offer-v3' ? 5 : 4
+}
+
+export function firstCouponOpeningAtLeast24HoursAfter(args: {
 	instant: Date
 	timeZone: IanaTimeZone
+	definitionVersion: string
 }) {
 	const earliest = new Date(args.instant.getTime() + DAY_MS)
 	let date = localDate(earliest, args.timeZone)
@@ -275,12 +284,12 @@ function firstThursdayNineAtLeast24HoursAfter(args: {
 			time: '09:00:00',
 			timeZone: args.timeZone,
 		})
-		if (weekday(date) === 4 && candidate.getTime() >= earliest.getTime()) {
+		if (weekday(date) === couponOpeningWeekday(args.definitionVersion) && candidate.getTime() >= earliest.getTime()) {
 			return candidate
 		}
 		date = addLocalDays(date, 1)
 	}
-	throw new Error('Could not resolve the Thursday coupon issue time')
+	throw new Error('Could not resolve the pinned coupon opening time')
 }
 
 function localDate(instant: Date, timeZone: IanaTimeZone) {

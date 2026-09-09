@@ -43,7 +43,16 @@ export type JourneyQueryError =
 
 export type EffectApplicationError =
 	| { readonly type: 'EffectPermanentRefusal'; readonly reason: string }
-	| { readonly type: 'EffectTransientUnavailable'; readonly reason: string }
+	| {
+			readonly type: 'EffectTransientUnavailable'
+			readonly reason: string
+			/**
+			 * Explicit proof that no provider request left the process. Only a producer
+			 * that failed strictly before issuing any request may set this. Absent proof
+			 * means unknown, and executors must treat it as ambiguous, never as retryable.
+			 */
+			readonly requestIssued?: false
+	  }
 	| { readonly type: 'EffectAmbiguous'; readonly reason: string }
 
 export type JourneyLedgerCommit = {
@@ -62,17 +71,18 @@ export type CommittedJourneyDecision = {
 }
 
 export interface JourneyLedger {
-	readonly load: (
-		journeyId: JourneyId,
-	) => Effect.Effect<
+	readonly load: (journeyId: JourneyId) => Effect.Effect<
 		EvergreenOfferJourneyAggregate | null,
-		Extract<JourneyCommandError, { type: 'JourneyDecodeFailure' }> | {
-			readonly type: 'JourneyCommitUnavailable'
-			readonly reason: string
-		}
+		| Extract<JourneyCommandError, { type: 'JourneyDecodeFailure' }>
+		| {
+				readonly type: 'JourneyCommitUnavailable'
+				readonly reason: string
+		  }
 	>
 	readonly findCommittedStimulus: (
 		stimulusId: StimulusId,
+		/** Command replay must bind the full stimulus, not just its ID. */
+		expectedStimulus?: EvergreenOfferStimulus,
 	) => Effect.Effect<CommittedJourneyDecision | null, JourneyCommandError>
 	readonly commit: (
 		commit: JourneyLedgerCommit,
@@ -149,7 +159,9 @@ export interface WakeScheduler {
 }
 
 export interface OperationalReceiptSink {
-	readonly record: (receipt: TransitionReceipt) => Effect.Effect<
+	readonly record: (
+		receipt: TransitionReceipt,
+	) => Effect.Effect<
 		void,
 		{ readonly type: 'ReceiptSinkUnavailable'; readonly reason: string }
 	>

@@ -11,6 +11,7 @@ import { WorkshopResourceList } from '@/app/(content)/workshops/_components/work
 import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
+import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
@@ -266,6 +267,14 @@ export default async function ModulePage(props: Props) {
 
 	return (
 		<LayoutClient withContainer>
+			{params.module === 'ai-coding-crash-course' &&
+				product?.id === 'product-ma254' && (
+					<EvergreenClaimPanel
+						pilotOnly
+						endpoint="/api/evergreen/claim"
+						productPath="/workshops/ai-coding-crash-course"
+					/>
+				)}
 			<main className="flex min-h-screen w-full flex-col">
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { fridayDefinitionError } from './definition'
 
 import { addPitchMessagePlan, buildBridgeMessagePlan } from './calendar'
 import {
@@ -413,6 +414,8 @@ export function restoreEvergreenOfferJourneySnapshot(
 function validateAggregateInvariants(
 	aggregate: EvergreenOfferJourneyAggregate,
 ): string | null {
+	const bindingError = fridayDefinitionError(aggregate.definition)
+	if (bindingError) return bindingError
 	if (aggregate.journeyId !== deriveJourneyId(aggregate.entryFactId)) {
 		return 'Journey ID does not match the entry fact ID'
 	}
@@ -545,7 +548,7 @@ function validateAggregateInvariants(
 	}
 	if (aggregate.coupon) {
 		if (aggregate.coupon.issuedAt !== canonicalBridge.value.couponIssueAt) {
-			return 'Coupon issue time does not match the canonical Thursday opening'
+			return 'Coupon issue time does not match the canonical pinned opening'
 		}
 		if (aggregate.messagePlan.pitch.length !== 5) {
 			return 'A recorded coupon requires all five canonical pitch slots'
