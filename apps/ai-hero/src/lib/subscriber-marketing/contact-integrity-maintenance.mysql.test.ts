@@ -1,5 +1,9 @@
 import fs from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+	validateProviderReceipt,
+	type VerifiedProviderReceipt,
+} from '../../scripts/contact-maintenance-provider-receipt'
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise'
 import { beforeAll, beforeEach, afterAll, describe, it, expect } from 'vitest'
 import { Effect } from 'effect'
@@ -31,6 +35,7 @@ suite('Contact integrity maintenance native disposable CI', () => {
 			after?: (sql: string, result: unknown) => Promise<unknown>
 			monotonic?: () => number
 			runtime?: { node: string; unicode: string }
+			providerEvidence?: VerifiedProviderReceipt
 		} = {},
 	) {
 		const connection = await pool.getConnection()
@@ -46,7 +51,11 @@ suite('Contact integrity maintenance native disposable CI', () => {
 					destroy: () => connection.destroy(),
 				},
 				{ ...defaults, ...options },
-				{ monotonic: hooks.monotonic, runtime: hooks.runtime },
+				{
+					monotonic: hooks.monotonic,
+					runtime: hooks.runtime,
+					providerEvidence: hooks.providerEvidence,
+				},
 			),
 		)
 	}
@@ -105,6 +114,89 @@ suite('Contact integrity maintenance native disposable CI', () => {
 		if (server && name) await server.query(`DROP DATABASE \`${name}\``)
 		await server?.end()
 	})
+	it.each(['valid', 'copied', 'database-mismatch'])(
+		'uses native SQL with explicitly synthetic provider metadata: %s',
+		async (kind) => {
+			const now = Date.now()
+			const config = {
+				purpose: 'contact-integrity-maintenance' as const,
+				target: 'disposable-ci',
+				host: 'fixture.psdb.cloud',
+				port: 3306,
+				database: name,
+				user: 'generated-fixture-user',
+				password: 'synthetic-secret',
+				tls: true,
+				provider: 'planetscale' as const,
+				organization: 'fixture',
+				branch: 'fixture',
+				operatorRole: 'reader' as const,
+			}
+			const record = {
+				id: 'fixture-password',
+				name: 'fixture-reader',
+				username: config.user,
+				access_host_url: config.host,
+				role: 'reader',
+				database_branch: { name: 'fixture' },
+				created_at: new Date(now - 60000).toISOString(),
+				expires_at: new Date(now + 600000).toISOString(),
+				deleted_at: null,
+				ttl_seconds: 600,
+				replica: false,
+			}
+			const raw = JSON.stringify({
+				version: 1,
+				provider: config.provider,
+				purpose: config.purpose,
+				operatorRole: 'reader',
+				target: config.target,
+				approvalRef: 'fixture-approval',
+				organization: config.organization,
+				database: name,
+				branch: config.branch,
+				credentialName: record.name,
+				readbackAt: new Date(now).toISOString(),
+				validUntil: new Date(now + 600000).toISOString(),
+				creation: { ...record, plain_text: config.password },
+				readback: record,
+			})
+			const evidence = validateProviderReceipt(
+				raw,
+				createHash('sha256').update(raw).digest('hex'),
+				config,
+				{
+					target: config.target,
+					approvalRef: 'fixture-approval',
+					mode: 'verify',
+					maxMs: 10000,
+				},
+			)
+			await insert('owned-fixture', 'native@example.test', true)
+			const result = await run(
+				{},
+				{
+					providerEvidence: kind === 'copied' ? { ...evidence } : evidence,
+					after: async (sql, result) =>
+						sql.startsWith('SELECT VERSION()')
+							? [
+									{
+										...(result as RowDataPacket[])[0],
+										version: '8.4.11',
+										comment: '',
+										databaseName: kind === 'database-mismatch' ? 'other' : name,
+									},
+								]
+							: result,
+				},
+			)
+			expect(result.code).toBe(
+				kind === 'valid' ? 'complete' : 'unsupported-snapshot',
+			)
+			expect(result.snapshotProjectionValid).toBe(kind === 'valid')
+			expect(result.unqualifiedReady).toBe(false)
+		},
+	)
 	it('compares actual generated expression structurally and verifies required native metadata', async () => {
 		const [rows] = await pool.query<RowDataPacket[]>(
 			"SELECT GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND COLUMN_NAME='emailKeyStale'",

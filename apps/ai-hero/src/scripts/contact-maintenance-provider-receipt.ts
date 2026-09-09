@@ -56,6 +56,32 @@ export const operatorCredentialsSchema = z
 	})
 	.strict()
 export type OperatorCredentials = z.infer<typeof operatorCredentialsSchema>
+export type VerifiedProviderReceipt = Readonly<{
+	scope: readonly string[]
+	validUntil: number
+	mode: string
+}>
+const verifiedReceipts = new WeakSet<VerifiedProviderReceipt>()
+/** Native-looking version text alone is not provider evidence. This exact
+ * backend was exercised with concurrent writers, snapshot reads, read-only
+ * refusal and lock timeouts. Accept only this process's pinned receipt. */
+export function supportsPinnedPlanetScaleSnapshot(
+	evidence: VerifiedProviderReceipt | undefined,
+	server: Record<string, unknown>,
+	remainingMs: number,
+	now = Date.now(),
+) {
+	return Boolean(
+		evidence &&
+		verifiedReceipts.has(evidence) &&
+		evidence.mode === 'verify' &&
+		evidence.scope[0] === 'planetscale' &&
+		evidence.scope[2] === server.databaseName &&
+		evidence.validUntil > now + remainingMs &&
+		server.version === '8.4.11' &&
+		server.comment === '',
+	)
+}
 const unset = (value: string | null) =>
 	value === null || value === '0001-01-01T00:00:00Z'
 /** Checks an operator-approved private artifact pinned independently in the
@@ -123,20 +149,23 @@ export function validateProviderReceipt(
 		(r.readback.plain_text && r.readback.plain_text !== config.password)
 	)
 		throw new Error('Credential readback mismatch')
-	return {
-		scope: [
+	const evidence: VerifiedProviderReceipt = Object.freeze({
+		mode: binding.mode,
+		scope: Object.freeze([
 			r.provider,
 			r.organization,
 			r.database,
 			r.branch,
 			r.readback.id,
 			r.operatorRole,
-		],
+		]),
 		validUntil: Math.min(
 			Date.parse(r.validUntil),
 			...[r.creation, r.readback]
 				.filter((p) => !unset(p.expires_at))
 				.map((p) => Date.parse(p.expires_at!)),
 		),
-	}
+	})
+	verifiedReceipts.add(evidence)
+	return evidence
 }

@@ -51,7 +51,7 @@ export const offlineMaintenancePlan = {
 	approval:
 		'Database modes require separate actual operator approval, exact target, approval reference and --acknowledge-approval. CLI strings record assertions; they do not grant approval.',
 	coverage:
-		'dry-run/apply are bounded keyset pages, never whole-table certificates. verify starts a new native MySQL 8.4 consistent read-only snapshot and cannot resume; budget exhaustion cannot certify coverage. Fresh nonlocking stale read is separate.',
+		'dry-run/apply are bounded keyset pages, never whole-table certificates. verify starts a new native MySQL 8.4 or pinned PlanetScale 8.4.11 consistent read-only snapshot and cannot resume; budget exhaustion cannot certify coverage. Fresh nonlocking stale read is separate.',
 	state:
 		'--state-in/--state-out are private linkable machine state, not anonymous. Retain every state file and unresolved row list. New state files are exclusive 0600; no overwrite.',
 	example: 'pnpm contact-integrity:maintenance --mode plan',
@@ -286,7 +286,7 @@ export async function runMaintenanceCli(
 				throw new Error('Dedicated principal unavailable')
 			}
 			const result = await Effect.runPromise(
-				maintainContactIntegrity(connection, options),
+				maintainContactIntegrity(connection, options, { providerEvidence }),
 			)
 			if (stateFd !== undefined)
 				writeFileSync(

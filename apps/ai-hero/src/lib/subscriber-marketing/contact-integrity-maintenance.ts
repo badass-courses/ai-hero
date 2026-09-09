@@ -1,6 +1,10 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
 import {
+	supportsPinnedPlanetScaleSnapshot,
+	type VerifiedProviderReceipt,
+} from '../../scripts/contact-maintenance-provider-receipt'
+import {
 	assertEmailKeyRuntime,
 	contactEmailWriteValues,
 	normalizeEmail,
@@ -92,7 +96,10 @@ export type MaintenanceResult = {
 	/** Private machine state. MUST be separated from normal stdout/logging. */
 	privateState: {
 		after: string | undefined
-		unresolved: { id: string; reason: 'conflict' | 'deleted' | 'invalid-raw' }[]
+		unresolved: {
+			id: string
+			reason: 'conflict' | 'deleted' | 'invalid-raw'
+		}[]
 	}
 }
 class Stop extends Error {
@@ -113,6 +120,7 @@ export function maintainContactIntegrity(
 	dependencies: {
 		runtime?: { node: string; unicode: string | undefined }
 		monotonic?: () => number
+		providerEvidence?: VerifiedProviderReceipt
 	} = {},
 ) {
 	return Effect.tryPromise({
@@ -188,7 +196,7 @@ export function maintainContactIntegrity(
 				await inspectSchema()
 				const server = (
 					await rows(
-						'SELECT VERSION() version, @@version_comment comment, @@character_set_client clientCharset, @@character_set_connection connectionCharset, @@character_set_results resultsCharset',
+						'SELECT VERSION() version, @@version_comment comment, DATABASE() databaseName, @@character_set_client clientCharset, @@character_set_connection connectionCharset, @@character_set_results resultsCharset',
 					)
 				)[0]
 				if (
@@ -214,11 +222,17 @@ export function maintainContactIntegrity(
 					return t
 				}
 				if (o.mode === 'verify') {
-					// Deliberately narrow supported substrate. A provider claiming MySQL syntax
-					// does not inherit native snapshot proof. Add provider support only with evidence.
+					const native =
+						!dependencies.providerEvidence &&
+						/^8\.4\./.test(String(server.version)) &&
+						server.comment === 'MySQL Community Server - GPL'
 					if (
-						!/^8\.4\./.test(String(server.version)) ||
-						server.comment !== 'MySQL Community Server - GPL'
+						!native &&
+						!supportsPinnedPlanetScaleSnapshot(
+							dependencies.providerEvidence,
+							server,
+							remaining(),
+						)
 					)
 						throw new Stop('unsupported-snapshot')
 					await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')

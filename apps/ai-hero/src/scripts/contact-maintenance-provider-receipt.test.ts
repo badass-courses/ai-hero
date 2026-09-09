@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { describe, it, expect, vi } from 'vitest'
 import {
 	operatorCredentialsSchema,
+	supportsPinnedPlanetScaleSnapshot,
 	validateProviderReceipt,
 } from './contact-maintenance-provider-receipt'
 import { runMaintenanceCli } from './contact-integrity-maintenance'
@@ -64,6 +65,48 @@ function fixture(mode = 'inspect') {
 	return { config, receipt, binding, encode, now }
 }
 describe('PlanetScale operator receipt boundary', () => {
+	it.each([
+		'valid',
+		'copy',
+		'missing',
+		'expiry',
+		'database',
+		'version',
+		'comment',
+		'mode',
+	])('keeps snapshot compatibility bound to the minted receipt: %s', (kind) => {
+		const f = fixture(kind === 'mode' ? 'inspect' : 'verify')
+		const { raw, pin } = f.encode()
+		const evidence = validateProviderReceipt(
+			raw,
+			pin,
+			f.config,
+			f.binding,
+			f.now,
+		)
+		expect(Object.isFrozen(evidence)).toBe(true)
+		expect(Object.isFrozen(evidence.scope)).toBe(true)
+		const server = {
+			version: '8.4.11',
+			comment: '',
+			databaseName: f.config.database,
+		}
+		if (kind === 'database') server.databaseName = 'other'
+		if (kind === 'version') server.version = '8.4.12'
+		if (kind === 'comment') server.comment = 'MySQL Community Server - GPL'
+		expect(
+			supportsPinnedPlanetScaleSnapshot(
+				kind === 'copy'
+					? { ...evidence }
+					: kind === 'missing'
+						? undefined
+						: evidence,
+				server,
+				10000,
+				kind === 'expiry' ? evidence.validUntil - 5000 : f.now,
+			),
+		).toBe(kind === 'valid')
+	})
 	it.each(['', 'a/b', 'a b', '`name`', 'a;b', 'a'.repeat(65)])(
 		'refuses malformed or overlong database name %s',
 		(database) => {
