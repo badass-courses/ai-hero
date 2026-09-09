@@ -37,6 +37,13 @@ const getConnection = pool.getConnection.bind(pool)
 pool.getConnection = (async () =>
 	preserveQueryResultShape(await getConnection())) as typeof pool.getConnection
 
+/** Existing pool capabilities for owned transactions and independent readback.
+ * These do not create another pool or change normal application queries. */
+export const acquireDatabaseConnection = () => pool.getConnection()
+export const createDatabaseHandle = <Tables extends Record<string, unknown>>(
+	tables: Tables,
+) => drizzle(pool, { schema: tables, mode: 'planetscale' })
+
 /** Close the app-owned MySQL pool after a finite CLI command completes. */
 export const closeDatabasePool = createDatabasePoolCloser(pool)
 

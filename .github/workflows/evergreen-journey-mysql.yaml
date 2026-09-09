@@ -100,3 +100,4 @@ jobs:
           src/lib/subscriber-marketing/contact-email-integrity.mysql.test.ts
           src/lib/subscriber-marketing/contact-integrity-maintenance.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/verified-user-observed-source.mysql.test.ts
+          src/server/evergreen-pilot.mysql.test.ts

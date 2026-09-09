@@ -96,7 +96,7 @@ const metadataSchema = z.object({
 		binding: bindingSchema,
 	}),
 })
-const merchantEvidenceSchema = z.object({
+export const merchantEvidenceSchema = z.object({
 	id: z.string().min(1),
 	identifier: z.string().min(1),
 	merchantAccountId: z.string().min(1),

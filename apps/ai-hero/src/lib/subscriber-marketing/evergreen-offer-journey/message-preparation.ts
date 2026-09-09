@@ -108,7 +108,10 @@ export const preparationSnapshotSchema = z
 					!dynamicTokens.some((t) => k === `${s.namespace}_${t.toLowerCase()}`),
 			)
 		)
-			ctx.addIssue({ code: 'custom', message: 'Projection namespace mismatch' })
+			ctx.addIssue({
+				code: 'custom',
+				message: 'Projection namespace mismatch',
+			})
 		if (
 			!isDeepStrictEqual(s.revision, revisionOf(EVERGREEN_OFFER_JOURNEY_V3)) ||
 			s.sourceHash !== EVERGREEN_OFFER_JOURNEY_V3.messagePlanSourceHash
@@ -172,16 +175,21 @@ export function checkedMessageUrl(
 		throw new Error('Unreviewable message URL')
 	return raw
 }
-export type ReviewedMessageTemplate = Readonly<{
-	revision: DeliveryRevision
-	slot: MessagePreparationSnapshot['slot']
-	sourceHash: string
-	subject: string
-	html: string
-	htmlHash: string
-	subjectHash: string
-	links: Partial<Record<MessageLinkToken, string>>
-}>
+export const reviewedMessageTemplateSchema = z
+	.object({
+		revision: deliveryRevisionSchema,
+		slot: preparationSnapshotSchema.innerType().shape.slot,
+		sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+		subject: z.string().min(1).max(500),
+		html: z.string().min(1).max(100000),
+		htmlHash: z.string().regex(/^[a-f0-9]{64}$/),
+		subjectHash: z.string().regex(/^[a-f0-9]{64}$/),
+		links: z.record(z.enum(linkTokens), z.string().min(1).max(2048)),
+	})
+	.strict()
+export type ReviewedMessageTemplate = Readonly<
+	z.infer<typeof reviewedMessageTemplateSchema>
+>
 /** Trusted reviewed HTML only, not a Markdown parser or a prose generator. The
  * owning content repository supplies bodies and exact reviewed hashes at runtime. */
 export function compileMessageTemplate(

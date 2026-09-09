@@ -140,6 +140,7 @@ export function restoreSourceCandidate(
 export function createBoundedJourneyReaders(
 	database: Pick<MySql2Database, 'select'>,
 	ledger: Pick<JourneyLedger, 'findCommittedStimulus'>,
+	scope?: { contactId: string; entryFactId: string; journeyId: string },
 ) {
 	function read<Value>(
 		input: ReaderPageInput,
@@ -162,6 +163,8 @@ export function createBoundedJourneyReaders(
 					.where(
 						and(
 							eq(contactEvent.eventType, COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE),
+							scope ? eq(contactEvent.contactId, scope.contactId) : undefined,
+							scope ? eq(contactEvent.id, scope.entryFactId) : undefined,
 							lte(contactEvent.occurredAt, request.now),
 							request.after
 								? or(
@@ -194,6 +197,7 @@ export function createBoundedJourneyReaders(
 					.where(
 						and(
 							eq(wakes.status, 'Pending'),
+							scope ? eq(wakes.journeyId, scope.journeyId) : undefined,
 							lte(wakes.dueAt, request.now),
 							request.after
 								? or(
@@ -234,6 +238,7 @@ export function createBoundedJourneyReaders(
 					.where(
 						and(
 							eq(intents.status, 'Pending'),
+							scope ? eq(intents.journeyId, scope.journeyId) : undefined,
 							lte(intents.availableAt, request.now),
 							request.after
 								? or(

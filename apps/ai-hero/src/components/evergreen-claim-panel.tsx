@@ -48,6 +48,7 @@ export const evergreenClaimMachine = setup({
 						: undefined,
 					body: input.csrf ? JSON.stringify({ csrf: input.csrf }) : undefined,
 				})
+				if (!result.ok) throw new Error('Claim unavailable')
 				return responseSchema.parse(await result.json())
 			},
 		),
@@ -102,18 +103,28 @@ export const evergreenClaimMachine = setup({
 export function EvergreenClaimPanel({
 	endpoint,
 	productPath,
+	pilotOnly = false,
 }: {
 	endpoint: string
 	productPath: string
+	pilotOnly?: boolean
 }) {
 	if (
 		!/^\/api\/[a-z0-9/-]+$/.test(endpoint) ||
-		!/^\/products\/[a-z0-9-]+$/.test(productPath)
+		!/^\/(products|workshops)\/[a-z0-9-]+$/.test(productPath)
 	)
 		throw new Error('Invalid local claim route')
 	const [state, send] = useMachine(evergreenClaimMachine, {
 		input: { endpoint },
 	})
+	// Static workshop HTML contains no private configuration. The uncached,
+	// authenticated GET decides whether this pilot affordance exists at all.
+	if (
+		pilotOnly &&
+		(state.matches('error') ||
+			(state.matches('loading') && state.context.status === 'unavailable'))
+	)
+		return null
 	const busy = state.matches('loading') || state.matches('submitting')
 	const message = busy
 		? 'Checking your offer…'
