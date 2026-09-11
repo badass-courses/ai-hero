@@ -205,8 +205,7 @@ export const WorkshopSidebarMobile = ({
 	teamOptionsHref?: string
 }) => {
 	const { fields } = workshop ?? {}
-	// The bar has room for one ask. The team path rides under the title as a
-	// text link, where the sidebar card puts it under the buy button.
+	// The team path, beside the buy button as on the card.
 	const showTeamLink =
 		Boolean(teamOptionsHref) && !interestCapture && !purchased
 
@@ -236,18 +235,19 @@ export const WorkshopSidebarMobile = ({
 				<h3 className="font-heading truncate text-sm font-semibold">
 					{fields?.title}
 				</h3>
-				{showTeamLink ? (
-					<Link
-						href={teamOptionsHref!}
-						className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[13px] font-medium underline-offset-4 hover:underline"
-					>
-						See team options
-						<ArrowUpRight className="size-3.5" aria-hidden="true" />
-					</Link>
-				) : (
-					<Contributor className="gap-1 text-sm [&_img]:w-5" />
-				)}
+				<Contributor className="gap-1 text-sm [&_img]:w-5" />
 			</div>
+			{/* The card's outline twin, compact: the bar has room for the pair
+			    only if the secondary keeps to one word. */}
+			{showTeamLink && (
+				<Link
+					href={teamOptionsHref!}
+					className="border-input hover:bg-foreground/[0.04] inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[9px] border px-3.5 text-sm font-semibold transition-colors"
+				>
+					Teams
+					<ArrowUpRight className="size-3.5" aria-hidden="true" />
+				</Link>
+			)}
 			{interestCapture ? (
 				<Button
 					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}

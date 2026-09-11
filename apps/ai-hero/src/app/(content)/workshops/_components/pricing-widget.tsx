@@ -8,7 +8,6 @@ import {
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
-	ArrowRight,
 	ArrowUpRight,
 	Mail,
 	Minus,
@@ -129,10 +128,7 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
-					<TeamPurchaseControls
-						teamMode={teamMode}
-						teamOptionsHref={teamOptionsHref}
-					/>
+					<TeamPurchaseControls teamMode={teamMode} />
 					{buyButton ?? (
 						<Pricing.BuyButton
 							className={cn(
@@ -148,6 +144,19 @@ export const PricingWidget = ({
 										? 'Buy Ticket'
 										: null)}
 						</Pricing.BuyButton>
+					)}
+					{/* The secondary ask, as the primary's outline twin: same height
+					    and radius, hairline instead of gold, so the pair reads as one
+					    decision with two answers. Only on the individual card; the
+					    team page is where it leads. */}
+					{!teamMode && teamOptionsHref && (
+						<a
+							href={teamOptionsHref}
+							className="border-input hover:bg-foreground/[0.04] mt-2.5 inline-flex h-[46px] w-full items-center justify-center gap-2 rounded-[9px] border text-[15px] font-bold transition-colors"
+						>
+							See team options
+							<ArrowUpRight className="size-4" aria-hidden="true" />
+						</a>
 					)}
 					<Pricing.GuaranteeBadge>
 						<span
@@ -365,13 +374,7 @@ const CardPrice = ({
  * Same context state underneath (`isTeamPurchaseActive`, `quantity`), so the
  * checkout path and PPP gating behave exactly as before.
  */
-const TeamPurchaseControls = ({
-	teamMode,
-	teamOptionsHref,
-}: {
-	teamMode: boolean
-	teamOptionsHref?: string
-}) => {
+const TeamPurchaseControls = ({ teamMode }: { teamMode: boolean }) => {
 	const {
 		isTeamPurchaseActive,
 		toggleTeamPurchase,
@@ -448,7 +451,7 @@ const TeamPurchaseControls = ({
 			    checkbox renders a button, and a button inside a label is invalid
 			    markup that leaves the control unnamed. */}
 			{!teamMode && (
-				<div className="flex w-full flex-wrap items-center gap-x-4 gap-y-1.5">
+				<div className="flex w-full items-center gap-2.5">
 					<div className="flex items-center gap-2.5">
 						<Checkbox
 							id="team-purchase"
@@ -463,22 +466,6 @@ const TeamPurchaseControls = ({
 							Buying for your team?
 						</label>
 					</div>
-					{/* The full team story, on the row where a team buyer is already
-					    looking. Wraps under the label on a narrow card rather than
-					    truncating. Visible whether or not the box is ticked: the
-					    undecided reader is the one who needs it. */}
-					{teamOptionsHref && (
-						<a
-							href={teamOptionsHref}
-							className={cn(
-								TYPE.meta,
-								'text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 underline-offset-4 transition-colors hover:underline',
-							)}
-						>
-							Team options
-							<ArrowRight className="size-3.5" aria-hidden="true" />
-						</a>
-					)}
 				</div>
 			)}
 			{teamMode && (
