@@ -206,7 +206,9 @@ export default async function WorkshopForTeamsPage(props: Props) {
 				<section className="border-b">
 					<article
 						className={cn(
-							'prose dark:prose-invert sm:prose-lg prose-headings:tracking-tight prose-p:max-w-4xl prose-headings:max-w-4xl prose-ul:max-w-4xl prose-ol:max-w-4xl max-w-none',
+							// Centred at the article measure, the way the landing's Prose
+							// block sits, rather than hugging the left edge of a wide band.
+							'prose dark:prose-invert sm:prose-lg prose-headings:tracking-tight mx-auto max-w-3xl',
 							INNER,
 						)}
 					>
