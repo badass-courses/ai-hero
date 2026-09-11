@@ -8,6 +8,7 @@ import {
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
 import {
+	ArrowRight,
 	ArrowUpRight,
 	Mail,
 	Minus,
@@ -128,7 +129,10 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
-					<TeamPurchaseControls teamMode={teamMode} />
+					<TeamPurchaseControls
+						teamMode={teamMode}
+						teamOptionsHref={teamOptionsHref}
+					/>
 					{buyButton ?? (
 						<Pricing.BuyButton
 							className={cn(
@@ -361,7 +365,13 @@ const CardPrice = ({
  * Same context state underneath (`isTeamPurchaseActive`, `quantity`), so the
  * checkout path and PPP gating behave exactly as before.
  */
-const TeamPurchaseControls = ({ teamMode }: { teamMode: boolean }) => {
+const TeamPurchaseControls = ({
+	teamMode,
+	teamOptionsHref,
+}: {
+	teamMode: boolean
+	teamOptionsHref?: string
+}) => {
 	const {
 		isTeamPurchaseActive,
 		toggleTeamPurchase,
@@ -438,20 +448,38 @@ const TeamPurchaseControls = ({ teamMode }: { teamMode: boolean }) => {
 			    checkbox renders a button, and a button inside a label is invalid
 			    markup that leaves the control unnamed. */}
 			{!teamMode && (
-			<div className="flex items-center gap-2.5">
-				<Checkbox
-					id="team-purchase"
-					checked={isTeamPurchaseActive}
-					onCheckedChange={onTeamCheckedChange}
-					className="rounded-[4px]"
-				/>
-				<label
-					htmlFor="team-purchase"
-					className={cn(TYPE.meta, 'text-muted-foreground cursor-pointer')}
-				>
-					Buying for your team?
-				</label>
-			</div>
+				<div className="flex w-full flex-wrap items-center gap-x-4 gap-y-1.5">
+					<div className="flex items-center gap-2.5">
+						<Checkbox
+							id="team-purchase"
+							checked={isTeamPurchaseActive}
+							onCheckedChange={onTeamCheckedChange}
+							className="rounded-[4px]"
+						/>
+						<label
+							htmlFor="team-purchase"
+							className={cn(TYPE.meta, 'text-muted-foreground cursor-pointer')}
+						>
+							Buying for your team?
+						</label>
+					</div>
+					{/* The full team story, on the row where a team buyer is already
+					    looking. Wraps under the label on a narrow card rather than
+					    truncating. Visible whether or not the box is ticked: the
+					    undecided reader is the one who needs it. */}
+					{teamOptionsHref && (
+						<a
+							href={teamOptionsHref}
+							className={cn(
+								TYPE.meta,
+								'text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 underline-offset-4 transition-colors hover:underline',
+							)}
+						>
+							Team options
+							<ArrowRight className="size-3.5" aria-hidden="true" />
+						</a>
+					)}
+				</div>
 			)}
 			{teamMode && (
 				<label htmlFor="team-seats" className={cn(TYPE.groupLabel)}>
