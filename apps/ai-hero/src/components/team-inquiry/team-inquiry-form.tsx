@@ -45,9 +45,14 @@ const ErrorMessage = ({ children }: React.PropsWithChildren) => (
 	</div>
 )
 
-export const TeamInquiryForm: React.FC<{ location: string }> = ({
-	location,
-}) => {
+export const TeamInquiryForm: React.FC<{
+	location: string
+	/**
+	 * Names the product the inquiry is about in the email Joel reads, e.g. a
+	 * workshop slug. Defaults to "Direct" on the server.
+	 */
+	source?: string
+}> = ({ location, source }) => {
 	const [isSubmitted, setIsSubmitted] = React.useState(false)
 	const [error, setError] = React.useState<string>()
 
@@ -79,6 +84,7 @@ export const TeamInquiryForm: React.FC<{ location: string }> = ({
 			...values,
 			context: {
 				url: location,
+				source,
 			},
 		})
 

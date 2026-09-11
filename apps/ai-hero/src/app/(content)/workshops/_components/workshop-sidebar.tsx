@@ -9,6 +9,7 @@ import { env } from '@/env.mjs'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
+import { ArrowUpRight } from 'lucide-react'
 
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -18,7 +19,7 @@ import {
 	type PricingComponentProps,
 } from './inline-mdx-pricing'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
-import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 import type { WorkshopPageProps } from './workshop-page-props'
 
 export const WorkshopSidebar = ({
@@ -28,6 +29,7 @@ export const WorkshopSidebar = ({
 	pricingProps,
 	interestCapture = false,
 	purchased = false,
+	teamOptionsHref,
 }: {
 	children: React.ReactNode
 	workshop?: MinimalWorkshop | null
@@ -36,6 +38,8 @@ export const WorkshopSidebar = ({
 	interestCapture?: boolean
 	/** The viewer owns this workshop: the mobile bar offers Continue, not Buy. */
 	purchased?: boolean
+	/** The workshop's team page, when it has one: the mobile bar's second path. */
+	teamOptionsHref?: string
 }) => {
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
@@ -141,6 +145,7 @@ export const WorkshopSidebar = ({
 				pricingProps={pricingProps}
 				interestCapture={interestCapture}
 				purchased={purchased}
+				teamOptionsHref={teamOptionsHref}
 			/>
 		</>
 	)
@@ -190,14 +195,20 @@ export const WorkshopSidebarMobile = ({
 	pricingProps,
 	interestCapture = false,
 	purchased = false,
+	teamOptionsHref,
 }: {
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
 	purchased?: boolean
+	teamOptionsHref?: string
 }) => {
 	const { fields } = workshop ?? {}
+	// The bar has room for one ask. The team path rides under the title as a
+	// text link, where the sidebar card puts it under the buy button.
+	const showTeamLink =
+		Boolean(teamOptionsHref) && !interestCapture && !purchased
 
 	const handleScrollToBuy = (
 		e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>,
@@ -225,7 +236,17 @@ export const WorkshopSidebarMobile = ({
 				<h3 className="font-heading truncate text-sm font-semibold">
 					{fields?.title}
 				</h3>
-				<Contributor className="gap-1 text-sm [&_img]:w-5" />
+				{showTeamLink ? (
+					<Link
+						href={teamOptionsHref!}
+						className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[13px] font-medium underline-offset-4 hover:underline"
+					>
+						See team options
+						<ArrowUpRight className="size-3.5" aria-hidden="true" />
+					</Link>
+				) : (
+					<Contributor className="gap-1 text-sm [&_img]:w-5" />
+				)}
 			</div>
 			{interestCapture ? (
 				<Button

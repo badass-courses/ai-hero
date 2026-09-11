@@ -8,6 +8,7 @@ import { hasWorkshopInterest } from '@/lib/cta-gating'
 import { Button } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 import { WorkshopInterestButton } from './workshop-interest-button'
 
 /**
@@ -19,9 +20,6 @@ import { WorkshopInterestButton } from './workshop-interest-button'
  * `Button`'s default variant paints this CTA black on paper and gold at night.
  * `--accent-fill` is the gold that survives both themes.
  */
-export const WORKSHOP_CTA_BUTTON =
-	'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover h-[46px] cursor-pointer rounded-[9px] px-5 text-[15px] font-bold'
-
 /**
  * In-body CTA for pre-launch workshops: scrolls to the sidebar interest-capture
  * form (the single source of signups) rather than showing a buy button. If the
