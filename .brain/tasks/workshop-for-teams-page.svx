@@ -27,9 +27,12 @@ disturbing the workshop sidebar pricing widget that is converting today.
 
 1. Workshop sidebar pricing widget stays the individual path. The
    "Buying for your team?" checkbox, stepper and boss-letter card all stay.
-2. Entry point: a "See team options" line in the sidebar card under the buy
-   button, alongside the boss-letter card, and the same link in the mobile
-   bottom bar. No hero choice grid, no sticky buy bar.
+2. Entry point (settled after three rounds on 2026-09-11): an outline button
+   "Buy for your team" directly under the gold buy button, the primary's
+   twin; and a compact "For your team" outline button beside the buy button
+   in the mobile bar. The "Buying for your team?" checkbox stays. The small
+   row link and the bottom side-link card were both tried and dropped:
+   buried and too small. Boss-letter card stays at the card's foot.
 3. New route `/workshops/[module]/for-teams`. Copy lives in a new optional
    `fields.forTeamsBody` MDX field on the workshop, exposed in the editor as a
    second "For teams" body (same pattern as cohort `postPurchaseBody`, done as
@@ -66,6 +69,7 @@ a cohort-specific teams page, Kit or Slack hooks for inquiries.
 - Gotcha: the workshop cover is a 16:9 card with the title drawn in; never
   `object-cover` it into a narrow column. The teams hero shows it at its own
   ratio in a balanced split.
-- Open: an entry point for the team link also has to live in the checkbox row
-  of the widget (added). Amended entry point decision: row link AND bottom
-  card, per Vojta.
+- CTA vocabulary: the secondary ask on the team pages is "Get a quote for
+  your team" (form), the hub's crash-course card says "See team options"
+  (goes to the page), the workshop card says "Buy for your team". Labels
+  name what the reader gets, never the act of contacting.
