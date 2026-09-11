@@ -13,7 +13,13 @@ import {
 	getCachedWorkshopProduct,
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
-import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
+import {
+	ArrowLeft,
+	ArrowRight,
+	Percent,
+	Receipt,
+	User,
+} from 'lucide-react'
 
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -39,9 +45,9 @@ export async function generateStaticParams() {
 
 /** What a seat is, for the person deciding how many to buy. */
 const SEAT_FACTS = [
-	'One licence per engineer, yours to assign from your account',
-	'Volume pricing from five seats, applied in the card',
-	'Invoice with your company details and tax ID after checkout',
+	{ icon: User, text: 'One licence per engineer, yours to assign from your account' },
+	{ icon: Percent, text: 'Volume pricing from five seats, applied in the card' },
+	{ icon: Receipt, text: 'Invoice with your company details and tax ID after checkout' },
 ] as const
 
 /** The inner pad every band shares (DESIGN rules 1 and 3). */
@@ -243,19 +249,18 @@ export default async function WorkshopForTeamsPage(props: Props) {
 									whenever you are ready.
 								</p>
 								<ul className="mt-8 flex max-w-[52ch] flex-col">
-									{SEAT_FACTS.map((fact) => (
+									{SEAT_FACTS.map(({ icon: Icon, text }) => (
 										<li
-											key={fact}
+											key={text}
 											className={cn(
 												TYPE.meta,
-												'flex items-start gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal last:border-b',
+												'flex items-center gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal last:border-b',
 											)}
 										>
-											<Check
-												className="text-primary mt-0.5 size-4 shrink-0"
-												aria-hidden="true"
-											/>
-											{fact}
+											<span className="border-border bg-background flex size-9 shrink-0 items-center justify-center rounded-[6px] border text-[color:var(--ah-fg-muted)]">
+												<Icon className="size-4" aria-hidden="true" />
+											</span>
+											{text}
 										</li>
 									))}
 								</ul>

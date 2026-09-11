@@ -1,14 +1,24 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
-import { BADGE_NEUTRAL, BADGE_SOLID, TYPE } from '@/components/landing/type'
+import { HeroShader } from '@/components/landing/hero-shader'
+import { BADGE_NEUTRAL, TYPE } from '@/components/landing/type'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import LayoutClient from '@/components/layout-client'
 import { TeamInquiryForm } from '@/components/team-inquiry/team-inquiry-form'
 import { AI_CODING_COHORT_SLUG } from '@/lib/campaign-landings'
 import { AI_CODING_CRASH_COURSE_SLUG } from '@/lib/crash-course-purchaser-tag'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
-import { ArrowRight, ArrowUpRight, Check } from 'lucide-react'
+import {
+	ArrowRight,
+	ArrowUpRight,
+	CalendarOff,
+	Percent,
+	PlayCircle,
+	Receipt,
+	User,
+	Users,
+} from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
 
@@ -31,10 +41,10 @@ export const metadata: Metadata = {
 
 /** The four facts a champion forwards to whoever signs off. */
 const TEAM_FACTS = [
-	'One licence per engineer, assigned from your account',
-	'An invoice with your company details and tax ID',
-	'Volume pricing from five seats',
-	'Self-paced, so nobody waits for a cohort date',
+	{ icon: User, text: 'One licence per engineer, assigned from your account' },
+	{ icon: Receipt, text: 'An invoice with your company details and tax ID' },
+	{ icon: Percent, text: 'Volume pricing from five seats' },
+	{ icon: CalendarOff, text: 'Self-paced, so nobody waits for a cohort date' },
 ] as const
 
 /** The inner pad every band shares (DESIGN rules 1 and 3). */
@@ -95,33 +105,58 @@ export default async function TeamPage() {
 								<li className={cn(TYPE.groupLabel, 'pb-3')}>
 									What your team gets
 								</li>
-								{TEAM_FACTS.map((fact) => (
+								{TEAM_FACTS.map(({ icon: Icon, text }) => (
 									<li
-										key={fact}
+										key={text}
 										className={cn(
 											TYPE.meta,
-											'flex items-start gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal',
+											'flex items-center gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal',
 										)}
 									>
-										<Check
-											className="text-primary mt-0.5 size-4 shrink-0"
-											aria-hidden="true"
-										/>
-										{fact}
+										<span className="border-border bg-background flex size-9 shrink-0 items-center justify-center rounded-[6px] border text-[color:var(--ah-fg-muted)]">
+											<Icon className="size-4" aria-hidden="true" />
+										</span>
+										{text}
 									</li>
 								))}
 							</ul>
 						</div>
 					</div>
-					<div className="absolute right-0 top-0 z-0 w-full">
-						<div
-							className="bg-stripes opacity-8! h-[320px] w-full"
-							aria-hidden="true"
+					{/* The page's one colourful moment (DESIGN § color strategy): the
+					    brand shader the newsletter page wears, faded into the page
+					    ground so the copy stays on neutral. */}
+					<div
+						aria-hidden
+						className="pointer-events-none absolute inset-0 z-0 select-none overflow-hidden"
+					>
+						<HeroShader
+							className="absolute inset-0 opacity-25"
+							speed={0.2}
+							frequency={7.0}
+							displacement={0.018}
+							displacementFreq={4.5}
+							mouseFollow={0.03}
+							mouseInfluence={0.55}
+							flowY={0.2}
+							flowX={0.2}
+							intensity={1.0}
+							saturation={1.25}
+							sharpness={0.7}
+							grain={0.1}
+							grainTexture={0.3}
+							grainScale={0.5}
+							chromaOffset={13.0}
+							vignette={0}
+							mouseHalo={0.15}
+							posterize={0.1}
+							colorDrift={0.05}
+							seed={10}
 						/>
-						<div
-							className="to-background via-background bg-linear-to-bl absolute left-0 top-0 z-10 h-full w-full from-transparent"
-							aria-hidden="true"
-						/>
+						{/* Two fades: down into the page ground, and from the copy column
+						    outward so the words stay on neutral and the colour sits behind
+						    the panel. */}
+						<div className="bg-linear-to-b to-background absolute inset-0 from-transparent via-transparent" />
+						<div className="from-background via-background/70 bg-linear-to-r absolute inset-0 to-transparent" />
 					</div>
 				</header>
 
@@ -134,9 +169,12 @@ export default async function TeamPage() {
 							className={cn('bg-background flex flex-col', INNER)}
 							aria-labelledby="offer-crash-course"
 						>
+							<span className="border-border bg-background mb-5 flex size-11 items-center justify-center rounded-lg border text-[color:var(--ah-fg-muted)]">
+								<PlayCircle className="size-5" aria-hidden="true" />
+							</span>
 							<div className="mb-4 flex flex-wrap items-center gap-3">
 								<p className={cn(TYPE.groupLabel)}>01 / Self-paced course</p>
-								<span className={cn(TYPE.badge, BADGE_SOLID)}>Buy today</span>
+								<span className={cn(TYPE.badge, BADGE_NEUTRAL)}>Buy today</span>
 							</div>
 							<h2 id="offer-crash-course" className={cn(TYPE.heading)}>
 								{crashCourse?.fields.title ?? 'AI Coding Crash Course'}
@@ -189,6 +227,9 @@ export default async function TeamPage() {
 							className={cn('bg-background flex flex-col', INNER)}
 							aria-labelledby="offer-cohort"
 						>
+							<span className="border-border bg-background mb-5 flex size-11 items-center justify-center rounded-lg border text-[color:var(--ah-fg-muted)]">
+								<Users className="size-5" aria-hidden="true" />
+							</span>
 							<div className="mb-4 flex flex-wrap items-center gap-3">
 								<p className={cn(TYPE.groupLabel)}>02 / Completed cohort</p>
 								<span className={cn(TYPE.badge, BADGE_NEUTRAL)}>
