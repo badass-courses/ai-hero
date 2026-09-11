@@ -237,44 +237,46 @@ export const WorkshopSidebarMobile = ({
 				</h3>
 				<Contributor className="gap-1 text-sm [&_img]:w-5" />
 			</div>
-			{/* The card's outline twin, compact: the bar has room for the pair
-			    only if the secondary keeps to one word. */}
-			{showTeamLink && (
-				<Link
-					href={teamOptionsHref!}
-					className="border-input hover:bg-foreground/[0.04] inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[9px] border px-3.5 text-sm font-semibold transition-colors"
-				>
-					Teams
-					<ArrowUpRight className="size-3.5" aria-hidden="true" />
-				</Link>
-			)}
-			{interestCapture ? (
-				<Button
-					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
-					onClick={handleScrollToBuy}
-				>
-					Get notified
-				</Button>
-			) : purchased && fields?.slug ? (
-				<ContinueLearningButton moduleSlug={fields.slug} />
-			) : (
-				workshop &&
-				pricingProps && (
-					<InlineBuyButton
-						className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
-						resource={workshop}
-						pricingDataLoader={pricingProps.pricingDataLoader}
-						pricingProps={pricingProps as any}
-						centered={false}
-						resourceType="workshop"
-						pricingOptions={{
-							withTitle: false,
-							withImage: false,
-						}}
-						regionalPricingNoteTargetId="buy"
-					/>
-				)
-			)}
+			{/* The two asks together on the right, as on the card: the outline
+			    twin first, the gold buy last. */}
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{showTeamLink && (
+					<Link
+						href={teamOptionsHref!}
+						className="border-input hover:bg-foreground/[0.04] inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[9px] border px-3.5 text-sm font-semibold transition-colors"
+					>
+						For teams
+						<ArrowUpRight className="size-3.5" aria-hidden="true" />
+					</Link>
+				)}
+				{interestCapture ? (
+					<Button
+						className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
+						onClick={handleScrollToBuy}
+					>
+						Get notified
+					</Button>
+				) : purchased && fields?.slug ? (
+					<ContinueLearningButton moduleSlug={fields.slug} />
+				) : (
+					workshop &&
+					pricingProps && (
+						<InlineBuyButton
+							className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
+							resource={workshop}
+							pricingDataLoader={pricingProps.pricingDataLoader}
+							pricingProps={pricingProps as any}
+							centered={false}
+							resourceType="workshop"
+							pricingOptions={{
+								withTitle: false,
+								withImage: false,
+							}}
+							regionalPricingNoteTargetId="buy"
+						/>
+					)
+				)}
+			</div>
 		</div>
 	)
 }
