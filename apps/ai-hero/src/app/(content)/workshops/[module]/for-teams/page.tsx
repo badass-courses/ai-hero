@@ -13,7 +13,7 @@ import {
 	getCachedWorkshopProduct,
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -36,6 +36,13 @@ export const dynamic = 'force-static'
 export async function generateStaticParams() {
 	return []
 }
+
+/** What a seat is, for the person deciding how many to buy. */
+const SEAT_FACTS = [
+	'One licence per engineer, yours to assign from your account',
+	'Volume pricing from five seats, applied in the card',
+	'Invoice with your company details and tax ID after checkout',
+] as const
 
 /** The inner pad every band shares (DESIGN rules 1 and 3). */
 const INNER = 'px-[18px] py-12 sm:px-11 md:py-[52px]'
@@ -235,6 +242,23 @@ export default async function WorkshopForTeamsPage(props: Props) {
 									is a full licence, and you assign them from your account
 									whenever you are ready.
 								</p>
+								<ul className="mt-8 flex max-w-[52ch] flex-col">
+									{SEAT_FACTS.map((fact) => (
+										<li
+											key={fact}
+											className={cn(
+												TYPE.meta,
+												'flex items-start gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal last:border-b',
+											)}
+										>
+											<Check
+												className="text-primary mt-0.5 size-4 shrink-0"
+												aria-hidden="true"
+											/>
+											{fact}
+										</li>
+									))}
+								</ul>
 								<a
 									href="#contact"
 									className={cn(
@@ -242,7 +266,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 										'text-muted-foreground hover:text-foreground mt-6 inline-flex items-center gap-1.5 underline-offset-4 hover:underline',
 									)}
 								>
-									Need an invoice or a bigger group? Ask about team access
+									Need an invoice up front or a bigger group? Ask about team access
 									<ArrowRight className="size-3.5" aria-hidden="true" />
 								</a>
 							</div>
@@ -302,9 +326,9 @@ export default async function WorkshopForTeamsPage(props: Props) {
 				>
 					<div className="grid grid-cols-1 md:grid-cols-6">
 						<div className={cn('col-span-3 lg:col-span-2', INNER)}>
-							<p className={cn(TYPE.groupLabel, 'mb-4')}>Talk to us</p>
+							<p className={cn(TYPE.groupLabel, 'mb-4')}>Team pricing</p>
 							<h2 id="contact-title" className={cn(TYPE.heading)}>
-								Have a question first?
+								Get a quote for your team
 							</h2>
 							<p
 								className={cn(
@@ -312,9 +336,10 @@ export default async function WorkshopForTeamsPage(props: Props) {
 									'text-foreground/80 mt-5 max-w-[40ch]',
 								)}
 							>
-								Tell us your team size and what you would like your engineers
-								to learn. Invoicing, procurement and larger groups all start
-								here.
+								Bigger group, an invoice before payment, or a question the
+								page did not answer? Tell us how many engineers and what you
+								want them to improve. You get pricing and the fastest way to
+								get everyone started, within a working day.
 							</p>
 						</div>
 						<div className={cn('col-span-3 md:border-l lg:col-span-4', INNER)}>
