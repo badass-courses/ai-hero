@@ -119,7 +119,7 @@ export default async function TeamPage() {
 							aria-labelledby="offer-cohort"
 						>
 							<p className={cn(TYPE.groupLabel, 'mb-4')}>
-								02 / Recorded cohort
+								02 / Completed cohort
 							</p>
 							<h2 id="offer-cohort" className={cn(TYPE.heading)}>
 								AI Coding for Real Engineers
@@ -130,9 +130,10 @@ export default async function TeamPage() {
 									'text-foreground/80 mt-4 max-w-[46ch]',
 								)}
 							>
-								Team access to the recorded lessons and async material from
-								the completed live run: specification-driven development,
-								agent workflows and shared practices. Quoted per team.
+								Team access to the completed cohort: the self-paced lessons and
+								exercises, plus the recorded office hours from the live run.
+								Specification-driven development, agent workflows and shared
+								practices. Quoted per team.
 							</p>
 							<p className={cn(TYPE.metaSm, 'text-muted-foreground mb-8 mt-3')}>
 								<Link
