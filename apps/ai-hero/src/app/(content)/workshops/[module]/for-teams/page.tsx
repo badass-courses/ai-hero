@@ -13,7 +13,7 @@ import {
 	getCachedWorkshopProduct,
 } from '@/lib/workshops-query'
 import { compileMDX } from '@/utils/compile-mdx'
-import { ArrowLeft, ArrowRight, ArrowUpRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -41,7 +41,7 @@ export async function generateStaticParams() {
 const INNER = 'px-[18px] py-12 sm:px-11 md:py-[52px]'
 
 const OUTLINE_BUTTON =
-	'border-foreground/20 hover:bg-secondary focus-visible:ring-ring group inline-flex h-[46px] items-center justify-center gap-2 rounded-[9px] border px-5 text-[15px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
+	'border-foreground/20 hover:bg-secondary focus-visible:ring-ring inline-flex h-[46px] items-center justify-center rounded-[9px] border px-5 text-[15px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
 
 export async function generateMetadata(
 	props: Props,
@@ -146,19 +146,15 @@ export default async function WorkshopForTeamsPage(props: Props) {
 										href="#seats"
 										className={cn(
 											WORKSHOP_CTA_BUTTON,
-											'inline-flex items-center gap-2',
+											'inline-flex items-center',
 										)}
 									>
 										Buy team seats
-										<ArrowUpRight className="size-4" aria-hidden="true" />
 									</a>
 								)}
+								{/* Both asks stay on this page, so neither wears an arrow. */}
 								<a href="#contact" className={OUTLINE_BUTTON}>
 									Ask about team access
-									<ArrowRight
-										className="ease-out-quart size-4 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none"
-										aria-hidden="true"
-									/>
 								</a>
 							</div>
 							<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-4')}>
