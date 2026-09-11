@@ -125,7 +125,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 				    drawn into it, so it is never cropped: it sits on the column's
 				    ground at the gutter, not stretched to fill it. */}
 				<header className="relative overflow-hidden border-b">
-					<div className="relative z-10 grid grid-cols-1 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+					<div className="relative z-10 flex flex-col-reverse md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
 						<div className="flex w-full flex-col items-start px-[18px] pb-12 pt-8 sm:px-11 md:justify-center md:py-[52px]">
 							<Link
 								href={workshopHref}
@@ -175,7 +175,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 							</p>
 						</div>
 						{workshop.fields.coverImage?.url && (
-							<div className="flex items-center px-[18px] pb-8 pt-8 sm:px-11 md:border-l md:py-[52px]">
+							<div className="flex items-center px-[18px] pb-2 pt-8 sm:px-11 md:border-l md:py-[52px]">
 								<div className="relative aspect-video w-full overflow-hidden rounded-[9px]">
 									<Image
 										priority
