@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
+import Image from 'next/image'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
@@ -17,7 +18,6 @@ import { ArrowLeft, ArrowRight, ArrowUpRight } from 'lucide-react'
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import WorkshopImage from '../../_components/workshop-image'
 import { WORKSHOP_CTA_BUTTON } from '../../_components/workshop-cta-button'
 import {
 	WorkshopPricingClient,
@@ -107,14 +107,13 @@ export default async function WorkshopForTeamsPage(props: Props) {
 	return (
 		<LayoutClient withContainer>
 			<main className="flex min-h-screen w-full flex-col">
-				{/* Hero: same six-column rhythm as the workshop page, the cover
-				    bleeding to the container's edges on the right. The eyebrow says
-				    what kind of page this is, the title names the course, and the
-				    two asks sit under the lead where the workshop page has its
-				    contributor. */}
+				{/* Hero: a balanced editorial split (DESIGN rule 4), the cover at
+				    its own 16:9 on the right. The cover is a card with the title
+				    drawn into it, so it is never cropped: it sits on the column's
+				    ground at the gutter, not stretched to fill it. */}
 				<header className="relative overflow-hidden border-b">
-					<div className="relative z-10 flex w-full flex-col-reverse md:grid md:grid-cols-6 md:items-stretch">
-						<div className="col-span-4 flex w-full flex-col items-start px-[18px] pb-12 pt-8 sm:px-11 md:justify-center md:py-[52px]">
+					<div className="relative z-10 grid grid-cols-1 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+						<div className="flex w-full flex-col items-start px-[18px] pb-12 pt-8 sm:px-11 md:justify-center md:py-[52px]">
 							<Link
 								href={workshopHref}
 								className={cn(
@@ -166,11 +165,20 @@ export default async function WorkshopForTeamsPage(props: Props) {
 								One licence per person. Everyone learns on their own schedule.
 							</p>
 						</div>
-						<div className="relative col-span-2 w-full md:border-l">
-							{workshop.fields.coverImage?.url && (
-								<WorkshopImage imageUrl={workshop.fields.coverImage.url} />
-							)}
-						</div>
+						{workshop.fields.coverImage?.url && (
+							<div className="flex items-center px-[18px] pb-8 pt-8 sm:px-11 md:border-l md:py-[52px]">
+								<div className="relative aspect-video w-full overflow-hidden rounded-[9px]">
+									<Image
+										priority
+										fill
+										src={workshop.fields.coverImage.url}
+										alt={workshop.fields.coverImage.alt ?? workshop.fields.title}
+										sizes="(max-width: 768px) 100vw, 50vw"
+										className="object-contain"
+									/>
+								</div>
+							</div>
+						)}
 					</div>
 					<div className="absolute right-0 top-0 z-0 w-full">
 						<div

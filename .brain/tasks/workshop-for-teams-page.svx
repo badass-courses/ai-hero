@@ -1,6 +1,6 @@
 ---
 title: Surface the team story on the AI Coding Crash Course
-status: in-progress
+status: review
 assignee: "vojta (2026-09-11)"
 branch: feat/workshop-for-teams
 ---
@@ -55,3 +55,17 @@ a cohort-specific teams page, Kit or Slack hooks for inquiries.
 
 # Done
 
+- 2026-09-11: shipped on `feat/workshop-for-teams` (3 commits). Verified on the
+  ngrok dev app: hub, teams page (hero, story, logo wall, seats card in team
+  mode pricing 5 seats with the bulk discount, tagged inquiry form), sidebar
+  row link plus bottom card. Crash-course `forTeamsBody` pasted by Vojta via
+  the dev editor (prod DB; inert until deploy).
+- Gotcha: `WORKSHOP_CTA_BUTTON` lived in a `'use client'` module. A string
+  imported from one into a server component arrives as a client reference and
+  `cn()` drops it silently. It now lives in `workshop-cta-button.ts`.
+- Gotcha: the workshop cover is a 16:9 card with the title drawn in; never
+  `object-cover` it into a narrow column. The teams hero shows it at its own
+  ratio in a balanced split.
+- Open: an entry point for the team link also has to live in the checkbox row
+  of the widget (added). Amended entry point decision: row link AND bottom
+  card, per Vojta.
