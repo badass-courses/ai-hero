@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { CheckIcon, XCircleIcon } from 'lucide-react'
+import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { useForm } from 'react-hook-form'
 
 import {
@@ -18,6 +19,7 @@ import {
 	Textarea,
 } from '@coursebuilder/ui'
 import Spinner from '@coursebuilder/ui/primitives/spinner'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { sendTeamInquiry } from './team-inquiry-actions'
 import {
@@ -165,11 +167,12 @@ export const TeamInquiryForm: React.FC<{
 					/>
 				</div>
 
+				{/* The house gold CTA, same object as the workshop buy button. */}
 				<Button
 					type="submit"
 					size="lg"
 					disabled={form.formState.isSubmitting}
-					className="w-full"
+					className={cn(WORKSHOP_CTA_BUTTON, 'w-full')}
 				>
 					{form.formState.isSubmitting ? (
 						<>
