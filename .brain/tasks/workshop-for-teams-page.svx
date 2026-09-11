@@ -1,0 +1,75 @@
+---
+title: Surface the team story on the AI Coding Crash Course
+status: review
+assignee: "vojta (2026-09-11)"
+branch: feat/workshop-for-teams
+---
+
+# Goal
+
+Answer Joel's 2026-09-11 #lc-ai-hero ask ("make this nice", wzrrd mockup
+`aih-team-flow-2026-09-10-v7n3qk`, "bring team story to the surface") without
+disturbing the workshop sidebar pricing widget that is converting today.
+
+# Evidence
+
+- Front: nearly every `/for-your-team` inquiry (Sutter Health, BAC, Reveal AI,
+  Loihde, 2026-09-09..10) is answered by Joel with recorded team access to the
+  completed cohort "AI Coding for Real Engineers", not the crash course. Larger
+  groups get a call-booking link.
+- `/courses` "Bringing your team?" banner (`FLAGSHIP_TEAM` in
+  `src/lib/courses-content.ts`) is the highest-volume entry and links to
+  `/for-your-team`.
+- The cohort lives under `/cohorts/[slug]`, a different route family from
+  `/workshops/[module]`, so a per-workshop teams page cannot cover it.
+
+# Decisions (grilled 2026-09-11)
+
+1. Workshop sidebar pricing widget stays the individual path. The
+   "Buying for your team?" checkbox, stepper and boss-letter card all stay.
+2. Entry point (settled after three rounds on 2026-09-11): an outline button
+   "Buy for your team" directly under the gold buy button, the primary's
+   twin; and a compact "For your team" outline button beside the buy button
+   in the mobile bar. The "Buying for your team?" checkbox stays. The small
+   row link and the bottom side-link card were both tried and dropped:
+   buried and too small. Boss-letter card stays at the card's foot.
+3. New route `/workshops/[module]/for-teams`. Copy lives in a new optional
+   `fields.forTeamsBody` MDX field on the workshop, exposed in the editor as a
+   second "For teams" body (same pattern as cohort `postPurchaseBody`, done as
+   a local override on the spread `workshopManifest`; no `@coursebuilder/ui`
+   release). The page owns the layout: hero from workshop title, MDX field,
+   logo wall, seats section, inquiry form. Empty field returns 404.
+4. Seat checkout embeds the existing pricing container in team mode with the
+   individual checkbox hidden. No separate seats route.
+5. Contact is the existing `TeamInquiryForm` inline, source tagged with the
+   workshop slug so Front subjects show the product.
+6. Logo wall reuses `CompanyLogoGrid` with its "Trusted by engineers from"
+   claim. "Trusted by teams at" is not a claim we can defend.
+7. `/for-your-team` stays the generic hub, rebuilt as a two-offer page:
+   crash-course team seats (links to the new page) and cohort recordings
+   (scrolls to the inquiry form). Courses banner and nav keep pointing here.
+8. Delete the unused `TeamPricingWidget` component.
+9. One branch, one PR; ngrok preview posted in Joel's thread before merge.
+
+# Out of scope
+
+Sidebar redesign spec (`docs/workshop-landing-sidebar-actions-spec.md`),
+a cohort-specific teams page, Kit or Slack hooks for inquiries.
+
+# Done
+
+- 2026-09-11: shipped on `feat/workshop-for-teams` (3 commits). Verified on the
+  ngrok dev app: hub, teams page (hero, story, logo wall, seats card in team
+  mode pricing 5 seats with the bulk discount, tagged inquiry form), sidebar
+  row link plus bottom card. Crash-course `forTeamsBody` pasted by Vojta via
+  the dev editor (prod DB; inert until deploy).
+- Gotcha: `WORKSHOP_CTA_BUTTON` lived in a `'use client'` module. A string
+  imported from one into a server component arrives as a client reference and
+  `cn()` drops it silently. It now lives in `workshop-cta-button.ts`.
+- Gotcha: the workshop cover is a 16:9 card with the title drawn in; never
+  `object-cover` it into a narrow column. The teams hero shows it at its own
+  ratio in a balanced split.
+- CTA vocabulary: the secondary ask on the team pages is "Get a quote for
+  your team" (form), the hub's crash-course card says "See team options"
+  (goes to the page), the workshop card says "Buy for your team". Labels
+  name what the reader gets, never the act of contacting.

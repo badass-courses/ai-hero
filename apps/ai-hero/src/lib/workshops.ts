@@ -13,6 +13,12 @@ export const WorkshopFieldsSchema = z.object({
 	subtitle: z.string().optional(),
 	description: z.string().optional(),
 	body: z.string().optional(),
+	/**
+	 * MDX for `/workshops/[slug]/for-teams`: the team story for this workshop,
+	 * edited as a second body next to the sales copy (same pattern as a
+	 * cohort's `postPurchaseBody`). Empty means the route is a 404.
+	 */
+	forTeamsBody: z.string().optional(),
 	state: z.enum(['draft', 'published', 'archived', 'deleted']).default('draft'),
 	startsAt: z.string().datetime().nullish(),
 	endsAt: z.string().datetime().nullish(),

@@ -7,7 +7,13 @@ import {
 } from '@/components/commerce/product-pricing-features'
 import { TYPE } from '@/components/landing/type'
 import { formatDeadline } from '@/utils/discount-formatter'
-import { ArrowUpRight, Mail, Minus, Plus, ShieldCheck } from 'lucide-react'
+import {
+	ArrowUpRight,
+	Mail,
+	Minus,
+	Plus,
+	ShieldCheck,
+} from 'lucide-react'
 import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
@@ -24,7 +30,7 @@ import { formatUsd } from '@coursebuilder/core/utils/format-usd'
 import { Checkbox } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 
 export type PricingData = {
 	formattedPrice?: FormattedPrice | null
@@ -55,6 +61,13 @@ export type PricingWidgetProps = {
 	buyButton?: React.ReactNode
 	/** "/boss/<slug>" — a shareable approval letter, offered beside the team checkbox. */
 	teamLetterHref?: string
+	/** "/workshops/<slug>/for-teams" — the team story, offered under the letter. */
+	teamOptionsHref?: string
+	/**
+	 * The card is the team checkout: seats start on, the checkbox goes away, and
+	 * the side-links do too (this IS the team options page).
+	 */
+	teamMode?: boolean
 }
 
 /**
@@ -81,6 +94,8 @@ export const PricingWidget = ({
 	hideFeatures,
 	buyButton,
 	teamLetterHref,
+	teamOptionsHref,
+	teamMode = false,
 }: PricingWidgetProps) => {
 	const couponFromCode = commerceProps?.couponFromCode
 	const { validCoupon } = useCoupon(couponFromCode)
@@ -112,7 +127,7 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
-					<TeamPurchaseControls />
+					<TeamPurchaseControls teamMode={teamMode} />
 					{buyButton ?? (
 						<Pricing.BuyButton
 							className={cn(
@@ -128,6 +143,19 @@ export const PricingWidget = ({
 										? 'Buy Ticket'
 										: null)}
 						</Pricing.BuyButton>
+					)}
+					{/* The secondary ask, as the primary's outline twin: same height
+					    and radius, hairline instead of gold, so the pair reads as one
+					    decision with two answers. Only on the individual card; the
+					    team page is where it leads. */}
+					{!teamMode && teamOptionsHref && (
+						<a
+							href={teamOptionsHref}
+							className="border-input hover:bg-foreground/[0.04] mt-2.5 inline-flex h-[46px] w-full items-center justify-center gap-2 rounded-[9px] border text-[15px] font-bold transition-colors"
+						>
+							Buy for your team
+							<ArrowUpRight className="size-4" aria-hidden="true" />
+						</a>
 					)}
 					<Pricing.GuaranteeBadge>
 						<span
@@ -157,46 +185,68 @@ export const PricingWidget = ({
 					prependFeatures={prependFeatures}
 				/>
 			)}
-			{teamLetterHref && (
+			{!teamMode && teamLetterHref && (
 				<div className="w-full px-5 pb-7 pt-5 sm:px-6">
 					{/* The approval path, after the reader has seen what the money
-					    buys: a ready-made letter to forward to whoever signs off.
-					    Bordered like the card's other side-objects (countdown,
+					    buys. Bordered like the card's other side-objects (countdown,
 					    regional pricing) — an offer, not the ask, so no gold. New
 					    tab, so the checkout they were considering stays put. */}
-					<a
+					<SideLink
 						href={teamLetterHref}
-						target="_blank"
-						rel="noopener noreferrer"
-						className="border-border hover:bg-foreground/[0.04] group flex w-full items-start gap-3 rounded-[9px] border px-4 py-3.5 transition-colors"
-					>
-						<Mail
-							className="text-muted-foreground mt-0.5 size-4 shrink-0"
-							aria-hidden="true"
-						/>
-						<span className="flex min-w-0 flex-col gap-0.5">
-							<span
-								className={cn(
-									TYPE.meta,
-									'text-foreground flex items-center gap-1 font-semibold',
-								)}
-							>
-								Letter for your boss
-								<ArrowUpRight
-									className="size-3.5 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-									aria-hidden="true"
-								/>
-							</span>
-							<span className={cn(TYPE.metaSm, 'text-muted-foreground')}>
-								Need sign-off? Copy-paste the case for expensing this.
-							</span>
-						</span>
-					</a>
+						newTab
+						icon={Mail}
+						title="Letter for your boss"
+						body="Need sign-off? Copy-paste the case for expensing this."
+					/>
 				</div>
 			)}
 		</Pricing.Root>
 	)
 }
+
+/**
+ * A bordered side-object under the card: an icon, a bold line with the
+ * outward arrow, and one line of why.
+ */
+const SideLink = ({
+	href,
+	icon: Icon,
+	title,
+	body,
+	newTab = false,
+}: {
+	href: string
+	icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
+	title: string
+	body: string
+	newTab?: boolean
+}) => (
+	<a
+		href={href}
+		{...(newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+		className="border-border hover:bg-foreground/[0.04] group flex w-full items-start gap-3 rounded-[9px] border px-4 py-3.5 transition-colors"
+	>
+		<Icon
+			className="text-muted-foreground mt-0.5 size-4 shrink-0"
+			aria-hidden={true}
+		/>
+		<span className="flex min-w-0 flex-col gap-0.5">
+			<span
+				className={cn(
+					TYPE.meta,
+					'text-foreground flex items-center gap-1 font-semibold',
+				)}
+			>
+				{title}
+				<ArrowUpRight
+					className="size-3.5 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+					aria-hidden="true"
+				/>
+			</span>
+			<span className={cn(TYPE.metaSm, 'text-muted-foreground')}>{body}</span>
+		</span>
+	</a>
+)
 
 /**
  * Price row: mono numeral, and — under a discount — the struck full price and
@@ -311,7 +361,7 @@ const CardPrice = ({
  * Same context state underneath (`isTeamPurchaseActive`, `quantity`), so the
  * checkout path and PPP gating behave exactly as before.
  */
-const TeamPurchaseControls = () => {
+const TeamPurchaseControls = ({ teamMode }: { teamMode: boolean }) => {
 	const {
 		isTeamPurchaseActive,
 		toggleTeamPurchase,
@@ -341,6 +391,17 @@ const TeamPurchaseControls = () => {
 			toggleTeamPurchase()
 		}
 	}, [status, toggleTeamPurchase])
+
+	// Team mode: the machine always boots in single-seat mode, so flip it once
+	// the first price load settles. Same guard the checkbox goes through, so a
+	// PPP coupon still wins (it clears team mode; the toggle is not re-armed).
+	const bootedTeamMode = React.useRef(false)
+	React.useEffect(() => {
+		if (!teamMode || bootedTeamMode.current) return
+		if (status !== 'success' || isTeamPurchaseActive) return
+		bootedTeamMode.current = true
+		toggleTeamPurchase()
+	}, [teamMode, status, isTeamPurchaseActive, toggleTeamPurchase])
 
 	const onTeamCheckedChange = () => {
 		if (activeMerchantCoupon?.type === 'ppp') {
@@ -376,20 +437,29 @@ const TeamPurchaseControls = () => {
 			{/* Sibling label via htmlFor, not a wrapping <label>: the Radix
 			    checkbox renders a button, and a button inside a label is invalid
 			    markup that leaves the control unnamed. */}
-			<div className="flex items-center gap-2.5">
-				<Checkbox
-					id="team-purchase"
-					checked={isTeamPurchaseActive}
-					onCheckedChange={onTeamCheckedChange}
-					className="rounded-[4px]"
-				/>
-				<label
-					htmlFor="team-purchase"
-					className={cn(TYPE.meta, 'text-muted-foreground cursor-pointer')}
-				>
-					Buying for your team?
+			{!teamMode && (
+				<div className="flex w-full items-center gap-2.5">
+					<div className="flex items-center gap-2.5">
+						<Checkbox
+							id="team-purchase"
+							checked={isTeamPurchaseActive}
+							onCheckedChange={onTeamCheckedChange}
+							className="rounded-[4px]"
+						/>
+						<label
+							htmlFor="team-purchase"
+							className={cn(TYPE.meta, 'text-muted-foreground cursor-pointer')}
+						>
+							Buying for your team?
+						</label>
+					</div>
+				</div>
+			)}
+			{teamMode && (
+				<label htmlFor="team-seats" className={cn(TYPE.groupLabel)}>
+					Seats
 				</label>
-			</div>
+			)}
 			{isTeamPurchaseActive && (
 				<div className="flex items-center gap-2.5">
 					<button
@@ -408,6 +478,7 @@ const TeamPurchaseControls = () => {
 						max={teamQuantityLimit}
 						step={1}
 						required
+						id="team-seats"
 						aria-label="Team seats"
 						className="border-border bg-background h-10 w-[52px] rounded-[9px] border text-center font-mono text-[15px] font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 						value={quantity}

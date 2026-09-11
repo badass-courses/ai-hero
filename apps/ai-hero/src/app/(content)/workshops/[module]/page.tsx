@@ -136,6 +136,11 @@ export default async function ModulePage(props: Props) {
 
 	const product = await getCachedWorkshopProduct(params.module)
 	const hasSelfPacedProduct = product?.type === 'self-paced'
+	// The team page exists only when its body does (it 404s otherwise), so the
+	// card and the mobile bar offer it on the same condition.
+	const teamOptionsHref = workshop.fields.forTeamsBody
+		? `/workshops/${params.module}/for-teams`
+		: undefined
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
@@ -427,6 +432,7 @@ export default async function ModulePage(props: Props) {
 												>
 													<WorkshopPricingClient
 														className="bg-card"
+														teamOptionsHref={teamOptionsHref}
 														{...pricingProps}
 													/>
 												</React.Suspense>
@@ -436,6 +442,7 @@ export default async function ModulePage(props: Props) {
 													pricingProps={pricingProps}
 													workshop={workshop}
 													interestCapture={showInterestCapture}
+													teamOptionsHref={teamOptionsHref}
 												>
 													{pricingProps.allowPurchase ? (
 														pricingWidget

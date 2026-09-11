@@ -26,7 +26,7 @@ import * as ModuleCertificate from '@/components/certificates/module-certificate
 import { CertificateDialog } from '../../_components/module-certificate-container'
 import { useModuleProgress } from '../../_components/module-progress-provider'
 import { useWorkshopAbility } from './use-workshop-ability'
-import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 
 /**
  * The actions bar's secondary control: same 46px/9px geometry as the primary

@@ -14,7 +14,13 @@ import { useWorkshopNavigation } from './workshop-navigation-provider'
 import type { WorkshopPageProps } from './workshop-page-props'
 import { WorkshopPricingWidgetContainer } from './workshop-pricing-widget-container'
 
-type WorkshopPricingProps = WorkshopPageProps & { className?: string }
+type WorkshopPricingProps = WorkshopPageProps & {
+	className?: string
+	/** The workshop's team page, when it has one. */
+	teamOptionsHref?: string
+	/** Render as the team checkout (seats on, no side-links). */
+	teamMode?: boolean
+}
 
 export function WorkshopPricingClient(props: WorkshopPricingProps) {
 	const searchParams = useSearchParams()
@@ -58,6 +64,8 @@ function WorkshopPricingView({
 	hasPurchasedCurrentProduct,
 	searchParams,
 	className,
+	teamOptionsHref,
+	teamMode,
 	...commerceProps
 }: WorkshopPricingProps & { searchParams: CommerceUrlParams }) {
 	const teamQuantityLimit = 100
@@ -94,6 +102,8 @@ function WorkshopPricingView({
 				searchParams={searchParams}
 				workshops={workshops}
 				pathname={pathname}
+				teamOptionsHref={teamOptionsHref}
+				teamMode={teamMode}
 				pricingWidgetOptions={{
 					teamQuantityLimit,
 				}}

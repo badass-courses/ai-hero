@@ -9,6 +9,7 @@ import { env } from '@/env.mjs'
 import { getFirstResourceSlug } from '@/lib/content-navigation'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { useInView } from 'framer-motion'
+import { ArrowUpRight } from 'lucide-react'
 
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -18,7 +19,7 @@ import {
 	type PricingComponentProps,
 } from './inline-mdx-pricing'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
-import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 import type { WorkshopPageProps } from './workshop-page-props'
 
 export const WorkshopSidebar = ({
@@ -28,6 +29,7 @@ export const WorkshopSidebar = ({
 	pricingProps,
 	interestCapture = false,
 	purchased = false,
+	teamOptionsHref,
 }: {
 	children: React.ReactNode
 	workshop?: MinimalWorkshop | null
@@ -36,6 +38,8 @@ export const WorkshopSidebar = ({
 	interestCapture?: boolean
 	/** The viewer owns this workshop: the mobile bar offers Continue, not Buy. */
 	purchased?: boolean
+	/** The workshop's team page, when it has one: the mobile bar's second path. */
+	teamOptionsHref?: string
 }) => {
 	const buySectionRef = useRef<HTMLDivElement>(null)
 	const isInView = useInView(buySectionRef, { margin: '0px 0px 0% 0px' })
@@ -141,6 +145,7 @@ export const WorkshopSidebar = ({
 				pricingProps={pricingProps}
 				interestCapture={interestCapture}
 				purchased={purchased}
+				teamOptionsHref={teamOptionsHref}
 			/>
 		</>
 	)
@@ -190,14 +195,19 @@ export const WorkshopSidebarMobile = ({
 	pricingProps,
 	interestCapture = false,
 	purchased = false,
+	teamOptionsHref,
 }: {
 	workshop?: MinimalWorkshop | null
 	className?: string
 	pricingProps?: WorkshopPageProps
 	interestCapture?: boolean
 	purchased?: boolean
+	teamOptionsHref?: string
 }) => {
 	const { fields } = workshop ?? {}
+	// The team path, beside the buy button as on the card.
+	const showTeamLink =
+		Boolean(teamOptionsHref) && !interestCapture && !purchased
 
 	const handleScrollToBuy = (
 		e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>,
@@ -227,33 +237,46 @@ export const WorkshopSidebarMobile = ({
 				</h3>
 				<Contributor className="gap-1 text-sm [&_img]:w-5" />
 			</div>
-			{interestCapture ? (
-				<Button
-					className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
-					onClick={handleScrollToBuy}
-				>
-					Get notified
-				</Button>
-			) : purchased && fields?.slug ? (
-				<ContinueLearningButton moduleSlug={fields.slug} />
-			) : (
-				workshop &&
-				pricingProps && (
-					<InlineBuyButton
-						className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
-						resource={workshop}
-						pricingDataLoader={pricingProps.pricingDataLoader}
-						pricingProps={pricingProps as any}
-						centered={false}
-						resourceType="workshop"
-						pricingOptions={{
-							withTitle: false,
-							withImage: false,
-						}}
-						regionalPricingNoteTargetId="buy"
-					/>
-				)
-			)}
+			{/* The two asks together on the right, as on the card: the outline
+			    twin first, the gold buy last. */}
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{showTeamLink && (
+					<Link
+						href={teamOptionsHref!}
+						className="border-input hover:bg-foreground/[0.04] inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[9px] border px-3.5 text-sm font-semibold transition-colors"
+					>
+						For your team
+						<ArrowUpRight className="size-3.5" aria-hidden="true" />
+					</Link>
+				)}
+				{interestCapture ? (
+					<Button
+						className={cn(WORKSHOP_CTA_BUTTON, 'h-11 shrink-0 gap-2 text-sm')}
+						onClick={handleScrollToBuy}
+					>
+						Get notified
+					</Button>
+				) : purchased && fields?.slug ? (
+					<ContinueLearningButton moduleSlug={fields.slug} />
+				) : (
+					workshop &&
+					pricingProps && (
+						<InlineBuyButton
+							className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
+							resource={workshop}
+							pricingDataLoader={pricingProps.pricingDataLoader}
+							pricingProps={pricingProps as any}
+							centered={false}
+							resourceType="workshop"
+							pricingOptions={{
+								withTitle: false,
+								withImage: false,
+							}}
+							regionalPricingNoteTargetId="buy"
+						/>
+					)
+				)}
+			</div>
 		</div>
 	)
 }
