@@ -347,7 +347,14 @@ export default async function WorkshopForTeamsPage(props: Props) {
 								get everyone started, within a working day.
 							</p>
 						</div>
-						<div className={cn('col-span-3 md:border-l lg:col-span-4', INNER)}>
+						<div
+							className={cn(
+								'col-span-3 md:border-l lg:col-span-4',
+								INNER,
+								// Stacked under the copy on mobile, the two pads would double up.
+								'pt-0 md:pt-[52px]',
+							)}
+						>
 							<div>
 								<TeamInquiryForm location={location} source={params.module} />
 							</div>
