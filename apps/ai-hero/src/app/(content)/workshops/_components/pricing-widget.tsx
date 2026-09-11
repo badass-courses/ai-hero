@@ -154,7 +154,7 @@ export const PricingWidget = ({
 							href={teamOptionsHref}
 							className="border-input hover:bg-foreground/[0.04] mt-2.5 inline-flex h-[46px] w-full items-center justify-center gap-2 rounded-[9px] border text-[15px] font-bold transition-colors"
 						>
-							See team options
+							Buy for your team
 							<ArrowUpRight className="size-4" aria-hidden="true" />
 						</a>
 					)}
@@ -206,7 +206,7 @@ export const PricingWidget = ({
 						<SideLink
 							href={teamOptionsHref}
 							icon={Users}
-							title="See team options"
+							title="Buy for your team"
 							body="Seats for your team, invoicing, and a shared way to build."
 						/>
 					)}

@@ -245,7 +245,7 @@ export const WorkshopSidebarMobile = ({
 						href={teamOptionsHref!}
 						className="border-input hover:bg-foreground/[0.04] inline-flex h-11 shrink-0 items-center gap-1.5 rounded-[9px] border px-3.5 text-sm font-semibold transition-colors"
 					>
-						For teams
+						For your team
 						<ArrowUpRight className="size-3.5" aria-hidden="true" />
 					</Link>
 				)}
