@@ -167,7 +167,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 								)}
 								{/* Both asks stay on this page, so neither wears an arrow. */}
 								<a href="#contact" className={OUTLINE_BUTTON}>
-									Ask about team access
+									Get a quote for your team
 								</a>
 							</div>
 							<p className={cn(TYPE.metaSm, 'text-muted-foreground mt-4')}>
@@ -271,7 +271,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 										'text-muted-foreground hover:text-foreground mt-6 inline-flex items-center gap-1.5 underline-offset-4 hover:underline',
 									)}
 								>
-									Need an invoice up front or a bigger group? Ask about team access
+									Need an invoice up front or a bigger group? Get a quote
 									<ArrowRight className="size-3.5" aria-hidden="true" />
 								</a>
 							</div>
@@ -309,7 +309,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 														Team seats open with the course.
 													</p>
 													<p className={cn(TYPE.meta, 'text-muted-foreground')}>
-														Ask about team access below and we will let you know
+														Get a quote below and we will let you know
 														the moment seats are on sale.
 													</p>
 												</div>

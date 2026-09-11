@@ -259,7 +259,7 @@ export default async function TeamPage() {
 								</Link>
 							</p>
 							<a href="#contact" className={cn(TYPE.meta, OFFER_LINK, 'h-[46px]')}>
-								Ask about team access
+								Get a quote for your team
 								<ArrowRight
 									className="ease-out-quart size-4 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none"
 									aria-hidden="true"
