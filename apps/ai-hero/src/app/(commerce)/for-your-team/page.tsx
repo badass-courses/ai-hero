@@ -157,7 +157,7 @@ export default async function TeamPage() {
 				<section
 					id="contact"
 					aria-labelledby="contact-title"
-					className="scroll-mt-(--nav-height) border-b"
+					className="scroll-mt-(--nav-height)"
 				>
 					<div className="grid grid-cols-1 md:grid-cols-6">
 						<div className={cn('col-span-3 lg:col-span-2', INNER)}>
@@ -177,7 +177,7 @@ export default async function TeamPage() {
 							</p>
 						</div>
 						<div className={cn('col-span-3 md:border-l lg:col-span-4', INNER)}>
-							<div className="max-w-2xl">
+							<div>
 								<TeamInquiryForm location="/for-your-team" />
 							</div>
 						</div>
