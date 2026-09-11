@@ -254,7 +254,7 @@ export default async function WorkshopForTeamsPage(props: Props) {
 											key={text}
 											className={cn(
 												TYPE.meta,
-												'flex items-center gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal last:border-b',
+												'flex items-center gap-3 border-t border-[color:var(--ah-line-soft)] py-3 font-normal first:border-t-0 first:pt-0 last:pb-0',
 											)}
 										>
 											<span className="border-border bg-background flex size-9 shrink-0 items-center justify-center rounded-[6px] border text-[color:var(--ah-fg-muted)]">
