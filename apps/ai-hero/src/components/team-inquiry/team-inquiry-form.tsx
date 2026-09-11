@@ -179,7 +179,7 @@ export const TeamInquiryForm: React.FC<{
 							<Spinner className="w-4" aria-hidden="true" /> Sending...
 						</>
 					) : (
-						'Get in Touch'
+						'Get team pricing'
 					)}
 				</Button>
 

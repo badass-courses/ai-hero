@@ -161,9 +161,9 @@ export default async function TeamPage() {
 				>
 					<div className="grid grid-cols-1 md:grid-cols-6">
 						<div className={cn('col-span-3 lg:col-span-2', INNER)}>
-							<p className={cn(TYPE.groupLabel, 'mb-4')}>Talk to us</p>
+							<p className={cn(TYPE.groupLabel, 'mb-4')}>Team pricing</p>
 							<h2 id="contact-title" className={cn(TYPE.heading)}>
-								Tell us about your team
+								Get a quote for your team
 							</h2>
 							<p
 								className={cn(
@@ -171,9 +171,10 @@ export default async function TeamPage() {
 									'text-foreground/80 mt-5 max-w-[40ch]',
 								)}
 							>
-								Team size, what you want your engineers to improve, and
-								anything procurement needs from us. We reply within a working
-								day.
+								Tell us how many engineers and what you want them to improve.
+								You get pricing, an invoice your procurement team can use, and
+								the fastest way to get everyone started. Volume pricing starts
+								at five seats, and we reply within a working day.
 							</p>
 						</div>
 						<div className={cn('col-span-3 md:border-l lg:col-span-4', INNER)}>
