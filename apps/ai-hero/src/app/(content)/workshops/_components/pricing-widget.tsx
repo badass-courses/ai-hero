@@ -13,7 +13,6 @@ import {
 	Minus,
 	Plus,
 	ShieldCheck,
-	Users,
 } from 'lucide-react'
 import type { CountdownRenderProps } from 'react-countdown'
 
@@ -186,30 +185,19 @@ export const PricingWidget = ({
 					prependFeatures={prependFeatures}
 				/>
 			)}
-			{!teamMode && (teamLetterHref || teamOptionsHref) && (
-				<div className="flex w-full flex-col gap-2.5 px-5 pb-7 pt-5 sm:px-6">
-					{/* The two side paths, after the reader has seen what the money
+			{!teamMode && teamLetterHref && (
+				<div className="w-full px-5 pb-7 pt-5 sm:px-6">
+					{/* The approval path, after the reader has seen what the money
 					    buys. Bordered like the card's other side-objects (countdown,
-					    regional pricing) — offers, not the ask, so no gold. The
-					    letter opens in a new tab so the checkout they were considering
-					    stays put; the team page is a destination, so it navigates. */}
-					{teamLetterHref && (
-						<SideLink
-							href={teamLetterHref}
-							newTab
-							icon={Mail}
-							title="Letter for your boss"
-							body="Need sign-off? Copy-paste the case for expensing this."
-						/>
-					)}
-					{teamOptionsHref && (
-						<SideLink
-							href={teamOptionsHref}
-							icon={Users}
-							title="Buy for your team"
-							body="Seats for your team, invoicing, and a shared way to build."
-						/>
-					)}
+					    regional pricing) — an offer, not the ask, so no gold. New
+					    tab, so the checkout they were considering stays put. */}
+					<SideLink
+						href={teamLetterHref}
+						newTab
+						icon={Mail}
+						title="Letter for your boss"
+						body="Need sign-off? Copy-paste the case for expensing this."
+					/>
 				</div>
 			)}
 		</Pricing.Root>
@@ -218,8 +206,7 @@ export const PricingWidget = ({
 
 /**
  * A bordered side-object under the card: an icon, a bold line with the
- * outward arrow, and one line of why. Shared by the boss letter and the team
- * options link so the two read as the same kind of thing.
+ * outward arrow, and one line of why.
  */
 const SideLink = ({
 	href,
