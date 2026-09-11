@@ -291,14 +291,14 @@ export default async function WorkshopForTeamsPage(props: Props) {
 												<React.Suspense
 													fallback={
 														<WorkshopPricingFallback
-															className="bg-card"
+															className="bg-card pb-8"
 															teamMode
 															{...pricingProps}
 														/>
 													}
 												>
 													<WorkshopPricingClient
-														className="bg-card"
+														className="bg-card pb-8"
 														teamMode
 														{...pricingProps}
 													/>
