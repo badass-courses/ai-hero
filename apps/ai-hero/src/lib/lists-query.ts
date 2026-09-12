@@ -2,7 +2,7 @@
 
 import { cache } from 'react'
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
-import { courseBuilderAdapter, db } from '@/db'
+import { courseBuilderAdapter, db, type DbExecutor } from '@/db'
 import {
 	contentResource,
 	contentResourceResource,
@@ -479,19 +479,25 @@ export async function addPostToList({
 	postId,
 	listId,
 	metadata,
+	tx,
+	revalidate = true,
 }: {
 	postId: string
 	listId: string
 	metadata?: {
 		tier?: 'standard' | 'premium' | 'vip'
 	}
+	tx?: DbExecutor
+	revalidate?: boolean
 }) {
 	const { ability } = await getServerAuthSession()
 	if (!ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
 
-	const list = await db.query.contentResource.findFirst({
+	const dbContext = tx || db
+
+	const list = await dbContext.query.contentResource.findFirst({
 		where: eq(contentResource.id, listId),
 		with: {
 			resources: true,
@@ -500,16 +506,18 @@ export async function addPostToList({
 
 	if (!list) throw new Error('List not found')
 
-	await db.insert(contentResourceResource).values({
+	await dbContext.insert(contentResourceResource).values({
 		resourceOfId: list.id,
 		resourceId: postId,
 		position: list.resources.length,
 		metadata,
 	})
 
-	revalidateTag('lists', 'max')
+	if (revalidate) {
+		revalidateTag('lists', 'max')
+	}
 
-	return db.query.contentResourceResource.findFirst({
+	return dbContext.query.contentResourceResource.findFirst({
 		where: and(
 			eq(contentResourceResource.resourceOfId, listId),
 			eq(contentResourceResource.resourceId, postId),

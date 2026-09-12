@@ -1,9 +1,20 @@
 'use server'
 
-import { writeNewLessonToDatabase } from '@/lib/lessons-query'
+import { revalidateTag } from 'next/cache'
+import { db } from '@/db'
+import {
+	executeLessonCreationSideEffects,
+	writeNewLessonToDatabase,
+} from '@/lib/lessons-query'
 import { addPostToList } from '@/lib/lists-query'
-import { createPost } from '@/lib/posts-query'
-import { createResource } from '@/lib/resources/create-resources'
+import {
+	createPost,
+	executePostCreationSideEffects,
+} from '@/lib/posts-query'
+import {
+	createResource,
+	executeResourceCreationSideEffects,
+} from '@/lib/resources/create-resources'
 import { getWorkshop } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -95,56 +106,108 @@ export async function listWorkshopContents(
  * already uses (tier lands as 'standard', legacy `handleResourceAdd` parity).
  * Every creator slugs its placeholder title with a fresh guid, so repeated
  * untitled children never collide. Returns the new row as a `ContentsItem`.
+ *
+ * Creation and attachment are wrapped in a single database transaction:
+ * either both the child resource and the join relation are persisted, or
+ * neither is created (preventing orphaned draft resources if attach fails).
+ * External side effects (TypeSense, Inngest, tag revalidation) run only
+ * post-commit.
  */
 export async function createWorkshopChild(
 	workshopId: string,
 	type: string,
 ): Promise<ContentsItem> {
 	const { session, ability } = await getServerAuthSession()
-	if (!session?.user || !ability.can('create', 'Content')) {
+	const user = session?.user
+	if (
+		!user ||
+		!ability.can('create', 'Content') ||
+		!ability.can('update', 'Content')
+	) {
 		throw new Error('Unauthorized')
 	}
 
-	let childId: string
-	if (type === 'post') {
-		const post = await createPost({
-			title: 'Untitled post',
-			postType: 'article',
-			createdById: session.user.id,
-		})
-		if (!post) {
-			throw new Error('Failed to create post')
-		}
-		childId = post.id
-	} else if (type === 'lesson') {
-		// The real lesson writer (draft state, `lesson_${guid}` id, `~guid`
-		// slug); 'lesson' is the plain default lessonType — exercise/solution
-		// variants are authored through their own flows.
-		const lesson = await writeNewLessonToDatabase({
-			title: 'Untitled lesson',
-			lessonType: 'lesson',
-			createdById: session.user.id,
-		})
-		childId = lesson.id
-	} else if (type === 'section') {
-		// Sections have no bespoke writer — the generic top-level creator the
-		// legacy Create-New modal used (draft state, `~guid` slug).
-		const section = await createResource({
-			type: 'section',
-			title: 'Untitled section',
-		})
-		childId = section.id
-	} else {
+	if (!['post', 'lesson', 'section'].includes(type)) {
 		throw new Error(`Cannot quick-create a "${type}" in a workshop`)
 	}
 
-	const row = await addPostToList({
-		postId: childId,
-		listId: workshopId,
-		metadata: { tier: 'standard' },
+	const result = await db.transaction(async (tx) => {
+		let childId: string
+		let createdPost: any = null
+		let createdLesson: any = null
+		let createdSection: any = null
+
+		if (type === 'post') {
+			const post = await createPost(
+				{
+					title: 'Untitled post',
+					postType: 'article',
+					createdById: user.id,
+				},
+				{ tx, deferSideEffects: true },
+			)
+			if (!post) {
+				throw new Error('Failed to create post')
+			}
+			childId = post.id
+			createdPost = post
+		} else if (type === 'lesson') {
+			// The real lesson writer (draft state, `lesson_${guid}` id, `~guid`
+			// slug); 'lesson' is the plain default lessonType — exercise/solution
+			// variants are authored through their own flows.
+			const lesson = await writeNewLessonToDatabase(
+				{
+					title: 'Untitled lesson',
+					lessonType: 'lesson',
+					createdById: user.id,
+				},
+				{ tx, deferSideEffects: true },
+			)
+			childId = lesson.id
+			createdLesson = lesson
+		} else if (type === 'section') {
+			// Sections have no bespoke writer — the generic top-level creator the
+			// legacy Create-New modal used (draft state, `~guid` slug).
+			const section = await createResource(
+				{
+					type: 'section',
+					title: 'Untitled section',
+				},
+				{ tx, deferSideEffects: true },
+			)
+			childId = section.id
+			createdSection = section
+		} else {
+			throw new Error(`Cannot quick-create a "${type}" in a workshop`)
+		}
+
+		const row = await addPostToList({
+			postId: childId,
+			listId: workshopId,
+			metadata: { tier: 'standard' },
+			tx,
+			revalidate: false,
+		})
+		if (!row) {
+			throw new Error('Failed to attach the new resource to the workshop')
+		}
+
+		return { row, type, createdPost, createdLesson, createdSection }
 	})
-	if (!row) {
-		throw new Error('Failed to attach the new resource to the workshop')
+
+	// Post-commit side effects: executed only after both records are durable
+	if (result.type === 'post' && result.createdPost) {
+		await executePostCreationSideEffects(result.createdPost)
+	} else if (result.type === 'lesson' && result.createdLesson) {
+		await executeLessonCreationSideEffects(result.createdLesson)
+		revalidateTag('lesson', 'max')
+		revalidateTag('workshop-navigation', 'max')
+	} else if (result.type === 'section' && result.createdSection) {
+		await executeResourceCreationSideEffects(result.createdSection)
 	}
-	return toContentsItem(row)
+
+	revalidateTag('lists', 'max')
+	revalidateTag(workshopId, 'max')
+
+	return toContentsItem(result.row)
 }

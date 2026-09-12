@@ -1,4 +1,5 @@
-import { db } from '@/db'
+import { revalidateTag } from 'next/cache'
+import { db, type DbExecutor } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getUsersEntitledToWorkshops } from '@/lib/cohort-workshop-emails-query'
 import { type Cohort } from '@/lib/cohort'
@@ -212,8 +213,12 @@ export async function attachReminderEmailToCohort(
 	emailResourceId: string,
 	schedule?: CohortReminderSchedule,
 	detachExisting: boolean = false,
+	options?: {
+		tx?: DbExecutor
+	},
 ) {
-	const emailResource = await db.query.contentResource.findFirst({
+	const dbContext = options?.tx || db
+	const emailResource = await dbContext.query.contentResource.findFirst({
 		where: and(
 			eq(contentResource.id, emailResourceId),
 			eq(contentResource.type, 'email'),
@@ -226,7 +231,7 @@ export async function attachReminderEmailToCohort(
 
 	let nextSchedule = schedule
 	if (!nextSchedule?.sendAt && nextSchedule?.hoursInAdvance === undefined) {
-		const existing = await db.query.contentResourceResource.findFirst({
+		const existing = await dbContext.query.contentResourceResource.findFirst({
 			where: and(
 				eq(contentResourceResource.resourceOfId, cohortId),
 				eq(contentResourceResource.resourceId, emailResourceId),
@@ -246,7 +251,7 @@ export async function attachReminderEmailToCohort(
 		}
 	}
 
-	return await db.transaction(async (tx) => {
+	const executeAttach = async (tx: DbExecutor) => {
 		if (detachExisting) {
 			await tx
 				.delete(contentResourceResource)
@@ -266,7 +271,11 @@ export async function attachReminderEmailToCohort(
 			resourceId: emailResourceId,
 			metadata: buildReminderMetadata(nextSchedule),
 		})
-	})
+	}
+
+	return options?.tx
+		? await executeAttach(options.tx)
+		: await db.transaction(executeAttach)
 }
 
 export async function detachReminderEmailFromCohort(
@@ -295,19 +304,24 @@ export async function createAndAttachReminderEmailToCohort(
 	schedule?: CohortReminderSchedule,
 	detachExisting: boolean = false,
 ) {
-	const email = await createEmail(input)
+	const email = await db.transaction(async (tx) => {
+		const createdEmail = await createEmail(input, { tx, revalidate: false })
+		if (!createdEmail) {
+			throw new Error('Failed to create email')
+		}
 
-	if (!email) {
-		throw new Error('Failed to create email')
-	}
+		await attachReminderEmailToCohort(
+			cohortId,
+			createdEmail.id,
+			schedule,
+			detachExisting,
+			{ tx },
+		)
 
-	await attachReminderEmailToCohort(
-		cohortId,
-		email.id,
-		schedule,
-		detachExisting,
-	)
+		return createdEmail
+	})
 
+	revalidateTag('emails', 'max')
 	return email
 }
 
