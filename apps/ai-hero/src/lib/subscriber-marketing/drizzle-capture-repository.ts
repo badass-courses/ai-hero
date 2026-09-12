@@ -10,6 +10,7 @@ import {
 	stateTransition,
 } from '@/db/schema'
 import { and, asc, eq, gt, inArray, sql, type SQL } from 'drizzle-orm'
+import { z } from 'zod'
 
 import { guid } from '@coursebuilder/utils/guid'
 
@@ -59,7 +60,7 @@ import type {
 	StateTransition,
 } from './types'
 import {
-	scanCompletedValuePathIntentFrontier,
+	createCompletedValuePathIntentScan,
 	sortValuePathIntentsByCreatedAt,
 	type CompletedValuePathIntentScanArgs,
 } from './value-path-intent-scan'
@@ -491,12 +492,11 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	async findCompletedValuePathEmailSideEffectIntentScan(
 		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
 	) {
-		const records = await this.findValuePathEmailSideEffectIntentsForScan()
-		// Reduce to each contact/path frontier after applying the authorization
-		// and asset scope, then apply the limit. Scope-after-limit starved rolling
-		// enrollments on 2026-07-17 when the original activation cohort crowded
-		// out the live public cohort.
-		return scanCompletedValuePathIntentFrontier({ ...args, intents: records })
+		const scan = createCompletedValuePathIntentScan(args)
+		for await (const rows of this.selectValuePathIntentRowPages()) {
+			scan.addPage(rows.map(toSideEffectIntentRecord))
+		}
+		return scan.finish()
 	}
 
 	async findCompletedValuePathEmailSideEffectIntents(
@@ -519,7 +519,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	// full read of this set must go through here — a single unbounded select
 	// crossed vtgate's 64MiB gRPC response cap on 2026-08-12.
 	private async selectValuePathIntentRowsPaged(extraCondition?: SQL) {
-		const collected: any[] = []
+		const collected: Array<typeof sideEffectIntent.$inferSelect> = []
+		for await (const rows of this.selectValuePathIntentRowPages(extraCondition))
+			collected.push(...rows)
+		return collected
+	}
+
+	private async *selectValuePathIntentRowPages(extraCondition?: SQL) {
 		let cursor: string | undefined
 		for (;;) {
 			const rows = await this.database
@@ -535,10 +541,8 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				)
 				.orderBy(asc(sideEffectIntent.id))
 				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
-			collected.push(...rows)
-			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) {
-				return collected
-			}
+			yield rows
+			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) return
 			cursor = rows[rows.length - 1].id
 		}
 	}
@@ -635,6 +639,153 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			contactIds.push(...page)
 			if (page.length < LEARNER_FLOW_RECORD_PAGE_SIZE) return contactIds
 			cursor = page[page.length - 1]
+		}
+	}
+
+	/** Membership only: preserve course-path filtering without retaining detail. */
+	async findSkillsWorkflowLearnerFlowMembership(options?: {
+		includeCanary?: boolean
+	}) {
+		const ids: string[] = []
+		for await (const page of this.findSkillsWorkflowLearnerFlowRecordPages(
+			options,
+		)) {
+			ids.push(...page.map((record) => record.contactId))
+		}
+		return ids
+	}
+
+	/** Status projections omit event payloads and intent gates/action fields. */
+	async *findGateDStatusPages(contactIds: string[]) {
+		for (
+			let offset = 0;
+			offset < contactIds.length;
+			offset += LEARNER_FLOW_RECORD_PAGE_SIZE
+		) {
+			const ids = contactIds.slice(
+				offset,
+				offset + LEARNER_FLOW_RECORD_PAGE_SIZE,
+			)
+			let cursor: string | undefined
+			for (;;) {
+				const intents: Array<
+					import('./value-path-gate-d-summary').GateDStatusIntent
+				> = await this.database
+					.select({
+						id: sideEffectIntent.id,
+						contactId: sideEffectIntent.contactId,
+						status: sideEffectIntent.status,
+						createdAt: sideEffectIntent.createdAt,
+						completedAt: sideEffectIntent.completedAt,
+						metadata: gateDStatusMetadataProjection(),
+						reviewReasons: sideEffectIntent.reviewReasons,
+					})
+					.from(sideEffectIntent)
+					.where(
+						and(
+							inArray(sideEffectIntent.contactId, ids),
+							eq(sideEffectIntent.type, 'send-value-path-email'),
+							cursor === undefined
+								? undefined
+								: gt(sideEffectIntent.id, cursor),
+						),
+					)
+					.orderBy(asc(sideEffectIntent.id))
+					.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+				yield { intents, events: [] }
+				if (intents.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) break
+				cursor = intents[intents.length - 1]!.id
+			}
+			cursor = undefined
+			for (;;) {
+				const rows: Array<
+					import('./value-path-gate-d-summary').GateDStatusEvent & {
+						id: string
+					}
+				> = await this.database
+					.select({
+						id: contactEvent.id,
+						contactId: contactEvent.contactId,
+						eventType: contactEvent.eventType,
+						occurredAt: contactEvent.occurredAt,
+					})
+					.from(contactEvent)
+					.where(
+						and(
+							inArray(contactEvent.contactId, ids),
+							cursor === undefined ? undefined : gt(contactEvent.id, cursor),
+						),
+					)
+					.orderBy(asc(contactEvent.id))
+					.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+				yield { intents: [], events: rows }
+				if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) break
+				cursor = rows[rows.length - 1]!.id
+			}
+		}
+	}
+
+	/** Repair evidence stays complete within each contact page, never projected. */
+	async *findSkillsWorkflowLearnerFlowRepairRecordPages(options?: {
+		includeCanary?: boolean
+	}): AsyncGenerator<LearnerFlowRecord[]> {
+		const ids = await this.findSkillsWorkflowLearnerFlowContactIds(options)
+		for (
+			let offset = 0;
+			offset < ids.length;
+			offset += LEARNER_FLOW_RECORD_PAGE_SIZE
+		) {
+			const contactIds = ids.slice(
+				offset,
+				offset + LEARNER_FLOW_RECORD_PAGE_SIZE,
+			)
+			const [intentRows, entryEventRows, contacts, states] = await Promise.all([
+				this.selectValuePathIntentRowsPaged(
+					inArray(sideEffectIntent.contactId, contactIds),
+				),
+				this.selectLearnerFlowRepairEntryRowsPaged(contactIds),
+				this.database
+					.select()
+					.from(contact)
+					.where(inArray(contact.id, contactIds)),
+				this.database
+					.select()
+					.from(contactState)
+					.where(inArray(contactState.contactId, contactIds)),
+			])
+			yield assembleLearnerFlowRecords({
+				contactIds,
+				intentRows,
+				entryEventRows,
+				contacts,
+				states,
+			})
+		}
+	}
+
+	private async selectLearnerFlowRepairEntryRowsPaged(contactIds: string[]) {
+		const collected: Array<typeof contactEvent.$inferSelect> = []
+		let cursor: string | undefined
+		for (;;) {
+			const rows: Array<typeof contactEvent.$inferSelect> = await this.database
+				.select()
+				.from(contactEvent)
+				.where(
+					and(
+						inArray(contactEvent.contactId, contactIds),
+						eq(contactEvent.eventType, 'value-path.entered'),
+						inArray(
+							contactEvent.providerReference,
+							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
+						),
+						cursor === undefined ? undefined : gt(contactEvent.id, cursor),
+					),
+				)
+				.orderBy(asc(contactEvent.id))
+				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+			collected.push(...rows)
+			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) return collected
+			cursor = rows[rows.length - 1]!.id
 		}
 	}
 
@@ -927,6 +1078,44 @@ function assembleLearnerFlowSummaryRecords(args: {
 		.filter(
 			(record) => record.intents.length > 0 || record.entryEvents.length > 0,
 		)
+}
+
+const gateDStatusMetadataKeys = [
+	'emailResourceId',
+	'kitSequenceId',
+	'completedAt',
+	'retryable',
+	'nextRetryAt',
+] as const
+const gateDStatusMetadataSchema = z.object({
+	values: z.record(z.unknown()),
+	present: z.record(z.union([z.literal(0), z.literal(1), z.null()])),
+})
+
+/** Preserve missing vs JSON null, scalar types and arbitrarily long values. */
+export function decodeGateDStatusMetadata(
+	value: unknown,
+): Record<string, unknown> {
+	const parsed = gateDStatusMetadataSchema.parse(
+		typeof value === 'string' ? JSON.parse(value) : value,
+	)
+	return Object.fromEntries(
+		Object.entries(parsed.values).filter(([key]) => parsed.present[key] === 1),
+	)
+}
+
+function gateDStatusMetadataProjection() {
+	const values = gateDStatusMetadataKeys.map(
+		(key) =>
+			sql`${key}, json_extract(${sideEffectIntent.metadata}, ${`$.${key}`})`,
+	)
+	const present = gateDStatusMetadataKeys.map(
+		(key) =>
+			sql`${key}, json_contains_path(${sideEffectIntent.metadata}, 'one', ${`$.${key}`})`,
+	)
+	return sql`json_object('values', json_object(${sql.join(values, sql`, `)}), 'present', json_object(${sql.join(present, sql`, `)}))`.mapWith(
+		decodeGateDStatusMetadata,
+	)
 }
 
 function assembleLearnerFlowRecords(args: {
