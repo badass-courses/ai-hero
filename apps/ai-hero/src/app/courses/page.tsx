@@ -4,7 +4,6 @@ import {
 	formatAlumniCount,
 	getCachedCohortAlumniCount,
 } from '@/lib/cohort-stats'
-import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import { getCoursesHeroState } from '@/lib/courses-hero-state'
 import { getNextOfferSafe } from '@/lib/next-offer'
 import {
@@ -12,7 +11,7 @@ import {
 	getPastCohorts,
 	getUpcomingCohort,
 } from '@/lib/upcoming-cohort-query'
-import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
+import { getCachedLatestSelfPacedWorkshop } from '@/lib/workshops-query'
 
 import { CoursesPage } from './_components/courses-page'
 
@@ -38,12 +37,12 @@ export default async function CoursesRoute() {
 	// below instead. `getLatestCohort` is fetched unconditionally for the same
 	// reason: it is a cached read, and speculatively resolving it is cheaper than
 	// serializing it behind `upcoming`.
-	const [upcoming, latest, alumniCount, comingNextWorkshop, allPastCohorts] =
+	const [upcoming, latest, alumniCount, latestWorkshop, allPastCohorts] =
 		await Promise.all([
 			getUpcomingCohort(),
 			getLatestCohort(),
 			getCachedCohortAlumniCount(),
-			getCachedMinimalWorkshop(COURSES_COMING_NEXT.slug),
+			getCachedLatestSelfPacedWorkshop(),
 			getPastCohorts(),
 		])
 
@@ -58,20 +57,19 @@ export default async function CoursesRoute() {
 		getNextOfferSafe(),
 	])
 
-	// The hero follows the offer ladder (`next-offer.ts`). When the top offer
-	// is a live SALE on the self-paced workshop, the workshop IS the hero —
-	// even over an open cohort enrollment, matching the ladder's own rule that
-	// a discount outranks seats ("if we have discounted something, that is the
-	// thing to talk about") — and the cohort takes a card in the grid. Sale
-	// only: `WorkshopHero` is a purchase hero ("Available now", "Get the
-	// course"), and a `workshop-waitlist` offer — an unreleased course — would
-	// wear that copy as a lie. The id check keeps a sale on the cohort (or any
-	// other resource) from hijacking the slot.
+	// The hero follows the offer ladder (`next-offer.ts`). The newest
+	// self-paced workshop IS the hero whenever the ladder's top rung is it:
+	// a live SALE on it — even over an open cohort enrollment, matching the
+	// ladder's own rule that a discount outranks seats — or the plain
+	// `workshop-buy` rung between cohorts. Either way `WorkshopHero` is a
+	// purchase hero ("Available now", "Get the course") and both rungs are
+	// purchases, so the copy is true. The id check keeps a sale on the cohort
+	// (or any other resource) from hijacking the slot.
 	const featuredWorkshopOffer =
 		offer &&
-		offer.kind === 'sale' &&
-		comingNextWorkshop &&
-		offer.id === comingNextWorkshop.id
+		(offer.kind === 'sale' || offer.kind === 'workshop-buy') &&
+		latestWorkshop &&
+		offer.id === latestWorkshop.id
 			? offer
 			: null
 
@@ -92,7 +90,7 @@ export default async function CoursesRoute() {
 				sale={sale}
 				running={running}
 				featuredWorkshopOffer={featuredWorkshopOffer}
-				comingNextWorkshop={comingNextWorkshop}
+				latestWorkshop={latestWorkshop}
 			/>
 		</LayoutClient>
 	)

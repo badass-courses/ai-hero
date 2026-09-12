@@ -159,7 +159,7 @@ const PrimaryEntryLink = ({
  *    walked through it should not be asked for a paid cohort first.
  * 2. **On the free course** → whatever `getNextOffer` says is the best ask
  *    right now: a live sale on anything ("Save 30%"), else a purchasable
- *    cohort, else the unreleased workshop's waitlist, else the next cohort's.
+ *    cohort, else the newest self-paced workshop, else the next cohort's.
  *    The bar used to know only about cohorts, so a sale on a standalone
  *    workshop — or the workshop itself — could not appear here at all.
  * 3. **Nothing left to offer** → nothing. Never sell someone what they have.
@@ -258,9 +258,9 @@ const FreeCourseCta = ({
 		)
 
 	// A waitlist is the one thing on this ladder you can be finished with
-	// without buying anything, and the offer says which waitlist it is — the
-	// next cohort's, or the unreleased workshop's. The field comes off the same
-	// subscriber record the rung above reads, so this costs nothing extra.
+	// without buying anything, and the offer carries which one it is. The
+	// field comes off the same subscriber record the rung above reads, so this
+	// costs nothing extra.
 	const activeOfferWaitlist =
 		activeOffer && 'waitlist' in activeOffer ? activeOffer.waitlist : undefined
 	const alreadyWaiting = hasJoinedOfferWaitlist(
