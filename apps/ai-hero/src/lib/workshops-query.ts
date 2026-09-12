@@ -264,6 +264,10 @@ export async function getLatestSelfPacedWorkshop() {
 			and(
 				eq(contentResource.type, 'workshop'),
 				isNull(contentResource.deletedAt),
+				// Detaching a product is a soft delete on the join row
+				// (`removeResourceFromProduct`), so without this a workshop whose
+				// product was pulled would still lead as "buyable".
+				isNull(contentResourceProduct.deletedAt),
 				eq(
 					sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
 					'public',
