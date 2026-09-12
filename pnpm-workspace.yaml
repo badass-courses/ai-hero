@@ -29,6 +29,8 @@ overrides:
   '@types/react': '19.2.7'
   '@types/react-dom': '19.2.3'
   '@codemirror/state': '6.7.0'
+  # Keep the launch app on its existing CSS compiler while the status tracer adds Vite 8.
+  lightningcss: '1.32.0'
 
 packageExtensions:
   '@coursebuilder/ui@*':
