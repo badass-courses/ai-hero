@@ -1,8 +1,8 @@
 'use server'
 
-import { revalidateTag } from 'next/cache'
 import { db } from '@/db'
 import { contentResourceProduct } from '@/db/schema'
+import { revalidateProducts } from '@/lib/product-cache'
 import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
@@ -106,7 +106,7 @@ export async function addResourceToProductById(input: {
 					eq(contentResourceProduct.resourceId, resourceId),
 				),
 			)
-		revalidateProductMembership()
+		revalidateProducts()
 		return { position }
 	}
 
@@ -117,7 +117,7 @@ export async function addResourceToProductById(input: {
 		metadata: { addedBy: user.id },
 	})
 
-	revalidateProductMembership()
+	revalidateProducts()
 	return { position }
 }
 
@@ -137,18 +137,7 @@ export async function removeResourceFromProduct(input: {
 				eq(contentResourceProduct.resourceId, input.resourceId),
 			),
 		)
-	revalidateProductMembership()
-}
-
-/**
- * Which resources a product carries is what decides "the newest buyable
- * workshop" (`getCachedLatestSelfPacedWorkshop`, tagged `products`) and so
- * the offer ladder behind the nav and `/courses`. Without this, attaching the
- * next release or detaching the current one left the old answer cached for
- * up to an hour.
- */
-function revalidateProductMembership() {
-	revalidateTag('products', 'max')
+	revalidateProducts()
 }
 
 /**
