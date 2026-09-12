@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createEventBindings } from '@/lib/cms/event-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { EventSchema, type Event } from '@/lib/events'
 import type { Tag } from '@/lib/tags'
 
@@ -116,6 +117,8 @@ export function EditEventClient({
 		return createResourceEditor({
 			manifest: {
 				...eventManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(eventManifest.media),
 				schema: EventSchema,
 				defaultValues: eventDefaultValues,
 				tabs: [

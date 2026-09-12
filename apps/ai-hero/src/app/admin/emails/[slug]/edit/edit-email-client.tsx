@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { createEmailBindings, EmailEditorSchema } from '@/lib/cms/email-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { type Email } from '@/lib/emails'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 
@@ -35,6 +36,8 @@ export function EditEmailClient({
 		return createResourceEditor({
 			manifest: {
 				...emailManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(emailManifest.media),
 				schema: EmailEditorSchema,
 				// Legacy-parity normalization: same ''/null coercions the old
 				// useForm defaults applied, INCLUDING the derived OG socialImage
