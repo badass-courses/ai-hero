@@ -10,6 +10,7 @@ import {
 	prices,
 	products,
 } from '@/db/schema'
+import { revalidateProducts } from '@/lib/product-cache'
 import { NewProduct } from '@/lib/products'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -66,7 +67,9 @@ export async function archiveProduct(productId: string) {
 	if (!user || !ability.can('create', 'Content')) {
 		throw new Error('Unauthorized')
 	}
-	return courseBuilderAdapter.archiveProduct(productId)
+	const archived = await courseBuilderAdapter.archiveProduct(productId)
+	revalidateProducts()
+	return archived
 }
 
 export async function getActiveSelfPacedProducts() {
@@ -82,7 +85,9 @@ export async function updateProduct(input: Product) {
 	if (!user || !ability.can('create', 'Content')) {
 		throw new Error('Unauthorized')
 	}
-	return courseBuilderAdapter.updateProduct(input)
+	const updated = await courseBuilderAdapter.updateProduct(input)
+	revalidateProducts()
+	return updated
 }
 
 export async function getProduct(productSlugOrId?: string) {
@@ -125,7 +130,9 @@ export async function createProduct(input: NewProduct) {
 		throw new Error('Unauthorized')
 	}
 
-	return courseBuilderAdapter.createProduct(input)
+	const created = await courseBuilderAdapter.createProduct(input)
+	revalidateProducts()
+	return created
 }
 
 /**

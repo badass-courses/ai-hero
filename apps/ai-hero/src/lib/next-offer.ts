@@ -5,9 +5,8 @@ import {
 } from '@/components/navigation/promo-config'
 import { db } from '@/db'
 import { coupon } from '@/db/schema'
-import { COURSES_COMING_NEXT } from '@/lib/courses-content'
 import { getSaleBannerData } from '@/lib/sale-banner'
-import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
+import { getCachedLatestSelfPacedWorkshop } from '@/lib/workshops-query'
 import { log } from '@/server/logger'
 import { and, desc, eq, gte, isNotNull, ne } from 'drizzle-orm'
 
@@ -18,31 +17,23 @@ import { getLatestCohort, getUpcomingCohort } from './upcoming-cohort-query'
 /**
  * How a reader can already have answered this offer, so a CTA can check.
  *
- * Cohort and workshop waitlists are stored under different Kit field keys and
- * keyed off different things — a product NAME for one, a resource SLUG for the
- * other — so the offer carries which test applies rather than leaving every
- * call site to work it out from the `kind`.
+ * Only a cohort waitlist today. The Kit field is keyed off the product NAME,
+ * and the offer carries it so no call site has to work that out from `kind`.
  */
-export type OfferWaitlist =
-	| { kind: 'cohort'; productName: string }
-	| { kind: 'workshop'; slug: string }
+export type OfferWaitlist = { kind: 'cohort'; productName: string }
 
 /**
  * The single best thing to offer a reader right now, resolved once and shared.
  *
  * There are four asks competing for the one gold slot in the nav, the card at
  * the foot of every article, and the palette's promo row: a live sale, a
- * purchasable cohort, the waitlist for a workshop that has not shipped, and
- * the waitlist for the next cohort. They used to be resolved separately or not
- * at all — the nav only ever knew about cohorts, so a sale on anything else,
- * and the crash course, were invisible outside `/courses`.
+ * purchasable cohort, the newest self-paced workshop, and the waitlist for the
+ * next cohort. They used to be resolved separately or not at all — the nav
+ * only ever knew about cohorts, so a sale on anything else, and a released
+ * workshop, were invisible outside `/courses`.
  */
 export type NextOffer = {
-	kind:
-		| 'sale'
-		| 'cohort-enroll'
-		| 'cohort-waitlist'
-		| 'workshop-waitlist'
+	kind: 'sale' | 'cohort-enroll' | 'workshop-buy' | 'cohort-waitlist'
 	/** Resource id, so a caller can ask whether this viewer already owns it. */
 	id: string
 	title: string
@@ -81,26 +72,16 @@ export type NextOffer = {
  *    resolves its resource, so a standalone workshop sells here for free.
  * 2. **A purchasable cohort.** Seats you can buy today outrank interest in
  *    something that does not exist yet.
- * 3. **A workshop still in draft.** Never shipped, so it cannot be sold — but
- *    it is NEWS, and that is the whole difference between this rung and the
- *    one below it.
+ * 3. **The newest self-paced workshop.** Something you can buy and start
+ *    today, between cohorts, outranks a queue for something that is closed.
+ *    "Newest" is decided by the data (`getCachedLatestSelfPacedWorkshop`:
+ *    public, published, with a live self-paced product, newest first), so the
+ *    next release takes this rung the day it ships without a code change.
  * 4. **The next cohort's waitlist**, between cohorts.
  *
- * Rungs 3 and 4 are both "waitlist" in mechanism and nothing alike in meaning,
- * which is why they are separate kinds carrying separate copy rather than one
- * `waitlist` kind with a shared label:
- *
- * - A DRAFT WORKSHOP is a thing that does not exist yet. Nobody has ever been
- *   able to buy it, there is no date, and the reader has certainly not seen it
- *   before. The honest pitch is the announcement itself — "New course".
- * - A COHORT WAITLIST is a thing that already ran. It has a page, alumni, and
- *   a reader may well have watched the last one sell out. Nothing is new about
- *   it; what they want is the next date — "Join next cohort".
- *
- * Draft workshop outranks ended cohort deliberately. "Here is something that
- * did not exist last time you looked" beats "the thing you already know about
- * is still closed", and only one of those two is worth the site's one gold
- * button.
+ * Workshop outranks ended cohort deliberately. "Here is a thing you can buy
+ * right now" beats "the thing you already know about is still closed", and
+ * only one of those two is worth the site's one gold button.
  *
  * NOT personalised, on purpose. What is on sale is the same fact for every
  * visitor, so this is cached and safe to resolve in the root layout — no
@@ -129,7 +110,7 @@ const getNextOfferCached = unstable_cache(
 			}
 		}
 
-		const workshop = await resolveWorkshopWaitlistOffer()
+		const workshop = await resolveWorkshopOffer()
 		if (workshop) return workshop
 
 		const latest = await getLatestCohort()
@@ -267,36 +248,26 @@ async function findActiveProductSaleCoupon(
 }
 
 /**
- * The unreleased workshop's waitlist.
+ * The newest workshop a reader can buy today, as an offer.
  *
- * Keyed off `COURSES_COMING_NEXT`, which is already the single place the
- * crash course is named — the `/courses` catalog reads the same constant. That
- * keeps one editorial decision in one file instead of inventing a query for
- * "workshops with an open waitlist", which the data does not currently express.
- * The workshop still has to EXIST for the offer to render, so a stale constant
- * degrades to no offer rather than to a link into nothing.
+ * A purchase, so no `waitlist`: the only way to be finished with this rung is
+ * to own the workshop, which is the ownership check every surface already
+ * makes against `id`. No `discount` either — when one is live, the sale rung
+ * above already resolved this same workshop with the saving in its label.
  */
-async function resolveWorkshopWaitlistOffer(): Promise<NextOffer | null> {
-	const workshop = await getCachedMinimalWorkshop(COURSES_COMING_NEXT.slug)
+async function resolveWorkshopOffer(): Promise<NextOffer | null> {
+	const workshop = await getCachedLatestSelfPacedWorkshop()
 	if (!workshop) return null
 
 	return {
-		kind: 'workshop-waitlist',
+		kind: 'workshop-buy',
 		id: workshop.id,
-		title: COURSES_COMING_NEXT.title,
-		href: `/workshops/${COURSES_COMING_NEXT.slug}`,
-		// The NEWS, not the mechanism.
-		//
-		// "Join the waitlist" names a queue — something you endure to reach the
-		// thing, not the thing. And "Get notified" is worse: it describes an email
-		// we will send rather than a course we are making.
-		//
-		// "Upcoming" over "New" because the course is not out. "New course" reads
-		// as something you can go and get, and the click leads to a page that
-		// cannot sell it to you — a small promise broken immediately. "Upcoming"
-		// says the same news and stays true until the day it ships.
-		label: 'Upcoming course',
-		waitlist: { kind: 'workshop', slug: COURSES_COMING_NEXT.slug },
+		title: workshop.fields.title,
+		href: `/workshops/${workshop.fields.slug}`,
+		// Names the thing you get, not the mechanism, and stays true for as
+		// long as the workshop is the latest one — unlike "New course", which
+		// ages.
+		label: 'Get the course',
 	}
 }
 

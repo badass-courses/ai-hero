@@ -214,30 +214,12 @@ export const COURSES_TESTIMONIALS = [
 ] as const
 
 /**
- * The crash course. The workshop (`ai-coding-crash-course`) is draft +
- * unlisted on purpose: its page is a public interest-capture landing with its
- * own "Join Waitlist" Kit form, so its card clicks straight through to that
- * list. Image is fetched live from the workshop resource in page.tsx.
- *
- * It used to have a "Coming next" section to itself. It does not need one: a
- * course that has not shipped announced above the fold of its own section had
- * more of the page than the course you can buy today.
- */
-export const COURSES_COMING_NEXT = {
-	title: 'AI Coding Crash Course',
-	slug: 'ai-coding-crash-course',
-	// Shipped 2026-08-17. The card wore "Waitlist open" / "Matt is recording…"
-	// into launch week, selling a waitlist for a course you could buy.
-	badge: 'Available now',
-	description:
-		'A self-paced AI coding course you can start any day, no cohort dates required: build production-grade software with agents doing the typing.',
-} as const
-
-/**
- * The workshop as the page's hero, for as long as the offer ladder ranks it
- * above the cohort (`next-offer.ts`: a live sale on it, or its waitlist while
- * nothing is purchasable). The cohort does not leave the page — it takes a
- * card in the grid below (`COURSES_NEXT_COHORT_CARD`).
+ * The newest self-paced workshop as the page's hero, for as long as the offer
+ * ladder ranks it above the cohort (`next-offer.ts`: a live sale on it, or
+ * simply that it is buyable while no cohort is). Which workshop that is comes
+ * from the data (`getCachedLatestSelfPacedWorkshop`), not from here. The
+ * cohort does not leave the page — it takes a card in the shelf below
+ * (`COURSES_NEXT_COHORT_CARD`).
  */
 export const COURSES_FEATURED_WORKSHOP = {
 	/** Same slot and same reasoning as `FLAGSHIP_HERO.eyebrow`: the headline is
@@ -277,13 +259,13 @@ export const COURSES_NEXT_COHORT_CARD = {
 
 /**
  * Everything that is not the cohort, as one grid. Badges are the honest
- * status of each thing rather than a uniform label: one is not built yet, one
- * costs money, one is free, and flattening that difference is what a "browse
- * our catalog" grid usually gets wrong.
+ * status of each thing rather than a uniform label: one costs money, one is
+ * free, and flattening that difference is what a "browse our catalog" grid
+ * usually gets wrong.
  *
  * `image` values are the same committed Cloudinary assets the nav menu uses
- * (`use-nav-links.tsx`); the crash course's is fetched live because its
- * resource is the one that still changes.
+ * (`use-nav-links.tsx`). The latest workshop is not listed here: it is fetched
+ * live and leads either the hero or this grid (`courses-page.tsx`).
  */
 /**
  * The catalog's second shelf. Separate from `COURSES_CATALOG` because that

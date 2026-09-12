@@ -1,4 +1,5 @@
 import { revalidateTag } from 'next/cache'
+import { revalidateProducts } from '@/lib/product-cache'
 import { NextRequest, NextResponse } from 'next/server'
 import { courseBuilderAdapter } from '@/db'
 import {
@@ -160,6 +161,8 @@ const createProductHandler = async (request: NextRequest) => {
 			})
 		}
 
+		revalidateProducts()
+
 		const readback = await getProductWithFullStructure(createdProduct.id)
 
 		await log.info('api.products.post.success', {
@@ -256,6 +259,7 @@ const updateProductHandler = async (request: NextRequest) => {
 		})
 
 		revalidateTag('workshop', 'max')
+		revalidateProducts()
 
 		const readback = await getProductWithFullStructure(input.id)
 

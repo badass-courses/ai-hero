@@ -2,6 +2,7 @@
 
 import { db } from '@/db'
 import { contentResourceProduct } from '@/db/schema'
+import { revalidateProducts } from '@/lib/product-cache'
 import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
@@ -105,6 +106,7 @@ export async function addResourceToProductById(input: {
 					eq(contentResourceProduct.resourceId, resourceId),
 				),
 			)
+		revalidateProducts()
 		return { position }
 	}
 
@@ -115,6 +117,7 @@ export async function addResourceToProductById(input: {
 		metadata: { addedBy: user.id },
 	})
 
+	revalidateProducts()
 	return { position }
 }
 
@@ -134,6 +137,7 @@ export async function removeResourceFromProduct(input: {
 				eq(contentResourceProduct.resourceId, input.resourceId),
 			),
 		)
+	revalidateProducts()
 }
 
 /**

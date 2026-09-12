@@ -5,8 +5,8 @@ import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { BADGE_SOLID, TYPE } from '@/components/landing/type'
 import {
 	COURSES_CATALOG,
-	COURSES_COMING_NEXT,
 	COURSES_DETAILS_EYEBROW,
+	COURSES_FEATURED_WORKSHOP,
 	COURSES_NEXT_COHORT_CARD,
 	COURSES_PAST_COHORTS,
 	COURSES_TESTIMONIALS,
@@ -142,7 +142,7 @@ export function CoursesPage({
 	flagship,
 	isPurchasable,
 	alumniLabel,
-	comingNextWorkshop,
+	latestWorkshop,
 	pastCohorts,
 	sale,
 	running,
@@ -152,8 +152,8 @@ export function CoursesPage({
 	isPurchasable: boolean
 	/** e.g. "8,500+" — null hides the stat. */
 	alumniLabel: string | null
-	/** The crash-course workshop; null (missing) drops its card / hero. */
-	comingNextWorkshop: MinimalWorkshop | null
+	/** The newest buyable self-paced workshop; null drops its card / hero. */
+	latestWorkshop: MinimalWorkshop | null
 	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
 	pastCohorts: UpcomingCohortSummary[]
 	/** A live discount on the flagship. Never carries a price. */
@@ -166,22 +166,24 @@ export function CoursesPage({
 	 */
 	featuredWorkshopOffer: NextOffer | null
 }) {
-	const workshopLeads = Boolean(featuredWorkshopOffer && comingNextWorkshop)
+	const workshopLeads = Boolean(featuredWorkshopOffer && latestWorkshop)
 
-	// The crash course leads the catalog when it exists AND is not already the
-	// hero — the page never lists one thing twice. The demoted cohort does NOT
-	// join this grid: its note promises "self-paced, start any day", and a
+	// The latest workshop leads the catalog when it exists AND is not already
+	// the hero — the page never lists one thing twice. The demoted cohort does
+	// NOT join this grid: its note promises "self-paced, start any day", and a
 	// closed cohort is neither. It leads the cohorts shelf below instead.
 	const catalog = [
-		...(!workshopLeads && comingNextWorkshop
+		...(!workshopLeads && latestWorkshop
 			? [
 					{
-						title: COURSES_COMING_NEXT.title,
-						href: `/workshops/${COURSES_COMING_NEXT.slug}`,
-						description: COURSES_COMING_NEXT.description,
-						badge: COURSES_COMING_NEXT.badge,
+						title: latestWorkshop.fields.title,
+						href: `/workshops/${latestWorkshop.fields.slug}`,
+						description:
+							latestWorkshop.fields.description ||
+							COURSES_FEATURED_WORKSHOP.description,
+						badge: COURSES_FEATURED_WORKSHOP.badge,
 						badgeTone: 'accent' as const,
-						image: comingNextWorkshop.fields.coverImage?.url,
+						image: latestWorkshop.fields.coverImage?.url,
 					},
 				]
 			: []),
@@ -223,10 +225,10 @@ export function CoursesPage({
 			    so the two surfaces cannot drift. While the self-paced workshop
 			    outranks it (a live sale, or its arrival between cohorts), the
 			    workshop takes the slot and the cohort takes a catalog card. */}
-			{workshopLeads && featuredWorkshopOffer && comingNextWorkshop ? (
+			{workshopLeads && featuredWorkshopOffer && latestWorkshop ? (
 				<WorkshopHero
 					offer={featuredWorkshopOffer}
-					workshop={comingNextWorkshop}
+					workshop={latestWorkshop}
 					headingId="flagship-heading"
 				/>
 			) : (

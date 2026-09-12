@@ -18,7 +18,17 @@ import {
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
-import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	inArray,
+	isNull,
+	like,
+	or,
+	sql,
+} from 'drizzle-orm'
 import z from 'zod'
 
 import {
@@ -217,6 +227,71 @@ export async function getMinimalWorkshop(moduleSlugOrId: string) {
 			return MinimalWorkshopSchema.parse(workshop)
 		},
 	})
+}
+
+/**
+ * The newest workshop a reader can buy today.
+ *
+ * Public, published, and attached to an active self-paced product — newest
+ * `createdAt` first. This is how "the latest release" is decided everywhere it
+ * matters (the offer ladder, the `/courses` hero) rather than by a constant
+ * someone has to remember to edit when the next course ships. Cohort modules
+ * are unlisted and carry no self-paced product, so they never qualify.
+ *
+ * Tagged with `products` as well as the workshop tags: attaching a product to
+ * a workshop is what makes it eligible, so that write must invalidate this.
+ */
+export const getCachedLatestSelfPacedWorkshop = unstable_cache(
+	async () => getLatestSelfPacedWorkshop(),
+	['latest-self-paced-workshop-v1'],
+	{ revalidate: 3600, tags: ['workshop', 'workshops', 'products'] },
+)
+
+export async function getLatestSelfPacedWorkshop() {
+	const rows = await db
+		.select({
+			id: contentResource.id,
+			type: contentResource.type,
+			fields: contentResource.fields,
+		})
+		.from(contentResource)
+		.innerJoin(
+			contentResourceProduct,
+			eq(contentResourceProduct.resourceId, contentResource.id),
+		)
+		.innerJoin(productTable, eq(productTable.id, contentResourceProduct.productId))
+		.where(
+			and(
+				eq(contentResource.type, 'workshop'),
+				isNull(contentResource.deletedAt),
+				// Detaching a product is a soft delete on the join row
+				// (`removeResourceFromProduct`), so without this a workshop whose
+				// product was pulled would still lead as "buyable".
+				isNull(contentResourceProduct.deletedAt),
+				eq(
+					sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+					'public',
+				),
+				eq(sql`JSON_EXTRACT (${contentResource.fields}, "$.state")`, 'published'),
+				eq(productTable.type, 'self-paced'),
+				eq(productTable.status, 1),
+			),
+		)
+		.orderBy(desc(contentResource.createdAt))
+		.limit(1)
+
+	const row = rows[0]
+	if (!row) return null
+
+	const parsed = MinimalWorkshopSchema.safeParse(row)
+	if (!parsed.success) {
+		await log.error('workshop.parse.error', {
+			scope: 'latest-self-paced',
+			error: parsed.error.message,
+		})
+		return null
+	}
+	return parsed.data
 }
 
 export async function getWorkshop(moduleSlugOrId: string) {
