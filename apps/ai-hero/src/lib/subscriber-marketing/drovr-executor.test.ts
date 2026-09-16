@@ -17,14 +17,22 @@ class FakeRepository implements DrovrExecutorRepository {
 	findContactById(id: string) {
 		return this.contacts.get(id)
 	}
+	/** Rows a concurrent writer inserts between the read and the insert. */
+	raceRows: SideEffectIntent[] = []
 	findSideEffectIntentByIdempotencyKey(idempotencyKey: string) {
 		return Array.from(this.intents.values()).find(
 			(intent) => intent.idempotencyKey === idempotencyKey,
 		)
 	}
+	private admitRacers() {
+		for (const row of this.raceRows.splice(0)) this.intents.set(row.id, row)
+	}
 	createSideEffectIntent(input: SideEffectIntent) {
+		this.admitRacers()
 		if (this.findSideEffectIntentByIdempotencyKey(input.idempotencyKey)) {
-			throw new Error('duplicate idempotency key')
+			throw new Error(
+				"Duplicate entry for key 'SideEffectIntent_idempotencyKey_uq'",
+			)
 		}
 		this.intents.set(input.id, input)
 		return input
@@ -81,7 +89,7 @@ describe('drovr executor: accepting an email.send intent', () => {
 			provider: 'kit',
 			type: 'send-value-path-email',
 			status: 'pending',
-			nextActionId: `drovr:${intent().idempotencyKey}`,
+			nextActionId: expect.stringMatching(/^drovr:[0-9a-f]{40}$/),
 			metadata: {
 				source: 'drovr',
 				drovr: {
@@ -287,5 +295,101 @@ describe('drovr completion for an owned intent', () => {
 			emailResourceId: 'ai-hero-skills-workflow.email-3',
 		})
 		expect(completion?.idempotencyKey).toBe('completion:k')
+	})
+})
+
+describe('drovr executor: edges Macroscope asked about', () => {
+	it('survives a duplicate-insert race by answering with the row that won', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.raceRows.push({
+			id: 'raced-row',
+			nextActionId: 'legacy',
+			contactId: 'contact-1',
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			idempotencyKey:
+				'contact:contact-1:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0',
+			gates: [],
+			reviewReasons: [],
+			metadata: {},
+			createdAt: now,
+		})
+
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+		})
+
+		expect(result).toEqual({
+			status: 'accepted',
+			intentId: 'raced-row',
+			idempotencyKey:
+				'contact:contact-1:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0',
+			created: false,
+		})
+		expect(repository.intents.size).toBe(1)
+	})
+
+	it('answers a legacy-completed email with a completion addressed to the requester', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set('legacy-done', {
+			id: 'legacy-done',
+			nextActionId: 'legacy',
+			contactId: 'contact-1',
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'completed',
+			completedAt: '2026-09-10T10:00:00.000Z',
+			idempotencyKey:
+				'contact:contact-1:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-0',
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+			},
+			createdAt: '2026-09-10T09:00:00.000Z',
+		})
+
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+		})
+
+		expect(result).toEqual({
+			status: 'completed',
+			intentId: 'legacy-done',
+			completion: {
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'value-path-skills-course',
+				type: 'email.completed',
+				occurredAt: '2026-09-10T10:00:00.000Z',
+				idempotencyKey: `completion:${intent().idempotencyKey}`,
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+			},
+		})
+	})
+
+	it('bounds nextActionId for an unbounded drovr key', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent({ idempotencyKey: `intent:${'x'.repeat(600)}` }),
+			now,
+		})
+		expect(result.status).toBe('accepted')
+		if (result.status !== 'accepted') return
+		const row = repository.intents.get(result.intentId)!
+		expect(row.nextActionId.length).toBeLessThanOrEqual(255)
+		expect(row.metadata).toMatchObject({
+			drovr: { intentKey: `intent:${'x'.repeat(600)}` },
+		})
 	})
 })

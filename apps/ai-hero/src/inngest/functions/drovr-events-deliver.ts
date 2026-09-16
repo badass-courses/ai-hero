@@ -6,22 +6,10 @@ import {
 	deliveryStepId,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import {
-	DROVR_AUTHORITY_TENANT_ID,
-	DROVR_SHADOW_TENANT_ID,
+	drovrApiKeyForTenant,
 	type DrovrDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import { log } from '@/server/logger'
-
-export function drovrApiKeyForTenant(tenantId: string): string | undefined {
-	switch (tenantId) {
-		case DROVR_SHADOW_TENANT_ID:
-			return env.DROVR_SHADOW_API_KEY
-		case DROVR_AUTHORITY_TENANT_ID:
-			return env.DROVR_API_KEY_ORG_AIHERO
-		default:
-			return undefined
-	}
-}
 
 export type DrovrEventsDeliverReceipt = {
 	status: 'delivered' | 'skipped'

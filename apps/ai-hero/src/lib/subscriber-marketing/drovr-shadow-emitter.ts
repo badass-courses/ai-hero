@@ -63,7 +63,32 @@ export type DrovrShadowFact =
 
 type DrovrShadowEmitterConfig = {
 	ingestUrl?: string
+	/** Bearer key for the shadow tenant. */
 	apiKey?: string
+	/** Bearer key for the authority tenant, once cut over. */
+	authorityApiKey?: string
+}
+
+/**
+ * One bearer key per drovr tenant. Every path that posts to drovr (the
+ * durable delivery function, the direct fallback) must choose by tenant;
+ * an authority completion sent with the shadow key is a 403 at drovr.
+ */
+export function drovrApiKeyForTenant(
+	tenantId: string,
+	config: Pick<DrovrShadowEmitterConfig, 'apiKey' | 'authorityApiKey'> = {
+		apiKey: env.DROVR_SHADOW_API_KEY,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
+	},
+): string | undefined {
+	switch (tenantId) {
+		case DROVR_SHADOW_TENANT_ID:
+			return config.apiKey
+		case DROVR_AUTHORITY_TENANT_ID:
+			return config.authorityApiKey
+		default:
+			return undefined
+	}
 }
 
 type DrovrShadowEmitterOptions = {
@@ -92,10 +117,10 @@ export async function emitDrovrShadowFact(
 	const config = options.config ?? {
 		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
 		apiKey: env.DROVR_SHADOW_API_KEY,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
 	}
 	const ingestUrl = config.ingestUrl
-	const apiKey = config.apiKey
-	if (!ingestUrl || !apiKey) return
+	if (!ingestUrl) return
 
 	const events = mapDrovrShadowFact(fact)
 	if (events.length === 0) return
@@ -104,15 +129,23 @@ export async function emitDrovrShadowFact(
 	const warn = options.warn ?? log.warn
 	try {
 		await Promise.all(
-			events.map((event) =>
-				postDrovrShadowEvent({
+			events.map(async (event) => {
+				const apiKey = drovrApiKeyForTenant(event.tenantId, config)
+				if (!apiKey) {
+					await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
+						tenantId: event.tenantId,
+						idempotencyKey: event.idempotencyKey,
+					})
+					return
+				}
+				await postDrovrShadowEvent({
 					event,
 					config: { ingestUrl, apiKey },
 					fetcher,
 					warn,
 					timeoutMs: options.timeoutMs ?? 3000,
-				}),
-			),
+				})
+			}),
 		)
 	} catch (error) {
 		await warnWithoutThrow(warn, 'drovr.shadow.emit_failed', {
@@ -335,7 +368,7 @@ function courseCompletionTimezone(headerValue?: string) {
 
 async function postDrovrShadowEvent(args: {
 	event: DrovrShadowEvent
-	config: Required<DrovrShadowEmitterConfig>
+	config: DrovrDeliveryConfig
 	fetcher: typeof fetch
 	warn: typeof log.warn
 	timeoutMs: number
@@ -416,7 +449,7 @@ export type DrovrDeliveryOutcome =
 	| { status: 'rejected'; httpStatus: number; problem: unknown }
 	| { status: 'failed'; reason: string; httpStatus?: number }
 
-export type DrovrDeliveryConfig = Required<DrovrShadowEmitterConfig>
+export type DrovrDeliveryConfig = { ingestUrl: string; apiKey: string }
 
 /**
  * Post one event and report the outcome instead of swallowing it. The

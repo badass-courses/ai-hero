@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
 import { createInternalId } from '../internal-id'
@@ -192,7 +193,7 @@ export async function acceptDrovrIntent(args: {
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) {
-		return existingIntentResult(existing)
+		return existingIntentResult(existing, intent, step)
 	}
 
 	const kitSubscriberId =
@@ -204,27 +205,40 @@ export async function acceptDrovrIntent(args: {
 		intentKey: intent.idempotencyKey,
 		dueAt: intent.dueAt,
 	}
-	const created = await args.repository.createSideEffectIntent({
-		id: createInternalId(),
-		nextActionId: `drovr:${intent.idempotencyKey}`,
-		contactId: contact.id,
-		provider: 'kit',
-		type: 'send-value-path-email',
-		status: 'pending',
-		idempotencyKey,
-		gates: [],
-		reviewReasons: [],
-		metadata: {
-			source: 'drovr',
-			drovr: owner,
-			valuePathSlug: step.valuePathSlug,
-			emailResourceId: step.emailResourceId,
-			kitSequenceId: step.kitSequenceId,
-			...(kitSubscriberId ? { kitSubscriberId } : {}),
-			...carryForward(latest?.metadata),
-		},
-		createdAt: now,
-	})
+	let created: SideEffectIntent
+	try {
+		created = await args.repository.createSideEffectIntent({
+			id: createInternalId(),
+			// Bounded: the column is 255 chars and drovr keys are unbounded
+			// text, so the link back is a stable digest of the key.
+			nextActionId: `drovr:${createHash('sha256').update(intent.idempotencyKey).digest('hex').slice(0, 40)}`,
+			contactId: contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			idempotencyKey,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				source: 'drovr',
+				drovr: owner,
+				valuePathSlug: step.valuePathSlug,
+				emailResourceId: step.emailResourceId,
+				kitSequenceId: step.kitSequenceId,
+				...(kitSubscriberId ? { kitSubscriberId } : {}),
+				...carryForward(latest?.metadata),
+			},
+			createdAt: now,
+		})
+	} catch (cause) {
+		// Two posts for the same email raced past the read; the unique key
+		// held, so the row that won is the answer, exactly as if it had been
+		// found first. Anything else is a real failure.
+		const raced =
+			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+		if (!raced) throw cause
+		return existingIntentResult(raced, intent, step)
+	}
 	return {
 		status: 'accepted',
 		intentId: created.id,
@@ -233,20 +247,45 @@ export async function acceptDrovrIntent(args: {
 	}
 }
 
-function existingIntentResult(existing: SideEffectIntent): DrovrExecutorResult {
+/**
+ * The inline completion is always addressed to the request in hand: its
+ * tenant and its intent key. The row may have been planned by the legacy
+ * planner (no owner) or by an earlier drovr transition (another key); in
+ * both cases the email was sent, and drovr's fold matches on the
+ * emailResourceId, so the requester gets a completion it can fold.
+ */
+function existingIntentResult(
+	existing: SideEffectIntent,
+	request: DrovrIntent,
+	step: SkillsWorkflowEmailStep,
+): DrovrExecutorResult {
 	if (existing.status === 'completed' || isValuePathIntentCompleted(existing)) {
-		const completion = drovrCompletionForIntent(existing)
-		if (completion) {
-			return { status: 'completed', intentId: existing.id, completion }
+		const completedAt =
+			stringField(existing.completedAt) ??
+			stringField(existing.metadata.completedAt) ??
+			new Date().toISOString()
+		const tenantId = knownTenant(request.tenantId)
+		if (!tenantId) {
+			return {
+				status: 'unsupported',
+				reason: `tenant ${request.tenantId} is not one ai-hero executes for`,
+				hint: `Known tenants: ${DROVR_AUTHORITY_TENANT_ID}, ${DROVR_SHADOW_TENANT_ID}.`,
+			}
 		}
-		// A legacy-planned completion has no drovr owner to route to; the
-		// caller learns it is done and drovr's own executor completion path
-		// carries the fold.
 		return {
-			status: 'accepted',
+			status: 'completed',
 			intentId: existing.id,
-			idempotencyKey: existing.idempotencyKey,
-			created: false,
+			completion: {
+				tenantId,
+				contactId: existing.contactId,
+				journeyId: request.journeyId as DrovrShadowEvent['journeyId'],
+				type: 'email.completed',
+				occurredAt: completedAt,
+				idempotencyKey: `completion:${request.idempotencyKey}`,
+				payload: {
+					emailResourceId: canonicalIndividualResourceId(step.emailResourceId),
+				},
+			},
 		}
 	}
 	if (
