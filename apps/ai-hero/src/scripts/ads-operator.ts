@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { db } from '@/db'
+import { closeDatabasePool, db } from '@/db'
 import {
 	contact,
 	contactEvent,
@@ -1279,5 +1279,7 @@ try {
 			2,
 		),
 	)
-	process.exit(1)
+	process.exitCode = 1
+} finally {
+	await closeDatabasePool()
 }
