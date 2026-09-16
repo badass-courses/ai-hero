@@ -134,6 +134,37 @@ describe('drovr shadow fact mapper', () => {
 		expect(mapDrovrShadowFact(fact)).toEqual(mapDrovrShadowFact(fact))
 	})
 
+	it('routes a drovr-owned completed intent to its owner tenant, not the shadow', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: completedIntent({
+				metadata: {
+					source: 'drovr',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'value-path-skills-course',
+						intentKey: 'intent:org-aihero:contact-1:value-path-skills-course:email2.pending:drip.email1To2:0',
+						dueAt: occurredAt,
+					},
+					valuePathSlug: 'ai-hero-skills-workflow',
+					emailResourceId: 'ai-hero-skills-workflow.email-2',
+				},
+			}),
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'value-path-skills-course',
+				type: 'email.completed',
+				occurredAt,
+				idempotencyKey:
+					'completion:intent:org-aihero:contact-1:value-path-skills-course:email2.pending:drip.email1To2:0',
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' },
+			},
+		])
+	})
+
 	it('maps a new durable course completion to both journeys with fallback timezone', () => {
 		const events = mapDrovrShadowFact({
 			kind: 'course-completed',

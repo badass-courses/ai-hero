@@ -5,7 +5,23 @@ import {
 	deliverOrThrow,
 	deliveryStepId,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
-import type { DrovrDeliveryConfig } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import {
+	DROVR_AUTHORITY_TENANT_ID,
+	DROVR_SHADOW_TENANT_ID,
+	type DrovrDeliveryConfig,
+} from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { log } from '@/server/logger'
+
+export function drovrApiKeyForTenant(tenantId: string): string | undefined {
+	switch (tenantId) {
+		case DROVR_SHADOW_TENANT_ID:
+			return env.DROVR_SHADOW_API_KEY
+		case DROVR_AUTHORITY_TENANT_ID:
+			return env.DROVR_API_KEY_ORG_AIHERO
+		default:
+			return undefined
+	}
+}
 
 export type DrovrEventsDeliverReceipt = {
 	status: 'delivered' | 'skipped'
@@ -31,8 +47,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 	{ event: DROVR_EVENTS_DELIVER_EVENT },
 	async ({ event, step }): Promise<DrovrEventsDeliverReceipt> => {
 		const ingestUrl = env.DROVR_SHADOW_INGEST_URL
-		const apiKey = env.DROVR_SHADOW_API_KEY
-		if (!ingestUrl || !apiKey) {
+		if (!ingestUrl) {
 			return {
 				status: 'skipped',
 				accepted: 0,
@@ -40,11 +55,22 @@ export const drovrEventsDeliver = inngest.createFunction(
 				reason: 'drovr ingest is not configured',
 			}
 		}
-		const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
 
 		let accepted = 0
 		let rejected = 0
 		for (const drovrEvent of event.data.events) {
+			// One bearer key per drovr tenant; a tenant without a key is a
+			// configuration gap, final for this run and loud in the receipt.
+			const apiKey = drovrApiKeyForTenant(drovrEvent.tenantId)
+			if (!apiKey) {
+				await log.warn('drovr.shadow.tenant_key_missing', {
+					tenantId: drovrEvent.tenantId,
+					idempotencyKey: drovrEvent.idempotencyKey,
+				})
+				rejected += 1
+				continue
+			}
+			const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
 			const outcome = await step.run(deliveryStepId(drovrEvent), () =>
 				deliverOrThrow({ event: drovrEvent, config }),
 			)

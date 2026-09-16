@@ -12,8 +12,14 @@ export const DROVR_EVERGREEN_OFFER_JOURNEY_ID =
 	'crash-course-evergreen-offer' as const
 export const DROVR_FALLBACK_TIMEZONE = 'America/Los_Angeles' as const
 
+/** Tenants ai-hero speaks to: the shadow, and the authority once cut over. */
+export const DROVR_AUTHORITY_TENANT_ID = 'org-aihero' as const
+export type DrovrTenantId =
+	| typeof DROVR_SHADOW_TENANT_ID
+	| typeof DROVR_AUTHORITY_TENANT_ID
+
 export type DrovrShadowEvent = {
-	tenantId: typeof DROVR_SHADOW_TENANT_ID
+	tenantId: DrovrTenantId
 	contactId: string
 	journeyId:
 		| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
@@ -175,6 +181,11 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	) {
 		return []
 	}
+	// An intent drovr planned completes back to the tenant that owns it,
+	// keyed the way drovr's own executors key completions. The shadow does
+	// not hear about it: that contact is not the shadow's to follow.
+	const ownerCompletion = drovrOwnedCompletion(intent)
+	if (ownerCompletion) return [ownerCompletion]
 	const completedAt = valuePathIntentCompletedAt(intent)
 	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
 	const emailResourceId = sourceEmailResourceId
@@ -193,6 +204,44 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 			payload: { emailResourceId },
 		},
 	]
+}
+
+function drovrOwnedCompletion(
+	intent: SideEffectIntent,
+): DrovrShadowEvent | undefined {
+	const owner = intent.metadata.drovr
+	if (!owner || typeof owner !== 'object') return undefined
+	const record = owner as Record<string, unknown>
+	const tenantId = stringValue(record.tenantId)
+	const journeyId = stringValue(record.journeyId)
+	const intentKey = stringValue(record.intentKey)
+	const completedAt = valuePathIntentCompletedAt(intent)
+	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
+	const emailResourceId = sourceEmailResourceId
+		? canonicalSkillsEmailResourceId(sourceEmailResourceId)
+		: undefined
+	if (
+		!tenantId ||
+		!journeyId ||
+		!intentKey ||
+		!completedAt ||
+		!emailResourceId ||
+		(tenantId !== DROVR_SHADOW_TENANT_ID &&
+			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
+		(journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID &&
+			journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID)
+	) {
+		return undefined
+	}
+	return {
+		tenantId,
+		contactId: intent.contactId,
+		journeyId,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `completion:${intentKey}`,
+		payload: { emailResourceId },
+	}
 }
 
 function mapCourseCompleted(
