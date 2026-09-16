@@ -1,6 +1,6 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
-import { emitDrovrShadowFactSafely } from './drovr-shadow-emitter'
+import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
 	isContentCompleteSkillsWorkflowEmailResourceId,
@@ -315,7 +315,7 @@ export async function executeValuePathEmailIntent(args: {
 				completedAt,
 			})
 		}
-		emitDrovrShadowFactSafely({
+		dispatchDrovrShadowFactSafely({
 			kind: 'side-effect-intent-completed',
 			intent: {
 				...intent,
@@ -330,7 +330,7 @@ export async function executeValuePathEmailIntent(args: {
 			metadata.valuePathSlug &&
 			isTerminalSkillsWorkflowEmailResourceId(metadata.emailResourceId)
 		) {
-			emitDrovrShadowFactSafely({
+			dispatchDrovrShadowFactSafely({
 				kind: 'course-completed',
 				contactId: intent.contactId,
 				valuePathSlug: metadata.valuePathSlug,
