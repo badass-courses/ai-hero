@@ -94,7 +94,9 @@ function rollingAllowlist(): GateDRuntimeAllowlist {
 	}
 }
 
-function riskyReplanCandidates(count: number): LearnerFlowReconcilerCandidate[] {
+function riskyReplanCandidates(
+	count: number,
+): LearnerFlowReconcilerCandidate[] {
 	return Array.from({ length: count }, (_, index) => ({
 		contactId: `contact-${index}`,
 		intentId: `intent-${index}`,
@@ -295,8 +297,7 @@ describe('learner flow reconciler', () => {
 						contactId,
 						id: `intent-${index}`,
 						status: index < 60 ? 'completed' : 'pending',
-						completedAt:
-							index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
+						completedAt: index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
 						emailResourceId:
 							index < 60
 								? 'ai-hero-skills-workflow.email-6'
@@ -388,8 +389,7 @@ describe('learner flow reconciler', () => {
 		})
 		const emailSeven = Array.from(repository.sideEffectIntents.values()).find(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-7',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 		)
 
 		expect(emailSeven).toMatchObject({ status: 'pending' })
@@ -438,8 +438,7 @@ describe('learner flow reconciler', () => {
 		)
 		const intents = Array.from(repository.sideEffectIntents.values()).filter(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-7',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 		)
 
 		expect(first.counts.intentsCreated).toBe(1)
@@ -553,8 +552,7 @@ describe('learner flow reconciler', () => {
 		expect(
 			Array.from(repository.sideEffectIntents.values()).some(
 				(intent) =>
-					intent.metadata.emailResourceId ===
-					'ai-hero-skills-workflow.email-7',
+					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 			),
 		).toBe(false)
 		expect(receipt).toMatchObject({
@@ -614,12 +612,8 @@ describe('learner flow reconciler', () => {
 				permanentProviderFailures: 1,
 			},
 		})
-		expect(receipt.failureReasons).toContain(
-			'tier2:provider-permanent-failure',
-		)
-		expect(receipt.brake.reasons).toContain(
-			'repair-ratio-37.7%-exceeds-25.0%',
-		)
+		expect(receipt.failureReasons).toContain('tier2:provider-permanent-failure')
+		expect(receipt.brake.reasons).toContain('repair-ratio-37.7%-exceeds-25.0%')
 		expect(repository.includeCanary).toBe(true)
 		expect(repository.writeAttempts).toBe(0)
 	})
@@ -695,15 +689,12 @@ describe('learner flow reconciler', () => {
 		const repaired = repository.sideEffectIntents.get(driftIntent.id)!
 		const next = Array.from(repository.sideEffectIntents.values()).find(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-1',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-1',
 		)
 		expect(driftIntent.completedAt).toBeNull()
 		expect(driftIntent.metadata.completedAt).toBeUndefined()
 		expect(repaired.completedAt).toBe('2026-07-15T20:00:00.000Z')
-		expect(repaired.metadata.completedAt).toBe(
-			'2026-07-15T20:00:00.000Z',
-		)
+		expect(repaired.metadata.completedAt).toBe('2026-07-15T20:00:00.000Z')
 		expect(next?.status).toBe('pending')
 		expect(receipt).toMatchObject({
 			status: 'ok',
@@ -745,8 +736,7 @@ describe('learner flow reconciler', () => {
 				contactId: 'zombie-contact',
 				contact: {
 					id: 'zombie-contact',
-					email:
-						'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
+					email: 'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
 					lifecycle: 'nurture-ready',
 					isProvisional: true,
 					createdAt: completedAt,
@@ -1118,5 +1108,44 @@ describe('learner flow reconciler', () => {
 		expect(functionSource).toContain('email7LiveEnabled')
 		expect(configSource).toContain('learnerFlowReconciler')
 		expect(configSource).not.toContain('valuePathDripProgression')
+	})
+
+	it('skips contacts drovr drives and reports how many', async () => {
+		const { captured, completed, repository } =
+			await createEmailSixReconcilerFixture()
+		const ownedIntent = {
+			...completed,
+			id: 'drovr-owned-intent',
+			idempotencyKey: `${completed.idempotencyKey}:drovr`,
+			metadata: {
+				...completed.metadata,
+				source: 'drovr',
+				drovr: {
+					tenantId: 'org-aihero',
+					journeyId: 'value-path-skills-course',
+					intentKey: 'k',
+					dueAt: now,
+				},
+			},
+		}
+		const reconcilerRepository = Object.assign(repository, {
+			findSkillsWorkflowLearnerFlowRecords: () => [
+				{
+					contactId: captured.contact.id,
+					contact: captured.contact,
+					contactState: captured.contactState,
+					intents: [ownedIntent],
+					entryEvents: [],
+				},
+			],
+		})
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository: reconcilerRepository,
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		expect(plan.cohort.drovrOwnedSkipped).toBe(1)
+		expect(plan.candidates).toEqual([])
+		expect(plan.records).toEqual([])
 	})
 })

@@ -9,7 +9,38 @@ import {
 	drovrApiKeyForTenant,
 	type DrovrDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import {
+	fanOutOwnedEvents,
+	findRecordedJourneyOwner,
+} from '@/lib/subscriber-marketing/drovr-ownership'
+import { DROVR_SHADOW_TENANT_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { log } from '@/server/logger'
+
+async function resolveOwnedContactIds(
+	events: readonly DrovrShadowEvent[],
+): Promise<string[]> {
+	const candidates = new Set(
+		events
+			.filter(
+				(event) =>
+					event.tenantId === DROVR_SHADOW_TENANT_ID &&
+					event.type !== 'contact.created',
+			)
+			.map((event) => event.contactId),
+	)
+	if (candidates.size === 0) return []
+	const { db } = await import('@/db')
+	const repository = new DrizzleCaptureMarketingRepository(db)
+	const owned: string[] = []
+	for (const contactId of candidates) {
+		if ((await findRecordedJourneyOwner(repository, contactId)) === 'drovr') {
+			owned.push(contactId)
+		}
+	}
+	return owned
+}
 
 export type DrovrEventsDeliverReceipt = {
 	status: 'delivered' | 'skipped'
@@ -44,9 +75,19 @@ export const drovrEventsDeliver = inngest.createFunction(
 			}
 		}
 
+		// Facts about drovr-owned contacts also reach the authority tenant.
+		// Ownership is read here, off the host's write path, once per batch.
+		const ownedContactIds = await step.run('resolve-drovr-owners', () =>
+			resolveOwnedContactIds(event.data.events),
+		)
+		const events = fanOutOwnedEvents(
+			event.data.events,
+			new Set(ownedContactIds),
+		)
+
 		let accepted = 0
 		let rejected = 0
-		for (const drovrEvent of event.data.events) {
+		for (const drovrEvent of events) {
 			// One bearer key per drovr tenant; a tenant without a key is a
 			// configuration gap, final for this run and loud in the receipt.
 			const apiKey = drovrApiKeyForTenant(drovrEvent.tenantId)

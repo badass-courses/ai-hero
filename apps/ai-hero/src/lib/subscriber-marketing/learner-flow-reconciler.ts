@@ -7,6 +7,7 @@ import {
 	type LearnerFlowCohortRecord,
 	type LearnerFlowCohortRepository,
 } from './learner-flow-cohort'
+import { isDrovrOwnedIntent } from './drovr-ownership'
 import {
 	learnerFlowDrillSuppression,
 	type LearnerFlowDrillSuppression,
@@ -79,6 +80,8 @@ export type LearnerFlowReconcilerPlan = {
 		contacts: number
 		liveRecordsScanned: number
 		includesCanary: true
+		/** Contacts drovr drives; the legacy planner never touches them. */
+		drovrOwnedSkipped: number
 	}
 	counts: {
 		moving: number
@@ -157,7 +160,13 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			candidate.scheduleEvidence,
 		]),
 	)
-	const classified = cohort.records.map((record) => ({
+	// A contact with any drovr-planned intent is drovr's to drive: nudging
+	// its drip here would send the next email twice, once per planner.
+	const legacyRecords = cohort.records.filter(
+		(record) => !record.intents.some(isDrovrOwnedIntent),
+	)
+	const drovrOwnedSkipped = cohort.records.length - legacyRecords.length
+	const classified = legacyRecords.map((record) => ({
 		record,
 		classification: classifyLearnerFlowContact({
 			...record,
@@ -173,9 +182,8 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		if (classification.state !== 'stuck' || !classification.cause) continue
 		const repairEvidence = item.record.intents
 			.map(valuePathCompletionRepairEvidence)
-			.find(
-				(evidence): evidence is ValuePathCompletionRepairEvidence =>
-					Boolean(evidence),
+			.find((evidence): evidence is ValuePathCompletionRepairEvidence =>
+				Boolean(evidence),
 			)
 		if (repairEvidence && classification.cause === 'classifier-gap') {
 			candidates.push({
@@ -236,6 +244,7 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			contacts: cohort.contactIds.length,
 			liveRecordsScanned: cohort.liveRecordsScanned,
 			includesCanary: true,
+			drovrOwnedSkipped,
 		},
 		counts: {
 			moving: classified.filter(
@@ -244,9 +253,8 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			terminal: classified.filter(
 				(item) => item.classification.state === 'terminal',
 			).length,
-			stuck: classified.filter(
-				(item) => item.classification.state === 'stuck',
-			).length,
+			stuck: classified.filter((item) => item.classification.state === 'stuck')
+				.length,
 			planned: candidates.length,
 			suppressedFixtureStarved: suppressedFixtureStarved.length,
 			tier2: tier2.length,
@@ -255,7 +263,7 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		candidates,
 		suppressedFixtureStarved,
 		tier2,
-		records: cohort.records,
+		records: legacyRecords,
 	}
 }
 
@@ -271,8 +279,7 @@ export function evaluateLearnerFlowReconcilerBrake(args: {
 	const repairToCohortRatio =
 		args.cohortSize > 0 ? riskyRepairCount / args.cohortSize : 0
 	const reasons =
-		args.cohortSize > 0 &&
-		repairToCohortRatio > config.maxRepairToCohortRatio
+		args.cohortSize > 0 && repairToCohortRatio > config.maxRepairToCohortRatio
 			? [
 					`repair-ratio-${formatRatio(repairToCohortRatio)}-exceeds-${formatRatio(config.maxRepairToCohortRatio)}`,
 				]
@@ -424,7 +431,9 @@ function receiptFor(args: {
 	const status =
 		args.brake.status === 'tripped'
 			? 'blocked'
-			: writeFailed > 0 || blockedResults.length > 0 || args.plan.tier2.length > 0
+			: writeFailed > 0 ||
+				  blockedResults.length > 0 ||
+				  args.plan.tier2.length > 0
 				? 'degraded'
 				: 'ok'
 

@@ -131,7 +131,7 @@ describe('drovr shadow fact mapper', () => {
 		expect(mapDrovrShadowFact(fact)).toEqual(mapDrovrShadowFact(fact))
 	})
 
-	it('routes a drovr-owned completed intent to its owner tenant, not the shadow', () => {
+	it('routes a drovr-owned completed intent to its owner tenant and mirrors it to the shadow', () => {
 		const events = mapDrovrShadowFact({
 			kind: 'side-effect-intent-completed',
 			intent: completedIntent({
@@ -159,6 +159,36 @@ describe('drovr shadow fact mapper', () => {
 				idempotencyKey:
 					'completion:intent:org-aihero:contact-1:value-path-skills-course:email2.pending:drip.email1To2:0',
 				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' },
+			},
+			{
+				tenantId: 'org-aihero-shadow',
+				contactId: 'contact-1',
+				journeyId: 'value-path-skills-course',
+				type: 'email.completed',
+				occurredAt,
+				idempotencyKey: 'aihero:intent-completed:intent-1',
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' },
+			},
+		])
+	})
+
+	it('maps a journey.owner.assigned event to a birth in the authority tenant', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('journey.owner.assigned', {
+				semanticIdempotencyKey:
+					'kit:journey.owner.assigned:kit-1:drovr-owner:contact-1:value-path-skills-course',
+			}),
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'value-path-skills-course',
+				type: 'contact.created',
+				occurredAt,
+				idempotencyKey:
+					'aihero:kit:journey.owner.assigned:kit-1:drovr-owner:contact-1:value-path-skills-course',
 			},
 		])
 	})
@@ -429,12 +459,13 @@ describe('drovr direct sender: per-tenant keys', () => {
 				fetch,
 			},
 		)
-		expect(fetch).toHaveBeenCalledTimes(1)
-		expect(fetch.mock.calls[0]?.[1]).toMatchObject({
-			headers: expect.objectContaining({
-				authorization: 'Bearer authority-key',
-			}),
-		})
+		// Owner completion plus the shadow mirror, each with its tenant's key.
+		expect(fetch).toHaveBeenCalledTimes(2)
+		const keys = fetch.mock.calls.map(
+			(call) =>
+				(call[1] as { headers: Record<string, string> }).headers.authorization,
+		)
+		expect(keys.sort()).toEqual(['Bearer authority-key', 'Bearer shadow-key'])
 	})
 
 	it('warns and skips an authority event when no authority key is configured', async () => {
@@ -464,7 +495,12 @@ describe('drovr direct sender: per-tenant keys', () => {
 				warn,
 			},
 		)
-		expect(fetch).not.toHaveBeenCalled()
+		// The shadow mirror still posts with the shadow key; only the
+		// authority-addressed completion is skipped.
+		expect(fetch).toHaveBeenCalledTimes(1)
+		expect(fetch.mock.calls[0]?.[1]).toMatchObject({
+			headers: expect.objectContaining({ authorization: 'Bearer shadow-key' }),
+		})
 		expect(warn).toHaveBeenCalledWith(
 			'drovr.shadow.tenant_key_missing',
 			expect.objectContaining({ tenantId: 'org-aihero' }),
