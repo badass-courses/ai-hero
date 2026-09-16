@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactEventRecord, SideEffectIntent } from './types'
-import {
-	emitDrovrShadowFact,
-	mapDrovrShadowFact,
-} from './drovr-shadow-emitter'
+import { emitDrovrShadowFact, mapDrovrShadowFact } from './drovr-shadow-emitter'
 
 const occurredAt = '2026-08-30T12:00:00.000Z'
 
@@ -134,6 +131,38 @@ describe('drovr shadow fact mapper', () => {
 		expect(mapDrovrShadowFact(fact)).toEqual(mapDrovrShadowFact(fact))
 	})
 
+	it('routes a drovr-owned completed intent to its owner tenant, not the shadow', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: completedIntent({
+				metadata: {
+					source: 'drovr',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'value-path-skills-course',
+						intentKey:
+							'intent:org-aihero:contact-1:value-path-skills-course:email2.pending:drip.email1To2:0',
+						dueAt: occurredAt,
+					},
+					valuePathSlug: 'ai-hero-skills-workflow',
+					emailResourceId: 'ai-hero-skills-workflow.email-2',
+				},
+			}),
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'value-path-skills-course',
+				type: 'email.completed',
+				occurredAt,
+				idempotencyKey:
+					'completion:intent:org-aihero:contact-1:value-path-skills-course:email2.pending:drip.email1To2:0',
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' },
+			},
+		])
+	})
+
 	it('maps a new durable course completion to both journeys with fallback timezone', () => {
 		const events = mapDrovrShadowFact({
 			kind: 'course-completed',
@@ -149,8 +178,7 @@ describe('drovr shadow fact mapper', () => {
 				journeyId: 'value-path-skills-course',
 				type: 'course.sequence-exhausted',
 				occurredAt,
-				idempotencyKey:
-					'aihero:completion:contact-1:ai-hero-skills-workflow',
+				idempotencyKey: 'aihero:completion:contact-1:ai-hero-skills-workflow',
 			},
 			{
 				tenantId: 'org-aihero-shadow',
@@ -158,8 +186,7 @@ describe('drovr shadow fact mapper', () => {
 				journeyId: 'crash-course-evergreen-offer',
 				type: 'course.sequence-exhausted',
 				occurredAt,
-				idempotencyKey:
-					'aihero:completion:contact-1:ai-hero-skills-workflow',
+				idempotencyKey: 'aihero:completion:contact-1:ai-hero-skills-workflow',
 				payload: {
 					valuePathSlug: 'ai-hero-skills-workflow',
 					completedAt: occurredAt,
@@ -231,9 +258,7 @@ describe('drovr shadow fact mapper', () => {
 			}),
 		})
 
-		expect(event?.idempotencyKey).toBe(
-			'aihero:contact-event:contact-event-1',
-		)
+		expect(event?.idempotencyKey).toBe('aihero:contact-event:contact-event-1')
 		expect(JSON.stringify(event)).not.toContain('learner@example.com')
 	})
 
@@ -372,5 +397,77 @@ describe('drovr shadow sender', () => {
 			eventCount: 1,
 			error: 'network down',
 		})
+	})
+})
+
+describe('drovr direct sender: per-tenant keys', () => {
+	it('posts an authority-owned completion with the authority key, not the shadow key', async () => {
+		const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		await emitDrovrShadowFact(
+			{
+				kind: 'side-effect-intent-completed',
+				intent: completedIntent({
+					metadata: {
+						source: 'drovr',
+						drovr: {
+							tenantId: 'org-aihero',
+							journeyId: 'value-path-skills-course',
+							intentKey: 'k',
+							dueAt: occurredAt,
+						},
+						valuePathSlug: 'ai-hero-skills-workflow',
+						emailResourceId: 'ai-hero-skills-workflow.email-2',
+					},
+				}),
+			},
+			{
+				config: {
+					ingestUrl: 'https://drovr.test/events',
+					apiKey: 'shadow-key',
+					authorityApiKey: 'authority-key',
+				},
+				fetch,
+			},
+		)
+		expect(fetch).toHaveBeenCalledTimes(1)
+		expect(fetch.mock.calls[0]?.[1]).toMatchObject({
+			headers: expect.objectContaining({
+				authorization: 'Bearer authority-key',
+			}),
+		})
+	})
+
+	it('warns and skips an authority event when no authority key is configured', async () => {
+		const fetch = vi.fn()
+		const warn = vi.fn()
+		await emitDrovrShadowFact(
+			{
+				kind: 'side-effect-intent-completed',
+				intent: completedIntent({
+					metadata: {
+						drovr: {
+							tenantId: 'org-aihero',
+							journeyId: 'value-path-skills-course',
+							intentKey: 'k',
+							dueAt: occurredAt,
+						},
+						emailResourceId: 'ai-hero-skills-workflow.email-2',
+					},
+				}),
+			},
+			{
+				config: {
+					ingestUrl: 'https://drovr.test/events',
+					apiKey: 'shadow-key',
+				},
+				fetch,
+				warn,
+			},
+		)
+		expect(fetch).not.toHaveBeenCalled()
+		expect(warn).toHaveBeenCalledWith(
+			'drovr.shadow.tenant_key_missing',
+			expect.objectContaining({ tenantId: 'org-aihero' }),
+		)
 	})
 })

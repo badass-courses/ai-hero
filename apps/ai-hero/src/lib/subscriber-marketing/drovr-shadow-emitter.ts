@@ -12,8 +12,14 @@ export const DROVR_EVERGREEN_OFFER_JOURNEY_ID =
 	'crash-course-evergreen-offer' as const
 export const DROVR_FALLBACK_TIMEZONE = 'America/Los_Angeles' as const
 
+/** Tenants ai-hero speaks to: the shadow, and the authority once cut over. */
+export const DROVR_AUTHORITY_TENANT_ID = 'org-aihero' as const
+export type DrovrTenantId =
+	| typeof DROVR_SHADOW_TENANT_ID
+	| typeof DROVR_AUTHORITY_TENANT_ID
+
 export type DrovrShadowEvent = {
-	tenantId: typeof DROVR_SHADOW_TENANT_ID
+	tenantId: DrovrTenantId
 	contactId: string
 	journeyId:
 		| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
@@ -57,7 +63,32 @@ export type DrovrShadowFact =
 
 type DrovrShadowEmitterConfig = {
 	ingestUrl?: string
+	/** Bearer key for the shadow tenant. */
 	apiKey?: string
+	/** Bearer key for the authority tenant, once cut over. */
+	authorityApiKey?: string
+}
+
+/**
+ * One bearer key per drovr tenant. Every path that posts to drovr (the
+ * durable delivery function, the direct fallback) must choose by tenant;
+ * an authority completion sent with the shadow key is a 403 at drovr.
+ */
+export function drovrApiKeyForTenant(
+	tenantId: string,
+	config: Pick<DrovrShadowEmitterConfig, 'apiKey' | 'authorityApiKey'> = {
+		apiKey: env.DROVR_SHADOW_API_KEY,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
+	},
+): string | undefined {
+	switch (tenantId) {
+		case DROVR_SHADOW_TENANT_ID:
+			return config.apiKey
+		case DROVR_AUTHORITY_TENANT_ID:
+			return config.authorityApiKey
+		default:
+			return undefined
+	}
 }
 
 type DrovrShadowEmitterOptions = {
@@ -86,10 +117,10 @@ export async function emitDrovrShadowFact(
 	const config = options.config ?? {
 		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
 		apiKey: env.DROVR_SHADOW_API_KEY,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
 	}
 	const ingestUrl = config.ingestUrl
-	const apiKey = config.apiKey
-	if (!ingestUrl || !apiKey) return
+	if (!ingestUrl) return
 
 	const events = mapDrovrShadowFact(fact)
 	if (events.length === 0) return
@@ -98,15 +129,23 @@ export async function emitDrovrShadowFact(
 	const warn = options.warn ?? log.warn
 	try {
 		await Promise.all(
-			events.map((event) =>
-				postDrovrShadowEvent({
+			events.map(async (event) => {
+				const apiKey = drovrApiKeyForTenant(event.tenantId, config)
+				if (!apiKey) {
+					await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
+						tenantId: event.tenantId,
+						idempotencyKey: event.idempotencyKey,
+					})
+					return
+				}
+				await postDrovrShadowEvent({
 					event,
 					config: { ingestUrl, apiKey },
 					fetcher,
 					warn,
 					timeoutMs: options.timeoutMs ?? 3000,
-				}),
-			),
+				})
+			}),
 		)
 	} catch (error) {
 		await warnWithoutThrow(warn, 'drovr.shadow.emit_failed', {
@@ -175,6 +214,11 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	) {
 		return []
 	}
+	// An intent drovr planned completes back to the tenant that owns it,
+	// keyed the way drovr's own executors key completions. The shadow does
+	// not hear about it: that contact is not the shadow's to follow.
+	const ownerCompletion = drovrOwnedCompletion(intent)
+	if (ownerCompletion) return [ownerCompletion]
 	const completedAt = valuePathIntentCompletedAt(intent)
 	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
 	const emailResourceId = sourceEmailResourceId
@@ -193,6 +237,44 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 			payload: { emailResourceId },
 		},
 	]
+}
+
+function drovrOwnedCompletion(
+	intent: SideEffectIntent,
+): DrovrShadowEvent | undefined {
+	const owner = intent.metadata.drovr
+	if (!owner || typeof owner !== 'object') return undefined
+	const record = owner as Record<string, unknown>
+	const tenantId = stringValue(record.tenantId)
+	const journeyId = stringValue(record.journeyId)
+	const intentKey = stringValue(record.intentKey)
+	const completedAt = valuePathIntentCompletedAt(intent)
+	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
+	const emailResourceId = sourceEmailResourceId
+		? canonicalSkillsEmailResourceId(sourceEmailResourceId)
+		: undefined
+	if (
+		!tenantId ||
+		!journeyId ||
+		!intentKey ||
+		!completedAt ||
+		!emailResourceId ||
+		(tenantId !== DROVR_SHADOW_TENANT_ID &&
+			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
+		(journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID &&
+			journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID)
+	) {
+		return undefined
+	}
+	return {
+		tenantId,
+		contactId: intent.contactId,
+		journeyId,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `completion:${intentKey}`,
+		payload: { emailResourceId },
+	}
 }
 
 function mapCourseCompleted(
@@ -286,7 +368,7 @@ function courseCompletionTimezone(headerValue?: string) {
 
 async function postDrovrShadowEvent(args: {
 	event: DrovrShadowEvent
-	config: Required<DrovrShadowEmitterConfig>
+	config: DrovrDeliveryConfig
 	fetcher: typeof fetch
 	warn: typeof log.warn
 	timeoutMs: number
@@ -367,7 +449,7 @@ export type DrovrDeliveryOutcome =
 	| { status: 'rejected'; httpStatus: number; problem: unknown }
 	| { status: 'failed'; reason: string; httpStatus?: number }
 
-export type DrovrDeliveryConfig = Required<DrovrShadowEmitterConfig>
+export type DrovrDeliveryConfig = { ingestUrl: string; apiKey: string }
 
 /**
  * Post one event and report the outcome instead of swallowing it. The
