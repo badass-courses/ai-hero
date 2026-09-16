@@ -112,6 +112,14 @@ export async function emitDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowEmitterOptions = {},
 ): Promise<void> {
+	await emitDrovrShadowEvents(mapDrovrShadowFact(fact), options)
+}
+
+/** Post already-mapped events directly, each with its tenant's key. */
+export async function emitDrovrShadowEvents(
+	events: readonly DrovrShadowEvent[],
+	options: DrovrShadowEmitterOptions = {},
+): Promise<void> {
 	const config = options.config ?? {
 		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
 		apiKey: env.DROVR_SHADOW_API_KEY,
@@ -119,8 +127,6 @@ export async function emitDrovrShadowFact(
 	}
 	const ingestUrl = config.ingestUrl
 	if (!ingestUrl) return
-
-	const events = mapDrovrShadowFact(fact)
 	if (events.length === 0) return
 
 	const fetcher = options.fetch ?? fetch

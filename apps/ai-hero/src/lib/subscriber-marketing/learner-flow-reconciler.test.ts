@@ -1145,6 +1145,9 @@ describe('learner flow reconciler', () => {
 			now,
 		})
 		expect(plan.cohort.drovrOwnedSkipped).toBe(1)
+		// The brake divides by contacts this planner may repair, not by the
+		// whole scan, so skipped contacts cannot dilute the ratio.
+		expect(plan.cohort.contacts).toBe(0)
 		expect(plan.candidates).toEqual([])
 		expect(plan.records).toEqual([])
 	})

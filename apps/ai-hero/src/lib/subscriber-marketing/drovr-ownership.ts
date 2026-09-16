@@ -43,9 +43,18 @@ export const DROVR_OWNERSHIP_OFF: DrovrOwnershipConfig = {
 	emails: new Set(),
 }
 
+/**
+ * The rollout is off, whatever the knobs say, until the authority tenant
+ * has a bearer key: routing a signup to drovr without one would suppress
+ * the legacy Email 0 and then reject the birth at delivery, leaving the
+ * contact owned by nobody.
+ */
 export function parseDrovrOwnershipConfig(
 	env: Readonly<Record<string, string | number | undefined>>,
 ): DrovrOwnershipConfig {
+	if (!String(env.DROVR_API_KEY_ORG_AIHERO ?? '').trim()) {
+		return DROVR_OWNERSHIP_OFF
+	}
 	const raw = Number(env.AIH_DROVR_OWNER_PERCENT ?? 0)
 	const percent = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0
 	const emails = new Set(
@@ -90,19 +99,28 @@ export async function findRecordedJourneyOwner(
 	repository: OwnershipReadRepository,
 	contactId: string,
 ): Promise<JourneyOwner | undefined> {
+	return (await findJourneyOwnerAssignment(repository, contactId))
+		? 'drovr'
+		: undefined
+}
+
+export async function findJourneyOwnerAssignment(
+	repository: OwnershipReadRepository,
+	contactId: string,
+): Promise<ContactEventRecord | undefined> {
 	if (!repository.findContactEventsByType) return undefined
 	const events = await repository.findContactEventsByType(
 		contactId,
 		JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	)
-	return events.length > 0 ? 'drovr' : undefined
+	return events[0]
 }
 
-export type JourneyOwnerResolution = {
-	owner: JourneyOwner
-	/** True when the assignment already exists and must not be recorded again. */
-	recorded: boolean
-}
+export type JourneyOwnerResolution =
+	| { owner: 'legacy'; recorded: false }
+	| { owner: 'drovr'; recorded: false }
+	/** The assignment already exists; re-dispatch it rather than record again. */
+	| { owner: 'drovr'; recorded: true; assignment: ContactEventRecord }
 
 /**
  * Ownership is sticky and never flips a contact the legacy planner already
@@ -117,11 +135,11 @@ export async function resolveJourneyOwner(args: {
 	alreadyEntered: boolean
 	config: DrovrOwnershipConfig
 }): Promise<JourneyOwnerResolution> {
-	const recorded = await findRecordedJourneyOwner(
+	const assignment = await findJourneyOwnerAssignment(
 		args.repository,
 		args.contactId,
 	)
-	if (recorded) return { owner: recorded, recorded: true }
+	if (assignment) return { owner: 'drovr', recorded: true, assignment }
 	if (args.alreadyEntered) return { owner: 'legacy', recorded: false }
 	return { owner: decideJourneyOwner(args), recorded: false }
 }
@@ -174,20 +192,33 @@ export function isDrovrOwnedIntent(intent: SideEffectIntent): boolean {
 }
 
 /**
+ * Shadow-addressed facts that the authority tenant must also hear. Births
+ * are excluded: the ownership event is the only authority birth. Email
+ * completions are excluded too: an owned contact's sends are all
+ * drovr-planned, and those already complete straight to the owner under
+ * drovr's own completion key; copying the shadow mirror would fold the
+ * same completion twice.
+ */
+export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
+	return (
+		event.tenantId === DROVR_SHADOW_TENANT_ID &&
+		event.type !== 'contact.created' &&
+		event.type !== 'email.completed'
+	)
+}
+
+/**
  * Shadow-addressed facts about a drovr-owned contact also go to the
- * authority tenant, where the owning actor folds them. Births are the one
- * exception: the ownership event is the only authority birth, so the
- * shadow birth is never copied. Copies get their own idempotency key so
- * drovr's per-tenant dedupe cannot confuse them with the shadow's.
+ * authority tenant, where the owning actor folds them. Copies get their
+ * own idempotency key so drovr's per-tenant dedupe cannot confuse them
+ * with the shadow's.
  */
 export function fanOutOwnedEvents(
 	events: readonly DrovrShadowEvent[],
 	ownedContactIds: ReadonlySet<string>,
 ): DrovrShadowEvent[] {
 	const copies = events.flatMap((event) =>
-		event.tenantId === DROVR_SHADOW_TENANT_ID &&
-		event.type !== 'contact.created' &&
-		ownedContactIds.has(event.contactId)
+		isOwnerFanOutCandidate(event) && ownedContactIds.has(event.contactId)
 			? [
 					{
 						...event,

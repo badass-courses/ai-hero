@@ -5,6 +5,7 @@ import {
 	resolveJourneyOwner,
 	type DrovrOwnershipConfig,
 } from './drovr-ownership'
+import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import {
 	deadlineTimeZoneEvidenceFromHeader,
 	restoreDeadlineTimeZoneEvidence,
@@ -110,7 +111,14 @@ export async function enterSkillsNewsletterSubscriber(args: {
 		config: args.drovrOwnership ?? DROVR_OWNERSHIP_OFF,
 	})
 	if (ownership.owner === 'drovr') {
-		if (!ownership.recorded) {
+		if (ownership.recorded) {
+			// A replay is the repair path for a birth whose delivery was lost:
+			// drovr dedupes the key, so re-dispatching a landed birth is free.
+			dispatchDrovrShadowFactSafely({
+				kind: 'contact-event',
+				event: ownership.assignment,
+			})
+		} else {
 			await recordJourneyOwnerAssigned({
 				repository: args.repository,
 				contactId: capture.contact.id,

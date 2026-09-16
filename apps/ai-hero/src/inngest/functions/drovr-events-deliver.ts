@@ -9,38 +9,9 @@ import {
 	drovrApiKeyForTenant,
 	type DrovrDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
-import {
-	fanOutOwnedEvents,
-	findRecordedJourneyOwner,
-} from '@/lib/subscriber-marketing/drovr-ownership'
-import { DROVR_SHADOW_TENANT_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
-import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
-import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { fanOutOwnedEvents } from '@/lib/subscriber-marketing/drovr-ownership'
+import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import { log } from '@/server/logger'
-
-async function resolveOwnedContactIds(
-	events: readonly DrovrShadowEvent[],
-): Promise<string[]> {
-	const candidates = new Set(
-		events
-			.filter(
-				(event) =>
-					event.tenantId === DROVR_SHADOW_TENANT_ID &&
-					event.type !== 'contact.created',
-			)
-			.map((event) => event.contactId),
-	)
-	if (candidates.size === 0) return []
-	const { db } = await import('@/db')
-	const repository = new DrizzleCaptureMarketingRepository(db)
-	const owned: string[] = []
-	for (const contactId of candidates) {
-		if ((await findRecordedJourneyOwner(repository, contactId)) === 'drovr') {
-			owned.push(contactId)
-		}
-	}
-	return owned
-}
 
 export type DrovrEventsDeliverReceipt = {
 	status: 'delivered' | 'skipped'

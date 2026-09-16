@@ -9,22 +9,39 @@ import {
 } from './drovr-ownership'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
-const off = parseDrovrOwnershipConfig({})
+const authorityKey = { DROVR_API_KEY_ORG_AIHERO: 'k' }
+const off = parseDrovrOwnershipConfig(authorityKey)
 
 describe('drovr ownership config', () => {
 	it('defaults to nobody and clamps the percent', () => {
 		expect(off).toEqual({ percent: 0, emails: new Set() })
 		expect(
-			parseDrovrOwnershipConfig({ AIH_DROVR_OWNER_PERCENT: '250' }).percent,
+			parseDrovrOwnershipConfig({
+				...authorityKey,
+				AIH_DROVR_OWNER_PERCENT: '250',
+			}).percent,
 		).toBe(100)
 		expect(
-			parseDrovrOwnershipConfig({ AIH_DROVR_OWNER_PERCENT: 'lots' }).percent,
+			parseDrovrOwnershipConfig({
+				...authorityKey,
+				AIH_DROVR_OWNER_PERCENT: 'lots',
+			}).percent,
 		).toBe(0)
+	})
+
+	it('is off, whatever the knobs say, without the authority tenant key', () => {
+		expect(
+			parseDrovrOwnershipConfig({
+				AIH_DROVR_OWNER_PERCENT: '100',
+				AIH_DROVR_OWNER_EMAILS: 'joel@example.com',
+			}),
+		).toEqual({ percent: 0, emails: new Set() })
 	})
 
 	it('lowercases and trims the email allowlist', () => {
 		expect(
 			parseDrovrOwnershipConfig({
+				...authorityKey,
 				AIH_DROVR_OWNER_EMAILS: ' Joel@Example.com, ,other@example.com',
 			}).emails,
 		).toEqual(new Set(['joel@example.com', 'other@example.com']))
@@ -62,9 +79,10 @@ describe('journey owner decision', () => {
 })
 
 describe('journey owner resolution', () => {
+	const assignment = { id: 'owner-event', eventType: 'journey.owner.assigned' }
 	const repositoryWith = (recorded: boolean) => ({
 		findContactEventsByType: async () =>
-			recorded ? [{ eventType: 'journey.owner.assigned' } as never] : [],
+			recorded ? [assignment as never] : [],
 	})
 
 	it('honors a recorded assignment regardless of the rollout', async () => {
@@ -75,7 +93,7 @@ describe('journey owner resolution', () => {
 				alreadyEntered: true,
 				config: off,
 			}),
-		).resolves.toEqual({ owner: 'drovr', recorded: true })
+		).resolves.toEqual({ owner: 'drovr', recorded: true, assignment })
 	})
 
 	it('never flips a contact the legacy planner already started', async () => {
@@ -114,16 +132,17 @@ describe('fan-out of owned facts to the authority tenant', () => {
 		idempotencyKey: `aihero:${type}:${contactId}`,
 	})
 
-	it('copies non-birth shadow facts for owned contacts with their own key', () => {
+	it('copies non-birth, non-completion shadow facts for owned contacts with their own key', () => {
 		const events = [
 			shadow('contact.created', 'owned'),
+			shadow('email.completed', 'owned'),
 			shadow('value-path.answer-selected', 'owned'),
 			shadow('value-path.answer-selected', 'legacy'),
 		]
 		const out = fanOutOwnedEvents(events, new Set(['owned']))
-		expect(out).toHaveLength(4)
-		expect(out[3]).toEqual({
-			...events[1],
+		expect(out).toHaveLength(5)
+		expect(out[4]).toEqual({
+			...events[2],
 			tenantId: 'org-aihero',
 			idempotencyKey: 'owner:aihero:value-path.answer-selected:owned',
 		})

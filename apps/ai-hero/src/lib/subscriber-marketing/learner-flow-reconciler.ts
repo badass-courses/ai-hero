@@ -241,7 +241,8 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		generatedAt: args.now,
 		cohort: {
 			source: cohort.source,
-			contacts: cohort.contactIds.length,
+			// The brake's denominator: only contacts this planner may repair.
+			contacts: cohort.contactIds.length - drovrOwnedSkipped,
 			liveRecordsScanned: cohort.liveRecordsScanned,
 			includesCanary: true,
 			drovrOwnedSkipped,
