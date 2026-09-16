@@ -355,3 +355,115 @@ async function warnWithoutThrow(
 function stringValue(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
 }
+
+/**
+ * What one delivery attempt concluded. `accepted` is drovr's 200/202;
+ * `rejected` is a 4xx problem detail, final by contract (replaying the
+ * same idempotency key cannot change the answer); `failed` is anything
+ * transient (5xx, network, timeout) and is the only outcome worth a retry.
+ */
+export type DrovrDeliveryOutcome =
+	| { status: 'accepted' }
+	| { status: 'rejected'; httpStatus: number; problem: unknown }
+	| { status: 'failed'; reason: string; httpStatus?: number }
+
+export type DrovrDeliveryConfig = Required<DrovrShadowEmitterConfig>
+
+/**
+ * Post one event and report the outcome instead of swallowing it. The
+ * durable delivery function builds its retry decision on this; the legacy
+ * fire-and-forget path above keeps its own warnings.
+ */
+export async function deliverDrovrShadowEvent(args: {
+	event: DrovrShadowEvent
+	config: DrovrDeliveryConfig
+	fetcher?: typeof fetch
+	timeoutMs?: number
+}): Promise<DrovrDeliveryOutcome> {
+	const fetcher = args.fetcher ?? fetch
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 10_000)
+	try {
+		const response = await fetcher(args.config.ingestUrl, {
+			method: 'POST',
+			headers: {
+				authorization: `Bearer ${args.config.apiKey}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify(args.event),
+			signal: controller.signal,
+		})
+		if (response.status === 200 || response.status === 202) {
+			// Accepted is decided by the status alone. The body is never read,
+			// so an oversized or stalled body cannot turn an accepted event
+			// into a retried one.
+			return { status: 'accepted' }
+		}
+		if (response.status >= 400 && response.status < 500) {
+			return {
+				status: 'rejected',
+				httpStatus: response.status,
+				problem: await boundedProblemBody(response),
+			}
+		}
+		return {
+			status: 'failed',
+			httpStatus: response.status,
+			reason: `drovr answered ${response.status}`,
+		}
+	} catch (error) {
+		return {
+			status: 'failed',
+			reason: error instanceof Error ? error.message : String(error),
+		}
+	} finally {
+		clearTimeout(timeout)
+	}
+}
+
+const PROBLEM_BODY_LIMIT_BYTES = 4096
+
+/**
+ * Read at most 4 KiB of a problem body and stop. A 4xx is conclusive by
+ * status; the body is only evidence for the log, so a huge or stalled
+ * body must never turn a final rejection into a retryable failure. Read
+ * errors and aborts yield null instead of throwing.
+ */
+async function boundedProblemBody(response: Response): Promise<unknown> {
+	const reader = response.body?.getReader()
+	if (!reader) return null
+	const chunks: Uint8Array[] = []
+	let received = 0
+	try {
+		while (received < PROBLEM_BODY_LIMIT_BYTES) {
+			const { done, value } = await reader.read()
+			if (done) break
+			if (!value) continue
+			const room = PROBLEM_BODY_LIMIT_BYTES - received
+			const slice = value.byteLength > room ? value.subarray(0, room) : value
+			chunks.push(slice)
+			received += slice.byteLength
+		}
+	} catch {
+		// Partial evidence is still evidence; the status already decided.
+	} finally {
+		try {
+			await reader.cancel()
+		} catch {
+			// The response is finished either way.
+		}
+	}
+	if (received === 0) return null
+	const joined = new Uint8Array(received)
+	let offset = 0
+	for (const chunk of chunks) {
+		joined.set(chunk, offset)
+		offset += chunk.byteLength
+	}
+	const text = new TextDecoder().decode(joined)
+	try {
+		return JSON.parse(text) as unknown
+	} catch {
+		return text
+	}
+}
