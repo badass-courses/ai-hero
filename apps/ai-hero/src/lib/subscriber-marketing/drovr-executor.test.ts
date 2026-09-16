@@ -392,4 +392,36 @@ describe('drovr executor: edges Macroscope asked about', () => {
 			drovr: { intentKey: `intent:${'x'.repeat(600)}` },
 		})
 	})
+
+	it('refuses an intent due in the future instead of letting the cron send it early', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent({ dueAt: '2026-09-17T22:30:00.000Z' }),
+			now,
+		})
+		expect(result).toMatchObject({
+			status: 'unsupported',
+			reason: expect.stringContaining('1440 minutes ahead'),
+		})
+		expect(repository.intents.size).toBe(0)
+	})
+
+	it('tolerates a few minutes of skew and a due time in the past', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		for (const dueAt of [
+			'2026-09-16T22:33:00.000Z',
+			'2026-09-16T20:00:00.000Z',
+		]) {
+			repository.intents.clear()
+			const result = await acceptDrovrIntent({
+				repository,
+				intent: intent({ dueAt }),
+				now,
+			})
+			expect(result.status).toBe('accepted')
+		}
+	})
 })

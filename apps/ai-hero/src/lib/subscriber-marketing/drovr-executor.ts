@@ -131,6 +131,9 @@ export function drovrCompletionForIntent(
 	}
 }
 
+/** Clock skew tolerated between drovr's fold time and this endpoint. */
+const DUE_AT_SKEW_MS = 5 * 60_000
+
 export async function acceptDrovrIntent(args: {
 	repository: DrovrExecutorRepository
 	intent: DrovrIntent
@@ -140,6 +143,19 @@ export async function acceptDrovrIntent(args: {
 }): Promise<DrovrExecutorResult> {
 	const { intent } = args
 	const now = args.now ?? new Date().toISOString()
+	// drovr times sends with wakes and posts an intent when it is due; the
+	// sender cron drains pending rows without consulting dueAt. A future
+	// dueAt is therefore refused rather than sent early or scheduled here.
+	const dueInMs = Date.parse(intent.dueAt) - Date.parse(now)
+	if (Number.isNaN(dueInMs) || dueInMs > DUE_AT_SKEW_MS) {
+		return {
+			status: 'unsupported',
+			reason: Number.isNaN(dueInMs)
+				? `dueAt ${intent.dueAt} is not a timestamp`
+				: `intent is due at ${intent.dueAt}, ${Math.round(dueInMs / 60_000)} minutes ahead; the sender would deliver it now`,
+			hint: 'Post an intent when it is due. drovr schedules the wait with a wake, not with dueAt.',
+		}
+	}
 
 	if (intent.kind !== 'email.send') {
 		return {
