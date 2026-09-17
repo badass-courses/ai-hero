@@ -71,7 +71,7 @@ describe('readbackEvergreenSequences', () => {
 	const emailsJson = (published: boolean[]) =>
 		new Response(
 			JSON.stringify({
-				sequence_emails: published.map((p, i) => ({ id: i + 1, published: p })),
+				emails: published.map((p, i) => ({ id: i + 1, published: p })),
 			}),
 			{ status: 200 },
 		)
