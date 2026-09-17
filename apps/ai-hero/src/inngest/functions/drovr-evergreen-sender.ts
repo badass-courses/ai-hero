@@ -4,10 +4,12 @@ import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	addSubscriberToKitSequence,
+	EVERGREEN_LIST_SEQUENCES,
 	parseDrovrEvergreenConfig,
 	readbackEvergreenListSequences,
 	readbackEvergreenSequences,
 	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+	subscribeToEvergreenList,
 	updateKitSubscriberFields,
 } from '@/lib/subscriber-marketing/drovr-evergreen'
 import { executePendingEvergreenCoupons } from '@/lib/subscriber-marketing/drovr-evergreen-coupon'
@@ -50,7 +52,9 @@ export const drovrEvergreenSender = inngest.createFunction(
 			return { status: 'off', reason: config.reason }
 		}
 		// The list handoff has its own gate and runs first: the newsletter
-		// sequence must be active and off hold (many emails, may repeat), and a
+		// sequence must be active and non-repeating (a re-add to a repeating
+		// sequence would replay the newsletter; a held one falls back to the
+		// backfill tag like the entry path), and a
 		// problem with the eight bridge/pitch sequences must not hold a journey
 		// that is only waiting to close on its handoff.
 		const listReadback = await step.run('readback-kit-list-sequences', () =>
@@ -65,10 +69,12 @@ export const drovrEvergreenSender = inngest.createFunction(
 						repository: new DrizzleCaptureMarketingRepository(db),
 						type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
 						subscribe: (input) =>
-							addSubscriberToKitSequence({
+							subscribeToEvergreenList({
 								apiKey: process.env.KIT_V4_API_KEY,
 								fetch,
 								sequenceId: input.listId,
+								backfillTagId:
+									EVERGREEN_LIST_SEQUENCES['shadow-newsletter'].backfillTagId,
 								email: input.user.email,
 							}),
 						limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),

@@ -1,5 +1,10 @@
 import { z } from 'zod'
 
+import {
+	SHADOW_NEWSLETTER_BACKFILL_KIT_TAG,
+	SHADOW_NEWSLETTER_KIT_SEQUENCE,
+} from './skills-newsletter-path-entry'
+
 /**
  * The evergreen bridge and pitch on drovr: what ai-hero executes for the
  * `crash-course-evergreen-offer` journey once Joel enables it.
@@ -24,7 +29,13 @@ export const SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE =
  * re-adds and Kit answers already-added, so the fold completes either way.
  */
 export const EVERGREEN_LIST_SEQUENCES = {
-	'shadow-newsletter': { sequenceId: 2625552 },
+	'shadow-newsletter': {
+		sequenceId: Number(SHADOW_NEWSLETTER_KIT_SEQUENCE),
+		// The sequence is held by the operator today; the legacy entry path
+		// tags for backfill when Kit refuses the add, and the handoff does the
+		// same so the journey still closes on a real receipt.
+		backfillTagId: Number(SHADOW_NEWSLETTER_BACKFILL_KIT_TAG),
+	},
 } as const
 export type EvergreenListId = keyof typeof EVERGREEN_LIST_SEQUENCES
 export const EvergreenListPayload = z.object({
@@ -32,12 +43,13 @@ export const EvergreenListPayload = z.object({
 })
 export const evergreenSequenceForList = (
 	list: string,
-): { list: EvergreenListId; sequenceId: number } | undefined =>
+):
+	| { list: EvergreenListId; sequenceId: number; backfillTagId: number }
+	| undefined =>
 	list in EVERGREEN_LIST_SEQUENCES
 		? {
 				list: list as EvergreenListId,
-				sequenceId:
-					EVERGREEN_LIST_SEQUENCES[list as EvergreenListId].sequenceId,
+				...EVERGREEN_LIST_SEQUENCES[list as EvergreenListId],
 			}
 		: undefined
 
@@ -339,8 +351,13 @@ export async function updateKitSubscriberFields(options: {
 }
 
 /**
- * The handoff lists' readback: active and not on hold. A newsletter has many
- * emails and may repeat, so the one-published-email rule does not apply.
+ * The handoff lists' readback: active and not repeatable. Every skills signup
+ * already joined the newsletter at entry, so the handoff's add must answer
+ * already-added and nothing more; a repeatable sequence would re-enroll and
+ * replay it. Hold is the operator's sending choice, not a membership one:
+ * a held sequence refuses new adds and the handoff falls back to the backfill
+ * tag, exactly as the entry path does. Many emails, so the one-published-email
+ * rule does not apply.
  */
 export async function readbackEvergreenListSequences(options: {
 	apiKey: string | undefined
@@ -383,7 +400,9 @@ export async function readbackEvergreenListSequences(options: {
 				problems.push(`${list}: readback is for sequence ${s.id}`)
 			}
 			if (!s.active) problems.push(`${list}: sequence is not active`)
-			if (s.hold) problems.push(`${list}: sequence is on hold`)
+			if (s.repeat) {
+				problems.push(`${list}: sequence repeats, a re-add would replay it`)
+			}
 		} catch (error) {
 			problems.push(
 				`${list}: ${error instanceof Error ? error.message : String(error)}`,
@@ -393,4 +412,70 @@ export async function readbackEvergreenListSequences(options: {
 		}
 	}
 	return { ready: problems.length === 0, problems, checkedAt }
+}
+
+export async function addSubscriberToKitTag(options: {
+	apiKey: string | undefined
+	fetch: typeof fetch
+	tagId: string | number
+	email: string
+	timeoutMs?: number
+}): Promise<'added' | 'already-added'> {
+	const apiKey = options.apiKey?.trim()
+	if (!apiKey) throw new Error('Kit v4 API key is not configured')
+	const controller = new AbortController()
+	const timer = setTimeout(
+		() => controller.abort(),
+		options.timeoutMs ?? 10_000,
+	)
+	try {
+		const response = await options.fetch(
+			`https://api.kit.com/v4/tags/${options.tagId}/subscribers`,
+			{
+				method: 'POST',
+				headers: {
+					'X-Kit-Api-Key': apiKey,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ email_address: options.email }),
+				signal: controller.signal,
+			},
+		)
+		if (response.status === 201) return 'added'
+		if (response.status === 200) return 'already-added'
+		throw new KitV4Error(response.status, (await response.text()).slice(0, 200))
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
+/**
+ * The handoff add. A held or inactive sequence answers 4xx to a new add (the
+ * entry path sees the same); the contact is then tagged for backfill so the
+ * handoff still completes on a provider receipt. 429 and 5xx stay retryable.
+ */
+export async function subscribeToEvergreenList(options: {
+	apiKey: string | undefined
+	fetch: typeof fetch
+	sequenceId: string | number
+	backfillTagId: string | number
+	email: string
+}): Promise<'added' | 'already-added' | 'backfilled'> {
+	try {
+		return await addSubscriberToKitSequence(options)
+	} catch (error) {
+		if (
+			error instanceof KitV4Error &&
+			(error.status === 400 || error.status === 422)
+		) {
+			await addSubscriberToKitTag({
+				apiKey: options.apiKey,
+				fetch: options.fetch,
+				tagId: options.backfillTagId,
+				email: options.email,
+			})
+			return 'backfilled'
+		}
+		throw error
+	}
 }
