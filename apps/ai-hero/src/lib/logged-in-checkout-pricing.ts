@@ -14,7 +14,7 @@ import {
 	type ExclusiveCouponAuthorizationDecision,
 } from '@/lib/exclusive-coupon-authorization'
 
-import type { CourseBuilderAdapter } from '@coursebuilder/core/adapters'
+import type { CommerceAdapter } from '@coursebuilder/commerce'
 
 export type LoggedInCheckoutPricingResult =
 	| {
@@ -44,7 +44,7 @@ export async function resolveLoggedInCheckoutPricing({
 	handoffSecret,
 	now = new Date(),
 }: {
-	adapter: CourseBuilderAdapter
+	adapter: CommerceAdapter
 	handoffStore: CheckoutLoginHandoffStore
 	verifiedUserId: string
 	checkoutParams: {
