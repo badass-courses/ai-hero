@@ -39,6 +39,14 @@ describe('proxy matcher', () => {
 		'/thanks/purchase',
 		'/transfer/purchase-123',
 		'/welcome',
+		'/rss.xml',
+		'/skills/rss.xml',
+		'/sitemap.md',
+		'/llms.txt',
+		'/md/skills',
+		'/md/workshops/agentic-coding/lesson-one',
+		'/skills.md',
+		'/workshops/agentic-coding/lesson-one.md',
 	])('includes %s', (url) => {
 		expect(doesProxyMatch(url)).toBe(true)
 	})
@@ -50,8 +58,7 @@ describe('proxy matcher', () => {
 		'/grill-with-doc%EE%80%80s',
 		'/lists',
 		'/lists/ai-coding',
-		'/rss.xml',
-		'/skills/rss.xml',
+		'/sitemap.xml',
 		'/ai-coding-dictionary',
 		'/ai-coding-dictionary/agent',
 		'/q',
@@ -64,6 +71,43 @@ describe('proxy matcher', () => {
 		'/robots.txt',
 	])('excludes %s', (url) => {
 		expect(doesProxyMatch(url)).toBe(false)
+	})
+})
+
+describe('static route handler OPTIONS', () => {
+	it.each(['/skills.md', '/md/skills', '/rss.xml', '/sitemap.md'])(
+		'answers OPTIONS %s at the edge with 200 instead of a 204',
+		async (path) => {
+			const response = await runProxy(
+				new NextRequest(`https://www.aihero.dev${path}?_rsc=abc`, {
+					method: 'OPTIONS',
+				}),
+			)
+
+			expect(response.status).toBe(200)
+			expect(response.headers.get('allow')).toBe('GET, HEAD, OPTIONS')
+			expect(response.headers.get('x-middleware-next')).toBeNull()
+		},
+	)
+
+	it('passes GET through untouched', async () => {
+		const response = await runProxy(
+			new NextRequest('https://www.aihero.dev/skills.md'),
+		)
+
+		expect(response.headers.get('x-middleware-next')).toBe('1')
+		expect(response.headers.get('x-middleware-rewrite')).toBeNull()
+	})
+
+	it('does not intercept OPTIONS on other paths', async () => {
+		const response = await runProxy(
+			new NextRequest('https://www.aihero.dev/admin', { method: 'OPTIONS' }),
+		)
+
+		expect(response.headers.get('allow')).toBeNull()
+		expect(response.headers.get('x-middleware-rewrite')).toContain(
+			'/not-found',
+		)
 	})
 })
 
