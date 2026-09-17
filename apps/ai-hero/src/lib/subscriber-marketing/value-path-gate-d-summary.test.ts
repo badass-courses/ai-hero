@@ -258,7 +258,7 @@ describe('status query payload contract', () => {
 		expect(largestPayload).toBeLessThan(1_000_000)
 	})
 
-	it('bounds all status contact IN lists and does not filter away other event types or providers', async () => {
+	it('bounds all status contact IN lists, pins Kit intents and does not filter away other event types', async () => {
 		const dialect = new MySqlDialect()
 		const queries: Array<{ sql: string; params: unknown[] }> = []
 		const database = {
@@ -290,8 +290,13 @@ describe('status query payload contract', () => {
 					(value) => typeof value === 'string' && value.startsWith('c-'),
 				).length,
 			).toBeLessThanOrEqual(LEARNER_FLOW_RECORD_PAGE_SIZE)
-			expect(query.sql).not.toContain('`provider`')
 			expect(query.sql).not.toContain('`eventType`')
+			if (query.sql.includes('`type`')) {
+				expect(query.sql).toContain('`AI_SideEffectIntent`.`provider` = ?')
+				expect(query.params).toContain('kit')
+			} else {
+				expect(query.sql).not.toContain('`provider`')
+			}
 		}
 	})
 })

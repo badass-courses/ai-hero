@@ -684,6 +684,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					.where(
 						and(
 							inArray(sideEffectIntent.contactId, ids),
+							eq(sideEffectIntent.provider, 'kit'),
 							eq(sideEffectIntent.type, 'send-value-path-email'),
 							cursor === undefined
 								? undefined

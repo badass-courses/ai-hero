@@ -61,7 +61,7 @@ it.each(['text', 'object'] as const)(
 			expect(render).toHaveBeenCalled()
 			expect(calls).toHaveLength(2)
 			expect(calls[0]).toEqual({
-				sql: "select `id`, `contactId`, `status`, `createdAt`, `completedAt`, json_object('values', json_object(?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?)), 'present', json_object(?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?))), `reviewReasons` from `AI_SideEffectIntent` where (`AI_SideEffectIntent`.`contactId` in (?) and `AI_SideEffectIntent`.`type` = ?) order by `AI_SideEffectIntent`.`id` asc limit ?",
+				sql: "select `id`, `contactId`, `status`, `createdAt`, `completedAt`, json_object('values', json_object(?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?), ?, json_extract(`AI_SideEffectIntent`.`metadata`, ?)), 'present', json_object(?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?), ?, json_contains_path(`AI_SideEffectIntent`.`metadata`, 'one', ?))), `reviewReasons` from `AI_SideEffectIntent` where (`AI_SideEffectIntent`.`contactId` in (?) and `AI_SideEffectIntent`.`provider` = ? and `AI_SideEffectIntent`.`type` = ?) order by `AI_SideEffectIntent`.`id` asc limit ?",
 				params: [
 					'emailResourceId',
 					'$.emailResourceId',
@@ -84,6 +84,7 @@ it.each(['text', 'object'] as const)(
 					'nextRetryAt',
 					'$.nextRetryAt',
 					'contact-1',
+					'kit',
 					'send-value-path-email',
 					5000,
 				],
