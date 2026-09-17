@@ -74,6 +74,7 @@ export type DrovrExecutorRepository = Pick<
 	| 'findSideEffectIntentByIdempotencyKey'
 	| 'createSideEffectIntent'
 > &
+	Partial<Pick<CaptureMarketingRepository, 'updateSideEffectIntent'>> &
 	Required<
 		Pick<
 			CaptureMarketingRepository,
@@ -237,6 +238,10 @@ export async function acceptDrovrIntent(args: {
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) {
+		await adoptLegacyIntent(existing, intent, {
+			repository: args.repository,
+			tenantId,
+		})
 		return existingIntentResult(existing, intent, step)
 	}
 
@@ -298,6 +303,44 @@ export async function acceptDrovrIntent(args: {
  * both cases the email was sent, and drovr's fold matches on the
  * emailResourceId, so the requester gets a completion it can fold.
  */
+/**
+ * A row the legacy planner created for a contact drovr owns (a quiz answer
+ * or drip that raced the actor's intent). Stamp drovr's ownership on it so
+ * its completion flows back to the actor; without it the emitter has no
+ * owner to complete to and the actor waits forever. A completed row needs
+ * no stamp: the executor answers it with the completion directly.
+ */
+async function adoptLegacyIntent(
+	existing: SideEffectIntent,
+	intent: DrovrIntent,
+	args: { repository: DrovrExecutorRepository; tenantId: DrovrTenantId },
+): Promise<void> {
+	if (
+		existing.metadata.drovr ||
+		existing.status === 'completed' ||
+		!args.repository.updateSideEffectIntent
+	) {
+		return
+	}
+	await args.repository.updateSideEffectIntent(existing.id, {
+		status: existing.status,
+		completedAt: existing.completedAt ?? null,
+		gates: existing.gates,
+		reviewReasons: existing.reviewReasons,
+		metadata: {
+			...existing.metadata,
+			source: 'drovr',
+			adoptedFrom: 'legacy-planner',
+			drovr: {
+				tenantId: args.tenantId,
+				journeyId: intent.journeyId,
+				intentKey: intent.idempotencyKey,
+				dueAt: intent.dueAt,
+			},
+		},
+	})
+}
+
 function existingIntentResult(
 	existing: SideEffectIntent,
 	request: DrovrIntent,

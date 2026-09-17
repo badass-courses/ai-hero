@@ -14,6 +14,10 @@ import {
 	type CourseSequenceExhaustionRecords,
 } from './course-sequence-exhaustion'
 import { parseIsoInstant } from './evergreen-offer-journey/primitives'
+import {
+	findJourneyOwnerAssignment,
+	isDrovrOwnedIntent,
+} from './drovr-ownership'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
 	isContentCompleteSkillsWorkflowEmailResourceId,
@@ -291,9 +295,9 @@ async function progressCompletedIntent(args: {
 	const idempotencyKey = `contact:${args.intent.contactId}:value-path:${nextValuePathSlug}:email:${nextEmailResourceId}`
 	const terminalSequenceTransition = Boolean(
 		args.sequenceExhaustionEnabled &&
-			fromEmailResourceId &&
-			isContentCompleteSkillsWorkflowEmailResourceId(fromEmailResourceId) &&
-			isTerminalSkillsWorkflowEmailResourceId(nextEmailResourceId),
+		fromEmailResourceId &&
+		isContentCompleteSkillsWorkflowEmailResourceId(fromEmailResourceId) &&
+		isTerminalSkillsWorkflowEmailResourceId(nextEmailResourceId),
 	)
 	const existingIntent =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
@@ -309,6 +313,21 @@ async function progressCompletedIntent(args: {
 		}
 	}
 
+	// drovr owns the timing and the next send for its contacts: a drip planned
+	// here would race the actor's intent and complete without ownership.
+	if (
+		isDrovrOwnedIntent(args.intent) ||
+		(await findJourneyOwnerAssignment(args.repository, args.intent.contactId))
+	) {
+		return {
+			contactId: args.intent.contactId,
+			fromEmailResourceId,
+			nextEmailResourceId,
+			nextKitSequenceId,
+			status: 'deferred',
+			reviewReasons: ['drovr-owned'],
+		}
+	}
 	const contact = await args.repository.findContactById(args.intent.contactId)
 	const state = contact
 		? await args.repository.findCurrentContactState(contact.id)
