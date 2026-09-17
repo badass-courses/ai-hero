@@ -219,6 +219,32 @@ describe('drovr executor: accepting an email.send intent', () => {
 		expect(reopened.metadata.drovr).toMatchObject({ tenantId: 'org-aihero' })
 	})
 
+	it('re-opens a stale-blocked row that wins the insert race too', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({ repository, intent: intent(), now })
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		const row = repository.intents.get(first.intentId)!
+		repository.intents.delete(row.id)
+		// A concurrent writer lands the legacy-blocked row between the read
+		// and the insert.
+		repository.raceRows.push({
+			...row,
+			status: 'blocked',
+			reviewReasons: ['contact-state-missing'],
+			metadata: { ...row.metadata, drovr: undefined },
+		})
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+		})
+		expect(result).toMatchObject({ status: 'accepted', intentId: row.id })
+		const reopened = repository.intents.get(row.id)!
+		expect(reopened.status).toBe('pending')
+		expect(reopened.metadata.drovr).toMatchObject({ tenantId: 'org-aihero' })
+	})
+
 	it('keeps a contact the click path routed onto the team path on team emails', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())

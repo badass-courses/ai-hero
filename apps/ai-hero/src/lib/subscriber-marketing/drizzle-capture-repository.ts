@@ -334,6 +334,23 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return state
 	}
 
+	async insertContactStateIfAbsent(state: ContactState) {
+		try {
+			await this.database.insert(contactState).values({
+				...state,
+				confidence: state.confidence.toString(),
+				updatedAt: new Date(state.updatedAt),
+			})
+			return state
+		} catch (cause) {
+			// ContactState_contactId_uq held: a concurrent capture wrote the
+			// row first, and its newer state is the answer.
+			const existing = await this.findCurrentContactState(state.contactId)
+			if (!existing) throw cause
+			return existing
+		}
+	}
+
 	async createStateTransition(input: Omit<StateTransition, 'id'>) {
 		const record: StateTransition = {
 			id: this.newId('state_transition'),

@@ -13,6 +13,7 @@ import {
 } from './course-sequence-exhaustion'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import type { ContactState } from './types'
 import { isDrovrOwnedIntent } from './drovr-ownership'
 import type { OptInAttribution } from './opt-in-attribution'
 import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
@@ -125,11 +126,8 @@ export async function enterSkillsNewsletterSubscriber(args: {
 		// so a contact born on a replay would have none, and every send
 		// preflight (legacy executor included) refuses contact-state-missing.
 		// drovr owns it now: persist what the capture derived.
-		if (
-			capture.idempotentNoop &&
-			!(await args.repository.findCurrentContactState(capture.contact.id))
-		) {
-			await args.repository.upsertContactState(capture.contactState)
+		if (capture.idempotentNoop) {
+			await persistDerivedStateIfAbsent(args.repository, capture.contactState)
 		}
 		if (ownership.recorded) {
 			// A replay is the repair path for a birth whose delivery was lost:
@@ -307,4 +305,22 @@ async function legacyStartedContact(
 		return intents.some((intent) => !isDrovrOwnedIntent(intent))
 	}
 	return Boolean(await repository.findCurrentContactState(contactId))
+}
+
+/**
+ * Insert-if-absent so a concurrent capture's newer state is never replaced
+ * by the one this repeat derived. Repositories without the primitive fall
+ * back to check-then-write.
+ */
+async function persistDerivedStateIfAbsent(
+	repository: CaptureMarketingRepository,
+	state: ContactState,
+): Promise<void> {
+	if (repository.insertContactStateIfAbsent) {
+		await repository.insertContactStateIfAbsent(state)
+		return
+	}
+	if (!(await repository.findCurrentContactState(state.contactId))) {
+		await repository.upsertContactState(state)
+	}
 }

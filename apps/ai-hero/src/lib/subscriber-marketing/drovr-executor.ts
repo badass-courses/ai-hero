@@ -287,6 +287,11 @@ export async function acceptDrovrIntent(args: {
 		const raced =
 			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 		if (!raced) throw cause
+		await reopenStalePreflightBlock(raced, args.repository)
+		await adoptLegacyIntent(raced, intent, {
+			repository: args.repository,
+			tenantId,
+		})
 		return existingIntentResult(raced, intent, step)
 	}
 	return {
