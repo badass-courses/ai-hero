@@ -242,6 +242,11 @@ describe('Skills newsletter path entry: drovr ownership', () => {
 			),
 		).toHaveLength(1)
 		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+		// drovr owns it now, and every send preflight needs a state row: the
+		// entry persists the one the repeat capture derived.
+		expect(repository.states.get(first.contactId)).toMatchObject({
+			contactId: first.contactId,
+		})
 	})
 
 	it('lets the rollout own a contact whose state was written at capture but never planned', async () => {

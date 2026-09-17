@@ -191,6 +191,12 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	findCurrentContactState(contactId: string) {
 		return this.states.get(contactId)
 	}
+	insertContactStateIfAbsent(state: ContactState) {
+		const existing = this.states.get(state.contactId)
+		if (existing) return existing
+		this.states.set(state.contactId, state)
+		return state
+	}
 	upsertContactState(state: ContactState) {
 		this.states.set(state.contactId, state)
 		return state
@@ -424,9 +430,7 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 	}
 }
 
-function isSequenceExhaustionIntentStatus(
-	status: SideEffectIntent['status'],
-) {
+function isSequenceExhaustionIntentStatus(status: SideEffectIntent['status']) {
 	return (
 		status === 'pending' ||
 		status === 'completed' ||

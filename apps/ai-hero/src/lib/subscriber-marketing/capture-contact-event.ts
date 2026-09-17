@@ -70,6 +70,8 @@ export type CaptureMarketingRepository = {
 		contactId: string,
 	): MaybePromise<ContactState | undefined>
 	upsertContactState(state: ContactState): MaybePromise<ContactState>
+	/** Insert only when the contact has no state row; answers the row that exists afterwards. */
+	insertContactStateIfAbsent?(state: ContactState): MaybePromise<ContactState>
 	createStateTransition(
 		input: Omit<StateTransition, 'id'>,
 	): MaybePromise<StateTransition>

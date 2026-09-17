@@ -238,6 +238,7 @@ export async function acceptDrovrIntent(args: {
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) {
+		await reopenStalePreflightBlock(existing, args.repository)
 		await adoptLegacyIntent(existing, intent, {
 			repository: args.repository,
 			tenantId,
@@ -286,6 +287,11 @@ export async function acceptDrovrIntent(args: {
 		const raced =
 			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 		if (!raced) throw cause
+		await reopenStalePreflightBlock(raced, args.repository)
+		await adoptLegacyIntent(raced, intent, {
+			repository: args.repository,
+			tenantId,
+		})
 		return existingIntentResult(raced, intent, step)
 	}
 	return {
@@ -310,6 +316,39 @@ export async function acceptDrovrIntent(args: {
  * owner to complete to and the actor waits forever. A completed row needs
  * no stamp: the executor answers it with the completion directly.
  */
+/**
+ * Refusals the send preflight re-derives from current rows, not from the
+ * contact's answers or the campaign: a row blocked only for these was
+ * refused for a fact that may since have changed (the state row now
+ * exists). Re-open it so the executor runs preflight again; if the fact
+ * still holds it blocks again, so the reset is safe to repeat.
+ */
+const STALE_PREFLIGHT_REASONS = new Set(['contact-state-missing'])
+
+async function reopenStalePreflightBlock(
+	existing: SideEffectIntent,
+	repository: DrovrExecutorRepository,
+): Promise<void> {
+	if (
+		existing.status !== 'blocked' ||
+		existing.reviewReasons.length === 0 ||
+		!existing.reviewReasons.every((reason) =>
+			STALE_PREFLIGHT_REASONS.has(reason),
+		) ||
+		!repository.updateSideEffectIntent
+	) {
+		return
+	}
+	const reopened = await repository.updateSideEffectIntent(existing.id, {
+		status: 'pending',
+		completedAt: null,
+		gates: existing.gates,
+		reviewReasons: [],
+		metadata: { ...existing.metadata, reopenedFrom: existing.reviewReasons },
+	})
+	Object.assign(existing, reopened)
+}
+
 async function adoptLegacyIntent(
 	existing: SideEffectIntent,
 	intent: DrovrIntent,
