@@ -595,3 +595,45 @@ describe('evergreen coupon completions', () => {
 		])
 	})
 })
+
+describe('evergreen list handoff completions', () => {
+	it('completes the shadow-newsletter handoff to the owning actor as shadow.entered', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: {
+				id: 'row-1',
+				nextActionId: 'drovr:abc',
+				contactId: 'contact-1',
+				provider: 'kit',
+				type: 'subscribe-evergreen-list',
+				status: 'completed',
+				completedAt: '2026-09-22T16:00:05.000Z',
+				idempotencyKey: 'contact:contact-1:evergreen:list:shadow-newsletter',
+				gates: [],
+				reviewReasons: [],
+				metadata: {
+					source: 'drovr',
+					list: 'shadow-newsletter',
+					kitSequenceId: '2625552',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'crash-course-evergreen-offer',
+						intentKey: 'k-list',
+					},
+				},
+				createdAt: '2026-09-22T16:00:01.000Z',
+			},
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'crash-course-evergreen-offer',
+				type: 'shadow.entered',
+				occurredAt: '2026-09-22T16:00:05.000Z',
+				idempotencyKey: 'completion:k-list',
+				payload: { list: 'shadow-newsletter' },
+			},
+		])
+	})
+})

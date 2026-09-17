@@ -230,6 +230,7 @@ export type SideEffectIntent = {
 		| 'send-skills-course-lesson-one-recovery'
 		| 'send-evergreen-email'
 		| 'issue-evergreen-coupon'
+		| 'subscribe-evergreen-list'
 	status: SideEffectIntentStatus
 	completedAt?: string | null
 	idempotencyKey: string

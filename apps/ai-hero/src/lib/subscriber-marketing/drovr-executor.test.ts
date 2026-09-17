@@ -617,6 +617,60 @@ describe('acceptDrovrIntent: evergreen coupon issue', () => {
 		expect(repository.intents.size).toBe(1)
 	})
 
+	it('accepts a shadow-newsletter list.subscribe as one subscribe-evergreen-list row per contact', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const listIntent = (overrides: Partial<DrovrIntent> = {}) =>
+			couponIntent({
+				kind: 'list.subscribe',
+				payload: { list: 'shadow-newsletter' },
+				idempotencyKey: 'k-list',
+				...overrides,
+			})
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: listIntent(),
+			now,
+			evergreen: enabled,
+		})
+		expect(result.status).toBe('accepted')
+		if (result.status !== 'accepted') throw new Error('unreachable')
+		expect(repository.intents.get(result.intentId)).toMatchObject({
+			type: 'subscribe-evergreen-list',
+			idempotencyKey: 'contact:contact-1:evergreen:list:shadow-newsletter',
+			metadata: { list: 'shadow-newsletter', kitSequenceId: '2625552' },
+		})
+		const row = repository.intents.get(result.intentId)!
+		repository.intents.set(row.id, {
+			...row,
+			status: 'completed',
+			completedAt: '2026-09-10T16:00:05.000Z',
+		})
+		const again = await acceptDrovrIntent({
+			repository,
+			intent: listIntent({ idempotencyKey: 'redriven' }),
+			now,
+			evergreen: enabled,
+		})
+		expect(again).toMatchObject({
+			status: 'completed',
+			completion: {
+				type: 'shadow.entered',
+				idempotencyKey: 'completion:redriven',
+				occurredAt: '2026-09-10T16:00:05.000Z',
+				payload: { list: 'shadow-newsletter' },
+			},
+		})
+		expect(repository.intents.size).toBe(1)
+		const unknown = await acceptDrovrIntent({
+			repository,
+			intent: listIntent({ payload: { list: 'not-a-list' } }),
+			now,
+			evergreen: enabled,
+		})
+		expect(unknown.status).toBe('unsupported')
+	})
+
 	it('refuses a coupon.issue without the pinned window (v1/v2 journeys)', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())

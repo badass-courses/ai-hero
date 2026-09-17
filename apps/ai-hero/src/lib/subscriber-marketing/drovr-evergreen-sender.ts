@@ -1,5 +1,8 @@
 import type { CaptureMarketingRepository } from './capture-contact-event'
-import { SEND_EVERGREEN_EMAIL_INTENT_TYPE } from './drovr-evergreen'
+import {
+	SEND_EVERGREEN_EMAIL_INTENT_TYPE,
+	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+} from './drovr-evergreen'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
 
@@ -78,6 +81,11 @@ export async function executePendingEvergreenSends(args: {
 	pacingMs?: number
 	sleep?: (ms: number) => Promise<void>
 	dispatch?: (intent: SideEffectIntent) => void
+	/** Row type to drain; the list handoff rows add to a Kit sequence the
+	 * same way a message send does, so one drain serves both. */
+	type?:
+		| typeof SEND_EVERGREEN_EMAIL_INTENT_TYPE
+		| typeof SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE
 }): Promise<EvergreenSendResult[]> {
 	const now = args.now ?? (() => new Date().toISOString())
 	const sleep =
@@ -91,7 +99,7 @@ export async function executePendingEvergreenSends(args: {
 				intent,
 			}))
 	const rows = await args.repository.findPendingSideEffectIntentsByType(
-		SEND_EVERGREEN_EMAIL_INTENT_TYPE,
+		args.type ?? SEND_EVERGREEN_EMAIL_INTENT_TYPE,
 		args.limit,
 	)
 	const results: EvergreenSendResult[] = []

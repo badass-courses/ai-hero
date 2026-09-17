@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	addSubscriberToKitSequence,
+	readbackEvergreenListSequences,
+	subscribeToEvergreenList,
 	updateKitSubscriberFields,
 	EVERGREEN_KIT_SEQUENCES,
 	evergreenSequenceForMessage,
@@ -262,5 +264,100 @@ describe('updateKitSubscriberFields', () => {
 				fields: {},
 			}),
 		).rejects.toMatchObject({ status: 422 })
+	})
+})
+
+describe('readbackEvergreenListSequences', () => {
+	const answer = (overrides: Record<string, unknown>) =>
+		(async () =>
+			new Response(
+				JSON.stringify({
+					sequence: {
+						id: 2625552,
+						name: 'AI Hero Shadow Newsletter',
+						active: true,
+						hold: false,
+						repeat: false,
+						email_count: 13,
+						...overrides,
+					},
+				}),
+				{ status: 200 },
+			)) as typeof fetch
+
+	it('is ready when the newsletter sequence is active, off hold and non-repeating, however many emails it has', async () => {
+		const result = await readbackEvergreenListSequences({
+			apiKey: 'k',
+			fetch: answer({ email_count: 13 }),
+			now: () => '2026-09-16T00:00:00.000Z',
+		})
+		expect(result).toEqual({
+			ready: true,
+			problems: [],
+			checkedAt: '2026-09-16T00:00:00.000Z',
+		})
+	})
+
+	it('allows a held sequence (the add falls back to the backfill tag) but names an inactive or repeating one', async () => {
+		expect(
+			(
+				await readbackEvergreenListSequences({
+					apiKey: 'k',
+					fetch: answer({ hold: true }),
+				})
+			).ready,
+		).toBe(true)
+		const result = await readbackEvergreenListSequences({
+			apiKey: 'k',
+			fetch: answer({ active: false, repeat: true }),
+		})
+		expect(result.ready).toBe(false)
+		expect(result.problems).toEqual([
+			'shadow-newsletter: sequence is not active',
+			'shadow-newsletter: sequence repeats, a re-add would replay it',
+		])
+	})
+})
+
+describe('subscribeToEvergreenList', () => {
+	const make = (sequenceStatus: number, tagStatus = 201) =>
+		(async (url: string | URL | Request) =>
+			new Response('{}', {
+				status: String(url).includes('/tags/') ? tagStatus : sequenceStatus,
+			})) as typeof fetch
+	const input = {
+		apiKey: 'k',
+		sequenceId: 2625552,
+		backfillTagId: 22309615,
+		email: 'learner@example.com',
+	}
+
+	it('adds to the sequence when Kit accepts, and reports already-added', async () => {
+		await expect(
+			subscribeToEvergreenList({ ...input, fetch: make(201) }),
+		).resolves.toBe('added')
+		await expect(
+			subscribeToEvergreenList({ ...input, fetch: make(200) }),
+		).resolves.toBe('already-added')
+	})
+
+	it('tags for backfill when the held sequence refuses the add, and keeps 5xx retryable', async () => {
+		const calls: string[] = []
+		const fetchFake = (async (url: string | URL | Request) => {
+			calls.push(String(url))
+			return new Response('{}', {
+				status: String(url).includes('/tags/') ? 201 : 422,
+			})
+		}) as typeof fetch
+		await expect(
+			subscribeToEvergreenList({ ...input, fetch: fetchFake }),
+		).resolves.toBe('backfilled')
+		expect(calls).toEqual([
+			'https://api.kit.com/v4/sequences/2625552/subscribers',
+			'https://api.kit.com/v4/tags/22309615/subscribers',
+		])
+		await expect(
+			subscribeToEvergreenList({ ...input, fetch: make(503) }),
+		).rejects.toMatchObject({ status: 503 })
 	})
 })
