@@ -243,4 +243,29 @@ describe('Skills newsletter path entry: drovr ownership', () => {
 		).toHaveLength(1)
 		expect(valuePathEmailIntents(repository)).toHaveLength(0)
 	})
+
+	it('lets the rollout own a contact whose state was written at capture but never planned', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const first = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+		})
+		expect(first.status).toBe('planned')
+		// A contact captured on a path that classified it (state row written)
+		// but never ran the legacy planner: no send exists for the legacy
+		// gate to continue. Its confirmation is a new entry.
+		repository.sideEffectIntents.clear()
+		expect(repository.states.get(first.contactId)).toBeDefined()
+		const replay = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input: { ...input, source: 'signup-gap-replay' },
+			drovrOwnership: { percent: 100, emails: new Set() },
+		})
+		expect(replay.status).toBe('drovr-owned')
+		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+	})
 })
