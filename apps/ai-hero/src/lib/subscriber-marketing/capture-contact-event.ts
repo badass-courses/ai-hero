@@ -106,6 +106,15 @@ export type CaptureMarketingRepository = {
 		> &
 			Pick<SideEffectIntent, 'completedAt'>,
 	): MaybePromise<SideEffectIntent>
+	/**
+	 * Atomically take a row for one send: pending or failed becomes sending
+	 * with metadata.claimedAt; a sending row older than staleAfterMs (a
+	 * crashed sender) can be taken again. False means another sender holds it.
+	 */
+	claimSideEffectIntentForSend?(
+		id: string,
+		args: { now: string; staleAfterMs: number },
+	): MaybePromise<boolean>
 	newId(kind: string): string
 }
 

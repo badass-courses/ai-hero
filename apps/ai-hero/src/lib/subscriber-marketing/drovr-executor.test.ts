@@ -55,6 +55,45 @@ class FakeRepository implements DrovrExecutorRepository {
 		this.intents.set(id, next)
 		return next
 	}
+	claims: string[] = []
+	claimSideEffectIntentForSend(
+		id: string,
+		args: { now: string; staleAfterMs: number },
+	) {
+		const row = this.intents.get(id)
+		if (!row) return false
+		const claimedAt = row.metadata.claimedAt
+		const stale =
+			row.status === 'sending' &&
+			typeof claimedAt === 'string' &&
+			Date.parse(claimedAt) < Date.parse(args.now) - args.staleAfterMs
+		if (row.status !== 'pending' && row.status !== 'failed' && !stale) {
+			return false
+		}
+		this.claims.push(id)
+		this.intents.set(id, {
+			...row,
+			status: 'sending',
+			metadata: { ...row.metadata, claimedAt: args.now },
+		})
+		return true
+	}
+}
+
+const budgetOf = (ok: boolean, retryAfterMs = 0) => {
+	const calls = { refunds: 0, takes: 0 }
+	return {
+		calls,
+		budget: {
+			take: async () => {
+				calls.takes += 1
+				return { ok, retryAfterMs }
+			},
+			refund: async () => {
+				calls.refunds += 1
+			},
+		},
+	}
 }
 
 const contact = (): ContactRecord => ({
@@ -331,6 +370,229 @@ describe('drovr executor: accepting an email.send intent', () => {
 			).status,
 		).toBe('contact-missing')
 		expect(repository.intents.size).toBe(0)
+	})
+})
+
+describe('drovr executor: the synchronous send', () => {
+	const sentRow = (repository: FakeRepository, id: string, patch: object) =>
+		repository.updateSideEffectIntent(id, {
+			status: 'completed',
+			completedAt: now,
+			gates: [],
+			reviewReasons: [],
+			metadata: { ...repository.intents.get(id)!.metadata, ...patch },
+		} as never)
+
+	it('sends inside the request and answers the completion', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const seen: string[] = []
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => {
+				seen.push(row.status)
+				sentRow(repository, row.id, { completedAt: now })
+				return {
+					status: 'completed',
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		})
+		expect(seen).toEqual(['pending'])
+		expect(result.status).toBe('completed')
+		if (result.status !== 'completed') return
+		expect(result.completion).toMatchObject({
+			type: 'email.completed',
+			contactId: 'contact-1',
+			idempotencyKey: `completion:${intent().idempotencyKey}`,
+			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+		})
+	})
+
+	it("answers retry with the row's next retry time on a retryable Kit failure", async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => {
+				repository.updateSideEffectIntent(row.id, {
+					status: 'failed',
+					gates: [],
+					reviewReasons: ['kit-sequence-enrollment-retryable'],
+					metadata: {
+						...row.metadata,
+						retryReason: 'kit-rate-limited',
+						nextRetryAt: '2026-09-16T22:45:00.000Z',
+					},
+				} as never)
+				return {
+					status: 'retryable-failed',
+					intentId: row.id,
+					reviewReasons: ['kit-sequence-enrollment-retryable'],
+				}
+			},
+		})
+		expect(result).toMatchObject({
+			status: 'retry',
+			retryAfterMs: 15 * 60_000,
+			reason: 'kit-rate-limited',
+		})
+	})
+
+	it('answers retry from the budget before touching Kit', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		let sends = 0
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			budget: budgetOf(false, 4_000).budget,
+			sendNow: async (row) => {
+				sends += 1
+				return {
+					status: 'completed',
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		})
+		expect(sends).toBe(0)
+		expect(result).toMatchObject({
+			status: 'retry',
+			retryAfterMs: 4_000,
+			reason: 'send-budget-spent',
+		})
+		// The row exists and is not left claimed, so the next post can send it.
+		expect(repository.intents.size).toBe(1)
+		expect([...repository.intents.values()][0]?.status).toBe('pending')
+	})
+
+	it('claims the row before sending so the cron and a concurrent post step back', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const seen: string[] = []
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => {
+				// Under the claim the stored row is sending; the executor is
+				// handed its pending view.
+				seen.push(repository.intents.get(row.id)!.status, row.status)
+				sentRow(repository, row.id, { completedAt: now })
+				return {
+					status: 'completed',
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		})
+		expect(result.status).toBe('completed')
+		expect(seen).toEqual(['sending', 'pending'])
+		expect(repository.claims).toHaveLength(1)
+	})
+
+	it('answers accepted without sending when another sender holds the row', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({ repository, intent: intent(), now })
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		repository.updateSideEffectIntent(first.intentId, {
+			status: 'sending',
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				...repository.intents.get(first.intentId)!.metadata,
+				claimedAt: now,
+			},
+		} as never)
+		let sends = 0
+		const second = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async () => {
+				sends += 1
+				throw new Error('must not send')
+			},
+		})
+		expect(sends).toBe(0)
+		expect(second.status).toBe('accepted')
+	})
+
+	it('refunds the budget slot when the gates refuse without a Kit call', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const { budget, calls } = budgetOf(true)
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			budget,
+			sendNow: async (row) => {
+				repository.updateSideEffectIntent(row.id, {
+					status: 'blocked',
+					gates: [],
+					reviewReasons: ['contact-state-missing'],
+					metadata: row.metadata,
+				} as never)
+				return {
+					status: 'blocked',
+					intentId: row.id,
+					reviewReasons: ['contact-state-missing'],
+				}
+			},
+		})
+		expect(result.status).toBe('blocked')
+		expect(calls).toEqual({ takes: 1, refunds: 1 })
+	})
+
+	it("answers blocked when the executor's gates refuse", async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => ({
+				status: 'blocked',
+				intentId: row.id,
+				reviewReasons: ['contact-state-missing'],
+			}),
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['contact-state-missing'],
+		})
+	})
+
+	it('leaves a completed row alone and never calls sendNow for it', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({ repository, intent: intent(), now })
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		sentRow(repository, first.intentId, { completedAt: now })
+		let sends = 0
+		const second = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async () => {
+				sends += 1
+				throw new Error('must not send')
+			},
+		})
+		expect(sends).toBe(0)
+		expect(second.status).toBe('completed')
 	})
 })
 

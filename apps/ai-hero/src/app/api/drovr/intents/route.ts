@@ -9,7 +9,18 @@ import {
 	DrovrIntentSchema,
 } from '@/lib/subscriber-marketing/drovr-executor'
 import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-evergreen'
+import {
+	drovrSendBudget,
+	parseDrovrSyncSendConfig,
+} from '@/lib/subscriber-marketing/drovr-sync-send'
+import { createEmailCourseShadowRuntime } from '@/lib/subscriber-marketing/email-course-shadow-runtime'
+import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
+import { executeValuePathEmailIntent } from '@/lib/subscriber-marketing/value-path-email-executor'
+import { buildValuePathExecutorConfig } from '@/lib/subscriber-marketing/value-path-executor-config'
+import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
+import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { log } from '@/server/logger'
+import { redis } from '@/server/redis-client'
 import { withSkill } from '@/server/with-skill'
 import { and, eq } from 'drizzle-orm'
 
@@ -20,7 +31,10 @@ import { and, eq } from 'drizzle-orm'
  * answer steers drovr: 202 accepted means the sender cron owns delivery
  * and the completion arrives later through POST /events; 200 completed
  * carries the completion inline for an intent ai-hero already finished;
- * 200 blocked means ai-hero's gates refused and a human must look.
+ * 200 blocked means ai-hero's gates refused and a human must look;
+ * 200 retry names a wait (Kit rate limit or drovr's send budget). With
+ * AIH_DROVR_SYNC_SEND the skills-course send runs inside this request
+ * (decision 2026-09-17) and 202 stops appearing for it.
  * Refusals are RFC 9457 problem details with a hint, the same shape drovr
  * speaks, so an agent debugging either side reads one vocabulary.
  */
@@ -105,11 +119,47 @@ export const POST = withSkill(async (request: NextRequest) => {
 		)
 	}
 
+	const repository = new DrizzleCaptureMarketingRepository(db)
+	const syncSend = parseDrovrSyncSendConfig(process.env)
+	let sync: Pick<
+		Parameters<typeof acceptDrovrIntent>[0],
+		'sendNow' | 'budget'
+	> = {}
+	if (syncSend.enabled && parsed.data.kind === 'email.send') {
+		const allowlist = await readActiveGateDRuntimeAllowlist({ redis })
+		if (allowlist.passed && allowlist.allowlist) {
+			const config = buildValuePathExecutorConfig({
+				runtimeAllowlist: allowlist.allowlist,
+				answerPages: await getValuePathAnswerPages(),
+				env: process.env,
+			})
+			const shadowObserver = createEmailCourseShadowRuntime({
+				database: db,
+			}).observeDelivery
+			sync = {
+				sendNow: (row) =>
+					executeValuePathEmailIntent({
+						repository,
+						emailListProvider,
+						intent: row,
+						config,
+						shadowObserver,
+					}),
+				budget: drovrSendBudget(redis, syncSend.perMinute),
+			}
+		} else {
+			await log.warn('drovr.executor.sync_send_unavailable', {
+				reviewReasons: allowlist.reviewReasons,
+			})
+		}
+	}
+
 	const result = await acceptDrovrIntent({
-		repository: new DrizzleCaptureMarketingRepository(db),
+		repository,
 		intent: parsed.data,
 		findKitSubscriberId,
 		evergreen: parseDrovrEvergreenConfig(process.env),
+		...sync,
 	})
 
 	await log.info('drovr.executor.intent', {
@@ -118,7 +168,11 @@ export const POST = withSkill(async (request: NextRequest) => {
 		kind: parsed.data.kind,
 		idempotencyKey: parsed.data.idempotencyKey,
 		status: result.status,
+		sync: sync.sendNow !== undefined,
 		...('intentId' in result ? { intentId: result.intentId } : {}),
+		...(result.status === 'retry'
+			? { retryAfterMs: result.retryAfterMs, reason: result.reason }
+			: {}),
 	})
 
 	switch (result.status) {
@@ -143,6 +197,8 @@ export const POST = withSkill(async (request: NextRequest) => {
 		case 'completed':
 			return NextResponse.json(result, { status: 200 })
 		case 'blocked':
+			return NextResponse.json(result, { status: 200 })
+		case 'retry':
 			return NextResponse.json(result, { status: 200 })
 		default:
 			return problem(
