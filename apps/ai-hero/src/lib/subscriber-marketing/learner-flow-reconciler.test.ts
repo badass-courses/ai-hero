@@ -1110,6 +1110,48 @@ describe('learner flow reconciler', () => {
 		expect(configSource).toContain('learnerFlowReconciler')
 		expect(configSource).not.toContain('valuePathDripProgression')
 	})
+
+	it('skips contacts drovr drives and reports how many', async () => {
+		const { captured, completed, repository } =
+			await createEmailSixReconcilerFixture()
+		const ownedIntent = {
+			...completed,
+			id: 'drovr-owned-intent',
+			idempotencyKey: `${completed.idempotencyKey}:drovr`,
+			metadata: {
+				...completed.metadata,
+				source: 'drovr',
+				drovr: {
+					tenantId: 'org-aihero',
+					journeyId: 'value-path-skills-course',
+					intentKey: 'k',
+					dueAt: now,
+				},
+			},
+		}
+		const reconcilerRepository = Object.assign(repository, {
+			findSkillsWorkflowLearnerFlowRecords: () => [
+				{
+					contactId: captured.contact.id,
+					contact: captured.contact,
+					contactState: captured.contactState,
+					intents: [ownedIntent],
+					entryEvents: [],
+				},
+			],
+		})
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository: reconcilerRepository,
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		expect(plan.cohort.drovrOwnedSkipped).toBe(1)
+		// The brake divides by contacts this planner may repair, not by the
+		// whole scan, so skipped contacts cannot dilute the ratio.
+		expect(plan.cohort.contacts).toBe(0)
+		expect(plan.candidates).toEqual([])
+		expect(plan.records).toEqual([])
+	})
 })
 
 describe('bounded repair plan', () => {

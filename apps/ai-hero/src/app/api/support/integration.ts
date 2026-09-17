@@ -199,10 +199,11 @@ export const integration: SupportIntegration = {
 				return { success: false, error: 'Email already in use' }
 			}
 
-			// Use adapter's updateUser method with just the fields to update
+			// A replacement address has not been verified by the prior email login.
 			await courseBuilderAdapter.updateUser?.({
 				id: userId,
 				email: newEmail,
+				emailVerified: null,
 			})
 
 			return { success: true }

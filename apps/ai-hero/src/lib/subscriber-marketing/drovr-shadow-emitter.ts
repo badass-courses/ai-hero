@@ -12,8 +12,14 @@ export const DROVR_EVERGREEN_OFFER_JOURNEY_ID =
 	'crash-course-evergreen-offer' as const
 export const DROVR_FALLBACK_TIMEZONE = 'America/Los_Angeles' as const
 
+/** Tenants ai-hero speaks to: the shadow, and the authority once cut over. */
+export const DROVR_AUTHORITY_TENANT_ID = 'org-aihero' as const
+export type DrovrTenantId =
+	| typeof DROVR_SHADOW_TENANT_ID
+	| typeof DROVR_AUTHORITY_TENANT_ID
+
 export type DrovrShadowEvent = {
-	tenantId: typeof DROVR_SHADOW_TENANT_ID
+	tenantId: DrovrTenantId
 	contactId: string
 	journeyId:
 		| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
@@ -57,7 +63,32 @@ export type DrovrShadowFact =
 
 type DrovrShadowEmitterConfig = {
 	ingestUrl?: string
+	/** Bearer key for the shadow tenant. */
 	apiKey?: string
+	/** Bearer key for the authority tenant, once cut over. */
+	authorityApiKey?: string
+}
+
+/**
+ * One bearer key per drovr tenant. Every path that posts to drovr (the
+ * durable delivery function, the direct fallback) must choose by tenant;
+ * an authority completion sent with the shadow key is a 403 at drovr.
+ */
+export function drovrApiKeyForTenant(
+	tenantId: string,
+	config: Pick<DrovrShadowEmitterConfig, 'apiKey' | 'authorityApiKey'> = {
+		apiKey: env.DROVR_SHADOW_API_KEY,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
+	},
+): string | undefined {
+	switch (tenantId) {
+		case DROVR_SHADOW_TENANT_ID:
+			return config.apiKey
+		case DROVR_AUTHORITY_TENANT_ID:
+			return config.authorityApiKey
+		default:
+			return undefined
+	}
 }
 
 type DrovrShadowEmitterOptions = {
@@ -67,9 +98,7 @@ type DrovrShadowEmitterOptions = {
 	timeoutMs?: number
 }
 
-export function mapDrovrShadowFact(
-	fact: DrovrShadowFact,
-): DrovrShadowEvent[] {
+export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
 	if (fact.kind === 'contact-event') {
 		return mapContactEvent(fact.event)
 	}
@@ -83,30 +112,44 @@ export async function emitDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowEmitterOptions = {},
 ): Promise<void> {
+	await emitDrovrShadowEvents(mapDrovrShadowFact(fact), options)
+}
+
+/** Post already-mapped events directly, each with its tenant's key. */
+export async function emitDrovrShadowEvents(
+	events: readonly DrovrShadowEvent[],
+	options: DrovrShadowEmitterOptions = {},
+): Promise<void> {
 	const config = options.config ?? {
 		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
 		apiKey: env.DROVR_SHADOW_API_KEY,
+		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
 	}
 	const ingestUrl = config.ingestUrl
-	const apiKey = config.apiKey
-	if (!ingestUrl || !apiKey) return
-
-	const events = mapDrovrShadowFact(fact)
+	if (!ingestUrl) return
 	if (events.length === 0) return
 
 	const fetcher = options.fetch ?? fetch
 	const warn = options.warn ?? log.warn
 	try {
 		await Promise.all(
-			events.map((event) =>
-				postDrovrShadowEvent({
+			events.map(async (event) => {
+				const apiKey = drovrApiKeyForTenant(event.tenantId, config)
+				if (!apiKey) {
+					await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
+						tenantId: event.tenantId,
+						idempotencyKey: event.idempotencyKey,
+					})
+					return
+				}
+				await postDrovrShadowEvent({
 					event,
 					config: { ingestUrl, apiKey },
 					fetcher,
 					warn,
 					timeoutMs: options.timeoutMs ?? 3000,
-				}),
-			),
+				})
+			}),
 		)
 	} catch (error) {
 		await warnWithoutThrow(warn, 'drovr.shadow.emit_failed', {
@@ -137,6 +180,17 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 			return [
 				{
 					...base,
+					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+					type: 'contact.created',
+				},
+			]
+		// Ownership assigned to drovr is the contact's birth in the authority
+		// tenant: one event, one birth, no race with the shadow's.
+		case 'journey.owner.assigned':
+			return [
+				{
+					...base,
+					tenantId: DROVR_AUTHORITY_TENANT_ID,
 					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
 					type: 'contact.created',
 				},
@@ -182,17 +236,61 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 		: undefined
 	if (!completedAt || !sourceEmailResourceId || !emailResourceId) return []
 
-	return [
-		{
-			tenantId: DROVR_SHADOW_TENANT_ID,
-			contactId: intent.contactId,
-			journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
-			type: 'email.completed',
-			occurredAt: completedAt,
-			idempotencyKey: `aihero:intent-completed:${intent.id}`,
-			payload: { emailResourceId },
-		},
-	]
+	const shadowCompletion: DrovrShadowEvent = {
+		tenantId: DROVR_SHADOW_TENANT_ID,
+		contactId: intent.contactId,
+		journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `aihero:intent-completed:${intent.id}`,
+		payload: { emailResourceId },
+	}
+	// An intent drovr planned completes back to the tenant that owns it,
+	// keyed the way drovr's own executors key completions. The shadow hears
+	// it too, so the shadow actor of an owned contact keeps mirroring
+	// instead of sitting at pending and tripping the pending-intent alert.
+	const ownerCompletion = drovrOwnedCompletion(intent)
+	return ownerCompletion
+		? [ownerCompletion, shadowCompletion]
+		: [shadowCompletion]
+}
+
+function drovrOwnedCompletion(
+	intent: SideEffectIntent,
+): DrovrShadowEvent | undefined {
+	const owner = intent.metadata.drovr
+	if (!owner || typeof owner !== 'object') return undefined
+	const record = owner as Record<string, unknown>
+	const tenantId = stringValue(record.tenantId)
+	const journeyId = stringValue(record.journeyId)
+	const intentKey = stringValue(record.intentKey)
+	const completedAt = valuePathIntentCompletedAt(intent)
+	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
+	const emailResourceId = sourceEmailResourceId
+		? canonicalSkillsEmailResourceId(sourceEmailResourceId)
+		: undefined
+	if (
+		!tenantId ||
+		!journeyId ||
+		!intentKey ||
+		!completedAt ||
+		!emailResourceId ||
+		(tenantId !== DROVR_SHADOW_TENANT_ID &&
+			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
+		(journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID &&
+			journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID)
+	) {
+		return undefined
+	}
+	return {
+		tenantId,
+		contactId: intent.contactId,
+		journeyId,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `completion:${intentKey}`,
+		payload: { emailResourceId },
+	}
 }
 
 function mapCourseCompleted(
@@ -286,7 +384,7 @@ function courseCompletionTimezone(headerValue?: string) {
 
 async function postDrovrShadowEvent(args: {
 	event: DrovrShadowEvent
-	config: Required<DrovrShadowEmitterConfig>
+	config: DrovrDeliveryConfig
 	fetcher: typeof fetch
 	warn: typeof log.warn
 	timeoutMs: number
@@ -354,4 +452,116 @@ async function warnWithoutThrow(
 
 function stringValue(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * What one delivery attempt concluded. `accepted` is drovr's 200/202;
+ * `rejected` is a 4xx problem detail, final by contract (replaying the
+ * same idempotency key cannot change the answer); `failed` is anything
+ * transient (5xx, network, timeout) and is the only outcome worth a retry.
+ */
+export type DrovrDeliveryOutcome =
+	| { status: 'accepted' }
+	| { status: 'rejected'; httpStatus: number; problem: unknown }
+	| { status: 'failed'; reason: string; httpStatus?: number }
+
+export type DrovrDeliveryConfig = { ingestUrl: string; apiKey: string }
+
+/**
+ * Post one event and report the outcome instead of swallowing it. The
+ * durable delivery function builds its retry decision on this; the legacy
+ * fire-and-forget path above keeps its own warnings.
+ */
+export async function deliverDrovrShadowEvent(args: {
+	event: DrovrShadowEvent
+	config: DrovrDeliveryConfig
+	fetcher?: typeof fetch
+	timeoutMs?: number
+}): Promise<DrovrDeliveryOutcome> {
+	const fetcher = args.fetcher ?? fetch
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 10_000)
+	try {
+		const response = await fetcher(args.config.ingestUrl, {
+			method: 'POST',
+			headers: {
+				authorization: `Bearer ${args.config.apiKey}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify(args.event),
+			signal: controller.signal,
+		})
+		if (response.status === 200 || response.status === 202) {
+			// Accepted is decided by the status alone. The body is never read,
+			// so an oversized or stalled body cannot turn an accepted event
+			// into a retried one.
+			return { status: 'accepted' }
+		}
+		if (response.status >= 400 && response.status < 500) {
+			return {
+				status: 'rejected',
+				httpStatus: response.status,
+				problem: await boundedProblemBody(response),
+			}
+		}
+		return {
+			status: 'failed',
+			httpStatus: response.status,
+			reason: `drovr answered ${response.status}`,
+		}
+	} catch (error) {
+		return {
+			status: 'failed',
+			reason: error instanceof Error ? error.message : String(error),
+		}
+	} finally {
+		clearTimeout(timeout)
+	}
+}
+
+const PROBLEM_BODY_LIMIT_BYTES = 4096
+
+/**
+ * Read at most 4 KiB of a problem body and stop. A 4xx is conclusive by
+ * status; the body is only evidence for the log, so a huge or stalled
+ * body must never turn a final rejection into a retryable failure. Read
+ * errors and aborts yield null instead of throwing.
+ */
+async function boundedProblemBody(response: Response): Promise<unknown> {
+	const reader = response.body?.getReader()
+	if (!reader) return null
+	const chunks: Uint8Array[] = []
+	let received = 0
+	try {
+		while (received < PROBLEM_BODY_LIMIT_BYTES) {
+			const { done, value } = await reader.read()
+			if (done) break
+			if (!value) continue
+			const room = PROBLEM_BODY_LIMIT_BYTES - received
+			const slice = value.byteLength > room ? value.subarray(0, room) : value
+			chunks.push(slice)
+			received += slice.byteLength
+		}
+	} catch {
+		// Partial evidence is still evidence; the status already decided.
+	} finally {
+		try {
+			await reader.cancel()
+		} catch {
+			// The response is finished either way.
+		}
+	}
+	if (received === 0) return null
+	const joined = new Uint8Array(received)
+	let offset = 0
+	for (const chunk of chunks) {
+		joined.set(chunk, offset)
+		offset += chunk.byteLength
+	}
+	const text = new TextDecoder().decode(joined)
+	try {
+		return JSON.parse(text) as unknown
+	} catch {
+		return text
+	}
 }

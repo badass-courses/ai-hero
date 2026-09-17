@@ -36,6 +36,7 @@ import { contentReadRetention } from './functions/content-read-retention'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
+import { drovrEventsDeliver } from './functions/drovr-events-deliver'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
@@ -147,6 +148,7 @@ const allFunctions = [
 	typesensePopularitySync,
 	valuePathEmailExecutor,
 	learnerFlowReconciler,
+	drovrEventsDeliver,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
 	syncGithubSourcedPosts,

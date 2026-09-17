@@ -59,4 +59,13 @@ describe('SkillsHero', () => {
 			'Answer the question at the end if you want the next lesson in a few minutes. Otherwise, the next lesson arrives automatically after at least 18 hours.',
 		)
 	})
+
+	it('safely omits the GitHub stat when no count is available', async () => {
+		const hero = await SkillsHero({ stars: null, skillCount: 49 })
+		const markup = renderToStaticMarkup(hero)
+
+		expect(markup).not.toContain('GitHub stars')
+		expect(markup).toContain('Total skill installs')
+		expect(markup).toContain('https://github.com/mattpocock/skills')
+	})
 })

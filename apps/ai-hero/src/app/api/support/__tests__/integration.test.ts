@@ -372,7 +372,7 @@ describe('AI Hero Support Integration', () => {
 	// ── updateEmail ────────────────────────────────────────────────
 
 	describe('updateEmail', () => {
-		it('updates email when not taken', async () => {
+		it('updates email and clears stale verification atomically when not taken', async () => {
 			mockAdapter.getUserByEmail.mockResolvedValue(null)
 			mockAdapter.updateUser.mockResolvedValue(undefined)
 
@@ -385,6 +385,7 @@ describe('AI Hero Support Integration', () => {
 			expect(mockAdapter.updateUser).toHaveBeenCalledWith({
 				id: 'user-1',
 				email: 'new@example.com',
+				emailVerified: null,
 			})
 		})
 

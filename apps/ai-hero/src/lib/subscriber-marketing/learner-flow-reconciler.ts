@@ -7,6 +7,7 @@ import {
 	type LearnerFlowCohortRecord,
 	type LearnerFlowCohortRepository,
 } from './learner-flow-cohort'
+import { isDrovrOwnedIntent } from './drovr-ownership'
 import {
 	learnerFlowDrillSuppression,
 	type LearnerFlowDrillSuppression,
@@ -79,6 +80,8 @@ export type LearnerFlowReconcilerPlan = {
 		contacts: number
 		liveRecordsScanned: number
 		includesCanary: true
+		/** Contacts drovr drives; the legacy planner never touches them. */
+		drovrOwnedSkipped: number
 	}
 	counts: {
 		moving: number
@@ -159,7 +162,13 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			candidate.scheduleEvidence,
 		]),
 	)
-	const classified = cohort.records.map((record) => ({
+	// A contact with any drovr-planned intent is drovr's to drive: nudging
+	// its drip here would send the next email twice, once per planner.
+	const legacyRecords = cohort.records.filter(
+		(record) => !record.intents.some(isDrovrOwnedIntent),
+	)
+	const drovrOwnedSkipped = cohort.records.length - legacyRecords.length
+	const classified = legacyRecords.map((record) => ({
 		record,
 		classification: classifyLearnerFlowContact({
 			...record,
@@ -234,9 +243,11 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		generatedAt: args.now,
 		cohort: {
 			source: cohort.source,
-			contacts: cohort.contactIds.length,
+			// The brake's denominator: only contacts this planner may repair.
+			contacts: cohort.contactIds.length - drovrOwnedSkipped,
 			liveRecordsScanned: cohort.liveRecordsScanned,
 			includesCanary: true,
+			drovrOwnedSkipped,
 		},
 		counts: {
 			moving: classified.filter(
@@ -255,7 +266,7 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		candidates,
 		suppressedFixtureStarved,
 		tier2,
-		records: cohort.records,
+		records: legacyRecords,
 	}
 }
 

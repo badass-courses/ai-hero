@@ -574,6 +574,35 @@ const CommitEvidenceEnvelope: z.ZodTypeAny = z
 	})
 	.strict()
 
+export function restoreEvergreenOfferStimulus(
+	input: unknown,
+): JourneyPayloadRestorationResult<EvergreenOfferStimulus> {
+	return decodeAs(StimulusSchema, input, 'journey stimulus')
+}
+
+export function restoreEvergreenOfferAuthority(
+	input: unknown,
+): JourneyPayloadRestorationResult<EligibilityFacts> {
+	return decodeAs(EligibilityFactsSchema, input, 'current authority')
+}
+
+export function sameJourneyStimulus(
+	left: EvergreenOfferStimulus,
+	right: EvergreenOfferStimulus,
+): boolean {
+	return stimulusJson(left) === stimulusJson(right)
+}
+
+function stimulusJson(stimulus: EvergreenOfferStimulus): string {
+	return JSON.stringify(stimulus, (_key, value: unknown) =>
+		value !== null && typeof value === 'object' && !Array.isArray(value)
+			? Object.fromEntries(
+					Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
+				)
+			: value,
+	)
+}
+
 export function journeyCommitEvidenceRecord(
 	commit: JourneyLedgerCommit,
 ): JourneyCommitEvidence {

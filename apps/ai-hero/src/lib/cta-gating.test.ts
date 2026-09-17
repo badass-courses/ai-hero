@@ -105,12 +105,9 @@ describe('isOnCohortWaitlist', () => {
 })
 
 describe('hasJoinedOfferWaitlist', () => {
-	// The two waitlists on the offer ladder are the same word and different
-	// things: one is a cohort that already ran and will run again, the other is
-	// a workshop still in draft that has never shipped. They are stored under
-	// different Kit fields keyed off different identifiers, so signing up for
-	// one must never satisfy the other — otherwise joining the cohort waitlist
-	// would silently suppress the announcement of a brand new course.
+	// The cohort waitlist is keyed off the product NAME under its own Kit
+	// field; a workshop interest field for some other course must never stand
+	// in for it.
 	const cohortWaiter = subscriber({
 		fields: { waitlist_ai_coding_for_real_engineers: '2026-07-14' },
 	})
@@ -121,39 +118,19 @@ describe('hasJoinedOfferWaitlist', () => {
 		kind: 'cohort' as const,
 		productName: 'AI Coding for Real Engineers',
 	}
-	const workshopOffer = {
-		kind: 'workshop' as const,
-		slug: 'ai-coding-crash-course',
-	}
 
-	it('recognises each waitlist on its own terms', () => {
+	it('recognises the cohort waitlist by its product name', () => {
 		expect(hasJoinedOfferWaitlist(cohortWaiter, cohortOffer)).toBe(true)
-		expect(hasJoinedOfferWaitlist(workshopWaiter, workshopOffer)).toBe(true)
 	})
 
-	it('does not let one waitlist stand in for the other', () => {
-		expect(hasJoinedOfferWaitlist(cohortWaiter, workshopOffer)).toBe(false)
+	it('does not let a workshop interest field stand in for it', () => {
 		expect(hasJoinedOfferWaitlist(workshopWaiter, cohortOffer)).toBe(false)
 	})
 
 	it('never suppresses an offer that has no waitlist to join', () => {
-		// A sale or a purchasable cohort is answered by owning it, not by
-		// signing up — so this must not be the thing that hides it.
+		// A sale, a purchasable cohort, or a buyable workshop is answered by
+		// owning it, not by signing up — so this must not be the thing that
+		// hides it.
 		expect(hasJoinedOfferWaitlist(cohortWaiter, undefined)).toBe(false)
-	})
-})
-
-describe('hasWorkshopInterest', () => {
-	it('normalizes the slug the same way the capture does', () => {
-		expect(
-			hasWorkshopInterest(
-				subscriber({ fields: { interest_mcp_fundamentals: '2026-07-14' } }),
-				'mcp-fundamentals',
-			),
-		).toBe(true)
-	})
-
-	it('is false when interest was never expressed', () => {
-		expect(hasWorkshopInterest(subscriber(), 'mcp-fundamentals')).toBe(false)
 	})
 })

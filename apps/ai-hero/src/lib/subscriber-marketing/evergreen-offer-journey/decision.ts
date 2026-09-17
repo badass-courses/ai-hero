@@ -1,3 +1,4 @@
+import { fridayDefinitionError } from './definition'
 import {
 	addPitchMessagePlan,
 	buildBridgeMessagePlan,
@@ -1216,6 +1217,8 @@ function event<Type extends JourneyDomainEvent['type']>(
 function validateDefinition(
 	definition: DecideEvergreenOfferJourneyInput['definition'],
 ): string | null {
+	const bindingError = fridayDefinitionError(definition)
+	if (bindingError) return bindingError
 	const messages = [...definition.bridge, ...definition.pitch]
 	const slotIds = messages.map((message) => message.slotId)
 	if (new Set(slotIds).size !== slotIds.length) {

@@ -50,8 +50,8 @@ export function CourseCtaClient({
 			? startsLabel
 				? `Next cohort starts ${startsLabel}.`
 				: 'Join the next cohort and build these habits alongside other engineers.'
-			: offer.kind === 'workshop-waitlist'
-				? 'Not out yet. Join the waitlist and you hear the moment it ships.'
+			: offer.kind === 'workshop-buy'
+				? 'Self-paced. Buy it, open the first lesson, and go.'
 				: 'Enrollment is closed between cohorts. Join the waitlist to hear when the next one opens.'
 	const label = offer.kind === 'cohort-waitlist' ? offer.label : 'Learn more'
 	const tocLabel = isSale ? `Save ${offer.discount?.formatted}` : offer.label

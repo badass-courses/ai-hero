@@ -29,7 +29,7 @@ import { formatUsd } from '@coursebuilder/core/utils/format-usd'
 import { cn } from '@coursebuilder/ui/utils/cn'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
-import { WORKSHOP_CTA_BUTTON } from './workshop-notify-button'
+import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 
 export type PricingData = {
 	formattedPrice?: FormattedPrice | null

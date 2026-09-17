@@ -16,6 +16,8 @@ export const evergreenOfferJourneyCommit = mysqlTable(
 		stimulusId: varchar('stimulusId', { length: 500 }).notNull(),
 		journeyId: varchar('journeyId', { length: 500 }).notNull(),
 		actorVersion: int('actorVersion', { unsigned: true }).notNull(),
+		// Only initial commits reserve the v1 contact scope. NULL on later versions.
+		admissionContactId: varchar('admissionContactId', { length: 500 }),
 		stimulusType: varchar('stimulusType', { length: 64 }).notNull(),
 		commitEvidence: json('commitEvidence').$type<unknown>().notNull(),
 		decision: json('decision').$type<unknown>().notNull(),
@@ -28,6 +30,12 @@ export const evergreenOfferJourneyCommit = mysqlTable(
 			.notNull(),
 	},
 	(table) => ({
+		admissionContactUq: uniqueIndex(
+			'EvergreenOfferJourneyCommit_admission_contact_uq',
+		).on(table.admissionContactId),
+		legacyAdmissionIdx: index(
+			'EvergreenOfferJourneyCommit_legacy_admission_idx',
+		).on(table.admissionContactId, table.actorVersion),
 		journeyVersionPk: primaryKey({
 			columns: [table.journeyId, table.actorVersion],
 		}),
@@ -77,6 +85,37 @@ export const evergreenOfferJourneyIntent = mysqlTable(
 		originatingStimulusIdx: index(
 			'EvergreenOfferJourneyIntent_originatingStimulus_idx',
 		).on(table.originatingStimulusId),
+	}),
+)
+
+// Execution evidence is separate from domain intent settlement. There is no
+// reclaim transition: one semantic intent can acquire at most one attempt.
+export const evergreenOfferJourneyAttempt = mysqlTable(
+	'EvergreenOfferJourneyAttempt',
+	{
+		format: varchar('format', { length: 64 }).notNull(),
+		idempotencyKey: varchar('idempotencyKey', { length: 500 })
+			.notNull()
+			.primaryKey(),
+		journeyId: varchar('journeyId', { length: 500 }).notNull(),
+		claimToken: varchar('claimToken', { length: 36 }).notNull(),
+		status: varchar('status', { length: 32 }).notNull(),
+		claimedAt: timestamp('claimedAt', { mode: 'date', fsp: 3 }).notNull(),
+		leaseExpiresAt: timestamp('leaseExpiresAt', {
+			mode: 'date',
+			fsp: 3,
+		}).notNull(),
+		outcome: json('outcome').$type<unknown>(),
+	},
+	(table) => ({
+		tokenUq: uniqueIndex('EvergreenOfferJourneyAttempt_token_uq').on(
+			table.claimToken,
+		),
+		recoveryIdx: index('EvergreenOfferJourneyAttempt_recovery_idx').on(
+			table.status,
+			table.leaseExpiresAt,
+			table.idempotencyKey,
+		),
 	}),
 )
 

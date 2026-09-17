@@ -87,11 +87,9 @@ export function isOnCohortWaitlist(
 /**
  * Already signed up for whatever waitlist this offer carries.
  *
- * The ladder in `next-offer` can hand back a cohort waitlist or a workshop
- * waitlist, and the two live under different Kit field keys off different
- * identifiers. This is the one call a CTA makes so it does not have to branch
- * on `kind` — and so adding a third kind of waitlist later changes this file
- * rather than every surface that draws an offer.
+ * This is the one call a CTA makes so it does not have to branch on `kind` —
+ * and so a second kind of waitlist later changes this file rather than every
+ * surface that draws an offer.
  *
  * An offer with no waitlist (a purchase, a sale) is never "already answered"
  * here; ownership is a separate question with a separate answer.
@@ -101,9 +99,7 @@ export function hasJoinedOfferWaitlist(
 	waitlist: OfferWaitlist | undefined,
 ): boolean {
 	if (!waitlist) return false
-	return waitlist.kind === 'cohort'
-		? isOnCohortWaitlist(subscriber, waitlist.productName)
-		: hasWorkshopInterest(subscriber, waitlist.slug)
+	return isOnCohortWaitlist(subscriber, waitlist.productName)
 }
 
 /** Already registered interest in this specific workshop. */

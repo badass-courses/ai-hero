@@ -44,6 +44,7 @@ import {
 	getGithubProviderConfig,
 } from '@/server/oauth-provider-config'
 import { measureIfSlow } from '@/server/perf'
+import { createEvergreenPilotEmailObservation } from '@/server/evergreen-pilot'
 import DiscordProvider from '@auth/core/providers/discord'
 import GithubProvider from '@auth/core/providers/github'
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm'
@@ -111,8 +112,11 @@ declare module 'next-auth' {
 	}
 }
 
-const oauthContainmentAdapter =
-	createOAuthContainmentAdapter(courseBuilderAdapter)
+// Default off; only the explicitly configured pilot user can reach the writer.
+const emailObservation = createEvergreenPilotEmailObservation()
+const oauthContainmentAdapter = emailObservation.wrapAdapter(
+	createOAuthContainmentAdapter(courseBuilderAdapter),
+)
 
 const getSessionAndUser =
 	courseBuilderAdapter.getSessionAndUser?.bind(courseBuilderAdapter)
@@ -217,13 +221,13 @@ export const authOptions: NextAuthConfig = {
 				user: { id: user.id },
 			})
 		},
-		signIn: async (input) => {
+		signIn: emailObservation.wrapSignIn(async (input) => {
 			const verifiedLink = input.user.id
 				? takeVerifiedOAuthLink(input.user.id)
 				: null
 			if (verifiedLink) await triggerVerifiedOAuthRoleSync(verifiedLink)
 			await postSignInInvitationHandler(input)
-		},
+		}),
 		signOut: async () => {
 			const cookieStore = await cookies()
 			cookieStore.delete('organizationId')
@@ -268,10 +272,7 @@ export const authOptions: NextAuthConfig = {
 					expiresAt: discordAccount.expires_at,
 				}
 				const accountIdentityCondition = and(
-					eq(
-						accounts.providerAccountId,
-						discordAccount.providerAccountId,
-					),
+					eq(accounts.providerAccountId, discordAccount.providerAccountId),
 					eq(accounts.provider, 'discord'),
 					eq(accounts.userId, user.id),
 				)
@@ -525,16 +526,20 @@ const nextAuth = NextAuth(authOptions)
 
 export const { auth, signIn, signOut } = nextAuth
 export const GET = (request: Parameters<typeof nextAuth.handlers.GET>[0]) =>
-	runWithOAuthContainmentRequest(
-		request,
-		() => nextAuth.handlers.GET(request),
-		observeOAuthLinkCanary,
+	emailObservation.run(request, () =>
+		runWithOAuthContainmentRequest(
+			request,
+			() => nextAuth.handlers.GET(request),
+			observeOAuthLinkCanary,
+		),
 	)
 export const POST = (request: Parameters<typeof nextAuth.handlers.POST>[0]) =>
-	runWithOAuthContainmentRequest(
-		request,
-		() => nextAuth.handlers.POST(request),
-		observeOAuthLinkCanary,
+	emailObservation.run(request, () =>
+		runWithOAuthContainmentRequest(
+			request,
+			() => nextAuth.handlers.POST(request),
+			observeOAuthLinkCanary,
+		),
 	)
 
 export const getServerAuthSession = cache(async () => {

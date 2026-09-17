@@ -1,4 +1,5 @@
 import { courseSequenceContactEvent } from '@/db/course-sequence-exhaustion-schema'
+import { contactEmailWriteValues } from './contact-email-equivalence'
 import {
 	contact,
 	contactEvent,
@@ -38,7 +39,7 @@ import {
 } from './course-sequence-exhaustion'
 import { AI_HERO_SKILLS_WORKFLOW_COURSE_V1 } from './email-course/definition'
 import { restoreCourseEmailIntent } from './email-course/restoration'
-import { emitDrovrShadowFactSafely } from './drovr-shadow-emitter'
+import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
 	canonicalCompletionForWrite,
@@ -153,6 +154,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		const record: ContactRecord = { id: this.newId('contact'), ...input }
 		await this.database.insert(contact).values({
 			...record,
+			...contactEmailWriteValues(record.email),
 			createdAt: new Date(record.createdAt),
 			updatedAt: new Date(record.updatedAt),
 		})
@@ -238,7 +240,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				occurredAt: new Date(record.occurredAt),
 				createdAt: new Date(record.createdAt),
 			})
-			emitDrovrShadowFactSafely({ kind: 'contact-event', event: record })
+			dispatchDrovrShadowFactSafely({ kind: 'contact-event', event: record })
 			return record
 		} catch (cause) {
 			// The semantic key is the durable replay boundary. A concurrent or

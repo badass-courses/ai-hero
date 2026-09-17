@@ -319,10 +319,14 @@ const VALUE_PATH_COMPLETION_SURVEY_SPEC = {
 } as const
 
 if (command === 'lookup') {
-	const input = parseLookupInput(args)
-	const repository = await createLookupRepository()
-	const result = await lookupSubscriberMarketingContact({ repository, input })
-	console.log(JSON.stringify(result, null, 2))
+	try {
+		const input = parseLookupInput(args)
+		const repository = await createLookupRepository()
+		const result = await lookupSubscriberMarketingContact({ repository, input })
+		console.log(JSON.stringify(result, null, 2))
+	} finally {
+		await closeDatabasePool()
+	}
 } else if (command === 'replay-preview') {
 	const contactId = readFlag(args, '--contact-id')
 	const eventId = readFlag(args, '--event-id')
@@ -649,20 +653,24 @@ if (command === 'lookup') {
 	})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'purchase-preview') {
-	const repository = await createPurchasePreviewRepository()
-	const csvPath = readFlag(args, '--quick-question-csv')
-	const analysisJsonPath = readFlag(args, '--quick-question-analysis-json')
-	if (!csvPath && !analysisJsonPath) printUsageAndExit()
-	const productIds = readAllFlags(args, '--product-id')
-	const result = await previewPurchaseCorrelation({
-		repository,
-		quickQuestionCsv: csvPath ? await readFile(csvPath, 'utf8') : undefined,
-		quickQuestionAnalysisJson: analysisJsonPath
-			? await readFile(analysisJsonPath, 'utf8')
-			: undefined,
-		productIds: productIds.length ? productIds : ['product-9wdta'],
-	})
-	console.log(JSON.stringify(result, null, 2))
+	try {
+		const repository = await createPurchasePreviewRepository()
+		const csvPath = readFlag(args, '--quick-question-csv')
+		const analysisJsonPath = readFlag(args, '--quick-question-analysis-json')
+		if (!csvPath && !analysisJsonPath) printUsageAndExit()
+		const productIds = readAllFlags(args, '--product-id')
+		const result = await previewPurchaseCorrelation({
+			repository,
+			quickQuestionCsv: csvPath ? await readFile(csvPath, 'utf8') : undefined,
+			quickQuestionAnalysisJson: analysisJsonPath
+				? await readFile(analysisJsonPath, 'utf8')
+				: undefined,
+			productIds: productIds.length ? productIds : ['product-9wdta'],
+		})
+		console.log(JSON.stringify(result, null, 2))
+	} finally {
+		await closeDatabasePool()
+	}
 } else if (command === 'matched-purchaser-value-path-preview') {
 	const csvPath = requireFlag(args, '--quick-question-csv')
 	const productIds = readAllFlags(args, '--product-id')
@@ -709,9 +717,13 @@ if (command === 'lookup') {
 	})
 	console.log(JSON.stringify(result, null, 2))
 } else if (command === 'value-path-preview') {
-	const contactId = requireFlag(args, '--contact-id')
-	const result = await buildValuePathPreview(contactId)
-	console.log(JSON.stringify(result, null, 2))
+	try {
+		const contactId = requireFlag(args, '--contact-id')
+		const result = await buildValuePathPreview(contactId)
+		console.log(JSON.stringify(result, null, 2))
+	} finally {
+		await closeDatabasePool()
+	}
 } else if (command === 'value-path-qa-preview') {
 	const individualSequenceMdx = await readFile(
 		requireFlag(args, '--individual-sequence-mdx'),

@@ -877,7 +877,7 @@ describe('evergreen offer journey production core', () => {
 			error: {
 				type: 'ScheduleInvalid',
 				reason:
-					'Coupon expiry does not match Monday 23:59:59 in the pinned time zone',
+					'Coupon expiry must be four local days after opening at 23:59:59 in the pinned time zone',
 			},
 		})
 	})
