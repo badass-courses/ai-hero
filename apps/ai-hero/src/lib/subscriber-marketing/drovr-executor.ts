@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
+import { retryAfterMsFor, type DrovrSendBudget } from './drovr-sync-send'
+import type { ValuePathEmailExecutionResult } from './value-path-email-executor'
+
 import {
 	EvergreenListPayload,
 	evergreenSequenceForList,
@@ -98,6 +101,21 @@ export type DrovrExecutorResult =
 	  }
 	| { status: 'completed'; intentId: string; completion: DrovrShadowEvent }
 	| { status: 'blocked'; intentId: string; reviewReasons: string[] }
+	| {
+			/** Not now: Kit or the send budget said wait. drovr arms for retryAfterMs. */
+			status: 'retry'
+			intentId: string
+			retryAfterMs: number
+			reason: string
+	  }
+
+/**
+ * The synchronous send: run the value-path executor on the row this
+ * request created or found, inside the request. Absent, the cron sends.
+ */
+export type DrovrSendNow = (
+	row: SideEffectIntent,
+) => Promise<ValuePathEmailExecutionResult>
 
 const EmailSendPayload = z.object({
 	emailResourceId: z.string().min(1),
@@ -157,6 +175,10 @@ export async function acceptDrovrIntent(args: {
 	findKitSubscriberId?: (contactId: string) => Promise<string | undefined>
 	/** Evergreen bridge and pitch rollout; absent means off. */
 	evergreen?: DrovrEvergreenConfig
+	/** Send inside the request (skills course email.send only); absent means the cron sends. */
+	sendNow?: DrovrSendNow
+	/** drovr's share of the Kit key; over budget answers retry before any send. */
+	budget?: DrovrSendBudget
 }): Promise<DrovrExecutorResult> {
 	const { intent } = args
 	const now = args.now ?? new Date().toISOString()
@@ -243,7 +265,12 @@ export async function acceptDrovrIntent(args: {
 			repository: args.repository,
 			tenantId,
 		})
-		return existingIntentResult(existing, intent, step)
+		return await sendNowIfAccepted(
+			existingIntentResult(existing, intent, step),
+			args,
+			step,
+			now,
+		)
 	}
 
 	const kitSubscriberId =
@@ -292,13 +319,88 @@ export async function acceptDrovrIntent(args: {
 			repository: args.repository,
 			tenantId,
 		})
-		return existingIntentResult(raced, intent, step)
+		return await sendNowIfAccepted(
+			existingIntentResult(raced, intent, step),
+			args,
+			step,
+			now,
+		)
 	}
-	return {
-		status: 'accepted',
-		intentId: created.id,
-		idempotencyKey,
-		created: true,
+	return await sendNowIfAccepted(
+		{
+			status: 'accepted',
+			intentId: created.id,
+			idempotencyKey,
+			created: true,
+		},
+		args,
+		step,
+		now,
+	)
+}
+
+/**
+ * The synchronous path. An accepted row is sent right here when the caller
+ * supplied sendNow: the executor's own preflight, gates, personalization,
+ * Kit call, and row update run unchanged, and its outcome becomes the wire
+ * answer. Over budget answers retry before Kit is touched. Anything the
+ * executor could not act on now (a failed row whose retry is not due) stays
+ * accepted, which is the cron's answer.
+ */
+async function sendNowIfAccepted(
+	result: DrovrExecutorResult,
+	args: {
+		repository: DrovrExecutorRepository
+		intent: DrovrIntent
+		sendNow?: DrovrSendNow
+		budget?: DrovrSendBudget
+	},
+	step: SkillsWorkflowEmailStep,
+	now: string,
+): Promise<DrovrExecutorResult> {
+	if (result.status !== 'accepted' || !args.sendNow) return result
+	if (args.budget) {
+		const budget = await args.budget()
+		if (!budget.ok) {
+			return {
+				status: 'retry',
+				intentId: result.intentId,
+				retryAfterMs: budget.retryAfterMs,
+				reason: 'send-budget-spent',
+			}
+		}
+	}
+	const row = await args.repository.findSideEffectIntentByIdempotencyKey(
+		result.idempotencyKey,
+	)
+	if (!row) return result
+	const outcome = await args.sendNow(row)
+	const after =
+		(await args.repository.findSideEffectIntentByIdempotencyKey(
+			result.idempotencyKey,
+		)) ?? row
+	switch (outcome.status) {
+		case 'completed':
+			return existingIntentResult(after, args.intent, step)
+		case 'blocked':
+		case 'failed':
+			return {
+				status: 'blocked',
+				intentId: result.intentId,
+				reviewReasons: outcome.reviewReasons,
+			}
+		case 'retryable-failed':
+			return {
+				status: 'retry',
+				intentId: result.intentId,
+				retryAfterMs: retryAfterMsFor(
+					stringField(after.metadata.nextRetryAt),
+					now,
+				),
+				reason: stringField(after.metadata.retryReason) ?? 'kit-retryable',
+			}
+		default:
+			return result
 	}
 }
 

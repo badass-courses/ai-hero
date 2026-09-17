@@ -334,6 +334,147 @@ describe('drovr executor: accepting an email.send intent', () => {
 	})
 })
 
+describe('drovr executor: the synchronous send', () => {
+	const sentRow = (repository: FakeRepository, id: string, patch: object) =>
+		repository.updateSideEffectIntent(id, {
+			status: 'completed',
+			completedAt: now,
+			gates: [],
+			reviewReasons: [],
+			metadata: { ...repository.intents.get(id)!.metadata, ...patch },
+		} as never)
+
+	it('sends inside the request and answers the completion', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const seen: string[] = []
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => {
+				seen.push(row.status)
+				sentRow(repository, row.id, { completedAt: now })
+				return {
+					status: 'completed',
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		})
+		expect(seen).toEqual(['pending'])
+		expect(result.status).toBe('completed')
+		if (result.status !== 'completed') return
+		expect(result.completion).toMatchObject({
+			type: 'email.completed',
+			contactId: 'contact-1',
+			idempotencyKey: `completion:${intent().idempotencyKey}`,
+			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+		})
+	})
+
+	it("answers retry with the row's next retry time on a retryable Kit failure", async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => {
+				repository.updateSideEffectIntent(row.id, {
+					status: 'failed',
+					gates: [],
+					reviewReasons: ['kit-sequence-enrollment-retryable'],
+					metadata: {
+						...row.metadata,
+						retryReason: 'kit-rate-limited',
+						nextRetryAt: '2026-09-16T22:45:00.000Z',
+					},
+				} as never)
+				return {
+					status: 'retryable-failed',
+					intentId: row.id,
+					reviewReasons: ['kit-sequence-enrollment-retryable'],
+				}
+			},
+		})
+		expect(result).toMatchObject({
+			status: 'retry',
+			retryAfterMs: 15 * 60_000,
+			reason: 'kit-rate-limited',
+		})
+	})
+
+	it('answers retry from the budget before touching Kit', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		let sends = 0
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			budget: async () => ({ ok: false, retryAfterMs: 4_000 }),
+			sendNow: async (row) => {
+				sends += 1
+				return {
+					status: 'completed',
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		})
+		expect(sends).toBe(0)
+		expect(result).toMatchObject({
+			status: 'retry',
+			retryAfterMs: 4_000,
+			reason: 'send-budget-spent',
+		})
+		// The row exists, so the next post (or the cron) can send it.
+		expect(repository.intents.size).toBe(1)
+	})
+
+	it("answers blocked when the executor's gates refuse", async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async (row) => ({
+				status: 'blocked',
+				intentId: row.id,
+				reviewReasons: ['contact-state-missing'],
+			}),
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['contact-state-missing'],
+		})
+	})
+
+	it('leaves a completed row alone and never calls sendNow for it', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({ repository, intent: intent(), now })
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		sentRow(repository, first.intentId, { completedAt: now })
+		let sends = 0
+		const second = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendNow: async () => {
+				sends += 1
+				throw new Error('must not send')
+			},
+		})
+		expect(sends).toBe(0)
+		expect(second.status).toBe('completed')
+	})
+})
+
 describe('drovr completion for an owned intent', () => {
 	it('normalizes a team resource id back to the individual id drovr planned', () => {
 		const completion = drovrCompletionForIntent({
