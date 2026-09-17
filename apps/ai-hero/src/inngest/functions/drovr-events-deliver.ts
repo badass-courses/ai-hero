@@ -9,6 +9,8 @@ import {
 	drovrApiKeyForTenant,
 	type DrovrDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { fanOutOwnedEvents } from '@/lib/subscriber-marketing/drovr-ownership'
+import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import { log } from '@/server/logger'
 
 export type DrovrEventsDeliverReceipt = {
@@ -44,9 +46,19 @@ export const drovrEventsDeliver = inngest.createFunction(
 			}
 		}
 
+		// Facts about drovr-owned contacts also reach the authority tenant.
+		// Ownership is read here, off the host's write path, once per batch.
+		const ownedContactIds = await step.run('resolve-drovr-owners', () =>
+			resolveOwnedContactIds(event.data.events),
+		)
+		const events = fanOutOwnedEvents(
+			event.data.events,
+			new Set(ownedContactIds),
+		)
+
 		let accepted = 0
 		let rejected = 0
-		for (const drovrEvent of event.data.events) {
+		for (const drovrEvent of events) {
 			// One bearer key per drovr tenant; a tenant without a key is a
 			// configuration gap, final for this run and loud in the receipt.
 			const apiKey = drovrApiKeyForTenant(drovrEvent.tenantId)

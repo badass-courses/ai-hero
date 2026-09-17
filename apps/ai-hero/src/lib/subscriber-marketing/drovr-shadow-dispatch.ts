@@ -2,9 +2,12 @@ import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
 import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
 import { log } from '@/server/logger'
 
+import { fanOutOwnedEvents } from './drovr-ownership'
+import { resolveOwnedContactIds } from './drovr-ownership-live'
 import {
-	emitDrovrShadowFact,
+	emitDrovrShadowEvents,
 	mapDrovrShadowFact,
+	type DrovrShadowEvent,
 	type DrovrShadowFact,
 } from './drovr-shadow-emitter'
 
@@ -23,7 +26,10 @@ type DrovrShadowSend = (payload: DrovrEventsDeliver) => Promise<unknown>
 
 type DrovrShadowDispatchOptions = {
 	send?: DrovrShadowSend
-	fallback?: (fact: DrovrShadowFact) => Promise<void>
+	/** Direct sender for the fallback; receives the fanned-out batch. */
+	fallback?: (events: readonly DrovrShadowEvent[]) => Promise<void>
+	/** Ownership read for the fallback's fan-out. */
+	resolveOwners?: (events: readonly DrovrShadowEvent[]) => Promise<string[]>
 	warn?: typeof log.warn
 }
 
@@ -60,8 +66,15 @@ export async function dispatchDrovrShadowFact(
 		} catch {
 			// Logging cannot make delivery authoritative.
 		}
-		const fallback = options.fallback ?? emitDrovrShadowFact
-		await fallback(fact).catch(() => undefined)
+		// The fallback must deliver the same batch the durable path would:
+		// an owned contact's unsubscribe has to reach the authority tenant
+		// whichever road it takes.
+		const resolveOwners = options.resolveOwners ?? resolveOwnedContactIds
+		const owned = await resolveOwners(events).catch(() => [] as string[])
+		const fallback = options.fallback ?? emitDrovrShadowEvents
+		await fallback(fanOutOwnedEvents(events, new Set(owned))).catch(
+			() => undefined,
+		)
 		return 'fallback'
 	}
 }

@@ -98,9 +98,7 @@ type DrovrShadowEmitterOptions = {
 	timeoutMs?: number
 }
 
-export function mapDrovrShadowFact(
-	fact: DrovrShadowFact,
-): DrovrShadowEvent[] {
+export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
 	if (fact.kind === 'contact-event') {
 		return mapContactEvent(fact.event)
 	}
@@ -114,6 +112,14 @@ export async function emitDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowEmitterOptions = {},
 ): Promise<void> {
+	await emitDrovrShadowEvents(mapDrovrShadowFact(fact), options)
+}
+
+/** Post already-mapped events directly, each with its tenant's key. */
+export async function emitDrovrShadowEvents(
+	events: readonly DrovrShadowEvent[],
+	options: DrovrShadowEmitterOptions = {},
+): Promise<void> {
 	const config = options.config ?? {
 		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
 		apiKey: env.DROVR_SHADOW_API_KEY,
@@ -121,8 +127,6 @@ export async function emitDrovrShadowFact(
 	}
 	const ingestUrl = config.ingestUrl
 	if (!ingestUrl) return
-
-	const events = mapDrovrShadowFact(fact)
 	if (events.length === 0) return
 
 	const fetcher = options.fetch ?? fetch
@@ -180,6 +184,17 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 					type: 'contact.created',
 				},
 			]
+		// Ownership assigned to drovr is the contact's birth in the authority
+		// tenant: one event, one birth, no race with the shadow's.
+		case 'journey.owner.assigned':
+			return [
+				{
+					...base,
+					tenantId: DROVR_AUTHORITY_TENANT_ID,
+					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+					type: 'contact.created',
+				},
+			]
 		case 'value-path.answer-selected': {
 			const emailResourceId = emailResourceIdFromKeywords(
 				event.payloadSummary.keywords,
@@ -214,11 +229,6 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	) {
 		return []
 	}
-	// An intent drovr planned completes back to the tenant that owns it,
-	// keyed the way drovr's own executors key completions. The shadow does
-	// not hear about it: that contact is not the shadow's to follow.
-	const ownerCompletion = drovrOwnedCompletion(intent)
-	if (ownerCompletion) return [ownerCompletion]
 	const completedAt = valuePathIntentCompletedAt(intent)
 	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
 	const emailResourceId = sourceEmailResourceId
@@ -226,17 +236,23 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 		: undefined
 	if (!completedAt || !sourceEmailResourceId || !emailResourceId) return []
 
-	return [
-		{
-			tenantId: DROVR_SHADOW_TENANT_ID,
-			contactId: intent.contactId,
-			journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
-			type: 'email.completed',
-			occurredAt: completedAt,
-			idempotencyKey: `aihero:intent-completed:${intent.id}`,
-			payload: { emailResourceId },
-		},
-	]
+	const shadowCompletion: DrovrShadowEvent = {
+		tenantId: DROVR_SHADOW_TENANT_ID,
+		contactId: intent.contactId,
+		journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `aihero:intent-completed:${intent.id}`,
+		payload: { emailResourceId },
+	}
+	// An intent drovr planned completes back to the tenant that owns it,
+	// keyed the way drovr's own executors key completions. The shadow hears
+	// it too, so the shadow actor of an owned contact keeps mirroring
+	// instead of sitting at pending and tripping the pending-intent alert.
+	const ownerCompletion = drovrOwnedCompletion(intent)
+	return ownerCompletion
+		? [ownerCompletion, shadowCompletion]
+		: [shadowCompletion]
 }
 
 function drovrOwnedCompletion(

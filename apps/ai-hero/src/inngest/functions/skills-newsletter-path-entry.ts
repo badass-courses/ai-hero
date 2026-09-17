@@ -16,6 +16,7 @@ import {
 	SHADOW_NEWSLETTER_KIT_SEQUENCE,
 } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
+import { parseDrovrOwnershipConfig } from '@/lib/subscriber-marketing/drovr-ownership'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 
@@ -69,7 +70,10 @@ async function throwForDurableKitRetry({
 		throw new RetryAfterError('Kit provider retry scheduled', schedule.delayMs)
 	}
 
-	if (error instanceof ConvertKitApiError || error instanceof KitSubscribeError) {
+	if (
+		error instanceof ConvertKitApiError ||
+		error instanceof KitSubscribeError
+	) {
 		await log.warn('kit.write.outcome', {
 			operation,
 			outcome: 'failed',
@@ -106,68 +110,85 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 			eventId: event.id,
 			formId: event.data.formId,
 			hasAttribution: Boolean(event.data.optInAttribution),
-			hasClickId: Boolean(event.data.optInAttribution?.gclid || event.data.optInAttribution?.gbraid || event.data.optInAttribution?.wbraid),
+			hasClickId: Boolean(
+				event.data.optInAttribution?.gclid ||
+				event.data.optInAttribution?.gbraid ||
+				event.data.optInAttribution?.wbraid,
+			),
 		})
-		const entryResult = await step.run('authorize-capture-and-plan-email-zero', async () => {
-			// Read authorization in the same retryable step as the write so a kill
-			// switch or mode change cannot leave a stale authorization snapshot.
-			const allowlistDecision = await readActiveGateDRuntimeAllowlist({ redis })
-			if (!allowlistDecision.passed || !allowlistDecision.allowlist) {
-				await log.warn('subscriber_funnel.authorization_blocked', {
-					funnel: 'skills-newsletter', eventId: event.id,
-					reviewReasons: allowlistDecision.reviewReasons,
+		const entryResult = await step.run(
+			'authorize-capture-and-plan-email-zero',
+			async () => {
+				// Read authorization in the same retryable step as the write so a kill
+				// switch or mode change cannot leave a stale authorization snapshot.
+				const allowlistDecision = await readActiveGateDRuntimeAllowlist({
+					redis,
 				})
-				return {
-					status: 'blocked',
-					reviewReasons: allowlistDecision.reviewReasons,
+				if (!allowlistDecision.passed || !allowlistDecision.allowlist) {
+					await log.warn('subscriber_funnel.authorization_blocked', {
+						funnel: 'skills-newsletter',
+						eventId: event.id,
+						reviewReasons: allowlistDecision.reviewReasons,
+					})
+					return {
+						status: 'blocked',
+						reviewReasons: allowlistDecision.reviewReasons,
+					}
 				}
-			}
-			await log.info('subscriber_funnel.authorization_allowed', {
-				funnel: 'skills-newsletter', eventId: event.id,
-				authorizationMode: allowlistDecision.allowlist.authorizationMode,
-			})
-			const result = await enterSkillsNewsletterSubscriber({
-				repository: new DrizzleCaptureMarketingRepository(db),
-				shadowObserver: createEmailCourseShadowRuntime({
-					database: db,
-				}).observeSignup,
-				allowlist: allowlistDecision.allowlist,
-				input: event.data,
-				allowWrite: true,
-				sequenceExhaustionEnabled: parseCourseSequenceExhaustionEnabled(
-					process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
-				),
-			})
-			await log.info('subscriber_funnel.entry_result', {
-				funnel: 'skills-newsletter', eventId: event.id,
-				contactId: result.contactId, captureEventId: result.captureEventId,
-				status: result.status, emailZeroPlanned: result.entry.counts.planned,
-				blocked: result.entry.counts.blocked,
-				reviewReasons: result.entry.results.flatMap((item) => item.reviewReasons),
-			})
-			await log.info('subscriber_funnel.signup_entry_completed', {
-				funnel: 'skills-newsletter',
-				signupsCaptured: 1,
-				contactsPersisted: 1,
-				emailZeroPlanned: result.entry.counts.planned,
-				blocked: result.entry.counts.blocked,
-				idempotentNoop: result.entry.counts.idempotentNoop,
-			})
-			if (
-				event.data.source === 'signup-gap-replay' ||
-				event.data.source === 'learner-flow-unstick'
-			) {
-				await log.info('subscriber_funnel.signup_gap_replay_received', {
+				await log.info('subscriber_funnel.authorization_allowed', {
 					funnel: 'skills-newsletter',
-					replayEventsReceived: 1,
+					eventId: event.id,
+					authorizationMode: allowlistDecision.allowlist.authorizationMode,
+				})
+				const result = await enterSkillsNewsletterSubscriber({
+					repository: new DrizzleCaptureMarketingRepository(db),
+					shadowObserver: createEmailCourseShadowRuntime({
+						database: db,
+					}).observeSignup,
+					allowlist: allowlistDecision.allowlist,
+					input: event.data,
+					allowWrite: true,
+					sequenceExhaustionEnabled: parseCourseSequenceExhaustionEnabled(
+						process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
+					),
+					drovrOwnership: parseDrovrOwnershipConfig(process.env),
+				})
+				await log.info('subscriber_funnel.entry_result', {
+					funnel: 'skills-newsletter',
+					eventId: event.id,
+					contactId: result.contactId,
+					captureEventId: result.captureEventId,
+					status: result.status,
+					emailZeroPlanned: result.entry.counts.planned,
+					blocked: result.entry.counts.blocked,
+					reviewReasons: result.entry.results.flatMap(
+						(item) => item.reviewReasons,
+					),
+				})
+				await log.info('subscriber_funnel.signup_entry_completed', {
+					funnel: 'skills-newsletter',
+					signupsCaptured: 1,
+					contactsPersisted: 1,
 					emailZeroPlanned: result.entry.counts.planned,
 					blocked: result.entry.counts.blocked,
 					idempotentNoop: result.entry.counts.idempotentNoop,
-					...(event.data.signupGapLiveness ?? {}),
 				})
-			}
-			return result
-		})
+				if (
+					event.data.source === 'signup-gap-replay' ||
+					event.data.source === 'learner-flow-unstick'
+				) {
+					await log.info('subscriber_funnel.signup_gap_replay_received', {
+						funnel: 'skills-newsletter',
+						replayEventsReceived: 1,
+						emailZeroPlanned: result.entry.counts.planned,
+						blocked: result.entry.counts.blocked,
+						idempotentNoop: result.entry.counts.idempotentNoop,
+						...(event.data.signupGapLiveness ?? {}),
+					})
+				}
+				return result
+			},
+		)
 
 		// A blocked entry never became a course subscriber, so it must not be added
 		// to the newsletter either. Gate D is the only authorization gate here.

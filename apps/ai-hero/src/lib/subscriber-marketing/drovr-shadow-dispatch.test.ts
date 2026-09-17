@@ -66,6 +66,7 @@ describe('drovr shadow dispatch', () => {
 			send,
 			fallback,
 			warn,
+			resolveOwners: async () => [],
 		})
 
 		expect(result).toBe('fallback')
@@ -74,7 +75,37 @@ describe('drovr shadow dispatch', () => {
 			eventCount: 1,
 			error: 'inngest unreachable',
 		})
-		expect(fallback).toHaveBeenCalledWith(signup)
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup))
+	})
+
+	it("fans an owned contact's fact out to the authority tenant on the fallback road too", async () => {
+		const send = vi.fn().mockRejectedValue(new Error('inngest unreachable'))
+		const fallback = vi.fn().mockResolvedValue(undefined)
+		const unsubscribe: DrovrShadowFact = {
+			kind: 'contact-event',
+			event: contactEvent('contact.unsubscribed'),
+		}
+
+		await dispatchDrovrShadowFact(unsubscribe, {
+			send,
+			fallback,
+			warn: vi.fn(),
+			resolveOwners: async () => ['contact-1'],
+		})
+
+		const delivered = fallback.mock.calls[0]?.[0] as Array<{
+			tenantId: string
+			type: string
+		}>
+		expect(delivered.map((event) => event.tenantId).sort()).toEqual([
+			'org-aihero',
+			'org-aihero',
+			'org-aihero-shadow',
+			'org-aihero-shadow',
+		])
+		expect(
+			delivered.every((event) => event.type === 'contact.unsubscribed'),
+		).toBe(true)
 	})
 
 	it('does nothing for a fact that maps to no drovr event', async () => {
