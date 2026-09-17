@@ -55,6 +55,12 @@ type PrimaryNewsletterCtaProps = {
 	 */
 	isHiddenForSubscribers?: boolean
 	reserveSpaceWhenHidden?: boolean
+	/**
+	 * Painted behind the panel, inside this section, so it comes and goes
+	 * with the ask: a subscriber who gets `null` gets no ground and no
+	 * padding either, instead of an empty band where the panel was.
+	 */
+	backdrop?: React.ReactNode
 }
 
 /**
@@ -87,6 +93,7 @@ export const PrimaryNewsletterCta: React.FC<
 	formId,
 	fields,
 	onSuccess,
+	backdrop,
 }) => {
 	const router = useRouter()
 	const { subscriber } = useCtaGate()
@@ -118,14 +125,30 @@ export const PrimaryNewsletterCta: React.FC<
 			aria-label="Newsletter sign-up"
 			aria-hidden={shouldHideForSubscriber ? true : undefined}
 			className={cn(
-				'flex flex-col items-center px-5',
+				'relative flex flex-col items-center px-5',
 				{
 					'pointer-events-none invisible select-none': shouldHideForSubscriber,
 				},
 				className,
 			)}
 		>
-			<div className="border-border w-full max-w-[720px] rounded-lg border bg-[color:var(--ah-band)] px-6 py-6 sm:px-8 sm:py-[30px]">
+			{backdrop && (
+				<div
+					aria-hidden
+					className="pointer-events-none absolute inset-0 select-none overflow-hidden"
+				>
+					{backdrop}
+				</div>
+			)}
+			{/* On a backdrop the panel is the card surface (white in light, near
+			    black in dark), a surface resting on the gradient; on the page
+			    ground it is the band, one step up from the page. */}
+			<div
+				className={cn(
+					'border-border relative w-full max-w-[720px] rounded-lg border px-6 py-6 sm:px-8 sm:py-[30px]',
+					backdrop ? 'bg-card' : 'bg-[color:var(--ah-band)]',
+				)}
+			>
 				{children ? (
 					children
 				) : (

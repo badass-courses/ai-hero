@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { CldImage } from '@/components/cld-image'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
+import { HeroShader } from '@/components/landing/hero-shader'
 import { ProofQuote } from '@/components/landing/proof-grid'
 import { TYPE } from '@/components/landing/type'
 import { SubscriberCount } from '@/components/subscriber-count'
@@ -196,20 +197,46 @@ function Hero({
 				<HeroStats />
 			</div>
 
-			{/* The panel's ground is the raised band under the hatch, the card
-			    inside it is the card surface — two steps, so the form reads as an
-			    object resting on the column rather than as a box drawn on the page.
-			    Same treatment as `/skills`'s hero panel (`skills-hero.tsx`): these
-			    are the same offer, one page apart, so they take the same ground.
-			    The card stays `bg-card` (opaque) — a translucent surface lets the
-			    diagonals read straight through and the panel becomes a hole. */}
-			<div className="border-border bg-muted bg-stripes-muted flex items-center border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
+			{/* The panel's ground is the animated gradient — the same shader and
+			    settings as the home hero and `/newsletter`, at full strength here.
+			    `bg-muted` stays underneath as the ground for a browser without
+			    WebGL. The card is opaque `bg-card` so the form is a surface on
+			    the gradient, not a window onto it. */}
+			<div className="border-border bg-muted relative flex items-center overflow-hidden border-t p-8 sm:px-11 sm:py-12 lg:border-l lg:border-t-0">
+				<div
+					aria-hidden
+					className="pointer-events-none absolute inset-0 select-none"
+				>
+					<HeroShader
+						className="absolute inset-0"
+						speed={0.2}
+						frequency={7.0}
+						displacement={0.018}
+						displacementFreq={4.5}
+						mouseFollow={0.03}
+						mouseInfluence={0.55}
+						flowY={0.2}
+						flowX={0.2}
+						intensity={1.0}
+						saturation={1.25}
+						sharpness={0.7}
+						grain={0.1}
+						grainTexture={0.3}
+						grainScale={0.5}
+						chromaOffset={13.0}
+						vignette={0}
+						mouseHalo={0.15}
+						posterize={0.1}
+						colorDrift={0.05}
+						seed={10}
+					/>
+				</div>
 				<SkillsNewsletter.Root
 					status={status}
 					location={location}
 					surface="skills-subscribe"
 				>
-					<div className="border-input bg-card w-full rounded-lg border p-[30px] pb-8">
+					<div className="border-input bg-card relative w-full rounded-lg border p-[30px] pb-8">
 						{/* The panel names what it is FOR, which is not the same thing
 						    once the reader already has it: "Start the course" over a
 						    confirmation reads as an offer that failed to appear. */}

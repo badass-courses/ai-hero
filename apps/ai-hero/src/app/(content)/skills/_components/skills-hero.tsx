@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { SpotIllustration } from '@/components/brand/spot-illustration'
 import Link from 'next/link'
 import { Icon } from '@/components/brand/icons'
 import { BADGE_OUTLINE, TYPE } from '@/components/landing/type'
@@ -14,7 +15,6 @@ import { Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
-import { CourseMark } from './course-mark'
 import { SkillsCourseForm } from './skills-course-form'
 import { SkillsInstallOptions } from './skills-install-options'
 
@@ -231,30 +231,41 @@ function CourseCta() {
 		// this is where it turns into an ask; a hairline says that without giving
 		// the ask a de-emphasized container to sit in.
 		<div className="border-border mt-3 border-t pt-[22px]">
-			<div className="mb-[18px] flex items-start gap-6">
-				{/* The slot a spot illustration will take — 96 / 84 / 60px in the
-				    design return. Until that art exists the tile keeps its glyph, which
-				    is the return's own placeholder, not an invention. */}
-				<CourseMark className="size-[60px] flex-none @[560px]:size-[84px] @[1080px]:size-24" />
-				<div>
-					{/* No eyebrow, and no panel. The heading carries the offer, the body
-					    says it is free, and the button says what it starts. */}
-					{/* No measure cap and no `text-balance`: this line is short enough
-					    to sit on one at most widths, and balancing it broke a one-liner
-					    into two even rows for no reason a reader benefits from. Balance
-					    is for headings that WILL wrap. */}
-					<h2 className={cn(TYPE.subhead, 'mb-2')}>
-						{SKILLS_COURSE_PANEL.heading}
-					</h2>
-					<div
-						className={cn(
-							TYPE.metaProse,
-							'max-w-[52ch] space-y-2 text-pretty text-[color:var(--ah-fg-muted)]',
-						)}
-					>
-						<p>{SKILLS_COURSE_PANEL.body}</p>
-						<p>{SKILLS_COURSE_PANEL.progression}</p>
-					</div>
+			{/* A two-column grid, mark then copy. On a phone only the heading
+			    shares the row with the mark, centred against the tile since the
+			    heading wraps to two lines there; the body drops to a second row that
+			    spans both columns, so it starts flush with the mark's left edge
+			    rather than in a narrow column beside empty space under the tile.
+			    From 560px the mark spans both rows, so the heading row is only as
+			    tall as the heading and the body sits right under it. */}
+			<div className="mb-[18px] grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-3 @[560px]:grid-rows-[auto_1fr] @[560px]:gap-y-0">
+				{/* Max's skills mark in the slot the design return reserved for it,
+				    96 / 84 / 60px. The export bakes its halo into the canvas (the
+				    tile is ~85% of the box), so the box is the slot / 0.85 and pulled
+				    out by the halo on the top and left, so the TILE sits on the slot's
+				    edges and the heading's top line. */}
+				<SpotIllustration
+					name="real"
+					sizes="(min-width: 1080px) 113px, (min-width: 560px) 99px, 71px"
+					className="-ml-[5px] w-[71px] self-center @[560px]:row-span-2 @[560px]:self-start @[560px]:-ml-[7px] @[560px]:-mt-[7px] @[560px]:w-[99px] @[1080px]:-ml-2 @[1080px]:-mt-2 @[1080px]:w-[113px]"
+				/>
+				{/* No eyebrow, and no panel. The heading carries the offer, the body
+				    says it is free, and the button says what it starts. */}
+				{/* No measure cap and no `text-balance`: this line is short enough
+				    to sit on one at most widths, and balancing it broke a one-liner
+				    into two even rows for no reason a reader benefits from. Balance
+				    is for headings that WILL wrap. */}
+				<h2 className={cn(TYPE.subhead, 'self-center @[560px]:mb-2 @[560px]:self-start')}>
+					{SKILLS_COURSE_PANEL.heading}
+				</h2>
+				<div
+					className={cn(
+						TYPE.metaProse,
+						'col-span-2 max-w-[52ch] space-y-2 text-pretty text-[color:var(--ah-fg-muted)] @[560px]:col-span-1 @[560px]:col-start-2',
+					)}
+				>
+					<p>{SKILLS_COURSE_PANEL.body}</p>
+					<p>{SKILLS_COURSE_PANEL.progression}</p>
 				</div>
 			</div>
 			<SkillsCourseForm />

@@ -1,6 +1,7 @@
 import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { SpotIllustration } from '@/components/brand/spot-illustration'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { BADGE_SOLID, TYPE } from '@/components/landing/type'
 import {
@@ -21,7 +22,7 @@ import type { NextOffer } from '@/lib/next-offer'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { getResourcePath } from '@/utils/resource-paths'
-import { ArrowRight, Star, Users } from 'lucide-react'
+import { ArrowRight, Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -292,12 +293,15 @@ export function CoursesPage({
 					    page has. Outline button: the hero already spent the
 					    viewport's one gold fill. */}
 					<div className="border-border bg-muted flex flex-col gap-5 rounded-lg border p-6 sm:flex-row sm:items-center sm:gap-8">
-						{/* Neutral, not gold — the hero already spent the viewport's one
-						    gold fill (see above). A `bg-background` tile on the muted
-						    surface reads as a quiet inset rather than a second accent. */}
-						<span className="border-border bg-background flex size-11 shrink-0 items-center justify-center rounded-lg border text-[color:var(--ah-fg-muted)]">
-							<Users className="size-5" aria-hidden />
-						</span>
+						{/* Max's team tile in place of the old `Users` glyph. It is the
+						    card's one colourful moment and the row's only image, so it
+						    can afford the size; the negative margin eats the export's
+						    halo so the visible tile, not the halo, sets the gap. */}
+						<SpotIllustration
+							name="team"
+							sizes="112px"
+							className="-m-2 w-[96px] shrink-0 sm:w-[112px]"
+						/>
 						<div className="flex min-w-0 flex-col gap-1.5">
 							<h2 className={TYPE.cardTitle}>{FLAGSHIP_TEAM.heading}</h2>
 							<p

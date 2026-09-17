@@ -55,8 +55,15 @@ export function SectionHeader({
 	rank = 'quiet',
 	linkHref,
 	linkLabel,
+	illustration,
 	children,
 }: {
+	/**
+	 * A spot illustration leading the title block: above it on a phone,
+	 * beside it from `sm`, top-aligned with the first line of text. The
+	 * caller sizes it; the header only decides where it goes.
+	 */
+	illustration?: React.ReactNode
 	/**
 	 * Mono uppercase tag naming what the section is, above the heading. Every
 	 * section head in the redesign carries one — it is what tells a reader
@@ -94,45 +101,53 @@ export function SectionHeader({
 					? 'pb-9 sm:pt-[68px] md:pb-[30px]'
 					: 'pb-10 sm:pt-[76px] md:pb-[38px]',
 			)}>
-			<div className="md:max-w-2xl">
-				{/* Outside the `gap-4` stack on purpose: `TYPE.eyebrow` ships its own
-				    `mb-3`, and the whole point of that is that the eyebrow-to-heading
-				    distance stops being a per-call-site decision. Inside the stack the
-				    gap would add to the margin and the mark would float again. */}
-				{eyebrow ? <p className={TYPE.eyebrow}>{eyebrow}</p> : null}
-				<div className="flex flex-col gap-4">
-					{heading ? (
-						<h2 className={cn(RANK_TYPE[rank], 'text-balance')}>{heading}</h2>
-					) : null}
-					{badge ? (
-						<p>
-							<span
+			<div
+				className={cn(
+					'md:max-w-2xl',
+					illustration && 'flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8',
+				)}
+			>
+				{illustration}
+				<div className="min-w-0">
+					{/* Outside the `gap-4` stack on purpose: `TYPE.eyebrow` ships its own
+					    `mb-3`, and the whole point of that is that the eyebrow-to-heading
+					    distance stops being a per-call-site decision. Inside the stack the
+					    gap would add to the margin and the mark would float again. */}
+					{eyebrow ? <p className={TYPE.eyebrow}>{eyebrow}</p> : null}
+					<div className="flex flex-col gap-4">
+						{heading ? (
+							<h2 className={cn(RANK_TYPE[rank], 'text-balance')}>{heading}</h2>
+						) : null}
+						{badge ? (
+							<p>
+								<span
+									className={cn(
+										TYPE.badge,
+										BADGE_OUTLINE,
+										'inline-flex w-fit border-[color:var(--ah-accent-line)] text-primary',
+									)}
+								>
+									{badge}
+								</span>
+							</p>
+						) : null}
+						{children ? (
+							// `text-balance`, not `text-pretty`. Pretty only protects the last
+							// line from going orphan; the heading above is balanced, so an
+							// intro with a long first line and a short third read as ragged
+							// against it. These are two or three lines, well inside the four
+							// to six a browser will balance, so the whole block settles into
+							// even measures.
+							<p
 								className={cn(
-									TYPE.badge,
-									BADGE_OUTLINE,
-									'inline-flex w-fit border-[color:var(--ah-accent-line)] text-primary',
+									TYPE.body,
+									'max-w-[62ch] text-balance text-[color:var(--ah-fg-muted)]',
 								)}
 							>
-								{badge}
-							</span>
-						</p>
-					) : null}
-					{children ? (
-						// `text-balance`, not `text-pretty`. Pretty only protects the last
-						// line from going orphan; the heading above is balanced, so an
-						// intro with a long first line and a short third read as ragged
-						// against it. These are two or three lines, well inside the four
-						// to six a browser will balance, so the whole block settles into
-						// even measures.
-						<p
-							className={cn(
-								TYPE.body,
-								'max-w-[62ch] text-balance text-[color:var(--ah-fg-muted)]',
-							)}
-						>
-							{children}
-						</p>
-					) : null}
+								{children}
+							</p>
+						) : null}
+				</div>
 				</div>
 			</div>
 			{linkHref ? (
