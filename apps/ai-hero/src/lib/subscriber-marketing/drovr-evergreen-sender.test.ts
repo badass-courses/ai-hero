@@ -117,7 +117,12 @@ describe('executePendingEvergreenSends', () => {
 		const results = await executePendingEvergreenSends({
 			repository,
 			subscribe: async () => {
-				throw new Error('AIH_KIT_SUBSCRIBE_ERROR:rate-limited:429')
+				throw Object.assign(
+					new Error('AIH_KIT_SUBSCRIBE_ERROR:rate-limited:429'),
+					{
+						status: 429,
+					},
+				)
 			},
 			limit: 10,
 			dispatch: () => {},
@@ -166,15 +171,11 @@ describe('executePendingEvergreenSends', () => {
 		})
 	})
 
-	it('goes terminal on unresolved and rejected Kit answers instead of re-enrolling', async () => {
-		for (const code of ['unresolved', 'rejected'] as const) {
+	it('goes terminal on a 4xx Kit answer and retries on 429, 5xx, and network errors', async () => {
+		const run = async (error: unknown) => {
 			const repository = new FakeRepository()
 			repository.contacts.set('contact-1', contact())
 			repository.intents.set('row-1', row())
-			const error = Object.assign(
-				new Error(`AIH_KIT_SUBSCRIBE_ERROR:${code}`),
-				{ code },
-			)
 			const results = await executePendingEvergreenSends({
 				repository,
 				subscribe: async () => {
@@ -183,15 +184,24 @@ describe('executePendingEvergreenSends', () => {
 				limit: 10,
 				dispatch: () => {},
 			})
-			expect(results[0]).toMatchObject({ status: 'failed', intentId: 'row-1' })
-			expect(repository.intents.get('row-1')).toMatchObject({
-				status: 'failed',
-				reviewReasons: [`kit-${code}`],
-				metadata: { attempts: 1 },
-			})
+			return { result: results[0], row: repository.intents.get('row-1') }
+		}
+		const inactive = await run(Object.assign(new Error('422'), { status: 422 }))
+		expect(inactive.result).toMatchObject({ status: 'failed' })
+		expect(inactive.row).toMatchObject({
+			status: 'failed',
+			reviewReasons: ['kit-422'],
+		})
+		for (const error of [
+			Object.assign(new Error('429'), { status: 429 }),
+			Object.assign(new Error('503'), { status: 503 }),
+			new TypeError('fetch failed'),
+		]) {
+			const outcome = await run(error)
+			expect(outcome.result).toMatchObject({ status: 'retry', attempts: 1 })
+			expect(outcome.row?.status).toBe('pending')
 		}
 	})
-
 	it('fails a row whose contact has no email without touching Kit', async () => {
 		const repository = new FakeRepository()
 		repository.intents.set('row-1', row())

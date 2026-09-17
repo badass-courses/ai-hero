@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+	addSubscriberToKitSequence,
 	EVERGREEN_KIT_SEQUENCES,
 	evergreenSequenceForMessage,
 	parseDrovrEvergreenConfig,
@@ -159,5 +160,64 @@ describe('readbackEvergreenSequences', () => {
 		})
 		expect(result.ready).toBe(false)
 		expect(calls).toBe(0)
+	})
+})
+
+describe('addSubscriberToKitSequence', () => {
+	it('posts the email to the sequence on the v4 key and reports added or already-added', async () => {
+		const calls: { url: string; init?: RequestInit }[] = []
+		const make = (status: number) =>
+			(async (url: string | URL | Request, init?: RequestInit) => {
+				calls.push({ url: String(url), init })
+				return new Response(status === 204 ? null : '{}', { status })
+			}) as typeof fetch
+		await expect(
+			addSubscriberToKitSequence({
+				apiKey: 'k',
+				fetch: make(201),
+				sequenceId: 2887679,
+				email: 'learner@example.com',
+			}),
+		).resolves.toBe('added')
+		await expect(
+			addSubscriberToKitSequence({
+				apiKey: 'k',
+				fetch: make(200),
+				sequenceId: '2887679',
+				email: 'learner@example.com',
+			}),
+		).resolves.toBe('already-added')
+		expect(calls[0]?.url).toBe(
+			'https://api.kit.com/v4/sequences/2887679/subscribers',
+		)
+		expect(calls[0]?.init?.method).toBe('POST')
+		expect(
+			(calls[0]?.init?.headers as Record<string, string>)['X-Kit-Api-Key'],
+		).toBe('k')
+		expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+			email_address: 'learner@example.com',
+		})
+	})
+
+	it('throws a KitV4Error carrying the status for anything else', async () => {
+		await expect(
+			addSubscriberToKitSequence({
+				apiKey: 'k',
+				fetch: (async () =>
+					new Response('{"errors":["Sequence is inactive"]}', {
+						status: 422,
+					})) as typeof fetch,
+				sequenceId: 2887679,
+				email: 'learner@example.com',
+			}),
+		).rejects.toMatchObject({ name: 'KitV4Error', status: 422 })
+		await expect(
+			addSubscriberToKitSequence({
+				apiKey: undefined,
+				fetch: (async () => new Response('{}')) as typeof fetch,
+				sequenceId: 2887679,
+				email: 'learner@example.com',
+			}),
+		).rejects.toThrow('Kit v4 API key is not configured')
 	})
 })

@@ -208,3 +208,57 @@ export async function readbackEvergreenSequences(options: {
 	}
 	return { ready: problems.length === 0, problems, checkedAt }
 }
+
+export class KitV4Error extends Error {
+	readonly status: number
+	constructor(status: number, detail: string) {
+		super(`kit v4 answered ${status}: ${detail}`)
+		this.name = 'KitV4Error'
+		this.status = status
+	}
+}
+
+export type KitSequenceAddOutcome = 'added' | 'already-added'
+
+/**
+ * Add a subscriber to a Kit sequence by email, on the same v4 credential
+ * the readback proves the account with. 201 means added, 200 means Kit
+ * already had them in it. Because the readback refuses repeatable
+ * sequences, adding twice never sends twice: Kit delivers a
+ * non-repeatable sequence to a subscriber once, however many times they
+ * are added. That is what makes a retry after a lost DB write safe.
+ */
+export async function addSubscriberToKitSequence(options: {
+	apiKey: string | undefined
+	fetch: typeof fetch
+	sequenceId: string | number
+	email: string
+	timeoutMs?: number
+}): Promise<KitSequenceAddOutcome> {
+	const apiKey = options.apiKey?.trim()
+	if (!apiKey) throw new Error('Kit v4 API key is not configured')
+	const controller = new AbortController()
+	const timer = setTimeout(
+		() => controller.abort(),
+		options.timeoutMs ?? 10_000,
+	)
+	try {
+		const response = await options.fetch(
+			`https://api.kit.com/v4/sequences/${options.sequenceId}/subscribers`,
+			{
+				method: 'POST',
+				headers: {
+					'X-Kit-Api-Key': apiKey,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ email_address: options.email }),
+				signal: controller.signal,
+			},
+		)
+		if (response.status === 201) return 'added'
+		if (response.status === 200) return 'already-added'
+		throw new KitV4Error(response.status, (await response.text()).slice(0, 200))
+	} finally {
+		clearTimeout(timer)
+	}
+}

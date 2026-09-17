@@ -41,42 +41,34 @@ export type EvergreenSendResult =
 
 export const EVERGREEN_SEND_MAX_ATTEMPTS = 6
 
+const numberField = (value: unknown): number =>
+	typeof value === 'number' && Number.isFinite(value) ? value : 0
+const stringField = (value: unknown): string | undefined =>
+	typeof value === 'string' && value.length > 0 ? value : undefined
+
 /**
- * What a Kit failure means for the row. `rate-limited` and `upstream` are
- * safe to retry: nothing was written. `rejected` will not change on retry.
- * `unresolved` is the dangerous one: the POST may have landed and Kit
- * answered something we could not read, so a retry could enroll the
- * contact twice and send the message again. Both go terminal for a human.
+ * What a Kit failure means for the row. Rate limits, Kit outages, and
+ * network errors retry: the sequence is non-repeatable (the readback
+ * insists on it), so a request that did land cannot send twice. Any
+ * other 4xx (inactive sequence, unknown subscriber, bad key) will not
+ * change on retry and goes terminal for a human.
  */
 type KitFailureVerdict = 'retry' | 'terminal'
-
-const KIT_FAILURE_CODE =
-	/AIH_KIT_SUBSCRIBE_ERROR:(rate-limited|rejected|unresolved|upstream)/
 
 function kitFailureVerdict(error: unknown): {
 	verdict: KitFailureVerdict
 	code: string
 } {
-	const fromField =
-		error && typeof error === 'object' && 'code' in error
-			? (error as { code?: unknown }).code
+	const status =
+		error && typeof error === 'object' && 'status' in error
+			? (error as { status?: unknown }).status
 			: undefined
-	const message = error instanceof Error ? error.message : String(error)
-	const code =
-		typeof fromField === 'string'
-			? fromField
-			: (KIT_FAILURE_CODE.exec(message)?.[1] ?? 'unknown')
-	return {
-		verdict:
-			code === 'rejected' || code === 'unresolved' ? 'terminal' : 'retry',
-		code,
+	if (typeof status !== 'number') return { verdict: 'retry', code: 'network' }
+	if (status === 429 || status >= 500) {
+		return { verdict: 'retry', code: String(status) }
 	}
+	return { verdict: 'terminal', code: String(status) }
 }
-
-const numberField = (value: unknown): number =>
-	typeof value === 'number' && Number.isFinite(value) ? value : 0
-const stringField = (value: unknown): string | undefined =>
-	typeof value === 'string' && value.length > 0 ? value : undefined
 
 export async function executePendingEvergreenSends(args: {
 	repository: EvergreenSenderRepository
@@ -130,6 +122,8 @@ async function sendOne(input: {
 	if (!contact?.email) {
 		return await giveUp(row, args.repository, now, 'contact-email-missing')
 	}
+	const attempts = numberField(row.metadata.attempts) + 1
+	const unclaimed = row.metadata
 	try {
 		await args.subscribe({
 			listId: kitSequenceId,
@@ -137,7 +131,6 @@ async function sendOne(input: {
 			user: { email: contact.email, name: contact.name ?? undefined },
 		})
 	} catch (error) {
-		const attempts = numberField(row.metadata.attempts) + 1
 		const message = error instanceof Error ? error.message : String(error)
 		const failure = kitFailureVerdict(error)
 		if (failure.verdict === 'terminal') {
@@ -146,7 +139,7 @@ async function sendOne(input: {
 				completedAt: null,
 				gates: row.gates,
 				reviewReasons: [...row.reviewReasons, `kit-${failure.code}`],
-				metadata: { ...row.metadata, attempts, lastError: message },
+				metadata: { ...unclaimed, attempts, lastError: message },
 			})
 			return { status: 'failed', intentId: row.id, error: message }
 		}
@@ -156,16 +149,18 @@ async function sendOne(input: {
 				completedAt: null,
 				gates: row.gates,
 				reviewReasons: [...row.reviewReasons, 'evergreen-send-exhausted'],
-				metadata: { ...row.metadata, attempts, lastError: message },
+				metadata: { ...unclaimed, attempts, lastError: message },
 			})
 			return { status: 'failed', intentId: row.id, error: message }
 		}
+		// Kit did not accept the add (or we could not tell); a re-add is a no-op
+		// for a non-repeatable sequence, so retrying is the right recovery.
 		await args.repository.updateSideEffectIntent(row.id, {
 			status: 'pending',
 			completedAt: null,
 			gates: row.gates,
 			reviewReasons: row.reviewReasons,
-			metadata: { ...row.metadata, attempts, lastError: message },
+			metadata: { ...unclaimed, attempts, lastError: message },
 		})
 		return { status: 'retry', intentId: row.id, attempts, error: message }
 	}
@@ -174,7 +169,7 @@ async function sendOne(input: {
 		completedAt: now,
 		gates: row.gates,
 		reviewReasons: [],
-		metadata: { ...row.metadata, completedAt: now },
+		metadata: { ...unclaimed, completedAt: now },
 	})
 	dispatch(completed)
 	return { status: 'completed', intentId: row.id, kitSequenceId }

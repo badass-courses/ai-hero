@@ -1,8 +1,8 @@
-import { subscribeToKitListWithoutFields } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
+	addSubscriberToKitSequence,
 	parseDrovrEvergreenConfig,
 	readbackEvergreenSequences,
 } from '@/lib/subscriber-marketing/drovr-evergreen'
@@ -50,13 +50,14 @@ export const drovrEvergreenSender = inngest.createFunction(
 		const results = await step.run('send-pending-evergreen-emails', () =>
 			executePendingEvergreenSends({
 				repository: new DrizzleCaptureMarketingRepository(db),
+				// Same v4 key as the readback: the gate and the write prove the
+				// same account, and the sequence ids are that account's.
 				subscribe: (input) =>
-					subscribeToKitListWithoutFields({
-						listId: input.listId,
-						listType: input.listType,
-						user: input.user as Parameters<
-							typeof subscribeToKitListWithoutFields
-						>[0]['user'],
+					addSubscriberToKitSequence({
+						apiKey: process.env.KIT_V4_API_KEY,
+						fetch,
+						sequenceId: input.listId,
+						email: input.user.email,
 					}),
 				limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
 				pacingMs: parseValuePathProviderPacingMs(
