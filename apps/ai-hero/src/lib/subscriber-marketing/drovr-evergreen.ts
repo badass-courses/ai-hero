@@ -272,6 +272,9 @@ export async function updateKitSubscriberFields(options: {
 	apiKey: string | undefined
 	fetch: typeof fetch
 	subscriberId: string | number
+	/** Kit's v4 update requires `email_address` in the body; the drain
+	 * supplies the contact's current address so the row is never a 422. */
+	email: string
 	fields: Record<string, string>
 	timeoutMs?: number
 }): Promise<void> {
@@ -291,7 +294,10 @@ export async function updateKitSubscriberFields(options: {
 					'X-Kit-Api-Key': apiKey,
 					'Content-Type': 'application/json',
 				},
-				body: JSON.stringify({ fields: options.fields }),
+				body: JSON.stringify({
+					email_address: options.email,
+					fields: options.fields,
+				}),
 				signal: controller.signal,
 			},
 		)

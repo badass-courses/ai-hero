@@ -59,6 +59,16 @@ class FakeRepository implements CouponIssuerRepository {
 	}
 }
 
+const contact = (): ContactRecord => ({
+	id: 'contact-1',
+	email: 'learner@example.com',
+	name: 'Learner',
+	lifecycle: 'nurture-ready',
+	isProvisional: false,
+	createdAt: now,
+	updatedAt: now,
+})
+
 const row = (overrides: Partial<SideEffectIntent> = {}): SideEffectIntent => ({
 	id: 'row-1',
 	nextActionId: 'drovr:abc',
@@ -171,6 +181,7 @@ describe('executePendingEvergreenCoupons', () => {
 		attempts?: number
 	}) => {
 		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
 		repository.intents.set(
 			'row-1',
 			row(
@@ -210,6 +221,7 @@ describe('executePendingEvergreenCoupons', () => {
 		expect(out.written).toEqual([
 			{
 				subscriberId: '4298556847',
+				email: 'learner@example.com',
 				fields: expect.objectContaining({
 					aih_evergreen_offer_price: '$199',
 					aih_evergreen_offer_url:
@@ -295,6 +307,74 @@ describe('executePendingEvergreenCoupons', () => {
 		])
 		expect(repository.intents.get('row-2')?.reviewReasons).toEqual([
 			'coupon-offer-payload-invalid',
+		])
+	})
+
+	it('writes the Kit fields with the contact email and fails a row without one', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.contacts.set('contact-2', {
+			...contact(),
+			id: 'contact-2',
+			email: '',
+		})
+		repository.intents.set('row-1', row())
+		repository.intents.set(
+			'row-2',
+			row({ id: 'row-2', idempotencyKey: 'k2', contactId: 'contact-2' }),
+		)
+		const written: { subscriberId: string; email: string }[] = []
+		const results = await executePendingEvergreenCoupons({
+			repository,
+			authority: { issue: () => Effect.succeed(issued) },
+			writeFields: async ({ subscriberId, email }) => {
+				written.push({ subscriberId, email })
+			},
+			origin: 'https://www.aihero.dev',
+			limit: 10,
+			dispatch: () => {},
+		})
+		expect(results.map((r) => r.status)).toEqual(['completed', 'failed'])
+		expect(written).toEqual([
+			{ subscriberId: '4298556847', email: 'learner@example.com' },
+		])
+		expect(repository.intents.get('row-2')?.reviewReasons).toEqual([
+			'contact-email-missing',
+		])
+	})
+
+	it('fails a row whose pinned zone is invalid without aborting the drain', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'row-1',
+			row({
+				metadata: {
+					...row().metadata,
+					offer: { ...payload, timezone: 'Not/AZone' },
+				},
+			}),
+		)
+		repository.intents.set('row-2', row({ id: 'row-2', idempotencyKey: 'k2' }))
+		let issues = 0
+		const results = await executePendingEvergreenCoupons({
+			repository,
+			authority: {
+				issue: () => {
+					issues += 1
+					return Effect.succeed(issued)
+				},
+			},
+			writeFields: async () => {},
+			origin: 'https://www.aihero.dev',
+			limit: 10,
+			dispatch: () => {},
+		})
+		expect(results.map((r) => r.status)).toEqual(['failed', 'completed'])
+		expect(issues).toBe(1)
+		expect(repository.intents.get('row-1')?.status).toBe('failed')
+		expect(repository.intents.get('row-1')?.reviewReasons).toEqual([
+			'coupon-intent-invalid',
 		])
 	})
 })
