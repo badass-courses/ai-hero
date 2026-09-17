@@ -86,11 +86,12 @@ export const drovrEvergreenSender = inngest.createFunction(
 						merchantCouponEvidence: evidence,
 						now: () => new Date().toISOString(),
 					}),
-					writeFields: ({ subscriberId, fields }) =>
+					writeFields: ({ subscriberId, email, fields }) =>
 						updateKitSubscriberFields({
 							apiKey: process.env.KIT_V4_API_KEY,
 							fetch,
 							subscriberId,
+							email,
 							fields,
 						}),
 					origin: 'https://www.aihero.dev',

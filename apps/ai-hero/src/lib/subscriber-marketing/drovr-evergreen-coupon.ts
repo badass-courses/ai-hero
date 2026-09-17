@@ -214,6 +214,7 @@ export async function executePendingEvergreenCoupons(args: {
 	authority: Pick<CouponAuthority, 'issue'>
 	writeFields: (input: {
 		subscriberId: string
+		email: string
 		fields: Record<string, string>
 	}) => Promise<void>
 	origin: string
@@ -264,12 +265,23 @@ async function issueOne(input: {
 	if (!payload.success) return await fail('coupon-offer-payload-invalid')
 	const subscriberId = stringField(row.metadata.kitSubscriberId)
 	if (!subscriberId) return await fail('kit-subscriber-missing')
+	const contact = await args.repository.findContactById(row.contactId)
+	if (!contact?.email) return await fail('contact-email-missing')
 	const attempts = numberField(row.metadata.attempts) + 1
 
+	// Intent construction validates the pinned zone outside the Effect; a bad
+	// row fails on its own instead of aborting the drain for every row after it.
+	let intent: IssueCouponIntent
+	try {
+		intent = issueIntentFor(row.contactId, payload.data)
+	} catch (error) {
+		return await fail(
+			'coupon-intent-invalid',
+			error instanceof Error ? error.message : String(error),
+		)
+	}
 	const outcome = await Effect.runPromise(
-		Effect.either(
-			args.authority.issue(issueIntentFor(row.contactId, payload.data)),
-		),
+		Effect.either(args.authority.issue(intent)),
 	)
 	if (outcome._tag === 'Left') {
 		return await settleAuthorityFailure(
@@ -283,6 +295,7 @@ async function issueOne(input: {
 	try {
 		await args.writeFields({
 			subscriberId,
+			email: contact.email,
 			fields: offerFieldsFor({
 				couponId: coupon.couponId,
 				payload: payload.data,

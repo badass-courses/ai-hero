@@ -128,10 +128,10 @@ const sequenceReadback = z.object({
 	}),
 })
 
+// Kit lists a sequence's emails under `emails` (verified against the live
+// account on 2026-09-17), not `emails`.
 const sequenceEmailsReadback = z.object({
-	sequence_emails: z.array(
-		z.object({ id: z.number(), published: z.boolean() }),
-	),
+	emails: z.array(z.object({ id: z.number(), published: z.boolean() })),
 })
 
 export type EvergreenReadback = {
@@ -220,10 +220,10 @@ export async function readbackEvergreenSequences(options: {
 				problems.push(`${entry.slot}: unreadable sequence emails readback`)
 				continue
 			}
-			const published = emails.data.sequence_emails.filter((e) => e.published)
-			if (emails.data.sequence_emails.length !== 1 || published.length !== 1) {
+			const published = emails.data.emails.filter((e) => e.published)
+			if (emails.data.emails.length !== 1 || published.length !== 1) {
 				problems.push(
-					`${entry.slot}: ${published.length} published of ${emails.data.sequence_emails.length} emails, expected 1 of 1`,
+					`${entry.slot}: ${published.length} published of ${emails.data.emails.length} emails, expected 1 of 1`,
 				)
 			}
 		} catch (error) {
@@ -298,6 +298,9 @@ export async function updateKitSubscriberFields(options: {
 	apiKey: string | undefined
 	fetch: typeof fetch
 	subscriberId: string | number
+	/** Kit's v4 update requires `email_address` in the body; the drain
+	 * supplies the contact's current address so the row is never a 422. */
+	email: string
 	fields: Record<string, string>
 	timeoutMs?: number
 }): Promise<void> {
@@ -317,7 +320,10 @@ export async function updateKitSubscriberFields(options: {
 					'X-Kit-Api-Key': apiKey,
 					'Content-Type': 'application/json',
 				},
-				body: JSON.stringify({ fields: options.fields }),
+				body: JSON.stringify({
+					email_address: options.email,
+					fields: options.fields,
+				}),
 				signal: controller.signal,
 			},
 		)
