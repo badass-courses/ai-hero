@@ -121,6 +121,16 @@ export async function enterSkillsNewsletterSubscriber(args: {
 		config: args.drovrOwnership ?? DROVR_OWNERSHIP_OFF,
 	})
 	if (ownership.owner === 'drovr') {
+		// A repeat capture computes the contact state but does not write it,
+		// so a contact born on a replay would have none, and every send
+		// preflight (legacy executor included) refuses contact-state-missing.
+		// drovr owns it now: persist what the capture derived.
+		if (
+			capture.idempotentNoop &&
+			!(await args.repository.findCurrentContactState(capture.contact.id))
+		) {
+			await args.repository.upsertContactState(capture.contactState)
+		}
 		if (ownership.recorded) {
 			// A replay is the repair path for a birth whose delivery was lost:
 			// drovr dedupes the key, so re-dispatching a landed birth is free.
