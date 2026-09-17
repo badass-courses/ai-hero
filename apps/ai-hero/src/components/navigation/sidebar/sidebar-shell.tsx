@@ -114,7 +114,7 @@ export function HubSidebarShell({
 					onClick={toggle}
 					aria-label="Expand sidebar"
 					aria-expanded={false}
-					className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2"
+					className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2"
 				>
 					<PanelLeftOpen className="size-4" />
 				</button>
@@ -165,7 +165,7 @@ export function HubSidebarShell({
 															})
 														}
 														className={cn(
-															'focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2',
+															'focus-visible:ring-ring flex size-8 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2',
 															isActive
 																? 'bg-accent text-accent-foreground'
 																: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
@@ -190,7 +190,7 @@ export function HubSidebarShell({
 													type="button"
 													onClick={toggle}
 													aria-label={`Open ${section.title}`}
-													className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2"
+													className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2"
 												>
 													<Layers3 className="size-4" />
 												</button>
@@ -224,7 +224,7 @@ export function HubSidebarShell({
 						onClick={toggle}
 						aria-label="Collapse sidebar"
 						aria-expanded={true}
-						className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center focus-visible:outline-none focus-visible:ring-2"
+						className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2"
 					>
 						<PanelLeftClose className="size-4" />
 					</button>

@@ -9,7 +9,6 @@ import {
 
 import { CourseSyncError, asCourseSyncError } from './errors'
 import {
-	assertCourseSyncLaunchApplyPolicy,
 	evaluateCourseSyncBoundedAutoApply,
 } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
@@ -1092,7 +1091,6 @@ export function createCourseSyncControlPlane(
 					{ category: 'internal', retryable: false },
 				)
 			}
-			assertCourseSyncLaunchApplyPolicy(run.plan)
 			return publicRun(run)
 		},
 
@@ -1134,7 +1132,6 @@ export function createCourseSyncControlPlane(
 					409,
 				)
 			}
-			assertCourseSyncLaunchApplyPolicy(run.plan)
 			await requireBinding(run.bindingId)
 			try {
 				return publicRun(

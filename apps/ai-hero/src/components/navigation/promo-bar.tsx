@@ -89,13 +89,14 @@ export async function PromoBar() {
 		fallbackPromo = null
 	}
 
-	if (!FEATURED_PROMO.startsAt) {
+	if (!FEATURED_PROMO.startsAt && !FEATURED_PROMO.endsAt) {
 		return <PromoBarContent promo={FEATURED_PROMO} />
 	}
 
 	return (
 		<TimedPromoBarSwitch
 			startsAt={FEATURED_PROMO.startsAt}
+			endsAt={FEATURED_PROMO.endsAt}
 			initialFeaturedActive={isPromoActive(FEATURED_PROMO)}
 			featured={<PromoBarContent promo={FEATURED_PROMO} />}
 			fallback={

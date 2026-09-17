@@ -461,10 +461,7 @@ function PalettePromoRow({
 	) => void
 }) {
 	const cohortOffer = useCohortOffer()
-	const featuredPromoActive = useTimedActivation(
-		FEATURED_PROMO.startsAt,
-		false,
-	)
+	const featuredPromoActive = useTimedActivation(FEATURED_PROMO, false)
 	const promo = React.useMemo<Promo | null>(() => {
 		if (featuredPromoActive && isPromoActive(FEATURED_PROMO)) {
 			return FEATURED_PROMO

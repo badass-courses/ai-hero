@@ -7,6 +7,7 @@ import {
 	type LearnerFlowCohortRecord,
 	type LearnerFlowCohortRepository,
 } from './learner-flow-cohort'
+import { isDrovrOwnedIntent } from './drovr-ownership'
 import {
 	learnerFlowDrillSuppression,
 	type LearnerFlowDrillSuppression,
@@ -79,6 +80,8 @@ export type LearnerFlowReconcilerPlan = {
 		contacts: number
 		liveRecordsScanned: number
 		includesCanary: true
+		/** Contacts drovr drives; the legacy planner never touches them. */
+		drovrOwnedSkipped: number
 	}
 	counts: {
 		moving: number
@@ -93,6 +96,8 @@ export type LearnerFlowReconcilerPlan = {
 	suppressedFixtureStarved: LearnerFlowDrillSuppression[]
 	tier2: LearnerFlowReconcilerTier2Ask[]
 	records: LearnerFlowCohortRecord[]
+	/** Whole-cohort numerator, independent of retained candidate detail. */
+	riskyRepairCount?: number
 }
 
 export type LearnerFlowReconcilerBrake = {
@@ -157,7 +162,13 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			candidate.scheduleEvidence,
 		]),
 	)
-	const classified = cohort.records.map((record) => ({
+	// A contact with any drovr-planned intent is drovr's to drive: nudging
+	// its drip here would send the next email twice, once per planner.
+	const legacyRecords = cohort.records.filter(
+		(record) => !record.intents.some(isDrovrOwnedIntent),
+	)
+	const drovrOwnedSkipped = cohort.records.length - legacyRecords.length
+	const classified = legacyRecords.map((record) => ({
 		record,
 		classification: classifyLearnerFlowContact({
 			...record,
@@ -173,9 +184,8 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		if (classification.state !== 'stuck' || !classification.cause) continue
 		const repairEvidence = item.record.intents
 			.map(valuePathCompletionRepairEvidence)
-			.find(
-				(evidence): evidence is ValuePathCompletionRepairEvidence =>
-					Boolean(evidence),
+			.find((evidence): evidence is ValuePathCompletionRepairEvidence =>
+				Boolean(evidence),
 			)
 		if (repairEvidence && classification.cause === 'classifier-gap') {
 			candidates.push({
@@ -233,9 +243,11 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		generatedAt: args.now,
 		cohort: {
 			source: cohort.source,
-			contacts: cohort.contactIds.length,
+			// The brake's denominator: only contacts this planner may repair.
+			contacts: cohort.contactIds.length - drovrOwnedSkipped,
 			liveRecordsScanned: cohort.liveRecordsScanned,
 			includesCanary: true,
+			drovrOwnedSkipped,
 		},
 		counts: {
 			moving: classified.filter(
@@ -244,9 +256,8 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 			terminal: classified.filter(
 				(item) => item.classification.state === 'terminal',
 			).length,
-			stuck: classified.filter(
-				(item) => item.classification.state === 'stuck',
-			).length,
+			stuck: classified.filter((item) => item.classification.state === 'stuck')
+				.length,
 			planned: candidates.length,
 			suppressedFixtureStarved: suppressedFixtureStarved.length,
 			tier2: tier2.length,
@@ -255,24 +266,88 @@ export async function buildLearnerFlowReconcilerPlan(args: {
 		candidates,
 		suppressedFixtureStarved,
 		tier2,
-		records: cohort.records,
+		records: legacyRecords,
 	}
+}
+
+/**
+ * Scan full-fidelity pages, count before capping, and retain only the oldest
+ * repairCap + 1 candidates. The extra item preserves oldest-deferred receipts.
+ * Explicit detailed-plan callers keep buildLearnerFlowReconcilerPlan.
+ */
+export async function buildBoundedLearnerFlowReconcilerPlan(args: {
+	repository: LearnerFlowCohortRepository
+	allowlist: GateDRuntimeAllowlist
+	now: string
+	repairCap: number
+}): Promise<LearnerFlowReconcilerPlan> {
+	if (!Number.isSafeInteger(args.repairCap) || args.repairCap < 0) {
+		throw new Error('repairCap must be a non-negative safe integer')
+	}
+	const result = await buildLearnerFlowReconcilerPlan({
+		...args,
+		repository: { findSkillsWorkflowLearnerFlowRecords: () => [] },
+	})
+	result.riskyRepairCount = 0
+	const pages = args.repository.findSkillsWorkflowLearnerFlowRepairRecordPages
+		? args.repository.findSkillsWorkflowLearnerFlowRepairRecordPages({
+				includeCanary: true,
+			})
+		: [
+				await args.repository.findSkillsWorkflowLearnerFlowRecords({
+					includeCanary: true,
+				}),
+			]
+	for await (const records of pages) {
+		const page = await buildLearnerFlowReconcilerPlan({
+			...args,
+			repository: { findSkillsWorkflowLearnerFlowRecords: () => records },
+		})
+		result.cohort.contacts += page.cohort.contacts
+		result.cohort.liveRecordsScanned += page.cohort.liveRecordsScanned
+		for (const key of Object.keys(result.counts) as Array<
+			keyof typeof result.counts
+		>) {
+			result.counts[key] += page.counts[key]
+		}
+		for (const [cause, count] of Object.entries(page.causeCounts)) {
+			const key = cause as LearnerFlowStuckCause
+			result.causeCounts[key] = (result.causeCounts[key] ?? 0) + count
+		}
+		result.riskyRepairCount += page.candidates.filter(
+			(candidate) => candidate.action !== 'nudge-drip-progression',
+		).length
+		result.candidates = [...result.candidates, ...page.candidates]
+			.sort(compareCandidateAge)
+			.slice(0, args.repairCap + 1)
+		const retained = new Set(
+			result.candidates.map((candidate) => candidate.contactId),
+		)
+		result.records = [...result.records, ...page.records].filter((record) =>
+			retained.has(record.contactId),
+		)
+		result.suppressedFixtureStarved.push(...page.suppressedFixtureStarved)
+		result.tier2.push(...page.tier2)
+	}
+	return result
 }
 
 export function evaluateLearnerFlowReconcilerBrake(args: {
 	cohortSize: number
 	candidates: LearnerFlowReconcilerCandidate[]
+	riskyRepairCount?: number
 	config?: LearnerFlowReconcilerConfig
 }): LearnerFlowReconcilerBrake {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
-	const riskyRepairCount = args.candidates.filter(
-		(candidate) => candidate.action !== 'nudge-drip-progression',
-	).length
+	const riskyRepairCount =
+		args.riskyRepairCount ??
+		args.candidates.filter(
+			(candidate) => candidate.action !== 'nudge-drip-progression',
+		).length
 	const repairToCohortRatio =
 		args.cohortSize > 0 ? riskyRepairCount / args.cohortSize : 0
 	const reasons =
-		args.cohortSize > 0 &&
-		repairToCohortRatio > config.maxRepairToCohortRatio
+		args.cohortSize > 0 && repairToCohortRatio > config.maxRepairToCohortRatio
 			? [
 					`repair-ratio-${formatRatio(repairToCohortRatio)}-exceeds-${formatRatio(config.maxRepairToCohortRatio)}`,
 				]
@@ -290,14 +365,19 @@ export async function reconcileLearnerFlow(args: {
 	repository: LearnerFlowReconcilerRepository
 	allowlist: GateDRuntimeAllowlist
 	email7LiveEnabled: boolean
+	sequenceExhaustionEnabled?: boolean
 	now: string
 	config?: LearnerFlowReconcilerConfig
 }): Promise<LearnerFlowReconcilerReceipt> {
 	const config = args.config ?? LEARNER_FLOW_RECONCILER_CONFIG
-	const plan = await buildLearnerFlowReconcilerPlan(args)
+	const plan = await buildBoundedLearnerFlowReconcilerPlan({
+		...args,
+		repairCap: config.repairCap,
+	})
 	const brake = evaluateLearnerFlowReconcilerBrake({
 		cohortSize: plan.cohort.contacts,
 		candidates: plan.candidates,
+		riskyRepairCount: plan.riskyRepairCount,
 		config,
 	})
 	if (brake.status === 'tripped') {
@@ -346,6 +426,7 @@ export async function reconcileLearnerFlow(args: {
 				completedIntents: dripIntents,
 				allowWrite: true,
 				email7LiveEnabled: args.email7LiveEnabled,
+				sequenceExhaustionEnabled: args.sequenceExhaustionEnabled,
 				now: args.now,
 			})
 		: emptyDripResult()
@@ -422,7 +503,9 @@ function receiptFor(args: {
 	const status =
 		args.brake.status === 'tripped'
 			? 'blocked'
-			: writeFailed > 0 || blockedResults.length > 0 || args.plan.tier2.length > 0
+			: writeFailed > 0 ||
+				  blockedResults.length > 0 ||
+				  args.plan.tier2.length > 0
 				? 'degraded'
 				: 'ok'
 
@@ -432,7 +515,7 @@ function receiptFor(args: {
 		funnel: 'skills-newsletter',
 		loop: 'repair',
 		status,
-		workSeen: args.plan.candidates.length,
+		workSeen: args.plan.counts.planned,
 		workDone: unique(advanced.map((candidate) => candidate.intentId)).length,
 		oldestUnservedAt: oldestUnserved?.lastActivityAt ?? null,
 		oldestUnservedAgeHours: oldestUnserved?.stuckAgeHours ?? null,
@@ -446,7 +529,7 @@ function receiptFor(args: {
 			blocked: args.dripResult?.counts.blocked ?? 0,
 			notDue: args.dripResult?.counts.notDue ?? 0,
 			failed: args.dripResult?.counts.deferred ?? 0,
-			deferred: unserved.length,
+			deferred: args.plan.counts.planned - advanced.length,
 			writeFailed,
 			retriesExhausted: tier2Causes.filter(
 				(cause) => cause === 'provider-retries-exhausted',

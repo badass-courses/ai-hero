@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	findCoupon: vi.fn(),
 	getSaleBannerData: vi.fn(),
-	getCachedMinimalWorkshop: vi.fn(),
+	getCachedLatestSelfPacedWorkshop: vi.fn(),
 	getUpcomingCohort: vi.fn(),
 	getLatestCohort: vi.fn(),
 	ne: vi.fn(),
@@ -32,17 +32,11 @@ vi.mock('@/db/schema', () => ({
 		restrictedToProductId: 'restrictedToProductId',
 	},
 }))
-vi.mock('@/lib/courses-content', () => ({
-	COURSES_COMING_NEXT: {
-		title: 'AI Coding Crash Course',
-		slug: 'ai-coding-crash-course',
-	},
-}))
 vi.mock('@/lib/sale-banner', () => ({
 	getSaleBannerData: mocks.getSaleBannerData,
 }))
 vi.mock('@/lib/workshops-query', () => ({
-	getCachedMinimalWorkshop: mocks.getCachedMinimalWorkshop,
+	getCachedLatestSelfPacedWorkshop: mocks.getCachedLatestSelfPacedWorkshop,
 }))
 vi.mock('@/server/logger', () => ({
 	log: { error: vi.fn(() => Promise.resolve()) },
@@ -79,7 +73,7 @@ describe('getNextOffer Crash Course launch timing', () => {
 		vi.useFakeTimers()
 		mocks.findCoupon.mockResolvedValue(crashCourseCoupon)
 		mocks.getSaleBannerData.mockResolvedValue(crashCourseSale)
-		mocks.getCachedMinimalWorkshop.mockResolvedValue(null)
+		mocks.getCachedLatestSelfPacedWorkshop.mockResolvedValue(null)
 		mocks.getUpcomingCohort.mockResolvedValue(null)
 		mocks.getLatestCohort.mockResolvedValue(null)
 	})
@@ -131,5 +125,64 @@ describe('getNextOffer Crash Course launch timing', () => {
 			label: 'Save $100',
 		})
 		expect(mocks.getSaleBannerData).toHaveBeenCalledWith(crashCourseCoupon)
+	})
+})
+
+describe('getNextOffer after the launch sale', () => {
+	const crashCourse = {
+		id: 'workshop-2ozd9',
+		type: 'workshop',
+		fields: { title: 'AI Coding Crash Course', slug: 'ai-coding-crash-course' },
+	}
+	const endedCohort = {
+		id: 'cohort-1',
+		title: 'AI Coding for Real Engineers',
+		slug: 'ai-coding-for-real-engineers',
+		startsAt: '2026-06-01T00:00:00.000Z',
+		timezone: 'America/Los_Angeles',
+		productName: 'AI Coding for Real Engineers',
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date('2026-09-11T12:00:00.000Z'))
+		mocks.findCoupon.mockResolvedValue(null)
+		mocks.getCachedLatestSelfPacedWorkshop.mockResolvedValue(crashCourse)
+		mocks.getUpcomingCohort.mockResolvedValue(null)
+		mocks.getLatestCohort.mockResolvedValue(endedCohort)
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.clearAllMocks()
+	})
+
+	it('offers the newest self-paced workshop over an ended cohort', async () => {
+		expect(await getNextOffer()).toEqual({
+			kind: 'workshop-buy',
+			id: 'workshop-2ozd9',
+			title: 'AI Coding Crash Course',
+			href: '/workshops/ai-coding-crash-course',
+			label: 'Get the course',
+		})
+	})
+
+	it('lets a purchasable cohort outrank the workshop', async () => {
+		mocks.getUpcomingCohort.mockResolvedValue({
+			...endedCohort,
+			startsAt: '2026-10-06T00:00:00.000Z',
+		})
+
+		expect(await getNextOffer()).toMatchObject({ kind: 'cohort-enroll' })
+		expect(mocks.getCachedLatestSelfPacedWorkshop).not.toHaveBeenCalled()
+	})
+
+	it('falls through to the cohort waitlist with no buyable workshop', async () => {
+		mocks.getCachedLatestSelfPacedWorkshop.mockResolvedValue(null)
+
+		expect(await getNextOffer()).toMatchObject({
+			kind: 'cohort-waitlist',
+			waitlist: { kind: 'cohort', productName: endedCohort.productName },
+		})
 	})
 })

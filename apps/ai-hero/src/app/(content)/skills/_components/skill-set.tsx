@@ -216,9 +216,9 @@ function SkillRow({ slug, title, description, iconUrl, kind }: SkillSetItem) {
 				<CldImage
 					src={iconUrl}
 					alt=""
-					width={48}
-					height={48}
-					className="mt-0.5 size-6 shrink-0 self-start rounded-[6px]"
+					width={80}
+					height={80}
+					className="mt-0.5 size-10 shrink-0 self-start rounded-[8px]"
 				/>
 			) : null}
 			<span className="flex min-w-0 flex-1 flex-col gap-0.5">

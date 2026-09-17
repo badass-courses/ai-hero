@@ -66,7 +66,13 @@ import {
 	SkillChangelogPublished,
 } from '@/inngest/events/skill-changelog'
 import {
+	CONTACT_UNSUBSCRIBED_EVENT,
+	type ContactUnsubscribed,
+} from '@/inngest/events/contact-unsubscribed'
+import {
+	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
+	type SkillsCourseLessonOneRecoveryRequested,
 	type SkillsNewsletterSubscribed,
 } from '@/inngest/events/skills-newsletter'
 import {
@@ -77,6 +83,8 @@ import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
 } from '@/inngest/events/typesense-popularity'
+import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
+import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
 import { USER_CREATED_EVENT, UserCreated } from '@/inngest/events/user-created'
 import {
 	VALUE_PATH_ANSWER_SELECTED_EVENT,
@@ -145,6 +153,10 @@ import {
 	SlackArtworkSkipRequested,
 } from './events/artwork'
 import {
+	COURSE_SYNC_APPLIED_NOTICE_EVENT,
+	type CourseSyncAppliedNoticeRequested,
+} from './events/course-sync-applied-notice'
+import {
 	COURSE_SYNC_POLL_REQUESTED_EVENT,
 	type CourseSyncPollRequested,
 } from './events/course-sync-poll'
@@ -190,6 +202,7 @@ export type Events = {
 	[USER_CREATED_EVENT]: UserCreated
 	[AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT]: AiCodingDictionarySourceChanged
 	[CONTENT_RESOURCE_INDEX_REQUESTED_EVENT]: ContentResourceIndexRequested
+	[COURSE_SYNC_APPLIED_NOTICE_EVENT]: CourseSyncAppliedNoticeRequested
 	[COURSE_SYNC_POLL_REQUESTED_EVENT]: CourseSyncPollRequested
 	[GITHUB_SOURCE_SYNC_REQUESTED_EVENT]: GithubSourceSyncRequested
 	[POSTMARK_WEBHOOK_EVENT]: PostmarkWebhook
@@ -230,6 +243,8 @@ export type Events = {
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
 	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]: SkillsNewsletterSubscribed
+	[SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT]: SkillsCourseLessonOneRecoveryRequested
+	[CONTACT_UNSUBSCRIBED_EVENT]: ContactUnsubscribed
 	[WORKSHOP_INTEREST_REQUESTED_EVENT]: WorkshopInterestRequested
 	[TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT]: TypesensePopularitySyncRequested
 	[SLACK_ARTWORK_GENERATE_REQUESTED_EVENT]: SlackArtworkGenerateRequested
@@ -240,6 +255,7 @@ export type Events = {
 	[ARTWORK_FAL_COMPLETED_EVENT]: ArtworkFalCompleted
 	[ARTWORK_GENERATION_FAILED_EVENT]: ArtworkGenerationFailed
 	[VALUE_PATH_ANSWER_SELECTED_EVENT]: ValuePathAnswerSelected
+	[DROVR_EVENTS_DELIVER_EVENT]: DrovrEventsDeliver
 	// Operator lever: fire one learner-flow reconcile outside the hourly cron.
 	'subscriber_funnel.reconciler_run_requested': {
 		data: { requestedBy?: string; reason?: string }

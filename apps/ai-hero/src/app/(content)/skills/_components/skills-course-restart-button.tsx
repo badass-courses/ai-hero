@@ -20,7 +20,7 @@ export function SkillsCourseRestartButton({
 	const resend = () => {
 		setResult(null)
 		startTransition(async () => {
-			const response = await resendSkillsCourseLessonOne(source)
+			const response = await resendSkillsCourseLessonOne()
 			if (response.success) {
 				setResult('sent')
 			} else if (response.reason === 'confirmation-required') {
@@ -35,6 +35,7 @@ export function SkillsCourseRestartButton({
 		<div className="flex flex-col items-start gap-2.5">
 			<button
 				type="button"
+				data-recovery-surface={source}
 				onClick={resend}
 				disabled={isPending || result === 'sent'}
 				className={cn(

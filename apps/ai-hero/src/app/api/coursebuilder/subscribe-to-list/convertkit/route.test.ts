@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 
 const mocks = vi.hoisted(() => {
@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
 	const recordSignupAttribution = vi.fn().mockResolvedValue('captured')
 	const createShortlinkAttribution = vi.fn().mockResolvedValue(undefined)
 	const inngestSend = vi.fn().mockResolvedValue(undefined)
+	const issueRecoveryToken = vi.fn().mockResolvedValue(undefined)
 	const reconcile = vi.fn()
 	const cookieGet = vi.fn()
 	const log = {
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => {
 		recordSignupAttribution,
 		createShortlinkAttribution,
 		inngestSend,
+		issueRecoveryToken,
 		reconcile,
 		cookieGet,
 		log,
@@ -60,6 +62,11 @@ vi.mock('@/lib/subscriber-marketing/ai-hero-email-opt-in.server', () => ({
 	reconcileAiHeroEmailOptInWithKit: mocks.reconcile,
 }))
 
+vi.mock(
+	'@/lib/subscriber-marketing/skills-course-recovery-token.server',
+	() => ({ issueSkillsCourseRecoveryToken: mocks.issueRecoveryToken }),
+)
+
 vi.mock('@/server/logger', () => ({
 	log: mocks.log,
 	createRequestContext: () => ({}),
@@ -85,12 +92,18 @@ function subscriberResponse(body: Record<string, unknown>, status = 200) {
 	})
 }
 
-function request(body: Record<string, unknown>) {
+function request(
+	body: Record<string, unknown>,
+	timeZone: string | null = 'Asia/Tokyo',
+) {
 	return new NextRequest(
 		'http://localhost/api/coursebuilder/subscribe-to-list/convertkit',
 		{
 			method: 'POST',
-			headers: { 'content-type': 'application/json' },
+			headers: {
+				'content-type': 'application/json',
+				...(timeZone ? { 'x-vercel-ip-timezone': timeZone } : {}),
+			},
 			body: JSON.stringify(body),
 		},
 	)
@@ -135,9 +148,11 @@ function useRealCourseBuilderFailureBoundary(error: Error) {
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED = 'true'
 	mocks.recordSignupAttribution.mockResolvedValue('captured')
 	mocks.createShortlinkAttribution.mockResolvedValue(undefined)
 	mocks.inngestSend.mockResolvedValue(undefined)
+	mocks.issueRecoveryToken.mockResolvedValue(undefined)
 	mocks.cookieGet.mockImplementation((name: string) => {
 		if (name === 'ft_attr') {
 			return {
@@ -150,6 +165,10 @@ beforeEach(() => {
 		}
 		return undefined
 	})
+})
+
+afterEach(() => {
+	delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
 })
 
 describe('subscribe-to-list convertkit route attribution', () => {
@@ -180,7 +199,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
-	it('keeps Skills Inngest send and still writes the lean attribution row', async () => {
+	it('keeps Skills Inngest send without minting recovery authorization from public signup', async () => {
 		mocks.courseBuilderPOST.mockResolvedValue(
 			subscriberResponse({
 				id: 99,
@@ -200,6 +219,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 		)
 
 		expect(response.status).toBe(200)
+		expect(mocks.issueRecoveryToken).not.toHaveBeenCalled()
 		expect(mocks.inngestSend).toHaveBeenCalledWith(
 			expect.objectContaining({
 				name: 'skills-newsletter/subscribed',
@@ -207,6 +227,12 @@ describe('subscribe-to-list convertkit route attribution', () => {
 					email: 'skills@example.com',
 					formId: 9376133,
 					kitSubscriberId: '99',
+					deadlineTimeZone: {
+						type: 'BrowserEntryHeader',
+						headerName: 'x-vercel-ip-timezone',
+						timeZone: 'Asia/Tokyo',
+						capturedAt: expect.any(String),
+					},
 				}),
 			}),
 		)
@@ -217,6 +243,77 @@ describe('subscribe-to-list convertkit route attribution', () => {
 			rawCookie: expect.any(String),
 		})
 	})
+
+	it('keeps course-entry evidence inactive until the rollout flag is enabled', async () => {
+		delete process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 101,
+				email_address: 'disabled@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+
+		const response = await POST(
+			request({
+				email: 'disabled@example.com',
+				listId: 9376133,
+				fields: { source: 'aihero_skills_page' },
+			}),
+		)
+
+		expect(response.status).toBe(200)
+		expect(mocks.inngestSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.not.objectContaining({ deadlineTimeZone: expect.anything() }),
+			}),
+		)
+	})
+
+	it.each([
+		[null, 'header-missing'],
+		['not-a-zone', 'header-invalid'],
+	] as const)(
+		'records %s as explicit Pacific course-entry evidence',
+		async (timeZone, reason) => {
+			mocks.courseBuilderPOST.mockResolvedValue(
+				subscriberResponse({
+					id: 100,
+					email_address: 'fallback@example.com',
+					state: 'active',
+					fields: {},
+				}),
+			)
+			mocks.reconcile.mockResolvedValue({ status: 'active' })
+
+			const response = await POST(
+				request(
+					{
+						email: 'fallback@example.com',
+						listId: 9376133,
+						fields: { source: 'aihero_skills_page' },
+					},
+					timeZone,
+				),
+			)
+
+			expect(response.status).toBe(200)
+			expect(mocks.inngestSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					data: expect.objectContaining({
+						deadlineTimeZone: {
+							type: 'ExplicitFallback',
+							reason,
+							timeZone: 'America/Los_Angeles',
+							capturedAt: expect.any(String),
+						},
+					}),
+				}),
+			)
+		},
+	)
 
 	it('returns 200 when attribution insert fails', async () => {
 		mocks.courseBuilderPOST.mockResolvedValue(

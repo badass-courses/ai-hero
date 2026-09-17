@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apply } = vi.hoisted(() => ({
+const { apply, requestCourseSyncAppliedNotice } = vi.hoisted(() => ({
 	apply: vi.fn(async () => ({ runId: 'run-1', state: 'applied' })),
+	requestCourseSyncAppliedNotice: vi.fn(async () => {}),
+}))
+
+vi.mock('@/course-sync/applied-notice-dispatch', () => ({
+	requestCourseSyncAppliedNotice,
 }))
 
 vi.mock('@/course-sync/runtime', () => ({
@@ -30,13 +35,17 @@ const context = {
 }
 
 describe('course sync run operation route', () => {
-	beforeEach(() => apply.mockClear())
+	beforeEach(() => {
+		apply.mockClear()
+		requestCourseSyncAppliedNotice.mockClear()
+	})
 
 	it('rejects worker bearer for operator-policy apply', async () => {
 		const response = await POST(request('test-worker-token-123456789'), context)
 
 		expect(response.status).toBe(401)
 		expect(apply).not.toHaveBeenCalled()
+		expect(requestCourseSyncAppliedNotice).not.toHaveBeenCalled()
 	})
 
 	it('allows operator bearer to apply', async () => {
@@ -47,5 +56,22 @@ describe('course sync run operation route', () => {
 			runId: 'run-1',
 			idempotencyKey: 'apply-run-1',
 		})
+	})
+
+	it('asks for the applied notice after an operator apply', async () => {
+		await POST(request('test-operator-token-1234567'), context)
+
+		expect(requestCourseSyncAppliedNotice).toHaveBeenCalledWith({
+			controlPlaneRunId: 'run-1',
+			requestedBy: 'operator',
+		})
+	})
+
+	it('stays silent when apply did not reach the applied state', async () => {
+		apply.mockResolvedValueOnce({ runId: 'run-1', state: 'previewed' })
+
+		await POST(request('test-operator-token-1234567'), context)
+
+		expect(requestCourseSyncAppliedNotice).not.toHaveBeenCalled()
 	})
 })

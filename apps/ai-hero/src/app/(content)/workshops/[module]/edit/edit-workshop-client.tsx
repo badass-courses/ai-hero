@@ -33,6 +33,18 @@ export function EditWorkshopClient({
 			manifest: {
 				...workshopManifest,
 				schema: WorkshopSchema,
+				// A second body for the team story (`/workshops/[slug]/for-teams`),
+				// the way a cohort carries its post-purchase copy. Declared here
+				// rather than in the kit because only this app has the route.
+				bodies: [
+					...(workshopManifest.bodies ?? []),
+					{
+						label: 'For teams',
+						field: 'fields.forTeamsBody',
+						description:
+							'The team story on /for-teams. Leave empty to hide the page.',
+					},
+				],
 			},
 			bindings: createWorkshopBindings({
 				onSlugChange: (slug) => router.push(`/workshops/${slug}/edit`),

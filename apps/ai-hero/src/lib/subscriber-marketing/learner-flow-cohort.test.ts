@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
-import { queryLearnerFlowCohort } from './learner-flow-cohort'
+import {
+	queryLearnerFlowCohort,
+	queryLearnerFlowCohortMembership,
+} from './learner-flow-cohort'
 import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 
-const records = ['captured-and-live', 'live-after-activation'].map((contactId) => ({
-	contactId,
-	intents: [],
-	entryEvents: [],
-}))
+const records = ['captured-and-live', 'live-after-activation'].map(
+	(contactId) => ({
+		contactId,
+		intents: [],
+		entryEvents: [],
+	}),
+)
 
 function allowlist(
 	authorizationMode: GateDRuntimeAllowlist['authorizationMode'],
@@ -19,6 +24,40 @@ function allowlist(
 }
 
 describe('learner-flow cohort query', () => {
+	it.each(['rolling-public-enrollment', 'finish-approved-path'] as const)(
+		'deduplicates %s membership in first-seen order without hiding scan counts',
+		async (authorizationMode) => {
+			const liveIds = [
+				'z-last-alphabetically',
+				'a-first-alphabetically',
+				'z-last-alphabetically',
+				'outside-approval',
+				'a-first-alphabetically',
+			]
+			const approvedIds = [
+				'a-first-alphabetically',
+				'z-last-alphabetically',
+				'absent',
+			]
+			const result = await queryLearnerFlowCohortMembership({
+				repository: {
+					findSkillsWorkflowLearnerFlowMembership: async () => liveIds,
+				},
+				allowlist: { authorizationMode, contactIds: approvedIds },
+			})
+			expect(result.contactIds).toEqual(
+				authorizationMode === 'rolling-public-enrollment'
+					? [
+							'z-last-alphabetically',
+							'a-first-alphabetically',
+							'outside-approval',
+						]
+					: ['z-last-alphabetically', 'a-first-alphabetically'],
+			)
+			expect(result.liveRecordsScanned).toBe(5)
+		},
+	)
+
 	it('uses the live cohort for rolling enrollment instead of the activation snapshot', async () => {
 		const result = await queryLearnerFlowCohort({
 			repository: { findSkillsWorkflowLearnerFlowRecords: () => records },

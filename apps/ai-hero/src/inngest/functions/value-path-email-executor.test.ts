@@ -27,7 +27,7 @@ describe('valuePathEmailExecutor production config', () => {
 		},
 	)
 
-	it('passes the strict environment parser into the production cron config', async () => {
+	it('passes the strict environment parser and isolated shadow observer into the production cron', async () => {
 		const source = await readFile(
 			new URL('./value-path-email-executor.ts', import.meta.url),
 			'utf8',
@@ -35,5 +35,7 @@ describe('valuePathEmailExecutor production config', () => {
 		expect(source).toContain(
 			'parseValuePathProviderPacingMs(\n\t\t\t\tprocess.env.AIH_VALUE_PATH_PROVIDER_PACING_MS',
 		)
+		expect(source).toContain('shadowObserver: createEmailCourseShadowRuntime({')
+		expect(source).toContain('}).observeDelivery')
 	})
 })

@@ -5,6 +5,7 @@ import {
 	idempotencyKey,
 } from '@/course-sync/http'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
+import { requestCourseSyncAppliedNotice } from '@/course-sync/applied-notice-dispatch'
 import { CourseSyncError } from '@/course-sync/errors'
 
 function parseOperation(value: string) {
@@ -55,12 +56,20 @@ export async function POST(
 		}
 		if (parsed.operation === 'apply') {
 			authorizeCourseSyncRequest(request, 'operator')
-			return courseSyncJson(
-				await courseSyncControlPlane.apply({
-					runId: parsed.runId,
-					idempotencyKey: idempotencyKey(request),
-				}),
-			)
+			const applied = await courseSyncControlPlane.apply({
+				runId: parsed.runId,
+				idempotencyKey: idempotencyKey(request),
+			})
+			// The team hears about an applied sync no matter who applied it. The
+			// notice is a durable event rather than inline work so a slow
+			// narration or a Slack outage cannot fail the operator's apply.
+			if (applied.state === 'applied') {
+				await requestCourseSyncAppliedNotice({
+					controlPlaneRunId: applied.runId,
+					requestedBy: 'operator',
+				})
+			}
+			return courseSyncJson(applied)
 		}
 		if (parsed.operation === 'rollback') {
 			authorizeCourseSyncRequest(request, 'operator')

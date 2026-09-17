@@ -7,6 +7,7 @@ import { PlayerGestureShell } from '@/components/player/player-gesture-shell'
 import { useMuxChapters } from '@/components/video-chapters/use-mux-chapters'
 import { useMuxMetadata } from '@/hooks/use-mux-metadata'
 import { useMuxPlayer } from '@/hooks/use-mux-player'
+import { useVideoQualityPref } from '@/hooks/use-video-quality-pref'
 import {
 	handleTextTrackChange,
 	setPreferredPlaybackRate,
@@ -111,6 +112,7 @@ export function AuthedVideoPlayer({
 	useMuxChapters(playerRef, chapters)
 	const { dispatch: dispatchVideoPlayerOverlay } = useVideoPlayerOverlay()
 	const { playerPrefs, setPlayerPrefs, setMuxPlayerRef } = useMuxPlayer()
+	const bindVideoQuality = useVideoQualityPref(playerRef)
 	const { playbackRate, volume, autoplay: bingeMode } = playerPrefs
 	const minResolution = muxMinResolutionForPrefs(playerPrefs)
 	const router = useRouter()
@@ -267,6 +269,10 @@ export function AuthedVideoPlayer({
 				className="h-full w-full"
 				{...playerProps}
 				{...props}
+				onLoadedMetadata={(event) => {
+					bindVideoQuality()
+					props.onLoadedMetadata?.(event)
+				}}
 			/>
 		</PlayerGestureShell>
 	) : null

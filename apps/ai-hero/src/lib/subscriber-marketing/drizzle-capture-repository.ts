@@ -1,3 +1,5 @@
+import { courseSequenceContactEvent } from '@/db/course-sequence-exhaustion-schema'
+import { contactEmailWriteValues } from './contact-email-equivalence'
 import {
 	contact,
 	contactEvent,
@@ -8,15 +10,36 @@ import {
 	stateTransition,
 } from '@/db/schema'
 import { and, asc, eq, gt, inArray, sql, type SQL } from 'drizzle-orm'
+import { z } from 'zod'
 
 import { guid } from '@coursebuilder/utils/guid'
 
 import { createInternalId } from '../internal-id'
-import { withMysqlPrimaryKeyRetry } from '../mysql-primary-key-retry'
+import {
+	isMysqlDuplicateEntryError,
+	withMysqlPrimaryKeyRetry,
+} from '../mysql-primary-key-retry'
 import type {
 	CaptureMarketingRepository,
 	LinkedActionRecords,
 } from './capture-contact-event'
+import {
+	COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
+	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+	COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+	courseSequenceExhaustionFactKey,
+	readCoursePayload,
+	restoreCourseSequenceExhaustedPayload,
+	restoreEmailCourseEntryPayload,
+	withCoursePayload,
+	type CourseSequenceExhaustionCommitRequest,
+	type CourseSequenceExhaustionCommitResult,
+	type CourseSequenceExhaustionRecords,
+	type EmailCourseEntryEventRecord,
+} from './course-sequence-exhaustion'
+import { AI_HERO_SKILLS_WORKFLOW_COURSE_V1 } from './email-course/definition'
+import { restoreCourseEmailIntent } from './email-course/restoration'
+import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import { excludeLearnerFlowCanary } from './learner-flow-canary-exclusion'
 import {
 	canonicalCompletionForWrite,
@@ -37,7 +60,7 @@ import type {
 	StateTransition,
 } from './types'
 import {
-	scanCompletedValuePathIntentFrontier,
+	createCompletedValuePathIntentScan,
 	sortValuePathIntentsByCreatedAt,
 	type CompletedValuePathIntentScanArgs,
 } from './value-path-intent-scan'
@@ -131,19 +154,29 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		const record: ContactRecord = { id: this.newId('contact'), ...input }
 		await this.database.insert(contact).values({
 			...record,
+			...contactEmailWriteValues(record.email),
 			createdAt: new Date(record.createdAt),
 			updatedAt: new Date(record.updatedAt),
 		})
 		return record
 	}
 
-	async updateContactOptInAttribution(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>) {
+	async updateContactOptInAttribution(
+		contactId: string,
+		attribution: NonNullable<ContactRecord['optInAttribution']>,
+	) {
 		const current = await this.findContactById(contactId)
 		if (!current) throw new Error(`Missing contact ${contactId}`)
 		if (!current.optInAttribution) {
-			await this.database.update(contact).set({ optInAttribution: attribution, updatedAt: new Date() }).where(eq(contact.id, contactId))
+			await this.database
+				.update(contact)
+				.set({ optInAttribution: attribution, updatedAt: new Date() })
+				.where(eq(contact.id, contactId))
 		}
-		return { ...current, optInAttribution: current.optInAttribution ?? attribution }
+		return {
+			...current,
+			optInAttribution: current.optInAttribution ?? attribution,
+		}
 	}
 
 	async createProviderIdentity(input: Omit<ProviderIdentityRecord, 'id'>) {
@@ -207,6 +240,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				occurredAt: new Date(record.occurredAt),
 				createdAt: new Date(record.createdAt),
 			})
+			dispatchDrovrShadowFactSafely({ kind: 'contact-event', event: record })
 			return record
 		} catch (cause) {
 			// The semantic key is the durable replay boundary. A concurrent or
@@ -218,6 +252,58 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			)
 			if (existing) return existing
 			throw cause
+		}
+	}
+
+	async createEmailCourseEntryEvent(
+		input: Omit<EmailCourseEntryEventRecord, 'id' | 'createdAt'> & {
+			createdAt?: string
+		},
+	) {
+		const record: EmailCourseEntryEventRecord = {
+			id: this.newId('contact_event'),
+			createdAt: input.createdAt ?? new Date().toISOString(),
+			...input,
+		}
+		try {
+			const { payloadFormat, domainPayload, ...baseRecord } = record
+			await this.database.insert(courseSequenceContactEvent).values({
+				...baseRecord,
+				payloadSummary: withCoursePayload(
+					record.payloadSummary,
+					payloadFormat,
+					domainPayload,
+				),
+				occurredAt: new Date(record.occurredAt),
+				createdAt: new Date(record.createdAt),
+			})
+			return record
+		} catch (cause) {
+			if (!isMysqlDuplicateEntryError(cause)) throw cause
+			const rows = await this.database
+				.select()
+				.from(courseSequenceContactEvent)
+				.where(
+					eq(
+						courseSequenceContactEvent.semanticIdempotencyKey,
+						record.semanticIdempotencyKey,
+					),
+				)
+				.limit(1)
+			const existing = rows[0]
+			const stored = existing
+				? readCoursePayload(existing.payloadSummary)
+				: undefined
+			const restored = restoreEmailCourseEntryPayload(stored?.payload)
+			if (
+				!existing ||
+				!restored ||
+				stored?.format !== record.payloadFormat ||
+				JSON.stringify(restored) !== JSON.stringify(record.domainPayload)
+			) {
+				throw cause
+			}
+			return toEmailCourseEntryEventRecord(existing, restored)
 		}
 	}
 
@@ -297,6 +383,56 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		})
 	}
 
+	async commitCourseSequenceExhaustion(
+		request: CourseSequenceExhaustionCommitRequest,
+	): Promise<CourseSequenceExhaustionCommitResult> {
+		try {
+			return await this.database.transaction(
+				async (transaction: AiHeroWriteDatabase) => {
+					await validateSequenceExhaustionSource(transaction, request)
+					const existing = await readSequenceExhaustionPair(
+						transaction,
+						request,
+					)
+					if (existing) return existing
+
+					const { fact, nextAction: action, terminalIntent } = request.records
+					const {
+						domainFactKey: _domainFactKey,
+						payloadFormat,
+						domainPayload,
+						...baseFact
+					} = fact
+					await transaction.insert(courseSequenceContactEvent).values({
+						...baseFact,
+						payloadSummary: withCoursePayload(
+							fact.payloadSummary,
+							payloadFormat,
+							domainPayload,
+						),
+						occurredAt: new Date(fact.occurredAt),
+						createdAt: new Date(fact.createdAt),
+					})
+					await transaction.insert(nextAction).values({
+						...action,
+						createdAt: new Date(action.createdAt),
+					})
+					await transaction.insert(sideEffectIntent).values({
+						...terminalIntent,
+						completedAt: null,
+						createdAt: new Date(terminalIntent.createdAt),
+					})
+					return { status: 'committed' as const, records: request.records }
+				},
+			)
+		} catch (cause) {
+			if (!isMysqlDuplicateEntryError(cause)) throw cause
+			const replay = await readSequenceExhaustionPair(this.database, request)
+			if (replay) return replay
+			throw cause
+		}
+	}
+
 	async findSideEffectIntentByIdempotencyKey(idempotencyKey: string) {
 		const rows = await this.database
 			.select()
@@ -353,21 +489,44 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
+	async findPendingSideEffectIntentsByType(
+		type: SideEffectIntent['type'],
+		limit: number,
+	) {
+		// Drizzle drops the LIMIT clause for NaN, which would hand the sender
+		// every pending row; an unusable limit reads as zero rows, not all.
+		const safeLimit =
+			Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 0
+		if (safeLimit === 0) return []
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.type, type),
+					eq(sideEffectIntent.status, 'pending'),
+				),
+			)
+			.orderBy(sideEffectIntent.createdAt)
+			.limit(safeLimit)
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async findCompletedValuePathEmailSideEffectIntentScan(
 		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
 	) {
-		const records = await this.findValuePathEmailSideEffectIntentsForScan()
-		// Reduce to each contact/path frontier after applying the authorization
-		// and asset scope, then apply the limit. Scope-after-limit starved rolling
-		// enrollments on 2026-07-17 when the original activation cohort crowded
-		// out the live public cohort.
-		return scanCompletedValuePathIntentFrontier({ ...args, intents: records })
+		const scan = createCompletedValuePathIntentScan(args)
+		for await (const rows of this.selectValuePathIntentRowPages()) {
+			scan.addPage(rows.map(toSideEffectIntentRecord))
+		}
+		return scan.finish()
 	}
 
 	async findCompletedValuePathEmailSideEffectIntents(
 		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
 	) {
-		return (await this.findCompletedValuePathEmailSideEffectIntentScan(args)).intents
+		return (await this.findCompletedValuePathEmailSideEffectIntentScan(args))
+			.intents
 	}
 
 	async findValuePathEmailSideEffectIntentsForScan() {
@@ -383,7 +542,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	// full read of this set must go through here — a single unbounded select
 	// crossed vtgate's 64MiB gRPC response cap on 2026-08-12.
 	private async selectValuePathIntentRowsPaged(extraCondition?: SQL) {
-		const collected: any[] = []
+		const collected: Array<typeof sideEffectIntent.$inferSelect> = []
+		for await (const rows of this.selectValuePathIntentRowPages(extraCondition))
+			collected.push(...rows)
+		return collected
+	}
+
+	private async *selectValuePathIntentRowPages(extraCondition?: SQL) {
 		let cursor: string | undefined
 		for (;;) {
 			const rows = await this.database
@@ -399,10 +564,8 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				)
 				.orderBy(asc(sideEffectIntent.id))
 				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
-			collected.push(...rows)
-			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) {
-				return collected
-			}
+			yield rows
+			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) return
 			cursor = rows[rows.length - 1].id
 		}
 	}
@@ -436,8 +599,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	async *findSkillsWorkflowLearnerFlowRecordPages(options?: {
 		includeCanary?: boolean
 	}): AsyncGenerator<LearnerFlowSummaryRecord[]> {
-		const contactIds = await this.findSkillsWorkflowLearnerFlowContactIds(options)
-		for (let offset = 0; offset < contactIds.length; offset += LEARNER_FLOW_RECORD_PAGE_SIZE) {
+		const contactIds =
+			await this.findSkillsWorkflowLearnerFlowContactIds(options)
+		for (
+			let offset = 0;
+			offset < contactIds.length;
+			offset += LEARNER_FLOW_RECORD_PAGE_SIZE
+		) {
 			yield await this.findSkillsWorkflowLearnerFlowRecordsByContactIds(
 				contactIds.slice(offset, offset + LEARNER_FLOW_RECORD_PAGE_SIZE),
 			)
@@ -459,7 +627,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 						eq(sideEffectIntent.type, 'send-value-path-email'),
 						options?.includeCanary
 							? undefined
-							: excludeLearnerFlowCanary({ contactId: sideEffectIntent.contactId }),
+							: excludeLearnerFlowCanary({
+									contactId: sideEffectIntent.contactId,
+								}),
 					),
 				)
 			const entryContactIds = this.database
@@ -477,17 +647,169 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 							: excludeLearnerFlowCanary({ contactId: contactEvent.contactId }),
 					),
 				)
-			const learnerIds = intentContactIds.union(entryContactIds).as('learner_ids')
+			const learnerIds = intentContactIds
+				.union(entryContactIds)
+				.as('learner_ids')
 			const idRows = await this.database
 				.select({ contactId: learnerIds.contactId })
 				.from(learnerIds)
-				.where(cursor === undefined ? undefined : gt(learnerIds.contactId, cursor))
+				.where(
+					cursor === undefined ? undefined : gt(learnerIds.contactId, cursor),
+				)
 				.orderBy(asc(learnerIds.contactId))
 				.limit(LEARNER_FLOW_RECORD_PAGE_SIZE)
 			const page = idRows.map((row: { contactId: string }) => row.contactId)
 			contactIds.push(...page)
 			if (page.length < LEARNER_FLOW_RECORD_PAGE_SIZE) return contactIds
 			cursor = page[page.length - 1]
+		}
+	}
+
+	/** Membership only: preserve course-path filtering without retaining detail. */
+	async findSkillsWorkflowLearnerFlowMembership(options?: {
+		includeCanary?: boolean
+	}) {
+		const ids: string[] = []
+		for await (const page of this.findSkillsWorkflowLearnerFlowRecordPages(
+			options,
+		)) {
+			ids.push(...page.map((record) => record.contactId))
+		}
+		return ids
+	}
+
+	/** Status projections omit event payloads and intent gates/action fields. */
+	async *findGateDStatusPages(contactIds: string[]) {
+		for (
+			let offset = 0;
+			offset < contactIds.length;
+			offset += LEARNER_FLOW_RECORD_PAGE_SIZE
+		) {
+			const ids = contactIds.slice(
+				offset,
+				offset + LEARNER_FLOW_RECORD_PAGE_SIZE,
+			)
+			let cursor: string | undefined
+			for (;;) {
+				const intents: Array<
+					import('./value-path-gate-d-summary').GateDStatusIntent
+				> = await this.database
+					.select({
+						id: sideEffectIntent.id,
+						contactId: sideEffectIntent.contactId,
+						status: sideEffectIntent.status,
+						createdAt: sideEffectIntent.createdAt,
+						completedAt: sideEffectIntent.completedAt,
+						metadata: gateDStatusMetadataProjection(),
+						reviewReasons: sideEffectIntent.reviewReasons,
+					})
+					.from(sideEffectIntent)
+					.where(
+						and(
+							inArray(sideEffectIntent.contactId, ids),
+							eq(sideEffectIntent.provider, 'kit'),
+							eq(sideEffectIntent.type, 'send-value-path-email'),
+							cursor === undefined
+								? undefined
+								: gt(sideEffectIntent.id, cursor),
+						),
+					)
+					.orderBy(asc(sideEffectIntent.id))
+					.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+				yield { intents, events: [] }
+				if (intents.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) break
+				cursor = intents[intents.length - 1]!.id
+			}
+			cursor = undefined
+			for (;;) {
+				const rows: Array<
+					import('./value-path-gate-d-summary').GateDStatusEvent & {
+						id: string
+					}
+				> = await this.database
+					.select({
+						id: contactEvent.id,
+						contactId: contactEvent.contactId,
+						eventType: contactEvent.eventType,
+						occurredAt: contactEvent.occurredAt,
+					})
+					.from(contactEvent)
+					.where(
+						and(
+							inArray(contactEvent.contactId, ids),
+							cursor === undefined ? undefined : gt(contactEvent.id, cursor),
+						),
+					)
+					.orderBy(asc(contactEvent.id))
+					.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+				yield { intents: [], events: rows }
+				if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) break
+				cursor = rows[rows.length - 1]!.id
+			}
+		}
+	}
+
+	/** Repair evidence stays complete within each contact page, never projected. */
+	async *findSkillsWorkflowLearnerFlowRepairRecordPages(options?: {
+		includeCanary?: boolean
+	}): AsyncGenerator<LearnerFlowRecord[]> {
+		const ids = await this.findSkillsWorkflowLearnerFlowContactIds(options)
+		for (
+			let offset = 0;
+			offset < ids.length;
+			offset += LEARNER_FLOW_RECORD_PAGE_SIZE
+		) {
+			const contactIds = ids.slice(
+				offset,
+				offset + LEARNER_FLOW_RECORD_PAGE_SIZE,
+			)
+			const [intentRows, entryEventRows, contacts, states] = await Promise.all([
+				this.selectValuePathIntentRowsPaged(
+					inArray(sideEffectIntent.contactId, contactIds),
+				),
+				this.selectLearnerFlowRepairEntryRowsPaged(contactIds),
+				this.database
+					.select()
+					.from(contact)
+					.where(inArray(contact.id, contactIds)),
+				this.database
+					.select()
+					.from(contactState)
+					.where(inArray(contactState.contactId, contactIds)),
+			])
+			yield assembleLearnerFlowRecords({
+				contactIds,
+				intentRows,
+				entryEventRows,
+				contacts,
+				states,
+			})
+		}
+	}
+
+	private async selectLearnerFlowRepairEntryRowsPaged(contactIds: string[]) {
+		const collected: Array<typeof contactEvent.$inferSelect> = []
+		let cursor: string | undefined
+		for (;;) {
+			const rows: Array<typeof contactEvent.$inferSelect> = await this.database
+				.select()
+				.from(contactEvent)
+				.where(
+					and(
+						inArray(contactEvent.contactId, contactIds),
+						eq(contactEvent.eventType, 'value-path.entered'),
+						inArray(
+							contactEvent.providerReference,
+							COURSE_VALUE_PATH_SLUGS.map((path) => `value-path:${path}`),
+						),
+						cursor === undefined ? undefined : gt(contactEvent.id, cursor),
+					),
+				)
+				.orderBy(asc(contactEvent.id))
+				.limit(SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE)
+			collected.push(...rows)
+			if (rows.length < SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE) return collected
+			cursor = rows[rows.length - 1]!.id
 		}
 	}
 
@@ -590,23 +912,62 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					status: sideEffectIntent.status,
 					completedAt: sideEffectIntent.completedAt,
 					reviewReasons: sideEffectIntent.reviewReasons,
-					valuePathSlug: jsonString(sideEffectIntent.metadata, '$.valuePathSlug'),
-					emailResourceId: jsonString(sideEffectIntent.metadata, '$.emailResourceId'),
-					metadataCompletedAt: jsonString(sideEffectIntent.metadata, '$.completedAt'),
-					learnerFlowCanary: jsonBoolean(sideEffectIntent.metadata, '$.learnerFlowCanary'),
-					learnerFlowCanaryCadenceHours: jsonNumber(sideEffectIntent.metadata, '$.learnerFlowCanaryCadenceHours'),
-					learnerFlowFixture: jsonBoolean(sideEffectIntent.metadata, '$.learnerFlowFixture'),
-					learnerFlowFixtureStatus: jsonString(sideEffectIntent.metadata, '$.learnerFlowFixtureStatus'),
+					valuePathSlug: jsonString(
+						sideEffectIntent.metadata,
+						'$.valuePathSlug',
+					),
+					emailResourceId: jsonString(
+						sideEffectIntent.metadata,
+						'$.emailResourceId',
+					),
+					metadataCompletedAt: jsonString(
+						sideEffectIntent.metadata,
+						'$.completedAt',
+					),
+					learnerFlowCanary: jsonBoolean(
+						sideEffectIntent.metadata,
+						'$.learnerFlowCanary',
+					),
+					learnerFlowCanaryCadenceHours: jsonNumber(
+						sideEffectIntent.metadata,
+						'$.learnerFlowCanaryCadenceHours',
+					),
+					learnerFlowFixture: jsonBoolean(
+						sideEffectIntent.metadata,
+						'$.learnerFlowFixture',
+					),
+					learnerFlowFixtureStatus: jsonString(
+						sideEffectIntent.metadata,
+						'$.learnerFlowFixtureStatus',
+					),
 					retryable: jsonBoolean(sideEffectIntent.metadata, '$.retryable'),
-					retryAttemptCount: jsonNumber(sideEffectIntent.metadata, '$.retryAttemptCount'),
-					maxRetryAttempts: jsonNumber(sideEffectIntent.metadata, '$.maxRetryAttempts'),
+					retryAttemptCount: jsonNumber(
+						sideEffectIntent.metadata,
+						'$.retryAttemptCount',
+					),
+					maxRetryAttempts: jsonNumber(
+						sideEffectIntent.metadata,
+						'$.maxRetryAttempts',
+					),
 					retryReason: jsonString(sideEffectIntent.metadata, '$.retryReason'),
 					bounced: jsonBoolean(sideEffectIntent.metadata, '$.bounced'),
 					complained: jsonBoolean(sideEffectIntent.metadata, '$.complained'),
-					unsubscribed: jsonBoolean(sideEffectIntent.metadata, '$.unsubscribed'),
-					providerResultBounced: jsonBoolean(sideEffectIntent.metadata, '$.providerResult.bounced'),
-					providerResultComplained: jsonBoolean(sideEffectIntent.metadata, '$.providerResult.complained'),
-					providerResultUnsubscribed: jsonBoolean(sideEffectIntent.metadata, '$.providerResult.unsubscribed'),
+					unsubscribed: jsonBoolean(
+						sideEffectIntent.metadata,
+						'$.unsubscribed',
+					),
+					providerResultBounced: jsonBoolean(
+						sideEffectIntent.metadata,
+						'$.providerResult.bounced',
+					),
+					providerResultComplained: jsonBoolean(
+						sideEffectIntent.metadata,
+						'$.providerResult.complained',
+					),
+					providerResultUnsubscribed: jsonBoolean(
+						sideEffectIntent.metadata,
+						'$.providerResult.unsubscribed',
+					),
 					createdAt: sideEffectIntent.createdAt,
 				})
 				.from(sideEffectIntent)
@@ -663,7 +1024,8 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		> & Pick<SideEffectIntent, 'completedAt'>,
+		> &
+			Pick<SideEffectIntent, 'completedAt'>,
 	) {
 		const completedAt = canonicalCompletionForWrite(patch)
 		await this.database
@@ -698,9 +1060,14 @@ function assembleLearnerFlowSummaryRecords(args: {
 	entryEventRows: any[]
 	states: any[]
 }): LearnerFlowSummaryRecord[] {
-	const intents = args.intentRows.map(toLearnerFlowSummaryIntent).filter(isCourseValuePathIntent)
+	const intents = args.intentRows
+		.map(toLearnerFlowSummaryIntent)
+		.filter(isCourseValuePathIntent)
 	const entryEvents = args.entryEventRows.map(toLearnerFlowSummaryEntryEvent)
-	const statesByContactId = new Map<string, Pick<ContactState, 'lifecycle' | 'humanReview'>>(
+	const statesByContactId = new Map<
+		string,
+		Pick<ContactState, 'lifecycle' | 'humanReview'>
+	>(
 		args.states.map((record) => [
 			record.contactId,
 			{ lifecycle: record.lifecycle, humanReview: Boolean(record.humanReview) },
@@ -712,7 +1079,10 @@ function assembleLearnerFlowSummaryRecords(args: {
 		current.push(intent)
 		intentsByContactId.set(intent.contactId, current)
 	}
-	const entryEventsByContactId = new Map<string, LearnerFlowSummaryEntryEvent[]>()
+	const entryEventsByContactId = new Map<
+		string,
+		LearnerFlowSummaryEntryEvent[]
+	>()
 	for (const event of entryEvents) {
 		const current = entryEventsByContactId.get(event.contactId) ?? []
 		current.push(event)
@@ -724,11 +1094,52 @@ function assembleLearnerFlowSummaryRecords(args: {
 			contactState: statesByContactId.get(contactId),
 			intents: [...(intentsByContactId.get(contactId) ?? [])].sort(
 				(left, right) =>
-					left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+					left.createdAt.localeCompare(right.createdAt) ||
+					left.id.localeCompare(right.id),
 			),
 			entryEvents: entryEventsByContactId.get(contactId) ?? [],
 		}))
-		.filter((record) => record.intents.length > 0 || record.entryEvents.length > 0)
+		.filter(
+			(record) => record.intents.length > 0 || record.entryEvents.length > 0,
+		)
+}
+
+const gateDStatusMetadataKeys = [
+	'emailResourceId',
+	'kitSequenceId',
+	'completedAt',
+	'retryable',
+	'nextRetryAt',
+] as const
+const gateDStatusMetadataSchema = z.object({
+	values: z.record(z.string(), z.unknown()),
+	present: z.record(z.string(), z.union([z.literal(0), z.literal(1), z.null()])),
+})
+
+/** Preserve missing vs JSON null, scalar types and arbitrarily long values. */
+export function decodeGateDStatusMetadata(
+	value: unknown,
+): Record<string, unknown> {
+	const parsed = gateDStatusMetadataSchema.parse(
+		typeof value === 'string' ? JSON.parse(value) : value,
+	)
+	return Object.fromEntries(
+		Object.entries(parsed.values).filter(([key]) => parsed.present[key] === 1),
+	)
+}
+
+function gateDStatusMetadataProjection() {
+	const values = gateDStatusMetadataKeys.map(
+		(key) =>
+			sql`${key}, json_extract(${sideEffectIntent.metadata}, ${`$.${key}`})`,
+	)
+	const present = gateDStatusMetadataKeys.map(
+		(key) =>
+			sql`${key}, json_contains_path(${sideEffectIntent.metadata}, 'one', ${`$.${key}`})`,
+	)
+	return sql`json_object('values', json_object(${sql.join(values, sql`, `)}), 'present', json_object(${sql.join(present, sql`, `)}))`.mapWith(
+		decodeGateDStatusMetadata,
+	)
 }
 
 function assembleLearnerFlowRecords(args: {
@@ -738,13 +1149,18 @@ function assembleLearnerFlowRecords(args: {
 	contacts: any[]
 	states: any[]
 }): LearnerFlowRecord[] {
-	const intents = args.intentRows.map(toSideEffectIntentRecord).filter(isCourseValuePathIntent)
+	const intents = args.intentRows
+		.map(toSideEffectIntentRecord)
+		.filter(isCourseValuePathIntent)
 	const entryEvents = args.entryEventRows.map(toContactEventRecord)
 	const contactsById = new Map<string, ContactRecord>(
 		args.contacts.map((record) => [record.id, toContactRecord(record)]),
 	)
 	const statesByContactId = new Map<string, ContactState>(
-		args.states.map((record) => [record.contactId, toContactStateRecord(record)]),
+		args.states.map((record) => [
+			record.contactId,
+			toContactStateRecord(record),
+		]),
 	)
 	const intentsByContactId = new Map<string, SideEffectIntent[]>()
 	for (const intent of intents) {
@@ -763,10 +1179,14 @@ function assembleLearnerFlowRecords(args: {
 			contactId,
 			contact: contactsById.get(contactId),
 			contactState: statesByContactId.get(contactId),
-			intents: sortValuePathIntentsByCreatedAt(intentsByContactId.get(contactId) ?? []),
+			intents: sortValuePathIntentsByCreatedAt(
+				intentsByContactId.get(contactId) ?? [],
+			),
 			entryEvents: entryEventsByContactId.get(contactId) ?? [],
 		}))
-		.filter((record) => record.intents.length > 0 || record.entryEvents.length > 0)
+		.filter(
+			(record) => record.intents.length > 0 || record.entryEvents.length > 0,
+		)
 }
 
 function toLearnerFlowSummaryIntent(row: any): LearnerFlowSummaryIntent {
@@ -788,7 +1208,9 @@ function toLearnerFlowSummaryIntent(row: any): LearnerFlowSummaryIntent {
 			emailResourceId: toJsonString(row.emailResourceId),
 			completedAt: toJsonString(row.metadataCompletedAt),
 			learnerFlowCanary: toJsonBoolean(row.learnerFlowCanary),
-			learnerFlowCanaryCadenceHours: toJsonNumber(row.learnerFlowCanaryCadenceHours),
+			learnerFlowCanaryCadenceHours: toJsonNumber(
+				row.learnerFlowCanaryCadenceHours,
+			),
 			learnerFlowFixture: toJsonBoolean(row.learnerFlowFixture),
 			learnerFlowFixtureStatus: toJsonString(row.learnerFlowFixtureStatus),
 			retryable: toJsonBoolean(row.retryable),
@@ -805,7 +1227,9 @@ function toLearnerFlowSummaryIntent(row: any): LearnerFlowSummaryIntent {
 	}
 }
 
-function toLearnerFlowSummaryEntryEvent(row: any): LearnerFlowSummaryEntryEvent {
+function toLearnerFlowSummaryEntryEvent(
+	row: any,
+): LearnerFlowSummaryEntryEvent {
 	return {
 		id: row.id,
 		contactId: row.contactId,
@@ -829,6 +1253,263 @@ function toContactRecord(row: any): ContactRecord {
 	}
 }
 
+async function validateSequenceExhaustionSource(
+	database: AiHeroWriteDatabase,
+	request: CourseSequenceExhaustionCommitRequest,
+) {
+	const sourceRows = await database
+		.select()
+		.from(sideEffectIntent)
+		.where(eq(sideEffectIntent.id, request.sourceIntentId))
+		.limit(1)
+	const entryRows = await database
+		.select()
+		.from(courseSequenceContactEvent)
+		.where(eq(courseSequenceContactEvent.id, request.courseEntryEventId))
+		.limit(1)
+	const source = sourceRows[0]
+	const entry = entryRows[0]
+	const payload = restoreCourseSequenceExhaustedPayload(
+		request.records.fact.domainPayload,
+	)
+	const entryStoredPayload = readCoursePayload(entry?.payloadSummary)
+	const entryPayload = restoreEmailCourseEntryPayload(
+		entryStoredPayload?.payload,
+	)
+	if (!source || !entry || !payload) {
+		throw new Error('Sequence exhaustion source evidence is missing or invalid')
+	}
+	const sourceRecord = toSideEffectIntentRecord(source)
+	if (
+		sourceRecord.id !== request.sourceIntentId ||
+		sourceRecord.id !== payload.progression.from.intentId ||
+		sourceRecord.status !== 'completed' ||
+		!sourceRecord.completedAt ||
+		sourceRecord.contactId !== payload.actor.contactId ||
+		sourceRecord.contactId !== request.records.fact.contactId ||
+		stringValue(sourceRecord.metadata.valuePathSlug) !==
+			payload.actor.valuePathId ||
+		stringValue(sourceRecord.metadata.emailResourceId) !==
+			payload.progression.from.emailResourceId ||
+		sourceRecord.idempotencyKey !== payload.progression.from.idempotencyKey ||
+		sourceRecord.completedAt !== payload.progression.from.completedAt ||
+		entry.id !== request.courseEntryEventId ||
+		entry.id !== payload.actor.courseEntryEventId ||
+		entry.contactId !== payload.actor.contactId ||
+		entry.eventType !== 'value-path.entered' ||
+		entryStoredPayload?.format !== EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT ||
+		(entryPayload
+			? entryPayload.valuePathId !== payload.actor.valuePathId ||
+				JSON.stringify(entryPayload.deadlineTimeZone) !==
+					JSON.stringify(payload.deadlineTimeZone)
+			: payload.deadlineTimeZone.type !== 'ExplicitFallback' ||
+				payload.deadlineTimeZone.reason !== 'legacy-entry') ||
+		request.records.fact.provider !== 'ai-hero' ||
+		request.records.fact.contactId !== payload.actor.contactId ||
+		request.records.fact.providerReference !==
+			`value-path:${payload.actor.valuePathId}` ||
+		request.records.fact.occurredAt !== payload.exhaustedAt ||
+		request.records.fact.eventType !== COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE ||
+		request.records.fact.domainFactKey !==
+			courseSequenceExhaustionFactKey({
+				contactId: payload.actor.contactId,
+				valuePathId: payload.actor.valuePathId,
+			}) ||
+		request.records.fact.semanticIdempotencyKey !==
+			request.records.fact.domainFactKey ||
+		request.records.fact.payloadFormat !==
+			COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+		request.records.nextAction.id !==
+			payload.progression.terminal.nextActionId ||
+		request.records.nextAction.eventId !== request.records.fact.id ||
+		request.records.nextAction.contactId !== payload.actor.contactId ||
+		request.records.nextAction.type !== 'advance-value-path' ||
+		request.records.nextAction.status !== 'planned' ||
+		request.records.terminalIntent.nextActionId !==
+			request.records.nextAction.id ||
+		request.records.terminalIntent.contactId !== payload.actor.contactId ||
+		request.records.terminalIntent.provider !== 'kit' ||
+		request.records.terminalIntent.type !== 'send-value-path-email' ||
+		request.records.terminalIntent.status !== 'pending' ||
+		request.records.terminalIntent.id !==
+			payload.progression.terminal.intentId ||
+		request.records.terminalIntent.idempotencyKey !==
+			payload.progression.terminal.idempotencyKey ||
+		stringValue(request.records.terminalIntent.metadata.valuePathSlug) !==
+			payload.actor.valuePathId ||
+		stringValue(request.records.terminalIntent.metadata.emailResourceId) !==
+			payload.progression.terminal.emailResourceId ||
+		stringValue(
+			request.records.terminalIntent.metadata.sequenceExhaustionFactId,
+		) !== request.records.fact.id
+	) {
+		throw new Error(
+			'Sequence exhaustion source evidence does not own the commit',
+		)
+	}
+}
+
+async function readSequenceExhaustionPair(
+	database: AiHeroWriteDatabase,
+	request: CourseSequenceExhaustionCommitRequest,
+): Promise<CourseSequenceExhaustionCommitResult | undefined> {
+	const factRows = await database
+		.select()
+		.from(courseSequenceContactEvent)
+		.where(
+			eq(
+				courseSequenceContactEvent.semanticIdempotencyKey,
+				request.records.fact.domainFactKey,
+			),
+		)
+		.limit(1)
+	const intentRows = await database
+		.select()
+		.from(sideEffectIntent)
+		.where(
+			eq(
+				sideEffectIntent.idempotencyKey,
+				request.records.terminalIntent.idempotencyKey,
+			),
+		)
+		.limit(1)
+	const factRow = factRows[0]
+	const intentRow = intentRows[0]
+	if (!factRow && !intentRow) return undefined
+	if (!factRow && intentRow) {
+		return {
+			status: 'legacy-terminal-intent-without-fact',
+			terminalIntentId: intentRow.id,
+		}
+	}
+	if (factRow && !intentRow) {
+		throw new Error('Sequence exhaustion fact exists without terminal intent')
+	}
+	const storedPayload = readCoursePayload(factRow.payloadSummary)
+	const payload = restoreCourseSequenceExhaustedPayload(storedPayload?.payload)
+	const intent = toSideEffectIntentRecord(intentRow)
+	const emailCourseIntent =
+		intent.metadata.format === 'email-course.intent.v1'
+			? restoreCourseEmailIntent(
+					intent.metadata.intent,
+					AI_HERO_SKILLS_WORKFLOW_COURSE_V1,
+				)
+			: null
+	if (emailCourseIntent) {
+		if (
+			!payload ||
+			storedPayload?.format !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+			!emailCourseIntent.ok ||
+			factRow.eventType !== COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE ||
+			factRow.provider !== 'ai-hero' ||
+			factRow.contactId !== payload.actor.contactId ||
+			factRow.providerReference !==
+				`email-course:${emailCourseIntent.value.runId}` ||
+			canonicalSecondIso(factRow.occurredAt) !==
+				canonicalSecondIso(payload.exhaustedAt) ||
+			factRow.semanticIdempotencyKey !==
+				courseSequenceExhaustionFactKey({
+					contactId: payload.actor.contactId,
+					valuePathId: payload.actor.valuePathId,
+				}) ||
+			payload.progression.terminal.intentId !== intent.id ||
+			payload.progression.terminal.idempotencyKey !== intent.idempotencyKey ||
+			payload.progression.terminal.nextActionId !== intent.nextActionId ||
+			intent.contactId !== payload.actor.contactId ||
+			emailCourseIntent.value.id !== intent.id ||
+			emailCourseIntent.value.contactId !== payload.actor.contactId ||
+			emailCourseIntent.value.pathId !== payload.actor.valuePathId ||
+			emailCourseIntent.value.contentResourceId !==
+				payload.progression.terminal.emailResourceId
+		) {
+			throw new Error(
+				'Stored Email Course sequence exhaustion pair is corrupt or mismatched',
+			)
+		}
+		return {
+			status: 'email-course-authority-present',
+			factId: factRow.id,
+			terminalIntentId: intent.id,
+		}
+	}
+	if (
+		!payload ||
+		storedPayload?.format !== COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT ||
+		factRow.eventType !== COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE ||
+		factRow.provider !== 'ai-hero' ||
+		factRow.contactId !== request.records.fact.contactId ||
+		factRow.contactId !== payload.actor.contactId ||
+		factRow.providerReference !== `value-path:${payload.actor.valuePathId}` ||
+		toIso(factRow.occurredAt) !== payload.exhaustedAt ||
+		factRow.semanticIdempotencyKey !==
+			courseSequenceExhaustionFactKey({
+				contactId: payload.actor.contactId,
+				valuePathId: payload.actor.valuePathId,
+			}) ||
+		payload.progression.terminal.intentId !== intent.id ||
+		payload.progression.terminal.idempotencyKey !== intent.idempotencyKey ||
+		payload.progression.terminal.nextActionId !== intent.nextActionId ||
+		intent.contactId !== payload.actor.contactId ||
+		stringValue(intent.metadata.sequenceExhaustionFactId) !== factRow.id ||
+		stringValue(intent.metadata.valuePathSlug) !== payload.actor.valuePathId ||
+		stringValue(intent.metadata.emailResourceId) !==
+			payload.progression.terminal.emailResourceId
+	) {
+		throw new Error('Stored sequence exhaustion pair is corrupt or mismatched')
+	}
+	const actionRows = await database
+		.select()
+		.from(nextAction)
+		.where(eq(nextAction.id, intent.nextActionId))
+		.limit(1)
+	const action = actionRows[0]
+	if (
+		!action ||
+		action.id !== payload.progression.terminal.nextActionId ||
+		action.eventId !== factRow.id ||
+		action.contactId !== payload.actor.contactId ||
+		action.type !== 'advance-value-path' ||
+		action.status !== 'planned' ||
+		intent.provider !== 'kit' ||
+		intent.type !== 'send-value-path-email' ||
+		!isSequenceExhaustionIntentStatus(intent.status)
+	) {
+		throw new Error(
+			'Stored sequence exhaustion action is missing or mismatched',
+		)
+	}
+	return {
+		status: 'replayed',
+		records: {
+			fact: {
+				...toContactEventRecord(factRow),
+				provider: 'ai-hero',
+				eventType: COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
+				domainFactKey: factRow.semanticIdempotencyKey,
+				payloadFormat: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+				domainPayload: payload,
+			},
+			nextAction: {
+				id: action.id,
+				contactId: action.contactId,
+				contactStateId: action.contactStateId,
+				eventId: action.eventId,
+				type: action.type,
+				status: action.status,
+				gates: action.gates,
+				reviewReasons: action.reviewReasons,
+				rationale: action.rationale,
+				createdAt: toIso(action.createdAt),
+			},
+			terminalIntent: {
+				...intent,
+				provider: 'kit',
+				type: 'send-value-path-email',
+			},
+		},
+	}
+}
+
 function toProviderIdentityRecord(row: any): ProviderIdentityRecord {
 	return {
 		id: row.id,
@@ -838,6 +1519,18 @@ function toProviderIdentityRecord(row: any): ProviderIdentityRecord {
 		evidence: row.evidence,
 		createdAt: toIso(row.createdAt),
 		updatedAt: toIso(row.updatedAt),
+	}
+}
+
+function toEmailCourseEntryEventRecord(
+	row: any,
+	domainPayload: EmailCourseEntryEventRecord['domainPayload'],
+): EmailCourseEntryEventRecord {
+	return {
+		...toContactEventRecord(row),
+		eventType: 'value-path.entered',
+		payloadFormat: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+		domainPayload,
 	}
 }
 
@@ -909,7 +1602,10 @@ function toContactStateRecord(row: any): ContactState {
 
 const LEARNER_FLOW_METADATA_STRING_MAX_BYTES = 500
 
-function jsonString(column: SQL | typeof sideEffectIntent.metadata, path: string) {
+function jsonString(
+	column: SQL | typeof sideEffectIntent.metadata,
+	path: string,
+) {
 	return sql<string | null>`CASE
 		WHEN JSON_TYPE(JSON_EXTRACT(${column}, ${path})) = 'STRING'
 			AND OCTET_LENGTH(JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path}))) <= ${LEARNER_FLOW_METADATA_STRING_MAX_BYTES}
@@ -918,7 +1614,10 @@ function jsonString(column: SQL | typeof sideEffectIntent.metadata, path: string
 	END`
 }
 
-function jsonNumber(column: SQL | typeof sideEffectIntent.metadata, path: string) {
+function jsonNumber(
+	column: SQL | typeof sideEffectIntent.metadata,
+	path: string,
+) {
 	return sql<number | null>`CASE
 		WHEN JSON_TYPE(JSON_EXTRACT(${column}, ${path})) IN ('INTEGER', 'DOUBLE', 'DECIMAL')
 		THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path})) AS DOUBLE)
@@ -926,7 +1625,10 @@ function jsonNumber(column: SQL | typeof sideEffectIntent.metadata, path: string
 	END`
 }
 
-function jsonBoolean(column: SQL | typeof sideEffectIntent.metadata, path: string) {
+function jsonBoolean(
+	column: SQL | typeof sideEffectIntent.metadata,
+	path: string,
+) {
 	return sql<number | null>`CASE
 		WHEN JSON_TYPE(JSON_EXTRACT(${column}, ${path})) = 'BOOLEAN'
 		THEN JSON_UNQUOTE(JSON_EXTRACT(${column}, ${path})) = 'true'
@@ -940,14 +1642,25 @@ function compactDefined(values: Record<string, unknown>) {
 	)
 }
 
+function isSequenceExhaustionIntentStatus(status: SideEffectIntent['status']) {
+	return (
+		status === 'pending' ||
+		status === 'completed' ||
+		status === 'failed' ||
+		status === 'blocked'
+	)
+}
+
+function stringValue(value: unknown) {
+	return typeof value === 'string' ? value : undefined
+}
+
 function toJsonString(value: unknown) {
 	return typeof value === 'string' && value !== 'null' ? value : undefined
 }
 
 function toJsonNumber(value: unknown) {
-	return typeof value === 'number' && Number.isFinite(value)
-		? value
-		: undefined
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function toJsonBoolean(value: unknown) {
@@ -960,4 +1673,10 @@ function toIso(value: string | Date) {
 	return value instanceof Date
 		? value.toISOString()
 		: new Date(value).toISOString()
+}
+
+function canonicalSecondIso(value: string | Date) {
+	const date = new Date(value)
+	date.setUTCMilliseconds(0)
+	return date.toISOString()
 }

@@ -28,14 +28,15 @@ export type PlayerPrefs = {
 	 * current Crash Course assets means 720p is the lowest available stream.
 	 */
 	allowLowResolution: boolean
-	videoQuality: {
-		bitrate: any
-		height: any
-		id: string
-		width: any
-	}
+	/**
+	 * Rendition height the viewer picked in the quality menu (e.g. 1080), or
+	 * 'auto' to let the ABR ladder decide. Reapplied on every player mount.
+	 */
+	videoQuality: VideoQualityPreference
 	subtitle: Subtitle
 }
+
+export type VideoQualityPreference = number | 'auto'
 
 /** Floor the player keeps unless the viewer opts into 480p. */
 export const MUX_DEFAULT_MIN_RESOLUTION = '540p' as const
@@ -51,12 +52,7 @@ export const defaultPlayerPreferences: PlayerPrefs = {
 	playbackRate: 1,
 	autoplay: false,
 	allowLowResolution: false,
-	videoQuality: {
-		bitrate: null,
-		height: null,
-		id: 'auto',
-		width: null,
-	},
+	videoQuality: 'auto',
 	subtitle: defaultSubtitlePreference,
 }
 
@@ -88,10 +84,8 @@ export const getPlayerPrefs = (): PlayerPrefs => {
 		...defaultPlayerPreferences,
 		...stored,
 		allowLowResolution: stored.allowLowResolution === true,
-		videoQuality: {
-			...defaultPlayerPreferences.videoQuality,
-			...stored.videoQuality,
-		},
+		videoQuality:
+			typeof stored.videoQuality === 'number' ? stored.videoQuality : 'auto',
 		subtitle: {
 			...defaultPlayerPreferences.subtitle,
 			...stored.subtitle,

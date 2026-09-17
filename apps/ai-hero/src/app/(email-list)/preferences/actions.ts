@@ -35,6 +35,7 @@ export async function updateEmailPreferenceAction(formData: FormData) {
 
 	const state = await updateProviderEmailPreference({
 		subscriberId,
+		subscriberEmail: subscriber.email_address ?? undefined,
 		preference,
 		subscribed,
 		source: 'preferences-page',

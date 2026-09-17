@@ -1,12 +1,13 @@
 import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { SpotIllustration } from '@/components/brand/spot-illustration'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { BADGE_SOLID, TYPE } from '@/components/landing/type'
 import {
 	COURSES_CATALOG,
-	COURSES_COMING_NEXT,
 	COURSES_DETAILS_EYEBROW,
+	COURSES_FEATURED_WORKSHOP,
 	COURSES_NEXT_COHORT_CARD,
 	COURSES_PAST_COHORTS,
 	COURSES_TESTIMONIALS,
@@ -21,7 +22,7 @@ import type { NextOffer } from '@/lib/next-offer'
 import type { UpcomingCohortSummary } from '@/lib/upcoming-cohort-query'
 import type { MinimalWorkshop } from '@/lib/workshops'
 import { getResourcePath } from '@/utils/resource-paths'
-import { ArrowRight, Star, Users } from 'lucide-react'
+import { ArrowRight, Star } from 'lucide-react'
 
 import { cn } from '@coursebuilder/utils/cn'
 
@@ -142,7 +143,7 @@ export function CoursesPage({
 	flagship,
 	isPurchasable,
 	alumniLabel,
-	comingNextWorkshop,
+	latestWorkshop,
 	pastCohorts,
 	sale,
 	running,
@@ -152,8 +153,8 @@ export function CoursesPage({
 	isPurchasable: boolean
 	/** e.g. "8,500+" — null hides the stat. */
 	alumniLabel: string | null
-	/** The crash-course workshop; null (missing) drops its card / hero. */
-	comingNextWorkshop: MinimalWorkshop | null
+	/** The newest buyable self-paced workshop; null drops its card / hero. */
+	latestWorkshop: MinimalWorkshop | null
 	/** Closed cohorts, newest first — the shelf alumni navigate back through. */
 	pastCohorts: UpcomingCohortSummary[]
 	/** A live discount on the flagship. Never carries a price. */
@@ -166,22 +167,24 @@ export function CoursesPage({
 	 */
 	featuredWorkshopOffer: NextOffer | null
 }) {
-	const workshopLeads = Boolean(featuredWorkshopOffer && comingNextWorkshop)
+	const workshopLeads = Boolean(featuredWorkshopOffer && latestWorkshop)
 
-	// The crash course leads the catalog when it exists AND is not already the
-	// hero — the page never lists one thing twice. The demoted cohort does NOT
-	// join this grid: its note promises "self-paced, start any day", and a
+	// The latest workshop leads the catalog when it exists AND is not already
+	// the hero — the page never lists one thing twice. The demoted cohort does
+	// NOT join this grid: its note promises "self-paced, start any day", and a
 	// closed cohort is neither. It leads the cohorts shelf below instead.
 	const catalog = [
-		...(!workshopLeads && comingNextWorkshop
+		...(!workshopLeads && latestWorkshop
 			? [
 					{
-						title: COURSES_COMING_NEXT.title,
-						href: `/workshops/${COURSES_COMING_NEXT.slug}`,
-						description: COURSES_COMING_NEXT.description,
-						badge: COURSES_COMING_NEXT.badge,
+						title: latestWorkshop.fields.title,
+						href: `/workshops/${latestWorkshop.fields.slug}`,
+						description:
+							latestWorkshop.fields.description ||
+							COURSES_FEATURED_WORKSHOP.description,
+						badge: COURSES_FEATURED_WORKSHOP.badge,
 						badgeTone: 'accent' as const,
-						image: comingNextWorkshop.fields.coverImage?.url,
+						image: latestWorkshop.fields.coverImage?.url,
 					},
 				]
 			: []),
@@ -223,10 +226,10 @@ export function CoursesPage({
 			    so the two surfaces cannot drift. While the self-paced workshop
 			    outranks it (a live sale, or its arrival between cohorts), the
 			    workshop takes the slot and the cohort takes a catalog card. */}
-			{workshopLeads && featuredWorkshopOffer && comingNextWorkshop ? (
+			{workshopLeads && featuredWorkshopOffer && latestWorkshop ? (
 				<WorkshopHero
 					offer={featuredWorkshopOffer}
-					workshop={comingNextWorkshop}
+					workshop={latestWorkshop}
 					headingId="flagship-heading"
 				/>
 			) : (
@@ -290,12 +293,15 @@ export function CoursesPage({
 					    page has. Outline button: the hero already spent the
 					    viewport's one gold fill. */}
 					<div className="border-border bg-muted flex flex-col gap-5 rounded-lg border p-6 sm:flex-row sm:items-center sm:gap-8">
-						{/* Neutral, not gold — the hero already spent the viewport's one
-						    gold fill (see above). A `bg-background` tile on the muted
-						    surface reads as a quiet inset rather than a second accent. */}
-						<span className="border-border bg-background flex size-11 shrink-0 items-center justify-center rounded-lg border text-[color:var(--ah-fg-muted)]">
-							<Users className="size-5" aria-hidden />
-						</span>
+						{/* Max's team tile in place of the old `Users` glyph. It is the
+						    card's one colourful moment and the row's only image, so it
+						    can afford the size; the negative margin eats the export's
+						    halo so the visible tile, not the halo, sets the gap. */}
+						<SpotIllustration
+							name="team"
+							sizes="112px"
+							className="-m-2 w-[96px] shrink-0 sm:w-[112px]"
+						/>
 						<div className="flex min-w-0 flex-col gap-1.5">
 							<h2 className={TYPE.cardTitle}>{FLAGSHIP_TEAM.heading}</h2>
 							<p

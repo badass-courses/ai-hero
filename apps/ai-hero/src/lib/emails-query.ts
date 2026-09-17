@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidateTag } from 'next/cache'
-import { courseBuilderAdapter, db } from '@/db'
+import { courseBuilderAdapter, db, type DbExecutor } from '@/db'
 import { contentResource } from '@/db/schema'
 import { Email, EmailSchema, NewEmail } from '@/lib/emails'
 import { getServerAuthSession } from '@/server/auth'
@@ -51,7 +51,13 @@ export async function getEmails(): Promise<Email[]> {
 	return emailsParsed.data
 }
 
-export async function createEmail(input: NewEmail) {
+export async function createEmail(
+	input: NewEmail,
+	options?: {
+		tx?: DbExecutor
+		revalidate?: boolean
+	},
+) {
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
 	if (!user || !ability.can('create', 'Content')) {
@@ -59,8 +65,9 @@ export async function createEmail(input: NewEmail) {
 	}
 
 	const newEmailId = v4()
+	const dbContext = options?.tx || db
 
-	await db.insert(contentResource).values({
+	await dbContext.insert(contentResource).values({
 		id: newEmailId,
 		type: 'email',
 		fields: {
@@ -72,9 +79,15 @@ export async function createEmail(input: NewEmail) {
 		createdById: user.id,
 	})
 
-	const email = await getEmail(newEmailId)
+	const emailRow = await dbContext.query.contentResource.findFirst({
+		where: eq(contentResource.id, newEmailId),
+	})
+	const emailParsed = EmailSchema.safeParse(emailRow)
+	const email = emailParsed.success ? emailParsed.data : null
 
-	revalidateTag('emails', 'max')
+	if (options?.revalidate !== false) {
+		revalidateTag('emails', 'max')
+	}
 
 	return email
 }

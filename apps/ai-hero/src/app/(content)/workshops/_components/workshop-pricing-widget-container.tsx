@@ -30,6 +30,10 @@ export const WorkshopPricingWidgetContainer: React.FC<
 		prependFeatures?: ProductPricingFeature[]
 		pricingWidgetOptions?: any
 		pathname?: string
+		/** The workshop's team page, when it has one. */
+		teamOptionsHref?: string
+		/** Render as the team checkout (seats on, no side-links). */
+		teamMode?: boolean
 	}
 > = ({
 	className,
@@ -38,6 +42,8 @@ export const WorkshopPricingWidgetContainer: React.FC<
 	prependFeatures,
 	pricingWidgetOptions,
 	pathname,
+	teamOptionsHref,
+	teamMode,
 	...props
 }) => {
 	const {
@@ -318,6 +324,8 @@ export const WorkshopPricingWidgetContainer: React.FC<
 						hasPurchasedCurrentProduct={hasPurchasedCurrentProduct}
 						prependFeatures={prependFeatures}
 						teamLetterHref={teamLetterHref}
+						teamOptionsHref={teamOptionsHref}
+						teamMode={teamMode}
 						pricingWidgetOptions={{
 							withImage: false,
 							withGuaranteeBadge: true,

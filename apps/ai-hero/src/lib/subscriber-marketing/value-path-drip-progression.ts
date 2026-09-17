@@ -4,14 +4,29 @@ import {
 	createLinkedActionRecords,
 	type CaptureMarketingRepository,
 } from './capture-contact-event'
+import {
+	COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
+	COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+	courseSequenceExhaustionFactKey,
+	deadlineTimeZoneEvidenceFromHeader,
+	parseCourseSequenceExhaustionEnabled,
+	restoreDeadlineTimeZoneEvidence,
+	type CourseSequenceExhaustionRecords,
+} from './course-sequence-exhaustion'
+import { parseIsoInstant } from './evergreen-offer-journey/primitives'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
+	isContentCompleteSkillsWorkflowEmailResourceId,
+	isTerminalSkillsWorkflowEmailResourceId,
 	SKILLS_WORKFLOW_EMAIL_STEPS,
 	type SkillsWorkflowEmailStep,
 } from './skills-workflow-path'
 import {
 	CONTACT_EVENT_SCHEMA_VERSION,
+	type ContactRecord,
+	type ContactState,
 	type Gate,
+	type ProviderIdentityRecord,
 	type SideEffectIntent,
 } from './types'
 import {
@@ -53,6 +68,7 @@ export type ValuePathDripProgressionRepository = Pick<
 	| 'findSideEffectIntentByIdempotencyKey'
 	| 'createSideEffectIntent'
 	| 'createNextActionWithSideEffectIntents'
+	| 'commitCourseSequenceExhaustion'
 > & {
 	findContactEventsByType?: (
 		contactId: string,
@@ -112,15 +128,28 @@ export async function progressValuePathDrips(args: {
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
 	email7LiveEnabled?: boolean
+	sequenceExhaustionEnabled?: boolean
 	now?: string
 	logger?: Pick<typeof log, 'info' | 'warn'>
 }): Promise<ValuePathDripProgressionResult> {
 	const now = args.now ?? new Date().toISOString()
+	const sequenceExhaustionEnabled =
+		args.sequenceExhaustionEnabled ??
+		parseCourseSequenceExhaustionEnabled(
+			process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
+		)
 	const results: ValuePathDripProgressionContactResult[] = []
 	const logger = args.logger ?? log
 	for (const intent of args.completedIntents) {
 		try {
-			results.push(await progressCompletedIntent({ ...args, intent, now }))
+			results.push(
+				await progressCompletedIntent({
+					...args,
+					intent,
+					now,
+					sequenceExhaustionEnabled,
+				}),
+			)
 		} catch (cause) {
 			const fromEmailResourceId = stringField(intent.metadata.emailResourceId)
 			await logger.warn('value-path.drip.progression_deferred', {
@@ -158,6 +187,7 @@ async function progressCompletedIntent(args: {
 	allowWrite: boolean
 	acceptedReviewReasons?: string[]
 	email7LiveEnabled?: boolean
+	sequenceExhaustionEnabled?: boolean
 	now: string
 	intent: SideEffectIntent
 	logger?: Pick<typeof log, 'info' | 'warn'>
@@ -243,16 +273,13 @@ async function progressCompletedIntent(args: {
 			}
 		}
 		clickAdvisories.push('answer-click-undelivered-drip-fallback')
-		await logger.warn(
-			'value-path.ask.answer_click_undelivered_drip_fallback',
-			{
-				contactId: args.intent.contactId,
-				completedIntentId: args.intent.id,
-				fromEmailResourceId,
-				answerClickEventId: answerClick.event.id,
-				advisory: 'answer-click-undelivered-drip-fallback',
-			},
-		)
+		await logger.warn('value-path.ask.answer_click_undelivered_drip_fallback', {
+			contactId: args.intent.contactId,
+			completedIntentId: args.intent.id,
+			fromEmailResourceId,
+			answerClickEventId: answerClick.event.id,
+			advisory: 'answer-click-undelivered-drip-fallback',
+		})
 	} else if (answerClick.verdict !== 'none') {
 		// Scanner/bot-like click volume: do not treat the clicks as answers.
 		clickAdvisories.push(`answer-click-unverified:${answerClick.verdict}`)
@@ -262,9 +289,15 @@ async function progressCompletedIntent(args: {
 	const nextKitSequenceId = step.nextKitSequenceId
 	const nextValuePathSlug = step.nextValuePathSlug
 	const idempotencyKey = `contact:${args.intent.contactId}:value-path:${nextValuePathSlug}:email:${nextEmailResourceId}`
+	const terminalSequenceTransition = Boolean(
+		args.sequenceExhaustionEnabled &&
+			fromEmailResourceId &&
+			isContentCompleteSkillsWorkflowEmailResourceId(fromEmailResourceId) &&
+			isTerminalSkillsWorkflowEmailResourceId(nextEmailResourceId),
+	)
 	const existingIntent =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
-	if (existingIntent) {
+	if (existingIntent && !terminalSequenceTransition) {
 		return {
 			contactId: args.intent.contactId,
 			fromEmailResourceId,
@@ -396,6 +429,26 @@ async function progressCompletedIntent(args: {
 			updatedAt: args.now,
 		})
 	}
+	if (terminalSequenceTransition && fromEmailResourceId) {
+		return commitTerminalSequenceExhaustion({
+			...args,
+			contact,
+			state,
+			identity,
+			fromEmailResourceId,
+			nextEmailResourceId,
+			nextKitSequenceId,
+			nextValuePathSlug,
+			idempotencyKey,
+			kitSubscriberId,
+			activationId: args.allowlist.activationId,
+			mode: args.allowlist.mode,
+			gates,
+			advisoryReasons,
+			dueReason: due.reason,
+		})
+	}
+
 	const eventKey = `contact:${contact.id}:value-path:${nextValuePathSlug}:drip:${fromEmailResourceId}`
 	const event = await args.repository.createContactEvent({
 		contactId: contact.id,
@@ -463,6 +516,22 @@ async function progressCompletedIntent(args: {
 							kitSubscriberId: kitSubscriberId ?? null,
 							previousEmailResourceId: fromEmailResourceId,
 							progression: 'daily-drip',
+							...(stringField(metadata.courseEntryEventId)
+								? {
+										courseEntryEventId: stringField(
+											metadata.courseEntryEventId,
+										),
+									}
+								: {}),
+							...(restoreDeadlineTimeZoneEvidence(
+								metadata.courseDeadlineTimeZone,
+							)
+								? {
+										courseDeadlineTimeZone: restoreDeadlineTimeZoneEvidence(
+											metadata.courseDeadlineTimeZone,
+										),
+									}
+								: {}),
 							kitSequenceId: nextKitSequenceId,
 							providerResult: null,
 						},
@@ -485,6 +554,279 @@ async function progressCompletedIntent(args: {
 		nextActionId: nextAction.id,
 		sideEffectIntentId: intent.id,
 	}
+}
+
+async function commitTerminalSequenceExhaustion(args: {
+	repository: ValuePathDripProgressionRepository
+	intent: SideEffectIntent
+	now: string
+	contact: ContactRecord
+	state: ContactState
+	identity: ProviderIdentityRecord
+	fromEmailResourceId: string
+	nextEmailResourceId: string
+	nextKitSequenceId: string
+	nextValuePathSlug: SkillsWorkflowEmailStep['valuePathSlug']
+	idempotencyKey: string
+	kitSubscriberId?: string
+	activationId: string
+	mode: string
+	gates: Gate[]
+	advisoryReasons: string[]
+	dueReason: string
+}): Promise<ValuePathDripProgressionContactResult> {
+	if (!args.repository.commitCourseSequenceExhaustion) {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'blocked',
+			reviewReasons: ['sequence-exhaustion-atomic-commit-unavailable'],
+			advisoryReasons: args.advisoryReasons,
+		}
+	}
+	if (
+		args.dueReason !== 'local-day-9am-due' &&
+		args.dueReason !== 'fallback-24h-due' &&
+		args.dueReason !== 'fixture-cadence-due'
+	) {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'blocked',
+			reviewReasons: ['sequence-exhaustion-trigger-invalid'],
+			advisoryReasons: args.advisoryReasons,
+		}
+	}
+	const metadata = args.intent.metadata
+	const courseEntryEventId =
+		stringField(metadata.courseEntryEventId) ??
+		(await findCourseEntryEventId({
+			repository: args.repository,
+			contactId: args.contact.id,
+			valuePathId: args.nextValuePathSlug,
+		}))
+	if (!courseEntryEventId) {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'blocked',
+			reviewReasons: ['course-entry-evidence-missing'],
+			advisoryReasons: args.advisoryReasons,
+		}
+	}
+	const fallback = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: undefined,
+		capturedAt: args.now,
+		existingLearner: true,
+	})
+	const deadlineTimeZone =
+		restoreDeadlineTimeZoneEvidence(metadata.courseDeadlineTimeZone) ??
+		(fallback.ok ? fallback.value : undefined)
+	const completedAt = valuePathIntentCompletedAt(args.intent)
+	const parsedCompletedAt = completedAt
+		? parseIsoInstant(completedAt)
+		: undefined
+	const parsedExhaustedAt = parseIsoInstant(args.now)
+	const storedExhaustedAt = parsedExhaustedAt.ok
+		? parseIsoInstant(
+				new Date(
+					Math.floor(Date.parse(parsedExhaustedAt.value) / 1000) * 1000,
+				).toISOString(),
+			)
+		: undefined
+	if (
+		!deadlineTimeZone ||
+		!parsedCompletedAt?.ok ||
+		!parsedExhaustedAt.ok ||
+		!storedExhaustedAt?.ok
+	) {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'blocked',
+			reviewReasons: ['sequence-exhaustion-evidence-invalid'],
+			advisoryReasons: args.advisoryReasons,
+		}
+	}
+
+	const factId = args.repository.newId('contact_event')
+	const nextActionId = args.repository.newId('next_action')
+	const terminalIntentId = args.repository.newId('side_effect_intent')
+	const factKey = courseSequenceExhaustionFactKey({
+		contactId: args.contact.id,
+		valuePathId: args.nextValuePathSlug,
+	})
+	const domainPayload = {
+		format: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+		actor: {
+			actorId: `email-course:${args.contact.id}:${args.nextValuePathSlug}`,
+			contactId: args.contact.id,
+			valuePathId: args.nextValuePathSlug,
+			courseEntryEventId,
+		},
+		exhaustedAt: storedExhaustedAt.value,
+		deadlineTimeZone,
+		progression: {
+			from: {
+				intentId: args.intent.id,
+				idempotencyKey: args.intent.idempotencyKey,
+				emailResourceId: args.fromEmailResourceId,
+				completedAt: parsedCompletedAt.value,
+			},
+			trigger: {
+				type: 'DailyDripDue' as const,
+				evaluatedAt: parsedExhaustedAt.value,
+				reason: args.dueReason,
+			},
+			terminal: {
+				intentId: terminalIntentId,
+				idempotencyKey: args.idempotencyKey,
+				nextActionId,
+				emailResourceId: args.nextEmailResourceId,
+			},
+		},
+		sourceReferences: {
+			courseEntryEventId,
+			priorIntentId: args.intent.id,
+		},
+	} satisfies CourseSequenceExhaustionRecords['fact']['domainPayload']
+	const records: CourseSequenceExhaustionRecords = {
+		fact: {
+			id: factId,
+			contactId: args.contact.id,
+			providerIdentityId: args.identity.id,
+			provider: 'ai-hero',
+			providerEventId: factKey,
+			providerReference: `value-path:${args.nextValuePathSlug}`,
+			eventType: COURSE_SEQUENCE_EXHAUSTED_EVENT_TYPE,
+			occurredAt: storedExhaustedAt.value,
+			semanticIdempotencyKey: factKey,
+			domainFactKey: factKey,
+			payloadFormat: COURSE_SEQUENCE_EXHAUSTED_PAYLOAD_FORMAT,
+			domainPayload,
+			privacyLevel: 'internal',
+			identityEvidence: args.identity.evidence,
+			payloadSummary: {
+				summary: `Email course sequence exhausted at ${args.nextEmailResourceId}`,
+				keywords: [
+					'email-course',
+					'sequence-exhausted',
+					args.nextValuePathSlug,
+					args.nextEmailResourceId,
+				],
+				restrictedPayloadStored: false,
+			},
+			schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
+			createdAt: args.now,
+		},
+		nextAction: {
+			id: nextActionId,
+			contactId: args.contact.id,
+			contactStateId: args.state.id,
+			eventId: factId,
+			type: 'advance-value-path',
+			status: 'planned',
+			gates: args.gates,
+			reviewReasons: [],
+			rationale: [
+				`Terminal intent ${args.nextEmailResourceId} exhausted machine progression.`,
+			],
+			createdAt: args.now,
+		},
+		terminalIntent: {
+			id: terminalIntentId,
+			nextActionId,
+			contactId: args.contact.id,
+			provider: 'kit',
+			type: 'send-value-path-email',
+			status: 'pending',
+			completedAt: null,
+			idempotencyKey: args.idempotencyKey,
+			gates: args.gates,
+			reviewReasons: [],
+			metadata: {
+				gate: 'send-gate-d-value-path-email',
+				activationId: args.activationId,
+				mode: args.mode,
+				valuePathSlug: args.nextValuePathSlug,
+				emailResourceId: args.nextEmailResourceId,
+				kitSubscriberId: args.kitSubscriberId ?? null,
+				previousEmailResourceId: args.fromEmailResourceId,
+				progression: 'daily-drip',
+				kitSequenceId: args.nextKitSequenceId,
+				courseEntryEventId,
+				courseDeadlineTimeZone: deadlineTimeZone,
+				sequenceExhaustionFactId: factId,
+				providerResult: null,
+			},
+			createdAt: args.now,
+		},
+	}
+	const committed = await args.repository.commitCourseSequenceExhaustion({
+		sourceIntentId: args.intent.id,
+		courseEntryEventId,
+		records,
+	})
+	if (committed.status === 'email-course-authority-present') {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'idempotent-noop',
+			reviewReasons: ['email-course-authority-present'],
+			advisoryReasons: args.advisoryReasons,
+			contactEventId: committed.factId,
+			sideEffectIntentId: committed.terminalIntentId,
+		}
+	}
+	if (committed.status === 'legacy-terminal-intent-without-fact') {
+		return {
+			contactId: args.contact.id,
+			fromEmailResourceId: args.fromEmailResourceId,
+			nextEmailResourceId: args.nextEmailResourceId,
+			nextKitSequenceId: args.nextKitSequenceId,
+			status: 'idempotent-noop',
+			reviewReasons: ['legacy-terminal-intent-without-fact'],
+			advisoryReasons: args.advisoryReasons,
+			sideEffectIntentId: committed.terminalIntentId,
+		}
+	}
+	return {
+		contactId: args.contact.id,
+		fromEmailResourceId: args.fromEmailResourceId,
+		nextEmailResourceId: args.nextEmailResourceId,
+		nextKitSequenceId: args.nextKitSequenceId,
+		status: committed.status === 'committed' ? 'planned' : 'idempotent-noop',
+		reviewReasons: [],
+		advisoryReasons: args.advisoryReasons,
+		contactEventId: committed.records.fact.id,
+		nextActionId: committed.records.nextAction.id,
+		sideEffectIntentId: committed.records.terminalIntent.id,
+	}
+}
+
+async function findCourseEntryEventId(args: {
+	repository: ValuePathDripProgressionRepository
+	contactId: string
+	valuePathId: string
+}) {
+	if (!args.repository.findContactEventsByType) return undefined
+	const entries = await args.repository.findContactEventsByType(
+		args.contactId,
+		'value-path.entered',
+	)
+	return entries.find(
+		(entry) => entry.providerReference === `value-path:${args.valuePathId}`,
+	)?.id
 }
 
 async function findAnswerClickForCompletedEmail(args: {
@@ -532,7 +874,8 @@ async function findDeliverableIntentSinceClick(args: {
 }
 
 function isDeliverableIntentStatus(intent: SideEffectIntent) {
-	if (intent.status === 'pending' || isValuePathIntentCompleted(intent)) return true
+	if (intent.status === 'pending' || isValuePathIntentCompleted(intent))
+		return true
 	return intent.status === 'failed' && intent.metadata.retryable === true
 }
 

@@ -1,6 +1,7 @@
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { parseCourseSequenceExhaustionEnabled } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
 import { parseEmail7LiveEnabled } from '@/lib/subscriber-marketing/email-7-launch-gate'
 import { reconcileLearnerFlow } from '@/lib/subscriber-marketing/learner-flow-reconciler'
 import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
@@ -69,6 +70,9 @@ export const learnerFlowReconciler = inngest.createFunction(
 				allowlist,
 				email7LiveEnabled: parseEmail7LiveEnabled(
 					process.env.AIH_VALUE_PATH_EMAIL_7_LIVE_ENABLED,
+				),
+				sequenceExhaustionEnabled: parseCourseSequenceExhaustionEnabled(
+					process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
 				),
 				now,
 			}),

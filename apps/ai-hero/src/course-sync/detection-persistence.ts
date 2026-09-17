@@ -23,6 +23,10 @@ import type {
 } from './detection-poller'
 import { CourseSyncError } from './errors'
 import { courseSyncApplyPolicyOverride } from './poll-policy'
+import {
+	summarizeCourseSyncPlanChanges,
+	type CourseSyncPlanChange,
+} from './persistence-invariants'
 import { canAutomaticallySaveCourseSyncPollState } from './poll-state-guard'
 import {
 	releasedCourseSyncPollState,
@@ -170,7 +174,13 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 	})
 }
 
+// A notice is claimed per lifecycle state, not per caller. Both the poller and
+// an operator apply reach the same applied state, so both deliver through the
+// same claim and the reader sees exactly one message.
+export type CourseSyncNotificationKind = 'review' | 'applied'
+
 export type CourseSyncReviewNotificationReceiptInput = {
+	kind?: CourseSyncNotificationKind
 	bindingId: string
 	courseVersionId: string
 	providerRevision: string
@@ -181,28 +191,31 @@ export type CourseSyncReviewNotificationReceiptInput = {
 }
 
 function courseSyncReviewNotificationReceipt(input: {
+	kind?: CourseSyncNotificationKind
 	bindingId: string
 	courseVersionId: string
 	planSha256: string
 }) {
+	const kind = input.kind ?? 'review'
 	const notificationKey = sha256(
 		stableJson({
-			kind: 'review',
+			kind,
 			bindingId: input.bindingId,
 			courseVersionId: input.courseVersionId,
 			planSha256: input.planSha256,
 		}),
 	)
 	return {
+		kind,
 		notificationKey,
-		receiptId: `cspl_review_notice_${notificationKey}`,
+		receiptId: `cspl_${kind}_notice_${notificationKey}`,
 	}
 }
 
 export async function claimCourseSyncReviewNotification(
 	input: CourseSyncReviewNotificationReceiptInput,
 ): Promise<boolean> {
-	const { notificationKey, receiptId } =
+	const { kind, notificationKey, receiptId } =
 		courseSyncReviewNotificationReceipt(input)
 	return db.transaction(async (trx) => {
 		await trx
@@ -256,7 +269,7 @@ export async function claimCourseSyncReviewNotification(
 			outcome: 'started',
 			failureClass: null,
 			metadata: {
-				kind: 'review',
+				kind,
 				notificationKey,
 				planSha256: input.planSha256,
 				deliveryAttempts: 1,
@@ -577,4 +590,20 @@ export async function appendCourseSyncPollLog(input: CourseSyncPollLogInput) {
 	} else {
 		await log.info(event, attributes)
 	}
+}
+
+/**
+ * The full stored plan carries resource titles and every source kind; the
+ * public run summary deliberately does not. Read it here so the written
+ * notice can name what changed without widening the API contract.
+ */
+export async function getCourseSyncPlanChanges(
+	runId: string,
+): Promise<CourseSyncPlanChange[]> {
+	const [row] = await db
+		.select({ plan: courseSyncRun.plan })
+		.from(courseSyncRun)
+		.where(eq(courseSyncRun.runId, runId))
+		.limit(1)
+	return row?.plan ? summarizeCourseSyncPlanChanges(row.plan) : []
 }

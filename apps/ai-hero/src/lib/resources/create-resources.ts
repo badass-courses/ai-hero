@@ -1,6 +1,6 @@
 'use server'
 
-import { db } from '@/db'
+import { db, type DbExecutor } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -21,7 +21,28 @@ const NewResourceSchema = z.object({
 
 type NewResource = z.infer<typeof NewResourceSchema>
 
-export async function createResource(input: NewResource) {
+export async function executeResourceCreationSideEffects(resource: any) {
+	try {
+		await upsertPostToTypeSense(resource, 'save')
+		await log.info('resource.typesense.indexed', {
+			resourceId: resource.id,
+			action: 'save',
+		})
+	} catch (error) {
+		void log.error('resource.typesense.index.failed', {
+			resourceId: resource.id,
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
+}
+
+export async function createResource(
+	input: NewResource,
+	options?: {
+		tx?: DbExecutor
+		deferSideEffects?: boolean
+	},
+) {
 	const { session, ability } = await getServerAuthSession()
 	const user = session?.user
 	if (!user || !ability.can('create', 'Content')) {
@@ -46,9 +67,10 @@ export async function createResource(input: NewResource) {
 		createdById: user.id,
 	}
 
-	await db.insert(contentResource).values(newResource)
+	const dbContext = options?.tx || db
+	await dbContext.insert(contentResource).values(newResource)
 
-	const resource = await db.query.contentResource.findFirst({
+	const resource = await dbContext.query.contentResource.findFirst({
 		where: eq(contentResource.id, newResourceId),
 		with: {
 			resources: {
@@ -79,6 +101,9 @@ export async function createResource(input: NewResource) {
 		throw new Error('Error parsing resource')
 	}
 
-	await upsertPostToTypeSense(parsedResource.data, 'save')
+	if (!options?.deferSideEffects) {
+		await executeResourceCreationSideEffects(parsedResource.data)
+	}
+
 	return parsedResource.data
 }

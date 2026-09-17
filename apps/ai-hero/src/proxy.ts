@@ -36,6 +36,24 @@ type ReqUser = {
 	entitlements: []
 }
 
+// Static Route Handlers (`dynamic = 'force-static'`) only export GET, so Next
+// synthesizes a 204 OPTIONS response that its static response handling then
+// rebuilds with an empty body, which Undici rejects (vercel/next.js#49005).
+// Answering OPTIONS here keeps GET statically cached.
+const STATIC_ROUTE_HANDLER_PATH =
+	/^\/(?:rss\.xml|skills\/rss\.xml|sitemap\.md|llms\.txt|md(?:\/.*)?|.+\.md)$/
+
+export function isStaticRouteHandlerPath(pathname: string) {
+	return STATIC_ROUTE_HANDLER_PATH.test(pathname)
+}
+
+export function staticRouteHandlerOptionsResponse() {
+	return new NextResponse(null, {
+		status: 200,
+		headers: { Allow: 'GET, HEAD, OPTIONS' },
+	})
+}
+
 const COOKIE_OPTIONS = {
 	httpOnly: true,
 	secure: process.env.NODE_ENV === 'production',
@@ -47,6 +65,13 @@ const COOKIE_OPTIONS = {
 export default auth(async function middleware(req) {
 	const user = req.auth?.user as ReqUser | undefined
 	const pathname = req.nextUrl.pathname
+
+	if (isStaticRouteHandlerPath(pathname)) {
+		return req.method === 'OPTIONS'
+			? staticRouteHandlerOptionsResponse()
+			: NextResponse.next()
+	}
+
 	const campaignLandingMatch = pathname.match(/^\/c\/([^/]+)\/([^/]+)\/?$/)
 
 	if (campaignLandingMatch) {
@@ -175,5 +200,11 @@ export const config = {
 		'/thanks/:path*',
 		'/transfer/:path*',
 		'/welcome/:path*',
+		'/rss.xml',
+		'/skills/rss.xml',
+		'/sitemap.md',
+		'/llms.txt',
+		'/md/:path*',
+		'/:path*.md',
 	],
 }

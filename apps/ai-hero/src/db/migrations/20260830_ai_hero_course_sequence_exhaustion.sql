@@ -1,0 +1,5 @@
+-- Superseded before deployment by
+-- 20260831_ai_hero_email_course_evergreen_schema.sql.
+--
+-- The replacement reuses Contact Event semantic identity and JSON payload
+-- fields. It adds only the bounded event-type and occurrence-time index.

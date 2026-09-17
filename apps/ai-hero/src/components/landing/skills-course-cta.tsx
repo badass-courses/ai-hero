@@ -5,9 +5,14 @@ import { api } from '@/trpc/react'
 
 import * as SkillsNewsletter from '@/app/(content)/skills/_components/skills-newsletter'
 import type { SkillsNewsletterStatus } from '@/app/(content)/skills/_components/skills-newsletter'
+import { SKILLS_COURSE_WAYFINDING } from '@/lib/skills-content'
+
+import { cn } from '@coursebuilder/utils/cn'
+
+import { TYPE } from './type'
 
 /**
- * The homepage's newsletter form, pointed at the free 7-day email course
+ * The homepage's newsletter form, pointed at the free seven-lesson email course
  * instead of the general list.
  *
  * The landing page used to ask for an email and promise "short, practical
@@ -87,6 +92,15 @@ export function SkillsCourseCta({
 						/>
 					}
 				/>
+				<div
+					className={cn(
+						TYPE.metaProse,
+						'mt-4 max-w-[70ch] space-y-2 text-[color:var(--ah-fg-muted)]',
+					)}
+				>
+					<p>{SKILLS_COURSE_WAYFINDING.signup}</p>
+					<p>{SKILLS_COURSE_WAYFINDING.progression}</p>
+				</div>
 				<SkillsNewsletter.Privacy
 					// Mono, small, unornamented — the prototype's privacy line is a
 					// note under the form, not a badge with an icon.
@@ -96,7 +110,7 @@ export function SkillsCourseCta({
 					// signing up here subscribes you to the list as well as the
 					// course. Reassurance that the product does not honour is worse
 					// than no reassurance.
-					formMessage="Seven daily lessons, then my regular updates. Unsubscribe any time."
+					formMessage="Seven lessons, then you're on the AI Hero list for new skills and Matt's coding letters. Leave any time."
 				/>
 			</div>
 		</SkillsNewsletter.Root>

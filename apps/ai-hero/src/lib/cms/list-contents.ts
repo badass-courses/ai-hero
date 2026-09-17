@@ -1,8 +1,16 @@
 'use server'
 
+import { revalidateTag } from 'next/cache'
+import { db } from '@/db'
 import { addPostToList, getListWithSections } from '@/lib/lists-query'
-import { createPost } from '@/lib/posts-query'
-import { createResource } from '@/lib/resources/create-resources'
+import {
+	createPost,
+	executePostCreationSideEffects,
+} from '@/lib/posts-query'
+import {
+	createResource,
+	executeResourceCreationSideEffects,
+} from '@/lib/resources/create-resources'
 import { ResourceTypeSchema } from '@/lib/resource-types'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -88,6 +96,12 @@ export async function listListContents(
  * this exported server action rejects instead of persisting a bad resource.
  * Both attach at tier 'standard'; placeholder titles are guid-slugged so
  * untitled rows never collide.
+ *
+ * Creation and attachment are wrapped in a single database transaction:
+ * either both the child resource and the join relation are persisted, or
+ * neither is created (preventing orphaned draft resources if attach fails).
+ * External side effects (TypeSense, Inngest, tag revalidation) run only
+ * post-commit.
  */
 export async function createInList(
 	listId: string,
@@ -96,40 +110,74 @@ export async function createInList(
 	description?: string,
 ): Promise<void> {
 	const { session, ability } = await getServerAuthSession()
-	if (!session?.user || !ability.can('create', 'Content')) {
+	const user = session?.user
+	if (
+		!user ||
+		!ability.can('create', 'Content') ||
+		!ability.can('update', 'Content')
+	) {
 		throw new Error('Unauthorized')
 	}
 
 	const trimmedTitle = title?.trim()
 
-	let childId: string
-	if (type === 'post') {
-		const post = await createPost({
-			title: trimmedTitle || 'Untitled post',
-			postType: 'article',
-			createdById: session.user.id,
-		})
-		if (!post) {
-			throw new Error('Failed to create post')
-		}
-		childId = post.id
-	} else if (ResourceTypeSchema.safeParse(type).success) {
-		// Any known non-post type (section, lesson, …) — created as itself. A
-		// caller-supplied title/description (e.g. the section-name modal) wins;
-		// otherwise a guid-slugged placeholder so untitled rows never collide.
-		const resource = await createResource({
-			type,
-			title: trimmedTitle || `Untitled ${type}`,
-			description: description?.trim() || undefined,
-		})
-		childId = resource.id
-	} else {
+	if (type !== 'post' && !ResourceTypeSchema.safeParse(type).success) {
 		throw new Error(`Cannot create an unknown resource type "${type}" in a list`)
 	}
 
-	await addPostToList({
-		postId: childId,
-		listId,
-		metadata: { tier: 'standard' },
+	const result = await db.transaction(async (tx) => {
+		let childId: string
+		let createdPost: any = null
+		let createdResource: any = null
+
+		if (type === 'post') {
+			const post = await createPost(
+				{
+					title: trimmedTitle || 'Untitled post',
+					postType: 'article',
+					createdById: user.id,
+				},
+				{ tx, deferSideEffects: true },
+			)
+			if (!post) {
+				throw new Error('Failed to create post')
+			}
+			childId = post.id
+			createdPost = post
+		} else {
+			// Any known non-post type (section, lesson, …) — created as itself. A
+			// caller-supplied title/description (e.g. the section-name modal) wins;
+			// otherwise a guid-slugged placeholder so untitled rows never collide.
+			const resource = await createResource(
+				{
+					type,
+					title: trimmedTitle || `Untitled ${type}`,
+					description: description?.trim() || undefined,
+				},
+				{ tx, deferSideEffects: true },
+			)
+			childId = resource.id
+			createdResource = resource
+		}
+
+		await addPostToList({
+			postId: childId,
+			listId,
+			metadata: { tier: 'standard' },
+			tx,
+			revalidate: false,
+		})
+
+		return { type, createdPost, createdResource }
 	})
+
+	// Post-commit side effects: executed only after both records are durable
+	if (result.type === 'post' && result.createdPost) {
+		await executePostCreationSideEffects(result.createdPost)
+	} else if (result.createdResource) {
+		await executeResourceCreationSideEffects(result.createdResource)
+	}
+
+	revalidateTag('lists', 'max')
+	revalidateTag(listId, 'max')
 }

@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { CheckIcon, XCircleIcon } from 'lucide-react'
+import { WORKSHOP_CTA_BUTTON } from '@/app/(content)/workshops/_components/workshop-cta-button'
 import { useForm } from 'react-hook-form'
 
 import {
@@ -18,6 +19,7 @@ import {
 	Textarea,
 } from '@coursebuilder/ui'
 import Spinner from '@coursebuilder/ui/primitives/spinner'
+import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { sendTeamInquiry } from './team-inquiry-actions'
 import {
@@ -45,9 +47,14 @@ const ErrorMessage = ({ children }: React.PropsWithChildren) => (
 	</div>
 )
 
-export const TeamInquiryForm: React.FC<{ location: string }> = ({
-	location,
-}) => {
+export const TeamInquiryForm: React.FC<{
+	location: string
+	/**
+	 * Names the product the inquiry is about in the email Joel reads, e.g. a
+	 * workshop slug. Defaults to "Direct" on the server.
+	 */
+	source?: string
+}> = ({ location, source }) => {
 	const [isSubmitted, setIsSubmitted] = React.useState(false)
 	const [error, setError] = React.useState<string>()
 
@@ -79,6 +86,7 @@ export const TeamInquiryForm: React.FC<{ location: string }> = ({
 			...values,
 			context: {
 				url: location,
+				source,
 			},
 		})
 
@@ -159,18 +167,19 @@ export const TeamInquiryForm: React.FC<{ location: string }> = ({
 					/>
 				</div>
 
+				{/* The house gold CTA, same object as the workshop buy button. */}
 				<Button
 					type="submit"
 					size="lg"
 					disabled={form.formState.isSubmitting}
-					className="w-full"
+					className={cn(WORKSHOP_CTA_BUTTON, 'w-full')}
 				>
 					{form.formState.isSubmitting ? (
 						<>
 							<Spinner className="w-4" aria-hidden="true" /> Sending...
 						</>
 					) : (
-						'Get in Touch'
+						'Get team pricing'
 					)}
 				</Button>
 

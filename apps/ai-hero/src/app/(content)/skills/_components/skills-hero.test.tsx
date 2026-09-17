@@ -52,5 +52,20 @@ describe('SkillsHero', () => {
 		// gap-x-[30px] gap-y-5` (see Stats() in skills-hero.tsx). The assertions
 		// above already cover what this test is about: the badge and its data.
 		expect(markup).not.toContain('Latest release')
+		expect(markup).toContain(
+			'This is a seven-lesson email course. Lesson 1 arrives as soon as you sign up. The lesson is the email itself. It will not appear under Courses in your AI Hero account.',
+		)
+		expect(markup).toContain(
+			'Answer the question at the end if you want the next lesson in a few minutes. Otherwise, the next lesson arrives automatically after at least 18 hours.',
+		)
+	})
+
+	it('safely omits the GitHub stat when no count is available', async () => {
+		const hero = await SkillsHero({ stars: null, skillCount: 49 })
+		const markup = renderToStaticMarkup(hero)
+
+		expect(markup).not.toContain('GitHub stars')
+		expect(markup).toContain('Total skill installs')
+		expect(markup).toContain('https://github.com/mattpocock/skills')
 	})
 })

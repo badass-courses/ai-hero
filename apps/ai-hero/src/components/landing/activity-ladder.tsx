@@ -1,5 +1,6 @@
 import * as React from 'react'
 import Link from 'next/link'
+import { SpotIllustration } from '@/components/brand/spot-illustration'
 import { ArrowRight } from 'lucide-react'
 
 import { SectionHeader } from './section-header'
@@ -66,6 +67,17 @@ export function ActivityLadder({
 					rank="lead"
 					linkHref={ctaHref}
 					linkLabel={ctaLabel}
+					// Decided here, not in the MDX: the ladder is the one section
+					// that carries this tile, the same way its `rank` is set in code.
+					// The negative margin is the export's halo, so the visible tile
+					// sits on the heading's top edge and the gutter's left edge.
+					illustration={
+						<SpotIllustration
+							name="todo"
+							sizes="160px"
+							className="-m-3 w-[136px] shrink-0 sm:w-[160px]"
+						/>
+					}
 				>
 					{intro}
 				</SectionHeader>

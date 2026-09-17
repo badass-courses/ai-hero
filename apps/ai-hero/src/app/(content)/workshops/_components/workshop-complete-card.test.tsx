@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	cohortNavigation: null as CohortNavigation | null,
 	workshopId: 'workshop-p9j8f' as string | null,
 	percentCompleted: 100 as number,
+	cohortCertificateEligible: false as boolean,
 }))
 
 vi.mock('next/navigation', () => ({
@@ -23,6 +24,14 @@ vi.mock('./cohort-navigation-provider', () => ({
 vi.mock('./workshop-navigation-provider', () => ({
 	useWorkshopNavigation: () =>
 		mocks.workshopId ? { id: mocks.workshopId } : null,
+}))
+
+vi.mock('../../_components/cohort-certificate-container', () => ({
+	useCohortCertificateEligibility: (cohort: CohortNavigation | null) =>
+		Boolean(cohort) && mocks.cohortCertificateEligible,
+	CohortCertificateAction: ({ cohort }: { cohort: CohortNavigation }) => (
+		<button type="button">Get your {cohort.title} certificate</button>
+	),
 }))
 
 vi.mock('../../_components/module-progress-provider', () => ({
@@ -79,6 +88,7 @@ function claudeCodeCohort(
 
 describe('WorkshopCompleteCard', () => {
 	beforeEach(() => {
+		mocks.cohortCertificateEligible = false
 		mocks.cohortNavigation = claudeCodeCohort()
 		mocks.workshopId = 'workshop-p9j8f'
 		mocks.percentCompleted = 100
@@ -138,6 +148,21 @@ describe('WorkshopCompleteCard', () => {
 			'the last workshop in AI Coding for Real Engineers',
 		)
 		expect(markup).toContain('href="/cohorts/ai-coding-for-real-engineers"')
+	})
+
+	it('offers the cohort certificate once every workshop is done', () => {
+		mocks.workshopId = 'workshop-bfkce'
+		mocks.cohortCertificateEligible = true
+		const markup = renderToStaticMarkup(<WorkshopCompleteCard />)
+		expect(markup).toContain(
+			'Get your AI Coding for Real Engineers certificate',
+		)
+	})
+
+	it('keeps the certificate off the card mid-cohort', () => {
+		mocks.cohortCertificateEligible = true
+		const markup = renderToStaticMarkup(<WorkshopCompleteCard />)
+		expect(markup).not.toContain('certificate')
 	})
 
 	it('always offers the way back to the cohort', () => {

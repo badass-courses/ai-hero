@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+	isMysqlDuplicateEntryError,
 	MYSQL_PRIMARY_KEY_RETRY_ATTEMPTS,
 	withMysqlPrimaryKeyRetry,
 } from './mysql-primary-key-retry'
@@ -11,6 +12,26 @@ function duplicateError(key: string) {
 		errno: 1062,
 	})
 }
+
+describe('isMysqlDuplicateEntryError', () => {
+	it.each([
+		"Duplicate entry '2' for key 'PRIMARY'",
+		"Duplicate entry 'journey:2' for key 'EvergreenOfferJourneyCommit.PRIMARY'",
+		"Duplicate entry 'intent-1' for key 'EvergreenOfferJourneyIntent.PRIMARY'",
+	])('recognizes message-only duplicate errors: %s', (message) => {
+		expect(isMysqlDuplicateEntryError(new Error(message))).toBe(true)
+	})
+
+	it('recognizes a nested PlanetScale semantic-key duplicate', () => {
+		expect(
+			isMysqlDuplicateEntryError({
+				cause: new Error(
+					"Duplicate entry 'wake-1' for key 'EvergreenOfferJourneyWake.PRIMARY'",
+				),
+			}),
+		).toBe(true)
+	})
+})
 
 describe('withMysqlPrimaryKeyRetry', () => {
 	it('retries two primary-key collisions then succeeds', async () => {

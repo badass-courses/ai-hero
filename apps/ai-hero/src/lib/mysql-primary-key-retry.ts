@@ -23,6 +23,21 @@ function errorChain(error: unknown) {
 	return chain
 }
 
+export function isMysqlDuplicateEntryError(error: unknown) {
+	const chain = errorChain(error)
+	const messages = chain.map((candidate) =>
+		[candidate.message, candidate.sqlMessage]
+			.filter((value): value is string => typeof value === 'string')
+			.join(' '),
+	)
+	return (
+		chain.some(
+			(candidate) =>
+				candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062,
+		) || messages.some((message) => /Duplicate entry/i.test(message))
+	)
+}
+
 function isMysqlPrimaryKeyDuplicate(error: unknown) {
 	const chain = errorChain(error)
 	const messages = chain.map((candidate) =>
@@ -30,12 +45,7 @@ function isMysqlPrimaryKeyDuplicate(error: unknown) {
 			.filter((value): value is string => typeof value === 'string')
 			.join(' '),
 	)
-	const isDuplicate =
-		chain.some(
-			(candidate) =>
-				candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062,
-		) || messages.some((message) => /Duplicate entry/i.test(message))
-	if (!isDuplicate) return false
+	if (!isMysqlDuplicateEntryError(error)) return false
 
 	return messages.some((message) =>
 		/for key\s+['"`]?(?:[^'"`\s]+\.)?PRIMARY['"`]?/i.test(message),

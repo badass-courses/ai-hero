@@ -1,0 +1,67 @@
+---
+title: "Typecheck memory: TS7 native compiler, and the stale-install failure signature"
+type: "resource"
+status: "active"
+created_at: "2026-08-30"
+tags:
+  - typecheck
+  - ci
+  - vercel
+---
+
+# Typecheck memory: TS7 native, and the stale-install signature
+
+Landed in PR #188 (squash `6ca872b`, 2026-08-30). Two separate problems shared one week.
+
+## CI typecheck now runs the native TS 7 compiler
+
+`apps/ai-hero` typecheck was `tsc --noEmit` on TypeScript 5.4.5. It needed ~4.0 GB of V8
+heap; CI (Node 24, no `NODE_OPTIONS`) has a ~4 GB default. Main sat at ~98% of the cliff,
+so any PR that added type instantiations OOM'd CI. Type attribution (tsc `--generateTrace`):
+zod 104,922 types, drizzle-orm 97,500, app source 98,121, inngest 35,144.
+
+The fix: `typecheck` runs `typescript@7.0.2` (native Go compiler) via the npm alias
+`typescript-native`, with `--singleThreaded` and `GOMEMLIMIT=3GiB`, against
+`tsconfig.typecheck.json` (`target: es2022`). TS 5.4.5 stays installed for `next build`.
+
+- Numbers: 4499 MiB / 33 s (tsc 5.4.5) → 3238 MiB / 12 s local; 27.6 s on CI.
+- The flags matter. A naive compiler swap is WORSE on memory (5090 MiB): tsgo trades
+  memory for parallel speed. `--singleThreaded` is the lever; `GOMEMLIMIT=3GiB` is the knee.
+- The binary replaces Node via execve, so there is no V8 heap ceiling and no
+  `NODE_OPTIONS` effect. The hard-crash failure mode is gone, not moved.
+- Traps: `node_modules/.bin/tsc` now resolves to 7.0.2 (bin collision with the alias) —
+  use explicit paths; `GOMEMLIMIT=…` inline env is POSIX-only.
+- `tsconfig.json` lost `baseUrl` (removed in TS7; proven behavior-neutral here). The main
+  config still claims `target: es2017`, which is wrong for the code (named capture groups,
+  `s` flag) — the typecheck config overrides it; bumping main target is open follow-up.
+
+## The stale-install failure signature (recognize it fast)
+
+Symptom: a wave of `TS7006 implicit any` errors plus
+`ZodObject … missing properties from ZodType<any, any, $ZodTypeInternals>` — in files
+nobody touched. Seen three times (157-error and 195-error local sets, and the Vercel
+preview failure at `src/ability/index.ts:289`).
+
+Cause: a stale `node_modules` symlink layout. The store holds both `zod@3.25.76` and
+`zod@4.4.3`; a poisoned layout resolves some imports to v4 and inference collapses
+downstream. Critically, `pnpm install --frozen-lockfile` AND `pnpm install --force` both
+no-op on it ("Already up to date"). Only deleting `node_modules` and reinstalling fixes it.
+
+On Vercel the same disease arrives via "Restored build cache from previous deployment".
+Fix there: branch-scoped `VERCEL_FORCE_NO_BUILD_CACHE=1` preview env var, redeploy, remove
+the var once the cache is healthy (done for #188).
+
+Rule of thumb: if this error signature appears in untouched files, do not debug the types.
+Delete `node_modules`, reinstall, re-run.
+
+## Open follow-up: @coursebuilder/ui should ship .d.ts
+
+A measured spike (branch `worker/ui-dts-spike`, local ref) proved the app can consume
+declarations instead of re-typechecking the package's raw `.tsx`: −19% typecheck wall time,
+−4.2% types, real types preserved. It is NOT a memory fix (−1.4% RSS) — the memory is in
+zod/drizzle/app breadth, not the UI package. Durable version needs course-builder
+`packages/ui` to emit declarations (emit is already clean in the monorepo; the npm-consumed
+copy needs 9 one-line type-only imports for TS2742) and ship an `exports` map covering the
+~20 subpath specifiers ai-hero uses. Full recipe and receipts:
+`.brain/data/ui-dts-spike-report-2026-08-30.md` (TS7 spike receipts beside it); working
+mechanism on local branch `worker/ui-dts-spike`.

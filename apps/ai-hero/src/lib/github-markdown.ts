@@ -1,26 +1,32 @@
-import { Octokit } from '@octokit/rest'
+import {
+	githubSourceAuthMode,
+	githubSourceOctokit,
+	isGithubSourceDegradableError,
+	readGithubSource,
+} from '@/lib/github-source-resilience'
 
 /**
- * Shared GitHub markdown reader. Fetches a file's text via the GitHub contents
- * API and falls back to the raw host when the API can't serve usable content —
- * either because it is rate-limited (403) or because the file is too large for
- * the contents API (>1MB, which returns `encoding: 'none'` with empty content).
+ * Shared GitHub markdown reader. It normally fetches through the GitHub
+ * contents API and falls back to the raw host when the API can't serve usable
+ * content. Public read paths can select the raw host directly so an expected
+ * API rate limit never becomes a runtime error first.
  *
  * Used by both the AI coding dictionary and the github-sourced post sync.
  */
-
-const octokit = new Octokit({
-	auth: process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined,
-	userAgent: 'ai-hero-github-markdown/1.0.0',
-})
 
 export type GithubMarkdownFileRef = {
 	owner: string
 	repo: string
 	path: string
 	ref: string
-	/** Optional ISR revalidate (seconds) applied to the raw-host fallback fetch. */
+	/** Optional ISR revalidate (seconds) applied to a raw-host fetch. */
 	revalidate?: number
+	/** Cache tags applied to a raw-host fetch. */
+	tags?: string[]
+	/** Abort signal applied to a raw-host fetch. */
+	signal?: AbortSignal
+	/** Skip the contents API for a public source that raw GitHub can serve. */
+	transport?: 'api-first' | 'raw-only'
 }
 
 function safeDecode(segment: string): string {
@@ -84,19 +90,36 @@ export function parseGithubSource(
 }
 
 async function fetchFromRawHost(ref: GithubMarkdownFileRef): Promise<string> {
-	const { owner, repo, path, ref: gitRef, revalidate } = ref
+	const { owner, repo, path, ref: gitRef, revalidate, tags, signal } = ref
+	const next =
+		revalidate !== undefined || tags?.length
+			? {
+					...(revalidate !== undefined ? { revalidate } : {}),
+					...(tags?.length ? { tags } : {}),
+				}
+			: undefined
+	const init =
+		next || signal
+			? {
+					...(next ? { next } : {}),
+					...(signal ? { signal } : {}),
+				}
+			: undefined
 
 	const response = await fetch(
 		`https://raw.githubusercontent.com/${owner}/${repo}/${gitRef}/${path
 			.split('/')
 			.map(encodeURIComponent)
 			.join('/')}`,
-		revalidate ? { next: { revalidate } } : undefined,
+		init,
 	)
 
 	if (!response.ok) {
-		throw new Error(
-			`Failed to fetch ${owner}/${repo}/${path} fallback: ${response.status}`,
+		throw Object.assign(
+			new Error(
+				`Failed to fetch ${owner}/${repo}/${path} fallback: ${response.status}`,
+			),
+			{ status: response.status },
 		)
 	}
 
@@ -107,38 +130,49 @@ export async function fetchGithubMarkdownFile(
 	ref: GithubMarkdownFileRef,
 ): Promise<string> {
 	const { owner, repo, path } = ref
+	const operation = path.toLowerCase() === 'readme.md' ? 'readme' : 'markdown'
+	const cacheTtlMs = ref.revalidate
+		? ref.revalidate * 1_000
+		: operation === 'readme'
+			? 3_600_000
+			: -1
 
-	try {
-		const response = await octokit.rest.repos.getContent({
-			owner,
-			repo,
-			path,
-			ref: ref.ref,
-		})
-
-		const data = response.data
-		if (
-			!Array.isArray(data) &&
-			data.type === 'file' &&
-			data.content &&
-			data.encoding === 'base64'
-		) {
-			return Buffer.from(data.content, 'base64').toString('utf8')
-		}
-
-		// Large files come back as `encoding: 'none'` with empty content; the raw
-		// host serves them fine.
-		return fetchFromRawHost(ref)
-	} catch (error) {
-		const status =
-			typeof error === 'object' && error && 'status' in error
-				? Number((error as { status?: unknown }).status)
-				: undefined
-
-		// Fall back to the raw host on rate-limit; surface anything else (e.g. a
-		// 404 for a deleted source file).
-		if (status !== 403) throw error
-
+	if (ref.transport === 'raw-only') {
 		return fetchFromRawHost(ref)
 	}
+
+	return readGithubSource({
+		cacheKey: `contents:${owner}/${repo}/${ref.ref}/${path}`,
+		operation,
+		authMode: githubSourceAuthMode,
+		cacheTtlMs,
+		anonymousFallback: () => fetchFromRawHost(ref),
+		request: async () => {
+			const response = await githubSourceOctokit.rest.repos.getContent({
+				owner,
+				repo,
+				path,
+				ref: ref.ref,
+			})
+
+			const data = response.data
+			if (
+				!Array.isArray(data) &&
+				data.type === 'file' &&
+				data.content &&
+				data.encoding === 'base64'
+			) {
+				return Buffer.from(data.content, 'base64').toString('utf8')
+			}
+
+			// Large files come back as `encoding: 'none'` with empty content; the
+			// raw host serves them fine.
+			return fetchFromRawHost(ref)
+		},
+		fallback: async (error) => {
+			if (!isGithubSourceDegradableError(error)) throw error
+			return fetchFromRawHost(ref)
+		},
+		cacheFallback: true,
+	})
 }

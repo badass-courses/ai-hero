@@ -3,6 +3,7 @@
 import { db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { getServerAuthSession } from '@/server/auth'
+import { deriveResourceType } from '@/lib/typesense-resource-type'
 import { log } from '@/server/logger'
 import { and, desc, eq, isNotNull } from 'drizzle-orm'
 import { revalidateTag, unstable_cache } from 'next/cache'
@@ -233,12 +234,7 @@ export async function upsertPostToTypeSense(
 			description: post.fields?.body || '',
 			summary: post.fields?.description || '',
 			image,
-			type:
-				post?.fields && 'postType' in post.fields
-					? post.fields.postType
-					: post?.fields && 'type' in post.fields
-						? post.fields.type
-						: post.type,
+			type: deriveResourceType(post),
 			visibility: post.fields?.visibility,
 			state: post.fields?.state,
 			created_at_timestamp: post.createdAt?.getTime() ?? Date.now(),
@@ -426,7 +422,7 @@ export async function indexAllContentToTypeSense(
 			slug: resource?.fields?.slug,
 			description: resource?.fields?.body || resource?.fields?.description,
 			image,
-			type: resource.type,
+			type: deriveResourceType(resource),
 			visibility: resource?.fields?.visibility,
 			state: resource?.fields?.state,
 			created_at_timestamp: resource.createdAt?.getTime() ?? now,

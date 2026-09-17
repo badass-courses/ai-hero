@@ -189,6 +189,50 @@ export async function getProviderEmailPreferences({
 }
 
 /**
+ * Mirrors a confirmed opt-out into the ContactEvent log via Inngest so
+ * marketing history replays can see the unsubscribe. Fire-and-forget: a
+ * capture failure never breaks the preference flow, and the ContactEvent
+ * semantic idempotency key dedupes repeated emits.
+ */
+async function sendContactUnsubscribedCaptureEvent({
+	email,
+	kitSubscriberId,
+	preferenceKey,
+	source,
+}: {
+	email?: string | null
+	kitSubscriberId?: string
+	preferenceKey: EmailPreferenceKey
+	source: PreferenceSource
+}) {
+	if (!email) return
+	try {
+		const [{ inngest }, { CONTACT_UNSUBSCRIBED_EVENT }] = await Promise.all([
+			import('@/inngest/inngest.server'),
+			import('@/inngest/events/contact-unsubscribed'),
+		])
+		await inngest.send({
+			name: CONTACT_UNSUBSCRIBED_EVENT,
+			data: {
+				email,
+				kitSubscriberId,
+				preferenceKey,
+				source,
+				occurredAt: new Date().toISOString(),
+			},
+		})
+	} catch (error) {
+		await log.warn('email-preferences.contact-unsubscribed.emit-failed', {
+			source,
+			provider: EMAIL_PREFERENCE_PROVIDER,
+			kitSubscriberId,
+			preferenceKey,
+			error: serializeError(error),
+		})
+	}
+}
+
+/**
  * Updates provider-canonical preference state and logs the result.
  */
 export async function updateProviderEmailPreference({
@@ -238,6 +282,15 @@ export async function updateProviderEmailPreference({
 			preferenceKey: preference.key,
 			result: state.status,
 		})
+
+		if (!subscribed && !state.subscribed) {
+			await sendContactUnsubscribedCaptureEvent({
+				email: subscriberEmail,
+				kitSubscriberId: subscriberId,
+				preferenceKey: preference.key,
+				source,
+			})
+		}
 
 		return state
 	} catch (error) {
@@ -426,12 +479,22 @@ export async function unsubscribeLocalEmailPreferenceByUserId({
 
 	if (!user) return null
 
-	return syncLocalEmailPreferenceForUser({
+	const result = await syncLocalEmailPreferenceForUser({
 		user,
 		preference,
 		subscribed: false,
 		source,
 	})
+
+	if (result) {
+		await sendContactUnsubscribedCaptureEvent({
+			email: user.email,
+			preferenceKey: preference.key,
+			source,
+		})
+	}
+
+	return result
 }
 
 /**

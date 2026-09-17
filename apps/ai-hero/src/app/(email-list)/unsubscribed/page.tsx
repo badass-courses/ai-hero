@@ -75,6 +75,7 @@ const Unsubscribed = async (props: UnsubscribedProps) => {
 
 		const state = await updateProviderEmailPreference({
 			subscriberId,
+			subscriberEmail: subscriber.email_address ?? undefined,
 			preference: preferenceDefinition,
 			subscribed: false,
 			source: 'unsubscribe-link',

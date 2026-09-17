@@ -45,7 +45,7 @@ function createLockedAuthHarness({
 	accountOwner,
 	activeUser = null,
 	emailOwner = null,
-	sessionExpires = new Date('2026-09-01T00:00:00Z'),
+	sessionExpires = new Date(Date.now() + 24 * 60 * 60 * 1000),
 	accountType = 'oauth',
 }: {
 	provider: string

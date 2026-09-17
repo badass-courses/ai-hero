@@ -24,8 +24,9 @@ describe('subscriber marketing operator reliability contracts', () => {
 			'buildValuePathGateDStatus',
 			'buildValuePathContactStateInit',
 		)
-		expect(gateStatus).toContain('queryLearnerFlowCohort({ repository, allowlist })')
+		expect(gateStatus).toContain('queryLearnerFlowCohortMembership({ repository, allowlist })')
 		expect(gateStatus).toContain('const contactIds = cohort?.contactIds ?? []')
+		expect(gateStatus).toContain('summarizeGateDStatus({ repository, contactIds, now: checkedAt })')
 		expect(gateStatus).toContain('source: cohort?.source')
 		expect(gateStatus).toContain('participants: contactIds.length')
 		expect(gateStatus).toContain('byContact')
@@ -48,6 +49,26 @@ describe('subscriber marketing operator reliability contracts', () => {
 			stuckList.indexOf('await closeDatabasePool()'),
 		)
 		expect(source).not.toContain('process.exit(0)')
+	})
+
+	it.each([
+		['lookup', 'replay-preview'],
+		['value-path-preview', 'value-path-qa-preview'],
+		['purchase-preview', 'matched-purchaser-value-path-preview'],
+	])('closes the pool after %s output or failure', (command, nextCommand) => {
+		const branch = commandSource(command, nextCommand)
+		expect(branch).toMatch(/\{\s*try \{/)
+		expect(branch).toMatch(/finally \{\s*await closeDatabasePool\(\)\s*\}/)
+		expect(branch.indexOf('try {')).toBeLessThan(branch.indexOf('await '))
+		expect(branch.indexOf('console.log(JSON.stringify(result, null, 2))')).toBeGreaterThan(
+			branch.indexOf('try {'),
+		)
+		expect(branch.indexOf('console.log(JSON.stringify(result, null, 2))')).toBeLessThan(
+			branch.indexOf('finally {'),
+		)
+		expect(branch).not.toContain('catch')
+		expect(branch).not.toContain('process.exit(0)')
+		expect(branch.match(/closeDatabasePool\(\)/g)).toHaveLength(1)
 	})
 
 	it('keeps retry sends out of the broad learner-flow unstick command', () => {

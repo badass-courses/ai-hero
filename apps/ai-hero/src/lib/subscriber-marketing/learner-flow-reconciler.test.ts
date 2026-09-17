@@ -2,6 +2,10 @@ import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 import { codingWorkflowFixture } from './__fixtures__/quick-question-fixtures'
+import {
+	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+	deadlineTimeZoneEvidenceFromHeader,
+} from './course-sequence-exhaustion'
 import { DrizzleCaptureMarketingRepository } from './drizzle-capture-repository'
 import {
 	dryRunSubscriberMarketingFixture,
@@ -11,6 +15,7 @@ import type { LearnerFlowCohortRecord } from './learner-flow-cohort'
 import { classifyLearnerFlowContact } from './learner-flow-classifier'
 import {
 	buildLearnerFlowReconcilerPlan,
+	buildBoundedLearnerFlowReconcilerPlan,
 	evaluateLearnerFlowReconcilerBrake,
 	reconcileLearnerFlow,
 	type LearnerFlowReconcilerCandidate,
@@ -90,7 +95,9 @@ function rollingAllowlist(): GateDRuntimeAllowlist {
 	}
 }
 
-function riskyReplanCandidates(count: number): LearnerFlowReconcilerCandidate[] {
+function riskyReplanCandidates(
+	count: number,
+): LearnerFlowReconcilerCandidate[] {
 	return Array.from({ length: count }, (_, index) => ({
 		contactId: `contact-${index}`,
 		intentId: `intent-${index}`,
@@ -120,6 +127,37 @@ async function createEmailSixReconcilerFixture() {
 		now: '2026-07-15T20:00:00.000Z',
 	})
 	repository.sideEffectIntents.clear()
+	const deadline = deadlineTimeZoneEvidenceFromHeader({
+		headerValue: 'Asia/Tokyo',
+		capturedAt: '2026-07-15T20:00:00.000Z',
+	})
+	if (!deadline.ok) throw new Error(deadline.error.detail)
+	const courseEntry = repository.createContactEvent({
+		contactId: captured.contact.id,
+		providerIdentityId: captured.providerIdentity.id,
+		provider: 'ai-hero',
+		providerEventId: `course-entry:${captured.contact.id}`,
+		providerReference: 'value-path:ai-hero-skills-workflow',
+		eventType: 'value-path.entered',
+		occurredAt: '2026-07-15T20:00:00.000Z',
+		semanticIdempotencyKey: `course-entry:${captured.contact.id}`,
+		payloadFormat: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+		domainPayload: {
+			format: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+			valuePathId: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			deadlineTimeZone: deadline.value,
+		},
+		privacyLevel: 'internal',
+		identityEvidence: captured.providerIdentity.evidence,
+		payloadSummary: {
+			summary: 'Entered AI Hero Skills Workflow',
+			keywords: ['value-path', 'entered'],
+			restrictedPayloadStored: false,
+		},
+		schemaVersion: 1,
+		createdAt: '2026-07-15T20:00:00.000Z',
+	})
 	const completed = repository.createSideEffectIntent({
 		...courseIntent({
 			contactId: captured.contact.id,
@@ -135,6 +173,8 @@ async function createEmailSixReconcilerFixture() {
 			kitSequenceId: '2757205',
 			kitSubscriberId: '4089521940',
 			completedAt: '2026-07-15T20:00:00.000Z',
+			courseEntryEventId: courseEntry.id,
+			courseDeadlineTimeZone: deadline.value,
 		},
 	})
 	const reconcilerRepository = Object.assign(repository, {
@@ -258,8 +298,7 @@ describe('learner flow reconciler', () => {
 						contactId,
 						id: `intent-${index}`,
 						status: index < 60 ? 'completed' : 'pending',
-						completedAt:
-							index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
+						completedAt: index < 60 ? '2026-07-16T20:00:00.000Z' : undefined,
 						emailResourceId:
 							index < 60
 								? 'ai-hero-skills-workflow.email-6'
@@ -351,11 +390,15 @@ describe('learner flow reconciler', () => {
 		})
 		const emailSeven = Array.from(repository.sideEffectIntents.values()).find(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-7',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 		)
 
 		expect(emailSeven).toMatchObject({ status: 'pending' })
+		expect(
+			Array.from(repository.contactEvents.values()).some(
+				(event) => event.eventType === 'course.sequence-exhausted',
+			),
+		).toBe(false)
 		expect(receipt).toMatchObject({
 			status: 'ok',
 			workSeen: 1,
@@ -369,6 +412,131 @@ describe('learner flow reconciler', () => {
 			},
 			blockedReasons: {},
 		})
+	})
+
+	it('atomically owns sequence exhaustion when terminal Email 7 is committed', async () => {
+		const { completed, reconcilerRepository, repository } =
+			await createEmailSixReconcilerFixture()
+		const first = await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist: emailSevenAllowlist(),
+			email7LiveEnabled: true,
+			sequenceExhaustionEnabled: true,
+			now,
+			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
+		})
+		const second = await progressValuePathDrips({
+			repository,
+			allowlist: emailSevenAllowlist(),
+			completedIntents: [completed],
+			allowWrite: true,
+			email7LiveEnabled: true,
+			sequenceExhaustionEnabled: true,
+			now,
+		})
+		const facts = Array.from(repository.contactEvents.values()).filter(
+			(event) => event.eventType === 'course.sequence-exhausted',
+		)
+		const intents = Array.from(repository.sideEffectIntents.values()).filter(
+			(intent) =>
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
+		)
+
+		expect(first.counts.intentsCreated).toBe(1)
+		expect(second.counts.idempotentNoop).toBe(1)
+		expect(second.results[0]).toMatchObject({
+			contactEventId: facts[0]?.id,
+			nextActionId: intents[0]?.nextActionId,
+			sideEffectIntentId: intents[0]?.id,
+		})
+		expect(facts).toHaveLength(1)
+		expect(intents).toHaveLength(1)
+		expect(facts[0]).toMatchObject({
+			domainFactKey: expect.stringContaining('email-course.sequence-exhausted'),
+			payloadFormat: 'email-course.sequence-exhausted.v1',
+			domainPayload: {
+				deadlineTimeZone: {
+					type: 'BrowserEntryHeader',
+					timeZone: 'Asia/Tokyo',
+				},
+				progression: {
+					from: { emailResourceId: 'ai-hero-skills-workflow.email-6' },
+					terminal: {
+						emailResourceId: 'ai-hero-skills-workflow.email-7',
+					},
+				},
+			},
+		})
+		expect(intents[0]).toMatchObject({
+			status: 'pending',
+			metadata: {
+				sequenceExhaustionFactId: facts[0]?.id,
+				providerResult: null,
+			},
+		})
+		expect(repository.nextActions.get(intents[0]!.nextActionId)?.eventId).toBe(
+			facts[0]?.id,
+		)
+		repository.updateSideEffectIntent(intents[0]!.id, {
+			status: 'completed',
+			completedAt: '2026-07-18T00:00:00.000Z',
+			gates: intents[0]!.gates,
+			reviewReasons: [],
+			metadata: {
+				...intents[0]!.metadata,
+				providerResult: { status: 'accepted' },
+			},
+		})
+		const afterSettlement = await progressValuePathDrips({
+			repository,
+			allowlist: emailSevenAllowlist(),
+			completedIntents: [completed],
+			allowWrite: true,
+			email7LiveEnabled: true,
+			sequenceExhaustionEnabled: true,
+			now,
+		})
+		expect(afterSettlement.counts.idempotentNoop).toBe(1)
+		expect(afterSettlement.results[0]).toMatchObject({
+			contactEventId: facts[0]?.id,
+			nextActionId: intents[0]?.nextActionId,
+			sideEffectIntentId: intents[0]?.id,
+		})
+		expect(
+			Array.from(repository.contactEvents.values()).filter(
+				(event) => event.eventType === 'course.sequence-exhausted',
+			),
+		).toHaveLength(1)
+	})
+
+	it('does not backfill an existing terminal intent into an exhaustion fact', async () => {
+		const { reconcilerRepository, repository, captured } =
+			await createEmailSixReconcilerFixture()
+		repository.createSideEffectIntent({
+			...courseIntent({
+				contactId: captured.contact.id,
+				id: 'historical-email-7',
+				status: 'completed',
+				completedAt: '2026-07-16T20:00:00.000Z',
+				emailResourceId: 'ai-hero-skills-workflow.email-7',
+				kitSequenceId: '2831545',
+			}),
+			idempotencyKey: `contact:${captured.contact.id}:value-path:ai-hero-skills-workflow:email:ai-hero-skills-workflow.email-7`,
+		})
+		await reconcileLearnerFlow({
+			repository: reconcilerRepository,
+			allowlist: emailSevenAllowlist(),
+			email7LiveEnabled: true,
+			sequenceExhaustionEnabled: true,
+			now,
+			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
+		})
+
+		expect(
+			Array.from(repository.contactEvents.values()).some(
+				(event) => event.eventType === 'course.sequence-exhausted',
+			),
+		).toBe(false)
 	})
 
 	it('reports the exact email-7 blocker when the live flag is disabled', async () => {
@@ -385,8 +553,7 @@ describe('learner flow reconciler', () => {
 		expect(
 			Array.from(repository.sideEffectIntents.values()).some(
 				(intent) =>
-					intent.metadata.emailResourceId ===
-					'ai-hero-skills-workflow.email-7',
+					intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-7',
 			),
 		).toBe(false)
 		expect(receipt).toMatchObject({
@@ -446,12 +613,8 @@ describe('learner flow reconciler', () => {
 				permanentProviderFailures: 1,
 			},
 		})
-		expect(receipt.failureReasons).toContain(
-			'tier2:provider-permanent-failure',
-		)
-		expect(receipt.brake.reasons).toContain(
-			'repair-ratio-37.7%-exceeds-25.0%',
-		)
+		expect(receipt.failureReasons).toContain('tier2:provider-permanent-failure')
+		expect(receipt.brake.reasons).toContain('repair-ratio-37.7%-exceeds-25.0%')
 		expect(repository.includeCanary).toBe(true)
 		expect(repository.writeAttempts).toBe(0)
 	})
@@ -527,15 +690,12 @@ describe('learner flow reconciler', () => {
 		const repaired = repository.sideEffectIntents.get(driftIntent.id)!
 		const next = Array.from(repository.sideEffectIntents.values()).find(
 			(intent) =>
-				intent.metadata.emailResourceId ===
-				'ai-hero-skills-workflow.email-1',
+				intent.metadata.emailResourceId === 'ai-hero-skills-workflow.email-1',
 		)
 		expect(driftIntent.completedAt).toBeNull()
 		expect(driftIntent.metadata.completedAt).toBeUndefined()
 		expect(repaired.completedAt).toBe('2026-07-15T20:00:00.000Z')
-		expect(repaired.metadata.completedAt).toBe(
-			'2026-07-15T20:00:00.000Z',
-		)
+		expect(repaired.metadata.completedAt).toBe('2026-07-15T20:00:00.000Z')
 		expect(next?.status).toBe('pending')
 		expect(receipt).toMatchObject({
 			status: 'ok',
@@ -577,8 +737,7 @@ describe('learner flow reconciler', () => {
 				contactId: 'zombie-contact',
 				contact: {
 					id: 'zombie-contact',
-					email:
-						'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
+					email: 'joel+aih-synth-drill-zombie-v1-test-1@badass.dev',
 					lifecycle: 'nurture-ready',
 					isProvisional: true,
 					createdAt: completedAt,
@@ -951,4 +1110,123 @@ describe('learner flow reconciler', () => {
 		expect(configSource).toContain('learnerFlowReconciler')
 		expect(configSource).not.toContain('valuePathDripProgression')
 	})
+
+	it('skips contacts drovr drives and reports how many', async () => {
+		const { captured, completed, repository } =
+			await createEmailSixReconcilerFixture()
+		const ownedIntent = {
+			...completed,
+			id: 'drovr-owned-intent',
+			idempotencyKey: `${completed.idempotencyKey}:drovr`,
+			metadata: {
+				...completed.metadata,
+				source: 'drovr',
+				drovr: {
+					tenantId: 'org-aihero',
+					journeyId: 'value-path-skills-course',
+					intentKey: 'k',
+					dueAt: now,
+				},
+			},
+		}
+		const reconcilerRepository = Object.assign(repository, {
+			findSkillsWorkflowLearnerFlowRecords: () => [
+				{
+					contactId: captured.contact.id,
+					contact: captured.contact,
+					contactState: captured.contactState,
+					intents: [ownedIntent],
+					entryEvents: [],
+				},
+			],
+		})
+		const plan = await buildLearnerFlowReconcilerPlan({
+			repository: reconcilerRepository,
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		expect(plan.cohort.drovrOwnedSkipped).toBe(1)
+		// The brake divides by contacts this planner may repair, not by the
+		// whole scan, so skipped contacts cannot dilute the ratio.
+		expect(plan.cohort.contacts).toBe(0)
+		expect(plan.candidates).toEqual([])
+		expect(plan.records).toEqual([])
+	})
+})
+
+describe('bounded repair plan', () => {
+	it('matches full classification above 100k intents without retaining lifetime detail', async () => {
+		const records: LearnerFlowCohortRecord[] = Array.from(
+			{ length: 100_001 },
+			(_, index) => {
+				const contactId = `contact-${String(index).padStart(6, '0')}`
+				return {
+					contactId,
+					entryEvents: [],
+					intents: [
+						courseIntent({
+							contactId,
+							id: `intent-${index}`,
+							status: index % 3 ? 'completed' : 'blocked',
+							createdAt: '2026-07-01T00:00:00.000Z',
+							...(index % 3 ? { completedAt: '2026-07-01T00:00:00.000Z' } : {}),
+						}),
+					],
+				}
+			},
+		)
+		const full = await buildLearnerFlowReconcilerPlan({
+			repository: {
+				findSkillsWorkflowLearnerFlowRecords: () => records,
+			},
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		let pages = 0
+		const bounded = await buildBoundedLearnerFlowReconcilerPlan({
+			repository: {
+				findSkillsWorkflowLearnerFlowRecords: () => {
+					throw new Error('unbounded read')
+				},
+				async *findSkillsWorkflowLearnerFlowRepairRecordPages() {
+					for (let offset = 0; offset < records.length; offset += 137) {
+						pages++
+						yield records.slice(offset, offset + 137)
+					}
+				},
+			},
+			allowlist: rollingAllowlist(),
+			now,
+			repairCap: 150,
+		})
+		expect(pages).toBe(730)
+		expect(full.records).toHaveLength(100_001)
+		expect(full.candidates.length).toBeGreaterThan(150)
+		expect(bounded.riskyRepairCount).toBeGreaterThan(150)
+		expect(bounded.cohort).toEqual(full.cohort)
+		expect(bounded.counts).toEqual(full.counts)
+		expect(bounded.causeCounts).toEqual(full.causeCounts)
+		expect(bounded.tier2).toEqual(full.tier2)
+		expect(bounded.suppressedFixtureStarved).toEqual(
+			full.suppressedFixtureStarved,
+		)
+		expect(bounded.candidates).toEqual(full.candidates.slice(0, 151))
+		expect(bounded.records.length).toBeLessThanOrEqual(151)
+		expect(bounded.riskyRepairCount).toBe(
+			full.candidates.filter((c) => c.action !== 'nudge-drip-progression')
+				.length,
+		)
+		expect(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: bounded.cohort.contacts,
+				candidates: bounded.candidates,
+				riskyRepairCount: bounded.riskyRepairCount,
+			}),
+		).toEqual(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: full.cohort.contacts,
+				candidates: full.candidates,
+			}),
+		)
+	}, 30_000)
 })

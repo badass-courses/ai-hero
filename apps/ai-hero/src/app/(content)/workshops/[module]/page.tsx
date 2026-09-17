@@ -8,8 +8,10 @@ import {
 	WorkshopSidebarAccessBoundary,
 } from '@/app/(content)/workshops/_components/workshop-access-boundary'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
+import { TeamWelcomeVideo } from '@/app/(content)/workshops/_components/team-welcome-video'
 import { WorkshopActionsBar } from '@/app/(content)/workshops/_components/workshop-user-actions'
 import { Contributor } from '@/components/contributor'
+import { EvergreenClaimPanel } from '@/components/evergreen-claim-panel'
 import { DiscountDeadline } from '@/components/pricing/discount-deadline'
 import { PricingInline } from '@/components/pricing/pricing-inline'
 import { TYPE } from '@/components/landing/type'
@@ -134,6 +136,11 @@ export default async function ModulePage(props: Props) {
 
 	const product = await getCachedWorkshopProduct(params.module)
 	const hasSelfPacedProduct = product?.type === 'self-paced'
+	// The team page exists only when its body does (it 404s otherwise), so the
+	// card and the mobile bar offer it on the same condition.
+	const teamOptionsHref = workshop.fields.forTeamsBody
+		? `/workshops/${params.module}/for-teams`
+		: undefined
 	const shouldShowPricingSidebar = hasSelfPacedProduct || isPreLaunch
 	const bodySource = workshop.fields.body || ''
 	// The body placing the curriculum itself replaces the auto-appended list.
@@ -144,6 +151,17 @@ export default async function ModulePage(props: Props) {
 		bodySource.replace(/```[\s\S]*?```|`[^`\n]*`/g, ''),
 	)
 	const { content: body } = await compileMDX(bodySource, {
+		// A welcome video for ONE organization, keyed by resource id. Safe on a
+		// `force-static` page because the tag carries no playback id: the client
+		// component asks `/api/restricted-videos/:id`, which reads the viewer's
+		// session, and renders nothing for everybody else.
+		TeamWelcomeVideo: ({
+			resourceId,
+			title,
+		}: {
+			resourceId: string
+			title?: string
+		}) => <TeamWelcomeVideo resourceId={resourceId} title={title} />,
 		// Dynamic commerce copy: same vocabulary as the cohort page
 		// (content/cohort-copy.mdx). All render from the cached public pricing
 		// props, so they stay correct on the static page: PricingInline shows
@@ -254,6 +272,14 @@ export default async function ModulePage(props: Props) {
 
 	return (
 		<LayoutClient withContainer>
+			{params.module === 'ai-coding-crash-course' &&
+				product?.id === 'product-ma254' && (
+					<EvergreenClaimPanel
+						pilotOnly
+						endpoint="/api/evergreen/claim"
+						productPath="/workshops/ai-coding-crash-course"
+					/>
+				)}
 			<main className="flex min-h-screen w-full flex-col">
 				{isPreLaunch && (
 					<React.Suspense fallback={null}>
@@ -406,6 +432,7 @@ export default async function ModulePage(props: Props) {
 												>
 													<WorkshopPricingClient
 														className="bg-card"
+														teamOptionsHref={teamOptionsHref}
 														{...pricingProps}
 													/>
 												</React.Suspense>
@@ -415,6 +442,7 @@ export default async function ModulePage(props: Props) {
 													pricingProps={pricingProps}
 													workshop={workshop}
 													interestCapture={showInterestCapture}
+													teamOptionsHref={teamOptionsHref}
 												>
 													{pricingProps.allowPurchase ? (
 														pricingWidget
