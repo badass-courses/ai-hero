@@ -4,6 +4,8 @@ import {
 	DROVR_OWNERSHIP_OFF,
 	decideJourneyOwner,
 	fanOutOwnedEvents,
+	journeyOwnerAssignmentJourneyId,
+	journeyOwnerProviderEventId,
 	ownershipBucket,
 	parseDrovrOwnershipConfig,
 	resolveJourneyOwner,
@@ -95,7 +97,11 @@ describe('journey owner decision', () => {
 })
 
 describe('journey owner resolution', () => {
-	const assignment = { id: 'owner-event', eventType: 'journey.owner.assigned' }
+	const assignment = {
+		id: 'owner-event',
+		eventType: 'journey.owner.assigned',
+		providerEventId: 'drovr-owner:c:value-path-skills-course',
+	}
 	const repositoryWith = (recorded: boolean) => ({
 		findContactEventsByType: async () =>
 			recorded ? [assignment as never] : [],
@@ -135,6 +141,17 @@ describe('journey owner resolution', () => {
 	})
 })
 
+describe('journey ownership discriminator', () => {
+	it.each([
+		'value-path-skills-course',
+		'crash-course-evergreen-offer',
+	] as const)('round-trips %s through the provider event id', (journeyId) => {
+		const providerEventId = journeyOwnerProviderEventId('contact-1', journeyId)
+		expect(providerEventId).toBe(`drovr-owner:contact-1:${journeyId}`)
+		expect(journeyOwnerAssignmentJourneyId({ providerEventId })).toBe(journeyId)
+	})
+})
+
 describe('fan-out of owned facts to the authority tenant', () => {
 	const shadow = (
 		type: DrovrShadowEvent['type'],
@@ -161,6 +178,21 @@ describe('fan-out of owned facts to the authority tenant', () => {
 			...events[2],
 			tenantId: 'org-aihero',
 			idempotencyKey: 'owner:aihero:value-path.answer-selected:owned',
+		})
+	})
+
+	it('copies only the evergreen exhaustion, never a skills-course exhaustion', () => {
+		const skills = shadow('course.sequence-exhausted', 'owned')
+		const evergreen = {
+			...skills,
+			journeyId: 'crash-course-evergreen-offer' as const,
+		}
+		const out = fanOutOwnedEvents([skills, evergreen], new Set(['owned']))
+		expect(out).toHaveLength(3)
+		expect(out[2]).toEqual({
+			...evergreen,
+			tenantId: 'org-aihero',
+			idempotencyKey: `owner:${evergreen.idempotencyKey}`,
 		})
 	})
 
