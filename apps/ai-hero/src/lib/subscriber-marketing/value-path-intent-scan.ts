@@ -55,69 +55,114 @@ export function scanCompletedValuePathIntentFrontier(
 	intents: SideEffectIntent[]
 	diagnostics: CompletedValuePathIntentScanDiagnostics
 } {
+	const scan = createCompletedValuePathIntentScan(args)
+	scan.addPage(args.intents)
+	return scan.finish()
+}
+
+/** Streaming equivalent of the array scan; retains one frontier per contact/path. */
+export function createCompletedValuePathIntentScan(
+	args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
+) {
 	let excludedMissingCompletedAt = 0
 	let excludedByScope = 0
-	const eligible = args.intents.filter((intent) => {
-		if (!isValuePathIntentCompleted(intent)) return false
-		const completedAt = valuePathIntentCompletedAt(intent)
-		if (!completedAt) {
-			excludedMissingCompletedAt += 1
-			return false
-		}
-		if (args.maxCompletedAt && completedAt > args.maxCompletedAt) return false
-		if (!matchesScanScope(intent, args)) {
-			excludedByScope += 1
-			return false
-		}
-		return true
-	})
+	let scanned = 0
+	let eligible = 0
 	const frontier = new Map<string, SideEffectIntent>()
-	for (const intent of eligible) {
-		const key = frontierKey(intent)
-		const current = frontier.get(key)
-		if (!current || compareByCompletion(intent, current) > 0) {
-			frontier.set(key, intent)
+	const intentSteps = new Set<string>()
+	const scopes = {
+		contactIds: args.contactIds && new Set(args.contactIds),
+		valuePathSlugs: args.valuePathSlugs && new Set(args.valuePathSlugs),
+		emailResourceIds: args.emailResourceIds && new Set(args.emailResourceIds),
+		kitSequenceIds: args.kitSequenceIds && new Set(args.kitSequenceIds),
+	}
+	function addPage(intents: SideEffectIntent[]) {
+		for (const intent of intents) {
+			scanned++
+			const step = intentStepKey(intent)
+			if (step) intentSteps.add(step)
+			if (!isValuePathIntentCompleted(intent)) continue
+			const completedAt = valuePathIntentCompletedAt(intent)
+			if (!completedAt) {
+				excludedMissingCompletedAt++
+				continue
+			}
+			if (args.maxCompletedAt && completedAt > args.maxCompletedAt) continue
+			if (
+				!matchesSet(scopes.contactIds, intent.contactId) ||
+				!matchesSet(
+					scopes.valuePathSlugs,
+					stringField(intent.metadata.valuePathSlug),
+				) ||
+				!matchesSet(
+					scopes.emailResourceIds,
+					stringField(intent.metadata.emailResourceId),
+				) ||
+				!matchesSet(
+					scopes.kitSequenceIds,
+					stringField(intent.metadata.kitSequenceId),
+				)
+			) {
+				excludedByScope++
+				continue
+			}
+			eligible++
+			const key = frontierKey(intent)
+			const current = frontier.get(key)
+			if (!current || compareByCompletion(intent, current) > 0)
+				frontier.set(key, intent)
 		}
 	}
-	const orderedFrontier = Array.from(frontier.values()).sort(compareByCompletion)
-	const intentSteps = new Set(args.intents.map(intentStepKey).filter(Boolean))
-	let excludedTerminal = 0
-	let excludedExistingNextIntent = 0
-	const actionableFrontier = orderedFrontier.filter((intent) => {
-		const nextStepKey = nextIntentStepKey(intent)
-		if (!nextStepKey) {
-			excludedTerminal += 1
-			return false
+	function finish() {
+		const orderedFrontier = Array.from(frontier.values()).sort(
+			compareByCompletion,
+		)
+		let excludedTerminal = 0
+		let excludedExistingNextIntent = 0
+		const actionableFrontier = orderedFrontier.filter((intent) => {
+			const nextStepKey = nextIntentStepKey(intent)
+			if (!nextStepKey) {
+				excludedTerminal += 1
+				return false
+			}
+			if (intentSteps.has(nextStepKey)) {
+				excludedExistingNextIntent += 1
+				return false
+			}
+			return true
+		})
+		const intents = actionableFrontier.slice(0, args.limit)
+		const oldestFrontierCompletedAt = valuePathIntentCompletedAt(
+			actionableFrontier[0],
+		)
+		return {
+			intents,
+			diagnostics: {
+				scanned,
+				eligible,
+				frontierSize: orderedFrontier.length,
+				actionableFrontierSize: actionableFrontier.length,
+				returned: intents.length,
+				truncated: Math.max(0, actionableFrontier.length - intents.length),
+				excludedMissingCompletedAt,
+				excludedByScope,
+				excludedTerminal,
+				excludedExistingNextIntent,
+				oldestFrontierCompletedAt,
+				oldestFrontierAgeHours: oldestFrontierCompletedAt
+					? hoursBetween(
+							oldestFrontierCompletedAt,
+							args.now ?? new Date().toISOString(),
+						)
+					: undefined,
+			},
 		}
-		if (intentSteps.has(nextStepKey)) {
-			excludedExistingNextIntent += 1
-			return false
-		}
-		return true
-	})
-	const intents = actionableFrontier.slice(0, args.limit)
-	const oldestFrontierCompletedAt = valuePathIntentCompletedAt(
-		actionableFrontier[0],
-	)
-	return {
-		intents,
-		diagnostics: {
-			scanned: args.intents.length,
-			eligible: eligible.length,
-			frontierSize: orderedFrontier.length,
-			actionableFrontierSize: actionableFrontier.length,
-			returned: intents.length,
-			truncated: Math.max(0, actionableFrontier.length - intents.length),
-			excludedMissingCompletedAt,
-			excludedByScope,
-			excludedTerminal,
-			excludedExistingNextIntent,
-			oldestFrontierCompletedAt,
-			oldestFrontierAgeHours: oldestFrontierCompletedAt
-				? hoursBetween(oldestFrontierCompletedAt, args.now ?? new Date().toISOString())
-				: undefined,
-		},
 	}
+	return { addPage, finish }
+}
+
+function matchesSet(values: Set<string> | undefined, value?: string) {
+	return !values || (value !== undefined && values.has(value))
 }
 
 export function selectCompletedValuePathIntentFrontier(
@@ -128,31 +173,13 @@ export function selectCompletedValuePathIntentFrontier(
 
 export function sortValuePathIntentsByCreatedAt(intents: SideEffectIntent[]) {
 	return [...intents].sort(
-		(a, b) => compareStrings(a.createdAt, b.createdAt) || compareStrings(a.id, b.id),
+		(a, b) =>
+			compareStrings(a.createdAt, b.createdAt) || compareStrings(a.id, b.id),
 	)
 }
 
 export function hasValidCompletedAt(intent: SideEffectIntent) {
 	return isValuePathIntentCompleted(intent)
-}
-
-function matchesScanScope(
-	intent: SideEffectIntent,
-	args: CompletedValuePathIntentScanArgs,
-) {
-	return (
-		matchesOptional(args.contactIds, intent.contactId) &&
-		matchesOptional(args.valuePathSlugs, stringField(intent.metadata.valuePathSlug)) &&
-		matchesOptional(
-			args.emailResourceIds,
-			stringField(intent.metadata.emailResourceId),
-		) &&
-		matchesOptional(args.kitSequenceIds, stringField(intent.metadata.kitSequenceId))
-	)
-}
-
-function matchesOptional(values: readonly string[] | undefined, value?: string) {
-	return !values || (value !== undefined && values.includes(value))
 }
 
 function frontierKey(intent: SideEffectIntent) {
@@ -162,7 +189,9 @@ function frontierKey(intent: SideEffectIntent) {
 function intentStepKey(intent: SideEffectIntent) {
 	const slug = valuePathSlug(intent)
 	const resourceId = stringField(intent.metadata.emailResourceId)
-	return slug && resourceId ? `${intent.contactId}:${slug}:${resourceId}` : undefined
+	return slug && resourceId
+		? `${intent.contactId}:${slug}:${resourceId}`
+		: undefined
 }
 
 function nextIntentStepKey(intent: SideEffectIntent) {
@@ -195,7 +224,10 @@ function stringField(value: unknown) {
 }
 
 function hoursBetween(from: string, to: string) {
-	return Math.max(0, Math.round(((Date.parse(to) - Date.parse(from)) / 3_600_000) * 10) / 10)
+	return Math.max(
+		0,
+		Math.round(((Date.parse(to) - Date.parse(from)) / 3_600_000) * 10) / 10,
+	)
 }
 
 function compareStrings(a: string, b: string) {

@@ -15,6 +15,7 @@ import type { LearnerFlowCohortRecord } from './learner-flow-cohort'
 import { classifyLearnerFlowContact } from './learner-flow-classifier'
 import {
 	buildLearnerFlowReconcilerPlan,
+	buildBoundedLearnerFlowReconcilerPlan,
 	evaluateLearnerFlowReconcilerBrake,
 	reconcileLearnerFlow,
 	type LearnerFlowReconcilerCandidate,
@@ -1151,4 +1152,81 @@ describe('learner flow reconciler', () => {
 		expect(plan.candidates).toEqual([])
 		expect(plan.records).toEqual([])
 	})
+})
+
+describe('bounded repair plan', () => {
+	it('matches full classification above 100k intents without retaining lifetime detail', async () => {
+		const records: LearnerFlowCohortRecord[] = Array.from(
+			{ length: 100_001 },
+			(_, index) => {
+				const contactId = `contact-${String(index).padStart(6, '0')}`
+				return {
+					contactId,
+					entryEvents: [],
+					intents: [
+						courseIntent({
+							contactId,
+							id: `intent-${index}`,
+							status: index % 3 ? 'completed' : 'blocked',
+							createdAt: '2026-07-01T00:00:00.000Z',
+							...(index % 3 ? { completedAt: '2026-07-01T00:00:00.000Z' } : {}),
+						}),
+					],
+				}
+			},
+		)
+		const full = await buildLearnerFlowReconcilerPlan({
+			repository: {
+				findSkillsWorkflowLearnerFlowRecords: () => records,
+			},
+			allowlist: rollingAllowlist(),
+			now,
+		})
+		let pages = 0
+		const bounded = await buildBoundedLearnerFlowReconcilerPlan({
+			repository: {
+				findSkillsWorkflowLearnerFlowRecords: () => {
+					throw new Error('unbounded read')
+				},
+				async *findSkillsWorkflowLearnerFlowRepairRecordPages() {
+					for (let offset = 0; offset < records.length; offset += 137) {
+						pages++
+						yield records.slice(offset, offset + 137)
+					}
+				},
+			},
+			allowlist: rollingAllowlist(),
+			now,
+			repairCap: 150,
+		})
+		expect(pages).toBe(730)
+		expect(full.records).toHaveLength(100_001)
+		expect(full.candidates.length).toBeGreaterThan(150)
+		expect(bounded.riskyRepairCount).toBeGreaterThan(150)
+		expect(bounded.cohort).toEqual(full.cohort)
+		expect(bounded.counts).toEqual(full.counts)
+		expect(bounded.causeCounts).toEqual(full.causeCounts)
+		expect(bounded.tier2).toEqual(full.tier2)
+		expect(bounded.suppressedFixtureStarved).toEqual(
+			full.suppressedFixtureStarved,
+		)
+		expect(bounded.candidates).toEqual(full.candidates.slice(0, 151))
+		expect(bounded.records.length).toBeLessThanOrEqual(151)
+		expect(bounded.riskyRepairCount).toBe(
+			full.candidates.filter((c) => c.action !== 'nudge-drip-progression')
+				.length,
+		)
+		expect(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: bounded.cohort.contacts,
+				candidates: bounded.candidates,
+				riskyRepairCount: bounded.riskyRepairCount,
+			}),
+		).toEqual(
+			evaluateLearnerFlowReconcilerBrake({
+				cohortSize: full.cohort.contacts,
+				candidates: full.candidates,
+			}),
+		)
+	}, 30_000)
 })
