@@ -9,7 +9,7 @@ import {
 	sideEffectIntent,
 	stateTransition,
 } from '@/db/schema'
-import { and, asc, eq, gt, inArray, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, or, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { guid } from '@coursebuilder/utils/guid'
@@ -1036,6 +1036,34 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		}
 	}
 
+	async claimSideEffectIntentForSend(
+		id: string,
+		args: { now: string; staleAfterMs: number },
+	) {
+		const staleBefore = new Date(
+			Date.parse(args.now) - args.staleAfterMs,
+		).toISOString()
+		const result = await this.database
+			.update(sideEffectIntent)
+			.set({
+				status: 'sending',
+				metadata: sql`JSON_SET(${sideEffectIntent.metadata}, '$.claimedAt', ${args.now})`,
+			})
+			.where(
+				and(
+					eq(sideEffectIntent.id, id),
+					or(
+						inArray(sideEffectIntent.status, ['pending', 'failed']),
+						and(
+							eq(sideEffectIntent.status, 'sending'),
+							sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.claimedAt')) < ${staleBefore}`,
+						),
+					),
+				),
+			)
+		return affectedRowsOf(result) === 1
+	}
+
 	async updateSideEffectIntent(
 		id: string,
 		patch: Pick<
@@ -1069,6 +1097,28 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			.limit(1)
 		return rows[0] ? toProviderIdentityRecord(rows[0]) : undefined
 	}
+}
+
+/** The driver answers an update with rowsAffected (planetscale) or a header's affectedRows (mysql2). */
+function affectedRowsOf(result: unknown): number {
+	if (result && typeof result === 'object') {
+		if (
+			'rowsAffected' in result &&
+			typeof (result as { rowsAffected: unknown }).rowsAffected === 'number'
+		) {
+			return (result as { rowsAffected: number }).rowsAffected
+		}
+		const header = Array.isArray(result) ? result[0] : result
+		if (
+			header &&
+			typeof header === 'object' &&
+			'affectedRows' in header &&
+			typeof (header as { affectedRows: unknown }).affectedRows === 'number'
+		) {
+			return (header as { affectedRows: number }).affectedRows
+		}
+	}
+	return 0
 }
 
 function assembleLearnerFlowSummaryRecords(args: {

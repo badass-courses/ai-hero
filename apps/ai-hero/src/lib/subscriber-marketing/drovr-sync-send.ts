@@ -1,6 +1,3 @@
-import { Ratelimit } from '@upstash/ratelimit'
-import type { Redis } from '@upstash/redis'
-
 /**
  * The synchronous send (decision 2026-09-17): drovr posts an intent and the
  * executor sends inside the request, answering completed, blocked, or
@@ -33,30 +30,52 @@ export function parseDrovrSyncSendConfig(
 	return { enabled: true, perMinute }
 }
 
-export type DrovrSendBudget = () => Promise<{
-	ok: boolean
-	retryAfterMs: number
-}>
+export type DrovrSendBudget = {
+	/** Take one slot; not ok means wait retryAfterMs. */
+	take(): Promise<{ ok: boolean; retryAfterMs: number }>
+	/** Give a taken slot back when no Kit call happened. */
+	refund(): Promise<void>
+}
 
-/** A sliding-window share of the Kit key for drovr's sends, across all instances. */
+const WINDOW_MS = 60_000
+
+/**
+ * A fixed one-minute window on Redis, shared across instances: INCR per
+ * window key, over the limit is refused (and un-counted), and a refund is
+ * a DECR. Fixed rather than sliding so a slot can be given back.
+ */
+/** The three Redis commands the budget needs; Upstash's client satisfies it. */
+export type BudgetStore = {
+	incr(key: string): Promise<number>
+	decr(key: string): Promise<number>
+	expire(key: string, seconds: number): Promise<unknown>
+}
+
 export function drovrSendBudget(
-	redis: Redis,
+	redis: BudgetStore,
 	perMinute: number,
 	now: () => number = Date.now,
 ): DrovrSendBudget {
-	const limiter = new Ratelimit({
-		redis,
-		limiter: Ratelimit.slidingWindow(perMinute, '60 s'),
-		prefix: 'drovr:executor:send',
-	})
-	return async () => {
-		const decision = await limiter.limit('kit')
-		return {
-			ok: decision.success,
-			retryAfterMs: decision.success
-				? 0
-				: Math.max(1_000, decision.reset - now()),
-		}
+	const keyFor = (at: number) =>
+		`drovr:executor:send:${Math.floor(at / WINDOW_MS)}`
+	let lastKey: string | undefined
+	return {
+		async take() {
+			const at = now()
+			const key = keyFor(at)
+			lastKey = key
+			const count = await redis.incr(key)
+			if (count === 1) await redis.expire(key, 120)
+			if (count <= perMinute) return { ok: true, retryAfterMs: 0 }
+			await redis.decr(key)
+			return {
+				ok: false,
+				retryAfterMs: Math.max(1_000, WINDOW_MS - (at % WINDOW_MS)),
+			}
+		},
+		async refund() {
+			if (lastKey) await redis.decr(lastKey)
+		},
 	}
 }
 

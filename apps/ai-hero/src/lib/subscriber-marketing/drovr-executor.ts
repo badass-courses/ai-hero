@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
 import { retryAfterMsFor, type DrovrSendBudget } from './drovr-sync-send'
-import type { ValuePathEmailExecutionResult } from './value-path-email-executor'
+import {
+	isDueRetryableValuePathEmailIntent,
+	type ValuePathEmailExecutionResult,
+} from './value-path-email-executor'
 
 import {
 	EvergreenListPayload,
@@ -77,7 +80,12 @@ export type DrovrExecutorRepository = Pick<
 	| 'findSideEffectIntentByIdempotencyKey'
 	| 'createSideEffectIntent'
 > &
-	Partial<Pick<CaptureMarketingRepository, 'updateSideEffectIntent'>> &
+	Partial<
+		Pick<
+			CaptureMarketingRepository,
+			'updateSideEffectIntent' | 'claimSideEffectIntentForSend'
+		>
+	> &
 	Required<
 		Pick<
 			CaptureMarketingRepository,
@@ -339,13 +347,19 @@ export async function acceptDrovrIntent(args: {
 	)
 }
 
+/** A sender that has held a row this long without finishing has crashed. */
+export const SEND_CLAIM_STALE_MS = 10 * 60_000
+
 /**
  * The synchronous path. An accepted row is sent right here when the caller
- * supplied sendNow: the executor's own preflight, gates, personalization,
- * Kit call, and row update run unchanged, and its outcome becomes the wire
- * answer. Over budget answers retry before Kit is touched. Anything the
- * executor could not act on now (a failed row whose retry is not due) stays
- * accepted, which is the cron's answer.
+ * supplied sendNow: the row is claimed atomically first (pending or failed
+ * becomes sending, so the cron and a concurrent post both step back), then
+ * the executor's own preflight, gates, personalization, Kit call, and row
+ * update run unchanged, and its outcome becomes the wire answer. The
+ * budget slot is taken before the send and given back when no Kit call
+ * happened (gates refused). A row the executor cannot act on now (a failed
+ * row whose retry is not due, or one another sender holds) stays accepted:
+ * drovr's deadline re-asks.
  */
 async function sendNowIfAccepted(
 	result: DrovrExecutorResult,
@@ -359,9 +373,26 @@ async function sendNowIfAccepted(
 	now: string,
 ): Promise<DrovrExecutorResult> {
 	if (result.status !== 'accepted' || !args.sendNow) return result
+	const row = await args.repository.findSideEffectIntentByIdempotencyKey(
+		result.idempotencyKey,
+	)
+	if (!row) return result
+	const due =
+		row.status === 'pending' ||
+		row.status === 'sending' ||
+		isDueRetryableValuePathEmailIntent(row, now)
+	if (!due) return result
+	if (args.repository.claimSideEffectIntentForSend) {
+		const claimed = await args.repository.claimSideEffectIntentForSend(row.id, {
+			now,
+			staleAfterMs: SEND_CLAIM_STALE_MS,
+		})
+		if (!claimed) return result
+	}
 	if (args.budget) {
-		const budget = await args.budget()
+		const budget = await args.budget.take()
 		if (!budget.ok) {
+			await releaseClaim(args.repository, row)
 			return {
 				status: 'retry',
 				intentId: result.intentId,
@@ -370,11 +401,24 @@ async function sendNowIfAccepted(
 			}
 		}
 	}
-	const row = await args.repository.findSideEffectIntentByIdempotencyKey(
-		result.idempotencyKey,
-	)
-	if (!row) return result
-	const outcome = await args.sendNow(row)
+	let outcome: ValuePathEmailExecutionResult
+	try {
+		// The executor sees the row as it was before the claim: it only acts
+		// on pending or due-retryable rows, and every outcome overwrites the
+		// claim with completed, blocked, or failed.
+		outcome = await args.sendNow({
+			...row,
+			status: row.status === 'sending' ? 'pending' : row.status,
+		})
+	} catch (cause) {
+		await releaseClaim(args.repository, row)
+		await args.budget?.refund()
+		throw cause
+	}
+	if (outcome.status === 'blocked' || outcome.status === 'skipped') {
+		// No Kit call happened: give the slot back.
+		await args.budget?.refund()
+	}
 	const after =
 		(await args.repository.findSideEffectIntentByIdempotencyKey(
 			result.idempotencyKey,
@@ -400,8 +444,24 @@ async function sendNowIfAccepted(
 				reason: stringField(after.metadata.retryReason) ?? 'kit-retryable',
 			}
 		default:
+			if (after.status === 'sending') await releaseClaim(args.repository, row)
 			return result
 	}
+}
+
+/** Put a claimed row back as it was, so the cron or the next re-ask can take it. */
+async function releaseClaim(
+	repository: DrovrExecutorRepository,
+	row: SideEffectIntent,
+): Promise<void> {
+	if (!repository.updateSideEffectIntent) return
+	await repository.updateSideEffectIntent(row.id, {
+		status: row.status,
+		gates: row.gates,
+		reviewReasons: row.reviewReasons,
+		metadata: row.metadata,
+		completedAt: row.completedAt,
+	})
 }
 
 /**
