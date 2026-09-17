@@ -489,6 +489,29 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
+	async findPendingSideEffectIntentsByType(
+		type: SideEffectIntent['type'],
+		limit: number,
+	) {
+		// Drizzle drops the LIMIT clause for NaN, which would hand the sender
+		// every pending row; an unusable limit reads as zero rows, not all.
+		const safeLimit =
+			Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 0
+		if (safeLimit === 0) return []
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.type, type),
+					eq(sideEffectIntent.status, 'pending'),
+				),
+			)
+			.orderBy(sideEffectIntent.createdAt)
+			.limit(safeLimit)
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async findCompletedValuePathEmailSideEffectIntentScan(
 		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
 	) {

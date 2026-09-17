@@ -35,6 +35,7 @@ export type DrovrShadowEvent = {
 	idempotencyKey: string
 	payload?:
 		| { emailResourceId: string }
+		| { messageId: string }
 		| { productId: string }
 		| {
 				valuePathSlug: string
@@ -222,13 +223,14 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 }
 
 function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
-	if (
-		intent.provider !== 'kit' ||
-		intent.type !== 'send-value-path-email' ||
-		intent.status !== 'completed'
-	) {
-		return []
+	if (intent.provider !== 'kit' || intent.status !== 'completed') return []
+	// An evergreen send completes to its owning actor only: the shadow's
+	// evergreen actors run their own log executor and never hear from us.
+	if (intent.type === 'send-evergreen-email') {
+		const completion = drovrEvergreenCompletion(intent)
+		return completion ? [completion] : []
 	}
+	if (intent.type !== 'send-value-path-email') return []
 	const completedAt = valuePathIntentCompletedAt(intent)
 	const sourceEmailResourceId = stringValue(intent.metadata.emailResourceId)
 	const emailResourceId = sourceEmailResourceId
@@ -253,6 +255,38 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	return ownerCompletion
 		? [ownerCompletion, shadowCompletion]
 		: [shadowCompletion]
+}
+
+function drovrEvergreenCompletion(
+	intent: SideEffectIntent,
+): DrovrShadowEvent | undefined {
+	const owner = intent.metadata.drovr
+	if (!owner || typeof owner !== 'object') return undefined
+	const record = owner as Record<string, unknown>
+	const tenantId = stringValue(record.tenantId)
+	const intentKey = stringValue(record.intentKey)
+	const messageId = stringValue(intent.metadata.messageId)
+	const completedAt =
+		stringValue(intent.completedAt) ?? stringValue(intent.metadata.completedAt)
+	if (
+		!intentKey ||
+		!messageId ||
+		!completedAt ||
+		(tenantId !== DROVR_SHADOW_TENANT_ID &&
+			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
+		stringValue(record.journeyId) !== DROVR_EVERGREEN_OFFER_JOURNEY_ID
+	) {
+		return undefined
+	}
+	return {
+		tenantId,
+		contactId: intent.contactId,
+		journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `completion:${intentKey}`,
+		payload: { messageId },
+	}
 }
 
 function drovrOwnedCompletion(

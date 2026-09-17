@@ -8,6 +8,7 @@ import {
 	acceptDrovrIntent,
 	DrovrIntentSchema,
 } from '@/lib/subscriber-marketing/drovr-executor'
+import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-evergreen'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 import { and, eq } from 'drizzle-orm'
@@ -108,6 +109,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 		repository: new DrizzleCaptureMarketingRepository(db),
 		intent: parsed.data,
 		findKitSubscriberId,
+		evergreen: parseDrovrEvergreenConfig(process.env),
 	})
 
 	await log.info('drovr.executor.intent', {
