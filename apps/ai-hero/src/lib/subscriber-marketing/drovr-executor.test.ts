@@ -425,3 +425,144 @@ describe('drovr executor: edges Macroscope asked about', () => {
 		}
 	})
 })
+
+describe('acceptDrovrIntent: evergreen bridge and pitch sends', () => {
+	const evergreenIntent = (overrides: Partial<DrovrIntent> = {}): DrovrIntent =>
+		intent({
+			journeyId: 'crash-course-evergreen-offer',
+			idempotencyKey: 'contact-1:crash-course-evergreen-offer:send:B1',
+			payload: { messageId: 'bridge_can_engineer_v1', slot: 'B1' },
+			...overrides,
+		})
+	const enabled = { enabled: true } as const
+
+	it('refuses with a hint while the rollout flag is off', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent(),
+			now,
+		})
+		expect(result.status).toBe('unsupported')
+		if (result.status !== 'unsupported') throw new Error('unreachable')
+		expect(result.hint).toContain('AIH_DROVR_EVERGREEN_ENABLED')
+		expect(repository.intents.size).toBe(0)
+	})
+
+	it('accepts a known message as a send-evergreen-email row bound to its Kit sequence', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent(),
+			now,
+			evergreen: enabled,
+			findKitSubscriberId: async () => 'kit-123',
+		})
+		expect(result.status).toBe('accepted')
+		if (result.status !== 'accepted') throw new Error('unreachable')
+		expect(result.created).toBe(true)
+		const row = repository.intents.get(result.intentId)
+		expect(row).toMatchObject({
+			provider: 'kit',
+			type: 'send-evergreen-email',
+			status: 'pending',
+			idempotencyKey: 'contact:contact-1:evergreen:bridge_can_engineer_v1',
+			metadata: {
+				source: 'drovr',
+				messageId: 'bridge_can_engineer_v1',
+				slot: 'B1',
+				kitSequenceId: '2887679',
+				kitSubscriberId: 'kit-123',
+				drovr: {
+					tenantId: 'org-aihero',
+					journeyId: 'crash-course-evergreen-offer',
+					intentKey: 'contact-1:crash-course-evergreen-offer:send:B1',
+				},
+			},
+		})
+		expect(row?.nextActionId).toMatch(/^drovr:[0-9a-f]{40}$/)
+	})
+
+	it('answers a repeat with the existing row instead of a second send', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent(),
+			now,
+			evergreen: enabled,
+		})
+		const second = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent({ idempotencyKey: 'redriven-key' }),
+			now,
+			evergreen: enabled,
+		})
+		expect(second.status).toBe('accepted')
+		if (first.status !== 'accepted' || second.status !== 'accepted') {
+			throw new Error('unreachable')
+		}
+		expect(second.intentId).toBe(first.intentId)
+		expect(second.created).toBe(false)
+		expect(repository.intents.size).toBe(1)
+	})
+
+	it('answers a completed row with an email.completed addressed to the requester', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const accepted = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent(),
+			now,
+			evergreen: enabled,
+		})
+		if (accepted.status !== 'accepted') throw new Error('unreachable')
+		const row = repository.intents.get(accepted.intentId)!
+		repository.intents.set(row.id, {
+			...row,
+			status: 'completed',
+			completedAt: '2026-09-17T16:00:00.000Z',
+		})
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent({ idempotencyKey: 'redriven-key' }),
+			now,
+			evergreen: enabled,
+		})
+		expect(result).toMatchObject({
+			status: 'completed',
+			intentId: row.id,
+			completion: {
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'crash-course-evergreen-offer',
+				type: 'email.completed',
+				occurredAt: '2026-09-17T16:00:00.000Z',
+				idempotencyKey: 'completion:redriven-key',
+				payload: { messageId: 'bridge_can_engineer_v1' },
+			},
+		})
+	})
+
+	it('refuses an unknown message id and non-send kinds', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const unknown = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent({ payload: { messageId: 'nope_v9' } }),
+			now,
+			evergreen: enabled,
+		})
+		expect(unknown.status).toBe('unsupported')
+		const coupon = await acceptDrovrIntent({
+			repository,
+			intent: evergreenIntent({ kind: 'coupon.issue', payload: {} }),
+			now,
+			evergreen: enabled,
+		})
+		expect(coupon.status).toBe('unsupported')
+		expect(repository.intents.size).toBe(0)
+	})
+})

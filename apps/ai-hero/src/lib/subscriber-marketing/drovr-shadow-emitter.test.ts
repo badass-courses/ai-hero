@@ -507,3 +507,46 @@ describe('drovr direct sender: per-tenant keys', () => {
 		)
 	})
 })
+
+describe('evergreen send completions', () => {
+	it('completes to the owning evergreen actor only, carrying the message id', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: {
+				id: 'row-1',
+				nextActionId: 'drovr:abc',
+				contactId: 'contact-1',
+				provider: 'kit',
+				type: 'send-evergreen-email',
+				status: 'completed',
+				completedAt: '2026-09-17T16:00:00.000Z',
+				idempotencyKey: 'contact:contact-1:evergreen:bridge_can_engineer_v1',
+				gates: [],
+				reviewReasons: [],
+				metadata: {
+					source: 'drovr',
+					messageId: 'bridge_can_engineer_v1',
+					slot: 'B1',
+					kitSequenceId: '2887679',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'crash-course-evergreen-offer',
+						intentKey: 'k1',
+					},
+				},
+				createdAt: '2026-09-17T15:59:00.000Z',
+			},
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'crash-course-evergreen-offer',
+				type: 'email.completed',
+				occurredAt: '2026-09-17T16:00:00.000Z',
+				idempotencyKey: 'completion:k1',
+				payload: { messageId: 'bridge_can_engineer_v1' },
+			},
+		])
+	})
+})

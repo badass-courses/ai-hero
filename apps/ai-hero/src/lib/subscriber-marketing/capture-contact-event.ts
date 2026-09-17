@@ -33,7 +33,10 @@ export type CaptureMarketingRepository = {
 	findContactById(id: string): MaybePromise<ContactRecord | undefined>
 	findContactByEmail(email: string): MaybePromise<ContactRecord | undefined>
 	createContact(input: Omit<ContactRecord, 'id'>): MaybePromise<ContactRecord>
-	updateContactOptInAttribution?(contactId: string, attribution: NonNullable<ContactRecord['optInAttribution']>): MaybePromise<ContactRecord>
+	updateContactOptInAttribution?(
+		contactId: string,
+		attribution: NonNullable<ContactRecord['optInAttribution']>,
+	): MaybePromise<ContactRecord>
 	createProviderIdentity(
 		input: Omit<ProviderIdentityRecord, 'id'>,
 	): MaybePromise<ProviderIdentityRecord>
@@ -48,6 +51,11 @@ export type CaptureMarketingRepository = {
 		contactId: string,
 		eventType: string,
 	): MaybePromise<ContactEventRecord[]>
+	/** Pending rows of one intent type, oldest first, for a dedicated sender. */
+	findPendingSideEffectIntentsByType?(
+		type: SideEffectIntent['type'],
+		limit: number,
+	): MaybePromise<SideEffectIntent[]>
 	createContactEvent(
 		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
 			createdAt?: string
@@ -93,7 +101,8 @@ export type CaptureMarketingRepository = {
 		patch: Pick<
 			SideEffectIntent,
 			'status' | 'gates' | 'reviewReasons' | 'metadata'
-		> & Pick<SideEffectIntent, 'completedAt'>,
+		> &
+			Pick<SideEffectIntent, 'completedAt'>,
 	): MaybePromise<SideEffectIntent>
 	newId(kind: string): string
 }
@@ -249,8 +258,13 @@ async function resolveOrCreateCaptureIdentity(args: {
 			)
 		}
 		const attributedContact =
-			!contact.optInAttribution && args.event.optInAttribution && args.repository.updateContactOptInAttribution
-				? await args.repository.updateContactOptInAttribution(contact.id, args.event.optInAttribution)
+			!contact.optInAttribution &&
+			args.event.optInAttribution &&
+			args.repository.updateContactOptInAttribution
+				? await args.repository.updateContactOptInAttribution(
+						contact.id,
+						args.event.optInAttribution,
+					)
 				: contact
 		return {
 			contact: attributedContact,

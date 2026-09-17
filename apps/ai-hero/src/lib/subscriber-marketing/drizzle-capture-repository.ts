@@ -489,6 +489,24 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return sortValuePathIntentsByCreatedAt(due).slice(0, args.limit)
 	}
 
+	async findPendingSideEffectIntentsByType(
+		type: SideEffectIntent['type'],
+		limit: number,
+	) {
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(
+				and(
+					eq(sideEffectIntent.type, type),
+					eq(sideEffectIntent.status, 'pending'),
+				),
+			)
+			.orderBy(sideEffectIntent.createdAt)
+			.limit(limit)
+		return rows.map(toSideEffectIntentRecord)
+	}
+
 	async findCompletedValuePathEmailSideEffectIntentScan(
 		args: Omit<CompletedValuePathIntentScanArgs, 'intents'>,
 	) {

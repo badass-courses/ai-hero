@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
+import {
+	evergreenSequenceForMessage,
+	SEND_EVERGREEN_EMAIL_INTENT_TYPE,
+	type DrovrEvergreenConfig,
+} from './drovr-evergreen'
+
 import { createInternalId } from '../internal-id'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import {
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_AUTHORITY_TENANT_ID,
 	DROVR_SHADOW_TENANT_ID,
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
@@ -140,6 +147,8 @@ export async function acceptDrovrIntent(args: {
 	now?: string
 	/** Optional lookup for the contact's Kit subscriber id (provider identity). */
 	findKitSubscriberId?: (contactId: string) => Promise<string | undefined>
+	/** Evergreen bridge and pitch rollout; absent means off. */
+	evergreen?: DrovrEvergreenConfig
 }): Promise<DrovrExecutorResult> {
 	const { intent } = args
 	const now = args.now ?? new Date().toISOString()
@@ -172,11 +181,21 @@ export async function acceptDrovrIntent(args: {
 			hint: `Known tenants: ${DROVR_AUTHORITY_TENANT_ID}, ${DROVR_SHADOW_TENANT_ID}.`,
 		}
 	}
+	if (intent.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID) {
+		return await acceptEvergreenSend({
+			repository: args.repository,
+			intent,
+			tenantId,
+			now,
+			evergreen: args.evergreen,
+			findKitSubscriberId: args.findKitSubscriberId,
+		})
+	}
 	if (intent.journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID) {
 		return {
 			status: 'unsupported',
 			reason: `journey ${intent.journeyId} has no ai-hero executor`,
-			hint: `Only ${DROVR_SKILLS_COURSE_JOURNEY_ID} is executed here today.`,
+			hint: `Journeys executed here: ${DROVR_SKILLS_COURSE_JOURNEY_ID}, ${DROVR_EVERGREEN_OFFER_JOURNEY_ID}.`,
 		}
 	}
 	const payload = EmailSendPayload.safeParse(intent.payload ?? {})
@@ -373,4 +392,131 @@ function carryForward(metadata: Record<string, unknown> | undefined) {
 
 function stringField(value: unknown) {
 	return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+const EvergreenSendPayload = z.object({
+	messageId: z.string().min(1),
+	slot: z.string().optional(),
+})
+
+const boundedNextActionId = (intentKey: string): string =>
+	`drovr:${createHash('sha256').update(intentKey).digest('hex').slice(0, 40)}`
+
+/**
+ * An evergreen bridge or pitch send: one row for the evergreen sender,
+ * keyed per contact and message so a redriven intent never queues the
+ * same message twice. drovr's evergreen journey does not wait on this
+ * completion (its cadence is the calendar), but the completion is still
+ * posted so the receipt log shows the send.
+ */
+async function acceptEvergreenSend(args: {
+	repository: DrovrExecutorRepository
+	intent: DrovrIntent
+	tenantId: DrovrTenantId
+	now: string
+	evergreen: DrovrEvergreenConfig | undefined
+	findKitSubscriberId?: (contactId: string) => Promise<string | undefined>
+}): Promise<DrovrExecutorResult> {
+	const { intent } = args
+	if (!args.evergreen?.enabled) {
+		return {
+			status: 'unsupported',
+			reason: `evergreen sends are not enabled: ${args.evergreen?.reason ?? 'off'}`,
+			hint: 'Set AIH_DROVR_EVERGREEN_ENABLED=true once the Kit sequences read back ready.',
+		}
+	}
+	if (intent.kind !== 'email.send') {
+		return {
+			status: 'unsupported',
+			reason: `intent kind ${intent.kind} has no evergreen executor yet`,
+			hint: 'email.send is executed; coupon.issue and list.subscribe are next.',
+		}
+	}
+	const payload = EvergreenSendPayload.safeParse(intent.payload ?? {})
+	if (!payload.success) {
+		return {
+			status: 'unsupported',
+			reason: 'email.send payload is missing messageId',
+			hint: 'Send { messageId: "<evergreen message id>" }.',
+		}
+	}
+	const sequence = evergreenSequenceForMessage(payload.data.messageId)
+	if (!sequence) {
+		return {
+			status: 'unsupported',
+			reason: `unknown evergreen message ${payload.data.messageId}`,
+			hint: 'Use a message id from the evergreen bridge/pitch plan.',
+		}
+	}
+	const contact = await args.repository.findContactById(intent.contactId)
+	if (!contact) return { status: 'contact-missing' }
+
+	const idempotencyKey = `contact:${contact.id}:evergreen:${sequence.messageId}`
+	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => ({
+		status: 'completed',
+		intentId: row.id,
+		completion: {
+			tenantId: args.tenantId,
+			contactId: row.contactId,
+			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			type: 'email.completed',
+			occurredAt:
+				stringField(row.completedAt) ??
+				stringField(row.metadata.completedAt) ??
+				args.now,
+			idempotencyKey: `completion:${intent.idempotencyKey}`,
+			payload: { messageId: sequence.messageId },
+		},
+	})
+	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
+		row.status === 'completed'
+			? completionFor(row)
+			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+
+	const existing =
+		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	if (existing) return existingResult(existing)
+
+	const kitSubscriberId = args.findKitSubscriberId
+		? await args.findKitSubscriberId(contact.id)
+		: undefined
+	let created: SideEffectIntent
+	try {
+		created = await args.repository.createSideEffectIntent({
+			id: createInternalId(),
+			nextActionId: boundedNextActionId(intent.idempotencyKey),
+			contactId: contact.id,
+			provider: 'kit',
+			type: SEND_EVERGREEN_EMAIL_INTENT_TYPE,
+			status: 'pending',
+			idempotencyKey,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				source: 'drovr',
+				drovr: {
+					tenantId: args.tenantId,
+					journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					intentKey: intent.idempotencyKey,
+					dueAt: intent.dueAt,
+				},
+				messageId: sequence.messageId,
+				slot: sequence.slot,
+				kitSequenceId: String(sequence.sequenceId),
+				...(kitSubscriberId ? { kitSubscriberId } : {}),
+			},
+			createdAt: args.now,
+		})
+	} catch (cause) {
+		const raced =
+			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+		if (!raced) throw cause
+		return existingResult(raced)
+	}
+	return {
+		status: 'accepted',
+		intentId: created.id,
+		idempotencyKey,
+		created: true,
+	}
 }
