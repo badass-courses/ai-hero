@@ -213,4 +213,34 @@ describe('Skills newsletter path entry: drovr ownership', () => {
 			),
 		).toBe(false)
 	})
+
+	it('lets the rollout own a contact captured without state: the legacy gate has nothing to continue', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const first = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+		})
+		expect(first.status).toBe('planned')
+		// An old provisional contact: the capture event exists, but it predates
+		// contact state and never got a legacy plan. Its late confirmation
+		// replays the same signup.
+		repository.states.delete(first.contactId)
+		repository.sideEffectIntents.clear()
+		const replay = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input: { ...input, source: 'signup-gap-replay' },
+			drovrOwnership: { percent: 100, emails: new Set() },
+		})
+		expect(replay.status).toBe('drovr-owned')
+		expect(
+			Array.from(repository.contactEvents.values()).filter(
+				(event) => event.eventType === 'journey.owner.assigned',
+			),
+		).toHaveLength(1)
+		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+	})
 })
