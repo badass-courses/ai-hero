@@ -13,6 +13,7 @@ import {
 } from './course-sequence-exhaustion'
 import { normalizeContactEvent } from './normalize-contact-event'
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { isDrovrOwnedIntent } from './drovr-ownership'
 import type { OptInAttribution } from './opt-in-attribution'
 import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 import {
@@ -103,13 +104,15 @@ export async function enterSkillsNewsletterSubscriber(args: {
 	// is their birth in drovr's authority tenant, and drovr's actor emits
 	// every send from there. Ownership is sticky and never flips a contact
 	// the legacy planner already started (a replayed signup stays legacy).
-	// "Started" means a contact state exists: a contact captured before
-	// state was written has nothing for the legacy gate to continue (it
-	// blocks with contact-state-missing), so its late confirmation is a new
-	// entry and the rollout decides.
+	// "Started" means legacy created a send for the contact. A contact state
+	// alone is not that: the capture path writes one (classified or
+	// human-review) before any planning, so a contact captured on a path
+	// that never ran the entry, confirming later, would otherwise stick to
+	// legacy with nothing to continue. Where the repository cannot list a
+	// contact's sends, the state row stands in.
 	const alreadyEntered =
 		capture.idempotentNoop &&
-		Boolean(await args.repository.findCurrentContactState(capture.contact.id))
+		(await legacyStartedContact(args.repository, capture.contact.id))
 	const ownership = await resolveJourneyOwner({
 		repository: args.repository,
 		contactId: capture.contact.id,
@@ -282,4 +285,16 @@ function emptyEntry(
 					]
 				: [],
 	}
+}
+
+async function legacyStartedContact(
+	repository: CaptureMarketingRepository,
+	contactId: string,
+): Promise<boolean> {
+	if (repository.findValuePathEmailSideEffectIntentsByContact) {
+		const intents =
+			await repository.findValuePathEmailSideEffectIntentsByContact(contactId)
+		return intents.some((intent) => !isDrovrOwnedIntent(intent))
+	}
+	return Boolean(await repository.findCurrentContactState(contactId))
 }
