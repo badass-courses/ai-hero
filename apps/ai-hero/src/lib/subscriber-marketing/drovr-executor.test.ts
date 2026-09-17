@@ -42,6 +42,19 @@ class FakeRepository implements DrovrExecutorRepository {
 			.filter((intent) => intent.contactId === contactId)
 			.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 	}
+	updateSideEffectIntent(
+		id: string,
+		patch: Pick<
+			SideEffectIntent,
+			'status' | 'gates' | 'reviewReasons' | 'metadata' | 'completedAt'
+		>,
+	) {
+		const row = this.intents.get(id)
+		if (!row) throw new Error(`no row ${id}`)
+		const next = { ...row, ...patch }
+		this.intents.set(id, next)
+		return next
+	}
 }
 
 const contact = (): ContactRecord => ({
@@ -728,5 +741,96 @@ describe('acceptDrovrIntent: evergreen coupon issue', () => {
 				},
 			},
 		})
+	})
+})
+
+describe('legacy rows for drovr-owned contacts', () => {
+	const legacyRow = (
+		emailResourceId: string,
+		status: SideEffectIntent['status'],
+	): SideEffectIntent => ({
+		id: `legacy-${emailResourceId}`,
+		nextActionId: 'na-legacy',
+		contactId: 'contact-1',
+		provider: 'kit',
+		type: 'send-value-path-email',
+		status,
+		completedAt: status === 'completed' ? now : null,
+		idempotencyKey: `contact:contact-1:value-path:ai-hero-skills-workflow:email:${emailResourceId}`,
+		gates: [],
+		reviewReasons: [],
+		metadata: {
+			gate: 'send-gate-d-value-path-email',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId,
+		},
+		createdAt: now,
+	})
+
+	it('adopts a pending legacy row by stamping drovr ownership so its completion flows back', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'legacy-ai-hero-skills-workflow.email-0',
+			legacyRow('ai-hero-skills-workflow.email-0', 'completed'),
+		)
+		repository.intents.set(
+			'legacy-ai-hero-skills-workflow.email-1',
+			legacyRow('ai-hero-skills-workflow.email-1', 'pending'),
+		)
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent({
+				idempotencyKey: 'k-email-1',
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-1' },
+			}),
+			now,
+		})
+		expect(result).toMatchObject({ status: 'accepted', created: false })
+		const row = repository.intents.get(
+			'legacy-ai-hero-skills-workflow.email-1',
+		)!
+		expect(row.status).toBe('pending')
+		expect(row.metadata).toMatchObject({
+			source: 'drovr',
+			adoptedFrom: 'legacy-planner',
+			drovr: {
+				tenantId: 'org-aihero',
+				journeyId: 'value-path-skills-course',
+				intentKey: 'k-email-1',
+			},
+		})
+	})
+
+	it('answers a completed legacy row with the completion and leaves it unstamped', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'legacy-ai-hero-skills-workflow.email-0',
+			legacyRow('ai-hero-skills-workflow.email-0', 'completed'),
+		)
+		repository.intents.set(
+			'legacy-ai-hero-skills-workflow.email-1',
+			legacyRow('ai-hero-skills-workflow.email-1', 'completed'),
+		)
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent({
+				idempotencyKey: 'k-email-1',
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-1' },
+			}),
+			now,
+		})
+		expect(result).toMatchObject({
+			status: 'completed',
+			completion: {
+				type: 'email.completed',
+				idempotencyKey: 'completion:k-email-1',
+			},
+		})
+		expect(
+			repository.intents.get('legacy-ai-hero-skills-workflow.email-1')!.metadata
+				.drovr,
+		).toBeUndefined()
 	})
 })

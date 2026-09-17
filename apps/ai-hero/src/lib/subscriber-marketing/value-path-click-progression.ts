@@ -3,6 +3,7 @@ import {
 	type CaptureMarketingRepository,
 } from './capture-contact-event'
 import type { ValuePathTokenPayload } from './path-token'
+import { findJourneyOwnerAssignment } from './drovr-ownership'
 import { CONTACT_EVENT_SCHEMA_VERSION } from './types'
 import { MAX_PLAUSIBLE_ANSWER_CLICKS_PER_CONTACT } from './value-path-answer-click-verification'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
@@ -469,6 +470,18 @@ export async function recordValuePathAnswerProgression(args: {
 		}
 	}
 
+	// The answer is recorded above and reaches drovr through the repository's
+	// own dispatch; for a drovr-owned contact that is the whole job. drovr's
+	// actor plans the next send, so the legacy planner must not race it with
+	// a row the executor would find and adopt too late.
+	if (await findJourneyOwnerAssignment(args.repository, contact.id)) {
+		return {
+			status: 'recorded',
+			contactEventId: event.id,
+			idempotentNoop: false,
+			reviewReasons: ['drovr-owned'],
+		}
+	}
 	const gate = applyAcceptedValuePathSendGateReviewReasons(
 		evaluateValuePathEmailSendGate({
 			mode: args.mode ?? 'dry-run',
