@@ -117,7 +117,7 @@ describe('executePendingEvergreenSends', () => {
 		const results = await executePendingEvergreenSends({
 			repository,
 			subscribe: async () => {
-				throw new Error('kit-subscribe-failed:rate-limited')
+				throw new Error('AIH_KIT_SUBSCRIBE_ERROR:rate-limited:429')
 			},
 			limit: 10,
 			dispatch: () => {},
@@ -127,12 +127,15 @@ describe('executePendingEvergreenSends', () => {
 				status: 'retry',
 				intentId: 'row-1',
 				attempts: 1,
-				error: 'kit-subscribe-failed:rate-limited',
+				error: 'AIH_KIT_SUBSCRIBE_ERROR:rate-limited:429',
 			},
 		])
 		expect(repository.intents.get('row-1')).toMatchObject({
 			status: 'pending',
-			metadata: { attempts: 1, lastError: 'kit-subscribe-failed:rate-limited' },
+			metadata: {
+				attempts: 1,
+				lastError: 'AIH_KIT_SUBSCRIBE_ERROR:rate-limited:429',
+			},
 		})
 	})
 
@@ -161,6 +164,32 @@ describe('executePendingEvergreenSends', () => {
 			status: 'failed',
 			reviewReasons: ['evergreen-send-exhausted'],
 		})
+	})
+
+	it('goes terminal on unresolved and rejected Kit answers instead of re-enrolling', async () => {
+		for (const code of ['unresolved', 'rejected'] as const) {
+			const repository = new FakeRepository()
+			repository.contacts.set('contact-1', contact())
+			repository.intents.set('row-1', row())
+			const error = Object.assign(
+				new Error(`AIH_KIT_SUBSCRIBE_ERROR:${code}`),
+				{ code },
+			)
+			const results = await executePendingEvergreenSends({
+				repository,
+				subscribe: async () => {
+					throw error
+				},
+				limit: 10,
+				dispatch: () => {},
+			})
+			expect(results[0]).toMatchObject({ status: 'failed', intentId: 'row-1' })
+			expect(repository.intents.get('row-1')).toMatchObject({
+				status: 'failed',
+				reviewReasons: [`kit-${code}`],
+				metadata: { attempts: 1 },
+			})
+		}
 	})
 
 	it('fails a row whose contact has no email without touching Kit', async () => {

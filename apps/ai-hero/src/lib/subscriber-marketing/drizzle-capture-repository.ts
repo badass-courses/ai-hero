@@ -493,6 +493,11 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		type: SideEffectIntent['type'],
 		limit: number,
 	) {
+		// Drizzle drops the LIMIT clause for NaN, which would hand the sender
+		// every pending row; an unusable limit reads as zero rows, not all.
+		const safeLimit =
+			Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 0
+		if (safeLimit === 0) return []
 		const rows = await this.database
 			.select()
 			.from(sideEffectIntent)
@@ -503,7 +508,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				),
 			)
 			.orderBy(sideEffectIntent.createdAt)
-			.limit(limit)
+			.limit(safeLimit)
 		return rows.map(toSideEffectIntentRecord)
 	}
 

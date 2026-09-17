@@ -102,6 +102,12 @@ const sequenceReadback = z.object({
 	}),
 })
 
+const sequenceEmailsReadback = z.object({
+	sequence_emails: z.array(
+		z.object({ id: z.number(), published: z.boolean() }),
+	),
+})
+
 export type EvergreenReadback = {
 	readonly ready: boolean
 	readonly problems: readonly string[]
@@ -110,9 +116,11 @@ export type EvergreenReadback = {
 
 /**
  * GET-only proof that each slot's sequence can deliver: active, not on
- * hold, not repeating, exactly one email. A sequence with zero emails is
- * the state Kit leaves a freshly created sequence in; adding a subscriber
- * to it would "send" nothing and the journey would move on.
+ * hold, not repeating, exactly one email and that email published. A
+ * sequence with zero emails is the state Kit leaves a freshly created
+ * sequence in, and a draft email counts toward `email_count` but never
+ * sends; adding a subscriber to either would "send" nothing and the
+ * journey would move on.
  */
 export async function readbackEvergreenSequences(options: {
 	apiKey: string | undefined
@@ -130,20 +138,24 @@ export async function readbackEvergreenSequences(options: {
 		}
 	}
 	const problems: string[] = []
-	for (const entry of EVERGREEN_KIT_SEQUENCES) {
+	const get = async (path: string) => {
 		const controller = new AbortController()
 		const timer = setTimeout(
 			() => controller.abort(),
 			options.timeoutMs ?? 10_000,
 		)
 		try {
-			const response = await options.fetch(
-				`https://api.kit.com/v4/sequences/${entry.sequenceId}`,
-				{
-					headers: { 'X-Kit-Api-Key': apiKey },
-					signal: controller.signal,
-				},
-			)
+			return await options.fetch(`https://api.kit.com/v4${path}`, {
+				headers: { 'X-Kit-Api-Key': apiKey },
+				signal: controller.signal,
+			})
+		} finally {
+			clearTimeout(timer)
+		}
+	}
+	for (const entry of EVERGREEN_KIT_SEQUENCES) {
+		try {
+			const response = await get(`/sequences/${entry.sequenceId}`)
 			if (response.status !== 200) {
 				problems.push(`${entry.slot}: Kit answered ${response.status}`)
 				continue
@@ -165,13 +177,33 @@ export async function readbackEvergreenSequences(options: {
 			if (s.repeat) problems.push(`${entry.slot}: sequence repeats`)
 			if (s.email_count !== 1) {
 				problems.push(`${entry.slot}: ${s.email_count} emails, expected 1`)
+				continue
+			}
+			// email_count counts drafts too; only a published email sends.
+			const emailsResponse = await get(`/sequences/${entry.sequenceId}/emails`)
+			if (emailsResponse.status !== 200) {
+				problems.push(
+					`${entry.slot}: Kit answered ${emailsResponse.status} for emails`,
+				)
+				continue
+			}
+			const emails = sequenceEmailsReadback.safeParse(
+				await emailsResponse.json(),
+			)
+			if (!emails.success) {
+				problems.push(`${entry.slot}: unreadable sequence emails readback`)
+				continue
+			}
+			const published = emails.data.sequence_emails.filter((e) => e.published)
+			if (emails.data.sequence_emails.length !== 1 || published.length !== 1) {
+				problems.push(
+					`${entry.slot}: ${published.length} published of ${emails.data.sequence_emails.length} emails, expected 1 of 1`,
+				)
 			}
 		} catch (error) {
 			problems.push(
 				`${entry.slot}: ${error instanceof Error ? error.message : String(error)}`,
 			)
-		} finally {
-			clearTimeout(timer)
 		}
 	}
 	return { ready: problems.length === 0, problems, checkedAt }

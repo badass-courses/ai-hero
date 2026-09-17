@@ -67,6 +67,22 @@ describe('readbackEvergreenSequences', () => {
 		)
 	const nameFor = (id: number) =>
 		EVERGREEN_KIT_SEQUENCES.find((e) => e.sequenceId === id)!.messageId
+	const emailsJson = (published: boolean[]) =>
+		new Response(
+			JSON.stringify({
+				sequence_emails: published.map((p, i) => ({ id: i + 1, published: p })),
+			}),
+			{ status: 200 },
+		)
+	const isEmails = (url: string | URL | Request) =>
+		String(url).endsWith('/emails')
+	const idOf = (url: string | URL | Request) =>
+		Number(
+			String(url)
+				.replace(/\/emails$/, '')
+				.split('/')
+				.pop(),
+		)
 
 	it('is ready when every sequence is active with exactly one email', async () => {
 		const seen: string[] = []
@@ -77,7 +93,8 @@ describe('readbackEvergreenSequences', () => {
 				expect((init?.headers as Record<string, string>)['X-Kit-Api-Key']).toBe(
 					'k',
 				)
-				const id = Number(String(url).split('/').pop())
+				if (isEmails(url)) return emailsJson([true])
+				const id = idOf(url)
 				return sequenceJson(id, `AIH Evergreen ${nameFor(id)}`)
 			}) as typeof fetch,
 			now: () => '2026-09-16T00:00:00.000Z',
@@ -87,14 +104,15 @@ describe('readbackEvergreenSequences', () => {
 			problems: [],
 			checkedAt: '2026-09-16T00:00:00.000Z',
 		})
-		expect(seen).toHaveLength(8)
+		expect(seen).toHaveLength(16)
 	})
 
 	it('names every empty, inactive, held, or misnamed sequence', async () => {
 		const result = await readbackEvergreenSequences({
 			apiKey: 'k',
 			fetch: (async (url: string | URL | Request) => {
-				const id = Number(String(url).split('/').pop())
+				if (isEmails(url)) return emailsJson([true])
+				const id = idOf(url)
 				if (id === 2887679)
 					return sequenceJson(id, nameFor(id), {
 						email_count: 0,
@@ -112,6 +130,21 @@ describe('readbackEvergreenSequences', () => {
 			'P1: sequence name lacks pitch_open_product_origin_v1',
 			'P1: sequence is on hold',
 			'P5: Kit answered 500',
+		])
+	})
+
+	it('treats a lone draft email as not ready', async () => {
+		const result = await readbackEvergreenSequences({
+			apiKey: 'k',
+			fetch: (async (url: string | URL | Request) => {
+				if (isEmails(url)) return emailsJson([idOf(url) !== 2887680])
+				const id = idOf(url)
+				return sequenceJson(id, nameFor(id))
+			}) as typeof fetch,
+		})
+		expect(result.ready).toBe(false)
+		expect(result.problems).toEqual([
+			'B2: 0 published of 1 emails, expected 1 of 1',
 		])
 	})
 

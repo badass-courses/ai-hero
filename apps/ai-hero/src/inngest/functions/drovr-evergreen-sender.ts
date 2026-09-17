@@ -17,6 +17,11 @@ import { parseValuePathProviderPacingMs } from './value-path-provider-pacing'
  * eight Kit sequences are active with one email before it touches a row:
  * the readback is the gate, not a deploy-time promise.
  */
+const senderLimit = (raw: string | undefined): number => {
+	const parsed = Number.parseInt(raw ?? '', 10)
+	return Number.isFinite(parsed) && parsed >= 1 ? parsed : 25
+}
+
 export const drovrEvergreenSender = inngest.createFunction(
 	{
 		id: 'drovr-evergreen-sender-v1',
@@ -53,7 +58,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 							typeof subscribeToKitListWithoutFields
 						>[0]['user'],
 					}),
-				limit: Number(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT ?? 25),
+				limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
 				pacingMs: parseValuePathProviderPacingMs(
 					process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
 				),
