@@ -1,0 +1,59 @@
+---
+title: Max's spot illustrations on five surfaces
+status: review
+assignee: "vojta (2026-09-15)"
+branch: feat/spot-illustrations
+---
+
+# Goal
+
+Place the five spot illustrations Max delivered on 2026-09-07 (DM, mockups
+`mockup-{build,mail,team,todo,todo-big}.png`) on the surfaces they were drawn
+for, served from Cloudinary.
+
+# Assets
+
+- Sources: Max's Dropbox folder "AI Hero" (PSDs for `mail` and `todo-big`),
+  local copy `~/Downloads/ai-hero-spot-illos-meta-dir`.
+- Served from `total-typescript` Cloudinary, folder `aihero.dev/spot-illos/`
+  (`build`, `real`, `team`, `todo`, `todo-big`, `mail`, `mail-shadow`).
+  Uploaded 2026-09-15 with the `cloudinary` SDK already in the app and the
+  `.env` API key; a script run from `apps/ai-hero` so the package resolves.
+- Every export bakes its glow into the canvas: the visible tile is ~85% of
+  the box. Placements pull the box out with a negative margin so the TILE,
+  not the halo, sits on the text's top edge.
+
+# Decisions
+
+1. One component, `src/components/brand/spot-illustration.tsx`, holds the
+   URLs and renders `CldImage` with empty alt: every surface says in words
+   what the picture shows.
+2. Placements: `build` led the `/open-source` hero (removed 2026-09-17, Vojta); `team` replaces the `Users` glyph on the `/courses` team card;
+   `todo` leads the home "What do you want to do?" ladder via a new
+   `illustration` slot on `SectionHeader`, set in `ActivityLadder` code (not
+   the CMS MDX) the same way its `rank` is; `todo-big` was a right rail on
+   `/learn` from `lg`; removed 2026-09-17 (Vojta), asset stays on Cloudinary.
+3. The `/skills/subscribe` panel swapped its CSS hatch for the animated
+   `HeroShader` at full strength (Max's mockup); `bg-muted` stays under it
+   for no-WebGL.
+4. The envelope over the signup card was built to Max's three-layer spec
+   (multiply shadow, blurred gradient through the body, plus-lighter
+   envelope) and then dropped on 2026-09-17: Vojta didn't like it. The
+   shader panel stays. `mail` and `mail-shadow` remain on Cloudinary unused.
+5. The `real` mark on `/skills/subscribe` was placed beside the h1, then
+   removed on 2026-09-17 (Vojta). The asset stays on Cloudinary unused; the
+   page keeps only the shader panel.
+
+# Gotchas
+
+- First request for each Cloudinary derivative is slow (on-demand
+  generation); a fresh page can show the reserved box empty for a few
+  seconds until it is warm.
+- `pnpm typecheck` on this machine shows the stale-install signature
+  (196 errors, none in these files); see
+  `resources/typecheck-memory-and-install-state.svx`.
+
+# Open
+
+- Max asked (2026-09-15) for two more assets: `/implement-spec` and `/retro`
+  skill icons; unrelated to these five.

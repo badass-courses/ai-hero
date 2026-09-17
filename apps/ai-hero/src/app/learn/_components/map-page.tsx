@@ -6,6 +6,7 @@ import type { MapTocItem } from '@/components/navigation/map-toc'
 import { MapQuestionGrid } from '@/components/navigation/map-toc'
 import { AskAIHeroBotCard } from '@/components/navigation/ask-ai-hero-bot-card'
 import type { GoalSection } from '@/components/navigation/goal-sections-data'
+import { HeroShader } from '@/components/landing/hero-shader'
 import { PrimaryNewsletterCta } from '@/components/primary-newsletter-cta'
 import { PrimaryNewsletterTitle } from '@/components/subscriber-count'
 import type { ResolvedItem } from '@/lib/goal-sections-query'
@@ -231,16 +232,42 @@ export function MapPage({ goalSections, whatsNew, tocItems }: MapPageProps) {
 			{/* What's New featured row */}
 			<WhatsNewSection items={whatsNew} />
 
-			{/* Bookend CTA */}
-			<section>
-				<div className="py-16 md:py-24">
-					<PrimaryNewsletterCta
-						title={<PrimaryNewsletterTitle />}
-						titleElement="h2"
-						trackProps={{ event: 'learn_bookend_newsletter' }}
+			{/* Bookend CTA. The padding and the gradient ride on the CTA itself,
+			    not a wrapper: the CTA returns null for a subscriber, and a padded
+			    wrapper around nothing was a blank band between What's New and the
+			    way onward. Same shader and settings as `/newsletter`, at half
+			    strength, edge to edge. */}
+			<PrimaryNewsletterCta
+				className="py-16 md:py-24"
+				title={<PrimaryNewsletterTitle />}
+				titleElement="h2"
+				trackProps={{ event: 'learn_bookend_newsletter' }}
+				backdrop={
+					<HeroShader
+						className="absolute inset-0 opacity-50"
+						speed={0.2}
+						frequency={7.0}
+						displacement={0.018}
+						displacementFreq={4.5}
+						mouseFollow={0.03}
+						mouseInfluence={0.55}
+						flowY={0.2}
+						flowX={0.2}
+						intensity={1.0}
+						saturation={1.25}
+						sharpness={0.7}
+						grain={0.1}
+						grainTexture={0.3}
+						grainScale={0.5}
+						chromaOffset={13.0}
+						vignette={0}
+						mouseHalo={0.15}
+						posterize={0.1}
+						colorDrift={0.05}
+						seed={10}
 					/>
-				</div>
-			</section>
+				}
+			/>
 
 			{/* Last thing on the page: the way onward. The newsletter is an ask the
 			    reader can decline, and declining it should not be the note the Map
