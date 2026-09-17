@@ -103,11 +103,18 @@ export async function enterSkillsNewsletterSubscriber(args: {
 	// is their birth in drovr's authority tenant, and drovr's actor emits
 	// every send from there. Ownership is sticky and never flips a contact
 	// the legacy planner already started (a replayed signup stays legacy).
+	// "Started" means a contact state exists: a contact captured before
+	// state was written has nothing for the legacy gate to continue (it
+	// blocks with contact-state-missing), so its late confirmation is a new
+	// entry and the rollout decides.
+	const alreadyEntered =
+		capture.idempotentNoop &&
+		Boolean(await args.repository.findCurrentContactState(capture.contact.id))
 	const ownership = await resolveJourneyOwner({
 		repository: args.repository,
 		contactId: capture.contact.id,
 		email: args.input.email,
-		alreadyEntered: capture.idempotentNoop,
+		alreadyEntered,
 		config: args.drovrOwnership ?? DROVR_OWNERSHIP_OFF,
 	})
 	if (ownership.owner === 'drovr') {
