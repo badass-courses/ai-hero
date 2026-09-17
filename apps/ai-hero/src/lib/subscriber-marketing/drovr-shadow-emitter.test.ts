@@ -550,3 +550,48 @@ describe('evergreen send completions', () => {
 		])
 	})
 })
+
+describe('evergreen coupon completions', () => {
+	it('completes to the owning evergreen actor as coupon.issued with the coupon id and expiry', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: {
+				id: 'row-1',
+				nextActionId: 'drovr:abc',
+				contactId: 'contact-1',
+				provider: 'kit',
+				type: 'issue-evergreen-coupon',
+				status: 'completed',
+				completedAt: '2026-09-10T16:00:05.000Z',
+				idempotencyKey: 'contact:contact-1:evergreen:coupon',
+				gates: [],
+				reviewReasons: [],
+				metadata: {
+					source: 'drovr',
+					couponId: 'eoj-coupon:abc',
+					expiresAt: '2026-09-15T06:59:59.000Z',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'crash-course-evergreen-offer',
+						intentKey: 'k-coupon',
+					},
+				},
+				createdAt: '2026-09-10T16:00:01.000Z',
+			},
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'crash-course-evergreen-offer',
+				type: 'coupon.issued',
+				occurredAt: '2026-09-10T16:00:05.000Z',
+				idempotencyKey: 'completion:k-coupon',
+				payload: {
+					couponId: 'eoj-coupon:abc',
+					expiresAt: '2026-09-15T06:59:59.000Z',
+				},
+			},
+		])
+	})
+})

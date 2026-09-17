@@ -262,3 +262,46 @@ export async function addSubscriberToKitSequence(options: {
 		clearTimeout(timer)
 	}
 }
+
+/**
+ * Write custom field values on a Kit subscriber (v4 `PUT /v4/subscribers/{id}`),
+ * keyed by field key. Used by the coupon arm to publish the offer values the
+ * pitch emails render through Liquid. Same key as the readback and the send.
+ */
+export async function updateKitSubscriberFields(options: {
+	apiKey: string | undefined
+	fetch: typeof fetch
+	subscriberId: string | number
+	fields: Record<string, string>
+	timeoutMs?: number
+}): Promise<void> {
+	const apiKey = options.apiKey?.trim()
+	if (!apiKey) throw new Error('Kit v4 API key is not configured')
+	const controller = new AbortController()
+	const timer = setTimeout(
+		() => controller.abort(),
+		options.timeoutMs ?? 10_000,
+	)
+	try {
+		const response = await options.fetch(
+			`https://api.kit.com/v4/subscribers/${options.subscriberId}`,
+			{
+				method: 'PUT',
+				headers: {
+					'X-Kit-Api-Key': apiKey,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ fields: options.fields }),
+				signal: controller.signal,
+			},
+		)
+		if (response.status !== 200) {
+			throw new KitV4Error(
+				response.status,
+				(await response.text()).slice(0, 200),
+			)
+		}
+	} finally {
+		clearTimeout(timer)
+	}
+}

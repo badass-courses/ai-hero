@@ -6,6 +6,10 @@ import {
 	SEND_EVERGREEN_EMAIL_INTENT_TYPE,
 	type DrovrEvergreenConfig,
 } from './drovr-evergreen'
+import {
+	CouponIssuePayload,
+	ISSUE_EVERGREEN_COUPON_INTENT_TYPE,
+} from './drovr-evergreen-coupon'
 
 import { createInternalId } from '../internal-id'
 import type { CaptureMarketingRepository } from './capture-contact-event'
@@ -166,13 +170,6 @@ export async function acceptDrovrIntent(args: {
 		}
 	}
 
-	if (intent.kind !== 'email.send') {
-		return {
-			status: 'unsupported',
-			reason: `intent kind ${intent.kind} has no ai-hero executor`,
-			hint: 'Only email.send for the skills course is executed here today.',
-		}
-	}
 	const tenantId = knownTenant(intent.tenantId)
 	if (!tenantId) {
 		return {
@@ -181,6 +178,7 @@ export async function acceptDrovrIntent(args: {
 			hint: `Known tenants: ${DROVR_AUTHORITY_TENANT_ID}, ${DROVR_SHADOW_TENANT_ID}.`,
 		}
 	}
+
 	if (intent.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID) {
 		return await acceptEvergreenSend({
 			repository: args.repository,
@@ -190,6 +188,14 @@ export async function acceptDrovrIntent(args: {
 			evergreen: args.evergreen,
 			findKitSubscriberId: args.findKitSubscriberId,
 		})
+	}
+
+	if (intent.kind !== 'email.send') {
+		return {
+			status: 'unsupported',
+			reason: `intent kind ${intent.kind} has no ai-hero executor`,
+			hint: 'The skills course executes email.send here; the evergreen journey also executes coupon.issue.',
+		}
 	}
 	if (intent.journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID) {
 		return {
@@ -425,11 +431,14 @@ async function acceptEvergreenSend(args: {
 			hint: 'Set AIH_DROVR_EVERGREEN_ENABLED=true once the Kit sequences read back ready.',
 		}
 	}
+	if (intent.kind === 'coupon.issue') {
+		return await acceptEvergreenCoupon(args)
+	}
 	if (intent.kind !== 'email.send') {
 		return {
 			status: 'unsupported',
 			reason: `intent kind ${intent.kind} has no evergreen executor yet`,
-			hint: 'email.send is executed; coupon.issue and list.subscribe are next.',
+			hint: 'email.send and coupon.issue are executed; list.subscribe is next.',
 		}
 	}
 	const payload = EvergreenSendPayload.safeParse(intent.payload ?? {})
@@ -503,6 +512,108 @@ async function acceptEvergreenSend(args: {
 				messageId: sequence.messageId,
 				slot: sequence.slot,
 				kitSequenceId: String(sequence.sequenceId),
+				...(kitSubscriberId ? { kitSubscriberId } : {}),
+			},
+			createdAt: args.now,
+		})
+	} catch (cause) {
+		const raced =
+			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+		if (!raced) throw cause
+		return existingResult(raced)
+	}
+	return {
+		status: 'accepted',
+		intentId: created.id,
+		idempotencyKey,
+		created: true,
+	}
+}
+
+/**
+ * The Thursday coupon: one row per contact, keyed without the message id
+ * because a journey issues exactly one coupon. drovr's v3 intent carries the
+ * window and time zone; a v1/v2 intent lacks them and is refused so the
+ * actor redrives after the journey is repinned, never with a guessed window.
+ */
+async function acceptEvergreenCoupon(args: {
+	repository: DrovrExecutorRepository
+	intent: DrovrIntent
+	tenantId: DrovrTenantId
+	now: string
+	findKitSubscriberId?: (contactId: string) => Promise<string | undefined>
+}): Promise<DrovrExecutorResult> {
+	const { intent } = args
+	const payload = CouponIssuePayload.safeParse(intent.payload ?? {})
+	if (!payload.success) {
+		return {
+			status: 'unsupported',
+			reason: 'coupon.issue payload lacks the pinned window or time zone',
+			hint: 'Evergreen release v3 carries issueAt, expiresAt, timezone, timezoneSource on coupon.issue.',
+		}
+	}
+	const contact = await args.repository.findContactById(intent.contactId)
+	if (!contact) return { status: 'contact-missing' }
+	const idempotencyKey = `contact:${contact.id}:evergreen:coupon`
+	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => {
+		const couponId = stringField(row.metadata.couponId)
+		const expiresAt = stringField(row.metadata.expiresAt)
+		if (!couponId || !expiresAt) {
+			return {
+				status: 'accepted',
+				intentId: row.id,
+				idempotencyKey,
+				created: false,
+			}
+		}
+		return {
+			status: 'completed',
+			intentId: row.id,
+			completion: {
+				tenantId: args.tenantId,
+				contactId: row.contactId,
+				journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+				type: 'coupon.issued',
+				occurredAt:
+					stringField(row.completedAt) ??
+					stringField(row.metadata.completedAt) ??
+					args.now,
+				idempotencyKey: `completion:${intent.idempotencyKey}`,
+				payload: { couponId, expiresAt },
+			},
+		}
+	}
+	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
+		row.status === 'completed'
+			? completionFor(row)
+			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+	const existing =
+		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	if (existing) return existingResult(existing)
+	const kitSubscriberId = args.findKitSubscriberId
+		? await args.findKitSubscriberId(contact.id)
+		: undefined
+	let created: SideEffectIntent
+	try {
+		created = await args.repository.createSideEffectIntent({
+			id: createInternalId(),
+			nextActionId: boundedNextActionId(intent.idempotencyKey),
+			contactId: contact.id,
+			provider: 'kit',
+			type: ISSUE_EVERGREEN_COUPON_INTENT_TYPE,
+			status: 'pending',
+			idempotencyKey,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				source: 'drovr',
+				drovr: {
+					tenantId: args.tenantId,
+					journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					intentKey: intent.idempotencyKey,
+					dueAt: intent.dueAt,
+				},
+				offer: payload.data,
 				...(kitSubscriberId ? { kitSubscriberId } : {}),
 			},
 			createdAt: args.now,

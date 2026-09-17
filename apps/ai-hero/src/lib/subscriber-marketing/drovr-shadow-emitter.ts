@@ -27,6 +27,7 @@ export type DrovrShadowEvent = {
 	type:
 		| 'contact.created'
 		| 'value-path.answer-selected'
+		| 'coupon.issued'
 		| 'email.completed'
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
@@ -36,6 +37,7 @@ export type DrovrShadowEvent = {
 	payload?:
 		| { emailResourceId: string }
 		| { messageId: string }
+		| { couponId: string; expiresAt: string }
 		| { productId: string }
 		| {
 				valuePathSlug: string
@@ -226,7 +228,10 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	if (intent.provider !== 'kit' || intent.status !== 'completed') return []
 	// An evergreen send completes to its owning actor only: the shadow's
 	// evergreen actors run their own log executor and never hear from us.
-	if (intent.type === 'send-evergreen-email') {
+	if (
+		intent.type === 'send-evergreen-email' ||
+		intent.type === 'issue-evergreen-coupon'
+	) {
 		const completion = drovrEvergreenCompletion(intent)
 		return completion ? [completion] : []
 	}
@@ -265,12 +270,10 @@ function drovrEvergreenCompletion(
 	const record = owner as Record<string, unknown>
 	const tenantId = stringValue(record.tenantId)
 	const intentKey = stringValue(record.intentKey)
-	const messageId = stringValue(intent.metadata.messageId)
 	const completedAt =
 		stringValue(intent.completedAt) ?? stringValue(intent.metadata.completedAt)
 	if (
 		!intentKey ||
-		!messageId ||
 		!completedAt ||
 		(tenantId !== DROVR_SHADOW_TENANT_ID &&
 			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
@@ -278,15 +281,26 @@ function drovrEvergreenCompletion(
 	) {
 		return undefined
 	}
-	return {
+	const base = {
 		tenantId,
 		contactId: intent.contactId,
 		journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
-		type: 'email.completed',
 		occurredAt: completedAt,
 		idempotencyKey: `completion:${intentKey}`,
-		payload: { messageId },
 	}
+	if (intent.type === 'issue-evergreen-coupon') {
+		const couponId = stringValue(intent.metadata.couponId)
+		const expiresAt = stringValue(intent.metadata.expiresAt)
+		if (!couponId || !expiresAt) return undefined
+		return {
+			...base,
+			type: 'coupon.issued',
+			payload: { couponId, expiresAt },
+		}
+	}
+	const messageId = stringValue(intent.metadata.messageId)
+	if (!messageId) return undefined
+	return { ...base, type: 'email.completed', payload: { messageId } }
 }
 
 function drovrOwnedCompletion(

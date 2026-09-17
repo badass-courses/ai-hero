@@ -566,3 +566,113 @@ describe('acceptDrovrIntent: evergreen bridge and pitch sends', () => {
 		expect(repository.intents.size).toBe(0)
 	})
 })
+
+describe('acceptDrovrIntent: evergreen coupon issue', () => {
+	const couponPayload = {
+		productId: 'product-ma254',
+		amountOffCents: 10_000,
+		maxUses: 1,
+		exclusive: true,
+		regularPriceCents: 29_900,
+		effectivePriceCents: 19_900,
+		issueAt: '2026-09-10T16:00:00.000Z',
+		expiresAt: '2026-09-15T06:59:59.000Z',
+		timezone: 'America/Los_Angeles',
+		timezoneSource: 'vercel-header',
+	}
+	const couponIntent = (overrides: Partial<DrovrIntent> = {}): DrovrIntent =>
+		intent({
+			journeyId: 'crash-course-evergreen-offer',
+			kind: 'coupon.issue',
+			idempotencyKey: 'contact-1:crash-course-evergreen-offer:coupon',
+			payload: couponPayload,
+			...overrides,
+		})
+	const enabled = { enabled: true } as const
+
+	it('accepts a v3 coupon.issue as one issue-evergreen-coupon row per contact', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: couponIntent(),
+			now,
+			evergreen: enabled,
+			findKitSubscriberId: async () => 'kit-123',
+		})
+		expect(result.status).toBe('accepted')
+		if (result.status !== 'accepted') throw new Error('unreachable')
+		expect(repository.intents.get(result.intentId)).toMatchObject({
+			type: 'issue-evergreen-coupon',
+			idempotencyKey: 'contact:contact-1:evergreen:coupon',
+			metadata: { offer: couponPayload, kitSubscriberId: 'kit-123' },
+		})
+		const again = await acceptDrovrIntent({
+			repository,
+			intent: couponIntent({ idempotencyKey: 'redriven' }),
+			now,
+			evergreen: enabled,
+		})
+		expect(again).toMatchObject({ status: 'accepted', created: false })
+		expect(repository.intents.size).toBe(1)
+	})
+
+	it('refuses a coupon.issue without the pinned window (v1/v2 journeys)', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: couponIntent({
+				payload: { productId: 'product-ma254', amountOffCents: 10_000 },
+			}),
+			now,
+			evergreen: enabled,
+		})
+		expect(result.status).toBe('unsupported')
+		if (result.status !== 'unsupported') throw new Error('unreachable')
+		expect(result.hint).toContain('v3')
+		expect(repository.intents.size).toBe(0)
+	})
+
+	it('answers a completed coupon row with coupon.issued carrying the coupon id and expiry', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const accepted = await acceptDrovrIntent({
+			repository,
+			intent: couponIntent(),
+			now,
+			evergreen: enabled,
+		})
+		if (accepted.status !== 'accepted') throw new Error('unreachable')
+		const row = repository.intents.get(accepted.intentId)!
+		repository.intents.set(row.id, {
+			...row,
+			status: 'completed',
+			completedAt: '2026-09-10T16:00:05.000Z',
+			metadata: {
+				...row.metadata,
+				couponId: 'eoj-coupon:abc',
+				expiresAt: couponPayload.expiresAt,
+			},
+		})
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: couponIntent({ idempotencyKey: 'redriven' }),
+			now,
+			evergreen: enabled,
+		})
+		expect(result).toMatchObject({
+			status: 'completed',
+			completion: {
+				type: 'coupon.issued',
+				journeyId: 'crash-course-evergreen-offer',
+				occurredAt: '2026-09-10T16:00:05.000Z',
+				idempotencyKey: 'completion:redriven',
+				payload: {
+					couponId: 'eoj-coupon:abc',
+					expiresAt: couponPayload.expiresAt,
+				},
+			},
+		})
+	})
+})

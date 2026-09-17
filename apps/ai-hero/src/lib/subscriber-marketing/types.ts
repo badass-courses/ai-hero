@@ -229,6 +229,7 @@ export type SideEffectIntent = {
 		| 'send-value-path-email'
 		| 'send-skills-course-lesson-one-recovery'
 		| 'send-evergreen-email'
+		| 'issue-evergreen-coupon'
 	status: SideEffectIntentStatus
 	completedAt?: string | null
 	idempotencyKey: string
