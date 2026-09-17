@@ -37,9 +37,11 @@ export type DrovrClaimReaders = {
 	) => Promise<
 		{ id: string; email: string | null; emailVerified: Date | null } | undefined
 	>
-	contactsByEmail: (
+	/** The repository's normalized-email lookup, so a user whose stored email
+	 * differs only by case or whitespace still resolves to their contact. */
+	contactByEmail: (
 		email: string,
-	) => Promise<{ id: string; email: string | null }[]>
+	) => Promise<{ id: string; email?: string | null } | undefined>
 	couponById: (id: string) => Promise<CommerceCouponRow | undefined>
 }
 
@@ -64,9 +66,8 @@ export async function resolveDrovrClaim(input: {
 }): Promise<DrovrClaimResolution> {
 	const user = await input.readers.userById(input.session.userId)
 	if (!user?.email) return { status: 'unavailable', reason: 'user-missing' }
-	const owners = await input.readers.contactsByEmail(user.email)
-	const owner = owners.find((row) => lower(row.email) === lower(user.email))
-	if (!owner || owners.length !== 1) {
+	const owner = await input.readers.contactByEmail(user.email)
+	if (!owner || lower(owner.email) !== lower(user.email)) {
 		return { status: 'unavailable', reason: 'contact-not-resolved' }
 	}
 	const journeyId = evergreenJourneyIdForContact(owner.id)
@@ -133,7 +134,9 @@ export function drovrClaimVerifiedOwnerReader(now: () => string) {
 
 export function createDrovrEvergreenClaimApplication(options: {
 	readers: DrovrClaimReaders
-	authority: Pick<CouponAuthority, 'bind'>
+	/** Resolved only on an authenticated claim: building the authority reads
+	 * (and may create) the merchant coupon, which a status GET must not do. */
+	resolveAuthority: () => Promise<Pick<CouponAuthority, 'bind'>>
 	now: () => string
 	onBindFailure?: (reason: string) => void
 }): ClaimApplication {
@@ -154,9 +157,10 @@ export function createDrovrEvergreenClaimApplication(options: {
 			if (!contactId.ok || !couponId.ok || !verifiedUserId.ok) {
 				return 'unavailable'
 			}
+			const authority = await options.resolveAuthority()
 			const outcome = await Effect.runPromise(
 				Effect.either(
-					options.authority.bind({
+					authority.bind({
 						type: 'BindCoupon',
 						idempotencyKey: couponBindingIntentKey({
 							journeyId: resolution.journeyId,

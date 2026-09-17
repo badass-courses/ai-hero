@@ -66,7 +66,11 @@ const readers = (input: {
 	coupon?: CommerceCouponRow
 }): DrovrClaimReaders => ({
 	userById: async () => input.user,
-	contactsByEmail: async () => input.contacts ?? [],
+	contactByEmail: async (email) =>
+		(input.contacts ?? []).find(
+			(c) =>
+				(c.email ?? '').trim().toLowerCase() === email.trim().toLowerCase(),
+		),
 	couponById: async (id) => (id === couponId ? input.coupon : undefined),
 })
 const verified = {
@@ -189,7 +193,7 @@ describe('claim application', () => {
 		const binds: unknown[] = []
 		const app = createDrovrEvergreenClaimApplication({
 			readers: ready,
-			authority: {
+			resolveAuthority: async () => ({
 				bind: (intent) => {
 					binds.push(intent)
 					return Effect.succeed({
@@ -197,7 +201,7 @@ describe('claim application', () => {
 						providerReceiptId: 'commerce-entitlement:x',
 					})
 				},
-			},
+			}),
 			now,
 		})
 		expect(await app.status(session)).toBe('ready')
@@ -222,7 +226,7 @@ describe('claim application', () => {
 		}) =>
 			createDrovrEvergreenClaimApplication({
 				readers: ready,
-				authority: { bind: () => Effect.fail(failure) },
+				resolveAuthority: async () => ({ bind: () => Effect.fail(failure) }),
 				now,
 				onBindFailure: (reason) => reasons.push(reason),
 			})
@@ -245,22 +249,31 @@ describe('claim application', () => {
 
 	it('does not bind when the claim is not ready', async () => {
 		let binds = 0
+		let resolved = 0
 		const app = createDrovrEvergreenClaimApplication({
 			readers: readers({
 				user: { ...verified, emailVerified: null },
 				contacts: [{ id: 'contact-1', email: 'learner@example.com' }],
 				coupon: couponRow(),
 			}),
-			authority: {
-				bind: () => {
-					binds += 1
-					return Effect.succeed({ coupon: {} as never, providerReceiptId: 'x' })
-				},
+			resolveAuthority: async () => {
+				resolved += 1
+				return {
+					bind: () => {
+						binds += 1
+						return Effect.succeed({
+							coupon: {} as never,
+							providerReceiptId: 'x',
+						})
+					},
+				}
 			},
 			now,
 		})
+		expect(await app.status(session)).toBe('verification-needed')
 		expect(await app.claim(session)).toBe('verification-needed')
 		expect(binds).toBe(0)
+		expect(resolved).toBe(0)
 	})
 })
 
