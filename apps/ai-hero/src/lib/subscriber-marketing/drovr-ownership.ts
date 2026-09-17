@@ -44,15 +44,21 @@ export const DROVR_OWNERSHIP_OFF: DrovrOwnershipConfig = {
 }
 
 /**
- * The rollout is off, whatever the knobs say, until the authority tenant
- * has a bearer key: routing a signup to drovr without one would suppress
- * the legacy Email 0 and then reject the birth at delivery, leaving the
+ * The rollout is off, whatever the knobs say, until drovr is reachable
+ * for the authority tenant: the ingest URL and that tenant's bearer key.
+ * Routing a signup to drovr with either missing would suppress the legacy
+ * Email 0 and then drop or reject the birth at delivery, leaving the
  * contact owned by nobody.
  */
 export function parseDrovrOwnershipConfig(
 	env: Readonly<Record<string, string | number | undefined>>,
 ): DrovrOwnershipConfig {
-	if (!String(env.DROVR_API_KEY_ORG_AIHERO ?? '').trim()) {
+	const present = (value: string | number | undefined) =>
+		String(value ?? '').trim().length > 0
+	if (
+		!present(env.DROVR_SHADOW_INGEST_URL) ||
+		!present(env.DROVR_API_KEY_ORG_AIHERO)
+	) {
 		return DROVR_OWNERSHIP_OFF
 	}
 	const raw = Number(env.AIH_DROVR_OWNER_PERCENT ?? 0)

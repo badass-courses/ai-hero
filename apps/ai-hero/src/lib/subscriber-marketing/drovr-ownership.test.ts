@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+	DROVR_OWNERSHIP_OFF,
 	decideJourneyOwner,
 	fanOutOwnedEvents,
 	ownershipBucket,
@@ -9,7 +10,10 @@ import {
 } from './drovr-ownership'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
-const authorityKey = { DROVR_API_KEY_ORG_AIHERO: 'k' }
+const authorityKey = {
+	DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events',
+	DROVR_API_KEY_ORG_AIHERO: 'k',
+}
 const off = parseDrovrOwnershipConfig(authorityKey)
 
 describe('drovr ownership config', () => {
@@ -29,13 +33,25 @@ describe('drovr ownership config', () => {
 		).toBe(0)
 	})
 
-	it('is off, whatever the knobs say, without the authority tenant key', () => {
+	it('is off, whatever the knobs say, unless drovr is reachable for the authority tenant', () => {
+		const knobs = {
+			AIH_DROVR_OWNER_PERCENT: '100',
+			AIH_DROVR_OWNER_EMAILS: 'joel@example.com',
+		}
+		expect(parseDrovrOwnershipConfig(knobs)).toEqual(DROVR_OWNERSHIP_OFF)
+		expect(
+			parseDrovrOwnershipConfig({ ...knobs, DROVR_API_KEY_ORG_AIHERO: 'k' }),
+		).toEqual(DROVR_OWNERSHIP_OFF)
 		expect(
 			parseDrovrOwnershipConfig({
-				AIH_DROVR_OWNER_PERCENT: '100',
-				AIH_DROVR_OWNER_EMAILS: 'joel@example.com',
+				...knobs,
+				DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events',
 			}),
-		).toEqual({ percent: 0, emails: new Set() })
+		).toEqual(DROVR_OWNERSHIP_OFF)
+		expect(parseDrovrOwnershipConfig({ ...knobs, ...authorityKey })).toEqual({
+			percent: 100,
+			emails: new Set(['joel@example.com']),
+		})
 	})
 
 	it('lowercases and trims the email allowlist', () => {
