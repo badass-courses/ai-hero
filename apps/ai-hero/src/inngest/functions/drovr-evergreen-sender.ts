@@ -30,6 +30,12 @@ const senderLimit = (raw: string | undefined): number => {
 	return Number.isFinite(parsed) && parsed >= 1 ? parsed : 25
 }
 
+const tally = (rows: readonly { status: string }[]) =>
+	rows.reduce<Record<string, number>>((acc, result) => {
+		acc[result.status] = (acc[result.status] ?? 0) + 1
+		return acc
+	}, {})
+
 export const drovrEvergreenSender = inngest.createFunction(
 	{
 		id: 'drovr-evergreen-sender-v1',
@@ -43,6 +49,40 @@ export const drovrEvergreenSender = inngest.createFunction(
 		if (!config.enabled) {
 			return { status: 'off', reason: config.reason }
 		}
+		// The list handoff has its own gate and runs first: the newsletter
+		// sequence must be active and off hold (many emails, may repeat), and a
+		// problem with the eight bridge/pitch sequences must not hold a journey
+		// that is only waiting to close on its handoff.
+		const listReadback = await step.run('readback-kit-list-sequences', () =>
+			readbackEvergreenListSequences({
+				apiKey: process.env.KIT_V4_API_KEY,
+				fetch,
+			}),
+		)
+		const lists = listReadback.ready
+			? await step.run('subscribe-pending-evergreen-lists', () =>
+					executePendingEvergreenSends({
+						repository: new DrizzleCaptureMarketingRepository(db),
+						type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+						subscribe: (input) =>
+							addSubscriberToKitSequence({
+								apiKey: process.env.KIT_V4_API_KEY,
+								fetch,
+								sequenceId: input.listId,
+								email: input.user.email,
+							}),
+						limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+						pacingMs: parseValuePathProviderPacingMs(
+							process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
+						),
+					}),
+				)
+			: []
+		if (!listReadback.ready) {
+			await log.warn('drovr.evergreen.lists_not_ready', {
+				problems: listReadback.problems,
+			})
+		}
 		const readback = await step.run('readback-kit-sequences', () =>
 			readbackEvergreenSequences({
 				apiKey: process.env.KIT_V4_API_KEY,
@@ -53,7 +93,11 @@ export const drovrEvergreenSender = inngest.createFunction(
 			await log.warn('drovr.evergreen.not_ready', {
 				problems: readback.problems,
 			})
-			return { status: 'not-ready', problems: readback.problems }
+			return {
+				status: 'not-ready',
+				problems: readback.problems,
+				counts: { lists: tally(lists) },
+			}
 		}
 		const results = await step.run('send-pending-evergreen-emails', () =>
 			executePendingEvergreenSends({
@@ -99,43 +143,6 @@ export const drovrEvergreenSender = inngest.createFunction(
 				})
 			},
 		)
-		// The list handoff has its own gate: the newsletter sequence must be
-		// active and off hold, but it has many emails and may repeat.
-		const listReadback = await step.run('readback-kit-list-sequences', () =>
-			readbackEvergreenListSequences({
-				apiKey: process.env.KIT_V4_API_KEY,
-				fetch,
-			}),
-		)
-		const lists = listReadback.ready
-			? await step.run('subscribe-pending-evergreen-lists', () =>
-					executePendingEvergreenSends({
-						repository: new DrizzleCaptureMarketingRepository(db),
-						type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
-						subscribe: (input) =>
-							addSubscriberToKitSequence({
-								apiKey: process.env.KIT_V4_API_KEY,
-								fetch,
-								sequenceId: input.listId,
-								email: input.user.email,
-							}),
-						limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
-						pacingMs: parseValuePathProviderPacingMs(
-							process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
-						),
-					}),
-				)
-			: []
-		if (!listReadback.ready) {
-			await log.warn('drovr.evergreen.lists_not_ready', {
-				problems: listReadback.problems,
-			})
-		}
-		const tally = (rows: readonly { status: string }[]) =>
-			rows.reduce<Record<string, number>>((acc, result) => {
-				acc[result.status] = (acc[result.status] ?? 0) + 1
-				return acc
-			}, {})
 		const counts = {
 			coupons: tally(coupons),
 			sends: tally(results),
