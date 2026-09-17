@@ -14,6 +14,32 @@ import { z } from 'zod'
  */
 
 export const SEND_EVERGREEN_EMAIL_INTENT_TYPE = 'send-evergreen-email' as const
+export const SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE =
+	'subscribe-evergreen-list' as const
+
+/**
+ * The lists drovr's evergreen journey hands a contact to. The shadow
+ * newsletter is the general list every skills signup already joins at entry;
+ * the journey's handoff (after purchase, or once the pitch window closes)
+ * re-adds and Kit answers already-added, so the fold completes either way.
+ */
+export const EVERGREEN_LIST_SEQUENCES = {
+	'shadow-newsletter': { sequenceId: 2625552 },
+} as const
+export type EvergreenListId = keyof typeof EVERGREEN_LIST_SEQUENCES
+export const EvergreenListPayload = z.object({
+	list: z.enum(['shadow-newsletter']),
+})
+export const evergreenSequenceForList = (
+	list: string,
+): { list: EvergreenListId; sequenceId: number } | undefined =>
+	list in EVERGREEN_LIST_SEQUENCES
+		? {
+				list: list as EvergreenListId,
+				sequenceId:
+					EVERGREEN_LIST_SEQUENCES[list as EvergreenListId].sequenceId,
+			}
+		: undefined
 
 export type EvergreenSlot =
 	| 'B1'
@@ -304,4 +330,61 @@ export async function updateKitSubscriberFields(options: {
 	} finally {
 		clearTimeout(timer)
 	}
+}
+
+/**
+ * The handoff lists' readback: active and not on hold. A newsletter has many
+ * emails and may repeat, so the one-published-email rule does not apply.
+ */
+export async function readbackEvergreenListSequences(options: {
+	apiKey: string | undefined
+	fetch: typeof fetch
+	now?: () => string
+	timeoutMs?: number
+}): Promise<EvergreenReadback> {
+	const checkedAt = (options.now ?? (() => new Date().toISOString()))()
+	const apiKey = options.apiKey?.trim()
+	if (!apiKey) {
+		return {
+			ready: false,
+			problems: ['Kit v4 API key is not configured'],
+			checkedAt,
+		}
+	}
+	const problems: string[] = []
+	for (const [list, entry] of Object.entries(EVERGREEN_LIST_SEQUENCES)) {
+		const controller = new AbortController()
+		const timer = setTimeout(
+			() => controller.abort(),
+			options.timeoutMs ?? 10_000,
+		)
+		try {
+			const response = await options.fetch(
+				`https://api.kit.com/v4/sequences/${entry.sequenceId}`,
+				{ headers: { 'X-Kit-Api-Key': apiKey }, signal: controller.signal },
+			)
+			if (response.status !== 200) {
+				problems.push(`${list}: Kit answered ${response.status}`)
+				continue
+			}
+			const parsed = sequenceReadback.safeParse(await response.json())
+			if (!parsed.success) {
+				problems.push(`${list}: unreadable sequence readback`)
+				continue
+			}
+			const s = parsed.data.sequence
+			if (s.id !== entry.sequenceId) {
+				problems.push(`${list}: readback is for sequence ${s.id}`)
+			}
+			if (!s.active) problems.push(`${list}: sequence is not active`)
+			if (s.hold) problems.push(`${list}: sequence is on hold`)
+		} catch (error) {
+			problems.push(
+				`${list}: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		} finally {
+			clearTimeout(timer)
+		}
+	}
+	return { ready: problems.length === 0, problems, checkedAt }
 }

@@ -248,4 +248,51 @@ describe('executePendingEvergreenSends', () => {
 		expect(results.map((r) => r.intentId)).toEqual(['a', 'b'])
 		expect(sleeps).toEqual([250])
 	})
+
+	it('drains subscribe-evergreen-list rows when asked for that type and leaves sends alone', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set('row-1', row())
+		repository.intents.set(
+			'row-2',
+			row({
+				id: 'row-2',
+				type: 'subscribe-evergreen-list',
+				idempotencyKey: 'contact:contact-1:evergreen:list:shadow-newsletter',
+				metadata: {
+					source: 'drovr',
+					list: 'shadow-newsletter',
+					kitSequenceId: '2625552',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'crash-course-evergreen-offer',
+						intentKey: 'k-list',
+					},
+				},
+			}),
+		)
+		const subscribes: unknown[] = []
+		const results = await executePendingEvergreenSends({
+			repository,
+			type: 'subscribe-evergreen-list',
+			subscribe: async (input) => {
+				subscribes.push(input)
+				return 'already-added'
+			},
+			limit: 10,
+			now: () => now,
+			dispatch: () => {},
+		})
+		expect(results.map((r) => [r.intentId, r.status])).toEqual([
+			['row-2', 'completed'],
+		])
+		expect(subscribes).toMatchObject([
+			{
+				listId: '2625552',
+				user: { email: 'learner@example.com', name: 'Learner' },
+			},
+		])
+		expect(repository.intents.get('row-1')?.status).toBe('pending')
+		expect(repository.intents.get('row-2')?.status).toBe('completed')
+	})
 })

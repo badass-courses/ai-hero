@@ -5,7 +5,9 @@ import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/dr
 import {
 	addSubscriberToKitSequence,
 	parseDrovrEvergreenConfig,
+	readbackEvergreenListSequences,
 	readbackEvergreenSequences,
+	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
 	updateKitSubscriberFields,
 } from '@/lib/subscriber-marketing/drovr-evergreen'
 import { executePendingEvergreenCoupons } from '@/lib/subscriber-marketing/drovr-evergreen-coupon'
@@ -96,13 +98,49 @@ export const drovrEvergreenSender = inngest.createFunction(
 				})
 			},
 		)
+		// The list handoff has its own gate: the newsletter sequence must be
+		// active and off hold, but it has many emails and may repeat.
+		const listReadback = await step.run('readback-kit-list-sequences', () =>
+			readbackEvergreenListSequences({
+				apiKey: process.env.KIT_V4_API_KEY,
+				fetch,
+			}),
+		)
+		const lists = listReadback.ready
+			? await step.run('subscribe-pending-evergreen-lists', () =>
+					executePendingEvergreenSends({
+						repository: new DrizzleCaptureMarketingRepository(db),
+						type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+						subscribe: (input) =>
+							addSubscriberToKitSequence({
+								apiKey: process.env.KIT_V4_API_KEY,
+								fetch,
+								sequenceId: input.listId,
+								email: input.user.email,
+							}),
+						limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+						pacingMs: parseValuePathProviderPacingMs(
+							process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
+						),
+					}),
+				)
+			: []
+		if (!listReadback.ready) {
+			await log.warn('drovr.evergreen.lists_not_ready', {
+				problems: listReadback.problems,
+			})
+		}
 		const tally = (rows: readonly { status: string }[]) =>
 			rows.reduce<Record<string, number>>((acc, result) => {
 				acc[result.status] = (acc[result.status] ?? 0) + 1
 				return acc
 			}, {})
-		const counts = { coupons: tally(coupons), sends: tally(results) }
+		const counts = {
+			coupons: tally(coupons),
+			sends: tally(results),
+			lists: tally(lists),
+		}
 		await log.info('drovr.evergreen.sender_run', counts)
-		return { status: 'ran', counts, results, coupons }
+		return { status: 'ran', counts, results, coupons, lists }
 	},
 )

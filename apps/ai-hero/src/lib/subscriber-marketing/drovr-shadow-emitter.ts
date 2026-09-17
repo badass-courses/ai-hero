@@ -28,6 +28,8 @@ export type DrovrShadowEvent = {
 		| 'contact.created'
 		| 'value-path.answer-selected'
 		| 'coupon.issued'
+		| 'shadow.entered'
+		| 'list.subscribed'
 		| 'email.completed'
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
@@ -38,6 +40,7 @@ export type DrovrShadowEvent = {
 		| { emailResourceId: string }
 		| { messageId: string }
 		| { couponId: string; expiresAt: string }
+		| { list: string }
 		| { productId: string }
 		| {
 				valuePathSlug: string
@@ -230,7 +233,8 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	// evergreen actors run their own log executor and never hear from us.
 	if (
 		intent.type === 'send-evergreen-email' ||
-		intent.type === 'issue-evergreen-coupon'
+		intent.type === 'issue-evergreen-coupon' ||
+		intent.type === 'subscribe-evergreen-list'
 	) {
 		const completion = drovrEvergreenCompletion(intent)
 		return completion ? [completion] : []
@@ -296,6 +300,17 @@ function drovrEvergreenCompletion(
 			...base,
 			type: 'coupon.issued',
 			payload: { couponId, expiresAt },
+		}
+	}
+	if (intent.type === 'subscribe-evergreen-list') {
+		const list = stringValue(intent.metadata.list)
+		if (!list) return undefined
+		// The shadow-newsletter handoff closes the journey; any other list
+		// completes generically, mirroring drovr's own log executor.
+		return {
+			...base,
+			type: list === 'shadow-newsletter' ? 'shadow.entered' : 'list.subscribed',
+			payload: { list },
 		}
 	}
 	const messageId = stringValue(intent.metadata.messageId)

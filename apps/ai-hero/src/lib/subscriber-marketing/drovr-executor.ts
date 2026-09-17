@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
 import {
+	EvergreenListPayload,
+	evergreenSequenceForList,
 	evergreenSequenceForMessage,
 	SEND_EVERGREEN_EMAIL_INTENT_TYPE,
+	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
 	type DrovrEvergreenConfig,
 } from './drovr-evergreen'
 import {
@@ -434,11 +437,14 @@ async function acceptEvergreenSend(args: {
 	if (intent.kind === 'coupon.issue') {
 		return await acceptEvergreenCoupon(args)
 	}
+	if (intent.kind === 'list.subscribe') {
+		return await acceptEvergreenListSubscribe(args)
+	}
 	if (intent.kind !== 'email.send') {
 		return {
 			status: 'unsupported',
-			reason: `intent kind ${intent.kind} has no evergreen executor yet`,
-			hint: 'email.send and coupon.issue are executed; list.subscribe is next.',
+			reason: `intent kind ${intent.kind} has no evergreen executor`,
+			hint: 'email.send, coupon.issue and list.subscribe are executed.',
 		}
 	}
 	const payload = EvergreenSendPayload.safeParse(intent.payload ?? {})
@@ -513,6 +519,103 @@ async function acceptEvergreenSend(args: {
 				slot: sequence.slot,
 				kitSequenceId: String(sequence.sequenceId),
 				...(kitSubscriberId ? { kitSubscriberId } : {}),
+			},
+			createdAt: args.now,
+		})
+	} catch (cause) {
+		const raced =
+			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+		if (!raced) throw cause
+		return existingResult(raced)
+	}
+	return {
+		status: 'accepted',
+		intentId: created.id,
+		idempotencyKey,
+		created: true,
+	}
+}
+
+/**
+ * The list handoff: after purchase or once the pitch window closes the
+ * journey hands the contact to the shadow newsletter. One row per contact
+ * and list; the drain adds to the list's Kit sequence and the completion
+ * (`shadow.entered` for the newsletter) closes the journey.
+ */
+async function acceptEvergreenListSubscribe(args: {
+	repository: DrovrExecutorRepository
+	intent: DrovrIntent
+	tenantId: DrovrTenantId
+	now: string
+}): Promise<DrovrExecutorResult> {
+	const { intent } = args
+	const payload = EvergreenListPayload.safeParse(intent.payload ?? {})
+	if (!payload.success) {
+		return {
+			status: 'unsupported',
+			reason: 'list.subscribe payload names no known list',
+			hint: 'Send { list: "shadow-newsletter" }.',
+		}
+	}
+	const sequence = evergreenSequenceForList(payload.data.list)
+	if (!sequence) {
+		return {
+			status: 'unsupported',
+			reason: `unknown evergreen list ${payload.data.list}`,
+			hint: 'Use a list from the evergreen handoff plan.',
+		}
+	}
+	const contact = await args.repository.findContactById(intent.contactId)
+	if (!contact) return { status: 'contact-missing' }
+	const idempotencyKey = `contact:${contact.id}:evergreen:list:${sequence.list}`
+	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => ({
+		status: 'completed',
+		intentId: row.id,
+		completion: {
+			tenantId: args.tenantId,
+			contactId: row.contactId,
+			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			type:
+				sequence.list === 'shadow-newsletter'
+					? 'shadow.entered'
+					: 'list.subscribed',
+			occurredAt:
+				stringField(row.completedAt) ??
+				stringField(row.metadata.completedAt) ??
+				args.now,
+			idempotencyKey: `completion:${intent.idempotencyKey}`,
+			payload: { list: sequence.list },
+		},
+	})
+	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
+		row.status === 'completed'
+			? completionFor(row)
+			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+	const existing =
+		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	if (existing) return existingResult(existing)
+	let created: SideEffectIntent
+	try {
+		created = await args.repository.createSideEffectIntent({
+			id: createInternalId(),
+			nextActionId: boundedNextActionId(intent.idempotencyKey),
+			contactId: contact.id,
+			provider: 'kit',
+			type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+			status: 'pending',
+			idempotencyKey,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				source: 'drovr',
+				drovr: {
+					tenantId: args.tenantId,
+					journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					intentKey: intent.idempotencyKey,
+					dueAt: intent.dueAt,
+				},
+				list: sequence.list,
+				kitSequenceId: String(sequence.sequenceId),
 			},
 			createdAt: args.now,
 		})

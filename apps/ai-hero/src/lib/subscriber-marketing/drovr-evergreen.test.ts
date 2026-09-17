@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	addSubscriberToKitSequence,
+	readbackEvergreenListSequences,
 	EVERGREEN_KIT_SEQUENCES,
 	evergreenSequenceForMessage,
 	parseDrovrEvergreenConfig,
@@ -219,5 +220,49 @@ describe('addSubscriberToKitSequence', () => {
 				email: 'learner@example.com',
 			}),
 		).rejects.toThrow('Kit v4 API key is not configured')
+	})
+})
+
+describe('readbackEvergreenListSequences', () => {
+	const answer = (overrides: Record<string, unknown>) =>
+		(async () =>
+			new Response(
+				JSON.stringify({
+					sequence: {
+						id: 2625552,
+						name: 'AI Hero Shadow Newsletter',
+						active: true,
+						hold: false,
+						repeat: false,
+						email_count: 13,
+						...overrides,
+					},
+				}),
+				{ status: 200 },
+			)) as typeof fetch
+
+	it('is ready when the newsletter sequence is active and off hold, however many emails it has', async () => {
+		const result = await readbackEvergreenListSequences({
+			apiKey: 'k',
+			fetch: answer({ repeat: true }),
+			now: () => '2026-09-16T00:00:00.000Z',
+		})
+		expect(result).toEqual({
+			ready: true,
+			problems: [],
+			checkedAt: '2026-09-16T00:00:00.000Z',
+		})
+	})
+
+	it('names an inactive or held sequence', async () => {
+		const result = await readbackEvergreenListSequences({
+			apiKey: 'k',
+			fetch: answer({ active: false, hold: true }),
+		})
+		expect(result.ready).toBe(false)
+		expect(result.problems).toEqual([
+			'shadow-newsletter: sequence is not active',
+			'shadow-newsletter: sequence is on hold',
+		])
 	})
 })
