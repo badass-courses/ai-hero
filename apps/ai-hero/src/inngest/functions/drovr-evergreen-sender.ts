@@ -1,11 +1,17 @@
-import { db } from '@/db'
+import { couponCommerceSchema } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql'
+import { createDatabaseHandle, db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	addSubscriberToKitSequence,
 	parseDrovrEvergreenConfig,
 	readbackEvergreenSequences,
+	updateKitSubscriberFields,
 } from '@/lib/subscriber-marketing/drovr-evergreen'
+import { executePendingEvergreenCoupons } from '@/lib/subscriber-marketing/drovr-evergreen-coupon'
+import { createCouponAuthority } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority'
+import { createMySqlCouponCommerceStore } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql'
+import { resolveEvergreenMerchantEvidence } from '@/lib/subscriber-marketing/evergreen-merchant-evidence'
 import { executePendingEvergreenSends } from '@/lib/subscriber-marketing/drovr-evergreen-sender'
 import { log } from '@/server/logger'
 
@@ -65,11 +71,39 @@ export const drovrEvergreenSender = inngest.createFunction(
 				),
 			}),
 		)
-		const counts = results.reduce<Record<string, number>>((acc, result) => {
-			acc[result.status] = (acc[result.status] ?? 0) + 1
-			return acc
-		}, {})
-		await log.info('drovr.evergreen.sender_run', { counts })
-		return { status: 'ran', counts, results }
+		const coupons = await step.run(
+			'issue-pending-evergreen-coupons',
+			async () => {
+				const evidence = await resolveEvergreenMerchantEvidence()
+				return executePendingEvergreenCoupons({
+					repository: new DrizzleCaptureMarketingRepository(db),
+					authority: createCouponAuthority({
+						store: createMySqlCouponCommerceStore(
+							createDatabaseHandle(couponCommerceSchema),
+						),
+						merchantCouponEvidence: evidence,
+						now: () => new Date().toISOString(),
+					}),
+					writeFields: ({ subscriberId, email, fields }) =>
+						updateKitSubscriberFields({
+							apiKey: process.env.KIT_V4_API_KEY,
+							fetch,
+							subscriberId,
+							email,
+							fields,
+						}),
+					origin: 'https://www.aihero.dev',
+					limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+				})
+			},
+		)
+		const tally = (rows: readonly { status: string }[]) =>
+			rows.reduce<Record<string, number>>((acc, result) => {
+				acc[result.status] = (acc[result.status] ?? 0) + 1
+				return acc
+			}, {})
+		const counts = { coupons: tally(coupons), sends: tally(results) }
+		await log.info('drovr.evergreen.sender_run', counts)
+		return { status: 'ran', counts, results, coupons }
 	},
 )

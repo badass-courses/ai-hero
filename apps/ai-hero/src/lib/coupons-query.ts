@@ -118,7 +118,7 @@ async function createOrFindMerchantCoupon(
  * @param isSpecialCredit - Whether this is a special credit coupon (true) or regular special coupon (false)
  * @returns The merchant coupon ID
  */
-async function createOrFindFixedMerchantCoupon(
+export async function createOrFindFixedMerchantCoupon(
 	amountDiscount: number,
 	isSpecialCredit: boolean = false,
 ): Promise<string | null> {

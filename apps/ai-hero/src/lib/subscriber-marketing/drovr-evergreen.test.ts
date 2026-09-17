@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	addSubscriberToKitSequence,
+	updateKitSubscriberFields,
 	EVERGREEN_KIT_SEQUENCES,
 	evergreenSequenceForMessage,
 	parseDrovrEvergreenConfig,
@@ -219,5 +220,47 @@ describe('addSubscriberToKitSequence', () => {
 				email: 'learner@example.com',
 			}),
 		).rejects.toThrow('Kit v4 API key is not configured')
+	})
+})
+
+describe('updateKitSubscriberFields', () => {
+	it('puts the fields with the required email_address on the subscriber', async () => {
+		const calls: { url: string; init?: RequestInit }[] = []
+		const fetchFake = (async (
+			url: string | URL | Request,
+			init?: RequestInit,
+		) => {
+			calls.push({ url: String(url), init })
+			return new Response('{}', { status: 200 })
+		}) as typeof fetch
+		await updateKitSubscriberFields({
+			apiKey: 'k',
+			fetch: fetchFake,
+			subscriberId: '4298556847',
+			email: 'learner@example.com',
+			fields: { aih_evergreen_offer_price: '$199' },
+		})
+		expect(calls[0]?.url).toBe('https://api.kit.com/v4/subscribers/4298556847')
+		expect(calls[0]?.init?.method).toBe('PUT')
+		expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+			email_address: 'learner@example.com',
+			fields: { aih_evergreen_offer_price: '$199' },
+		})
+	})
+
+	it('throws a KitV4Error carrying the status on a non-200', async () => {
+		const fetchFake = (async () =>
+			new Response('{"errors":["email_address is required"]}', {
+				status: 422,
+			})) as typeof fetch
+		await expect(
+			updateKitSubscriberFields({
+				apiKey: 'k',
+				fetch: fetchFake,
+				subscriberId: '1',
+				email: 'learner@example.com',
+				fields: {},
+			}),
+		).rejects.toMatchObject({ status: 422 })
 	})
 })
