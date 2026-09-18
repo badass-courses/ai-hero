@@ -26,7 +26,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { db } from '@/db'
-import { organization, organizationMemberships } from '@/db/schema'
+import { organization, organizationMemberships, users } from '@/db/schema'
 import { log, serializeError } from '@/server/logger'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, like } from 'drizzle-orm'
 
@@ -350,6 +350,17 @@ async function run() {
 			// so the pair must land together or not at all. Zero affected rows
 			// means the IS NULL guard lost a race — roll back and recount.
 			await db.transaction(async (tx) => {
+				// Eligibility was decided from a scan snapshot; re-establish it
+				// inside the transaction so a user deleted or a membership moved
+				// between scan and write rejects the stamp instead of landing it.
+				const [currentUser] = await tx
+					.select({ id: users.id })
+					.from(users)
+					.where(eq(users.id, candidate.userId))
+					.limit(1)
+				if (!currentUser) {
+					throw new Error('candidate-user-no-longer-exists')
+				}
 				const organizationResult = await tx
 					.update(organization)
 					.set({ personalOrganizationUserId: candidate.userId })
@@ -369,6 +380,11 @@ async function run() {
 						.where(
 							and(
 								eq(organizationMemberships.id, candidate.membershipId),
+								eq(organizationMemberships.userId, candidate.userId),
+								eq(
+									organizationMemberships.organizationId,
+									candidate.organizationId,
+								),
 								isNull(organizationMemberships.personalOrganizationUserId),
 							),
 						)
