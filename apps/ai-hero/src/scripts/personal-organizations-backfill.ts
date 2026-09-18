@@ -25,7 +25,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import { db } from '@/db'
+import { closeDatabasePool, db } from '@/db'
 import { organization, organizationMemberships, users } from '@/db/schema'
 import { log, serializeError } from '@/server/logger'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, like } from 'drizzle-orm'
@@ -36,6 +36,7 @@ const DEFAULT_RECEIPT_DIRECTORY =
 	'/Users/joel/Code/badass-courses/aihero-support/.brain/data/crm/receipts'
 
 const PAGE_SIZE = 500
+const STAMPED_PAGE_SIZE = 20_000
 const WRITE_CONCURRENCY = Math.max(
 	1,
 	Number(process.env.DATABASE_POOL_SIZE) || 1,
@@ -136,23 +137,51 @@ async function loadStampedUserIds(): Promise<{
 	organizationUserIds: Set<string>
 	membershipUserIds: Set<string>
 }> {
-	const stampedOrganizations = await db
-		.select({ userId: organization.personalOrganizationUserId })
-		.from(organization)
-		.where(isNotNull(organization.personalOrganizationUserId))
-	const stampedMemberships = await db
-		.select({ userId: organizationMemberships.personalOrganizationUserId })
-		.from(organizationMemberships)
-		.where(isNotNull(organizationMemberships.personalOrganizationUserId))
-
-	return {
-		organizationUserIds: new Set(
-			stampedOrganizations.flatMap((row) => (row.userId ? [row.userId] : [])),
-		),
-		membershipUserIds: new Set(
-			stampedMemberships.flatMap((row) => (row.userId ? [row.userId] : [])),
-		),
+	// PlanetScale caps a single result at 100k rows and the stamped set is
+	// larger than that once the bulk pass has run, so page by primary key.
+	const organizationUserIds = new Set<string>()
+	for (let cursor: string | undefined; ; ) {
+		const rows = await db
+			.select({
+				id: organization.id,
+				userId: organization.personalOrganizationUserId,
+			})
+			.from(organization)
+			.where(
+				and(
+					isNotNull(organization.personalOrganizationUserId),
+					cursor ? gt(organization.id, cursor) : undefined,
+				),
+			)
+			.orderBy(asc(organization.id))
+			.limit(STAMPED_PAGE_SIZE)
+		if (rows.length === 0) break
+		cursor = rows[rows.length - 1]?.id
+		for (const row of rows) if (row.userId) organizationUserIds.add(row.userId)
 	}
+
+	const membershipUserIds = new Set<string>()
+	for (let cursor: string | undefined; ; ) {
+		const rows = await db
+			.select({
+				id: organizationMemberships.id,
+				userId: organizationMemberships.personalOrganizationUserId,
+			})
+			.from(organizationMemberships)
+			.where(
+				and(
+					isNotNull(organizationMemberships.personalOrganizationUserId),
+					cursor ? gt(organizationMemberships.id, cursor) : undefined,
+				),
+			)
+			.orderBy(asc(organizationMemberships.id))
+			.limit(STAMPED_PAGE_SIZE)
+		if (rows.length === 0) break
+		cursor = rows[rows.length - 1]?.id
+		for (const row of rows) if (row.userId) membershipUserIds.add(row.userId)
+	}
+
+	return { organizationUserIds, membershipUserIds }
 }
 
 async function collectCandidates(
@@ -475,10 +504,12 @@ async function run() {
 	if (unresolvedOrganizations > 0 || writeErrors > 0) process.exitCode = 1
 }
 
-run().catch(async (error) => {
-	await log.error('personal-org-backfill.fatal', {
-		error: serializeError(error),
+run()
+	.catch(async (error) => {
+		await log.error('personal-org-backfill.fatal', {
+			error: serializeError(error),
+		})
+		console.error(error instanceof Error ? error.message : String(error))
+		process.exitCode = 1
 	})
-	console.error(error instanceof Error ? error.message : String(error))
-	process.exitCode = 1
-})
+	.finally(() => closeDatabasePool())
