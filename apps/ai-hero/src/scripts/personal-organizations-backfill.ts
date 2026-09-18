@@ -36,6 +36,10 @@ const DEFAULT_RECEIPT_DIRECTORY =
 	'/Users/joel/Code/badass-courses/aihero-support/.brain/data/crm/receipts'
 
 const PAGE_SIZE = 500
+const WRITE_CONCURRENCY = Math.max(
+	1,
+	Number(process.env.DATABASE_POOL_SIZE) || 1,
+)
 
 type Mode = 'dry-run' | 'allow-write'
 
@@ -339,10 +343,12 @@ async function run() {
 
 	let organizationsStamped = 0
 	let membershipsStamped = 0
-	for (const candidate of toStamp) {
-		organizationsStamped += 1
-		if (!candidate.membershipAlreadyStamped) membershipsStamped += 1
-		if (!allowWrite) continue
+	const stampCandidate = async (candidate: Candidate) => {
+		if (!allowWrite) {
+			organizationsStamped += 1
+			if (!candidate.membershipAlreadyStamped) membershipsStamped += 1
+			return
+		}
 
 		try {
 			// One transaction per candidate: a stamped organization with an
@@ -393,6 +399,10 @@ async function run() {
 					}
 				}
 			})
+			// Counted only after the transaction committed, so the receipt
+			// reports rows that landed rather than rows that were attempted.
+			organizationsStamped += 1
+			if (!candidate.membershipAlreadyStamped) membershipsStamped += 1
 		} catch (error) {
 			writeErrors += 1
 			incrementReason(unresolvedReasons, 'stamp-write-failed')
@@ -406,6 +416,20 @@ async function run() {
 			})
 		}
 	}
+
+	// Each stamp is a short transaction bound by round-trip latency, so run a
+	// bounded number in flight; the pool size caps real concurrency.
+	let nextIndex = 0
+	const worker = async () => {
+		for (;;) {
+			const index = nextIndex
+			nextIndex += 1
+			const candidate = toStamp[index]
+			if (!candidate) return
+			await stampCandidate(candidate)
+		}
+	}
+	await Promise.all(Array.from({ length: WRITE_CONCURRENCY }, worker))
 
 	const unresolvedOrganizations = Object.values(unresolvedReasons).reduce(
 		(total, count) => total + count,
