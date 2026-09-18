@@ -4,6 +4,7 @@ import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { CmsVideoField } from '@/components/cms/cms-video-field'
 import { createPostBindings } from '@/lib/cms/post-bindings'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { PostSchema, type Post } from '@/lib/posts'
 import { updatePost } from '@/lib/posts-query'
 import type { Tag } from '@/lib/tags'
@@ -144,6 +145,8 @@ export function EditPostClient({
 		return createResourceEditor({
 			manifest: {
 				...postManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(postManifest.media),
 				// Content tab + the fields.postType selector (see buildTabsWithPostType).
 				tabs: buildTabsWithPostType(post.fields?.postType),
 				schema: PostSchema,

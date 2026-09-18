@@ -8,6 +8,7 @@ import {
 	SkillChangelogSchema,
 	type SkillChangelog,
 } from '@/lib/skill-changelog'
+import { withVideoChapters } from '@/lib/cms/video-chapters-slot'
 import { updateSkillChangelog } from '@/lib/skill-changelog-mutations'
 import type { UseFormReturn } from 'react-hook-form'
 
@@ -59,6 +60,8 @@ export function EditSkillChangelogClient({
 		return createResourceEditor({
 			manifest: {
 				...skillChangelogManifest,
+				// Chapters for any video opened in the Media tab (see withVideoChapters).
+				media: withVideoChapters(skillChangelogManifest.media),
 				schema: SkillChangelogSchema,
 				tabs: skillChangelogManifest.tabs.map((tab) =>
 					tab.label === 'Newsletter'
