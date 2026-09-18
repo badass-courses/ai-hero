@@ -52,7 +52,7 @@ export const videoResourceRouter = createTRPCRouter({
 					cursor: z.string().optional(),
 				})
 				.optional()
-				.default({}),
+				.prefault({}),
 		)
 		.query(async ({ ctx, input }) => {
 			const canAccessVideoResources =

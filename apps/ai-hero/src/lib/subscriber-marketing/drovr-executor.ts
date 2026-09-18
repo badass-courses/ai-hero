@@ -61,7 +61,7 @@ export const DrovrIntentSchema = z.object({
 	kind: z.string().min(1),
 	idempotencyKey: z.string().min(1),
 	dueAt: z.string().min(1),
-	payload: z.record(z.unknown()).optional(),
+	payload: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type DrovrIntent = z.infer<typeof DrovrIntentSchema>

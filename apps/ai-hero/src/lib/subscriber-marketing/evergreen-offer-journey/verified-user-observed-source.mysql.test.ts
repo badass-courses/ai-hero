@@ -1,3 +1,4 @@
+import { createAuthJsAdapter } from "@/server/auth-js-adapter"
 import { randomUUID, createHash } from "node:crypto";
 import { Auth } from "@auth/core";
 import Postmark from "@auth/core/providers/postmark";
@@ -608,7 +609,7 @@ suite("secure claim source disposable MySQL", () => {
         runWithOAuthContainmentRequest(request, () =>
           Auth(request, {
             adapter: observer.wrapAdapter(
-              createOAuthContainmentAdapter(adapter),
+              createOAuthContainmentAdapter(createAuthJsAdapter(adapter)),
             ),
             secret: authSecret,
             trustHost: true,

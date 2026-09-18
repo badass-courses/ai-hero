@@ -7,7 +7,7 @@ import { getPricingData } from '@/lib/pricing-query'
 import { log } from '@/server/logger'
 import { eq, or, sql } from 'drizzle-orm'
 
-import { getPPPDiscountPercent } from '@coursebuilder/core/pricing/parity-coupon'
+import { getPPPDiscountPercent } from '@coursebuilder/commerce/parity-coupon'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
 import { DiscountBadge } from './discount-badge'

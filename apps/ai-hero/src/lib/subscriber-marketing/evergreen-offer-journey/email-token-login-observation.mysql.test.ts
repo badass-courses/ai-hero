@@ -21,6 +21,7 @@ import {
 	sessions,
 } from '@/db/schema'
 import * as journeySchema from '@/db/evergreen-offer-journey-schema'
+import { createAuthJsAdapter } from '@/server/auth-js-adapter'
 import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2'
@@ -332,7 +333,7 @@ integration('email login observation real adapter and disposable MySQL', () => {
 				runWithOAuthContainmentRequest(request, () =>
 					Auth(request, {
 						adapter: observer.wrapAdapter(
-							createOAuthContainmentAdapter(adapter),
+							createOAuthContainmentAdapter(createAuthJsAdapter(adapter)),
 						),
 						secret: authSecret,
 						trustHost: true,

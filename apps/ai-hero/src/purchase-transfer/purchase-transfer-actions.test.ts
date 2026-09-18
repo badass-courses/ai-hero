@@ -104,14 +104,20 @@ vi.mock('@/coursebuilder/stripe-provider', () => ({
 		updateCustomer: mocks.stripeUpdateCustomer,
 	},
 }))
-vi.mock('@coursebuilder/core/lib/send-server-email', () => ({
+vi.mock('@coursebuilder/email/send-server-email', () => ({
 	sendServerEmail: mocks.sendServerEmail,
 }))
 vi.mock('@coursebuilder/email-templates/emails/purchase-transfer', () => ({
 	default: vi.fn(),
 }))
 vi.mock('@react-email/render', () => ({ render: vi.fn(async () => '') }))
-vi.mock('inngest', () => ({
+vi.mock('@/lib/find-or-create-user', () => ({
+	findOrCreateUserWithPersonalOrg: (...args: unknown[]) =>
+		mocks.findOrCreateUser(...args),
+}))
+
+vi.mock('inngest', async (importOriginal) => ({
+	...(await importOriginal<typeof import('inngest')>()),
 	Inngest: class {
 		send = mocks.inngestSend
 	},

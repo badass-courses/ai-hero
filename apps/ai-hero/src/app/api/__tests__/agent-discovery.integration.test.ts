@@ -247,8 +247,7 @@ describe('AI Hero discovery surfaces', () => {
 			required: expect.arrayContaining(['token', 'id', 'scopes']),
 			properties: {
 				token: expect.objectContaining({
-					// zod-to-json-schema escapes underscores in startsWith patterns
-					pattern: '^aih\\_pat\\_',
+					pattern: '^aih_pat_.*',
 				}),
 			},
 		})

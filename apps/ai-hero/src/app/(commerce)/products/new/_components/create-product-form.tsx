@@ -1,6 +1,6 @@
 import { NewProduct, NewProductSchema } from '@/lib/products'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useForm } from 'react-hook-form'
+import { useForm, type Resolver } from 'react-hook-form'
 
 import { Product } from '@coursebuilder/core/schemas'
 import {
@@ -32,7 +32,8 @@ export function CreateProductForm({
 }) {
 	const form = useForm<NewProduct>({
 		mode: 'onChange',
-		resolver: zodResolver(NewProductSchema),
+		// z.coerce fields type their input as unknown, which the number inputs below cannot bind to
+		resolver: zodResolver(NewProductSchema) as Resolver<NewProduct>,
 		defaultValues: {
 			name: '',
 			quantityAvailable: -1,

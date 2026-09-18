@@ -11,7 +11,7 @@ import {
 	CommerceProps,
 	PricingData,
 	type PricingOptions,
-} from '@coursebuilder/core/types'
+} from '@coursebuilder/commerce/types'
 
 import { CohortOfficeHoursSessionsSchema } from './cohort-office-hours'
 import { WorkshopSchema } from './workshops'

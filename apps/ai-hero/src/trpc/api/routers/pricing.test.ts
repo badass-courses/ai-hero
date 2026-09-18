@@ -162,10 +162,10 @@ vi.mock('next/headers', () => ({
 	headers: vi.fn(async () => new Headers({ 'x-vercel-ip-country': 'US' })),
 }))
 vi.mock('drizzle-orm', () => ({ eq: vi.fn(() => true) }))
-vi.mock('@coursebuilder/core', () => ({
+vi.mock('@coursebuilder/commerce', () => ({
 	formatPricesForProduct: mocks.formatPricesForProduct,
 }))
-vi.mock('@coursebuilder/core/pricing/props-for-commerce', () => ({
+vi.mock('@coursebuilder/commerce/props-for-commerce', () => ({
 	propsForCommerce: vi.fn(),
 }))
 

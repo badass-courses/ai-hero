@@ -1179,8 +1179,8 @@ const gateDStatusMetadataKeys = [
 	'nextRetryAt',
 ] as const
 const gateDStatusMetadataSchema = z.object({
-	values: z.record(z.unknown()),
-	present: z.record(z.union([z.literal(0), z.literal(1), z.null()])),
+	values: z.record(z.string(), z.unknown()),
+	present: z.record(z.string(), z.union([z.literal(0), z.literal(1), z.null()])),
 })
 
 /** Preserve missing vs JSON null, scalar types and arbitrarily long values. */

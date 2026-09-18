@@ -139,7 +139,6 @@ const IsoInstantSchema = parsedString(parseIsoInstant)
 const IanaTimeZoneSchema = parsedString(parseIanaTimeZone)
 const DeadlineTimeZoneEvidenceSchema: z.ZodType<
 	DeadlineTimeZoneEvidence,
-	z.ZodTypeDef,
 	unknown
 > =
 	z.discriminatedUnion('type', [
@@ -164,7 +163,6 @@ const DeadlineTimeZoneEvidenceSchema: z.ZodType<
 	])
 const EmailCourseEntryPayloadSchema: z.ZodType<
 	EmailCourseEntryPayload,
-	z.ZodTypeDef,
 	unknown
 > = z
 	.object({
@@ -186,7 +184,6 @@ const StoredCoursePayloadSchema = z
 	.passthrough()
 const CourseSequenceExhaustedPayloadSchema: z.ZodType<
 	CourseSequenceExhaustedPayload,
-	z.ZodTypeDef,
 	unknown
 > =
 	z

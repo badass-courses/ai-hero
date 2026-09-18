@@ -2,7 +2,6 @@
 import React from 'react'
 import { tokenTransitions } from '@/components/codehike/token-transitions'
 import { cn } from '@coursebuilder/utils/cn'
-import { Block, CodeBlock, parseRoot } from 'codehike/blocks'
 import { highlight, Pre, RawCode } from 'codehike/code'
 import {
 	Selectable,
@@ -10,18 +9,12 @@ import {
 	SelectionProvider,
 } from 'codehike/utils/selection'
 import { ArrowDown } from 'lucide-react'
-import { z } from 'zod'
 
 import { CopyButton } from './copy-button'
-
-const Schema = Block.extend({
-	steps: z.array(Block.extend({ code: CodeBlock })),
-})
 
 export default function Scrollycoding(props: any) {
 	if (!props) return null
 
-	// const { steps } = parseRoot(props, Schema)
 	const { steps } = props
 
 	const getHeadingLevel = (header: string) => {

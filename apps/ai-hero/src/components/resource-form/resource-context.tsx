@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { ResourceType } from '@/lib/resources'
-import { UseFormReturn } from 'react-hook-form'
-import { z, type Schema } from 'zod'
+import { FieldValues, UseFormReturn } from 'react-hook-form'
 
 import { ContentResource } from '@coursebuilder/core/schemas'
 
@@ -14,7 +13,9 @@ export interface ResourceContextType<
 > {
 	resource: T
 	resourceType: ResourceType
-	form: UseFormReturn<z.infer<Schema>>
+	// Field values stay loose (zod 3's z.infer<ZodTypeAny> here was already
+	// any); FieldValues keeps the form API itself typed without leaking any.
+	form: UseFormReturn<FieldValues>
 }
 
 // Create context with null as default value and generic type parameter
@@ -34,7 +35,7 @@ export function ResourceProvider<T extends ContentResource>({
 }: React.PropsWithChildren<{
 	resource: T
 	resourceType: ResourceType
-	form: UseFormReturn<z.infer<Schema>>
+	form: UseFormReturn<FieldValues>
 }>) {
 	return (
 		<ResourceContext.Provider value={{ resource, resourceType, form }}>

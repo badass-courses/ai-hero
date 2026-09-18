@@ -8,7 +8,7 @@ import {
 import { log } from '@/server/logger'
 import Stripe from 'stripe'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 /**
  * Write Stripe billing and checkout metadata onto the purchase as soon as

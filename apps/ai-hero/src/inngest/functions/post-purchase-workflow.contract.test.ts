@@ -99,7 +99,7 @@ vi.mock('../events/post-purchase-async', () => ({
 		'post-purchase/welcome-email-requested',
 }))
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 import { postPurchaseWorkflow } from './post-purchase-workflow'
 

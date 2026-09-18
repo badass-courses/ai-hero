@@ -7,7 +7,7 @@ import type Stripe from 'stripe'
 import {
 	STRIPE_CHECKOUT_SESSION_COMPLETED_EVENT,
 	type StripeCheckoutSessionCompleted,
-} from '@coursebuilder/core/inngest/stripe/event-checkout-session-completed'
+} from '@coursebuilder/core/events/stripe'
 import { checkoutSessionCompletedEvent } from '@coursebuilder/core/schemas/stripe/checkout-session-completed'
 
 export type CheckoutRecoveryArgs = {

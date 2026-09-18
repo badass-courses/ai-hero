@@ -6,7 +6,7 @@ import { api } from '@/trpc/react'
 import { useSession } from 'next-auth/react'
 
 import type { Product } from '@coursebuilder/core/schemas'
-import type { CommerceProps, PricingData } from '@coursebuilder/core/types'
+import type { CommerceProps, PricingData } from '@coursebuilder/commerce/types'
 
 import { readCommerceUrlParams } from './commerce-url-params'
 

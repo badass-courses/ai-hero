@@ -129,7 +129,7 @@ export async function createCheckoutRecoveryRuntime(
 		{ drizzle },
 		mysqlModule,
 	] = await Promise.all([
-		import('@coursebuilder/core/providers/stripe'),
+		import('@coursebuilder/commerce/stripe-provider'),
 		import('@/db/schema'),
 		import('@/db/mysql-query-client'),
 		import('@/db/pool-lifecycle'),

@@ -12,7 +12,7 @@ import type {
 	CommerceProps,
 	FormattedPrice,
 	PricingOptions,
-} from '@coursebuilder/core/types'
+} from '@coursebuilder/commerce/types'
 
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { ProductPricingFeatures } from './product-pricing-features'

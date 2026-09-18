@@ -15,7 +15,7 @@ export type EditorResourceType = (typeof EDITOR_RESOURCE_TYPES)[number]
 export const EditorResourceMutationRequestSchema = z
 	.object({
 		action: z.enum(['save', 'publish']).default('save'),
-		fields: z.record(z.unknown()).default({}),
+		fields: z.record(z.string(), z.unknown()).default({}),
 	})
 	.strict()
 
@@ -26,7 +26,7 @@ export const EditorResourceRollbackRequestSchema = z
 export const EditorResourceSchema = z.object({
 	id: z.string(),
 	type: z.enum(EDITOR_RESOURCE_TYPES),
-	fields: z.record(z.unknown()),
+	fields: z.record(z.string(), z.unknown()),
 	currentVersionId: z.string().nullable(),
 	createdAt: z.coerce.date().nullable(),
 	updatedAt: z.coerce.date().nullable(),
@@ -46,7 +46,7 @@ export const EditorResourceVersionSchema = z.object({
 	resourceId: z.string(),
 	parentVersionId: z.string().nullable(),
 	versionNumber: z.number().int().positive(),
-	fields: z.record(z.unknown()),
+	fields: z.record(z.string(), z.unknown()),
 	createdAt: z.coerce.date().nullable(),
 	createdById: z.string(),
 })

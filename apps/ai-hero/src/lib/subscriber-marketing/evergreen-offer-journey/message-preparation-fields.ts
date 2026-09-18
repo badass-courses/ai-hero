@@ -17,7 +17,7 @@ const subscriber = z.object({
 		id: z.number().int().positive(),
 		email_address: z.string().min(1),
 		state: z.literal('active'),
-		fields: z.record(z.string().nullable()),
+		fields: z.record(z.string(), z.string().nullable()),
 	}),
 })
 /** Documented V3 fields-only protocol used by installed Core's

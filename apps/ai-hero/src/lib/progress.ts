@@ -5,6 +5,7 @@ import { courseBuilderAdapter, db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { LESSON_COMPLETED_EVENT } from '@/inngest/events/lesson-completed'
 import { inngest } from '@/inngest/inngest.server'
+import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -117,7 +118,7 @@ async function getUser() {
 		return null
 	}
 
-	const result = await courseBuilderAdapter.findOrCreateUser(
+	const result = await findOrCreateUserWithPersonalOrg(
 		subscriber.email_address,
 		subscriber.first_name,
 	)

@@ -36,7 +36,7 @@ describe('parseLessonVideoTranscriptRows', () => {
 			expect.arrayContaining([
 				expect.objectContaining({
 					path: [0, 'transcript'],
-					message: 'Expected string, received number',
+					message: 'Invalid input: expected string, received number',
 				}),
 			]),
 		)

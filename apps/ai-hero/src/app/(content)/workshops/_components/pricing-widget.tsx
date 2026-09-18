@@ -25,8 +25,8 @@ import type {
 	CommerceProps,
 	FormattedPrice,
 	PricingOptions,
-} from '@coursebuilder/core/types'
-import { formatUsd } from '@coursebuilder/core/utils/format-usd'
+} from '@coursebuilder/commerce/types'
+import { formatUsd } from '@coursebuilder/commerce/format-usd'
 import { Checkbox } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 

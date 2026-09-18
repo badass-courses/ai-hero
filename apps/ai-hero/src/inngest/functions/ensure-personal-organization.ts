@@ -1,4 +1,6 @@
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
+import { log } from '@/server/logger'
+
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 
 import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '../events/ensure-personal-organization'
 import { inngest } from '../inngest.server'
@@ -13,6 +15,10 @@ export const ensurePersonalOrganizationWorkflow = inngest.createFunction(
 	},
 	async ({ event, step, db: adapter }) => {
 		const { userId, createIfMissing = true } = event.data
+		const personalOrganizations = createPersonalOrganizationService({
+			organizations: adapter,
+			logger: log,
+		})
 
 		const user = await step.run('get user', async () => {
 			return adapter.getUserById(userId)
@@ -24,9 +30,7 @@ export const ensurePersonalOrganizationWorkflow = inngest.createFunction(
 
 		if (!createIfMissing) {
 			const result = await step.run('check personal organization', async () => {
-				const { getPersonalOrganization } =
-					await import('@/lib/personal-organization-service')
-				return getPersonalOrganization(user, adapter)
+				return personalOrganizations.getPersonalOrganization(user)
 			})
 
 			return {
@@ -38,7 +42,9 @@ export const ensurePersonalOrganizationWorkflow = inngest.createFunction(
 		}
 
 		const result = await step.run('ensure personal organization', async () => {
-			return ensurePersonalOrganizationWithLearnerRole(user, adapter)
+			return personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
+				user,
+			)
 		})
 
 		return {

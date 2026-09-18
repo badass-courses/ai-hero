@@ -107,7 +107,7 @@ const CouponGeneratorForm = ({
 	productsLoader: Promise<{ products: Product[]; pastEventIds: string[] }>
 }) => {
 	const router = useRouter()
-	const form = useForm<z.infer<typeof formSchema>>({
+	const form = useForm<z.input<typeof formSchema>, any, z.output<typeof formSchema>>({
 		resolver: zodResolver(formSchema),
 		defaultValues: {
 			quantity: '1',

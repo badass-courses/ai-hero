@@ -39,11 +39,11 @@ vi.mock('next/cache', () => ({
 	unstable_cache: (fn: unknown) => fn,
 }))
 
-vi.mock('@coursebuilder/core', () => ({
+vi.mock('@coursebuilder/commerce', () => ({
 	formatPricesForProduct: mocks.formatPricesForProduct,
 }))
 
-vi.mock('@coursebuilder/core/pricing/props-for-commerce', () => ({
+vi.mock('@coursebuilder/commerce/props-for-commerce', () => ({
 	propsForCommerce: vi.fn(),
 }))
 

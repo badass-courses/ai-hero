@@ -2,7 +2,7 @@ const { getCouponForCode } = vi.hoisted(() => ({
 	getCouponForCode: vi.fn(),
 }))
 
-vi.mock('@coursebuilder/core/lib/pricing/props-for-commerce', () => ({
+vi.mock('@coursebuilder/commerce/props-for-commerce', () => ({
 	getCouponForCode,
 }))
 

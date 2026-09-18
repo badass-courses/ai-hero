@@ -7,7 +7,7 @@ import { getPricingData } from '@/lib/pricing-query'
 import { getServerAuthSession } from '@/server/auth'
 import { count, eq } from 'drizzle-orm'
 
-import { propsForCommerce } from '@coursebuilder/core/pricing/props-for-commerce'
+import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
 import {
 	productSchema,
 	type Product,

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { courseBuilderAdapter } from '@/db'
 
-import { getCouponForCode } from '@coursebuilder/core/lib/pricing/props-for-commerce'
+import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
 
 const DEFAULT_OG_IMAGE =
 	'https://res.cloudinary.com/total-typescript/image/upload/v1777557385/og-image-root_2x.jpg'

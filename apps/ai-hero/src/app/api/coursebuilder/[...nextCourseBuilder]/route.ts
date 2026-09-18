@@ -11,7 +11,7 @@ import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shor
 import { inngest } from '@/inngest/inngest.server'
 import { getServerAuthSession } from '@/server/auth'
 import { withSkill } from '@/server/with-skill'
-import { StripePaymentAdapter } from '@coursebuilder/core/providers/stripe'
+import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type { NextRequest } from 'next/server'
 
 type CashBalanceEventType =

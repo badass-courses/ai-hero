@@ -19,7 +19,7 @@ const postmarkMessageSchema = z.object({
 	Status: z.string().min(1),
 	Recipients: z.array(z.string()).optional(),
 	To: z.array(z.object({ Email: z.string() })).optional(),
-	Metadata: z.record(z.string()).optional(),
+	Metadata: z.record(z.string(), z.string()).optional(),
 })
 
 const postmarkSearchSchema = z.object({

@@ -26,13 +26,13 @@ export const UserSchema = userSchema.merge(
 	z.object({
 		role: z.enum(['admin', 'user', 'contributor']).nullish(),
 		email: z.string().nullish(),
-		fields: z.any(),
+		fields: z.any().optional(),
 		entitlements: z
 			.array(
 				z.object({
 					type: z.string(),
 					expires: z.date().nullish(),
-					metadata: z.record(z.any()),
+					metadata: z.record(z.string(), z.any()),
 				}),
 			)
 			.optional(),

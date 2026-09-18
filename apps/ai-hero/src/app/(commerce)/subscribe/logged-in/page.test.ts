@@ -214,7 +214,7 @@ vi.mock('next/headers', () => ({
 	headers: mocks.headers,
 }))
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }))
-vi.mock('@coursebuilder/core/lib/checkout-attribution', () => ({
+vi.mock('@coursebuilder/commerce/checkout-attribution', () => ({
 	buildCheckoutAttribution: vi.fn(() => ({})),
 }))
 

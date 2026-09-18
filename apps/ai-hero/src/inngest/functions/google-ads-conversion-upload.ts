@@ -8,7 +8,7 @@ import {
 import { classifyGoogleAdsUploadTrigger } from '@/lib/google-ads-conversion-upload-trigger'
 import { processGoogleAdsSignupConversionUploads } from '@/lib/google-ads-signup-conversion-upload'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 const DEFAULT_LIMIT = 50
 

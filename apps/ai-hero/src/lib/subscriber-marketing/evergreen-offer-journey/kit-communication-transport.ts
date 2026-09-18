@@ -20,7 +20,7 @@ const SubscriberEnvelope = z
         id: ProviderId,
         email_address: z.string().min(1),
         state: z.string().min(1),
-        fields: z.record(z.string().nullable()),
+        fields: z.record(z.string(), z.string().nullable()),
       })
       .passthrough(),
   })

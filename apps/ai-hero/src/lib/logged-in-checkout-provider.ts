@@ -7,7 +7,7 @@ import type {
 	CheckoutLoginHandoffStore,
 } from '@/lib/checkout-login-handoff-store'
 
-import type { CourseBuilderAdapter } from '@coursebuilder/core/adapters'
+import type { CommerceAdapter } from '@coursebuilder/commerce'
 import type {
 	CheckoutParams,
 	CheckoutSessionResult,
@@ -47,7 +47,7 @@ export async function createLoggedInCheckoutSession({
 	checkoutParams,
 }: {
 	provider: StripePaymentsProviderConfig
-	adapter: CourseBuilderAdapter
+	adapter: CommerceAdapter
 	handoffStore: CheckoutLoginHandoffStore
 	claim?: CheckoutLoginHandoffClaim
 	handoffPayload?: CheckoutLoginHandoffPayload

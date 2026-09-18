@@ -6,7 +6,7 @@ import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log, serializeError } from '@/server/logger'
 import { canCreateContentRelation, canUploadMedia } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
-import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/inngest/video-processing/events/event-video-uploaded'
+import { VIDEO_UPLOADED_EVENT } from '@coursebuilder/core/events/video'
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',

@@ -12,8 +12,8 @@ import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing
 import { getSubscriptionStatus } from '@/lib/subscriptions'
 import { getServerAuthSession } from '@/server/auth'
 
-import { buildCheckoutAttribution } from '@coursebuilder/core/lib/checkout-attribution'
-import { CheckoutParamsSchema } from '@coursebuilder/core/types'
+import { buildCheckoutAttribution } from '@coursebuilder/commerce/checkout-attribution'
+import { CheckoutParamsSchema } from '@coursebuilder/commerce/stripe-checkout'
 
 export const dynamic = 'force-dynamic'
 

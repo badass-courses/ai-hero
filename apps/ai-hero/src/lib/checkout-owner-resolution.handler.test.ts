@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { courseBuilderCoreFunctions } from '@coursebuilder/core/inngest'
+import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 
 /**
  * Behavioral proof for AIH-254 against the installed (patched)

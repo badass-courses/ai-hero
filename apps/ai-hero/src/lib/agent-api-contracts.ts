@@ -55,6 +55,7 @@ export const NextActionSchema = z.object({
 	description: z.string(),
 	params: z
 		.record(
+			z.string(),
 			z.object({
 				description: z.string().optional(),
 				value: z.union([z.string(), z.number()]).optional(),
@@ -223,7 +224,7 @@ export const ShortlinkSchema = z.object({
 	slug: z.string(),
 	url: z.string().url(),
 	description: z.string().nullable(),
-	metadata: z.record(z.unknown()).nullable(),
+	metadata: z.record(z.string(), z.unknown()).nullable(),
 	clicks: z.number().int(),
 	createdById: z.string().nullable(),
 	createdAt: z.coerce.date(),

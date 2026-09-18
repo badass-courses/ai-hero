@@ -8,12 +8,12 @@ import {
 } from '@/db/schema'
 import { inngest } from '@/inngest/inngest.server'
 import { EntitlementSourceType } from '@/lib/entitlements'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
 import { log } from '@/server/logger'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 
 import {
 	GRANT_COUPON_ENTITLEMENTS_FOR_PURCHASE_EVENT,
@@ -37,6 +37,10 @@ export const grantCouponEntitlementsForPurchase = inngest.createFunction(
 		event: GRANT_COUPON_ENTITLEMENTS_FOR_PURCHASE_EVENT,
 	},
 	async ({ event, step, db: adapter }) => {
+		const personalOrganizations = createPersonalOrganizationService({
+			organizations: adapter,
+			logger: log,
+		})
 		const {
 			purchaseId,
 			userId,
@@ -409,9 +413,11 @@ export const grantCouponEntitlementsForPurchase = inngest.createFunction(
 			// Step 8: Grant entitlement for restricted purchase
 			await step.run('grant entitlement for restricted purchase', async () => {
 				const personalOrgResult =
-					await ensurePersonalOrganizationWithLearnerRole(
-						{ id: user.id, email: user.email },
-						adapter,
+					await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
+						{
+							id: user.id,
+							email: user.email,
+						},
 					)
 
 				const existingEntitlement = await db.query.entitlements.findFirst({
@@ -516,9 +522,8 @@ export const grantCouponEntitlementsForPurchase = inngest.createFunction(
 				// Step 8: Grant entitlement for valid purchase
 				await step.run('grant entitlement for valid purchase', async () => {
 					const personalOrgResult =
-						await ensurePersonalOrganizationWithLearnerRole(
+						await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
 							{ id: user.id, email: user.email },
-							adapter,
 						)
 
 					const existingEntitlement = await db.query.entitlements.findFirst({

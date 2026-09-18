@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ formatPricesForProduct: vi.fn() }))
 
-vi.mock('@coursebuilder/core', () => ({
+vi.mock('@coursebuilder/commerce', () => ({
 	formatPricesForProduct: mocks.formatPricesForProduct,
 }))
 

@@ -81,7 +81,7 @@ vi.mock('@/server/with-skill', () => ({
 
 import { KitSubscribeError } from '@/coursebuilder/email-list-provider'
 
-import { CourseBuilder } from '@coursebuilder/core'
+import { CourseBuilder } from '@coursebuilder/server/http'
 
 import { POST } from './route'
 

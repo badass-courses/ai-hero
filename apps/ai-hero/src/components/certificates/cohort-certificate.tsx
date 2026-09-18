@@ -10,7 +10,7 @@ import type { Session } from 'next-auth'
 import { useSession } from 'next-auth/react'
 import { useForm, type UseFormReturn } from 'react-hook-form'
 import { z } from 'zod'
-import { shouldRegenerateCertificateShare } from '@coursebuilder/core/lib/certificates'
+import { shouldRegenerateCertificateShare } from '@coursebuilder/core/certificates'
 
 import {
 	Button,

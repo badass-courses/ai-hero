@@ -572,7 +572,7 @@ export function createKitCurrentCommunicationReader(args: {
           id: z.union([z.number().int().positive(), Text]),
           email_address: z.string().email(),
           state: Text,
-          fields: z.record(z.string().nullable()).optional(),
+          fields: z.record(z.string(), z.string().nullable()).optional(),
           suppressed: z.unknown().optional(),
           bounced: z.unknown().optional(),
           complained: z.unknown().optional(),

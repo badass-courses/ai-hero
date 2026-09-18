@@ -1,3 +1,4 @@
+import { createAuthJsAdapter } from "@/server/auth-js-adapter"
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import {
@@ -368,7 +369,7 @@ describe.skipIf(!serverUrl)(
             trustHost: true,
             basePath: "/api/auth",
             session: { strategy: "database" },
-            adapter: observer.wrapAdapter(createOAuthContainmentAdapter(a)),
+            adapter: observer.wrapAdapter(createOAuthContainmentAdapter(createAuthJsAdapter(a))),
             providers: [
               Postmark({
                 apiKey: "synthetic",

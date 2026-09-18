@@ -7,7 +7,7 @@ import {
 	senderMatchesCustomerName,
 } from '@/lib/invoice-shortfall-policy'
 import { log } from '@/server/logger'
-import { StripePaymentAdapter } from '@coursebuilder/core/providers/stripe'
+import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type Stripe from 'stripe'
 
 const POLICY_VERSION = 'under-5-percent-and-at-most-100-usd-v1'

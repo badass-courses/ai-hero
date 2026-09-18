@@ -20,7 +20,7 @@ vi.mock('@/lib/team-purchase-fulfillment', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 import { teamPurchaseFulfillmentWorkflow } from './team-purchase-fulfillment-workflow'
 

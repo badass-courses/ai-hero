@@ -5,13 +5,10 @@ import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
 import type { CheckoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 
-import { formatPricesForProduct } from '@coursebuilder/core'
-import {
-	MockCourseBuilderAdapter,
-	type CourseBuilderAdapter,
-} from '@coursebuilder/core/adapters'
-import { stripeCheckout } from '@coursebuilder/core/pricing/stripe-checkout'
-import { StripePaymentAdapter } from '@coursebuilder/core/providers/stripe'
+import { formatPricesForProduct } from '@coursebuilder/commerce/format-prices-for-product'
+import type { CommerceAdapter } from '@coursebuilder/commerce'
+import { stripeCheckout } from '@coursebuilder/commerce/stripe-checkout'
+import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type {
 	PaymentsAdapter,
 	PaymentsProviderConsumerConfig,
@@ -146,11 +143,10 @@ function createAppAdapter({
 }: {
 	credit?: Credit
 	purchaseStatus?: 'Restricted' | 'Valid'
-} = {}): CourseBuilderAdapter {
+} = {}): CommerceAdapter {
 	const records = creditRecords(credit)
 
 	return {
-		...MockCourseBuilderAdapter,
 		getProduct: vi.fn(async () => product as never),
 		getPriceForProduct: vi.fn(async () => price as never),
 		getPurchase: vi.fn(async () => null),
@@ -247,7 +243,7 @@ function createAppAdapter({
 		),
 		getMerchantCouponForTypeAndAmount: vi.fn(async () => null),
 		createMerchantCoupon: vi.fn(async () => ({ id: 'merchant_stacked' }) as never),
-	} as unknown as CourseBuilderAdapter
+	} as unknown as CommerceAdapter
 }
 
 function providerSession(params: Stripe.Checkout.SessionCreateParams) {
@@ -353,7 +349,7 @@ async function checkout({
 	purchaseStatus?: 'Restricted' | 'Valid'
 	user?: boolean
 	couponId?: string
-	appAdapter?: CourseBuilderAdapter
+	appAdapter?: CommerceAdapter
 }) {
 	const payments = createPaymentsAdapter()
 	const result = await stripeCheckout({

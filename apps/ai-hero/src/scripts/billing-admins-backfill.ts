@@ -9,9 +9,11 @@ import {
 	purchases,
 	roles,
 } from '@/db/schema'
-import { getPersonalOrgName } from '@/lib/personal-organization-service'
 import { BILLING_ADMIN_ROLE } from '@/lib/team-roles'
+import { personalOrganizations } from '@/server/personal-organizations'
 import { and, asc, eq, isNotNull } from 'drizzle-orm'
+
+import { getPersonalOrganizationName } from '@coursebuilder/organizations'
 
 const DEFAULT_RECEIPT_DIRECTORY =
 	'/Users/joel/Code/badass-courses/aihero-support/.brain/data/crm/receipts'
@@ -221,17 +223,10 @@ async function createPersonalMembership(user: {
 	id: string
 	email: string
 }): Promise<MembershipRecord> {
-	const organization = await courseBuilderAdapter.createOrganization({
-		name: getPersonalOrgName(user.email),
-	})
-	if (!organization) throw new Error('organization-create-failed')
-
-	const membership = await courseBuilderAdapter.addMemberToOrganization({
-		organizationId: organization.id,
-		userId: user.id,
-		invitedById: user.id,
-	})
-	if (!membership) throw new Error('membership-create-failed')
+	// Goes through the shared policy so the org is keyed on
+	// personalOrganizationUserId, the same identity the app looks it up by.
+	const { organization, membership } =
+		await personalOrganizations.ensurePersonalOrganization(user)
 
 	return {
 		id: membership.id,
@@ -334,7 +329,9 @@ async function run() {
 		let targetKey = existingOrganizationId ?? `new:${purchase.userId}`
 
 		if (!existingOrganizationId) {
-			const personalOrganizationName = getPersonalOrgName(purchase.user.email)
+			const personalOrganizationName = getPersonalOrganizationName(
+				purchase.user.email,
+			)
 			membership =
 				memberships.find(
 					(candidate) =>

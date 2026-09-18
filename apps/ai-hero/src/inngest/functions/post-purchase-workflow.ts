@@ -19,17 +19,17 @@ import {
 import { EntitlementSourceType } from '@/lib/entitlements'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import type { WorkshopAvailability } from '@/lib/get-workshop-availability'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
 import { log } from '@/server/logger'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
 import { guid } from '@coursebuilder/adapter-drizzle/mysql'
-import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/inngest/commerce/event-full-price-coupon-redeemed'
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { FULL_PRICE_COUPON_REDEEMED_EVENT } from '@coursebuilder/core/events/commerce'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 import {
 	ContentResourceSchema,
 	type ContentResource,
 } from '@coursebuilder/core/schemas'
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 
@@ -670,8 +670,14 @@ export const postPurchaseWorkflow = inngest.createFunction(
 							}
 						} else {
 							// No organizationId on purchase - ensure user has personal org
+							const personalOrganizations = createPersonalOrganizationService({
+								organizations: adapter,
+								logger: log,
+							})
 							const personalOrgResult =
-								await ensurePersonalOrganizationWithLearnerRole(user, adapter)
+								await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
+									user,
+								)
 
 							return {
 								organizationId: personalOrgResult.organization.id,

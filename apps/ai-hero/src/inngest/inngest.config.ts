@@ -22,7 +22,7 @@ import { teamPurchaseFulfillmentWorkflow } from '@/inngest/functions/team-purcha
 import { userCreated } from '@/inngest/functions/user-created'
 import { inngest } from '@/inngest/inngest.server'
 
-import { courseBuilderCoreFunctions } from '@coursebuilder/core/inngest'
+import { courseBuilderCoreFunctions } from '@coursebuilder/server'
 
 import {
 	calendarSync,

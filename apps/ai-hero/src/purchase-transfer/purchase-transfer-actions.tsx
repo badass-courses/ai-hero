@@ -11,6 +11,7 @@ import {
 	purchaseUserTransfer as purchaseUserTransferTable,
 } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import {
 	evaluateAccept,
 	evaluateCancel,
@@ -35,8 +36,8 @@ import type { NextAuthConfig } from 'next-auth'
 import { v4 } from 'uuid'
 import { z } from 'zod'
 
-import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/inngest/purchase-transfer/event-purchase-transferred'
-import { sendServerEmail } from '@coursebuilder/core/lib/send-server-email'
+import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/events/purchase-transfer'
+import { sendServerEmail } from '@coursebuilder/email/send-server-email'
 import { purchaseUserTransferSchema } from '@coursebuilder/core/schemas'
 import PurchaseTransferEmail from '@coursebuilder/email-templates/emails/purchase-transfer'
 
@@ -477,7 +478,7 @@ export async function initiatePurchaseTransfer(input: {
 	const transfer = purchaseUserTransfer!
 
 	const { user: toUser } =
-		await courseBuilderAdapter.findOrCreateUser(parsedEmail)
+		await findOrCreateUserWithPersonalOrg(parsedEmail)
 
 	const decision = evaluateInitiate({
 		transfer,

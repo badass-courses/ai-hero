@@ -1,5 +1,5 @@
 import config from '@/config'
-import { courseBuilderAdapter, db } from '@/db'
+import { db } from '@/db'
 import {
 	contentResource,
 	contentResourceProduct,
@@ -14,7 +14,7 @@ import BasicEmail from '@/emails/basic-email'
 import WelcomeCohortEmailForTeamRedeemer from '@/emails/welcome-cohort-email-team-redeemer'
 import { env } from '@/env.mjs'
 import { getWorkshopAvailability } from '@/lib/get-workshop-availability'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
+import { personalOrganizations } from '@/server/personal-organizations'
 import { createResourceEntitlements } from '@/lib/entitlements-query'
 import {
 	alertPurchaseBenefitOperator,
@@ -78,9 +78,8 @@ export async function applyPurchaseBenefitEntitlements(input: {
 	}
 
 	const { organization, membership } =
-		await ensurePersonalOrganizationWithLearnerRole(
+		await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
 			user as any,
-			courseBuilderAdapter,
 		)
 
 	const results: PurchaseBenefitEntitlementResult[] = []

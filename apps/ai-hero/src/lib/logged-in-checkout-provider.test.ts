@@ -8,13 +8,10 @@ import type {
 } from '@/lib/checkout-login-handoff-store'
 import { createLoggedInCheckoutSession } from '@/lib/logged-in-checkout-provider'
 
-import {
-	MockCourseBuilderAdapter,
-	type CourseBuilderAdapter,
-} from '@coursebuilder/core/adapters'
+import type { CommerceAdapter } from '@coursebuilder/commerce'
 import StripeProvider, {
 	mockStripeAdapter,
-} from '@coursebuilder/core/providers/stripe'
+} from '@coursebuilder/commerce/stripe-provider'
 import type {
 	CheckoutSessionRequestOptions,
 	PaymentsAdapter,
@@ -44,9 +41,9 @@ const checkoutParams = {
 	userId: claim.userId,
 }
 
-function courseAdapter(): CourseBuilderAdapter {
+function courseAdapter(): CommerceAdapter {
 	return {
-		...MockCourseBuilderAdapter,
+		getMerchantCouponsForTypeAndPercent: vi.fn(async () => []),
 		getUser: vi.fn(async (id: string) => ({
 			id,
 			email: 'learner@example.test',
@@ -90,7 +87,7 @@ function courseAdapter(): CourseBuilderAdapter {
 		getDefaultCoupon: vi.fn(async () => null),
 		getEntitlementTypeByName: vi.fn(async () => null),
 		getEntitlementsForUser: vi.fn(async () => []),
-	} as unknown as CourseBuilderAdapter
+	} as unknown as CommerceAdapter
 }
 
 function provider(paymentsAdapter: PaymentsAdapter) {

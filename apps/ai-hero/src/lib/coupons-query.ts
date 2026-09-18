@@ -23,7 +23,7 @@ const CouponInputSchema = z.object({
 	amountDiscount: z.number().optional(),
 	status: z.number().default(1),
 	default: z.boolean().default(false),
-	fields: z.record(z.any()).default({}),
+	fields: z.record(z.string(), z.any()).default({}),
 })
 
 export type CouponInput = z.infer<typeof CouponInputSchema>

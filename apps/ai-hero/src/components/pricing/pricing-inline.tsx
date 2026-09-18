@@ -3,7 +3,7 @@
 import { Suspense, use } from 'react'
 
 import type { Purchase } from '@coursebuilder/core/schemas'
-import type { FormattedPrice } from '@coursebuilder/core/types'
+import type { FormattedPrice } from '@coursebuilder/commerce/types'
 
 export type PricingData = {
 	formattedPrice?: FormattedPrice | null

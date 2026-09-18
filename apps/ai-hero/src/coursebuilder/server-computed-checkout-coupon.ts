@@ -1,5 +1,5 @@
-import { formatPricesForProduct } from '@coursebuilder/core'
-import type { CourseBuilderAdapter } from '@coursebuilder/core/adapters'
+import { formatPricesForProduct } from '@coursebuilder/commerce'
+import type { CommerceAdapter } from '@coursebuilder/commerce/types'
 
 export async function resolveServerComputedCheckoutCoupon({
 	adapter,
@@ -8,7 +8,7 @@ export async function resolveServerComputedCheckoutCoupon({
 	verifiedUserId,
 	country,
 }: {
-	adapter: CourseBuilderAdapter
+	adapter: CommerceAdapter
 	productId: string
 	quantity: number
 	verifiedUserId?: string

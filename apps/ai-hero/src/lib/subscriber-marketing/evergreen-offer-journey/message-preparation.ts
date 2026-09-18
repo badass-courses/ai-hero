@@ -178,13 +178,13 @@ export function checkedMessageUrl(
 export const reviewedMessageTemplateSchema = z
 	.object({
 		revision: deliveryRevisionSchema,
-		slot: preparationSnapshotSchema.innerType().shape.slot,
+		slot: preparationSnapshotSchema.shape.slot,
 		sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
 		subject: z.string().min(1).max(500),
 		html: z.string().min(1).max(100000),
 		htmlHash: z.string().regex(/^[a-f0-9]{64}$/),
 		subjectHash: z.string().regex(/^[a-f0-9]{64}$/),
-		links: z.record(z.enum(linkTokens), z.string().min(1).max(2048)),
+		links: z.partialRecord(z.enum(linkTokens), z.string().min(1).max(2048)),
 	})
 	.strict()
 export type ReviewedMessageTemplate = Readonly<

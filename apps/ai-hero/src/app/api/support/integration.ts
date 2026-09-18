@@ -6,6 +6,7 @@ import {
 	isArchiveProductType,
 	summarizeArchiveEntitlements,
 } from '@/lib/archive-entitlements'
+import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { log } from '@/server/logger'
 import { TYPESENSE_COLLECTION_NAME } from '@/utils/typesense-instantsearch-adapter'
 import type {
@@ -126,9 +127,12 @@ export const integration: SupportIntegration = {
 		toEmail: string
 	}): Promise<ActionResult> {
 		try {
-			// Find or create the target user via adapter
-			const { user: toUser } =
-				await courseBuilderAdapter.findOrCreateUser(toEmail)
+			// Find or create the target user through the provisioning boundary.
+			// Lowercased to match the purchase-transfer path — a mixed-case address
+			// would otherwise mint a second user row for the same person.
+			const { user: toUser } = await findOrCreateUserWithPersonalOrg(
+				toEmail.toLowerCase(),
+			)
 
 			if (!toUser) {
 				return { success: false, error: 'Failed to find or create user' }

@@ -27,8 +27,9 @@ interface TcpQueryResultHKT extends MySqlQueryResultHKT {
 const pool = preserveQueryResultShape(
 	mysql.createPool({
 		uri: env.DATABASE_URL,
-		connectionLimit: 2,
-		maxIdle: 2,
+		// Serverless keeps this tiny; one-off scripts raise it per run.
+		connectionLimit: Number(process.env.DATABASE_POOL_SIZE) || 2,
+		maxIdle: Number(process.env.DATABASE_POOL_SIZE) || 2,
 		timezone: 'Z',
 		enableKeepAlive: true,
 	}),

@@ -2,7 +2,7 @@ import { inngest } from '@/inngest/inngest.server'
 import { reconcileTeamPurchaseFulfillment } from '@/lib/team-purchase-fulfillment'
 import { log } from '@/server/logger'
 
-import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-new-purchase-created'
+import { NEW_PURCHASE_CREATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 export const teamPurchaseFulfillmentWorkflow = inngest.createFunction(
 	{

@@ -43,10 +43,10 @@ vi.mock('@coursebuilder/ui/utils/cn', () => ({
 vi.mock('@coursebuilder/commerce-next/team/invite-team', () => ({
 	default: () => <div>Team invitations</div>,
 }))
-vi.mock('@coursebuilder/core/pricing/build-stripe-checkout-path', () => ({
+vi.mock('@coursebuilder/commerce/build-stripe-checkout-path', () => ({
 	buildStripeCheckoutPath: () => '/checkout',
 }))
-vi.mock('@coursebuilder/core/utils/format-usd', () => ({
+vi.mock('@coursebuilder/commerce/format-usd', () => ({
 	formatUsd: () => ({ dollars: '10', cents: '00' }),
 }))
 vi.mock('@coursebuilder/utils/resource-paths', () => ({

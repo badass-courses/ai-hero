@@ -28,7 +28,7 @@ export const bridgeRuntimeCommandSchema = z.discriminatedUnion("type", [
       type: z.literal("messageRecorded"),
       generation,
       input: z
-        .object({ afterByScope: z.record(recordedCursor).optional() })
+        .object({ afterByScope: z.record(z.string(), recordedCursor).optional() })
         .strict(),
     })
     .strict(),
@@ -37,7 +37,7 @@ export const bridgeRuntimeCommandSchema = z.discriminatedUnion("type", [
       type: z.literal("messageUncertain"),
       generation,
       input: z
-        .object({ afterByScope: z.record(recoveryCursor).optional() })
+        .object({ afterByScope: z.record(z.string(), recoveryCursor).optional() })
         .strict(),
     })
     .strict(),

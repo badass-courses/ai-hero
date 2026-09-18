@@ -8,7 +8,7 @@ import { EntitlementSourceType } from '@/lib/entitlements'
 import { log } from '@/server/logger'
 import { and, eq, isNull } from 'drizzle-orm'
 
-import { PURCHASE_STATUS_UPDATED_EVENT } from '@coursebuilder/core/inngest/commerce/event-purchase-status-updated'
+import { PURCHASE_STATUS_UPDATED_EVENT } from '@coursebuilder/core/events/commerce'
 
 export const removePurchaseRoleDiscord = inngest.createFunction(
 	{ id: `remove-purchase-role-discord`, name: 'Remove Purchase Role Discord' },

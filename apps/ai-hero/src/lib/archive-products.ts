@@ -12,7 +12,7 @@ import {
 	createCohortEntitlement,
 	EntitlementSourceType,
 } from '@/lib/entitlements'
-import { ensurePersonalOrganizationWithLearnerRole } from '@/lib/personal-organization-service'
+import { personalOrganizations } from '@/server/personal-organizations'
 import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
@@ -294,10 +294,10 @@ export async function ensureArchiveEntitlementContext(params: {
 		}
 	}
 
-	const personalOrgResult = await ensurePersonalOrganizationWithLearnerRole(
-		params.user,
-		courseBuilderAdapter,
-	)
+	const personalOrgResult =
+		await personalOrganizations.ensurePersonalOrganizationWithLearnerRole(
+			params.user,
+		)
 
 	return {
 		organizationId: personalOrgResult.organization.id,

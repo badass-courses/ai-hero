@@ -15,6 +15,10 @@ import { inngest } from '@/inngest/inngest.server'
 import { acceptBillingAdminInvitations } from '@/lib/team-manager-invitations'
 import { authLogger } from '@/server/auth-logger'
 import { createPostSignInInvitationHandler } from '@/server/auth-post-sign-in'
+import { createAuthJsAdapter } from '@/server/auth-js-adapter'
+import { personalOrganizations } from '@/server/personal-organizations'
+import { handleUserCreatedBoundary } from '@/server/user-provisioning'
+import { ENSURE_PERSONAL_ORGANIZATION_EVENT } from '@/inngest/events/ensure-personal-organization'
 import { refreshDiscordAccessToken } from '@/server/discord-token-refresh'
 import {
 	claimDiscordRefresh,
@@ -24,7 +28,7 @@ import {
 	type DiscordAccountCredentials,
 	type DiscordCredentialUpdate,
 } from '@/server/discord-token-refresh-persistence'
-import { log } from '@/server/logger'
+import { log, serializeError } from '@/server/logger'
 import {
 	createOAuthContainmentAdapter,
 	createOAuthContainmentSignInCallback,
@@ -115,7 +119,9 @@ declare module 'next-auth' {
 // Default off; only the explicitly configured pilot user can reach the writer.
 const emailObservation = createEvergreenPilotEmailObservation()
 const oauthContainmentAdapter = emailObservation.wrapAdapter(
-	createOAuthContainmentAdapter(courseBuilderAdapter),
+	createOAuthContainmentAdapter(
+		createAuthJsAdapter(courseBuilderAdapter),
+	),
 )
 
 const getSessionAndUser =
@@ -210,7 +216,29 @@ export const authOptions: NextAuthConfig = {
 	logger: authLogger,
 	events: {
 		createUser: async ({ user }) => {
-			await inngest.send({ name: USER_CREATED_EVENT, user, data: {} })
+			if (!user.id || !user.email) {
+				throw new Error('Persisted user identity requires an id and email')
+			}
+
+			await handleUserCreatedBoundary(
+				{ id: user.id, email: user.email },
+				{
+					publishUserCreated: () =>
+						inngest.send({ name: USER_CREATED_EVENT, user, data: {} }),
+					provisionPersonalOrganization: (persistedUser) =>
+						personalOrganizations.ensurePersonalOrganization(persistedUser),
+					enqueueProvisioningRepair: (userId, cause) => {
+						void log.error('auth.personal-org-provisioning-failed', {
+							userId,
+							error: serializeError(cause),
+						})
+						return inngest.send({
+							name: ENSURE_PERSONAL_ORGANIZATION_EVENT,
+							data: { userId, createIfMissing: true },
+						})
+					},
+				},
+			)
 		},
 		linkAccount: async ({ user, account }) => {
 			await inngest.send({

@@ -332,8 +332,10 @@ vi.mock('@/lib/entitlements', () => ({
 vi.mock('@/lib/entitlements-query', () => ({
 	createResourceEntitlements: mocks.createResourceEntitlements,
 }))
-vi.mock('@/lib/personal-organization-service', () => ({
-	ensurePersonalOrganization: mocks.ensurePersonalOrganization,
+vi.mock('@coursebuilder/organizations', () => ({
+	createPersonalOrganizationService: () => ({
+		ensurePersonalOrganization: mocks.ensurePersonalOrganization,
+	}),
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 vi.mock('@/inngest/config/product-types', () => ({

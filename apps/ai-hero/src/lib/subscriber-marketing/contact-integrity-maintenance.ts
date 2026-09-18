@@ -179,7 +179,7 @@ export function maintainContactIntegrity(
 					sql: string,
 					values: unknown[] = [],
 				): Promise<MetadataRow[]> =>
-					z.array(z.record(z.unknown())).parse(await query(sql, values))
+					z.array(z.record(z.string(), z.unknown())).parse(await query(sql, values))
 				const inspectSchema = async () => {
 					const columns = await rows(
 						"SELECT COLUMN_NAME,DATA_TYPE,CHARACTER_MAXIMUM_LENGTH,CHARACTER_SET_NAME,COLLATION_NAME,IS_NULLABLE,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='AI_Contact'",

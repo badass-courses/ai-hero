@@ -43,7 +43,7 @@ export const ProductUpdateApiSchema = z
 		state: z.enum(['draft', 'published', 'archived', 'deleted']).optional(),
 		visibility: z.enum(['public', 'private', 'unlisted']).optional(),
 		slug: z.string().min(2).max(191).optional(),
-		fields: z.record(z.unknown()).optional(),
+		fields: z.record(z.string(), z.unknown()).optional(),
 	})
 	.refine(
 		(input) =>
