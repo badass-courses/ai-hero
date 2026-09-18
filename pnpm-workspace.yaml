@@ -36,5 +36,3 @@ packageExtensions:
       '@codemirror/state': '^6.0.0'
       '@codemirror/view': '^6.0.0'
 
-patchedDependencies:
-  '@coursebuilder/adapter-drizzle@3.0.2': patches/@coursebuilder__adapter-drizzle@3.0.2.patch

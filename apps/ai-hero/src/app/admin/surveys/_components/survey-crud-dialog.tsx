@@ -53,7 +53,7 @@ export default function SurveyCrudDialog({
 }: SurveyCrudDialogProps) {
 	const [isOpen, setIsOpen] = React.useState(false)
 
-	const form = useForm<FormSchemaType>({
+	const form = useForm<z.input<typeof SurveyFieldsSchema>, any, FormSchemaType>({
 		resolver: zodResolver(SurveyFieldsSchema),
 		defaultValues: survey?.fields || {
 			title: '',
