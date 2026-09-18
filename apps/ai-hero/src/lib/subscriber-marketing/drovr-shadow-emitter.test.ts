@@ -172,26 +172,33 @@ describe('drovr shadow fact mapper', () => {
 		])
 	})
 
-	it('maps a journey.owner.assigned event to a birth in the authority tenant', () => {
-		const events = mapDrovrShadowFact({
-			kind: 'contact-event',
-			event: contactEvent('journey.owner.assigned', {
-				semanticIdempotencyKey:
-					'kit:journey.owner.assigned:kit-1:drovr-owner:contact-1:value-path-skills-course',
-			}),
-		})
-		expect(events).toEqual([
-			{
-				tenantId: 'org-aihero',
-				contactId: 'contact-1',
-				journeyId: 'value-path-skills-course',
-				type: 'contact.created',
-				occurredAt,
-				idempotencyKey:
-					'aihero:kit:journey.owner.assigned:kit-1:drovr-owner:contact-1:value-path-skills-course',
-			},
-		])
-	})
+	it.each([
+		'value-path-skills-course',
+		'crash-course-evergreen-offer',
+	] as const)(
+		'maps a %s journey.owner.assigned event to only that authority birth',
+		(journeyId) => {
+			const providerEventId = `drovr-owner:contact-1:${journeyId}`
+			const semanticIdempotencyKey = `kit:journey.owner.assigned:kit-1:${providerEventId}`
+			const events = mapDrovrShadowFact({
+				kind: 'contact-event',
+				event: contactEvent('journey.owner.assigned', {
+					providerEventId,
+					semanticIdempotencyKey,
+				}),
+			})
+			expect(events).toEqual([
+				{
+					tenantId: 'org-aihero',
+					contactId: 'contact-1',
+					journeyId,
+					type: 'contact.created',
+					occurredAt,
+					idempotencyKey: `aihero:${semanticIdempotencyKey}`,
+				},
+			])
+		},
+	)
 
 	it('maps a new durable course completion to both journeys with fallback timezone', () => {
 		const events = mapDrovrShadowFact({

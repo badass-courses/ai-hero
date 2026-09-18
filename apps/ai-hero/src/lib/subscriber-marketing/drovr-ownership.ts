@@ -2,12 +2,15 @@ import { createHash } from 'node:crypto'
 
 import {
 	DROVR_AUTHORITY_TENANT_ID,
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_SHADOW_TENANT_ID,
+	DROVR_SKILLS_COURSE_JOURNEY_ID,
+	type DrovrJourneyId,
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import { normalizeContactEvent } from './normalize-contact-event'
-import type { ContactEventRecord, SideEffectIntent } from './types'
+import type { ContactEventRecord, Provider, SideEffectIntent } from './types'
 
 /**
  * Who drives a contact's skills-course journey: the legacy in-app planner
@@ -105,7 +108,12 @@ export async function findRecordedJourneyOwner(
 	repository: OwnershipReadRepository,
 	contactId: string,
 ): Promise<JourneyOwner | undefined> {
-	return (await findJourneyOwnerAssignment(repository, contactId))
+	if (!repository.findContactEventsByType) return undefined
+	const events = await repository.findContactEventsByType(
+		contactId,
+		JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
+	)
+	return events.some((event) => journeyOwnerAssignmentJourneyId(event))
 		? 'drovr'
 		: undefined
 }
@@ -113,13 +121,16 @@ export async function findRecordedJourneyOwner(
 export async function findJourneyOwnerAssignment(
 	repository: OwnershipReadRepository,
 	contactId: string,
+	journeyId: DrovrJourneyId = DROVR_SKILLS_COURSE_JOURNEY_ID,
 ): Promise<ContactEventRecord | undefined> {
 	if (!repository.findContactEventsByType) return undefined
 	const events = await repository.findContactEventsByType(
 		contactId,
 		JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	)
-	return events[0]
+	return events.find(
+		(event) => journeyOwnerAssignmentJourneyId(event) === journeyId,
+	)
 }
 
 export type JourneyOwnerResolution =
@@ -150,8 +161,23 @@ export async function resolveJourneyOwner(args: {
 	return { owner: decideJourneyOwner(args), recorded: false }
 }
 
-export function journeyOwnerProviderEventId(contactId: string): string {
-	return `drovr-owner:${contactId}:value-path-skills-course`
+export function journeyOwnerProviderEventId(
+	contactId: string,
+	journeyId: DrovrJourneyId = DROVR_SKILLS_COURSE_JOURNEY_ID,
+): string {
+	return `drovr-owner:${contactId}:${journeyId}`
+}
+
+export function journeyOwnerAssignmentJourneyId(
+	event: Pick<ContactEventRecord, 'providerEventId'>,
+): DrovrJourneyId | undefined {
+	if (event.providerEventId.endsWith(`:${DROVR_SKILLS_COURSE_JOURNEY_ID}`)) {
+		return DROVR_SKILLS_COURSE_JOURNEY_ID
+	}
+	if (event.providerEventId.endsWith(`:${DROVR_EVERGREEN_OFFER_JOURNEY_ID}`)) {
+		return DROVR_EVERGREEN_OFFER_JOURNEY_ID
+	}
+	return undefined
 }
 
 /**
@@ -164,19 +190,23 @@ export async function recordJourneyOwnerAssigned(args: {
 	contactId: string
 	providerIdentityId: string
 	kitSubscriberId: string
+	provider?: Provider
+	providerExternalId?: string
 	email: string
 	name?: string
 	occurredAt: string
+	journeyId?: DrovrJourneyId
 }): Promise<ContactEventRecord> {
+	const journeyId = args.journeyId ?? DROVR_SKILLS_COURSE_JOURNEY_ID
 	const normalized = normalizeContactEvent({
-		provider: 'kit',
-		providerEventId: journeyOwnerProviderEventId(args.contactId),
+		provider: args.provider ?? 'kit',
+		providerEventId: journeyOwnerProviderEventId(args.contactId, journeyId),
 		eventType: JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 		occurredAt: args.occurredAt,
 		email: args.email,
 		name: args.name,
-		externalId: args.kitSubscriberId,
-		message: 'Journey owner assigned to drovr for the skills course',
+		externalId: args.providerExternalId ?? args.kitSubscriberId,
+		message: `Journey owner assigned to drovr for ${journeyId}`,
 		privacyLevel: 'internal',
 	})
 	return args.repository.createContactEvent({
@@ -209,7 +239,9 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
 	return (
 		event.tenantId === DROVR_SHADOW_TENANT_ID &&
 		event.type !== 'contact.created' &&
-		event.type !== 'email.completed'
+		event.type !== 'email.completed' &&
+		(event.type !== 'course.sequence-exhausted' ||
+			event.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID)
 	)
 }
 

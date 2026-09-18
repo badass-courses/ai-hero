@@ -17,13 +17,14 @@ export const DROVR_AUTHORITY_TENANT_ID = 'org-aihero' as const
 export type DrovrTenantId =
 	| typeof DROVR_SHADOW_TENANT_ID
 	| typeof DROVR_AUTHORITY_TENANT_ID
+export type DrovrJourneyId =
+	| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
+	| typeof DROVR_EVERGREEN_OFFER_JOURNEY_ID
 
 export type DrovrShadowEvent = {
 	tenantId: DrovrTenantId
 	contactId: string
-	journeyId:
-		| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
-		| typeof DROVR_EVERGREEN_OFFER_JOURNEY_ID
+	journeyId: DrovrJourneyId
 	type:
 		| 'contact.created'
 		| 'value-path.answer-selected'
@@ -190,17 +191,21 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 					type: 'contact.created',
 				},
 			]
-		// Ownership assigned to drovr is the contact's birth in the authority
-		// tenant: one event, one birth, no race with the shadow's.
-		case 'journey.owner.assigned':
+		// Ownership assigned to drovr is the named journey's birth in the
+		// authority tenant. The discriminator prevents an evergreen finisher
+		// assignment from birthing a phantom skills-course actor.
+		case 'journey.owner.assigned': {
+			const journeyId = ownerAssignmentJourneyId(event.providerEventId)
+			if (!journeyId) return []
 			return [
 				{
 					...base,
 					tenantId: DROVR_AUTHORITY_TENANT_ID,
-					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+					journeyId,
 					type: 'contact.created',
 				},
 			]
+		}
 		case 'value-path.answer-selected': {
 			const emailResourceId = emailResourceIdFromKeywords(
 				event.payloadSummary.keywords,
@@ -401,6 +406,18 @@ function bothJourneys(
 			...(payload ? { payload } : {}),
 		}),
 	)
+}
+
+function ownerAssignmentJourneyId(
+	providerEventId: string,
+): DrovrJourneyId | undefined {
+	if (providerEventId.endsWith(`:${DROVR_SKILLS_COURSE_JOURNEY_ID}`)) {
+		return DROVR_SKILLS_COURSE_JOURNEY_ID
+	}
+	if (providerEventId.endsWith(`:${DROVR_EVERGREEN_OFFER_JOURNEY_ID}`)) {
+		return DROVR_EVERGREEN_OFFER_JOURNEY_ID
+	}
+	return undefined
 }
 
 function contactEventIdempotencyKey(event: ContactEventRecord) {

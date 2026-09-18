@@ -2,11 +2,16 @@ import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
 import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
 import { log } from '@/server/logger'
 
+import type { EvergreenPitchEntryResult } from './drovr-pitch-entry'
 import { fanOutOwnedEvents } from './drovr-ownership'
-import { resolveOwnedContactIds } from './drovr-ownership-live'
+import {
+	enterEvergreenPitchFromLiveDatabase,
+	resolveOwnedContactIds,
+} from './drovr-ownership-live'
 import {
 	emitDrovrShadowEvents,
 	mapDrovrShadowFact,
+	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	type DrovrShadowEvent,
 	type DrovrShadowFact,
 } from './drovr-shadow-emitter'
@@ -30,6 +35,13 @@ type DrovrShadowDispatchOptions = {
 	fallback?: (events: readonly DrovrShadowEvent[]) => Promise<void>
 	/** Ownership read for the fallback's fan-out. */
 	resolveOwners?: (events: readonly DrovrShadowEvent[]) => Promise<string[]>
+	/** Test seam for the live eligibility read and ownership stamp. */
+	enterPitch?: (args: {
+		contactId: string
+		completedAt: string
+	}) => Promise<EvergreenPitchEntryResult>
+	/** Evergreen route flag. Defaults to AIH_DROVR_EVERGREEN_ENABLED. */
+	evergreenEnabled?: boolean
 	warn?: typeof log.warn
 }
 
@@ -37,7 +49,45 @@ export async function dispatchDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowDispatchOptions = {},
 ): Promise<'queued' | 'fallback' | 'nothing'> {
-	const events = mapDrovrShadowFact(fact)
+	const evergreenEnabled =
+		options.evergreenEnabled ??
+		['true', '1'].includes(
+			String(process.env.AIH_DROVR_EVERGREEN_ENABLED ?? '')
+				.trim()
+				.toLowerCase(),
+		)
+	let evergreenEntryAllowed = true
+	if (fact.kind === 'course-completed' && evergreenEnabled) {
+		const enterPitch = options.enterPitch ?? enterEvergreenPitchFromLiveDatabase
+		try {
+			const entry = await enterPitch({
+				contactId: fact.contactId,
+				completedAt: fact.completedAt,
+			})
+			evergreenEntryAllowed =
+				entry.status === 'entered' || entry.status === 'already-entered'
+		} catch (error) {
+			evergreenEntryAllowed = false
+			const warn = options.warn ?? log.warn
+			try {
+				await warn('drovr.evergreen.entry_failed_closed', {
+					contactId: fact.contactId,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			} catch {
+				// Logging cannot make an uncertain contact eligible.
+			}
+		}
+	}
+	const mappedEvents = mapDrovrShadowFact(fact)
+	const events =
+		fact.kind === 'course-completed' &&
+		evergreenEnabled &&
+		!evergreenEntryAllowed
+			? mappedEvents.filter(
+					(event) => event.journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+				)
+			: mappedEvents
 	if (events.length === 0) return 'nothing'
 
 	// Lazy: the Inngest client pulls the whole middleware graph (db,

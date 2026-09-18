@@ -41,6 +41,13 @@ const signup: DrovrShadowFact = {
 	event: contactEvent('skills-newsletter.subscribed'),
 }
 
+const courseCompleted: DrovrShadowFact = {
+	kind: 'course-completed',
+	contactId: 'contact-1',
+	valuePathSlug: 'ai-hero-skills-workflow',
+	completedAt: occurredAt,
+}
+
 describe('drovr shadow dispatch', () => {
 	it('queues the mapped events as one durable Inngest batch', async () => {
 		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
@@ -106,6 +113,92 @@ describe('drovr shadow dispatch', () => {
 		expect(
 			delivered.every((event) => event.type === 'contact.unsubscribed'),
 		).toBe(true)
+	})
+
+	it('does not run the forward route or change completion events while the evergreen flag is off', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		const enterPitch = vi.fn()
+
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			enterPitch,
+			evergreenEnabled: false,
+		})
+
+		expect(enterPitch).not.toHaveBeenCalled()
+		expect(send.mock.calls[0]?.[0].data.events).toEqual(
+			mapDrovrShadowFact(courseCompleted),
+		)
+	})
+
+	it('enters an eligible legacy finisher with the real completion time', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		const enterPitch = vi.fn().mockResolvedValue({
+			status: 'entered',
+			journeyId: 'crash-course-evergreen-offer',
+		})
+
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			enterPitch,
+			evergreenEnabled: true,
+		})
+
+		expect(enterPitch).toHaveBeenCalledWith({
+			contactId: 'contact-1',
+			completedAt: occurredAt,
+		})
+		const events = send.mock.calls[0]?.[0].data.events
+		expect(events).toHaveLength(2)
+		expect(
+			events.find(
+				(event: { journeyId: string }) =>
+					event.journeyId === 'crash-course-evergreen-offer',
+			),
+		).toMatchObject({
+			type: 'course.sequence-exhausted',
+			occurredAt,
+			idempotencyKey: 'aihero:completion:contact-1:ai-hero-skills-workflow',
+		})
+	})
+
+	it('keeps an already drovr-owned eligible finisher on the existing completion route', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			evergreenEnabled: true,
+			enterPitch: vi.fn().mockResolvedValue({
+				status: 'already-entered',
+				journeyId: 'crash-course-evergreen-offer',
+			}),
+		})
+		expect(send.mock.calls[0]?.[0].data.events).toEqual(
+			mapDrovrShadowFact(courseCompleted),
+		)
+	})
+
+	it('fails closed and removes the evergreen exhaustion for a live purchaser', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			evergreenEnabled: true,
+			enterPitch: vi.fn().mockResolvedValue({
+				status: 'refused',
+				reason: 'crash-course-purchaser',
+			}),
+		})
+		const events = send.mock.calls[0]?.[0].data.events
+		expect(events).toHaveLength(1)
+		expect(events[0]).toMatchObject({
+			journeyId: 'value-path-skills-course',
+			type: 'course.sequence-exhausted',
+		})
+		expect(
+			events.some(
+				(event: { journeyId: string }) =>
+					event.journeyId === 'crash-course-evergreen-offer',
+			),
+		).toBe(false)
 	})
 
 	it('does nothing for a fact that maps to no drovr event', async () => {
