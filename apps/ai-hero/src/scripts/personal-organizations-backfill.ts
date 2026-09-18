@@ -232,6 +232,12 @@ async function collectCandidates(
 				)
 				continue
 			}
+			// Production carries memberships whose user row is gone; a durable
+			// id for a user that cannot sign in is a stamp nothing will read.
+			if (!membership.user) {
+				incrementReason(unresolvedReasons, 'membership-user-missing')
+				continue
+			}
 
 			candidates.push({
 				organizationId: candidateOrganization.id,
