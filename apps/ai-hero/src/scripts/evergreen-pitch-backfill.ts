@@ -15,7 +15,10 @@ import {
   JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
   journeyOwnerProviderEventId,
 } from "@/lib/subscriber-marketing/drovr-ownership";
-import { dispatchDrovrShadowFact } from "@/lib/subscriber-marketing/drovr-shadow-dispatch";
+import {
+  dispatchDrovrShadowFact,
+  sendDrovrEventsDeliverViaInngestHttp,
+} from "@/lib/subscriber-marketing/drovr-shadow-dispatch";
 import {
   DROVR_EVERGREEN_OFFER_JOURNEY_ID,
   type DrovrShadowFact,
@@ -60,6 +63,7 @@ export type EvergreenPitchBackfillSummary = {
   requested: number;
   selected: number;
   entered: number;
+  enteredContactIds: string[];
   refused: Record<BackfillRefusalReason, number>;
   errors: string[];
 };
@@ -89,6 +93,40 @@ export type EvergreenPitchBackfillArgs = {
   apply: boolean;
   out: string;
 };
+
+export function resolveBackfillApplyInngestEventKey(
+  source: Record<string, string | undefined>,
+  options: { apply: boolean },
+): string | null {
+  if (!options.apply) return null;
+  const eventKey = source.INNGEST_EVENT_KEY?.trim();
+  if (!eventKey) throw new Error("Apply requires INNGEST_EVENT_KEY");
+  if (eventKey === "[SENSITIVE]") {
+    throw new Error(
+      'INNGEST_EVENT_KEY holds the Vercel "[SENSITIVE]" placeholder, not a usable value',
+    );
+  }
+  return eventKey;
+}
+
+export function createBackfillFactDispatcher(args: {
+  eventKey: string;
+  fetchImpl?: typeof fetch;
+}): EvergreenPitchBackfillRepository["dispatchFact"] {
+  return (fact) =>
+    dispatchDrovrShadowFact(fact, {
+      evergreenEnabled: false,
+      send: (payload) =>
+        sendDrovrEventsDeliverViaInngestHttp(payload, {
+          eventKey: args.eventKey,
+          fetchImpl: args.fetchImpl,
+        }),
+      // A rejected HTTP handoff is terminal for this run. Do not bypass the
+      // durable path with the direct drovr fallback used by the live host.
+      resolveOwners: async () => [],
+      fallback: async () => undefined,
+    });
+}
 
 export function parseEvergreenPitchBackfillArgs(
   argv: readonly string[],
@@ -238,6 +276,7 @@ export async function runEvergreenPitchBackfill(args: {
     requested: args.limit,
     selected: 0,
     entered: 0,
+    enteredContactIds: [],
     refused: emptyRefusalCounts(),
     errors: [],
   };
@@ -299,6 +338,7 @@ export async function runEvergreenPitchBackfill(args: {
         continue;
       }
 
+      summary.enteredContactIds.push(candidate.contactId);
       const idempotencyKey = [
         "aihero",
         "backfill",
@@ -316,8 +356,8 @@ export async function runEvergreenPitchBackfill(args: {
           idempotencyKey,
         },
       });
-      if (delivery === "nothing") {
-        throw new Error("backfill exhaustion mapped to no delivery");
+      if (delivery !== "queued") {
+        throw new Error(`backfill dispatch returned ${delivery}`);
       }
       summary.entered += 1;
     } catch (error) {
@@ -330,7 +370,14 @@ export async function runEvergreenPitchBackfill(args: {
   return summary;
 }
 
-export async function createLiveEvergreenPitchBackfillRepository(): Promise<EvergreenPitchBackfillRepository> {
+export async function createLiveEvergreenPitchBackfillRepository(args: {
+  inngestEventKey: string | null;
+}): Promise<EvergreenPitchBackfillRepository> {
+  const dispatchFact = args.inngestEventKey
+    ? createBackfillFactDispatcher({ eventKey: args.inngestEventKey })
+    : async () => {
+        throw new Error("Apply requires INNGEST_EVENT_KEY");
+      };
   const [{ db }, schema] = await Promise.all([
     import("@/db"),
     import("@/db/schema"),
@@ -483,10 +530,9 @@ export async function createLiveEvergreenPitchBackfillRepository(): Promise<Ever
     },
     findCrashCoursePurchaserContactIds,
     enterEvergreenPitch: enterEvergreenPitchFromLiveDatabase,
-    dispatchFact: (fact) =>
-      // Entry already ran above. Backfill mapping addresses only the authority
-      // evergreen actor, so the forward-route entry hook must not run again.
-      dispatchDrovrShadowFact(fact, { evergreenEnabled: false }),
+    // Entry already ran above. Backfill mapping addresses only the authority
+    // evergreen actor, so the forward-route entry hook must not run again.
+    dispatchFact,
   };
 }
 
@@ -551,10 +597,15 @@ function chunk<Value>(values: readonly Value[], size: number): Value[][] {
 
 async function main() {
   const args = parseEvergreenPitchBackfillArgs(process.argv.slice(2));
+  const inngestEventKey = resolveBackfillApplyInngestEventKey(process.env, {
+    apply: args.apply,
+  });
   const birthInstant = new Date().toISOString();
   let summary: EvergreenPitchBackfillSummary;
   try {
-    const repository = await createLiveEvergreenPitchBackfillRepository();
+    const repository = await createLiveEvergreenPitchBackfillRepository({
+      inngestEventKey,
+    });
     summary = await runEvergreenPitchBackfill({
       repository,
       floor: args.floor,
@@ -577,6 +628,7 @@ async function main() {
       requested: args.limit,
       selected: 0,
       entered: 0,
+      enteredContactIds: [],
       refused: emptyRefusalCounts(),
       errors: [`run: ${errorMessage(error)}`],
     };

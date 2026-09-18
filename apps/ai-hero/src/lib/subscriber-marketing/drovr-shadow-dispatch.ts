@@ -29,6 +29,62 @@ import {
 
 type DrovrShadowSend = (payload: DrovrEventsDeliver) => Promise<unknown>
 
+type InngestEventApiAcknowledgement = {
+	ids: string[]
+	status: 200
+}
+
+export async function sendDrovrEventsDeliverViaInngestHttp(
+	payload: DrovrEventsDeliver,
+	options: {
+		eventKey: string
+		fetchImpl?: typeof fetch
+	},
+): Promise<InngestEventApiAcknowledgement> {
+	const eventKey = options.eventKey.trim()
+	if (!eventKey) throw new Error('Inngest event API key is required')
+	const fetchImpl = options.fetchImpl ?? fetch
+	let response: Response
+	try {
+		response = await fetchImpl(
+			`https://inn.gs/e/${encodeURIComponent(eventKey)}`,
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(payload),
+			},
+		)
+	} catch {
+		// The request URL contains the event key. Never propagate fetch details.
+		throw new Error('Inngest event API request failed')
+	}
+	if (!response.ok) {
+		throw new Error(`Inngest event API returned HTTP ${response.status}`)
+	}
+	let acknowledgement: unknown
+	try {
+		acknowledgement = await response.json()
+	} catch {
+		throw new Error('Inngest event API returned an invalid acknowledgement')
+	}
+	if (
+		typeof acknowledgement !== 'object' ||
+		acknowledgement === null ||
+		!('status' in acknowledgement) ||
+		acknowledgement.status !== 200 ||
+		!('ids' in acknowledgement) ||
+		!Array.isArray(acknowledgement.ids) ||
+		acknowledgement.ids.length === 0 ||
+		!acknowledgement.ids.every((id) => typeof id === 'string')
+	) {
+		throw new Error('Inngest event API returned an invalid acknowledgement')
+	}
+	return {
+		ids: acknowledgement.ids,
+		status: 200,
+	}
+}
+
 type DrovrShadowDispatchOptions = {
 	send?: DrovrShadowSend
 	/** Direct sender for the fallback; receives the fanned-out batch. */
@@ -59,6 +115,7 @@ export async function dispatchDrovrShadowFact(
 	let evergreenEntryAllowed = true
 	if (fact.kind === 'course-completed' && evergreenEnabled) {
 		const enterPitch = options.enterPitch ?? enterEvergreenPitchFromLiveDatabase
+		const warn = options.warn ?? log.warn
 		try {
 			const entry = await enterPitch({
 				contactId: fact.contactId,
@@ -66,9 +123,18 @@ export async function dispatchDrovrShadowFact(
 			})
 			evergreenEntryAllowed =
 				entry.status === 'entered' || entry.status === 'already-entered'
+			if (entry.status === 'refused') {
+				try {
+					await warn('drovr.evergreen.entry_refused', {
+						contactId: fact.contactId,
+						reason: entry.reason,
+					})
+				} catch {
+					// Logging cannot make an ineligible contact eligible.
+				}
+			}
 		} catch (error) {
 			evergreenEntryAllowed = false
-			const warn = options.warn ?? log.warn
 			try {
 				await warn('drovr.evergreen.entry_failed_closed', {
 					contactId: fact.contactId,
