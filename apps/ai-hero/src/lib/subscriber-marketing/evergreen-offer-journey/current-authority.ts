@@ -26,7 +26,7 @@ import { restoreEvergreenOfferJourneySnapshot } from "./restoration";
 const Text = z.string().min(1);
 const ControlRow = z.object({
   automationId: Text,
-  control: z.unknown(),
+  control: z.unknown().optional(),
   updatedAt: z.date(),
 });
 const IdentityRows = z.object({

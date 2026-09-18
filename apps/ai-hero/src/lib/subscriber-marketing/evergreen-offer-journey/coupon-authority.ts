@@ -73,7 +73,7 @@ const issueSchema = z.object({
 	issueAt: z.string(),
 	expiresAt: z.string(),
 	terms: termsSchema,
-	deadlineTimeZone: z.unknown(),
+	deadlineTimeZone: z.unknown().optional(),
 })
 const bindingSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('AwaitingVerifiedUser') }),

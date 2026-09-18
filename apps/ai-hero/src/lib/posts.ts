@@ -65,7 +65,7 @@ export const PostTagsSchema = z
 			updatedAt: z
 				.union([z.string(), z.date()])
 				.transform((val) => new Date(val)),
-			deletedAt: z.any(),
+			deletedAt: z.any().optional(),
 			tag: TagSchema,
 		}),
 	)

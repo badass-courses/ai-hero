@@ -177,7 +177,7 @@ const StoredCoursePayloadSchema = z
 		coursePayload: z
 			.object({
 				format: z.string().trim().min(1),
-				payload: z.unknown(),
+				payload: z.unknown().optional(),
 			})
 			.strict(),
 	})

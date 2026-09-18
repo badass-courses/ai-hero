@@ -66,7 +66,7 @@ type EmailCoursePersistenceMode = 'authoritative' | 'shadow'
 const OutboxPayloadSchema = z
 	.object({
 		format: z.literal(OUTBOX_PAYLOAD_FORMAT),
-		intent: z.unknown(),
+		intent: z.unknown().optional(),
 	})
 	.strict()
 const CommitReceiptSchema = z
@@ -75,7 +75,7 @@ const CommitReceiptSchema = z
 		stimulusFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
 		result: z
 			.object({
-				decision: z.unknown(),
+				decision: z.unknown().optional(),
 				committed: z.literal(true),
 				replayedStimulus: z.literal(false),
 			})
