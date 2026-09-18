@@ -9,9 +9,11 @@ import { mapDrovrShadowFact } from "@/lib/subscriber-marketing/drovr-shadow-emit
 import type { ContactEventRecord } from "@/lib/subscriber-marketing/types";
 
 import {
+  createBackfillFactDispatcher,
   DEFAULT_BACKFILL_FLOOR,
   EVERGREEN_PITCH_ENABLE_INSTANT,
   parseEvergreenPitchBackfillArgs,
+  resolveBackfillApplyInngestEventKey,
   runEvergreenPitchBackfill,
   selectBackfillPopulation,
   type BackfillCandidate,
@@ -159,6 +161,7 @@ describe("evergreen pitch backfill run", () => {
       requested: 25,
       selected: 1,
       entered: 1,
+      enteredContactIds: ["contact-1"],
       errors: [],
     });
   });
@@ -310,6 +313,69 @@ describe("evergreen pitch backfill run", () => {
     expect(repository.enterEvergreenPitch).toHaveBeenCalledTimes(1);
     expect(repository.dispatchFact).not.toHaveBeenCalled();
   });
+
+  it.each(["fallback", "nothing"] as const)(
+    "counts a %s dispatch as an error, never as entered, and stops",
+    async (delivery) => {
+      const repository = fakeRepository({
+        population: [
+          candidate("ownership-recorded"),
+          candidate("never-reached"),
+        ],
+        dispatch: async () => delivery,
+      });
+
+      const summary = await runEvergreenPitchBackfill(runArgs(repository));
+
+      expect(summary.entered).toBe(0);
+      expect(summary.enteredContactIds).toEqual(["ownership-recorded"]);
+      expect(summary.errors).toEqual([
+        `contact ownership-recorded: backfill dispatch returned ${delivery}`,
+      ]);
+      expect(repository.enterEvergreenPitch).toHaveBeenCalledTimes(1);
+      expect(repository.dispatchFact).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("sends the mapped batch through Inngest HTTP without the Next.js client", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ ids: ["inngest-event-1"], status: 200 }),
+      );
+    const dispatch = createBackfillFactDispatcher({
+      eventKey: "test-event-key",
+      fetchImpl,
+    });
+    const fact = {
+      kind: "course-completed" as const,
+      contactId: "contact-1",
+      valuePathSlug: "ai-hero-skills-workflow",
+      completedAt: "2026-09-17T12:00:00.000Z",
+      backfill: {
+        occurredAt: birthInstant,
+        idempotencyKey:
+          "aihero:backfill:contact-1:ai-hero-skills-workflow:2026-09-18",
+      },
+    };
+
+    await expect(dispatch(fact)).resolves.toBe("queued");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(url).toBe("https://inn.gs/e/test-event-key");
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      name: "drovr/events.deliver",
+      data: {
+        events: mapDrovrShadowFact(fact),
+        source: "course-completed",
+      },
+    });
+  });
 });
 
 describe("evergreen pitch backfill CLI", () => {
@@ -328,6 +394,21 @@ describe("evergreen pitch backfill CLI", () => {
       apply: false,
       out: "/tmp/backfill.json",
     });
+  });
+
+  it("refuses apply before startup when the Inngest event key is missing or placeholder", () => {
+    expect(
+      resolveBackfillApplyInngestEventKey({}, { apply: false }),
+    ).toBeNull();
+    expect(() =>
+      resolveBackfillApplyInngestEventKey({}, { apply: true }),
+    ).toThrow("Apply requires INNGEST_EVENT_KEY");
+    expect(() =>
+      resolveBackfillApplyInngestEventKey(
+        { INNGEST_EVENT_KEY: "[SENSITIVE]" },
+        { apply: true },
+      ),
+    ).toThrow('INNGEST_EVENT_KEY holds the Vercel "[SENSITIVE]" placeholder');
   });
 
   it("requires one explicit mode when apply is requested", () => {

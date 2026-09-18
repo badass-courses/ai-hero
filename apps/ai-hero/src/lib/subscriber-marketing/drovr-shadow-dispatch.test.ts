@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { dispatchDrovrShadowFact } from './drovr-shadow-dispatch'
+import {
+	dispatchDrovrShadowFact,
+	sendDrovrEventsDeliverViaInngestHttp,
+} from './drovr-shadow-dispatch'
 import {
 	mapDrovrShadowFact,
 	type DrovrShadowFact,
@@ -62,6 +65,54 @@ describe('drovr shadow dispatch', () => {
 			data: { events: mapDrovrShadowFact(signup), source: 'contact-event' },
 		})
 		expect(fallback).not.toHaveBeenCalled()
+	})
+
+	it('posts the exact durable event through Inngest HTTP', async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(Response.json({ ids: ['evt-1'], status: 200 }))
+		const payload = {
+			name: 'drovr/events.deliver' as const,
+			data: {
+				events: mapDrovrShadowFact(signup),
+				source: 'contact-event' as const,
+			},
+		}
+
+		await expect(
+			sendDrovrEventsDeliverViaInngestHttp(payload, {
+				eventKey: 'test-key',
+				fetchImpl,
+			}),
+		).resolves.toEqual({ ids: ['evt-1'], status: 200 })
+
+		expect(fetchImpl).toHaveBeenCalledTimes(1)
+		const [url, init] = fetchImpl.mock.calls[0] ?? []
+		expect(url).toBe('https://inn.gs/e/test-key')
+		expect(init).toMatchObject({
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(payload),
+		})
+	})
+
+	it('rejects a malformed Inngest HTTP acknowledgement', async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(Response.json({ ids: [], status: 202 }))
+
+		await expect(
+			sendDrovrEventsDeliverViaInngestHttp(
+				{
+					name: 'drovr/events.deliver',
+					data: {
+						events: mapDrovrShadowFact(signup),
+						source: 'contact-event',
+					},
+				},
+				{ eventKey: 'test-key', fetchImpl },
+			),
+		).rejects.toThrow('invalid acknowledgement')
 	})
 
 	it('falls back to the direct post when queueing fails, after one warning', async () => {
@@ -179,8 +230,10 @@ describe('drovr shadow dispatch', () => {
 
 	it('fails closed and removes the evergreen exhaustion for a live purchaser', async () => {
 		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		const warn = vi.fn()
 		await dispatchDrovrShadowFact(courseCompleted, {
 			send,
+			warn,
 			evergreenEnabled: true,
 			enterPitch: vi.fn().mockResolvedValue({
 				status: 'refused',
@@ -199,6 +252,44 @@ describe('drovr shadow dispatch', () => {
 					event.journeyId === 'crash-course-evergreen-offer',
 			),
 		).toBe(false)
+		expect(warn).toHaveBeenCalledWith('drovr.evergreen.entry_refused', {
+			contactId: 'contact-1',
+			reason: 'crash-course-purchaser',
+		})
+	})
+
+	it('logs an unsubscribe refusal but never labels entry errors as refusals', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		const unsubscribedWarn = vi.fn()
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			warn: unsubscribedWarn,
+			evergreenEnabled: true,
+			enterPitch: vi.fn().mockResolvedValue({
+				status: 'refused',
+				reason: 'unsubscribed',
+			}),
+		})
+		expect(unsubscribedWarn).toHaveBeenCalledWith(
+			'drovr.evergreen.entry_refused',
+			{ contactId: 'contact-1', reason: 'unsubscribed' },
+		)
+
+		const failedWarn = vi.fn()
+		await dispatchDrovrShadowFact(courseCompleted, {
+			send,
+			warn: failedWarn,
+			evergreenEnabled: true,
+			enterPitch: vi.fn().mockRejectedValue(new Error('database unavailable')),
+		})
+		expect(failedWarn).toHaveBeenCalledWith(
+			'drovr.evergreen.entry_failed_closed',
+			{ contactId: 'contact-1', error: 'database unavailable' },
+		)
+		expect(failedWarn).not.toHaveBeenCalledWith(
+			'drovr.evergreen.entry_refused',
+			expect.anything(),
+		)
 	})
 
 	it('does nothing for a fact that maps to no drovr event', async () => {
