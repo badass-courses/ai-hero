@@ -64,8 +64,17 @@ export type DrovrShadowFact =
 			kind: 'course-completed'
 			contactId: string
 			valuePathSlug: string
+			/** Historic course completion, retained in the exhaustion payload. */
 			completedAt: string
 			timezoneHeader?: string
+			/**
+			 * A paced backfill is born now, not at the historic completion.
+			 * Constraining both overrides to this shape keeps the forward fact unchanged.
+			 */
+			backfill?: {
+				occurredAt: string
+				idempotencyKey: string
+			}
 	  }
 
 type DrovrShadowEmitterConfig = {
@@ -365,6 +374,25 @@ function mapCourseCompleted(
 	fact: Extract<DrovrShadowFact, { kind: 'course-completed' }>,
 ): DrovrShadowEvent[] {
 	const timezone = courseCompletionTimezone(fact.timezoneHeader)
+	const evergreenPayload = {
+		valuePathSlug: fact.valuePathSlug,
+		completedAt: fact.completedAt,
+		timezone: timezone.value,
+		timezoneSource: timezone.source,
+	}
+	if (fact.backfill) {
+		return [
+			{
+				tenantId: DROVR_AUTHORITY_TENANT_ID,
+				contactId: fact.contactId,
+				journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+				type: 'course.sequence-exhausted',
+				occurredAt: fact.backfill.occurredAt,
+				idempotencyKey: fact.backfill.idempotencyKey,
+				payload: evergreenPayload,
+			},
+		]
+	}
 	const completionBase = {
 		tenantId: DROVR_SHADOW_TENANT_ID,
 		contactId: fact.contactId,
@@ -380,12 +408,7 @@ function mapCourseCompleted(
 		{
 			...completionBase,
 			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
-			payload: {
-				valuePathSlug: fact.valuePathSlug,
-				completedAt: fact.completedAt,
-				timezone: timezone.value,
-				timezoneSource: timezone.source,
-			},
+			payload: evergreenPayload,
 		},
 	]
 }
