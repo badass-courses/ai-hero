@@ -938,7 +938,7 @@ describe('acceptDrovrIntent: shadow newsletter sends', () => {
 			if (result.status !== 'accepted') return
 			expect(repository.intents.get(result.intentId)).toMatchObject({
 				type: 'send-shadow-newsletter-email',
-				idempotencyKey: `contact:contact-1:shadow-newsletter:${sequence.messageId}`,
+				idempotencyKey: `contact:org-aihero:contact-1:shadow-newsletter:${sequence.messageId}`,
 				metadata: {
 					newsletter: 'shadow-newsletter',
 					catalogRevision: SHADOW_NEWSLETTER_CATALOG_REVISION,
@@ -1032,10 +1032,42 @@ describe('acceptDrovrIntent: shadow newsletter sends', () => {
 				journeyId: 'shadow-newsletter',
 				type: 'email.completed',
 				occurredAt: '2026-09-19T16:00:05.000Z',
-				idempotencyKey: 'completion:redriven-after-send',
+				idempotencyKey:
+					'completion:contact-1:shadow-newsletter:send:agents_md_big_problem_v1',
 				payload: { messageId: 'agents_md_big_problem_v1' },
 			},
 		})
+	})
+
+	it('keeps the same message separate for authority and shadow tenants', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const authority = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({
+				idempotencyKey: 'authority-shadow-message',
+				tenantId: 'org-aihero',
+			}),
+			now,
+		})
+		const shadow = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({
+				idempotencyKey: 'shadow-shadow-message',
+				tenantId: 'org-aihero-shadow',
+			}),
+			now,
+		})
+
+		expect(authority).toMatchObject({ status: 'accepted', created: true })
+		expect(shadow).toMatchObject({ status: 'accepted', created: true })
+		expect(repository.intents.size).toBe(2)
+		expect(
+			Array.from(repository.intents.values()).map((row) => row.idempotencyKey),
+		).toEqual([
+			'contact:org-aihero:contact-1:shadow-newsletter:agents_md_big_problem_v1',
+			'contact:org-aihero-shadow:contact-1:shadow-newsletter:agents_md_big_problem_v1',
+		])
 	})
 })
 

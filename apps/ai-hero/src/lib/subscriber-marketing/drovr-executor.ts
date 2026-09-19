@@ -862,12 +862,21 @@ async function acceptShadowNewsletterSend(args: {
 	if (!contact) return { status: 'contact-missing' }
 
 	const idempotencyKey =
-		`contact:${contact.id}:shadow-newsletter:${sequence.messageId}`
-	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => ({
+		`contact:${args.tenantId}:${contact.id}:shadow-newsletter:${sequence.messageId}`
+	const storedOwnerFor = (row: SideEffectIntent) => {
+		const owner = drovrOwnerFromMetadata(row.metadata)
+		return owner?.journeyId === DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
+			? owner
+			: undefined
+	}
+	const completionFor = (
+		row: SideEffectIntent,
+		owner: DrovrIntentOwner,
+	): DrovrExecutorResult => ({
 		status: 'completed',
 		intentId: row.id,
 		completion: {
-			tenantId: args.tenantId,
+			tenantId: owner.tenantId,
 			contactId: row.contactId,
 			journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 			type: 'email.completed',
@@ -875,14 +884,28 @@ async function acceptShadowNewsletterSend(args: {
 				stringField(row.completedAt) ??
 				stringField(row.metadata.completedAt) ??
 				args.now,
-			idempotencyKey: `completion:${intent.idempotencyKey}`,
+			idempotencyKey: `completion:${owner.intentKey}`,
 			payload: { messageId: sequence.messageId },
 		},
 	})
-	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
-		row.status === 'completed'
-			? completionFor(row)
-			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+	const existingResult = (row: SideEffectIntent): DrovrExecutorResult => {
+		const owner = storedOwnerFor(row)
+		if (!owner) {
+			return {
+				status: 'blocked',
+				intentId: row.id,
+				reviewReasons: ['shadow-newsletter-owner-missing'],
+			}
+		}
+		return row.status === 'completed'
+			? completionFor(row, owner)
+			: {
+					status: 'accepted',
+					intentId: row.id,
+					idempotencyKey: row.idempotencyKey,
+					created: false,
+				}
+	}
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) return existingResult(existing)
