@@ -83,75 +83,76 @@ export async function readKitSubscriber(
 	return subscriber
 }
 
-export const POST = withSkill(
-	async (req: NextRequest, props: { params: Promise<{ secret: string }> }) => {
-		const { secret } = await props.params
-		const expected = env.KIT_WEBHOOK_SECRET
-		if (!expected || secret !== expected) {
-			return Response.json({ error: 'not found' }, { status: 404 })
-		}
-		const eventParam = req.nextUrl.searchParams.get('event')
-		const kitEvent: KitEvent = isKitEvent(eventParam)
-			? eventParam
-			: 'subscriber_unsubscribe'
+export async function POST(
+	req: NextRequest,
+	props: { params: Promise<{ secret: string }> },
+) {
+	const { secret } = await props.params
+	const expected = env.KIT_WEBHOOK_SECRET
+	if (!expected || !secretMatches(secret, expected)) {
+		return Response.json({ error: 'not found' }, { status: 404 })
+	}
+	const eventParam = req.nextUrl.searchParams.get('event')
+	const kitEvent: KitEvent = isKitEvent(eventParam)
+		? eventParam
+		: 'subscriber_unsubscribe'
 
-		let body: unknown
-		try {
-			body = await req.json()
-		} catch {
-			return Response.json({ error: 'malformed body' }, { status: 400 })
-		}
-		const kitSubscriberId = subscriberIdFromBody(body)
-		if (!kitSubscriberId) {
-			return Response.json({ error: 'no subscriber id' }, { status: 400 })
-		}
+	let body: unknown
+	try {
+		body = await req.json()
+	} catch {
+		return Response.json({ error: 'malformed body' }, { status: 400 })
+	}
+	const kitSubscriberId = subscriberIdFromBody(body)
+	if (!kitSubscriberId) {
+		return Response.json({ error: 'no subscriber id' }, { status: 400 })
+	}
 
-		const apiKey = env.KIT_V4_API_KEY
-		if (!apiKey) {
-			await log.warn('kit.webhook.unverifiable', {
-				kitEvent,
-				kitSubscriberId,
-				reason: 'KIT_V4_API_KEY missing',
-			})
-			return Response.json({ error: 'cannot verify' }, { status: 503 })
-		}
-		const subscriber = await readKitSubscriber(kitSubscriberId, apiKey)
-		if (!subscriber) {
-			await log.warn('kit.webhook.unverifiable', {
-				kitEvent,
-				kitSubscriberId,
-				reason: 'subscriber readback failed',
-			})
-			return Response.json({ error: 'cannot verify' }, { status: 503 })
-		}
-		if (subscriber.state === 'active') {
-			await log.info('kit.webhook.ignored', {
-				kitEvent,
-				kitSubscriberId,
-				state: subscriber.state,
-			})
-			return Response.json({ status: 'ignored', state: subscriber.state })
-		}
-
-		const occurredAt = new Date().toISOString()
-		await inngest.send(
-			PREFERENCE_KEYS.map((preferenceKey) => ({
-				name: CONTACT_UNSUBSCRIBED_EVENT,
-				data: {
-					email: subscriber.email_address,
-					kitSubscriberId,
-					preferenceKey,
-					source: `kit-webhook:${kitEvent}`,
-					occurredAt,
-				},
-			})),
-		)
-		await log.info('kit.webhook.captured', {
+	const apiKey = env.KIT_V4_API_KEY
+	if (!apiKey) {
+		await log.warn('kit.webhook.unverifiable', {
+			kitEvent,
+			kitSubscriberId,
+			reason: 'KIT_V4_API_KEY missing',
+		})
+		return Response.json({ error: 'cannot verify' }, { status: 503 })
+	}
+	const subscriber = await readKitSubscriber(kitSubscriberId, apiKey)
+	if (!subscriber) {
+		await log.warn('kit.webhook.unverifiable', {
+			kitEvent,
+			kitSubscriberId,
+			reason: 'subscriber readback failed',
+		})
+		return Response.json({ error: 'cannot verify' }, { status: 503 })
+	}
+	if (subscriber.state === 'active') {
+		await log.info('kit.webhook.ignored', {
 			kitEvent,
 			kitSubscriberId,
 			state: subscriber.state,
-			preferenceKeys: PREFERENCE_KEYS.length,
 		})
-		return Response.json({ status: 'captured', state: subscriber.state })
-	},
-)
+		return Response.json({ status: 'ignored', state: subscriber.state })
+	}
+
+	const occurredAt = new Date().toISOString()
+	await inngest.send(
+		PREFERENCE_KEYS.map((preferenceKey) => ({
+			name: CONTACT_UNSUBSCRIBED_EVENT,
+			data: {
+				email: subscriber.email_address,
+				kitSubscriberId,
+				preferenceKey,
+				source: `kit-webhook:${kitEvent}`,
+				occurredAt,
+			},
+		})),
+	)
+	await log.info('kit.webhook.captured', {
+		kitEvent,
+		kitSubscriberId,
+		state: subscriber.state,
+		preferenceKeys: PREFERENCE_KEYS.length,
+	})
+	return Response.json({ status: 'captured', state: subscriber.state })
+}
