@@ -25,11 +25,18 @@ import type { CaptureMarketingRepository } from './capture-contact-event'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_AUTHORITY_TENANT_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	DROVR_SHADOW_TENANT_ID,
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
 	type DrovrShadowEvent,
 	type DrovrTenantId,
 } from './drovr-shadow-emitter'
+import {
+	SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE,
+	SHADOW_NEWSLETTER_CATALOG_REVISION,
+	ShadowNewsletterSendPayload,
+	shadowNewsletterSequenceForMessage,
+} from './drovr-shadow-newsletter'
 import {
 	getSkillsWorkflowEmailStep,
 	SKILLS_WORKFLOW_EMAIL_STEPS,
@@ -108,7 +115,7 @@ export type DrovrExecutorResult =
 			created: boolean
 	  }
 	| { status: 'completed'; intentId: string; completion: DrovrShadowEvent }
-	| { status: 'blocked'; intentId: string; reviewReasons: string[] }
+	| { status: 'blocked'; intentId?: string; reviewReasons: string[] }
 	| {
 			/** Not now: Kit or the send budget said wait. drovr arms for retryAfterMs. */
 			status: 'retry'
@@ -224,6 +231,16 @@ export async function acceptDrovrIntent(args: {
 		})
 	}
 
+	if (intent.journeyId === DROVR_SHADOW_NEWSLETTER_JOURNEY_ID) {
+		return await acceptShadowNewsletterSend({
+			repository: args.repository,
+			intent,
+			tenantId,
+			now,
+			findKitSubscriberId: args.findKitSubscriberId,
+		})
+	}
+
 	if (intent.kind !== 'email.send') {
 		return {
 			status: 'unsupported',
@@ -235,7 +252,7 @@ export async function acceptDrovrIntent(args: {
 		return {
 			status: 'unsupported',
 			reason: `journey ${intent.journeyId} has no ai-hero executor`,
-			hint: `Journeys executed here: ${DROVR_SKILLS_COURSE_JOURNEY_ID}, ${DROVR_EVERGREEN_OFFER_JOURNEY_ID}.`,
+			hint: `Journeys executed here: ${DROVR_SKILLS_COURSE_JOURNEY_ID}, ${DROVR_EVERGREEN_OFFER_JOURNEY_ID}, ${DROVR_SHADOW_NEWSLETTER_JOURNEY_ID}.`,
 		}
 	}
 	const payload = EmailSendPayload.safeParse(intent.payload ?? {})
@@ -761,6 +778,142 @@ async function acceptEvergreenSend(args: {
 				},
 				messageId: sequence.messageId,
 				slot: sequence.slot,
+				kitSequenceId: String(sequence.sequenceId),
+				...(kitSubscriberId ? { kitSubscriberId } : {}),
+			},
+			createdAt: args.now,
+		})
+	} catch (cause) {
+		const raced =
+			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+		if (!raced) throw cause
+		return existingResult(raced)
+	}
+	return {
+		status: 'accepted',
+		intentId: created.id,
+		idempotencyKey,
+		created: true,
+	}
+}
+
+/**
+ * The shadow-newsletter send: one row per contact and catalog message. The
+ * sequence sender adds the contact to the mapped one-email Kit sequence; the
+ * completion carries the message id back so the journey marks exactly the
+ * message that was in flight as seen.
+ */
+async function acceptShadowNewsletterSend(args: {
+	repository: DrovrExecutorRepository
+	intent: DrovrIntent
+	tenantId: DrovrTenantId
+	now: string
+	findKitSubscriberId?: (contactId: string) => Promise<string | undefined>
+}): Promise<DrovrExecutorResult> {
+	const { intent } = args
+	if (intent.kind !== 'email.send') {
+		return {
+			status: 'unsupported',
+			reason: `intent kind ${intent.kind} has no shadow-newsletter executor`,
+			hint: 'The shadow-newsletter journey executes email.send.',
+		}
+	}
+	const payload = ShadowNewsletterSendPayload.safeParse(intent.payload ?? {})
+	if (!payload.success) {
+		return {
+			status: 'blocked',
+			reviewReasons: [
+				'shadow-newsletter-payload-invalid: expected newsletter, catalogRevision, and messageId',
+			],
+		}
+	}
+	if (payload.data.catalogRevision !== SHADOW_NEWSLETTER_CATALOG_REVISION) {
+		return {
+			status: 'blocked',
+			reviewReasons: [
+				`shadow-newsletter-catalog-revision-unknown:${payload.data.catalogRevision}`,
+			],
+		}
+	}
+	const sequence = shadowNewsletterSequenceForMessage(
+		payload.data.catalogRevision,
+		payload.data.messageId,
+	)
+	if (!sequence) {
+		return {
+			status: 'blocked',
+			reviewReasons: [
+				`shadow-newsletter-message-unknown:${payload.data.messageId}`,
+			],
+		}
+	}
+	if (
+		payload.data.position !== undefined &&
+		payload.data.position !== sequence.position
+	) {
+		return {
+			status: 'blocked',
+			reviewReasons: [
+				`shadow-newsletter-position-mismatch:${payload.data.messageId}:${payload.data.position}`,
+			],
+		}
+	}
+	const contact = await args.repository.findContactById(intent.contactId)
+	if (!contact) return { status: 'contact-missing' }
+
+	const idempotencyKey =
+		`contact:${contact.id}:shadow-newsletter:${sequence.messageId}`
+	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => ({
+		status: 'completed',
+		intentId: row.id,
+		completion: {
+			tenantId: args.tenantId,
+			contactId: row.contactId,
+			journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+			type: 'email.completed',
+			occurredAt:
+				stringField(row.completedAt) ??
+				stringField(row.metadata.completedAt) ??
+				args.now,
+			idempotencyKey: `completion:${intent.idempotencyKey}`,
+			payload: { messageId: sequence.messageId },
+		},
+	})
+	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
+		row.status === 'completed'
+			? completionFor(row)
+			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+	const existing =
+		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	if (existing) return existingResult(existing)
+
+	const kitSubscriberId = args.findKitSubscriberId
+		? await args.findKitSubscriberId(contact.id)
+		: undefined
+	let created: SideEffectIntent
+	try {
+		created = await args.repository.createSideEffectIntent({
+			id: createInternalId(),
+			nextActionId: boundedNextActionId(intent.idempotencyKey),
+			contactId: contact.id,
+			provider: 'kit',
+			type: SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE,
+			status: 'pending',
+			idempotencyKey,
+			gates: [],
+			reviewReasons: [],
+			metadata: {
+				source: 'drovr',
+				drovr: {
+					tenantId: args.tenantId,
+					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+					intentKey: intent.idempotencyKey,
+					dueAt: intent.dueAt,
+				},
+				newsletter: 'shadow-newsletter',
+				catalogRevision: payload.data.catalogRevision,
+				messageId: sequence.messageId,
+				position: sequence.position,
 				kitSequenceId: String(sequence.sequenceId),
 				...(kitSubscriberId ? { kitSubscriberId } : {}),
 			},

@@ -558,6 +558,52 @@ describe('evergreen send completions', () => {
 	})
 })
 
+describe('shadow-newsletter completions', () => {
+	it('completes to the shadow-newsletter actor with the catalog message id', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: {
+				id: 'row-shadow',
+				nextActionId: 'drovr:abc',
+				contactId: 'contact-1',
+				provider: 'kit',
+				type: 'send-shadow-newsletter-email',
+				status: 'completed',
+				completedAt: '2026-09-26T18:00:00.000Z',
+				idempotencyKey:
+					'contact:contact-1:shadow-newsletter:agents_md_big_problem_v1',
+				gates: [],
+				reviewReasons: [],
+				metadata: {
+					source: 'drovr',
+					newsletter: 'shadow-newsletter',
+					catalogRevision: 'kit-2625552-2026-09-19',
+					messageId: 'agents_md_big_problem_v1',
+					position: 0,
+					kitSequenceId: '2899143',
+					drovr: {
+						tenantId: 'org-aihero-shadow',
+						journeyId: 'shadow-newsletter',
+						intentKey: 'k-shadow',
+					},
+				},
+				createdAt: '2026-09-26T17:59:00.000Z',
+			},
+		})
+		expect(events).toEqual([
+			{
+				tenantId: 'org-aihero-shadow',
+				contactId: 'contact-1',
+				journeyId: 'shadow-newsletter',
+				type: 'email.completed',
+				occurredAt: '2026-09-26T18:00:00.000Z',
+				idempotencyKey: 'completion:k-shadow',
+				payload: { messageId: 'agents_md_big_problem_v1' },
+			},
+		])
+	})
+})
+
 describe('evergreen coupon completions', () => {
 	it('completes to the owning evergreen actor as coupon.issued with the coupon id and expiry', () => {
 		const events = mapDrovrShadowFact({

@@ -229,6 +229,7 @@ export type SideEffectIntent = {
 		| 'send-value-path-email'
 		| 'send-skills-course-lesson-one-recovery'
 		| 'send-evergreen-email'
+		| 'send-shadow-newsletter-email'
 		| 'issue-evergreen-coupon'
 		| 'subscribe-evergreen-list'
 	status: SideEffectIntentStatus

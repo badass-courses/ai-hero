@@ -4,12 +4,15 @@ import { log } from '@/server/logger'
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
+import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
 
 export const DROVR_SHADOW_TENANT_ID = 'org-aihero-shadow' as const
 export const DROVR_SKILLS_COURSE_JOURNEY_ID =
 	'value-path-skills-course' as const
 export const DROVR_EVERGREEN_OFFER_JOURNEY_ID =
 	'crash-course-evergreen-offer' as const
+export const DROVR_SHADOW_NEWSLETTER_JOURNEY_ID =
+	SHADOW_NEWSLETTER_JOURNEY_ID
 export const DROVR_FALLBACK_TIMEZONE = 'America/Los_Angeles' as const
 
 /** Tenants ai-hero speaks to: the shadow, and the authority once cut over. */
@@ -20,6 +23,7 @@ export type DrovrTenantId =
 export type DrovrJourneyId =
 	| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
 	| typeof DROVR_EVERGREEN_OFFER_JOURNEY_ID
+	| typeof DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
 
 export type DrovrShadowEvent = {
 	tenantId: DrovrTenantId
@@ -243,8 +247,12 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 
 function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	if (intent.provider !== 'kit' || intent.status !== 'completed') return []
-	// An evergreen send completes to its owning actor only: the shadow's
-	// evergreen actors run their own log executor and never hear from us.
+	// Sequence sends complete to their owning actor only: the shadow's
+	// actors run their own log executor and never hear from us.
+	if (intent.type === 'send-shadow-newsletter-email') {
+		const completion = drovrShadowNewsletterCompletion(intent)
+		return completion ? [completion] : []
+	}
 	if (
 		intent.type === 'send-evergreen-email' ||
 		intent.type === 'issue-evergreen-coupon' ||
@@ -278,6 +286,41 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	return ownerCompletion
 		? [ownerCompletion, shadowCompletion]
 		: [shadowCompletion]
+}
+
+function drovrShadowNewsletterCompletion(
+	intent: SideEffectIntent,
+): DrovrShadowEvent | undefined {
+	const owner = intent.metadata.drovr
+	if (!owner || typeof owner !== 'object') return undefined
+	const record = owner as Record<string, unknown>
+	const tenantId = stringValue(record.tenantId)
+	const journeyId = stringValue(record.journeyId)
+	const intentKey = stringValue(record.intentKey)
+	const catalogRevision = stringValue(intent.metadata.catalogRevision)
+	const messageId = stringValue(intent.metadata.messageId)
+	const completedAt =
+		stringValue(intent.completedAt) ?? stringValue(intent.metadata.completedAt)
+	if (
+		!intentKey ||
+		!completedAt ||
+		!messageId ||
+		!catalogRevision ||
+		(tenantId !== DROVR_SHADOW_TENANT_ID &&
+			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
+		journeyId !== DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
+	) {
+		return undefined
+	}
+	return {
+		tenantId,
+		contactId: intent.contactId,
+		journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		type: 'email.completed',
+		occurredAt: completedAt,
+		idempotencyKey: `completion:${intentKey}`,
+		payload: { messageId },
+	}
 }
 
 function drovrEvergreenCompletion(
