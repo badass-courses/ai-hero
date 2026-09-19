@@ -1,9 +1,9 @@
+import { timingSafeEqual } from 'node:crypto'
 import { type NextRequest } from 'next/server'
 import { env } from '@/env.mjs'
 import { CONTACT_UNSUBSCRIBED_EVENT } from '@/inngest/events/contact-unsubscribed'
 import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
-import { withSkill } from '@/server/with-skill'
 
 /**
  * Kit -> ai-hero -> drovr: a subscriber who unsubscribes, bounces, or
@@ -14,6 +14,10 @@ import { withSkill } from '@/server/with-skill'
  * query, and nothing is trusted from the body: the subscriber is read back
  * from Kit with our key and only a non-active state is acted on. A forged
  * POST can at most make us read one subscriber.
+ *
+ * Deliberately not wrapped in withSkill: that wrapper logs the request URL
+ * verbatim, which would write the secret segment into every log line. This
+ * route logs its own structured lines and never the path.
  *
  * The internal contact-unsubscribed event already lands in the ContactEvent
  * log, which dispatches contact.unsubscribed to drovr for both journeys and
@@ -38,6 +42,12 @@ type KitSubscriber = {
 
 const isKitEvent = (value: string | null): value is KitEvent =>
 	KIT_EVENTS.some((event) => event === value)
+
+const secretMatches = (given: string, expected: string): boolean => {
+	const a = Buffer.from(given)
+	const b = Buffer.from(expected)
+	return a.length === b.length && timingSafeEqual(a, b)
+}
 
 const subscriberIdFromBody = (body: unknown): string | undefined => {
 	if (typeof body !== 'object' || body === null) return undefined
