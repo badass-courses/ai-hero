@@ -184,6 +184,7 @@ describe('kit directory ingest', () => {
 				email: 'New@Example.Test',
 				name: 'New Subscriber',
 				createdAt: '2026-09-19T23:00:00Z',
+				state: 'active',
 			},
 			now: '2026-09-20T01:00:00.000Z',
 		})
@@ -193,6 +194,7 @@ describe('kit directory ingest', () => {
 			providerEventId: 'directory-import:43',
 			identityEvidence: {
 				email: 'new@example.test',
+				state: 'active',
 				providerIdentity: { provider: 'kit', externalId: '43' },
 			},
 			payloadSummary: { restrictedPayloadStored: false },

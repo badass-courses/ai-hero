@@ -43,6 +43,7 @@ export function kitDirectoryIdentityEvent(args: {
 		occurredAt,
 		email: args.subscriber.email,
 		name: args.subscriber.name,
+		state: args.subscriber.state,
 		externalId: id,
 		message: 'Kit subscriber imported into the AI Hero contact directory.',
 		privacyLevel: 'internal',

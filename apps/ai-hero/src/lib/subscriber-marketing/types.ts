@@ -37,6 +37,7 @@ export type ContactIdentityEvidence = {
 	email?: string
 	name?: string
 	userId?: string
+	state?: string
 	providerIdentity?: {
 		provider: Provider
 		externalId: string
@@ -59,6 +60,7 @@ export type FixtureContactEventInput = {
 	eventType: string
 	occurredAt: string
 	email?: string
+	state?: string
 	name?: string
 	userId?: string
 	externalId?: string

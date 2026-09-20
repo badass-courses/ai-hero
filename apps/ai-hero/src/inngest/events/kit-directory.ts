@@ -5,13 +5,14 @@ export type KitDirectorySubscriber = {
 	email?: string
 	name?: string
 	createdAt?: string
+	state?: string
 }
 
 export type KitDirectoryIngest = {
 	name: typeof KIT_DIRECTORY_INGEST_EVENT
 	data: {
 		batch: KitDirectorySubscriber[]
-		/** The last Kit id in the source batch, for operator resume receipts. */
+		/** The Kit API end_cursor after the source page, for resume receipts. */
 		cursor?: string
 		dryRun?: boolean
 	}

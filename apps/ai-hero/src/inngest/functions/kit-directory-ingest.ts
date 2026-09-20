@@ -8,9 +8,9 @@ import { log } from '@/server/logger'
 /**
  * Imports Kit subscribers into the existing ai-hero identity directory.
  *
- * The source export stays local to the operator. The one-off sender publishes
- * bounded batches here; retries are safe because ProviderIdentity is the
- * durable cursor and createContact uses collision-safe ids.
+ * The operator reads the Kit v4 subscribers API and publishes bounded batches
+ * here; retries are safe because ProviderIdentity is the durable identity
+ * cursor and createContact uses collision-safe ids.
  */
 export const kitDirectoryIngest = inngest.createFunction(
 	{

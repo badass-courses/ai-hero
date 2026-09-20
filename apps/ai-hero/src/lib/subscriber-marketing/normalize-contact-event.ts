@@ -59,6 +59,7 @@ export function normalizeContactEvent(
 			email,
 			name: input.name?.trim(),
 			userId: input.userId,
+			...(input.state ? { state: input.state } : {}),
 			providerIdentity: { provider: input.provider, externalId },
 			source: input.provider,
 			strength:

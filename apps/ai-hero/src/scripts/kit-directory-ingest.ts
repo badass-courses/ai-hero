@@ -1,6 +1,4 @@
-import { createReadStream } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { createInterface } from 'node:readline'
 import { resolve } from 'node:path'
 
 import {
@@ -10,133 +8,206 @@ import {
 } from '@/inngest/events/kit-directory'
 import { KIT_DIRECTORY_BATCH_SIZE } from '@/lib/subscriber-marketing/kit-directory-ingest'
 
+const KIT_API_SUBSCRIBERS_URL = 'https://api.kit.com/v4/subscribers'
 const INNGEST_EVENT_KEY_PLACEHOLDER = '[SENSITIVE]'
 
+export const KIT_DIRECTORY_API_PAGE_SIZE = 1000 as const
+export const KIT_DIRECTORY_PAGE_DELAY_MS = 600 as const
+
 type ScriptOptions = {
-	file: string
+	status: string
 	after?: string
 	batchSize: number
+	limit?: number
 	send: boolean
 	write: boolean
 }
 
-function normalizedHeader(value: string): string {
-	return value.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+type JsonRecord = Record<string, unknown>
+
+type KitDirectoryPagePayload = {
+	subscribers: KitDirectorySubscriber[]
+	cursor?: string
+	hasNextPage: boolean
 }
 
-export function parseCsvLine(line: string): string[] {
-	const values: string[] = []
-	let value = ''
-	let quoted = false
+export type KitDirectoryApiPage = KitDirectoryPagePayload & {
+	page: number
+}
 
-	for (let index = 0; index < line.length; index++) {
-		const character = line[index]
-		if (character === '"') {
-			if (quoted && line[index + 1] === '"') {
-				value += '"'
-				index += 1
-			} else {
-				quoted = !quoted
-			}
-		} else if (character === ',' && !quoted) {
-			values.push(value.trim())
-			value = ''
-		} else {
-			value += character
-		}
+export type KitDirectoryPageSummary = {
+	page: number
+	subscribers: number
+	batches: number
+	sentBatches: number
+	cursor?: string
+}
+
+export type RunKitDirectoryIngestArgs = {
+	apiKey: string
+	status: string
+	after?: string
+	batchSize: number
+	limit?: number
+	send: boolean
+	write: boolean
+	eventKey?: string
+	fetcher?: typeof fetch
+	sleep?: (milliseconds: number) => Promise<void>
+	onPage?: (summary: KitDirectoryPageSummary) => void | Promise<void>
+}
+
+export type RunKitDirectoryIngestResult = {
+	pages: number
+	subscribers: number
+	batches: number
+	sentBatches: number
+	cursor?: string
+	pageSummaries: KitDirectoryPageSummary[]
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+	return typeof value === 'object' && value !== null
+}
+
+function stringValue(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined
+	const trimmed = value.trim()
+	return trimmed || undefined
+}
+
+function subscriberId(value: unknown): string | undefined {
+	if (typeof value === 'number') {
+		return Number.isSafeInteger(value) ? String(value) : undefined
 	}
-	if (quoted) throw new Error('CSV row has an unterminated quoted field')
-	values.push(value.trim())
-	return values
+	return stringValue(value)
 }
 
-export function subscriberFromCsvRow(
-	headers: readonly string[],
-	values: readonly string[],
+export function mapKitDirectorySubscriber(
+	value: unknown,
 ): KitDirectorySubscriber | undefined {
-	const row = new Map(
-		headers.map((header, index) => [header, values[index]?.trim() ?? '']),
-	)
-	const id =
-		row.get('id') ??
-		row.get('subscriberid') ??
-		row.get('subscriber') ??
-		''
+	if (!isRecord(value)) return undefined
+	const id = subscriberId(value.id)
 	if (!id) return undefined
 
-	const firstName = row.get('firstname') ?? ''
-	const lastName = row.get('lastname') ?? ''
-	const name = row.get('name') || [firstName, lastName].filter(Boolean).join(' ')
-	const email = row.get('email') || row.get('emailaddress')
-	const createdAt =
-		row.get('createdat') || row.get('created') || row.get('createdon')
+	const email = stringValue(value.email_address)
+	const name = stringValue(value.first_name)
+	const state = stringValue(value.state)
+	const createdAt = stringValue(value.created_at)
 	return {
 		id,
 		...(email ? { email } : {}),
 		...(name ? { name } : {}),
 		...(createdAt ? { createdAt } : {}),
+		...(state ? { state } : {}),
 	}
 }
 
-function csvQuoteStateAfterLine(line: string, quoted: boolean): boolean {
-	for (let index = 0; index < line.length; index++) {
-		if (line[index] !== '"') continue
-		if (quoted && line[index + 1] === '"') {
-			index += 1
-			continue
-		}
-		quoted = !quoted
+function parseKitDirectoryPage(payload: unknown): KitDirectoryPagePayload {
+	if (!isRecord(payload) || !Array.isArray(payload.subscribers)) {
+		throw new Error('Kit API returned an invalid subscribers page')
 	}
-	return quoted
+	const pagination = payload.pagination
+	if (
+		!isRecord(pagination) ||
+		typeof pagination.has_next_page !== 'boolean'
+	) {
+		throw new Error('Kit API returned invalid pagination')
+	}
+
+	return {
+		subscribers: payload.subscribers
+			.map(mapKitDirectorySubscriber)
+			.filter((subscriber): subscriber is KitDirectorySubscriber => Boolean(subscriber)),
+		cursor: stringValue(pagination.end_cursor),
+		hasNextPage: pagination.has_next_page,
+	}
 }
 
-export async function* readKitDirectoryBatches(
-	file: string,
-	options: { after?: string; batchSize: number },
-): AsyncGenerator<KitDirectorySubscriber[]> {
-	const input = createReadStream(resolve(file), { encoding: 'utf8' })
-	const lines = createInterface({ input, crlfDelay: Infinity })
-	let headers: string[] | undefined
-	let batch: KitDirectorySubscriber[] = []
-	let recordLines: string[] = []
-	let quoted = false
+export async function fetchKitDirectoryPage(args: {
+	apiKey: string
+	status: string
+	after?: string
+	fetcher?: typeof fetch
+}): Promise<KitDirectoryPagePayload> {
+	const apiKey = args.apiKey.trim()
+	if (!apiKey) throw new Error('KIT_API_KEY is required')
+	const status = args.status.trim()
+	if (!status) throw new Error('--status cannot be empty')
 
+	const url = new URL(KIT_API_SUBSCRIBERS_URL)
+	url.searchParams.set('status', status)
+	url.searchParams.set('per_page', String(KIT_DIRECTORY_API_PAGE_SIZE))
+	if (args.after) url.searchParams.set('after', args.after)
+
+	const response = await (args.fetcher ?? fetch)(url, {
+		headers: { 'X-Kit-Api-Key': apiKey },
+	})
+	if (!response.ok) {
+		throw new Error(`Kit API returned HTTP ${response.status}`)
+	}
+
+	let payload: unknown
 	try {
-		for await (const line of lines) {
-			if (!line.trim() && recordLines.length === 0) continue
-			recordLines.push(line)
-			quoted = csvQuoteStateAfterLine(line, quoted)
-			if (quoted) continue
+		payload = await response.json()
+	} catch {
+		throw new Error('Kit API returned invalid JSON')
+	}
+	return parseKitDirectoryPage(payload)
+}
 
-			const record = recordLines.join('\n')
-			recordLines = []
-			quoted = false
-			if (!headers) {
-				headers = parseCsvLine(record).map(normalizedHeader)
-				continue
-			}
-			const subscriber = subscriberFromCsvRow(headers, parseCsvLine(record))
-			if (!subscriber) continue
-			if (
-				options.after &&
-				Number(subscriber.id) <= Number(options.after)
-			)
-				continue
-			batch.push(subscriber)
-			if (batch.length >= options.batchSize) {
-				yield batch
-				batch = []
-			}
-		}
-		if (recordLines.length > 0) {
-			throw new Error('CSV row has an unterminated quoted field')
-		}
-	} finally {
-		lines.close()
-		input.destroy()
+function sleep(milliseconds: number) {
+	return new Promise<void>((resolveSleep) => setTimeout(resolveSleep, milliseconds))
+}
+
+export async function* readKitDirectoryPages(args: {
+	apiKey: string
+	status: string
+	after?: string
+	limit?: number
+	fetcher?: typeof fetch
+	sleep?: (milliseconds: number) => Promise<void>
+}): AsyncGenerator<KitDirectoryApiPage> {
+	if (
+		args.limit !== undefined &&
+		(!Number.isInteger(args.limit) || args.limit < 1)
+	) {
+		throw new Error('--limit must be a positive integer')
 	}
 
-	if (batch.length > 0) yield batch
+	let after = args.after
+	const wait = args.sleep ?? sleep
+	for (let page = 1; args.limit === undefined || page <= args.limit; page++) {
+		const result = await fetchKitDirectoryPage({
+			apiKey: args.apiKey,
+			status: args.status,
+			after,
+			fetcher: args.fetcher,
+		})
+		yield { ...result, page }
+
+		if (args.limit !== undefined && page >= args.limit) return
+		if (!result.hasNextPage) return
+		if (!result.cursor) {
+			throw new Error('Kit API indicated another page without an end cursor')
+		}
+		if (result.cursor === after) {
+			throw new Error('Kit API returned a repeated pagination cursor')
+		}
+		after = result.cursor
+		await wait(KIT_DIRECTORY_PAGE_DELAY_MS)
+	}
+}
+
+function batchesOf(
+	subscribers: readonly KitDirectorySubscriber[],
+	batchSize: number,
+) {
+	const batches: KitDirectorySubscriber[][] = []
+	for (let index = 0; index < subscribers.length; index += batchSize) {
+		batches.push(Array.from(subscribers.slice(index, index + batchSize)))
+	}
+	return batches
 }
 
 export async function sendKitDirectoryBatch(
@@ -167,68 +238,152 @@ export async function sendKitDirectoryBatch(
 	return response.json()
 }
 
+export async function runKitDirectoryIngest(
+	args: RunKitDirectoryIngestArgs,
+): Promise<RunKitDirectoryIngestResult> {
+	if (
+		!Number.isInteger(args.batchSize) ||
+		args.batchSize < 1 ||
+		args.batchSize > KIT_DIRECTORY_BATCH_SIZE
+	) {
+		throw new Error(
+			`--batch-size must be an integer from 1 to ${KIT_DIRECTORY_BATCH_SIZE}`,
+		)
+	}
+	if (args.send && !args.eventKey?.trim()) {
+		throw new Error('--send requires a usable INNGEST_EVENT_KEY')
+	}
+
+	const pageSummaries: KitDirectoryPageSummary[] = []
+	let pages = 0
+	let subscribers = 0
+	let batches = 0
+	let sentBatches = 0
+	let cursor = args.after
+
+	for await (const page of readKitDirectoryPages({
+		apiKey: args.apiKey,
+		status: args.status,
+		after: args.after,
+		limit: args.limit,
+		fetcher: args.fetcher,
+		sleep: args.sleep,
+	})) {
+		const pageBatches = batchesOf(page.subscribers, args.batchSize)
+		if (args.send) {
+			for (const batch of pageBatches) {
+				await sendKitDirectoryBatch(
+					args.eventKey!,
+					batch,
+					page.cursor,
+					!args.write,
+					args.fetcher,
+				)
+			}
+		}
+
+		pages += 1
+		subscribers += page.subscribers.length
+		batches += pageBatches.length
+		sentBatches += args.send ? pageBatches.length : 0
+		cursor = page.cursor ?? cursor
+		const summary: KitDirectoryPageSummary = {
+			page: page.page,
+			subscribers: page.subscribers.length,
+			batches: pageBatches.length,
+			sentBatches: args.send ? pageBatches.length : 0,
+			...(page.cursor ? { cursor: page.cursor } : {}),
+		}
+		pageSummaries.push(summary)
+		await args.onPage?.(summary)
+	}
+
+	return {
+		pages,
+		subscribers,
+		batches,
+		sentBatches,
+		...(cursor ? { cursor } : {}),
+		pageSummaries,
+	}
+}
+
+function nextArgument(argv: readonly string[], index: number, flag: string) {
+	const value = argv[index + 1]
+	if (!value || value.startsWith('--')) {
+		throw new Error(`${flag} requires a value`)
+	}
+	return value
+}
+
 function parseArgs(argv: readonly string[]): ScriptOptions {
-	let file: string | undefined
+	let status = 'all'
 	let after: string | undefined
 	let batchSize: number = KIT_DIRECTORY_BATCH_SIZE
+	let limit: number | undefined
 	let send = false
 	let write = false
 
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index]
 		if (arg === '--') continue
-		if (arg === '--file') file = argv[++index]
-		else if (arg === '--after') after = argv[++index]
-		else if (arg === '--batch-size') batchSize = Number(argv[++index])
-		else if (arg === '--send') send = true
+		if (arg === '--status') status = nextArgument(argv, index++, arg)
+		else if (arg === '--after') after = nextArgument(argv, index++, arg)
+		else if (arg === '--batch-size') {
+			batchSize = Number(nextArgument(argv, index++, arg))
+		} else if (arg === '--limit') {
+			limit = Number(nextArgument(argv, index++, arg))
+		} else if (arg === '--send') send = true
 		else if (arg === '--write') {
 			write = true
 			send = true
 		} else if (arg === '--help') {
 			console.log(
-				'Usage: pnpm kit-directory:ingest -- --file <csv> [--after <kit-id>] [--batch-size 500] [--send] [--write]',
+				'Usage: pnpm kit-directory:ingest -- [--status all] [--after <cursor>] [--batch-size 500] [--limit <pages>] [--send] [--write]',
 			)
 			process.exit(0)
 		} else {
 			throw new Error(`Unknown argument: ${arg}`)
 		}
 	}
-	if (!file) throw new Error('--file is required')
-	if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > KIT_DIRECTORY_BATCH_SIZE) {
-		throw new Error(`--batch-size must be an integer from 1 to ${KIT_DIRECTORY_BATCH_SIZE}`)
+
+	if (!status.trim()) throw new Error('--status cannot be empty')
+	if (
+		!Number.isInteger(batchSize) ||
+		batchSize < 1 ||
+		batchSize > KIT_DIRECTORY_BATCH_SIZE
+	) {
+		throw new Error(
+			`--batch-size must be an integer from 1 to ${KIT_DIRECTORY_BATCH_SIZE}`,
+		)
 	}
-	return { file, after, batchSize, send, write }
+	if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+		throw new Error('--limit must be a positive integer')
+	}
+	return { status, after, batchSize, limit, send, write }
 }
 
 async function main() {
 	const options = parseArgs(process.argv.slice(2))
+	const apiKey = process.env.KIT_API_KEY?.trim()
+	if (!apiKey) throw new Error('KIT_API_KEY is required')
 	const eventKey = process.env.INNGEST_EVENT_KEY?.trim()
 	if (options.send && (!eventKey || eventKey === INNGEST_EVENT_KEY_PLACEHOLDER)) {
 		throw new Error('--send requires a usable INNGEST_EVENT_KEY')
 	}
 
-	let batches = 0
-	let subscribers = 0
-	let cursor = options.after
-	for await (const batch of readKitDirectoryBatches(options.file, options)) {
-		const nextCursor = batch.at(-1)?.id
-		if (options.send) {
-			await sendKitDirectoryBatch(
-				eventKey!,
-				batch,
-				nextCursor,
-				!options.write,
+	const result = await runKitDirectoryIngest({
+		...options,
+		apiKey,
+		eventKey,
+		onPage: (summary) => {
+			console.log(
+				`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches}`,
 			)
-		}
-		batches += 1
-		subscribers += batch.length
-		cursor = nextCursor ?? cursor
-		console.log(
-			`kit-directory-ingest mode=${options.write ? 'write' : 'dry-run'} batch=${batches} subscribers=${subscribers} cursor=${cursor ?? 'none'}`,
-		)
-	}
+		},
+	})
 	console.log(
-		`kit-directory-ingest complete mode=${options.write ? 'write' : 'dry-run'} batches=${batches} subscribers=${subscribers} cursor=${cursor ?? 'none'} sent=${options.send}`,
+		`kit-directory-ingest complete mode=${options.write ? 'write' : 'dry-run'} status=${options.status} pages=${result.pages} subscribers=${result.subscribers} batches=${result.batches} cursor=${result.cursor ?? 'none'} sent=${result.sentBatches}`,
 	)
 }
 
