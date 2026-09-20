@@ -5,15 +5,51 @@ import {
 	executePendingEvergreenSends,
 	type EvergreenSenderRepository,
 } from './drovr-evergreen-sender'
-import type { ContactRecord, SideEffectIntent } from './types'
+import { mapDrovrShadowFact } from './drovr-shadow-emitter'
+import type { ContactEventRecord, ContactRecord, SideEffectIntent } from './types'
 
 const now = '2026-09-17T16:00:00.000Z'
 
 class FakeRepository implements EvergreenSenderRepository {
 	contacts = new Map<string, ContactRecord>()
 	intents = new Map<string, SideEffectIntent>()
+	shadowNewsletterAssigned = false
 	findContactById(id: string) {
 		return this.contacts.get(id)
+	}
+	findContactEventsByType(
+		_contactId: string,
+		eventType: string,
+	): ContactEventRecord[] {
+		if (!this.shadowNewsletterAssigned || eventType !== 'journey.owner.assigned') {
+			return []
+		}
+		return [
+			{
+				id: 'newsletter-owner-1',
+				contactId: 'contact-1',
+				providerIdentityId: 'identity-1',
+				provider: 'kit',
+				providerEventId: 'drovr-owner:contact-1:shadow-newsletter',
+				providerReference: 'drovr-owner:contact-1:shadow-newsletter',
+				eventType: 'journey.owner.assigned',
+				occurredAt: now,
+				createdAt: now,
+				semanticIdempotencyKey: 'owner:contact-1:shadow-newsletter',
+				privacyLevel: 'internal',
+				identityEvidence: {
+					source: 'kit',
+					strength: 'strong',
+					providerIdentity: { provider: 'kit', externalId: 'kit-1' },
+				},
+				payloadSummary: {
+					summary: 'owner assignment',
+					keywords: [],
+					restrictedPayloadStored: false,
+				},
+				schemaVersion: 1,
+			},
+		]
 	}
 	findPendingSideEffectIntentsByType(
 		type: SideEffectIntent['type'],
@@ -302,6 +338,67 @@ describe('executePendingEvergreenSends', () => {
 		})
 		expect(results.map((r) => r.intentId)).toEqual(['a', 'b'])
 		expect(sleeps).toEqual([250])
+	})
+
+	it('skips Kit for an assigned shadow-newsletter handoff and still emits its birth', async () => {
+		const repository = new FakeRepository()
+		repository.shadowNewsletterAssigned = true
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'row-assigned',
+			row({
+				id: 'row-assigned',
+				type: 'subscribe-evergreen-list',
+				idempotencyKey: 'contact:contact-1:evergreen:list:shadow-newsletter',
+				metadata: {
+					source: 'drovr',
+					list: 'shadow-newsletter',
+					kitSequenceId: '2625552',
+					drovr: {
+						tenantId: 'org-aihero',
+						journeyId: 'crash-course-evergreen-offer',
+						intentKey: 'k-assigned',
+					},
+				},
+			}),
+		)
+		const subscribes: unknown[] = []
+		const dispatched: SideEffectIntent[] = []
+		const results = await executePendingEvergreenSends({
+			repository,
+			subscribe: async (input) => {
+				subscribes.push(input)
+				return 'must-not-add'
+			},
+			limit: 10,
+			now: () => now,
+			dispatch: (intent) => dispatched.push(intent),
+			type: 'subscribe-evergreen-list',
+		})
+
+		expect(results).toEqual([
+			{ status: 'completed', intentId: 'row-assigned', kitSequenceId: '2625552' },
+		])
+		expect(subscribes).toEqual([])
+		expect(repository.intents.get('row-assigned')).toMatchObject({
+			status: 'completed',
+			metadata: {
+				kitSkipped: 'shadow-newsletter-owner-assignment',
+				completedAt: now,
+			},
+		})
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-completed',
+			intent: dispatched[0]!,
+		})
+		expect(events).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					journeyId: 'shadow-newsletter',
+					type: 'contact.created',
+				}),
+			]),
+		)
 	})
 
 	it('drains subscribe-evergreen-list rows when asked for that type and leaves sends alone', async () => {

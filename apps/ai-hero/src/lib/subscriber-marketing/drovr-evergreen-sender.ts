@@ -1,4 +1,8 @@
 import type { CaptureMarketingRepository } from './capture-contact-event'
+import { findJourneyOwnerAssignment } from './drovr-ownership'
+import {
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+} from './drovr-shadow-emitter'
 import {
 	SEND_EVERGREEN_EMAIL_INTENT_TYPE,
 	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
@@ -26,10 +30,9 @@ export type EvergreenSubscribe = (input: {
 	user: { email: string; name?: string }
 }) => Promise<unknown>
 
-export type EvergreenSenderRepository = Pick<
-	CaptureMarketingRepository,
-	'findContactById'
-> &
+export type EvergreenSenderRepository =
+	Pick<CaptureMarketingRepository, 'findContactById'> &
+	Partial<Pick<CaptureMarketingRepository, 'findContactEventsByType'>> &
 	Required<
 		Pick<
 			CaptureMarketingRepository,
@@ -134,6 +137,21 @@ async function sendOne(input: {
 	}
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
+	if (await isOwnedShadowNewsletterHandoff(row, args.repository)) {
+		const completed = await args.repository.updateSideEffectIntent(row.id, {
+			status: 'completed',
+			completedAt: now,
+			gates: row.gates,
+			reviewReasons: [],
+			metadata: {
+				...unclaimed,
+				completedAt: now,
+				kitSkipped: 'shadow-newsletter-owner-assignment',
+			},
+		})
+		dispatch(completed)
+		return { status: 'completed', intentId: row.id, kitSequenceId }
+	}
 	try {
 		await args.subscribe({
 			listId: kitSequenceId,
@@ -183,6 +201,26 @@ async function sendOne(input: {
 	})
 	dispatch(completed)
 	return { status: 'completed', intentId: row.id, kitSequenceId }
+}
+
+async function isOwnedShadowNewsletterHandoff(
+	row: SideEffectIntent,
+	repository: EvergreenSenderRepository,
+): Promise<boolean> {
+	if (
+		row.type !== SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE ||
+		row.metadata.list !== 'shadow-newsletter' ||
+		!repository.findContactEventsByType
+	) {
+		return false
+	}
+	return Boolean(
+		await findJourneyOwnerAssignment(
+			repository,
+			row.contactId,
+			DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		),
+	)
 }
 
 async function giveUp(

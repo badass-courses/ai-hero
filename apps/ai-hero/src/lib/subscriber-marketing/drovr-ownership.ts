@@ -178,6 +178,9 @@ export function journeyOwnerAssignmentJourneyId(
 	if (event.providerEventId.endsWith(`:${DROVR_EVERGREEN_OFFER_JOURNEY_ID}`)) {
 		return DROVR_EVERGREEN_OFFER_JOURNEY_ID
 	}
+	if (event.providerEventId.endsWith(`:${DROVR_SHADOW_NEWSLETTER_JOURNEY_ID}`)) {
+		return DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
+	}
 	return undefined
 }
 

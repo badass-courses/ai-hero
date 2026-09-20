@@ -4,6 +4,7 @@ import {
 	DROVR_OWNERSHIP_OFF,
 	decideJourneyOwner,
 	fanOutOwnedEvents,
+	findJourneyOwnerAssignment,
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
 	ownershipBucket,
@@ -145,10 +146,34 @@ describe('journey ownership discriminator', () => {
 	it.each([
 		'value-path-skills-course',
 		'crash-course-evergreen-offer',
+		'shadow-newsletter',
 	] as const)('round-trips %s through the provider event id', (journeyId) => {
 		const providerEventId = journeyOwnerProviderEventId('contact-1', journeyId)
 		expect(providerEventId).toBe(`drovr-owner:contact-1:${journeyId}`)
 		expect(journeyOwnerAssignmentJourneyId({ providerEventId })).toBe(journeyId)
+	})
+})
+
+describe('journey assignment scope', () => {
+	it('finds newsletter ownership without treating skills ownership as enough', async () => {
+		const assignment = (journeyId: string) =>
+			({
+				providerEventId: `drovr-owner:contact-1:${journeyId}`,
+			} as never)
+		const repository = {
+			findContactEventsByType: async () => [
+				assignment('value-path-skills-course'),
+				assignment('shadow-newsletter'),
+			],
+		}
+
+		expect(
+			await findJourneyOwnerAssignment(
+				repository,
+				'contact-1',
+				'shadow-newsletter',
+			),
+		).toEqual(assignment('shadow-newsletter'))
 	})
 })
 

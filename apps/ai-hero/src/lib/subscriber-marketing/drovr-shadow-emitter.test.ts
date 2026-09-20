@@ -200,6 +200,18 @@ describe('drovr shadow fact mapper', () => {
 		},
 	)
 
+	it('records a shadow-newsletter assignment as a gate, not an early birth', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'contact-event',
+			event: contactEvent('journey.owner.assigned', {
+				providerEventId: 'drovr-owner:contact-1:shadow-newsletter',
+				semanticIdempotencyKey:
+					'kit:journey.owner.assigned:kit-1:drovr-owner:contact-1:shadow-newsletter',
+			}),
+		})
+		expect(events).toEqual([])
+	})
+
 	it('maps a new durable course completion to both journeys with fallback timezone', () => {
 		const events = mapDrovrShadowFact({
 			kind: 'course-completed',
