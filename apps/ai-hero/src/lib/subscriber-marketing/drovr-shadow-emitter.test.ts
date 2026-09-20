@@ -63,6 +63,34 @@ function completedIntent(
 }
 
 describe('drovr shadow fact mapper', () => {
+	it('maps a newly created contact to the directory with the seed contract', () => {
+		expect(
+			mapDrovrShadowFact({
+				kind: 'contact-created',
+				contactId: 'contact-1',
+				createdAt: occurredAt,
+				sourceLifecycle: 'new',
+				kitSubscriberId: '4290731338',
+			}),
+		).toEqual([
+			{
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'contact-directory',
+				type: 'contact.created',
+				occurredAt,
+				idempotencyKey: 'directory:seed:contact-1',
+				payload: {
+					createdAt: occurredAt,
+					kitSubscriberId: '4290731338',
+					lifecycle: 'provisional',
+					source: 'ai-hero',
+					sourceLifecycle: 'new',
+				},
+			},
+		])
+	})
+
 	it('maps a skills newsletter subscription to course contact creation', () => {
 		expect(
 			mapDrovrShadowFact({
@@ -339,7 +367,9 @@ describe('drovr shadow fact mapper', () => {
 		})
 		const events = mapDrovrShadowFact({ kind: 'contact-event', event })
 
-		expect(events[2]?.payload).toEqual({
+		expect(
+			events.find((item) => item.journeyId === 'shadow-newsletter')?.payload,
+		).toEqual({
 			timezone: 'America/New_York',
 			timezoneSource: 'vercel-header',
 		})
@@ -365,6 +395,7 @@ describe('drovr shadow fact mapper', () => {
 					? [
 							'value-path-skills-course',
 							'crash-course-evergreen-offer',
+							'contact-directory',
 							'shadow-newsletter',
 						]
 					: ['value-path-skills-course', 'crash-course-evergreen-offer'],
@@ -372,7 +403,9 @@ describe('drovr shadow fact mapper', () => {
 			if (eventType === 'purchase.recorded') {
 				expect(events[0]?.payload).toEqual({ productId: 'product-ai-hero' })
 				expect(events[1]?.payload).toEqual({ productId: 'product-ai-hero' })
-				expect(events[2]?.payload).toEqual({
+				expect(events[2]?.tenantId).toBe('org-aihero')
+				expect(events[2]?.payload).toEqual({ productId: 'product-ai-hero' })
+				expect(events[3]?.payload).toEqual({
 					timezone: 'America/Los_Angeles',
 					timezoneSource: 'fallback',
 				})

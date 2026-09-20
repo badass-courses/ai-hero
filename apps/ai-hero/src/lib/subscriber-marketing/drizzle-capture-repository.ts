@@ -21,6 +21,7 @@ import {
 } from '../mysql-primary-key-retry'
 import type {
 	CaptureMarketingRepository,
+	ContactCreationOptions,
 	LinkedActionRecords,
 } from './capture-contact-event'
 import {
@@ -150,13 +151,25 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows[0] ? toContactRecord(rows[0]) : undefined
 	}
 
-	async createContact(input: Omit<ContactRecord, 'id'>) {
+	async createContact(
+		input: Omit<ContactRecord, 'id'>,
+		options?: ContactCreationOptions,
+	) {
 		const record: ContactRecord = { id: this.newId('contact'), ...input }
 		await this.database.insert(contact).values({
 			...record,
 			...contactEmailWriteValues(record.email),
 			createdAt: new Date(record.createdAt),
 			updatedAt: new Date(record.updatedAt),
+		})
+		dispatchDrovrShadowFactSafely({
+			kind: 'contact-created',
+			contactId: record.id,
+			createdAt: record.createdAt,
+			sourceLifecycle: record.lifecycle,
+			...(options?.kitSubscriberId
+				? { kitSubscriberId: options.kitSubscriberId }
+				: {}),
 		})
 		return record
 	}

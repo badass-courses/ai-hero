@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	inngestSend: vi.fn().mockResolvedValue(undefined),
+	dbSelect: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 	env: { KIT_WEBHOOK_SECRET: 'whsec_test' } as { KIT_WEBHOOK_SECRET?: string },
 }))
 
+vi.mock('@/db', () => ({ db: { select: mocks.dbSelect } }))
 vi.mock('@/env.mjs', () => ({ env: mocks.env }))
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: mocks.inngestSend },
@@ -62,6 +64,13 @@ describe('POST /api/kit/webhook', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.env.KIT_WEBHOOK_SECRET = SECRET
+		mocks.dbSelect.mockReturnValue({
+			from: () => ({
+				where: () => ({
+					limit: vi.fn().mockResolvedValue([{ contactId: 'contact-1' }]),
+				}),
+			}),
+		})
 	})
 
 	it('rejects a delivery whose signature does not match and sends nothing', async () => {
@@ -113,22 +122,27 @@ describe('POST /api/kit/webhook', () => {
 		const response = await post(raw, sign(raw))
 		expect(response.status).toBe(200)
 		await expect(response.json()).resolves.toEqual({ captured: 1, ignored: 0 })
-		expect(mocks.inngestSend).toHaveBeenCalledTimes(1)
-		const sent = mocks.inngestSend.mock.calls[0]?.[0] as Array<{
-			id: string
-			name: string
-			data: Record<string, unknown>
-		}>
-		expect(sent.map((e) => e.data.preferenceKey)).toEqual([
+		expect(mocks.inngestSend).toHaveBeenCalledTimes(2)
+		const sent = mocks.inngestSend.mock.calls.flatMap(
+			([batch]) =>
+				batch as Array<{
+					id: string
+					name: string
+					data: Record<string, unknown>
+				}>,
+		)
+		const preferenceEvents = sent.filter(
+			(e) => e.name === 'email-preferences/contact-unsubscribed',
+		)
+		expect(preferenceEvents.map((e) => e.data.preferenceKey)).toEqual([
 			'newsletter',
 			'ai-skills',
 		])
-		expect(sent.map((e) => e.id)).toEqual([
+		expect(preferenceEvents.map((e) => e.id)).toEqual([
 			'kit-webhook:9c2e1f3a-6b7d-4e8f-a1b2-c3d4e5f60718:newsletter',
 			'kit-webhook:9c2e1f3a-6b7d-4e8f-a1b2-c3d4e5f60718:ai-skills',
 		])
-		for (const e of sent) {
-			expect(e.name).toBe('email-preferences/contact-unsubscribed')
+		for (const e of preferenceEvents) {
 			expect(e.data).toMatchObject({
 				email: 'real@example.com',
 				kitSubscriberId: '4290731338',
@@ -136,6 +150,24 @@ describe('POST /api/kit/webhook', () => {
 				occurredAt: '2026-09-19T16:00:00Z',
 			})
 		}
+		const directoryEvent = sent.find((e) => e.name === 'drovr/events.deliver')
+		expect(directoryEvent).toMatchObject({
+			id: 'kit-directory:9c2e1f3a-6b7d-4e8f-a1b2-c3d4e5f60718:contact.unsubscribed',
+			data: {
+				source: 'kit-webhook',
+				events: [
+					{
+						tenantId: 'org-aihero',
+						contactId: 'contact-1',
+						journeyId: 'contact-directory',
+						type: 'contact.unsubscribed',
+						occurredAt: '2026-09-19T16:00:00Z',
+						idempotencyKey:
+							'directory:kit-state:4290731338:unsubscribed',
+					},
+				],
+			},
+		})
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'kit.webhook.captured',
 			expect.objectContaining({
@@ -168,10 +200,57 @@ describe('POST /api/kit/webhook', () => {
 		})
 		const response = await post(raw, sign(raw))
 		await expect(response.json()).resolves.toEqual({ captured: 2, ignored: 1 })
-		expect(mocks.inngestSend).toHaveBeenCalledTimes(2)
+		expect(mocks.inngestSend).toHaveBeenCalledTimes(4)
 		expect(mocks.log.info).toHaveBeenCalledWith(
 			'kit.webhook.ignored',
 			expect.objectContaining({ eventIds: ['e2'] }),
+		)
+	})
+
+	it('queues confirmed and bounced directory state without sending Kit preferences', async () => {
+		const raw = JSON.stringify({
+			events: [
+				event('subscriber.confirmed', {
+					id: 11,
+					state: 'active',
+				}),
+				event('subscriber.bounced', {
+					id: 12,
+					state: 'inactive',
+				}),
+			],
+		})
+		const response = await post(raw, sign(raw))
+		await expect(response.json()).resolves.toEqual({ captured: 2, ignored: 0 })
+		expect(mocks.inngestSend).toHaveBeenCalledTimes(2)
+		expect(
+			mocks.inngestSend.mock.calls.map(
+				([delivery]: [{ data: { events: Array<{ type: string }> } }]) =>
+					delivery.data.events[0]?.type,
+			),
+		).toEqual(['contact.confirmed', 'contact.bounced'])
+	})
+
+	it('drops directory state when the Kit identity is unknown', async () => {
+		mocks.dbSelect.mockReturnValue({
+			from: () => ({
+				where: () => ({ limit: vi.fn().mockResolvedValue([]) }),
+			}),
+		})
+		const raw = JSON.stringify({
+			events: [
+				event('subscriber.confirmed', {
+					id: 99,
+					state: 'active',
+				}),
+			],
+		})
+		const response = await post(raw, sign(raw))
+		await expect(response.json()).resolves.toEqual({ captured: 0, ignored: 1 })
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'kit.webhook.directory_contact_missing',
+			expect.objectContaining({ kitSubscriberId: '99' }),
 		)
 	})
 
