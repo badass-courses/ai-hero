@@ -22,5 +22,7 @@ export type DrovrEventsDeliver = {
 			| 'side-effect-intent-completed'
 			| 'course-completed'
 			| 'course-exhausted'
+			/** Pre-gate veterans' newsletter births, sent by the veterans function. */
+			| 'newsletter-veteran'
 	}
 }
