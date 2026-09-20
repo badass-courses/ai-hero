@@ -619,6 +619,7 @@ export const contact = mysqlTable(
 			table.emailKeyStale,
 		),
 		lifecycleIdx: index('Contact_lifecycle_idx').on(table.lifecycle),
+		createdAtIdx: index('Contact_createdAt_idx').on(table.createdAt),
 	}),
 )
 
