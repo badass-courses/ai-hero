@@ -13,6 +13,7 @@ export const DROVR_EVERGREEN_OFFER_JOURNEY_ID =
 	'crash-course-evergreen-offer' as const
 export const DROVR_SHADOW_NEWSLETTER_JOURNEY_ID =
 	SHADOW_NEWSLETTER_JOURNEY_ID
+export const DROVR_CONTACT_DIRECTORY_JOURNEY_ID = 'contact-directory' as const
 export const DROVR_FALLBACK_TIMEZONE = 'America/Los_Angeles' as const
 
 /** Tenants ai-hero speaks to: the shadow, and the authority once cut over. */
@@ -24,10 +25,19 @@ export type DrovrJourneyId =
 	| typeof DROVR_SKILLS_COURSE_JOURNEY_ID
 	| typeof DROVR_EVERGREEN_OFFER_JOURNEY_ID
 	| typeof DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
+	| typeof DROVR_CONTACT_DIRECTORY_JOURNEY_ID
 
 export type DrovrPinnedTimezonePayload = {
 	timezone: string
 	timezoneSource: 'vercel-header' | 'fallback'
+}
+
+export type DrovrContactDirectoryBirthPayload = {
+	createdAt: string
+	kitSubscriberId?: string
+	lifecycle: 'provisional'
+	source: 'ai-hero'
+	sourceLifecycle?: string
 }
 
 export type DrovrShadowEvent = {
@@ -36,6 +46,8 @@ export type DrovrShadowEvent = {
 	journeyId: DrovrJourneyId
 	type:
 		| 'contact.created'
+		| 'contact.confirmed'
+		| 'contact.bounced'
 		| 'value-path.answer-selected'
 		| 'coupon.issued'
 		| 'shadow.entered'
@@ -53,6 +65,7 @@ export type DrovrShadowEvent = {
 		| { list: string }
 		| { productId: string }
 		| DrovrPinnedTimezonePayload
+		| DrovrContactDirectoryBirthPayload
 		| {
 				valuePathSlug: string
 				completedAt: string
@@ -62,6 +75,13 @@ export type DrovrShadowEvent = {
 }
 
 export type DrovrShadowFact =
+	| {
+			kind: 'contact-created'
+			contactId: string
+			createdAt: string
+			sourceLifecycle: string
+			kitSubscriberId?: string
+	  }
 	| {
 			kind: 'contact-event'
 			event: ContactEventRecord
@@ -134,6 +154,29 @@ type DrovrShadowEmitterOptions = {
 }
 
 export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
+	if (fact.kind === 'contact-created') {
+		return [
+			{
+				tenantId: DROVR_AUTHORITY_TENANT_ID,
+				contactId: fact.contactId,
+				journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
+				type: 'contact.created',
+				occurredAt: fact.createdAt,
+				idempotencyKey: `directory:seed:${fact.contactId}`,
+				payload: {
+					createdAt: fact.createdAt,
+					lifecycle: 'provisional',
+					source: 'ai-hero',
+					...(fact.kitSubscriberId
+						? { kitSubscriberId: fact.kitSubscriberId }
+						: {}),
+					...(fact.sourceLifecycle
+						? { sourceLifecycle: fact.sourceLifecycle }
+						: {}),
+				},
+			},
+		]
+	}
 	if (fact.kind === 'contact-event') {
 		return mapContactEvent(fact.event)
 	}
@@ -607,14 +650,27 @@ function bothJourneys(
 	type: 'contact.unsubscribed' | 'purchase.recorded',
 	payload?: { productId: string },
 ): DrovrShadowEvent[] {
-	return [DROVR_SKILLS_COURSE_JOURNEY_ID, DROVR_EVERGREEN_OFFER_JOURNEY_ID].map(
-		(journeyId) => ({
+	const shadowJourneys = [
+		DROVR_SKILLS_COURSE_JOURNEY_ID,
+		DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+	] as const
+	const shadowEvents = shadowJourneys.map((journeyId) => ({
+		...base,
+		journeyId,
+		type,
+		...(payload ? { payload } : {}),
+	}))
+	if (type !== 'purchase.recorded') return shadowEvents
+	return [
+		...shadowEvents,
+		{
 			...base,
-			journeyId,
+			tenantId: DROVR_AUTHORITY_TENANT_ID,
+			journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
 			type,
 			...(payload ? { payload } : {}),
-		}),
-	)
+		},
+	]
 }
 
 function ownerAssignmentJourneyId(

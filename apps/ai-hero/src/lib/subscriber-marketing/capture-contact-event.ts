@@ -20,6 +20,10 @@ import type {
 
 type MaybePromise<T> = T | Promise<T>
 
+export type ContactCreationOptions = {
+	kitSubscriberId?: string
+}
+
 export type LinkedActionRecords = {
 	nextAction: NextAction
 	sideEffectIntents: SideEffectIntent[]
@@ -32,7 +36,10 @@ export type CaptureMarketingRepository = {
 	): MaybePromise<ProviderIdentityRecord | undefined>
 	findContactById(id: string): MaybePromise<ContactRecord | undefined>
 	findContactByEmail(email: string): MaybePromise<ContactRecord | undefined>
-	createContact(input: Omit<ContactRecord, 'id'>): MaybePromise<ContactRecord>
+	createContact(
+		input: Omit<ContactRecord, 'id'>,
+		options?: ContactCreationOptions,
+	): MaybePromise<ContactRecord>
 	updateContactOptInAttribution?(
 		contactId: string,
 		attribution: NonNullable<ContactRecord['optInAttribution']>,
@@ -285,16 +292,21 @@ async function resolveOrCreateCaptureIdentity(args: {
 		}
 	}
 
-	const contact = await args.repository.createContact({
-		userId: evidence.userId ?? null,
-		email: evidence.email ?? null,
-		name: evidence.name ?? null,
-		lifecycle: 'new',
-		isProvisional: true,
-		optInAttribution: args.event.optInAttribution ?? null,
-		createdAt: args.now,
-		updatedAt: args.now,
-	})
+	const contact = await args.repository.createContact(
+		{
+			userId: evidence.userId ?? null,
+			email: evidence.email ?? null,
+			name: evidence.name ?? null,
+			lifecycle: 'new',
+			isProvisional: true,
+			optInAttribution: args.event.optInAttribution ?? null,
+			createdAt: args.now,
+			updatedAt: args.now,
+		},
+		providerIdentityEvidence.provider === 'kit'
+			? { kitSubscriberId: providerIdentityEvidence.externalId }
+			: undefined,
+	)
 	const providerIdentity = await args.repository.createProviderIdentity({
 		contactId: contact.id,
 		provider: providerIdentityEvidence.provider,

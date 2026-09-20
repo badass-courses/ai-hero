@@ -16,7 +16,9 @@ export type DrovrEventsDeliver = {
 		events: DrovrShadowEvent[]
 		/** Which host fact produced the batch, for the delivery receipt. */
 		source:
+			| 'contact-created'
 			| 'contact-event'
+			| 'kit-webhook'
 			| 'side-effect-intent-completed'
 			| 'course-completed'
 			| 'course-exhausted'
