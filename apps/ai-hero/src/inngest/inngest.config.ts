@@ -39,6 +39,7 @@ import { courseSyncDetectionPoller } from './functions/course-sync-detection-pol
 import { drovrEventsDeliver } from './functions/drovr-events-deliver'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
+import { newsletterVeteransAssign } from './functions/newsletter-veterans'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
@@ -153,6 +154,7 @@ const allFunctions = [
 	drovrEventsDeliver,
 	drovrEvergreenSender,
 	kitDirectoryIngest,
+	newsletterVeteransAssign,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
 	syncGithubSourcedPosts,
