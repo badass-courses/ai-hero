@@ -7,6 +7,10 @@ import {
 	type DrovrIntent,
 } from './drovr-executor'
 import type { ContactRecord, SideEffectIntent } from './types'
+import {
+	SHADOW_NEWSLETTER_CATALOG_REVISION,
+	SHADOW_NEWSLETTER_KIT_SEQUENCES,
+} from './drovr-shadow-newsletter'
 
 const now = '2026-09-16T22:30:00.000Z'
 
@@ -893,6 +897,177 @@ describe('acceptDrovrIntent: evergreen bridge and pitch sends', () => {
 		})
 		expect(coupon.status).toBe('unsupported')
 		expect(repository.intents.size).toBe(0)
+	})
+})
+
+describe('acceptDrovrIntent: shadow newsletter sends', () => {
+	const shadowIntent = (overrides: Partial<DrovrIntent> = {}): DrovrIntent =>
+		intent({
+			journeyId: 'shadow-newsletter',
+			idempotencyKey:
+				'contact-1:shadow-newsletter:send:agents_md_big_problem_v1',
+			payload: {
+				newsletter: 'shadow-newsletter',
+				catalogRevision: SHADOW_NEWSLETTER_CATALOG_REVISION,
+				messageId: 'agents_md_big_problem_v1',
+				position: 0,
+			},
+			...overrides,
+		})
+
+	it.each(SHADOW_NEWSLETTER_KIT_SEQUENCES)(
+		'accepts $messageId and binds sequence $sequenceId',
+		async (sequence) => {
+			const repository = new FakeRepository()
+			repository.contacts.set('contact-1', contact())
+			const result = await acceptDrovrIntent({
+				repository,
+				intent: shadowIntent({
+					idempotencyKey: `contact-1:shadow-newsletter:send:${sequence.messageId}`,
+					payload: {
+						newsletter: 'shadow-newsletter',
+						catalogRevision: SHADOW_NEWSLETTER_CATALOG_REVISION,
+						messageId: sequence.messageId,
+						position: sequence.position,
+					},
+				}),
+				now,
+				findKitSubscriberId: async () => 'kit-123',
+			})
+			expect(result.status).toBe('accepted')
+			if (result.status !== 'accepted') return
+			expect(repository.intents.get(result.intentId)).toMatchObject({
+				type: 'send-shadow-newsletter-email',
+				idempotencyKey: `contact:org-aihero:contact-1:shadow-newsletter:${sequence.messageId}`,
+				metadata: {
+					newsletter: 'shadow-newsletter',
+					catalogRevision: SHADOW_NEWSLETTER_CATALOG_REVISION,
+					messageId: sequence.messageId,
+					position: sequence.position,
+					kitSequenceId: String(sequence.sequenceId),
+					kitSubscriberId: 'kit-123',
+				},
+			})
+		},
+	)
+
+	it('blocks an unknown catalog revision without creating a provider row', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({
+				payload: {
+					newsletter: 'shadow-newsletter',
+					catalogRevision: 'kit-2625552-future',
+					messageId: 'agents_md_big_problem_v1',
+				},
+			}),
+			now,
+		})
+		expect(result).toEqual({
+			status: 'blocked',
+			reviewReasons: ['shadow-newsletter-catalog-revision-unknown:kit-2625552-future'],
+		})
+		expect(repository.intents.size).toBe(0)
+	})
+
+	it('blocks an unknown message id without creating a provider row', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({
+				payload: {
+					newsletter: 'shadow-newsletter',
+					catalogRevision: SHADOW_NEWSLETTER_CATALOG_REVISION,
+					messageId: 'not-in-the-catalog-v9',
+				},
+			}),
+			now,
+		})
+		expect(result).toEqual({
+			status: 'blocked',
+			reviewReasons: ['shadow-newsletter-message-unknown:not-in-the-catalog-v9'],
+		})
+		expect(repository.intents.size).toBe(0)
+	})
+
+	it('is idempotent and returns the message completion after the row finishes', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent(),
+			now,
+		})
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		const second = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({ idempotencyKey: 'redriven-key' }),
+			now,
+		})
+		expect(second).toMatchObject({
+			status: 'accepted',
+			intentId: first.intentId,
+			created: false,
+		})
+		const row = repository.intents.get(first.intentId)!
+		repository.intents.set(row.id, {
+			...row,
+			status: 'completed',
+			completedAt: '2026-09-19T16:00:05.000Z',
+		})
+		const completed = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({ idempotencyKey: 'redriven-after-send' }),
+			now,
+		})
+		expect(completed).toEqual({
+			status: 'completed',
+			intentId: row.id,
+			completion: {
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'shadow-newsletter',
+				type: 'email.completed',
+				occurredAt: '2026-09-19T16:00:05.000Z',
+				idempotencyKey:
+					'completion:contact-1:shadow-newsletter:send:agents_md_big_problem_v1',
+				payload: { messageId: 'agents_md_big_problem_v1' },
+			},
+		})
+	})
+
+	it('keeps the same message separate for authority and shadow tenants', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const authority = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({
+				idempotencyKey: 'authority-shadow-message',
+				tenantId: 'org-aihero',
+			}),
+			now,
+		})
+		const shadow = await acceptDrovrIntent({
+			repository,
+			intent: shadowIntent({
+				idempotencyKey: 'shadow-shadow-message',
+				tenantId: 'org-aihero-shadow',
+			}),
+			now,
+		})
+
+		expect(authority).toMatchObject({ status: 'accepted', created: true })
+		expect(shadow).toMatchObject({ status: 'accepted', created: true })
+		expect(repository.intents.size).toBe(2)
+		expect(
+			Array.from(repository.intents.values()).map((row) => row.idempotencyKey),
+		).toEqual([
+			'contact:org-aihero:contact-1:shadow-newsletter:agents_md_big_problem_v1',
+			'contact:org-aihero-shadow:contact-1:shadow-newsletter:agents_md_big_problem_v1',
+		])
 	})
 })
 

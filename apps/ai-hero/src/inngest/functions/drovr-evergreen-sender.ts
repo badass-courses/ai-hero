@@ -17,15 +17,18 @@ import { createCouponAuthority } from '@/lib/subscriber-marketing/evergreen-offe
 import { createMySqlCouponCommerceStore } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql'
 import { resolveEvergreenMerchantEvidence } from '@/lib/subscriber-marketing/evergreen-merchant-evidence'
 import { executePendingEvergreenSends } from '@/lib/subscriber-marketing/drovr-evergreen-sender'
+import {
+	readbackShadowNewsletterSequences,
+	SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE,
+} from '@/lib/subscriber-marketing/drovr-shadow-newsletter'
 import { log } from '@/server/logger'
 
 import { parseValuePathProviderPacingMs } from './value-path-provider-pacing'
 
 /**
- * Sends the evergreen bridge and pitch messages drovr planned. Off until
- * AIH_DROVR_EVERGREEN_ENABLED, and even then every run re-proves that all
- * eight Kit sequences are active with one email before it touches a row:
- * the readback is the gate, not a deploy-time promise.
+ * Sends drovr's evergreen and shadow-newsletter sequence enrollments. Off
+ * until AIH_DROVR_EVERGREEN_ENABLED, and every customer-visible sequence
+ * write is behind a live Kit readback gate rather than a deploy-time promise.
  */
 const senderLimit = (raw: string | undefined): number => {
 	const parsed = Number.parseInt(raw ?? '', 10)
@@ -89,6 +92,40 @@ export const drovrEvergreenSender = inngest.createFunction(
 				problems: listReadback.problems,
 			})
 		}
+		const shadowReadback = await step.run(
+			'readback-kit-shadow-newsletter-sequences',
+			() =>
+				readbackShadowNewsletterSequences({
+					apiKey: process.env.KIT_V4_API_KEY,
+					fetch,
+				}),
+		)
+		const shadowSends = shadowReadback.ready
+			? await step.run('send-pending-shadow-newsletter-emails', () =>
+					executePendingEvergreenSends({
+						repository: new DrizzleCaptureMarketingRepository(db),
+						type: SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE,
+						subscribe: (input) =>
+							addSubscriberToKitSequence({
+								apiKey: process.env.KIT_V4_API_KEY,
+								fetch,
+								sequenceId: input.listId,
+								email: input.user.email,
+							}),
+						limit: senderLimit(
+							process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT,
+						),
+						pacingMs: parseValuePathProviderPacingMs(
+							process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
+						),
+					}),
+				)
+			: []
+		if (!shadowReadback.ready) {
+			await log.warn('drovr.shadow_newsletter.not_ready', {
+				problems: shadowReadback.problems,
+			})
+		}
 		const readback = await step.run('readback-kit-sequences', () =>
 			readbackEvergreenSequences({
 				apiKey: process.env.KIT_V4_API_KEY,
@@ -102,7 +139,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 			return {
 				status: 'not-ready',
 				problems: readback.problems,
-				counts: { lists: tally(lists) },
+				counts: { lists: tally(lists), shadow: tally(shadowSends) },
 			}
 		}
 		const results = await step.run('send-pending-evergreen-emails', () =>
@@ -153,8 +190,9 @@ export const drovrEvergreenSender = inngest.createFunction(
 			coupons: tally(coupons),
 			sends: tally(results),
 			lists: tally(lists),
+			shadow: tally(shadowSends),
 		}
 		await log.info('drovr.evergreen.sender_run', counts)
-		return { status: 'ran', counts, results, coupons, lists }
+		return { status: 'ran', counts, results, coupons, lists, shadowSends }
 	},
 )

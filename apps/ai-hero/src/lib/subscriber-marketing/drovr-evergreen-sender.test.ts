@@ -110,6 +110,61 @@ describe('executePendingEvergreenSends', () => {
 		expect(dispatched.map((d) => d.status)).toEqual(['completed'])
 	})
 
+	it('adds a shadow-newsletter contact to its pinned one-email sequence', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		repository.intents.set(
+			'row-shadow',
+			row({
+				id: 'row-shadow',
+				type: 'send-shadow-newsletter-email',
+				idempotencyKey:
+					'contact:contact-1:shadow-newsletter:agents_md_big_problem_v1',
+				metadata: {
+					source: 'drovr',
+					newsletter: 'shadow-newsletter',
+					catalogRevision: 'kit-2625552-2026-09-19',
+					messageId: 'agents_md_big_problem_v1',
+					position: 0,
+					kitSequenceId: '2899143',
+					drovr: {
+						tenantId: 'org-aihero-shadow',
+						journeyId: 'shadow-newsletter',
+						intentKey: 'k-shadow',
+					},
+				},
+			}),
+		)
+		const subscribes: unknown[] = []
+		const dispatched: SideEffectIntent[] = []
+		const results = await executePendingEvergreenSends({
+			repository,
+			subscribe: async (input) => {
+				subscribes.push(input)
+				return 'added'
+			},
+			limit: 10,
+			now: () => now,
+			dispatch: (intent) => dispatched.push(intent),
+			type: 'send-shadow-newsletter-email',
+		})
+		expect(results).toEqual([
+			{ status: 'completed', intentId: 'row-shadow', kitSequenceId: '2899143' },
+		])
+		expect(subscribes).toEqual([
+			{
+				listId: '2899143',
+				listType: 'sequence',
+				user: { email: 'learner@example.com', name: 'Learner' },
+			},
+		])
+		expect(repository.intents.get('row-shadow')).toMatchObject({
+			status: 'completed',
+			metadata: { completedAt: now, messageId: 'agents_md_big_problem_v1' },
+		})
+		expect(dispatched).toHaveLength(1)
+	})
+
 	it('keeps a failed Kit write pending with the attempt and error recorded', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())

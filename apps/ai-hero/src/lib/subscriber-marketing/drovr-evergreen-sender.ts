@@ -3,15 +3,16 @@ import {
 	SEND_EVERGREEN_EMAIL_INTENT_TYPE,
 	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
 } from './drovr-evergreen'
+import { SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE } from './drovr-shadow-newsletter'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
 
 /**
- * The evergreen sender: drains `send-evergreen-email` rows the drovr
- * executor endpoint accepted and adds each contact to the slot's Kit
- * sequence. One Kit write per row, sequential with pacing, exactly like
- * the skills-course sender. A completed row dispatches its completion
- * fact, which the emitter routes to the owning drovr actor.
+ * The sequence sender: drains the evergreen and shadow-newsletter rows the
+ * drovr executor endpoint accepted and adds each contact to the row's Kit
+ * sequence. One Kit write per row, sequential with pacing, exactly like the
+ * skills-course sender. A completed row dispatches its completion fact, which
+ * the emitter routes to the owning drovr actor.
  *
  * Failures stay retryable: the row keeps `pending` with an attempt count
  * and the last error until the attempt budget is spent, then it is
@@ -81,10 +82,11 @@ export async function executePendingEvergreenSends(args: {
 	pacingMs?: number
 	sleep?: (ms: number) => Promise<void>
 	dispatch?: (intent: SideEffectIntent) => void
-	/** Row type to drain; the list handoff rows add to a Kit sequence the
-	 * same way a message send does, so one drain serves both. */
+	/** Row type to drain; list handoffs and shadow rows add to a Kit
+	 * sequence the same way an evergreen message send does. */
 	type?:
 		| typeof SEND_EVERGREEN_EMAIL_INTENT_TYPE
+		| typeof SEND_SHADOW_NEWSLETTER_EMAIL_INTENT_TYPE
 		| typeof SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE
 }): Promise<EvergreenSendResult[]> {
 	const now = args.now ?? (() => new Date().toISOString())
