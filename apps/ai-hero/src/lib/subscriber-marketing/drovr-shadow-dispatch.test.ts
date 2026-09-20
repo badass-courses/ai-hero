@@ -51,6 +51,18 @@ const courseCompleted: DrovrShadowFact = {
 	completedAt: occurredAt,
 }
 
+const courseExhausted: DrovrShadowFact = {
+	kind: 'course-exhausted',
+	contactId: 'contact-1',
+	valuePathSlug: 'ai-hero-skills-workflow',
+	completedAt: occurredAt,
+	exhaustedAt: '2026-08-31T16:00:00.000Z',
+	timezone: {
+		timezone: 'Asia/Tokyo',
+		timezoneSource: 'vercel-header',
+	},
+}
+
 describe('drovr shadow dispatch', () => {
 	it('queues the mapped events as one durable Inngest batch', async () => {
 		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
@@ -281,6 +293,44 @@ describe('drovr shadow dispatch', () => {
 		expect(warn).toHaveBeenCalledWith('drovr.evergreen.entry_refused', {
 			contactId: 'contact-1',
 			reason: 'crash-course-purchaser',
+		})
+	})
+
+	it('fails closed for an ineligible course exhaustion without evergreen or newsletter birth', async () => {
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+		const warn = vi.fn()
+
+		await dispatchDrovrShadowFact(courseExhausted, {
+			send,
+			warn,
+			evergreenEnabled: true,
+			enterPitch: vi.fn().mockResolvedValue({
+				status: 'refused',
+				reason: 'unsubscribed',
+			}),
+		})
+
+		const events = send.mock.calls[0]?.[0].data.events
+		expect(events).toHaveLength(1)
+		expect(events[0]).toMatchObject({
+			journeyId: 'value-path-skills-course',
+			type: 'course.sequence-exhausted',
+		})
+		expect(
+			events.some(
+				(event: { journeyId: string }) =>
+					event.journeyId === 'crash-course-evergreen-offer',
+			),
+		).toBe(false)
+		expect(
+			events.some(
+				(event: { journeyId: string }) =>
+					event.journeyId === 'shadow-newsletter',
+			),
+		).toBe(false)
+		expect(warn).toHaveBeenCalledWith('drovr.evergreen.entry_refused', {
+			contactId: 'contact-1',
+			reason: 'unsubscribed',
 		})
 	})
 

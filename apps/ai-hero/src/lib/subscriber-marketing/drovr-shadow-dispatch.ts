@@ -15,7 +15,7 @@ import {
 	emitDrovrShadowEvents,
 	mapDrovrShadowFact,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
-	DROVR_SKILLS_COURSE_JOURNEY_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	type DrovrShadowEvent,
 	type DrovrShadowFact,
 } from './drovr-shadow-emitter'
@@ -121,7 +121,10 @@ export async function dispatchDrovrShadowFact(
 				.toLowerCase(),
 		)
 	let evergreenEntryAllowed = true
-	if (fact.kind === 'course-completed' && evergreenEnabled) {
+	const requiresEvergreenEligibility =
+		evergreenEnabled &&
+		(fact.kind === 'course-completed' || fact.kind === 'course-exhausted')
+	if (requiresEvergreenEligibility) {
 		const enterPitch = options.enterPitch ?? enterEvergreenPitchFromLiveDatabase
 		const warn = options.warn ?? log.warn
 		try {
@@ -155,11 +158,14 @@ export async function dispatchDrovrShadowFact(
 	}
 	const mappedEvents = mapDrovrShadowFact(fact)
 	const events =
-		fact.kind === 'course-completed' &&
-		evergreenEnabled &&
-		!evergreenEntryAllowed
+		requiresEvergreenEligibility && !evergreenEntryAllowed
 			? mappedEvents.filter(
-					(event) => event.journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					(event) =>
+						event.journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID &&
+						!(
+							fact.kind === 'course-exhausted' &&
+							isShadowNewsletterBirth(event)
+						),
 				)
 			: mappedEvents
 	if (events.length === 0) return 'nothing'
@@ -200,7 +206,7 @@ export async function dispatchDrovrShadowFact(
 			options.resolveNewsletterOwners ??
 			((births: readonly DrovrShadowEvent[]) =>
 				resolveOwnedContactIds(births, {
-					journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 				}))
 		const newsletterOwned = newsletterEvents.length
 			? await resolveNewsletterOwners(newsletterEvents).catch(

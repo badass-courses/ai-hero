@@ -7,7 +7,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import {
 	drovrApiKeyForTenant,
-	DROVR_SKILLS_COURSE_JOURNEY_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	type DrovrDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
@@ -59,7 +59,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 		const newsletterOwnedContactIds = newsletterEvents.length
 			? await step.run('resolve-newsletter-owners', () =>
 					resolveOwnedContactIds(newsletterEvents, {
-						journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+						journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 					})
 				)
 			: []

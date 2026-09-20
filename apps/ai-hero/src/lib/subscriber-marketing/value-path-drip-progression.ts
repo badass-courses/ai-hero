@@ -796,16 +796,17 @@ async function commitTerminalSequenceExhaustion(args: {
 		records,
 	})
 	if (committed.status === 'committed' || committed.status === 'replayed') {
+		const committedPayload = committed.records.fact.domainPayload
 		dispatchDrovrShadowFactSafely({
 			kind: 'course-exhausted',
 			contactId: args.contact.id,
 			valuePathSlug: args.nextValuePathSlug,
-			completedAt: parsedCompletedAt.value,
-			exhaustedAt: storedExhaustedAt.value,
+			completedAt: committedPayload.progression.from.completedAt,
+			exhaustedAt: committedPayload.exhaustedAt,
 			timezone: {
-				timezone: deadlineTimeZone.timeZone,
+				timezone: committedPayload.deadlineTimeZone.timeZone,
 				timezoneSource:
-					deadlineTimeZone.type === 'BrowserEntryHeader'
+					committedPayload.deadlineTimeZone.type === 'BrowserEntryHeader'
 						? 'vercel-header'
 						: 'fallback',
 			},

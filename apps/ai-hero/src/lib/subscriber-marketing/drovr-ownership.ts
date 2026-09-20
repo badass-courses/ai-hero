@@ -272,9 +272,10 @@ export function fanOutOwnedEvents(
 	newsletterOwnedContactIds: ReadonlySet<string>,
 ): DrovrShadowEvent[] {
 	// A newsletter birth is a handoff, not parity telemetry. It is allowed
-	// only for contacts that were born into drovr's skills-course journey;
-	// evergreen ownership alone must not migrate a Kit veteran. Keep the
-	// original-before-copy ordering used by the other owner-routed facts.
+	// only for contacts with a shadow-newsletter ownership assignment;
+	// skills-course or evergreen ownership alone must not migrate a Kit
+	// veteran. Keep the original-before-copy ordering used by the other
+	// owner-routed facts.
 	const retained = events.filter((event) => {
 		if (!isShadowNewsletterBirth(event)) return true
 		return newsletterOwnedContactIds.has(event.contactId)
