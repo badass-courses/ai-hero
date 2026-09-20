@@ -38,6 +38,39 @@ describe('kit directory export reader', () => {
 		}
 	})
 
+	it('accumulates multiline records and preserves escaped quotes', async () => {
+		const directory = await mkdtemp(join(tmpdir(), 'kit-directory-ingest-'))
+		const file = join(directory, 'subscribers.csv')
+		try {
+			await writeFile(
+				file,
+				'id,name,email\n9,"Jane\nDoe",jane@example.test\n10,"Said ""hello""",ten@example.test\n',
+				'utf8',
+			)
+			const subscribers = []
+			for await (const batch of readKitDirectoryBatches(file, {
+				batchSize: 500,
+			})) {
+				subscribers.push(...batch)
+			}
+
+			expect(subscribers).toEqual([
+				{
+					id: '9',
+					name: 'Jane\nDoe',
+					email: 'jane@example.test',
+				},
+				{
+					id: '10',
+					name: 'Said "hello"',
+					email: 'ten@example.test',
+				},
+			])
+		} finally {
+			await rm(directory, { recursive: true, force: true })
+		}
+	})
+
 	it('accepts common Kit export headers and omits missing optional fields', () => {
 		expect(
 			subscriberFromCsvRow(

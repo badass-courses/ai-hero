@@ -78,6 +78,18 @@ export function subscriberFromCsvRow(
 	}
 }
 
+function csvQuoteStateAfterLine(line: string, quoted: boolean): boolean {
+	for (let index = 0; index < line.length; index++) {
+		if (line[index] !== '"') continue
+		if (quoted && line[index + 1] === '"') {
+			index += 1
+			continue
+		}
+		quoted = !quoted
+	}
+	return quoted
+}
+
 export async function* readKitDirectoryBatches(
 	file: string,
 	options: { after?: string; batchSize: number },
@@ -86,15 +98,24 @@ export async function* readKitDirectoryBatches(
 	const lines = createInterface({ input, crlfDelay: Infinity })
 	let headers: string[] | undefined
 	let batch: KitDirectorySubscriber[] = []
+	let recordLines: string[] = []
+	let quoted = false
 
 	try {
 		for await (const line of lines) {
-			if (!line.trim()) continue
+			if (!line.trim() && recordLines.length === 0) continue
+			recordLines.push(line)
+			quoted = csvQuoteStateAfterLine(line, quoted)
+			if (quoted) continue
+
+			const record = recordLines.join('\n')
+			recordLines = []
+			quoted = false
 			if (!headers) {
-				headers = parseCsvLine(line).map(normalizedHeader)
+				headers = parseCsvLine(record).map(normalizedHeader)
 				continue
 			}
-			const subscriber = subscriberFromCsvRow(headers, parseCsvLine(line))
+			const subscriber = subscriberFromCsvRow(headers, parseCsvLine(record))
 			if (!subscriber) continue
 			if (
 				options.after &&
@@ -106,6 +127,9 @@ export async function* readKitDirectoryBatches(
 				yield batch
 				batch = []
 			}
+		}
+		if (recordLines.length > 0) {
+			throw new Error('CSV row has an unterminated quoted field')
 		}
 	} finally {
 		lines.close()
