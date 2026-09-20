@@ -251,7 +251,7 @@ export async function captureNormalizedContactEvent(args: {
 	}
 }
 
-async function resolveOrCreateCaptureIdentity(args: {
+export async function resolveOrCreateCaptureIdentity(args: {
 	repository: CaptureMarketingRepository
 	event: NormalizedContactEvent
 	now: string

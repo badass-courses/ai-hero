@@ -13,6 +13,7 @@ import { and, asc, eq, gt, inArray, or, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { guid } from '@coursebuilder/utils/guid'
+import { customAlphabet } from 'nanoid'
 
 import { createInternalId } from '../internal-id'
 import {
@@ -70,6 +71,11 @@ type AiHeroWriteDatabase = any
 
 // ~5k rows of intent payload (metadata/gates included) is ~5MB on the wire,
 // far under vtgate's 64MiB gRPC response cap.
+const contactId = customAlphabet(
+	'1234567890abcdefghijklmnopqrstuvwxyz',
+	8,
+)
+
 const SIDE_EFFECT_INTENT_SCAN_PAGE_SIZE = 5000
 // Projected entry rows are small, but still page them so pathological history
 // cannot recreate vtgate's 64MiB response failure inside one learner page.
@@ -103,6 +109,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	constructor(private readonly database: AiHeroWriteDatabase) {}
 
 	newId(kind: string) {
+		if (kind === 'contact') return contactId()
 		return kind === 'next_action' ||
 			kind === 'intent' ||
 			kind === 'side_effect_intent'
@@ -155,12 +162,15 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		input: Omit<ContactRecord, 'id'>,
 		options?: ContactCreationOptions,
 	) {
-		const record: ContactRecord = { id: this.newId('contact'), ...input }
-		await this.database.insert(contact).values({
-			...record,
-			...contactEmailWriteValues(record.email),
-			createdAt: new Date(record.createdAt),
-			updatedAt: new Date(record.updatedAt),
+		const record = await withMysqlPrimaryKeyRetry(async () => {
+			const next: ContactRecord = { id: this.newId('contact'), ...input }
+			await this.database.insert(contact).values({
+				...next,
+				...contactEmailWriteValues(next.email),
+				createdAt: new Date(next.createdAt),
+				updatedAt: new Date(next.updatedAt),
+			})
+			return next
 		})
 		dispatchDrovrShadowFactSafely({
 			kind: 'contact-created',

@@ -41,6 +41,7 @@
 		"evergreen-bridge:operator": "tsx src/scripts/evergreen-bridge-operator.ts",
 		"contact-integrity:maintenance": "tsx src/scripts/contact-integrity-maintenance.ts",
 		"contact-events:backfill": "tsx -r dotenv/config src/scripts/backfill-contact-events.ts",
+		"kit-directory:ingest": "tsx -r dotenv/config src/scripts/kit-directory-ingest.ts",
 		"ads:operator": "tsx -r dotenv/config src/scripts/ads-operator.ts",
 		"course-sync:funnel": "tsx -r dotenv/config src/scripts/course-sync-funnel.ts",
 		"ads:purchase-fallback-synthetic-proof": "tsx -r dotenv/config src/scripts/purchase-attribution-fallback-synthetic-proof.ts",
