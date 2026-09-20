@@ -85,6 +85,10 @@ import {
 } from '@/inngest/events/typesense-popularity'
 import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
 import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
+import {
+	KIT_DIRECTORY_INGEST_EVENT,
+	type KitDirectoryIngest,
+} from '@/inngest/events/kit-directory'
 import { USER_CREATED_EVENT, UserCreated } from '@/inngest/events/user-created'
 import {
 	VALUE_PATH_ANSWER_SELECTED_EVENT,
@@ -256,6 +260,7 @@ export type Events = {
 	[ARTWORK_GENERATION_FAILED_EVENT]: ArtworkGenerationFailed
 	[VALUE_PATH_ANSWER_SELECTED_EVENT]: ValuePathAnswerSelected
 	[DROVR_EVENTS_DELIVER_EVENT]: DrovrEventsDeliver
+	[KIT_DIRECTORY_INGEST_EVENT]: KitDirectoryIngest
 	// Operator lever: fire one learner-flow reconcile outside the hourly cron.
 	'subscriber_funnel.reconciler_run_requested': {
 		data: { requestedBy?: string; reason?: string }

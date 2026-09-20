@@ -38,6 +38,7 @@ import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
 import { drovrEventsDeliver } from './functions/drovr-events-deliver'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
+import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
 import { grantCouponEntitlements } from './functions/coupon/grant-coupon-entitlements'
 import { grantCouponEntitlementsForPurchase } from './functions/coupon/grant-coupon-entitlements-for-purchase'
@@ -151,6 +152,7 @@ const allFunctions = [
 	learnerFlowReconciler,
 	drovrEventsDeliver,
 	drovrEvergreenSender,
+	kitDirectoryIngest,
 	googleAdsConversionUpload,
 	invoiceShortfallReconciliation,
 	syncGithubSourcedPosts,
