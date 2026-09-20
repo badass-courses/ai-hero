@@ -71,7 +71,8 @@ export async function ingestKitDirectoryBatch(args: {
 
 	for (const subscriber of args.batch) {
 		const id = subscriber.id.trim()
-		if (!id) {
+		const numericId = Number(id)
+		if (!id || !Number.isFinite(numericId)) {
 			counts.skippedInvalid += 1
 			continue
 		}

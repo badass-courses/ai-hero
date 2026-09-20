@@ -29,6 +29,13 @@ export type LinkedActionRecords = {
 	sideEffectIntents: SideEffectIntent[]
 }
 
+export type CaptureIdentityCreationResult = {
+	contact: ContactRecord
+	providerIdentity: ProviderIdentityRecord
+	createdContact: boolean
+	createdProviderIdentity: boolean
+}
+
 export type CaptureMarketingRepository = {
 	findProviderIdentity(
 		provider: string,
@@ -40,6 +47,11 @@ export type CaptureMarketingRepository = {
 		input: Omit<ContactRecord, 'id'>,
 		options?: ContactCreationOptions,
 	): MaybePromise<ContactRecord>
+	createContactAndProviderIdentity(
+		input: Omit<ContactRecord, 'id'>,
+		providerIdentity: Omit<ProviderIdentityRecord, 'id' | 'contactId'>,
+		options?: ContactCreationOptions,
+	): MaybePromise<CaptureIdentityCreationResult>
 	updateContactOptInAttribution?(
 		contactId: string,
 		attribution: NonNullable<ContactRecord['optInAttribution']>,
@@ -292,7 +304,7 @@ export async function resolveOrCreateCaptureIdentity(args: {
 		}
 	}
 
-	const contact = await args.repository.createContact(
+	const created = await args.repository.createContactAndProviderIdentity(
 		{
 			userId: evidence.userId ?? null,
 			email: evidence.email ?? null,
@@ -303,23 +315,32 @@ export async function resolveOrCreateCaptureIdentity(args: {
 			createdAt: args.now,
 			updatedAt: args.now,
 		},
+		{
+			provider: providerIdentityEvidence.provider,
+			externalId: providerIdentityEvidence.externalId,
+			evidence,
+			createdAt: args.now,
+			updatedAt: args.now,
+		},
 		providerIdentityEvidence.provider === 'kit'
 			? { kitSubscriberId: providerIdentityEvidence.externalId }
 			: undefined,
 	)
-	const providerIdentity = await args.repository.createProviderIdentity({
-		contactId: contact.id,
-		provider: providerIdentityEvidence.provider,
-		externalId: providerIdentityEvidence.externalId,
-		evidence,
-		createdAt: args.now,
-		updatedAt: args.now,
-	})
 
-	return {
-		contact,
-		providerIdentity,
-		createdContact: true,
-		createdProviderIdentity: true,
+	if (
+		!created.createdContact &&
+		!created.contact.optInAttribution &&
+		args.event.optInAttribution &&
+		args.repository.updateContactOptInAttribution
+	) {
+		return {
+			...created,
+			contact: await args.repository.updateContactOptInAttribution(
+				created.contact.id,
+				args.event.optInAttribution,
+			),
+		}
 	}
+
+	return created
 }

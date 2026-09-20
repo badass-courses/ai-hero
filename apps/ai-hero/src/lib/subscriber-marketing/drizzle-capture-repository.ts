@@ -158,20 +158,26 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return rows[0] ? toContactRecord(rows[0]) : undefined
 	}
 
-	async createContact(
+	private insertContact(
+		database: AiHeroWriteDatabase,
 		input: Omit<ContactRecord, 'id'>,
+	) {
+		return withMysqlPrimaryKeyRetry(async () => {
+			const record: ContactRecord = { id: this.newId('contact'), ...input }
+			await database.insert(contact).values({
+				...record,
+				...contactEmailWriteValues(record.email),
+				createdAt: new Date(record.createdAt),
+				updatedAt: new Date(record.updatedAt),
+			})
+			return record
+		})
+	}
+
+	private dispatchContactCreated(
+		record: ContactRecord,
 		options?: ContactCreationOptions,
 	) {
-		const record = await withMysqlPrimaryKeyRetry(async () => {
-			const next: ContactRecord = { id: this.newId('contact'), ...input }
-			await this.database.insert(contact).values({
-				...next,
-				...contactEmailWriteValues(next.email),
-				createdAt: new Date(next.createdAt),
-				updatedAt: new Date(next.updatedAt),
-			})
-			return next
-		})
 		dispatchDrovrShadowFactSafely({
 			kind: 'contact-created',
 			contactId: record.id,
@@ -181,7 +187,76 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 				? { kitSubscriberId: options.kitSubscriberId }
 				: {}),
 		})
+	}
+
+	async createContact(
+		input: Omit<ContactRecord, 'id'>,
+		options?: ContactCreationOptions,
+	) {
+		const record = await this.insertContact(this.database, input)
+		this.dispatchContactCreated(record, options)
 		return record
+	}
+
+	async createContactAndProviderIdentity(
+		input: Omit<ContactRecord, 'id'>,
+		providerIdentityInput: Omit<
+			ProviderIdentityRecord,
+			'id' | 'contactId'
+		>,
+		options?: ContactCreationOptions,
+	) {
+		try {
+			const records = await this.database.transaction(
+				async (transaction: AiHeroWriteDatabase) => {
+					const contactRecord = await this.insertContact(transaction, input)
+					const providerIdentityRecord: ProviderIdentityRecord = {
+						id: this.newId('provider_identity'),
+						contactId: contactRecord.id,
+						...providerIdentityInput,
+					}
+					await transaction.insert(providerIdentity).values({
+						...providerIdentityRecord,
+						createdAt: new Date(providerIdentityRecord.createdAt),
+						updatedAt: new Date(providerIdentityRecord.updatedAt),
+					})
+					return {
+						contact: contactRecord,
+						providerIdentity: providerIdentityRecord,
+					}
+				},
+			)
+			this.dispatchContactCreated(records.contact, options)
+			return {
+				...records,
+				createdContact: true,
+				createdProviderIdentity: true,
+			}
+		} catch (cause) {
+			if (!isMysqlDuplicateEntryError(cause)) throw cause
+
+			const existingIdentity = await this.findProviderIdentity(
+				providerIdentityInput.provider,
+				providerIdentityInput.externalId,
+			)
+			if (!existingIdentity) throw cause
+
+			const existingContact = await this.findContactById(
+				existingIdentity.contactId,
+			)
+			if (!existingContact) {
+				throw new Error(
+					`Provider identity ${existingIdentity.id} points at missing contact`,
+				)
+			}
+
+			return {
+				contact: existingContact,
+				providerIdentity: existingIdentity,
+				createdContact: false,
+				createdProviderIdentity: false,
+			}
+		}
 	}
 
 	async updateContactOptInAttribution(

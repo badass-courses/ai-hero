@@ -11,6 +11,10 @@ import {
 	resolveOrCreateIdentity,
 	type IdentityRepository,
 } from './identity-resolution'
+import type {
+	CaptureIdentityCreationResult,
+	ContactCreationOptions,
+} from './capture-contact-event'
 import { planDryRunIntents } from './intent-planner'
 import { normalizeContactEvent } from './normalize-contact-event'
 import { classifyContactEvent } from './signal-classifier'
@@ -120,6 +124,51 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		const contact = { id: this.id('contact'), ...input }
 		this.contacts.set(contact.id, contact)
 		return contact
+	}
+
+	createContactAndProviderIdentity(
+		input: Omit<ContactRecord, 'id'>,
+		providerIdentityInput: Omit<
+			ProviderIdentityRecord,
+			'id' | 'contactId'
+		>,
+		_options?: ContactCreationOptions,
+	): CaptureIdentityCreationResult {
+		const existingIdentity = this.findProviderIdentity(
+			providerIdentityInput.provider,
+			providerIdentityInput.externalId,
+		)
+		if (existingIdentity) {
+			const existingContact = this.findContactById(existingIdentity.contactId)
+			if (!existingContact) {
+				throw new Error(
+					`Provider identity ${existingIdentity.id} points at missing contact`,
+				)
+			}
+			return {
+				contact: existingContact,
+				providerIdentity: existingIdentity,
+				createdContact: false,
+				createdProviderIdentity: false,
+			}
+		}
+
+		const contact = this.createContact(input)
+		try {
+			const providerIdentity = this.createProviderIdentity({
+				...providerIdentityInput,
+				contactId: contact.id,
+			})
+			return {
+				contact,
+				providerIdentity,
+				createdContact: true,
+				createdProviderIdentity: true,
+			}
+		} catch (error) {
+			this.contacts.delete(contact.id)
+			throw error
+		}
 	}
 
 	updateContactOptInAttribution(

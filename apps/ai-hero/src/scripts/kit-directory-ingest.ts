@@ -96,7 +96,11 @@ export async function* readKitDirectoryBatches(
 			}
 			const subscriber = subscriberFromCsvRow(headers, parseCsvLine(line))
 			if (!subscriber) continue
-			if (options.after && subscriber.id <= options.after) continue
+			if (
+				options.after &&
+				Number(subscriber.id) <= Number(options.after)
+			)
+				continue
 			batch.push(subscriber)
 			if (batch.length >= options.batchSize) {
 				yield batch
