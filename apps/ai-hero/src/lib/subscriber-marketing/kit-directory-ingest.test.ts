@@ -170,7 +170,7 @@ describe('kit directory ingest', () => {
 				name: 'New Subscriber',
 				createdAt: '2026-09-20T01:00:00.000Z',
 			}),
-		{ kitSubscriberId: '43' },
+			{ kitSubscriberId: '43', deliverySource: 'kit-directory-ingest' },
 		)
 		expect(fake.createProviderIdentity).toHaveBeenCalledWith(
 			expect.objectContaining({ provider: 'kit', externalId: '43' }),

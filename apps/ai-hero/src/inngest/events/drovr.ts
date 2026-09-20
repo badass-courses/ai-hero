@@ -24,5 +24,11 @@ export type DrovrEventsDeliver = {
 			| 'course-exhausted'
 			/** Pre-gate veterans' newsletter births, sent by the veterans function. */
 			| 'newsletter-veteran'
+			/**
+			 * Directory births for contacts the Kit ingest creates. Their own lane:
+			 * as `contact-created` they queued live signups behind a bulk page
+			 * (2026-09-20 21:37Z, 579 waiting).
+			 */
+			| 'kit-directory-ingest'
 	}
 }

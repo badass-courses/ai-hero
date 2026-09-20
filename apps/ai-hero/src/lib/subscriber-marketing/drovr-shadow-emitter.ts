@@ -81,6 +81,8 @@ export type DrovrShadowFact =
 			createdAt: string
 			sourceLifecycle: string
 			kitSubscriberId?: string
+			/** Delivery lane override for bulk producers (see ContactCreationOptions). */
+			deliverySource?: 'kit-directory-ingest'
 	  }
 	| {
 			kind: 'contact-event'

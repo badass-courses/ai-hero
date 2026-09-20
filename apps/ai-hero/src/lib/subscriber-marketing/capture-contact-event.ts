@@ -20,8 +20,24 @@ import type {
 
 type MaybePromise<T> = T | Promise<T>
 
+function contactCreationOptions(
+	providerIdentity: { provider: string; externalId: string },
+	extra: Omit<ContactCreationOptions, 'kitSubscriberId'> | undefined,
+): ContactCreationOptions | undefined {
+	const options: ContactCreationOptions = { ...extra }
+	if (providerIdentity.provider === 'kit') {
+		options.kitSubscriberId = providerIdentity.externalId
+	}
+	return Object.keys(options).length > 0 ? options : undefined
+}
+
 export type ContactCreationOptions = {
 	kitSubscriberId?: string
+	/**
+	 * Which delivery lane the contact's drovr birth rides. Bulk producers
+	 * name their own so live signups never queue behind them.
+	 */
+	deliverySource?: 'kit-directory-ingest'
 }
 
 export type LinkedActionRecords = {
@@ -267,6 +283,7 @@ export async function resolveOrCreateCaptureIdentity(args: {
 	repository: CaptureMarketingRepository
 	event: NormalizedContactEvent
 	now: string
+	creationOptions?: Omit<ContactCreationOptions, 'kitSubscriberId'>
 }) {
 	const evidence = args.event.identityEvidence
 	const providerIdentityEvidence = evidence.providerIdentity
@@ -322,9 +339,7 @@ export async function resolveOrCreateCaptureIdentity(args: {
 			createdAt: args.now,
 			updatedAt: args.now,
 		},
-		providerIdentityEvidence.provider === 'kit'
-			? { kitSubscriberId: providerIdentityEvidence.externalId }
-			: undefined,
+		contactCreationOptions(providerIdentityEvidence, args.creationOptions),
 	)
 
 	if (

@@ -7,6 +7,8 @@ import {
 import { normalizeContactEvent } from './normalize-contact-event'
 
 export const KIT_DIRECTORY_BATCH_SIZE = 500 as const
+/** The delivery lane for ingest-born directory births, apart from live signups. */
+export const KIT_DIRECTORY_DELIVERY_SOURCE = 'kit-directory-ingest' as const
 
 type KitDirectoryIngestMode = 'dry-run' | 'write'
 
@@ -94,6 +96,7 @@ export async function ingestKitDirectoryBatch(args: {
 			repository: args.repository,
 			event: kitDirectoryIdentityEvent({ subscriber, now }),
 			now,
+			creationOptions: { deliverySource: KIT_DIRECTORY_DELIVERY_SOURCE },
 		})
 		if (identity.createdContact) counts.created += 1
 		else counts.alreadyPresent += 1

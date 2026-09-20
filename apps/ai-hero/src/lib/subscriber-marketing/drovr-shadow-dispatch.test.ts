@@ -79,6 +79,31 @@ describe('drovr shadow dispatch', () => {
 		expect(fallback).not.toHaveBeenCalled()
 	})
 
+	it('keys a bulk producer birth to its own delivery lane', async () => {
+		const created: DrovrShadowFact = {
+			kind: 'contact-created',
+			contactId: 'contact-1',
+			createdAt: occurredAt,
+			sourceLifecycle: 'new',
+			kitSubscriberId: '43',
+		}
+		const send = vi.fn().mockResolvedValue({ ids: ['evt-1'] })
+
+		await dispatchDrovrShadowFact(created, { send })
+		await dispatchDrovrShadowFact(
+			{ ...created, deliverySource: 'kit-directory-ingest' },
+			{ send },
+		)
+
+		expect(send.mock.calls.map(([payload]) => payload.data.source)).toEqual([
+			'contact-created',
+			'kit-directory-ingest',
+		])
+		expect(send.mock.calls[0]?.[0].data.events).toEqual(
+			send.mock.calls[1]?.[0].data.events,
+		)
+	})
+
 	it('posts the exact durable event through Inngest HTTP', async () => {
 		const fetchImpl = vi
 			.fn()
