@@ -3,6 +3,11 @@ import type {
 	ContactEventWriteRepository,
 } from './contact-event-normalizer-preview'
 import {
+	readCoursePayload,
+	restoreEmailCourseEntryPayload,
+	type DeadlineTimeZoneEvidence,
+} from './course-sequence-exhaustion'
+import {
 	CONTACT_EVENT_SCHEMA_VERSION,
 	type ContactEventRecord,
 	type ContactIdentityEvidence,
@@ -31,6 +36,8 @@ export type PurchaseRecordedSource = {
 	totalAmount: string | number
 	/** ISO timestamp from the Purchase row's createdAt. */
 	purchasedAt: string
+	/** Captured at course entry when the purchase path can recover it. */
+	deadlineTimeZone?: DeadlineTimeZoneEvidence
 }
 
 export type ContactUnsubscribedSource = {
@@ -127,6 +134,9 @@ export function buildPurchaseRecordedEvent(
 			],
 			restrictedPayloadStored: false,
 		},
+		...(source.deadlineTimeZone
+			? { domainPayload: { deadlineTimeZone: source.deadlineTimeZone } }
+			: {}),
 		schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 	}
 }
@@ -316,7 +326,10 @@ async function decideLifecycleContactEvent(args: {
 	source: LifecycleContactEventSourceKind
 	sourceId: string
 	identity: LifecycleIdentityInput
-	build: (evidence: ContactIdentityEvidence) => NormalizedContactEvent
+	build: (
+		evidence: ContactIdentityEvidence,
+		contactId: string,
+	) => NormalizedContactEvent | Promise<NormalizedContactEvent>
 }): Promise<LifecycleContactEventDecision> {
 	const resolved = await resolveLifecycleIdentity(args.repository, args.identity)
 	if (resolved.status === 'skipped') {
@@ -328,7 +341,7 @@ async function decideLifecycleContactEvent(args: {
 			detail: resolved.detail,
 		}
 	}
-	const event = args.build(resolved.evidence)
+	const event = await args.build(resolved.evidence, resolved.contact.id)
 	const existing = await args.repository.findContactEventBySemanticKey(
 		event.semanticIdempotencyKey,
 	)
@@ -353,7 +366,39 @@ async function decideLifecycleContactEvent(args: {
 	}
 }
 
-function previewPurchaseRecordedDecision(
+async function findContactDeadlineTimeZone(
+	repository: ContactEventPreviewRepository,
+	contactId: string,
+): Promise<DeadlineTimeZoneEvidence | undefined> {
+	if (!repository.findContactEventsByType) return undefined
+	const entryEvents = await repository.findContactEventsByType(
+		contactId,
+		'value-path.entered',
+	)
+	const candidates = entryEvents
+		.map((event) => {
+			const nested = readCoursePayload(event.domainPayload)?.payload
+			const deadlineTimeZone =
+				restoreEmailCourseEntryPayload(nested)?.deadlineTimeZone ??
+				restoreEmailCourseEntryPayload(event.domainPayload)?.deadlineTimeZone
+			return deadlineTimeZone
+				? { occurredAt: event.occurredAt, deadlineTimeZone }
+				: undefined
+		})
+		.filter(
+			(value): value is {
+				occurredAt: string
+				deadlineTimeZone: DeadlineTimeZoneEvidence
+			} => value !== undefined,
+		)
+		.sort(
+			(left, right) =>
+				Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
+		)
+	return candidates[0]?.deadlineTimeZone
+}
+
+async function previewPurchaseRecordedDecision(
 	repository: ContactEventPreviewRepository,
 	row: PurchaseRecordedSource,
 ) {
@@ -366,7 +411,15 @@ function previewPurchaseRecordedDecision(
 			email: row.email,
 			name: row.name,
 		},
-		build: (evidence) => buildPurchaseRecordedEvent(row, evidence),
+		build: async (evidence, contactId) => {
+			const deadlineTimeZone =
+				row.deadlineTimeZone ??
+				(await findContactDeadlineTimeZone(repository, contactId))
+			return buildPurchaseRecordedEvent(
+				deadlineTimeZone ? { ...row, deadlineTimeZone } : row,
+				evidence,
+			)
+		},
 	})
 }
 

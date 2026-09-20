@@ -1,6 +1,7 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
 import {
 	DROVR_OWNERSHIP_OFF,
+	findJourneyOwnerAssignment,
 	recordJourneyOwnerAssigned,
 	resolveJourneyOwner,
 	type DrovrOwnershipConfig,
@@ -15,6 +16,7 @@ import { normalizeContactEvent } from './normalize-contact-event'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import type { ContactState } from './types'
 import { isDrovrOwnedIntent } from './drovr-ownership'
+import { DROVR_SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-emitter'
 import type { OptInAttribution } from './opt-in-attribution'
 import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 import {
@@ -62,6 +64,44 @@ export type SkillsNewsletterShadowObserver = (observation: {
 	subscribedAt: string
 	deadlineTimeZone?: DeadlineTimeZoneEvidence
 }) => Promise<unknown>
+
+/**
+ * Mark the legacy newsletter boundary explicitly for a drovr-owned signup.
+ * This runs at the exact branch where the Kit probe is skipped, rather than
+ * treating skills-course ownership as newsletter ownership. Veterans never
+ * get this assignment, so later shadow births cannot migrate them.
+ */
+export async function ensureShadowNewsletterOwnershipAssignment(args: {
+	repository: Pick<
+		CaptureMarketingRepository,
+		'findContactEventsByType' | 'createContactEvent'
+	>
+	contactId: string
+	providerIdentityId: string
+	kitSubscriberId: string
+	email: string
+	name?: string
+	occurredAt: string
+}) {
+	const existing = await findJourneyOwnerAssignment(
+		args.repository,
+		args.contactId,
+		DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	)
+	if (existing) return existing
+	return recordJourneyOwnerAssigned({
+		repository: args.repository,
+		contactId: args.contactId,
+		providerIdentityId: args.providerIdentityId,
+		kitSubscriberId: args.kitSubscriberId,
+		provider: 'kit',
+		providerExternalId: args.kitSubscriberId,
+		email: args.email,
+		name: args.name,
+		occurredAt: args.occurredAt,
+		journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	})
+}
 
 function attributionWithSubscriptionTime(
 	input: SkillsNewsletterPathEntryInput,

@@ -28,6 +28,10 @@ export type ContactEventPreviewRepository = {
 	findContactEventBySemanticKey(
 		key: string,
 	): ContactEventRecord | undefined | Promise<ContactEventRecord | undefined>
+	findContactEventsByType?(
+		contactId: string,
+		eventType: string,
+	): ContactEventRecord[] | Promise<ContactEventRecord[]>
 }
 
 export type KitSubscriberLookup = {

@@ -1,5 +1,11 @@
 import { readFile } from 'node:fs/promises'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const dispatchShadowFact = vi.hoisted(() => vi.fn())
+
+vi.mock('./drovr-shadow-dispatch', () => ({
+	dispatchDrovrShadowFactSafely: dispatchShadowFact,
+}))
 
 import { codingWorkflowFixture } from './__fixtures__/quick-question-fixtures'
 import {
@@ -425,6 +431,7 @@ describe('learner flow reconciler', () => {
 			now,
 			config: { repairCap: 150, maxRepairToCohortRatio: 1 },
 		})
+		dispatchShadowFact.mockClear()
 		const second = await progressValuePathDrips({
 			repository,
 			allowlist: emailSevenAllowlist(),
@@ -443,6 +450,9 @@ describe('learner flow reconciler', () => {
 		)
 
 		expect(first.counts.intentsCreated).toBe(1)
+		expect(dispatchShadowFact).toHaveBeenCalledTimes(1)
+		const firstExhaustionFact = dispatchShadowFact.mock.calls[0]?.[0]
+		dispatchShadowFact.mockClear()
 		expect(second.counts.idempotentNoop).toBe(1)
 		expect(second.results[0]).toMatchObject({
 			contactEventId: facts[0]?.id,
@@ -477,6 +487,26 @@ describe('learner flow reconciler', () => {
 		expect(repository.nextActions.get(intents[0]!.nextActionId)?.eventId).toBe(
 			facts[0]?.id,
 		)
+		dispatchShadowFact.mockClear()
+		const replay = await progressValuePathDrips({
+			repository,
+			allowlist: emailSevenAllowlist(),
+			completedIntents: [completed],
+			allowWrite: true,
+			email7LiveEnabled: true,
+			sequenceExhaustionEnabled: true,
+			now: '2026-07-18T23:00:00.000Z',
+		})
+		expect(replay.counts.idempotentNoop).toBe(1)
+		expect(dispatchShadowFact).toHaveBeenCalledTimes(1)
+		expect(dispatchShadowFact.mock.calls[0]?.[0]).toMatchObject({
+			kind: 'course-exhausted',
+			completedAt: firstExhaustionFact?.completedAt,
+			exhaustedAt: firstExhaustionFact?.exhaustedAt,
+			timezone: firstExhaustionFact?.timezone,
+		})
+
+		dispatchShadowFact.mockClear()
 		repository.updateSideEffectIntent(intents[0]!.id, {
 			status: 'completed',
 			completedAt: '2026-07-18T00:00:00.000Z',

@@ -4,6 +4,7 @@ import {
 	DROVR_OWNERSHIP_OFF,
 	decideJourneyOwner,
 	fanOutOwnedEvents,
+	findJourneyOwnerAssignment,
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
 	ownershipBucket,
@@ -145,10 +146,34 @@ describe('journey ownership discriminator', () => {
 	it.each([
 		'value-path-skills-course',
 		'crash-course-evergreen-offer',
+		'shadow-newsletter',
 	] as const)('round-trips %s through the provider event id', (journeyId) => {
 		const providerEventId = journeyOwnerProviderEventId('contact-1', journeyId)
 		expect(providerEventId).toBe(`drovr-owner:contact-1:${journeyId}`)
 		expect(journeyOwnerAssignmentJourneyId({ providerEventId })).toBe(journeyId)
+	})
+})
+
+describe('journey assignment scope', () => {
+	it('finds newsletter ownership without treating skills ownership as enough', async () => {
+		const assignment = (journeyId: string) =>
+			({
+				providerEventId: `drovr-owner:contact-1:${journeyId}`,
+			} as never)
+		const repository = {
+			findContactEventsByType: async () => [
+				assignment('value-path-skills-course'),
+				assignment('shadow-newsletter'),
+			],
+		}
+
+		expect(
+			await findJourneyOwnerAssignment(
+				repository,
+				'contact-1',
+				'shadow-newsletter',
+			),
+		).toEqual(assignment('shadow-newsletter'))
 	})
 })
 
@@ -172,7 +197,11 @@ describe('fan-out of owned facts to the authority tenant', () => {
 			shadow('value-path.answer-selected', 'owned'),
 			shadow('value-path.answer-selected', 'legacy'),
 		]
-		const out = fanOutOwnedEvents(events, new Set(['owned']))
+		const out = fanOutOwnedEvents(
+			events,
+			new Set(['owned']),
+			new Set(['owned']),
+		)
 		expect(out).toHaveLength(5)
 		expect(out[4]).toEqual({
 			...events[2],
@@ -187,7 +216,11 @@ describe('fan-out of owned facts to the authority tenant', () => {
 			...skills,
 			journeyId: 'crash-course-evergreen-offer' as const,
 		}
-		const out = fanOutOwnedEvents([skills, evergreen], new Set(['owned']))
+		const out = fanOutOwnedEvents(
+			[skills, evergreen],
+			new Set(['owned']),
+			new Set(['owned']),
+		)
 		expect(out).toHaveLength(3)
 		expect(out[2]).toEqual({
 			...evergreen,
@@ -196,12 +229,61 @@ describe('fan-out of owned facts to the authority tenant', () => {
 		})
 	})
 
+	it('keeps a shadow-newsletter birth only for owned contacts and fans it out', () => {
+		const birth: DrovrShadowEvent = {
+			...shadow('contact.created', 'owned'),
+			journeyId: 'shadow-newsletter',
+			payload: {
+				timezone: 'America/Los_Angeles',
+				timezoneSource: 'fallback',
+			},
+		}
+		const veteranBirth = { ...birth, contactId: 'legacy' }
+		const out = fanOutOwnedEvents(
+			[birth, veteranBirth],
+			new Set(['owned']),
+			new Set(['owned']),
+		)
+		expect(out).toEqual([
+			birth,
+			{
+				...birth,
+				tenantId: 'org-aihero',
+				idempotencyKey: `owner:${birth.idempotencyKey}`,
+			},
+		])
+	})
+
+	it('does not migrate a Kit veteran from evergreen ownership alone', () => {
+		const birth: DrovrShadowEvent = {
+			...shadow('contact.created', 'veteran'),
+			journeyId: 'shadow-newsletter',
+			payload: {
+				timezone: 'America/Los_Angeles',
+				timezoneSource: 'fallback',
+			},
+		}
+		expect(
+			fanOutOwnedEvents(
+				[birth],
+				new Set(['veteran']),
+				new Set(),
+			),
+		).toEqual([])
+	})
+
 	it('leaves authority-addressed events alone', () => {
 		const authority: DrovrShadowEvent = {
 			...shadow('email.completed', 'owned'),
 			tenantId: 'org-aihero',
 		}
-		expect(fanOutOwnedEvents([authority], new Set(['owned']))).toEqual([
+		expect(
+			fanOutOwnedEvents(
+				[authority],
+				new Set(['owned']),
+				new Set(['owned']),
+			),
+		).toEqual([
 			authority,
 		])
 	})

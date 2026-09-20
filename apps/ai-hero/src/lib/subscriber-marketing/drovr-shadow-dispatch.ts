@@ -3,7 +3,10 @@ import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
 import { log } from '@/server/logger'
 
 import type { EvergreenPitchEntryResult } from './drovr-pitch-entry'
-import { fanOutOwnedEvents } from './drovr-ownership'
+import {
+	fanOutOwnedEvents,
+	isShadowNewsletterBirth,
+} from './drovr-ownership'
 import {
 	enterEvergreenPitchFromLiveDatabase,
 	resolveOwnedContactIds,
@@ -12,6 +15,7 @@ import {
 	emitDrovrShadowEvents,
 	mapDrovrShadowFact,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	type DrovrShadowEvent,
 	type DrovrShadowFact,
 } from './drovr-shadow-emitter'
@@ -89,13 +93,17 @@ type DrovrShadowDispatchOptions = {
 	send?: DrovrShadowSend
 	/** Direct sender for the fallback; receives the fanned-out batch. */
 	fallback?: (events: readonly DrovrShadowEvent[]) => Promise<void>
-	/** Ownership read for the fallback's fan-out. */
-	resolveOwners?: (events: readonly DrovrShadowEvent[]) => Promise<string[]>
 	/** Test seam for the live eligibility read and ownership stamp. */
 	enterPitch?: (args: {
 		contactId: string
 		completedAt: string
 	}) => Promise<EvergreenPitchEntryResult>
+	/** Test seam for the all-journey owner read used by fallback fan-out. */
+	resolveOwners?: (events: readonly DrovrShadowEvent[]) => Promise<string[]>
+	/** Test seam for skills-course ownership of newsletter births. */
+	resolveNewsletterOwners?: (
+		events: readonly DrovrShadowEvent[],
+	) => Promise<string[]>
 	/** Evergreen route flag. Defaults to AIH_DROVR_EVERGREEN_ENABLED. */
 	evergreenEnabled?: boolean
 	warn?: typeof log.warn
@@ -113,7 +121,10 @@ export async function dispatchDrovrShadowFact(
 				.toLowerCase(),
 		)
 	let evergreenEntryAllowed = true
-	if (fact.kind === 'course-completed' && evergreenEnabled) {
+	const requiresEvergreenEligibility =
+		evergreenEnabled &&
+		(fact.kind === 'course-completed' || fact.kind === 'course-exhausted')
+	if (requiresEvergreenEligibility) {
 		const enterPitch = options.enterPitch ?? enterEvergreenPitchFromLiveDatabase
 		const warn = options.warn ?? log.warn
 		try {
@@ -147,11 +158,14 @@ export async function dispatchDrovrShadowFact(
 	}
 	const mappedEvents = mapDrovrShadowFact(fact)
 	const events =
-		fact.kind === 'course-completed' &&
-		evergreenEnabled &&
-		!evergreenEntryAllowed
+		requiresEvergreenEligibility && !evergreenEntryAllowed
 			? mappedEvents.filter(
-					(event) => event.journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+					(event) =>
+						event.journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID &&
+						!(
+							fact.kind === 'course-exhausted' &&
+							isShadowNewsletterBirth(event)
+						),
 				)
 			: mappedEvents
 	if (events.length === 0) return 'nothing'
@@ -187,10 +201,26 @@ export async function dispatchDrovrShadowFact(
 		// whichever road it takes.
 		const resolveOwners = options.resolveOwners ?? resolveOwnedContactIds
 		const owned = await resolveOwners(events).catch(() => [] as string[])
+		const newsletterEvents = events.filter(isShadowNewsletterBirth)
+		const resolveNewsletterOwners =
+			options.resolveNewsletterOwners ??
+			((births: readonly DrovrShadowEvent[]) =>
+				resolveOwnedContactIds(births, {
+					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+				}))
+		const newsletterOwned = newsletterEvents.length
+			? await resolveNewsletterOwners(newsletterEvents).catch(
+					() => [] as string[],
+				)
+			: []
 		const fallback = options.fallback ?? emitDrovrShadowEvents
-		await fallback(fanOutOwnedEvents(events, new Set(owned))).catch(
-			() => undefined,
-		)
+		await fallback(
+			fanOutOwnedEvents(
+				events,
+				new Set(owned),
+				new Set(newsletterOwned),
+			),
+		).catch(() => undefined)
 		return 'fallback'
 	}
 }

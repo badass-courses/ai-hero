@@ -5,7 +5,10 @@ import {
 	deadlineTimeZoneEvidenceFromHeader,
 } from './course-sequence-exhaustion'
 import { InMemorySubscriberMarketingRepository } from './dry-run'
-import { enterSkillsNewsletterSubscriber } from './skills-newsletter-path-entry'
+import {
+	ensureShadowNewsletterOwnershipAssignment,
+	enterSkillsNewsletterSubscriber,
+} from './skills-newsletter-path-entry'
 import type { GateDRuntimeAllowlist } from './value-path-gate-d-allowlist'
 
 const subscribedAt = '2026-08-30T02:00:00.000Z'
@@ -140,6 +143,49 @@ describe('Skills newsletter path entry: drovr ownership', () => {
 			'skills-newsletter.subscribed',
 		])
 		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+	})
+
+	it('records a separate newsletter assignment at the Kit-probe boundary', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+			drovrOwnership: { percent: 100, emails: new Set() },
+		})
+		const identity = Array.from(repository.providerIdentities.values())[0]
+		if (!identity) throw new Error('expected Kit identity')
+
+		const assignment = await ensureShadowNewsletterOwnershipAssignment({
+			repository,
+			contactId: result.contactId,
+			providerIdentityId: identity.id,
+			kitSubscriberId: input.kitSubscriberId,
+			email: input.email,
+			name: 'Owned Learner',
+			occurredAt: input.subscribedAt,
+		})
+		const replay = await ensureShadowNewsletterOwnershipAssignment({
+			repository,
+			contactId: result.contactId,
+			providerIdentityId: identity.id,
+			kitSubscriberId: input.kitSubscriberId,
+			email: input.email,
+			occurredAt: input.subscribedAt,
+		})
+
+		expect(assignment.providerEventId).toBe(
+			`drovr-owner:${result.contactId}:shadow-newsletter`,
+		)
+		expect(replay).toEqual(assignment)
+		expect(
+			Array.from(repository.contactEvents.values()).filter(
+				(event) =>
+					event.eventType === 'journey.owner.assigned' &&
+					event.providerEventId.endsWith(':shadow-newsletter'),
+			),
+		).toHaveLength(1)
 	})
 
 	it('keeps ownership sticky across a replayed signup and records it once', async () => {

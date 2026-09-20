@@ -4,6 +4,7 @@ import {
 	DROVR_AUTHORITY_TENANT_ID,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_SHADOW_TENANT_ID,
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
 	type DrovrJourneyId,
 	type DrovrShadowEvent,
@@ -177,6 +178,9 @@ export function journeyOwnerAssignmentJourneyId(
 	if (event.providerEventId.endsWith(`:${DROVR_EVERGREEN_OFFER_JOURNEY_ID}`)) {
 		return DROVR_EVERGREEN_OFFER_JOURNEY_ID
 	}
+	if (event.providerEventId.endsWith(`:${DROVR_SHADOW_NEWSLETTER_JOURNEY_ID}`)) {
+		return DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
+	}
 	return undefined
 }
 
@@ -228,14 +232,25 @@ export function isDrovrOwnedIntent(intent: SideEffectIntent): boolean {
 }
 
 /**
- * Shadow-addressed facts that the authority tenant must also hear. Births
- * are excluded: the ownership event is the only authority birth. Email
- * completions are excluded too: an owned contact's sends are all
+ * Shadow-addressed facts that the authority tenant must also hear. The
+ * ownership assignment remains the only authority birth for the course
+ * journeys; the shadow-newsletter birth is the deliberate exception because
+ * the same journey must run as parity in shadow and as the real sender in
+ * authority. Email completions are excluded: an owned contact's sends are
  * drovr-planned, and those already complete straight to the owner under
- * drovr's own completion key; copying the shadow mirror would fold the
- * same completion twice.
+ * drovr's own completion key; copying the shadow mirror would fold the same
+ * completion twice.
  */
+export function isShadowNewsletterBirth(event: DrovrShadowEvent): boolean {
+	return (
+		event.tenantId === DROVR_SHADOW_TENANT_ID &&
+		event.journeyId === DROVR_SHADOW_NEWSLETTER_JOURNEY_ID &&
+		event.type === 'contact.created'
+	)
+}
+
 export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
+	if (isShadowNewsletterBirth(event)) return true
 	return (
 		event.tenantId === DROVR_SHADOW_TENANT_ID &&
 		event.type !== 'contact.created' &&
@@ -254,9 +269,22 @@ export function isOwnerFanOutCandidate(event: DrovrShadowEvent): boolean {
 export function fanOutOwnedEvents(
 	events: readonly DrovrShadowEvent[],
 	ownedContactIds: ReadonlySet<string>,
+	newsletterOwnedContactIds: ReadonlySet<string>,
 ): DrovrShadowEvent[] {
-	const copies = events.flatMap((event) =>
-		isOwnerFanOutCandidate(event) && ownedContactIds.has(event.contactId)
+	// A newsletter birth is a handoff, not parity telemetry. It is allowed
+	// only for contacts with a shadow-newsletter ownership assignment;
+	// skills-course or evergreen ownership alone must not migrate a Kit
+	// veteran. Keep the original-before-copy ordering used by the other
+	// owner-routed facts.
+	const retained = events.filter((event) => {
+		if (!isShadowNewsletterBirth(event)) return true
+		return newsletterOwnedContactIds.has(event.contactId)
+	})
+	const copies = retained.flatMap((event) => {
+		const owned = isShadowNewsletterBirth(event)
+			? newsletterOwnedContactIds.has(event.contactId)
+			: ownedContactIds.has(event.contactId)
+		return isOwnerFanOutCandidate(event) && owned
 			? [
 					{
 						...event,
@@ -264,7 +292,7 @@ export function fanOutOwnedEvents(
 						idempotencyKey: `owner:${event.idempotencyKey}`,
 					},
 				]
-			: [],
-	)
-	return [...events, ...copies]
+			: []
+	})
+	return [...retained, ...copies]
 }
