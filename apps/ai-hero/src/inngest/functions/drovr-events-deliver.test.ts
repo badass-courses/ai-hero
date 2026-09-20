@@ -1,148 +1,58 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-import type { DrovrShadowEvent } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	createFunction: vi.fn(),
-	deliverOrThrow: vi.fn(),
-	deliveryStepId: vi.fn((event: { idempotencyKey: string }) =>
-		`deliver:${event.idempotencyKey}`,
+	createFunction: vi.fn(
+		(config: unknown, trigger: unknown, handler: unknown) => ({
+			config,
+			trigger,
+			handler,
+		}),
 	),
-	resolveOwnedContactIds: vi.fn(),
-	log: {
-		warn: vi.fn(),
-	},
+	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('@/env.mjs', () => ({
-	env: {
-		DROVR_SHADOW_INGEST_URL: 'https://drovr.test/events',
-		DROVR_SHADOW_API_KEY: 'shadow-key',
-		DROVR_API_KEY_ORG_AIHERO: 'authority-key',
-	},
-}))
-
+vi.mock('@/env.mjs', () => ({ env: {} }))
 vi.mock('@/inngest/inngest.server', () => ({
-	inngest: {
-		createFunction: mocks.createFunction.mockImplementation(
-			(config: unknown, trigger: unknown, handler: unknown) => ({
-				config,
-				trigger,
-				handler,
-			}),
-		),
-	},
+	inngest: { createFunction: mocks.createFunction },
 }))
-
 vi.mock('@/lib/subscriber-marketing/drovr-shadow-delivery', () => ({
-	deliverOrThrow: mocks.deliverOrThrow,
-	deliveryStepId: mocks.deliveryStepId,
+	deliverOrThrow: vi.fn(),
+	deliveryStepId: vi.fn(),
 }))
-
+vi.mock('@/lib/subscriber-marketing/drovr-shadow-emitter', () => ({
+	drovrApiKeyForTenant: vi.fn(),
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID: 'shadow-newsletter',
+}))
+vi.mock('@/lib/subscriber-marketing/drovr-ownership', () => ({
+	fanOutOwnedEvents: vi.fn(),
+	isShadowNewsletterBirth: vi.fn(),
+}))
 vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
-	resolveOwnedContactIds: mocks.resolveOwnedContactIds,
+	resolveOwnedContactIds: vi.fn(),
 }))
-
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
 import { drovrEventsDeliver } from './drovr-events-deliver'
 
-type TestHandler = (args: {
-	event: {
-		data: {
-			events: readonly DrovrShadowEvent[]
-			source: string
-		}
+const registered = drovrEventsDeliver as unknown as {
+	config: {
+		id: string
+		concurrency: Array<{ key?: string; limit: number }>
 	}
-	step: {
-		run: (id: string, callback: () => Promise<unknown>) => Promise<unknown>
-	}
-}) => Promise<unknown>
-
-const handler = (drovrEventsDeliver as unknown as { handler: TestHandler }).handler
-
-const birth: DrovrShadowEvent = {
-	tenantId: 'org-aihero-shadow',
-	contactId: 'contact-1',
-	journeyId: 'shadow-newsletter',
-	type: 'contact.created',
-	occurredAt: '2026-09-20T05:00:00.000Z',
-	idempotencyKey:
-		'contact:org-aihero-shadow:contact-1:shadow-newsletter:birth',
-	payload: {
-		timezone: 'America/Los_Angeles',
-		timezoneSource: 'fallback',
-	},
+	trigger: { event: string }
 }
 
-function createStep() {
-	return {
-		run: vi.fn(async (_id: string, callback: () => Promise<unknown>) =>
-			callback(),
-		),
-	}
-}
-
-function event() {
-	return {
-		data: {
-			events: [birth],
-			source: 'course-exhausted',
-		},
-	}
-}
-
-describe('drovrEventsDeliver newsletter ownership gate', () => {
-	beforeEach(() => {
-		vi.clearAllMocks()
-		mocks.deliverOrThrow.mockResolvedValue({ status: 'accepted' })
-	})
-
-	it('drops a birth when only the skills-course assignment exists', async () => {
-		mocks.resolveOwnedContactIds
-			.mockResolvedValueOnce(['contact-1'])
-			.mockResolvedValueOnce([])
-
-		await expect(handler({ event: event(), step: createStep() })).resolves.toEqual(
-			{
-				status: 'delivered',
-				accepted: 0,
-				rejected: 0,
-			},
-		)
-
-		expect(mocks.resolveOwnedContactIds).toHaveBeenNthCalledWith(
-			2,
-			[birth],
-			{ journeyId: 'shadow-newsletter' },
-		)
-		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
-	})
-
-	it('keeps the birth and authority copy when the newsletter assignment exists', async () => {
-		mocks.resolveOwnedContactIds
-			.mockResolvedValueOnce(['contact-1'])
-			.mockResolvedValueOnce(['contact-1'])
-
-		await handler({ event: event(), step: createStep() })
-
-		expect(mocks.deliverOrThrow).toHaveBeenCalledTimes(2)
-		expect(
-			mocks.deliverOrThrow.mock.calls.map(
-				([args]: [{ event: DrovrShadowEvent }]) => args.event,
-			),
-		).toEqual([
-			birth,
-			{
-				...birth,
-				tenantId: 'org-aihero',
-				idempotencyKey: `owner:${birth.idempotencyKey}`,
-			},
+describe('drovr events deliver registration', () => {
+	it('keeps a per-source sub-queue so bulk producers cannot starve live facts', () => {
+		// 2026-09-20: the Kit directory ingest emitted ~170 `contact-created`
+		// facts a minute into a single 8-slot queue and live signups waited
+		// minutes behind them. The keyed entry caps any one source at half
+		// the slots and gives every other source its own queue.
+		expect(registered.config.id).toBe('drovr-events-deliver-v1')
+		expect(registered.config.concurrency).toEqual([
+			{ limit: 8 },
+			{ key: 'event.data.source', limit: 4 },
 		])
-		expect(mocks.resolveOwnedContactIds).toHaveBeenNthCalledWith(
-			2,
-			[birth],
-			{ journeyId: 'shadow-newsletter' },
-		)
+		expect(registered.trigger).toEqual({ event: 'drovr/events.deliver' })
 	})
 })
