@@ -18,6 +18,7 @@ import {
 	findJourneyOwnerAssignment,
 	isDrovrOwnedIntent,
 } from './drovr-ownership'
+import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
 	isContentCompleteSkillsWorkflowEmailResourceId,
@@ -794,6 +795,22 @@ async function commitTerminalSequenceExhaustion(args: {
 		courseEntryEventId,
 		records,
 	})
+	if (committed.status === 'committed' || committed.status === 'replayed') {
+		dispatchDrovrShadowFactSafely({
+			kind: 'course-exhausted',
+			contactId: args.contact.id,
+			valuePathSlug: args.nextValuePathSlug,
+			completedAt: parsedCompletedAt.value,
+			exhaustedAt: storedExhaustedAt.value,
+			timezone: {
+				timezone: deadlineTimeZone.timeZone,
+				timezoneSource:
+					deadlineTimeZone.type === 'BrowserEntryHeader'
+						? 'vercel-header'
+						: 'fallback',
+			},
+		})
+	}
 	if (committed.status === 'email-course-authority-present') {
 		return {
 			contactId: args.contact.id,

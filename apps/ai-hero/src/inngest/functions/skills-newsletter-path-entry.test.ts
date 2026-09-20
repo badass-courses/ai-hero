@@ -240,6 +240,31 @@ describe('skills newsletter path entry', () => {
 		})
 	})
 
+	it('skips legacy Kit enrollment for a drovr-owned contact', async () => {
+		mocks.enterSkillsNewsletterSubscriber.mockResolvedValueOnce({
+			status: 'drovr-owned',
+			contactId: 'contact_1',
+			captureEventId: 'capture_1',
+			entry: {
+				counts: { planned: 0, blocked: 0, idempotentNoop: 0 },
+				results: [],
+			},
+		})
+		const { step, results } = createDurableStep()
+
+		await runAttempt(step, 0)
+
+		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
+		expect(results.has('probe-shadow-newsletter-sequence')).toBe(false)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'subscriber_funnel.legacy_newsletter_enrollment_skipped',
+			expect.objectContaining({
+				contactId: 'contact_1',
+				reason: 'drovr-owned',
+			}),
+		)
+	})
+
 	it('uses RetryAfterError instead of an in-process 429 retry', async () => {
 		mocks.subscribeToKitListWithoutFields.mockRejectedValue(
 			convertKitError(429),

@@ -7,9 +7,13 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import {
 	drovrApiKeyForTenant,
+	DROVR_SKILLS_COURSE_JOURNEY_ID,
 	type DrovrDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
-import { fanOutOwnedEvents } from '@/lib/subscriber-marketing/drovr-ownership'
+import {
+	fanOutOwnedEvents,
+	isShadowNewsletterBirth,
+} from '@/lib/subscriber-marketing/drovr-ownership'
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
 import { log } from '@/server/logger'
 
@@ -51,9 +55,18 @@ export const drovrEventsDeliver = inngest.createFunction(
 		const ownedContactIds = await step.run('resolve-drovr-owners', () =>
 			resolveOwnedContactIds(event.data.events),
 		)
+		const newsletterEvents = event.data.events.filter(isShadowNewsletterBirth)
+		const newsletterOwnedContactIds = newsletterEvents.length
+			? await step.run('resolve-newsletter-owners', () =>
+					resolveOwnedContactIds(newsletterEvents, {
+						journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+					})
+				)
+			: []
 		const events = fanOutOwnedEvents(
 			event.data.events,
 			new Set(ownedContactIds),
+			new Set(newsletterOwnedContactIds),
 		)
 
 		let accepted = 0

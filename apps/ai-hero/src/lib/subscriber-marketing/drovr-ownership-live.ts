@@ -12,9 +12,11 @@ import {
 	isSuppressedLifecycle,
 } from './drovr-pitch-entry'
 import {
+	findJourneyOwnerAssignment,
 	findRecordedJourneyOwner,
 	isOwnerFanOutCandidate,
 } from './drovr-ownership'
+import type { DrovrJourneyId } from './drovr-shadow-emitter'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
 
 /**
@@ -154,6 +156,7 @@ export async function enterEvergreenPitchFromLiveDatabase(args: {
 
 export async function resolveOwnedContactIds(
 	events: readonly DrovrShadowEvent[],
+	options: { journeyId?: DrovrJourneyId } = {},
 ): Promise<string[]> {
 	const candidates = new Set(
 		events.filter(isOwnerFanOutCandidate).map((event) => event.contactId),
@@ -167,7 +170,14 @@ export async function resolveOwnedContactIds(
 		const repository = new DrizzleCaptureMarketingRepository(db)
 		const owned: string[] = []
 		for (const contactId of candidates) {
-			if ((await findRecordedJourneyOwner(repository, contactId)) === 'drovr') {
+			const assigned = options.journeyId
+				? await findJourneyOwnerAssignment(
+						repository,
+						contactId,
+						options.journeyId,
+					)
+				: await findRecordedJourneyOwner(repository, contactId)
+			if (options.journeyId ? assigned !== undefined : assigned === 'drovr') {
 				owned.push(contactId)
 			}
 		}

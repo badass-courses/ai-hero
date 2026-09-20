@@ -25,6 +25,11 @@ export type DrovrJourneyId =
 	| typeof DROVR_EVERGREEN_OFFER_JOURNEY_ID
 	| typeof DROVR_SHADOW_NEWSLETTER_JOURNEY_ID
 
+export type DrovrPinnedTimezonePayload = {
+	timezone: string
+	timezoneSource: 'vercel-header' | 'fallback'
+}
+
 export type DrovrShadowEvent = {
 	tenantId: DrovrTenantId
 	contactId: string
@@ -47,6 +52,7 @@ export type DrovrShadowEvent = {
 		| { couponId: string; expiresAt: string }
 		| { list: string }
 		| { productId: string }
+		| DrovrPinnedTimezonePayload
 		| {
 				valuePathSlug: string
 				completedAt: string
@@ -71,6 +77,7 @@ export type DrovrShadowFact =
 			/** Historic course completion, retained in the exhaustion payload. */
 			completedAt: string
 			timezoneHeader?: string
+			timezone?: DrovrPinnedTimezonePayload
 			/**
 			 * A paced backfill is born now, not at the historic completion.
 			 * Constraining both overrides to this shape keeps the forward fact unchanged.
@@ -79,6 +86,14 @@ export type DrovrShadowFact =
 				occurredAt: string
 				idempotencyKey: string
 			}
+	  }
+	| {
+			kind: 'course-exhausted'
+			contactId: string
+			valuePathSlug: string
+			completedAt: string
+			exhaustedAt: string
+			timezone: DrovrPinnedTimezonePayload
 	  }
 
 type DrovrShadowEmitterConfig = {
@@ -124,6 +139,9 @@ export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
 	}
 	if (fact.kind === 'side-effect-intent-completed') {
 		return mapCompletedIntent(fact.intent)
+	}
+	if (fact.kind === 'course-exhausted') {
+		return mapCourseExhausted(fact)
 	}
 	return mapCourseCompleted(fact)
 }
@@ -238,7 +256,16 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 		case 'purchase.recorded': {
 			const productId = purchaseProductId(event.payloadSummary.keywords)
 			if (!productId) return []
-			return bothJourneys(base, 'purchase.recorded', { productId })
+			return [
+				...bothJourneys(base, 'purchase.recorded', { productId }),
+				shadowNewsletterBirth({
+					contactId: event.contactId,
+					occurredAt: event.occurredAt,
+					timezone:
+						pinnedTimezonePayloadFromUnknown(event.domainPayload) ??
+						fallbackPinnedTimezone(),
+				}),
+			]
 		}
 		default:
 			return []
@@ -259,7 +286,19 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 		intent.type === 'subscribe-evergreen-list'
 	) {
 		const completion = drovrEvergreenCompletion(intent)
-		return completion ? [completion] : []
+		if (!completion) return []
+		const newsletterBirth =
+			intent.type === 'subscribe-evergreen-list' &&
+			stringValue(intent.metadata.list) === 'shadow-newsletter'
+				? shadowNewsletterBirth({
+						contactId: intent.contactId,
+						occurredAt: completion.occurredAt,
+						timezone:
+							pinnedTimezonePayloadFromUnknown(intent.metadata) ??
+							fallbackPinnedTimezone(),
+					})
+				: undefined
+		return newsletterBirth ? [completion, newsletterBirth] : [completion]
 	}
 	if (intent.type !== 'send-value-path-email') return []
 	const completedAt = valuePathIntentCompletedAt(intent)
@@ -416,7 +455,7 @@ function drovrOwnedCompletion(
 function mapCourseCompleted(
 	fact: Extract<DrovrShadowFact, { kind: 'course-completed' }>,
 ): DrovrShadowEvent[] {
-	const timezone = courseCompletionTimezone(fact.timezoneHeader)
+	const timezone = courseCompletionTimezone(fact.timezoneHeader, fact.timezone)
 	const evergreenPayload = {
 		valuePathSlug: fact.valuePathSlug,
 		completedAt: fact.completedAt,
@@ -453,6 +492,110 @@ function mapCourseCompleted(
 			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 			payload: evergreenPayload,
 		},
+		shadowNewsletterBirth({
+			contactId: fact.contactId,
+			occurredAt: fact.completedAt,
+			timezone: {
+				timezone: timezone.value,
+				timezoneSource: timezone.source,
+			},
+		}),
+	]
+}
+
+function shadowNewsletterBirthIdempotencyKey(contactId: string) {
+	return `contact:${DROVR_SHADOW_TENANT_ID}:${contactId}:shadow-newsletter:birth`
+}
+
+function shadowNewsletterBirth(args: {
+	contactId: string
+	occurredAt: string
+	timezone: DrovrPinnedTimezonePayload
+}): DrovrShadowEvent {
+	return {
+		tenantId: DROVR_SHADOW_TENANT_ID,
+		contactId: args.contactId,
+		journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+		type: 'contact.created',
+		occurredAt: args.occurredAt,
+		idempotencyKey: shadowNewsletterBirthIdempotencyKey(args.contactId),
+		payload: args.timezone,
+	}
+}
+
+function fallbackPinnedTimezone(): DrovrPinnedTimezonePayload {
+	return {
+		timezone: DROVR_FALLBACK_TIMEZONE,
+		timezoneSource: 'fallback',
+	}
+}
+
+function pinnedTimezonePayloadFromUnknown(
+	value: unknown,
+): DrovrPinnedTimezonePayload | undefined {
+	if (!value || typeof value !== 'object') return undefined
+	const record = value as Record<string, unknown>
+	const candidate = record.timezone ?? record.timeZone
+	if (typeof candidate === 'string') {
+		const parsed = parseIanaTimeZone(candidate)
+		if (parsed?.ok) {
+			return {
+				timezone: parsed.value,
+				timezoneSource:
+					record.timezoneSource === 'vercel-header' ||
+					record.type === 'BrowserEntryHeader'
+						? 'vercel-header'
+						: 'fallback',
+			}
+		}
+	}
+	for (const key of [
+		'courseDeadlineTimeZone',
+		'deadlineTimeZone',
+		'coursePayload',
+		'payload',
+	]) {
+		const nested = pinnedTimezonePayloadFromUnknown(record[key])
+		if (nested) return nested
+	}
+	return undefined
+}
+
+function mapCourseExhausted(
+	fact: Extract<DrovrShadowFact, { kind: 'course-exhausted' }>,
+): DrovrShadowEvent[] {
+	const timezone = courseCompletionTimezone(undefined, fact.timezone)
+	const completionBase = {
+		tenantId: DROVR_SHADOW_TENANT_ID,
+		contactId: fact.contactId,
+		occurredAt: fact.exhaustedAt,
+		idempotencyKey: `aihero:exhaustion:${fact.contactId}:${fact.valuePathSlug}`,
+	}
+	return [
+		{
+			...completionBase,
+			journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+			type: 'course.sequence-exhausted',
+		},
+		{
+			...completionBase,
+			journeyId: DROVR_EVERGREEN_OFFER_JOURNEY_ID,
+			type: 'course.sequence-exhausted',
+			payload: {
+				valuePathSlug: fact.valuePathSlug,
+				completedAt: fact.completedAt,
+				timezone: timezone.value,
+				timezoneSource: timezone.source,
+			},
+		},
+		shadowNewsletterBirth({
+			contactId: fact.contactId,
+			occurredAt: fact.exhaustedAt,
+			timezone: {
+				timezone: timezone.value,
+				timezoneSource: timezone.source,
+			},
+		}),
 	]
 }
 
@@ -521,7 +664,22 @@ function purchaseProductId(keywords: string[]) {
 	return value && !value.startsWith('status-') ? value : undefined
 }
 
-function courseCompletionTimezone(headerValue?: string) {
+function courseCompletionTimezone(
+	headerValue?: string,
+	pinned?: DrovrPinnedTimezonePayload,
+): { value: string; source: DrovrPinnedTimezonePayload['timezoneSource'] } {
+	if (pinned) {
+		const parsedPinned = parseIanaTimeZone(pinned.timezone)
+		if (parsedPinned.ok) {
+			return {
+				value: parsedPinned.value,
+				source:
+					pinned.timezoneSource === 'vercel-header'
+						? 'vercel-header'
+						: 'fallback',
+			}
+		}
+	}
 	const parsed = headerValue ? parseIanaTimeZone(headerValue) : undefined
 	return parsed?.ok
 		? { value: parsed.value, source: 'vercel-header' as const }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import {
+	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+	deadlineTimeZoneEvidenceFromHeader,
+} from './course-sequence-exhaustion'
 import { InMemorySubscriberMarketingRepository } from './dry-run'
 import {
 	buildPurchaseRecordedEvent,
@@ -92,6 +96,56 @@ describe('purchase.recorded lifecycle contact events', () => {
 		// same user resolve directly.
 		const identity = repository.findProviderIdentity('ai-hero', 'user-1')
 		expect(identity?.contactId).toBe(contact.id)
+	})
+
+	it('preserves the course entry timezone on the purchase event', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const contact = seedKitContact(repository, {
+			email: 'buyer@example.com',
+			kitSubscriberId: 'kit-123',
+		})
+		const deadline = deadlineTimeZoneEvidenceFromHeader({
+			headerValue: 'Asia/Tokyo',
+			capturedAt: '2026-08-17T12:00:00.000Z',
+		})
+		if (!deadline.ok) throw new Error(deadline.error.detail)
+		const identity = repository.findProviderIdentity('kit', 'kit-123')
+		if (!identity) throw new Error('missing test identity')
+		repository.createEmailCourseEntryEvent({
+			contactId: contact.id,
+			providerIdentityId: identity.id,
+			provider: 'kit',
+			providerEventId: 'entry-1',
+			providerReference: 'entry-1',
+			eventType: 'value-path.entered',
+			occurredAt: '2026-08-17T12:00:00.000Z',
+			semanticIdempotencyKey: 'entry-1',
+			privacyLevel: 'internal',
+			identityEvidence: identity.evidence,
+			payloadSummary: {
+				summary: 'course entry',
+				keywords: [],
+				restrictedPayloadStored: false,
+			},
+			payloadFormat: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+			domainPayload: {
+				format: EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
+				valuePathId: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				deadlineTimeZone: deadline.value,
+			},
+			schemaVersion: 1,
+		})
+
+		const summary = await writePurchaseRecordedContactEvents({
+			repository,
+			rows: [purchaseSource()],
+			now: NOW,
+		})
+
+		expect(summary.written[0]?.domainPayload).toEqual({
+			deadlineTimeZone: deadline.value,
+		})
 	})
 
 	it('never touches contact state, next actions, or side-effect intents', async () => {

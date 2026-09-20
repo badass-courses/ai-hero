@@ -1,6 +1,7 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
+import { restoreDeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
 	isContentCompleteSkillsWorkflowEmailResourceId,
@@ -335,6 +336,17 @@ export async function executeValuePathEmailIntent(args: {
 				contactId: intent.contactId,
 				valuePathSlug: metadata.valuePathSlug,
 				completedAt,
+				...(metadata.courseDeadlineTimeZone
+					? {
+							timezone: {
+								timezone: metadata.courseDeadlineTimeZone.timeZone,
+								timezoneSource:
+									metadata.courseDeadlineTimeZone.type === 'BrowserEntryHeader'
+										? 'vercel-header'
+										: 'fallback',
+							},
+						}
+					: {}),
 			})
 		}
 		return {
@@ -671,6 +683,9 @@ function parseValuePathEmailIntentMetadata(metadata: Record<string, unknown>) {
 		emailResourceId: stringField(metadata.emailResourceId),
 		kitSequenceId: stringField(metadata.kitSequenceId),
 		kitSubscriberId: stringField(metadata.kitSubscriberId),
+		courseDeadlineTimeZone: restoreDeadlineTimeZoneEvidence(
+			metadata.courseDeadlineTimeZone,
+		),
 	}
 }
 

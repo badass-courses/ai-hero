@@ -200,6 +200,18 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		if (entryResult.status === 'blocked') {
 			return entryResult
 		}
+		// drovr-owned contacts enter the shadow-newsletter actor through the
+		// durable Stage 3 handoffs. Do not probe Kit's paused legacy sequence or
+		// apply its backfill tag for them; both would create a second owner.
+		if (entryResult.status === 'drovr-owned') {
+			await log.info('subscriber_funnel.legacy_newsletter_enrollment_skipped', {
+				funnel: 'skills-newsletter',
+				eventId: event.id,
+				contactId: entryResult.contactId,
+				reason: 'drovr-owned',
+			})
+			return entryResult
+		}
 
 		const user = {
 			email: event.data.email,

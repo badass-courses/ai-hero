@@ -231,6 +231,19 @@ describe('drovr shadow fact mapper', () => {
 					timezoneSource: 'fallback',
 				},
 			},
+			{
+				tenantId: 'org-aihero-shadow',
+				contactId: 'contact-1',
+				journeyId: 'shadow-newsletter',
+				type: 'contact.created',
+				occurredAt,
+				idempotencyKey:
+					'contact:org-aihero-shadow:contact-1:shadow-newsletter:birth',
+				payload: {
+					timezone: 'America/Los_Angeles',
+					timezoneSource: 'fallback',
+				},
+			},
 		])
 	})
 
@@ -256,6 +269,70 @@ describe('drovr shadow fact mapper', () => {
 		})
 	})
 
+	it('maps a live course exhaustion to all three handoff events with its pinned zone', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'course-exhausted',
+			contactId: 'contact-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			completedAt: '2026-08-30T12:00:00.000Z',
+			exhaustedAt: '2026-08-31T16:00:00.000Z',
+			timezone: {
+				timezone: 'Asia/Tokyo',
+				timezoneSource: 'vercel-header',
+			},
+		})
+
+		expect(events).toEqual([
+			expect.objectContaining({
+				journeyId: 'value-path-skills-course',
+				type: 'course.sequence-exhausted',
+				occurredAt: '2026-08-31T16:00:00.000Z',
+			}),
+			expect.objectContaining({
+				journeyId: 'crash-course-evergreen-offer',
+				type: 'course.sequence-exhausted',
+				occurredAt: '2026-08-31T16:00:00.000Z',
+				payload: {
+					valuePathSlug: 'ai-hero-skills-workflow',
+					completedAt: '2026-08-30T12:00:00.000Z',
+					timezone: 'Asia/Tokyo',
+					timezoneSource: 'vercel-header',
+				},
+			}),
+			expect.objectContaining({
+				journeyId: 'shadow-newsletter',
+				type: 'contact.created',
+				occurredAt: '2026-08-31T16:00:00.000Z',
+				payload: {
+					timezone: 'Asia/Tokyo',
+					timezoneSource: 'vercel-header',
+				},
+			}),
+		])
+	})
+
+	it('carries validated purchase timezone evidence into the newsletter birth', () => {
+		const event = contactEvent('purchase.recorded', {
+			payloadSummary: {
+				summary: 'purchase',
+				keywords: ['purchase-recorded', 'product-ai-hero'],
+				restrictedPayloadStored: false,
+			},
+			domainPayload: {
+				deadlineTimeZone: {
+					type: 'BrowserEntryHeader',
+					timeZone: 'America/New_York',
+				},
+			},
+		})
+		const events = mapDrovrShadowFact({ kind: 'contact-event', event })
+
+		expect(events[2]?.payload).toEqual({
+			timezone: 'America/New_York',
+			timezoneSource: 'vercel-header',
+		})
+	})
+
 	it.each(['contact.unsubscribed', 'purchase.recorded'])(
 		'forwards %s to both journeys',
 		(eventType) => {
@@ -271,15 +348,22 @@ describe('drovr shadow fact mapper', () => {
 			})
 			const events = mapDrovrShadowFact({ kind: 'contact-event', event })
 
-			expect(events.map(({ journeyId }) => journeyId)).toEqual([
-				'value-path-skills-course',
-				'crash-course-evergreen-offer',
-			])
+			expect(events.map(({ journeyId }) => journeyId)).toEqual(
+				eventType === 'purchase.recorded'
+					? [
+							'value-path-skills-course',
+							'crash-course-evergreen-offer',
+							'shadow-newsletter',
+						]
+					: ['value-path-skills-course', 'crash-course-evergreen-offer'],
+			)
 			if (eventType === 'purchase.recorded') {
-				expect(events.map(({ payload }) => payload)).toEqual([
-					{ productId: 'product-ai-hero' },
-					{ productId: 'product-ai-hero' },
-				])
+				expect(events[0]?.payload).toEqual({ productId: 'product-ai-hero' })
+				expect(events[1]?.payload).toEqual({ productId: 'product-ai-hero' })
+				expect(events[2]?.payload).toEqual({
+					timezone: 'America/Los_Angeles',
+					timezoneSource: 'fallback',
+				})
 			} else {
 				expect(events.every((item) => item.payload === undefined)).toBe(true)
 			}
@@ -439,7 +523,11 @@ describe('drovr shadow sender', () => {
 
 describe('drovr direct sender: per-tenant keys', () => {
 	it('posts an authority-owned completion with the authority key, not the shadow key', async () => {
-		const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		const fetch = vi
+			.fn()
+			.mockImplementation(() =>
+				Promise.resolve(new Response('{}', { status: 200 })),
+			)
 		await emitDrovrShadowFact(
 			{
 				kind: 'side-effect-intent-completed',
@@ -668,6 +756,8 @@ describe('evergreen list handoff completions', () => {
 					source: 'drovr',
 					list: 'shadow-newsletter',
 					kitSequenceId: '2625552',
+					timezone: 'America/New_York',
+					timezoneSource: 'vercel-header',
 					drovr: {
 						tenantId: 'org-aihero',
 						journeyId: 'crash-course-evergreen-offer',
@@ -686,6 +776,19 @@ describe('evergreen list handoff completions', () => {
 				occurredAt: '2026-09-22T16:00:05.000Z',
 				idempotencyKey: 'completion:k-list',
 				payload: { list: 'shadow-newsletter' },
+			},
+			{
+				tenantId: 'org-aihero-shadow',
+				contactId: 'contact-1',
+				journeyId: 'shadow-newsletter',
+				type: 'contact.created',
+				occurredAt: '2026-09-22T16:00:05.000Z',
+				idempotencyKey:
+					'contact:org-aihero-shadow:contact-1:shadow-newsletter:birth',
+				payload: {
+					timezone: 'America/New_York',
+					timezoneSource: 'vercel-header',
+				},
 			},
 		])
 	})

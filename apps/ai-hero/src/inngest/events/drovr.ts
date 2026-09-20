@@ -19,5 +19,6 @@ export type DrovrEventsDeliver = {
 			| 'contact-event'
 			| 'side-effect-intent-completed'
 			| 'course-completed'
+			| 'course-exhausted'
 	}
 }

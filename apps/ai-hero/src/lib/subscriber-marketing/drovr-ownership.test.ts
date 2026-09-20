@@ -172,7 +172,11 @@ describe('fan-out of owned facts to the authority tenant', () => {
 			shadow('value-path.answer-selected', 'owned'),
 			shadow('value-path.answer-selected', 'legacy'),
 		]
-		const out = fanOutOwnedEvents(events, new Set(['owned']))
+		const out = fanOutOwnedEvents(
+			events,
+			new Set(['owned']),
+			new Set(['owned']),
+		)
 		expect(out).toHaveLength(5)
 		expect(out[4]).toEqual({
 			...events[2],
@@ -187,7 +191,11 @@ describe('fan-out of owned facts to the authority tenant', () => {
 			...skills,
 			journeyId: 'crash-course-evergreen-offer' as const,
 		}
-		const out = fanOutOwnedEvents([skills, evergreen], new Set(['owned']))
+		const out = fanOutOwnedEvents(
+			[skills, evergreen],
+			new Set(['owned']),
+			new Set(['owned']),
+		)
 		expect(out).toHaveLength(3)
 		expect(out[2]).toEqual({
 			...evergreen,
@@ -196,12 +204,61 @@ describe('fan-out of owned facts to the authority tenant', () => {
 		})
 	})
 
+	it('keeps a shadow-newsletter birth only for owned contacts and fans it out', () => {
+		const birth: DrovrShadowEvent = {
+			...shadow('contact.created', 'owned'),
+			journeyId: 'shadow-newsletter',
+			payload: {
+				timezone: 'America/Los_Angeles',
+				timezoneSource: 'fallback',
+			},
+		}
+		const veteranBirth = { ...birth, contactId: 'legacy' }
+		const out = fanOutOwnedEvents(
+			[birth, veteranBirth],
+			new Set(['owned']),
+			new Set(['owned']),
+		)
+		expect(out).toEqual([
+			birth,
+			{
+				...birth,
+				tenantId: 'org-aihero',
+				idempotencyKey: `owner:${birth.idempotencyKey}`,
+			},
+		])
+	})
+
+	it('does not migrate a Kit veteran from evergreen ownership alone', () => {
+		const birth: DrovrShadowEvent = {
+			...shadow('contact.created', 'veteran'),
+			journeyId: 'shadow-newsletter',
+			payload: {
+				timezone: 'America/Los_Angeles',
+				timezoneSource: 'fallback',
+			},
+		}
+		expect(
+			fanOutOwnedEvents(
+				[birth],
+				new Set(['veteran']),
+				new Set(),
+			),
+		).toEqual([])
+	})
+
 	it('leaves authority-addressed events alone', () => {
 		const authority: DrovrShadowEvent = {
 			...shadow('email.completed', 'owned'),
 			tenantId: 'org-aihero',
 		}
-		expect(fanOutOwnedEvents([authority], new Set(['owned']))).toEqual([
+		expect(
+			fanOutOwnedEvents(
+				[authority],
+				new Set(['owned']),
+				new Set(['owned']),
+			),
+		).toEqual([
 			authority,
 		])
 	})

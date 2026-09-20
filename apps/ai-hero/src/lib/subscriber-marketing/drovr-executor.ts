@@ -1036,6 +1036,12 @@ async function acceptEvergreenListSubscribe(args: {
 				},
 				list: sequence.list,
 				kitSequenceId: String(sequence.sequenceId),
+				...(typeof intent.payload?.timezone === 'string'
+					? { timezone: intent.payload.timezone }
+					: {}),
+				...(typeof intent.payload?.timezoneSource === 'string'
+					? { timezoneSource: intent.payload.timezoneSource }
+					: {}),
 			},
 			createdAt: args.now,
 		})
