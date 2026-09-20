@@ -13,12 +13,19 @@ import type {
 
 const mocks = vi.hoisted(() => ({
 	ensureShadowNewsletterOwnershipAssignment: vi.fn(),
+	dispatchDrovrShadowFact: vi.fn(),
 }))
 
 vi.mock('./skills-newsletter-path-entry', () => ({
 	ensureShadowNewsletterOwnershipAssignment:
 		mocks.ensureShadowNewsletterOwnershipAssignment,
 }))
+vi.mock('./drovr-shadow-dispatch', () => ({
+	dispatchDrovrShadowFact: mocks.dispatchDrovrShadowFact,
+}))
+
+const COURSE = 'value-path-skills-course'
+const NEWSLETTER = 'shadow-newsletter'
 
 const contact = (id: string): ContactRecord => ({
 	id,
@@ -67,8 +74,21 @@ function repository(args: {
 	} as unknown as NewsletterVeteransRepository
 }
 
+const emptyCounts = {
+	processed: 0,
+	assigned: 0,
+	wouldAssign: 0,
+	alreadyAssigned: 0,
+	redispatched: 0,
+	redispatchFailed: 0,
+	missingContact: 0,
+	identityMismatch: 0,
+	notCourseOwned: 0,
+}
+
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.dispatchDrovrShadowFact.mockResolvedValue(undefined)
 })
 
 describe('assignNewsletterVeteransBatch', () => {
@@ -76,6 +96,7 @@ describe('assignNewsletterVeteransBatch', () => {
 		const repo = repository({
 			contacts: { c1: contact('c1') },
 			identities: { k1: identity('c1', 'k1') },
+			assignments: { c1: [assignment('c1', COURSE)] },
 		})
 		const result = await assignNewsletterVeteransBatch({
 			repository: repo,
@@ -83,22 +104,17 @@ describe('assignNewsletterVeteransBatch', () => {
 		})
 		expect(result).toEqual({
 			mode: 'dry-run',
-			counts: {
-				processed: 1,
-				assigned: 0,
-				wouldAssign: 1,
-				alreadyAssigned: 0,
-				missingContact: 0,
-				identityMismatch: 0,
-			},
+			counts: { ...emptyCounts, processed: 1, wouldAssign: 1 },
 		})
 		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(mocks.dispatchDrovrShadowFact).not.toHaveBeenCalled()
 	})
 
 	it('writes the newsletter assignment with the contact and identity it verified', async () => {
 		const repo = repository({
 			contacts: { c1: contact('c1') },
 			identities: { k1: identity('c1', 'k1') },
+			assignments: { c1: [assignment('c1', COURSE)] },
 		})
 		const result = await assignNewsletterVeteransBatch({
 			repository: repo,
@@ -119,30 +135,87 @@ describe('assignNewsletterVeteransBatch', () => {
 		})
 	})
 
-	it('skips contacts already assigned, missing, or whose Kit identity belongs to someone else', async () => {
+	it('re-dispatches an existing assignment in write mode so a lost birth is repaired', async () => {
+		const existing = assignment('c1', NEWSLETTER)
 		const repo = repository({
-			contacts: { c1: contact('c1'), c2: contact('c2') },
-			identities: { k1: identity('c1', 'k1'), k2: identity('other', 'k2') },
-			assignments: { c1: [assignment('c1', 'shadow-newsletter')] },
+			contacts: { c1: contact('c1') },
+			identities: { k1: identity('c1', 'k1') },
+			assignments: { c1: [assignment('c1', COURSE), existing] },
+		})
+		const dry = await assignNewsletterVeteransBatch({
+			repository: repo,
+			batch: [{ contactId: 'c1', kitSubscriberId: 'k1' }],
+		})
+		expect(dry.counts).toEqual({ ...emptyCounts, processed: 1, alreadyAssigned: 1 })
+		expect(mocks.dispatchDrovrShadowFact).not.toHaveBeenCalled()
+
+		const write = await assignNewsletterVeteransBatch({
+			repository: repo,
+			batch: [{ contactId: 'c1', kitSubscriberId: 'k1' }],
+			dryRun: false,
+		})
+		expect(write.counts).toEqual({
+			...emptyCounts,
+			processed: 1,
+			alreadyAssigned: 1,
+			redispatched: 1,
+		})
+		expect(mocks.dispatchDrovrShadowFact).toHaveBeenCalledWith({
+			kind: 'contact-event',
+			event: existing,
+		})
+		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+	})
+
+	it('counts a failed re-dispatch instead of throwing', async () => {
+		mocks.dispatchDrovrShadowFact.mockRejectedValueOnce(new Error('inngest down'))
+		const repo = repository({
+			contacts: { c1: contact('c1') },
+			identities: { k1: identity('c1', 'k1') },
+			assignments: { c1: [assignment('c1', COURSE), assignment('c1', NEWSLETTER)] },
+		})
+		const result = await assignNewsletterVeteransBatch({
+			repository: repo,
+			batch: [{ contactId: 'c1', kitSubscriberId: 'k1' }],
+			dryRun: false,
+		})
+		expect(result.counts).toEqual({
+			...emptyCounts,
+			processed: 1,
+			alreadyAssigned: 1,
+			redispatchFailed: 1,
+		})
+	})
+
+	it('skips contacts that are missing, not course-owned, or whose Kit identity belongs to someone else', async () => {
+		const repo = repository({
+			contacts: { c1: contact('c1'), c2: contact('c2'), c3: contact('c3') },
+			identities: {
+				k1: identity('c1', 'k1'),
+				k2: identity('other', 'k2'),
+				k3: identity('c3', 'k3'),
+			},
+			assignments: { c1: [assignment('c1', COURSE)], c2: [assignment('c2', COURSE)] },
 		})
 		const result = await assignNewsletterVeteransBatch({
 			repository: repo,
 			batch: [
 				{ contactId: 'c1', kitSubscriberId: 'k1' },
 				{ contactId: 'c2', kitSubscriberId: 'k2' },
-				{ contactId: 'missing', kitSubscriberId: 'k3' },
+				{ contactId: 'c3', kitSubscriberId: 'k3' },
+				{ contactId: 'missing', kitSubscriberId: 'k4' },
 			],
 			dryRun: false,
 		})
 		expect(result.counts).toEqual({
-			processed: 3,
-			assigned: 0,
-			wouldAssign: 0,
-			alreadyAssigned: 1,
-			missingContact: 1,
+			...emptyCounts,
+			processed: 4,
+			assigned: 1,
 			identityMismatch: 1,
+			notCourseOwned: 1,
+			missingContact: 1,
 		})
-		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(mocks.ensureShadowNewsletterOwnershipAssignment).toHaveBeenCalledTimes(1)
 	})
 
 	it('refuses batches above the lane-sized limit', async () => {

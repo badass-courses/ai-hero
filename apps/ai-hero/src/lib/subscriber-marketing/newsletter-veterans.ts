@@ -2,7 +2,12 @@ import type { NewsletterVeteran } from '@/inngest/events/newsletter-veterans'
 
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import { findJourneyOwnerAssignment } from './drovr-ownership'
-import { DROVR_SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-emitter'
+import { dispatchDrovrShadowFact } from './drovr-shadow-dispatch'
+import {
+	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	DROVR_SKILLS_COURSE_JOURNEY_ID,
+	type DrovrShadowFact,
+} from './drovr-shadow-emitter'
 import { ensureShadowNewsletterOwnershipAssignment } from './skills-newsletter-path-entry'
 
 /**
@@ -18,9 +23,14 @@ export type NewsletterVeteransCounts = {
 	processed: number
 	assigned: number
 	wouldAssign: number
+	/** Already assigned; in write mode the assignment was dispatched again. */
 	alreadyAssigned: number
+	redispatched: number
+	redispatchFailed: number
 	missingContact: number
 	identityMismatch: number
+	/** Not drovr-owned for the course, so not a veteran; the cohort row is wrong. */
+	notCourseOwned: number
 }
 
 export type NewsletterVeteransResult = {
@@ -43,12 +53,19 @@ export type NewsletterVeteransRepository = Pick<
  * to drovr, and the emitter turns it into the newsletter actor's birth in
  * the authority tenant. Nothing here touches Kit: moving the contact off
  * Kit's weekly sequence is a separate tag write once the actor exists.
+ *
+ * The repository's dispatch is fire-and-forget, so a committed assignment
+ * can exist without its drovr birth having landed. In write mode an
+ * existing assignment is dispatched again and awaited: drovr dedupes the
+ * event by its idempotency key, so a rerun repairs a lost birth and is a
+ * no-op fold for one that landed.
  */
 export async function assignNewsletterVeteransBatch(args: {
 	repository: NewsletterVeteransRepository
 	batch: readonly NewsletterVeteran[]
 	dryRun?: boolean
 	now?: string
+	dispatch?: (fact: DrovrShadowFact) => Promise<unknown>
 }): Promise<NewsletterVeteransResult> {
 	if (args.batch.length > NEWSLETTER_VETERANS_BATCH_SIZE) {
 		throw new Error(
@@ -57,13 +74,17 @@ export async function assignNewsletterVeteransBatch(args: {
 	}
 	const dryRun = args.dryRun ?? true
 	const now = args.now ?? new Date().toISOString()
+	const dispatch = args.dispatch ?? dispatchDrovrShadowFact
 	const counts: NewsletterVeteransCounts = {
 		processed: 0,
 		assigned: 0,
 		wouldAssign: 0,
 		alreadyAssigned: 0,
+		redispatched: 0,
+		redispatchFailed: 0,
 		missingContact: 0,
 		identityMismatch: 0,
+		notCourseOwned: 0,
 	}
 
 	for (const veteran of args.batch) {
@@ -81,6 +102,15 @@ export async function assignNewsletterVeteransBatch(args: {
 			counts.identityMismatch += 1
 			continue
 		}
+		const courseOwned = await findJourneyOwnerAssignment(
+			args.repository,
+			veteran.contactId,
+			DROVR_SKILLS_COURSE_JOURNEY_ID,
+		)
+		if (!courseOwned) {
+			counts.notCourseOwned += 1
+			continue
+		}
 		const existing = await findJourneyOwnerAssignment(
 			args.repository,
 			veteran.contactId,
@@ -88,6 +118,14 @@ export async function assignNewsletterVeteransBatch(args: {
 		)
 		if (existing) {
 			counts.alreadyAssigned += 1
+			if (!dryRun) {
+				try {
+					await dispatch({ kind: 'contact-event', event: existing })
+					counts.redispatched += 1
+				} catch {
+					counts.redispatchFailed += 1
+				}
+			}
 			continue
 		}
 		if (dryRun) {
