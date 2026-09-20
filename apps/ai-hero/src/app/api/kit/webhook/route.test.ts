@@ -163,7 +163,7 @@ describe('POST /api/kit/webhook', () => {
 						type: 'contact.unsubscribed',
 						occurredAt: '2026-09-19T16:00:00Z',
 						idempotencyKey:
-							'directory:kit-state:4290731338:unsubscribed',
+							'directory:kit-state:4290731338:9c2e1f3a-6b7d-4e8f-a1b2-c3d4e5f60718:unsubscribed',
 					},
 				],
 			},
@@ -229,6 +229,38 @@ describe('POST /api/kit/webhook', () => {
 					delivery.data.events[0]?.type,
 			),
 		).toEqual(['contact.confirmed', 'contact.bounced'])
+	})
+
+	it('keeps confirmed directory events distinct by Kit event id', async () => {
+		const raw = JSON.stringify({
+			events: [
+				event(
+					'subscriber.confirmed',
+					{ id: 11, state: 'active' },
+					'confirmed-1',
+				),
+				event(
+					'subscriber.confirmed',
+					{ id: 11, state: 'active' },
+					'confirmed-2',
+				),
+			],
+		})
+		const response = await post(raw, sign(raw))
+		await expect(response.json()).resolves.toEqual({ captured: 2, ignored: 0 })
+
+		const directoryEvents = mocks.inngestSend.mock.calls.map(
+			([delivery]) =>
+				(
+					delivery as {
+						data: { events: Array<{ idempotencyKey: string }> }
+					}
+				).data.events[0]?.idempotencyKey,
+		)
+		expect(directoryEvents).toEqual([
+			'directory:kit-state:11:confirmed-1:confirmed',
+			'directory:kit-state:11:confirmed-2:confirmed',
+		])
 	})
 
 	it('drops directory state when the Kit identity is unknown', async () => {

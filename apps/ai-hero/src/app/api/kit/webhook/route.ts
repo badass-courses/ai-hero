@@ -159,7 +159,7 @@ const directoryEventFor = (args: {
 	journeyId: DROVR_CONTACT_DIRECTORY_JOURNEY_ID,
 	type: args.type,
 	occurredAt: args.event.created,
-	idempotencyKey: `directory:kit-state:${args.subscriber.id}:${args.type.slice('contact.'.length)}`,
+	idempotencyKey: `directory:kit-state:${args.subscriber.id}:${args.event.id}:${args.type.slice('contact.'.length)}`,
 })
 
 const findDirectoryContactId = async (
