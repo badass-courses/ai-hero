@@ -30,13 +30,22 @@ export type DrovrEventsDeliverReceipt = {
  * re-posts what already landed, and drovr dedupes anything that does
  * repeat. Concurrency stays modest: drovr's ingress is one D1 append and
  * one Durable Object fold per event.
+ *
+ * The second concurrency entry keys a sub-queue per `event.data.source`
+ * (the fact kind). Bulk producers such as the Kit directory ingest emit
+ * thousands of `contact-created` facts in minutes; without the key they
+ * filled every slot and live signups (`contact-event`,
+ * `side-effect-intent-completed`) waited behind them (2026-09-20: 4.5 min
+ * of queue lag within twenty minutes of starting the ingest). With it, one
+ * source can hold at most half the slots and the others keep their own
+ * queues.
  */
 export const drovrEventsDeliver = inngest.createFunction(
 	{
 		id: 'drovr-events-deliver-v1',
 		name: 'drovr: deliver events durably',
 		retries: 6,
-		concurrency: { limit: 8 },
+		concurrency: [{ limit: 8 }, { key: 'event.data.source', limit: 4 }],
 	},
 	{ event: DROVR_EVENTS_DELIVER_EVENT },
 	async ({ event, step }): Promise<DrovrEventsDeliverReceipt> => {
