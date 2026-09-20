@@ -186,6 +186,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			...(options?.kitSubscriberId
 				? { kitSubscriberId: options.kitSubscriberId }
 				: {}),
+			...(options?.deliverySource
+				? { deliverySource: options.deliverySource }
+				: {}),
 		})
 	}
 

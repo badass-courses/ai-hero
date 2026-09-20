@@ -179,17 +179,23 @@ export async function dispatchDrovrShadowFact(
 			const { inngest } = await import('@/inngest/inngest.server')
 			return inngest.send(payload)
 		})
+	// The source keys the delivery sub-queue (#257). A bulk producer that
+	// creates contacts names its own lane so live signups never wait on it.
+	const source =
+		fact.kind === 'contact-created' && fact.deliverySource !== undefined
+			? fact.deliverySource
+			: fact.kind
 	try {
 		await send({
 			name: DROVR_EVENTS_DELIVER_EVENT,
-			data: { events, source: fact.kind },
+			data: { events, source },
 		})
 		return 'queued'
 	} catch (error) {
 		const warn = options.warn ?? log.warn
 		try {
 			await warn('drovr.shadow.queue_failed', {
-				source: fact.kind,
+				source,
 				eventCount: events.length,
 				error: error instanceof Error ? error.message : String(error),
 			})
