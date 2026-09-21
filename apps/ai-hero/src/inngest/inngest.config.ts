@@ -36,7 +36,10 @@ import { contentReadRetention } from './functions/content-read-retention'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
-import { drovrEventsDeliver } from './functions/drovr-events-deliver'
+import {
+	drovrEventsDeliver,
+	drovrEventsDeliverBulk,
+} from './functions/drovr-events-deliver'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
@@ -152,6 +155,7 @@ const allFunctions = [
 	valuePathEmailExecutor,
 	learnerFlowReconciler,
 	drovrEventsDeliver,
+	drovrEventsDeliverBulk,
 	drovrEvergreenSender,
 	kitDirectoryIngest,
 	newsletterVeteransAssign,

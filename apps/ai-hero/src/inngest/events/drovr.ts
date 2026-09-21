@@ -32,3 +32,36 @@ export type DrovrEventsDeliver = {
 			| 'kit-directory-ingest'
 	}
 }
+
+export type DrovrDeliverySource = DrovrEventsDeliver['data']['source']
+
+/**
+ * The same batches on their own Inngest function, which is its own queue.
+ * A per-source concurrency key on the live function was not isolation: a
+ * Kit page's thousand one-contact deliveries sat ahead of the live and
+ * completion lanes in the shared queue and those waited eleven minutes
+ * (2026-09-21 04:44Z). Bulk producers name themselves through `source`;
+ * `deliverEventNameFor` routes them here.
+ */
+export const DROVR_EVENTS_DELIVER_BULK_EVENT = 'drovr/events.deliver.bulk'
+
+export type DrovrEventsDeliverBulk = {
+	name: typeof DROVR_EVENTS_DELIVER_BULK_EVENT
+	data: DrovrEventsDeliver['data']
+}
+
+export type DrovrDeliverEventName =
+	| typeof DROVR_EVENTS_DELIVER_EVENT
+	| typeof DROVR_EVENTS_DELIVER_BULK_EVENT
+
+/** Sources whose batches travel on the bulk function. */
+export const BULK_DELIVERY_SOURCES: ReadonlySet<DrovrDeliverySource> =
+	new Set<DrovrDeliverySource>(['kit-directory-ingest'])
+
+export function deliverEventNameFor(
+	source: DrovrDeliverySource,
+): DrovrDeliverEventName {
+	return BULK_DELIVERY_SOURCES.has(source)
+		? DROVR_EVENTS_DELIVER_BULK_EVENT
+		: DROVR_EVENTS_DELIVER_EVENT
+}

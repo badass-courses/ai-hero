@@ -83,8 +83,14 @@ import {
 	TYPESENSE_POPULARITY_SYNC_REQUESTED_EVENT,
 	TypesensePopularitySyncRequested,
 } from '@/inngest/events/typesense-popularity'
-import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
-import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
+import {
+	DROVR_EVENTS_DELIVER_BULK_EVENT,
+	DROVR_EVENTS_DELIVER_EVENT,
+} from '@/inngest/events/drovr'
+import type {
+	DrovrEventsDeliver,
+	DrovrEventsDeliverBulk,
+} from '@/inngest/events/drovr'
 import {
 	KIT_DIRECTORY_INGEST_EVENT,
 	type KitDirectoryIngest,
@@ -264,6 +270,7 @@ export type Events = {
 	[ARTWORK_GENERATION_FAILED_EVENT]: ArtworkGenerationFailed
 	[VALUE_PATH_ANSWER_SELECTED_EVENT]: ValuePathAnswerSelected
 	[DROVR_EVENTS_DELIVER_EVENT]: DrovrEventsDeliver
+	[DROVR_EVENTS_DELIVER_BULK_EVENT]: DrovrEventsDeliverBulk
 	[KIT_DIRECTORY_INGEST_EVENT]: KitDirectoryIngest
 	[NEWSLETTER_VETERANS_ASSIGN_EVENT]: NewsletterVeteransAssign
 	// Operator lever: fire one learner-flow reconcile outside the hourly cron.

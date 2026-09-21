@@ -99,6 +99,13 @@ describe('drovr shadow dispatch', () => {
 			'contact-created',
 			'kit-directory-ingest',
 		])
+		// A key on the shared function was not isolation (2026-09-21 04:44Z:
+		// live facts waited eleven minutes behind a Kit page); the bulk
+		// source travels on its own function.
+		expect(send.mock.calls.map(([payload]) => payload.name)).toEqual([
+			'drovr/events.deliver',
+			'drovr/events.deliver.bulk',
+		])
 		expect(send.mock.calls[0]?.[0].data.events).toEqual(
 			send.mock.calls[1]?.[0].data.events,
 		)
