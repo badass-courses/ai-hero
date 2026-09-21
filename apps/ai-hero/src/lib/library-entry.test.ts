@@ -56,7 +56,7 @@ describe('overviewHrefFor', () => {
 			'/workshops/claude-code~p9j8f',
 		)
 		expect(overviewHrefFor('tutorial', 'some-tutorial')).toBe(
-			'/workshops/some-tutorial',
+			'/some-tutorial',
 		)
 		expect(overviewHrefFor('post', 'a-post')).toBe('/a-post')
 	})

@@ -7,6 +7,8 @@
  * part worth testing, so they live where they can be.
  */
 
+import { getResourcePath } from '@/utils/resource-paths'
+
 export type LibraryEntry = {
 	key: string
 	title: string
@@ -30,8 +32,8 @@ export type LibraryEntry = {
 /**
  * The overview page for a purchased resource.
  *
- * `/{slug}` is only right for a post — a cohort or workshop sent there 404s, so
- * the fallback entry this builds would be its own dead end.
+ * Routes come from `getResourcePath`, the one place that knows them: a
+ * tutorial is a list and lives at `/{slug}`, not under `/workshops`.
  *
  * @param resourceType - The content resource's type, or null when unknown.
  * @param slug - The resource's routing slug, or null when it has none.
@@ -42,11 +44,7 @@ export function overviewHrefFor(
 	slug: string | null,
 ): string {
 	if (!slug) return '/workshops'
-	if (resourceType === 'cohort') return `/cohorts/${slug}`
-	if (resourceType === 'workshop' || resourceType === 'tutorial') {
-		return `/workshops/${slug}`
-	}
-	return `/${slug}`
+	return getResourcePath(resourceType ?? 'post', slug)
 }
 
 /**

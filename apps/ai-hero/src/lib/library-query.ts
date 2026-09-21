@@ -23,6 +23,7 @@ import { getContentNavigation } from './content-navigation-query'
 import { getLatestCourseLesson } from './course-resume-navigation'
 import { getModuleProgressForUser } from './progress'
 import { getCachedWorkshopNavigation } from './workshops-query'
+import { getResourcePath } from '@/utils/resource-paths'
 
 export type { LibraryEntry } from './library-entry'
 
@@ -139,6 +140,13 @@ async function getResourceTitle(
 	return resource?.fields?.title ?? null
 }
 
+function lessonHref(workshopSlug: string, lessonSlug: string) {
+	return getResourcePath('lesson', lessonSlug, 'view', {
+		parentType: 'workshop',
+		parentSlug: workshopSlug,
+	})
+}
+
 async function buildWorkshopEntry(
 	purchase: PurchasedResource,
 	options: { contextLabel?: string | null; workshopSlug: string; title: string },
@@ -147,7 +155,7 @@ async function buildWorkshopEntry(
 	const completed = progress?.completedLessonsCount ?? 0
 	const total = progress?.totalLessonsCount ?? 0
 	const status = statusFor(completed, total)
-	const overviewHref = `/workshops/${options.workshopSlug}`
+	const overviewHref = getResourcePath('workshop', options.workshopSlug)
 
 	const nextSlug = progress?.nextResource?.fields?.slug ?? null
 	const nextTitle = await getResourceTitle(
@@ -163,7 +171,7 @@ async function buildWorkshopEntry(
 		cta: ctaFor(
 			status,
 			nextTitle,
-			nextSlug ? `/workshops/${options.workshopSlug}/${nextSlug}` : null,
+			nextSlug ? lessonHref(options.workshopSlug, nextSlug) : null,
 			overviewHref,
 		),
 		completedLessons: completed,
@@ -187,7 +195,7 @@ async function buildCohortEntry(
 	const cohort = await getCachedCohortNavigation(cohortId)
 	if (!cohort) return null
 
-	const overviewHref = `/cohorts/${cohort.slug}`
+	const overviewHref = getResourcePath('cohort', cohort.slug)
 	const progressByWorkshop = await Promise.all(
 		cohort.workshops.map(async (workshop) => ({
 			workshop,
@@ -223,9 +231,7 @@ async function buildCohortEntry(
 		cta: ctaFor(
 			status,
 			nextTitle,
-			current && nextSlug
-				? `/workshops/${current.workshop.slug}/${nextSlug}`
-				: null,
+			current && nextSlug ? lessonHref(current.workshop.slug, nextSlug) : null,
 			overviewHref,
 		),
 		completedLessons: completed,
@@ -304,7 +310,12 @@ export async function getLibraryEntries(
 		purchased.map(async (purchase) =>
 			withResumeCta(
 				await buildEntry(purchase),
-				purchase.resourceId,
+				// The resume traversal builds `/workshops/...` lesson paths, which
+				// is only right inside a workshop or a cohort of them.
+				purchase.resourceType === 'workshop' ||
+					purchase.resourceType === 'cohort'
+					? purchase.resourceId
+					: null,
 				progress,
 			),
 		),
@@ -330,11 +341,7 @@ async function buildEntry(purchase: PurchasedResource): Promise<LibraryEntry> {
 		)
 	}
 
-	if (
-		(purchase.resourceType === 'workshop' ||
-			purchase.resourceType === 'tutorial') &&
-		purchase.resourceSlug
-	) {
+	if (purchase.resourceType === 'workshop' && purchase.resourceSlug) {
 		return buildWorkshopEntry(purchase, {
 			workshopSlug: purchase.resourceSlug,
 			title: purchase.title,
