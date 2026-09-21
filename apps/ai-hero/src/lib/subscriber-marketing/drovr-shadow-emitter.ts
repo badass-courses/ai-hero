@@ -11,8 +11,7 @@ export const DROVR_SKILLS_COURSE_JOURNEY_ID =
 	'value-path-skills-course' as const
 export const DROVR_EVERGREEN_OFFER_JOURNEY_ID =
 	'crash-course-evergreen-offer' as const
-export const DROVR_SHADOW_NEWSLETTER_JOURNEY_ID =
-	SHADOW_NEWSLETTER_JOURNEY_ID
+export const DROVR_SHADOW_NEWSLETTER_JOURNEY_ID = SHADOW_NEWSLETTER_JOURNEY_ID
 export const DROVR_CONTACT_DIRECTORY_JOURNEY_ID = 'contact-directory' as const
 export const DROVR_FALLBACK_TIMEZONE = 'America/Los_Angeles' as const
 
@@ -889,7 +888,7 @@ const PROBLEM_BODY_LIMIT_BYTES = 4096
  * body must never turn a final rejection into a retryable failure. Read
  * errors and aborts yield null instead of throwing.
  */
-async function boundedProblemBody(response: Response): Promise<unknown> {
+export async function boundedProblemBody(response: Response): Promise<unknown> {
 	const reader = response.body?.getReader()
 	if (!reader) return null
 	const chunks: Uint8Array[] = []

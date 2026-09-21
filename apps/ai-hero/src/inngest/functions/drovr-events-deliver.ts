@@ -7,13 +7,17 @@ import {
 import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import {
+	batchStepId,
+	deliverBatchOrThrow,
 	deliverOrThrow,
 	deliveryStepId,
+	DROVR_BATCH_MAX,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	type DrovrDeliveryConfig,
+	type DrovrShadowEvent,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	fanOutOwnedEvents,
@@ -46,22 +50,19 @@ export type DrovrEventsDeliverReceipt = {
  */
 type DeliverStep = GetStepTools<typeof inngest>
 
-const deliverBatch = async (
+const NOT_CONFIGURED: DrovrEventsDeliverReceipt = {
+	status: 'skipped',
+	accepted: 0,
+	rejected: 0,
+	reason: 'drovr ingest is not configured',
+}
+
+// Facts about drovr-owned contacts also reach the authority tenant.
+// Ownership is read here, off the host's write path, once per batch.
+const fanOut = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
-): Promise<DrovrEventsDeliverReceipt> => {
-	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
-	if (!ingestUrl) {
-		return {
-			status: 'skipped',
-			accepted: 0,
-			rejected: 0,
-			reason: 'drovr ingest is not configured',
-		}
-	}
-
-	// Facts about drovr-owned contacts also reach the authority tenant.
-	// Ownership is read here, off the host's write path, once per batch.
+): Promise<DrovrShadowEvent[]> => {
 	const ownedContactIds = await step.run('resolve-drovr-owners', () =>
 		resolveOwnedContactIds(batch),
 	)
@@ -73,11 +74,20 @@ const deliverBatch = async (
 				}),
 			)
 		: []
-	const events = fanOutOwnedEvents(
+	return fanOutOwnedEvents(
 		batch,
 		new Set(ownedContactIds),
 		new Set(newsletterOwnedContactIds),
 	)
+}
+
+const deliverBatch = async (
+	batch: DrovrEventsDeliver['data']['events'],
+	step: DeliverStep,
+): Promise<DrovrEventsDeliverReceipt> => {
+	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
+	if (!ingestUrl) return NOT_CONFIGURED
+	const events = await fanOut(batch, step)
 
 	let accepted = 0
 	let rejected = 0
@@ -99,6 +109,61 @@ const deliverBatch = async (
 		)
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
+	}
+	return { status: 'delivered', accepted, rejected }
+}
+
+/**
+ * The bulk shape: one step per tenant chunk of up to a hundred events
+ * through drovr's `POST /events/batch`, instead of one step and one POST
+ * per contact. A Kit page is then ten steps, not a thousand. The live
+ * function keeps one step per event: a signup's welcome should not wait
+ * on its neighbours, and dual-journey facts need their per-journey step.
+ */
+const deliverBulk = async (
+	batch: DrovrEventsDeliver['data']['events'],
+	step: DeliverStep,
+): Promise<DrovrEventsDeliverReceipt> => {
+	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
+	if (!ingestUrl) return NOT_CONFIGURED
+	const events = await fanOut(batch, step)
+
+	// One key per tenant, so one batch stream per tenant.
+	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
+	for (const drovrEvent of events) {
+		const list = byTenant.get(drovrEvent.tenantId) ?? []
+		list.push(drovrEvent)
+		byTenant.set(drovrEvent.tenantId, list)
+	}
+
+	let accepted = 0
+	let rejected = 0
+	for (const [tenantId, tenantEvents] of byTenant) {
+		const apiKey = drovrApiKeyForTenant(tenantId)
+		if (!apiKey) {
+			await log.warn('drovr.shadow.tenant_key_missing', {
+				tenantId,
+				count: tenantEvents.length,
+			})
+			rejected += tenantEvents.length
+			continue
+		}
+		const config: DrovrDeliveryConfig = { ingestUrl, apiKey }
+		for (
+			let chunkIndex = 0;
+			chunkIndex * DROVR_BATCH_MAX < tenantEvents.length;
+			chunkIndex += 1
+		) {
+			const chunk = tenantEvents.slice(
+				chunkIndex * DROVR_BATCH_MAX,
+				(chunkIndex + 1) * DROVR_BATCH_MAX,
+			)
+			const outcome = await step.run(batchStepId(tenantId, chunkIndex), () =>
+				deliverBatchOrThrow({ events: chunk, config }),
+			)
+			accepted += outcome.accepted
+			rejected += outcome.rejected
+		}
 	}
 	return { status: 'delivered', accepted, rejected }
 }
@@ -153,7 +218,7 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
 	async ({ events, step }) =>
-		deliverBatch(
+		deliverBulk(
 			events.flatMap((bulkEvent) => bulkEvent.data.events),
 			step,
 		),
