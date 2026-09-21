@@ -93,6 +93,8 @@ type BatchBody = {
 	results: BatchItemResult[]
 }
 
+const BATCH_ITEM_STATUSES = new Set(['accepted', 'rejected', 'failed'])
+
 function isBatchBody(value: unknown): value is BatchBody {
 	if (typeof value !== 'object' || value === null) return false
 	const body = value as Record<string, unknown>
@@ -102,6 +104,32 @@ function isBatchBody(value: unknown): value is BatchBody {
 		typeof body.failed === 'number' &&
 		Array.isArray(body.results)
 	)
+}
+
+/**
+ * Drovr answers one result per submitted item. A body that does not
+ * cover every item exactly once with a known status is not a verdict on
+ * the chunk; the caller retries rather than let an unrepresented event
+ * count as delivered.
+ */
+function coversEveryEvent(body: BatchBody, count: number): boolean {
+	if (body.results.length !== count) return false
+	const seen = new Set<number>()
+	for (const item of body.results) {
+		if (
+			typeof item !== 'object' ||
+			item === null ||
+			!Number.isInteger(item.index) ||
+			item.index < 0 ||
+			item.index >= count ||
+			seen.has(item.index) ||
+			!BATCH_ITEM_STATUSES.has(item.status)
+		) {
+			return false
+		}
+		seen.add(item.index)
+	}
+	return true
 }
 
 /**
@@ -171,6 +199,12 @@ export async function deliverBatchOrThrow(args: {
 			throw new DrovrBatchDeliveryFailedError(
 				keys,
 				'drovr answered 200 without a batch body',
+			)
+		}
+		if (!coversEveryEvent(body, args.events.length)) {
+			throw new DrovrBatchDeliveryFailedError(
+				keys,
+				`drovr answered ${body.results.length} result(s) for ${args.events.length} event(s)`,
 			)
 		}
 		const failedKeys: string[] = []

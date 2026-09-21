@@ -278,6 +278,37 @@ describe('drovr batch delivery step', () => {
 		).rejects.toThrow(/no batch ingress/)
 	})
 
+	it('retries when the body does not cover every submitted event', async () => {
+		// Macroscope on #263: a 200 with fewer, duplicate, or unknown results
+		// is not a verdict on the chunk. Never let an unrepresented event
+		// count as delivered.
+		const short = vi.fn().mockResolvedValue(
+			new Response(batchBody([{ index: 0, status: 'accepted' }]), {
+				status: 200,
+			}),
+		)
+		await expect(
+			deliverBatchOrThrow({ events: [event, second], config, fetcher: short }),
+		).rejects.toThrow(/1 result\(s\) for 2 event\(s\)/)
+
+		const duplicate = vi.fn().mockResolvedValue(
+			new Response(
+				batchBody([
+					{ index: 0, status: 'accepted' },
+					{ index: 0, status: 'accepted' },
+				]),
+				{ status: 200 },
+			),
+		)
+		await expect(
+			deliverBatchOrThrow({
+				events: [event, second],
+				config,
+				fetcher: duplicate,
+			}),
+		).rejects.toThrow(DrovrBatchDeliveryFailedError)
+	})
+
 	it('derives the batch url and a stable step id', () => {
 		expect(batchIngestUrl('https://drovr.test/events/')).toBe(
 			'https://drovr.test/events/batch',
