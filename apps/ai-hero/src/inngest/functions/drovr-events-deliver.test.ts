@@ -32,15 +32,21 @@ vi.mock('@/lib/subscriber-marketing/drovr-ownership-live', () => ({
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))
 
-import { drovrEventsDeliver } from './drovr-events-deliver'
+import {
+	drovrEventsDeliver,
+	drovrEventsDeliverBulk,
+} from './drovr-events-deliver'
 
-const registered = drovrEventsDeliver as unknown as {
+type Registered = {
 	config: {
 		id: string
 		concurrency: Array<{ key?: string; limit: number }>
 	}
 	trigger: { event: string }
 }
+
+const registered = drovrEventsDeliver as unknown as Registered
+const registeredBulk = drovrEventsDeliverBulk as unknown as Registered
 
 describe('drovr events deliver registration', () => {
 	it('keeps a per-source sub-queue so bulk producers cannot starve live facts', () => {
@@ -54,5 +60,17 @@ describe('drovr events deliver registration', () => {
 			{ key: 'event.data.source', limit: 4 },
 		])
 		expect(registered.trigger).toEqual({ event: 'drovr/events.deliver' })
+	})
+
+	it('runs bulk batches on their own function so they never share the live queue', () => {
+		// 2026-09-21 04:44Z: with the key above, a Kit page's thousand
+		// one-contact deliveries still sat ahead of the live and completion
+		// lanes in the one function queue for eleven minutes. A separate
+		// function is a separate queue.
+		expect(registeredBulk.config.id).toBe('drovr-events-deliver-bulk-v1')
+		expect(registeredBulk.config.concurrency).toEqual([{ limit: 4 }])
+		expect(registeredBulk.trigger).toEqual({
+			event: 'drovr/events.deliver.bulk',
+		})
 	})
 })

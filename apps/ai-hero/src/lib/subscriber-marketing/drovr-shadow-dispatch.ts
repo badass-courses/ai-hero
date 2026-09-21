@@ -1,12 +1,12 @@
-import { DROVR_EVENTS_DELIVER_EVENT } from '@/inngest/events/drovr'
-import type { DrovrEventsDeliver } from '@/inngest/events/drovr'
+import { deliverEventNameFor } from '@/inngest/events/drovr'
+import type {
+	DrovrEventsDeliver,
+	DrovrEventsDeliverBulk,
+} from '@/inngest/events/drovr'
 import { log } from '@/server/logger'
 
 import type { EvergreenPitchEntryResult } from './drovr-pitch-entry'
-import {
-	fanOutOwnedEvents,
-	isShadowNewsletterBirth,
-} from './drovr-ownership'
+import { fanOutOwnedEvents, isShadowNewsletterBirth } from './drovr-ownership'
 import {
 	enterEvergreenPitchFromLiveDatabase,
 	resolveOwnedContactIds,
@@ -31,7 +31,9 @@ import {
  * the authoritative write that produced the fact already committed.
  */
 
-type DrovrShadowSend = (payload: DrovrEventsDeliver) => Promise<unknown>
+type DrovrShadowSend = (
+	payload: DrovrEventsDeliver | DrovrEventsDeliverBulk,
+) => Promise<unknown>
 
 type InngestEventApiAcknowledgement = {
 	ids: string[]
@@ -39,7 +41,7 @@ type InngestEventApiAcknowledgement = {
 }
 
 export async function sendDrovrEventsDeliverViaInngestHttp(
-	payload: DrovrEventsDeliver,
+	payload: DrovrEventsDeliver | DrovrEventsDeliverBulk,
 	options: {
 		eventKey: string
 		fetchImpl?: typeof fetch
@@ -163,8 +165,7 @@ export async function dispatchDrovrShadowFact(
 					(event) =>
 						event.journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID &&
 						!(
-							fact.kind === 'course-exhausted' &&
-							isShadowNewsletterBirth(event)
+							fact.kind === 'course-exhausted' && isShadowNewsletterBirth(event)
 						),
 				)
 			: mappedEvents
@@ -179,15 +180,16 @@ export async function dispatchDrovrShadowFact(
 			const { inngest } = await import('@/inngest/inngest.server')
 			return inngest.send(payload)
 		})
-	// The source keys the delivery sub-queue (#257). A bulk producer that
-	// creates contacts names its own lane so live signups never wait on it.
+	// The source keys the delivery sub-queue (#257) and picks the function:
+	// a bulk producer that creates contacts names itself and its batches go
+	// to the bulk function's own queue, so live signups never wait on them.
 	const source =
 		fact.kind === 'contact-created' && fact.deliverySource !== undefined
 			? fact.deliverySource
 			: fact.kind
 	try {
 		await send({
-			name: DROVR_EVENTS_DELIVER_EVENT,
+			name: deliverEventNameFor(source),
 			data: { events, source },
 		})
 		return 'queued'
@@ -221,11 +223,7 @@ export async function dispatchDrovrShadowFact(
 			: []
 		const fallback = options.fallback ?? emitDrovrShadowEvents
 		await fallback(
-			fanOutOwnedEvents(
-				events,
-				new Set(owned),
-				new Set(newsletterOwned),
-			),
+			fanOutOwnedEvents(events, new Set(owned), new Set(newsletterOwned)),
 		).catch(() => undefined)
 		return 'fallback'
 	}
