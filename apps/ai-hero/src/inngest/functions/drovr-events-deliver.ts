@@ -37,14 +37,12 @@ export type DrovrEventsDeliverReceipt = {
  * repeat. Concurrency stays modest: drovr's ingress is one D1 append and
  * one Durable Object fold per event.
  *
- * The second concurrency entry keys a sub-queue per `event.data.source`
- * (the fact kind). Bulk producers such as the Kit directory ingest emit
- * thousands of `contact-created` facts in minutes; without the key they
- * filled every slot and live signups (`contact-event`,
- * `side-effect-intent-completed`) waited behind them (2026-09-20: 4.5 min
- * of queue lag within twenty minutes of starting the ingest). With it, one
- * source can hold at most half the slots and the others keep their own
- * queues.
+ * Bulk producers do not share this function. A per-source concurrency key
+ * (#260) was tried first: it caps a source's slots but not its place in
+ * the one function queue, and on 2026-09-21 a Kit page's thousand
+ * one-contact deliveries held every live fact `Scheduled` for two hours.
+ * Inngest's own queue posts describe the mechanism (scan windows filled by
+ * concurrency-blocked items). A separate function is a separate queue.
  */
 type DeliverStep = GetStepTools<typeof inngest>
 
@@ -110,7 +108,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 		id: 'drovr-events-deliver-v1',
 		name: 'drovr: deliver events durably',
 		retries: 6,
-		concurrency: [{ limit: 8 }, { key: 'event.data.source', limit: 4 }],
+		concurrency: [{ limit: 8 }],
 	},
 	{ event: DROVR_EVENTS_DELIVER_EVENT },
 	async ({ event, step }) => {
@@ -132,19 +130,31 @@ export const drovrEventsDeliver = inngest.createFunction(
 
 /**
  * Bulk producers' batches, on their own function and so their own queue.
- * The keyed entry above caps a source's slots but not its place in line:
- * a Kit page's thousand one-contact deliveries sat ahead of the live and
- * completion lanes and those waited eleven minutes (2026-09-21 04:44Z).
  * Four slots: drovr folds a birth in about two seconds, and the live
  * function's eight stay untouched.
+ *
+ * Inngest folds up to a hundred bulk events into one run before it is
+ * queued, so a Kit page (about a thousand one-contact events in a second)
+ * becomes ten queue items instead of a thousand, and the owner lookups run
+ * once per hundred contacts instead of once per contact. Each contact is
+ * still its own step, keyed by its drovr idempotency key, so a retry after
+ * a partial run never re-posts what already landed. Drovr's ingress takes
+ * one event per request; a batch ingress there is the next step down.
  */
+export const BULK_DELIVERY_BATCH = { maxSize: 100, timeout: '10s' } as const
+
 export const drovrEventsDeliverBulk = inngest.createFunction(
 	{
 		id: 'drovr-events-deliver-bulk-v1',
 		name: 'drovr: deliver bulk events durably',
 		retries: 6,
 		concurrency: [{ limit: 4 }],
+		batchEvents: BULK_DELIVERY_BATCH,
 	},
 	{ event: DROVR_EVENTS_DELIVER_BULK_EVENT },
-	async ({ event, step }) => deliverBatch(event.data.events, step),
+	async ({ events, step }) =>
+		deliverBatch(
+			events.flatMap((bulkEvent) => bulkEvent.data.events),
+			step,
+		),
 )

@@ -41,6 +41,7 @@ type Registered = {
 	config: {
 		id: string
 		concurrency: Array<{ key?: string; limit: number }>
+		batchEvents?: { maxSize: number; timeout: string }
 	}
 	trigger: { event: string }
 }
@@ -49,16 +50,13 @@ const registered = drovrEventsDeliver as unknown as Registered
 const registeredBulk = drovrEventsDeliverBulk as unknown as Registered
 
 describe('drovr events deliver registration', () => {
-	it('keeps a per-source sub-queue so bulk producers cannot starve live facts', () => {
-		// 2026-09-20: the Kit directory ingest emitted ~170 `contact-created`
-		// facts a minute into a single 8-slot queue and live signups waited
-		// minutes behind them. The keyed entry caps any one source at half
-		// the slots and gives every other source its own queue.
+	it('keeps the live function to one plain eight-slot queue', () => {
+		// A per-source key (#260) capped a source's slots but not its place
+		// in line: on 2026-09-21 a Kit page's thousand deliveries still held
+		// every live fact Scheduled for two hours. Bulk sources now have their
+		// own function; the key had nothing left to do.
 		expect(registered.config.id).toBe('drovr-events-deliver-v1')
-		expect(registered.config.concurrency).toEqual([
-			{ limit: 8 },
-			{ key: 'event.data.source', limit: 4 },
-		])
+		expect(registered.config.concurrency).toEqual([{ limit: 8 }])
 		expect(registered.trigger).toEqual({ event: 'drovr/events.deliver' })
 	})
 
@@ -72,5 +70,16 @@ describe('drovr events deliver registration', () => {
 		expect(registeredBulk.trigger).toEqual({
 			event: 'drovr/events.deliver.bulk',
 		})
+	})
+
+	it('folds a bulk flood into hundred-event runs before it is queued', () => {
+		// A Kit page is about a thousand one-contact events in one second.
+		// As a thousand runs they are a thousand queue items and a thousand
+		// owner lookups; as ten runs they are ten of each.
+		expect(registeredBulk.config.batchEvents).toEqual({
+			maxSize: 100,
+			timeout: '10s',
+		})
+		expect(registered.config.batchEvents).toBeUndefined()
 	})
 })
