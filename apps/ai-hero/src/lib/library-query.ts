@@ -68,13 +68,14 @@ async function getPurchasedResources(
 			resourceType: contentResource.type,
 			// Routes key off `fields.slug`; the column is the fallback. They agree
 			// in production today, and preferring the one the router uses means a
-			// drift shows up as a stale label rather than a broken link.
+			// drift shows up as a stale label rather than a broken link. NULLIF
+			// because unquoting a JSON null yields the string 'null', not NULL.
 			resourceSlug: sql<
 				string | null
-			>`COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.slug')), ${contentResource.slug})`,
+			>`COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.slug')), 'null'), ${contentResource.slug})`,
 			resourceTitle: sql<
 				string | null
-			>`JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.title'))`,
+			>`NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${contentResource.fields}, '$.title')), 'null')`,
 		})
 		.from(purchases)
 		.leftJoin(products, eq(purchases.productId, products.id))
