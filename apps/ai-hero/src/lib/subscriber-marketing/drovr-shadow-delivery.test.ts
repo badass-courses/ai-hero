@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+	batchIngestUrl,
+	batchStepId,
+	deliverBatchOrThrow,
 	deliverOrThrow,
 	deliveryStepId,
+	DrovrBatchDeliveryFailedError,
 	DrovrDeliveryFailedError,
 } from './drovr-shadow-delivery'
 import type { DrovrShadowEvent } from './drovr-shadow-emitter'
@@ -139,5 +143,145 @@ describe('drovr 4xx body handling', () => {
 			httpStatus: 404,
 			problem: null,
 		})
+	})
+})
+
+describe('drovr batch delivery step', () => {
+	const second: DrovrShadowEvent = {
+		...event,
+		contactId: 'contact-2',
+		idempotencyKey: 'aihero:semantic:skills-newsletter.subscribed:2',
+	}
+	const batchBody = (
+		results: { index: number; status: string; detail?: string }[],
+	) =>
+		JSON.stringify({
+			accepted: results.filter((r) => r.status === 'accepted').length,
+			rejected: results.filter((r) => r.status === 'rejected').length,
+			failed: results.filter((r) => r.status === 'failed').length,
+			results,
+		})
+
+	it('posts the chunk to /events/batch and returns the counts', async () => {
+		const fetcher = vi.fn().mockResolvedValue(
+			new Response(
+				batchBody([
+					{ index: 0, status: 'accepted' },
+					{ index: 1, status: 'accepted' },
+				]),
+				{ status: 200 },
+			),
+		)
+
+		const outcome = await deliverBatchOrThrow({
+			events: [event, second],
+			config,
+			fetcher,
+		})
+
+		expect(outcome).toEqual({ accepted: 2, rejected: 0 })
+		expect(fetcher).toHaveBeenCalledWith(
+			'https://drovr.test/events/batch',
+			expect.objectContaining({
+				method: 'POST',
+				headers: {
+					authorization: 'Bearer test-key',
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify({ events: [event, second] }),
+			}),
+		)
+	})
+
+	it('throws naming the failed keys when drovr could not take an item', async () => {
+		const fetcher = vi.fn().mockResolvedValue(
+			new Response(
+				batchBody([
+					{ index: 0, status: 'accepted' },
+					{ index: 1, status: 'failed', detail: 'actor busy' },
+				]),
+				{ status: 200 },
+			),
+		)
+
+		await expect(
+			deliverBatchOrThrow({ events: [event, second], config, fetcher }),
+		).rejects.toMatchObject({
+			name: 'DrovrBatchDeliveryFailedError',
+			failedKeys: [second.idempotencyKey],
+		})
+	})
+
+	it('warns once per rejected item and does not throw', async () => {
+		const fetcher = vi.fn().mockResolvedValue(
+			new Response(
+				batchBody([
+					{ index: 0, status: 'rejected', detail: 'unknown journey nope' },
+					{ index: 1, status: 'accepted' },
+				]),
+				{ status: 200 },
+			),
+		)
+		const warn = vi.fn()
+
+		const outcome = await deliverBatchOrThrow({
+			events: [event, second],
+			config,
+			fetcher,
+			warn,
+		})
+
+		expect(outcome).toEqual({ accepted: 1, rejected: 1 })
+		expect(warn).toHaveBeenCalledTimes(1)
+		expect(warn).toHaveBeenCalledWith(
+			'drovr.shadow.rejected',
+			expect.objectContaining({
+				idempotencyKey: event.idempotencyKey,
+				problem: 'unknown journey nope',
+			}),
+		)
+	})
+
+	it('treats a 4xx envelope as final for the chunk and a 5xx as a retry', async () => {
+		const warn = vi.fn()
+		const unauthorized = vi
+			.fn()
+			.mockResolvedValue(
+				new Response(JSON.stringify({ title: 'Unknown key' }), { status: 401 }),
+			)
+		expect(
+			await deliverBatchOrThrow({
+				events: [event, second],
+				config,
+				fetcher: unauthorized,
+				warn,
+			}),
+		).toEqual({ accepted: 0, rejected: 2 })
+		expect(warn).toHaveBeenCalledWith(
+			'drovr.shadow.batch_rejected',
+			expect.objectContaining({ status: 401, count: 2 }),
+		)
+
+		const sad = vi
+			.fn()
+			.mockResolvedValue(new Response('upstream sad', { status: 503 }))
+		await expect(
+			deliverBatchOrThrow({ events: [event], config, fetcher: sad }),
+		).rejects.toThrow(DrovrBatchDeliveryFailedError)
+
+		// A drovr without the batch route yet is a retry, never a drop.
+		const missing = vi
+			.fn()
+			.mockResolvedValue(new Response('not found', { status: 404 }))
+		await expect(
+			deliverBatchOrThrow({ events: [event], config, fetcher: missing }),
+		).rejects.toThrow(/no batch ingress/)
+	})
+
+	it('derives the batch url and a stable step id', () => {
+		expect(batchIngestUrl('https://drovr.test/events/')).toBe(
+			'https://drovr.test/events/batch',
+		)
+		expect(batchStepId('org-aihero', 3)).toBe('deliver-batch:org-aihero:3')
 	})
 })
