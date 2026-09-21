@@ -94,6 +94,40 @@ export function ctaFor(
 	}
 }
 
+/**
+ * Where an in-progress learner was last, when that beats "first unfinished".
+ *
+ * The player saves a playback position on the lesson's progress row before the
+ * lesson is completed, so the most recently touched lesson is often one they
+ * are halfway through. That is where Continue should land. Once that lesson is
+ * completed the answer is the next unfinished one, which `ctaFor` already has.
+ *
+ * @param latest - The most recently touched lesson, from `getLatestCourseLesson`.
+ * @param progress - The learner's progress rows.
+ * @returns A Continue CTA, or null when the latest lesson is already finished.
+ */
+export function resumeCtaFor(
+	latest: {
+		lesson: { id: string; fields?: Record<string, unknown> | null }
+		href: string
+	} | null,
+	progress: { resourceId?: string | null; completedAt?: Date | null }[],
+): LibraryEntry['cta'] | null {
+	if (!latest) return null
+
+	const finished = progress.some(
+		(row) => row.resourceId === latest.lesson.id && row.completedAt,
+	)
+	if (finished) return null
+
+	const title = latest.lesson.fields?.title
+	return {
+		label:
+			typeof title === 'string' && title ? `Continue: ${title}` : 'Continue',
+		href: latest.href,
+	}
+}
+
 type WorkshopProgress = {
 	workshop: { slug: string; title: string; state: string; startsAt: string | null }
 	progress: {

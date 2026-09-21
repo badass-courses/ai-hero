@@ -4,6 +4,7 @@ import {
 	ctaFor,
 	overviewHrefFor,
 	pickCurrentWorkshop,
+	resumeCtaFor,
 	statusFor,
 } from './library-entry'
 
@@ -146,5 +147,33 @@ describe('pickCurrentWorkshop', () => {
 		expect(
 			pickCurrentWorkshop([entry('one', 8, 8), entry('two', 5, 5)], available),
 		).toBeUndefined()
+	})
+})
+
+describe('resumeCtaFor', () => {
+	const latest = {
+		lesson: { id: 'lesson-2', fields: { title: 'Permissions' } },
+		href: '/workshops/agents/permissions',
+	}
+
+	it('continues the lesson the learner was last in when it is unfinished', () => {
+		expect(
+			resumeCtaFor(latest, [{ resourceId: 'lesson-2', completedAt: null }]),
+		).toEqual({
+			label: 'Continue: Permissions',
+			href: '/workshops/agents/permissions',
+		})
+	})
+
+	it('steps aside once that lesson is complete', () => {
+		expect(
+			resumeCtaFor(latest, [
+				{ resourceId: 'lesson-2', completedAt: new Date('2026-09-01') },
+			]),
+		).toBeNull()
+	})
+
+	it('has nothing to say before the learner starts', () => {
+		expect(resumeCtaFor(null, [])).toBeNull()
 	})
 })

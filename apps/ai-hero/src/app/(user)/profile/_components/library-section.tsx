@@ -15,7 +15,7 @@ import { cn } from '@coursebuilder/utils/cn'
  */
 export function LibrarySection({ entries }: { entries: LibraryEntry[] }) {
 	return (
-		<section>
+		<section id="my-courses" className="scroll-mt-[calc(var(--nav-height)+1rem)]">
 			<div className="mb-4">
 				{/* Matches the page's own `h1`, which is 20px here — a section head
 				    that outranks the page title reads as the wrong hierarchy. */}

@@ -4,6 +4,7 @@ import {
 	contentResourceProduct,
 	products,
 	purchases,
+	resourceProgress,
 } from '@/db/schema'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
@@ -12,11 +13,14 @@ import {
 	ctaFor,
 	overviewHrefFor,
 	pickCurrentWorkshop,
+	resumeCtaFor,
 	statusFor,
 	type LibraryEntry,
 } from './library-entry'
 import { getCachedCohortNavigation } from './cohort-navigation-query'
 import { flattenNavigationResources } from './content-navigation'
+import { getContentNavigation } from './content-navigation-query'
+import { getLatestCourseLesson } from './course-resume-navigation'
 import { getModuleProgressForUser } from './progress'
 import { getCachedWorkshopNavigation } from './workshops-query'
 
@@ -257,6 +261,27 @@ function buildPlainEntry(purchase: PurchasedResource): LibraryEntry {
 	}
 }
 
+/**
+ * Points an unfinished entry at the lesson the learner was last in, when they
+ * have not finished that lesson. Everything else keeps the CTA it was built
+ * with. Not gated on `in-progress`: someone halfway through their first video
+ * has completed nothing yet, and still has a place to go back to.
+ */
+async function withResumeCta(
+	entry: LibraryEntry,
+	resourceId: string | null,
+	progress: { resourceId: string | null; completedAt: Date | null }[],
+): Promise<LibraryEntry> {
+	if (entry.status === 'complete' || !resourceId) return entry
+
+	const navigation = await getContentNavigation(resourceId)
+	const cta = navigation
+		? resumeCtaFor(getLatestCourseLesson(navigation, progress), progress)
+		: null
+
+	return cta ? { ...entry, cta } : entry
+}
+
 /** In-progress first, then unstarted, then finished; newest purchase breaks ties. */
 const STATUS_ORDER: Record<LibraryEntry['status'], number> = {
 	'in-progress': 0,
@@ -267,41 +292,54 @@ const STATUS_ORDER: Record<LibraryEntry['status'], number> = {
 export async function getLibraryEntries(
 	userId: string,
 ): Promise<LibraryEntry[]> {
-	const purchased = await getPurchasedResources(userId)
+	const [purchased, progress] = await Promise.all([
+		getPurchasedResources(userId),
+		db.query.resourceProgress.findMany({
+			where: eq(resourceProgress.userId, userId),
+			columns: { resourceId: true, updatedAt: true, completedAt: true },
+		}),
+	])
 
 	const entries = await Promise.all(
-		purchased.map(async (purchase) => {
-			if (purchase.resourceType === 'cohort' && purchase.resourceId) {
-				// Falls back rather than dropping the row: `buildCohortEntry` returns
-				// null when the cohort's navigation will not load, and a purchase
-				// silently vanishing from "your courses" is the worst outcome here.
-				return (
-					(await buildCohortEntry(purchase, purchase.resourceId)) ??
-					buildPlainEntry(purchase)
-				)
-			}
-
-			if (
-				(purchase.resourceType === 'workshop' ||
-					purchase.resourceType === 'tutorial') &&
-				purchase.resourceSlug
-			) {
-				return buildWorkshopEntry(purchase, {
-					workshopSlug: purchase.resourceSlug,
-					title: purchase.title,
-				})
-			}
-
-			return buildPlainEntry(purchase)
-		}),
+		purchased.map(async (purchase) =>
+			withResumeCta(
+				await buildEntry(purchase),
+				purchase.resourceId,
+				progress,
+			),
+		),
 	)
 
-	// No filter: every branch above now yields an entry, so a purchase can no
-	// longer disappear between the query and the page.
-	return entries
-		.sort((a, b) => {
-			const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
-			if (byStatus !== 0) return byStatus
-			return (b.purchasedAt?.getTime() ?? 0) - (a.purchasedAt?.getTime() ?? 0)
+	// No filter: every branch of `buildEntry` yields an entry, so a purchase can
+	// no longer disappear between the query and the page.
+	return entries.sort((a, b) => {
+		const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
+		if (byStatus !== 0) return byStatus
+		return (b.purchasedAt?.getTime() ?? 0) - (a.purchasedAt?.getTime() ?? 0)
+	})
+}
+
+async function buildEntry(purchase: PurchasedResource): Promise<LibraryEntry> {
+	if (purchase.resourceType === 'cohort' && purchase.resourceId) {
+		// Falls back rather than dropping the row: `buildCohortEntry` returns
+		// null when the cohort's navigation will not load, and a purchase
+		// silently vanishing from "your courses" is the worst outcome here.
+		return (
+			(await buildCohortEntry(purchase, purchase.resourceId)) ??
+			buildPlainEntry(purchase)
+		)
+	}
+
+	if (
+		(purchase.resourceType === 'workshop' ||
+			purchase.resourceType === 'tutorial') &&
+		purchase.resourceSlug
+	) {
+		return buildWorkshopEntry(purchase, {
+			workshopSlug: purchase.resourceSlug,
+			title: purchase.title,
 		})
+	}
+
+	return buildPlainEntry(purchase)
 }
