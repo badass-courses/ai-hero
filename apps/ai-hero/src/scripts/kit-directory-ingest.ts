@@ -20,6 +20,7 @@ const INNGEST_EVENT_KEY_PLACEHOLDER = '[SENSITIVE]'
 export const KIT_DIRECTORY_API_PAGE_SIZE = 1000 as const
 export const KIT_DIRECTORY_PAGE_DELAY_MS = 600 as const
 export const KIT_DIRECTORY_REQUEST_TIMEOUT_MS = 15_000 as const
+export const KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS = 1_000 as const
 export const KIT_DIRECTORY_MAX_ATTEMPTS = 5 as const
 export const KIT_DIRECTORY_RETRY_BASE_MS = 1_000 as const
 export const KIT_DIRECTORY_MAX_RETRY_DELAY_MS = 300_000 as const
@@ -201,8 +202,14 @@ export async function fetchKitDirectoryPage(args: {
 	if (!status) throw new Error('--status cannot be empty')
 	const requestTimeoutMs =
 		args.requestTimeoutMs ?? KIT_DIRECTORY_REQUEST_TIMEOUT_MS
-	if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1) {
-		throw new Error('Kit request timeout must be a positive integer')
+	if (
+		!Number.isInteger(requestTimeoutMs) ||
+		requestTimeoutMs < KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS ||
+		requestTimeoutMs > KIT_DIRECTORY_MAX_RETRY_DELAY_MS
+	) {
+		throw new Error(
+			`Kit request timeout must be an integer from ${KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS} to ${KIT_DIRECTORY_MAX_RETRY_DELAY_MS} milliseconds`,
+		)
 	}
 	const maxAttempts = args.maxAttempts ?? KIT_DIRECTORY_MAX_ATTEMPTS
 	if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {

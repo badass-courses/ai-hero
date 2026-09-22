@@ -8,6 +8,7 @@ import {
 	KIT_DIRECTORY_API_PAGE_SIZE,
 	fetchKitDirectoryPage,
 	KIT_DIRECTORY_MAX_RETRY_DELAY_MS,
+	KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS,
 	KIT_DIRECTORY_PAGE_DELAY_MS,
 	parseKitDirectoryIngestArgs,
 	readKitDirectoryPages,
@@ -378,66 +379,97 @@ describe('Kit pagination resilience', () => {
 		expect(sleeps).toEqual([KIT_DIRECTORY_MAX_RETRY_DELAY_MS])
 	})
 
-	it('aborts a Kit request at its deadline', async () => {
-		const fetcher: typeof fetch = async (_input, init) =>
-			new Promise((_resolve, reject) => {
-				init?.signal?.addEventListener('abort', () => {
-					reject(new Error('aborted'))
-				})
-			})
+	it('rejects a request timeout above the safe setTimeout ceiling', async () => {
+		const fetcher = vi.fn()
 
 		await expect(
 			fetchKitDirectoryPage({
 				apiKey: 'test-kit-key',
 				status: 'all',
 				fetcher,
-				maxAttempts: 1,
-				requestTimeoutMs: 1,
+				requestTimeoutMs: KIT_DIRECTORY_MAX_RETRY_DELAY_MS + 1,
 			}),
-		).rejects.toThrow('Kit API request failed after 1 attempts')
+		).rejects.toThrow(
+			`Kit request timeout must be an integer from ${KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS} to ${KIT_DIRECTORY_MAX_RETRY_DELAY_MS} milliseconds`,
+		)
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+
+	it('aborts a Kit request at its deadline', async () => {
+		vi.useFakeTimers()
+		try {
+			const fetcher: typeof fetch = async (_input, init) =>
+				new Promise((_resolve, reject) => {
+					init?.signal?.addEventListener('abort', () => {
+						reject(new Error('aborted'))
+					})
+				})
+			const assertion = expect(
+				fetchKitDirectoryPage({
+					apiKey: 'test-kit-key',
+					status: 'all',
+					fetcher,
+					maxAttempts: 1,
+					requestTimeoutMs: KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS,
+				}),
+			).rejects.toThrow('Kit API request failed after 1 attempts')
+
+			await vi.advanceTimersByTimeAsync(KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS)
+			await assertion
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('keeps the deadline alive through body parsing and retries a stalled body', async () => {
-		let attempts = 0
-		const sleeps: number[] = []
-		const fetcher: typeof fetch = async (_input, init) => {
-			attempts += 1
-			if (attempts > 1) {
-				return jsonResponse({
-					subscribers: [{ id: 11 }],
-					pagination: { has_next_page: false, end_cursor: 'cursor-eleven' },
+		vi.useFakeTimers()
+		try {
+			let attempts = 0
+			const sleeps: number[] = []
+			const fetcher: typeof fetch = async (_input, init) => {
+				attempts += 1
+				if (attempts > 1) {
+					return jsonResponse({
+						subscribers: [{ id: 11 }],
+						pagination: {
+							has_next_page: false,
+							end_cursor: 'cursor-eleven',
+						},
+					})
+				}
+				const body = new ReadableStream<Uint8Array>({
+					start(controller) {
+						init?.signal?.addEventListener('abort', () => {
+							controller.error(new Error('body aborted'))
+						})
+					},
+				})
+				return new Response(body, {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
 				})
 			}
-			const body = new ReadableStream<Uint8Array>({
-				start(controller) {
-					init?.signal?.addEventListener('abort', () => {
-						controller.error(new Error('body aborted'))
-					})
-				},
-			})
-			return new Response(body, {
-				status: 200,
-				headers: { 'content-type': 'application/json' },
-			})
-		}
-
-		await expect(
-			fetchKitDirectoryPage({
+			const result = fetchKitDirectoryPage({
 				apiKey: 'test-kit-key',
 				status: 'all',
 				fetcher,
 				maxAttempts: 2,
-				requestTimeoutMs: 1,
+				requestTimeoutMs: KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS,
 				sleep: async (milliseconds) => {
 					sleeps.push(milliseconds)
 				},
-			}),
-		).resolves.toMatchObject({
-			cursor: 'cursor-eleven',
-			subscribers: [{ id: '11' }],
-		})
-		expect(attempts).toBe(2)
-		expect(sleeps).toEqual([1_000])
+			})
+
+			await vi.advanceTimersByTimeAsync(KIT_DIRECTORY_MIN_REQUEST_TIMEOUT_MS)
+			await expect(result).resolves.toMatchObject({
+				cursor: 'cursor-eleven',
+				subscribers: [{ id: '11' }],
+			})
+			expect(attempts).toBe(2)
+			expect(sleeps).toEqual([1_000])
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })
 
