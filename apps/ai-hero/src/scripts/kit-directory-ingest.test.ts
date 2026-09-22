@@ -251,6 +251,8 @@ describe('rows-only cursor state', () => {
 				createdRows: 2,
 				alreadyPresentRows: 1,
 				skippedInvalidRows: 0,
+				failedRows: 0,
+				failed: [],
 				writeElapsedMs: 25,
 				updatedAt: '2026-09-22T00:00:00.000Z',
 			})
@@ -276,6 +278,8 @@ describe('rows-only cursor state', () => {
 			createdRows: 1,
 			alreadyPresentRows: 0,
 			skippedInvalidRows: 0,
+			failedRows: 0,
+			failed: [],
 			writeElapsedMs: 10,
 			updatedAt: '2026-09-22T00:00:00.000Z',
 		}
@@ -495,7 +499,9 @@ describe('rows-only Kit directory ingest', () => {
 					alreadyPresent: 0,
 					wouldCreate: 0,
 					skippedInvalid: 0,
+					failed: 0,
 				},
+				failed: [],
 			}),
 		)
 		const onPage = vi.fn()
@@ -544,7 +550,9 @@ describe('rows-only Kit directory ingest', () => {
 					alreadyPresent: 0,
 					wouldCreate: 0,
 					skippedInvalid: 0,
+					failed: 0,
 				},
+				failed: [],
 			})
 			.mockRejectedValueOnce(new Error('second batch failed'))
 		const onPage = vi.fn()
@@ -565,6 +573,56 @@ describe('rows-only Kit directory ingest', () => {
 			}),
 		).rejects.toThrow('second batch failed')
 		expect(onPage).not.toHaveBeenCalled()
+	})
+
+	it('finishes the page before exiting with failed provider ids', async () => {
+		const ingestBatch = vi
+			.fn()
+			.mockResolvedValueOnce({
+				mode: 'write',
+				counts: {
+					processed: 2,
+					created: 1,
+					alreadyPresent: 0,
+					wouldCreate: 0,
+					skippedInvalid: 0,
+					failed: 1,
+				},
+				failed: ['2'],
+			})
+			.mockResolvedValueOnce({
+				mode: 'write',
+				counts: {
+					processed: 1,
+					created: 1,
+					alreadyPresent: 0,
+					wouldCreate: 0,
+					skippedInvalid: 0,
+					failed: 0,
+				},
+				failed: [],
+			})
+		const onPage = vi.fn()
+
+		await expect(
+			runKitDirectoryIngest({
+				apiKey: 'test-kit-key',
+				status: 'all',
+				batchSize: 2,
+				limit: 1,
+				send: false,
+				write: true,
+				rowsOnly: true,
+				repository: {} as CaptureMarketingRepository,
+				fetcher: onePage,
+				ingestBatch,
+				onPage,
+			}),
+		).rejects.toThrow('Rows-only page 1 failed for Kit provider ids: 2')
+		expect(ingestBatch).toHaveBeenCalledTimes(2)
+		expect(onPage).toHaveBeenCalledWith(
+			expect.objectContaining({ failedRows: 1, failed: ['2'] }),
+		)
 	})
 
 	it('is idempotent when a restart repeats the last source page', async () => {

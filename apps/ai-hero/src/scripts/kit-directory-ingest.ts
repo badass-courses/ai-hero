@@ -56,6 +56,8 @@ export type KitDirectoryPageSummary = {
 	createdRows?: number
 	alreadyPresentRows?: number
 	skippedInvalidRows?: number
+	failedRows?: number
+	failed?: string[]
 	writeElapsedMs?: number
 	cursor?: string
 }
@@ -69,6 +71,8 @@ export type KitDirectoryRowsOnlyState = {
 	createdRows: number
 	alreadyPresentRows: number
 	skippedInvalidRows: number
+	failedRows: number
+	failed: string[]
 	writeElapsedMs: number
 	updatedAt: string
 }
@@ -100,6 +104,8 @@ export type RunKitDirectoryIngestResult = {
 	createdRows: number
 	alreadyPresentRows: number
 	skippedInvalidRows: number
+	failedRows: number
+	failed: string[]
 	cursor?: string
 	pageSummaries: KitDirectoryPageSummary[]
 }
@@ -401,6 +407,8 @@ export async function runKitDirectoryIngest(
 	let createdRows = 0
 	let alreadyPresentRows = 0
 	let skippedInvalidRows = 0
+	let failedRows = 0
+	const failed: string[] = []
 	let cursor = args.after
 
 	for await (const page of readKitDirectoryPages({
@@ -417,6 +425,8 @@ export async function runKitDirectoryIngest(
 		let pageCreatedRows = 0
 		let pageAlreadyPresentRows = 0
 		let pageSkippedInvalidRows = 0
+		let pageFailedRows = 0
+		const pageFailed: string[] = []
 		const writeStartedAt = Date.now()
 		if (args.rowsOnly) {
 			if (!repository) {
@@ -428,10 +438,13 @@ export async function runKitDirectoryIngest(
 					batch,
 					dryRun: false,
 					suppressBirthDelivery: true,
+					continueOnContactError: true,
 				})
 				pageCreatedRows += result.counts.created
 				pageAlreadyPresentRows += result.counts.alreadyPresent
 				pageSkippedInvalidRows += result.counts.skippedInvalid
+				pageFailedRows += result.counts.failed
+				pageFailed.push(...result.failed)
 			}
 		} else if (args.send) {
 			for (const batch of pageBatches) {
@@ -452,6 +465,8 @@ export async function runKitDirectoryIngest(
 		createdRows += pageCreatedRows
 		alreadyPresentRows += pageAlreadyPresentRows
 		skippedInvalidRows += pageSkippedInvalidRows
+		failedRows += pageFailedRows
+		failed.push(...pageFailed)
 		cursor = page.cursor ?? cursor
 		const summary: KitDirectoryPageSummary = {
 			page: page.page,
@@ -463,6 +478,8 @@ export async function runKitDirectoryIngest(
 						createdRows: pageCreatedRows,
 						alreadyPresentRows: pageAlreadyPresentRows,
 						skippedInvalidRows: pageSkippedInvalidRows,
+						failedRows: pageFailedRows,
+						failed: pageFailed,
 						writeElapsedMs: Date.now() - writeStartedAt,
 					}
 				: {}),
@@ -470,6 +487,11 @@ export async function runKitDirectoryIngest(
 		}
 		pageSummaries.push(summary)
 		await args.onPage?.(summary)
+		if (args.rowsOnly && pageFailed.length > 0) {
+			throw new Error(
+				`Rows-only page ${page.page} failed for Kit provider ids: ${pageFailed.join(', ')}`,
+			)
+		}
 	}
 
 	return {
@@ -480,6 +502,8 @@ export async function runKitDirectoryIngest(
 		createdRows,
 		alreadyPresentRows,
 		skippedInvalidRows,
+		failedRows,
+		failed,
 		...(cursor ? { cursor } : {}),
 		pageSummaries,
 	}
@@ -606,6 +630,7 @@ async function main() {
 		? await createRowsOnlyRepository()
 		: undefined
 	const stateFile = options.stateFile
+	let checkpointCursor: string | null = options.after ?? null
 	try {
 		const result = await runKitDirectoryIngest({
 			...options,
@@ -613,22 +638,30 @@ async function main() {
 			eventKey,
 			repository: direct?.repository,
 			onPage: async (summary) => {
+				const pageFailed = summary.failed ?? []
 				if (options.rowsOnly && stateFile) {
+					const stateCursor =
+						pageFailed.length === 0
+							? (summary.cursor ?? checkpointCursor)
+							: checkpointCursor
 					await writeKitDirectoryRowsOnlyState(stateFile, {
 						version: 1,
 						status: options.status,
 						page: summary.page,
-						cursor: summary.cursor ?? null,
+						cursor: stateCursor,
 						subscribers: summary.subscribers,
 						createdRows: summary.createdRows ?? 0,
 						alreadyPresentRows: summary.alreadyPresentRows ?? 0,
 						skippedInvalidRows: summary.skippedInvalidRows ?? 0,
+						failedRows: summary.failedRows ?? 0,
+						failed: pageFailed,
 						writeElapsedMs: summary.writeElapsedMs ?? 0,
 						updatedAt: new Date().toISOString(),
 					})
+					if (pageFailed.length === 0) checkpointCursor = stateCursor
 				}
 				console.log(
-					`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches} created=${summary.createdRows ?? 0} existing=${summary.alreadyPresentRows ?? 0} writeMs=${summary.writeElapsedMs ?? 0}`,
+					`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches} created=${summary.createdRows ?? 0} existing=${summary.alreadyPresentRows ?? 0} failed=${pageFailed.join(',') || 'none'} writeMs=${summary.writeElapsedMs ?? 0}`,
 				)
 			},
 		})
@@ -638,7 +671,7 @@ async function main() {
 				? 'write'
 				: 'dry-run'
 		console.log(
-			`kit-directory-ingest complete mode=${mode} status=${options.status} pages=${result.pages} subscribers=${result.subscribers} batches=${result.batches} cursor=${result.cursor ?? 'none'} sent=${result.sentBatches} created=${result.createdRows} existing=${result.alreadyPresentRows}`,
+			`kit-directory-ingest complete mode=${mode} status=${options.status} pages=${result.pages} subscribers=${result.subscribers} batches=${result.batches} cursor=${result.cursor ?? 'none'} sent=${result.sentBatches} created=${result.createdRows} existing=${result.alreadyPresentRows} failed=${result.failedRows}`,
 		)
 	} finally {
 		await direct?.close()

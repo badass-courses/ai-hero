@@ -20,6 +20,7 @@ const contact = (id: string): ContactRecord => ({
 function repository(args: {
 	existing?: ProviderIdentityRecord
 	created?: ContactRecord
+	failExternalId?: string
 }) {
 	const createContact = vi.fn(
 		async (
@@ -45,6 +46,9 @@ function repository(args: {
 				CaptureMarketingRepository['createContactAndProviderIdentity']
 			>[2],
 		) => {
+			if (providerIdentityInput.externalId === args.failExternalId) {
+				throw new Error(`failed ${providerIdentityInput.externalId}`)
+			}
 			const createdContact = await createContact(input, options)
 			const providerIdentity = await createProviderIdentity({
 				...providerIdentityInput,
@@ -114,7 +118,9 @@ describe('kit directory ingest', () => {
 				alreadyPresent: 1,
 				wouldCreate: 1,
 				skippedInvalid: 1,
+				failed: 0,
 			},
+			failed: [],
 			cursor: '43',
 		})
 		expect(fake.createContact).not.toHaveBeenCalled()
@@ -137,7 +143,9 @@ describe('kit directory ingest', () => {
 				alreadyPresent: 0,
 				wouldCreate: 2,
 				skippedInvalid: 1,
+				failed: 0,
 			},
+			failed: [],
 			cursor: '10',
 		})
 	})
@@ -163,6 +171,7 @@ describe('kit directory ingest', () => {
 			alreadyPresent: 0,
 			wouldCreate: 0,
 			skippedInvalid: 0,
+			failed: 0,
 		})
 		expect(fake.createContact).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -175,6 +184,35 @@ describe('kit directory ingest', () => {
 		expect(fake.createProviderIdentity).toHaveBeenCalledWith(
 			expect.objectContaining({ provider: 'kit', externalId: '43' }),
 		)
+	})
+
+	it('records a per-contact failure and continues the rows-only batch', async () => {
+		const fake = repository({
+			created: contact('contact-new'),
+			failExternalId: '42',
+		})
+
+		const result = await ingestKitDirectoryBatch({
+			repository: fake.fake,
+			batch: [{ id: '41' }, { id: '42' }, { id: '43' }],
+			continueOnContactError: true,
+			now: '2026-09-20T01:00:00.000Z',
+		})
+
+		expect(result).toEqual({
+			mode: 'write',
+			counts: {
+				processed: 3,
+				created: 2,
+				alreadyPresent: 0,
+				wouldCreate: 0,
+				skippedInvalid: 0,
+				failed: 1,
+			},
+			failed: ['42'],
+			cursor: '43',
+		})
+		expect(fake.createContactAndProviderIdentity).toHaveBeenCalledTimes(3)
 	})
 
 	it('threads rows-only birth suppression without changing the delivery source', async () => {

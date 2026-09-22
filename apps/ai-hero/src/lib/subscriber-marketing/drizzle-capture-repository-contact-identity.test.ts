@@ -18,6 +18,15 @@ function duplicateEntry() {
 	)
 }
 
+function primaryKeyDuplicateEntry(id: string) {
+	return Object.assign(
+		new Error(
+			`Duplicate entry '${id}' for key 'AI_ProviderIdentity.PRIMARY'`,
+		),
+		{ code: 'ER_DUP_ENTRY', errno: 1062 },
+	)
+}
+
 const contactInput: Omit<ContactRecord, 'id'> = {
 	userId: null,
 	email: 'subscriber@example.test',
@@ -40,16 +49,23 @@ const providerIdentityInput: Omit<
 	updatedAt: '2026-09-20T00:00:00.000Z',
 }
 
-function database(options: { identityError?: unknown } = {}) {
+function database(
+	options: { identityError?: unknown; identityErrors?: unknown[] } = {},
+) {
 	const committed: Array<{ table: unknown; value: unknown }> = []
+	const attempted: Array<{ table: unknown; value: unknown }> = []
+	const identityErrors = [...(options.identityErrors ?? [])]
 	const database = {
 		transaction: vi.fn(async (write: (tx: unknown) => Promise<unknown>) => {
 			const pending: Array<{ table: unknown; value: unknown }> = []
 			const transaction = {
 				insert: (table: unknown) => ({
 					values: async (value: unknown) => {
-						if (table === providerIdentity && options.identityError) {
-							throw options.identityError
+						attempted.push({ table, value })
+						if (table === providerIdentity) {
+							const identityError =
+								identityErrors.shift() ?? options.identityError
+							if (identityError) throw identityError
 						}
 						pending.push({ table, value })
 					},
@@ -60,7 +76,7 @@ function database(options: { identityError?: unknown } = {}) {
 			return result
 		}),
 	}
-	return { committed, database }
+	return { attempted, committed, database }
 }
 
 class TestRepository extends DrizzleCaptureMarketingRepository {
@@ -99,7 +115,7 @@ describe('DrizzleCaptureMarketingRepository contact identity creation', () => {
 			id: 'winning-identity',
 			contactId: winningContact.id,
 		}
-		const { committed, database: writeDatabase } = database({
+		const { attempted, committed, database: writeDatabase } = database({
 			identityError: duplicateEntry(),
 		})
 		const repository = new TestRepository(
@@ -120,7 +136,43 @@ describe('DrizzleCaptureMarketingRepository contact identity creation', () => {
 			createdProviderIdentity: false,
 		})
 		expect(committed).toEqual([])
+		expect(
+			attempted.filter(({ table }) => table === providerIdentity),
+		).toHaveLength(1)
 		expect(dispatchShadowFact).not.toHaveBeenCalled()
+	})
+
+	it('retries a provider identity PRIMARY collision with a new id', async () => {
+		const { attempted, committed, database: writeDatabase } = database({
+			identityErrors: [primaryKeyDuplicateEntry('3xl4e')],
+		})
+		const repository = new TestRepository(writeDatabase)
+		vi.spyOn(repository, 'newId')
+			.mockReturnValueOnce('contact-id')
+			.mockReturnValueOnce('3xl4e')
+			.mockReturnValueOnce('fresh-id')
+
+		await expect(
+			repository.createContactAndProviderIdentity(
+				contactInput,
+				providerIdentityInput,
+			),
+		).resolves.toMatchObject({
+			createdContact: true,
+			createdProviderIdentity: true,
+			providerIdentity: { id: 'fresh-id' },
+		})
+
+		expect(
+			attempted
+				.filter(({ table }) => table === providerIdentity)
+				.map(({ value }) => (value as ProviderIdentityRecord).id),
+		).toEqual(['3xl4e', 'fresh-id'])
+		expect(
+			committed
+				.filter(({ table }) => table === providerIdentity)
+				.map(({ value }) => (value as ProviderIdentityRecord).id),
+		).toEqual(['fresh-id'])
 	})
 
 	it('dispatches one birth fact only after the transaction commits', async () => {
