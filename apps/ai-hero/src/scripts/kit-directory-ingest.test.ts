@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -262,6 +262,42 @@ describe('rows-only cursor state', () => {
 			await rm(directory, { recursive: true, force: true })
 		}
 	})
+
+	it('uses independent temp files for concurrent state writers', async () => {
+		const directory = await mkdtemp(join(tmpdir(), 'kit-directory-state-'))
+		const stateFile = join(directory, 'state.json')
+		const state = {
+			version: 1 as const,
+			status: 'all',
+			page: 1,
+			subscribers: 1,
+			createdRows: 1,
+			alreadyPresentRows: 0,
+			skippedInvalidRows: 0,
+			writeElapsedMs: 10,
+			updatedAt: '2026-09-22T00:00:00.000Z',
+		}
+		try {
+			await Promise.all([
+				writeKitDirectoryRowsOnlyState(stateFile, {
+					...state,
+					cursor: 'cursor-one',
+				}),
+				writeKitDirectoryRowsOnlyState(stateFile, {
+					...state,
+					cursor: 'cursor-two',
+				}),
+			])
+
+			const written = JSON.parse(await readFile(stateFile, 'utf8')) as {
+				cursor: string
+			}
+			expect(['cursor-one', 'cursor-two']).toContain(written.cursor)
+			expect(await readdir(directory)).toEqual(['state.json'])
+		} finally {
+			await rm(directory, { recursive: true, force: true })
+		}
+	})
 })
 
 describe('Kit pagination resilience', () => {
@@ -328,6 +364,49 @@ describe('Kit pagination resilience', () => {
 				requestTimeoutMs: 1,
 			}),
 		).rejects.toThrow('Kit API request failed after 1 attempts')
+	})
+
+	it('keeps the deadline alive through body parsing and retries a stalled body', async () => {
+		let attempts = 0
+		const sleeps: number[] = []
+		const fetcher: typeof fetch = async (_input, init) => {
+			attempts += 1
+			if (attempts > 1) {
+				return jsonResponse({
+					subscribers: [{ id: 11 }],
+					pagination: { has_next_page: false, end_cursor: 'cursor-eleven' },
+				})
+			}
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					init?.signal?.addEventListener('abort', () => {
+						controller.error(new Error('body aborted'))
+					})
+				},
+			})
+			return new Response(body, {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			})
+		}
+
+		await expect(
+			fetchKitDirectoryPage({
+				apiKey: 'test-kit-key',
+				status: 'all',
+				fetcher,
+				maxAttempts: 2,
+				requestTimeoutMs: 1,
+				sleep: async (milliseconds) => {
+					sleeps.push(milliseconds)
+				},
+			}),
+		).resolves.toMatchObject({
+			cursor: 'cursor-eleven',
+			subscribers: [{ id: '11' }],
+		})
+		expect(attempts).toBe(2)
+		expect(sleeps).toEqual([1_000])
 	})
 })
 

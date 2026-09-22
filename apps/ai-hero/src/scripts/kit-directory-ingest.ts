@@ -1,4 +1,5 @@
-import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -218,11 +219,10 @@ export async function fetchKitDirectoryPage(args: {
 				signal: controller.signal,
 			})
 		} catch {
+			clearTimeout(timeout)
 			if (attempt === maxAttempts) {
 				throw new Error(`Kit API request failed after ${maxAttempts} attempts`)
 			}
-		} finally {
-			clearTimeout(timeout)
 		}
 		if (!response) {
 			await wait(retryBackoffMs(attempt))
@@ -230,6 +230,7 @@ export async function fetchKitDirectoryPage(args: {
 		}
 
 		if (response.status === 429 || response.status >= 500) {
+			clearTimeout(timeout)
 			if (attempt === maxAttempts) {
 				throw new Error(
 					`Kit API returned HTTP ${response.status} after ${maxAttempts} attempts`,
@@ -243,6 +244,7 @@ export async function fetchKitDirectoryPage(args: {
 			continue
 		}
 		if (!response.ok) {
+			clearTimeout(timeout)
 			throw new Error(`Kit API returned HTTP ${response.status}`)
 		}
 
@@ -250,8 +252,20 @@ export async function fetchKitDirectoryPage(args: {
 		try {
 			payload = await response.json()
 		} catch {
+			const timedOut = controller.signal.aborted
+			clearTimeout(timeout)
+			if (timedOut) {
+				if (attempt === maxAttempts) {
+					throw new Error(
+						`Kit API request failed after ${maxAttempts} attempts`,
+					)
+				}
+				await wait(retryBackoffMs(attempt))
+				continue
+			}
 			throw new Error('Kit API returned invalid JSON')
 		}
+		clearTimeout(timeout)
 		return parseKitDirectoryPage(payload)
 	}
 	throw new Error('Kit API retry loop exhausted')
@@ -539,13 +553,17 @@ export async function writeKitDirectoryRowsOnlyState(
 	state: KitDirectoryRowsOnlyState,
 ) {
 	const target = resolve(path)
-	const temporary = `${target}.tmp`
+	const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`
 	await mkdir(dirname(target), { recursive: true })
-	await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-		encoding: 'utf8',
-		mode: 0o600,
-	})
-	await rename(temporary, target)
+	try {
+		await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
+			encoding: 'utf8',
+			mode: 0o600,
+		})
+		await rename(temporary, target)
+	} finally {
+		await rm(temporary, { force: true })
+	}
 }
 
 async function createRowsOnlyRepository() {
