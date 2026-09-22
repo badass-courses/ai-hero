@@ -197,7 +197,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		options?: ContactCreationOptions,
 	) {
 		const record = await this.insertContact(this.database, input)
-		this.dispatchContactCreated(record, options)
+		if (!options?.suppressBirthDelivery) {
+			this.dispatchContactCreated(record, options)
+		}
 		return record
 	}
 
@@ -229,7 +231,9 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 					}
 				},
 			)
-			this.dispatchContactCreated(records.contact, options)
+			if (!options?.suppressBirthDelivery) {
+				this.dispatchContactCreated(records.contact, options)
+			}
 			return {
 				...records,
 				createdContact: true,
