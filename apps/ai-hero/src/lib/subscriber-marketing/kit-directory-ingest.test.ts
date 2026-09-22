@@ -47,7 +47,10 @@ function repository(args: {
 			>[2],
 		) => {
 			if (providerIdentityInput.externalId === args.failExternalId) {
-				throw new Error(`failed ${providerIdentityInput.externalId}`)
+				throw Object.assign(
+					new Error(`database timeout for ${input.email ?? 'unknown contact'}`),
+					{ name: 'DatabaseError', code: 'ETIMEDOUT' },
+				)
 			}
 			const createdContact = await createContact(input, options)
 			const providerIdentity = await createProviderIdentity({
@@ -186,33 +189,97 @@ describe('kit directory ingest', () => {
 		)
 	})
 
-	it('records a per-contact failure and continues the rows-only batch', async () => {
+	it('records and logs a redacted per-contact failure reason', async () => {
 		const fake = repository({
 			created: contact('contact-new'),
 			failExternalId: '42',
 		})
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+		try {
+			const result = await ingestKitDirectoryBatch({
+				repository: fake.fake,
+				batch: [
+					{ id: '41' },
+					{ id: '42', email: 'private@example.test' },
+					{ id: '43' },
+				],
+				continueOnContactError: true,
+				now: '2026-09-20T01:00:00.000Z',
+			})
 
-		const result = await ingestKitDirectoryBatch({
-			repository: fake.fake,
-			batch: [{ id: '41' }, { id: '42' }, { id: '43' }],
-			continueOnContactError: true,
-			now: '2026-09-20T01:00:00.000Z',
-		})
+			expect(result).toEqual({
+				mode: 'write',
+				counts: {
+					processed: 3,
+					created: 2,
+					alreadyPresent: 0,
+					wouldCreate: 0,
+					skippedInvalid: 0,
+					failed: 1,
+				},
+				failed: [
+					{
+						id: '42',
+						reason:
+							'DatabaseError [ETIMEDOUT]: database timeout for [REDACTED_EMAIL]',
+					},
+				],
+				cursor: '43',
+			})
+			expect(errorLog).toHaveBeenCalledWith(
+				'kit-directory-ingest contact-failed id=42 attempt=1/1 reason=DatabaseError [ETIMEDOUT]: database timeout for [REDACTED_EMAIL]',
+			)
+			expect(JSON.stringify(errorLog.mock.calls)).not.toContain(
+				'private@example.test',
+			)
+			expect(fake.createContactAndProviderIdentity).toHaveBeenCalledTimes(3)
+		} finally {
+			errorLog.mockRestore()
+		}
+	})
 
-		expect(result).toEqual({
-			mode: 'write',
-			counts: {
-				processed: 3,
-				created: 2,
-				alreadyPresent: 0,
-				wouldCreate: 0,
-				skippedInvalid: 0,
-				failed: 1,
-			},
-			failed: ['42'],
-			cursor: '43',
-		})
-		expect(fake.createContactAndProviderIdentity).toHaveBeenCalledTimes(3)
+	it('retries one failed contact after the configured delay', async () => {
+		const fake = repository({ created: contact('contact-new') })
+		fake.createContactAndProviderIdentity
+			.mockRejectedValueOnce(
+				Object.assign(new Error('temporary database failure'), {
+					code: 'ETIMEDOUT',
+				}),
+			)
+			.mockResolvedValueOnce({
+				contact: contact('contact-new'),
+				providerIdentity: {
+					id: 'provider-1',
+					contactId: 'contact-new',
+					provider: 'kit',
+					externalId: '42',
+					evidence: { source: 'kit', strength: 'strong' },
+					createdAt: '2026-09-20T01:00:00.000Z',
+					updatedAt: '2026-09-20T01:00:00.000Z',
+				},
+				createdContact: true,
+				createdProviderIdentity: true,
+			})
+		const sleep = vi.fn(async () => {})
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+		try {
+			const result = await ingestKitDirectoryBatch({
+				repository: fake.fake,
+				batch: [{ id: '42' }],
+				continueOnContactError: true,
+				contactFailureAttempts: 2,
+				contactFailureRetryDelayMs: 5_000,
+				sleep,
+				now: '2026-09-20T01:00:00.000Z',
+			})
+
+			expect(result.counts).toMatchObject({ created: 1, failed: 0 })
+			expect(result.failed).toEqual([])
+			expect(sleep).toHaveBeenCalledWith(5_000)
+			expect(fake.createContactAndProviderIdentity).toHaveBeenCalledTimes(2)
+		} finally {
+			errorLog.mockRestore()
+		}
 	})
 
 	it('threads rows-only birth suppression without changing the delivery source', async () => {

@@ -12,6 +12,8 @@ import type { CaptureMarketingRepository } from '@/lib/subscriber-marketing/capt
 import {
 	ingestKitDirectoryBatch,
 	KIT_DIRECTORY_BATCH_SIZE,
+	KIT_DIRECTORY_CONTACT_RETRY_DELAY_MS,
+	type KitDirectoryFailure,
 } from '@/lib/subscriber-marketing/kit-directory-ingest'
 
 const KIT_API_SUBSCRIBERS_URL = 'https://api.kit.com/v4/subscribers'
@@ -33,6 +35,7 @@ export type ScriptOptions = {
 	send: boolean
 	write: boolean
 	rowsOnly: boolean
+	continueOnFailure: boolean
 	stateFile?: string
 }
 
@@ -57,7 +60,7 @@ export type KitDirectoryPageSummary = {
 	alreadyPresentRows?: number
 	skippedInvalidRows?: number
 	failedRows?: number
-	failed?: string[]
+	failed?: KitDirectoryFailure[]
 	writeElapsedMs?: number
 	cursor?: string
 }
@@ -72,7 +75,7 @@ export type KitDirectoryRowsOnlyState = {
 	alreadyPresentRows: number
 	skippedInvalidRows: number
 	failedRows: number
-	failed: string[]
+	failed: KitDirectoryFailure[]
 	writeElapsedMs: number
 	updatedAt: string
 }
@@ -86,6 +89,7 @@ export type RunKitDirectoryIngestArgs = {
 	send: boolean
 	write: boolean
 	rowsOnly?: boolean
+	continueOnFailure?: boolean
 	repository?: CaptureMarketingRepository
 	eventKey?: string
 	fetcher?: typeof fetch
@@ -105,7 +109,7 @@ export type RunKitDirectoryIngestResult = {
 	alreadyPresentRows: number
 	skippedInvalidRows: number
 	failedRows: number
-	failed: string[]
+	failed: KitDirectoryFailure[]
 	cursor?: string
 	pageSummaries: KitDirectoryPageSummary[]
 }
@@ -408,7 +412,7 @@ export async function runKitDirectoryIngest(
 	let alreadyPresentRows = 0
 	let skippedInvalidRows = 0
 	let failedRows = 0
-	const failed: string[] = []
+	const failed: KitDirectoryFailure[] = []
 	let cursor = args.after
 
 	for await (const page of readKitDirectoryPages({
@@ -426,7 +430,7 @@ export async function runKitDirectoryIngest(
 		let pageAlreadyPresentRows = 0
 		let pageSkippedInvalidRows = 0
 		let pageFailedRows = 0
-		const pageFailed: string[] = []
+		const pageFailed: KitDirectoryFailure[] = []
 		const writeStartedAt = Date.now()
 		if (args.rowsOnly) {
 			if (!repository) {
@@ -439,6 +443,10 @@ export async function runKitDirectoryIngest(
 					dryRun: false,
 					suppressBirthDelivery: true,
 					continueOnContactError: true,
+					contactFailureAttempts: args.continueOnFailure ? 2 : 1,
+					contactFailureRetryDelayMs:
+						KIT_DIRECTORY_CONTACT_RETRY_DELAY_MS,
+					sleep: args.sleep,
 				})
 				pageCreatedRows += result.counts.created
 				pageAlreadyPresentRows += result.counts.alreadyPresent
@@ -487,11 +495,21 @@ export async function runKitDirectoryIngest(
 		}
 		pageSummaries.push(summary)
 		await args.onPage?.(summary)
-		if (args.rowsOnly && pageFailed.length > 0) {
+		if (
+			args.rowsOnly &&
+			!args.continueOnFailure &&
+			pageFailed.length > 0
+		) {
 			throw new Error(
-				`Rows-only page ${page.page} failed for Kit provider ids: ${pageFailed.join(', ')}`,
+				`Rows-only page ${page.page} failed contacts: ${JSON.stringify(pageFailed)}`,
 			)
 		}
+	}
+
+	if (args.rowsOnly && args.continueOnFailure && failed.length > 0) {
+		throw new Error(
+			`Rows-only ingest completed with failed contacts: ${JSON.stringify(failed)}`,
+		)
 	}
 
 	return {
@@ -527,6 +545,7 @@ export function parseKitDirectoryIngestArgs(
 	let send = false
 	let write = false
 	let rowsOnly = false
+	let continueOnFailure = false
 	let stateFile: string | undefined
 
 	for (let index = 0; index < argv.length; index++) {
@@ -542,12 +561,13 @@ export function parseKitDirectoryIngestArgs(
 			stateFile = nextArgument(argv, index++, arg)
 		} else if (arg === '--send') send = true
 		else if (arg === '--write') write = true
+		else if (arg === '--continue-on-failure') continueOnFailure = true
 		else if (arg === '--rows-only') {
 			rowsOnly = true
 			write = true
 		} else if (arg === '--help') {
 			console.log(
-				'Usage: pnpm kit-directory:ingest -- [--status all] [--after <cursor>] [--batch-size 500] [--limit <pages>] [--send] [--write] [--rows-only --state-file <path>]',
+				'Usage: pnpm kit-directory:ingest -- [--status all] [--after <cursor>] [--batch-size 500] [--limit <pages>] [--send] [--write] [--rows-only --state-file <path> [--continue-on-failure]]',
 			)
 			process.exit(0)
 		} else {
@@ -574,6 +594,9 @@ export function parseKitDirectoryIngestArgs(
 	if (rowsOnly && !stateFile) {
 		throw new Error('--rows-only requires --state-file')
 	}
+	if (continueOnFailure && !rowsOnly) {
+		throw new Error('--continue-on-failure requires --rows-only')
+	}
 	if (write && !rowsOnly) send = true
 	return {
 		status,
@@ -583,6 +606,7 @@ export function parseKitDirectoryIngestArgs(
 		send,
 		write,
 		rowsOnly,
+		continueOnFailure,
 		stateFile,
 	}
 }
@@ -631,6 +655,7 @@ async function main() {
 		: undefined
 	const stateFile = options.stateFile
 	let checkpointCursor: string | null = options.after ?? null
+	const accumulatedFailures: KitDirectoryFailure[] = []
 	try {
 		const result = await runKitDirectoryIngest({
 			...options,
@@ -639,11 +664,13 @@ async function main() {
 			repository: direct?.repository,
 			onPage: async (summary) => {
 				const pageFailed = summary.failed ?? []
+				accumulatedFailures.push(...pageFailed)
 				if (options.rowsOnly && stateFile) {
-					const stateCursor =
-						pageFailed.length === 0
-							? (summary.cursor ?? checkpointCursor)
-							: checkpointCursor
+					const canCheckpoint =
+						pageFailed.length === 0 || options.continueOnFailure
+					const stateCursor = canCheckpoint
+						? (summary.cursor ?? checkpointCursor)
+						: checkpointCursor
 					await writeKitDirectoryRowsOnlyState(stateFile, {
 						version: 1,
 						status: options.status,
@@ -653,15 +680,15 @@ async function main() {
 						createdRows: summary.createdRows ?? 0,
 						alreadyPresentRows: summary.alreadyPresentRows ?? 0,
 						skippedInvalidRows: summary.skippedInvalidRows ?? 0,
-						failedRows: summary.failedRows ?? 0,
-						failed: pageFailed,
+						failedRows: accumulatedFailures.length,
+						failed: accumulatedFailures,
 						writeElapsedMs: summary.writeElapsedMs ?? 0,
 						updatedAt: new Date().toISOString(),
 					})
-					if (pageFailed.length === 0) checkpointCursor = stateCursor
+					if (canCheckpoint) checkpointCursor = stateCursor
 				}
 				console.log(
-					`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches} created=${summary.createdRows ?? 0} existing=${summary.alreadyPresentRows ?? 0} failed=${pageFailed.join(',') || 'none'} writeMs=${summary.writeElapsedMs ?? 0}`,
+					`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches} created=${summary.createdRows ?? 0} existing=${summary.alreadyPresentRows ?? 0} failed=${pageFailed.map(({ id }) => id).join(',') || 'none'} writeMs=${summary.writeElapsedMs ?? 0}`,
 				)
 			},
 		})
