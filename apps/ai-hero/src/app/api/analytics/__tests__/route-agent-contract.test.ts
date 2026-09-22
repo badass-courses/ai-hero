@@ -67,6 +67,7 @@ vi.mock('@/server/with-skill', () => ({
 	withSkill: (handler: unknown) => handler,
 }))
 
+import { createAppAbility } from '@/ability'
 import { GET } from '../route'
 
 const request = (query = '') =>
@@ -85,6 +86,19 @@ describe('analytics API agent contract', () => {
 			session: null,
 			ability: null,
 		})
+	})
+
+	it('accepts the limited analytics-read device ability at the analytics route', async () => {
+		mocks.getUserAbilityForRequest.mockResolvedValue({
+			user: { id: 'user_1' },
+			ability: createAppAbility([{ action: 'view', subject: 'Analytics' }]),
+			authMethod: 'device-token',
+		})
+
+		const response = await GET(request())
+
+		expect(response.status).toBe(200)
+		expect((await response.json()).ok).toBe(true)
 	})
 
 	it('publishes versioned query and revenue response schemas in the catalog', async () => {

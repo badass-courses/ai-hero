@@ -36,3 +36,5 @@ packageExtensions:
       '@codemirror/state': '^6.0.0'
       '@codemirror/view': '^6.0.0'
 
+patchedDependencies:
+  '@coursebuilder/analytics@1.1.3': patches/@coursebuilder__analytics@1.1.3.patch

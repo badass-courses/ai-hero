@@ -1,5 +1,11 @@
 import { NextRequest } from 'next/server'
-import { getAbility, UserSchema, type AppAbility, type User } from '@/ability'
+import {
+	createAppAbility,
+	getAbility,
+	UserSchema,
+	type AppAbility,
+	type User,
+} from '@/ability'
 import { db } from '@/db'
 import { deviceAccessToken, personalAccessToken } from '@/db/schema'
 import { env } from '@/env.mjs'
@@ -15,8 +21,10 @@ import {
 } from '@/server/pat-scopes'
 import { eq } from 'drizzle-orm'
 
-/** Analytics device tokens are valid for 90 days from creation. */
-const TOKEN_TTL_HOURS = 90 * 24
+import {
+	DEVICE_TOKEN_TTL_HOURS,
+	isDeviceAccessTokenActive,
+} from './device-access-token'
 
 export type RequestAuthMethod =
 	| 'device-token'
@@ -71,18 +79,21 @@ export async function getUserAbilityForRequest(
 		return anonymousAuth()
 	}
 
-	// Enforce token TTL based on createdAt timestamp
-	if (deviceToken.createdAt) {
-		const ageMs = Date.now() - deviceToken.createdAt.getTime()
-		const ttlMs = TOKEN_TTL_HOURS * 60 * 60 * 1000
-		if (ageMs > ttlMs) {
-			void log.warn('auth.token-expired', {
-				token: authToken.slice(0, 8) + '…',
-				ageHours: Math.round(ageMs / 3_600_000),
-				ttlHours: TOKEN_TTL_HOURS,
-			})
-			return anonymousAuth()
-		}
+	const scope = deviceToken.scope ?? ''
+	if (scope && authScheme?.toLowerCase() !== 'bearer') {
+		void log.warn('auth.device-token-invalid-scheme', {
+			tokenKind: 'device-token',
+			scope,
+		})
+		return anonymousAuth()
+	}
+
+	if (!isDeviceAccessTokenActive(deviceToken)) {
+		void log.warn('auth.device-token-inactive', {
+			tokenKind: 'device-token',
+			ttlHours: DEVICE_TOKEN_TTL_HOURS,
+		})
+		return anonymousAuth()
 	}
 
 	const userParsed = UserSchema.safeParse({
@@ -99,12 +110,32 @@ export async function getUserAbilityForRequest(
 	}
 
 	const user = userParsed.data
-	const ability = getAbility({ user })
+	const ownerAbility = getAbility({ user })
+	let ability = ownerAbility
+
+	if (scope) {
+		if (
+			scope !== 'analytics:read' ||
+			(!ownerAbility.can('view', 'Analytics') &&
+				!ownerAbility.can('manage', 'all'))
+		) {
+			void log.warn('auth.device-token-scope-denied', {
+				tokenKind: 'device-token',
+				scope,
+				userId: user.id,
+			})
+			return anonymousAuth()
+		}
+
+		// Scoped credentials never inherit the owner's admin/content rules.
+		ability = createAppAbility([{ action: 'view', subject: 'Analytics' }])
+	}
 
 	void log.info('auth.user-authenticated', {
 		userId: user.id,
 		email: user.email ?? null,
 		role: user.roles?.map((r) => r.name).join(',') ?? null,
+		scope: scope || null,
 	})
 
 	return { user, ability, authMethod: 'device-token' }

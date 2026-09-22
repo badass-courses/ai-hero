@@ -1,0 +1,73 @@
+diff --git a/dist/components/index.d.ts b/dist/components/index.d.ts
+index 9c79c11f3588400b729e5ad0832176cf1c4e559c..86689b9369699de101ec02a68133db6f543dc2fe 100644
+--- a/dist/components/index.d.ts
++++ b/dist/components/index.d.ts
+@@ -174,13 +174,15 @@ interface DashboardData {
+         }[];
+     } | null;
+ }
+-declare function OmnibusDashboard({ data, initialRange, appName, surveyDrilldownHref, }: {
++declare function OmnibusDashboard({ data, initialRange, appName, surveyDrilldownHref, agentApiCard, }: {
+     data: DashboardData;
+     initialRange: AnalyticsRange;
+     appName?: string;
+     /** Link to the analytics survey list page (e.g. /admin/analytics/surveys).
+      * When set, the Survey Segments header becomes a clickable link. */
+     surveyDrilldownHref?: string;
++    /** Optional app-owned agent prompt card. */
++    agentApiCard?: react_jsx_runtime.JSX.Element;
+ }): react_jsx_runtime.JSX.Element;
+ 
+ interface DayData {
+diff --git a/dist/components/index.js b/dist/components/index.js
+index c2e5156258d646f41a589c95b2946292b8f8123b..ff29e49904189ed50e2053ba41fbeb8c793d84c7 100644
+--- a/dist/components/index.js
++++ b/dist/components/index.js
+@@ -795,7 +795,7 @@ var rangeParser = parseAsStringLiteral([
+   "90d",
+   "all"
+ ]).withDefault("30d");
+-function OmnibusDashboard({ data, initialRange, appName, surveyDrilldownHref }) {
++function OmnibusDashboard({ data, initialRange, appName, surveyDrilldownHref, agentApiCard }) {
+   const [range, setRange] = useQueryState("range", rangeParser);
+   const [isPending, startTransition] = useTransition();
+   const rangeLabel = range === "24h" ? "24 hours" : range === "7d" ? "7 days" : range === "90d" ? "90 days" : range === "all" ? "all time" : "30 days";
+@@ -840,7 +840,7 @@ function OmnibusDashboard({ data, initialRange, appName, surveyDrilldownHref })
+     className: `shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium transition-[background-color,color,transform] duration-[150ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.95] ${range === value ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:text-foreground"} ${isPending ? "cursor-wait opacity-60" : ""}`
+   }, label))))), /* @__PURE__ */ React3.createElement("div", {
+     className: `flex flex-col gap-5 transition-opacity duration-200 lg:gap-7 ${isPending ? "pointer-events-none opacity-50" : ""}`
+-  }, /* @__PURE__ */ React3.createElement(AgentApiCard, {
++  }, agentApiCard ?? /* @__PURE__ */ React3.createElement(AgentApiCard, {
+     appName
+   }), /* @__PURE__ */ React3.createElement("div", {
+     className: "grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-5"
+diff --git a/src/components/omnibus-dashboard.tsx b/src/components/omnibus-dashboard.tsx
+index ac25178b8088cd45e804c5e6dea3ff5a7f06b0c4..59b04bb589eab0a1d6857f5a3c8e1d9078bd1f00 100644
+--- a/src/components/omnibus-dashboard.tsx
++++ b/src/components/omnibus-dashboard.tsx
+@@ -785,6 +785,7 @@ export function OmnibusDashboard({
+ 	initialRange,
+ 	appName,
+ 	surveyDrilldownHref,
++	agentApiCard,
+ }: {
+ 	data: DashboardData
+ 	initialRange: AnalyticsRange
+@@ -792,6 +793,8 @@ export function OmnibusDashboard({
+ 	/** Link to the analytics survey list page (e.g. /admin/analytics/surveys).
+ 	 * When set, the Survey Segments header becomes a clickable link. */
+ 	surveyDrilldownHref?: string
++	/** Optional app-owned agent prompt card. */
++	agentApiCard?: React.ReactNode
+ }) {
+ 	const [range, setRange] = useQueryState('range', rangeParser)
+ 	const [isPending, startTransition] = useTransition()
+@@ -875,7 +878,7 @@ export function OmnibusDashboard({
+ 				className={`flex flex-col gap-5 transition-opacity duration-200 lg:gap-7 ${isPending ? 'pointer-events-none opacity-50' : ''}`}
+ 			>
+ 				{/* ── Agent API ────────────────────────────────────────────── */}
+-				<AgentApiCard appName={appName} />
++				{agentApiCard ?? <AgentApiCard appName={appName} />}
+ 
+ 				{/* ── Stat Grid ────────────────────────────────────────────── */}
+ 				<div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3 xl:grid-cols-5">
