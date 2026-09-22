@@ -419,19 +419,29 @@ export const shortlinkRelations = relations(shortlink, ({ one, many }) => ({
 /**
  * Shortlink click events for analytics
  */
-export const shortlinkClick = mysqlTable('ShortlinkClick', {
-	id: varchar('id', { length: 255 })
-		.notNull()
-		.primaryKey()
-		.$defaultFn(() => guid()),
-	shortlinkId: varchar('shortlinkId', { length: 255 }).notNull(),
-	timestamp: timestamp('timestamp').defaultNow().notNull(),
-	referrer: varchar('referrer', { length: 500 }),
-	userAgent: varchar('userAgent', { length: 500 }),
-	country: varchar('country', { length: 2 }),
-	device: varchar('device', { length: 50 }),
-	metadata: json('metadata').$type<Record<string, unknown>>(),
-})
+export const shortlinkClick = mysqlTable(
+	'ShortlinkClick',
+	{
+		id: varchar('id', { length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => guid()),
+		shortlinkId: varchar('shortlinkId', { length: 255 }).notNull(),
+		timestamp: timestamp('timestamp').defaultNow().notNull(),
+		referrer: varchar('referrer', { length: 500 }),
+		userAgent: varchar('userAgent', { length: 500 }),
+		country: varchar('country', { length: 2 }),
+		device: varchar('device', { length: 50 }),
+		metadata: json('metadata').$type<Record<string, unknown>>(),
+	},
+	(table) => ({
+		// Covers the ranged per-link aggregation used by analytics and shortlink
+		// detail views.
+		timestampShortlinkIdIdx: index(
+			'ShortlinkClick_timestamp_shortlinkId_idx',
+		).on(table.timestamp, table.shortlinkId),
+	}),
+)
 
 export const shortlinkClickRelations = relations(shortlinkClick, ({ one }) => ({
 	shortlink: one(shortlink, {

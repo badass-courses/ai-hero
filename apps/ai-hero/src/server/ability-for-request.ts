@@ -71,13 +71,29 @@ export async function getUserAbilityForRequest(
 		return anonymousAuth()
 	}
 
-	// Enforce token TTL based on createdAt timestamp
-	if (deviceToken.createdAt) {
-		const ageMs = Date.now() - deviceToken.createdAt.getTime()
+	const now = Date.now()
+	if (deviceToken.revokedAt) {
+		void log.warn('auth.token-revoked', { tokenKind: 'device-token' })
+		return anonymousAuth()
+	}
+
+	// New analytics tokens carry an explicit expiry. Legacy device-flow rows
+	// have no expiry and retain the existing createdAt-based fallback.
+	if (deviceToken.expiresAt) {
+		if (new Date(deviceToken.expiresAt).getTime() <= now) {
+			void log.warn('auth.token-expired', {
+				tokenKind: 'device-token',
+				expiryKind: 'persisted',
+			})
+			return anonymousAuth()
+		}
+	} else if (deviceToken.createdAt) {
+		const ageMs = now - deviceToken.createdAt.getTime()
 		const ttlMs = TOKEN_TTL_HOURS * 60 * 60 * 1000
 		if (ageMs > ttlMs) {
 			void log.warn('auth.token-expired', {
-				token: authToken.slice(0, 8) + '…',
+				tokenKind: 'device-token',
+				expiryKind: 'legacy-createdAt',
 				ageHours: Math.round(ageMs / 3_600_000),
 				ttlHours: TOKEN_TTL_HOURS,
 			})

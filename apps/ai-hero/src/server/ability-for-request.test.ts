@@ -268,6 +268,58 @@ describe('getUserAbilityForRequest', () => {
 		expect(auth.ability.can('read_privileged', 'Content')).toBe(true)
 		expect(mocks.personalAccessTokenFindFirst).not.toHaveBeenCalled()
 	})
+
+	it('accepts a future persisted expiry even when the legacy createdAt is old', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			createdAt: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000),
+			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+			revokedAt: null,
+			verifiedBy: user,
+		})
+
+		const auth = await getUserAbilityForRequest(request('device-token'))
+
+		expect(auth.authMethod).toBe('device-token')
+		expect(auth.user?.id).toBe(user.id)
+	})
+
+	it.each([
+		['persisted expiry', { expiresAt: new Date(Date.now() - 1_000) }],
+		['revocation', { revokedAt: new Date() }],
+	] as const)('denies a device token with %s', async (_label, overrides) => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			createdAt: new Date(),
+			expiresAt: null,
+			revokedAt: null,
+			verifiedBy: user,
+			...overrides,
+		})
+
+		const auth = await getUserAbilityForRequest(request('device-token'))
+
+		expect(auth.authMethod).toBe('anonymous')
+		expect(auth.user).toBeNull()
+	})
+
+	it('keeps the 90-day createdAt check for legacy null-expiry tokens', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			createdAt: new Date(Date.now() - 91 * 24 * 60 * 60 * 1000),
+			expiresAt: null,
+			revokedAt: null,
+			verifiedBy: user,
+		})
+
+		const auth = await getUserAbilityForRequest(request('device-token'))
+
+		expect(auth.authMethod).toBe('anonymous')
+		expect(auth.user).toBeNull()
+		expect(JSON.stringify(mocks.log.warn.mock.calls)).not.toContain(
+			'"token":"device-token"',
+		)
+	})
 })
 
 describe('personal access token scope registry', () => {
