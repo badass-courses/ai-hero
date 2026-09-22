@@ -44,7 +44,7 @@ describe('oauth userinfo device-token policy', () => {
 		expect(mocks.getUser).toHaveBeenCalledWith('user_1')
 	})
 
-	it('does not accept a scoped credential through Basic auth', async () => {
+	it('does not expose a scoped credential through userinfo', async () => {
 		mocks.findFirst.mockResolvedValue({
 			userId: 'user_1',
 			scope: 'analytics:read',
@@ -53,7 +53,7 @@ describe('oauth userinfo device-token policy', () => {
 			revokedAt: null,
 		})
 
-		const response = await GET(request('Basic device-token'))
+		const response = await GET(request('Bearer device-token'))
 
 		expect(response.status).toBe(404)
 		expect(mocks.getUser).not.toHaveBeenCalled()
