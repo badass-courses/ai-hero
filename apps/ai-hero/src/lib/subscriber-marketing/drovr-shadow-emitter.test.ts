@@ -438,78 +438,27 @@ describe('drovr shadow fact mapper', () => {
 	})
 })
 
-describe('drovr shadow sender', () => {
-	it('does nothing when either env variable is absent', async () => {
-		const fetch = vi.fn()
-		const fact = {
-			kind: 'contact-event' as const,
-			event: contactEvent('skills-newsletter.subscribed'),
-		}
-
-		await emitDrovrShadowFact(fact, { fetch })
-		await emitDrovrShadowFact(fact, {
-			config: { ingestUrl: undefined, apiKey: 'test-key' },
-			fetch,
-		})
-		await emitDrovrShadowFact(fact, {
-			config: { ingestUrl: 'https://drovr.test/events', apiKey: undefined },
-			fetch,
-		})
-
-		expect(fetch).not.toHaveBeenCalled()
-	})
-
-	it('posts the ingress contract once with bearer auth', async () => {
-		const fetch = vi.fn().mockResolvedValue(
-			new Response(JSON.stringify({ accepted: true }), {
-				status: 202,
-				headers: { 'content-type': 'application/json' },
-			}),
-		)
-		const event = contactEvent('skills-newsletter.subscribed')
-
-		await emitDrovrShadowFact(
-			{ kind: 'contact-event', event },
-			{
-				config: {
-					ingestUrl: 'https://drovr.test/events',
-					apiKey: 'test-key',
+describe('retired drovr direct sender', () => {
+	const authorityCompletion = () => ({
+		kind: 'side-effect-intent-completed' as const,
+		intent: completedIntent({
+			metadata: {
+				source: 'drovr',
+				drovr: {
+					tenantId: 'org-aihero',
+					journeyId: 'value-path-skills-course',
+					intentKey: 'k',
+					dueAt: occurredAt,
 				},
-				fetch,
+				valuePathSlug: 'ai-hero-skills-workflow',
+				emailResourceId: 'ai-hero-skills-workflow.email-2',
 			},
-		)
-
-		expect(fetch).toHaveBeenCalledTimes(1)
-		expect(fetch).toHaveBeenCalledWith(
-			'https://drovr.test/events',
-			expect.objectContaining({
-				method: 'POST',
-				headers: {
-					authorization: 'Bearer test-key',
-					'content-type': 'application/json',
-				},
-				body: JSON.stringify(
-					mapDrovrShadowFact({ kind: 'contact-event', event })[0],
-				),
-			}),
-		)
+		}),
 	})
 
-	it('warns with 4xx problem details and does not retry', async () => {
-		const fetch = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					type: 'https://drovr.test/problems/unknown-event',
-					title: 'Unknown event',
-					steeringHint: 'check the journey event type',
-				}),
-				{
-					status: 422,
-					headers: { 'content-type': 'application/problem+json' },
-				},
-			),
-		)
-		const warn = vi.fn()
+	it('discards a shadow-only fact after mapping and logs one tenant group', async () => {
+		const fetch = vi.fn()
+		const info = vi.fn()
 
 		await emitDrovrShadowFact(
 			{
@@ -519,15 +468,78 @@ describe('drovr shadow sender', () => {
 			{
 				config: {
 					ingestUrl: 'https://drovr.test/events',
-					apiKey: 'test-key',
+					authorityApiKey: 'authority-key',
 				},
 				fetch,
-				warn,
+				info,
 			},
 		)
 
-		expect(fetch).toHaveBeenCalledTimes(1)
-		expect(warn).toHaveBeenCalledTimes(1)
+		expect(fetch).not.toHaveBeenCalled()
+		expect(info).toHaveBeenCalledOnce()
+		expect(info).toHaveBeenCalledWith('drovr.shadow.events_discarded', {
+			tenantId: 'org-aihero-shadow',
+			count: 1,
+			deliveryLane: 'direct',
+		})
+	})
+
+	it('posts the unchanged authority event and discards only its shadow mirror', async () => {
+		const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		const info = vi.fn()
+		const fact = authorityCompletion()
+		const authorityEvent = mapDrovrShadowFact(fact).find(
+			(event) => event.tenantId === 'org-aihero',
+		)
+
+		await emitDrovrShadowFact(fact, {
+			config: {
+				ingestUrl: 'https://drovr.test/events',
+				authorityApiKey: 'authority-key',
+			},
+			fetch,
+			info,
+		})
+
+		expect(fetch).toHaveBeenCalledOnce()
+		expect(fetch).toHaveBeenCalledWith(
+			'https://drovr.test/events',
+			expect.objectContaining({
+				method: 'POST',
+				headers: {
+					authorization: 'Bearer authority-key',
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify(authorityEvent),
+			}),
+		)
+		expect(info).toHaveBeenCalledWith('drovr.shadow.events_discarded', {
+			tenantId: 'org-aihero-shadow',
+			count: 1,
+			deliveryLane: 'direct',
+		})
+	})
+
+	it('keeps authority rejection and network handling unchanged', async () => {
+		const rejectedFetch = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ title: 'Unknown event' }), {
+				status: 422,
+				headers: { 'content-type': 'application/problem+json' },
+			}),
+		)
+		const warn = vi.fn()
+		const options = {
+			config: {
+				ingestUrl: 'https://drovr.test/events',
+				authorityApiKey: 'authority-key',
+			},
+			fetch: rejectedFetch,
+			info: vi.fn(),
+			warn,
+		}
+
+		await emitDrovrShadowFact(authorityCompletion(), options)
+		expect(rejectedFetch).toHaveBeenCalledOnce()
 		expect(warn).toHaveBeenCalledWith(
 			'drovr.shadow.rejected',
 			expect.objectContaining({
@@ -535,112 +547,30 @@ describe('drovr shadow sender', () => {
 				problem: expect.objectContaining({ title: 'Unknown event' }),
 			}),
 		)
-	})
 
-	it('swallows network failures after one warning and one attempt', async () => {
-		const fetch = vi.fn().mockRejectedValue(new Error('network down'))
-		const warn = vi.fn()
-
-		await expect(
-			emitDrovrShadowFact(
-				{
-					kind: 'contact-event',
-					event: contactEvent('skills-newsletter.subscribed'),
-				},
-				{
-					config: {
-						ingestUrl: 'https://drovr.test/events',
-						apiKey: 'test-key',
-					},
-					fetch,
-					warn,
-				},
-			),
-		).resolves.toBeUndefined()
-		expect(fetch).toHaveBeenCalledTimes(1)
-		expect(warn).toHaveBeenCalledTimes(1)
+		const failedFetch = vi.fn().mockRejectedValue(new Error('network down'))
+		await emitDrovrShadowFact(authorityCompletion(), {
+			...options,
+			fetch: failedFetch,
+		})
+		expect(failedFetch).toHaveBeenCalledOnce()
 		expect(warn).toHaveBeenCalledWith('drovr.shadow.emit_failed', {
 			eventCount: 1,
 			error: 'network down',
 		})
 	})
-})
 
-describe('drovr direct sender: per-tenant keys', () => {
-	it('posts an authority-owned completion with the authority key, not the shadow key', async () => {
-		const fetch = vi
-			.fn()
-			.mockImplementation(() =>
-				Promise.resolve(new Response('{}', { status: 200 })),
-			)
-		await emitDrovrShadowFact(
-			{
-				kind: 'side-effect-intent-completed',
-				intent: completedIntent({
-					metadata: {
-						source: 'drovr',
-						drovr: {
-							tenantId: 'org-aihero',
-							journeyId: 'value-path-skills-course',
-							intentKey: 'k',
-							dueAt: occurredAt,
-						},
-						valuePathSlug: 'ai-hero-skills-workflow',
-						emailResourceId: 'ai-hero-skills-workflow.email-2',
-					},
-				}),
-			},
-			{
-				config: {
-					ingestUrl: 'https://drovr.test/events',
-					apiKey: 'shadow-key',
-					authorityApiKey: 'authority-key',
-				},
-				fetch,
-			},
-		)
-		// Owner completion plus the shadow mirror, each with its tenant's key.
-		expect(fetch).toHaveBeenCalledTimes(2)
-		const keys = fetch.mock.calls.map(
-			(call) =>
-				(call[1] as { headers: Record<string, string> }).headers.authorization,
-		)
-		expect(keys.sort()).toEqual(['Bearer authority-key', 'Bearer shadow-key'])
-	})
-
-	it('warns and skips an authority event when no authority key is configured', async () => {
+	it('warns and skips an authority event when its key is absent', async () => {
 		const fetch = vi.fn()
 		const warn = vi.fn()
-		await emitDrovrShadowFact(
-			{
-				kind: 'side-effect-intent-completed',
-				intent: completedIntent({
-					metadata: {
-						drovr: {
-							tenantId: 'org-aihero',
-							journeyId: 'value-path-skills-course',
-							intentKey: 'k',
-							dueAt: occurredAt,
-						},
-						emailResourceId: 'ai-hero-skills-workflow.email-2',
-					},
-				}),
-			},
-			{
-				config: {
-					ingestUrl: 'https://drovr.test/events',
-					apiKey: 'shadow-key',
-				},
-				fetch,
-				warn,
-			},
-		)
-		// The shadow mirror still posts with the shadow key; only the
-		// authority-addressed completion is skipped.
-		expect(fetch).toHaveBeenCalledTimes(1)
-		expect(fetch.mock.calls[0]?.[1]).toMatchObject({
-			headers: expect.objectContaining({ authorization: 'Bearer shadow-key' }),
+		await emitDrovrShadowFact(authorityCompletion(), {
+			config: { ingestUrl: 'https://drovr.test/events' },
+			fetch,
+			info: vi.fn(),
+			warn,
 		})
+
+		expect(fetch).not.toHaveBeenCalled()
 		expect(warn).toHaveBeenCalledWith(
 			'drovr.shadow.tenant_key_missing',
 			expect.objectContaining({ tenantId: 'org-aihero' }),
