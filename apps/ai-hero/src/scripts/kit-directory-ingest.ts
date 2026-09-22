@@ -22,6 +22,7 @@ export const KIT_DIRECTORY_PAGE_DELAY_MS = 600 as const
 export const KIT_DIRECTORY_REQUEST_TIMEOUT_MS = 15_000 as const
 export const KIT_DIRECTORY_MAX_ATTEMPTS = 5 as const
 export const KIT_DIRECTORY_RETRY_BASE_MS = 1_000 as const
+export const KIT_DIRECTORY_MAX_RETRY_DELAY_MS = 300_000 as const
 
 export type ScriptOptions = {
 	status: string
@@ -164,13 +165,20 @@ function retryBackoffMs(attempt: number) {
 	return KIT_DIRECTORY_RETRY_BASE_MS * 2 ** (attempt - 1)
 }
 
+function boundedRetryDelay(milliseconds: number) {
+	return Number.isFinite(milliseconds) &&
+		milliseconds >= 0 &&
+		milliseconds <= KIT_DIRECTORY_MAX_RETRY_DELAY_MS
+		? milliseconds
+		: KIT_DIRECTORY_MAX_RETRY_DELAY_MS
+}
+
 function retryAfterMs(response: Response, now: () => number): number | undefined {
 	const value = response.headers.get('retry-after')?.trim()
 	if (!value) return undefined
 	const seconds = Number(value)
-	if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000
-	const at = Date.parse(value)
-	return Number.isNaN(at) ? undefined : Math.max(0, at - now())
+	if (Number.isFinite(seconds)) return boundedRetryDelay(seconds * 1_000)
+	return boundedRetryDelay(Date.parse(value) - now())
 }
 
 function sleep(milliseconds: number) {

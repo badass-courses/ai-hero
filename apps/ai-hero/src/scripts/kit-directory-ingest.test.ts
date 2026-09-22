@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	KIT_DIRECTORY_API_PAGE_SIZE,
 	fetchKitDirectoryPage,
+	KIT_DIRECTORY_MAX_RETRY_DELAY_MS,
 	KIT_DIRECTORY_PAGE_DELAY_MS,
 	parseKitDirectoryIngestArgs,
 	readKitDirectoryPages,
@@ -345,6 +346,36 @@ describe('Kit pagination resilience', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(4)
 		expect(sleeps).toEqual([1_000, 3_000, 4_000])
 		expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
+	})
+
+	it('caps an oversized Retry-After instead of overflowing setTimeout', async () => {
+		const responses = [
+			new Response('{}', {
+				status: 429,
+				headers: { 'retry-after': '3000000' },
+			}),
+			jsonResponse({
+				subscribers: [{ id: 10 }],
+				pagination: { has_next_page: false, end_cursor: 'cursor-ten' },
+			}),
+		]
+		const sleeps: number[] = []
+
+		await fetchKitDirectoryPage({
+			apiKey: 'test-kit-key',
+			status: 'all',
+			fetcher: async () => {
+				const response = responses.shift()
+				if (!response) throw new Error('missing test response')
+				return response
+			},
+			maxAttempts: 2,
+			sleep: async (milliseconds) => {
+				sleeps.push(milliseconds)
+			},
+		})
+
+		expect(sleeps).toEqual([KIT_DIRECTORY_MAX_RETRY_DELAY_MS])
 	})
 
 	it('aborts a Kit request at its deadline', async () => {
