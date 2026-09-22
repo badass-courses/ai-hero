@@ -67,9 +67,26 @@ export async function GET(request: NextRequest) {
 	}
 
 	try {
-		const data = await loadDashboardSection(rawSection, range)
+		const data = await loadDashboardSection(rawSection, range, {
+			signal: request.signal,
+		})
 		return json({ ok: true, section: rawSection, range, data }, 200)
 	} catch (error) {
+		if (error instanceof Error && error.name === 'AbortError') {
+			return json(
+				{
+					ok: false,
+					section: rawSection,
+					range,
+					error: {
+						code: 'REQUEST_ABORTED',
+						message: 'The analytics request was cancelled.',
+					},
+				},
+				499,
+			)
+		}
+
 		const code =
 			error &&
 			typeof error === 'object' &&

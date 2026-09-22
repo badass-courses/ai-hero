@@ -1,39 +1,47 @@
-import { headers } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { db } from '@/db'
 import { deviceAccessToken as deviceAccessTokenTable } from '@/db/schema'
+import { isDeviceAccessTokenActive } from '@/server/device-access-token'
 import { eq } from 'drizzle-orm'
 
 import { getUser } from './get-user'
 
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' }
+
+function json(body: unknown, status = 200) {
+	return NextResponse.json(body, {
+		status,
+		headers: NO_STORE_HEADERS,
+	})
+}
+
 export async function GET(request: Request) {
-	const headersList = await headers()
-	const deviceAccessToken = headersList.get('Authorization')?.split(' ')[1]
+	const deviceAccessToken = request.headers.get('Authorization')?.split(' ')[1]
 
 	if (deviceAccessToken) {
 		const token = await db.query.deviceAccessToken.findFirst({
 			where: eq(deviceAccessTokenTable.token, deviceAccessToken),
 		})
-		if (token?.userId) {
+		if (token?.userId && isDeviceAccessTokenActive(token)) {
 			const user = await getUser(token.userId)
 
-			return NextResponse.json({ ...user })
+			return json({ ...user })
 		} else {
-			return NextResponse.json(
+			return json(
 				{
 					error: 'not_found',
 					error_description: 'User not found.',
 				},
-				{ status: 404 },
+				404,
 			)
 		}
 	} else {
-		return NextResponse.json(
+		return json(
 			{
 				error: 'access_denied',
 				error_description: 'Nothing to see here.',
 			},
-			{ status: 403 },
+			403,
 		)
 	}
 }

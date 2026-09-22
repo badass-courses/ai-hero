@@ -15,8 +15,10 @@ import {
 } from '@/server/pat-scopes'
 import { eq } from 'drizzle-orm'
 
-/** Analytics device tokens are valid for 90 days from creation. */
-const TOKEN_TTL_HOURS = 90 * 24
+import {
+	DEVICE_TOKEN_TTL_HOURS,
+	isDeviceAccessTokenActive,
+} from './device-access-token'
 
 export type RequestAuthMethod =
 	| 'device-token'
@@ -71,34 +73,12 @@ export async function getUserAbilityForRequest(
 		return anonymousAuth()
 	}
 
-	const now = Date.now()
-	if (deviceToken.revokedAt) {
-		void log.warn('auth.token-revoked', { tokenKind: 'device-token' })
+	if (!isDeviceAccessTokenActive(deviceToken)) {
+		void log.warn('auth.device-token-inactive', {
+			tokenKind: 'device-token',
+			ttlHours: DEVICE_TOKEN_TTL_HOURS,
+		})
 		return anonymousAuth()
-	}
-
-	// New analytics tokens carry an explicit expiry. Legacy device-flow rows
-	// have no expiry and retain the existing createdAt-based fallback.
-	if (deviceToken.expiresAt) {
-		if (new Date(deviceToken.expiresAt).getTime() <= now) {
-			void log.warn('auth.token-expired', {
-				tokenKind: 'device-token',
-				expiryKind: 'persisted',
-			})
-			return anonymousAuth()
-		}
-	} else if (deviceToken.createdAt) {
-		const ageMs = now - deviceToken.createdAt.getTime()
-		const ttlMs = TOKEN_TTL_HOURS * 60 * 60 * 1000
-		if (ageMs > ttlMs) {
-			void log.warn('auth.token-expired', {
-				tokenKind: 'device-token',
-				expiryKind: 'legacy-createdAt',
-				ageHours: Math.round(ageMs / 3_600_000),
-				ttlHours: TOKEN_TTL_HOURS,
-			})
-			return anonymousAuth()
-		}
 	}
 
 	const userParsed = UserSchema.safeParse({

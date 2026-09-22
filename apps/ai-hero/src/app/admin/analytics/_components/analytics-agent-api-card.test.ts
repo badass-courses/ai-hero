@@ -5,6 +5,7 @@ import {
 	copyAgentPrompt,
 	createAgentPrompt,
 	agentPromptReducer,
+	startGestureClipboardWrite,
 } from './analytics-agent-api-card'
 
 describe('analytics agent prompt', () => {
@@ -63,6 +64,35 @@ describe('analytics agent prompt', () => {
 
 		expect(fetchImpl).toHaveBeenCalledTimes(2)
 		expect(writeText).toHaveBeenCalledTimes(2)
+	})
+
+	it('contains a synchronous navigator.clipboard.write throw', () => {
+		vi.stubGlobal('navigator', {
+			clipboard: {
+				write: vi.fn(() => {
+					throw new Error('clipboard sync failure')
+				}),
+			},
+		})
+		vi.stubGlobal(
+			'ClipboardItem',
+			class {
+				constructor(_items: unknown) {}
+			},
+		)
+
+		expect(startGestureClipboardWrite()).toBeNull()
+		vi.unstubAllGlobals()
+	})
+
+	it('turns a synchronous writeText throw into a rejected copy operation', async () => {
+		const writeText = vi.fn(() => {
+			throw new Error('clipboard sync failure')
+		})
+
+		await expect(copyAgentPrompt('prompt text', { writeText })).rejects.toThrow(
+			'clipboard sync failure',
+		)
 	})
 
 	it('transitions a denied clipboard into a manual-copy state with the prompt intact', () => {

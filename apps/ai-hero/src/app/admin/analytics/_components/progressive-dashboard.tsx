@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import type { AnalyticsRange } from '@/lib/analytics'
@@ -15,8 +15,14 @@ import {
 	mergeDashboardSection,
 } from '@/lib/analytics/dashboard-contract'
 
+import {
+	createSectionRequestQueue,
+	type SectionRequest,
+} from './progressive-dashboard-queue'
+
 import { OmnibusDashboard, type DashboardData } from './omnibus-dashboard'
 import { AnalyticsAgentApiCard } from './analytics-agent-api-card'
+import { AnalyticsDashboardErrorBoundary } from './analytics-dashboard-error-boundary'
 import {
 	TrafficBreakdownPanel,
 	type TrafficOverviewWithBreakdowns,
@@ -100,11 +106,104 @@ export function ProgressiveAnalyticsDashboard({
 	const generationRef = useRef(0)
 	const activeRangeRef = useRef(range)
 	const controllersRef = useRef(new Map<DashboardSection, AbortController>())
+	const enqueueRef = useRef<(request: SectionRequest) => boolean>(() => false)
+	const runRequestRef = useRef<(request: SectionRequest) => Promise<void>>(
+		async () => undefined,
+	)
+	const queueRef = useRef<ReturnType<typeof createSectionRequestQueue> | null>(
+		null,
+	)
+
+	const isCurrentRequest = useCallback((request: SectionRequest) => {
+		return isCurrentDashboardResponse({
+			responseRange: request.range,
+			activeRange: activeRangeRef.current,
+			responseGeneration: request.generation,
+			activeGeneration: generationRef.current,
+		})
+	}, [])
+
+	const runRequest = useCallback(async (request: SectionRequest) => {
+		const { section, range: requestedRange } = request
+		if (!isCurrentRequest(request)) return
+		const controller = new AbortController()
+		controllersRef.current.get(section)?.abort()
+		controllersRef.current.set(section, controller)
+		setSectionStates((current) => ({
+			...current,
+			[section]: { status: 'loading' },
+		}))
+		const timeout = setTimeout(() => controller.abort(), SECTION_TIMEOUT_MS)
+
+		try {
+			const response = await fetch(
+				`/api/analytics/dashboard?section=${encodeURIComponent(section)}&range=${encodeURIComponent(requestedRange)}`,
+				{ signal: controller.signal, cache: 'no-store' },
+			)
+			const body = await readSectionResponse(response)
+			if (
+				!isCurrentRequest(request) ||
+				body.range !== requestedRange ||
+				body.section !== section
+			) {
+				return
+			}
+
+			const sectionData = body.data as DashboardSectionData[typeof section]
+			setData((current) => mergeDashboardSection(current, section, sectionData))
+			if (section === 'traffic') {
+				setTraffic180d(
+					(sectionData as DashboardSectionData['traffic'])
+						.traffic180d as TrafficOverviewWithBreakdowns,
+				)
+			}
+			setSectionStates((current) => ({
+				...current,
+				[section]: { status: 'ready' },
+			}))
+		} catch (error) {
+			if (!isCurrentRequest(request)) return
+			setSectionStates((current) => ({
+				...current,
+				[section]: { status: 'failed', message: safeErrorMessage(error) },
+			}))
+		} finally {
+			clearTimeout(timeout)
+			if (controllersRef.current.get(section) === controller) {
+				controllersRef.current.delete(section)
+			}
+			if (request.bootstrap && isCurrentRequest(request)) {
+				for (const optionalSection of DASHBOARD_SECTIONS.slice(1)) {
+					enqueueRef.current({
+						section: optionalSection,
+						range: requestedRange,
+						generation: request.generation,
+					})
+				}
+			}
+		}
+	}, [isCurrentRequest])
+
+	const queue =
+		queueRef.current ??
+		createSectionRequestQueue(
+			(request) => runRequestRef.current(request),
+			SECTION_CONCURRENCY,
+		)
+	queueRef.current = queue
+	runRequestRef.current = runRequest
+
+	const enqueueSection = useCallback(
+		(request: SectionRequest) => queue.enqueue(request),
+		[queue],
+	)
+	enqueueRef.current = enqueueSection
 
 	useEffect(() => {
 		const generation = generationRef.current + 1
 		generationRef.current = generation
 		activeRangeRef.current = range
+		queue.clear()
 		for (const controller of controllersRef.current.values()) {
 			controller.abort()
 		}
@@ -115,168 +214,39 @@ export function ProgressiveAnalyticsDashboard({
 			...initialSectionStates(),
 			summary: { status: 'loading' },
 		})
-
-		const isCurrent = () =>
-			isCurrentDashboardResponse({
-				responseRange: range,
-				activeRange: activeRangeRef.current,
-				responseGeneration: generation,
-				activeGeneration: generationRef.current,
-			})
-
-		const runSection = async (section: DashboardSection) => {
-			if (!isCurrent()) return false
-			const controller = new AbortController()
-			controllersRef.current.get(section)?.abort()
-			controllersRef.current.set(section, controller)
-			setSectionStates((current) => ({
-				...current,
-				[section]: { status: 'loading' },
-			}))
-			const timeout = setTimeout(
-				() => controller.abort(),
-				SECTION_TIMEOUT_MS,
-			)
-
-			try {
-				const response = await fetch(
-					`/api/analytics/dashboard?section=${encodeURIComponent(section)}&range=${encodeURIComponent(range)}`,
-					{ signal: controller.signal, cache: 'no-store' },
-				)
-				const body = await readSectionResponse(response)
-				if (
-					!isCurrent() ||
-					!isCurrentDashboardResponse({
-						responseRange: body.range ?? '',
-						activeRange: range,
-						responseGeneration: generation,
-						activeGeneration: generationRef.current,
-					}) ||
-					body.section !== section
-				) {
-					return false
-				}
-
-				const sectionData = body.data as DashboardSectionData[typeof section]
-				setData((current) =>
-					mergeDashboardSection(current, section, sectionData),
-				)
-				if (section === 'traffic') {
-					setTraffic180d(
-						(sectionData as DashboardSectionData['traffic']).traffic180d as TrafficOverviewWithBreakdowns,
-					)
-				}
-				setSectionStates((current) => ({
-					...current,
-					[section]: { status: 'ready' },
-				}))
-				return true
-			} catch (error) {
-				if (!isCurrent()) return false
-				setSectionStates((current) => ({
-					...current,
-					[section]: {
-						status: 'failed',
-						message: safeErrorMessage(error),
-					},
-				}))
-				return false
-			} finally {
-				clearTimeout(timeout)
-				if (controllersRef.current.get(section) === controller) {
-					controllersRef.current.delete(section)
-				}
-			}
-		}
-
-		const runOptionalSections = async () => {
-			const queue = DASHBOARD_SECTIONS.slice(1)
-			const worker = async () => {
-				while (queue.length > 0 && isCurrent()) {
-					const section = queue.shift()
-					if (!section) return
-					await runSection(section)
-				}
-			}
-		await Promise.all(
-			Array.from(
-				{ length: Math.min(SECTION_CONCURRENCY, queue.length) },
-				() => worker(),
-			),
-		)
-		}
-
-		void (async () => {
-			await runSection('summary')
-			await runOptionalSections()
-		})()
+		enqueueSection({
+			section: 'summary',
+			range,
+			generation,
+			bootstrap: true,
+		})
 
 		return () => {
 			generationRef.current += 1
+			queue.clear()
 			for (const controller of controllersRef.current.values()) {
 				controller.abort()
 			}
 			controllersRef.current.clear()
 		}
-	}, [range])
+	}, [enqueueSection, queue, range])
 
-	const retrySection = (section: DashboardSection) => {
-		const generation = generationRef.current
-		const requestedRange = activeRangeRef.current
-		const controller = new AbortController()
-		controllersRef.current.get(section)?.abort()
-		controllersRef.current.set(section, controller)
-		setSectionStates((current) => ({
-			...current,
-			[section]: { status: 'loading' },
-		}))
-		const timeout = setTimeout(() => controller.abort(), SECTION_TIMEOUT_MS)
-
-		void (async () => {
-			try {
-				const response = await fetch(
-					`/api/analytics/dashboard?section=${encodeURIComponent(section)}&range=${encodeURIComponent(requestedRange)}`,
-					{ signal: controller.signal, cache: 'no-store' },
-				)
-				const body = await readSectionResponse(response)
-				if (
-					!isCurrentDashboardResponse({
-						responseRange: body.range ?? '',
-						activeRange: activeRangeRef.current,
-						responseGeneration: generation,
-						activeGeneration: generationRef.current,
-					}) ||
-					body.section !== section
-				) {
-					return
-				}
-				const sectionData = body.data as DashboardSectionData[typeof section]
-				setData((current) =>
-					mergeDashboardSection(current, section, sectionData),
-				)
-				if (section === 'traffic') {
-					setTraffic180d(
-						(sectionData as DashboardSectionData['traffic']).traffic180d as TrafficOverviewWithBreakdowns,
-					)
-				}
-				setSectionStates((current) => ({
-					...current,
-					[section]: { status: 'ready' },
-				}))
-			} catch (error) {
-				if (generation !== generationRef.current) return
-				setSectionStates((current) => ({
-					...current,
-					[section]: { status: 'failed', message: safeErrorMessage(error) },
-				}))
-			} finally {
-				clearTimeout(timeout)
-				if (controllersRef.current.get(section) === controller) {
-					controllersRef.current.delete(section)
-				}
-			}
-		})()
-	}
+	const retrySection = useCallback(
+		(section: DashboardSection) => {
+			const generation = generationRef.current
+			const requestedRange = activeRangeRef.current
+			setSectionStates((current) => ({
+				...current,
+				[section]: { status: 'loading' },
+			}))
+			enqueueSection({
+				section,
+				range: requestedRange,
+				generation,
+			})
+		},
+		[enqueueSection],
+	)
 
 	const activeStatuses = DASHBOARD_SECTIONS.filter(
 		(section) => sectionStates[section].status === 'loading' || sectionStates[section].status === 'failed',
@@ -313,14 +283,16 @@ export function ProgressiveAnalyticsDashboard({
 				</div>
 			)}
 
-			<OmnibusDashboard
-				appName="AI Hero"
-				data={data}
-				initialRange={range}
-				surveyDrilldownHref="/admin/analytics/surveys"
-				agentApiCard={<AnalyticsAgentApiCard />}
-			/>
-			<TrafficBreakdownPanel traffic={traffic180d} />
+			<AnalyticsDashboardErrorBoundary>
+				<OmnibusDashboard
+					appName="AI Hero"
+					data={data}
+					initialRange={range}
+					surveyDrilldownHref="/admin/analytics/surveys"
+					agentApiCard={<AnalyticsAgentApiCard />}
+				/>
+				<TrafficBreakdownPanel traffic={traffic180d} />
+			</AnalyticsDashboardErrorBoundary>
 		</div>
 	)
 }

@@ -8,6 +8,8 @@ import {
 	type DashboardSection,
 } from '@/lib/analytics/dashboard-contract'
 
+import { createSectionRequestQueue } from './progressive-dashboard-queue'
+
 const revenue = {
 	summary: { totalRevenue: 199, purchaseCount: 1, avgOrderValue: 199 },
 }
@@ -67,5 +69,35 @@ describe('progressive analytics dashboard contract', () => {
 		expect(DASHBOARD_SECTIONS).toContain('shortlinks')
 		expect(DASHBOARD_SECTIONS).toContain('value-paths')
 		expect(DASHBOARD_SECTIONS.length).toBeGreaterThan(4)
+	})
+
+	it('keeps five rapid retry requests at two active fetches', async () => {
+		let active = 0
+		let maximumActive = 0
+		const started: string[] = []
+		const releases: Array<() => void> = []
+		const queue = createSectionRequestQueue(async ({ section }) => {
+			active += 1
+			maximumActive = Math.max(maximumActive, active)
+			started.push(section)
+			await new Promise<void>((resolve) => releases.push(resolve))
+			active -= 1
+		}, 2)
+
+		for (const section of DASHBOARD_SECTIONS.slice(1, 6)) {
+			queue.enqueue({ section, range: '30d', generation: 1 })
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(started).toHaveLength(2)
+		expect(maximumActive).toBe(2)
+
+		while (started.length < 5) {
+			for (const release of releases.splice(0)) release()
+			await new Promise((resolve) => setTimeout(resolve, 0))
+		}
+		for (const release of releases.splice(0)) release()
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(started).toHaveLength(5)
+		expect(maximumActive).toBeLessThanOrEqual(2)
 	})
 })

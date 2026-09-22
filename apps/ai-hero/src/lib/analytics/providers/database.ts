@@ -26,21 +26,49 @@ export const {
 	getValuePathSummary,
 } = provider
 
-type ShortlinkClickCount = { shortlinkId: string; clicks: number }
+type ShortlinkPerformanceRow = {
+	shortlinkId: string
+	slug: string
+	url: string
+	clicks: number | bigint
+}
 
-/** Keep ranking deterministic while retaining the provider's inner-join semantics. */
-export function rankShortlinkClickCounts(
-	rows: readonly ShortlinkClickCount[],
-	availableShortlinkIds: ReadonlySet<string>,
-	limit: number,
+type ShortlinkAttributionCount = {
+	shortlinkId: string
+	type: string
+	count: number | bigint
+}
+
+/** Format the already-ranked SQL result without changing its order. */
+export function formatShortlinkPerformance(
+	rows: readonly ShortlinkPerformanceRow[],
+	attrRows: readonly ShortlinkAttributionCount[],
 ) {
-	return rows
-		.filter((row) => availableShortlinkIds.has(row.shortlinkId))
-		.sort(
-			(a, b) =>
-				b.clicks - a.clicks || a.shortlinkId.localeCompare(b.shortlinkId),
-		)
-		.slice(0, limit)
+	const selectedRows = rows.slice(0, 20)
+	const selectedIds = new Set(selectedRows.map((row) => row.shortlinkId))
+	const attrMap = new Map<string, { signups: number; purchases: number }>()
+	for (const row of attrRows) {
+		if (!selectedIds.has(row.shortlinkId)) continue
+		const existing = attrMap.get(row.shortlinkId) ?? {
+			signups: 0,
+			purchases: 0,
+		}
+		if (row.type === 'signup') existing.signups = Number(row.count ?? 0)
+		if (row.type === 'purchase') existing.purchases = Number(row.count ?? 0)
+		attrMap.set(row.shortlinkId, existing)
+	}
+
+	return selectedRows.map((row) => {
+		const attr = attrMap.get(row.shortlinkId)
+		return {
+			shortlinkId: row.shortlinkId,
+			slug: row.slug,
+			url: row.url,
+			clicks: Number(row.clicks ?? 0),
+			signups: attr?.signups ?? 0,
+			purchases: attr?.purchases ?? 0,
+		}
+	})
 }
 
 function rangeToDate(range: AnalyticsRange) {
@@ -58,18 +86,19 @@ function rangeToDate(range: AnalyticsRange) {
 
 /**
  * Aggregate the large click table before joining shortlink metadata. The
- * outer join keeps deleted links out, matching the previous inner-join
+ * metadata inner join keeps deleted links out, matching the previous
  * behavior, while attribution is bounded to the selected top twenty IDs.
  */
 export async function getShortlinkPerformance(
 	range: AnalyticsRange = '30d',
+	database: typeof db = db,
 ) {
 	const since = rangeToDate(range)
 	const clickConditions = since
 		? [gte(schema.shortlinkClick.timestamp, since)]
 		: []
 
-	const clickCounts = db
+	const clickCounts = database
 		.select({
 			shortlinkId: schema.shortlinkClick.shortlinkId,
 			clicks: count().as('clicks'),
@@ -79,7 +108,7 @@ export async function getShortlinkPerformance(
 		.groupBy(schema.shortlinkClick.shortlinkId)
 		.as('shortlink_click_counts')
 
-	const rows = await db
+	const rows = await database
 		.select({
 			shortlinkId: clickCounts.shortlinkId,
 			slug: schema.shortlink.slug,
@@ -94,25 +123,14 @@ export async function getShortlinkPerformance(
 		.orderBy(desc(clickCounts.clicks), asc(clickCounts.shortlinkId))
 		.limit(20)
 
-	const rankedRows = rankShortlinkClickCounts(
-		rows.map((row: any) => ({
-			shortlinkId: row.shortlinkId,
-			clicks: Number(row.clicks ?? 0),
-		})),
-		new Set(rows.map((row: any) => row.shortlinkId)),
-		20,
-	)
-	const rowById = new Map(
-		rows.map((row: any) => [row.shortlinkId, row] as const),
-	)
-	const selectedIds = rankedRows.map((row) => row.shortlinkId)
+	const selectedIds = rows.slice(0, 20).map((row: any) => row.shortlinkId)
 	if (selectedIds.length === 0) return []
 
 	const attrConditions = [
 		inArray(schema.shortlinkAttribution.shortlinkId, selectedIds),
 		...(since ? [gte(schema.shortlinkAttribution.createdAt, since)] : []),
 	]
-	const attrRows = await db
+	const attrRows = await database
 		.select({
 			shortlinkId: schema.shortlinkAttribution.shortlinkId,
 			type: schema.shortlinkAttribution.type,
@@ -125,29 +143,7 @@ export async function getShortlinkPerformance(
 			schema.shortlinkAttribution.type,
 		)
 
-	const attrMap = new Map<string, { signups: number; purchases: number }>()
-	for (const row of attrRows as any[]) {
-		const existing = attrMap.get(row.shortlinkId) ?? {
-			signups: 0,
-			purchases: 0,
-		}
-		if (row.type === 'signup') existing.signups = Number(row.count ?? 0)
-		if (row.type === 'purchase') existing.purchases = Number(row.count ?? 0)
-		attrMap.set(row.shortlinkId, existing)
-	}
-
-	return rankedRows.map((ranked) => {
-		const row = rowById.get(ranked.shortlinkId)
-		const attr = attrMap.get(ranked.shortlinkId)
-		return {
-			shortlinkId: ranked.shortlinkId,
-			slug: row.slug,
-			url: row.url,
-			clicks: ranked.clicks,
-			signups: attr?.signups ?? 0,
-			purchases: attr?.purchases ?? 0,
-		}
-	})
+	return formatShortlinkPerformance(rows as ShortlinkPerformanceRow[], attrRows as ShortlinkAttributionCount[])
 }
 
 export default { ...provider, getShortlinkPerformance }

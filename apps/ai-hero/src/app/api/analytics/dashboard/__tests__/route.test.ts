@@ -74,7 +74,11 @@ describe('analytics dashboard section route', () => {
 
 		expect(response.status).toBe(200)
 		expect(response.headers.get('cache-control')).toBe('private, no-store')
-		expect(mocks.loadDashboardSection).toHaveBeenCalledWith('summary', '7d')
+		expect(mocks.loadDashboardSection).toHaveBeenCalledWith(
+			'summary',
+			'7d',
+			expect.objectContaining({ signal: expect.any(AbortSignal) }),
+		)
 		expect(await response.json()).toMatchObject({
 			ok: true,
 			section: 'summary',

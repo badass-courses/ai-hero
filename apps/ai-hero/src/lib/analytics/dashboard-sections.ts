@@ -155,7 +155,7 @@ function toMuxRange(range: AnalyticsRange): TimeRange {
 	return '30:days'
 }
 
-export async function loadDashboardSection<S extends DashboardSection>(
+async function loadDashboardSectionUnshared<S extends DashboardSection>(
 	section: S,
 	range: AnalyticsRange,
 ): Promise<DashboardSectionData[S]> {
@@ -254,6 +254,83 @@ export async function loadDashboardSection<S extends DashboardSection>(
 				valuePaths: await requireQuery(cachedValuePaths(range)),
 			} as unknown as DashboardSectionData[S]
 	}
+}
+
+export type DashboardSectionLoadOptions = {
+	signal?: AbortSignal
+}
+
+const inFlightDashboardSections = new Map<string, Promise<unknown>>()
+
+function requestKey(section: DashboardSection, range: AnalyticsRange) {
+	return `${section}:${range}`
+}
+
+function requestAbortedError() {
+	const error = new Error('Analytics dashboard request aborted.')
+	error.name = 'AbortError'
+	return error
+}
+
+function awaitDashboardRequest<T>(
+	shared: Promise<T>,
+	signal?: AbortSignal,
+): Promise<T> {
+	if (!signal) return shared
+	if (signal.aborted) return Promise.reject(requestAbortedError())
+
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => {
+			signal.removeEventListener('abort', onAbort)
+			reject(requestAbortedError())
+		}
+		signal.addEventListener('abort', onAbort, { once: true })
+		void shared.then(
+			(value) => {
+				signal.removeEventListener('abort', onAbort)
+				resolve(value)
+			},
+			(error) => {
+				signal.removeEventListener('abort', onAbort)
+				reject(error)
+			},
+		)
+	})
+}
+
+/**
+ * Share identical in-flight section work without tying provider cancellation
+ * to one browser caller. Rejections evict the entry so a retry can recover.
+ */
+export async function loadDashboardSection<S extends DashboardSection>(
+	section: S,
+	range: AnalyticsRange,
+	options: DashboardSectionLoadOptions = {},
+): Promise<DashboardSectionData[S]> {
+	if (options.signal?.aborted) throw requestAbortedError()
+
+	const key = requestKey(section, range)
+	let shared = inFlightDashboardSections.get(key) as
+		| Promise<DashboardSectionData[S]>
+		| undefined
+	if (!shared) {
+		shared = loadDashboardSectionUnshared(section, range)
+		inFlightDashboardSections.set(key, shared)
+		void shared.then(
+			() => {
+				if (inFlightDashboardSections.get(key) === shared) {
+					inFlightDashboardSections.delete(key)
+				}
+			},
+			() => {
+				if (inFlightDashboardSections.get(key) === shared) {
+					inFlightDashboardSections.delete(key)
+				}
+			},
+		)
+	}
+
+	return awaitDashboardRequest(shared, options.signal)
 }
 
 export { DASHBOARD_SECTIONS }

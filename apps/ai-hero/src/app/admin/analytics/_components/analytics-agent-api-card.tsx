@@ -219,36 +219,40 @@ type ClipboardItemConstructor = new (
 	items: Record<string, ClipboardItemValue>,
 ) => ClipboardItem
 
-type GestureClipboardWrite = {
+export type GestureClipboardWrite = {
 	resolve: (prompt: string) => void
 	reject: (error: unknown) => void
 	promise: Promise<void>
 }
 
-function startGestureClipboardWrite(): GestureClipboardWrite | null {
-	if (
-		typeof navigator === 'undefined' ||
-		!navigator.clipboard?.write ||
-		typeof globalThis.ClipboardItem !== 'function'
-	) {
+export function startGestureClipboardWrite(): GestureClipboardWrite | null {
+	try {
+		if (
+			typeof navigator === 'undefined' ||
+			!navigator.clipboard?.write ||
+			typeof globalThis.ClipboardItem !== 'function'
+		) {
+			return null
+		}
+
+		let resolvePayload!: (prompt: string) => void
+		let rejectPayload!: (error: unknown) => void
+		const payload = new Promise<Blob>((resolve, reject) => {
+			resolvePayload = (prompt) =>
+				resolve(new Blob([prompt], { type: 'text/plain' }))
+			rejectPayload = reject
+		})
+		const ClipboardItemCtor = globalThis
+			.ClipboardItem as unknown as ClipboardItemConstructor
+		const promise = navigator.clipboard.write([
+			new ClipboardItemCtor({ 'text/plain': payload }),
+		])
+		void promise.catch(() => undefined)
+
+		return { resolve: resolvePayload, reject: rejectPayload, promise }
+	} catch {
 		return null
 	}
-
-	let resolvePayload!: (prompt: string) => void
-	let rejectPayload!: (error: unknown) => void
-	const payload = new Promise<Blob>((resolve, reject) => {
-		resolvePayload = (prompt) =>
-			resolve(new Blob([prompt], { type: 'text/plain' }))
-		rejectPayload = reject
-	})
-	const ClipboardItemCtor = globalThis
-		.ClipboardItem as unknown as ClipboardItemConstructor
-	const promise = navigator.clipboard.write([
-		new ClipboardItemCtor({ 'text/plain': payload }),
-	])
-	void promise.catch(() => undefined)
-
-	return { resolve: resolvePayload, reject: rejectPayload, promise }
 }
 
 function errorMessage(error: unknown) {
