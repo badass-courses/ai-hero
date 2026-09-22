@@ -18,11 +18,13 @@ export type KitDirectoryIngestCounts = {
 	alreadyPresent: number
 	wouldCreate: number
 	skippedInvalid: number
+	failed: number
 }
 
 export type KitDirectoryIngestResult = {
 	mode: KitDirectoryIngestMode
 	counts: KitDirectoryIngestCounts
+	failed: string[]
 	cursor?: string
 }
 
@@ -57,6 +59,7 @@ export async function ingestKitDirectoryBatch(args: {
 	batch: readonly KitDirectorySubscriber[]
 	dryRun?: boolean
 	suppressBirthDelivery?: boolean
+	continueOnContactError?: boolean
 	now?: string
 }): Promise<KitDirectoryIngestResult> {
 	if (args.batch.length > KIT_DIRECTORY_BATCH_SIZE) {
@@ -70,7 +73,9 @@ export async function ingestKitDirectoryBatch(args: {
 		alreadyPresent: 0,
 		wouldCreate: 0,
 		skippedInvalid: 0,
+		failed: 0,
 	}
+	const failed: string[] = []
 	let cursor: string | undefined
 
 	for (const subscriber of args.batch) {
@@ -83,34 +88,41 @@ export async function ingestKitDirectoryBatch(args: {
 		counts.processed += 1
 		cursor = id
 
-		const existing = await args.repository.findProviderIdentity('kit', id)
-		if (existing) {
-			counts.alreadyPresent += 1
-			continue
-		}
-		if (args.dryRun) {
-			counts.wouldCreate += 1
-			continue
-		}
+		try {
+			const existing = await args.repository.findProviderIdentity('kit', id)
+			if (existing) {
+				counts.alreadyPresent += 1
+				continue
+			}
+			if (args.dryRun) {
+				counts.wouldCreate += 1
+				continue
+			}
 
-		const identity = await resolveOrCreateCaptureIdentity({
-			repository: args.repository,
-			event: kitDirectoryIdentityEvent({ subscriber, now }),
-			now,
-			creationOptions: {
-				deliverySource: KIT_DIRECTORY_DELIVERY_SOURCE,
-				...(args.suppressBirthDelivery
-					? { suppressBirthDelivery: true }
-					: {}),
-			},
-		})
-		if (identity.createdContact) counts.created += 1
-		else counts.alreadyPresent += 1
+			const identity = await resolveOrCreateCaptureIdentity({
+				repository: args.repository,
+				event: kitDirectoryIdentityEvent({ subscriber, now }),
+				now,
+				creationOptions: {
+					deliverySource: KIT_DIRECTORY_DELIVERY_SOURCE,
+					...(args.suppressBirthDelivery
+						? { suppressBirthDelivery: true }
+						: {}),
+				},
+			})
+			if (identity.createdContact) counts.created += 1
+			else counts.alreadyPresent += 1
+		} catch (error) {
+			if (!args.continueOnContactError) throw error
+			counts.failed += 1
+			failed.push(id)
+		}
 	}
 
 	return {
 		mode: args.dryRun ? 'dry-run' : 'write',
 		counts,
+		failed,
 		cursor,
 	}
 }

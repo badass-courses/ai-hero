@@ -174,6 +174,24 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		})
 	}
 
+	private insertProviderIdentity(
+		database: AiHeroWriteDatabase,
+		input: Omit<ProviderIdentityRecord, 'id'>,
+	) {
+		return withMysqlPrimaryKeyRetry(async () => {
+			const record: ProviderIdentityRecord = {
+				id: this.newId('provider_identity'),
+				...input,
+			}
+			await database.insert(providerIdentity).values({
+				...record,
+				createdAt: new Date(record.createdAt),
+				updatedAt: new Date(record.updatedAt),
+			})
+			return record
+		})
+	}
+
 	private dispatchContactCreated(
 		record: ContactRecord,
 		options?: ContactCreationOptions,
@@ -215,16 +233,13 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 			const records = await this.database.transaction(
 				async (transaction: AiHeroWriteDatabase) => {
 					const contactRecord = await this.insertContact(transaction, input)
-					const providerIdentityRecord: ProviderIdentityRecord = {
-						id: this.newId('provider_identity'),
-						contactId: contactRecord.id,
-						...providerIdentityInput,
-					}
-					await transaction.insert(providerIdentity).values({
-						...providerIdentityRecord,
-						createdAt: new Date(providerIdentityRecord.createdAt),
-						updatedAt: new Date(providerIdentityRecord.updatedAt),
-					})
+					const providerIdentityRecord = await this.insertProviderIdentity(
+						transaction,
+						{
+							contactId: contactRecord.id,
+							...providerIdentityInput,
+						},
+					)
 					return {
 						contact: contactRecord,
 						providerIdentity: providerIdentityRecord,
@@ -285,16 +300,7 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 	}
 
 	async createProviderIdentity(input: Omit<ProviderIdentityRecord, 'id'>) {
-		const record: ProviderIdentityRecord = {
-			id: this.newId('provider_identity'),
-			...input,
-		}
-		await this.database.insert(providerIdentity).values({
-			...record,
-			createdAt: new Date(record.createdAt),
-			updatedAt: new Date(record.updatedAt),
-		})
-		return record
+		return this.insertProviderIdentity(this.database, input)
 	}
 
 	async linkProviderIdentityToContact(identityId: string, contactId: string) {
