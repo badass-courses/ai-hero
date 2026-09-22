@@ -15,9 +15,9 @@ vi.mock('../get-user', () => ({ getUser: mocks.getUser }))
 
 import { GET } from '../route'
 
-const request = () =>
+const request = (authorization = 'Bearer device-token') =>
 	new Request('http://localhost/oauth/userinfo', {
-		headers: { Authorization: 'Bearer device-token' },
+		headers: { Authorization: authorization },
 	})
 
 beforeEach(() => {
@@ -44,9 +44,25 @@ describe('oauth userinfo device-token policy', () => {
 		expect(mocks.getUser).toHaveBeenCalledWith('user_1')
 	})
 
+	it('does not accept a scoped credential through Basic auth', async () => {
+		mocks.findFirst.mockResolvedValue({
+			userId: 'user_1',
+			scope: 'analytics:read',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60_000),
+			revokedAt: null,
+		})
+
+		const response = await GET(request('Basic device-token'))
+
+		expect(response.status).toBe(404)
+		expect(mocks.getUser).not.toHaveBeenCalled()
+	})
+
 	it.each([
 		['expired', { expiresAt: new Date(Date.now() - 1_000) }],
 		['revoked', { revokedAt: new Date() }],
+		['unknown scope', { scope: 'admin:all' }],
 	])('rejects an %s token before loading the user', async (_label, overrides) => {
 		mocks.findFirst.mockResolvedValue({
 			userId: 'user_1',

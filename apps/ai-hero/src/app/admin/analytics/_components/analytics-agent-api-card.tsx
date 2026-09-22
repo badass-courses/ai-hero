@@ -18,23 +18,40 @@ type AgentPromptInput = {
 	surfaces: AgentSurface[]
 }
 
+export const AGENT_PROMPT_TIMEOUT_MS = 5_000
+
+export function isAgentPromptTokenActive(
+	expiresAt: unknown,
+	now = Date.now(),
+) {
+	if (typeof expiresAt !== 'string' || expiresAt.length === 0) return false
+	const timestamp = Date.parse(expiresAt)
+	return Number.isFinite(timestamp) && timestamp > now
+}
+
 export type AgentPromptState =
-	| { status: 'idle'; prompt: null; error: null }
-	| { status: 'generating'; prompt: null; error: null }
-	| { status: 'copied'; prompt: string; error: null }
-	| { status: 'manual-copy'; prompt: string; error: string }
-	| { status: 'failed'; prompt: null; error: string }
+	| { status: 'idle'; prompt: null; expiresAt: null; error: null }
+	| { status: 'generating'; prompt: null; expiresAt: null; error: null }
+	| { status: 'copied'; prompt: string; expiresAt: string; error: null }
+	| {
+			status: 'manual-copy'
+			prompt: string
+			expiresAt: string
+			error: string
+	  }
+	| { status: 'failed'; prompt: null; expiresAt: null; error: string }
 
 type AgentPromptEvent =
 	| { type: 'generate-start' }
-	| { type: 'copied'; prompt: string }
-	| { type: 'manual-copy'; prompt: string; error: string }
+	| { type: 'copied'; prompt: string; expiresAt: string }
+	| { type: 'manual-copy'; prompt: string; expiresAt: string; error: string }
 	| { type: 'failed'; error: string }
 	| { type: 'reset' }
 
 const INITIAL_AGENT_PROMPT_STATE: AgentPromptState = {
 	status: 'idle',
 	prompt: null,
+	expiresAt: null,
 	error: null,
 }
 
@@ -44,17 +61,33 @@ export function agentPromptReducer(
 ): AgentPromptState {
 	switch (event.type) {
 		case 'generate-start':
-			return { status: 'generating', prompt: null, error: null }
+			return {
+				status: 'generating',
+				prompt: null,
+				expiresAt: null,
+				error: null,
+			}
 		case 'copied':
-			return { status: 'copied', prompt: event.prompt, error: null }
+			return {
+				status: 'copied',
+				prompt: event.prompt,
+				expiresAt: event.expiresAt,
+				error: null,
+			}
 		case 'manual-copy':
 			return {
 				status: 'manual-copy',
 				prompt: event.prompt,
+				expiresAt: event.expiresAt,
 				error: event.error,
 			}
 		case 'failed':
-			return { status: 'failed', prompt: null, error: event.error }
+			return {
+				status: 'failed',
+				prompt: null,
+				expiresAt: null,
+				error: event.error,
+			}
 		case 'reset':
 			return INITIAL_AGENT_PROMPT_STATE
 	}
@@ -135,6 +168,66 @@ Every response has contextual next_actions. Errors have codes + fix hints.`
 
 type AnalyticsFetch = typeof fetch
 
+function timeoutError(label: string) {
+	const error = new Error(`${label} timed out.`)
+	error.name = 'AbortError'
+	return error
+}
+
+function withDeadline<T>(
+	operation: () => Promise<T>,
+	label: string,
+	onTimeout?: () => void,
+) {
+	return new Promise<T>((resolve, reject) => {
+		let settled = false
+		const timeout = setTimeout(() => {
+			if (settled) return
+			settled = true
+			onTimeout?.()
+			reject(timeoutError(label))
+		}, AGENT_PROMPT_TIMEOUT_MS)
+		const finish = (callback: (value: T) => void, value: T) => {
+			if (settled) return
+			settled = true
+			clearTimeout(timeout)
+			callback(value)
+		}
+		void Promise.resolve()
+			.then(operation)
+			.then(
+				(value) => finish(resolve, value),
+				(error) => {
+					if (settled) return
+					settled = true
+					clearTimeout(timeout)
+					reject(error)
+				},
+			)
+	})
+}
+
+async function fetchJsonWithDeadline(
+	fetchImpl: AnalyticsFetch,
+	input: RequestInfo | URL,
+	init: RequestInit,
+	label: string,
+) {
+	const controller = new AbortController()
+	return withDeadline(
+		async () => {
+			const response = await fetchImpl(input, {
+				...init,
+				signal: controller.signal,
+			})
+			const body = response.ok ? await response.json() : null
+			return { response, body }
+		},
+		label,
+		() => controller.abort(),
+	)
+}
+
 export async function createAgentPrompt({
 	appName,
 	endpoint,
@@ -144,60 +237,69 @@ export async function createAgentPrompt({
 	endpoint: string
 	fetchImpl?: AnalyticsFetch
 }) {
-	const [tokenResponse, catalogResponse] = await Promise.all([
-		fetchImpl('/api/analytics/token', {
-			method: 'POST',
-			cache: 'no-store',
-		}),
-		fetchImpl('/api/analytics', { cache: 'no-store' }).catch(() => null),
+	const tokenPromise = fetchJsonWithDeadline(
+		fetchImpl,
+		'/api/analytics/token',
+		{ method: 'POST', cache: 'no-store' },
+		'Analytics token request',
+	).then(({ response, body }) => {
+		if (!response.ok) {
+			throw new Error('Unable to generate analytics token.')
+		}
+		return body
+	})
+	const catalogPromise = fetchJsonWithDeadline(
+		fetchImpl,
+		'/api/analytics',
+		{ cache: 'no-store' },
+		'Analytics catalog request',
+	)
+		.then(({ response, body }) => (response.ok ? body : null))
+		.catch(() => null)
+
+	const [tokenBody, catalogBody] = await Promise.all([
+		tokenPromise,
+		catalogPromise,
 	])
 
-	if (!tokenResponse.ok) {
-		throw new Error('Unable to generate analytics token.')
-	}
-
-	const tokenBody = (await tokenResponse.json()) as {
+	const typedTokenBody = tokenBody as {
 		token?: unknown
 		ttlLabel?: unknown
 		expiresAt?: unknown
 	}
 	if (
-		typeof tokenBody.token !== 'string' ||
-		typeof tokenBody.ttlLabel !== 'string' ||
-		typeof tokenBody.expiresAt !== 'string'
+		typeof typedTokenBody.token !== 'string' ||
+		typeof typedTokenBody.ttlLabel !== 'string' ||
+		!isAgentPromptTokenActive(typedTokenBody.expiresAt)
 	) {
-		throw new Error('Analytics token response was incomplete.')
+		throw new Error('Analytics token response was incomplete or expired.')
 	}
 
 	let surfaces: AgentSurface[] = []
-	if (catalogResponse?.ok) {
-		const catalogBody = (await catalogResponse.json()) as {
-			surfaces?: unknown
-		}
-		if (Array.isArray(catalogBody.surfaces)) {
-			surfaces = catalogBody.surfaces.filter(
-				(surface): surface is AgentSurface =>
-					Boolean(
-						surface &&
-						typeof surface === 'object' &&
-						typeof (surface as AgentSurface).name === 'string' &&
-						typeof (surface as AgentSurface).description === 'string' &&
-						typeof (surface as AgentSurface).category === 'string',
-					),
-			)
-		}
+	const typedCatalogBody = catalogBody as { surfaces?: unknown } | null
+	if (typedCatalogBody && Array.isArray(typedCatalogBody.surfaces)) {
+		surfaces = typedCatalogBody.surfaces.filter(
+			(surface: unknown): surface is AgentSurface =>
+				Boolean(
+					surface &&
+					typeof surface === 'object' &&
+					typeof (surface as AgentSurface).name === 'string' &&
+					typeof (surface as AgentSurface).description === 'string' &&
+					typeof (surface as AgentSurface).category === 'string',
+				),
+		)
 	}
 
 	const prompt = buildAgentPrompt({
 		appName,
 		endpoint,
-		token: tokenBody.token,
-		ttlLabel: tokenBody.ttlLabel,
-		expiresAt: tokenBody.expiresAt,
+		token: typedTokenBody.token,
+		ttlLabel: typedTokenBody.ttlLabel,
+		expiresAt: typedTokenBody.expiresAt as string,
 		surfaces,
 	})
 
-	return { prompt }
+	return { prompt, expiresAt: typedTokenBody.expiresAt as string }
 }
 
 type TextClipboard = {
@@ -280,23 +382,26 @@ export function AnalyticsAgentApiCard({
 		dispatch({ type: 'generate-start' })
 		const gestureWrite = startGestureClipboardWrite()
 		let prompt: string | null = null
+		let expiresAt: string | null = null
 
 		try {
 			const result = await createAgentPrompt({ appName, endpoint })
 			prompt = result.prompt
+			expiresAt = result.expiresAt
 			if (gestureWrite) {
 				gestureWrite.resolve(prompt)
 				await gestureWrite.promise
 			} else {
 				await copyAgentPrompt(prompt)
 			}
-			dispatch({ type: 'copied', prompt })
+			dispatch({ type: 'copied', prompt, expiresAt: expiresAt! })
 		} catch (error) {
 			gestureWrite?.reject(error)
 			if (prompt) {
 				dispatch({
 					type: 'manual-copy',
 					prompt,
+					expiresAt: expiresAt!,
 					error:
 						'Clipboard access was denied. Select the prompt below and copy it manually.',
 				})
@@ -311,6 +416,10 @@ export function AnalyticsAgentApiCard({
 
 	const handleCopyExisting = async () => {
 		if (!state.prompt) return
+		if (!isAgentPromptTokenActive(state.expiresAt)) {
+			await handleGenerateAndCopy()
+			return
+		}
 		const prompt = state.prompt
 		const gestureWrite = startGestureClipboardWrite()
 		try {
@@ -320,12 +429,17 @@ export function AnalyticsAgentApiCard({
 			} else {
 				await copyAgentPrompt(prompt)
 			}
-			dispatch({ type: 'copied', prompt })
+			dispatch({
+				type: 'copied',
+				prompt,
+				expiresAt: state.expiresAt,
+			})
 		} catch {
 			gestureWrite?.reject(new Error('clipboard-denied'))
 			dispatch({
 				type: 'manual-copy',
 				prompt,
+				expiresAt: state.expiresAt,
 				error:
 					'Clipboard access was denied. Select the prompt below and copy it manually.',
 			})

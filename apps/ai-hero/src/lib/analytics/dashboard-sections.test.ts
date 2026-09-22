@@ -26,7 +26,7 @@ vi.mock('@/lib/mux-data', () => ({
 	getVideoThumbnails: vi.fn(),
 }))
 
-import { loadDashboardSection } from './dashboard-sections'
+import { loadDashboardSection, runBounded } from './dashboard-sections'
 
 const summary = { totalRevenue: 199, purchaseCount: 1, avgOrderValue: 199 }
 
@@ -36,6 +36,33 @@ beforeEach(() => {
 })
 
 describe('dashboard section in-flight sharing', () => {
+	it('stops claiming queued work after a worker fails while pending work drains', async () => {
+		let releasePending!: () => void
+		const started: string[] = []
+		const batch = runBounded(
+			[
+				async () => {
+					started.push('reject')
+					throw new Error('first worker failed')
+				},
+				async () => {
+					started.push('pending')
+					await new Promise<void>((resolve) => (releasePending = resolve))
+				},
+				async () => {
+					started.push('queued')
+				},
+			],
+			2,
+		)
+
+		await Promise.resolve()
+		await Promise.resolve()
+		expect(started).toEqual(['reject', 'pending'])
+		releasePending()
+		await expect(batch).rejects.toThrow('first worker failed')
+		expect(started).not.toContain('queued')
+	})
 	it('shares identical section/range work and evicts failed work for retry', async () => {
 		let release!: (value: typeof summary) => void
 		mocks.getRevenueSummary.mockImplementationOnce(

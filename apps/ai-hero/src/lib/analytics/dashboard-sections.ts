@@ -125,17 +125,26 @@ export async function runBounded<T>(
 ): Promise<T[]> {
 	const results = new Array<T>(tasks.length)
 	let next = 0
+	let failed = false
+	let firstError: unknown
 	const workerCount = Math.min(Math.max(1, concurrency), tasks.length)
 
 	async function worker() {
-		while (true) {
+		while (!failed) {
 			const index = next++
 			if (index >= tasks.length) return
-			results[index] = await tasks[index]!()
+			try {
+				results[index] = await tasks[index]!()
+			} catch (error) {
+				if (!failed) firstError = error
+				failed = true
+				return
+			}
 		}
 	}
 
 	await Promise.all(Array.from({ length: workerCount }, () => worker()))
+	if (failed) throw firstError
 	return results
 }
 

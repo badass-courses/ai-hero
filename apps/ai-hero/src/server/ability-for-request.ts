@@ -1,5 +1,11 @@
 import { NextRequest } from 'next/server'
-import { getAbility, UserSchema, type AppAbility, type User } from '@/ability'
+import {
+	createAppAbility,
+	getAbility,
+	UserSchema,
+	type AppAbility,
+	type User,
+} from '@/ability'
 import { db } from '@/db'
 import { deviceAccessToken, personalAccessToken } from '@/db/schema'
 import { env } from '@/env.mjs'
@@ -73,6 +79,15 @@ export async function getUserAbilityForRequest(
 		return anonymousAuth()
 	}
 
+	const scope = deviceToken.scope ?? ''
+	if (scope && authScheme?.toLowerCase() !== 'bearer') {
+		void log.warn('auth.device-token-invalid-scheme', {
+			tokenKind: 'device-token',
+			scope,
+		})
+		return anonymousAuth()
+	}
+
 	if (!isDeviceAccessTokenActive(deviceToken)) {
 		void log.warn('auth.device-token-inactive', {
 			tokenKind: 'device-token',
@@ -95,12 +110,32 @@ export async function getUserAbilityForRequest(
 	}
 
 	const user = userParsed.data
-	const ability = getAbility({ user })
+	const ownerAbility = getAbility({ user })
+	let ability = ownerAbility
+
+	if (scope) {
+		if (
+			scope !== 'analytics:read' ||
+			(!ownerAbility.can('view', 'Analytics') &&
+				!ownerAbility.can('manage', 'all'))
+		) {
+			void log.warn('auth.device-token-scope-denied', {
+				tokenKind: 'device-token',
+				scope,
+				userId: user.id,
+			})
+			return anonymousAuth()
+		}
+
+		// Scoped credentials never inherit the owner's admin/content rules.
+		ability = createAppAbility([{ action: 'view', subject: 'Analytics' }])
+	}
 
 	void log.info('auth.user-authenticated', {
 		userId: user.id,
 		email: user.email ?? null,
 		role: user.roles?.map((r) => r.name).join(',') ?? null,
+		scope: scope || null,
 	})
 
 	return { user, ability, authMethod: 'device-token' }

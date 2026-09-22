@@ -16,13 +16,20 @@ function json(body: unknown, status = 200) {
 }
 
 export async function GET(request: Request) {
-	const deviceAccessToken = request.headers.get('Authorization')?.split(' ')[1]
+	const [authScheme, deviceAccessToken] =
+		request.headers.get('Authorization')?.trim().split(/\s+/) ?? []
 
 	if (deviceAccessToken) {
 		const token = await db.query.deviceAccessToken.findFirst({
 			where: eq(deviceAccessTokenTable.token, deviceAccessToken),
 		})
-		if (token?.userId && isDeviceAccessTokenActive(token)) {
+		if (
+			token?.userId &&
+			(!token.scope ||
+				token.scope === 'analytics:read') &&
+			(!token.scope || authScheme?.toLowerCase() === 'bearer') &&
+			isDeviceAccessTokenActive(token)
+		) {
 			const user = await getUser(token.userId)
 
 			return json({ ...user })

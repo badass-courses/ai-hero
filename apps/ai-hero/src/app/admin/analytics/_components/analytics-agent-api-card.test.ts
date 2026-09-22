@@ -6,6 +6,8 @@ import {
 	createAgentPrompt,
 	agentPromptReducer,
 	startGestureClipboardWrite,
+	AGENT_PROMPT_TIMEOUT_MS,
+	isAgentPromptTokenActive,
 } from './analytics-agent-api-card'
 
 describe('analytics agent prompt', () => {
@@ -95,20 +97,74 @@ describe('analytics agent prompt', () => {
 		)
 	})
 
+	it('bounds a hung optional catalog and still returns a token prompt', async () => {
+		vi.useFakeTimers()
+		try {
+			const fetchImpl = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							token: 'token-for-test-only',
+							ttlLabel: '90 days',
+							expiresAt: '2026-12-21T00:00:00.000Z',
+						}),
+					),
+				)
+				.mockImplementationOnce(() => new Promise<Response>(() => undefined))
+
+			const resultPromise = createAgentPrompt({
+				appName: 'AI Hero',
+				endpoint: 'https://example.test/api/analytics',
+				fetchImpl,
+			})
+			await vi.advanceTimersByTimeAsync(AGENT_PROMPT_TIMEOUT_MS)
+
+			await expect(resultPromise).resolves.toMatchObject({
+				prompt: expect.stringContaining('Bearer token-for-test-only'),
+				expiresAt: '2026-12-21T00:00:00.000Z',
+			})
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('treats expiry as active only before the clock reaches it', () => {
+		const expiresAt = '2026-12-21T00:00:00.000Z'
+		const expiry = Date.parse(expiresAt)
+		expect(isAgentPromptTokenActive(expiresAt, expiry - 1)).toBe(true)
+		expect(isAgentPromptTokenActive(expiresAt, expiry)).toBe(false)
+		expect(isAgentPromptTokenActive('not-a-date', expiry - 1)).toBe(false)
+		expect(isAgentPromptTokenActive(null, expiry - 1)).toBe(false)
+	})
+
 	it('transitions a denied clipboard into a manual-copy state with the prompt intact', () => {
 		const generating = agentPromptReducer(
-			{ status: 'idle', prompt: null, error: null },
+			{ status: 'idle', prompt: null, expiresAt: null, error: null },
 			{ type: 'generate-start' },
 		)
+		const copied = agentPromptReducer(generating, {
+			type: 'copied',
+			prompt: 'prompt text',
+			expiresAt: '2026-12-21T00:00:00.000Z',
+		})
+		expect(copied).toMatchObject({
+			status: 'copied',
+			prompt: 'prompt text',
+			expiresAt: '2026-12-21T00:00:00.000Z',
+		})
+
 		const manual = agentPromptReducer(generating, {
 			type: 'manual-copy',
 			prompt: 'prompt text',
+			expiresAt: '2026-12-21T00:00:00.000Z',
 			error: 'Clipboard access was denied. Select the prompt below and copy it.',
 		})
 
 		expect(manual).toEqual({
 			status: 'manual-copy',
 			prompt: 'prompt text',
+			expiresAt: '2026-12-21T00:00:00.000Z',
 			error: 'Clipboard access was denied. Select the prompt below and copy it.',
 		})
 	})

@@ -269,6 +269,83 @@ describe('getUserAbilityForRequest', () => {
 		expect(mocks.personalAccessTokenFindFirst).not.toHaveBeenCalled()
 	})
 
+	it('limits an analytics-scoped device token to analytics reads', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			scope: 'analytics:read',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+			revokedAt: null,
+			verifiedBy: user,
+		})
+
+		const auth = await getUserAbilityForRequest(request('device-token'))
+
+		expect(auth.authMethod).toBe('device-token')
+		expect(auth.ability.can('view', 'Analytics')).toBe(true)
+		expect(auth.ability.cannot('manage', 'all')).toBe(true)
+		expect(auth.ability.cannot('create', 'Content')).toBe(true)
+		expect(auth.ability.cannot('update', 'Content')).toBe(true)
+	})
+
+	it('requires Bearer for scoped device credentials', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			scope: 'analytics:read',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+			revokedAt: null,
+			verifiedBy: user,
+		})
+
+		const auth = await getUserAbilityForRequest(
+			new NextRequest('http://localhost:3000/api/posts', {
+				headers: { Authorization: 'Basic device-token' },
+			}),
+		)
+
+		expect(auth.authMethod).toBe('anonymous')
+	})
+
+	it('denies unknown scopes and owners who no longer have analytics permission', async () => {
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			scope: 'admin:all',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+			revokedAt: null,
+			verifiedBy: user,
+		})
+		expect((await getUserAbilityForRequest(request('device-token'))).authMethod).toBe(
+			'anonymous',
+		)
+
+		mocks.deviceFindFirst.mockResolvedValue({
+			token: 'device-token',
+			scope: 'analytics:read',
+			createdAt: new Date(),
+			expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+			revokedAt: null,
+			verifiedBy: {
+				...user,
+				roles: [
+					{
+						role: {
+							id: 'role_user',
+							name: 'user',
+							description: null,
+							active: true,
+						},
+					},
+				],
+			},
+		})
+
+		expect((await getUserAbilityForRequest(request('device-token'))).authMethod).toBe(
+			'anonymous',
+		)
+	})
+
 	it('accepts a future persisted expiry even when the legacy createdAt is old', async () => {
 		mocks.deviceFindFirst.mockResolvedValue({
 			token: 'device-token',
