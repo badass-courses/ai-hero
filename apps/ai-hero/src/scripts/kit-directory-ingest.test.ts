@@ -206,6 +206,7 @@ describe('kit directory CLI options', () => {
 				'cursor-zero',
 				'--limit',
 				'1',
+				'--continue-on-failure',
 			]),
 		).toMatchObject({
 			rowsOnly: true,
@@ -214,6 +215,7 @@ describe('kit directory CLI options', () => {
 			stateFile: '/tmp/kit-directory-state.json',
 			after: 'cursor-zero',
 			limit: 1,
+			continueOnFailure: true,
 		})
 	})
 
@@ -234,6 +236,9 @@ describe('kit directory CLI options', () => {
 		expect(() => parseKitDirectoryIngestArgs(['--rows-only'])).toThrow(
 			'--rows-only requires --state-file',
 		)
+		expect(() =>
+			parseKitDirectoryIngestArgs(['--continue-on-failure']),
+		).toThrow('--continue-on-failure requires --rows-only')
 	})
 })
 
@@ -251,8 +256,8 @@ describe('rows-only cursor state', () => {
 				createdRows: 2,
 				alreadyPresentRows: 1,
 				skippedInvalidRows: 0,
-				failedRows: 0,
-				failed: [],
+				failedRows: 1,
+				failed: [{ id: '42', reason: 'Error [ETIMEDOUT]: timeout' }],
 				writeElapsedMs: 25,
 				updatedAt: '2026-09-22T00:00:00.000Z',
 			})
@@ -261,6 +266,7 @@ describe('rows-only cursor state', () => {
 				cursor: 'cursor-one',
 				createdRows: 2,
 				alreadyPresentRows: 1,
+				failed: [{ id: '42', reason: 'Error [ETIMEDOUT]: timeout' }],
 			})
 		} finally {
 			await rm(directory, { recursive: true, force: true })
@@ -526,6 +532,7 @@ describe('rows-only Kit directory ingest', () => {
 			expect(args).toMatchObject({
 				dryRun: false,
 				suppressBirthDelivery: true,
+				contactFailureAttempts: 1,
 			})
 		}
 		expect(result).toMatchObject({
@@ -575,7 +582,11 @@ describe('rows-only Kit directory ingest', () => {
 		expect(onPage).not.toHaveBeenCalled()
 	})
 
-	it('finishes the page before exiting with failed provider ids', async () => {
+	it('finishes the page before exiting with failed contact reasons', async () => {
+		const failure = {
+			id: '2',
+			reason: 'Error [ETIMEDOUT]: temporary database failure',
+		}
 		const ingestBatch = vi
 			.fn()
 			.mockResolvedValueOnce({
@@ -588,7 +599,7 @@ describe('rows-only Kit directory ingest', () => {
 					skippedInvalid: 0,
 					failed: 1,
 				},
-				failed: ['2'],
+				failed: [failure],
 			})
 			.mockResolvedValueOnce({
 				mode: 'write',
@@ -618,10 +629,98 @@ describe('rows-only Kit directory ingest', () => {
 				ingestBatch,
 				onPage,
 			}),
-		).rejects.toThrow('Rows-only page 1 failed for Kit provider ids: 2')
+		).rejects.toThrow(
+			`Rows-only page 1 failed contacts: ${JSON.stringify([failure])}`,
+		)
 		expect(ingestBatch).toHaveBeenCalledTimes(2)
 		expect(onPage).toHaveBeenCalledWith(
-			expect.objectContaining({ failedRows: 1, failed: ['2'] }),
+			expect.objectContaining({ failedRows: 1, failed: [failure] }),
+		)
+	})
+
+	it('continues later pages and exits only after the full walk', async () => {
+		const failure = {
+			id: '2',
+			reason: 'Error [ETIMEDOUT]: temporary database failure',
+		}
+		const ingestBatch = vi
+			.fn()
+			.mockResolvedValueOnce({
+				mode: 'write',
+				counts: {
+					processed: 2,
+					created: 1,
+					alreadyPresent: 0,
+					wouldCreate: 0,
+					skippedInvalid: 0,
+					failed: 1,
+				},
+				failed: [failure],
+			})
+			.mockResolvedValueOnce({
+				mode: 'write',
+				counts: {
+					processed: 1,
+					created: 1,
+					alreadyPresent: 0,
+					wouldCreate: 0,
+					skippedInvalid: 0,
+					failed: 0,
+				},
+				failed: [],
+			})
+		let page = 0
+		const fetcher: typeof fetch = async () => {
+			page += 1
+			return jsonResponse(
+				page === 1
+					? {
+							subscribers: [{ id: 1 }, { id: 2 }],
+							pagination: {
+								has_next_page: true,
+								end_cursor: 'cursor-one',
+							},
+						}
+					: {
+							subscribers: [{ id: 3 }],
+							pagination: {
+								has_next_page: false,
+								end_cursor: 'cursor-two',
+							},
+						},
+			)
+		}
+		const onPage = vi.fn()
+
+		await expect(
+			runKitDirectoryIngest({
+				apiKey: 'test-kit-key',
+				status: 'all',
+				batchSize: 500,
+				send: false,
+				write: true,
+				rowsOnly: true,
+				continueOnFailure: true,
+				repository: {} as CaptureMarketingRepository,
+				fetcher,
+				ingestBatch,
+				sleep: async () => {},
+				onPage,
+			}),
+		).rejects.toThrow(
+			`Rows-only ingest completed with failed contacts: ${JSON.stringify([failure])}`,
+		)
+		expect(ingestBatch).toHaveBeenCalledTimes(2)
+		expect(ingestBatch).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({
+				contactFailureAttempts: 2,
+				contactFailureRetryDelayMs: 5_000,
+			}),
+		)
+		expect(onPage).toHaveBeenCalledTimes(2)
+		expect(onPage).toHaveBeenLastCalledWith(
+			expect.objectContaining({ page: 2, cursor: 'cursor-two' }),
 		)
 	})
 
