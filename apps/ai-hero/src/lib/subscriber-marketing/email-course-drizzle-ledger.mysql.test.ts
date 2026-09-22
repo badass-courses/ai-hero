@@ -151,76 +151,53 @@ integration('Email Course MySQL ledger', () => {
 		await serverPool?.end()
 	})
 
-	it('commits shadow state and pushes parity without touching production rows', async () => {
-		const pushed: unknown[] = []
-		const pushedUrls: string[] = []
-		const commitCountsAtPush: number[] = []
+	it('keeps the retired shadow runtime out of the ledger and parity sink', async () => {
+		let fetched = false
 		const runtime = createEmailCourseShadowRuntime({
 			database,
 			parity: {
-				config: {
-					ingestUrl: 'https://drovr-api.wzrrd.sh/events/ingest',
-					apiKey: 'shadow-test-key',
-				},
-				fetch: async (input, init) => {
-					const [rows] = await pool.query<RowDataPacket[]>(
-						'SELECT COUNT(*) AS count FROM AI_EmailCourseCommit',
-					)
-					commitCountsAtPush.push(Number(rows[0]?.count ?? 0))
-					pushedUrls.push(String(input))
-					pushed.push(JSON.parse(String(init?.body)))
-					return new Response(JSON.stringify({ matched: true }), {
-						status: 200,
-					})
+				fetch: async () => {
+					fetched = true
+					return new Response('{}', { status: 200 })
 				},
 			},
 		})
 
-		const started = await runtime.observeSignup({
-			contactId,
-			courseEntryEventId: entryEventId,
-			subscribedAt: startedAt,
-		})
-		const settled = await runtime.observeDelivery({
-			courseEntryEventId: entryEventId,
-			legacyIntentId: 'legacy-shadow-email-0',
-			emailResourceId: 'ai-hero-skills-workflow.email-0',
-			completedAt: '2026-09-01T17:00:00.000Z',
-		})
-		const answered = await runtime.observeAnswer({
-			courseEntryEventId: entryEventId,
-			contactEventId: 'legacy-shadow-answer-email-0',
-			sentEmailResourceId: 'ai-hero-skills-workflow.email-0',
-			selectedNextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
-			selectedAt: '2026-09-01T17:05:00.000Z',
-		})
+		const results = await Promise.all([
+			runtime.observeSignup({
+				contactId,
+				courseEntryEventId: entryEventId,
+				subscribedAt: startedAt,
+			}),
+			runtime.observeDelivery({
+				courseEntryEventId: entryEventId,
+				legacyIntentId: 'legacy-shadow-email-0',
+				emailResourceId: 'ai-hero-skills-workflow.email-0',
+				completedAt: '2026-09-01T17:00:00.000Z',
+			}),
+			runtime.observeAnswer({
+				courseEntryEventId: entryEventId,
+				contactEventId: 'legacy-shadow-answer-email-0',
+				sentEmailResourceId: 'ai-hero-skills-workflow.email-0',
+				selectedNextEmailResourceId:
+					'ai-hero-skills-team-workflow.team-email-1',
+				selectedAt: '2026-09-01T17:05:00.000Z',
+			}),
+		])
 		const [commits] = await pool.query<RowDataPacket[]>(
-			'SELECT runId, actorVersion FROM AI_EmailCourseCommit ORDER BY actorVersion',
-		)
-		const [controls] = await pool.query<RowDataPacket[]>(
-			'SELECT * FROM AI_AutomationControl',
+			'SELECT runId FROM AI_EmailCourseCommit',
 		)
 
-		expect(started).toMatchObject({ status: 'committed', runId })
-		expect(settled).toMatchObject({ status: 'committed', runId })
-		expect(answered).toMatchObject({ status: 'committed', runId })
-		expect(commits).toHaveLength(3)
-		expect(controls).toHaveLength(0)
+		expect(results).toEqual(
+			Array.from({ length: 3 }, () => ({
+				status: 'skipped',
+				reason: 'shadow-runtime-retired',
+			})),
+		)
+		expect(commits).toHaveLength(0)
+		expect(fetched).toBe(false)
 		expect(await activeIntents(pool)).toHaveLength(0)
 		expect(await factCount(pool)).toBe(0)
-		expect(commitCountsAtPush).toEqual([1, 2, 2, 3])
-		expect(pushedUrls).toEqual(
-			Array.from(
-				{ length: 4 },
-				() => 'https://drovr-api.wzrrd.sh/parity/transitions',
-			),
-		)
-		expect(pushed).toMatchObject([
-			{ fromState: 'email0.pending', toState: 'email0.pending' },
-			{ fromState: 'email0.pending', toState: 'email0.waiting' },
-			{ fromState: 'email0.waiting', toState: 'email1.pending' },
-			{ fromState: 'email0.waiting', toState: 'email1.pending' },
-		])
 	})
 
 	it('records a missing-control hard stop without an outbox intent', async () => {

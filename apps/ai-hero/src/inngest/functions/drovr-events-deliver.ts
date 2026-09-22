@@ -16,6 +16,7 @@ import {
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
+	DROVR_SHADOW_TENANT_ID,
 	type DrovrDeliveryConfig,
 	type DrovrShadowEvent,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
@@ -31,6 +32,7 @@ export type DrovrEventsDeliverReceipt = {
 	status: 'delivered' | 'skipped'
 	accepted: number
 	rejected: number
+	discarded: number
 	reason?: string
 }
 
@@ -54,7 +56,26 @@ const NOT_CONFIGURED: DrovrEventsDeliverReceipt = {
 	status: 'skipped',
 	accepted: 0,
 	rejected: 0,
+	discarded: 0,
 	reason: 'drovr ingest is not configured',
+}
+
+const discardShadowTenantEvents = async (
+	events: readonly DrovrShadowEvent[],
+	deliveryLane: 'live' | 'bulk',
+): Promise<{ events: DrovrShadowEvent[]; discarded: number }> => {
+	const deliverable = events.filter(
+		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
+	)
+	const discarded = events.length - deliverable.length
+	if (discarded > 0) {
+		await log.info('drovr.shadow.events_discarded', {
+			tenantId: DROVR_SHADOW_TENANT_ID,
+			count: discarded,
+			deliveryLane,
+		})
+	}
+	return { events: deliverable, discarded }
 }
 
 // Facts about drovr-owned contacts also reach the authority tenant.
@@ -87,7 +108,11 @@ const deliverBatch = async (
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
-	const events = await fanOut(batch, step)
+	const fanOutEvents = await fanOut(batch, step)
+	const { events, discarded } = await discardShadowTenantEvents(
+		fanOutEvents,
+		'live',
+	)
 
 	let accepted = 0
 	let rejected = 0
@@ -110,7 +135,7 @@ const deliverBatch = async (
 		if (outcome.status === 'accepted') accepted += 1
 		if (outcome.status === 'rejected') rejected += 1
 	}
-	return { status: 'delivered', accepted, rejected }
+	return { status: 'delivered', accepted, rejected, discarded }
 }
 
 /**
@@ -126,7 +151,11 @@ const deliverBulk = async (
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
-	const events = await fanOut(batch, step)
+	const fanOutEvents = await fanOut(batch, step)
+	const { events, discarded } = await discardShadowTenantEvents(
+		fanOutEvents,
+		'bulk',
+	)
 
 	// One key per tenant, so one batch stream per tenant.
 	const byTenant = new Map<DrovrShadowEvent['tenantId'], DrovrShadowEvent[]>()
@@ -165,7 +194,7 @@ const deliverBulk = async (
 			rejected += outcome.rejected
 		}
 	}
-	return { status: 'delivered', accepted, rejected }
+	return { status: 'delivered', accepted, rejected, discarded }
 }
 
 export const drovrEventsDeliver = inngest.createFunction(
@@ -186,6 +215,7 @@ export const drovrEventsDeliver = inngest.createFunction(
 				status: 'skipped',
 				accepted: 0,
 				rejected: 0,
+				discarded: 0,
 				reason: 'bulk source on the live function',
 			}
 		}

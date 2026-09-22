@@ -119,37 +119,29 @@ export type DrovrShadowFact =
 
 type DrovrShadowEmitterConfig = {
 	ingestUrl?: string
-	/** Bearer key for the shadow tenant. */
-	apiKey?: string
-	/** Bearer key for the authority tenant, once cut over. */
+	/** Bearer key for the authority tenant. */
 	authorityApiKey?: string
 }
 
 /**
- * One bearer key per drovr tenant. Every path that posts to drovr (the
- * durable delivery function, the direct fallback) must choose by tenant;
- * an authority completion sent with the shadow key is a 403 at drovr.
+ * Shadow-addressed events are retired before delivery. Every remaining
+ * path uses the authority tenant's own bearer key.
  */
 export function drovrApiKeyForTenant(
 	tenantId: string,
-	config: Pick<DrovrShadowEmitterConfig, 'apiKey' | 'authorityApiKey'> = {
-		apiKey: env.DROVR_SHADOW_API_KEY,
+	config: Pick<DrovrShadowEmitterConfig, 'authorityApiKey'> = {
 		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
 	},
 ): string | undefined {
-	switch (tenantId) {
-		case DROVR_SHADOW_TENANT_ID:
-			return config.apiKey
-		case DROVR_AUTHORITY_TENANT_ID:
-			return config.authorityApiKey
-		default:
-			return undefined
-	}
+	return tenantId === DROVR_AUTHORITY_TENANT_ID
+		? config.authorityApiKey
+		: undefined
 }
 
 type DrovrShadowEmitterOptions = {
 	config?: DrovrShadowEmitterConfig
 	fetch?: typeof fetch
+	info?: typeof log.info
 	warn?: typeof log.warn
 	timeoutMs?: number
 }
@@ -204,7 +196,6 @@ export async function emitDrovrShadowEvents(
 ): Promise<void> {
 	const config = options.config ?? {
 		ingestUrl: env.DROVR_SHADOW_INGEST_URL,
-		apiKey: env.DROVR_SHADOW_API_KEY,
 		authorityApiKey: env.DROVR_API_KEY_ORG_AIHERO,
 	}
 	const ingestUrl = config.ingestUrl
@@ -212,10 +203,24 @@ export async function emitDrovrShadowEvents(
 	if (events.length === 0) return
 
 	const fetcher = options.fetch ?? fetch
+	const info = options.info ?? log.info
 	const warn = options.warn ?? log.warn
+	const deliverableEvents = events.filter(
+		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
+	)
+	const discarded = events.length - deliverableEvents.length
+	if (discarded > 0) {
+		await infoWithoutThrow(info, 'drovr.shadow.events_discarded', {
+			tenantId: DROVR_SHADOW_TENANT_ID,
+			count: discarded,
+			deliveryLane: 'direct',
+		})
+	}
+	if (deliverableEvents.length === 0) return
+
 	try {
 		await Promise.all(
-			events.map(async (event) => {
+			deliverableEvents.map(async (event) => {
 				const apiKey = drovrApiKeyForTenant(event.tenantId, config)
 				if (!apiKey) {
 					await warnWithoutThrow(warn, 'drovr.shadow.tenant_key_missing', {
@@ -235,7 +240,7 @@ export async function emitDrovrShadowEvents(
 		)
 	} catch (error) {
 		await warnWithoutThrow(warn, 'drovr.shadow.emit_failed', {
-			eventCount: events.length,
+			eventCount: deliverableEvents.length,
 			error: error instanceof Error ? error.message : String(error),
 		})
 	}
@@ -796,6 +801,18 @@ async function boundedResponseBody(response: Response) {
 		return JSON.parse(text) as unknown
 	} catch {
 		return text
+	}
+}
+
+async function infoWithoutThrow(
+	info: typeof log.info,
+	event: string,
+	data: Record<string, unknown>,
+) {
+	try {
+		await info(event, data)
+	} catch {
+		// Logging cannot make shadow delivery authoritative.
 	}
 }
 
