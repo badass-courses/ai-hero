@@ -88,6 +88,8 @@ export function mergeDashboardSection<S extends DashboardSection>(
 				valuePaths:
 					(payload as DashboardSectionData['value-paths']).valuePaths ?? null,
 			}
+		default:
+			throw new Error(`Unsupported analytics dashboard section: ${String(section)}`)
 	}
 }
 
