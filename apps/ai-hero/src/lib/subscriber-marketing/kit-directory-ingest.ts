@@ -56,6 +56,7 @@ export async function ingestKitDirectoryBatch(args: {
 	repository: CaptureMarketingRepository
 	batch: readonly KitDirectorySubscriber[]
 	dryRun?: boolean
+	suppressBirthDelivery?: boolean
 	now?: string
 }): Promise<KitDirectoryIngestResult> {
 	if (args.batch.length > KIT_DIRECTORY_BATCH_SIZE) {
@@ -96,7 +97,12 @@ export async function ingestKitDirectoryBatch(args: {
 			repository: args.repository,
 			event: kitDirectoryIdentityEvent({ subscriber, now }),
 			now,
-			creationOptions: { deliverySource: KIT_DIRECTORY_DELIVERY_SOURCE },
+			creationOptions: {
+				deliverySource: KIT_DIRECTORY_DELIVERY_SOURCE,
+				...(args.suppressBirthDelivery
+					? { suppressBirthDelivery: true }
+					: {}),
+			},
 		})
 		if (identity.createdContact) counts.created += 1
 		else counts.alreadyPresent += 1

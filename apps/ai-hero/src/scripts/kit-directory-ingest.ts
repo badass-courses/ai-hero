@@ -1,26 +1,36 @@
+import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
 
 import {
 	KIT_DIRECTORY_INGEST_EVENT,
 	type KitDirectoryIngest,
 	type KitDirectorySubscriber,
 } from '@/inngest/events/kit-directory'
-import { KIT_DIRECTORY_BATCH_SIZE } from '@/lib/subscriber-marketing/kit-directory-ingest'
+import type { CaptureMarketingRepository } from '@/lib/subscriber-marketing/capture-contact-event'
+import {
+	ingestKitDirectoryBatch,
+	KIT_DIRECTORY_BATCH_SIZE,
+} from '@/lib/subscriber-marketing/kit-directory-ingest'
 
 const KIT_API_SUBSCRIBERS_URL = 'https://api.kit.com/v4/subscribers'
 const INNGEST_EVENT_KEY_PLACEHOLDER = '[SENSITIVE]'
 
 export const KIT_DIRECTORY_API_PAGE_SIZE = 1000 as const
 export const KIT_DIRECTORY_PAGE_DELAY_MS = 600 as const
+export const KIT_DIRECTORY_REQUEST_TIMEOUT_MS = 15_000 as const
+export const KIT_DIRECTORY_MAX_ATTEMPTS = 5 as const
+export const KIT_DIRECTORY_RETRY_BASE_MS = 1_000 as const
 
-type ScriptOptions = {
+export type ScriptOptions = {
 	status: string
 	after?: string
 	batchSize: number
 	limit?: number
 	send: boolean
 	write: boolean
+	rowsOnly: boolean
+	stateFile?: string
 }
 
 type JsonRecord = Record<string, unknown>
@@ -40,7 +50,24 @@ export type KitDirectoryPageSummary = {
 	subscribers: number
 	batches: number
 	sentBatches: number
+	createdRows?: number
+	alreadyPresentRows?: number
+	skippedInvalidRows?: number
+	writeElapsedMs?: number
 	cursor?: string
+}
+
+export type KitDirectoryRowsOnlyState = {
+	version: 1
+	status: string
+	page: number
+	cursor: string | null
+	subscribers: number
+	createdRows: number
+	alreadyPresentRows: number
+	skippedInvalidRows: number
+	writeElapsedMs: number
+	updatedAt: string
 }
 
 export type RunKitDirectoryIngestArgs = {
@@ -51,9 +78,14 @@ export type RunKitDirectoryIngestArgs = {
 	limit?: number
 	send: boolean
 	write: boolean
+	rowsOnly?: boolean
+	repository?: CaptureMarketingRepository
 	eventKey?: string
 	fetcher?: typeof fetch
 	sleep?: (milliseconds: number) => Promise<void>
+	requestTimeoutMs?: number
+	maxAttempts?: number
+	ingestBatch?: typeof ingestKitDirectoryBatch
 	onPage?: (summary: KitDirectoryPageSummary) => void | Promise<void>
 }
 
@@ -62,6 +94,9 @@ export type RunKitDirectoryIngestResult = {
 	subscribers: number
 	batches: number
 	sentBatches: number
+	createdRows: number
+	alreadyPresentRows: number
+	skippedInvalidRows: number
 	cursor?: string
 	pageSummaries: KitDirectoryPageSummary[]
 }
@@ -124,40 +159,102 @@ function parseKitDirectoryPage(payload: unknown): KitDirectoryPagePayload {
 	}
 }
 
+function retryBackoffMs(attempt: number) {
+	return KIT_DIRECTORY_RETRY_BASE_MS * 2 ** (attempt - 1)
+}
+
+function retryAfterMs(response: Response, now: () => number): number | undefined {
+	const value = response.headers.get('retry-after')?.trim()
+	if (!value) return undefined
+	const seconds = Number(value)
+	if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000
+	const at = Date.parse(value)
+	return Number.isNaN(at) ? undefined : Math.max(0, at - now())
+}
+
+function sleep(milliseconds: number) {
+	return new Promise<void>((resolveSleep) => setTimeout(resolveSleep, milliseconds))
+}
+
 export async function fetchKitDirectoryPage(args: {
 	apiKey: string
 	status: string
 	after?: string
 	fetcher?: typeof fetch
+	sleep?: (milliseconds: number) => Promise<void>
+	requestTimeoutMs?: number
+	maxAttempts?: number
+	now?: () => number
 }): Promise<KitDirectoryPagePayload> {
 	const apiKey = args.apiKey.trim()
 	if (!apiKey) throw new Error('KIT_API_KEY is required')
 	const status = args.status.trim()
 	if (!status) throw new Error('--status cannot be empty')
+	const requestTimeoutMs =
+		args.requestTimeoutMs ?? KIT_DIRECTORY_REQUEST_TIMEOUT_MS
+	if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1) {
+		throw new Error('Kit request timeout must be a positive integer')
+	}
+	const maxAttempts = args.maxAttempts ?? KIT_DIRECTORY_MAX_ATTEMPTS
+	if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+		throw new Error('Kit max attempts must be a positive integer')
+	}
 
 	const url = new URL(KIT_API_SUBSCRIBERS_URL)
 	url.searchParams.set('status', status)
 	url.searchParams.set('per_page', String(KIT_DIRECTORY_API_PAGE_SIZE))
 	if (args.after) url.searchParams.set('after', args.after)
 
-	const response = await (args.fetcher ?? fetch)(url, {
-		headers: { 'X-Kit-Api-Key': apiKey },
-	})
-	if (!response.ok) {
-		throw new Error(`Kit API returned HTTP ${response.status}`)
-	}
+	const fetcher = args.fetcher ?? fetch
+	const wait = args.sleep ?? sleep
+	const now = args.now ?? Date.now
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const controller = new AbortController()
+		const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
+		let response: Response | undefined
+		try {
+			response = await fetcher(url, {
+				headers: { 'X-Kit-Api-Key': apiKey },
+				signal: controller.signal,
+			})
+		} catch {
+			if (attempt === maxAttempts) {
+				throw new Error(`Kit API request failed after ${maxAttempts} attempts`)
+			}
+		} finally {
+			clearTimeout(timeout)
+		}
+		if (!response) {
+			await wait(retryBackoffMs(attempt))
+			continue
+		}
 
-	let payload: unknown
-	try {
-		payload = await response.json()
-	} catch {
-		throw new Error('Kit API returned invalid JSON')
-	}
-	return parseKitDirectoryPage(payload)
-}
+		if (response.status === 429 || response.status >= 500) {
+			if (attempt === maxAttempts) {
+				throw new Error(
+					`Kit API returned HTTP ${response.status} after ${maxAttempts} attempts`,
+				)
+			}
+			await wait(
+				response.status === 429
+					? (retryAfterMs(response, now) ?? retryBackoffMs(attempt))
+					: retryBackoffMs(attempt),
+			)
+			continue
+		}
+		if (!response.ok) {
+			throw new Error(`Kit API returned HTTP ${response.status}`)
+		}
 
-function sleep(milliseconds: number) {
-	return new Promise<void>((resolveSleep) => setTimeout(resolveSleep, milliseconds))
+		let payload: unknown
+		try {
+			payload = await response.json()
+		} catch {
+			throw new Error('Kit API returned invalid JSON')
+		}
+		return parseKitDirectoryPage(payload)
+	}
+	throw new Error('Kit API retry loop exhausted')
 }
 
 export async function* readKitDirectoryPages(args: {
@@ -167,6 +264,8 @@ export async function* readKitDirectoryPages(args: {
 	limit?: number
 	fetcher?: typeof fetch
 	sleep?: (milliseconds: number) => Promise<void>
+	requestTimeoutMs?: number
+	maxAttempts?: number
 }): AsyncGenerator<KitDirectoryApiPage> {
 	if (
 		args.limit !== undefined &&
@@ -183,6 +282,9 @@ export async function* readKitDirectoryPages(args: {
 			status: args.status,
 			after,
 			fetcher: args.fetcher,
+			sleep: args.sleep,
+			requestTimeoutMs: args.requestTimeoutMs,
+			maxAttempts: args.maxAttempts,
 		})
 		yield { ...result, page }
 
@@ -250,15 +352,26 @@ export async function runKitDirectoryIngest(
 			`--batch-size must be an integer from 1 to ${KIT_DIRECTORY_BATCH_SIZE}`,
 		)
 	}
+	if (args.rowsOnly && args.send) {
+		throw new Error('--rows-only cannot be combined with --send')
+	}
+	const repository = args.repository
+	if (args.rowsOnly && !repository) {
+		throw new Error('--rows-only requires a contact repository')
+	}
 	if (args.send && !args.eventKey?.trim()) {
 		throw new Error('--send requires a usable INNGEST_EVENT_KEY')
 	}
 
 	const pageSummaries: KitDirectoryPageSummary[] = []
+	const ingestBatch = args.ingestBatch ?? ingestKitDirectoryBatch
 	let pages = 0
 	let subscribers = 0
 	let batches = 0
 	let sentBatches = 0
+	let createdRows = 0
+	let alreadyPresentRows = 0
+	let skippedInvalidRows = 0
 	let cursor = args.after
 
 	for await (const page of readKitDirectoryPages({
@@ -268,9 +381,30 @@ export async function runKitDirectoryIngest(
 		limit: args.limit,
 		fetcher: args.fetcher,
 		sleep: args.sleep,
+		requestTimeoutMs: args.requestTimeoutMs,
+		maxAttempts: args.maxAttempts,
 	})) {
 		const pageBatches = batchesOf(page.subscribers, args.batchSize)
-		if (args.send) {
+		let pageCreatedRows = 0
+		let pageAlreadyPresentRows = 0
+		let pageSkippedInvalidRows = 0
+		const writeStartedAt = Date.now()
+		if (args.rowsOnly) {
+			if (!repository) {
+				throw new Error('--rows-only requires a contact repository')
+			}
+			for (const batch of pageBatches) {
+				const result = await ingestBatch({
+					repository,
+					batch,
+					dryRun: false,
+					suppressBirthDelivery: true,
+				})
+				pageCreatedRows += result.counts.created
+				pageAlreadyPresentRows += result.counts.alreadyPresent
+				pageSkippedInvalidRows += result.counts.skippedInvalid
+			}
+		} else if (args.send) {
 			for (const batch of pageBatches) {
 				await sendKitDirectoryBatch(
 					args.eventKey!,
@@ -286,13 +420,24 @@ export async function runKitDirectoryIngest(
 		subscribers += page.subscribers.length
 		batches += pageBatches.length
 		sentBatches += args.send ? pageBatches.length : 0
+		createdRows += pageCreatedRows
+		alreadyPresentRows += pageAlreadyPresentRows
+		skippedInvalidRows += pageSkippedInvalidRows
 		cursor = page.cursor ?? cursor
 		const summary: KitDirectoryPageSummary = {
 			page: page.page,
 			subscribers: page.subscribers.length,
 			batches: pageBatches.length,
 			sentBatches: args.send ? pageBatches.length : 0,
-			...(page.cursor ? { cursor: page.cursor } : {}),
+			...(args.rowsOnly
+				? {
+						createdRows: pageCreatedRows,
+						alreadyPresentRows: pageAlreadyPresentRows,
+						skippedInvalidRows: pageSkippedInvalidRows,
+						writeElapsedMs: Date.now() - writeStartedAt,
+					}
+				: {}),
+			...(cursor ? { cursor } : {}),
 		}
 		pageSummaries.push(summary)
 		await args.onPage?.(summary)
@@ -303,6 +448,9 @@ export async function runKitDirectoryIngest(
 		subscribers,
 		batches,
 		sentBatches,
+		createdRows,
+		alreadyPresentRows,
+		skippedInvalidRows,
 		...(cursor ? { cursor } : {}),
 		pageSummaries,
 	}
@@ -316,13 +464,17 @@ function nextArgument(argv: readonly string[], index: number, flag: string) {
 	return value
 }
 
-function parseArgs(argv: readonly string[]): ScriptOptions {
+export function parseKitDirectoryIngestArgs(
+	argv: readonly string[],
+): ScriptOptions {
 	let status = 'all'
 	let after: string | undefined
 	let batchSize: number = KIT_DIRECTORY_BATCH_SIZE
 	let limit: number | undefined
 	let send = false
 	let write = false
+	let rowsOnly = false
+	let stateFile: string | undefined
 
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index]
@@ -333,13 +485,16 @@ function parseArgs(argv: readonly string[]): ScriptOptions {
 			batchSize = Number(nextArgument(argv, index++, arg))
 		} else if (arg === '--limit') {
 			limit = Number(nextArgument(argv, index++, arg))
+		} else if (arg === '--state-file') {
+			stateFile = nextArgument(argv, index++, arg)
 		} else if (arg === '--send') send = true
-		else if (arg === '--write') {
+		else if (arg === '--write') write = true
+		else if (arg === '--rows-only') {
+			rowsOnly = true
 			write = true
-			send = true
 		} else if (arg === '--help') {
 			console.log(
-				'Usage: pnpm kit-directory:ingest -- [--status all] [--after <cursor>] [--batch-size 500] [--limit <pages>] [--send] [--write]',
+				'Usage: pnpm kit-directory:ingest -- [--status all] [--after <cursor>] [--batch-size 500] [--limit <pages>] [--send] [--write] [--rows-only --state-file <path>]',
 			)
 			process.exit(0)
 		} else {
@@ -360,11 +515,53 @@ function parseArgs(argv: readonly string[]): ScriptOptions {
 	if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
 		throw new Error('--limit must be a positive integer')
 	}
-	return { status, after, batchSize, limit, send, write }
+	if (rowsOnly && send) {
+		throw new Error('--rows-only cannot be combined with --send')
+	}
+	if (rowsOnly && !stateFile) {
+		throw new Error('--rows-only requires --state-file')
+	}
+	if (write && !rowsOnly) send = true
+	return {
+		status,
+		after,
+		batchSize,
+		limit,
+		send,
+		write,
+		rowsOnly,
+		stateFile,
+	}
+}
+
+export async function writeKitDirectoryRowsOnlyState(
+	path: string,
+	state: KitDirectoryRowsOnlyState,
+) {
+	const target = resolve(path)
+	const temporary = `${target}.tmp`
+	await mkdir(dirname(target), { recursive: true })
+	await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
+		encoding: 'utf8',
+		mode: 0o600,
+	})
+	await rename(temporary, target)
+}
+
+async function createRowsOnlyRepository() {
+	const [{ closeDatabasePool, db }, { DrizzleCaptureMarketingRepository }] =
+		await Promise.all([
+			import('@/db'),
+			import('@/lib/subscriber-marketing/drizzle-capture-repository'),
+		])
+	return {
+		repository: new DrizzleCaptureMarketingRepository(db),
+		close: closeDatabasePool,
+	}
 }
 
 async function main() {
-	const options = parseArgs(process.argv.slice(2))
+	const options = parseKitDirectoryIngestArgs(process.argv.slice(2))
 	const apiKey = process.env.KIT_API_KEY?.trim()
 	if (!apiKey) throw new Error('KIT_API_KEY is required')
 	const eventKey = process.env.INNGEST_EVENT_KEY?.trim()
@@ -372,19 +569,47 @@ async function main() {
 		throw new Error('--send requires a usable INNGEST_EVENT_KEY')
 	}
 
-	const result = await runKitDirectoryIngest({
-		...options,
-		apiKey,
-		eventKey,
-		onPage: (summary) => {
-			console.log(
-				`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches}`,
-			)
-		},
-	})
-	console.log(
-		`kit-directory-ingest complete mode=${options.write ? 'write' : 'dry-run'} status=${options.status} pages=${result.pages} subscribers=${result.subscribers} batches=${result.batches} cursor=${result.cursor ?? 'none'} sent=${result.sentBatches}`,
-	)
+	const direct = options.rowsOnly
+		? await createRowsOnlyRepository()
+		: undefined
+	const stateFile = options.stateFile
+	try {
+		const result = await runKitDirectoryIngest({
+			...options,
+			apiKey,
+			eventKey,
+			repository: direct?.repository,
+			onPage: async (summary) => {
+				if (options.rowsOnly && stateFile) {
+					await writeKitDirectoryRowsOnlyState(stateFile, {
+						version: 1,
+						status: options.status,
+						page: summary.page,
+						cursor: summary.cursor ?? null,
+						subscribers: summary.subscribers,
+						createdRows: summary.createdRows ?? 0,
+						alreadyPresentRows: summary.alreadyPresentRows ?? 0,
+						skippedInvalidRows: summary.skippedInvalidRows ?? 0,
+						writeElapsedMs: summary.writeElapsedMs ?? 0,
+						updatedAt: new Date().toISOString(),
+					})
+				}
+				console.log(
+					`kit-directory-ingest page=${summary.page} subscribers=${summary.subscribers} batches=${summary.batches} cursor=${summary.cursor ?? 'none'} sent=${summary.sentBatches} created=${summary.createdRows ?? 0} existing=${summary.alreadyPresentRows ?? 0} writeMs=${summary.writeElapsedMs ?? 0}`,
+				)
+			},
+		})
+		const mode = options.rowsOnly
+			? 'rows-only'
+			: options.write
+				? 'write'
+				: 'dry-run'
+		console.log(
+			`kit-directory-ingest complete mode=${mode} status=${options.status} pages=${result.pages} subscribers=${result.subscribers} batches=${result.batches} cursor=${result.cursor ?? 'none'} sent=${result.sentBatches} created=${result.createdRows} existing=${result.alreadyPresentRows}`,
+		)
+	} finally {
+		await direct?.close()
+	}
 }
 
 const invokedPath = process.argv[1]

@@ -177,6 +177,26 @@ describe('kit directory ingest', () => {
 		)
 	})
 
+	it('threads rows-only birth suppression without changing the delivery source', async () => {
+		const fake = repository({ created: contact('contact-9') })
+
+		await ingestKitDirectoryBatch({
+			repository: fake.fake,
+			batch: [{ id: '44' }],
+			suppressBirthDelivery: true,
+			now: '2026-09-20T01:00:00.000Z',
+		})
+
+		expect(fake.createContact).toHaveBeenCalledWith(
+			expect.objectContaining({ lifecycle: 'new', isProvisional: true }),
+		{
+				kitSubscriberId: '44',
+				deliverySource: 'kit-directory-ingest',
+				suppressBirthDelivery: true,
+			},
+		)
+	})
+
 	it('keeps the source subscriber id in identity evidence without storing raw payload', () => {
 		const event = kitDirectoryIdentityEvent({
 			subscriber: {

@@ -38,6 +38,8 @@ export type ContactCreationOptions = {
 	 * name their own so live signups never queue behind them.
 	 */
 	deliverySource?: 'kit-directory-ingest'
+	/** Skip the drovr birth after the contact transaction commits. */
+	suppressBirthDelivery?: boolean
 }
 
 export type LinkedActionRecords = {

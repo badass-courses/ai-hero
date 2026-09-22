@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { contact, providerIdentity } from '@/db/schema'
 
@@ -88,6 +88,10 @@ class TestRepository extends DrizzleCaptureMarketingRepository {
 }
 
 describe('DrizzleCaptureMarketingRepository contact identity creation', () => {
+	beforeEach(() => {
+		dispatchShadowFact.mockReset()
+	})
+
 	it('rolls back the contact and skips the birth fact when identity creation loses a race', async () => {
 		const winningContact: ContactRecord = { ...contactInput, id: 'winner' }
 		const winningIdentity: ProviderIdentityRecord = {
@@ -160,5 +164,50 @@ describe('DrizzleCaptureMarketingRepository contact identity creation', () => {
 			}),
 		)
 		expect(phases).toEqual(['commit', 'dispatch'])
+	})
+
+	it('suppresses birth delivery for the direct contact creation entry point', async () => {
+		const committed: Array<{ table: unknown; value: unknown }> = []
+		const writeDatabase = {
+			insert: (table: unknown) => ({
+				values: async (value: unknown) => {
+					committed.push({ table, value })
+				},
+			}),
+		}
+		const repository = new TestRepository(writeDatabase)
+
+		await repository.createContact(contactInput, {
+			kitSubscriberId: providerIdentityInput.externalId,
+			suppressBirthDelivery: true,
+		})
+
+		expect(committed.map(({ table }) => table)).toEqual([contact])
+		expect(dispatchShadowFact).not.toHaveBeenCalled()
+	})
+
+	it('commits contact and identity atomically without enqueue or fallback dispatch', async () => {
+		const { committed, database: writeDatabase } = database()
+		const repository = new TestRepository(writeDatabase)
+
+		const result = await repository.createContactAndProviderIdentity(
+			contactInput,
+			providerIdentityInput,
+			{
+				kitSubscriberId: providerIdentityInput.externalId,
+				deliverySource: 'kit-directory-ingest',
+				suppressBirthDelivery: true,
+			},
+		)
+
+		expect(result).toMatchObject({
+			createdContact: true,
+			createdProviderIdentity: true,
+		})
+		expect(committed.map(({ table }) => table)).toEqual([
+			contact,
+			providerIdentity,
+		])
+		expect(dispatchShadowFact).not.toHaveBeenCalled()
 	})
 })
