@@ -253,6 +253,8 @@ async function loadDashboardSectionUnshared<S extends DashboardSection>(
 			return {
 				valuePaths: await requireQuery(cachedValuePaths(range)),
 			} as unknown as DashboardSectionData[S]
+		default:
+			throw new Error(`Unsupported analytics dashboard section: ${String(section)}`)
 	}
 }
 
