@@ -28,8 +28,6 @@ import {
 } from '@/purchase-transfer/transfer-outbox'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
-import { Theme } from '@auth/core/types'
-import { render } from '@react-email/render'
 import { and, eq, gte, inArray, isNull, or } from 'drizzle-orm'
 import { Inngest } from 'inngest'
 import type { NextAuthConfig } from 'next-auth'
@@ -39,7 +37,10 @@ import { z } from 'zod'
 import { PURCHASE_TRANSFERRED_EVENT } from '@coursebuilder/core/events/purchase-transfer'
 import { sendServerEmail } from '@coursebuilder/email/send-server-email'
 import { purchaseUserTransferSchema } from '@coursebuilder/core/schemas'
-import PurchaseTransferEmail from '@coursebuilder/email-templates/emails/purchase-transfer'
+import {
+	transferEmailHtml,
+	transferEmailText,
+} from '@/purchase-transfer/transfer-email'
 
 function getRowsAffected(result: unknown): number {
 	if (
@@ -521,65 +522,12 @@ export async function initiatePurchaseTransfer(input: {
 		baseUrl: env.COURSEBUILDER_URL,
 		authOptions: authOptions as NextAuthConfig,
 		type: 'transfer',
-		html: defaultHtml,
-		text: defaultText,
+		html: transferEmailHtml,
+		text: transferEmailText,
 		expiresAt: initiatedTransfer.expiresAt,
 		adapter: courseBuilderAdapter,
 		emailProvider: emailProvider,
 	})
 
 	return initiatedTransfer
-}
-
-type HTMLEmailParams = Record<'url' | 'host' | 'email', string> & {
-	expires?: Date
-}
-
-async function defaultHtml(
-	{ url, host, email }: HTMLEmailParams,
-	theme?: Theme,
-) {
-	return await render(
-		PurchaseTransferEmail(
-			{
-				url,
-				host,
-				email,
-				siteName:
-					process.env.NEXT_PUBLIC_PRODUCT_NAME ||
-					process.env.NEXT_PUBLIC_SITE_TITLE ||
-					'',
-				previewText: 'Claim your seat.',
-			},
-			theme,
-		),
-	)
-}
-
-// Email Text body (fallback for email clients that don't render HTML, e.g. feature phones)
-async function defaultText(
-	{ url, host, email }: HTMLEmailParams,
-	theme?: Theme,
-) {
-	return await render(
-		PurchaseTransferEmail(
-			{
-				url,
-				host,
-				email,
-				siteName:
-					process.env.NEXT_PUBLIC_PRODUCT_NAME ||
-					process.env.NEXT_PUBLIC_SITE_TITLE ||
-					'',
-				previewText:
-					process.env.NEXT_PUBLIC_PRODUCT_NAME ||
-					process.env.NEXT_PUBLIC_SITE_TITLE ||
-					'login link',
-			},
-			theme,
-		),
-		{
-			plainText: true,
-		},
-	)
 }
