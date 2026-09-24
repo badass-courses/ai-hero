@@ -3,6 +3,7 @@ import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
+import { drovrFailureReason } from './drovr-failure'
 import type { ContactEventRecord, SideEffectIntent } from './types'
 import { valuePathIntentCompletedAt } from './value-path-completion'
 import { SHADOW_NEWSLETTER_JOURNEY_ID } from './drovr-shadow-newsletter'
@@ -50,6 +51,8 @@ export type DrovrShadowEvent = {
 		| 'contact.bounced'
 		| 'value-path.answer-selected'
 		| 'coupon.issued'
+		| 'coupon.failed'
+		| 'intent.failed'
 		| 'shadow.entered'
 		| 'list.subscribed'
 		| 'list.unsubscribed'
@@ -63,6 +66,7 @@ export type DrovrShadowEvent = {
 		| { emailResourceId: string }
 		| { messageId: string }
 		| { couponId: string; expiresAt: string }
+		| { reasonClass: string; reason: string }
 		| { list: string }
 		| { scope: 'course' | 'all' }
 		| { productId: string }
@@ -92,6 +96,10 @@ export type DrovrShadowFact =
 	  }
 	| {
 			kind: 'side-effect-intent-completed'
+			intent: SideEffectIntent
+	  }
+	| {
+			kind: 'side-effect-intent-failed'
 			intent: SideEffectIntent
 	  }
 	| {
@@ -178,6 +186,9 @@ export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
 	}
 	if (fact.kind === 'side-effect-intent-completed') {
 		return mapCompletedIntent(fact.intent)
+	}
+	if (fact.kind === 'side-effect-intent-failed') {
+		return mapFailedIntent(fact.intent)
 	}
 	if (fact.kind === 'course-exhausted') {
 		return mapCourseExhausted(fact)
@@ -330,6 +341,47 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 		default:
 			return []
 	}
+}
+
+// Only these rows fail terminally. A failed list.unsubscribe row is a retry
+// (drovr-list-unsubscribe.ts), and a failure event would close its intent.
+const TERMINALLY_FAILING_INTENT_TYPES: ReadonlySet<string> = new Set([
+	'issue-evergreen-coupon',
+	'send-evergreen-email',
+	'subscribe-evergreen-list',
+	'send-shadow-newsletter-email',
+	'send-value-path-email',
+])
+
+function mapFailedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
+	if (intent.provider !== 'kit' || intent.status !== 'failed') return []
+	if (!TERMINALLY_FAILING_INTENT_TYPES.has(intent.type)) return []
+	const owner = intent.metadata.drovr
+	if (!owner || typeof owner !== 'object') return []
+	const record = owner as Record<string, unknown>
+	const tenantId = stringValue(record.tenantId)
+	const journeyId = stringValue(record.journeyId)
+	const intentKey = stringValue(record.intentKey)
+	const failedAt = stringValue(intent.metadata.failedAt)
+	if (
+		(tenantId !== DROVR_SHADOW_TENANT_ID &&
+			tenantId !== DROVR_AUTHORITY_TENANT_ID) ||
+		!intentKey ||
+		!failedAt || !Number.isFinite(Date.parse(failedAt)) ||
+		(journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID &&
+			journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID &&
+			journeyId !== DROVR_SHADOW_NEWSLETTER_JOURNEY_ID) ||
+		(intent.type === 'issue-evergreen-coupon' && journeyId !== DROVR_EVERGREEN_OFFER_JOURNEY_ID)
+	) return []
+	return [{
+		tenantId,
+		contactId: intent.contactId,
+		journeyId,
+		type: intent.type === 'issue-evergreen-coupon' ? 'coupon.failed' : 'intent.failed',
+		occurredAt: failedAt,
+		idempotencyKey: `completion:${intentKey}`,
+		payload: drovrFailureReason(intent),
+	}]
 }
 
 function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
