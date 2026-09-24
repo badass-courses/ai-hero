@@ -40,6 +40,12 @@ export type DrovrOwnershipConfig = {
 	percent: number
 	/** Lowercased emails always routed to drovr, regardless of percent. */
 	emails: ReadonlySet<string>
+	/**
+	 * Lowercased emails captured but not entered: no legacy plan, no drovr
+	 * assignment. Moving one to `emails` and replaying its signup enters it
+	 * as drovr-owned. Wins over `emails`, so a half-moved address stays held.
+	 */
+	holdEmails?: ReadonlySet<string>
 }
 
 export const DROVR_OWNERSHIP_OFF: DrovrOwnershipConfig = {
@@ -59,21 +65,34 @@ export function parseDrovrOwnershipConfig(
 ): DrovrOwnershipConfig {
 	const present = (value: string | number | undefined) =>
 		String(value ?? '').trim().length > 0
+	const emailList = (value: string | number | undefined) =>
+		new Set(
+			String(value ?? '')
+				.split(',')
+				.map((email) => email.trim().toLowerCase())
+				.filter((email) => email.length > 0),
+		)
+	// A hold never routes anywhere, so it applies even while drovr is unreachable.
+	const holdEmails = emailList(env.AIH_DROVR_OWNER_HOLD_EMAILS)
+	const hold = holdEmails.size > 0 ? { holdEmails } : {}
 	if (
 		!present(env.DROVR_SHADOW_INGEST_URL) ||
 		!present(env.DROVR_API_KEY_ORG_AIHERO)
 	) {
-		return DROVR_OWNERSHIP_OFF
+		return { ...DROVR_OWNERSHIP_OFF, ...hold }
 	}
 	const raw = Number(env.AIH_DROVR_OWNER_PERCENT ?? 0)
 	const percent = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0
-	const emails = new Set(
-		String(env.AIH_DROVR_OWNER_EMAILS ?? '')
-			.split(',')
-			.map((email) => email.trim().toLowerCase())
-			.filter((email) => email.length > 0),
-	)
-	return { percent, emails }
+	return { percent, emails: emailList(env.AIH_DROVR_OWNER_EMAILS), ...hold }
+}
+
+/** True when the signup is to be captured and held, not entered. */
+export function isHeldSignup(
+	config: DrovrOwnershipConfig,
+	email: string | undefined,
+): boolean {
+	const normalized = email?.trim().toLowerCase()
+	return Boolean(normalized && config.holdEmails?.has(normalized))
 }
 
 /** Stable 0..99 bucket so a contact lands on the same side of any percent. */
