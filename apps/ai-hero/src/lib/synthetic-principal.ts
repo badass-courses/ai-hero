@@ -7,6 +7,8 @@
  */
 export const SYNTHETIC_PRINCIPAL_ID_PREFIX = 'synthetic_'
 export const SYNTHETIC_PRINCIPAL_EMAIL_DOMAIN = 'synthetic.aihero.invalid'
+/** SQL LIKE pattern for a synthetic id; `_` is a LIKE wildcard, so escaped. */
+export const SYNTHETIC_PRINCIPAL_ID_LIKE = 'synthetic\\_%'
 
 /**
  * True for a contact or user id minted for a synthetic principal.

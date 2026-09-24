@@ -9,6 +9,7 @@ import {
 	shortlinkClick,
 	users,
 } from '@/db/schema'
+import { SYNTHETIC_PRINCIPAL_ID_LIKE } from '@/lib/synthetic-principal'
 import {
 	and,
 	count,
@@ -18,6 +19,7 @@ import {
 	gte,
 	inArray,
 	lte,
+	notLike,
 	sql,
 	sum,
 } from 'drizzle-orm'
@@ -404,14 +406,16 @@ export async function getRevenueBySource(range: AnalyticsTimeRange = '30d') {
 export async function getConversionFunnel(range: AnalyticsTimeRange = '30d') {
 	const since = rangeToDate(range)
 
-	const userConditions = since ? [gte(users.createdAt, since)] : []
+	// Synthetic test principals (#36T) are not signups.
+	const userConditions = [notLike(users.id, SYNTHETIC_PRINCIPAL_ID_LIKE)]
+	if (since) userConditions.push(gte(users.createdAt, since))
 	const purchaseConditions = [paidPurchase()]
 	if (since) purchaseConditions.push(gte(purchases.createdAt, since))
 
 	const [userCount] = await db
 		.select({ total: count() })
 		.from(users)
-		.where(userConditions.length > 0 ? and(...userConditions) : undefined)
+		.where(and(...userConditions))
 
 	const [purchaseCount] = await db
 		.select({ total: count() })

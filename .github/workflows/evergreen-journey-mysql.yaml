@@ -26,6 +26,10 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-email-*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-*maintenance*"
       - "apps/ai-hero/src/scripts/contact-integrity-maintenance*"
+      - "apps/ai-hero/src/lib/test-principals/**"
+      - "apps/ai-hero/src/lib/synthetic-principal*"
+      - "apps/ai-hero/src/server/magic-link-confirmation*"
+      - "apps/ai-hero/src/server/auth-js-adapter*"
   push:
     branches: [main]
     paths:
@@ -52,6 +56,10 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-email-*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-*maintenance*"
       - "apps/ai-hero/src/scripts/contact-integrity-maintenance*"
+      - "apps/ai-hero/src/lib/test-principals/**"
+      - "apps/ai-hero/src/lib/synthetic-principal*"
+      - "apps/ai-hero/src/server/magic-link-confirmation*"
+      - "apps/ai-hero/src/server/auth-js-adapter*"
 
 jobs:
   mysql-contract:
@@ -109,3 +117,4 @@ jobs:
           src/lib/subscriber-marketing/contact-integrity-maintenance.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/verified-user-observed-source.mysql.test.ts
           src/server/evergreen-pilot.mysql.test.ts
+          src/lib/test-principals/test-principal.mysql.test.ts

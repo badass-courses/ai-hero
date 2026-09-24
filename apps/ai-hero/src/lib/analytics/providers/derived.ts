@@ -6,7 +6,20 @@ import {
 	questionResponse,
 	users,
 } from '@/db/schema'
-import { and, count, desc, eq, gte, inArray, min, sql, sum } from 'drizzle-orm'
+import {
+	and,
+	count,
+	desc,
+	eq,
+	gte,
+	inArray,
+	min,
+	notLike,
+	sql,
+	sum,
+} from 'drizzle-orm'
+
+import { SYNTHETIC_PRINCIPAL_ID_LIKE } from '@/lib/synthetic-principal'
 
 import { createDerivedProvider } from '@coursebuilder/analytics/providers/derived'
 
@@ -80,7 +93,11 @@ export async function getSurveyRevenueCorrelation(
 
 	if (totalRespondents === 0) {
 		// Baseline: even with no respondents, compute baseline conversion rate
-		const [totalUsersResult] = await db.select({ count: count() }).from(users)
+		const [totalUsersResult] = await db
+			.select({ count: count() })
+			.from(users)
+			// Synthetic test principals (#36T) are not users of the product.
+			.where(notLike(users.id, SYNTHETIC_PRINCIPAL_ID_LIKE))
 		const totalUserCount = totalUsersResult?.count ?? 0
 
 		const [baselinePurchasersResult] = await db
@@ -209,7 +226,11 @@ export async function getSurveyRevenueCorrelation(
 	}
 
 	// 6. Baseline conversion rate (non-respondent users)
-	const [totalUsersResult] = await db.select({ count: count() }).from(users)
+	const [totalUsersResult] = await db
+			.select({ count: count() })
+			.from(users)
+			// Synthetic test principals (#36T) are not users of the product.
+			.where(notLike(users.id, SYNTHETIC_PRINCIPAL_ID_LIKE))
 	const totalUserCount = totalUsersResult?.count ?? 0
 	const nonRespondentCount = totalUserCount - totalRespondents
 

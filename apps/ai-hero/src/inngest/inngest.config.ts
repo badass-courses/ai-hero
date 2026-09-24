@@ -33,6 +33,7 @@ import { cohortEntitlementSyncWorkflow } from './functions/cohort-entitlement-sy
 import { cohortReminderBroadcast } from './functions/cohort-reminder-broadcast'
 import { getOrCreateConcept } from './functions/concepts/get-or-create-tag'
 import { contentReadRetention } from './functions/content-read-retention'
+import { testPrincipalReaper } from './functions/test-principal-reaper'
 import { contentResourceIndexRequested } from './functions/content-resource-index'
 import { courseSyncAppliedNotice } from './functions/course-sync-applied-notice'
 import { courseSyncDetectionPoller } from './functions/course-sync-detection-poller'
@@ -148,6 +149,7 @@ const allFunctions = [
 	eventReminderBroadcast,
 	cohortReminderBroadcast,
 	contentReadRetention,
+	testPrincipalReaper,
 	contentResourceIndexRequested,
 	courseSyncAppliedNotice,
 	courseSyncDetectionPoller,
