@@ -3,7 +3,6 @@ import type { coupon, entitlements, merchantCoupon, users } from '@/db/schema'
 import { Effect } from 'effect'
 import { z } from 'zod'
 
-import { restoreDeadlineTimeZoneEvidence } from '../course-sequence-exhaustion'
 import {
 	EVERGREEN_OFFER_AMOUNT_OFF_CENTS,
 	EVERGREEN_OFFER_CURRENCY,
@@ -13,6 +12,7 @@ import {
 	type IssuedCoupon,
 } from './domain'
 import type { CouponAuthority, EffectApplicationError } from './ports'
+import { restoreEvergreenDeadlineTimeZoneEvidence } from './restoration'
 import {
 	couponBindingIntentKey,
 	couponIntentKey,
@@ -159,7 +159,7 @@ export function decodeIssue(input: unknown): IssueCouponIntent {
 	const parsed = issueSchema.safeParse(input)
 	if (!parsed.success) return refuseCoupon('invalid-issue-intent')
 	const source = parsed.data
-	const zone = restoreDeadlineTimeZoneEvidence(source.deadlineTimeZone)
+	const zone = restoreEvergreenDeadlineTimeZoneEvidence(source.deadlineTimeZone)
 	if (!zone) return refuseCoupon('invalid-deadline-evidence')
 	const journeyId = value(parseJourneyId(source.journeyId))
 	const key = value(parseIntentKey(source.idempotencyKey))

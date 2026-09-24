@@ -6,6 +6,7 @@ import {
 } from './persistence-codec'
 import { describe, expect, it } from 'vitest'
 import { authorizeExclusiveCouponSelection } from '../../exclusive-coupon-authorization'
+import { issueIntentFor } from '../drovr-evergreen-coupon'
 import { deadlineTimeZoneEvidenceFromHeader } from './calendar'
 import { EVERGREEN_OFFER_JOURNEY_V1 } from './definition'
 import type { BindCouponIntent, IssueCouponIntent } from './domain'
@@ -200,6 +201,32 @@ function fixture() {
 const result = <A>(effect: Effect.Effect<A, unknown>) =>
 	Effect.runPromise(Effect.either(effect))
 const permanent = { _tag: 'Left', left: { type: 'EffectPermanentRefusal' } }
+
+describe('drovr coupon authority boundary', () => {
+	it('issues and reads back a coupon with a pinned Kiritimati fallback zone', async () => {
+		const f = fixture()
+		const drovrIssue = issueIntentFor('contact-fixture', {
+			productId: 'product-ma254',
+			amountOffCents: 10_000,
+			maxUses: 1,
+			exclusive: true,
+			regularPriceCents: 29_900,
+			effectivePriceCents: 19_900,
+			issueAt: issue.issueAt,
+			expiresAt: issue.expiresAt,
+			timezone: 'Pacific/Kiritimati',
+			timezoneSource: 'fallback',
+		})
+		const issued = await Effect.runPromise(f.authority.issue(drovrIssue))
+		expect(issued.coupon.deadlineTimeZone).toMatchObject({
+			type: 'ExplicitFallback',
+			timeZone: 'Pacific/Kiritimati',
+		})
+		const replay = await Effect.runPromise(f.authority.issue(drovrIssue))
+		expect(replay.coupon.couponId).toBe(issued.coupon.couponId)
+		expect(f.state.coupons().size).toBe(1)
+	})
+})
 
 describe('locked verified-owner callback', () => {
 	it('locks User before invoking proof and passes immutable identity snapshots', async () => {

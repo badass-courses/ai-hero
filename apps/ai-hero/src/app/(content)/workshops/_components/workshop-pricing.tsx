@@ -10,6 +10,7 @@ import {
 	readCommerceUrlParams,
 	type CommerceUrlParams,
 } from './commerce-url-params'
+import { InlineBuyButton } from './inline-mdx-pricing'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
 import type { WorkshopPageProps } from './workshop-page-props'
 import { WorkshopPricingWidgetContainer } from './workshop-pricing-widget-container'
@@ -22,29 +23,75 @@ type WorkshopPricingProps = WorkshopPageProps & {
 	teamMode?: boolean
 }
 
-export function WorkshopPricingClient(props: WorkshopPricingProps) {
+function useWorkshopCommerce(productId?: string) {
 	const searchParams = useSearchParams()
 	const { params: commerceUrlParams, hasCommerceParams } =
 		readCommerceUrlParams(searchParams)
 	const { status: sessionStatus } = useSession()
-	const { data: personalizedCommerceProps } =
-		api.pricing.propsForCommerce.useQuery(
-			{ ...commerceUrlParams, productId: props.product?.id },
-			{
-				enabled:
-					Boolean(props.product?.id) &&
-					(sessionStatus === 'authenticated' || hasCommerceParams),
-				staleTime: 60_000,
-				refetchOnWindowFocus: false,
-				retry: 1,
-			},
-		)
+	const { data, isError } = api.pricing.propsForCommerce.useQuery(
+		{ ...commerceUrlParams, productId },
+		{
+			enabled:
+				Boolean(productId) &&
+				(sessionStatus === 'authenticated' || hasCommerceParams),
+			staleTime: 60_000,
+			refetchOnWindowFocus: false,
+			retry: 1,
+		},
+	)
+	return {
+		commerceUrlParams,
+		hasCommerceParams,
+		checkingCoupon: Boolean(commerceUrlParams.code || commerceUrlParams.coupon),
+		data,
+		isError,
+	}
+}
 
+export function WorkshopPricingClient(props: WorkshopPricingProps) {
+	const { commerceUrlParams, checkingCoupon, data, isError } =
+		useWorkshopCommerce(props.product?.id)
+	// This static shell renders before the uncached coupon read. Do not offer a
+	// full-price checkout while a URL coupon is still being verified.
+	if (checkingCoupon && !data) {
+		return (
+			<p role="status" className="px-[18px] py-12 sm:px-11">
+				{isError
+					? 'Could not check this coupon. Reload to try again.'
+					: 'Checking your coupon…'}
+			</p>
+		)
+	}
 	return (
 		<WorkshopPricingView
 			{...props}
-			{...(personalizedCommerceProps ?? {})}
+			{...(data ?? {})}
 			searchParams={commerceUrlParams}
+		/>
+	)
+}
+
+// Inline MDX buy buttons also render in the static shell. Give them the same
+// uncached coupon read as the sidebar, instead of leaving misleading $299 CTAs.
+export function WorkshopInlineBuyButton(
+	props: React.ComponentProps<typeof InlineBuyButton>,
+) {
+	const { checkingCoupon, data, isError } = useWorkshopCommerce(
+		props.pricingProps?.products?.[0]?.id,
+	)
+	if (checkingCoupon && !data) {
+		return (
+			<p role="status" className="py-4">
+				{isError
+					? 'Could not check this coupon. Reload to try again.'
+					: 'Checking your coupon…'}
+			</p>
+		)
+	}
+	return (
+		<InlineBuyButton
+			{...props}
+			pricingProps={{ ...props.pricingProps, ...(data ?? {}) }}
 		/>
 	)
 }

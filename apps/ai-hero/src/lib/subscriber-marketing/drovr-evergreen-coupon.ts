@@ -16,9 +16,11 @@ import type {
 import {
 	couponIntentKey,
 	parseContactId,
+	parseIanaTimeZone,
+	parseIsoInstant,
 	parseJourneyId,
 } from './evergreen-offer-journey/primitives'
-import { restoreDeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
+import type { DeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import type { SideEffectIntent } from './types'
 
@@ -70,29 +72,33 @@ export function evergreenJourneyIdForContact(contactId: string) {
 }
 
 /**
- * The pinned zone as the authority's evidence value. drovr pinned it at
- * course exhaustion from the same header-or-fallback rule; here we only
- * restate which of the two it was.
+ * drovr pins the zone when the journey starts. Its `fallback` source does
+ * not promise the ai-hero course-entry default (America/Los_Angeles): a
+ * previously pinned valid zone may also carry that source. Validate this
+ * executor boundary against Intl rather than the course-entry fallback rule.
  */
-export function deadlineEvidenceFromPayload(payload: CouponIssuePayload) {
-	const evidence = restoreDeadlineTimeZoneEvidence(
-		payload.timezoneSource === 'vercel-header'
-			? {
-					type: 'BrowserEntryHeader',
-					headerName: 'x-vercel-ip-timezone',
-					timeZone: payload.timezone,
-					capturedAt: payload.issueAt,
-				}
-			: {
-					type: 'ExplicitFallback',
-					reason: 'header-missing',
-					timeZone: payload.timezone,
-					capturedAt: payload.issueAt,
-				},
-	)
-	if (!evidence)
+export function deadlineEvidenceFromPayload(
+	payload: CouponIssuePayload,
+): DeadlineTimeZoneEvidence {
+	const zone = parseIanaTimeZone(payload.timezone)
+	if (!zone.ok)
 		throw new Error(`invalid deadline time zone ${payload.timezone}`)
-	return evidence
+	const capturedAt = parseIsoInstant(payload.issueAt)
+	if (!capturedAt.ok)
+		throw new Error(`invalid coupon issue instant ${payload.issueAt}`)
+	return payload.timezoneSource === 'vercel-header'
+		? {
+				type: 'BrowserEntryHeader',
+				headerName: 'x-vercel-ip-timezone',
+				timeZone: zone.value,
+				capturedAt: capturedAt.value,
+			}
+		: {
+				type: 'ExplicitFallback',
+				reason: 'header-missing',
+				timeZone: zone.value,
+				capturedAt: capturedAt.value,
+			}
 }
 
 export function issueIntentFor(
@@ -138,13 +144,13 @@ export function deadlineDisplay(expiresAt: string, timeZone: string): string {
 }
 
 /**
- * The claim entry the pitch links to. The claim route (E1b-3) reads `claim`,
- * verifies the logged-in user resolves to the owning contact, binds the
- * coupon, and hands to checkout. Never a reusable public code.
+ * New pitch links use the commerce coupon selector. The site coupon remains
+ * product-restricted, expiring and one-use, but its recipient may share it.
+ * Existing ?claim= links resolve as a compatibility alias in the workshop UI.
  */
 export function evergreenOfferUrl(origin: string, couponId: string): string {
 	const url = new URL('/workshops/ai-coding-crash-course', origin)
-	url.searchParams.set('claim', couponId)
+	url.searchParams.set('coupon', couponId)
 	return url.toString()
 }
 

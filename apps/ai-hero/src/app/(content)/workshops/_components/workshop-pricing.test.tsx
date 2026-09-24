@@ -41,10 +41,17 @@ vi.mock('@coursebuilder/commerce-next/pricing/pricing-check-context', () => ({
 	PriceCheckProvider: ({ children }: any) => children,
 }))
 
+vi.mock('./inline-mdx-pricing', () => ({
+	InlineBuyButton: ({ pricingProps }: any) => (
+		<div data-inline-coupon={pricingProps.couponIdFromCoupon ?? 'none'} />
+	),
+}))
+
 vi.mock('./workshop-pricing-widget-container', () => ({
 	WorkshopPricingWidgetContainer: ({ searchParams, userId }: any) => (
 		<div
 			data-code={searchParams.code ?? 'none'}
+			data-coupon={searchParams.coupon ?? 'none'}
 			data-allow-purchase={searchParams.allowPurchase ?? 'none'}
 			data-user={userId ?? 'anonymous'}
 		>
@@ -54,6 +61,7 @@ vi.mock('./workshop-pricing-widget-container', () => ({
 }))
 
 import {
+	WorkshopInlineBuyButton,
 	WorkshopPricingClient,
 	WorkshopPricingFallback,
 } from './workshop-pricing'
@@ -96,13 +104,18 @@ describe('WorkshopPricingClient', () => {
 
 	it('passes URL commerce params and hydrates their result anonymously', () => {
 		mocks.search = 'code=SAVE20&coupon=launch'
-		mocks.personalized = { products: [product], userId: 'coupon-visitor' }
+		mocks.personalized = {
+			products: [product],
+			userId: 'coupon-visitor',
+			couponIdFromCoupon: 'launch',
+		}
 
 		const markup = renderToStaticMarkup(
 			<WorkshopPricingClient {...pricingProps} />,
 		)
 
 		expect(markup).toContain('data-user="coupon-visitor"')
+		expect(markup).toContain('data-coupon="launch"')
 		expect(markup).toContain('data-code="SAVE20"')
 		expect(mocks.queryInput).toEqual({
 			code: 'SAVE20',
@@ -112,4 +125,34 @@ describe('WorkshopPricingClient', () => {
 		})
 		expect(mocks.queryOptions).toMatchObject({ enabled: true })
 	})
+
+	it.each(['coupon=coupon-valid', 'code=SAVE20'])(
+		'holds full-price CTAs until async %s pricing arrives',
+		(search) => {
+			mocks.search = search
+			const pending = renderToStaticMarkup(
+				<WorkshopPricingClient {...pricingProps} />,
+			)
+			expect(pending).toContain('Checking your coupon')
+			expect(pending).not.toContain('data-coupon=')
+			const inlineProps = { pricingProps: { products: [product] } } as any
+			const inlinePending = renderToStaticMarkup(
+				<WorkshopInlineBuyButton {...inlineProps} />,
+			)
+			expect(inlinePending).not.toContain('data-inline-coupon')
+
+			mocks.personalized = {
+				products: [product],
+				couponIdFromCoupon: 'coupon-valid',
+			}
+			const ready = renderToStaticMarkup(
+				<WorkshopPricingClient {...pricingProps} />,
+			)
+			expect(ready).toContain('data-coupon=')
+			const inlineReady = renderToStaticMarkup(
+				<WorkshopInlineBuyButton {...inlineProps} />,
+			)
+			expect(inlineReady).toContain('data-inline-coupon="coupon-valid"')
+		},
+	)
 })

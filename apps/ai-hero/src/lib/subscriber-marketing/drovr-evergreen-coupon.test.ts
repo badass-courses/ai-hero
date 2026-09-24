@@ -147,6 +147,32 @@ describe('issue intent and offer fields', () => {
 		).toBe('ExplicitFallback')
 	})
 
+	it('accepts a drovr-pinned UTC+14 zone even when its source is fallback', () => {
+		const acceptedByIntl = 'Pacific/Kiritimati'
+		expect(() => new Intl.DateTimeFormat('en-US', { timeZone: acceptedByIntl })).not.toThrow()
+		expect(
+			issueIntentFor('contact-1', {
+				...payload,
+				timezone: acceptedByIntl,
+				timezoneSource: 'fallback',
+			}).deadlineTimeZone,
+		).toMatchObject({
+			type: 'ExplicitFallback',
+			timeZone: acceptedByIntl,
+			capturedAt: payload.issueAt,
+		})
+		// The browser-header source has the same accepted-zone contract.
+		expect(
+			issueIntentFor('contact-1', {
+				...payload,
+				timezone: acceptedByIntl,
+			}).deadlineTimeZone,
+		).toMatchObject({ type: 'BrowserEntryHeader', timeZone: acceptedByIntl })
+		expect(() =>
+			issueIntentFor('contact-1', { ...payload, timezone: 'Not/AZone' }),
+		).toThrow('invalid deadline time zone Not/AZone')
+	})
+
 	it('renders the five Kit field values the pitch copy reads', () => {
 		expect(money(19_900)).toBe('$199')
 		expect(money(29_900)).toBe('$299')
@@ -154,7 +180,7 @@ describe('issue intent and offer fields', () => {
 			'Monday, September 14, 2026 at 11:59 PM PDT',
 		)
 		expect(evergreenOfferUrl('https://www.aihero.dev', 'eoj-coupon:abc')).toBe(
-			'https://www.aihero.dev/workshops/ai-coding-crash-course?claim=eoj-coupon%3Aabc',
+			'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=eoj-coupon%3Aabc',
 		)
 		expect(
 			offerFieldsFor({
@@ -164,7 +190,7 @@ describe('issue intent and offer fields', () => {
 			}),
 		).toEqual({
 			aih_evergreen_offer_url:
-				'https://www.aihero.dev/workshops/ai-coding-crash-course?claim=c1',
+				'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=c1',
 			aih_evergreen_offer_price: '$199',
 			aih_evergreen_regular_price: '$299',
 			aih_evergreen_discount_amount: '$100',
@@ -225,7 +251,7 @@ describe('executePendingEvergreenCoupons', () => {
 				fields: expect.objectContaining({
 					aih_evergreen_offer_price: '$199',
 					aih_evergreen_offer_url:
-						'https://www.aihero.dev/workshops/ai-coding-crash-course?claim=eoj-coupon%3Aabc',
+						'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=eoj-coupon%3Aabc',
 				}),
 			},
 		])
