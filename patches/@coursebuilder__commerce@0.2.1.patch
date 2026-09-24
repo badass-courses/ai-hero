@@ -1,0 +1,92 @@
+diff --git a/dist/chunk-UWRKZGPK.js b/dist/chunk-UWRKZGPK.js
+index e6f3cdcc9cf5bc3d00044d61e95a2d232a21d7d0..1defccab62b7ba7e72fb9bd56a24ba06994935a7 100644
+--- a/dist/chunk-UWRKZGPK.js
++++ b/dist/chunk-UWRKZGPK.js
+@@ -23,7 +23,7 @@ var pricingMachine = setup({
+       if (!input)
+         return Promise.resolve(null);
+       return await fetch(
+-        `${process.env.NEXT_PUBLIC_URL}/api/coursebuilder/prices-formatted`,
++        "/api/coursebuilder/prices-formatted",
+         {
+           method: "POST",
+           headers: {
+@@ -38,6 +38,7 @@ var pricingMachine = setup({
+           })
+         }
+       ).then(async (res) => {
++        if (!res.ok) throw new Error(`Price request failed (${res.status})`);
+         return await res.json() || null;
+       });
+     }),
+@@ -48,7 +49,7 @@ var pricingMachine = setup({
+         });
+       }
+       return await fetch(
+-        `${process.env.NEXT_PUBLIC_URL}/api/coursebuilder/purchases?userId=${input.userId}`
++        `/api/coursebuilder/purchases?userId=${input.userId}`
+       ).then(async (res) => {
+         const userPurchases = await res.json();
+         if (userPurchases?.length === 0)
+@@ -161,6 +162,7 @@ var pricingMachine = setup({
+             autoApplyPPP
+           }),
+           src: "loadFormattedPrices",
++          onError: { target: "Price Load Failed" },
+           onDone: {
+             target: "Ready To Buy",
+             actions: assign({
+@@ -181,6 +183,7 @@ var pricingMachine = setup({
+         }
+       }
+     },
++    "Price Load Failed": {},
+     "Debouncing Quantity": {
+       after: {
+         350: {
+diff --git a/src/pricing-state-machine.ts b/src/pricing-state-machine.ts
+index ce34bff82a7d5582565a559ae17e8f00b16e4326..6e0b9970ded817113cac69c28c728e8174b7d6d7 100644
+--- a/src/pricing-state-machine.ts
++++ b/src/pricing-state-machine.ts
+@@ -79,7 +79,7 @@ export const pricingMachine = setup({
+ 		>(async ({ input }) => {
+ 			if (!input) return Promise.resolve(null)
+ 			return await fetch(
+-				`${process.env.NEXT_PUBLIC_URL}/api/coursebuilder/prices-formatted`,
++				'/api/coursebuilder/prices-formatted',
+ 				{
+ 					method: 'POST',
+ 					headers: {
+@@ -94,6 +94,7 @@ export const pricingMachine = setup({
+ 					}),
+ 				},
+ 			).then(async (res) => {
++				if (!res.ok) throw new Error(`Price request failed (${res.status})`)
+ 				return ((await res.json()) as FormattedPrice) || null
+ 			})
+ 		}),
+@@ -110,7 +111,7 @@ export const pricingMachine = setup({
+ 				})
+ 			}
+ 			return await fetch(
+-				`${process.env.NEXT_PUBLIC_URL}/api/coursebuilder/purchases?userId=${input.userId}`,
++				`/api/coursebuilder/purchases?userId=${input.userId}`,
+ 			)
+ 				.then(async (res) => {
+ 					const userPurchases = (await res.json()) as Purchase[] | null
+@@ -237,6 +238,7 @@ export const pricingMachine = setup({
+ 						autoApplyPPP,
+ 					}),
+ 					src: 'loadFormattedPrices',
++					onError: { target: 'Price Load Failed' },
+ 					onDone: {
+ 						target: 'Ready To Buy',
+ 						actions: assign({
+@@ -257,6 +259,7 @@ export const pricingMachine = setup({
+ 				},
+ 			},
+ 		},
++		'Price Load Failed': {},
+ 		'Debouncing Quantity': {
+ 			after: {
+ 				350: {
