@@ -128,6 +128,10 @@ export const env = createEnv({
 		AXIOM_TOKEN: z.string().optional(),
 		AXIOM_ORG_ID: z.string().optional(),
 		DROVR_SHADOW_INGEST_URL: z.string().url().optional(),
+		// drovr's API origin for the /unsubscribe page (GET /unsubscribe/state,
+		// POST /unsubscribe). Optional: the page falls back to the origin of
+		// DROVR_SHADOW_INGEST_URL. No secret; the token is the credential.
+		DROVR_API_BASE_URL: z.string().url().optional(),
 		DROVR_API_KEY_ORG_AIHERO: z.string().min(1).optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AIH_DROVR_OWNER_PERCENT: z.coerce.number().min(0).max(100).optional(),
@@ -274,6 +278,7 @@ export const env = createEnv({
 		AXIOM_TOKEN: process.env.AXIOM_TOKEN,
 		AXIOM_ORG_ID: process.env.AXIOM_ORG_ID,
 		DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
+		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AIH_DROVR_OWNER_PERCENT: process.env.AIH_DROVR_OWNER_PERCENT,

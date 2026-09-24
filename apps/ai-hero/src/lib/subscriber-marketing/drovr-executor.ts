@@ -23,6 +23,11 @@ import {
 import { createInternalId } from '../internal-id'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import {
+	acceptListUnsubscribe,
+	LIST_UNSUBSCRIBE_INTENT_KIND,
+	type KitUnsubscriber,
+} from './drovr-list-unsubscribe'
+import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_AUTHORITY_TENANT_ID,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -90,7 +95,9 @@ export type DrovrExecutorRepository = Pick<
 	Partial<
 		Pick<
 			CaptureMarketingRepository,
-			'updateSideEffectIntent' | 'claimSideEffectIntentForSend'
+			| 'updateSideEffectIntent'
+			| 'claimSideEffectIntentForSend'
+			| 'finishClaimedSideEffectIntent'
 		>
 	> &
 	Required<
@@ -194,6 +201,8 @@ export async function acceptDrovrIntent(args: {
 	sendNow?: DrovrSendNow
 	/** drovr's share of the Kit key; over budget answers retry before any send. */
 	budget?: DrovrSendBudget
+	/** Applies an all-AI-Hero unsubscribe in Kit; absent answers retry. */
+	unsubscribeInKit?: KitUnsubscriber
 }): Promise<DrovrExecutorResult> {
 	const { intent } = args
 	const now = args.now ?? new Date().toISOString()
@@ -218,6 +227,19 @@ export async function acceptDrovrIntent(args: {
 			reason: `tenant ${intent.tenantId} is not one ai-hero executes for`,
 			hint: `Known tenants: ${DROVR_AUTHORITY_TENANT_ID}, ${DROVR_SHADOW_TENANT_ID}.`,
 		}
+	}
+
+	// Any actor may ask (the contact directory for `all`, a journey for its
+	// course), so the unsubscribe is routed by kind, not by journey.
+	if (intent.kind === LIST_UNSUBSCRIBE_INTENT_KIND) {
+		return await acceptListUnsubscribe({
+			repository: args.repository,
+			intent,
+			tenantId,
+			now,
+			unsubscribeInKit: args.unsubscribeInKit,
+			findKitSubscriberId: args.findKitSubscriberId,
+		})
 	}
 
 	if (intent.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID) {
@@ -245,7 +267,7 @@ export async function acceptDrovrIntent(args: {
 		return {
 			status: 'unsupported',
 			reason: `intent kind ${intent.kind} has no ai-hero executor`,
-			hint: 'The skills course executes email.send here; the evergreen journey also executes coupon.issue.',
+			hint: 'The skills course executes email.send here; the evergreen journey also executes coupon.issue; any journey may send list.unsubscribe.',
 		}
 	}
 	if (intent.journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID) {

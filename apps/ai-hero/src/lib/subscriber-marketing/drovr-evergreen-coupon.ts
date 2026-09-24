@@ -144,13 +144,13 @@ export function deadlineDisplay(expiresAt: string, timeZone: string): string {
 }
 
 /**
- * The claim entry the pitch links to. The claim route (E1b-3) reads `claim`,
- * verifies the logged-in user resolves to the owning contact, binds the
- * coupon, and hands to checkout. Never a reusable public code.
+ * New pitch links use the commerce coupon selector. The site coupon remains
+ * product-restricted, expiring and one-use, but its recipient may share it.
+ * Existing ?claim= links resolve as a compatibility alias in the workshop UI.
  */
 export function evergreenOfferUrl(origin: string, couponId: string): string {
 	const url = new URL('/workshops/ai-coding-crash-course', origin)
-	url.searchParams.set('claim', couponId)
+	url.searchParams.set('coupon', couponId)
 	return url.toString()
 }
 

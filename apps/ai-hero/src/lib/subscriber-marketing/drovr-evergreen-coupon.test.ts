@@ -180,7 +180,7 @@ describe('issue intent and offer fields', () => {
 			'Monday, September 14, 2026 at 11:59 PM PDT',
 		)
 		expect(evergreenOfferUrl('https://www.aihero.dev', 'eoj-coupon:abc')).toBe(
-			'https://www.aihero.dev/workshops/ai-coding-crash-course?claim=eoj-coupon%3Aabc',
+			'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=eoj-coupon%3Aabc',
 		)
 		expect(
 			offerFieldsFor({
@@ -190,7 +190,7 @@ describe('issue intent and offer fields', () => {
 			}),
 		).toEqual({
 			aih_evergreen_offer_url:
-				'https://www.aihero.dev/workshops/ai-coding-crash-course?claim=c1',
+				'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=c1',
 			aih_evergreen_offer_price: '$199',
 			aih_evergreen_regular_price: '$299',
 			aih_evergreen_discount_amount: '$100',
@@ -251,7 +251,7 @@ describe('executePendingEvergreenCoupons', () => {
 				fields: expect.objectContaining({
 					aih_evergreen_offer_price: '$199',
 					aih_evergreen_offer_url:
-						'https://www.aihero.dev/workshops/ai-coding-crash-course?claim=eoj-coupon%3Aabc',
+						'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=eoj-coupon%3Aabc',
 				}),
 			},
 		])

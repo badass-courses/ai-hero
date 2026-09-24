@@ -316,6 +316,7 @@ export const WorkshopPricingWidgetContainer: React.FC<
 				// sidebar shell's note on why the shell carries no padding.
 				<div className={cn('h-full', className)}>
 					<PricingWidget
+						key={`${product.id}:${commerceProps.couponIdFromCoupon ?? 'regular'}`}
 						workshops={workshops}
 						product={product}
 						quantityAvailable={currentQuantityAvailable}
