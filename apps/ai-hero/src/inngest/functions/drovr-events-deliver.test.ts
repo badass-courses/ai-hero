@@ -182,6 +182,32 @@ describe('retired shadow tenant delivery', () => {
 		)
 	})
 
+	it('never delivers an event about a synthetic principal, on either lane', async () => {
+		const real = event('org-aihero', 'owner:answer')
+		const synthetic = { ...event('org-aihero', 'owner:synthetic'), contactId: 'synthetic_run-1' }
+		mocks.fanOutOwnedEvents.mockReturnValue([synthetic, real])
+
+		const live = await registered.handler({
+			event: { data: { source: 'live-contact', events: [synthetic, real] } },
+			step: createStep(),
+		})
+		expect(live).toMatchObject({ accepted: 1, discarded: 1 })
+		expect(mocks.deliverOrThrow.mock.calls.map(([args]) => args.event)).toEqual([real])
+		expect(mocks.log.info).toHaveBeenCalledWith('drovr.shadow.synthetic_discarded', {
+			count: 1,
+			deliveryLane: 'live',
+		})
+
+		const bulk = await registeredBulk.handler({
+			events: [{ data: { events: [synthetic, real] } }],
+			step: createStep(),
+		})
+		expect(bulk).toMatchObject({ discarded: 1 })
+		expect(mocks.deliverBatchOrThrow).toHaveBeenLastCalledWith(
+			expect.objectContaining({ events: [real] }),
+		)
+	})
+
 	it('never turns a legacy shadow birth into an authority birth', async () => {
 		const legacyBirth = event(
 			'org-aihero-shadow',

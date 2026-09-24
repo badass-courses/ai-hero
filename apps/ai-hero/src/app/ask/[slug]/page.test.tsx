@@ -391,3 +391,65 @@ describe('Email 7 certificate answer landing page', () => {
 		expect(markup).not.toContain('/api/certificates?')
 	})
 })
+
+describe('answer page path-token marker and synthetic principals', () => {
+	const genericAnswerPage = {
+		...answerPage,
+		id: 'ai-hero-skills-workflow.email-3-answer.correct',
+		fields: {
+			kind: 'answer' as const,
+			slug: 'skills-workflow-email-3-correct',
+			sequenceId: 'ai-hero-skills-workflow',
+			emailId: 'email-3',
+			optionValue: 'correct',
+			headline: 'Good answer.',
+		},
+	}
+	const render = async (slug: string) =>
+		renderToStaticMarkup(
+			await ValuePathAnswerPage({
+				params: Promise.resolve({ slug }),
+				searchParams: Promise.resolve({ pt: 'signed-token', answer: 'correct' }),
+			}),
+		)
+
+	it('marks <main> valid for a verified pt, without the token or contact id', async () => {
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
+		const markup = await render('skills-workflow-email-3-correct')
+
+		expect(markup).toMatch(/<main[^>]*data-value-path-token="valid"/)
+		expect(markup).not.toContain('signed-token')
+		expect(markup).not.toContain('contact-1')
+	})
+
+	it('marks <main> invalid when the pt fails, though the page still renders', async () => {
+		mocks.verifyValuePathToken.mockReturnValue({ valid: false, reason: 'bad-signature' })
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
+		const markup = await render('skills-workflow-email-3-correct')
+
+		expect(markup).toMatch(/<main[^>]*data-value-path-token="invalid"/)
+		expect(markup).toContain('Good answer.')
+		expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
+	})
+
+	it('never checks eligibility or persists a certificate share for a synthetic principal', async () => {
+		mocks.verifyValuePathToken.mockReturnValue({
+			valid: true,
+			payload: { ...tokenPayload, contactId: 'synthetic_run-1' },
+		})
+		mocks.recordValuePathAnswerProgression.mockResolvedValue({
+			status: 'skipped',
+			reason: 'synthetic-principal',
+			idempotentNoop: false,
+			reviewReasons: ['synthetic-principal'],
+		})
+		const markup = await render('ai-hero-skills-workflow-certificate')
+
+		expect(
+			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
+		).not.toHaveBeenCalled()
+		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(markup).toMatch(/<main[^>]*data-value-path-token="valid"/)
+	})
+})

@@ -79,6 +79,27 @@ describe('drovr shadow dispatch', () => {
 		expect(fallback).not.toHaveBeenCalled()
 	})
 
+	it.each([
+		['a contact event', { ...signup, event: { ...contactEvent('skills-newsletter.subscribed'), contactId: 'synthetic_run-1' } }],
+		['a course completion', { ...courseCompleted, contactId: 'synthetic_run-1' }],
+	] as const)('never queues, posts or enters evergreen for %s about a synthetic principal', async (_name, fact) => {
+		const send = vi.fn()
+		const fallback = vi.fn()
+		const enterPitch = vi.fn()
+
+		const result = await dispatchDrovrShadowFact(fact as DrovrShadowFact, {
+			send,
+			fallback,
+			enterPitch,
+			evergreenEnabled: true,
+		})
+
+		expect(result).toBe('nothing')
+		expect(send).not.toHaveBeenCalled()
+		expect(fallback).not.toHaveBeenCalled()
+		expect(enterPitch).not.toHaveBeenCalled()
+	})
+
 	it('keys a bulk producer birth to its own delivery lane', async () => {
 		const created: DrovrShadowFact = {
 			kind: 'contact-created',

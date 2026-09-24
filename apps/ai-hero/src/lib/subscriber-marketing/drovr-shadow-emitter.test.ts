@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactEventRecord, SideEffectIntent } from './types'
-import { emitDrovrShadowFact, mapDrovrShadowFact } from './drovr-shadow-emitter'
+import {
+	emitDrovrShadowEvents,
+	emitDrovrShadowFact,
+	mapDrovrShadowFact,
+} from './drovr-shadow-emitter'
 
 const occurredAt = '2026-08-30T12:00:00.000Z'
 
@@ -518,6 +522,27 @@ describe('retired drovr direct sender', () => {
 			count: 1,
 			deliveryLane: 'direct',
 		})
+	})
+
+	it('never posts an authority event about a synthetic principal', async () => {
+		const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		const fact = authorityCompletion()
+		const events = mapDrovrShadowFact({
+			...fact,
+			intent: { ...fact.intent, contactId: 'synthetic_run-1' },
+		})
+		expect(events.some((event) => event.tenantId === 'org-aihero')).toBe(true)
+
+		await emitDrovrShadowEvents(events, {
+			config: {
+				ingestUrl: 'https://drovr.test/events',
+				authorityApiKey: 'authority-key',
+			},
+			fetch,
+			info: vi.fn(),
+		})
+
+		expect(fetch).not.toHaveBeenCalled()
 	})
 
 	it('keeps authority rejection and network handling unchanged', async () => {

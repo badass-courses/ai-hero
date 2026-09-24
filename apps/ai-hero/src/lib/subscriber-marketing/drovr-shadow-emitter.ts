@@ -1,4 +1,5 @@
 import { env } from '@/env.mjs'
+import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 
 import { parseIanaTimeZone } from './evergreen-offer-journey/primitives'
@@ -195,6 +196,13 @@ export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
 	return mapCourseCompleted(fact)
 }
 
+/** The contact a fact is about, whatever its shape. */
+export function drovrShadowFactContactId(fact: DrovrShadowFact): string {
+	if (fact.kind === 'contact-event') return fact.event.contactId
+	if ('intent' in fact) return fact.intent.contactId
+	return fact.contactId
+}
+
 export async function emitDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowEmitterOptions = {},
@@ -218,7 +226,8 @@ export async function emitDrovrShadowEvents(
 	const fetcher = options.fetch ?? fetch
 	const info = options.info ?? log.info
 	const warn = options.warn ?? log.warn
-	const deliverableEvents = events.filter(
+	// Synthetic test principals never reach drovr, on any road.
+	const deliverableEvents = withoutSyntheticContacts(events).kept.filter(
 		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
 	)
 	const discarded = events.length - deliverableEvents.length
