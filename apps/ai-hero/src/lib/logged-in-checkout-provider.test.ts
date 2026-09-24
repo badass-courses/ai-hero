@@ -162,6 +162,29 @@ describe('logged-in checkout provider boundary', () => {
 		expect(handoffStore.complete).not.toHaveBeenCalled()
 	})
 
+	it('reports a lost synthetic handoff claim as the failure write it is', async () => {
+		const handoffStore = store({ failTerminal: vi.fn(async () => false) })
+		const createCheckoutSession = vi.fn()
+		await expect(
+			createLoggedInCheckoutSession({
+				provider: provider({
+					...mockStripeAdapter,
+					getPrice: vi.fn(async () => ({ recurring: null }) as never),
+					createCheckoutSession,
+				} satisfies PaymentsAdapter),
+				adapter: courseAdapter(),
+				handoffStore,
+				claim,
+				handoffPayload,
+				checkoutParams: {
+					...checkoutParams,
+					userId: 'synthetic_0123456789abcdef01234567',
+				},
+			}),
+		).rejects.toThrow('checkout-login-handoff-failure-write-failed')
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
+
 	it('does not complete when the real Course Builder provider reports failure', async () => {
 		const handoffStore = store()
 		const paymentsAdapter = {

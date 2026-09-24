@@ -88,6 +88,9 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 			'20260714_ai_hero_optin_attribution.sql',
 			'20260717_ai_hero_side_effect_intent_completed_at.sql',
 			'plans/20260908_contact_email_equivalence.sql',
+			// The capture repository reads SideEffectIntent's course-run columns.
+			'20260831_ai_hero_email_course_evergreen_schema.sql',
+			'20260907_evergreen_admission_attempts.sql',
 		])
 			await pool.query(
 				await fs.readFile(

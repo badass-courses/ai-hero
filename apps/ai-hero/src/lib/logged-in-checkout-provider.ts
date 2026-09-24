@@ -63,11 +63,16 @@ export async function createLoggedInCheckoutSession({
 	// checkout-under-test contract. This is the signed-in checkout entry; the
 	// coursebuilder route refuses the other one.
 	if (isSyntheticPrincipalId(checkoutParams.userId)) {
-		if (claim) {
-			await handoffStore.failTerminal({
+		// A claim this request no longer owns is the same write failure the
+		// provider-failure path below reports; never claim a refusal applied.
+		if (
+			claim &&
+			!(await handoffStore.failTerminal({
 				claim,
 				failureCode: SYNTHETIC_CHECKOUT_REFUSED,
-			})
+			}))
+		) {
+			throw new Error('checkout-login-handoff-failure-write-failed')
 		}
 		return {
 			kind: 'failure',
