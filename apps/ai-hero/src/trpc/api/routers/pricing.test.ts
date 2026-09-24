@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { couponSchema } from '@coursebuilder/core/schemas'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
@@ -385,5 +387,105 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 				userId: mocks.entitlement.userId,
 			}),
 		)
+	})
+
+	it('prices a signed-out evergreen coupon after the real adapter schema normalizes its row', async () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date('2026-09-24T18:00:00.000Z'))
+		try {
+			const issueAt = '2026-09-24T16:00:00.000Z'
+			const expiresAt = '2026-09-29T06:59:59.000Z'
+			const journeyId = 'evergreen-offer:drovr:contact-smoke-1'
+			const idempotencyKey = `${journeyId}:coupon.issue`
+			const couponId = `eoj-coupon:${createHash('sha256').update(idempotencyKey).digest('hex')}`
+			const merchant = {
+				id: 'merchant-evergreen',
+				type: 'special',
+				status: 1,
+				amountDiscount: 10_000,
+			}
+			const row = couponSchema.parse({
+				id: couponId,
+				code: null,
+				organizationId: null,
+				createdAt: new Date(issueAt),
+				expires: new Date(expiresAt),
+				fields: {
+					exclusive: true,
+					evergreenOffer: {
+						format: 1,
+						issue: {
+							type: 'IssueCoupon',
+							idempotencyKey,
+							journeyId,
+							contactId: 'contact-smoke-1',
+							issueAt,
+							expiresAt,
+							terms: {
+								productId: 'product-ma254',
+								currency: 'USD',
+								amountOffCents: 10_000,
+								maxUses: 1,
+								exclusive: true,
+							},
+							deadlineTimeZone: {
+								type: 'BrowserEntryHeader',
+								headerName: 'x-vercel-ip-timezone',
+								timeZone: 'America/Los_Angeles',
+								capturedAt: issueAt,
+							},
+						},
+						binding: { type: 'AwaitingVerifiedUser' },
+					},
+				},
+				maxUses: 1,
+				default: false,
+				merchantCouponId: merchant.id,
+				status: 1,
+				usedCount: 0,
+				percentageDiscount: null,
+				amountDiscount: 10_000,
+				restrictedToProductId: 'product-ma254',
+			})
+			// The production adapter parses with this schema: NULL becomes zero.
+			expect(row.percentageDiscount).toBe(0)
+			mocks.getServerAuthSession.mockResolvedValue({ session: null })
+			// This one-shot fixture uses the wider real adapter shape rather than
+			// the narrow public/default fixtures inferred by this test's mocks.
+			mocks.adapter.getCoupon.mockResolvedValueOnce(row as never)
+			mocks.adapter.getMerchantCoupon.mockResolvedValueOnce({
+				...merchant,
+				percentageDiscount: null,
+			} as never)
+			mocks.adapter.getDefaultCoupon.mockResolvedValueOnce(null as never)
+			mocks.adapter.couponForIdOrCode.mockResolvedValueOnce({
+				...row,
+				merchantCoupon: merchant,
+			} as never)
+			mocks.formatPricesForProduct.mockImplementationOnce(async (input) => ({
+				id: input.productId,
+				calculatedPrice: input.merchantCouponId === merchant.id ? 199 : 299,
+				usedCouponId: input.usedCouponId ?? null,
+				appliedMerchantCoupon:
+					input.merchantCouponId === merchant.id ? merchant : null,
+			}))
+
+			const result = await caller().formatted({
+				productId: 'product-ma254',
+				quantity: 1,
+				couponId,
+			})
+			expect(result.calculatedPrice).toBe(199)
+			expect(result.usedCouponId).toBe(couponId)
+			expect(result.appliedMerchantCoupon?.id).toBe(merchant.id)
+			expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
+				expect.objectContaining({
+					merchantCouponId: merchant.id,
+					usedCouponId: couponId,
+				}),
+			)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })
