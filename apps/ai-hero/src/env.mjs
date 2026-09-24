@@ -140,6 +140,8 @@ export const env = createEnv({
 		AIHERO_TEST_PRINCIPAL_TOKEN: z.string().min(32).optional(),
 		AIH_DROVR_OWNER_PERCENT: z.coerce.number().min(0).max(100).optional(),
 		AIH_DROVR_OWNER_EMAILS: z.string().optional(),
+		// Captured-but-held signups (phase 1 split); see drovr-ownership.ts.
+		AIH_DROVR_OWNER_HOLD_EMAILS: z.string().optional(),
 		AIH_DROVR_EVERGREEN_ENABLED: z.string().optional(),
 		KIT_V4_API_KEY: z.string().optional(),
 		KIT_WEBHOOK_SECRET: z.string().optional(),
@@ -290,6 +292,7 @@ export const env = createEnv({
 		AIHERO_TEST_PRINCIPAL_TOKEN: process.env.AIHERO_TEST_PRINCIPAL_TOKEN,
 		AIH_DROVR_OWNER_PERCENT: process.env.AIH_DROVR_OWNER_PERCENT,
 		AIH_DROVR_OWNER_EMAILS: process.env.AIH_DROVR_OWNER_EMAILS,
+		AIH_DROVR_OWNER_HOLD_EMAILS: process.env.AIH_DROVR_OWNER_HOLD_EMAILS,
 		AIH_DROVR_EVERGREEN_ENABLED: process.env.AIH_DROVR_EVERGREEN_ENABLED,
 		KIT_V4_API_KEY: process.env.KIT_V4_API_KEY,
 		KIT_WEBHOOK_SECRET: process.env.KIT_WEBHOOK_SECRET,

@@ -8,6 +8,7 @@ import {
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
 	ownershipBucket,
+	isHeldSignup,
 	parseDrovrOwnershipConfig,
 	resolveJourneyOwner,
 } from './drovr-ownership'
@@ -55,6 +56,22 @@ describe('drovr ownership config', () => {
 			percent: 100,
 			emails: new Set(['joel@example.com']),
 		})
+	})
+
+	it('reads the hold list, lowercased, even while drovr is unreachable', () => {
+		const unreachable = parseDrovrOwnershipConfig({
+			AIH_DROVR_OWNER_HOLD_EMAILS: ' Joel+P1@Example.com , ',
+		})
+		expect(unreachable.holdEmails).toEqual(new Set(['joel+p1@example.com']))
+		expect(isHeldSignup(unreachable, 'JOEL+p1@example.com ')).toBe(true)
+		expect(isHeldSignup(unreachable, 'someone@example.com')).toBe(false)
+		expect(isHeldSignup(off, 'joel+p1@example.com')).toBe(false)
+		expect(
+			parseDrovrOwnershipConfig({
+				...authorityKey,
+				AIH_DROVR_OWNER_HOLD_EMAILS: 'joel+p1@example.com',
+			}).holdEmails,
+		).toEqual(new Set(['joel+p1@example.com']))
 	})
 
 	it('lowercases and trims the email allowlist', () => {

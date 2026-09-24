@@ -1,6 +1,7 @@
 import { captureNormalizedContactEvent } from './capture-contact-event'
 import {
 	DROVR_OWNERSHIP_OFF,
+	isHeldSignup,
 	findJourneyOwnerAssignment,
 	recordJourneyOwnerAssigned,
 	resolveJourneyOwner,
@@ -52,7 +53,7 @@ export type SkillsNewsletterPathEntryInput = {
 }
 
 export type SkillsNewsletterPathEntryResult = {
-	status: 'planned' | 'blocked' | 'idempotent-noop' | 'drovr-owned'
+	status: 'planned' | 'blocked' | 'idempotent-noop' | 'drovr-owned' | 'held'
 	contactId: string
 	captureEventId: string
 	entry: ValuePathGateDStartResult
@@ -140,6 +141,19 @@ export async function enterSkillsNewsletterSubscriber(args: {
 			optInAttribution: attributionWithSubscriptionTime(args.input),
 		}),
 	})
+
+	// A held signup is captured (the contact and its id exist) and nothing
+	// else: no legacy Email 0, no drovr assignment. Replaying the signup once
+	// the address moves to the owner list enters it as drovr-owned: with no
+	// legacy send recorded, ownership is still undecided.
+	if (isHeldSignup(args.drovrOwnership ?? DROVR_OWNERSHIP_OFF, args.input.email)) {
+		return {
+			status: 'held',
+			contactId: capture.contact.id,
+			captureEventId: capture.contactEvent.id,
+			entry: emptyEntry(args, capture.contact.id, 'held'),
+		}
+	}
 
 	// drovr-owned contacts get no legacy Email 0 plan: the ownership event
 	// is their birth in drovr's authority tenant, and drovr's actor emits
@@ -304,7 +318,7 @@ function emptyEntry(
 		allowWrite: boolean
 	},
 	contactId: string,
-	status: 'blocked' | 'drovr-owned',
+	status: 'blocked' | 'drovr-owned' | 'held',
 	reason?: string,
 ): ValuePathGateDStartResult {
 	return {

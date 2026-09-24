@@ -201,6 +201,17 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		if (entryResult.status === 'blocked') {
 			return entryResult
 		}
+		// A held signup is captured only. Its owner is decided on the replay,
+		// so neither the paused legacy sequence probe nor its backfill tag runs.
+		if (entryResult.status === 'held') {
+			await log.info('subscriber_funnel.legacy_newsletter_enrollment_skipped', {
+				funnel: 'skills-newsletter',
+				eventId: event.id,
+				contactId: entryResult.contactId,
+				reason: 'held',
+			})
+			return entryResult
+		}
 		// drovr-owned contacts enter the shadow-newsletter actor through the
 		// durable Stage 3 handoffs. Do not probe Kit's paused legacy sequence or
 		// apply its backfill tag for them; both would create a second owner.

@@ -250,6 +250,30 @@ describe('skills newsletter path entry', () => {
 		})
 	})
 
+	it('touches no Kit list and assigns no owner for a held signup', async () => {
+		mocks.enterSkillsNewsletterSubscriber.mockResolvedValueOnce({
+			status: 'held',
+			contactId: 'contact_held',
+			captureEventId: 'capture_held',
+			entry: {
+				counts: { planned: 0, blocked: 0, idempotentNoop: 0 },
+				results: [],
+			},
+		})
+		const { step, results } = createDurableStep()
+
+		await runAttempt(step, 0)
+
+		expect(mocks.subscribeToKitListWithoutFields).not.toHaveBeenCalled()
+		expect(results.has('probe-shadow-newsletter-sequence')).toBe(false)
+		expect(results.has('assign-shadow-newsletter-owner')).toBe(false)
+		expect(mocks.ensureShadowNewsletterOwnershipAssignment).not.toHaveBeenCalled()
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'subscriber_funnel.legacy_newsletter_enrollment_skipped',
+			expect.objectContaining({ contactId: 'contact_held', reason: 'held' }),
+		)
+	})
+
 	it('skips legacy Kit enrollment for a drovr-owned contact', async () => {
 		mocks.enterSkillsNewsletterSubscriber.mockResolvedValueOnce({
 			status: 'drovr-owned',
