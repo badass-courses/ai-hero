@@ -47,6 +47,34 @@ class FakeRepository implements DrovrExecutorRepository {
 	findValuePathEmailSideEffectIntentsByContact() {
 		return []
 	}
+	claimSideEffectIntentForSend(id: string, args: { now: string; staleAfterMs: number }) {
+		const row = this.intents.get(id)
+		if (!row) return false
+		const staleClaim =
+			row.status === 'sending' &&
+			Date.parse(String(row.metadata.claimedAt)) < Date.parse(args.now) - args.staleAfterMs
+		if (row.status !== 'pending' && row.status !== 'failed' && !staleClaim) return false
+		this.intents.set(id, {
+			...row,
+			status: 'sending',
+			metadata: { ...row.metadata, claimedAt: args.now },
+		})
+		return true
+	}
+	finishClaimedSideEffectIntent(
+		id: string,
+		claimedAt: string,
+		patch: Pick<
+			SideEffectIntent,
+			'status' | 'gates' | 'reviewReasons' | 'metadata' | 'completedAt'
+		>,
+	) {
+		const row = this.intents.get(id)
+		if (row?.status !== 'sending' || row.metadata.claimedAt !== claimedAt) return undefined
+		const next = { ...row, ...patch }
+		this.intents.set(id, next)
+		return next
+	}
 	updateSideEffectIntent(
 		id: string,
 		patch: Pick<
@@ -135,6 +163,58 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 		})
 	})
 
+	it('claims one row before a concurrent all-scope Kit write', async () => {
+		const repository = setup()
+		const unsubscribeInKit = kitMock(async () => {
+			await Promise.resolve()
+			return 'tagged'
+		})
+		const [first, second] = await Promise.all([
+			acceptDrovrIntent({ repository, intent: intent(), now, unsubscribeInKit }),
+			acceptDrovrIntent({ repository, intent: intent(), now, unsubscribeInKit }),
+		])
+
+		expect(unsubscribeInKit).toHaveBeenCalledTimes(1)
+		expect(repository.intents.size).toBe(1)
+		expect(
+			repository.findSideEffectIntentByIdempotencyKey(
+				'contact:contact-1:list-unsubscribe:all',
+			)?.status,
+		).toBe('completed')
+		expect([first.status, second.status]).toContain('completed')
+	})
+
+	it('a stale Kit failure cannot overwrite a newer successful claim', async () => {
+		const repository = setup()
+		let rejectOld!: (reason: Error) => void
+		const oldKit = kitMock(
+			() => new Promise<'tagged'>((_resolve, reject) => { rejectOld = reject }),
+		)
+		const first = acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			unsubscribeInKit: oldKit,
+		})
+		await vi.waitFor(() => expect(oldKit).toHaveBeenCalledTimes(1))
+
+		const newer = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now: '2026-09-24T15:11:00.000Z',
+			unsubscribeInKit: kitMock(async () => 'tagged'),
+		})
+		expect(newer.status).toBe('completed')
+		rejectOld(new KitV4Error(429, 'late failure'))
+		const stale = await first
+		expect(stale.status).toBe('completed')
+		expect(
+			repository.findSideEffectIntentByIdempotencyKey(
+				'contact:contact-1:list-unsubscribe:all',
+			)?.status,
+		).toBe('completed')
+	})
+
 	it('is idempotent: a repeat answers the stored completion without calling Kit again', async () => {
 		const repository = setup()
 		const unsubscribeInKit = kitMock(async () => 'tagged')
@@ -203,10 +283,19 @@ describe('acceptDrovrIntent: list.unsubscribe', () => {
 			)?.status,
 		).toBe('failed')
 
-		const second = await acceptDrovrIntent({
+		const tooEarly = await acceptDrovrIntent({
 			repository,
 			intent: intent(),
 			now,
+			unsubscribeInKit,
+		})
+		expect(tooEarly).toMatchObject({ status: 'retry', reason: 'kit-unsubscribe-retry-due' })
+		expect(unsubscribeInKit).toHaveBeenCalledTimes(1)
+
+		const second = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now: '2026-09-24T15:01:00.000Z',
 			unsubscribeInKit,
 		})
 		expect(second.status).toBe('completed')

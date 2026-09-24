@@ -35,6 +35,8 @@ export const UNSUBSCRIBE_KIT_LIST_INTENT_TYPE = 'unsubscribe-kit-list' as const
 export const KIT_UNSUBSCRIBE_RETRY_MS = 60_000
 /** A deployment without the Kit key re-asks on a slow cadence until it has one. */
 export const KIT_UNSUBSCRIBE_UNCONFIGURED_RETRY_MS = 15 * 60_000
+/** Kit requests time out after 10s; an abandoned sending claim can be recovered later. */
+export const KIT_UNSUBSCRIBE_CLAIM_STALE_MS = 10 * 60_000
 
 export const ListUnsubscribePayload = z.object({
 	scope: z.enum(['course', 'all']),
@@ -203,24 +205,68 @@ export async function acceptListUnsubscribe(args: {
 		}
 	}
 
-	if (scope === 'course') {
-		return completionFor(
-			await finish(args.repository, row, {
-				status: 'completed',
-				metadata: { kitCall: 'none' },
-				now: args.now,
-			}),
+	const retry = (
+		reason: string,
+		retryAfterMs = KIT_UNSUBSCRIBE_RETRY_MS,
+	): DrovrExecutorResult => ({
+		status: 'retry',
+		intentId: row.id,
+		retryAfterMs,
+		reason,
+	})
+	const afterLostClaim = async (): Promise<DrovrExecutorResult> => {
+		const latest = await args.repository.findSideEffectIntentByIdempotencyKey(
+			idempotencyKey,
 		)
+		if (latest?.status === 'completed') return completionFor(latest)
+		if (latest?.status === 'blocked') {
+			return {
+				status: 'blocked',
+				intentId: latest.id,
+				reviewReasons: latest.reviewReasons,
+			}
+		}
+		return retry('kit-unsubscribe-in-flight')
+	}
+
+	// No provider write (or completion) without an atomic claim and a guarded finish.
+	if (
+		!args.repository.claimSideEffectIntentForSend ||
+		!args.repository.finishClaimedSideEffectIntent
+	) {
+		return retry('kit-unsubscribe-claim-unavailable')
+	}
+	const lastAttemptAt = stringField(row.metadata.lastAttemptAt)
+	if (row.status === 'failed' && lastAttemptAt) {
+		const remaining =
+			Date.parse(lastAttemptAt) + KIT_UNSUBSCRIBE_RETRY_MS - Date.parse(args.now)
+		if (Number.isFinite(remaining) && remaining > 0) {
+			return retry('kit-unsubscribe-retry-due', remaining)
+		}
+	}
+	if (scope === 'course') {
+		const claimed = await args.repository.claimSideEffectIntentForSend(row.id, {
+			now: args.now,
+			staleAfterMs: KIT_UNSUBSCRIBE_CLAIM_STALE_MS,
+		})
+		if (!claimed) return afterLostClaim()
+		const completed = await finish(args.repository, row, {
+			status: 'completed',
+			metadata: { kitCall: 'none' },
+			now: args.now,
+		})
+		return completed ? completionFor(completed) : afterLostClaim()
 	}
 
 	if (!args.unsubscribeInKit) {
-		return {
-			status: 'retry',
-			intentId: row.id,
-			retryAfterMs: KIT_UNSUBSCRIBE_UNCONFIGURED_RETRY_MS,
-			reason: 'kit-unsubscribe-not-configured',
-		}
+		return retry('kit-unsubscribe-not-configured', KIT_UNSUBSCRIBE_UNCONFIGURED_RETRY_MS)
 	}
+	const claimed = await args.repository.claimSideEffectIntentForSend(row.id, {
+		now: args.now,
+		staleAfterMs: KIT_UNSUBSCRIBE_CLAIM_STALE_MS,
+	})
+	if (!claimed) return afterLostClaim()
+
 	const email = contact.email?.trim()
 	if (!email) {
 		const blocked = await finish(args.repository, row, {
@@ -228,11 +274,9 @@ export async function acceptListUnsubscribe(args: {
 			reviewReasons: ['contact-email-missing'],
 			now: args.now,
 		})
-		return {
-			status: 'blocked',
-			intentId: blocked.id,
-			reviewReasons: blocked.reviewReasons,
-		}
+		return blocked
+			? { status: 'blocked', intentId: blocked.id, reviewReasons: blocked.reviewReasons }
+			: afterLostClaim()
 	}
 
 	const kitSubscriberId =
@@ -244,7 +288,7 @@ export async function acceptListUnsubscribe(args: {
 	} catch (error) {
 		const status = error instanceof KitV4Error ? error.status : undefined
 		if (status === undefined || status === 429 || status >= 500) {
-			await finish(args.repository, row, {
+			const failed = await finish(args.repository, row, {
 				status: 'failed',
 				metadata: {
 					retryReason:
@@ -256,35 +300,29 @@ export async function acceptListUnsubscribe(args: {
 				},
 				now: args.now,
 			})
-			return {
-				status: 'retry',
-				intentId: row.id,
-				retryAfterMs: KIT_UNSUBSCRIBE_RETRY_MS,
-				reason: status === 429 ? 'kit-rate-limited' : 'kit-retryable',
-			}
+			return failed
+				? retry(status === 429 ? 'kit-rate-limited' : 'kit-retryable')
+				: afterLostClaim()
 		}
 		const blocked = await finish(args.repository, row, {
 			status: 'blocked',
 			reviewReasons: [`kit-unsubscribe-refused:${status}`],
 			now: args.now,
 		})
-		return {
-			status: 'blocked',
-			intentId: blocked.id,
-			reviewReasons: blocked.reviewReasons,
-		}
+		return blocked
+			? { status: 'blocked', intentId: blocked.id, reviewReasons: blocked.reviewReasons }
+			: afterLostClaim()
 	}
-	return completionFor(
-		await finish(args.repository, row, {
-			status: 'completed',
-			metadata: {
-				kitCall: outcome,
-				kitTagId: AI_HERO_UNSUBSCRIBED_TAG_ID,
-				...(kitSubscriberId ? { kitSubscriberId } : {}),
-			},
-			now: args.now,
-		}),
-	)
+	const completed = await finish(args.repository, row, {
+		status: 'completed',
+		metadata: {
+			kitCall: outcome,
+			kitTagId: AI_HERO_UNSUBSCRIBED_TAG_ID,
+			...(kitSubscriberId ? { kitSubscriberId } : {}),
+		},
+		now: args.now,
+	})
+	return completed ? completionFor(completed) : afterLostClaim()
 }
 
 /** Record the outcome on the row; a repository without updates keeps the row as is. */
@@ -297,7 +335,7 @@ async function finish(
 		metadata?: Record<string, unknown>
 		now: string
 	},
-): Promise<SideEffectIntent> {
+): Promise<SideEffectIntent | undefined> {
 	const completedAt = outcome.status === 'completed' ? outcome.now : null
 	const next: SideEffectIntent = {
 		...row,
@@ -310,8 +348,8 @@ async function finish(
 			...(completedAt ? { completedAt } : { lastAttemptAt: outcome.now }),
 		},
 	}
-	if (!repository.updateSideEffectIntent) return next
-	return await repository.updateSideEffectIntent(row.id, {
+	if (!repository.finishClaimedSideEffectIntent) return undefined
+	return await repository.finishClaimedSideEffectIntent(row.id, outcome.now, {
 		status: next.status,
 		completedAt: next.completedAt,
 		gates: next.gates,

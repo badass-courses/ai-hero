@@ -95,7 +95,9 @@ export type DrovrExecutorRepository = Pick<
 	Partial<
 		Pick<
 			CaptureMarketingRepository,
-			'updateSideEffectIntent' | 'claimSideEffectIntentForSend'
+			| 'updateSideEffectIntent'
+			| 'claimSideEffectIntentForSend'
+			| 'finishClaimedSideEffectIntent'
 		>
 	> &
 	Required<
