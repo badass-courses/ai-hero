@@ -147,6 +147,32 @@ describe('issue intent and offer fields', () => {
 		).toBe('ExplicitFallback')
 	})
 
+	it('accepts a drovr-pinned UTC+14 zone even when its source is fallback', () => {
+		const acceptedByIntl = 'Pacific/Kiritimati'
+		expect(() => new Intl.DateTimeFormat('en-US', { timeZone: acceptedByIntl })).not.toThrow()
+		expect(
+			issueIntentFor('contact-1', {
+				...payload,
+				timezone: acceptedByIntl,
+				timezoneSource: 'fallback',
+			}).deadlineTimeZone,
+		).toMatchObject({
+			type: 'ExplicitFallback',
+			timeZone: acceptedByIntl,
+			capturedAt: payload.issueAt,
+		})
+		// The browser-header source has the same accepted-zone contract.
+		expect(
+			issueIntentFor('contact-1', {
+				...payload,
+				timezone: acceptedByIntl,
+			}).deadlineTimeZone,
+		).toMatchObject({ type: 'BrowserEntryHeader', timeZone: acceptedByIntl })
+		expect(() =>
+			issueIntentFor('contact-1', { ...payload, timezone: 'Not/AZone' }),
+		).toThrow('invalid deadline time zone Not/AZone')
+	})
+
 	it('renders the five Kit field values the pitch copy reads', () => {
 		expect(money(19_900)).toBe('$199')
 		expect(money(29_900)).toBe('$299')
