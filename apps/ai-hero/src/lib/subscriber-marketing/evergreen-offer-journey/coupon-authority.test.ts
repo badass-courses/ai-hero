@@ -264,9 +264,17 @@ describe('locked verified-owner callback', () => {
 })
 
 describe('historical receipt recovery, not authorization', () => {
-	it.each(['expired', 'consumed', 'revoked-coupon', 'revoked-grant'])(
+	// The canonical link is usable until the coupon itself expires, is revoked
+	// (status 0), or is consumed. Deleting its old owner grant alone does not
+	// revoke a shareable evergreen offer (#274); inspection never changes that.
+	it.each([
+		['expired', false],
+		['consumed', false],
+		['revoked-coupon', false],
+		['revoked-grant', true],
+	] as const)(
 		'inspection never widens the exclusive authorizer for %s',
-		async (stateName) => {
+		async (stateName, checkoutAllowed) => {
 			const { authority, reader, state } = fixture()
 			await Effect.runPromise(authority.issue(issue))
 			await Effect.runPromise(authority.bind(bind))
@@ -295,7 +303,7 @@ describe('historical receipt recovery, not authorization', () => {
 				requestedMerchantCouponId: evidence.id,
 				now: new Date(state.clock),
 			})
-			expect(gate.authorized).toBe(false)
+			expect(gate.authorized).toBe(checkoutAllowed)
 		},
 	)
 	it.each([1205, 1213])(
@@ -790,7 +798,7 @@ describe('dormant coupon authority', () => {
 		expect(await result(authority.bind(bind))).toMatchObject(permanent)
 		expect(state.grants().size).toBe(1)
 	})
-	it('existing exclusive authorizer accepts only correct user/product/individual quantity before expiry', async () => {
+	it('existing exclusive authorizer accepts any buyer for the right product, individual quantity, before expiry', async () => {
 		const { authority, state } = fixture()
 		await Effect.runPromise(authority.issue(issue))
 		await Effect.runPromise(authority.bind(bind))
@@ -802,7 +810,9 @@ describe('dormant coupon authority', () => {
 		}
 		for (const [userId, productId, quantity, clock, expected] of [
 			[verifiedUserId, 'product-ma254', 1, state.clock, true],
-			['other', 'product-ma254', 1, state.clock, false],
+			// Binding stays owner-only; the canonical unused one-use link is
+			// redeemable by any buyer at quantity one (#274).
+			['other', 'product-ma254', 1, state.clock, true],
 			[verifiedUserId, 'other', 1, state.clock, false],
 			[verifiedUserId, 'product-ma254', 2, state.clock, false],
 			[verifiedUserId, 'product-ma254', 1, issue.expiresAt, false],
