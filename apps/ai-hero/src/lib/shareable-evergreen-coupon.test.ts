@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
+import { couponSchema } from '@coursebuilder/core/schemas'
 import { readCommerceUrlParams } from '@/app/(content)/workshops/_components/commerce-url-params'
 import { evergreenJourneyIdForContact } from './subscriber-marketing/drovr-evergreen-coupon'
 import { couponIntentKey } from './subscriber-marketing/evergreen-offer-journey/primitives'
@@ -70,7 +71,10 @@ function coupon(overrides: Partial<CommerceCouponRow> = {}): CommerceCouponRow {
 	} as CommerceCouponRow
 }
 const adapter = (row: CommerceCouponRow) => ({
-	getCoupon: async (id: string) => (id === couponId ? row : null),
+	// Match DrizzleAdapter.getCoupon, which parses rows before pricing/formatted
+	// sees them. The core schema coerces SQL NULL percentageDiscount to 0.
+	getCoupon: async (id: string) =>
+		id === couponId ? couponSchema.parse(row) : null,
 	getMerchantCoupon: async (id: string) =>
 		id === merchant.id ? merchant : null,
 	getEntitlementTypeByName: async () => null,
@@ -180,7 +184,10 @@ describe('shared evergreen link through existing coupon pricing', () => {
 		const wrongAmount = await authorizeExclusiveCouponSelection({
 			adapter: {
 				...adapter(row),
-				getMerchantCoupon: async () => ({ ...merchant, amountDiscount: 50_000 }),
+				getMerchantCoupon: async () => ({
+					...merchant,
+					amountDiscount: 50_000,
+				}),
 			},
 			productId: 'product-ma254',
 			quantity: 1,

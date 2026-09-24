@@ -117,10 +117,18 @@ const isShareableEvergreenCoupon = (
 		return false
 	}
 	try {
-		return (
-			readCouponEvidence(siteCoupon as CommerceCouponRow).coupon.terms
-				.productId === productId
-		)
+		const parsedRow = siteCoupon as CommerceCouponRow
+		// DrizzleAdapter.getCoupon parses through couponSchema before this gate.
+		// Its z.coerce.number() turns SQL NULL percentageDiscount into 0;
+		// normalize only that no-percentage value for canonical row evidence.
+		const parsedPercentage = (siteCoupon as { percentageDiscount?: unknown })
+			.percentageDiscount
+		const evidenceRow = {
+			...parsedRow,
+			percentageDiscount:
+				parsedPercentage === 0 ? null : parsedRow.percentageDiscount,
+		}
+		return readCouponEvidence(evidenceRow).coupon.terms.productId === productId
 	} catch {
 		return false
 	}
