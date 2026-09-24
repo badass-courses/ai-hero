@@ -20,6 +20,7 @@ export type DrovrEventsDeliver = {
 			| 'contact-event'
 			| 'kit-webhook'
 			| 'side-effect-intent-completed'
+			| 'side-effect-intent-failed'
 			| 'course-completed'
 			| 'course-exhausted'
 			/** Pre-gate veterans' newsletter births, sent by the veterans function. */

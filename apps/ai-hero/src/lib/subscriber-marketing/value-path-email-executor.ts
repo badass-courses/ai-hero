@@ -374,7 +374,7 @@ export async function executeValuePathEmailIntent(args: {
 		const nextRetryAt = canRetry
 			? new Date(Date.parse(now) + retryDelayMs).toISOString()
 			: undefined
-		await args.repository.updateSideEffectIntent(intent.id, {
+		const failed = await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'failed',
 			gates,
 			reviewReasons: [
@@ -393,6 +393,12 @@ export async function executeValuePathEmailIntent(args: {
 				...(nextRetryAt ? { nextRetryAt } : {}),
 			},
 		})
+		if (!canRetry) {
+			dispatchDrovrShadowFactSafely({
+				kind: 'side-effect-intent-failed',
+				intent: failed,
+			})
+		}
 		return {
 			status: canRetry ? 'retryable-failed' : 'failed',
 			intentId: intent.id,

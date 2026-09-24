@@ -273,7 +273,9 @@ describe('executePendingEvergreenCoupons', () => {
 			expect(out.row).toMatchObject({
 				status: 'failed',
 				reviewReasons: [`coupon-${failure.type}`],
+				metadata: { failedAt: now },
 			})
+			expect(out.dispatched).toEqual([out.row])
 		}
 	})
 
@@ -287,6 +289,7 @@ describe('executePendingEvergreenCoupons', () => {
 		})
 		expect(transient.results[0]).toMatchObject({ status: 'retry', attempts: 1 })
 		expect(transient.row.status).toBe('pending')
+		expect(transient.dispatched).toEqual([])
 
 		const kitDown = await run({
 			issue: () => Effect.succeed(issued),

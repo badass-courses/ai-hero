@@ -32,7 +32,8 @@ import { and, eq } from 'drizzle-orm'
  * and the completion arrives later through POST /events; 200 completed
  * carries the completion inline for an intent ai-hero already finished;
  * 200 blocked means ai-hero's gates refused and a human must look;
- * 200 retry names a wait (Kit rate limit or drovr's send budget). With
+ * 200 retry names a wait (Kit rate limit or drovr's send budget); 200
+ * failed names a terminal reason class and must never be mistaken for 202. With
  * AIH_DROVR_SYNC_SEND the skills-course send runs inside this request
  * (decision 2026-09-17) and 202 stops appearing for it.
  * Refusals are RFC 9457 problem details with a hint, the same shape drovr
@@ -199,6 +200,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 		case 'blocked':
 			return NextResponse.json(result, { status: 200 })
 		case 'retry':
+		case 'failed':
 			return NextResponse.json(result, { status: 200 })
 		default:
 			return problem(

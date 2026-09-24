@@ -21,6 +21,7 @@ import {
 } from './drovr-evergreen-coupon'
 
 import { createInternalId } from '../internal-id'
+import { drovrFailureReason } from './drovr-failure'
 import type { CaptureMarketingRepository } from './capture-contact-event'
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -105,6 +106,11 @@ const knownTenant = (value: unknown): DrovrTenantId | undefined =>
 		? value
 		: undefined
 
+/** A terminal row must not masquerade as accepted on a drovr redrive. */
+function terminalFailureResult(row: SideEffectIntent): DrovrExecutorResult {
+	return { status: 'failed', intentId: row.id, ...drovrFailureReason(row) }
+}
+
 export type DrovrExecutorResult =
 	| { status: 'unsupported'; reason: string; hint: string }
 	| { status: 'contact-missing' }
@@ -116,6 +122,7 @@ export type DrovrExecutorResult =
 	  }
 	| { status: 'completed'; intentId: string; completion: DrovrShadowEvent }
 	| { status: 'blocked'; intentId?: string; reviewReasons: string[] }
+	| { status: 'failed'; intentId: string; reasonClass: string; reason: string }
 	| {
 			/** Not now: Kit or the send budget said wait. drovr arms for retryAfterMs. */
 			status: 'retry'
@@ -444,12 +451,13 @@ async function sendNowIfAccepted(
 		case 'completed':
 			return existingIntentResult(after, args.intent, step)
 		case 'blocked':
-		case 'failed':
 			return {
 				status: 'blocked',
 				intentId: result.intentId,
 				reviewReasons: outcome.reviewReasons,
 			}
+		case 'failed':
+			return terminalFailureResult(after)
 		case 'retryable-failed':
 			return {
 				status: 'retry',
@@ -593,6 +601,8 @@ function existingIntentResult(
 			},
 		}
 	}
+	if (existing.status === 'failed' && existing.metadata.retryable !== true)
+		return terminalFailureResult(existing)
 	if (
 		existing.status === 'pending' ||
 		existing.status === 'sending' ||
@@ -747,7 +757,9 @@ async function acceptEvergreenSend(args: {
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
 		row.status === 'completed'
 			? completionFor(row)
-			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+			: row.status === 'failed'
+				? terminalFailureResult(row)
+				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
 
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
@@ -899,12 +911,14 @@ async function acceptShadowNewsletterSend(args: {
 		}
 		return row.status === 'completed'
 			? completionFor(row, owner)
-			: {
-					status: 'accepted',
-					intentId: row.id,
-					idempotencyKey: row.idempotencyKey,
-					created: false,
-				}
+			: row.status === 'failed'
+				? terminalFailureResult(row)
+				: {
+						status: 'accepted',
+						intentId: row.id,
+						idempotencyKey: row.idempotencyKey,
+						created: false,
+					}
 	}
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
@@ -1010,7 +1024,9 @@ async function acceptEvergreenListSubscribe(args: {
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
 		row.status === 'completed'
 			? completionFor(row)
-			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+			: row.status === 'failed'
+				? terminalFailureResult(row)
+				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) return existingResult(existing)
@@ -1115,7 +1131,9 @@ async function acceptEvergreenCoupon(args: {
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
 		row.status === 'completed'
 			? completionFor(row)
-			: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
+			: row.status === 'failed'
+				? terminalFailureResult(row)
+				: { status: 'accepted', intentId: row.id, idempotencyKey, created: false }
 	const existing =
 		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
 	if (existing) return existingResult(existing)

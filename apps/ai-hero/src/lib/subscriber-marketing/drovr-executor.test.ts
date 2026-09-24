@@ -210,6 +210,26 @@ describe('drovr executor: accepting an email.send intent', () => {
 		})
 	})
 
+	it('answers a terminal email failure with its reason class instead of accepting again', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const first = await acceptDrovrIntent({ repository, intent: intent(), now })
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		const row = repository.intents.get(first.intentId)!
+		repository.intents.set(row.id, {
+			...row,
+			status: 'failed',
+			reviewReasons: ['kit-sequence-enrollment-failed'],
+			metadata: { ...row.metadata, retryable: false, retryReason: 'kit-invalid' },
+		})
+		expect(await acceptDrovrIntent({ repository, intent: intent(), now })).toEqual({
+			status: 'failed',
+			intentId: row.id,
+			reasonClass: 'kit-sequence-enrollment-failed',
+			reason: 'kit-sequence-enrollment-failed',
+		})
+	})
+
 	it('reports a gate-blocked existing intent as blocked with its reasons', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())
@@ -447,6 +467,24 @@ describe('drovr executor: the synchronous send', () => {
 			retryAfterMs: 15 * 60_000,
 			reason: 'kit-rate-limited',
 		})
+	})
+
+	it('answers a terminal inline failure as failed without a completion', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const result = await acceptDrovrIntent({
+			repository, intent: intent(), now,
+			sendNow: async (row) => {
+				repository.updateSideEffectIntent(row.id, {
+					status: 'failed', completedAt: null, gates: [],
+					reviewReasons: ['kit-sequence-enrollment-failed'],
+					metadata: { ...row.metadata, retryable: false, lastError: 'learner@example.com' },
+				})
+				return { status: 'failed', intentId: row.id, reviewReasons: ['kit-sequence-enrollment-failed'] }
+			},
+		})
+		expect(result).toMatchObject({ status: 'failed', reasonClass: 'kit-sequence-enrollment-failed', reason: 'kit-sequence-enrollment-failed' })
+		expect(result).not.toHaveProperty('completion')
 	})
 
 	it('answers retry from the budget before touching Kit', async () => {
@@ -842,6 +880,19 @@ describe('acceptDrovrIntent: evergreen bridge and pitch sends', () => {
 		expect(repository.intents.size).toBe(1)
 	})
 
+	it('answers a terminal evergreen email failure rather than re-accepting it', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const request = evergreenIntent()
+		const accepted = await acceptDrovrIntent({ repository, intent: request, now, evergreen: enabled })
+		if (accepted.status !== 'accepted') throw new Error('expected accepted')
+		const row = repository.intents.get(accepted.intentId)!
+		repository.intents.set(row.id, { ...row, status: 'failed', reviewReasons: ['evergreen-send-exhausted'], metadata: { ...row.metadata, lastError: 'network' } })
+		expect(await acceptDrovrIntent({ repository, intent: request, now, evergreen: enabled })).toEqual({
+			status: 'failed', intentId: row.id, reasonClass: 'evergreen-send-exhausted', reason: 'evergreen-send-exhausted',
+		})
+	})
+
 	it('answers a completed row with an email.completed addressed to the requester', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())
@@ -1173,6 +1224,32 @@ describe('acceptDrovrIntent: evergreen coupon issue', () => {
 			evergreen: enabled,
 		})
 		expect(unknown.status).toBe('unsupported')
+	})
+
+	it('answers terminal coupon and list failures instead of re-accepting them', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		for (const [kind, payload, key, reasonClass] of [
+			['coupon.issue', couponPayload, 'coupon-failed', 'coupon-intent-invalid'],
+			['list.subscribe', { list: 'shadow-newsletter' }, 'list-failed', 'kit-400'],
+		] as const) {
+			const request = couponIntent({ kind, payload, idempotencyKey: key })
+			const accepted = await acceptDrovrIntent({ repository, intent: request, now, evergreen: enabled })
+			if (accepted.status !== 'accepted') throw new Error('expected accepted')
+			const row = repository.intents.get(accepted.intentId)!
+			repository.intents.set(row.id, {
+				...row,
+				status: 'failed',
+				reviewReasons: [reasonClass],
+				metadata: { ...row.metadata, lastError: 'provider refused' },
+			})
+			expect(await acceptDrovrIntent({ repository, intent: request, now, evergreen: enabled })).toEqual({
+				status: 'failed',
+				intentId: row.id,
+				reasonClass,
+				reason: reasonClass,
+			})
+		}
 	})
 
 	it('refuses a coupon.issue without the pinned window (v1/v2 journeys)', async () => {
