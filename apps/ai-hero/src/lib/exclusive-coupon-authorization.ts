@@ -1,9 +1,16 @@
+import {
+	readCouponEvidence,
+	type CommerceCouponRow,
+} from './subscriber-marketing/evergreen-offer-journey/coupon-authority'
+import { EVERGREEN_OFFER_AMOUNT_OFF_CENTS } from './subscriber-marketing/evergreen-offer-journey/domain'
+
 type Awaitable<T> = T | Promise<T>
 
 type MerchantCouponRecord = {
 	id: string
 	type?: string | null
 	status?: number
+	amountDiscount?: number | null
 }
 
 type SiteCouponRecord = {
@@ -86,6 +93,39 @@ const couponIsActive = (coupon: SiteCouponRecord, now: Date) => {
 	)
 }
 
+// Existing evergreen rows are exclusive and remain attributed to the issuing
+// contact, but Joel opted to make their links redeemable by anyone. Do not
+// weaken other exclusive credits: require the entire canonical issued-row
+// evidence, the matching merchant discount, and a currently usable coupon.
+const isShareableEvergreenCoupon = (
+	merchantCoupon: MerchantCouponRecord,
+	siteCoupon: SiteCouponRecord | null,
+	productId: string,
+	quantity: number,
+	now: Date,
+) => {
+	if (
+		quantity !== 1 ||
+		merchantCoupon.type !== 'special' ||
+		merchantCoupon.status !== 1 ||
+		merchantCoupon.amountDiscount !== EVERGREEN_OFFER_AMOUNT_OFF_CENTS ||
+		!siteCoupon ||
+		siteCoupon.merchantCouponId !== merchantCoupon.id ||
+		!couponIsActive(siteCoupon, now) ||
+		!couponPermitsProduct(siteCoupon, productId)
+	) {
+		return false
+	}
+	try {
+		return (
+			readCouponEvidence(siteCoupon as CommerceCouponRow).coupon.terms
+				.productId === productId
+		)
+	} catch {
+		return false
+	}
+}
+
 const isPublicCouponProvenance = ({
 	merchantCoupon,
 	siteCoupon,
@@ -134,7 +174,14 @@ export async function authorizeExclusiveCouponSelection({
 				siteCoupon: requestedSiteCoupon,
 				productId,
 				now,
-			})
+			}) ||
+			isShareableEvergreenCoupon(
+				requestedMerchantCoupon,
+				requestedSiteCoupon,
+				productId,
+				quantity,
+				now,
+			)
 		: false
 	const protectedMerchantCoupon = Boolean(
 		requestedMerchantCouponId && !publicProvenance,

@@ -9,7 +9,10 @@ export function readCommerceUrlParams(
 ) {
 	const params: CommerceUrlParams = {
 		code: searchParams.get('code') || undefined,
-		coupon: searchParams.get('coupon') || undefined,
+		// Older evergreen emails shipped ?claim=<site coupon id>.
+		// Treat it as the existing commerce coupon selector, never as authority.
+		coupon:
+			searchParams.get('coupon') || searchParams.get('claim') || undefined,
 		allowPurchase: searchParams.get('allowPurchase') || undefined,
 	}
 
@@ -18,6 +21,7 @@ export function readCommerceUrlParams(
 		hasCommerceParams:
 			searchParams.has('code') ||
 			searchParams.has('coupon') ||
+			searchParams.has('claim') ||
 			searchParams.has('allowPurchase'),
 		forceAllowPurchase: params.allowPurchase === 'true',
 	}
