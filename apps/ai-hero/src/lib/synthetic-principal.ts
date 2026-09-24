@@ -48,3 +48,15 @@ export function withoutSyntheticContacts<T extends { contactId: string }>(
 	const kept = records.filter((record) => !isSyntheticPrincipalId(record.contactId))
 	return { kept, discarded: records.length - kept.length }
 }
+
+/**
+ * Real user ids only: drops nulls and synthetic principals, so a count built
+ * from them shares the scope of user counts that exclude synthetic ids.
+ *
+ * @example realUserIds(['u1', null, 'synthetic_a']) // ['u1']
+ */
+export function realUserIds(ids: readonly (string | null | undefined)[]): string[] {
+	return ids.filter(
+		(id): id is string => typeof id === 'string' && !isSyntheticPrincipalId(id),
+	)
+}

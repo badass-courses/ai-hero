@@ -1,3 +1,4 @@
+import { SYNTHETIC_CHECKOUT_REFUSED } from '@/coursebuilder/synthetic-checkout'
 import {
 	checkoutLoginHandoffProviderIdempotencyKey,
 	type CheckoutLoginHandoffPayload,
@@ -6,6 +7,7 @@ import type {
 	CheckoutLoginHandoffClaim,
 	CheckoutLoginHandoffStore,
 } from '@/lib/checkout-login-handoff-store'
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { CommerceAdapter } from '@coursebuilder/commerce'
 import type {
@@ -55,6 +57,22 @@ export async function createLoggedInCheckoutSession({
 }): Promise<CheckoutSessionResult> {
 	if (claim && !handoffPayload) {
 		throw new Error('missing-checkout-login-handoff-payload')
+	}
+
+	// Synthetic test principals (#36T) never reach Stripe until T8 defines a
+	// checkout-under-test contract. This is the signed-in checkout entry; the
+	// coursebuilder route refuses the other one.
+	if (isSyntheticPrincipalId(checkoutParams.userId)) {
+		if (claim) {
+			await handoffStore.failTerminal({
+				claim,
+				failureCode: SYNTHETIC_CHECKOUT_REFUSED,
+			})
+		}
+		return {
+			kind: 'failure',
+			failure: { code: SYNTHETIC_CHECKOUT_REFUSED, retryable: false },
+		}
 	}
 
 	const result = claim

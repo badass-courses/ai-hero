@@ -1,5 +1,7 @@
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
+export const SYNTHETIC_CHECKOUT_REFUSED = 'synthetic-checkout-refused'
+
 /**
  * Synthetic test principals (#36T) never create a Stripe customer or checkout
  * session until a checkout-under-test contract exists (T8). Returns the 403
@@ -14,7 +16,7 @@ export function syntheticCheckoutRefusal(
 	}
 	return Response.json(
 		{
-			type: 'urn:aihero:problem:synthetic-checkout-refused',
+			type: `urn:aihero:problem:${SYNTHETIC_CHECKOUT_REFUSED}`,
 			title: 'Checkout is not available to test principals',
 			status: 403,
 			detail: 'A synthetic test principal cannot start a Stripe checkout.',

@@ -19,7 +19,10 @@ import {
 	sum,
 } from 'drizzle-orm'
 
-import { SYNTHETIC_PRINCIPAL_ID_LIKE } from '@/lib/synthetic-principal'
+import {
+	realUserIds,
+	SYNTHETIC_PRINCIPAL_ID_LIKE,
+} from '@/lib/synthetic-principal'
 
 import { createDerivedProvider } from '@coursebuilder/analytics/providers/derived'
 
@@ -85,9 +88,9 @@ export async function getSurveyRevenueCorrelation(
 				: sql`${questionResponse.userId} IS NOT NULL`,
 		)
 
-	const respondentUserIds = respondentRows
-		.map((r) => r.userId)
-		.filter((id): id is string => id !== null)
+	// Same user scope as the baseline denominator below: synthetic test
+	// principals (#36T) are neither respondents nor users of the product.
+	const respondentUserIds = realUserIds(respondentRows.map((r) => r.userId))
 
 	const totalRespondents = respondentUserIds.length
 

@@ -1,5 +1,6 @@
 import { db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
+import { TEST_PRINCIPAL_TTL_MS } from '@/lib/test-principals/test-principal'
 import {
 	deleteTestPrincipalRecords,
 	expiredTestPrincipalIds,
@@ -18,13 +19,16 @@ export const testPrincipalReaper = inngest.createFunction(
 	},
 	{ cron: 'TZ=UTC */10 * * * *' },
 	async ({ step }) => {
+		const now = new Date()
+		const cutoff = new Date(now.getTime() - TEST_PRINCIPAL_TTL_MS)
 		const expired = await step.run('find expired test principals', () =>
-			expiredTestPrincipalIds(db, { now: new Date(), limit: 50 }),
+			expiredTestPrincipalIds(db, { now, limit: 50 }),
 		)
 		let reaped = 0
 		for (const principalId of expired) {
+			// A principal re-minted after it was listed is live again: keep it.
 			const deleted = await step.run(`reap ${principalId}`, () =>
-				deleteTestPrincipalRecords(db, principalId),
+				deleteTestPrincipalRecords(db, principalId, { createdBefore: cutoff }),
 			)
 			if (!deleted) continue
 			reaped += 1

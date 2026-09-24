@@ -15,6 +15,9 @@ import { contact, sessions, users, verificationTokens } from '@/db/schema'
 import { mysqlTable } from '@/db/mysql-table'
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { contactEmailWriteValues } from '@/lib/subscriber-marketing/contact-email-equivalence'
+import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { personalizeDrovrIntent } from '@/lib/subscriber-marketing/drovr-personalize'
+import { DROVR_SKILLS_COURSE_JOURNEY_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import { createAuthJsAdapter } from '@/server/auth-js-adapter'
 import {
@@ -113,7 +116,7 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 
 	beforeEach(async () => {
 		createdUsers = []
-		for (const table of ['AI_VerificationToken', 'AI_Session', 'AI_User', 'AI_Contact'])
+		for (const table of ['AI_VerificationToken', 'AI_Session', 'AI_User', 'AI_Contact', 'AI_ContactState'])
 			await pool.query(`DELETE FROM ${table}`)
 		// A real learner, whose rows must survive every synthetic operation.
 		await database.insert(users).values({ id: 'user-real', email: 'real@example.test' })
@@ -241,6 +244,98 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 			await database.select().from(sessions).where(eq(sessions.userId, records.identity.principalId)),
 		).toHaveLength(1)
 		expect(await realRows()).toEqual({ users: 1, contacts: 1, sessions: 1 })
+	})
+
+	it('gives personalize a real state, so a minted principal gets signed links', async () => {
+		const { records } = await mint('run-personalize-01')
+		if (records.status === 'limit') throw new Error('unexpected limit')
+		const answer = await personalizeDrovrIntent({
+			repository: new DrizzleCaptureMarketingRepository(database as never),
+			request: {
+				tenantId: 'org-aihero',
+				contactId: records.identity.contactId,
+				journeyId: DROVR_SKILLS_COURSE_JOURNEY_ID,
+				emailKey: 'ai-hero-skills-workflow.email-0',
+				idempotencyKey: 'test-principal:run-personalize-01:email-0',
+				dueAt: records.createdAt.toISOString(),
+			},
+			answerPages: [
+				{
+					id: 'answer-1',
+					type: 'value-path-page',
+					fields: {
+						kind: 'answer',
+						slug: 'what-next',
+						sequenceId: 'ai-hero-skills-workflow',
+						emailId: 'email-0',
+						position: 1,
+					},
+				} as never,
+			],
+			pathTokenSecret: 'synthetic-path-token-secret',
+			baseUrl: origin,
+		})
+		expect(answer?.reasons).toEqual([])
+		expect(Object.keys(answer?.variables ?? {}).length).toBeGreaterThan(0)
+		expect(JSON.stringify(answer?.variables)).toContain('pt=')
+		await deleteTestPrincipalRecords(database, records.identity.principalId)
+	})
+
+	it('answers concurrent mints for one runId with one principal and no error', async () => {
+		const results = await Promise.all(
+			[1, 2, 3].map(() => mint('run-concurrent-01')),
+		)
+		const statuses = results.map(({ records }) => records.status).sort()
+		expect(statuses).toEqual(['existing', 'existing', 'minted'])
+		const [[rows]] = (await pool.query(
+			"SELECT COUNT(*) AS n FROM AI_User WHERE id LIKE 'synthetic\\_%'",
+		)) as unknown as [[{ n: number }]]
+		expect(rows.n).toBe(1)
+		await deleteTestPrincipalRecords(
+			database,
+			testPrincipalIdentity('run-concurrent-01').principalId,
+		)
+	})
+
+	it('holds the cap under concurrent mints for different runIds', async () => {
+		const results = await Promise.all(
+			[1, 2, 3, 4, 5, 6, 7].map((i) => mint(`run-capcheck-0${i}`)),
+		)
+		const minted = results.filter(({ records }) => records.status === 'minted')
+		const limited = results.filter(({ records }) => records.status === 'limit')
+		expect(minted).toHaveLength(5)
+		expect(limited).toHaveLength(2)
+		const [[rows]] = (await pool.query(
+			"SELECT COUNT(*) AS n FROM AI_User WHERE id LIKE 'synthetic\\_%'",
+		)) as unknown as [[{ n: number }]]
+		expect(rows.n).toBe(5)
+		for (const { records } of minted)
+			if (records.status !== 'limit')
+				await deleteTestPrincipalRecords(database, records.identity.principalId)
+	})
+
+	it('lets the reaper skip a principal re-minted after it was listed', async () => {
+		const start = new Date()
+		const { records } = await mint('run-reaper-race1', start)
+		if (records.status === 'limit') throw new Error('unexpected limit')
+		const later = new Date(start.getTime() + 2 * 3_600_000)
+		const cutoff = new Date(later.getTime() - 3_600_000)
+		expect(await expiredTestPrincipalIds(database, { now: later, limit: 50 })).toEqual([
+			records.identity.principalId,
+		])
+		// The run starts again before the reaper gets to it.
+		expect((await mint('run-reaper-race1', later)).records.status).toBe('minted')
+		expect(
+			await deleteTestPrincipalRecords(database, records.identity.principalId, {
+				createdBefore: cutoff,
+			}),
+		).toBeNull()
+		const [[rows]] = (await pool.query(
+			'SELECT COUNT(*) AS n FROM AI_User WHERE id = ?',
+			[records.identity.principalId],
+		)) as unknown as [[{ n: number }]]
+		expect(rows.n).toBe(1)
+		await deleteTestPrincipalRecords(database, records.identity.principalId)
 	})
 
 	it('is idempotent per runId and deletes only the synthetic principal', async () => {
