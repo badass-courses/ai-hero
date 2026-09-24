@@ -16,7 +16,12 @@ import {
 } from './invoice-settings'
 
 type StoreOptions = {
-	purchases?: { merchantChargeId: string; id: string; userId: string | null }[]
+	purchases?: {
+		merchantChargeId: string
+		id: string
+		userId: string | null
+		billingUserId?: string | null
+	}[]
 	managedPurchaseIds?: Record<string, string[]>
 	corruptReadback?: boolean
 	/**
@@ -42,6 +47,7 @@ function memoryDataSource(options: StoreOptions = {}) {
 				? {
 						id: purchase.id,
 						userId: purchase.userId,
+						billingUserId: purchase.billingUserId,
 						merchantChargeId: purchase.merchantChargeId,
 					}
 				: null
@@ -173,6 +179,24 @@ describe('saveInvoiceSettingsForViewer', () => {
 		)
 		expect(result.state).toBe('denied')
 		expect(rows.size).toBe(0)
+	})
+
+	it('preserves invoice editing for the original payer after access moves', async () => {
+		const { dataSource } = memoryDataSource({
+			purchases: [
+				{
+					merchantChargeId: CHARGE,
+					id: PURCHASE_ID,
+					userId: 'transferred_learner',
+					billingUserId: OWNER,
+				},
+			],
+		})
+		const result = await saveInvoiceSettingsForViewer(
+			{ merchantChargeId: CHARGE, viewerUserId: OWNER, input: INPUT },
+			dataSource,
+		)
+		expect(result.state).toBe('saved')
 	})
 
 	it('saves trimmed values for the purchase owner and verifies readback', async () => {

@@ -57,12 +57,15 @@ export function getManagedOrganizationIds(
 
 export function canViewPurchaseInvoice(
 	viewerUserId: string | null | undefined,
-	purchase: Pick<Purchase, 'id' | 'userId'>,
+	purchase: Pick<Purchase, 'id' | 'userId'> & {
+		billingUserId?: string | null
+	},
 	managedTeamPurchases: Pick<Purchase, 'id'>[],
 ): boolean {
 	if (!viewerUserId) return false
 	return (
 		purchase.userId === viewerUserId ||
+		purchase.billingUserId === viewerUserId ||
 		managedTeamPurchases.some((managedPurchase) => managedPurchase.id === purchase.id)
 	)
 }

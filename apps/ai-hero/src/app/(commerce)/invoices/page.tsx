@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import LayoutClient from '@/components/layout-client'
-import { courseBuilderAdapter } from '@/db'
+import { getInvoicePurchasesForUser } from '@/lib/invoice-access'
 import { invoiceEditPath } from '@/lib/invoice-paths'
 import { getServerAuthSession } from '@/server/auth'
 
@@ -11,8 +11,7 @@ import { Button } from '@coursebuilder/ui'
 const Invoices = async () => {
 	const { session } = await getServerAuthSession()
 
-	const purchases =
-		(await courseBuilderAdapter.getPurchasesForUser(session?.user?.id)) || []
+	const purchases = await getInvoicePurchasesForUser(session?.user?.id)
 	return (
 		<LayoutClient withContainer>
 			<main className="container flex min-h-[calc(100vh-var(--nav-height))] flex-col px-5">

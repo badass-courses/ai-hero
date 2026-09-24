@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { env } from '@/env.mjs'
 import { verifySupportSignature } from '@/lib/support-signature'
 import {
+	completeSupportPurchaseTransfer,
+	inspectSupportPurchaseTransferCompletion,
+} from '@/purchase-transfer/support-complete'
+import {
 	initiateSupportPurchaseTransfer,
 	inspectSupportPurchaseTransfer,
 } from '@/purchase-transfer/support-initiate'
@@ -9,12 +13,19 @@ import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 import { z } from 'zod'
 
-/** Signed support invitation. This does not transfer the purchase yet.
- * The named recipient must sign in and accept before the existing completion
- * workflow can mark ownership and access as verified.
+/** Signed support purchase-transfer operator seam.
+ * Invitations preserve the recipient-acceptance flow. support_complete uses
+ * the same VERIFIED -> COMPLETED workflow after guarded buyer authorization.
  */
 const requestSchema = z.object({
-	mode: z.enum(['dry_run', 'invite']),
+	mode: z.enum([
+		'dry_run',
+		'invite',
+		'support_complete_dry_run',
+		'support_complete',
+		'support_complete_status',
+	]),
+	transferId: z.string().min(1).optional(),
 	purchaseId: z.string().min(1),
 	sourceUserId: z.string().min(1),
 	targetEmail: z.email(),
@@ -49,22 +60,58 @@ export const POST = withSkill(async (request: NextRequest) => {
 	if (!parsed.success)
 		return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
 
-	const { mode, purchaseId, sourceUserId, targetEmail, audit } = parsed.data
+	const { mode, transferId, purchaseId, sourceUserId, targetEmail, audit } =
+		parsed.data
 	const target = { purchaseId, sourceUserId, targetEmail }
-	const result = mode === 'dry_run'
-		? await inspectSupportPurchaseTransfer(target)
-		: await initiateSupportPurchaseTransfer(target)
-	await log.info('purchase_transfer.support_invite_result', {
+	let result
+	if (mode.startsWith('support_complete')) {
+		if (!transferId) {
+			return NextResponse.json(
+				{ state: 'invalid', reason: 'transfer_id_required' },
+				{ status: 400 },
+			)
+		}
+		const completionTarget = { ...target, transferId }
+		result =
+			mode === 'support_complete'
+				? await completeSupportPurchaseTransfer(completionTarget)
+				: await inspectSupportPurchaseTransferCompletion(completionTarget)
+	} else {
+		result =
+			mode === 'dry_run'
+				? await inspectSupportPurchaseTransfer(target)
+				: await initiateSupportPurchaseTransfer(target)
+	}
+	await log.info('purchase_transfer.support_result', {
 		purchaseId,
+		transferId: 'transferId' in result ? result.transferId : null,
 		mode,
 		state: result.state,
 		...audit,
 	})
-	if (result.state === 'ready' || result.state === 'invited') {
+	if (
+		result.state === 'ready' ||
+		result.state === 'invited' ||
+		result.state === 'completion_requested' ||
+		result.state === 'completed'
+	) {
 		return NextResponse.json({ state: result.state, transferId: result.transferId })
 	}
-	if (result.state === 'delivery_unknown') {
-		return NextResponse.json({ state: result.state, transferId: result.transferId }, { status: 502 })
+	if (
+		result.state === 'delivery_unknown' ||
+		result.state === 'completion_pending'
+	) {
+		return NextResponse.json(
+			{
+				state: result.state,
+				transferId: result.transferId,
+				...('reason' in result ? { reason: result.reason } : {}),
+			},
+			{ status: 202 },
+		)
 	}
-	return NextResponse.json({ state: result.state, reason: result.reason }, { status: 409 })
+	return NextResponse.json(
+		{ state: result.state, reason: result.reason },
+		{ status: 409 },
+	)
 })
