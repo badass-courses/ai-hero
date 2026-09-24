@@ -1,3 +1,5 @@
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
+
 import {
 	createLinkedActionRecords,
 	type CaptureMarketingRepository,
@@ -76,6 +78,16 @@ export async function recordValuePathAnswerProgression(args: {
 	sequenceExhaustionEnabled?: boolean
 	now?: string
 }): Promise<ValuePathAnswerProgressionResult> {
+	// A synthetic test principal's signed link renders, but its GET never
+	// records an answer, advances a path, or emits an event.
+	if (isSyntheticPrincipalId(args.token.contactId)) {
+		return {
+			status: 'skipped',
+			reason: 'synthetic-principal',
+			idempotentNoop: false,
+			reviewReasons: ['synthetic-principal'],
+		}
+	}
 	const now = args.now ?? new Date().toISOString()
 	const fields = args.answerPage.fields
 	const tokenEmailId = emailIdFromResourceId(args.token.emailResourceId)

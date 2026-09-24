@@ -3,6 +3,7 @@ import type {
 	DrovrEventsDeliver,
 	DrovrEventsDeliverBulk,
 } from '@/inngest/events/drovr'
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 
 import type { EvergreenPitchEntryResult } from './drovr-pitch-entry'
@@ -12,6 +13,7 @@ import {
 	resolveOwnedContactIds,
 } from './drovr-ownership-live'
 import {
+	drovrShadowFactContactId,
 	emitDrovrShadowEvents,
 	mapDrovrShadowFact,
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
@@ -115,6 +117,8 @@ export async function dispatchDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowDispatchOptions = {},
 ): Promise<'queued' | 'fallback' | 'nothing'> {
+	// Before the evergreen entry below writes anything for the contact.
+	if (isSyntheticPrincipalId(drovrShadowFactContactId(fact))) return 'nothing'
 	const evergreenEnabled =
 		options.evergreenEnabled ??
 		['true', '1'].includes(

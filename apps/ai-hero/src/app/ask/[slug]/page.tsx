@@ -7,6 +7,7 @@ import { emailListProvider } from '@/coursebuilder/email-list-provider'
 import { db } from '@/db'
 import { VALUE_PATH_ANSWER_SELECTED_EVENT } from '@/inngest/events/value-path'
 import { inngest } from '@/inngest/inngest.server'
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import { redis } from '@/server/redis-client'
 import { log } from '@/server/logger'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
@@ -164,8 +165,11 @@ export default async function ValuePathAnswerPage(props: {
 		answerPage.fields.emailId === 'email-7' ||
 		answerPage.fields.emailId === 'team-email-7'
 	let certificateEligibilityUnavailable = false
+	// A synthetic principal never persists a certificate share.
 	const certificateEligibility =
-		isCertificateAnswer && token.valid
+		isCertificateAnswer &&
+		token.valid &&
+		!isSyntheticPrincipalId(token.payload.contactId)
 			? await checkSkillsWorkflowValuePathCertificateEligibility({
 					contactId: token.payload.contactId,
 				}).catch(async (error) => {
@@ -240,7 +244,12 @@ export default async function ValuePathAnswerPage(props: {
 				</div>
 				<div className="hidden h-full w-full sm:flex" />
 				<div className="border-border bg-size-[12px_12px] hidden h-full w-full border-y bg-transparent bg-[radial-gradient(rgba(0,0,0,0.08)_1px,transparent_1px)] sm:flex dark:bg-[radial-gradient(rgba(255,255,255,0.08)_1px,transparent_1px)]" />
-				<main className="border-border bg-card relative col-span-4 mx-auto flex w-full shrink-0 justify-center p-5 pt-10 sm:border sm:p-10">
+				<main
+					className="border-border bg-card relative col-span-4 mx-auto flex w-full shrink-0 justify-center p-5 pt-10 sm:border sm:p-10"
+					// Link tests assert this, not the page copy: an invalid pt still
+					// renders the generic answer page. Carries no token or contact id.
+					data-value-path-token={token.valid ? 'valid' : 'invalid'}
+				>
 					<Plus
 						className="absolute -left-2 -top-2 hidden size-4 opacity-50 sm:block"
 						strokeWidth={1}

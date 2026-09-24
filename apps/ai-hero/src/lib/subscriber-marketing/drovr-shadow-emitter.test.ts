@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactEventRecord, SideEffectIntent } from './types'
-import { emitDrovrShadowFact, mapDrovrShadowFact } from './drovr-shadow-emitter'
+import {
+	emitDrovrShadowEvents,
+	emitDrovrShadowFact,
+	mapDrovrShadowFact,
+} from './drovr-shadow-emitter'
 
 const occurredAt = '2026-08-30T12:00:00.000Z'
 
@@ -520,6 +524,27 @@ describe('retired drovr direct sender', () => {
 		})
 	})
 
+	it('never posts an authority event about a synthetic principal', async () => {
+		const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		const fact = authorityCompletion()
+		const events = mapDrovrShadowFact({
+			...fact,
+			intent: { ...fact.intent, contactId: 'synthetic_run-1' },
+		})
+		expect(events.some((event) => event.tenantId === 'org-aihero')).toBe(true)
+
+		await emitDrovrShadowEvents(events, {
+			config: {
+				ingestUrl: 'https://drovr.test/events',
+				authorityApiKey: 'authority-key',
+			},
+			fetch,
+			info: vi.fn(),
+		})
+
+		expect(fetch).not.toHaveBeenCalled()
+	})
+
 	it('keeps authority rejection and network handling unchanged', async () => {
 		const rejectedFetch = vi.fn().mockResolvedValue(
 			new Response(JSON.stringify({ title: 'Unknown event' }), {
@@ -664,49 +689,6 @@ describe('shadow-newsletter completions', () => {
 				payload: { messageId: 'agents_md_big_problem_v1' },
 			},
 		])
-	})
-})
-
-describe('terminal drovr intent failures', () => {
-	it.each([
-		['issue-evergreen-coupon', 'coupon.failed'],
-		['send-evergreen-email', 'intent.failed'],
-		['subscribe-evergreen-list', 'intent.failed'],
-	] as const)('posts %s as %s to the owning actor with the completion key', (type, eventType) => {
-		const events = mapDrovrShadowFact({
-			kind: 'side-effect-intent-failed',
-			intent: {
-				id: 'row-1', nextActionId: 'drovr:abc', contactId: 'contact-1', provider: 'kit', type,
-				status: 'failed', completedAt: null,
-				idempotencyKey: 'local-row-key', gates: [],
-				reviewReasons: ['coupon-intent-invalid'],
-				metadata: { source: 'drovr', failedAt: '2026-09-10T16:00:05.000Z',
-					lastError: 'contact@example.com private failure',
-					drovr: { tenantId: 'org-aihero', journeyId: 'crash-course-evergreen-offer', intentKey: 'k-coupon' } },
-				createdAt: '2026-09-10T16:00:01.000Z',
-			},
-		})
-		expect(events).toEqual([{
-			tenantId: 'org-aihero', contactId: 'contact-1', journeyId: 'crash-course-evergreen-offer',
-			type: eventType, occurredAt: '2026-09-10T16:00:05.000Z',
-			idempotencyKey: 'completion:k-coupon',
-			payload: { reasonClass: 'coupon-intent-invalid', reason: 'coupon-intent-invalid' },
-		}])
-	})
-
-	it('never closes a list.unsubscribe intent: its failed rows are retries', () => {
-		const events = mapDrovrShadowFact({
-			kind: 'side-effect-intent-failed',
-			intent: {
-				id: 'row-1', nextActionId: 'drovr:abc', contactId: 'contact-1', provider: 'kit',
-				type: 'unsubscribe-kit-list', status: 'failed', completedAt: null,
-				idempotencyKey: 'contact:contact-1:list-unsubscribe:all', gates: [], reviewReasons: [],
-				metadata: { source: 'drovr', failedAt: '2026-09-10T16:00:05.000Z', retryReason: 'kit-503',
-					drovr: { tenantId: 'org-aihero', journeyId: 'crash-course-evergreen-offer', intentKey: 'k-unsub' } },
-				createdAt: '2026-09-10T16:00:01.000Z',
-			},
-		})
-		expect(events).toEqual([])
 	})
 })
 

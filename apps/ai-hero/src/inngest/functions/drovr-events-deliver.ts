@@ -25,6 +25,7 @@ import {
 	isShadowNewsletterBirth,
 } from '@/lib/subscriber-marketing/drovr-ownership'
 import { resolveOwnedContactIds } from '@/lib/subscriber-marketing/drovr-ownership-live'
+import { withoutSyntheticContacts } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
 
@@ -64,10 +65,18 @@ const discardShadowTenantEvents = async (
 	events: readonly DrovrShadowEvent[],
 	deliveryLane: 'live' | 'bulk',
 ): Promise<{ events: DrovrShadowEvent[]; discarded: number }> => {
-	const deliverable = events.filter(
+	// Synthetic test principals never reach drovr: no actor born or advanced.
+	const real = withoutSyntheticContacts(events)
+	if (real.discarded > 0) {
+		await log.info('drovr.shadow.synthetic_discarded', {
+			count: real.discarded,
+			deliveryLane,
+		})
+	}
+	const deliverable = real.kept.filter(
 		(event) => event.tenantId !== DROVR_SHADOW_TENANT_ID,
 	)
-	const discarded = events.length - deliverable.length
+	const discarded = real.kept.length - deliverable.length
 	if (discarded > 0) {
 		await log.info('drovr.shadow.events_discarded', {
 			tenantId: DROVR_SHADOW_TENANT_ID,
@@ -75,7 +84,7 @@ const discardShadowTenantEvents = async (
 			deliveryLane,
 		})
 	}
-	return { events: deliverable, discarded }
+	return { events: deliverable, discarded: discarded + real.discarded }
 }
 
 // Facts about drovr-owned contacts also reach the authority tenant.
