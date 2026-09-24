@@ -117,6 +117,77 @@ function valuePathEmailIntents(
 	)
 }
 
+describe('Skills newsletter path entry: held signup (phase 1 split)', () => {
+	const input = {
+		kitSubscriberId: 'kit-held',
+		email: 'Held@Example.com',
+		formId: 9376133,
+		source: 'aihero_skills_page' as const,
+		subscribedAt,
+	}
+	const held = new Set(['held@example.com'])
+
+	it('captures the contact and nothing else: no Email 0, no drovr assignment', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+			drovrOwnership: { percent: 100, emails: new Set(), holdEmails: held },
+		})
+		expect(result.status).toBe('held')
+		expect(result.contactId).toBeTruthy()
+		expect(result.entry.counts).toMatchObject({ planned: 0, blocked: 0 })
+		expect(
+			Array.from(repository.contactEvents.values()).map((event) => event.eventType),
+		).toEqual(['skills-newsletter.subscribed'])
+		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+	})
+
+	it('enters the held contact as drovr-owned when its signup is replayed off the hold', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const first = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+			drovrOwnership: { percent: 0, emails: new Set(), holdEmails: held },
+		})
+		const replay = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input: { ...input, source: 'signup-gap-replay' },
+			drovrOwnership: { percent: 0, emails: held, holdEmails: new Set() },
+		})
+		expect(replay).toMatchObject({ status: 'drovr-owned', contactId: first.contactId })
+		expect(
+			Array.from(repository.contactEvents.values()).filter(
+				(event) => event.eventType === 'journey.owner.assigned',
+			),
+		).toHaveLength(1)
+		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+	})
+
+	it('keeps an address on both lists held', async () => {
+		const repository = new InMemorySubscriberMarketingRepository()
+		const result = await enterSkillsNewsletterSubscriber({
+			repository,
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+			drovrOwnership: { percent: 0, emails: held, holdEmails: held },
+		})
+		expect(result.status).toBe('held')
+		expect(
+			Array.from(repository.contactEvents.values()).some(
+				(event) => event.eventType === 'journey.owner.assigned',
+			),
+		).toBe(false)
+	})
+})
+
 describe('Skills newsletter path entry: drovr ownership', () => {
 	const input = {
 		kitSubscriberId: 'kit-9',
