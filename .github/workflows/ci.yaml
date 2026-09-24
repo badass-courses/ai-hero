@@ -42,3 +42,45 @@ jobs:
 
       - name: Checkout recovery patch contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
+
+      - name: Workshop pricing actor contract
+        run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts "src/app/(content)/workshops/_components/workshop-pricing.mounted.test.tsx"
+
+  pricing-e2e:
+    # Real browser, real workshop CTAs and pricing actor; every API response is
+    # an in-memory Playwright route fixture (no DB, coupon, session or Stripe).
+    name: Workshop pricing e2e
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "pnpm_cache_dir=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.pnpm_cache_dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter ai-hero exec playwright install --with-deps chromium
+
+      - name: Workshop pricing e2e
+        run: pnpm --filter ai-hero test:e2e:pricing

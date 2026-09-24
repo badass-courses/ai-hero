@@ -1,0 +1,35 @@
+diff --git a/dist/pricing/pricing-context.js b/dist/pricing/pricing-context.js
+index da3c761ac1bad945c87014727e576d9b74f1210f..42760ed5ce579b6a72103178fea673ece87ac0c7 100644
+--- a/dist/pricing/pricing-context.js
++++ b/dist/pricing/pricing-context.js
+@@ -43,7 +43,11 @@ export const PricingProvider = ({ children, ...props }) => {
+         (pricingData.quantityAvailable || 0) <= 0);
+     return (_jsx(PricingContext.Provider, { value: {
+             ...state.context,
+-            status: state.value === 'Ready To Buy' ? 'success' : 'pending',
++            status: state.value === 'Ready To Buy'
++                ? 'success'
++                : state.value === 'Price Load Failed'
++                    ? 'error'
++                    : 'pending',
+             toggleBuyingMoreSeats,
+             toggleTeamPurchase,
+             updateQuantity,
+diff --git a/src/pricing/pricing-context.tsx b/src/pricing/pricing-context.tsx
+index 740f8e934599fa4705cd09e8da0d5cfcabcbf4b8..46c85aede1d74675c802b5f607271df6d50e69d4 100644
+--- a/src/pricing/pricing-context.tsx
++++ b/src/pricing/pricing-context.tsx
+@@ -79,7 +79,12 @@ export const PricingProvider = ({
+ 		<PricingContext.Provider
+ 			value={{
+ 				...state.context,
+-				status: state.value === 'Ready To Buy' ? 'success' : 'pending',
++				status:
++					state.value === 'Ready To Buy'
++						? 'success'
++						: state.value === 'Price Load Failed'
++							? 'error'
++							: 'pending',
+ 				toggleBuyingMoreSeats,
+ 				toggleTeamPurchase,
+ 				updateQuantity,

@@ -201,24 +201,38 @@ const Buy = ({
 	// the site has one accent and it is not blue, and permanent motion is not
 	// how a resting button earns attention (DESIGN rules 7 and 13).
 	return (
-		<Pricing.BuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
-			<span data-label="">Buy Now</span>
-			<span data-divider="" className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px" />
-			<span className="flex items-baseline font-mono text-[13px] font-medium">
-				{status === 'pending' ? (
-					<Spinner className="size-4" />
-				) : (
-					<>
-						<span className="tabular-nums">{formatUsd(finalPrice).dollars}</span>
-						{savings > 0 && !isSoldOut && (
-							<span className="ml-1.5 font-normal line-through opacity-60">
-								{formatUsd(fullPrice).dollars}
+		<>
+			<Pricing.BuyButton className={cn(WORKSHOP_CTA_BUTTON, className)}>
+				<span data-label="">Buy Now</span>
+				<span
+					data-divider=""
+					className="bg-accent-fill-foreground/25 mx-2.5 h-4 w-px"
+				/>
+				<span className="flex items-baseline font-mono text-[13px] font-medium">
+					{status === 'error' ? (
+						<span>Price unavailable</span>
+					) : status === 'pending' ? (
+						<Spinner className="size-4" />
+					) : (
+						<>
+							<span className="tabular-nums">
+								{formatUsd(finalPrice).dollars}
 							</span>
-						)}
-					</>
-				)}
-			</span>
-		</Pricing.BuyButton>
+							{savings > 0 && !isSoldOut && (
+								<span className="ml-1.5 font-normal line-through opacity-60">
+									{formatUsd(fullPrice).dollars}
+								</span>
+							)}
+						</>
+					)}
+				</span>
+			</Pricing.BuyButton>
+			{status === 'error' && (
+				<p role="alert" className="text-muted-foreground mt-2 text-sm">
+					Price unavailable. Reload to try again.
+				</p>
+			)}
+		</>
 	)
 }
 
