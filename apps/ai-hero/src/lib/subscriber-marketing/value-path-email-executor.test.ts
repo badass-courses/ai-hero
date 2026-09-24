@@ -533,11 +533,9 @@ describe('value path email executor after Kit answers', () => {
 		verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
 		verifiedKitSequenceIds: ['2757205'],
 		allowedActions: ['send-path-emails'],
-	} as const
-	const run = (args: {
-		updateSideEffectIntent: ReturnType<typeof vi.fn>
-		subscribeToList: ReturnType<typeof vi.fn>
-	}) =>
+	} satisfies Parameters<typeof executeValuePathEmailIntent>[0]['config']
+	// Mock signatures are narrower than the ports; the ports are what run reads.
+	const run = (args: { updateSideEffectIntent: unknown; subscribeToList: unknown }) =>
 		executeValuePathEmailIntent({
 			repository: {
 				findPendingValuePathEmailSideEffectIntents: vi.fn(),
@@ -553,9 +551,9 @@ describe('value path email executor after Kit answers', () => {
 					reviewSignals: [],
 					humanReview: false,
 				}),
-				updateSideEffectIntent: args.updateSideEffectIntent,
+				updateSideEffectIntent: args.updateSideEffectIntent as never,
 			},
-			emailListProvider: { subscribeToList: args.subscribeToList },
+			emailListProvider: { subscribeToList: args.subscribeToList as never },
 			intent: valuePathIntent(),
 			now: '2026-07-17T12:00:00.000Z',
 			config: liveConfig,
