@@ -124,6 +124,9 @@ async function loadGuardedContext(input: SupportCompleteInput) {
 	if (!transfer.targetUserId) {
 		return { ok: false as const, reason: 'transfer_target_missing' }
 	}
+	if (transfer.expiresAt && transfer.expiresAt.getTime() <= Date.now()) {
+		return { ok: false as const, reason: 'transfer_expired' }
+	}
 	if (!['INITIATED', 'VERIFIED', 'COMPLETED'].includes(transfer.transferState)) {
 		return { ok: false as const, reason: 'transfer_not_completable' }
 	}
