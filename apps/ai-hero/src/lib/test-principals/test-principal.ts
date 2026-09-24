@@ -17,6 +17,8 @@ export const MAX_LIVE_TEST_PRINCIPALS = 5
 /** Auth.js email provider id; its callback is the one-time sign-in route. */
 export const TEST_PRINCIPAL_SIGN_IN_PROVIDER = 'postmark'
 export const MAGIC_LINK_CONFIRM_PATH = '/api/auth/magic-link/confirm'
+/** @coursebuilder/adapter-drizzle useVerificationToken's multi-click grace. */
+export const MAGIC_LINK_REUSE_WINDOW_MS = 90_000
 
 export const TestPrincipalRequestSchema = z
 	.object({

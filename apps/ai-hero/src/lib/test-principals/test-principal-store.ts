@@ -19,6 +19,7 @@ import {
 import { contactEmailWriteValues } from '@/lib/subscriber-marketing/contact-email-equivalence'
 
 import {
+	MAGIC_LINK_REUSE_WINDOW_MS,
 	MAX_LIVE_TEST_PRINCIPALS,
 	TEST_PRINCIPAL_TTL_MS,
 	testPrincipalIdentity,
@@ -143,6 +144,12 @@ export async function mintTestPrincipalRecords(
 			identifier: identity.email,
 			token: args.tokenHash,
 			expires: args.tokenExpires,
+			// CourseBuilder's adapter keeps a magic link reusable for 90s after
+			// createdAt (email scanners click first). A test principal's link is
+			// one-time: start it past that window so its first use consumes it.
+			createdAt: new Date(
+				args.now.getTime() - MAGIC_LINK_REUSE_WINDOW_MS - 1_000,
+			),
 		})
 		return {
 			status: reusable ? 'existing' : 'minted',
