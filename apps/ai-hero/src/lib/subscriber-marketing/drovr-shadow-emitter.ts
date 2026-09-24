@@ -334,8 +334,19 @@ function mapContactEvent(event: ContactEventRecord): DrovrShadowEvent[] {
 	}
 }
 
+// Only these rows fail terminally. A failed list.unsubscribe row is a retry
+// (drovr-list-unsubscribe.ts), and a failure event would close its intent.
+const TERMINALLY_FAILING_INTENT_TYPES: ReadonlySet<string> = new Set([
+	'issue-evergreen-coupon',
+	'send-evergreen-email',
+	'subscribe-evergreen-list',
+	'send-shadow-newsletter-email',
+	'send-value-path-email',
+])
+
 function mapFailedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 	if (intent.provider !== 'kit' || intent.status !== 'failed') return []
+	if (!TERMINALLY_FAILING_INTENT_TYPES.has(intent.type)) return []
 	const owner = intent.metadata.drovr
 	if (!owner || typeof owner !== 'object') return []
 	const record = owner as Record<string, unknown>

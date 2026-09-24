@@ -693,6 +693,21 @@ describe('terminal drovr intent failures', () => {
 			payload: { reasonClass: 'coupon-intent-invalid', reason: 'coupon-intent-invalid' },
 		}])
 	})
+
+	it('never closes a list.unsubscribe intent: its failed rows are retries', () => {
+		const events = mapDrovrShadowFact({
+			kind: 'side-effect-intent-failed',
+			intent: {
+				id: 'row-1', nextActionId: 'drovr:abc', contactId: 'contact-1', provider: 'kit',
+				type: 'unsubscribe-kit-list', status: 'failed', completedAt: null,
+				idempotencyKey: 'contact:contact-1:list-unsubscribe:all', gates: [], reviewReasons: [],
+				metadata: { source: 'drovr', failedAt: '2026-09-10T16:00:05.000Z', retryReason: 'kit-503',
+					drovr: { tenantId: 'org-aihero', journeyId: 'crash-course-evergreen-offer', intentKey: 'k-unsub' } },
+				createdAt: '2026-09-10T16:00:01.000Z',
+			},
+		})
+		expect(events).toEqual([])
+	})
 })
 
 describe('evergreen coupon completions', () => {
