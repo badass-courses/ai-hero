@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SideEffectIntent } from './types'
+
+const dispatchMock = vi.hoisted(() => vi.fn())
+vi.mock('./drovr-shadow-dispatch', () => ({
+	dispatchDrovrShadowFactSafely: dispatchMock,
+}))
 import {
 	buildValuePathEmailPersonalization,
 	executePendingValuePathEmailIntents,
@@ -513,6 +518,97 @@ describe('value path email executor', () => {
 				completedAt,
 				metadata: expect.objectContaining({ completedAt }),
 			}),
+		)
+	})
+})
+
+describe('value path email executor after Kit answers', () => {
+	const liveConfig = {
+		mode: 'scoped-live',
+		allowWrite: true,
+		allowlistedContactIds: ['contact-1'],
+		allowlistedKitSubscriberIds: ['kit-1'],
+		allowlistedEmails: ['learner@example.com'],
+		enabledValuePathSlugs: ['ai-hero-skills-workflow'],
+		verifiedEmailResourceIds: ['ai-hero-skills-workflow.email-6'],
+		verifiedKitSequenceIds: ['2757205'],
+		allowedActions: ['send-path-emails'],
+	} as const
+	const run = (args: {
+		updateSideEffectIntent: ReturnType<typeof vi.fn>
+		subscribeToList: ReturnType<typeof vi.fn>
+	}) =>
+		executeValuePathEmailIntent({
+			repository: {
+				findPendingValuePathEmailSideEffectIntents: vi.fn(),
+				findContactById: vi.fn().mockResolvedValue({
+					id: 'contact-1',
+					email: 'learner@example.com',
+					name: 'Learner',
+				}),
+				findCurrentContactState: vi.fn().mockResolvedValue({
+					id: 'state-1',
+					contactId: 'contact-1',
+					lifecycle: 'nurture-ready',
+					reviewSignals: [],
+					humanReview: false,
+				}),
+				updateSideEffectIntent: args.updateSideEffectIntent,
+			},
+			emailListProvider: { subscribeToList: args.subscribeToList },
+			intent: valuePathIntent(),
+			now: '2026-07-17T12:00:00.000Z',
+			config: liveConfig,
+		})
+
+	it('never fails the intent terminally when Kit accepted and the completion write throws', async () => {
+		dispatchMock.mockClear()
+		// Only the completion write fails; a later failed-row write would succeed,
+		// which is exactly how a terminal failure used to slip through.
+		const updateSideEffectIntent = vi.fn(
+			async (id: string, update: { status: string }) => {
+				if (update.status === 'completed') {
+					throw new Error('Connection lost: The server closed the connection.')
+				}
+				return { ...valuePathIntent(), ...update, id }
+			},
+		)
+		const result = await run({
+			updateSideEffectIntent,
+			subscribeToList: vi.fn().mockResolvedValue({ subscriptionId: 'kit-1' }),
+		})
+		// The email went out; drovr must retry (and read completion back), never
+		// fold intent.failed and strand the actor in email0.pending.
+		expect(result.status).toBe('retryable-failed')
+		expect(updateSideEffectIntent).not.toHaveBeenCalledWith(
+			'intent-1',
+			expect.objectContaining({ status: 'failed' }),
+		)
+		expect(dispatchMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'side-effect-intent-failed' }),
+		)
+	})
+
+	it('still fails terminally when Kit refuses the enrollment', async () => {
+		dispatchMock.mockClear()
+		const updateSideEffectIntent = vi.fn(async (id: string, update: object) => ({
+			...valuePathIntent(),
+			...update,
+			id,
+		}))
+		const result = await run({
+			updateSideEffectIntent,
+			subscribeToList: vi
+				.fn()
+				.mockRejectedValue(new Error('Kit API error 422: subscriber is invalid')),
+		})
+		expect(result.status).toBe('failed')
+		expect(updateSideEffectIntent).toHaveBeenCalledWith(
+			'intent-1',
+			expect.objectContaining({ status: 'failed' }),
+		)
+		expect(dispatchMock).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'side-effect-intent-failed' }),
 		)
 	})
 })

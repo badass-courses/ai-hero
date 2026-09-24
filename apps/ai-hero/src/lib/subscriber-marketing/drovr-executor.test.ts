@@ -469,6 +469,25 @@ describe('drovr executor: the synchronous send', () => {
 		})
 	})
 
+	it('hands the claim back and answers retry when Kit accepted but the completion write threw', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		let claimedStatus: string | undefined
+		const result = await acceptDrovrIntent({
+			repository, intent: intent(), now,
+			sendNow: async (row) => {
+				claimedStatus = repository.intents.get(row.id)?.status
+				// The executor wrote nothing: the email went out, the DB write threw.
+				return { status: 'retryable-failed', intentId: row.id, reviewReasons: ['kit-accepted-completion-write-failed'] }
+			},
+		})
+		expect(claimedStatus).toBe('sending')
+		expect(result).toMatchObject({ status: 'retry', reason: 'kit-accepted-completion-write-failed' })
+		expect(result).not.toHaveProperty('reasonClass')
+		const [row] = [...repository.intents.values()]
+		expect(row?.status).toBe('pending')
+	})
+
 	it('answers a terminal inline failure as failed without a completion', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())

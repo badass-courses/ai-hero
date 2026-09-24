@@ -481,6 +481,9 @@ async function sendNowIfAccepted(
 		case 'failed':
 			return terminalFailureResult(after)
 		case 'retryable-failed':
+			// Kit accepted but the completion write threw: the row is still ours.
+			// Hand it back so the re-ask resends (a no-op) and records completion.
+			if (after.status === 'sending') await releaseClaim(args.repository, row)
 			return {
 				status: 'retry',
 				intentId: result.intentId,
@@ -488,7 +491,10 @@ async function sendNowIfAccepted(
 					stringField(after.metadata.nextRetryAt),
 					now,
 				),
-				reason: stringField(after.metadata.retryReason) ?? 'kit-retryable',
+				reason:
+					stringField(after.metadata.retryReason) ??
+					outcome.reviewReasons[0] ??
+					'kit-retryable',
 			}
 		default:
 			if (after.status === 'sending') await releaseClaim(args.repository, row)
