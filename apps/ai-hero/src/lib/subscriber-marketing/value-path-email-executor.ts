@@ -88,6 +88,10 @@ export type ValuePathEmailExecutionResult =
 
 const DEFAULT_MAX_RETRY_ATTEMPTS = 5
 
+/** Kit enrolled the contact but the completed-row write threw. */
+export const KIT_ACCEPTED_COMPLETION_WRITE_FAILED =
+	'kit-accepted-completion-write-failed'
+
 export type ValuePathEmailShadowObserver = (observation: {
 	courseEntryEventId: string
 	legacyIntentId: string
@@ -242,6 +246,8 @@ export async function executeValuePathEmailIntent(args: {
 		return { status: 'blocked', intentId: intent.id, reviewReasons }
 	}
 
+	// Once Kit has enrolled the contact, nothing after it is a Kit failure.
+	let kitAccepted = false
 	try {
 		const personalization = buildValuePathEmailPersonalization({
 			contactId: intent.contactId,
@@ -291,6 +297,7 @@ export async function executeValuePathEmailIntent(args: {
 			} as Parameters<EmailListConfig['subscribeToList']>[0]['user'],
 			fields: personalization.fields,
 		})
+		kitAccepted = true
 		const completedAt = args.now ?? new Date().toISOString()
 		const completedMetadata = {
 			...intent.metadata,
@@ -356,6 +363,17 @@ export async function executeValuePathEmailIntent(args: {
 			email: email!,
 		}
 	} catch (error) {
+		if (kitAccepted) {
+			// The email is going out; only recording it failed. Leave the row
+			// executable: the next run re-adds (a no-op for a sequence) and
+			// records completion. A terminal failure here would close drovr's
+			// intent with no transition while the contact got the email.
+			return {
+				status: 'retryable-failed',
+				intentId: intent.id,
+				reviewReasons: [KIT_ACCEPTED_COMPLETION_WRITE_FAILED],
+			}
+		}
 		const message = error instanceof Error ? error.message : String(error)
 		const retry = classifyKitEnrollmentError(error)
 		const previousAttempts = numberField(intent.metadata.retryAttemptCount) ?? 0
@@ -374,7 +392,7 @@ export async function executeValuePathEmailIntent(args: {
 		const nextRetryAt = canRetry
 			? new Date(Date.parse(now) + retryDelayMs).toISOString()
 			: undefined
-		await args.repository.updateSideEffectIntent(intent.id, {
+		const failed = await args.repository.updateSideEffectIntent(intent.id, {
 			status: 'failed',
 			gates,
 			reviewReasons: [
@@ -393,6 +411,12 @@ export async function executeValuePathEmailIntent(args: {
 				...(nextRetryAt ? { nextRetryAt } : {}),
 			},
 		})
+		if (!canRetry) {
+			dispatchDrovrShadowFactSafely({
+				kind: 'side-effect-intent-failed',
+				intent: failed,
+			})
+		}
 		return {
 			status: canRetry ? 'retryable-failed' : 'failed',
 			intentId: intent.id,

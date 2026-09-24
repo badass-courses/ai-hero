@@ -237,6 +237,7 @@ describe('executePendingEvergreenSends', () => {
 
 	it('marks the row failed once the attempt budget is spent', async () => {
 		const repository = new FakeRepository()
+		const dispatched: SideEffectIntent[] = []
 		repository.contacts.set('contact-1', contact())
 		repository.intents.set(
 			'row-1',
@@ -253,9 +254,12 @@ describe('executePendingEvergreenSends', () => {
 				throw new Error('still down')
 			},
 			limit: 10,
-			dispatch: () => {},
+			now: () => now,
+			dispatch: (intent) => dispatched.push(intent),
 		})
 		expect(results[0]).toMatchObject({ status: 'failed', intentId: 'row-1' })
+		expect(dispatched).toEqual([repository.intents.get('row-1')])
+		expect(dispatched[0]?.metadata.failedAt).toBe(now)
 		expect(repository.intents.get('row-1')).toMatchObject({
 			status: 'failed',
 			reviewReasons: ['evergreen-send-exhausted'],

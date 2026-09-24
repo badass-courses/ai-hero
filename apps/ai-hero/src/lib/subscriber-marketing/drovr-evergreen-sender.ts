@@ -100,7 +100,9 @@ export async function executePendingEvergreenSends(args: {
 		args.dispatch ??
 		((intent: SideEffectIntent) =>
 			dispatchDrovrShadowFactSafely({
-				kind: 'side-effect-intent-completed',
+				kind: intent.status === 'failed'
+					? 'side-effect-intent-failed'
+					: 'side-effect-intent-completed',
 				intent,
 			}))
 	const rows = await args.repository.findPendingSideEffectIntentsByType(
@@ -129,11 +131,11 @@ async function sendOne(input: {
 	const { row, args, now, dispatch } = input
 	const kitSequenceId = stringField(row.metadata.kitSequenceId)
 	if (!kitSequenceId) {
-		return await giveUp(row, args.repository, now, 'kit-sequence-missing')
+		return await giveUp(row, args.repository, now, 'kit-sequence-missing', dispatch)
 	}
 	const contact = await args.repository.findContactById(row.contactId)
 	if (!contact?.email) {
-		return await giveUp(row, args.repository, now, 'contact-email-missing')
+		return await giveUp(row, args.repository, now, 'contact-email-missing', dispatch)
 	}
 	const attempts = numberField(row.metadata.attempts) + 1
 	const unclaimed = row.metadata
@@ -162,23 +164,25 @@ async function sendOne(input: {
 		const message = error instanceof Error ? error.message : String(error)
 		const failure = kitFailureVerdict(error)
 		if (failure.verdict === 'terminal') {
-			await args.repository.updateSideEffectIntent(row.id, {
+			const failed = await args.repository.updateSideEffectIntent(row.id, {
 				status: 'failed',
 				completedAt: null,
 				gates: row.gates,
 				reviewReasons: [...row.reviewReasons, `kit-${failure.code}`],
-				metadata: { ...unclaimed, attempts, lastError: message },
+				metadata: { ...unclaimed, attempts, lastError: message, failedAt: now },
 			})
+			dispatch(failed)
 			return { status: 'failed', intentId: row.id, error: message }
 		}
 		if (attempts >= EVERGREEN_SEND_MAX_ATTEMPTS) {
-			await args.repository.updateSideEffectIntent(row.id, {
+			const failed = await args.repository.updateSideEffectIntent(row.id, {
 				status: 'failed',
 				completedAt: null,
 				gates: row.gates,
 				reviewReasons: [...row.reviewReasons, 'evergreen-send-exhausted'],
-				metadata: { ...unclaimed, attempts, lastError: message },
+				metadata: { ...unclaimed, attempts, lastError: message, failedAt: now },
 			})
+			dispatch(failed)
 			return { status: 'failed', intentId: row.id, error: message }
 		}
 		// Kit did not accept the add (or we could not tell); a re-add is a no-op
@@ -226,15 +230,17 @@ async function isOwnedShadowNewsletterHandoff(
 async function giveUp(
 	row: SideEffectIntent,
 	repository: EvergreenSenderRepository,
-	_now: string,
+	now: string,
 	reason: string,
+	dispatch: (intent: SideEffectIntent) => void,
 ): Promise<EvergreenSendResult> {
-	await repository.updateSideEffectIntent(row.id, {
+	const failed = await repository.updateSideEffectIntent(row.id, {
 		status: 'failed',
 		completedAt: null,
 		gates: row.gates,
 		reviewReasons: [...row.reviewReasons, reason],
-		metadata: { ...row.metadata, lastError: reason },
+		metadata: { ...row.metadata, lastError: reason, failedAt: now },
 	})
+	dispatch(failed)
 	return { status: 'failed', intentId: row.id, error: reason }
 }

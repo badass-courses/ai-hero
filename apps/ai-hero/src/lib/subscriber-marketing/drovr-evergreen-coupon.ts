@@ -233,7 +233,9 @@ export async function executePendingEvergreenCoupons(args: {
 		args.dispatch ??
 		((intent: SideEffectIntent) =>
 			dispatchDrovrShadowFactSafely({
-				kind: 'side-effect-intent-completed',
+				kind: intent.status === 'failed'
+					? 'side-effect-intent-failed'
+					: 'side-effect-intent-completed',
 				intent,
 			}))
 	const rows = await args.repository.findPendingSideEffectIntentsByType(
@@ -258,13 +260,14 @@ async function issueOne(input: {
 }): Promise<CouponIssueResult> {
 	const { row, args, now, dispatch } = input
 	const fail = async (reason: string, message = reason) => {
-		await args.repository.updateSideEffectIntent(row.id, {
+		const failed = await args.repository.updateSideEffectIntent(row.id, {
 			status: 'failed',
 			completedAt: null,
 			gates: row.gates,
 			reviewReasons: [...row.reviewReasons, reason],
-			metadata: { ...row.metadata, lastError: message },
+			metadata: { ...row.metadata, lastError: message, failedAt: now },
 		})
+		dispatch(failed)
 		return { status: 'failed', intentId: row.id, error: message } as const
 	}
 	const payload = CouponIssuePayload.safeParse(row.metadata.offer)
@@ -295,6 +298,8 @@ async function issueOne(input: {
 			attempts,
 			outcome.left,
 			args.repository,
+			now,
+			dispatch,
 		)
 	}
 	const { coupon } = outcome.right
@@ -350,20 +355,24 @@ async function settleAuthorityFailure(
 	attempts: number,
 	failure: EffectApplicationError,
 	repository: CouponIssuerRepository,
+	now: string,
+	dispatch: (intent: SideEffectIntent) => void,
 ): Promise<CouponIssueResult> {
 	const message = `${failure.type}:${failure.reason}`
 	const terminal =
 		failure.type !== 'EffectTransientUnavailable' ||
 		attempts >= EVERGREEN_COUPON_MAX_ATTEMPTS
-	await repository.updateSideEffectIntent(row.id, {
+	const settled = await repository.updateSideEffectIntent(row.id, {
 		status: terminal ? 'failed' : 'pending',
 		completedAt: null,
 		gates: row.gates,
 		reviewReasons: terminal
 			? [...row.reviewReasons, `coupon-${failure.type}`]
 			: row.reviewReasons,
-		metadata: { ...row.metadata, attempts, lastError: message },
+		metadata: { ...row.metadata, attempts, lastError: message,
+			...(terminal ? { failedAt: now } : {}) },
 	})
+	if (terminal) dispatch(settled)
 	return terminal
 		? { status: 'failed', intentId: row.id, error: message }
 		: { status: 'retry', intentId: row.id, attempts, error: message }
