@@ -43,6 +43,19 @@ jobs:
       - name: Checkout recovery patch contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/checkout-recovery-adopt.test.ts
 
+      # Every PR, no path filter: a coupon or checkout policy change must meet
+      # these unit contracts (the MySQL workflow runs only *.mysql.test.ts, so
+      # #274 shipped with coupon-authority.test.ts still asserting the old rule).
+      - name: Coupon and checkout policy unit suites
+        run: >-
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          src/lib/subscriber-marketing/evergreen-offer-journey
+          src/lib/exclusive-coupon-authorization.test.ts
+          src/lib/shareable-evergreen-coupon.test.ts
+          src/coursebuilder/server-computed-checkout-coupon.test.ts
+          src/lib/subscriber-marketing/drovr-evergreen-coupon.test.ts
+          src/trpc/api/routers/pricing.test.ts
+
       - name: Workshop pricing actor contract
         run: pnpm --filter ai-hero exec vitest run -c vitest.config.ts "src/app/(content)/workshops/_components/workshop-pricing.mounted.test.tsx"
 
