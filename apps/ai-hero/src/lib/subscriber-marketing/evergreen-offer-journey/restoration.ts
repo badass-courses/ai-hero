@@ -94,6 +94,13 @@ const DeadlineTimeZoneEvidenceSchema = z.discriminatedUnion('type', [
 		.strict(),
 ])
 
+/** Coupon authority shares the journey's zone evidence contract, not the
+ * skills-course entry fallback rule (which pins a single default zone). */
+export function restoreEvergreenDeadlineTimeZoneEvidence(input: unknown) {
+	const parsed = DeadlineTimeZoneEvidenceSchema.safeParse(input)
+	return parsed.success ? parsed.data : undefined
+}
+
 const CouponTermsSchema = z
 	.object({
 		productId: z.literal(EVERGREEN_OFFER_PRODUCT_ID),
