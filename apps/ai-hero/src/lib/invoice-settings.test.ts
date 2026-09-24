@@ -182,21 +182,30 @@ describe('saveInvoiceSettingsForViewer', () => {
 	})
 
 	it('preserves invoice editing for the original payer after access moves', async () => {
+		const transferredPurchase = {
+			merchantChargeId: CHARGE,
+			id: PURCHASE_ID,
+			userId: 'transferred_learner',
+			billingUserId: OWNER,
+		}
 		const { dataSource } = memoryDataSource({
-			purchases: [
-				{
-					merchantChargeId: CHARGE,
-					id: PURCHASE_ID,
-					userId: 'transferred_learner',
-					billingUserId: OWNER,
-				},
-			],
+			purchases: [transferredPurchase],
 		})
 		const result = await saveInvoiceSettingsForViewer(
 			{ merchantChargeId: CHARGE, viewerUserId: OWNER, input: INPUT },
 			dataSource,
 		)
 		expect(result.state).toBe('saved')
+
+		const recipientResult = await saveInvoiceSettingsForViewer(
+			{
+				merchantChargeId: CHARGE,
+				viewerUserId: transferredPurchase.userId,
+				input: INPUT,
+			},
+			dataSource,
+		)
+		expect(recipientResult.state).toBe('denied')
 	})
 
 	it('saves trimmed values for the purchase owner and verifies readback', async () => {

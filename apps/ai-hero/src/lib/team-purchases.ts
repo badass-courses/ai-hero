@@ -63,9 +63,9 @@ export function canViewPurchaseInvoice(
 	managedTeamPurchases: Pick<Purchase, 'id'>[],
 ): boolean {
 	if (!viewerUserId) return false
+	const billingOwnerId = purchase.billingUserId ?? purchase.userId
 	return (
-		purchase.userId === viewerUserId ||
-		purchase.billingUserId === viewerUserId ||
+		billingOwnerId === viewerUserId ||
 		managedTeamPurchases.some((managedPurchase) => managedPurchase.id === purchase.id)
 	)
 }

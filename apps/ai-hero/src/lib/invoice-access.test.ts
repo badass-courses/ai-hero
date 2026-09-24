@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	getPurchasesForUser: vi.fn(),
 	getPurchase: vi.fn(),
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
@@ -9,7 +8,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
-		getPurchasesForUser: mocks.getPurchasesForUser,
 		getPurchase: mocks.getPurchase,
 	},
 	db: {
@@ -31,13 +29,11 @@ vi.mock('drizzle-orm', () => ({
 
 import { getInvoicePurchasesForUser } from './invoice-access'
 
-const owned = { id: 'purchase-owned', status: 'Valid' }
 const transferred = { id: 'purchase-transferred', status: 'Valid' }
 
 describe('invoice purchase access', () => {
 	beforeEach(() => {
 		vi.resetAllMocks()
-		mocks.getPurchasesForUser.mockResolvedValue([owned])
 		mocks.findCharges.mockResolvedValue([{ id: 'charge-original-payer' }])
 		mocks.findPurchases.mockResolvedValue([{ id: transferred.id }])
 		mocks.getPurchase.mockResolvedValue(transferred)
@@ -45,14 +41,13 @@ describe('invoice purchase access', () => {
 
 	it('keeps a transferred purchase in the original payer invoice list', async () => {
 		await expect(getInvoicePurchasesForUser('payer-1')).resolves.toEqual([
-			owned,
 			transferred,
 		])
 	})
 
-	it('does not duplicate a purchase still owned by the payer', async () => {
-		mocks.findPurchases.mockResolvedValue([{ id: owned.id }])
-		mocks.getPurchase.mockResolvedValue(owned)
-		await expect(getInvoicePurchasesForUser('payer-1')).resolves.toEqual([owned])
+	it('does not expose a transferred invoice to the recipient', async () => {
+		mocks.findCharges.mockResolvedValue([])
+		await expect(getInvoicePurchasesForUser('learner-1')).resolves.toEqual([])
+		expect(mocks.findPurchases).not.toHaveBeenCalled()
 	})
 })

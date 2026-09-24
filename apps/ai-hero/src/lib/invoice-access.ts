@@ -10,21 +10,20 @@ const VISIBLE_PURCHASE_STATES = ['Valid', 'Refunded', 'Restricted']
  * Invoice ownership follows the payer, not the current learner.
  *
  * Purchase transfers intentionally move Purchase.userId so course access can
- * move. MerchantCharge.userId remains the original payer. This query returns
- * both sets and deduplicates them, preserving the payer's invoice list after a
- * transfer without granting them the learner's course access.
+ * move. MerchantCharge.userId remains the original payer. This query follows
+ * only that billing identity, preserving the payer's invoice list after a
+ * transfer without granting invoice visibility to the recipient.
  */
 export async function getInvoicePurchasesForUser(
 	userId: string | null | undefined,
 ): Promise<Purchase[]> {
 	if (!userId) return []
 
-	const owned = await courseBuilderAdapter.getPurchasesForUser(userId)
 	const chargeRows = await db.query.merchantCharge.findMany({
 		where: eq(merchantCharge.userId, userId),
 		columns: { id: true },
 	})
-	if (chargeRows.length === 0) return owned
+	if (chargeRows.length === 0) return []
 
 	const billedRows = await db.query.purchases.findMany({
 		where: inArray(
@@ -44,6 +43,6 @@ export async function getInvoicePurchasesForUser(
 	)
 
 	return Array.from(
-		new Map([...owned, ...billed].map((purchase) => [purchase.id, purchase])).values(),
+		new Map(billed.map((purchase) => [purchase.id, purchase])).values(),
 	)
 }
