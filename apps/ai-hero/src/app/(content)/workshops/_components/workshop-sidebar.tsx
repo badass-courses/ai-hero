@@ -14,10 +14,8 @@ import { ArrowUpRight } from 'lucide-react'
 import { Button, ScrollArea } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import {
-	InlineBuyButton,
-	type PricingComponentProps,
-} from './inline-mdx-pricing'
+import type { PricingComponentProps } from './inline-mdx-pricing'
+import { WorkshopInlineBuyButton } from './workshop-pricing'
 import { useWorkshopNavigation } from './workshop-navigation-provider'
 import { WORKSHOP_CTA_BUTTON } from './workshop-cta-button'
 import type { WorkshopPageProps } from './workshop-page-props'
@@ -261,19 +259,21 @@ export const WorkshopSidebarMobile = ({
 				) : (
 					workshop &&
 					pricingProps && (
-						<InlineBuyButton
-							className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
-							resource={workshop}
-							pricingDataLoader={pricingProps.pricingDataLoader}
-							pricingProps={pricingProps as any}
-							centered={false}
-							resourceType="workshop"
-							pricingOptions={{
-								withTitle: false,
-								withImage: false,
-							}}
-							regionalPricingNoteTargetId="buy"
-						/>
+						<React.Suspense fallback={null}>
+							<WorkshopInlineBuyButton
+								className="**:data-divider:mx-1 **:data-label:text-sm h-11 shrink-0 gap-2 px-5"
+								resource={workshop}
+								pricingDataLoader={pricingProps.pricingDataLoader}
+								pricingProps={pricingProps as any}
+								centered={false}
+								resourceType="workshop"
+								pricingOptions={{
+									withTitle: false,
+									withImage: false,
+								}}
+								regionalPricingNoteTargetId="buy"
+							/>
+						</React.Suspense>
 					)
 				)}
 			</div>

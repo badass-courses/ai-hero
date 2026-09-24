@@ -152,6 +152,15 @@ export type CaptureMarketingRepository = {
 		id: string,
 		args: { now: string; staleAfterMs: number },
 	): MaybePromise<boolean>
+	/** Finish only the claim that still owns a sending row; a stale sender cannot overwrite its successor. */
+	finishClaimedSideEffectIntent?(
+		id: string,
+		claimedAt: string,
+		patch: Pick<
+			SideEffectIntent,
+			'status' | 'gates' | 'reviewReasons' | 'metadata' | 'completedAt'
+		>,
+	): MaybePromise<SideEffectIntent | undefined>
 	newId(kind: string): string
 }
 

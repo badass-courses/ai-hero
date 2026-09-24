@@ -54,6 +54,7 @@ export type DrovrShadowEvent = {
 		| 'intent.failed'
 		| 'shadow.entered'
 		| 'list.subscribed'
+		| 'list.unsubscribed'
 		| 'email.completed'
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
@@ -66,6 +67,7 @@ export type DrovrShadowEvent = {
 		| { couponId: string; expiresAt: string }
 		| { reasonClass: string; reason: string }
 		| { list: string }
+		| { scope: 'course' | 'all' }
 		| { productId: string }
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload

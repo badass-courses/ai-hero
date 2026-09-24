@@ -282,7 +282,9 @@ integration('coupon executor guarded durable integration', () => {
 				verifiedUserId: f.userId,
 				boundAt,
 			})
-			// Prove the grant was usable before changing exactly one condition.
+			// The canonical link is usable until the coupon itself expires, is
+			// revoked (status 0), or is consumed. Deleting its old owner grant
+			// alone does not revoke a shareable evergreen offer.
 			expect((await f.gate()).authorized).toBe(true)
 			f.setNow(
 				state === 'expired'
@@ -302,7 +304,8 @@ integration('coupon executor guarded durable integration', () => {
 					'UPDATE AI_Entitlement SET deletedAt=? WHERE sourceId=?',
 					[new Date(f.getNow()), bind.couponId],
 				)
-			expect((await f.gate()).authorized).toBe(false)
+			const checkoutAllowed = state === 'deleted-grant'
+			expect((await f.gate()).authorized).toBe(checkoutAllowed)
 			const rows = await f.snapshot()
 			expect(rows.coupons).toHaveLength(1)
 			expect(rows.grants).toHaveLength(1)
@@ -323,7 +326,14 @@ integration('coupon executor guarded durable integration', () => {
 				verifiedUserId: bind.verifiedUserId,
 				boundAt,
 			})
-			expect((await f.gate()).authorized).toBe(false)
+			expect((await f.gate()).authorized).toBe(checkoutAllowed)
+			if (state === 'deleted-grant') {
+				// The operator revokes the offer through the coupon, not its old grant.
+				await pool.execute('UPDATE AI_Coupon SET status=0 WHERE id=?', [
+					bind.couponId,
+				])
+				expect((await f.gate()).authorized).toBe(false)
+			}
 			// Concrete reader restores the original ISSUE, not current Bound state.
 			expect(
 				await Effect.runPromise(f.reader.inspectIssue(f.issue)),

@@ -1175,6 +1175,38 @@ export class DrizzleCaptureMarketingRepository implements CaptureMarketingReposi
 		return affectedRowsOf(result) === 1
 	}
 
+	async finishClaimedSideEffectIntent(
+		id: string,
+		claimedAt: string,
+		patch: Pick<
+			SideEffectIntent,
+			'status' | 'gates' | 'reviewReasons' | 'metadata' | 'completedAt'
+		>,
+	) {
+		const completedAt = canonicalCompletionForWrite(patch)
+		const result = await this.database
+			.update(sideEffectIntent)
+			.set({
+				...patch,
+				completedAt: completedAt ? new Date(completedAt) : null,
+			})
+			.where(
+				and(
+					eq(sideEffectIntent.id, id),
+					eq(sideEffectIntent.status, 'sending'),
+					sql`JSON_UNQUOTE(JSON_EXTRACT(${sideEffectIntent.metadata}, '$.claimedAt')) = ${claimedAt}`,
+				),
+			)
+		if (affectedRowsOf(result) !== 1) return undefined
+		const rows = await this.database
+			.select()
+			.from(sideEffectIntent)
+			.where(eq(sideEffectIntent.id, id))
+			.limit(1)
+		if (!rows[0]) throw new Error(`Missing side effect intent ${id}`)
+		return toSideEffectIntentRecord(rows[0])
+	}
+
 	async updateSideEffectIntent(
 		id: string,
 		patch: Pick<
