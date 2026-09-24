@@ -1,4 +1,5 @@
 import { env } from '@/env.mjs'
+import { isSyntheticPrincipalEmail } from '@/lib/synthetic-principal'
 import { SubscriberSchema, type Subscriber } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
@@ -66,9 +67,23 @@ export function readKitSubscribeFailureCode(
 	return match?.[1] as KitSubscribeFailureCode | undefined
 }
 
+/**
+ * Synthetic test principals (#36T) live on an undeliverable .invalid domain
+ * and must never become Kit subscribers, tags, or field writes.
+ */
+async function refuseSyntheticKitWrite(
+	operation: string,
+	email: string | null | undefined,
+): Promise<void> {
+	if (!isSyntheticPrincipalEmail(email)) return
+	await log.info('kit.synthetic_refused', { operation })
+	throw new KitSubscribeError({ code: 'rejected' })
+}
+
 async function subscribeWithFieldContract(
 	options: SubscribeToListOptions,
 ): Promise<Subscriber> {
+	await refuseSyntheticKitWrite('subscribe-to-list-with-fields', options.user.email)
 	const listType = options.listType ?? convertkitProvider.defaultListType
 
 	await log.info('kit.write.logical_operation', {
@@ -127,6 +142,7 @@ export async function subscribeToKitListWithoutFields(
 	if ('fields' in unsafeOptions) {
 		throw new KitSubscribeError({ code: 'unresolved' })
 	}
+	await refuseSyntheticKitWrite('subscribe-to-list-lean', options.user.email)
 
 	try {
 		const result = await subscribeToEndpoint({
@@ -157,6 +173,20 @@ export async function subscribeToKitListWithoutFields(
 export const emailListProvider = {
 	...convertkitProvider,
 	subscribeToList: subscribeWithFieldContract,
+	tagSubscriber: async (
+		input: Parameters<NonNullable<typeof convertkitProvider.tagSubscriber>>[0],
+	) => {
+		await refuseSyntheticKitWrite('tag-subscriber', input.email)
+		return convertkitProvider.tagSubscriber!(input)
+	},
+	updateSubscriberFields: async (
+		input: Parameters<
+			NonNullable<typeof convertkitProvider.updateSubscriberFields>
+		>[0],
+	) => {
+		await refuseSyntheticKitWrite('update-subscriber-fields', input.subscriberEmail)
+		return convertkitProvider.updateSubscriberFields!(input)
+	},
 }
 
 function parseKitSubscriber({

@@ -129,6 +129,62 @@ function checkoutSession(
 }
 
 describe('logged-in checkout provider boundary', () => {
+	it('refuses a synthetic test principal before Stripe and closes its handoff', async () => {
+		const handoffStore = store()
+		const createCheckoutSession = vi.fn()
+		const paymentsAdapter = {
+			...mockStripeAdapter,
+			getPrice: vi.fn(async () => ({ recurring: null }) as never),
+			createCheckoutSession,
+		} satisfies PaymentsAdapter
+
+		const result = await createLoggedInCheckoutSession({
+			provider: provider(paymentsAdapter),
+			adapter: courseAdapter(),
+			handoffStore,
+			claim,
+			handoffPayload,
+			checkoutParams: {
+				...checkoutParams,
+				userId: 'synthetic_0123456789abcdef01234567',
+			},
+		})
+
+		expect(result).toEqual({
+			kind: 'failure',
+			failure: { code: 'synthetic-checkout-refused', retryable: false },
+		})
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+		expect(handoffStore.failTerminal).toHaveBeenCalledWith({
+			claim,
+			failureCode: 'synthetic-checkout-refused',
+		})
+		expect(handoffStore.complete).not.toHaveBeenCalled()
+	})
+
+	it('reports a lost synthetic handoff claim as the failure write it is', async () => {
+		const handoffStore = store({ failTerminal: vi.fn(async () => false) })
+		const createCheckoutSession = vi.fn()
+		await expect(
+			createLoggedInCheckoutSession({
+				provider: provider({
+					...mockStripeAdapter,
+					getPrice: vi.fn(async () => ({ recurring: null }) as never),
+					createCheckoutSession,
+				} satisfies PaymentsAdapter),
+				adapter: courseAdapter(),
+				handoffStore,
+				claim,
+				handoffPayload,
+				checkoutParams: {
+					...checkoutParams,
+					userId: 'synthetic_0123456789abcdef01234567',
+				},
+			}),
+		).rejects.toThrow('checkout-login-handoff-failure-write-failed')
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
+
 	it('does not complete when the real Course Builder provider reports failure', async () => {
 		const handoffStore = store()
 		const paymentsAdapter = {

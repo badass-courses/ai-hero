@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	isSyntheticPrincipalEmail,
 	isSyntheticPrincipalId,
+	realUserIds,
 } from './synthetic-principal'
 
 describe('synthetic principal markers', () => {
@@ -22,5 +23,14 @@ describe('synthetic principal markers', () => {
 		expect(isSyntheticPrincipalEmail('run-1@synthetic.aihero.invalid.example.com')).toBe(false)
 		expect(isSyntheticPrincipalEmail('run-1@notsynthetic.aihero.invalid')).toBe(false)
 		expect(isSyntheticPrincipalEmail(undefined)).toBe(false)
+	})
+})
+
+describe('real user scope', () => {
+	it('keeps survey respondents in the same scope as the user count', () => {
+		expect(realUserIds(['u1', null, 'synthetic_a', undefined, 'u2'])).toEqual([
+			'u1',
+			'u2',
+		])
 	})
 })

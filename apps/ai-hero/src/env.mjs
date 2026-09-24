@@ -135,6 +135,9 @@ export const env = createEnv({
 		DROVR_API_KEY_ORG_AIHERO: z.string().min(1).optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
+		// drovr #36T link tests mint throwaway principals with this; never the
+		// executor token. Unset means the endpoint answers 503.
+		AIHERO_TEST_PRINCIPAL_TOKEN: z.string().min(32).optional(),
 		AIH_DROVR_OWNER_PERCENT: z.coerce.number().min(0).max(100).optional(),
 		AIH_DROVR_OWNER_EMAILS: z.string().optional(),
 		// Captured-but-held signups (phase 1 split); see drovr-ownership.ts.
@@ -286,6 +289,7 @@ export const env = createEnv({
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,
+		AIHERO_TEST_PRINCIPAL_TOKEN: process.env.AIHERO_TEST_PRINCIPAL_TOKEN,
 		AIH_DROVR_OWNER_PERCENT: process.env.AIH_DROVR_OWNER_PERCENT,
 		AIH_DROVR_OWNER_EMAILS: process.env.AIH_DROVR_OWNER_EMAILS,
 		AIH_DROVR_OWNER_HOLD_EMAILS: process.env.AIH_DROVR_OWNER_HOLD_EMAILS,

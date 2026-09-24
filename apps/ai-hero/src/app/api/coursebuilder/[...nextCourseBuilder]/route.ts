@@ -5,6 +5,7 @@ import {
 import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-request-authorization'
 import { resolveServerComputedCheckoutCoupon } from '@/coursebuilder/server-computed-checkout-coupon'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
+import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
 import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { INVOICE_SHORTFALL_RECONCILE_EVENT } from '@/inngest/events/invoice-shortfall'
@@ -63,10 +64,17 @@ const isProtectedCommerceRequest = (request: NextRequest) =>
 	request.nextUrl.pathname.endsWith('/prices-formatted') ||
 	request.nextUrl.pathname.includes('/checkout/')
 
-const protectCommerceRequest = async (request: NextRequest) => {
+const protectCommerceRequest = async (
+	request: NextRequest,
+): Promise<NextRequest | Response> => {
 	if (!isProtectedCommerceRequest(request)) return request
 
 	const { session } = await getServerAuthSession()
+	const refusal = syntheticCheckoutRefusal(
+		request.nextUrl.pathname,
+		session?.user?.id,
+	)
+	if (refusal) return refusal
 	return protectCourseBuilderRequest(request, {
 		adapter: courseBuilderAdapter,
 		verifiedUserId: session?.user?.id,
@@ -78,14 +86,18 @@ const protectCommerceRequest = async (request: NextRequest) => {
 	})
 }
 
-const courseBuilderGETWithCouponAuthorization = async (request: NextRequest) =>
-	courseBuilderGET(await protectCommerceRequest(request))
+const courseBuilderGETWithCouponAuthorization = async (request: NextRequest) => {
+	const protectedRequest = await protectCommerceRequest(request)
+	if (protectedRequest instanceof Response) return protectedRequest
+	return courseBuilderGET(protectedRequest)
+}
 
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	request: NextRequest,
 ) => {
 	const webhookRequest = request.clone()
 	const protectedRequest = await protectCommerceRequest(request)
+	if (protectedRequest instanceof Response) return protectedRequest
 	const response = await coreCourseBuilderPOST(protectedRequest)
 	if (response.ok) await dispatchCashBalanceReconciliation(webhookRequest)
 	return response

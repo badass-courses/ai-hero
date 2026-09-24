@@ -7,6 +7,8 @@
  */
 export const SYNTHETIC_PRINCIPAL_ID_PREFIX = 'synthetic_'
 export const SYNTHETIC_PRINCIPAL_EMAIL_DOMAIN = 'synthetic.aihero.invalid'
+/** SQL LIKE pattern for a synthetic id; `_` is a LIKE wildcard, so escaped. */
+export const SYNTHETIC_PRINCIPAL_ID_LIKE = 'synthetic\\_%'
 
 /**
  * True for a contact or user id minted for a synthetic principal.
@@ -45,4 +47,16 @@ export function withoutSyntheticContacts<T extends { contactId: string }>(
 ): { kept: T[]; discarded: number } {
 	const kept = records.filter((record) => !isSyntheticPrincipalId(record.contactId))
 	return { kept, discarded: records.length - kept.length }
+}
+
+/**
+ * Real user ids only: drops nulls and synthetic principals, so a count built
+ * from them shares the scope of user counts that exclude synthetic ids.
+ *
+ * @example realUserIds(['u1', null, 'synthetic_a']) // ['u1']
+ */
+export function realUserIds(ids: readonly (string | null | undefined)[]): string[] {
+	return ids.filter(
+		(id): id is string => typeof id === 'string' && !isSyntheticPrincipalId(id),
+	)
 }

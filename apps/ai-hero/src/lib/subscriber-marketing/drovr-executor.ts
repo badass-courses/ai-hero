@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
+
 import { retryAfterMsFor, type DrovrSendBudget } from './drovr-sync-send'
 import {
 	isDueRetryableValuePathEmailIntent,
@@ -225,6 +227,12 @@ export async function acceptDrovrIntent(args: {
 				: `intent is due at ${intent.dueAt}, ${Math.round(dueInMs / 60_000)} minutes ahead; the sender would deliver it now`,
 			hint: 'Post an intent when it is due. drovr schedules the wait with a wake, not with dueAt.',
 		}
+	}
+
+	// A synthetic test principal never reaches drovr, so an intent for one is
+	// a bug upstream: refuse it before any row, Kit call, or coupon exists.
+	if (isSyntheticPrincipalId(intent.contactId)) {
+		return { status: 'blocked', reviewReasons: ['synthetic-principal'] }
 	}
 
 	const tenantId = knownTenant(intent.tenantId)

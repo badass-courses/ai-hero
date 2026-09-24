@@ -123,6 +123,20 @@ const intent = (overrides: Partial<DrovrIntent> = {}): DrovrIntent => ({
 })
 
 describe('drovr executor: accepting an email.send intent', () => {
+	it('refuses an intent for a synthetic test principal before writing anything', async () => {
+		const repository = new FakeRepository()
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent({ contactId: 'synthetic_0123456789abcdef01234567' }),
+			now,
+			findKitSubscriberId: async () => {
+				throw new Error('Kit lookup must not run')
+			},
+		})
+		expect(result).toEqual({ status: 'blocked', reviewReasons: ['synthetic-principal'] })
+		expect(repository.intents.size).toBe(0)
+	})
+
 	it('writes a pending send intent under the legacy key with drovr ownership', async () => {
 		const repository = new FakeRepository()
 		repository.contacts.set('contact-1', contact())

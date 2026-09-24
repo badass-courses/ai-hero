@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	subscribeToEndpoint: vi.fn(),
 	compoundSubscribeToList: vi.fn(),
+	tagSubscriber: vi.fn(),
+	updateSubscriberFields: vi.fn(),
 	log: {
 		info: vi.fn(),
 		warn: vi.fn(),
@@ -33,6 +35,8 @@ vi.mock('@coursebuilder/core/providers/convertkit', async (importOriginal) => {
 			defaultListType: 'form',
 			defaultListId: 'default-form',
 			subscribeToList: mocks.compoundSubscribeToList,
+			tagSubscriber: mocks.tagSubscriber,
+			updateSubscriberFields: mocks.updateSubscriberFields,
 		}),
 		subscribeToEndpoint: mocks.subscribeToEndpoint,
 	}
@@ -231,4 +235,55 @@ describe('subscribeToKitListWithoutFields', () => {
 			)
 		},
 	)
+})
+
+describe('synthetic test principals never reach Kit', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	const synthetic = {
+		...user,
+		id: 'synthetic_0123456789abcdef01234567',
+		email: 'run-12345678@synthetic.aihero.invalid',
+	}
+
+	it('refuses every write for a .invalid principal before any Kit call', async () => {
+		await expect(
+			emailListProvider.subscribeToList({ ...formOptions, user: synthetic } as never),
+		).rejects.toMatchObject({ code: 'rejected' })
+		await expect(
+			subscribeToKitListWithoutFields({
+				listId: '1',
+				listType: 'sequence',
+				user: synthetic,
+			} as never),
+		).rejects.toMatchObject({ code: 'rejected' })
+		await expect(
+			emailListProvider.tagSubscriber({ tag: '1', email: synthetic.email }),
+		).rejects.toMatchObject({ code: 'rejected' })
+		await expect(
+			emailListProvider.updateSubscriberFields({
+				subscriberEmail: synthetic.email,
+				fields: { a: 'b' },
+			}),
+		).rejects.toMatchObject({ code: 'rejected' })
+
+		expect(mocks.compoundSubscribeToList).not.toHaveBeenCalled()
+		expect(mocks.subscribeToEndpoint).not.toHaveBeenCalled()
+		expect(mocks.tagSubscriber).not.toHaveBeenCalled()
+		expect(mocks.updateSubscriberFields).not.toHaveBeenCalled()
+	})
+
+	it('passes real subscribers through the tag and field writes', async () => {
+		mocks.tagSubscriber.mockResolvedValue({ ok: true })
+		mocks.updateSubscriberFields.mockResolvedValue({ id: 'kit-1', fields: {} })
+		await emailListProvider.tagSubscriber({ tag: '1', email: user.email })
+		await emailListProvider.updateSubscriberFields({
+			subscriberEmail: user.email,
+			fields: { a: 'b' },
+		})
+		expect(mocks.tagSubscriber).toHaveBeenCalledWith({ tag: '1', email: user.email })
+		expect(mocks.updateSubscriberFields).toHaveBeenCalledOnce()
+	})
 })
