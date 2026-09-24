@@ -9,6 +9,7 @@ import {
 	DrovrIntentSchema,
 } from '@/lib/subscriber-marketing/drovr-executor'
 import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-evergreen'
+import { createKitUnsubscriber } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import {
 	drovrSendBudget,
 	parseDrovrSyncSendConfig,
@@ -32,7 +33,9 @@ import { and, eq } from 'drizzle-orm'
  * and the completion arrives later through POST /events; 200 completed
  * carries the completion inline for an intent ai-hero already finished;
  * 200 blocked means ai-hero's gates refused and a human must look;
- * 200 retry names a wait (Kit rate limit or drovr's send budget). With
+ * 200 retry names a wait (Kit rate limit or drovr's send budget).
+ * list.unsubscribe applies inside the request and answers 200 completed,
+ * retry, or blocked; it never answers 202. With
  * AIH_DROVR_SYNC_SEND the skills-course send runs inside this request
  * (decision 2026-09-17) and 202 stops appearing for it.
  * Refusals are RFC 9457 problem details with a hint, the same shape drovr
@@ -159,6 +162,9 @@ export const POST = withSkill(async (request: NextRequest) => {
 		intent: parsed.data,
 		findKitSubscriberId,
 		evergreen: parseDrovrEvergreenConfig(process.env),
+		unsubscribeInKit: createKitUnsubscriber({
+			apiKey: env.KIT_V4_API_KEY ?? process.env.CONVERTKIT_V4_API_KEY,
+		}),
 		...sync,
 	})
 

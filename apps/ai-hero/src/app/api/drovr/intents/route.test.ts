@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	acceptDrovrIntent: vi.fn(),
 	env: { DROVR_EXECUTOR_TOKEN: 'test-executor-token-1234567890' } as {
 		DROVR_EXECUTOR_TOKEN?: string
+		KIT_V4_API_KEY?: string
 	},
 	log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }))
@@ -110,6 +111,37 @@ describe('POST /api/drovr/intents', () => {
 		mocks.acceptDrovrIntent.mockResolvedValueOnce({ status: 'contact-missing' })
 		const missing = await post(intent, 'test-executor-token-1234567890')
 		expect(missing.status).toBe(404)
+	})
+
+	it('hands list.unsubscribe a Kit unsubscriber and answers its completion with 200', async () => {
+		mocks.env.KIT_V4_API_KEY = 'kit-test-key'
+		const unsubscribe = {
+			...intent,
+			journeyId: 'contact-directory',
+			kind: 'list.unsubscribe',
+			idempotencyKey: 'unsubscribe:org-aihero:contact-1:all',
+			payload: { scope: 'all', source: 'page' },
+		}
+		const completion = {
+			tenantId: 'org-aihero',
+			contactId: 'contact-1',
+			journeyId: 'contact-directory',
+			type: 'list.unsubscribed',
+			occurredAt: '2026-09-24T15:00:00.000Z',
+			idempotencyKey: 'completion:unsubscribe:org-aihero:contact-1:all',
+			payload: { scope: 'all' },
+		}
+		mocks.acceptDrovrIntent.mockResolvedValue({
+			status: 'completed',
+			intentId: 'sei-9',
+			completion,
+		})
+		const response = await post(unsubscribe, 'test-executor-token-1234567890')
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({ status: 'completed', completion })
+		const args = mocks.acceptDrovrIntent.mock.calls[0]?.[0]
+		expect(typeof args.unsubscribeInKit).toBe('function')
+		mocks.env.KIT_V4_API_KEY = undefined
 	})
 
 	it('rejects a malformed body with 400 before touching the executor', async () => {

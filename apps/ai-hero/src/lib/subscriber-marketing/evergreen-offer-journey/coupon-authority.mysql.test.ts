@@ -444,7 +444,7 @@ integration('coupon authority disposable MySQL', () => {
 			await database.select().from(couponCommerceSchema.coupon),
 		).toHaveLength(0)
 	})
-	it('refuses concurrent wrong-user bind and enforces resulting entitlement at existing checkout gate', async () => {
+	it('refuses concurrent wrong-user bind while allowing the issued evergreen link at checkout', async () => {
 		const authority = createCouponAuthority(options())
 		await Effect.runPromise(authority.issue(issue))
 		const wrongUser = value(parseVerifiedUserId('wrong-user'))
@@ -482,9 +482,11 @@ integration('coupon authority disposable MySQL', () => {
 			getEntitlementTypeByName: async () => ({ id: 'mysql-credit-type' }),
 			getEntitlementsForUser: async () => grants,
 		}
+		// Binding remains owner-only; the canonical unused one-use coupon link
+		// is deliberately redeemable by either buyer at quantity one.
 		for (const [verifiedUserId, quantity, expected] of [
 			[userId, 1, true],
-			[wrongUser, 1, false],
+			[wrongUser, 1, true],
 			[userId, 2, false],
 		] as const) {
 			const result = await authorizeExclusiveCouponSelection({
