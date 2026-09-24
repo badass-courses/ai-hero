@@ -1,8 +1,8 @@
-import { courseBuilderAdapter, db } from '@/db'
+import { db } from '@/db'
 import { merchantCharge, purchases } from '@/db/schema'
-import { asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 
-import type { Purchase } from '@coursebuilder/core/schemas'
+import { purchaseSchema, type Purchase } from '@coursebuilder/core/schemas'
 
 const VISIBLE_PURCHASE_STATES = ['Valid', 'Refunded', 'Restricted']
 
@@ -26,21 +26,22 @@ export async function getInvoicePurchasesForUser(
 	if (chargeRows.length === 0) return []
 
 	const billedRows = await db.query.purchases.findMany({
-		where: inArray(
-			purchases.merchantChargeId,
-			chargeRows.map((charge) => charge.id),
+		where: and(
+			inArray(
+				purchases.merchantChargeId,
+				chargeRows.map((charge) => charge.id),
+			),
+			inArray(purchases.status, VISIBLE_PURCHASE_STATES),
 		),
-		columns: { id: true },
+		with: {
+			product: true,
+			user: true,
+			bulkCoupon: true,
+		},
 		orderBy: asc(purchases.createdAt),
 	})
-	const billed = (
-		await Promise.all(
-			billedRows.map((row) => courseBuilderAdapter.getPurchase(row.id)),
-		)
-	).filter(
-		(purchase): purchase is Purchase =>
-			purchase !== null && VISIBLE_PURCHASE_STATES.includes(purchase.status),
-	)
+
+	const billed = purchaseSchema.array().parse(billedRows)
 
 	return Array.from(
 		new Map(billed.map((purchase) => [purchase.id, purchase])).values(),

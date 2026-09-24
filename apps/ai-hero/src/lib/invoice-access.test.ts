@@ -1,15 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-	getPurchase: vi.fn(),
 	findCharges: vi.fn(),
 	findPurchases: vi.fn(),
 }))
 
 vi.mock('@/db', () => ({
-	courseBuilderAdapter: {
-		getPurchase: mocks.getPurchase,
-	},
 	db: {
 		query: {
 			merchantCharge: { findMany: mocks.findCharges },
@@ -19,9 +15,14 @@ vi.mock('@/db', () => ({
 }))
 vi.mock('@/db/schema', () => ({
 	merchantCharge: { id: 'charge.id', userId: 'charge.userId' },
-	purchases: { createdAt: 'purchase.createdAt', merchantChargeId: 'purchase.merchantChargeId' },
+	purchases: {
+		createdAt: 'purchase.createdAt',
+		merchantChargeId: 'purchase.merchantChargeId',
+		status: 'purchase.status',
+	},
 }))
 vi.mock('drizzle-orm', () => ({
+	and: (...values: unknown[]) => values,
 	asc: (value: unknown) => value,
 	eq: (...values: unknown[]) => values,
 	inArray: (...values: unknown[]) => values,
@@ -29,20 +30,44 @@ vi.mock('drizzle-orm', () => ({
 
 import { getInvoicePurchasesForUser } from './invoice-access'
 
-const transferred = { id: 'purchase-transferred', status: 'Valid' }
+const transferred = {
+	id: 'purchase-transferred',
+	createdAt: new Date('2026-09-24T00:00:00Z'),
+	totalAmount: '199.00',
+	productId: 'product-1',
+	status: 'Valid',
+	fields: {},
+	product: {
+		id: 'product-1',
+		name: 'AI Coding Crash Course',
+		fields: { slug: 'ai-coding-crash-course' },
+		createdAt: null,
+	},
+}
 
 describe('invoice purchase access', () => {
 	beforeEach(() => {
 		vi.resetAllMocks()
 		mocks.findCharges.mockResolvedValue([{ id: 'charge-original-payer' }])
-		mocks.findPurchases.mockResolvedValue([{ id: transferred.id }])
-		mocks.getPurchase.mockResolvedValue(transferred)
+		mocks.findPurchases.mockResolvedValue([transferred])
 	})
 
-	it('keeps a transferred purchase in the original payer invoice list', async () => {
+	it('keeps a transferred purchase with its product in the original payer invoice list', async () => {
 		await expect(getInvoicePurchasesForUser('payer-1')).resolves.toEqual([
-			transferred,
+			expect.objectContaining({
+				...transferred,
+				totalAmount: 199,
+				product: expect.objectContaining({
+					id: 'product-1',
+					name: 'AI Coding Crash Course',
+				}),
+			}),
 		])
+		expect(mocks.findPurchases).toHaveBeenCalledWith(
+			expect.objectContaining({
+				with: { product: true, user: true, bulkCoupon: true },
+			}),
+		)
 	})
 
 	it('does not expose a transferred invoice to the recipient', async () => {
