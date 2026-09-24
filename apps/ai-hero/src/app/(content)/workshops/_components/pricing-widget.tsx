@@ -70,6 +70,30 @@ export type PricingWidgetProps = {
 	teamMode?: boolean
 }
 
+// The card's CTA carries its price like the inline and mobile CTAs do. The
+// action words mirror the stock BuyButton default, including Sold Out and
+// Upgrade Now; a membership keeps its interval in the card price instead.
+function WorkshopBuyButtonLabel({ product }: { product: Product }) {
+	const { formattedPrice, status, isSoldOut } = usePricing()
+	if (product.type === 'cohort') return <>Enroll</>
+	if (product.type === 'live') return <>Buy Ticket</>
+	if (isSoldOut) return <>Sold Out</>
+	const isMembership = product.type === 'membership'
+	const action = formattedPrice?.upgradeFromPurchaseId
+		? 'Upgrade Now'
+		: product.fields?.action || (isMembership ? 'Subscribe' : 'Buy Now')
+	return (
+		<>
+			{action}
+			{status === 'success' && formattedPrice && !isMembership && (
+				<span className="ml-1.5 font-mono tabular-nums">
+					{formatUsd(formattedPrice.calculatedPrice).dollars}
+				</span>
+			)}
+		</>
+	)
+}
+
 /**
  * The workshop pricing card (`Workshop Landing.dc.html` § Sidebar, buy state):
  * a left-aligned column on `bg-card` — title, mono price with strikethrough and
@@ -136,12 +160,7 @@ export const PricingWidget = ({
 								buyButtonClassName,
 							)}
 						>
-							{buyButtonContent ??
-								(product.type === 'cohort'
-									? 'Enroll'
-									: product.type === 'live'
-										? 'Buy Ticket'
-										: null)}
+							{buyButtonContent ?? <WorkshopBuyButtonLabel product={product} />}
 						</Pricing.BuyButton>
 					)}
 					{/* The secondary ask, as the primary's outline twin: same height
@@ -292,12 +311,15 @@ const CardPrice = ({
 		)
 	}
 
-	// A failed price lookup must not render as "$0" — the buy button is already
-	// disabled in this state, so the row simply stays empty (same choice the
-	// stock Price component makes).
-	if (status === 'error' || !formattedPrice) {
-		return null
+	// No stale or zero price on failure; the disabled buy button cannot submit.
+	if (status === 'error') {
+		return (
+			<p role="alert" className="text-muted-foreground mt-3 text-sm">
+				Price unavailable. Reload to try again.
+			</p>
+		)
 	}
+	if (!formattedPrice) return null
 
 	// Refetch (team toggle, seat count, coupon): the known price stays put,
 	// dimmed and pulsing, instead of collapsing into a skeleton — the reader

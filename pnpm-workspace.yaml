@@ -38,3 +38,5 @@ packageExtensions:
 
 patchedDependencies:
   '@coursebuilder/analytics@1.1.3': patches/@coursebuilder__analytics@1.1.3.patch
+  '@coursebuilder/commerce-next@0.2.16': patches/@coursebuilder__commerce-next@0.2.16.patch
+  '@coursebuilder/commerce@0.2.1': patches/@coursebuilder__commerce@0.2.1.patch

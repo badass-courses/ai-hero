@@ -6,6 +6,9 @@ export default defineConfig({
 	test: {
 		setupFiles: ['./src/test/setup.ts'],
 		environment: 'node',
+		// Commerce-next ships extensionless ESM imports; run it through Vite when
+		// mounting its real Pricing.Root in the workshop lifecycle test.
+		server: { deps: { inline: ['@coursebuilder/commerce-next'] } },
 		include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
 		globals: true,
 	},
