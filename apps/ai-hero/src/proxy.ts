@@ -161,6 +161,9 @@ export default auth(async function middleware(req) {
 	const result = determineOrgAccess(user.organizationRoles, currentOrgId)
 
 	if (result.action === 'REDIRECT_TO_ORG_LIST') {
+		// A buyer without an organization role must be able to reach this page.
+		// Redirecting it to itself traps them in ERR_TOO_MANY_REDIRECTS.
+		if (pathname === '/organization-list') return response
 		return NextResponse.redirect(new URL('/organization-list', req.url))
 	}
 
