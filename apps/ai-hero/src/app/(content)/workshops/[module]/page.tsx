@@ -35,10 +35,10 @@ import { Course } from 'schema-dts'
 import { Skeleton } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
-import { InlineBuyButton } from '../_components/inline-mdx-pricing'
 import WorkshopBreadcrumb from '../_components/workshop-breadcrumb'
 import WorkshopImage from '../_components/workshop-image'
 import {
+	WorkshopInlineBuyButton,
 	WorkshopPricingClient,
 	WorkshopPricingFallback,
 } from '../_components/workshop-pricing'
@@ -231,17 +231,19 @@ export default async function ModulePage(props: Props) {
 							<WorkshopAccessBoundary
 								member={null}
 								anonymous={
-									<InlineBuyButton
-										resource={workshop}
-										pricingDataLoader={workshopProps.pricingDataLoader}
-										pricingProps={workshopProps as any}
-										centered={false}
-										resourceType="workshop"
-										pricingOptions={{
-											withTitle: false,
-											withImage: false,
-										}}
-									/>
+									<React.Suspense fallback={null}>
+										<WorkshopInlineBuyButton
+											resource={workshop}
+											pricingDataLoader={workshopProps.pricingDataLoader}
+											pricingProps={workshopProps as any}
+											centered={false}
+											resourceType="workshop"
+											pricingOptions={{
+												withTitle: false,
+												withImage: false,
+											}}
+										/>
+									</React.Suspense>
 								}
 							/>
 						)

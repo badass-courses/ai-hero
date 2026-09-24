@@ -82,6 +82,7 @@ export const BuyButtonComponent: React.FC<
 		<PurchasedTicketInfo centered={centered} resourceType={resourceType} />
 	) : (
 		<Pricing.Root
+			key={`${product.id}:${couponId ?? 'regular'}`}
 			className={cn('flex items-start justify-start')}
 			product={product}
 			couponId={couponId}
@@ -255,8 +256,8 @@ export const withEventPricing = (
 
 		const commerceProps = {
 			...pricingProps,
-			couponFromCode: coupon,
-			couponIdFromCoupon: coupon?.id,
+			couponFromCode: pricingProps.couponFromCode ?? coupon,
+			couponIdFromCoupon: pricingProps.couponIdFromCoupon ?? coupon?.id,
 		}
 
 		const purchasedProductIds =
