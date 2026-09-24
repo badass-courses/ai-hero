@@ -234,7 +234,9 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 				headers: { cookie: confirmationCookie },
 			}),
 		)
-		expect(replay.status).not.toBe(302)
+		// Auth.js answers a spent token with a redirect to its error page.
+		expect(replay.headers.get('location')).toMatch(/error=Verification/)
+		expect(replay.headers.get('set-cookie') ?? '').not.toContain('authjs.session-token=')
 		expect(
 			await database.select().from(sessions).where(eq(sessions.userId, records.identity.principalId)),
 		).toHaveLength(1)
