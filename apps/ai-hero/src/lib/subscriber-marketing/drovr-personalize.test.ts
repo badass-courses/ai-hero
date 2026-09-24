@@ -56,6 +56,7 @@ const page = {
 function fixture() {
 	let currentContact: ContactRecord | undefined = contact
 	let currentState: ContactState | undefined = state
+	let identityConflict = false
 	const events = new Map<string, number>()
 	const prior: SideEffectIntent[] = []
 	const coupons = new Map<string, SideEffectIntent>()
@@ -77,6 +78,9 @@ function fixture() {
 		setState: (value: ContactState | undefined) => {
 			currentState = value
 		},
+		setIdentityConflict: (value: boolean) => {
+			identityConflict = value
+		},
 		answer: (
 			overrides: Partial<DrovrPersonalizeRequest> = {},
 			secret = 'local-test-secret',
@@ -88,6 +92,7 @@ function fixture() {
 				pathTokenSecret: secret,
 				baseUrl: 'https://www.aihero.dev',
 				kitSubscriberId: 'kit-1',
+				identityConflict,
 			}),
 	}
 }
@@ -103,6 +108,7 @@ describe('drovr read-only personalization', () => {
 			email: 'ada@example.com',
 			firstName: 'Ada',
 			reasons: [],
+			flags: [],
 		})
 		const href = first?.variables.aih_value_path_answer_1_url
 		expect(href).toContain('/ask/what-next?pt=')
@@ -143,7 +149,7 @@ describe('drovr read-only personalization', () => {
 		expect((await f.answer())?.reasons).toContain(reason)
 	})
 
-	it('fails closed for missing state, identity conflict and answer-token secret', async () => {
+	it('fails closed for missing state and answer-token secret', async () => {
 		const f = fixture()
 		f.setState(undefined)
 		const result = await f.answer({}, '')
@@ -153,8 +159,39 @@ describe('drovr read-only personalization', () => {
 		expect((await f.answer({}, 'local-test-secret'))?.reasons).toContain(
 			'stale-state',
 		)
+	})
+
+	it('allows a provisional contact with one Kit identity and records it as a non-blocking flag', async () => {
+		const f = fixture()
 		f.setContact({ ...contact, isProvisional: true })
-		expect((await f.answer())?.reasons).toContain('identity-conflict')
+		const answer = await f.answer()
+		expect(answer).toMatchObject({
+			sendable: true,
+			reasons: [],
+			flags: ['contact-provisional'],
+		})
+		expect(answer?.variables.aih_value_path_answer_1_url).toContain('/ask/')
+	})
+
+	it('blocks more than one Kit identity even if the contact is provisional', async () => {
+		const f = fixture()
+		f.setContact({ ...contact, isProvisional: true })
+		f.setIdentityConflict(true)
+		expect(await f.answer()).toMatchObject({
+			sendable: false,
+			reasons: ['identity-conflict'],
+			flags: ['contact-provisional'],
+			variables: {},
+		})
+	})
+
+	it('blocks a contact without a current email separately from Kit identity conflict', async () => {
+		const f = fixture()
+		f.setContact({ ...contact, email: null })
+		expect(await f.answer()).toMatchObject({
+			sendable: false,
+			reasons: ['contact-email-missing'],
+		})
 	})
 
 	it('returns unknown contact without a sendable answer', async () => {

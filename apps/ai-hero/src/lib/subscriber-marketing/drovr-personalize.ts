@@ -55,6 +55,7 @@ export type DrovrPersonalizeAnswer = {
 	variables: Record<string, string>
 	sendable: boolean
 	reasons: string[]
+	flags: string[]
 }
 
 /** Reads only. Repeated calls for the same intent use dueAt as the token
@@ -80,6 +81,7 @@ export async function personalizeDrovrIntent(args: {
 			repository.findValuePathEmailSideEffectIntentsByContact(contact.id),
 		])
 	const reasons: string[] = []
+	const flags: string[] = []
 	if (!state || state.lifecycle === 'stale' || contact.lifecycle === 'stale')
 		reasons.push('stale-state')
 	if (state?.lifecycle === 'suppressed' || contact.lifecycle === 'suppressed')
@@ -107,13 +109,13 @@ export async function personalizeDrovrIntent(args: {
 		)
 	)
 		reasons.push('complained')
-	if (args.identityConflict || contact.isProvisional)
-		reasons.push('identity-conflict')
+	if (args.identityConflict) reasons.push('identity-conflict')
+	if (contact.isProvisional) flags.push('contact-provisional')
 	if (state?.reviewSignals.includes('support')) reasons.push('support-intent')
 	if (state?.reviewSignals.includes('team-sales'))
 		reasons.push('team-sales-intent')
 	const email = contact.email?.trim().toLowerCase() ?? ''
-	if (!email) reasons.push('identity-conflict')
+	if (!email) reasons.push('contact-email-missing')
 	let variables: Record<string, string> = {}
 	if (request.journeyId === DROVR_SKILLS_COURSE_JOURNEY_ID) {
 		const step = getSkillsWorkflowEmailStep(request.emailKey)
@@ -162,6 +164,7 @@ export async function personalizeDrovrIntent(args: {
 		variables: reasons.length ? {} : variables,
 		sendable: reasons.length === 0,
 		reasons: [...new Set(reasons)],
+		flags,
 	}
 }
 

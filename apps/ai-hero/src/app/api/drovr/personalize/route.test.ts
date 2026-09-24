@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	env: {
 		DROVR_EXECUTOR_TOKEN: 'test-executor-token-1234567890',
-		AI_HERO_VALUE_PATH_TOKEN_SECRET: 'test-secret',
+		AI_HERO_VALUE_PATH_TOKEN_SECRET: 'test-token-secret-123456',
 		NEXT_PUBLIC_URL: 'https://www.aihero.dev',
 	},
 	personalize: vi.fn(),
@@ -82,15 +82,21 @@ describe('POST /api/drovr/personalize', () => {
 			variables: {},
 			sendable: true,
 			reasons: [],
+			flags: ['contact-provisional'],
 		})
 		const response = await post(body, 'test-executor-token-1234567890')
 		expect(response.status).toBe(200)
 		expect(await response.json()).toMatchObject({
 			sendable: true,
+			flags: ['contact-provisional'],
 			email: 'ada@example.com',
 		})
 		expect(mocks.personalize).toHaveBeenCalledWith(
-			expect.objectContaining({ request: body, kitSubscriberId: 'kit-1' }),
+			expect.objectContaining({
+				request: body,
+				kitSubscriberId: 'kit-1',
+				pathTokenSecret: 'test-token-secret-123456',
+			}),
 		)
 	})
 	it('marks duplicate Kit identities as a conflict instead of picking one', async () => {
