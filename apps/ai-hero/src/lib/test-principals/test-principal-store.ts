@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, is, like, lte } from 'drizzle-orm'
+import { and, eq, getTableColumns, is, like, lte, sql } from 'drizzle-orm'
 import {
 	MySqlTable,
 	type MySqlColumn,
@@ -9,6 +9,7 @@ import * as schema from '@/db/schema'
 import {
 	contact,
 	contactState,
+	coupon,
 	signupAttribution,
 	users,
 	verificationTokens,
@@ -18,6 +19,9 @@ import {
 	SYNTHETIC_PRINCIPAL_ID_LIKE,
 } from '@/lib/synthetic-principal'
 import { contactEmailWriteValues } from '@/lib/subscriber-marketing/contact-email-equivalence'
+import { evergreenJourneyIdForContact } from '@/lib/subscriber-marketing/drovr-evergreen-coupon'
+import { semanticCouponId } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority'
+import { couponIntentKey } from '@/lib/subscriber-marketing/evergreen-offer-journey/primitives'
 import { CONTACT_STATE_SCHEMA_VERSION } from '@/lib/subscriber-marketing/types'
 
 import {
@@ -200,6 +204,13 @@ async function retryOnMintConflict<T>(run: () => Promise<T>): Promise<T> {
 	}
 }
 
+/** The canonical id the evergreen coupon authority gives this contact's coupon. */
+export function testPrincipalCouponId(identity: TestPrincipalIdentity): string {
+	return semanticCouponId(
+		couponIntentKey(evergreenJourneyIdForContact(identity.contactId)),
+	)
+}
+
 export type PrincipalRemovalReceipt = {
 	removed: Record<string, number>
 	/** Schema tables this database does not have (MySQL 1146), so nothing to clean. */
@@ -257,6 +268,21 @@ async function deletePrincipalRows(
 				and(
 					eq(verificationTokens.identifier, identity.email),
 					like(verificationTokens.identifier, SYNTHETIC_EMAIL_LIKE),
+				),
+			),
+	)
+	// The run's synthetic evergreen coupon (T3c), by its canonical id, and
+	// only while its issue evidence names this synthetic contact. Grants a
+	// synthetic user bound are already gone with the userId tables above; a
+	// real buyer's grant, if one ever existed, is never touched.
+	await attempt('AI_Coupon', () =>
+		database
+			.delete(coupon)
+			.where(
+				and(
+					eq(coupon.id, testPrincipalCouponId(identity)),
+					sql`JSON_UNQUOTE(JSON_EXTRACT(${coupon.fields}, '$.evergreenOffer.issue.contactId')) = ${identity.contactId}`,
+					sql`JSON_UNQUOTE(JSON_EXTRACT(${coupon.fields}, '$.evergreenOffer.issue.contactId')) LIKE ${SYNTHETIC_ID_LIKE}`,
 				),
 			),
 	)

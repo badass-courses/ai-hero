@@ -18,6 +18,15 @@ import { contactEmailWriteValues } from '@/lib/subscriber-marketing/contact-emai
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { personalizeDrovrIntent } from '@/lib/subscriber-marketing/drovr-personalize'
 import { DROVR_SKILLS_COURSE_JOURNEY_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
+import {
+	createCouponAuthority,
+	readCouponEvidence,
+} from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority'
+import {
+	couponCommerceSchema,
+	createMySqlCouponCommerceStore,
+} from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 import { createAuthJsAdapter } from '@/server/auth-js-adapter'
 import {
@@ -36,11 +45,23 @@ import {
 	testPrincipalIdentity,
 	testPrincipalSignIn,
 } from './test-principal'
+import { issueTestPrincipalCoupon } from './test-principal-coupon'
 import {
 	deleteTestPrincipalRecords,
 	expiredTestPrincipalIds,
 	mintTestPrincipalRecords,
+	testPrincipalCouponId,
 } from './test-principal-store'
+
+const merchantEvidence = {
+	id: 'mysql-merchant',
+	identifier: 'mysql-provider',
+	merchantAccountId: 'mysql-account',
+	currency: 'USD',
+	amountOffCents: 10000,
+	type: 'special',
+	sourceReference: 'disposable-fixture-readback',
+}
 
 // Real @auth/core 0.37.2 email callback, real ai-hero magic-link confirmation
 // handlers, real CourseBuilder Drizzle adapter, disposable MySQL. Nothing
@@ -108,6 +129,14 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		await pool.query(
 			'CREATE TABLE AI_VerificationToken (identifier varchar(255) NOT NULL, token varchar(255) NOT NULL, expires timestamp NOT NULL, createdAt timestamp(3) DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY(identifier,token))',
 		)
+		// Pinned commerce shapes, as the coupon-authority MySQL suite uses.
+		for (const ddl of [
+			'CREATE TABLE AI_MerchantCoupon (id varchar(191) NOT NULL PRIMARY KEY, identifier varchar(191) UNIQUE, organizationId varchar(191), status int NOT NULL DEFAULT 0, merchantAccountId varchar(191) NOT NULL, percentageDiscount decimal(3,2), amountDiscount int, type varchar(191))',
+			'CREATE TABLE AI_Coupon (id varchar(191) NOT NULL PRIMARY KEY, organizationId varchar(191), code varchar(191) UNIQUE, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), expires timestamp(3) NULL, fields json, maxUses int NOT NULL DEFAULT -1, `default` boolean NOT NULL DEFAULT false, merchantCouponId varchar(191), status int NOT NULL DEFAULT 0, usedCount int NOT NULL DEFAULT 0, percentageDiscount decimal(3,2), amountDiscount int, restrictedToProductId varchar(191), INDEX Coupon_id_code_index(id,code))',
+			'CREATE TABLE AI_EntitlementType (id varchar(191) NOT NULL PRIMARY KEY, name varchar(255) NOT NULL UNIQUE, description text)',
+			'CREATE TABLE AI_Entitlement (id varchar(191) NOT NULL PRIMARY KEY, entitlementType varchar(255) NOT NULL, userId varchar(191), organizationId varchar(191), organizationMembershipId varchar(191), sourceType varchar(255) NOT NULL, sourceId varchar(191) NOT NULL, metadata json, expiresAt timestamp(3) NULL, createdAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updatedAt timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), deletedAt timestamp(3) NULL, INDEX source_idx(sourceType,sourceId))',
+		])
+			await pool.query(ddl)
 		database = drizzle(pool, { mode: 'planetscale' })
 	})
 
@@ -121,6 +150,14 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		createdUsers = []
 		for (const table of ['AI_VerificationToken', 'AI_Session', 'AI_User', 'AI_Contact', 'AI_ContactState'])
 			await pool.query(`DELETE FROM ${table}`)
+		for (const table of ['AI_Coupon', 'AI_Entitlement', 'AI_EntitlementType', 'AI_MerchantCoupon'])
+			await pool.query(`DELETE FROM ${table}`)
+		await pool.query(
+			"INSERT INTO AI_MerchantCoupon (id, identifier, merchantAccountId, amountDiscount, status, type) VALUES ('mysql-merchant', 'mysql-provider', 'mysql-account', 10000, 1, 'special')",
+		)
+		await pool.query(
+			"INSERT INTO AI_EntitlementType (id, name) VALUES ('mysql-credit-type', 'apply_special_credit')",
+		)
 		// A real learner, whose rows must survive every synthetic operation.
 		await database.insert(users).values({ id: 'user-real', email: 'real@example.test' })
 		await database.insert(contact).values({
@@ -339,6 +376,89 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		)) as unknown as [[{ n: number }]]
 		expect(rows.n).toBe(1)
 		await deleteTestPrincipalRecords(database, records.identity.principalId)
+	})
+
+	it('issues a canonical one-use crash-course coupon for the run and deletes only it', async () => {
+		const commerce = drizzle(pool, { schema: couponCommerceSchema, mode: 'default' })
+		const authority = (clock: Date) =>
+			createCouponAuthority({
+				store: createMySqlCouponCommerceStore(commerce),
+				merchantCouponEvidence: merchantEvidence,
+				now: () => clock.toISOString(),
+			})
+		const start = new Date()
+		// A real contact's evergreen coupon, issued the same way, must survive.
+		const real = await issueTestPrincipalCoupon({
+			authority: authority(new Date(start.getTime() + 60_000)),
+			identity: { principalId: 'user-real', contactId: 'contact-real', email: 'real@example.test' },
+			principalCreatedAt: start,
+			origin,
+		})
+		expect(real.status).toBe('issued')
+
+		const { records } = await mint('run-coupon-0001', start)
+		if (records.status === 'limit') throw new Error('unexpected limit')
+		const clock = new Date(records.createdAt.getTime() + 60_000)
+		const issued = await issueTestPrincipalCoupon({
+			authority: authority(clock),
+			identity: records.identity,
+			principalCreatedAt: records.createdAt,
+			origin,
+		})
+		if (issued.status !== 'issued') throw new Error(issued.reason)
+		expect(issued.coupon.couponId).toBe(testPrincipalCouponId(records.identity))
+		expect(issued.coupon.expiresAt).toBe(records.expiresAt.toISOString())
+		expect(new URL(issued.coupon.offerUrl).searchParams.get('coupon')).toBe(
+			issued.coupon.couponId,
+		)
+
+		// A repeated mint replays the same issue: same coupon, one row.
+		const replay = await issueTestPrincipalCoupon({
+			authority: authority(new Date(clock.getTime() + 60_000)),
+			identity: records.identity,
+			principalCreatedAt: records.createdAt,
+			origin,
+		})
+		expect(replay).toEqual(issued)
+
+		const [row] = await commerce
+			.select()
+			.from(couponCommerceSchema.coupon)
+			.where(eq(couponCommerceSchema.coupon.id, issued.coupon.couponId))
+		expect(row).toMatchObject({ maxUses: 1, usedCount: 0, status: 1 })
+		// The real evidence check and the shareable checkout gate accept it
+		// for any signed-in buyer at quantity one, inside its hour.
+		expect(readCouponEvidence(row as never).coupon.terms.productId).toBe('product-ma254')
+		const gate = await authorizeExclusiveCouponSelection({
+			adapter: {
+				getCoupon: async () => row as never,
+				getMerchantCoupon: async () =>
+					({ id: 'mysql-merchant', type: 'special', status: 1, amountDiscount: 10000 }) as never,
+				getEntitlementTypeByName: async () => ({ id: 'mysql-credit-type' }),
+				getEntitlementsForUser: async () => [],
+			},
+			verifiedUserId: 'any-buyer',
+			productId: 'product-ma254',
+			quantity: 1,
+			requestedSiteCouponId: issued.coupon.couponId,
+			requestedMerchantCouponId: 'mysql-merchant',
+			now: clock,
+		})
+		expect(gate.authorized).toBe(true)
+
+		const deleted = await deleteTestPrincipalRecords(database, records.identity.principalId)
+		expect(deleted?.removed).toMatchObject({ AI_Coupon: 1 })
+		const [[coupons]] = (await pool.query(
+			'SELECT COUNT(*) AS n FROM AI_Coupon WHERE id = ?',
+			[issued.coupon.couponId],
+		)) as unknown as [[{ n: number }]]
+		expect(coupons.n).toBe(0)
+		const [[realCoupons]] = (await pool.query(
+			'SELECT COUNT(*) AS n FROM AI_Coupon WHERE id = ?',
+			[real.status === 'issued' ? real.coupon.couponId : ''],
+		)) as unknown as [[{ n: number }]]
+		expect(realCoupons.n).toBe(1)
+		expect(await realRows()).toEqual({ users: 1, contacts: 1, sessions: 1 })
 	})
 
 	it('is idempotent per runId and deletes only the synthetic principal', async () => {

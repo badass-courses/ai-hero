@@ -19,45 +19,53 @@ import {
  * pending coupon refusing with `merchant-coupon-conflict`.
  */
 export async function resolveEvergreenMerchantEvidence(): Promise<unknown> {
-	const findActiveGlobal = async () =>
-		(
-			await db
-				.select()
-				.from(merchantCoupon)
-				.where(
-					and(
-						eq(merchantCoupon.amountDiscount, EVERGREEN_OFFER_AMOUNT_OFF_CENTS),
-						eq(merchantCoupon.type, 'special'),
-						eq(merchantCoupon.status, 1),
-						isNull(merchantCoupon.organizationId),
-					),
-				)
-				.limit(1)
-		)[0]
-	let row = await findActiveGlobal()
-	if (!row) {
-		const created = await createOrFindFixedMerchantCoupon(
-			EVERGREEN_OFFER_AMOUNT_OFF_CENTS,
-			false,
+	const found = await findEvergreenMerchantEvidence()
+	if (found) return found
+	const created = await createOrFindFixedMerchantCoupon(
+		EVERGREEN_OFFER_AMOUNT_OFF_CENTS,
+		false,
+	)
+	const evidence = await findEvergreenMerchantEvidence()
+	if (!evidence) {
+		throw new Error(
+			`evergreen merchant coupon unavailable: ${
+				created
+					? `merchant coupon ${created} is disabled or organization-owned`
+					: 'no special $100 merchant coupon could be created'
+			}`,
 		)
-		row = await findActiveGlobal()
-		if (!row) {
-			throw new Error(
-				`evergreen merchant coupon unavailable: ${
-					created
-						? `merchant coupon ${created} is disabled or organization-owned`
-						: 'no special $100 merchant coupon could be created'
-				}`,
-			)
-		}
 	}
+	return evidence
+}
+
+/**
+ * The same evidence, read-only: undefined when no active global coupon
+ * exists. For callers that must never create a provider object (synthetic
+ * test coupons).
+ */
+export async function findEvergreenMerchantEvidence(
+	database: Pick<typeof db, 'select'> = db,
+) {
+	const [row] = await database
+		.select()
+		.from(merchantCoupon)
+		.where(
+			and(
+				eq(merchantCoupon.amountDiscount, EVERGREEN_OFFER_AMOUNT_OFF_CENTS),
+				eq(merchantCoupon.type, 'special'),
+				eq(merchantCoupon.status, 1),
+				isNull(merchantCoupon.organizationId),
+			),
+		)
+		.limit(1)
+	if (!row) return undefined
 	return {
 		id: row.id,
 		identifier: row.identifier,
 		merchantAccountId: row.merchantAccountId,
 		currency: EVERGREEN_OFFER_CURRENCY,
 		amountOffCents: EVERGREEN_OFFER_AMOUNT_OFF_CENTS,
-		type: 'special',
+		type: 'special' as const,
 		sourceReference: `merchantCoupon:${row.id}`,
 	}
 }
