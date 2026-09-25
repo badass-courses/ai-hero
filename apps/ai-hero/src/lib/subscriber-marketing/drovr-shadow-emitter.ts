@@ -69,6 +69,7 @@ export type DrovrShadowEvent = {
 		| { reasonClass: string; reason: string }
 		| { list: string }
 		| { scope: 'course' | 'all' }
+		| { formId: string; kitFormId: number }
 		| { productId: string }
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload

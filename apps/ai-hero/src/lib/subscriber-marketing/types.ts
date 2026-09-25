@@ -235,6 +235,7 @@ export type SideEffectIntent = {
 		| 'issue-evergreen-coupon'
 		| 'subscribe-evergreen-list'
 		| 'unsubscribe-kit-list'
+		| 'subscribe-kit-form'
 	status: SideEffectIntentStatus
 	completedAt?: string | null
 	idempotencyKey: string
