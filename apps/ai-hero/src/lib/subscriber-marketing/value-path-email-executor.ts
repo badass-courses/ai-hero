@@ -99,12 +99,25 @@ export type ValuePathEmailShadowObserver = (observation: {
 	completedAt: string
 }) => Promise<unknown>
 
-/** A sender that has held a row this long without finishing has crashed. */
-export const VALUE_PATH_SEND_CLAIM_STALE_MS = 10 * 60_000
+/**
+ * A sender that has held a row this long without finishing has crashed.
+ * Longer than any sender can live (the cron runs under /api/inngest's
+ * 800 s maxDuration; drovr's POST and its after() under 60 s), so a live
+ * send is never reclaimed underneath itself.
+ */
+export const VALUE_PATH_SEND_CLAIM_STALE_MS = 15 * 60_000
 
 /** The cron found the row but another sender (a drovr POST, another run) holds it. */
 export const INTENT_CLAIMED_BY_ANOTHER_SENDER =
 	'intent-claimed-by-another-sender'
+
+/** The run's claim was taken over before it could record its outcome; it wrote nothing. */
+export const SEND_CLAIM_LOST = 'send-claim-lost'
+
+type SideEffectIntentPatch = Pick<
+	SideEffectIntent,
+	'status' | 'gates' | 'reviewReasons' | 'metadata' | 'completedAt'
+>
 
 export type ValuePathEmailSendClaim = {
 	/**
@@ -116,6 +129,12 @@ export type ValuePathEmailSendClaim = {
 		id: string,
 		args: { now: string; staleAfterMs: number },
 	): Promise<boolean> | boolean
+	/** Write only while this claim still owns the row; undefined when it does not. */
+	finishClaimedSideEffectIntent(
+		id: string,
+		claimedAt: string,
+		patch: SideEffectIntentPatch,
+	): Promise<SideEffectIntent | undefined> | SideEffectIntent | undefined
 }
 
 export async function executePendingValuePathEmailIntents(args: {
@@ -170,12 +189,10 @@ async function executeClaimedValuePathEmailIntent(
 	if (args.config?.allowWrite === false) {
 		return await executeValuePathEmailIntent(args)
 	}
+	const claimedAt = args.now ?? new Date().toISOString()
 	const claimed = await args.repository.claimSideEffectIntentForSend(
 		args.intent.id,
-		{
-			now: args.now ?? new Date().toISOString(),
-			staleAfterMs: VALUE_PATH_SEND_CLAIM_STALE_MS,
-		},
+		{ now: claimedAt, staleAfterMs: VALUE_PATH_SEND_CLAIM_STALE_MS },
 	)
 	if (!claimed) {
 		return {
@@ -184,17 +201,51 @@ async function executeClaimedValuePathEmailIntent(
 			reviewReasons: [INTENT_CLAIMED_BY_ANOTHER_SENDER],
 		}
 	}
+	// Every write to this row goes through the claim, so a run whose claim
+	// went stale and was taken over cannot overwrite the newer sender.
+	let claimLost = false
+	const finish = async (patch: SideEffectIntentPatch) => {
+		const finished = await args.repository.finishClaimedSideEffectIntent(
+			args.intent.id,
+			claimedAt,
+			patch,
+		)
+		if (!finished) claimLost = true
+		return finished
+	}
+	const repository: ValuePathEmailExecutorRepository = {
+		findPendingValuePathEmailSideEffectIntents: (scope) =>
+			args.repository.findPendingValuePathEmailSideEffectIntents(scope),
+		findContactById: (id) => args.repository.findContactById(id),
+		findCurrentContactState: (contactId) =>
+			args.repository.findCurrentContactState(contactId),
+		updateSideEffectIntent: async (id, patch) => {
+			if (id !== args.intent.id) {
+				return await args.repository.updateSideEffectIntent(id, patch)
+			}
+			const finished = await finish(patch)
+			if (!finished) throw new Error(SEND_CLAIM_LOST)
+			return finished
+		},
+	}
+	const lost = (): ValuePathEmailExecutionResult => ({
+		status: 'skipped',
+		intentId: args.intent.id,
+		reviewReasons: [SEND_CLAIM_LOST],
+	})
 	let outcome: ValuePathEmailExecutionResult
 	try {
 		// The executor sees the row as this run read it (pending or a due
 		// failed row); every outcome that writes overwrites the claim.
-		outcome = await executeValuePathEmailIntent(args)
+		outcome = await executeValuePathEmailIntent({ ...args, repository })
 	} catch (cause) {
-		await releaseValuePathSendClaim(args.repository, args.intent)
+		if (claimLost) return lost()
+		await releaseValuePathSendClaim(finish, args.intent)
 		throw cause
 	}
+	if (claimLost) return lost()
 	if (outcomeLeavesClaim(outcome)) {
-		await releaseValuePathSendClaim(args.repository, args.intent)
+		await releaseValuePathSendClaim(finish, args.intent)
 	}
 	return outcome
 }
@@ -210,15 +261,16 @@ function outcomeLeavesClaim(outcome: ValuePathEmailExecutionResult): boolean {
 
 /**
  * Put a claimed row back as the run read it, so the next run or a drovr
- * re-ask can take it. Best effort: a failed release leaves the row
- * sending until its claim goes stale and a re-ask takes it again.
+ * re-ask can take it. Only while the claim is still this run's; best
+ * effort: a failed release leaves the row sending until its claim goes
+ * stale and a re-ask takes it again.
  */
 async function releaseValuePathSendClaim(
-	repository: ValuePathEmailExecutorRepository,
+	finish: (patch: SideEffectIntentPatch) => Promise<unknown>,
 	row: SideEffectIntent,
 ): Promise<void> {
 	try {
-		await repository.updateSideEffectIntent(row.id, {
+		await finish({
 			status: row.status,
 			gates: row.gates,
 			reviewReasons: row.reviewReasons,

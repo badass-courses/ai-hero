@@ -24,6 +24,7 @@ describe('value path email executor', () => {
 				findCurrentContactState: vi.fn(),
 				updateSideEffectIntent: vi.fn(),
 				claimSideEffectIntentForSend: vi.fn(),
+				finishClaimedSideEffectIntent: vi.fn(),
 			},
 			emailListProvider: { subscribeToList: vi.fn() },
 			config: { limit: 3, intentIds: ['intent-1', 'intent-2'] },
@@ -45,6 +46,7 @@ describe('value path email executor', () => {
 				findCurrentContactState: vi.fn(),
 				updateSideEffectIntent: vi.fn(),
 				claimSideEffectIntentForSend: vi.fn(),
+				finishClaimedSideEffectIntent: vi.fn(),
 			},
 			emailListProvider: { subscribeToList: vi.fn() },
 			config: { intentIds: [] },
@@ -76,6 +78,7 @@ describe('value path email executor', () => {
 				}),
 				updateSideEffectIntent: vi.fn(),
 				claimSideEffectIntentForSend: vi.fn(),
+				finishClaimedSideEffectIntent: vi.fn(),
 			},
 			emailListProvider: { subscribeToList: vi.fn() },
 			config: {
@@ -120,6 +123,7 @@ describe('value path email executor', () => {
 				}),
 				updateSideEffectIntent: vi.fn(),
 				claimSideEffectIntentForSend: vi.fn(),
+				finishClaimedSideEffectIntent: vi.fn(),
 			}
 			let settled = false
 			const execution = executePendingValuePathEmailIntents({
@@ -197,6 +201,7 @@ describe('value path email executor', () => {
 				}),
 				updateSideEffectIntent,
 				claimSideEffectIntentForSend: vi.fn(),
+				finishClaimedSideEffectIntent: vi.fn(),
 			},
 			emailListProvider: { subscribeToList },
 			now: '2026-07-17T12:00:00.000Z',

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./drovr-shadow-dispatch', () => ({
@@ -15,6 +17,8 @@ import {
 	executePendingValuePathEmailIntents,
 	executeValuePathEmailIntent,
 	KIT_ACCEPTED_COMPLETION_WRITE_FAILED,
+	SEND_CLAIM_LOST,
+	VALUE_PATH_SEND_CLAIM_STALE_MS,
 	type ValuePathEmailExecutorConfig,
 } from './value-path-email-executor'
 
@@ -216,11 +220,11 @@ describe('value-path send claim: one Kit call per row across senders', () => {
 			repository: {
 				...bind(repository),
 				// Kit took the email; recording it failed once.
-				updateSideEffectIntent: (id, patch) => {
+				finishClaimedSideEffectIntent: (id, claimedAt, patch) => {
 					if (patch.status === 'completed') {
 						throw new Error('database write failed')
 					}
-					return repository.updateSideEffectIntent(id, patch)
+					return repository.finishClaimedSideEffectIntent(id, claimedAt, patch)
 				},
 			},
 			emailListProvider: {
@@ -262,6 +266,65 @@ describe('value-path send claim: one Kit call per row across senders', () => {
 	})
 })
 
+describe('value-path send claim: a sender that outlives its claim', () => {
+	it('cannot overwrite the row a newer sender reclaimed', async () => {
+		const { repository, contactId, config } = await seeded()
+		const kit = heldKit()
+		const posted = await acceptDrovrIntent({
+			repository,
+			intent: drovrIntent(contactId),
+		})
+		if (posted.status !== 'accepted') throw new Error('expected accepted')
+		const cron = executePendingValuePathEmailIntents({
+			repository,
+			emailListProvider: kit.provider as never,
+			config,
+		})
+		await tick()
+		// The claim went stale and another sender took the row.
+		const reclaimedAt = new Date(Date.now() + 60_000).toISOString()
+		const held = repository.sideEffectIntents.get(posted.intentId)!
+		expect(held.status).toBe('sending')
+		repository.sideEffectIntents.set(posted.intentId, {
+			...held,
+			metadata: { ...held.metadata, claimedAt: reclaimedAt },
+		})
+		kit.release()
+		expect(await cron).toEqual([
+			{
+				status: 'skipped',
+				intentId: posted.intentId,
+				reviewReasons: [SEND_CLAIM_LOST],
+			},
+		])
+		// The newer sender's claim stands; the stale owner wrote nothing.
+		expect(repository.sideEffectIntents.get(posted.intentId)).toMatchObject({
+			status: 'sending',
+			metadata: { claimedAt: reclaimedAt },
+		})
+	})
+
+	it('goes stale only after every sender that could hold it has been stopped', () => {
+		const maxDurationSeconds = (route: string) => {
+			const source = readFileSync(
+				join(__dirname, '../../app/api', route, 'route.ts'),
+				'utf8',
+			)
+			const match = source.match(/export const maxDuration = (\d+)/)
+			if (!match) throw new Error(`${route} sets no maxDuration`)
+			return Number(match[1])
+		}
+		// The cron sends from /api/inngest; drovr's POST and its after() from
+		// /api/drovr/intents. A live sender is never reclaimed underneath itself.
+		expect(VALUE_PATH_SEND_CLAIM_STALE_MS).toBeGreaterThan(
+			maxDurationSeconds('inngest') * 1000,
+		)
+		expect(VALUE_PATH_SEND_CLAIM_STALE_MS).toBeGreaterThan(
+			maxDurationSeconds('drovr/intents') * 1000,
+		)
+	})
+})
+
 /** The repository's methods as an object a test can override one of. */
 function bind(repository: InMemorySubscriberMarketingRepository) {
 	return {
@@ -273,5 +336,7 @@ function bind(repository: InMemorySubscriberMarketingRepository) {
 		updateSideEffectIntent: repository.updateSideEffectIntent.bind(repository),
 		claimSideEffectIntentForSend:
 			repository.claimSideEffectIntentForSend.bind(repository),
+		finishClaimedSideEffectIntent:
+			repository.finishClaimedSideEffectIntent.bind(repository),
 	}
 }

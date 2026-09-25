@@ -481,6 +481,24 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		})
 		return true
 	}
+	finishClaimedSideEffectIntent(
+		id: string,
+		claimedAt: string,
+		patch: Pick<
+			SideEffectIntent,
+			'status' | 'gates' | 'reviewReasons' | 'metadata' | 'completedAt'
+		>,
+	) {
+		const existing = this.sideEffectIntents.get(id)
+		if (
+			!existing ||
+			existing.status !== 'sending' ||
+			existing.metadata.claimedAt !== claimedAt
+		) {
+			return undefined
+		}
+		return this.updateSideEffectIntent(id, patch)
+	}
 	updateSideEffectIntent(
 		id: string,
 		patch: Pick<
