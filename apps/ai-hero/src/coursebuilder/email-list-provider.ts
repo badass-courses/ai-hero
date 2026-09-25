@@ -8,6 +8,8 @@ import ConvertkitProvider, {
 	subscribeToEndpoint,
 } from '@coursebuilder/core/providers/convertkit'
 
+import { withKitCallTiming } from './kit-call-timing'
+
 const convertkitProvider = ConvertkitProvider({
 	apiKey: env.CONVERTKIT_API_KEY,
 	apiSecret: env.CONVERTKIT_API_SECRET,
@@ -93,12 +95,18 @@ async function subscribeWithFieldContract(
 		listType,
 	})
 
+	// Keep Course Builder's full contract here. It creates missing custom fields,
+	// writes them, and reads the subscriber back before callers confirm fields.
+	// That is several Kit calls in a row; each one is timed so a slow
+	// operation names the call that stalled.
+	const timed = await withKitCallTiming(() =>
+		convertkitProvider.subscribeToList(options),
+	)
+	const timing = { durationMs: timed.durationMs, calls: timed.calls }
 	try {
-		// Keep Course Builder's full contract here. It creates missing custom fields,
-		// writes them, and reads the subscriber back before callers confirm fields.
-		const result = await convertkitProvider.subscribeToList(options)
+		if ('error' in timed) throw timed.error
 		const subscriber = parseKitSubscriber({
-			result,
+			result: timed.value,
 			requestedEmail: options.user.email,
 			allowMissingEmail: false,
 		})
@@ -109,6 +117,7 @@ async function subscribeWithFieldContract(
 			listType,
 			attempts: 1,
 			providerCallContract: 'coursebuilder-field-contract',
+			...timing,
 		})
 		return subscriber
 	} catch (error) {
@@ -121,6 +130,7 @@ async function subscribeWithFieldContract(
 			attempts: 1,
 			status: boundaryError.status,
 			reason: boundaryError.code,
+			...timing,
 		})
 		throw boundaryError
 	}

@@ -30,6 +30,29 @@ export function parseDrovrSyncSendConfig(
 	return { enabled: true, perMinute }
 }
 
+/**
+ * How long a synchronous send may hold drovr's request before it answers
+ * 202 and finishes in the background. drovr's executor deadline is 15 s;
+ * the default leaves room for transit. Bounded so a bad value cannot let
+ * drovr's deadline fire again or make every send a background send.
+ */
+export const DEFAULT_DROVR_SEND_DEADLINE_MS = 10_000
+const MIN_DROVR_SEND_DEADLINE_MS = 1_000
+const MAX_DROVR_SEND_DEADLINE_MS = 12_000
+
+export function drovrSendDeadlineMs(
+	env: Readonly<Record<string, string | number | undefined>>,
+): number {
+	const parsed = Number(env.AIH_DROVR_SEND_DEADLINE_MS)
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return DEFAULT_DROVR_SEND_DEADLINE_MS
+	}
+	return Math.min(
+		MAX_DROVR_SEND_DEADLINE_MS,
+		Math.max(MIN_DROVR_SEND_DEADLINE_MS, Math.trunc(parsed)),
+	)
+}
+
 export type DrovrSendBudget = {
 	/** Take one slot; not ok means wait retryAfterMs. */
 	take(): Promise<{ ok: boolean; retryAfterMs: number }>

@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { NextResponse, type NextRequest } from 'next/server'
+import { after, NextResponse, type NextRequest } from 'next/server'
 import { db } from '@/db'
 import { providerIdentity } from '@/db/schema'
 import { env } from '@/env.mjs'
@@ -7,6 +7,7 @@ import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/dr
 import {
 	acceptDrovrIntent,
 	DrovrIntentSchema,
+	type DrovrSendContinuation,
 } from '@/lib/subscriber-marketing/drovr-executor'
 import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-evergreen'
 import {
@@ -16,6 +17,7 @@ import {
 import { createKitUnsubscriber } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import {
 	drovrSendBudget,
+	drovrSendDeadlineMs,
 	parseDrovrSyncSendConfig,
 } from '@/lib/subscriber-marketing/drovr-sync-send'
 import { createEmailCourseShadowRuntime } from '@/lib/subscriber-marketing/email-course-shadow-runtime'
@@ -42,10 +44,19 @@ import { and, eq } from 'drizzle-orm'
  * list.unsubscribe applies inside the request and answers 200 completed,
  * retry, or blocked; it never answers 202 or failed. With
  * AIH_DROVR_SYNC_SEND the skills-course send runs inside this request
- * (decision 2026-09-17) and 202 stops appearing for it.
+ * (decision 2026-09-17) and answers its outcome; a send still running at
+ * the deadline (10 s, under drovr's 15 s) answers 202 and finishes in
+ * after() on the row it claimed.
  * Refusals are RFC 9457 problem details with a hint, the same shape drovr
  * speaks, so an agent debugging either side reads one vocabulary.
  */
+
+/** Covers a send that outlives the response; far inside the 15-minute stale claim. */
+export const maxDuration = 60
+
+/** Log text never carries an address. */
+const scrubAddresses = (text: string) =>
+	text.replace(/[^\s@<>"']+@[^\s@<>"']+/g, '[address]')
 
 const problem = (
 	status: number,
@@ -162,9 +173,36 @@ export const POST = withSkill(async (request: NextRequest) => {
 		}
 	}
 
+	let backgrounded = false
+	const continueInBackground: DrovrSendContinuation = (settled) => {
+		backgrounded = true
+		const idempotencyKey = parsed.data.idempotencyKey
+		after(async () => {
+			const send = await settled
+			if ('error' in send) {
+				await log.error('drovr.executor.sync_send_settled', {
+					idempotencyKey,
+					intentId: send.intentId,
+					status: 'error',
+					error: scrubAddresses(send.error),
+					durationMs: send.durationMs,
+				})
+				return
+			}
+			await log.info('drovr.executor.sync_send_settled', {
+				idempotencyKey,
+				intentId: send.intentId,
+				status: send.result.status,
+				durationMs: send.durationMs,
+			})
+		})
+	}
+
 	const result = await acceptDrovrIntent({
 		repository,
 		intent: parsed.data,
+		continueInBackground,
+		sendDeadlineMs: drovrSendDeadlineMs(process.env),
 		findKitSubscriberId,
 		evergreen: parseDrovrEvergreenConfig(process.env),
 		unsubscribeInKit: createKitUnsubscriber({
@@ -209,6 +247,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 		idempotencyKey: parsed.data.idempotencyKey,
 		status: result.status,
 		sync: sync.sendNow !== undefined,
+		...(backgrounded ? { backgrounded: true } : {}),
 		...('intentId' in result ? { intentId: result.intentId } : {}),
 		...(result.status === 'retry'
 			? { retryAfterMs: result.retryAfterMs, reason: result.reason }

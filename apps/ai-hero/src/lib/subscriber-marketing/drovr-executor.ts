@@ -3,9 +3,14 @@ import { z } from 'zod'
 
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
-import { retryAfterMsFor, type DrovrSendBudget } from './drovr-sync-send'
+import {
+	DEFAULT_DROVR_SEND_DEADLINE_MS,
+	retryAfterMsFor,
+	type DrovrSendBudget,
+} from './drovr-sync-send'
 import {
 	isDueRetryableValuePathEmailIntent,
+	VALUE_PATH_SEND_CLAIM_STALE_MS,
 	type ValuePathEmailExecutionResult,
 } from './value-path-email-executor'
 
@@ -155,6 +160,21 @@ export type DrovrSendNow = (
 	row: SideEffectIntent,
 ) => Promise<ValuePathEmailExecutionResult>
 
+/** How a send that outlived the deadline ended, for the route to log. */
+export type DrovrBackgroundSend = {
+	intentId: string
+	/** From the claim to the send's end. */
+	durationMs: number
+} & ({ result: DrovrExecutorResult } | { error: string })
+
+/**
+ * Keeps a send running after the response (the route passes next's after()).
+ * The promise never rejects.
+ */
+export type DrovrSendContinuation = (
+	settled: Promise<DrovrBackgroundSend>,
+) => void
+
 const EmailSendPayload = z.object({
 	emailResourceId: z.string().min(1),
 })
@@ -218,6 +238,13 @@ export async function acceptDrovrIntent(args: {
 	sendNow?: DrovrSendNow
 	/** drovr's share of the Kit key; over budget answers retry before any send. */
 	budget?: DrovrSendBudget
+	/**
+	 * Where a send still running at sendDeadlineMs finishes. Present, the
+	 * request answers accepted at the deadline; absent, it waits for the send.
+	 */
+	continueInBackground?: DrovrSendContinuation
+	/** Defaults to DEFAULT_DROVR_SEND_DEADLINE_MS, inside drovr's 15 s deadline. */
+	sendDeadlineMs?: number
 	/** Applies an all-AI-Hero unsubscribe in Kit; absent answers retry. */
 	unsubscribeInKit?: KitUnsubscriber
 	/** Mirrors a double opt-in confirmation into Kit; absent answers retry. */
@@ -433,7 +460,16 @@ export async function acceptDrovrIntent(args: {
 }
 
 /** A sender that has held a row this long without finishing has crashed. */
-export const SEND_CLAIM_STALE_MS = 10 * 60_000
+export const SEND_CLAIM_STALE_MS = VALUE_PATH_SEND_CLAIM_STALE_MS
+
+type SendNowArgs = {
+	repository: DrovrExecutorRepository
+	intent: DrovrIntent
+	sendNow?: DrovrSendNow
+	budget?: DrovrSendBudget
+	continueInBackground?: DrovrSendContinuation
+	sendDeadlineMs?: number
+}
 
 /**
  * The synchronous path. An accepted row is sent right here when the caller
@@ -445,15 +481,16 @@ export const SEND_CLAIM_STALE_MS = 10 * 60_000
  * happened (gates refused). A row the executor cannot act on now (a failed
  * row whose retry is not due, or one another sender holds) stays accepted:
  * drovr's deadline re-asks.
+ *
+ * A send still running at the deadline answers accepted (202) and keeps
+ * going under continueInBackground. It still holds the row's claim, so a
+ * re-ask meanwhile answers accepted without Kit, and it writes completed or
+ * failed to that same row; ai-hero's completion fact reaches drovr through
+ * /events, as it does for any accepted intent.
  */
 async function sendNowIfAccepted(
 	result: DrovrExecutorResult,
-	args: {
-		repository: DrovrExecutorRepository
-		intent: DrovrIntent
-		sendNow?: DrovrSendNow
-		budget?: DrovrSendBudget
-	},
+	args: SendNowArgs,
 	step: SkillsWorkflowEmailStep,
 	now: string,
 ): Promise<DrovrExecutorResult> {
@@ -486,12 +523,46 @@ async function sendNowIfAccepted(
 			}
 		}
 	}
+	const startedAt = Date.now()
+	const send = sendClaimedRow(result, args, step, now, row)
+	if (!args.continueInBackground) return await send
+	const raced = await settleWithin(
+		send,
+		args.sendDeadlineMs ?? DEFAULT_DROVR_SEND_DEADLINE_MS,
+	)
+	if (raced.settled === 'value') return raced.value
+	if (raced.settled === 'error') throw raced.error
+	args.continueInBackground(
+		send.then(
+			(settled): DrovrBackgroundSend => ({
+				intentId: result.intentId,
+				durationMs: Date.now() - startedAt,
+				result: settled,
+			}),
+			(cause): DrovrBackgroundSend => ({
+				intentId: result.intentId,
+				durationMs: Date.now() - startedAt,
+				error: cause instanceof Error ? cause.message : String(cause),
+			}),
+		),
+	)
+	return result
+}
+
+/** The claimed send and its wire answer; hands the claim back on the way out when nothing was written. */
+async function sendClaimedRow(
+	result: Extract<DrovrExecutorResult, { status: 'accepted' }>,
+	args: SendNowArgs,
+	step: SkillsWorkflowEmailStep,
+	now: string,
+	row: SideEffectIntent,
+): Promise<DrovrExecutorResult> {
 	let outcome: ValuePathEmailExecutionResult
 	try {
 		// The executor sees the row as it was before the claim: it only acts
 		// on pending or due-retryable rows, and every outcome overwrites the
 		// claim with completed, blocked, or failed.
-		outcome = await args.sendNow({
+		outcome = await args.sendNow!({
 			...row,
 			status: row.status === 'sending' ? 'pending' : row.status,
 		})
@@ -539,6 +610,30 @@ async function sendNowIfAccepted(
 			if (after.status === 'sending') await releaseClaim(args.repository, row)
 			return result
 	}
+}
+
+/** Whichever comes first: the work's outcome, or the deadline. */
+function settleWithin<T>(
+	work: Promise<T>,
+	ms: number,
+): Promise<
+	| { settled: 'value'; value: T }
+	| { settled: 'error'; error: unknown }
+	| { settled: false }
+> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => resolve({ settled: false }), ms)
+		work.then(
+			(value) => {
+				clearTimeout(timer)
+				resolve({ settled: 'value', value })
+			},
+			(error) => {
+				clearTimeout(timer)
+				resolve({ settled: 'error', error })
+			},
+		)
+	})
 }
 
 /** Put a claimed row back as it was, so the cron or the next re-ask can take it. */
