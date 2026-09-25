@@ -179,7 +179,12 @@ const genericAnswerPage = {
 
 async function render(
 	slug: string,
-	searchParams: { pt?: string; answer?: string; confirmed?: string },
+	searchParams: {
+		pt?: string
+		answer?: string
+		confirmed?: string
+		retry?: string
+	},
 ) {
 	return renderToStaticMarkup(
 		await ValuePathAnswerPage({
@@ -216,6 +221,20 @@ describe('answer link GET records nothing (mail gateways fetch links)', () => {
 		expect(markup).toMatch(/<input[^>]*name="pt"[^>]*value="signed-token"/)
 		expect(markup).toMatch(/<input[^>]*name="answer"[^>]*value="correct"/)
 		expect(markup).not.toContain('contact-1')
+	})
+
+	it('re-offers Confirm with a note after a failed save, still recording nothing', async () => {
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
+		const markup = await render('skills-workflow-email-3-correct', {
+			pt: 'signed-token',
+			answer: 'correct',
+			retry: '1',
+		})
+
+		expectNothingRecorded()
+		expect(markup).toContain('We could not save your answer.')
+		expect(markup).toMatch(/<input[^>]*name="pt"[^>]*value="signed-token"/)
+		expect(markup).toMatch(/<input[^>]*name="answer"[^>]*value="correct"/)
 	})
 
 	it('records nothing on the certificate answer either, and creates no share', async () => {

@@ -95,11 +95,15 @@ let recordedAnswers: Set<string>
 function confirm(
 	slug = 'skills-workflow-email-3-correct',
 	body: Record<string, string> = { pt: 'signed-token', answer: 'correct' },
+	headers: Record<string, string> = { origin: 'https://www.aihero.dev' },
 ) {
 	return POST(
 		new NextRequest(`https://www.aihero.dev/ask/${slug}/confirm`, {
 			method: 'POST',
-			headers: { 'content-type': 'application/x-www-form-urlencoded' },
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+				...headers,
+			},
 			body: new URLSearchParams(body).toString(),
 		}),
 		{ params: Promise.resolve({ slug }) },
@@ -130,7 +134,11 @@ beforeEach(() => {
 	mocks.recordValuePathAnswerProgression.mockImplementation(
 		async ({ answerPage: page }: { answerPage: { id: string } }) => {
 			if (recordedAnswers.has(page.id)) {
-				return { status: 'idempotent-noop', idempotentNoop: true, reviewReasons: [] }
+				return {
+					status: 'idempotent-noop',
+					idempotentNoop: true,
+					reviewReasons: [],
+				}
 			}
 			recordedAnswers.add(page.id)
 			return recorded
@@ -181,7 +189,10 @@ describe('POST /ask/{slug}/confirm records the answer', () => {
 	})
 
 	it('records nothing for an invalid pt and sends the reader back to the landing', async () => {
-		mocks.verifyValuePathToken.mockReturnValue({ valid: false, reason: 'tampered' })
+		mocks.verifyValuePathToken.mockReturnValue({
+			valid: false,
+			reason: 'tampered',
+		})
 		const response = await confirm()
 
 		expect(response.status).toBe(303)
@@ -260,6 +271,113 @@ describe('POST /ask/{slug}/confirm records the answer', () => {
 			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
 		).not.toHaveBeenCalled()
 		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['a cross-site Origin', { origin: 'https://evil.example' }],
+		['an opaque Origin', { origin: 'null' }],
+		['no Origin and no fetch metadata', {}],
+		['no Origin and a cross-site fetch', { 'sec-fetch-site': 'cross-site' }],
+	])('refuses %s with 403 before reading anything', async (_, headers) => {
+		const response = await confirm(undefined, undefined, headers)
+
+		expect(response.status).toBe(403)
+		expect(mocks.verifyValuePathToken).not.toHaveBeenCalled()
+		expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('accepts a same-origin fetch that withholds Origin', async () => {
+		const response = await confirm(undefined, undefined, {
+			'sec-fetch-site': 'same-origin',
+		})
+
+		expect(response.status).toBe(303)
+		expect(mocks.recordValuePathAnswerProgression).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends the reader back to Confirm when the answer fails to save', async () => {
+		mocks.recordValuePathAnswerProgression.mockRejectedValue(
+			new Error('database unavailable'),
+		)
+		const response = await confirm()
+
+		expect(response.status).toBe(303)
+		// The retry view carries the same pt and answer back to its form.
+		expect(response.headers.get('location')).toBe(
+			'https://www.aihero.dev/ask/skills-workflow-email-3-correct?answer=correct&pt=signed-token&retry=1',
+		)
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.logError).toHaveBeenCalledTimes(1)
+		expect(mocks.logError).toHaveBeenCalledWith(
+			'value-path.ask.progression_failed',
+			expect.objectContaining({ contactId: 'contact-1' }),
+		)
+		expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('@')
+	})
+
+	it('accepts the apex origin too', async () => {
+		const response = await confirm(undefined, undefined, {
+			origin: 'https://aihero.dev',
+		})
+
+		expect(response.status).toBe(303)
+		expect(mocks.recordValuePathAnswerProgression).toHaveBeenCalledTimes(1)
+	})
+
+	it('logs no pt when it refuses a cross-site POST', async () => {
+		await confirm(undefined, undefined, { origin: 'https://evil.example' })
+
+		expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain(
+			'signed-token',
+		)
+	})
+
+	it('sends the reader back to Confirm when the allowlist cannot be read', async () => {
+		mocks.readActiveGateDRuntimeAllowlist.mockRejectedValue(
+			new Error('redis unavailable'),
+		)
+		const response = await confirm()
+
+		expect(response.headers.get('location')).toContain('retry=1')
+		expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
+	})
+
+	it('treats a skipped progression as done, not as a failure', async () => {
+		mocks.recordValuePathAnswerProgression.mockResolvedValue({
+			status: 'skipped',
+			idempotentNoop: false,
+			reviewReasons: ['send-gate-closed'],
+		})
+		const response = await confirm()
+
+		expect(response.headers.get('location')).toContain('confirmed=1')
+		expect(mocks.inngestSend).not.toHaveBeenCalled()
+	})
+
+	it('still lands a finisher on the certificate when the answer fails but the share exists', async () => {
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue({
+			...answerPage,
+			fields: { ...answerPage.fields, emailId: 'email-7', slug: 'cert' },
+		})
+		mocks.recordValuePathAnswerProgression.mockRejectedValue(
+			new Error('Kit field write failed'),
+		)
+		mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockResolvedValue({
+			eligible: true,
+			contactId: 'contact-1',
+		})
+		mocks.ensureSkillsWorkflowCertificateShare.mockResolvedValue({
+			available: true,
+			created: false,
+			share: { slug: 's' },
+		})
+		const response = await confirm('cert', {
+			pt: 'signed-token',
+			answer: 'other',
+		})
+
+		expect(response.headers.get('location')).toContain('confirmed=1')
 	})
 
 	it('never logs an email address', async () => {

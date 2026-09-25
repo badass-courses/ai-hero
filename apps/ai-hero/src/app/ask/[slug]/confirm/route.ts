@@ -39,6 +39,16 @@ export const POST = withSkill(
 		context: { params: Promise<{ slug: string }> },
 	) => {
 		const { slug } = await context.params
+		// Only our own Confirm button may record: a cross-site page or a
+		// scanner posting from elsewhere is refused before anything is read.
+		if (!isSameOriginPost(request)) {
+			await log.warn('value-path.ask.confirm_cross_site_refused', {
+				slug,
+				origin: request.headers.get('origin') ?? undefined,
+				secFetchSite: request.headers.get('sec-fetch-site') ?? undefined,
+			})
+			return new NextResponse(null, { status: 403 })
+		}
 		const form = await request.formData().catch(() => undefined)
 		const pt = formString(form?.get('pt'))
 		const answer = formString(form?.get('answer'))
@@ -54,9 +64,13 @@ export const POST = withSkill(
 			return seeOther(request, answerLandingPath({ slug, pt, answer }))
 		}
 
+		// A thrown read or a thrown record is a failure to retry; a blocked
+		// allowlist or a skipped progression is a decision, shown as done.
+		let recordingFailed = false
 		const runtimeAllowlistDecision = await readActiveGateDRuntimeAllowlist({
 			redis,
 		}).catch(async (error) => {
+			recordingFailed = true
 			await log.error('value-path.ask.allowlist_read_failed', {
 				slug,
 				contactId: token.payload.contactId,
@@ -99,6 +113,7 @@ export const POST = withSkill(
 						),
 					}),
 				}).catch(async (error) => {
+					recordingFailed = true
 					await log.error('value-path.ask.progression_failed', {
 						slug,
 						contactId: token.payload.contactId,
@@ -148,13 +163,20 @@ export const POST = withSkill(
 
 		// A finisher's certificate share is created here, on the confirm, never
 		// by the landing GET. A synthetic principal never persists one.
-		if (
+		const certificateShareAvailable =
 			isCertificateAnswer(answerPage) &&
 			!isSyntheticPrincipalId(token.payload.contactId)
-		) {
-			await ensureCertificateShare(slug, token.payload.contactId)
-		}
+				? await ensureCertificateShare(slug, token.payload.contactId)
+				: false
 
+		// A finisher whose certificate is ready still lands on it; anyone else
+		// whose answer failed to save gets the Confirm button back.
+		if (recordingFailed && !certificateShareAvailable) {
+			return seeOther(
+				request,
+				answerLandingPath({ slug, pt, answer, retry: true }),
+			)
+		}
 		return seeOther(
 			request,
 			answerLandingPath({ slug, pt, answer, confirmed: true }),
@@ -162,7 +184,11 @@ export const POST = withSkill(
 	},
 )
 
-async function ensureCertificateShare(slug: string, contactId: string) {
+/** True when the finisher's share exists after this call. */
+async function ensureCertificateShare(
+	slug: string,
+	contactId: string,
+): Promise<boolean> {
 	const eligibility = await checkSkillsWorkflowValuePathCertificateEligibility({
 		contactId,
 	}).catch(async (error) => {
@@ -173,7 +199,7 @@ async function ensureCertificateShare(slug: string, contactId: string) {
 		})
 		return undefined
 	})
-	if (!eligibility?.eligible) return
+	if (!eligibility?.eligible) return false
 	const result = await ensureSkillsWorkflowCertificateShare({
 		eligibility,
 	}).catch(() => ({
@@ -187,6 +213,31 @@ async function ensureCertificateShare(slug: string, contactId: string) {
 			reason: result.reason,
 		})
 	}
+	return result.available
+}
+
+const SITE_ORIGINS = ['https://www.aihero.dev', 'https://aihero.dev']
+
+/**
+ * Browsers send Origin on every form POST; Sec-Fetch-Site covers one that
+ * withholds it. Only the site's origins (and its canonical URL) pass; an
+ * opaque `Origin: null` is cross-site.
+ */
+function isSameOriginPost(request: NextRequest) {
+	const origin = request.headers.get('origin')
+	if (origin) {
+		const allowed = new Set(SITE_ORIGINS)
+		const canonical = process.env.NEXT_PUBLIC_URL
+		if (canonical) {
+			try {
+				allowed.add(new URL(canonical).origin)
+			} catch {
+				// An unparseable canonical URL adds nothing.
+			}
+		}
+		return allowed.has(origin)
+	}
+	return request.headers.get('sec-fetch-site') === 'same-origin'
 }
 
 /** 303 so the browser follows with a GET, which records nothing. */

@@ -32,7 +32,12 @@ import { CertificateShareActions } from './certificate-share-actions'
  */
 export default async function ValuePathAnswerPage(props: {
 	params: Promise<{ slug: string }>
-	searchParams: Promise<{ pt?: string; answer?: string; confirmed?: string }>
+	searchParams: Promise<{
+		pt?: string
+		answer?: string
+		confirmed?: string
+		retry?: string
+	}>
 }) {
 	const [{ slug }, searchParams] = await Promise.all([
 		props.params,
@@ -53,6 +58,7 @@ export default async function ValuePathAnswerPage(props: {
 				confirmPath={`/ask/${encodeURIComponent(slug)}/confirm`}
 				pt={searchParams.pt}
 				answer={searchParams.answer}
+				retry={searchParams.retry === '1'}
 			/>
 		)
 	}
@@ -370,11 +376,13 @@ function ConfirmAnswerPage({
 	confirmPath,
 	pt,
 	answer,
+	retry,
 }: {
 	answerPage: AnswerPage
 	confirmPath: string
 	pt?: string
 	answer?: string
+	retry?: boolean
 }) {
 	const choice =
 		answerPage.fields.title ??
@@ -395,6 +403,14 @@ function ConfirmAnswerPage({
 						Confirm your answer
 					</h1>
 				</div>
+				{retry ? (
+					<p
+						className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
+						data-value-path-answer-retry="true"
+					>
+						We could not save your answer. Please confirm again.
+					</p>
+				) : null}
 				{choice ? (
 					<p className="text-lg leading-relaxed">
 						You picked: <strong>{choice}</strong>
