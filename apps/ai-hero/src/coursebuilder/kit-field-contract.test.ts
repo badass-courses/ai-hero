@@ -254,6 +254,20 @@ describe('Kit field contract with a custom-field cache', () => {
 		).rejects.toBeInstanceOf(ConvertKitApiError)
 	})
 
+	it('refuses a missing list id before any Kit call, exactly as Course Builder did', async () => {
+		// Course Builder's subscribeToList threw 'No listId provided' too: its
+		// provider object carries no defaultListId, so the server route's
+		// `listId || provider.defaultListId` was already undefined.
+		const kit = fakeKit({ fields: ['aih_known'] })
+		await expect(
+			subscribeWithKitFields(
+				{ ...options({ aih_known: 'a' }), listId: undefined },
+				deps(kit),
+			),
+		).rejects.toThrow('No listId provided')
+		expect(kit.calls).toEqual([])
+	})
+
 	it('subscribes forms and tags on their own endpoints', async () => {
 		const kit = fakeKit()
 		await subscribeWithKitFields(

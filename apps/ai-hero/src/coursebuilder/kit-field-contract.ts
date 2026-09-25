@@ -77,6 +77,8 @@ export async function subscribeWithKitFields(
 	options: KitFieldSubscribeOptions,
 	deps: KitFieldContractDeps,
 ): Promise<Record<string, unknown> | undefined> {
+	// Refuse a bad target before any Kit call, as Course Builder does.
+	const subscribePath = `/${endpointFor(options.listType)}/${requiredListId(options.listId)}/subscribe`
 	const kit = kitClient(deps)
 	const fields = options.fields ?? {}
 	const keys = Object.keys(fields)
@@ -84,15 +86,12 @@ export async function subscribeWithKitFields(
 	if (keys.length > 0) await ensureCustomFields(keys, kit, deps.cache)
 	const subscribed = await kit.post<{
 		subscription?: { subscriber?: { id?: number | string } }
-	}>(
-		`/${endpointFor(options.listType)}/${requiredListId(options.listId)}/subscribe`,
-		{
-			api_key: deps.apiKey,
-			email: options.user.email,
-			first_name: options.user.name ?? undefined,
-			...(keys.length > 0 ? { fields } : {}),
-		},
-	)
+	}>(subscribePath, {
+		api_key: deps.apiKey,
+		email: options.user.email,
+		first_name: options.user.name ?? undefined,
+		...(keys.length > 0 ? { fields } : {}),
+	})
 	const subscriberId = subscribed?.subscription?.subscriber?.id
 	if (subscriberId === undefined || subscriberId === null) {
 		throw new Error(
