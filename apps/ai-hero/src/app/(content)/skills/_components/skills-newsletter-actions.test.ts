@@ -214,6 +214,7 @@ describe('tagSubscriberAsSkills', () => {
 			email_address: 'contact',
 			first_name: null,
 			state: 'inactive',
+			created_at: '2026-09-15T06:32:55Z',
 			fields: {},
 		})
 		mocks.getServerAuthSession.mockResolvedValue({
@@ -229,6 +230,8 @@ describe('tagSubscriberAsSkills', () => {
 				intentKey: 'course:skills',
 				via: 'cookie',
 				state: 'inactive',
+				kitCreatedAt: '2026-09-15T06:32:55Z',
+				resubmit: true,
 			},
 		)
 	})
