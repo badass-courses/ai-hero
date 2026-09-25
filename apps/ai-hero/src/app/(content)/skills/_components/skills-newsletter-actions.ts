@@ -25,7 +25,13 @@ import {
 	parseCourseSequenceExhaustionEnabled,
 	serializeDeadlineTimeZoneEvidenceForKit,
 } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
+import {
+	doiAppliesTo,
+	parseDrovrDoiConfig,
+} from '@/lib/subscriber-marketing/drovr-doi-signup'
+import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
+import { getServerAuthSession } from '@/server/auth'
 import { issueSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
 
 import {
@@ -54,6 +60,44 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			hasSession: false,
 		})
 		return { success: false, reason: 'not-subscribed' as const }
+	}
+
+	// drovr double opt-in (DROVR_DOI_FORMS): a signed-in reader proved the
+	// address by logging in, so they count as confirmed and take today's
+	// path. A cookie alone proves nothing, so that reader confirms by email.
+	if (
+		doiAppliesTo(parseDrovrDoiConfig(env), SKILLS_FORM_ID, identity.email) &&
+		!(await isSignedInAs(identity))
+	) {
+		try {
+			const [cookieStore, headerStore] = await Promise.all([
+				cookies(),
+				headers(),
+			])
+			await requestDrovrDoiSignup({
+				email: identity.email,
+				name: identity.name,
+				kitFormId: SKILLS_FORM_ID,
+				page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
+				optInAttribution: parseOptInAttributionCookie(
+					cookieStore.get('ft_attr')?.value,
+				),
+				entry: 'tag-me',
+			})
+		} catch (error) {
+			await log.error('skills.tagme.doi.failed', {
+				formId: SKILLS_FORM_ID,
+				error: error instanceof Error ? error.name : 'unknown',
+			})
+			return { success: false, reason: 'request-failed' as const }
+		}
+		// The same answer the clients already follow: go to the plain
+		// "check your email" page.
+		return {
+			success: false as const,
+			reason: 'confirmation-required' as const,
+			confirmationUrl: `/confirm?email=${encodeURIComponent(identity.email)}`,
+		}
 	}
 
 	try {
@@ -212,4 +256,18 @@ async function sendSkillsNewsletterPathEntry(
 		},
 	}
 	await inngest.send(event)
+}
+
+/**
+ * Signed in as this address: the identity came from the session, or the
+ * cookie's address is also the session's. A different session address
+ * proves nothing about the cookie's.
+ */
+async function isSignedInAs(identity: { email: string; via: string }) {
+	if (identity.via === 'session') return true
+	const auth = await getServerAuthSession().catch(() => null)
+	const sessionEmail = auth?.session?.user?.email?.trim().toLowerCase()
+	return Boolean(
+		sessionEmail && sessionEmail === identity.email.trim().toLowerCase(),
+	)
 }

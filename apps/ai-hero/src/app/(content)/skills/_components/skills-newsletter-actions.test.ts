@@ -17,6 +17,11 @@ const mocks = vi.hoisted(() => ({
 	setSubscriberCookie: vi.fn(),
 	setSubscriberFields: vi.fn(),
 	subscribeToList: vi.fn(),
+	requestDoi: vi.fn(),
+	env: {
+		CONVERTKIT_API_SECRET: 'secret',
+		CONVERTKIT_API_KEY: 'key',
+	} as Record<string, string | undefined>,
 }))
 
 vi.mock('next/cache', () => ({
@@ -32,11 +37,10 @@ vi.mock('next/headers', () => ({
 	}),
 }))
 
-vi.mock('@/env.mjs', () => ({
-	env: {
-		CONVERTKIT_API_SECRET: 'secret',
-		CONVERTKIT_API_KEY: 'key',
-	},
+vi.mock('@/env.mjs', () => ({ env: mocks.env }))
+
+vi.mock('@/lib/subscriber-marketing/drovr-doi-signup.server', () => ({
+	requestDrovrDoiSignup: mocks.requestDoi,
 }))
 
 vi.mock('@coursebuilder/core/providers/convertkit', () => ({
@@ -247,5 +251,120 @@ describe('tagSubscriberAsSkills', () => {
 				}),
 			}),
 		)
+	})
+})
+
+describe('tagSubscriberAsSkills with drovr double opt-in (DROVR_DOI_FORMS)', () => {
+	const cookieReader = {
+		id: 7,
+		email_address: 'Reader@Example.com',
+		first_name: 'Reader',
+		state: 'active',
+		fields: {},
+	}
+	const drovrOn = () => {
+		mocks.env.DROVR_DOI_FORMS = '9376133'
+		mocks.env.DROVR_API_BASE_URL = 'https://drovr.test'
+		mocks.env.DROVR_API_KEY_ORG_AIHERO = 'drovr_key'
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		for (const key of [
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+		mocks.getSubscriberFromCookie.mockResolvedValue(cookieReader)
+		mocks.subscribeToList.mockResolvedValue(cookieReader)
+		mocks.reconcile.mockResolvedValue({ status: 'active' })
+		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.issueRecoveryToken.mockResolvedValue(undefined)
+		mocks.cookieGet.mockReturnValue(undefined)
+		mocks.headerGet.mockImplementation((name: string) =>
+			name === 'referer' ? 'https://www.aihero.dev/skills' : null,
+		)
+		mocks.getServerAuthSession.mockResolvedValue(null)
+		mocks.requestDoi.mockResolvedValue({ contactId: 'contact-doi-1' })
+	})
+
+	it('flag off: a cookie-only reader takes the Kit path, and drovr hears nothing', async () => {
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it('flag on, cookie only: confirms by email through drovr, never Kit', async () => {
+		drovrOn()
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).toHaveBeenCalledWith(
+			expect.objectContaining({
+				email: 'Reader@Example.com',
+				kitFormId: 9376133,
+				page: 'https://www.aihero.dev/skills',
+				entry: 'tag-me',
+			}),
+		)
+		expect(result).toEqual({
+			success: false,
+			reason: 'confirmation-required',
+			confirmationUrl: '/confirm?email=Reader%40Example.com',
+		})
+	})
+
+	it('flag on, signed in as the cookie address: already confirmed, takes the Kit path', async () => {
+		drovrOn()
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'reader@example.com' } },
+		})
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.subscribeToList).toHaveBeenCalledTimes(1)
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it('flag on, signed in with no cookie: already confirmed, takes the Kit path', async () => {
+		drovrOn()
+		mocks.getSubscriberFromCookie.mockResolvedValue(null)
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'signed-in@example.com' } },
+		})
+		mocks.subscribeToList.mockResolvedValue({
+			...cookieReader,
+			email_address: 'signed-in@example.com',
+		})
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: true })
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
+	})
+
+	it('flag on, signed in as someone else: the cookie address still confirms by email', async () => {
+		drovrOn()
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'other@example.com' } },
+		})
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(mocks.requestDoi).toHaveBeenCalledTimes(1)
+		expect(result).toMatchObject({ reason: 'confirmation-required' })
+	})
+
+	it('flag on, drovr path fails: request-failed, never a Kit fallback', async () => {
+		drovrOn()
+		mocks.requestDoi.mockRejectedValue(new Error('database unavailable'))
+		const result = await tagSubscriberAsSkills('skills-post')
+
+		expect(result).toEqual({ success: false, reason: 'request-failed' })
+		expect(mocks.subscribeToList).not.toHaveBeenCalled()
+		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain('Reader@')
 	})
 })
