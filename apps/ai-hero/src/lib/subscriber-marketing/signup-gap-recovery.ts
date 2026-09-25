@@ -30,6 +30,19 @@ export type SignupGapIdentityMatches = {
 	contactEmails: ReadonlySet<string>
 	kitSubscriberIds: ReadonlySet<string>
 	courseEntryKitSubscriberIds: ReadonlySet<string>
+	/**
+	 * Subscribers who opted out of these emails: Kit exclusion tags, or local
+	 * unsubscribe, bounce or complaint evidence. Kit `active` is not consent.
+	 */
+	optedOutKitSubscriberIds?: ReadonlySet<string>
+	optedOutEmails?: ReadonlySet<string>
+	/**
+	 * Subscribers with evidence they already got course email without a
+	 * recorded entry: a value-path send, an email 0 sequence subscription or
+	 * a completion field. Replaying them would start the course again.
+	 */
+	courseHistoryKitSubscriberIds?: ReadonlySet<string>
+	courseHistoryEmails?: ReadonlySet<string>
 }
 
 export type SignupGapPreviewCandidate = {
@@ -60,6 +73,8 @@ export type SignupGapPreview = {
 		withExistingProviderIdentity: number
 		withExistingIdentity: number
 		withExistingCourseEntry: number
+		excludedOptedOut: number
+		excludedCourseHistory: number
 		gapCandidates: number
 		excludedSynthetic: number
 		unconfirmed: number
@@ -102,10 +117,14 @@ export type SignupConfirmationReconciliationPlan = {
 	generatedAt: string
 	formId: number
 	window: SignupGapPreview['window']
+	/** The most this run may enqueue; 0 means the reconciler is paused. */
+	limit: number
 	counts: {
 		replayable: number
 		unconfirmed: number
 		excludedSynthetic: number
+		excludedOptedOut: number
+		excludedCourseHistory: number
 		planned: number
 		deferred: number
 	}
@@ -224,6 +243,8 @@ export function buildSignupGapPreview(args: {
 	let withExistingProviderIdentity = 0
 	let withExistingIdentity = 0
 	let withExistingCourseEntry = 0
+	let excludedOptedOut = 0
+	let excludedCourseHistory = 0
 	const candidates: SignupGapPreviewCandidate[] = []
 
 	for (const subscriber of inWindow) {
@@ -247,6 +268,24 @@ export function buildSignupGapPreview(args: {
 			)
 		) {
 			withExistingCourseEntry += 1
+			continue
+		}
+		if (
+			args.identityMatches.optedOutKitSubscriberIds?.has(
+				subscriber.kitSubscriberId,
+			) ||
+			args.identityMatches.optedOutEmails?.has(email)
+		) {
+			excludedOptedOut += 1
+			continue
+		}
+		if (
+			args.identityMatches.courseHistoryKitSubscriberIds?.has(
+				subscriber.kitSubscriberId,
+			) ||
+			args.identityMatches.courseHistoryEmails?.has(email)
+		) {
+			excludedCourseHistory += 1
 			continue
 		}
 
@@ -290,6 +329,8 @@ export function buildSignupGapPreview(args: {
 			withExistingProviderIdentity,
 			withExistingIdentity,
 			withExistingCourseEntry,
+			excludedOptedOut,
+			excludedCourseHistory,
 			gapCandidates: candidates.length,
 			excludedSynthetic,
 			unconfirmed: stateBreakdown.inactiveUnconfirmed,
@@ -322,24 +363,35 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 	limit: number
 	source?: string
 }): SignupConfirmationReconciliationPlan {
-	if (!Number.isInteger(args.limit) || args.limit < 1) {
+	if (!Number.isInteger(args.limit) || args.limit < 0) {
 		throw new Error(
-			'Confirmation reconciliation limit must be a positive integer',
+			'Confirmation reconciliation limit must be a non-negative integer',
 		)
 	}
-	const replayable = args.preview.candidates.filter(
-		(candidate) => !candidate.excludedSynthetic,
-	)
+	// Newest form signups first. Kit exposes no confirmation time, so this
+	// orders by when they joined the form: a recent signup confirming now is
+	// not queued behind an old backlog. An old signup confirming late can
+	// still wait behind newer unresolved ones until they enter.
+	const replayable = args.preview.candidates
+		.filter((candidate) => !candidate.excludedSynthetic)
+		.sort(
+			(left, right) =>
+				right.addedAt.localeCompare(left.addedAt) ||
+				left.kitSubscriberId.localeCompare(right.kitSubscriberId),
+		)
 	const planned = replayable.slice(0, args.limit)
 	return {
 		mode: 'signup-confirmation-reconciliation-plan',
 		generatedAt: args.preview.generatedAt,
 		formId: args.preview.formId,
 		window: args.preview.window,
+		limit: args.limit,
 		counts: {
 			replayable: replayable.length,
 			unconfirmed: args.preview.counts.unconfirmed,
 			excludedSynthetic: args.preview.counts.excludedSynthetic,
+			excludedOptedOut: args.preview.counts.excludedOptedOut,
+			excludedCourseHistory: args.preview.counts.excludedCourseHistory,
 			planned: planned.length,
 			deferred: Math.max(0, replayable.length - planned.length),
 		},

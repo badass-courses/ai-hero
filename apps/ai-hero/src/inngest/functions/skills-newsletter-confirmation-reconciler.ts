@@ -35,6 +35,7 @@ export const skillsNewsletterConfirmationReconciler = inngest.createFunction(
 			generatedAt: plan.generatedAt,
 			formId: plan.formId,
 			window: plan.window,
+			limit: plan.limit,
 			counts: plan.counts,
 		}
 		await step.run('log-confirmation-run-receipt', async () => {
