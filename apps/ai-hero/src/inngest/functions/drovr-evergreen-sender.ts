@@ -23,7 +23,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-shadow-newsletter'
 import { log } from '@/server/logger'
 
-import { parseValuePathProviderPacingMs } from './value-path-provider-pacing'
+import { evergreenSenderPacingMs } from './evergreen-sender-pacing'
 
 /**
  * Sends drovr's evergreen and shadow-newsletter sequence enrollments. Off
@@ -81,9 +81,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 								email: input.user.email,
 							}),
 						limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
-						pacingMs: parseValuePathProviderPacingMs(
-							process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
-						),
+						pacingMs: evergreenSenderPacingMs(process.env),
 					}),
 				)
 			: []
@@ -115,9 +113,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 						limit: senderLimit(
 							process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT,
 						),
-						pacingMs: parseValuePathProviderPacingMs(
-							process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
-						),
+						pacingMs: evergreenSenderPacingMs(process.env),
 					}),
 				)
 			: []
@@ -155,9 +151,7 @@ export const drovrEvergreenSender = inngest.createFunction(
 						email: input.user.email,
 					}),
 				limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
-				pacingMs: parseValuePathProviderPacingMs(
-					process.env.AIH_VALUE_PATH_PROVIDER_PACING_MS,
-				),
+				pacingMs: evergreenSenderPacingMs(process.env),
 			}),
 		)
 		const coupons = await step.run(
