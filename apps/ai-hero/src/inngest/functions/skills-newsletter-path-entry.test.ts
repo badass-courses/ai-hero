@@ -202,9 +202,16 @@ describe('skills newsletter path entry', () => {
 		vi.restoreAllMocks()
 	})
 
+	it('retries long enough to outlast a production deploy window', () => {
+		// 2026-09-25 17:07–17:10Z: every run 401'd at the edge for ~3 minutes.
+		// drovr-events-deliver (retries 6) came through; this function (3) gave
+		// up and a direct-form signup has nothing else to re-deliver it.
+		expect(fn.config.retries).toBeGreaterThanOrEqual(6)
+	})
+
 	it('states the independent-step worst-case provider-call bound', () => {
 		expect(fn.config).toMatchObject({
-			retries: 3,
+			retries: 6,
 			concurrency: 1,
 			throttle: { limit: 1, period: '2s' },
 		})
@@ -417,10 +424,10 @@ describe('skills newsletter path entry', () => {
 			expect.objectContaining({
 				operation: 'shadow-backfill-tag',
 				outcome: 'exhausted',
-				attempts: 4,
+				attempts: SKILLS_NEWSLETTER_PATH_RETRIES + 1,
 				providerCalls: 1,
-				maxProviderCallsForOperation: 4,
-				maxProviderCallsForPausedEvent: 8,
+				maxProviderCallsForOperation: SKILLS_NEWSLETTER_PATH_RETRIES + 1,
+				maxProviderCallsForPausedEvent: PAUSED_SEQUENCE_MAX_PROVIDER_CALLS,
 			}),
 		)
 	})
@@ -487,9 +494,9 @@ describe('skills newsletter path entry', () => {
 			expect.objectContaining({
 				operation: 'shadow-backfill-tag',
 				outcome: 'exhausted',
-				attempts: 4,
-				maxProviderCallsForOperation: 4,
-				maxProviderCallsForPausedEvent: 8,
+				attempts: SKILLS_NEWSLETTER_PATH_RETRIES + 1,
+				maxProviderCallsForOperation: SKILLS_NEWSLETTER_PATH_RETRIES + 1,
+				maxProviderCallsForPausedEvent: PAUSED_SEQUENCE_MAX_PROVIDER_CALLS,
 			}),
 		)
 	})

@@ -27,7 +27,11 @@ import { redis } from '@/server/redis-client'
 import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
 import { NonRetriableError, RetryAfterError } from 'inngest'
 
-export const SKILLS_NEWSLETTER_PATH_RETRIES = 3
+// Six, like drovr-events-deliver: on 2026-09-25 a production deploy made
+// every run 401 at the edge for ~3 minutes; the delivery functions retried
+// through it and this one (then 3) gave up. A direct-form or tag-me signup
+// has nothing else that re-delivers it.
+export const SKILLS_NEWSLETTER_PATH_RETRIES = 6
 export const PAUSED_SEQUENCE_MAX_PROVIDER_CALLS =
 	2 * (SKILLS_NEWSLETTER_PATH_RETRIES + 1)
 
@@ -104,7 +108,8 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 		concurrency: 1,
 		// The healthy paused path performs one expected 400 plus one tag write.
 		// One run per two seconds caps that path at 60 Kit calls per minute.
-		// Each durable step has its own four-attempt budget: eight calls worst case.
+		// Each durable step has its own seven-attempt budget: fourteen calls
+		// worst case (PAUSED_SEQUENCE_MAX_PROVIDER_CALLS).
 		throttle: { limit: 1, period: '2s' },
 	},
 	{ event: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT },
