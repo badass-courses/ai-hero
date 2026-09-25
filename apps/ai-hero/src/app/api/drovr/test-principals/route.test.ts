@@ -10,10 +10,12 @@ const mocks = vi.hoisted(() => ({
 	remove: vi.fn(),
 	personalize: vi.fn(),
 	answerPages: vi.fn(),
+	merchantEvidence: vi.fn(),
+	issueCoupon: vi.fn(),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('@/env.mjs', () => ({ env: mocks.env }))
-vi.mock('@/db', () => ({ db: {} }))
+vi.mock('@/db', () => ({ db: {}, createDatabaseHandle: vi.fn(() => ({})) }))
 vi.mock('@/server/logger', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/server/logger')>()),
 	log: mocks.log,
@@ -26,6 +28,19 @@ vi.mock('@/lib/subscriber-marketing/drovr-personalize', () => ({
 }))
 vi.mock('@/lib/subscriber-marketing/value-path-answer-page', () => ({
 	getValuePathAnswerPages: mocks.answerPages,
+}))
+vi.mock('@/lib/subscriber-marketing/evergreen-merchant-evidence', () => ({
+	findEvergreenMerchantEvidence: mocks.merchantEvidence,
+}))
+vi.mock('@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority', () => ({
+	createCouponAuthority: vi.fn(() => ({ issue: vi.fn() })),
+}))
+vi.mock('@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql', () => ({
+	couponCommerceSchema: {},
+	createMySqlCouponCommerceStore: vi.fn(() => ({})),
+}))
+vi.mock('@/lib/test-principals/test-principal-coupon', () => ({
+	issueTestPrincipalCoupon: mocks.issueCoupon,
 }))
 vi.mock('@/lib/test-principals/test-principal-store', () => ({
 	mintTestPrincipalRecords: mocks.mint,
@@ -85,13 +100,58 @@ describe('POST /api/drovr/test-principals', () => {
 		expect(mocks.mint).not.toHaveBeenCalled()
 	})
 
-	it('refuses a wrong bearer, a malformed body, another tenant, and the T3c coupon', async () => {
+	it('refuses a wrong bearer, a malformed body and another tenant', async () => {
 		expect((await post(body, 'wrong-token')).status).toBe(401)
 		expect((await post('{not json')).status).toBe(400)
 		expect((await post({ ...body, runId: 'x' })).status).toBe(400)
 		expect((await post({ ...body, tenantId: 'org-aihero-shadow' })).status).toBe(403)
-		expect((await post({ ...body, evergreenCoupon: 'crash-course' })).status).toBe(501)
+		expect((await post({ ...body, evergreenCoupon: 'other' })).status).toBe(400)
 		expect(mocks.mint).not.toHaveBeenCalled()
+	})
+
+	it('answers 503 before minting when no merchant coupon exists, never creating one', async () => {
+		mocks.merchantEvidence.mockResolvedValueOnce(undefined)
+		const response = await post({ ...body, evergreenCoupon: 'crash-course' })
+		expect(response.status).toBe(503)
+		expect(await response.json()).toMatchObject({
+			type: 'urn:aihero:problem:evergreen-merchant-coupon-unavailable',
+		})
+		expect(mocks.mint).not.toHaveBeenCalled()
+		expect(mocks.issueCoupon).not.toHaveBeenCalled()
+	})
+
+	it('returns the run coupon issued for the principal hour', async () => {
+		mocks.merchantEvidence.mockResolvedValueOnce({ id: 'merchant-1' })
+		mocks.issueCoupon.mockResolvedValueOnce({
+			status: 'issued',
+			coupon: {
+				couponId: 'eoj-coupon:abc',
+				offerUrl: 'https://www.aihero.dev/workshops/ai-coding-crash-course?coupon=eoj-coupon%3Aabc',
+				expiresAt: '2026-09-25T01:00:00.000Z',
+			},
+		})
+		const response = await post({ ...body, evergreenCoupon: 'crash-course' })
+		expect(response.status).toBe(201)
+		expect(await response.json()).toMatchObject({
+			evergreenCoupon: {
+				couponId: 'eoj-coupon:abc',
+				expiresAt: '2026-09-25T01:00:00.000Z',
+			},
+		})
+		expect(mocks.issueCoupon).toHaveBeenCalledWith(
+			expect.objectContaining({ identity, principalCreatedAt: createdAt }),
+		)
+	})
+
+	it('removes a fresh principal when its coupon is refused', async () => {
+		mocks.merchantEvidence.mockResolvedValueOnce({ id: 'merchant-1' })
+		mocks.issueCoupon.mockResolvedValueOnce({
+			status: 'refused',
+			reason: 'EffectTransientUnavailable:db',
+		})
+		const response = await post({ ...body, evergreenCoupon: 'crash-course' })
+		expect(response.status).toBe(503)
+		expect(mocks.remove).toHaveBeenCalledWith({}, identity.principalId)
 	})
 
 	it('mints a principal with a one-time sign-in the real Auth.js hash will accept', async () => {

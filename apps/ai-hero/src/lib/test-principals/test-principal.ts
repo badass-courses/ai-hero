@@ -27,7 +27,7 @@ export const TestPrincipalRequestSchema = z
 		personas: z.array(z.literal('recipient')).length(1),
 		valuePathSlug: z.string().trim().min(1).optional(),
 		emailKeys: z.array(z.string().trim().min(1)).max(50).default([]),
-		// Ships with T3c; refused explicitly until then, never ignored.
+		// A run-scoped synthetic crash-course coupon (T3c).
 		evergreenCoupon: z.literal('crash-course').optional(),
 	})
 	.strict()

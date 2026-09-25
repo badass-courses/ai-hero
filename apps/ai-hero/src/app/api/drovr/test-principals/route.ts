@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { db } from '@/db'
+import { createDatabaseHandle, db } from '@/db'
 import { env } from '@/env.mjs'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { personalizeDrovrIntent } from '@/lib/subscriber-marketing/drovr-personalize'
@@ -9,6 +9,12 @@ import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
 } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
+import { createCouponAuthority } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority'
+import {
+	couponCommerceSchema,
+	createMySqlCouponCommerceStore,
+} from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql'
+import { findEvergreenMerchantEvidence } from '@/lib/subscriber-marketing/evergreen-merchant-evidence'
 import { getSkillsWorkflowEmailStep } from '@/lib/subscriber-marketing/skills-workflow-path'
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
 import {
@@ -23,7 +29,14 @@ import {
 	problem,
 	testPrincipalAuthProblem,
 } from '@/lib/test-principals/test-principal-http'
-import { mintTestPrincipalRecords } from '@/lib/test-principals/test-principal-store'
+import {
+	issueTestPrincipalCoupon,
+	type TestPrincipalCoupon,
+} from '@/lib/test-principals/test-principal-coupon'
+import {
+	deleteTestPrincipalRecords,
+	mintTestPrincipalRecords,
+} from '@/lib/test-principals/test-principal-store'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
@@ -57,13 +70,18 @@ export const POST = withSkill(async (request: NextRequest) => {
 			'Mint under the authority tenant.',
 		)
 	}
-	if (input.evergreenCoupon) {
+	// Read-only: a synthetic coupon rides the existing merchant coupon and
+	// never creates one (resolveEvergreenMerchantEvidence can reach Stripe).
+	const merchantEvidence = input.evergreenCoupon
+		? await findEvergreenMerchantEvidence()
+		: undefined
+	if (input.evergreenCoupon && !merchantEvidence) {
 		return problem(
-			501,
-			'evergreen-coupon-unavailable',
-			'Synthetic coupons are not available yet',
-			'The optional evergreen coupon ships separately (T3c).',
-			'Mint without evergreenCoupon until T3c is deployed.',
+			503,
+			'evergreen-merchant-coupon-unavailable',
+			'No evergreen merchant coupon',
+			'No active global special $100 merchant coupon exists.',
+			'Restore the merchant coupon, then mint again.',
 		)
 	}
 	const secret = authJsSecret()
@@ -97,6 +115,40 @@ export const POST = withSkill(async (request: NextRequest) => {
 	}
 
 	const { identity } = records
+	let evergreenCoupon: TestPrincipalCoupon | undefined
+	if (input.evergreenCoupon && merchantEvidence) {
+		const issued = await issueTestPrincipalCoupon({
+			authority: createCouponAuthority({
+				store: createMySqlCouponCommerceStore(
+					createDatabaseHandle(couponCommerceSchema),
+				),
+				merchantCouponEvidence: merchantEvidence,
+				now: () => new Date().toISOString(),
+			}),
+			identity,
+			principalCreatedAt: records.createdAt,
+			origin: request.nextUrl.origin,
+		})
+		if (issued.status === 'refused') {
+			// Minted together or not at all: a fresh principal goes with it.
+			if (records.status === 'minted') {
+				await deleteTestPrincipalRecords(db, identity.principalId)
+			}
+			await log.warn('drovr.test_principal.coupon_refused', {
+				runId: input.runId,
+				principalId: identity.principalId,
+				reason: issued.reason,
+			})
+			return problem(
+				503,
+				'evergreen-coupon-refused',
+				'The synthetic coupon was refused',
+				issued.reason,
+				'Retry the mint; if it persists, check the coupon authority.',
+			)
+		}
+		evergreenCoupon = issued.coupon
+	}
 	const repository = new DrizzleCaptureMarketingRepository(db)
 	const answerPages = input.emailKeys.some((key) => getSkillsWorkflowEmailStep(key))
 		? await getValuePathAnswerPages()
@@ -128,6 +180,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 		principalId: identity.principalId,
 		status: records.status,
 		emailKeyCount: input.emailKeys.length,
+		evergreenCouponId: evergreenCoupon?.couponId,
 	})
 	return NextResponse.json(
 		{
@@ -141,6 +194,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 				expiresAt: tokenExpires,
 			}),
 			variables,
+			...(evergreenCoupon ? { evergreenCoupon } : {}),
 			expiresAt: records.expiresAt.toISOString(),
 		},
 		{
