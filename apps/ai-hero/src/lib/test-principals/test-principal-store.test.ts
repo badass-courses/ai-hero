@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { principalKeyedTables } from './test-principal-store'
+import {
+	principalKeyedTables,
+	UNINDEXED_KEY_CLEANUP,
+} from './test-principal-store'
 
 describe('test principal cleanup coverage', () => {
 	it('cleans every table keyed by userId or contactId, read from the schema', () => {
@@ -45,5 +48,17 @@ describe('test principal cleanup coverage', () => {
 			  "AI_ValuePathCertificateShare.contactId",
 			]
 		`)
+	})
+})
+
+describe('test principal cleanup cost', () => {
+	it('deletes only on index-backed keys, or has an explicit plan for the column', () => {
+		const unindexed = principalKeyedTables()
+			.filter(({ indexed }) => !indexed)
+			.map(({ name, column }) => `${name}.${column}`)
+			.sort()
+		// Mirrors prod (information_schema, 2026-09-25). A new unindexed key
+		// must get an index or a plan: a scan inside cleanup can take seconds.
+		expect(unindexed).toEqual(Object.keys(UNINDEXED_KEY_CLEANUP).sort())
 	})
 })

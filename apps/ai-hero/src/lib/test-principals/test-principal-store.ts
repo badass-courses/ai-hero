@@ -1,5 +1,6 @@
-import { and, eq, getTableColumns, is, like, lte, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, is, like, lt, lte, sql } from 'drizzle-orm'
 import {
+	getTableConfig,
 	MySqlTable,
 	type MySqlColumn,
 	type MySqlDatabase,
@@ -9,6 +10,7 @@ import * as schema from '@/db/schema'
 import {
 	contact,
 	contactState,
+	contentRead,
 	coupon,
 	signupAttribution,
 	users,
@@ -46,7 +48,26 @@ type KeyedTable = {
 	table: MySqlTable
 	column: 'userId' | 'contactId'
 	key: MySqlColumn
+	/** The schema declares an index (or primary key) led by this column. */
+	indexed: boolean
 }
+
+/**
+ * Keyed columns prod has no index on (information_schema, 2026-09-25). A
+ * delete keyed on one scans the whole table, which blew PlanetScale's 20s
+ * transaction limit on AI_ContentRead (~1M rows), so each has its own way.
+ */
+export const UNINDEXED_KEY_CLEANUP = {
+	// Signed-in reads key their unique semanticIdempotencyKey on the user id.
+	'AI_ContentRead.userId': 'content-read-semantic-key',
+	// Written for a purchase only, and checkout is refused for a synthetic user.
+	'AI_MerchantCharge.userId': 'never-written',
+	// Written for a purchase or a Kit subscribe only; both refused here.
+	'AI_ShortlinkAttribution.userId': 'never-written',
+} as const satisfies Record<string, 'content-read-semantic-key' | 'never-written'>
+
+/** Indexed in prod outside the Drizzle schema (idx_OrganizationMembership_on_userId). */
+const PROD_ONLY_INDEXED_KEYS = new Set(['AI_OrganizationMembership.userId'])
 
 /**
  * Every app table with a userId or contactId column, read from the schema
@@ -59,9 +80,28 @@ export function principalKeyedTables(): KeyedTable[] {
 		const columns: Record<string, MySqlColumn | undefined> =
 			getTableColumns(value)
 		const name = tableName(value)
+		const config = getTableConfig(value)
+		const leading = new Set<string>([
+			...config.indexes.map(
+				(index) => (index.config.columns[0] as { name?: string } | undefined)?.name ?? '',
+			),
+			...config.primaryKeys.map((pk) => pk.columns[0]?.name ?? ''),
+			...Object.values(columns)
+				.filter((column) => column?.primary || column?.isUnique)
+				.map((column) => column!.name),
+		])
 		for (const column of ['userId', 'contactId'] as const) {
 			const key = columns[column]
-			if (key) keyed.push({ name, table: value, column, key })
+			if (key) {
+				keyed.push({
+					name,
+					table: value,
+					column,
+					key,
+					indexed:
+						leading.has(key.name) || PROD_ONLY_INDEXED_KEYS.has(`${name}.${column}`),
+				})
+			}
 		}
 	}
 	return keyed
@@ -187,6 +227,9 @@ export async function mintTestPrincipalRecords(
 	)
 }
 
+/** LIKE-escape a literal (the ids carry `_`, a LIKE wildcard). */
+const escapeLike = (value: string) => value.replace(/[\\%_]/g, (c) => `\\${c}`)
+
 const mysqlErrno = (error: unknown) =>
 	(error as { errno?: number }).errno ??
 	(error as { cause?: { errno?: number } }).cause?.errno
@@ -224,6 +267,7 @@ const isMissingTable = (error: unknown) =>
 async function deletePrincipalRows(
 	database: Database,
 	identity: TestPrincipalIdentity,
+	createdBefore?: Date,
 ): Promise<PrincipalRemovalReceipt> {
 	const removed: Record<string, number> = {}
 	const absentTables: string[] = []
@@ -231,8 +275,8 @@ async function deletePrincipalRows(
 		const rows = affected(result)
 		if (rows > 0) removed[name] = (removed[name] ?? 0) + rows
 	}
-	// A failed statement alone rolls back in MySQL; the transaction goes on.
-	// Only a missing table is tolerated; any other error aborts the cleanup.
+	// Only a missing table is tolerated; any other error stops the cleanup,
+	// and the retry repeats it: every statement is idempotent.
 	const attempt = async (name: string, run: () => Promise<unknown>) => {
 		try {
 			note(name, await run())
@@ -241,13 +285,31 @@ async function deletePrincipalRows(
 			if (!absentTables.includes(name)) absentTables.push(name)
 		}
 	}
+	// Children first, each its own short statement on an index: equality on
+	// the principal's id, which is already proven synthetic by its User row.
+	// The LIKE guard stays on the principal's own rows below.
 	for (const { name, table, column, key } of principalKeyedTables()) {
 		const id = column === 'userId' ? identity.principalId : identity.contactId
-		await attempt(name, () =>
-			database
-				.delete(table)
-				.where(and(eq(key, id), like(key, SYNTHETIC_ID_LIKE))),
-		)
+		const strategy =
+			UNINDEXED_KEY_CLEANUP[`${name}.${column}` as keyof typeof UNINDEXED_KEY_CLEANUP]
+		if (strategy === 'never-written') continue
+		if (strategy === 'content-read-semantic-key') {
+			await attempt(name, () =>
+				database
+					.delete(contentRead)
+					.where(
+						and(
+							like(
+								contentRead.semanticIdempotencyKey,
+								`content-read:v1:${escapeLike(identity.principalId)}:%`,
+							),
+							eq(contentRead.userId, identity.principalId),
+						),
+					),
+			)
+			continue
+		}
+		await attempt(name, () => database.delete(table).where(eq(key, id)))
 	}
 	note(
 		'AI_Contact',
@@ -257,6 +319,7 @@ async function deletePrincipalRows(
 				and(
 					eq(contact.id, identity.contactId),
 					like(contact.id, SYNTHETIC_ID_LIKE),
+					...(createdBefore ? [lt(contact.createdAt, createdBefore)] : []),
 				),
 			),
 	)
@@ -296,6 +359,8 @@ async function deletePrincipalRows(
 				),
 			),
 	)
+	// The principal's own row goes last, so a partial run leaves it in place
+	// and a retry finds the principal and finishes.
 	note(
 		'AI_User',
 		await database
@@ -304,6 +369,7 @@ async function deletePrincipalRows(
 				and(
 					eq(users.id, identity.principalId),
 					like(users.id, SYNTHETIC_ID_LIKE),
+					...(createdBefore ? [lt(users.createdAt, createdBefore)] : []),
 				),
 			),
 	)
@@ -311,7 +377,7 @@ async function deletePrincipalRows(
 }
 
 /**
- * Remove a principal and everything keyed to it, in one transaction.
+ * Remove a principal and everything keyed to it, in one short transaction.
  * Returns null when nothing was there (the caller answers 204).
  */
 export async function deleteTestPrincipalRecords(
@@ -324,6 +390,12 @@ export async function deleteTestPrincipalRecords(
 ): Promise<
 	({ identity: TestPrincipalIdentity } & PrincipalRemovalReceipt) | null
 > {
+	// One transaction that locks the User row first. A mint's locking read
+	// over the synthetic range waits on it, so the reaper's cutoff check and
+	// its deletes are atomic against a re-mint of the same runId: the run
+	// either re-mints before the check (and the reaper skips it) or after
+	// the deletes (and starts clean). Every statement is index-backed, well
+	// inside PlanetScale's 20s transaction limit; the User row goes last.
 	return database.transaction(async (tx) => {
 		const [user] = await tx
 			.select({ email: users.email, createdAt: users.createdAt })
@@ -340,7 +412,10 @@ export async function deleteTestPrincipalRecords(
 		const runId = user.email.slice(0, user.email.indexOf('@'))
 		const identity = testPrincipalIdentity(runId)
 		if (identity.principalId !== principalId) return null
-		return { identity, ...(await deletePrincipalRows(tx, identity)) }
+		return {
+			identity,
+			...(await deletePrincipalRows(tx, identity, options.createdBefore)),
+		}
 	})
 }
 
