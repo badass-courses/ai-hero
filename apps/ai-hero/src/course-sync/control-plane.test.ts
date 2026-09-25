@@ -6,9 +6,12 @@ import {
 } from '@ai-hero/course-sync-schema'
 import { describe, expect, it } from 'vitest'
 
+import { resolveStoredCourseSyncBinding } from './binding-migration'
 import {
 	courseSyncRollbackStageIdempotencyKey,
 	createCourseSyncControlPlane,
+	sha256,
+	stableJson,
 } from './control-plane'
 import { InMemoryCourseSyncPersistence } from './in-memory-persistence'
 import { courseSyncRunMachine } from './run-machine'
@@ -954,6 +957,47 @@ describe('draft course sync control plane', () => {
 		).toMatchObject({
 			state: 'failed',
 			failureCode: 'APPLY_CONCURRENCY_CONFLICT',
+		})
+	})
+
+	it('keeps the existing course.json schemaVersion 3 preview and revision identity byte-identical', async () => {
+		const testHarness = harness()
+		const source = fixture()
+		const { staged, previewed } = await stagedAndPreviewed(testHarness, source)
+		const run = testHarness.persistence.runs.get(staged.runId)!
+		const revision = testHarness.persistence.revisions.get(run.sourceRevisionId)!
+		const { planSha256: claimedHash, ...planInput } = run.plan!
+		// Measured from origin/main 41233020 using this v3 fixture and harness.
+		// The same probe on this branch produced identical plan and revision hashes.
+		expect(previewed.planSha256).toBe(
+			'2baea07656c8b9143a54866d96b93717a4474934e3bf507d9ce988e816096e0c',
+		)
+		expect(claimedHash).toBe(previewed.planSha256)
+		expect(revision.manifestSha256).toBe(
+			'014539ff5f94df91420de0997dcf1520e284c75105f8e7fe14f23cb5512bbea6',
+		)
+		expect(run.stageFingerprint).toBe(
+			'68584941f006453e75d27167d81fac07fffbd5b6044fd6f223e3621199a1c5eb',
+		)
+		expect(claimedHash).toBe(sha256(stableJson(planInput)))
+		expect(revision.manifestSha256).toBe(sha256(stableJson(source)))
+		expect(revision.courseVersionId).toBe(source.courseVersionId)
+		expect(revision.providerRevision).toBe(source.courseVersionId)
+		expect(run.stageFingerprint).toBe(
+			sha256(stableJson({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifestSha256: revision.manifestSha256,
+			})),
+		)
+		expect(
+			resolveStoredCourseSyncBinding(
+				structuredClone(AI_HERO_COURSE_SYNC_BINDING),
+				AI_HERO_COURSE_SYNC_BINDING,
+			),
+		).toEqual({
+			binding: AI_HERO_COURSE_SYNC_BINDING,
+			migrated: false,
+			fromContractVersion: null,
 		})
 	})
 

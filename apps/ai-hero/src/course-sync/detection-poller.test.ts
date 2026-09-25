@@ -272,6 +272,7 @@ function failureHarness(initialState: CourseSyncPollState) {
 
 describe('course sync detection poller', () => {
 	it('records a no-op when the detected revision is already applied', async () => {
+		expect(manifest.schemaVersion).toBe(3)
 		const test = harness({
 			head: {
 				courseVersionId: 'version-2',
@@ -286,6 +287,7 @@ describe('course sync detection poller', () => {
 			courseVersionId: 'version-2',
 		})
 		expect(test.stage).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({ status: 'succeeded', failureClass: null })
 		expect(test.notifications).toHaveLength(0)
 		expect(test.logs).toEqual(
 			expect.arrayContaining([
