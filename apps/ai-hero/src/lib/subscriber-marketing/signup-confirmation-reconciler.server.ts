@@ -26,8 +26,14 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
 export const SKILLS_NEWSLETTER_FORM_ID = 9376133
+/**
+ * The floor: only subscribers who joined the form at or after this instant
+ * are ever replayed. Kit has no confirmation time, so a signup from before
+ * it that confirms later is not either. Joel's call (2026-09-25): the
+ * backlog stranded before this fix is let go, not enrolled.
+ */
 export const SKILLS_CONFIRMATION_RECONCILIATION_START =
-	'2026-07-15T00:00:00.000Z'
+	'2026-09-25T00:00:00.000Z'
 /**
  * Every replayed confirmation of a new signup is a birth in drovr, so the
  * hourly run stays small and a backlog drains over a few runs.

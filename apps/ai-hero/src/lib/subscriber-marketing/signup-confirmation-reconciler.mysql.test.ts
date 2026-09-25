@@ -22,11 +22,13 @@ import {
 	buildSignupConfirmationReconciliationBatch,
 	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECONCILIATION_LIMIT,
+	SKILLS_CONFIRMATION_RECONCILIATION_START,
 	SKILLS_NEWSLETTER_FORM_ID,
 } from './signup-confirmation-reconciler.server'
 
 // The real reconciler query against disposable MySQL: which confirmed Kit
 // subscribers count as already entered, and which get replayed.
+const TO = '2026-09-26T00:00:00.000Z'
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
 
@@ -146,7 +148,8 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 			id,
 			email: `learner-${id}@example.test`,
 			addedAt: new Date(
-				Date.parse('2026-09-20T00:00:00Z') + addedMinute * 60_000,
+				Date.parse(SKILLS_CONFIRMATION_RECONCILIATION_START) +
+					addedMinute * 60_000,
 			).toISOString(),
 		}
 		kitActive.push(row)
@@ -250,7 +253,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		confirmed('1007')
 
 		const plan = await buildSignupConfirmationReconciliationBatch({
-			to: '2026-09-25T00:00:00.000Z',
+			to: TO,
 			limit: 3,
 			database,
 		})
@@ -261,6 +264,28 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 			planned: 3,
 			deferred: 0,
 		})
+	})
+
+	it('never replays a signup from before the floor, only those after it', async () => {
+		// Joel's call (2026-09-25): the stranded backlog is let go. A
+		// confirmed, unentered subscriber who joined the form before the
+		// floor is never planned; one who joined after it is.
+		const beforeFloor = confirmed('9001')
+		beforeFloor.addedAt = new Date(
+			Date.parse(SKILLS_CONFIRMATION_RECONCILIATION_START) - 60_000,
+		).toISOString()
+		await captured(confirmed('9002'))
+		const capturedBeforeFloor = kitActive.at(-1)!
+		capturedBeforeFloor.addedAt = '2026-09-24T12:00:00.000Z'
+		confirmed('9003')
+
+		const plan = await buildSignupConfirmationReconciliationBatch({
+			to: TO,
+			database,
+		})
+
+		expect(plannedIds(plan)).toEqual(['9003'])
+		expect(plan.window.from).toBe('2026-09-25T00:00:00.000Z')
 	})
 
 	it('matches the ownership event to the same contact, not any contact', async () => {
@@ -277,7 +302,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		)
 
 		const plan = await buildSignupConfirmationReconciliationBatch({
-			to: '2026-09-25T00:00:00.000Z',
+			to: TO,
 			database,
 		})
 
@@ -319,7 +344,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		confirmed('4007')
 
 		const plan = await buildSignupConfirmationReconciliationBatch({
-			to: '2026-09-25T00:00:00.000Z',
+			to: TO,
 			database,
 		})
 
@@ -350,7 +375,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		confirmed('6006')
 
 		const plan = await buildSignupConfirmationReconciliationBatch({
-			to: '2026-09-25T00:00:00.000Z',
+			to: TO,
 			database,
 		})
 
@@ -369,7 +394,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 
 		await expect(
 			buildSignupConfirmationReconciliationBatch({
-				to: '2026-09-25T00:00:00.000Z',
+				to: TO,
 				database,
 			}),
 		).rejects.toThrow(ReconcilerEvidenceUnavailableError)
@@ -408,7 +433,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 				url.pathname === `/v4/${resource}/subscribers` ? page() : undefined
 			await expect(
 				buildSignupConfirmationReconciliationBatch({
-					to: '2026-09-25T00:00:00.000Z',
+					to: TO,
 					database,
 				}),
 			).rejects.toThrow(ReconcilerEvidenceUnavailableError)
@@ -420,7 +445,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		const planned = async (limit: string) => {
 			vi.stubEnv('AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT', limit)
 			const plan = await buildSignupConfirmationReconciliationBatch({
-				to: '2026-09-25T00:00:00.000Z',
+				to: TO,
 				database,
 			})
 			return [plan.counts.planned, plan.limit]
@@ -437,7 +462,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		for (let index = 0; index < 55; index++) confirmed(String(3000 + index))
 
 		const plan = await buildSignupConfirmationReconciliationBatch({
-			to: '2026-09-25T00:00:00.000Z',
+			to: TO,
 			database,
 		})
 
