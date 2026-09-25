@@ -33,6 +33,7 @@ import {
 import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_AUTHORITY_TENANT_ID,
+	KIT_EMAIL_PROVIDER,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 	DROVR_SHADOW_TENANT_ID,
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
@@ -191,6 +192,7 @@ export function drovrCompletionForIntent(
 		// drovr's guard matches on the individual resource id it planned.
 		payload: {
 			emailResourceId: canonicalIndividualResourceId(emailResourceId),
+			provider: KIT_EMAIL_PROVIDER,
 		},
 	}
 }
@@ -633,6 +635,7 @@ function existingIntentResult(
 				idempotencyKey: `completion:${request.idempotencyKey}`,
 				payload: {
 					emailResourceId: canonicalIndividualResourceId(step.emailResourceId),
+					provider: KIT_EMAIL_PROVIDER,
 				},
 			},
 		}
@@ -787,7 +790,7 @@ async function acceptEvergreenSend(args: {
 				stringField(row.metadata.completedAt) ??
 				args.now,
 			idempotencyKey: `completion:${intent.idempotencyKey}`,
-			payload: { messageId: sequence.messageId },
+			payload: { messageId: sequence.messageId, provider: KIT_EMAIL_PROVIDER },
 		},
 	})
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult =>
@@ -933,7 +936,7 @@ async function acceptShadowNewsletterSend(args: {
 				stringField(row.metadata.completedAt) ??
 				args.now,
 			idempotencyKey: `completion:${owner.intentKey}`,
-			payload: { messageId: sequence.messageId },
+			payload: { messageId: sequence.messageId, provider: KIT_EMAIL_PROVIDER },
 		},
 	})
 	const existingResult = (row: SideEffectIntent): DrovrExecutorResult => {
