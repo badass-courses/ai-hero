@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 	resolveGateDPreAuthorizedReviewReasons: vi.fn(() => []),
 	checkSkillsWorkflowValuePathCertificateEligibility: vi.fn(),
 	ensureSkillsWorkflowCertificateShare: vi.fn(),
+	findSkillsWorkflowCertificateShare: vi.fn(),
 	inngestSend: vi.fn(),
 	logError: vi.fn(),
 	logInfo: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock('@/lib/subscriber-marketing/value-path-certificate-shares', () => ({
 	SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME: 'AI Hero Skills Workflow',
 	ensureSkillsWorkflowCertificateShare:
 		mocks.ensureSkillsWorkflowCertificateShare,
+	findSkillsWorkflowCertificateShare: mocks.findSkillsWorkflowCertificateShare,
 	buildSkillsWorkflowCertificateShareUrl: vi.fn(
 		({ slug }: { slug: string }) =>
 			`https://www.aihero.dev/certificates/${slug}`,
@@ -148,54 +150,144 @@ beforeEach(() => {
 	})
 })
 
+beforeEach(() => {
+	mocks.findSkillsWorkflowCertificateShare.mockResolvedValue({
+		slug: 'opaque-public-certificate-slug-123',
+		learnerName: 'Joel Hooks',
+		courseName: 'AI Hero Skills Workflow',
+		completedAt: new Date('2026-07-18T00:00:00.000Z'),
+	})
+})
+
 afterEach(() => {
 	vi.unstubAllEnvs()
 })
 
-describe('Email 7 certificate answer landing page', () => {
-	it('records the selected variant, then renders the certificate trophy and safe share actions', async () => {
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
-		})
-		const markup = renderToStaticMarkup(page)
+const genericAnswerPage = {
+	id: 'skills-workflow.email-3-correct',
+	type: 'value-path-page' as const,
+	fields: {
+		kind: 'answer' as const,
+		slug: 'skills-workflow-email-3-correct',
+		sequenceId: 'ai-hero-skills-workflow',
+		emailId: 'email-3',
+		optionValue: 'correct',
+		title: 'Ship it on Friday',
+		headline: 'Good answer.',
+	},
+}
 
-		expect(mocks.getValuePathAnswerPageBySlug).toHaveBeenCalledWith({
-			slug: 'ai-hero-skills-workflow-certificate',
-			optionValue: 'other',
-			sequenceId: 'ai-hero-skills-workflow',
-			emailId: 'email-7',
+async function render(
+	slug: string,
+	searchParams: { pt?: string; answer?: string; confirmed?: string },
+) {
+	return renderToStaticMarkup(
+		await ValuePathAnswerPage({
+			params: Promise.resolve({ slug }),
+			searchParams: Promise.resolve(searchParams),
+		}),
+	)
+}
+
+/** Nothing a mail gateway's fetch may cause: no record, no event, no write. */
+function expectNothingRecorded() {
+	expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
+	expect(mocks.readActiveGateDRuntimeAllowlist).not.toHaveBeenCalled()
+	expect(mocks.inngestSend).not.toHaveBeenCalled()
+	expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
+}
+
+describe('answer link GET records nothing (mail gateways fetch links)', () => {
+	it('renders the chosen answer and a confirm button that POSTs pt and answer', async () => {
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
+		const markup = await render('skills-workflow-email-3-correct', {
+			pt: 'signed-token',
+			answer: 'correct',
 		})
-		expect(mocks.recordValuePathAnswerProgression).toHaveBeenCalledWith(
-			expect.objectContaining({
-				token: tokenPayload,
-				answerPage,
-				mode: 'allowlisted-test',
-			}),
+
+		expectNothingRecorded()
+		expect(markup).toMatch(/<main[^>]*data-value-path-token="valid"/)
+		expect(markup).toContain('data-value-path-answer="unconfirmed"')
+		expect(markup).toContain('Confirm your answer')
+		expect(markup).toContain('Ship it on Friday')
+		expect(markup).toMatch(
+			/<form[^>]*action="\/ask\/skills-workflow-email-3-correct\/confirm"[^>]*method="post"/,
 		)
+		expect(markup).toMatch(/<input[^>]*name="pt"[^>]*value="signed-token"/)
+		expect(markup).toMatch(/<input[^>]*name="answer"[^>]*value="correct"/)
+		expect(markup).not.toContain('contact-1')
+	})
+
+	it('records nothing on the certificate answer either, and creates no share', async () => {
+		const markup = await render('ai-hero-skills-workflow-certificate', {
+			pt: 'signed-token',
+			answer: 'other',
+		})
+
+		expectNothingRecorded()
+		expect(
+			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
+		).not.toHaveBeenCalled()
+		expect(markup).toContain('Confirm your answer')
+		expect(markup).not.toContain('data-value-path-certificate')
+	})
+
+	it('records nothing for an invalid pt and offers no confirm', async () => {
+		mocks.verifyValuePathToken.mockReturnValue({ valid: false, reason: 'tampered' })
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
+		const markup = await render('skills-workflow-email-3-correct', {
+			pt: 'bad-token',
+			answer: 'correct',
+		})
+
+		expectNothingRecorded()
+		expect(markup).toMatch(/<main[^>]*data-value-path-token="invalid"/)
+		expect(markup).toContain('Good answer.')
+		expect(markup).not.toContain('<form')
+	})
+
+	it('records nothing when a fetch replays the confirmed view', async () => {
+		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
+		const markup = await render('skills-workflow-email-3-correct', {
+			pt: 'signed-token',
+			answer: 'correct',
+			confirmed: '1',
+		})
+
+		expectNothingRecorded()
+		expect(markup).toMatch(/<main[^>]*data-value-path-token="valid"/)
+		expect(markup).toContain('Good answer.')
+		expect(markup).toContain('data-value-path-answer="confirmed"')
+		expect(markup).not.toContain('signed-token')
+	})
+})
+
+describe('confirmed Email 7 certificate view (read-only)', () => {
+	const confirmedCertificate = () =>
+		render('ai-hero-skills-workflow-certificate', {
+			pt: 'signed-token',
+			answer: 'other',
+			confirmed: '1',
+		})
+
+	it('renders the trophy from the existing share, with safe share actions', async () => {
+		const markup = await confirmedCertificate()
+
+		expectNothingRecorded()
 		expect(
 			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
 		).toHaveBeenCalledWith({ contactId: 'contact-1' })
-		expect(mocks.ensureSkillsWorkflowCertificateShare).toHaveBeenCalledWith({
-			eligibility: expect.objectContaining({
-				eligible: true,
-				contactId: 'contact-1',
-			}),
-		})
+		expect(mocks.findSkillsWorkflowCertificateShare).toHaveBeenCalledWith(
+			'contact-1',
+		)
 		expect(markup).toContain('You finished the AI Hero Skills Workflow.')
 		expect(markup).toContain('Noted. Your certificate is below.')
-		expect(markup).toContain('You are on the waitlist for the next course.')
 		expect(markup).toContain('data-value-path-certificate="available"')
 		expect(markup).toContain('Download PNG')
-		expect(markup).toContain(
-			'/api/certificates?share=opaque-public-certificate-slug-123',
-		)
 		expect(markup).toContain(
 			'https://www.aihero.dev/certificates/opaque-public-certificate-slug-123',
 		)
 		expect(markup).toContain('Share on X')
-		expect(markup).toContain('LinkedIn')
-		expect(markup).toContain('Copy link')
 		expect(markup).not.toContain('signed-token')
 		expect(markup).not.toContain('contact-1')
 		expect(markup).not.toContain('pt=')
@@ -205,251 +297,82 @@ describe('Email 7 certificate answer landing page', () => {
 		const actualPathToken = await vi.importActual<
 			typeof import('@/lib/subscriber-marketing/path-token')
 		>('@/lib/subscriber-marketing/path-token')
-		const expiredPayload = {
-			...tokenPayload,
-			expiresAt: '2020-01-01T00:00:00.000Z',
-		}
 		const expiredToken = actualPathToken.signValuePathToken({
-			payload: expiredPayload,
+			payload: { ...tokenPayload, expiresAt: '2020-01-01T00:00:00.000Z' },
 			secret: 'test-value-path-token-secret',
 		})
 		mocks.verifyValuePathToken.mockImplementation(
 			actualPathToken.verifyValuePathToken,
 		)
 
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: expiredToken, answer: 'other' }),
+		const markup = await render('ai-hero-skills-workflow-certificate', {
+			pt: expiredToken,
+			answer: 'other',
+			confirmed: '1',
 		})
-		const markup = renderToStaticMarkup(page)
 
 		expect(mocks.verifyValuePathToken).toHaveBeenCalledWith({
 			token: expiredToken,
 			secret: 'test-value-path-token-secret',
 			expirationPolicy: 'allow-expired',
 		})
-		expect(mocks.recordValuePathAnswerProgression).toHaveBeenCalledWith(
-			expect.objectContaining({ token: expiredPayload }),
-		)
 		expect(markup).toContain('data-value-path-certificate="available"')
-		expect(markup).toContain('Download PNG')
 	})
 
-	it('renders the certificate when answer progression fails after course completion', async () => {
-		mocks.recordValuePathAnswerProgression.mockRejectedValue(
-			new Error('Kit field write failed'),
-		)
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
-		})
-		const markup = renderToStaticMarkup(page)
-
-		expect(
-			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
-		).toHaveBeenCalledWith({ contactId: 'contact-1' })
-		expect(markup).toContain('data-value-path-certificate="available"')
-		expect(markup).toContain('Noted. Your certificate is below.')
-		expect(mocks.logError).toHaveBeenCalledWith(
-			'value-path.ask.progression_failed',
-			expect.objectContaining({ error: 'Kit field write failed' }),
-		)
-	})
-
-	it('renders the certificate when the runtime allowlist cannot be read', async () => {
-		mocks.readActiveGateDRuntimeAllowlist.mockRejectedValue(
-			new Error('Redis unavailable'),
-		)
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
-		})
-		const markup = renderToStaticMarkup(page)
-
-		expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
-		expect(markup).toContain('data-value-path-certificate="available"')
-		expect(mocks.logError).toHaveBeenCalledWith(
-			'value-path.ask.allowlist_read_failed',
-			expect.objectContaining({ error: 'Redis unavailable' }),
-		)
-	})
-
-	it('renders the certificate when the answer event cannot be sent', async () => {
-		mocks.inngestSend.mockRejectedValue(new Error('Inngest unavailable'))
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
-		})
-		const markup = renderToStaticMarkup(page)
-
-		expect(markup).toContain('data-value-path-certificate="available"')
-		expect(mocks.logError).toHaveBeenCalledWith(
-			'value-path.ask.answer_event_send_failed',
-			expect.objectContaining({ error: 'Inngest unavailable' }),
-		)
-	})
-
-	it('keeps team-email-7 on the same resilient certificate path', async () => {
-		const teamTokenPayload = {
-			...tokenPayload,
-			valuePathResourceId: 'ai-hero-skills-team-workflow',
-			emailResourceId: 'ai-hero-skills-team-workflow.team-email-7',
-			sequenceId: 'ai-hero-skills-team-workflow',
-		}
-		mocks.verifyValuePathToken.mockReturnValue({
-			valid: true,
-			payload: teamTokenPayload,
-		})
+	it('keeps team-email-7 on the certificate path', async () => {
 		mocks.getValuePathAnswerPageBySlug.mockResolvedValue({
 			...answerPage,
-			fields: {
-				...answerPage.fields,
-				sequenceId: 'ai-hero-skills-team-workflow',
-				emailId: 'team-email-7',
-			},
+			fields: { ...answerPage.fields, emailId: 'team-email-7' },
 		})
-		mocks.recordValuePathAnswerProgression.mockRejectedValue(
-			new Error('Kit field write failed'),
-		)
-
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'team-signed-token', answer: 'other' }),
-		})
-		const markup = renderToStaticMarkup(page)
+		const markup = await confirmedCertificate()
 
 		expect(markup).toContain('data-value-path-certificate="available"')
-		expect(
-			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
-		).toHaveBeenCalledWith({ contactId: 'contact-1' })
 	})
 
-	it('contains share persistence failure without losing the signed landing page', async () => {
-		mocks.ensureSkillsWorkflowCertificateShare.mockRejectedValue(
-			new Error('database unavailable'),
-		)
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'shipping' }),
-		})
-		const markup = renderToStaticMarkup(page)
+	it('offers a retry when the share is not there yet', async () => {
+		mocks.findSkillsWorkflowCertificateShare.mockResolvedValue(null)
+		const markup = await confirmedCertificate()
 
-		expect(markup).toContain(
-			'data-value-path-certificate="share-unavailable"',
-		)
-		expect(markup).toContain(
-			'Your certificate is ready, but the share page could not load.',
-		)
+		expect(markup).toContain('data-value-path-certificate="share-unavailable"')
+		expect(markup).toContain('Try again')
 		expect(markup).not.toContain('/api/certificates?')
-		expect(mocks.logWarn).toHaveBeenCalledWith(
-			'value-path.certificate.share_unavailable',
-			expect.objectContaining({ reason: 'share-persistence-failed' }),
-		)
 	})
 
 	it('renders a graceful fallback when eligibility cannot be checked', async () => {
 		mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockRejectedValue(
 			new Error('database unavailable'),
 		)
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'other' }),
-		})
-		const markup = renderToStaticMarkup(page)
+		const markup = await confirmedCertificate()
 
 		expect(markup).toContain(
 			'data-value-path-certificate="eligibility-unavailable"',
 		)
-		expect(markup).toContain(
-			'We could not load your certificate. Open this link again in a moment.',
-		)
 		expect(markup).not.toContain('/api/certificates?')
-		expect(mocks.logError).toHaveBeenCalledWith(
-			'value-path.certificate.eligibility_failed',
-			expect.objectContaining({ error: 'database unavailable' }),
-		)
 	})
 
 	it('renders a useful fallback without exposing a certificate URL when incomplete', async () => {
 		mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockResolvedValue({
 			eligible: false,
-			resourceIdOrSlug: 'value-path:ai-hero-skills-workflow',
-			contactId: 'contact-1',
-			reason: 'value-path-not-complete',
+			reason: 'course-incomplete',
 		})
-		const page = await ValuePathAnswerPage({
-			params: Promise.resolve({ slug: 'ai-hero-skills-workflow-certificate' }),
-			searchParams: Promise.resolve({ pt: 'signed-token', answer: 'shipping' }),
-		})
-		const markup = renderToStaticMarkup(page)
+		const markup = await confirmedCertificate()
 
 		expect(markup).toContain('data-value-path-certificate="ineligible"')
-		expect(markup).toContain(
-			'Your certificate unlocks after you complete the full Skills Workflow.',
-		)
-		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
+		expect(mocks.findSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
 		expect(markup).not.toContain('/api/certificates?')
 	})
-})
 
-describe('answer page path-token marker and synthetic principals', () => {
-	const genericAnswerPage = {
-		...answerPage,
-		id: 'ai-hero-skills-workflow.email-3-answer.correct',
-		fields: {
-			kind: 'answer' as const,
-			slug: 'skills-workflow-email-3-correct',
-			sequenceId: 'ai-hero-skills-workflow',
-			emailId: 'email-3',
-			optionValue: 'correct',
-			headline: 'Good answer.',
-		},
-	}
-	const render = async (slug: string) =>
-		renderToStaticMarkup(
-			await ValuePathAnswerPage({
-				params: Promise.resolve({ slug }),
-				searchParams: Promise.resolve({ pt: 'signed-token', answer: 'correct' }),
-			}),
-		)
-
-	it('marks <main> valid for a verified pt, without the token or contact id', async () => {
-		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
-		const markup = await render('skills-workflow-email-3-correct')
-
-		expect(markup).toMatch(/<main[^>]*data-value-path-token="valid"/)
-		expect(markup).not.toContain('signed-token')
-		expect(markup).not.toContain('contact-1')
-	})
-
-	it('marks <main> invalid when the pt fails, though the page still renders', async () => {
-		mocks.verifyValuePathToken.mockReturnValue({ valid: false, reason: 'bad-signature' })
-		mocks.getValuePathAnswerPageBySlug.mockResolvedValue(genericAnswerPage)
-		const markup = await render('skills-workflow-email-3-correct')
-
-		expect(markup).toMatch(/<main[^>]*data-value-path-token="invalid"/)
-		expect(markup).toContain('Good answer.')
-		expect(mocks.recordValuePathAnswerProgression).not.toHaveBeenCalled()
-	})
-
-	it('never checks eligibility or persists a certificate share for a synthetic principal', async () => {
+	it('never checks eligibility for a synthetic principal', async () => {
 		mocks.verifyValuePathToken.mockReturnValue({
 			valid: true,
 			payload: { ...tokenPayload, contactId: 'synthetic_run-1' },
 		})
-		mocks.recordValuePathAnswerProgression.mockResolvedValue({
-			status: 'skipped',
-			reason: 'synthetic-principal',
-			idempotentNoop: false,
-			reviewReasons: ['synthetic-principal'],
-		})
-		const markup = await render('ai-hero-skills-workflow-certificate')
+		const markup = await confirmedCertificate()
 
 		expect(
 			mocks.checkSkillsWorkflowValuePathCertificateEligibility,
 		).not.toHaveBeenCalled()
-		expect(mocks.ensureSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
-		expect(mocks.inngestSend).not.toHaveBeenCalled()
+		expect(mocks.findSkillsWorkflowCertificateShare).not.toHaveBeenCalled()
 		expect(markup).toMatch(/<main[^>]*data-value-path-token="valid"/)
 	})
 })

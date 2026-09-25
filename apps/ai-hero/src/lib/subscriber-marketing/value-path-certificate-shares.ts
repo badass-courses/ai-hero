@@ -160,6 +160,19 @@ export async function ensureSkillsWorkflowCertificateShare(input: {
 	throw lastError
 }
 
+/** Read-only: the contact's existing certificate share, if one was created. */
+export async function findSkillsWorkflowCertificateShare(
+	contactId: string,
+	repository: ValuePathCertificateShareRepository =
+		drizzleValuePathCertificateShareRepository,
+): Promise<PublicValuePathCertificateShare | null> {
+	const record = await repository.findByContactAndResource({
+		contactId,
+		resourceId: SKILLS_WORKFLOW_CERTIFICATE_RESOURCE,
+	})
+	return record ? toPublicShare(record) : null
+}
+
 export async function getPublicSkillsWorkflowCertificateShare(
 	slug: string,
 	repository: ValuePathCertificateShareRepository =

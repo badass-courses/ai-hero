@@ -3,169 +3,64 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { Logo } from '@/components/brand/logo'
 import LayoutClient from '@/components/layout-client'
-import { emailListProvider } from '@/coursebuilder/email-list-provider'
-import { db } from '@/db'
-import { VALUE_PATH_ANSWER_SELECTED_EVENT } from '@/inngest/events/value-path'
-import { inngest } from '@/inngest/inngest.server'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
-import { redis } from '@/server/redis-client'
 import { log } from '@/server/logger'
-import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
-import { verifyValuePathToken } from '@/lib/subscriber-marketing/path-token'
-import {
-	getValuePathAnswerPageBySlug,
-	SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG,
-} from '@/lib/subscriber-marketing/value-path-answer-page'
 import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
 import {
 	buildSkillsWorkflowCertificateShareImageUrl,
 	buildSkillsWorkflowCertificateShareUrl,
-	ensureSkillsWorkflowCertificateShare,
+	findSkillsWorkflowCertificateShare,
 	SKILLS_WORKFLOW_CERTIFICATE_COURSE_NAME,
 } from '@/lib/subscriber-marketing/value-path-certificate-shares'
-import { recordValuePathAnswerProgression } from '@/lib/subscriber-marketing/value-path-click-progression'
-import { parseExecutorList } from '@/lib/subscriber-marketing/value-path-email-executor'
-import {
-	readActiveGateDRuntimeAllowlist,
-	resolveGateDPreAuthorizedReviewReasons,
-} from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
 import { Download, Plus } from 'lucide-react'
 
+import {
+	answerLandingPath,
+	errorMessage,
+	isCertificateAnswer as isCertificateAnswerPage,
+	resolveAnswerLanding,
+	type AnswerPage,
+} from './answer-landing'
 import { CertificateShareActions } from './certificate-share-actions'
 
+/**
+ * The emailed answer link lands here. A GET records nothing and emits
+ * nothing: mail gateways fetch links before delivery and at click. With a
+ * valid pt it renders the chosen answer and a confirm button that POSTs to
+ * /ask/{slug}/confirm, the only place an answer is recorded. The confirm
+ * redirects back with `confirmed=1`, which renders the result (read-only).
+ */
 export default async function ValuePathAnswerPage(props: {
 	params: Promise<{ slug: string }>
-	searchParams: Promise<{ pt?: string; answer?: string }>
+	searchParams: Promise<{ pt?: string; answer?: string; confirmed?: string }>
 }) {
 	const [{ slug }, searchParams] = await Promise.all([
 		props.params,
 		props.searchParams,
 	])
-	const token = verifyValuePathToken({
-		token: searchParams.pt,
-		secret: getPathTokenSecret(),
-		expirationPolicy:
-			slug === SHARED_SKILLS_WORKFLOW_CERTIFICATE_ANSWER_SLUG
-				? 'allow-expired'
-				: 'enforce',
-	})
-	const answerPage = await getValuePathAnswerPageBySlug({
+	const { token, answerPage } = await resolveAnswerLanding({
 		slug,
-		optionValue: searchParams.answer,
-		sequenceId: token.valid ? token.payload.sequenceId : undefined,
-		emailId: token.valid
-			? emailIdFromResourceId(token.payload.emailResourceId)
-			: undefined,
+		pt: searchParams.pt,
+		answer: searchParams.answer,
 	})
 	if (!answerPage) notFound()
-	if (!token.valid) {
-		await log.warn('value-path.ask.token_invalid', {
-			slug,
-			reason: token.reason,
-			hasToken: Boolean(searchParams.pt),
-		})
+
+	const confirmed = searchParams.confirmed === '1'
+	if (token.valid && !confirmed) {
+		return (
+			<ConfirmAnswerPage
+				answerPage={answerPage}
+				confirmPath={`/ask/${encodeURIComponent(slug)}/confirm`}
+				pt={searchParams.pt}
+				answer={searchParams.answer}
+			/>
+		)
 	}
 
-	const runtimeAllowlistDecision = token.valid
-		? await readActiveGateDRuntimeAllowlist({ redis }).catch(async (error) => {
-				await log.error('value-path.ask.allowlist_read_failed', {
-					slug,
-					contactId: token.payload.contactId,
-					error: errorMessage(error),
-				})
-				return undefined
-			})
-		: undefined
-	const runtimeAllowlist = runtimeAllowlistDecision?.passed
-		? runtimeAllowlistDecision.allowlist
-		: undefined
-	const progression =
-		token.valid && runtimeAllowlist
-			? await recordValuePathAnswerProgression({
-					repository: new DrizzleCaptureMarketingRepository(db),
-					finisherFieldProvider: emailListProvider,
-					token: token.payload,
-					answerPage,
-					mode: runtimeAllowlist.mode,
-					sendGate: {
-						allowedActions: runtimeAllowlist.allowedActions,
-						allowlistedContactIds: runtimeAllowlist.contactIds,
-						allowlistedKitSubscriberIds: runtimeAllowlist.kitSubscriberIds,
-						allowlistedEmails: runtimeAllowlist.emails,
-						enabledValuePathSlugs: runtimeAllowlist.pathSlugs,
-						verifiedEmailResourceIds: runtimeAllowlist.emailResourceIds,
-						verifiedKitSequenceIds: runtimeAllowlist.kitSequenceIds,
-					},
-					acceptedReviewReasons: resolveGateDPreAuthorizedReviewReasons({
-						allowlist: runtimeAllowlist,
-						legacyEnvReviewReasons: parseExecutorList(
-							process.env.AIH_VALUE_PATH_ACCEPTED_REVIEW_REASONS,
-						),
-					}),
-				}).catch(async (error) => {
-					await log.error('value-path.ask.progression_failed', {
-						slug,
-						contactId: token.payload.contactId,
-						error: errorMessage(error),
-					})
-					return undefined
-				})
-			: undefined
-
-	if (token.valid && !runtimeAllowlist) {
-		await log.warn('value-path.ask.authorization_blocked', {
-			slug,
-			contactId: token.payload.contactId,
-			reviewReasons: runtimeAllowlistDecision?.reviewReasons ?? [
-				'gate-d-allowlist-missing',
-			],
-		})
-	}
-
-	if (token.valid && runtimeAllowlist && progression?.status !== 'recorded') {
-		await log.warn('value-path.ask.progression_not_recorded', {
-			slug,
-			contactId: token.payload.contactId,
-			status: progression?.status,
-			reviewReasons: progression?.reviewReasons,
-		})
-	}
-
-	if (progression?.status === 'recorded' && token.valid) {
-		await log.info('value-path.ask.answer_recorded', {
-			slug,
-			contactId: token.payload.contactId,
-			valuePathSlug: token.payload.valuePathResourceId,
-			emailResourceId: token.payload.emailResourceId,
-			contactEventId: progression.contactEventId,
-			finisherCapture: progression.finisherCapture,
-		})
-		await inngest
-			.send({
-				name: VALUE_PATH_ANSWER_SELECTED_EVENT,
-				data: {
-					contactId: token.payload.contactId,
-					valuePathSlug: token.payload.valuePathResourceId,
-					sentEmailResourceId: token.payload.emailResourceId,
-					answerPageId: answerPage.id,
-					contactEventId: progression.contactEventId,
-				},
-			})
-			.catch(async (error) => {
-				await log.error('value-path.ask.answer_event_send_failed', {
-					slug,
-					contactId: token.payload.contactId,
-					contactEventId: progression.contactEventId,
-					error: errorMessage(error),
-				})
-			})
-	}
-
-	const isCertificateAnswer =
-		answerPage.fields.emailId === 'email-7' ||
-		answerPage.fields.emailId === 'team-email-7'
+	const isCertificateAnswer = isCertificateAnswerPage(answerPage)
 	let certificateEligibilityUnavailable = false
-	// A synthetic principal never persists a certificate share.
+	// Read-only: the confirm POST creates the share. A synthetic principal
+	// never has one.
 	const certificateEligibility =
 		isCertificateAnswer &&
 		token.valid &&
@@ -182,26 +77,18 @@ export default async function ValuePathAnswerPage(props: {
 					return undefined
 				})
 			: undefined
-	const certificateShareResult = certificateEligibility?.eligible
-		? await ensureSkillsWorkflowCertificateShare({
-				eligibility: certificateEligibility,
-			}).catch(() => ({
-				available: false as const,
-				reason: 'share-persistence-failed',
-			}))
-		: undefined
-	const certificateShare = certificateShareResult?.available
-		? certificateShareResult.share
-		: undefined
+	const certificateShare =
+		certificateEligibility?.eligible && certificateEligibility.contactId
+			? await findSkillsWorkflowCertificateShare(
+					certificateEligibility.contactId,
+				).catch(() => null)
+			: null
 
 	if (certificateEligibility?.eligible && !certificateShare) {
 		await log.warn('value-path.certificate.share_unavailable', {
 			slug,
 			contactId: certificateEligibility.contactId,
-			reason:
-				certificateShareResult && !certificateShareResult.available
-					? certificateShareResult.reason
-					: 'share-not-created',
+			reason: 'share-not-found',
 		})
 	}
 
@@ -222,11 +109,18 @@ export default async function ValuePathAnswerPage(props: {
 					slug: certificateShare.slug,
 					baseUrl,
 				})}
-				progressionStatus={progression?.status}
 				valuePathSlug={token.payload.valuePathResourceId}
 			/>
 		)
 	}
+
+	const retryPath = token.valid
+		? answerLandingPath({
+				slug,
+				pt: searchParams.pt,
+				answer: searchParams.answer,
+			})
+		: undefined
 
 	return (
 		<LayoutClient withContainer withNavigation={false} withFooter={false}>
@@ -302,8 +196,14 @@ export default async function ValuePathAnswerPage(props: {
 									className="border-l-2 border-amber-600 pl-5 text-base leading-7 dark:border-amber-300"
 									data-value-path-certificate="share-unavailable"
 								>
-									Your certificate is ready, but the share page could not load.
-									Open this link again in a moment.
+									Your certificate is ready, but the share page could not load.{' '}
+									{retryPath ? (
+										<Link className="underline" href={retryPath}>
+											Try again
+										</Link>
+									) : (
+										'Open this link again in a moment.'
+									)}
 								</section>
 							) : certificateEligibilityUnavailable ? (
 								<section
@@ -328,7 +228,7 @@ export default async function ValuePathAnswerPage(props: {
 							<p
 								className="sr-only"
 								data-value-path-token="valid"
-								data-value-path-progression={progression?.status}
+								data-value-path-answer="confirmed"
 							>
 								Path token verified for {token.payload.valuePathResourceId}.
 							</p>
@@ -362,17 +262,13 @@ function CertificateTrophyPage({
 	downloadUrl,
 	learnerName,
 	permalink,
-	progressionStatus,
 	valuePathSlug,
 }: {
-	answerPage: NonNullable<
-		Awaited<ReturnType<typeof getValuePathAnswerPageBySlug>>
-	>
+	answerPage: AnswerPage
 	certificateImageUrl: string
 	downloadUrl: string
 	learnerName: string
 	permalink: string
-	progressionStatus?: string
 	valuePathSlug: string
 }) {
 	return (
@@ -460,7 +356,7 @@ function CertificateTrophyPage({
 				<p
 					className="sr-only"
 					data-value-path-token="valid"
-					data-value-path-progression={progressionStatus}
+					data-value-path-answer="confirmed"
 				>
 					Path token verified for {valuePathSlug}.
 				</p>
@@ -469,17 +365,52 @@ function CertificateTrophyPage({
 	)
 }
 
-function emailIdFromResourceId(resourceId: string) {
-	const [, emailId] = resourceId.split(/\.(.+)/)
-	return emailId
-}
-
-function errorMessage(error: unknown) {
-	return error instanceof Error ? error.message : String(error)
-}
-
-function getPathTokenSecret() {
+function ConfirmAnswerPage({
+	answerPage,
+	confirmPath,
+	pt,
+	answer,
+}: {
+	answerPage: AnswerPage
+	confirmPath: string
+	pt?: string
+	answer?: string
+}) {
+	const choice =
+		answerPage.fields.title ??
+		answerPage.fields.optionValue ??
+		answerPage.fields.headline
 	return (
-		process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET ?? 'dev-value-path-token-secret'
+		<LayoutClient withContainer withNavigation={false} withFooter={false}>
+			<main
+				className="mx-auto flex min-h-[100svh] w-full max-w-2xl flex-col justify-center gap-8 p-5 sm:p-10"
+				data-value-path-token="valid"
+				data-value-path-answer="unconfirmed"
+			>
+				<div className="space-y-3">
+					<p className="text-primary text-sm font-medium uppercase tracking-[0.3em]">
+						AI Hero Skills Workflow
+					</p>
+					<h1 className="font-heading text-balance text-4xl font-bold leading-tight">
+						Confirm your answer
+					</h1>
+				</div>
+				{choice ? (
+					<p className="text-lg leading-relaxed">
+						You picked: <strong>{choice}</strong>
+					</p>
+				) : null}
+				<form action={confirmPath} method="post">
+					{pt ? <input name="pt" type="hidden" value={pt} /> : null}
+					{answer ? <input name="answer" type="hidden" value={answer} /> : null}
+					<button
+						className="bg-primary text-primary-foreground inline-flex min-h-11 items-center justify-center px-6 py-2 font-medium"
+						type="submit"
+					>
+						Confirm
+					</button>
+				</form>
+			</main>
+		</LayoutClient>
 	)
 }
