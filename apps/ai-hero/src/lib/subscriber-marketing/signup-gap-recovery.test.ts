@@ -154,6 +154,7 @@ describe('confirmed signup reconciliation', () => {
 		expect(plan.counts).toEqual({
 			deferred: 0,
 			excludedOptedOut: 0,
+			excludedCourseHistory: 0,
 			excludedSynthetic: 0,
 			planned: 1,
 			replayable: 1,

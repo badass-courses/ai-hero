@@ -36,6 +36,13 @@ export type SignupGapIdentityMatches = {
 	 */
 	optedOutKitSubscriberIds?: ReadonlySet<string>
 	optedOutEmails?: ReadonlySet<string>
+	/**
+	 * Subscribers with evidence they already got course email without a
+	 * recorded entry: a value-path send, an email 0 sequence subscription or
+	 * a completion field. Replaying them would start the course again.
+	 */
+	courseHistoryKitSubscriberIds?: ReadonlySet<string>
+	courseHistoryEmails?: ReadonlySet<string>
 }
 
 export type SignupGapPreviewCandidate = {
@@ -67,6 +74,7 @@ export type SignupGapPreview = {
 		withExistingIdentity: number
 		withExistingCourseEntry: number
 		excludedOptedOut: number
+		excludedCourseHistory: number
 		gapCandidates: number
 		excludedSynthetic: number
 		unconfirmed: number
@@ -116,6 +124,7 @@ export type SignupConfirmationReconciliationPlan = {
 		unconfirmed: number
 		excludedSynthetic: number
 		excludedOptedOut: number
+		excludedCourseHistory: number
 		planned: number
 		deferred: number
 	}
@@ -235,6 +244,7 @@ export function buildSignupGapPreview(args: {
 	let withExistingIdentity = 0
 	let withExistingCourseEntry = 0
 	let excludedOptedOut = 0
+	let excludedCourseHistory = 0
 	const candidates: SignupGapPreviewCandidate[] = []
 
 	for (const subscriber of inWindow) {
@@ -267,6 +277,15 @@ export function buildSignupGapPreview(args: {
 			args.identityMatches.optedOutEmails?.has(email)
 		) {
 			excludedOptedOut += 1
+			continue
+		}
+		if (
+			args.identityMatches.courseHistoryKitSubscriberIds?.has(
+				subscriber.kitSubscriberId,
+			) ||
+			args.identityMatches.courseHistoryEmails?.has(email)
+		) {
+			excludedCourseHistory += 1
 			continue
 		}
 
@@ -311,6 +330,7 @@ export function buildSignupGapPreview(args: {
 			withExistingIdentity,
 			withExistingCourseEntry,
 			excludedOptedOut,
+			excludedCourseHistory,
 			gapCandidates: candidates.length,
 			excludedSynthetic,
 			unconfirmed: stateBreakdown.inactiveUnconfirmed,
@@ -371,6 +391,7 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 			unconfirmed: args.preview.counts.unconfirmed,
 			excludedSynthetic: args.preview.counts.excludedSynthetic,
 			excludedOptedOut: args.preview.counts.excludedOptedOut,
+			excludedCourseHistory: args.preview.counts.excludedCourseHistory,
 			planned: planned.length,
 			deferred: Math.max(0, replayable.length - planned.length),
 		},

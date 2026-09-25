@@ -199,6 +199,7 @@ describe('subscriber marketing signup gap recovery', () => {
 			withExistingIdentity: 2,
 			withExistingCourseEntry: 2,
 			excludedOptedOut: 0,
+			excludedCourseHistory: 0,
 			gapCandidates: 2,
 			excludedSynthetic: 1,
 			unconfirmed: 1,

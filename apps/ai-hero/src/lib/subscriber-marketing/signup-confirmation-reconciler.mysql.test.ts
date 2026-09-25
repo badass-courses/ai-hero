@@ -17,8 +17,10 @@ import {
 import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { validateMySqlIntegrationServerUrl } from '@/lib/team-purchase-mysql-test-guard'
 
+import { contactEmailWriteValues } from './contact-email-equivalence'
 import {
 	buildSignupConfirmationReconciliationBatch,
+	ReconcilerEvidenceUnavailableError,
 	SKILLS_CONFIRMATION_RECONCILIATION_LIMIT,
 	SKILLS_NEWSLETTER_FORM_ID,
 } from './signup-confirmation-reconciler.server'
@@ -28,7 +30,13 @@ import {
 const serverUrl = process.env.AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL
 const integration = describe.skipIf(!serverUrl)
 
-type KitRow = { id: string; email: string; addedAt: string }
+type KitRow = {
+	id: string
+	email: string
+	addedAt: string
+	fields?: Record<string, string>
+}
+type KitPage = (url: URL) => Response | undefined
 
 integration('skills confirmation reconciler on disposable MySQL', () => {
 	let server: Pool | undefined
@@ -37,6 +45,8 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 	let database: MySqlDatabase<any, any, any>
 	let kitActive: KitRow[]
 	let kitTagged: Map<string, string[]>
+	let kitSequences: Map<string, string[]>
+	let kitOverride: KitPage | undefined
 
 	beforeAll(async () => {
 		if (!serverUrl || process.env.CI !== 'true')
@@ -59,15 +69,17 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 				multipleStatements: true,
 			}),
 		)
-		await pool.query(
-			await fs.readFile(
-				new URL(
-					'../../db/migrations/20260504_ai_hero_subscriber_marketing_gate_a.sql',
-					import.meta.url,
+		for (const migration of [
+			'20260504_ai_hero_subscriber_marketing_gate_a.sql',
+			// The canonical email key (prod has it; the plan is its DDL).
+			'plans/20260908_contact_email_equivalence.sql',
+		])
+			await pool.query(
+				await fs.readFile(
+					new URL(`../../db/migrations/${migration}`, import.meta.url),
+					'utf8',
 				),
-				'utf8',
-			),
-		)
+			)
 		database = drizzle(pool, { mode: 'planetscale' })
 	})
 
@@ -79,6 +91,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 
 	beforeEach(async () => {
 		for (const table of [
+			'AI_SideEffectIntent',
 			'AI_ContactEvent',
 			'AI_ProviderIdentity',
 			'AI_Contact',
@@ -86,21 +99,33 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 			await pool.query(`DELETE FROM ${table}`)
 		kitActive = []
 		kitTagged = new Map()
+		kitSequences = new Map()
+		kitOverride = undefined
 		vi.stubEnv('CONVERTKIT_V4_API_KEY', 'test-kit-key')
 		vi.stubGlobal('fetch', async (input: URL | string) => {
 			const url = new URL(String(input))
+			const overridden = kitOverride?.(url)
+			if (overridden) return overridden
 			const tag = /\/v4\/tags\/(\d+)\/subscribers$/.exec(url.pathname)?.[1]
+			const sequence = /\/v4\/sequences\/(\d+)\/subscribers$/.exec(
+				url.pathname,
+			)?.[1]
 			const rows = tag
 				? kitActive.filter((row) => kitTagged.get(tag)?.includes(row.id))
-				: url.searchParams.get('status') === 'active'
-					? kitActive
-					: []
+				: sequence
+					? kitActive.filter((row) =>
+							kitSequences.get(sequence)?.includes(row.id),
+						)
+					: url.searchParams.get('status') === 'active'
+						? kitActive
+						: []
 			const subscribers = rows.map((row) => ({
 				id: Number(row.id),
 				email_address: row.email,
 				state: 'active',
 				created_at: row.addedAt,
 				added_at: row.addedAt,
+				fields: row.fields ?? {},
 			}))
 			return Response.json({
 				subscribers,
@@ -130,10 +155,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 
 	async function captured(row: KitRow) {
 		const contactId = `contact-${row.id}`
-		await pool.query('INSERT INTO AI_Contact (id, email) VALUES (?, ?)', [
-			contactId,
-			row.email,
-		])
+		await contactRow(contactId, row.email)
 		await pool.query(
 			"INSERT INTO AI_ProviderIdentity (id, contactId, provider, externalId, evidence) VALUES (?, ?, 'kit', ?, '{}')",
 			[`identity-${row.id}`, contactId, row.id],
@@ -144,6 +166,30 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 			`skills-form:${SKILLS_NEWSLETTER_FORM_ID}:subscriber:${row.id}`,
 		)
 		return contactId
+	}
+
+	async function contactRow(id: string, email: string) {
+		const values = contactEmailWriteValues(email)
+		await pool.query(
+			'INSERT INTO AI_Contact (id, email, emailKey, emailKeySource) VALUES (?, ?, ?, ?)',
+			[id, values.email, values.emailKey, values.emailKeySource],
+		)
+	}
+
+	async function intent(contactId: string, type: string) {
+		await pool.query(
+			"INSERT INTO AI_SideEffectIntent (id, nextActionId, contactId, provider, type, status, idempotencyKey, gates, reviewReasons, metadata) VALUES (?, ?, ?, 'kit', ?, 'planned', ?, '{}', '[]', '{}')",
+			[randomUUID(), randomUUID(), contactId, type, randomUUID()],
+		)
+	}
+
+	/** A contact Kit knows under another subscriber id, stored as typed. */
+	async function addressOnlyContact(id: string, storedEmail: string) {
+		await contactRow(id, storedEmail)
+		await pool.query(
+			"INSERT INTO AI_ProviderIdentity (id, contactId, provider, externalId, evidence) VALUES (?, ?, 'kit', ?, '{}')",
+			[`identity-${id}`, id, `other-kit-${id}`],
+		)
 	}
 
 	async function event(
@@ -250,21 +296,24 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		await captured(bounced)
 		await event(bounced, 'contact.bounced', 'kit-bounce:4004')
 		await captured(confirmed('4005'))
-		await pool.query(
-			"INSERT INTO AI_SideEffectIntent (id, nextActionId, contactId, provider, type, status, idempotencyKey, gates, reviewReasons, metadata) VALUES ('intent-4005', 'na-4005', 'contact-4005', 'kit', 'unsubscribe-kit-list', 'completed', 'list-unsub:4005', '{}', '[]', '{}')",
-		)
-		// Unsubscribed on a contact Kit knows only by email.
+		await intent('contact-4005', 'unsubscribe-kit-list')
+		// Complained on a contact Kit knows under another id, its address
+		// stored with different case and whitespace.
 		const byEmail = confirmed('4006')
-		await pool.query('INSERT INTO AI_Contact (id, email) VALUES (?, ?)', [
+		await addressOnlyContact(
 			'contact-email-only',
-			byEmail.email,
-		])
-		await pool.query(
-			"INSERT INTO AI_ProviderIdentity (id, contactId, provider, externalId, evidence) VALUES ('identity-email-only', 'contact-email-only', 'kit', 'other-kit-id', '{}')",
+			` ${byEmail.email.toUpperCase()} `,
 		)
 		await pool.query(
-			"INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt) VALUES ('ev-email-only', 'contact-email-only', 'identity-email-only', 'kit', 'unsub-email-only', 'kit:unsub-email-only', 'contact.complained', 'k-email-only', 'internal', '{}', '{}', 1, NOW())",
+			"INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt) VALUES ('ev-email-only', 'contact-email-only', 'identity-contact-email-only', 'kit', 'unsub-email-only', 'kit:unsub-email-only', 'contact.complained', 'k-email-only', 'internal', '{}', '{}', 1, NOW())",
 		)
+		// A list unsubscribe still pending (no event yet), same kind of address.
+		const pending = confirmed('4008')
+		await addressOnlyContact(
+			'contact-pending-unsub',
+			`\t${pending.email.replace('learner', 'Learner')}  `,
+		)
+		await intent('contact-pending-unsub', 'unsubscribe-kit-list')
 		kitTagged.set('8244351', [aiHeroTagged.id])
 		kitTagged.set('19251081', [skillsTagged.id])
 		confirmed('4007')
@@ -277,9 +326,93 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		expect(plannedIds(plan)).toEqual(['4007'])
 		expect(plan.counts).toMatchObject({
 			replayable: 1,
-			excludedOptedOut: 6,
+			excludedOptedOut: 7,
 			planned: 1,
 		})
+	})
+
+	it('never restarts the course for someone who already got course email', async () => {
+		// In email 0's Kit sequence (individual or team path).
+		kitSequences.set('2757199', [confirmed('6001').id])
+		kitSequences.set('2757206', [confirmed('6002').id])
+		// Finished the course, per the Kit field.
+		confirmed('6003').fields = { aih_course_completed_at: '2026-09-01' }
+		// A value-path send on record, under its own Kit id or by address.
+		const sent = confirmed('6004')
+		await captured(sent)
+		await intent('contact-6004', 'send-value-path-email')
+		const sentByAddress = confirmed('6005')
+		await addressOnlyContact(
+			'contact-sent-other-id',
+			` ${sentByAddress.email.toUpperCase()}`,
+		)
+		await intent('contact-sent-other-id', 'send-value-path-email')
+		confirmed('6006')
+
+		const plan = await buildSignupConfirmationReconciliationBatch({
+			to: '2026-09-25T00:00:00.000Z',
+			database,
+		})
+
+		expect(plannedIds(plan)).toEqual(['6006'])
+		expect(plan.counts).toMatchObject({
+			replayable: 1,
+			excludedCourseHistory: 5,
+		})
+	})
+
+	it('fails the run when a Contact email key is stale', async () => {
+		confirmed('7001')
+		await pool.query(
+			"INSERT INTO AI_Contact (id, email) VALUES ('contact-stale', 'stale@example.test')",
+		)
+
+		await expect(
+			buildSignupConfirmationReconciliationBatch({
+				to: '2026-09-25T00:00:00.000Z',
+				database,
+			}),
+		).rejects.toThrow(ReconcilerEvidenceUnavailableError)
+	})
+
+	it.each([
+		[
+			'an HTTP failure',
+			() => Response.json({ error: 'nope' }, { status: 403 }),
+		],
+		[
+			'a 200 without a subscriber list',
+			() => Response.json({ pagination: { has_next_page: false } }),
+		],
+		[
+			'a malformed subscriber id',
+			() =>
+				Response.json({
+					subscribers: [{ id: 'abc' }],
+					pagination: { has_next_page: false, end_cursor: null },
+				}),
+		],
+		[
+			'a next page without a cursor',
+			() =>
+				Response.json({
+					subscribers: [{ id: 1 }],
+					pagination: { has_next_page: true, end_cursor: null },
+				}),
+		],
+		['a body that is not JSON', () => new Response('<html>', { status: 200 })],
+	])('fails closed on %s from a consent or history list', async (_, page) => {
+		confirmed('8001')
+		for (const resource of ['tags/8244351', 'sequences/2757199']) {
+			kitOverride = (url) =>
+				url.pathname === `/v4/${resource}/subscribers` ? page() : undefined
+			await expect(
+				buildSignupConfirmationReconciliationBatch({
+					to: '2026-09-25T00:00:00.000Z',
+					database,
+				}),
+			).rejects.toThrow(ReconcilerEvidenceUnavailableError)
+		}
 	})
 
 	it('stops or slows on AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT, never above 50', async () => {
