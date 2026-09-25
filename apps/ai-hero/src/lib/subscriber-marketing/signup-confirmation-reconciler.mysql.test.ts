@@ -36,6 +36,7 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 	let name: string | undefined
 	let database: MySqlDatabase<any, any, any>
 	let kitActive: KitRow[]
+	let kitTagged: Map<string, string[]>
 
 	beforeAll(async () => {
 		if (!serverUrl || process.env.CI !== 'true')
@@ -84,19 +85,23 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		])
 			await pool.query(`DELETE FROM ${table}`)
 		kitActive = []
+		kitTagged = new Map()
 		vi.stubEnv('CONVERTKIT_V4_API_KEY', 'test-kit-key')
 		vi.stubGlobal('fetch', async (input: URL | string) => {
 			const url = new URL(String(input))
-			const subscribers =
-				url.searchParams.get('status') === 'active'
-					? kitActive.map((row) => ({
-							id: Number(row.id),
-							email_address: row.email,
-							state: 'active',
-							created_at: row.addedAt,
-							added_at: row.addedAt,
-						}))
+			const tag = /\/v4\/tags\/(\d+)\/subscribers$/.exec(url.pathname)?.[1]
+			const rows = tag
+				? kitActive.filter((row) => kitTagged.get(tag)?.includes(row.id))
+				: url.searchParams.get('status') === 'active'
+					? kitActive
 					: []
+			const subscribers = rows.map((row) => ({
+				id: Number(row.id),
+				email_address: row.email,
+				state: 'active',
+				created_at: row.addedAt,
+				added_at: row.addedAt,
+			}))
 			return Response.json({
 				subscribers,
 				pagination: { has_next_page: false, end_cursor: null },
@@ -231,6 +236,67 @@ integration('skills confirmation reconciler on disposable MySQL', () => {
 		})
 
 		expect(plannedIds(plan)).toEqual(['2002'])
+	})
+
+	it('never enters an active subscriber who opted out of AI Hero or the skills emails', async () => {
+		// Kit `active` is not consent: the AI Hero and AI Skills unsubscribe
+		// tags, and local unsubscribe/bounce/complaint evidence, all exclude.
+		const aiHeroTagged = confirmed('4001')
+		const skillsTagged = confirmed('4002')
+		const unsubscribed = confirmed('4003')
+		await captured(unsubscribed)
+		await event(unsubscribed, 'contact.unsubscribed', 'kit-unsub:4003')
+		const bounced = confirmed('4004')
+		await captured(bounced)
+		await event(bounced, 'contact.bounced', 'kit-bounce:4004')
+		await captured(confirmed('4005'))
+		await pool.query(
+			"INSERT INTO AI_SideEffectIntent (id, nextActionId, contactId, provider, type, status, idempotencyKey, gates, reviewReasons, metadata) VALUES ('intent-4005', 'na-4005', 'contact-4005', 'kit', 'unsubscribe-kit-list', 'completed', 'list-unsub:4005', '{}', '[]', '{}')",
+		)
+		// Unsubscribed on a contact Kit knows only by email.
+		const byEmail = confirmed('4006')
+		await pool.query('INSERT INTO AI_Contact (id, email) VALUES (?, ?)', [
+			'contact-email-only',
+			byEmail.email,
+		])
+		await pool.query(
+			"INSERT INTO AI_ProviderIdentity (id, contactId, provider, externalId, evidence) VALUES ('identity-email-only', 'contact-email-only', 'kit', 'other-kit-id', '{}')",
+		)
+		await pool.query(
+			"INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt) VALUES ('ev-email-only', 'contact-email-only', 'identity-email-only', 'kit', 'unsub-email-only', 'kit:unsub-email-only', 'contact.complained', 'k-email-only', 'internal', '{}', '{}', 1, NOW())",
+		)
+		kitTagged.set('8244351', [aiHeroTagged.id])
+		kitTagged.set('19251081', [skillsTagged.id])
+		confirmed('4007')
+
+		const plan = await buildSignupConfirmationReconciliationBatch({
+			to: '2026-09-25T00:00:00.000Z',
+			database,
+		})
+
+		expect(plannedIds(plan)).toEqual(['4007'])
+		expect(plan.counts).toMatchObject({
+			replayable: 1,
+			excludedOptedOut: 6,
+			planned: 1,
+		})
+	})
+
+	it('stops or slows on AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT, never above 50', async () => {
+		for (let index = 0; index < 60; index++) confirmed(String(5000 + index))
+		const planned = async (limit: string) => {
+			vi.stubEnv('AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT', limit)
+			const plan = await buildSignupConfirmationReconciliationBatch({
+				to: '2026-09-25T00:00:00.000Z',
+				database,
+			})
+			return [plan.counts.planned, plan.limit]
+		}
+
+		expect(await planned('0')).toEqual([0, 0])
+		expect(await planned('10')).toEqual([10, 10])
+		expect(await planned('500')).toEqual([50, 50])
+		expect(await planned('nope')).toEqual([50, 50])
 	})
 
 	it('plans at most 50 per hourly run by default', async () => {

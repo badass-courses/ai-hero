@@ -100,8 +100,11 @@ jobs:
         env:
           AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
           AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
+        # Nineteen suites share one MySQL in parallel. The long composition
+        # tests (bridge-runtime, evergreen-pilot) run past vitest's 5s default
+        # and timed out on main too (runs 35258220266, 35742641569).
         run: >-
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000
           src/lib/subscriber-marketing/evergreen-offer-journey/drizzle-ledger.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/current-authority-repository.mysql.test.ts
           src/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority.mysql.test.ts

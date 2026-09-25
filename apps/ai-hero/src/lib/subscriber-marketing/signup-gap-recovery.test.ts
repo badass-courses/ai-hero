@@ -153,6 +153,7 @@ describe('confirmed signup reconciliation', () => {
 
 		expect(plan.counts).toEqual({
 			deferred: 0,
+			excludedOptedOut: 0,
 			excludedSynthetic: 0,
 			planned: 1,
 			replayable: 1,
@@ -207,6 +208,39 @@ describe('confirmed signup reconciliation', () => {
 			'kit-backlog-3',
 		])
 		expect(plan.counts).toMatchObject({ planned: 2, deferred: 2 })
+	})
+
+	it('plans nothing at limit 0, the reconciler pause, and rejects a negative limit', () => {
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-09-25T00:00:00.000Z',
+			now: '2026-09-25T00:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
+			},
+			subscribers: [
+				{
+					kitSubscriberId: 'kit-waiting',
+					email: 'waiting@example.com',
+					createdAt: '2026-09-24T12:00:00.000Z',
+					addedAt: '2026-09-24T12:00:00.000Z',
+					state: 'active',
+				},
+			],
+		})
+
+		const paused = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 0,
+		})
+		expect(paused.events).toEqual([])
+		expect(paused.counts).toMatchObject({ planned: 0, deferred: 1 })
+		expect(() =>
+			buildSignupConfirmationReconciliationPlan({ preview, limit: -1 }),
+		).toThrow('non-negative integer')
 	})
 
 	it('carries stashed opt-in attribution from Kit fields into the enrollment event', () => {

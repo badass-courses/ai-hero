@@ -1,5 +1,12 @@
 import { db } from '@/db'
-import { contact, contactEvent, providerIdentity } from '@/db/schema'
+import {
+	contact,
+	contactEvent,
+	providerIdentity,
+	sideEffectIntent,
+} from '@/db/schema'
+import { AI_HERO_SKILLS_EXCLUSION_TAG_IDS } from '@/lib/kit-broadcasts'
+import { UNSUBSCRIBE_KIT_LIST_INTENT_TYPE } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from '@/lib/subscriber-marketing/drovr-ownership'
 import { DROVR_SKILLS_COURSE_JOURNEY_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
@@ -22,6 +29,27 @@ export const SKILLS_CONFIRMATION_RECONCILIATION_START =
  * hourly run stays small and a backlog drains over a few runs.
  */
 export const SKILLS_CONFIRMATION_RECONCILIATION_LIMIT = 50
+
+/**
+ * The stop lever: AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT can pause
+ * (0) or slow the reconciler, never raise it past the default. Anything
+ * unparseable falls back to the default.
+ */
+export function skillsConfirmationReconciliationLimit(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+	const raw = env.AIH_SKILLS_CONFIRMATION_RECONCILIATION_LIMIT?.trim()
+	if (!raw || !/^\d+$/.test(raw))
+		return SKILLS_CONFIRMATION_RECONCILIATION_LIMIT
+	return Math.min(Number(raw), SKILLS_CONFIRMATION_RECONCILIATION_LIMIT)
+}
+
+/** Opt-out evidence recorded locally: Kit webhooks and drovr list unsubscribes. */
+const OPT_OUT_EVENT_TYPES: string[] = [
+	'contact.unsubscribed',
+	'contact.bounced',
+	'contact.complained',
+]
 
 const KIT_SUBSCRIBER_STATES = [
 	'active',
@@ -48,12 +76,19 @@ export async function buildSignupConfirmationReconciliationBatch(args?: {
 		addedAfter: SKILLS_CONFIRMATION_RECONCILIATION_START,
 		states: KIT_SUBSCRIBER_STATES,
 	})
+	const [identityMatches, taggedOptOuts] = await Promise.all([
+		fetchIdentityMatches(subscribers, args?.database ?? db),
+		fetchKitTaggedSubscriberIds(AI_HERO_SKILLS_EXCLUSION_TAG_IDS),
+	])
 	const preview = buildSignupGapPreview({
 		subscribers,
-		identityMatches: await fetchIdentityMatches(
-			subscribers,
-			args?.database ?? db,
-		),
+		identityMatches: {
+			...identityMatches,
+			optedOutKitSubscriberIds: new Set([
+				...identityMatches.optedOutKitSubscriberIds,
+				...taggedOptOuts,
+			]),
+		},
 		formId: SKILLS_NEWSLETTER_FORM_ID,
 		from: SKILLS_CONFIRMATION_RECONCILIATION_START,
 		to,
@@ -61,7 +96,7 @@ export async function buildSignupConfirmationReconciliationBatch(args?: {
 	})
 	return buildSignupConfirmationReconciliationPlan({
 		preview,
-		limit: args?.limit ?? SKILLS_CONFIRMATION_RECONCILIATION_LIMIT,
+		limit: args?.limit ?? skillsConfirmationReconciliationLimit(),
 	})
 }
 
@@ -82,6 +117,8 @@ async function fetchIdentityMatches(
 	const contactEmails = new Set<string>()
 	const matchedSubscriberIds = new Set<string>()
 	const courseEntryKitSubscriberIds = new Set<string>()
+	const optedOutKitSubscriberIds = new Set<string>()
+	const optedOutEmails = new Set<string>()
 
 	for (const emailChunk of chunk(emails, 500)) {
 		const rows = await database
@@ -91,6 +128,22 @@ async function fetchIdentityMatches(
 		for (const row of rows) {
 			const email = normalizeSignupGapEmail(row.email)
 			if (email) contactEmails.add(email)
+		}
+		// A contact Kit knows under another subscriber id still carries its
+		// opt-out by address.
+		const optOutRows = await database
+			.select({ email: contact.email })
+			.from(contact)
+			.innerJoin(contactEvent, eq(contactEvent.contactId, contact.id))
+			.where(
+				and(
+					inArray(contact.email, emailChunk),
+					inArray(contactEvent.eventType, OPT_OUT_EVENT_TYPES),
+				),
+			)
+		for (const row of optOutRows) {
+			const email = normalizeSignupGapEmail(row.email)
+			if (email) optedOutEmails.add(email)
 		}
 	}
 	for (const idChunk of chunk(subscriberIds, 500)) {
@@ -140,13 +193,102 @@ async function fetchIdentityMatches(
 		for (const row of entryRows) {
 			courseEntryKitSubscriberIds.add(row.externalId)
 		}
+
+		const optOutEventRows = await database
+			.select({ externalId: providerIdentity.externalId })
+			.from(providerIdentity)
+			.innerJoin(
+				contactEvent,
+				eq(contactEvent.contactId, providerIdentity.contactId),
+			)
+			.where(
+				and(
+					eq(providerIdentity.provider, 'kit'),
+					inArray(providerIdentity.externalId, idChunk),
+					inArray(contactEvent.eventType, OPT_OUT_EVENT_TYPES),
+				),
+			)
+		const optOutIntentRows = await database
+			.select({ externalId: providerIdentity.externalId })
+			.from(providerIdentity)
+			.innerJoin(
+				sideEffectIntent,
+				eq(sideEffectIntent.contactId, providerIdentity.contactId),
+			)
+			.where(
+				and(
+					eq(providerIdentity.provider, 'kit'),
+					inArray(providerIdentity.externalId, idChunk),
+					eq(sideEffectIntent.type, UNSUBSCRIBE_KIT_LIST_INTENT_TYPE),
+				),
+			)
+		for (const row of [...optOutEventRows, ...optOutIntentRows]) {
+			optedOutKitSubscriberIds.add(row.externalId)
+		}
 	}
 
 	return {
 		contactEmails,
 		kitSubscriberIds: matchedSubscriberIds,
 		courseEntryKitSubscriberIds,
+		optedOutKitSubscriberIds,
+		optedOutEmails,
 	}
+}
+
+/** Active subscribers carrying any of these Kit tags, by subscriber id. */
+async function fetchKitTaggedSubscriberIds(tagIds: readonly number[]) {
+	const apiKey = kitApiKey()
+	const ids = new Set<string>()
+	for (const tagId of tagIds) {
+		let cursor: string | undefined
+		for (let page = 0; ; page++) {
+			if (page >= 100) {
+				throw new Error(
+					`Kit tag ${tagId} exceeded the 100-page cap during confirmation reconciliation`,
+				)
+			}
+			const url = new URL(
+				`https://api.convertkit.com/v4/tags/${tagId}/subscribers`,
+			)
+			url.searchParams.set('status', 'active')
+			url.searchParams.set('per_page', '1000')
+			if (cursor) url.searchParams.set('after', cursor)
+			const response = await fetchKitSignupGapPageWithRetry({
+				request: () => fetch(url, { headers: { 'X-Kit-Api-Key': apiKey } }),
+			})
+			const payload = (await response.json()) as Record<string, unknown>
+			if (!response.ok) {
+				// Consent cannot be proven without the tag list: fail the run.
+				throw new Error(
+					`Kit tag ${tagId} read failed with HTTP ${response.status}`,
+				)
+			}
+			for (const subscriber of Array.isArray(payload.subscribers)
+				? payload.subscribers
+				: []) {
+				const id = asRecord(subscriber)?.id
+				if (typeof id === 'number' || typeof id === 'string') {
+					ids.add(String(id))
+				}
+			}
+			const pagination = asRecord(payload.pagination)
+			cursor = stringField(pagination?.end_cursor)
+			if (!cursor || pagination?.has_next_page === false) break
+		}
+	}
+	return ids
+}
+
+function kitApiKey() {
+	const apiKey =
+		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
+	if (!apiKey) {
+		throw new Error(
+			'Confirmation reconciliation requires CONVERTKIT_V4_API_KEY or CONVERTKIT_API_KEY',
+		)
+	}
+	return apiKey
 }
 
 async function fetchKitFormSubscribersForStates(args: {
@@ -174,13 +316,7 @@ async function fetchKitFormSubscribers(args: {
 	addedAfter: string
 	state: SignupGapKitSubscriberState
 }) {
-	const apiKey =
-		process.env.CONVERTKIT_V4_API_KEY ?? process.env.CONVERTKIT_API_KEY
-	if (!apiKey) {
-		throw new Error(
-			'Confirmation reconciliation requires CONVERTKIT_V4_API_KEY or CONVERTKIT_API_KEY',
-		)
-	}
+	const apiKey = kitApiKey()
 	const subscribers: KitFormSubscriberRecord[] = []
 	let cursor: string | undefined
 	for (let page = 0; page < 100; page++) {
