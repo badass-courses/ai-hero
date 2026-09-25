@@ -65,11 +65,13 @@ describe('completeKnownConversionIntent', () => {
 	})
 
 	describe('a reader ai-hero verified whom Kit still holds unconfirmed', () => {
-		const inactive = () =>
+		// System time is 2026-07-31T12:00:00Z.
+		const inactive = (createdAt: string | null = '2026-07-31T12:00:00Z') =>
 			mocks.subscribeToList.mockResolvedValue({
 				id: 4295840642,
 				email_address: 'signed-in@example.com',
 				state: 'inactive',
+				...(createdAt ? { created_at: createdAt } : {}),
 				fields: {},
 			})
 		const allLogs = () =>
@@ -92,12 +94,54 @@ describe('completeKnownConversionIntent', () => {
 					intentKey: 'waitlist:cohort:cohort_four',
 					via: 'session',
 					state: 'inactive',
+					kitCreatedAt: '2026-07-31T12:00:00Z',
+					resubmit: false,
 				},
 			)
 			expect(mocks.isSignedInAs).toHaveBeenCalledWith(
 				expect.objectContaining({ via: 'session' }),
 			)
 			expect(allLogs()).not.toContain('signed-in@example.com')
+		})
+
+		it('marks a re-submit: Kit created the subscriber long before this signup', async () => {
+			// The cnv_1ojzdqat shape: unconfirmed since an earlier signup.
+			inactive('2026-07-20T06:32:55Z')
+			await completeKnownConversionIntent({
+				intent: { kind: 'cohort-waitlist', productName: 'Cohort Four' },
+				surface: 'cohort-page',
+			})
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				expect.objectContaining({
+					kitCreatedAt: '2026-07-20T06:32:55Z',
+					resubmit: true,
+				}),
+			)
+		})
+
+		it('treats a subscriber created within five minutes as this signup, not a re-submit', async () => {
+			inactive('2026-07-31T11:56:00Z')
+			await completeKnownConversionIntent({
+				intent: { kind: 'cohort-waitlist', productName: 'Cohort Four' },
+				surface: 'cohort-page',
+			})
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				expect.objectContaining({ resubmit: false }),
+			)
+		})
+
+		it('says so when Kit returned no creation time', async () => {
+			inactive(null)
+			await completeKnownConversionIntent({
+				intent: { kind: 'cohort-waitlist', productName: 'Cohort Four' },
+				surface: 'cohort-page',
+			})
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				expect.objectContaining({ kitCreatedAt: null, resubmit: false }),
+			)
 		})
 
 		it('is logged for a cookie-identified reader who is also signed in as that address', async () => {
