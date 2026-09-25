@@ -65,13 +65,21 @@ describe('POST /api/drovr/personalize', () => {
 		})
 	})
 	it('rejects a wrong token and any non-authority tenant before reading private data', async () => {
-		expect((await post(body)).status).toBe(401)
+		const unauthorized = await post(body)
+		expect(unauthorized.status).toBe(401)
+		expect(await unauthorized.json()).toMatchObject({
+			type: 'urn:aihero:problem:unauthorized',
+		})
 		const shadow = await post(
 			{ ...body, tenantId: 'org-aihero-shadow' },
 			'test-executor-token-1234567890',
 		)
 		expect(shadow.status).toBe(403)
-		expect(await shadow.json()).toEqual({ error: 'tenant_mismatch' })
+		expect(shadow.headers.get('content-type')).toBe('application/problem+json')
+		expect(await shadow.json()).toMatchObject({
+			type: 'urn:aihero:problem:tenant-mismatch',
+			status: 403,
+		})
 		expect(mocks.select).not.toHaveBeenCalled()
 		expect(mocks.personalize).not.toHaveBeenCalled()
 	})
@@ -110,9 +118,14 @@ describe('POST /api/drovr/personalize', () => {
 		expect(mocks.personalize).toHaveBeenCalledWith(expect.objectContaining({ identityConflict: true, kitSubscriberId: undefined }))
 	})
 
-	it('answers unknown contact with 404', async () => {
+	it('answers unknown contact with a 404 problem, the status drovr branches on', async () => {
 		mocks.personalize.mockResolvedValue(undefined)
 		const response = await post(body, 'test-executor-token-1234567890')
 		expect(response.status).toBe(404)
+		expect(response.headers.get('content-type')).toBe('application/problem+json')
+		expect(await response.json()).toMatchObject({
+			type: 'urn:aihero:problem:unknown-contact',
+			status: 404,
+		})
 	})
 })

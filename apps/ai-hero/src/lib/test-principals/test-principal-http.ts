@@ -1,18 +1,8 @@
 import { timingSafeEqual } from 'node:crypto'
-import { NextResponse } from 'next/server'
 
-/** RFC 9457 problem details, the vocabulary /api/drovr/intents speaks. */
-export const problem = (
-	status: number,
-	slug: string,
-	title: string,
-	detail: string,
-	hint: string,
-) =>
-	NextResponse.json(
-		{ type: `urn:aihero:problem:${slug}`, title, status, detail, hint },
-		{ status, headers: { 'content-type': 'application/problem+json' } },
-	)
+import { problem } from '@/lib/http/problem-details'
+
+export { problem }
 
 /**
  * The test-principal bearer, compared in constant time. It is its own token,

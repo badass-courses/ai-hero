@@ -15,10 +15,9 @@ import {
 	personalizeDrovrIntent,
 } from '@/lib/subscriber-marketing/drovr-personalize'
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
+import { problem } from '@/lib/http/problem-details'
 import { withSkill } from '@/server/with-skill'
 
-const problem = (status: number, error: string) =>
-	NextResponse.json({ error }, { status })
 
 const bearerMatches = (header: string | null, secret: string): boolean => {
 	const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : ''
@@ -32,19 +31,37 @@ const bearerMatches = (header: string | null, secret: string): boolean => {
  * only the authority tenant may obtain send-ready personalization. */
 export const POST = withSkill(async (request: NextRequest) => {
 	const secret = env.DROVR_EXECUTOR_TOKEN
-	if (!secret) return problem(503, 'executor_not_configured')
+	if (!secret) return problem(
+			503,
+			'executor-not-configured',
+			'Executor not configured',
+			'DROVR_EXECUTOR_TOKEN is not set on this deployment.',
+			'Set the executor token, then retry.',
+		)
 	if (!bearerMatches(request.headers.get('authorization'), secret))
-		return problem(401, 'unauthorized')
+		return problem(
+			401,
+			'unauthorized',
+			'Unauthorized',
+			'The executor bearer token is missing or wrong.',
+			'Send Authorization: Bearer <DROVR_EXECUTOR_TOKEN>.',
+		)
 	let body: unknown
 	try {
 		body = await request.json()
 	} catch {
-		return problem(400, 'malformed_request')
+		return malformed()
 	}
 	const parsed = DrovrPersonalizeRequestSchema.safeParse(body)
-	if (!parsed.success) return problem(400, 'malformed_request')
+	if (!parsed.success) return malformed()
 	if (parsed.data.tenantId !== DROVR_AUTHORITY_TENANT_ID)
-		return problem(403, 'tenant_mismatch')
+		return problem(
+			403,
+			'tenant-mismatch',
+			'Tenant not allowed',
+			`Only ${DROVR_AUTHORITY_TENANT_ID} may obtain send-ready personalization.`,
+			'Personalize under the authority tenant.',
+		)
 	const repository = new DrizzleCaptureMarketingRepository(db)
 	// More than one Kit identity for a contact is ambiguous; never choose a
 	// subscriber id arbitrarily when signing a path answer link.
@@ -74,5 +91,22 @@ export const POST = withSkill(async (request: NextRequest) => {
 			identities.length === 1 ? identities[0]?.externalId : undefined,
 		identityConflict: identities.length > 1,
 	})
-	return result ? NextResponse.json(result) : problem(404, 'unknown_contact')
+	return result
+		? NextResponse.json(result)
+		: problem(
+				404,
+				'unknown-contact',
+				'Unknown contact',
+				'No ai-hero contact has this contactId.',
+				'Personalize a contact ai-hero has captured.',
+			)
 })
+
+const malformed = () =>
+	problem(
+		400,
+		'malformed-request',
+		'Malformed request',
+		'The body is not a valid personalize request.',
+		'Send {tenantId, contactId, journeyId, emailKey, idempotencyKey, dueAt}.',
+	)

@@ -157,6 +157,7 @@ describe('drovr shadow fact mapper', () => {
 				idempotencyKey: 'aihero:intent-completed:intent-1',
 				payload: {
 					emailResourceId: 'ai-hero-skills-workflow.email-2',
+					provider: 'kit',
 				},
 			},
 		])
@@ -190,7 +191,7 @@ describe('drovr shadow fact mapper', () => {
 				occurredAt,
 				idempotencyKey:
 					'completion:intent:org-aihero:contact-1:value-path-skills-course:email2.pending:drip.email1To2:0',
-				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' },
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' , provider: 'kit' },
 			},
 			{
 				tenantId: 'org-aihero-shadow',
@@ -199,7 +200,7 @@ describe('drovr shadow fact mapper', () => {
 				type: 'email.completed',
 				occurredAt,
 				idempotencyKey: 'aihero:intent-completed:intent-1',
-				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' },
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-2' , provider: 'kit' },
 			},
 		])
 	})
@@ -640,7 +641,7 @@ describe('evergreen send completions', () => {
 				type: 'email.completed',
 				occurredAt: '2026-09-17T16:00:00.000Z',
 				idempotencyKey: 'completion:k1',
-				payload: { messageId: 'bridge_can_engineer_v1' },
+				payload: { messageId: 'bridge_can_engineer_v1' , provider: 'kit' },
 			},
 		])
 	})
@@ -686,7 +687,7 @@ describe('shadow-newsletter completions', () => {
 				type: 'email.completed',
 				occurredAt: '2026-09-26T18:00:00.000Z',
 				idempotencyKey: 'completion:k-shadow',
-				payload: { messageId: 'agents_md_big_problem_v1' },
+				payload: { messageId: 'agents_md_big_problem_v1' , provider: 'kit' },
 			},
 		])
 	})

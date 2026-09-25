@@ -63,8 +63,8 @@ export type DrovrShadowEvent = {
 	occurredAt: string
 	idempotencyKey: string
 	payload?:
-		| { emailResourceId: string }
-		| { messageId: string }
+		| { emailResourceId: string; provider?: typeof KIT_EMAIL_PROVIDER }
+		| { messageId: string; provider?: typeof KIT_EMAIL_PROVIDER }
 		| { couponId: string; expiresAt: string }
 		| { reasonClass: string; reason: string }
 		| { list: string }
@@ -79,6 +79,13 @@ export type DrovrShadowEvent = {
 				timezoneSource: 'vercel-header' | 'fallback'
 		  }
 }
+
+/**
+ * Every email.completed ai-hero reports went out through Kit. drovr's own
+ * PostShiba path marks its completions `postshiba`; per-provider telemetry
+ * reads this.
+ */
+export const KIT_EMAIL_PROVIDER = 'kit' as const
 
 export type DrovrShadowFact =
 	| {
@@ -427,7 +434,7 @@ function mapCompletedIntent(intent: SideEffectIntent): DrovrShadowEvent[] {
 		type: 'email.completed',
 		occurredAt: completedAt,
 		idempotencyKey: `aihero:intent-completed:${intent.id}`,
-		payload: { emailResourceId },
+		payload: { emailResourceId, provider: KIT_EMAIL_PROVIDER },
 	}
 	// An intent drovr planned completes back to the tenant that owns it,
 	// keyed the way drovr's own executors key completions. The shadow hears
@@ -470,7 +477,7 @@ function drovrShadowNewsletterCompletion(
 		type: 'email.completed',
 		occurredAt: completedAt,
 		idempotencyKey: `completion:${intentKey}`,
-		payload: { messageId },
+		payload: { messageId, provider: KIT_EMAIL_PROVIDER },
 	}
 }
 
@@ -523,7 +530,11 @@ function drovrEvergreenCompletion(
 	}
 	const messageId = stringValue(intent.metadata.messageId)
 	if (!messageId) return undefined
-	return { ...base, type: 'email.completed', payload: { messageId } }
+	return {
+		...base,
+		type: 'email.completed',
+		payload: { messageId, provider: KIT_EMAIL_PROVIDER },
+	}
 }
 
 function drovrOwnedCompletion(
@@ -560,7 +571,7 @@ function drovrOwnedCompletion(
 		type: 'email.completed',
 		occurredAt: completedAt,
 		idempotencyKey: `completion:${intentKey}`,
-		payload: { emailResourceId },
+		payload: { emailResourceId, provider: KIT_EMAIL_PROVIDER },
 	}
 }
 

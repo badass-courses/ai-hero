@@ -220,7 +220,7 @@ describe('drovr executor: accepting an email.send intent', () => {
 			type: 'email.completed',
 			occurredAt: '2026-09-16T22:35:00.000Z',
 			idempotencyKey: `completion:${intent().idempotencyKey}`,
-			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' , provider: 'kit' },
 		})
 	})
 
@@ -447,7 +447,7 @@ describe('drovr executor: the synchronous send', () => {
 			type: 'email.completed',
 			contactId: 'contact-1',
 			idempotencyKey: `completion:${intent().idempotencyKey}`,
-			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+			payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' , provider: 'kit' },
 		})
 	})
 
@@ -697,6 +697,7 @@ describe('drovr completion for an owned intent', () => {
 		})
 		expect(completion?.payload).toEqual({
 			emailResourceId: 'ai-hero-skills-workflow.email-3',
+			provider: 'kit',
 		})
 		expect(completion?.idempotencyKey).toBe('completion:k')
 	})
@@ -775,7 +776,7 @@ describe('drovr executor: edges Macroscope asked about', () => {
 				type: 'email.completed',
 				occurredAt: '2026-09-10T10:00:00.000Z',
 				idempotencyKey: `completion:${intent().idempotencyKey}`,
-				payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' },
+				payload: { emailResourceId: 'ai-hero-skills-workflow.email-0' , provider: 'kit' },
 			},
 		})
 	})
@@ -958,7 +959,7 @@ describe('acceptDrovrIntent: evergreen bridge and pitch sends', () => {
 				type: 'email.completed',
 				occurredAt: '2026-09-17T16:00:00.000Z',
 				idempotencyKey: 'completion:redriven-key',
-				payload: { messageId: 'bridge_can_engineer_v1' },
+				payload: { messageId: 'bridge_can_engineer_v1' , provider: 'kit' },
 			},
 		})
 	})
@@ -1118,7 +1119,7 @@ describe('acceptDrovrIntent: shadow newsletter sends', () => {
 				occurredAt: '2026-09-19T16:00:05.000Z',
 				idempotencyKey:
 					'completion:contact-1:shadow-newsletter:send:agents_md_big_problem_v1',
-				payload: { messageId: 'agents_md_big_problem_v1' },
+				payload: { messageId: 'agents_md_big_problem_v1' , provider: 'kit' },
 			},
 		})
 	})
