@@ -1,8 +1,13 @@
+import { randomUUID } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
+import { eq } from 'drizzle-orm'
 import { POST as courseBuilderPOST } from '@/coursebuilder/course-builder-config'
 import { readKitSubscribeFailureCode } from '@/coursebuilder/email-list-provider'
+import { db } from '@/db'
+import { contact } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { DROVR_SIGNUP_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -17,6 +22,14 @@ import {
 	parseCourseSequenceExhaustionEnabled,
 	serializeDeadlineTimeZoneEvidenceForKit,
 } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
+import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import {
+	buildDrovrSignupRequest,
+	DOI_DROVR_FORM_IDS,
+	doiAppliesTo,
+	parseDrovrDoiConfig,
+	resolveDoiSignupContact,
+} from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
@@ -36,6 +49,17 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	// Read the request body before passing to coursebuilder
 	const body = await req.json()
 	const email = body.email
+
+	// drovr-owned double opt-in, when DROVR_DOI_FORMS turns it on for this
+	// form (and address, during the canary). Off, this is a no-op and the
+	// signup takes Kit's path below exactly as before.
+	const kitFormId = Number(body.listId)
+	if (
+		typeof email === 'string' &&
+		doiAppliesTo(parseDrovrDoiConfig(env), kitFormId, email)
+	) {
+		return await doiSignup(req, body, email.trim(), kitFormId)
+	}
 
 	// Clone the request with the body since it can only be read once
 	const clonedRequest = new NextRequest(req.url, {
@@ -285,6 +309,96 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 	}
 
 	return response
+}
+
+/**
+ * A double opt-in signup: no Kit subscribe and no value-path entry. Find or
+ * create the contact, hand drovr the signup durably (it sends the
+ * confirmation email and births the course on confirmation), and tell the
+ * form to show "check your email". A failure answers the same 502 the Kit
+ * path uses; it never falls back to Kit, which (with Kit's own double
+ * opt-in off at go-live) would subscribe someone who never confirmed.
+ */
+async function doiSignup(
+	req: NextRequest,
+	body: { name?: unknown },
+	email: string,
+	kitFormId: number,
+) {
+	const drovrFormId = DOI_DROVR_FORM_IDS.get(kitFormId)
+	if (!drovrFormId || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+		return Response.json({ error: 'Subscription was rejected' }, { status: 400 })
+	}
+	const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined
+	const now = new Date().toISOString()
+	const submissionId = randomUUID()
+	try {
+		const cookieStore = await cookies()
+		const optInAttribution = parseOptInAttributionCookie(
+			cookieStore.get('ft_attr')?.value,
+		)
+		const { contactId } = await resolveDoiSignupContact({
+			repository: new DrizzleCaptureMarketingRepository(db),
+			findContactIdsByEmailKey: async (emailKey) =>
+				(
+					await db
+						.select({ id: contact.id })
+						.from(contact)
+						.where(eq(contact.emailKey, emailKey))
+						.limit(2)
+				).map((row) => row.id),
+			email,
+			name,
+			drovrFormId,
+			optInAttribution,
+			now,
+		})
+		await inngest.send({
+			id: `drovr-signup:${submissionId}`,
+			name: DROVR_SIGNUP_REQUESTED_EVENT,
+			data: buildDrovrSignupRequest({
+				contactId,
+				drovrFormId,
+				occurredAt: now,
+				submissionId,
+				page: req.headers.get('referer') ?? 'https://www.aihero.dev/',
+			}),
+		})
+		await log.info('skills.newsletter.doi.requested', {
+			formId: kitFormId,
+			contactId,
+			hasAttribution: Boolean(optInAttribution),
+		})
+		const shortlinkSlug = cookieStore.get('sl_ref')?.value
+		if (shortlinkSlug) {
+			createShortlinkAttribution({
+				shortlinkSlug,
+				email,
+				type: 'signup',
+			}).catch((error) => {
+				void log.error('api.coursebuilder.subscribe.attribution.failed', {
+					shortlinkSlug,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			})
+		}
+	} catch (error) {
+		await log.error('skills.newsletter.doi.failed', {
+			formId: kitFormId,
+			error: error instanceof Error ? error.name : 'unknown',
+		})
+		return Response.json(
+			{ error: 'Subscription could not be confirmed' },
+			{ status: 502 },
+		)
+	}
+	// Subscriber-shaped for the form, with no Kit id: nothing is in Kit yet.
+	return Response.json({
+		email_address: email,
+		first_name: name ?? null,
+		state: 'awaiting-confirmation',
+		fields: {},
+	})
 }
 
 export const POST = withSkill(subscribeWithAttribution)

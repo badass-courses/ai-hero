@@ -42,6 +42,7 @@ import {
 	drovrEventsDeliverBulk,
 } from './functions/drovr-events-deliver'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
+import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
 import { createPPPCreditCouponsForPurchasers } from './functions/coupon/create-ppp-credit-coupons-for-purchasers'
@@ -159,6 +160,7 @@ const allFunctions = [
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
 	drovrEvergreenSender,
+	drovrSignupDeliver,
 	kitDirectoryIngest,
 	newsletterVeteransAssign,
 	googleAdsConversionUpload,

@@ -66,3 +66,16 @@ export function deliverEventNameFor(
 		? DROVR_EVENTS_DELIVER_BULK_EVENT
 		: DROVR_EVENTS_DELIVER_EVENT
 }
+
+/**
+ * A double opt-in signup to record with drovr (`POST /signups`), delivered
+ * durably: ai-hero owns retrying the POST and drovr is idempotent on the
+ * submission. Sent once per form submit, with the submission id as the
+ * Inngest event id.
+ */
+export const DROVR_SIGNUP_REQUESTED_EVENT = 'drovr/signup.requested'
+
+export type DrovrSignupRequested = {
+	name: typeof DROVR_SIGNUP_REQUESTED_EVENT
+	data: import('@/lib/subscriber-marketing/drovr-doi-signup').DrovrSignupRequest
+}
