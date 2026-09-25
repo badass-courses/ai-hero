@@ -1,13 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
-import { eq } from 'drizzle-orm'
 import { POST as courseBuilderPOST } from '@/coursebuilder/course-builder-config'
 import { readKitSubscribeFailureCode } from '@/coursebuilder/email-list-provider'
-import { db } from '@/db'
-import { contact } from '@/db/schema'
 import { env } from '@/env.mjs'
-import { DROVR_SIGNUP_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -22,14 +17,12 @@ import {
 	parseCourseSequenceExhaustionEnabled,
 	serializeDeadlineTimeZoneEvidenceForKit,
 } from '@/lib/subscriber-marketing/course-sequence-exhaustion'
-import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
-	buildDrovrSignupRequest,
 	DOI_DROVR_FORM_IDS,
 	doiAppliesTo,
 	parseDrovrDoiConfig,
-	resolveDoiSignupContact,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
+import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import {
 	AIH_OPTIN_ATTRIBUTION_FIELD,
@@ -330,44 +323,17 @@ async function doiSignup(
 		return Response.json({ error: 'Subscription was rejected' }, { status: 400 })
 	}
 	const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined
-	const now = new Date().toISOString()
-	const submissionId = randomUUID()
 	try {
 		const cookieStore = await cookies()
-		const optInAttribution = parseOptInAttributionCookie(
-			cookieStore.get('ft_attr')?.value,
-		)
-		const { contactId } = await resolveDoiSignupContact({
-			repository: new DrizzleCaptureMarketingRepository(db),
-			findContactIdsByEmailKey: async (emailKey) =>
-				(
-					await db
-						.select({ id: contact.id })
-						.from(contact)
-						.where(eq(contact.emailKey, emailKey))
-						.limit(2)
-				).map((row) => row.id),
+		await requestDrovrDoiSignup({
 			email,
 			name,
-			drovrFormId,
-			optInAttribution,
-			now,
-		})
-		await inngest.send({
-			id: `drovr-signup:${submissionId}`,
-			name: DROVR_SIGNUP_REQUESTED_EVENT,
-			data: buildDrovrSignupRequest({
-				contactId,
-				drovrFormId,
-				occurredAt: now,
-				submissionId,
-				page: req.headers.get('referer') ?? 'https://www.aihero.dev/',
-			}),
-		})
-		await log.info('skills.newsletter.doi.requested', {
-			formId: kitFormId,
-			contactId,
-			hasAttribution: Boolean(optInAttribution),
+			kitFormId,
+			page: req.headers.get('referer') ?? 'https://www.aihero.dev/',
+			optInAttribution: parseOptInAttributionCookie(
+				cookieStore.get('ft_attr')?.value,
+			),
+			entry: 'form',
 		})
 		const shortlinkSlug = cookieStore.get('sl_ref')?.value
 		if (shortlinkSlug) {
