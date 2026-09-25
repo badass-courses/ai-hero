@@ -9,6 +9,7 @@ import {
 	journeyOwnerProviderEventId,
 	ownershipBucket,
 	isHeldSignup,
+	ownershipDecisionLog,
 	parseDrovrOwnershipConfig,
 	resolveJourneyOwner,
 } from './drovr-ownership'
@@ -81,6 +82,38 @@ describe('drovr ownership config', () => {
 				AIH_DROVR_OWNER_EMAILS: ' Joel@Example.com, ,other@example.com',
 			}).emails,
 		).toEqual(new Set(['joel@example.com', 'other@example.com']))
+	})
+})
+
+describe('ownership decision log', () => {
+	it('says whether the hold hit and how the config resolved, with no addresses', () => {
+		const config = parseDrovrOwnershipConfig({
+			...authorityKey,
+			AIH_DROVR_OWNER_PERCENT: '100',
+			AIH_DROVR_OWNER_EMAILS: 'owner@example.com',
+			AIH_DROVR_OWNER_HOLD_EMAILS: 'held@example.com, other@example.com',
+		})
+
+		const held = ownershipDecisionLog(config, ' Held@Example.com ')
+		expect(held).toEqual({
+			holdHit: true,
+			holdEmails: 2,
+			ownerEmailHit: false,
+			ownerEmails: 1,
+			ownerPercent: 100,
+		})
+		expect(ownershipDecisionLog(config, 'owner@example.com')).toMatchObject({
+			holdHit: false,
+			ownerEmailHit: true,
+		})
+		expect(ownershipDecisionLog(DROVR_OWNERSHIP_OFF, undefined)).toEqual({
+			holdHit: false,
+			holdEmails: 0,
+			ownerEmailHit: false,
+			ownerEmails: 0,
+			ownerPercent: 0,
+		})
+		expect(JSON.stringify(held)).not.toContain('@')
 	})
 })
 

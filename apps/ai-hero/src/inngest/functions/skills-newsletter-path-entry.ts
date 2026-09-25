@@ -17,7 +17,10 @@ import {
 	SHADOW_NEWSLETTER_KIT_SEQUENCE,
 } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
 import { readActiveGateDRuntimeAllowlist } from '@/lib/subscriber-marketing/value-path-gate-d-allowlist'
-import { parseDrovrOwnershipConfig } from '@/lib/subscriber-marketing/drovr-ownership'
+import {
+	ownershipDecisionLog,
+	parseDrovrOwnershipConfig,
+} from '@/lib/subscriber-marketing/drovr-ownership'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 
@@ -141,6 +144,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					eventId: event.id,
 					authorizationMode: allowlistDecision.allowlist.authorizationMode,
 				})
+				const drovrOwnership = parseDrovrOwnershipConfig(process.env)
 				const result = await enterSkillsNewsletterSubscriber({
 					repository: new DrizzleCaptureMarketingRepository(db),
 					shadowObserver: createEmailCourseShadowRuntime({
@@ -152,7 +156,7 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					sequenceExhaustionEnabled: parseCourseSequenceExhaustionEnabled(
 						process.env.AIH_COURSE_SEQUENCE_EXHAUSTION_V1_ENABLED,
 					),
-					drovrOwnership: parseDrovrOwnershipConfig(process.env),
+					drovrOwnership,
 				})
 				await log.info('subscriber_funnel.entry_result', {
 					funnel: 'skills-newsletter',
@@ -165,6 +169,8 @@ export const skillsNewsletterPathEntry = inngest.createFunction(
 					reviewReasons: result.entry.results.flatMap(
 						(item) => item.reviewReasons,
 					),
+					ownership: ownershipDecisionLog(drovrOwnership, event.data.email),
+					deployment: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8),
 				})
 				await log.info('subscriber_funnel.signup_entry_completed', {
 					funnel: 'skills-newsletter',
