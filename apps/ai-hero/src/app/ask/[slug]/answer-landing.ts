@@ -57,11 +57,13 @@ export function answerLandingPath(input: {
 	pt?: string
 	answer?: string
 	confirmed?: boolean
+	retry?: boolean
 }) {
 	const params = new URLSearchParams()
 	if (input.answer) params.set('answer', input.answer)
 	if (input.pt) params.set('pt', input.pt)
 	if (input.confirmed) params.set('confirmed', '1')
+	if (input.retry) params.set('retry', '1')
 	const query = params.toString()
 	return `/ask/${encodeURIComponent(input.slug)}${query ? `?${query}` : ''}`
 }
