@@ -8,7 +8,14 @@ const mocks = vi.hoisted(() => ({
 		KIT_V4_API_KEY?: string
 	},
 	log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+	after: vi.fn(),
 }))
+
+vi.mock('next/server', async () => {
+	const actual =
+		await vi.importActual<typeof import('next/server')>('next/server')
+	return { ...actual, after: mocks.after }
+})
 
 vi.mock('@/env.mjs', () => ({ env: mocks.env }))
 vi.mock('@/db', () => ({ db: {} }))
@@ -92,6 +99,78 @@ describe('POST /api/drovr/intents', () => {
 		})
 		expect(mocks.acceptDrovrIntent).toHaveBeenCalledWith(
 			expect.objectContaining({ intent }),
+		)
+	})
+
+	it('hands a send still running at the deadline to after() and answers 202', async () => {
+		mocks.log.info.mockClear()
+		mocks.after.mockReset()
+		mocks.acceptDrovrIntent.mockImplementationOnce(async (args) => {
+			expect(args.sendDeadlineMs).toBe(10_000)
+			args.continueInBackground(
+				Promise.resolve({
+					intentId: 'sei-1',
+					durationMs: 14_825,
+					result: {
+						status: 'completed',
+						intentId: 'sei-1',
+						completion: { idempotencyKey: 'completion:intent:k' },
+					},
+				}),
+			)
+			return {
+				status: 'accepted',
+				intentId: 'sei-1',
+				idempotencyKey: 'contact:contact-1:value-path:x:email:y',
+				created: true,
+			}
+		})
+		const response = await post(intent, 'test-executor-token-1234567890')
+		expect(response.status).toBe(202)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.executor.intent',
+			expect.objectContaining({ status: 'accepted', backgrounded: true }),
+		)
+		// The continuation runs after the response, inside after().
+		expect(mocks.after).toHaveBeenCalledTimes(1)
+		await mocks.after.mock.calls[0]![0]()
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'drovr.executor.sync_send_settled',
+			expect.objectContaining({
+				idempotencyKey: 'intent:k',
+				intentId: 'sei-1',
+				status: 'completed',
+				durationMs: 14_825,
+			}),
+		)
+	})
+
+	it('logs a background send that threw as an error, with addresses scrubbed', async () => {
+		mocks.log.error.mockClear()
+		mocks.after.mockReset()
+		mocks.acceptDrovrIntent.mockImplementationOnce(async (args) => {
+			args.continueInBackground(
+				Promise.resolve({
+					intentId: 'sei-1',
+					durationMs: 20_000,
+					error: 'Kit refused learner@example.com',
+				}),
+			)
+			return {
+				status: 'accepted',
+				intentId: 'sei-1',
+				idempotencyKey: 'contact:contact-1:value-path:x:email:y',
+				created: false,
+			}
+		})
+		await post(intent, 'test-executor-token-1234567890')
+		await mocks.after.mock.calls[0]![0]()
+		expect(mocks.log.error).toHaveBeenCalledWith(
+			'drovr.executor.sync_send_settled',
+			expect.objectContaining({ intentId: 'sei-1', status: 'error' }),
+		)
+		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain(
+			'learner@example.com',
 		)
 	})
 

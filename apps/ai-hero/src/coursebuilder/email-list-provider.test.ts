@@ -9,6 +9,17 @@ const mocks = vi.hoisted(() => ({
 		info: vi.fn(),
 		warn: vi.fn(),
 	},
+	kitCalls: [] as Array<Record<string, unknown>>,
+}))
+
+vi.mock('./kit-call-timing', () => ({
+	withKitCallTiming: async (work: () => Promise<unknown>) => {
+		try {
+			return { value: await work(), calls: mocks.kitCalls, durationMs: 1234 }
+		} catch (error) {
+			return { error, calls: mocks.kitCalls, durationMs: 1234 }
+		}
+	},
 }))
 
 vi.mock('@/env.mjs', () => ({
@@ -107,6 +118,37 @@ describe('emailListProvider field-writing contract', () => {
 		expect(mocks.compoundSubscribeToList).toHaveBeenCalledTimes(1)
 		expect(mocks.compoundSubscribeToList).toHaveBeenCalledWith(formOptions)
 		expect(mocks.subscribeToEndpoint).not.toHaveBeenCalled()
+	})
+
+	it('logs the whole op and each Kit call it made, with no address', async () => {
+		mocks.kitCalls = [
+			{ method: 'POST', path: '/v3/forms/:id/subscribe', status: 200, ms: 900 },
+			{ method: 'GET', path: '/v3/subscribers/:id', status: 200, ms: 300 },
+		]
+		await emailListProvider.subscribeToList(formOptions)
+		expect(mocks.log.info).toHaveBeenCalledWith(
+			'kit.write.outcome',
+			expect.objectContaining({
+				operation: 'subscribe-to-list-with-fields',
+				outcome: 'succeeded',
+				durationMs: 1234,
+				calls: mocks.kitCalls,
+			}),
+		)
+		mocks.compoundSubscribeToList.mockRejectedValue(kitError(429))
+		await expect(emailListProvider.subscribeToList(formOptions)).rejects.toThrow()
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'kit.write.outcome',
+			expect.objectContaining({
+				outcome: 'exhausted',
+				durationMs: 1234,
+				calls: mocks.kitCalls,
+			}),
+		)
+		expect(
+			JSON.stringify([...mocks.log.info.mock.calls, ...mocks.log.warn.mock.calls]),
+		).not.toContain('reader@example.com')
+		mocks.kitCalls = []
 	})
 
 	it('maps a direct 429 to a stable real-handler boundary error', async () => {

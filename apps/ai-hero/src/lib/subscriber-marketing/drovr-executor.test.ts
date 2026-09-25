@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	acceptDrovrIntent,
 	drovrCompletionForIntent,
+	type DrovrBackgroundSend,
 	type DrovrExecutorRepository,
 	type DrovrIntent,
 } from './drovr-executor'
@@ -668,6 +669,214 @@ describe('drovr executor: the synchronous send', () => {
 		})
 		expect(sends).toBe(0)
 		expect(second.status).toBe('completed')
+	})
+})
+
+describe('drovr executor: the send deadline', () => {
+	const deferred = <T>() => {
+		let resolve!: (value: T) => void
+		let reject!: (cause: unknown) => void
+		const promise = new Promise<T>((res, rej) => {
+			resolve = res
+			reject = rej
+		})
+		return { promise, resolve, reject }
+	}
+	const completeRow = (repository: FakeRepository, id: string) =>
+		repository.updateSideEffectIntent(id, {
+			status: 'completed',
+			completedAt: now,
+			gates: [],
+			reviewReasons: [],
+			metadata: { ...repository.intents.get(id)!.metadata, completedAt: now },
+		})
+	/** A Kit call that holds until the test lets it through. */
+	const slowKit = (repository: FakeRepository) => {
+		const gate = deferred<void>()
+		const calls: string[] = []
+		return {
+			calls,
+			release: gate.resolve,
+			fail: gate.reject,
+			sendNow: async (row: SideEffectIntent) => {
+				calls.push(row.id)
+				await gate.promise
+				completeRow(repository, row.id)
+				return {
+					status: 'completed' as const,
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		}
+	}
+
+	it('answers a send that beats the deadline inline, exactly as before', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const continued: unknown[] = []
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendDeadlineMs: 1_000,
+			continueInBackground: (settled) => continued.push(settled),
+			sendNow: async (row) => {
+				completeRow(repository, row.id)
+				return {
+					status: 'completed',
+					intentId: row.id,
+					kitSequenceId: '2757199',
+					email: 'learner@example.com',
+				}
+			},
+		})
+		expect(result.status).toBe('completed')
+		expect(continued).toHaveLength(0)
+	})
+
+	it('answers accepted at the deadline and finishes the same claimed row in the background', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const kit = slowKit(repository)
+		const continued: Promise<DrovrBackgroundSend>[] = []
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendDeadlineMs: 20,
+			continueInBackground: (settled) => continued.push(settled),
+			sendNow: kit.sendNow,
+		})
+		// The 202: the row this request claimed, still being sent.
+		expect(first.status).toBe('accepted')
+		if (first.status !== 'accepted') return
+		expect(continued).toHaveLength(1)
+		expect(repository.intents.get(first.intentId)?.status).toBe('sending')
+		expect(kit.calls).toEqual([first.intentId])
+
+		// drovr re-asks while the continuation holds the claim: 202, no Kit call.
+		const reask = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendDeadlineMs: 20,
+			continueInBackground: (settled) => continued.push(settled),
+			sendNow: kit.sendNow,
+		})
+		expect(reask).toMatchObject({ status: 'accepted', intentId: first.intentId })
+		expect(kit.calls).toHaveLength(1)
+		expect(continued).toHaveLength(1)
+
+		// The continuation writes completed to that same row.
+		kit.release()
+		const settled = await continued[0]!
+		expect(settled).toMatchObject({
+			intentId: first.intentId,
+			result: { status: 'completed', intentId: first.intentId },
+		})
+		expect(settled.durationMs).toBeGreaterThanOrEqual(0)
+		expect(repository.intents.size).toBe(1)
+		expect(repository.intents.get(first.intentId)?.status).toBe('completed')
+
+		// And the next re-ask gets the completion, still with one Kit call.
+		const after = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendDeadlineMs: 20,
+			continueInBackground: (settled) => continued.push(settled),
+			sendNow: kit.sendNow,
+		})
+		expect(after).toMatchObject({
+			status: 'completed',
+			intentId: first.intentId,
+			completion: { idempotencyKey: `completion:${intent().idempotencyKey}` },
+		})
+		expect(kit.calls).toHaveLength(1)
+	})
+
+	it('writes a terminal background failure to the same row, so the re-ask answers failed', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const gate = deferred<void>()
+		const continued: Promise<DrovrBackgroundSend>[] = []
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendDeadlineMs: 20,
+			continueInBackground: (settled) => continued.push(settled),
+			sendNow: async (row) => {
+				await gate.promise
+				repository.updateSideEffectIntent(row.id, {
+					status: 'failed',
+					completedAt: null,
+					gates: [],
+					reviewReasons: ['kit-sequence-enrollment-failed'],
+					metadata: { ...row.metadata, retryable: false },
+				})
+				return {
+					status: 'failed',
+					intentId: row.id,
+					reviewReasons: ['kit-sequence-enrollment-failed'],
+				}
+			},
+		})
+		expect(first.status).toBe('accepted')
+		if (first.status !== 'accepted') return
+		gate.resolve()
+		const settled = await continued[0]!
+		expect(settled).toMatchObject({
+			intentId: first.intentId,
+			result: { status: 'failed', reasonClass: 'kit-sequence-enrollment-failed' },
+		})
+		const reask = await acceptDrovrIntent({ repository, intent: intent(), now })
+		expect(reask).toMatchObject({ status: 'failed', intentId: first.intentId })
+	})
+
+	it('hands the claim and the budget slot back when the background send throws', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const kit = slowKit(repository)
+		const { budget, calls } = budgetOf(true)
+		const continued: Promise<DrovrBackgroundSend>[] = []
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			budget,
+			sendDeadlineMs: 20,
+			continueInBackground: (settled) => continued.push(settled),
+			sendNow: kit.sendNow,
+		})
+		if (first.status !== 'accepted') throw new Error('expected accepted')
+		kit.fail(new Error('connection reset'))
+		const settled = await continued[0]!
+		expect(settled).toMatchObject({
+			intentId: first.intentId,
+			error: 'connection reset',
+		})
+		// Back to pending, so the cron or the next re-ask sends it.
+		expect(repository.intents.get(first.intentId)?.status).toBe('pending')
+		expect(calls).toEqual({ takes: 1, refunds: 1 })
+	})
+
+	it('never races without a place to continue: the request waits for the send', async () => {
+		const repository = new FakeRepository()
+		repository.contacts.set('contact-1', contact())
+		const kit = slowKit(repository)
+		const pending = acceptDrovrIntent({
+			repository,
+			intent: intent(),
+			now,
+			sendDeadlineMs: 20,
+			sendNow: kit.sendNow,
+		})
+		await new Promise((resolve) => setTimeout(resolve, 60))
+		kit.release()
+		expect((await pending).status).toBe('completed')
 	})
 })
 

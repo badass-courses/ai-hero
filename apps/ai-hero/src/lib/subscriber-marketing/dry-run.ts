@@ -456,6 +456,31 @@ export class InMemorySubscriberMarketingRepository implements MarketingRepositor
 		)
 		return sortValuePathIntentsByCreatedAt(intents)
 	}
+	claimSideEffectIntentForSend(
+		id: string,
+		args: { now: string; staleAfterMs: number },
+	) {
+		const existing = this.sideEffectIntents.get(id)
+		if (!existing) return false
+		const claimedAt = existing.metadata.claimedAt
+		const stale =
+			existing.status === 'sending' &&
+			typeof claimedAt === 'string' &&
+			claimedAt < new Date(Date.parse(args.now) - args.staleAfterMs).toISOString()
+		if (
+			existing.status !== 'pending' &&
+			existing.status !== 'failed' &&
+			!stale
+		) {
+			return false
+		}
+		this.sideEffectIntents.set(id, {
+			...existing,
+			status: 'sending',
+			metadata: { ...existing.metadata, claimedAt: args.now },
+		})
+		return true
+	}
 	updateSideEffectIntent(
 		id: string,
 		patch: Pick<

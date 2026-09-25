@@ -2,13 +2,35 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	DEFAULT_DROVR_SEND_BUDGET_PER_MINUTE,
+	DEFAULT_DROVR_SEND_DEADLINE_MS,
 	drovrSendBudget,
+	drovrSendDeadlineMs,
 	KIT_RATE_LIMIT_RETRY_MS,
 	parseDrovrSyncSendConfig,
 	retryAfterMsFor,
 } from './drovr-sync-send'
 
 describe('drovr sync send config', () => {
+	it("answers before drovr's 15 s deadline, and only an in-range override moves it", () => {
+		expect(DEFAULT_DROVR_SEND_DEADLINE_MS).toBe(10_000)
+		expect(drovrSendDeadlineMs({})).toBe(10_000)
+		expect(drovrSendDeadlineMs({ AIH_DROVR_SEND_DEADLINE_MS: 'nope' })).toBe(
+			10_000,
+		)
+		expect(drovrSendDeadlineMs({ AIH_DROVR_SEND_DEADLINE_MS: '0' })).toBe(
+			10_000,
+		)
+		expect(drovrSendDeadlineMs({ AIH_DROVR_SEND_DEADLINE_MS: '8000' })).toBe(
+			8_000,
+		)
+		expect(drovrSendDeadlineMs({ AIH_DROVR_SEND_DEADLINE_MS: '15000' })).toBe(
+			12_000,
+		)
+		expect(drovrSendDeadlineMs({ AIH_DROVR_SEND_DEADLINE_MS: '10' })).toBe(
+			1_000,
+		)
+	})
+
 	it('is off unless the flag is set', () => {
 		expect(parseDrovrSyncSendConfig({})).toMatchObject({ enabled: false })
 		expect(
