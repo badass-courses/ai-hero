@@ -51,7 +51,7 @@ import { and, eq } from 'drizzle-orm'
  * speaks, so an agent debugging either side reads one vocabulary.
  */
 
-/** Covers a send that outlives the response; far inside the 10-minute stale claim. */
+/** Covers a send that outlives the response; far inside the 15-minute stale claim. */
 export const maxDuration = 60
 
 /** Log text never carries an address. */
