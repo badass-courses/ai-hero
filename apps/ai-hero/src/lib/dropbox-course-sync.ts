@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+	COURSE_JSON_SCHEMA_VERSIONS,
 	courseJsonVideos,
-	decodeCourseJsonDocumentV3,
-	type CourseJsonDocumentV3,
+	decodeCourseJsonDocument,
+	type CourseJsonDocument,
 } from '@ai-hero/course-sync-schema'
 
 export const DROPBOX_OAUTH_CALLBACK_PATH = '/api/integrations/dropbox'
@@ -59,7 +60,7 @@ export type DropboxCourseManifestSummary = {
 	contract: {
 		name: 'course-video-manager.course-json'
 	}
-	contractSchemaVersion: 3
+	contractSchemaVersion: CourseJsonDocument['schemaVersion']
 	producer: {
 		name: 'course-video-manager'
 	}
@@ -86,7 +87,7 @@ export type DropboxCourseManifestSummary = {
 }
 
 export type DropboxCourseManifestRead = {
-	manifest: CourseJsonDocumentV3
+	manifest: CourseJsonDocument
 	summary: DropboxCourseManifestSummary
 }
 
@@ -434,18 +435,18 @@ export async function readDropboxCourseManifest({
 	const input = JSON.parse(new TextDecoder().decode(bytes)) as unknown
 	const rawDocument = asRecord(input)
 	const observedVersion = rawDocument?.schemaVersion ?? 'missing'
-	if (observedVersion !== 3) {
+	if (!COURSE_JSON_SCHEMA_VERSIONS.some((version) => version === observedVersion)) {
 		throw new Error(
-			`Dropbox course manifest requires Course Video Manager course.json v3 (observedVersion=${String(observedVersion)}; v2 is retired).`,
+			`Dropbox course manifest requires course.json schemaVersion 3 or 4 (observedVersion=${String(observedVersion)}; v2 is retired).`,
 		)
 	}
 
 	const document = (() => {
 		try {
-			return decodeCourseJsonDocumentV3(input)
+			return decodeCourseJsonDocument(input)
 		} catch {
 			throw new Error(
-				`Dropbox course manifest v3 validation failed (observedVersion=${String(observedVersion)}).`,
+				`Dropbox course manifest validation failed (observedVersion=${String(observedVersion)}).`,
 			)
 		}
 	})()
@@ -458,7 +459,7 @@ export async function readDropboxCourseManifest({
 			contract: {
 				name: 'course-video-manager.course-json',
 			},
-			contractSchemaVersion: 3,
+			contractSchemaVersion: document.schemaVersion,
 			producer: { name: 'course-video-manager' },
 			course: {
 				sourceId: document.courseId,

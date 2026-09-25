@@ -484,6 +484,27 @@ describe('course sync detection poller', () => {
 		])
 	})
 
+	it('polls and auto-applies a syllabus-only course.json schemaVersion 4 revision without freezing assets', async () => {
+		const syllabus: CourseJsonDocumentV3 = {
+			...manifest,
+			schemaVersion: 4,
+			courseVersionId: 'version-syllabus',
+			sections: [{ id: 'section-1', title: 'Section 1', lessons: [
+				{ type: 'placeholder', id: 'lesson-1', title: 'Lesson 1' },
+			] }],
+		}
+		const test = harness({
+			manifest: syllabus,
+			evaluateBoundedAutoApply: async () => ({ eligible: true, planSha256: 'plan-sha' }),
+		})
+		await expect(test.poll('poll-syllabus')).resolves.toMatchObject({ outcome: 'applied' })
+		expect(test.freezeAssetBatch).not.toHaveBeenCalled()
+		expect(test.freezeAsset).not.toHaveBeenCalled()
+		expect(test.stage).toHaveBeenCalledWith(expect.objectContaining({ manifest: syllabus }))
+		expect(test.preview).toHaveBeenCalledTimes(1)
+		expect(test.apply).toHaveBeenCalledTimes(1)
+	})
+
 	it('suppresses a yellow notification when its plan receipt already exists', async () => {
 		const test = harness({
 			head: {

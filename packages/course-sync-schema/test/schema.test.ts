@@ -11,6 +11,7 @@ import {
 } from "../src/schema.js"
 import {
 	courseJsonVideos,
+	decodeCourseJsonDocument,
 	decodeCourseJsonDocumentV3,
 } from "../src/course-json-v3.js"
 import {
@@ -19,6 +20,7 @@ import {
 	decodeStageSourceRevisionRequest,
 } from "../src/control-plane.js"
 import { makeCourseJsonV3Fixture } from "./fixtures/course-json.v3.js"
+import { makeCourseJsonV4SyllabusFixture } from "./fixtures/course-json.v4.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixturePath = join(here, "fixtures/course-sync.v1.json")
@@ -84,6 +86,25 @@ assert.equal(v3.schemaVersion, 3)
 assert.equal(v3.archiveTTL, "90d")
 assert.equal(v3.sections.length, 3)
 assert.equal(courseJsonVideos(v3).length, 24)
+
+const syllabus = decodeCourseJsonDocument(makeCourseJsonV4SyllabusFixture())
+assert.equal(syllabus.schemaVersion, 4)
+assert.equal(syllabus.sections.length, 3)
+assert.equal(syllabus.sections[0]?.lessons.length, 8)
+assert.equal(courseJsonVideos(syllabus).length, 0)
+assert.doesNotThrow(() => decodeStageSourceRevisionRequest({ manifest: syllabus }))
+assert.throws(() =>
+	decodeCourseJsonDocument({
+		...makeCourseJsonV4SyllabusFixture(),
+		sections: [{
+			...makeCourseJsonV4SyllabusFixture().sections[0],
+			lessons: [{ type: "placeholder", id: "lesson-1", title: "Lesson 1", description: "extra" }],
+		}],
+	}),
+)
+assert.throws(() =>
+	decodeCourseJsonDocument({ ...makeCourseJsonV4SyllabusFixture(), schemaVersion: 5 }),
+)
 
 assert.throws(() =>
 	decodeCourseJsonDocumentV3({

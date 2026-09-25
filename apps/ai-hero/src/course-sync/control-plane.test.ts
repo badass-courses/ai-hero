@@ -986,6 +986,72 @@ describe('draft course sync control plane', () => {
 		)
 	})
 
+	it('stages, previews, and applies a course.json schemaVersion 4 syllabus without media', async () => {
+		const testHarness = harness()
+		const source: CourseJsonDocumentV3 = {
+			...fixture('syllabus-only'),
+			schemaVersion: 4,
+			sections: [{
+				id: 'section-syllabus',
+				title: 'Syllabus',
+				lessons: [
+					{ type: 'placeholder', id: 'lesson-1', title: 'First lesson' },
+					{ type: 'placeholder', id: 'lesson-2', title: 'Second lesson' },
+				],
+			}],
+		}
+		const { staged, previewed } = await stagedAndPreviewed(testHarness, source)
+		expect(staged.state).toBe('staged')
+		expect(testHarness.reads()).toBe(0)
+		expect(testHarness.muxCreates()).toBe(0)
+		expect(previewed).toMatchObject({
+			state: 'previewed',
+			resourceCounts: { create: 3, update: 0, retain: 0 },
+			plan: { media: [] },
+		})
+		const plan = testHarness.persistence.runs.get(staged.runId)?.plan
+		expect(plan?.resources.map((item) => item.sourceKind)).toEqual(['section', 'lesson', 'lesson'])
+		expect(plan?.resources[1]?.fields).toMatchObject({
+			body: '', description: '', state: 'draft', visibility: 'unlisted',
+			courseSync: { lessonType: 'placeholder', videos: [] },
+		})
+		await expect(testHarness.controlPlane.apply({ runId: staged.runId, idempotencyKey: 'apply-syllabus' }))
+			.resolves.toMatchObject({ state: 'applied' })
+		expect(testHarness.persistence.resources.size).toBe(3)
+	})
+
+	it('updates a placeholder lesson under the same target id when filmed', async () => {
+		const testHarness = harness()
+		const original = fixture('syllabus-first')
+		const filmed = original.sections[0]!.lessons[0]!
+		const syllabus: CourseJsonDocumentV3 = {
+			...original,
+			schemaVersion: 4,
+			sections: [{ id: 'section-1', title: 'Section 1', lessons: [
+				{ type: 'placeholder', id: filmed.id, title: filmed.title },
+			] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, syllabus)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-placeholder')
+		const next: CourseJsonDocumentV3 = {
+			...syllabus,
+			courseVersionId: 'filmed-second',
+			sections: [{ id: 'section-1', title: 'Section 1', lessons: [filmed] }],
+		}
+		const second = await stagedAndPreviewed(testHarness, next, 'stage-filmed')
+		const initialLesson = testHarness.persistence.runs.get(first.staged.runId)?.plan?.resources.find((item) => item.sourceKind === 'lesson')
+		const plan = testHarness.persistence.runs.get(second.staged.runId)?.plan
+		const updatedLesson = plan?.resources.find((item) => item.sourceKind === 'lesson')
+		expect(updatedLesson).toMatchObject({ action: 'update', targetResourceId: initialLesson?.targetResourceId })
+		expect(plan?.resources.find((item) => item.sourceKind === 'video')).toMatchObject({ action: 'create' })
+		await expect(testHarness.controlPlane.apply({ runId: second.staged.runId, idempotencyKey: 'apply-filmed' }))
+			.resolves.toMatchObject({ state: 'applied' })
+		expect(testHarness.persistence.resources.get(updatedLesson!.targetResourceId)?.fields).toMatchObject({
+			body: filmed.explainer.body,
+			courseSync: { lessonType: 'explainer' },
+		})
+	})
+
 	it('reuses each successful freeze receipt after a later asset fails', async () => {
 		const testHarness = harness({ failMuxCreateAt: 2 })
 		const source = fixture()

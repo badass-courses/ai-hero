@@ -104,13 +104,6 @@ function assertManifestScope(
 		)
 	}
 	const videos = courseJsonVideos(manifest)
-	if (videos.length === 0) {
-		throw new CourseSyncError(
-			'SOURCE_VIDEOS_EMPTY',
-			'The bound source must contain at least one video.',
-			409,
-		)
-	}
 	const unique = (values: ReadonlyArray<string>, label: string) => {
 		if (new Set(values).size !== values.length) {
 			throw new CourseSyncError(
@@ -144,6 +137,7 @@ function assertManifestScope(
 	const questionLessons = new Map<string, string>()
 	for (const section of manifest.sections) {
 		for (const lesson of section.lessons) {
+			if (lesson.type === 'placeholder') continue
 			const primary =
 				lesson.type === 'explainer' ? lesson.explainer : lesson.problem
 			for (const question of extractQuizQuestions(primary.body, lesson.id)) {
@@ -251,16 +245,16 @@ function sourceResourceFields(
 		}
 		const lessonItems = section.lessons.flatMap((lesson, lessonIndex) => {
 			const videos =
-				lesson.type === 'explainer'
-					? [lesson.explainer]
-					: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])]
-			const primary = videos[0]
-			if (!primary) {
-				throw new CourseSyncError(
-					'SOURCE_LESSON_VIDEO_MISSING',
-					`Lesson ${lesson.id} has no importable video.`,
-				)
-			}
+				lesson.type === 'placeholder'
+					? []
+					: lesson.type === 'explainer'
+						? [lesson.explainer]
+						: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])]
+			const primary = lesson.type === 'placeholder'
+				? null
+				: lesson.type === 'explainer'
+					? lesson.explainer
+					: lesson.problem
 			const lessonId = targetResourceId(binding.bindingId, 'lesson', lesson.id)
 			const solutionId =
 				lesson.type === 'problem' && lesson.solution
@@ -277,8 +271,8 @@ function sourceResourceFields(
 				fields: {
 					title: lesson.title,
 					slug: slug(lesson.id, lesson.title),
-					body: primary.body,
-					description: primary.description,
+					body: primary?.body ?? '',
+					description: primary?.description ?? '',
 					state: 'draft',
 					visibility: 'unlisted',
 					courseSync: {
@@ -297,6 +291,7 @@ function sourceResourceFields(
 					},
 				},
 			}
+			if (lesson.type === 'placeholder') return [lessonItem]
 			const videoItems = videos.map((video, videoIndex) => {
 				const asset = frozenByVideo.get(video.id)
 				if (
@@ -345,13 +340,7 @@ function sourceResourceFields(
 					},
 				}
 			})
-			const primaryVideoItem = videoItems[0]
-			if (!primaryVideoItem) {
-				throw new CourseSyncError(
-					'SOURCE_LESSON_VIDEO_MISSING',
-					`Lesson ${lesson.id} has no managed primary video.`,
-				)
-			}
+			const primaryVideoItem = videoItems[0]!
 			const solutionItem =
 				lesson.type === 'problem' && lesson.solution && solutionId
 					? {
@@ -381,7 +370,7 @@ function sourceResourceFields(
 							},
 						}
 					: null
-			const questionItems = extractQuizQuestions(primary.body, lesson.id).map(
+			const questionItems = extractQuizQuestions(primary!.body, lesson.id).map(
 				(question) => ({
 					sourceKind: 'question' as const,
 					sourceId: question.id,
@@ -465,7 +454,7 @@ export function createCourseSyncControlPlane(
 			manifest = decodeCourseJsonDocumentV3(input)
 		} catch (error) {
 			throw new CourseSyncError(
-				'INVALID_V3_MANIFEST',
+				'INVALID_COURSE_JSON',
 				error instanceof Error ? error.message : 'Manifest validation failed.',
 			)
 		}
