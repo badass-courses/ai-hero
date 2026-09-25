@@ -35,6 +35,22 @@ describe('completeSkillsCourseSignup', () => {
 		expect(url).toContain('flow=course')
 	})
 
+	it('sends a drovr double opt-in signup to the plain check-your-email /confirm', () => {
+		const onEnrolled = vi.fn()
+		completeSkillsCourseSignup(
+			{ state: 'awaiting-confirmation', email_address: 'reader@example.com' } as any,
+			{ push },
+			onEnrolled,
+		)
+
+		expect(assign).not.toHaveBeenCalled()
+		expect(onEnrolled).not.toHaveBeenCalled()
+		const url = push.mock.calls[0]?.[0] as string
+		expect(url).toContain('/confirm?')
+		expect(url).not.toContain('flow=course')
+		expect(url).not.toContain('ck_subscriber_id')
+	})
+
 	it('sends an inactive subscriber to the hosted resubscribe flow', () => {
 		const onEnrolled = vi.fn()
 		completeSkillsCourseSignup(subscriber('inactive'), { push }, onEnrolled)

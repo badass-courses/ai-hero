@@ -3,6 +3,9 @@ import type { Subscriber } from '@/schemas/subscriber'
 
 import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
 
+/** The form route's answer for a drovr double opt-in signup. */
+export const DOI_AWAITING_CONFIRMATION = 'awaiting-confirmation'
+
 /**
  * Where a successful course-form submission sends the reader. Every CTA that
  * enrols in the free course must go through here, because both branches are
@@ -25,6 +28,12 @@ export function completeSkillsCourseSignup(
 	onEnrolled?: () => void,
 ) {
 	if (!subscriber) return
+	// drovr double opt-in (DROVR_DOI_FORMS): nothing is in Kit yet, and the
+	// plain /confirm page is the one that says "check your email to confirm".
+	if (subscriber.state === DOI_AWAITING_CONFIRMATION) {
+		router.push(redirectUrlBuilder(subscriber, '/confirm'))
+		return
+	}
 	if (subscriber.state !== 'active') {
 		window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
 		return

@@ -133,6 +133,10 @@ export const env = createEnv({
 		// DROVR_SHADOW_INGEST_URL. No secret; the token is the credential.
 		DROVR_API_BASE_URL: z.string().url().optional(),
 		DROVR_API_KEY_ORG_AIHERO: z.string().min(1).optional(),
+		// drovr-owned double opt-in (#55). Comma list of Kit form ids, each on
+		// for everyone (`9376133`) or for an address allowlist
+		// (`9376133:a@example.com|b@example.com`). Unset: Kit's path, unchanged.
+		DROVR_DOI_FORMS: z.string().optional(),
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
 		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
 		// drovr #36T link tests mint throwaway principals with this; never the
@@ -286,6 +290,7 @@ export const env = createEnv({
 		DROVR_SHADOW_INGEST_URL: process.env.DROVR_SHADOW_INGEST_URL,
 		DROVR_API_BASE_URL: process.env.DROVR_API_BASE_URL,
 		DROVR_API_KEY_ORG_AIHERO: process.env.DROVR_API_KEY_ORG_AIHERO,
+		DROVR_DOI_FORMS: process.env.DROVR_DOI_FORMS,
 		DROVR_EXECUTOR_TOKEN: process.env.DROVR_EXECUTOR_TOKEN,
 		AI_HERO_VALUE_PATH_TOKEN_SECRET:
 			process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET,

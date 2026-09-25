@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => {
 	const issueRecoveryToken = vi.fn().mockResolvedValue(undefined)
 	const reconcile = vi.fn()
 	const cookieGet = vi.fn()
+	const resolveDoi = vi.fn()
+	const env: Record<string, string | undefined> = {
+		CONVERTKIT_API_SECRET: 'secret',
+		CONVERTKIT_API_KEY: 'key',
+	}
 	const log = {
 		info: vi.fn(),
 		warn: vi.fn(),
@@ -23,6 +28,8 @@ const mocks = vi.hoisted(() => {
 		issueRecoveryToken,
 		reconcile,
 		cookieGet,
+		resolveDoi,
+		env,
 		log,
 	}
 })
@@ -37,11 +44,15 @@ vi.mock('@/coursebuilder/course-builder-config', () => ({
 	POST: mocks.courseBuilderPOST,
 }))
 
-vi.mock('@/env.mjs', () => ({
-	env: {
-		CONVERTKIT_API_SECRET: 'secret',
-		CONVERTKIT_API_KEY: 'key',
-	},
+vi.mock('@/env.mjs', () => ({ env: mocks.env }))
+
+vi.mock('@/db', () => ({ db: {} }))
+
+vi.mock('@/lib/subscriber-marketing/drovr-doi-signup', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('@/lib/subscriber-marketing/drovr-doi-signup')
+	>()),
+	resolveDoiSignupContact: mocks.resolveDoi,
 }))
 
 vi.mock('@/inngest/inngest.server', () => ({
@@ -481,4 +492,140 @@ describe('subscribe-to-list convertkit route attribution', () => {
 			})
 		},
 	)
+})
+
+describe('drovr double opt-in (DROVR_DOI_FORMS)', () => {
+	const drovrOn = (forms: string) => {
+		mocks.env.DROVR_DOI_FORMS = forms
+		mocks.env.DROVR_API_BASE_URL = 'https://drovr.test'
+		mocks.env.DROVR_API_KEY_ORG_AIHERO = 'drovr_key'
+	}
+	const kitAccepts = () =>
+		mocks.courseBuilderPOST.mockResolvedValue(
+			subscriberResponse({
+				id: 4310000001,
+				email_address: 'reader@example.com',
+				state: 'active',
+				fields: {},
+			}),
+		)
+	const signup = (email = 'reader@example.com', listId = 9376133) =>
+		POST(
+			new NextRequest(
+				'https://www.aihero.dev/api/coursebuilder/subscribe-to-list/convertkit',
+				{
+					method: 'POST',
+					headers: {
+						'content-type': 'application/json',
+						referer: 'https://www.aihero.dev/skills',
+					},
+					body: JSON.stringify({ email, name: 'Reader', listId }),
+				},
+			),
+		)
+	const drovrEvents = () =>
+		mocks.inngestSend.mock.calls.filter(
+			([event]) => event?.name === 'drovr/signup.requested',
+		)
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		// Active, so the Kit path stays inside the mocks (no attribution stash).
+		mocks.reconcile.mockResolvedValue({
+			status: 'active',
+			removedUnsubscribeTag: false,
+		})
+		mocks.inngestSend.mockResolvedValue(undefined)
+		mocks.resolveDoi.mockResolvedValue({ contactId: 'contact-doi-1' })
+		for (const key of [
+			'DROVR_DOI_FORMS',
+			'DROVR_API_BASE_URL',
+			'DROVR_API_KEY_ORG_AIHERO',
+		])
+			delete mocks.env[key]
+	})
+
+	it('flag off: the Skills signup takes the Kit path, and drovr hears nothing', async () => {
+		kitAccepts()
+		const response = await signup()
+
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(response.status).toBe(200)
+		expect(mocks.resolveDoi).not.toHaveBeenCalled()
+		expect(drovrEvents()).toEqual([])
+	})
+
+	it.each([
+		['another address during the canary', '9376133:canary@example.com', 'reader@example.com', 9376133],
+		['another form', '9376133', 'reader@example.com', 1234],
+	])('flag on for %s: still the Kit path', async (_, forms, email, listId) => {
+		drovrOn(forms)
+		kitAccepts()
+		await signup(email, listId)
+
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(mocks.resolveDoi).not.toHaveBeenCalled()
+		expect(drovrEvents()).toEqual([])
+	})
+
+	it('flag on without drovr configured: the Kit path (never a stranded signup)', async () => {
+		mocks.env.DROVR_DOI_FORMS = '9376133'
+		kitAccepts()
+		await signup()
+
+		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
+		expect(drovrEvents()).toEqual([])
+	})
+
+	it('flag on for this address: no Kit subscribe, one durable drovr signup, "check your email"', async () => {
+		drovrOn('9376133:Reader@Example.com')
+		const response = await signup()
+
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(mocks.reconcile).not.toHaveBeenCalled()
+		expect(mocks.resolveDoi).toHaveBeenCalledWith(
+			expect.objectContaining({
+				email: 'reader@example.com',
+				name: 'Reader',
+				drovrFormId: 'skills-newsletter',
+			}),
+		)
+		const sent = drovrEvents()
+		expect(sent).toHaveLength(1)
+		expect(sent[0]?.[0]).toMatchObject({
+			id: expect.stringMatching(/^drovr-signup:/),
+			data: {
+				tenantId: 'org-aihero',
+				contactId: 'contact-doi-1',
+				formId: 'skills-newsletter',
+				source: { page: 'https://www.aihero.dev/skills' },
+			},
+		})
+		// No value-path entry: drovr births the course on confirmation.
+		expect(
+			mocks.inngestSend.mock.calls.filter(
+				([event]) => event?.name === 'skills-newsletter/subscribed',
+			),
+		).toEqual([])
+		expect(response.status).toBe(200)
+		expect(await response.json()).toEqual({
+			email_address: 'reader@example.com',
+			first_name: 'Reader',
+			state: 'awaiting-confirmation',
+			fields: {},
+		})
+	})
+
+	it('answers 502 when the drovr path fails, and never falls back to Kit', async () => {
+		drovrOn('9376133')
+		mocks.resolveDoi.mockRejectedValue(new Error('database unavailable'))
+		const response = await signup()
+
+		expect(response.status).toBe(502)
+		expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+		expect(drovrEvents()).toEqual([])
+		expect(JSON.stringify(mocks.log.error.mock.calls)).not.toContain(
+			'reader@example.com',
+		)
+	})
 })

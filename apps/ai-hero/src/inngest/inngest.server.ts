@@ -86,10 +86,12 @@ import {
 import {
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
 	DROVR_EVENTS_DELIVER_EVENT,
+	DROVR_SIGNUP_REQUESTED_EVENT,
 } from '@/inngest/events/drovr'
 import type {
 	DrovrEventsDeliver,
 	DrovrEventsDeliverBulk,
+	DrovrSignupRequested,
 } from '@/inngest/events/drovr'
 import {
 	KIT_DIRECTORY_INGEST_EVENT,
@@ -271,6 +273,7 @@ export type Events = {
 	[VALUE_PATH_ANSWER_SELECTED_EVENT]: ValuePathAnswerSelected
 	[DROVR_EVENTS_DELIVER_EVENT]: DrovrEventsDeliver
 	[DROVR_EVENTS_DELIVER_BULK_EVENT]: DrovrEventsDeliverBulk
+	[DROVR_SIGNUP_REQUESTED_EVENT]: DrovrSignupRequested
 	[KIT_DIRECTORY_INGEST_EVENT]: KitDirectoryIngest
 	[NEWSLETTER_VETERANS_ASSIGN_EVENT]: NewsletterVeteransAssign
 	// Operator lever: fire one learner-flow reconcile outside the hourly cron.
