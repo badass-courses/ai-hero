@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	subscribeToEndpoint: vi.fn(),
+	/** The field contract a send goes through (kit-field-contract). */
 	compoundSubscribeToList: vi.fn(),
+	/** Course Builder's own per-field subscribeToList; must never run. */
+	courseBuilderSubscribeToList: vi.fn(),
+	fieldContractDeps: [] as Array<Record<string, unknown>>,
 	tagSubscriber: vi.fn(),
 	updateSubscriberFields: vi.fn(),
 	log: {
@@ -10,6 +14,22 @@ const mocks = vi.hoisted(() => ({
 		warn: vi.fn(),
 	},
 	kitCalls: [] as Array<Record<string, unknown>>,
+}))
+
+vi.mock('./kit-field-contract', () => ({
+	KitFieldsUnconfirmedError: class KitFieldsUnconfirmedError extends Error {
+		missing: string[]
+		constructor(missing: string[]) {
+			super('unconfirmed')
+			this.name = 'KitFieldsUnconfirmedError'
+			this.missing = missing
+		}
+	},
+	createKitCustomFieldCache: () => ({ kind: 'instance-cache' }),
+	subscribeWithKitFields: (options: unknown, deps: Record<string, unknown>) => {
+		mocks.fieldContractDeps.push(deps)
+		return mocks.compoundSubscribeToList(options)
+	},
 }))
 
 vi.mock('./kit-call-timing', () => ({
@@ -45,7 +65,7 @@ vi.mock('@coursebuilder/core/providers/convertkit', async (importOriginal) => {
 			type: 'email-list',
 			defaultListType: 'form',
 			defaultListId: 'default-form',
-			subscribeToList: mocks.compoundSubscribeToList,
+			subscribeToList: mocks.courseBuilderSubscribeToList,
 			tagSubscriber: mocks.tagSubscriber,
 			updateSubscriberFields: mocks.updateSubscriberFields,
 		}),
@@ -104,6 +124,22 @@ describe('emailListProvider field-writing contract', () => {
 		})
 	})
 
+	it("sends through the cached field contract, never Course Builder's per-field reads", async () => {
+		mocks.fieldContractDeps.length = 0
+		await emailListProvider.subscribeToList(formOptions)
+		await emailListProvider.subscribeToList(formOptions)
+		expect(mocks.courseBuilderSubscribeToList).not.toHaveBeenCalled()
+		expect(mocks.fieldContractDeps).toHaveLength(2)
+		expect(mocks.fieldContractDeps[0]).toMatchObject({
+			apiKey: 'test-api-key',
+			apiSecret: 'test-api-secret',
+		})
+		// One cache per instance, shared by every send.
+		expect(mocks.fieldContractDeps[0]!.cache).toBe(
+			mocks.fieldContractDeps[1]!.cache,
+		)
+	})
+
 	it('preserves Course Builder field creation and write behavior', async () => {
 		await expect(
 			emailListProvider.subscribeToList(formOptions),
@@ -149,6 +185,23 @@ describe('emailListProvider field-writing contract', () => {
 			JSON.stringify([...mocks.log.info.mock.calls, ...mocks.log.warn.mock.calls]),
 		).not.toContain('reader@example.com')
 		mocks.kitCalls = []
+	})
+
+	it('reports fields Kit would not keep as unresolved, naming the field keys only', async () => {
+		const { KitFieldsUnconfirmedError } = await import('./kit-field-contract')
+		mocks.compoundSubscribeToList.mockRejectedValueOnce(
+			new KitFieldsUnconfirmedError(['dynamic_answer_2026']),
+		)
+		await expect(emailListProvider.subscribeToList(formOptions)).rejects.toEqual(
+			expect.objectContaining({ name: 'KitSubscribeError', code: 'unresolved' }),
+		)
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'kit.write.outcome',
+			expect.objectContaining({
+				reason: 'unresolved',
+				unconfirmedFields: ['dynamic_answer_2026'],
+			}),
+		)
 	})
 
 	it('maps a direct 429 to a stable real-handler boundary error', async () => {

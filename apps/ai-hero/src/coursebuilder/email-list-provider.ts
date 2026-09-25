@@ -9,6 +9,11 @@ import ConvertkitProvider, {
 } from '@coursebuilder/core/providers/convertkit'
 
 import { withKitCallTiming } from './kit-call-timing'
+import {
+	createKitCustomFieldCache,
+	KitFieldsUnconfirmedError,
+	subscribeWithKitFields,
+} from './kit-field-contract'
 
 const convertkitProvider = ConvertkitProvider({
 	apiKey: env.CONVERTKIT_API_KEY,
@@ -16,6 +21,9 @@ const convertkitProvider = ConvertkitProvider({
 	defaultListType: 'form',
 	defaultListId: env.CONVERTKIT_SIGNUP_FORM,
 })
+
+/** Custom field keys Kit has, shared by every send on this instance. */
+const kitCustomFieldCache = createKitCustomFieldCache()
 
 type SubscribeToListOptions = Parameters<
 	typeof convertkitProvider.subscribeToList
@@ -95,12 +103,17 @@ async function subscribeWithFieldContract(
 		listType,
 	})
 
-	// Keep Course Builder's full contract here. It creates missing custom fields,
-	// writes them, and reads the subscriber back before callers confirm fields.
-	// That is several Kit calls in a row; each one is timed so a slow
-	// operation names the call that stalled.
+	// Course Builder's full contract: create missing custom fields, write
+	// them, and read the subscriber back before callers confirm fields. The
+	// field check is cached per instance (kit-field-contract), so a warm send
+	// is four Kit calls; each one is timed so a slow operation names the call
+	// that stalled.
 	const timed = await withKitCallTiming(() =>
-		convertkitProvider.subscribeToList(options),
+		subscribeWithKitFields(options, {
+			apiKey: env.CONVERTKIT_API_KEY,
+			apiSecret: env.CONVERTKIT_API_SECRET,
+			cache: kitCustomFieldCache,
+		}),
 	)
 	const timing = { durationMs: timed.durationMs, calls: timed.calls }
 	try {
@@ -116,7 +129,7 @@ async function subscribeWithFieldContract(
 			context: 'coursebuilder-or-direct',
 			listType,
 			attempts: 1,
-			providerCallContract: 'coursebuilder-field-contract',
+			providerCallContract: 'coursebuilder-field-contract-cached',
 			...timing,
 		})
 		return subscriber
@@ -130,6 +143,9 @@ async function subscribeWithFieldContract(
 			attempts: 1,
 			status: boundaryError.status,
 			reason: boundaryError.code,
+			...(error instanceof KitFieldsUnconfirmedError
+				? { unconfirmedFields: error.missing }
+				: {}),
 			...timing,
 		})
 		throw boundaryError
@@ -251,6 +267,9 @@ function safeNumericSubscriberId(value: unknown) {
 
 function toKitSubscribeError(error: unknown) {
 	if (error instanceof KitSubscribeError) return error
+	if (error instanceof KitFieldsUnconfirmedError) {
+		return new KitSubscribeError({ code: 'unresolved' })
+	}
 	if (error instanceof ConvertKitApiError) {
 		return new KitSubscribeError({
 			code:
