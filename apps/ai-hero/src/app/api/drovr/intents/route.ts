@@ -9,6 +9,10 @@ import {
 	DrovrIntentSchema,
 } from '@/lib/subscriber-marketing/drovr-executor'
 import { parseDrovrEvergreenConfig } from '@/lib/subscriber-marketing/drovr-evergreen'
+import {
+	createKitFormSubscriber,
+	linkKitSubscriberIdentity,
+} from '@/lib/subscriber-marketing/drovr-list-subscribe'
 import { createKitUnsubscriber } from '@/lib/subscriber-marketing/drovr-list-unsubscribe'
 import {
 	drovrSendBudget,
@@ -166,6 +170,35 @@ export const POST = withSkill(async (request: NextRequest) => {
 		unsubscribeInKit: createKitUnsubscriber({
 			apiKey: env.KIT_V4_API_KEY ?? process.env.CONVERTKIT_V4_API_KEY,
 		}),
+		subscribeInKit: createKitFormSubscriber({
+			apiKey: env.KIT_V4_API_KEY ?? process.env.CONVERTKIT_V4_API_KEY,
+		}),
+		linkKitSubscriber: async (contactId, kitSubscriberId) => {
+			const linked = await linkKitSubscriberIdentity(
+				{
+					findProviderIdentity: (provider, externalId) =>
+						repository.findProviderIdentity(provider, externalId),
+					findKitSubscriberIdForContact: findKitSubscriberId,
+					createProviderIdentity: (input) =>
+						repository.createProviderIdentity(input),
+				},
+				contactId,
+				kitSubscriberId,
+				new Date().toISOString(),
+			).catch(async (error) => {
+				await log.warn('drovr.executor.kit_identity_link_failed', {
+					contactId,
+					error: error instanceof Error ? error.message : String(error),
+				})
+				return undefined
+			})
+			if (linked) {
+				await log.info('drovr.executor.kit_identity_link', {
+					contactId,
+					outcome: linked,
+				})
+			}
+		},
 		...sync,
 	})
 

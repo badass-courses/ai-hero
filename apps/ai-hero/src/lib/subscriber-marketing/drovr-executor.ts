@@ -31,6 +31,12 @@ import {
 	type KitUnsubscriber,
 } from './drovr-list-unsubscribe'
 import {
+	acceptListSubscribe,
+	DOUBLE_OPT_IN_JOURNEY_ID,
+	LIST_SUBSCRIBE_INTENT_KIND,
+	type KitFormSubscriber,
+} from './drovr-list-subscribe'
+import {
 	DROVR_EVERGREEN_OFFER_JOURNEY_ID,
 	DROVR_AUTHORITY_TENANT_ID,
 	KIT_EMAIL_PROVIDER,
@@ -214,6 +220,13 @@ export async function acceptDrovrIntent(args: {
 	budget?: DrovrSendBudget
 	/** Applies an all-AI-Hero unsubscribe in Kit; absent answers retry. */
 	unsubscribeInKit?: KitUnsubscriber
+	/** Mirrors a double opt-in confirmation into Kit; absent answers retry. */
+	subscribeInKit?: KitFormSubscriber
+	/** Links the confirmed Kit subscriber to the contact; best effort. */
+	linkKitSubscriber?: (
+		contactId: string,
+		kitSubscriberId: string,
+	) => Promise<void>
 }): Promise<DrovrExecutorResult> {
 	const { intent } = args
 	const now = args.now ?? new Date().toISOString()
@@ -259,6 +272,22 @@ export async function acceptDrovrIntent(args: {
 		})
 	}
 
+	// A double opt-in confirmation's Kit mirror. Only the double-opt-in
+	// journey routes here; other journeys' list.subscribe keep their paths.
+	if (
+		intent.kind === LIST_SUBSCRIBE_INTENT_KIND &&
+		intent.journeyId === DOUBLE_OPT_IN_JOURNEY_ID
+	) {
+		return await acceptListSubscribe({
+			repository: args.repository,
+			intent,
+			tenantId,
+			now,
+			subscribeInKit: args.subscribeInKit,
+			linkKitSubscriber: args.linkKitSubscriber,
+		})
+	}
+
 	if (intent.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID) {
 		return await acceptEvergreenSend({
 			repository: args.repository,
@@ -284,7 +313,7 @@ export async function acceptDrovrIntent(args: {
 		return {
 			status: 'unsupported',
 			reason: `intent kind ${intent.kind} has no ai-hero executor`,
-			hint: 'The skills course executes email.send here; the evergreen journey also executes coupon.issue; any journey may send list.unsubscribe.',
+			hint: 'The skills course executes email.send here; the evergreen journey also executes coupon.issue; any journey may send list.unsubscribe; double-opt-in sends list.subscribe.',
 		}
 	}
 	if (intent.journeyId !== DROVR_SKILLS_COURSE_JOURNEY_ID) {

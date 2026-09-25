@@ -243,3 +243,58 @@ describe('drovr read-only personalization', () => {
 		})
 	})
 })
+
+describe('double opt-in confirmation personalization', () => {
+	const doi = { journeyId: 'double-opt-in', emailKey: 'ai-hero-confirm.email-0' }
+
+	it('answers the email and first name for ai-hero-confirm.email-0', async () => {
+		const f = fixture()
+		const result = await f.answer(doi)
+		expect(result).toEqual({
+			email: 'ada@example.com',
+			firstName: 'Ada',
+			variables: {},
+			sendable: true,
+			reasons: [],
+			flags: [],
+		})
+	})
+
+	it('sends the confirmation to a new signup with no state and to a re-signup after an unsubscribe', async () => {
+		const f = fixture()
+		f.setState(undefined)
+		f.setContact({ ...contact, isProvisional: true, lifecycle: 'new' })
+		f.events.set('contact.unsubscribed', 1)
+		f.setIdentityConflict(true)
+		const result = await f.answer(doi)
+		expect(result).toMatchObject({ sendable: true, reasons: [] })
+		expect(result?.flags).toContain('contact-provisional')
+	})
+
+	it.each([
+		['contact.bounced', 'bounced'],
+		['contact.complained', 'complained'],
+	] as const)('still holds back an address that %s', async (eventType, reason) => {
+		const f = fixture()
+		f.events.set(eventType, 1)
+		expect(await f.answer(doi)).toMatchObject({
+			sendable: false,
+			reasons: [reason],
+		})
+	})
+
+	it('holds back a suppressed contact, a missing address and an unknown email key', async () => {
+		const suppressed = fixture()
+		suppressed.setContact({ ...contact, lifecycle: 'suppressed' })
+		expect((await suppressed.answer(doi))?.reasons).toContain('suppressed')
+
+		const noEmail = fixture()
+		noEmail.setContact({ ...contact, email: null })
+		expect((await noEmail.answer(doi))?.reasons).toContain('contact-email-missing')
+
+		const wrongKey = fixture()
+		expect(
+			await wrongKey.answer({ ...doi, emailKey: 'ai-hero-confirm.email-9' }),
+		).toMatchObject({ sendable: false, reasons: ['email-resource-missing'] })
+	})
+})

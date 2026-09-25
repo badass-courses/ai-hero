@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { DOUBLE_OPT_IN_JOURNEY_ID } from './drovr-list-subscribe'
+
 import { CouponIssuePayload, offerFieldsFor } from './drovr-evergreen-coupon'
 import { evergreenSequenceForMessage } from './drovr-evergreen'
 import {
@@ -57,6 +59,17 @@ export type DrovrPersonalizeAnswer = {
 	reasons: string[]
 	flags: string[]
 }
+
+/** The double opt-in confirmation email drovr sends (journey double-opt-in). */
+export const DOUBLE_OPT_IN_CONFIRM_EMAIL_KEY = 'ai-hero-confirm.email-0'
+
+const DOUBLE_OPT_IN_BLOCKING_REASONS: ReadonlySet<string> = new Set([
+	'contact-email-missing',
+	'suppressed',
+	'bounced',
+	'complained',
+	'email-resource-missing',
+])
 
 /** Reads only. Repeated calls for the same intent use dueAt as the token
  * expiry anchor, never the wall clock (PostShiba rejects body drift on retry). */
@@ -157,13 +170,24 @@ export async function personalizeDrovrIntent(args: {
 					origin: args.baseUrl,
 				})
 		}
+	} else if (request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID) {
+		if (request.emailKey !== DOUBLE_OPT_IN_CONFIRM_EMAIL_KEY)
+			reasons.push('email-resource-missing')
 	} else reasons.push('email-resource-missing')
+	// The confirmation email answers the reader's own signup request, so
+	// only what makes an address unsendable holds it back. An earlier
+	// unsubscribe does not: signing up again is the new request, and today's
+	// Kit double opt-in email reaches such a reader too.
+	const blocking =
+		request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID
+			? reasons.filter((reason) => DOUBLE_OPT_IN_BLOCKING_REASONS.has(reason))
+			: reasons
 	return {
 		email,
 		firstName: contact.name?.trim().split(/\s+/)[0] || null,
-		variables: reasons.length ? {} : variables,
-		sendable: reasons.length === 0,
-		reasons: [...new Set(reasons)],
+		variables: blocking.length ? {} : variables,
+		sendable: blocking.length === 0,
+		reasons: [...new Set(blocking)],
 		flags,
 	}
 }
