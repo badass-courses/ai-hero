@@ -78,6 +78,7 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 	let name: string | undefined
 	let database: MySqlDatabase<any, any, any>
 	let createdUsers: string[]
+	let targetUri: string
 
 	beforeAll(async () => {
 		if (!serverUrl || process.env.CI !== 'true')
@@ -93,6 +94,7 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		)
 		const target = new URL(safe)
 		target.pathname = `/${name}`
+		targetUri = target.toString()
 		pool = preserveQueryResultShape(
 			mysql.createPool({
 				uri: target.toString(),
@@ -379,6 +381,51 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		await deleteTestPrincipalRecords(database, records.identity.principalId)
 	})
 
+	it('never strips a principal the run re-mints while the reaper is deleting it', async () => {
+		const start = new Date()
+		const { records } = await mint('run-reaper-race2', start)
+		if (records.status === 'limit') throw new Error('unexpected limit')
+		const { identity } = records
+		const later = new Date(start.getTime() + 2 * 3_600_000)
+		const cutoff = new Date(later.getTime() - 3_600_000)
+
+		// The reaper runs on its own pool and pauses right before its first
+		// delete, after it has checked the cutoff. The run re-mints then.
+		let remint: ReturnType<typeof mint> | undefined
+		const reaperPool = pauseBeforeFirstDelete(
+			mysql.createPool({ uri: targetUri, timezone: 'Z', connectionLimit: 2 }),
+			async () => {
+				remint = mint('run-reaper-race2', later)
+				// Give the re-mint a second inside the reaper's window: unlocked,
+				// it finishes (~40ms); locked out, it waits for the reaper's
+				// commit. The invariant below holds either way.
+				await Promise.race([
+					remint,
+					new Promise((resolve) => setTimeout(resolve, 1_000)),
+				])
+			},
+		)
+		try {
+			await deleteTestPrincipalRecords(
+				drizzle(reaperPool, { mode: 'planetscale' }),
+				identity.principalId,
+				{ createdBefore: cutoff },
+			)
+		} finally {
+			await reaperPool.end()
+		}
+		expect((await remint!).records.status).toBe('minted')
+
+		// The re-minted principal is whole: its user, contact, state and
+		// sign-in token all survived the reaper.
+		const [[rows]] = (await pool.query(
+			'SELECT (SELECT COUNT(*) FROM AI_User WHERE id = ?) AS users, (SELECT COUNT(*) FROM AI_Contact WHERE id = ?) AS contacts, (SELECT COUNT(*) FROM AI_ContactState WHERE contactId = ?) AS states, (SELECT COUNT(*) FROM AI_VerificationToken WHERE identifier = ?) AS tokens',
+			[identity.principalId, identity.contactId, identity.contactId, identity.email],
+		)) as unknown as [[Record<string, number>]]
+		expect(rows).toEqual({ users: 1, contacts: 1, states: 1, tokens: 1 })
+		await deleteTestPrincipalRecords(database, identity.principalId)
+	})
+
 	it('issues a canonical one-use crash-course coupon for the run and deletes only it', async () => {
 		const commerce = drizzle(pool, { schema: couponCommerceSchema, mode: 'default' })
 		const authority = (clock: Date) =>
@@ -576,3 +623,32 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		await deleteTestPrincipalRecords(database, restarted.records.identity.principalId)
 	})
 })
+
+/** Run `beforeDelete` once, just before the pool's first DELETE statement. */
+function pauseBeforeFirstDelete(
+	raw: Pool,
+	beforeDelete: () => Promise<void>,
+): Pool {
+	let fired = false
+	const intercept = <Client extends { query: Pool['query'] }>(client: Client) => {
+		const query = client.query.bind(client) as (...args: unknown[]) => unknown
+		client.query = (async (...args: unknown[]) => {
+			const statement = args[0]
+			const text =
+				typeof statement === 'string'
+					? statement
+					: String((statement as { sql?: string } | undefined)?.sql ?? '')
+			if (!fired && /^\s*delete\b/i.test(text)) {
+				fired = true
+				await beforeDelete()
+			}
+			return query(...args)
+		}) as Client['query']
+		return client
+	}
+	intercept(raw)
+	const acquire = raw.getConnection.bind(raw)
+	raw.getConnection = (async () =>
+		preserveQueryResultShape(intercept(await acquire()))) as Pool['getConnection']
+	return preserveQueryResultShape(raw)
+}

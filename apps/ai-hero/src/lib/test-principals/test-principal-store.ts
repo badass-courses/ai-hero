@@ -377,7 +377,7 @@ async function deletePrincipalRows(
 }
 
 /**
- * Remove a principal and everything keyed to it, in one transaction.
+ * Remove a principal and everything keyed to it, in one short transaction.
  * Returns null when nothing was there (the caller answers 204).
  */
 export async function deleteTestPrincipalRecords(
@@ -390,26 +390,33 @@ export async function deleteTestPrincipalRecords(
 ): Promise<
 	({ identity: TestPrincipalIdentity } & PrincipalRemovalReceipt) | null
 > {
-	// No wrapping transaction: PlanetScale ends one after 20s. Each statement
-	// is short and index-backed, and the User row goes last.
-	const [user] = await database
-		.select({ email: users.email, createdAt: users.createdAt })
-		.from(users)
-		.where(and(eq(users.id, principalId), like(users.id, SYNTHETIC_ID_LIKE)))
-	if (!user?.email) return null
-	if (
-		options.createdBefore &&
-		(user.createdAt == null || user.createdAt >= options.createdBefore)
-	)
-		return null
-	// The address carries the runId; rebuild the identity from it.
-	const runId = user.email.slice(0, user.email.indexOf('@'))
-	const identity = testPrincipalIdentity(runId)
-	if (identity.principalId !== principalId) return null
-	return {
-		identity,
-		...(await deletePrincipalRows(database, identity, options.createdBefore)),
-	}
+	// One transaction that locks the User row first. A mint's locking read
+	// over the synthetic range waits on it, so the reaper's cutoff check and
+	// its deletes are atomic against a re-mint of the same runId: the run
+	// either re-mints before the check (and the reaper skips it) or after
+	// the deletes (and starts clean). Every statement is index-backed, well
+	// inside PlanetScale's 20s transaction limit; the User row goes last.
+	return database.transaction(async (tx) => {
+		const [user] = await tx
+			.select({ email: users.email, createdAt: users.createdAt })
+			.from(users)
+			.where(and(eq(users.id, principalId), like(users.id, SYNTHETIC_ID_LIKE)))
+			.for('update')
+		if (!user?.email) return null
+		if (
+			options.createdBefore &&
+			(user.createdAt == null || user.createdAt >= options.createdBefore)
+		)
+			return null
+		// The address carries the runId; rebuild the identity from it.
+		const runId = user.email.slice(0, user.email.indexOf('@'))
+		const identity = testPrincipalIdentity(runId)
+		if (identity.principalId !== principalId) return null
+		return {
+			identity,
+			...(await deletePrincipalRows(tx, identity, options.createdBefore)),
+		}
+	})
 }
 
 /** Principals older than their hour, oldest first, for the reaper. */
