@@ -57,3 +57,19 @@ export async function resolveEnrolmentIdentity(): Promise<{
 		subscriber,
 	}
 }
+
+/**
+ * True when the reader is signed in as this identity's address: they proved
+ * it by logging in. A Kit cookie alone proves nothing.
+ */
+export async function isSignedInAs(identity: {
+	email: string
+	via: string
+}): Promise<boolean> {
+	if (identity.via === 'session') return true
+	const auth = await getServerAuthSession().catch(() => null)
+	const sessionEmail = auth?.session?.user?.email?.trim().toLowerCase()
+	return Boolean(
+		sessionEmail && sessionEmail === identity.email.trim().toLowerCase(),
+	)
+}

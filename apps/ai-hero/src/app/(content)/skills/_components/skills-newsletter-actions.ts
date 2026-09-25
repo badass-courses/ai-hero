@@ -10,7 +10,11 @@ import {
 	type ConversionSurface,
 	withConfirmedConversionFields,
 } from '@/lib/cta/conversion-intent'
-import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
+import {
+	isSignedInAs,
+	resolveEnrolmentIdentity,
+} from '@/lib/enrolment-identity'
+import { reportVerifiedUnconfirmed } from '@/lib/cta/verified-unconfirmed'
 import {
 	SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
 	type SkillsNewsletterSubscribed,
@@ -31,7 +35,6 @@ import {
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
-import { getServerAuthSession } from '@/server/auth'
 import { issueSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
 
 import {
@@ -138,6 +141,11 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			subscriberState: subscribed.state,
 		})
 		if (optIn.status === 'confirmation-required') {
+			await reportVerifiedUnconfirmed({
+				identity,
+				subscriber: subscribed,
+				intentKey: contract.key,
+			})
 			return {
 				success: false as const,
 				reason: 'confirmation-required' as const,
@@ -263,11 +271,3 @@ async function sendSkillsNewsletterPathEntry(
  * cookie's address is also the session's. A different session address
  * proves nothing about the cookie's.
  */
-async function isSignedInAs(identity: { email: string; via: string }) {
-	if (identity.via === 'session') return true
-	const auth = await getServerAuthSession().catch(() => null)
-	const sessionEmail = auth?.session?.user?.email?.trim().toLowerCase()
-	return Boolean(
-		sessionEmail && sessionEmail === identity.email.trim().toLowerCase(),
-	)
-}
