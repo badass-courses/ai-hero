@@ -1,6 +1,9 @@
 import { z } from 'zod'
 
-import { DOUBLE_OPT_IN_JOURNEY_ID } from './drovr-list-subscribe'
+import {
+	DOUBLE_OPT_IN_JOURNEY_ID,
+	DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE,
+} from './drovr-list-subscribe'
 
 import { CouponIssuePayload, offerFieldsFor } from './drovr-evergreen-coupon'
 import { evergreenSequenceForMessage } from './drovr-evergreen'
@@ -81,6 +84,8 @@ export async function personalizeDrovrIntent(args: {
 	baseUrl: string
 	kitSubscriberId?: string
 	identityConflict?: boolean
+	/** See DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE. */
+	resubscribeAfterUnsubscribe?: boolean
 }): Promise<DrovrPersonalizeAnswer | undefined> {
 	const { repository, request } = args
 	const contact = await repository.findContactById(request.contactId)
@@ -175,12 +180,19 @@ export async function personalizeDrovrIntent(args: {
 			reasons.push('email-resource-missing')
 	} else reasons.push('email-resource-missing')
 	// The confirmation email answers the reader's own signup request, so
-	// only what makes an address unsendable holds it back. An earlier
-	// unsubscribe does not: signing up again is the new request, and today's
-	// Kit double opt-in email reaches such a reader too.
+	// only what makes an address unsendable holds it back. Whether an earlier
+	// unsubscribe does is the one open switch (today's Kit double opt-in
+	// email reaches such a reader).
+	const resubscribe =
+		args.resubscribeAfterUnsubscribe ??
+		DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE
 	const blocking =
 		request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID
-			? reasons.filter((reason) => DOUBLE_OPT_IN_BLOCKING_REASONS.has(reason))
+			? reasons.filter(
+					(reason) =>
+						DOUBLE_OPT_IN_BLOCKING_REASONS.has(reason) ||
+						(!resubscribe && reason === 'unsubscribed'),
+				)
 			: reasons
 	return {
 		email,

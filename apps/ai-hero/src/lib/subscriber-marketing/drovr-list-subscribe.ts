@@ -36,6 +36,15 @@ export const DOUBLE_OPT_IN_JOURNEY_ID = 'double-opt-in' as const
 export const DOUBLE_OPT_IN_CONFIRMED_REASON = 'double-opt-in-confirmed' as const
 export const SUBSCRIBE_KIT_FORM_INTENT_TYPE = 'subscribe-kit-form' as const
 
+/**
+ * The one switch for whether a fresh double opt-in re-subscribes someone
+ * who earlier unsubscribed from AI Hero (open question for Joel). It is
+ * read in two places: the Kit mirror removes the `Unsubscribed: AI Hero`
+ * tag on confirm, and personalize lets the confirmation email reach an
+ * address with an earlier unsubscribe. A "no" is this line set to false.
+ */
+export const DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE = true
+
 /** The Kit forms a confirmation may subscribe to: the Skills form only. */
 export const DOUBLE_OPT_IN_KIT_FORM_IDS: ReadonlySet<number> = new Set([
 	9376133,
@@ -90,12 +99,17 @@ export function createKitFormSubscriber(options: {
 	apiKey: string | undefined
 	fetch?: Fetcher
 	unsubscribedTagId?: string | number
+	/** See DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE. */
+	resubscribeAfterUnsubscribe?: boolean
 	timeoutMs?: number
 }): KitFormSubscriber | undefined {
 	const apiKey = options.apiKey?.trim()
 	if (!apiKey) return undefined
 	const fetcher = options.fetch ?? fetch
 	const tagId = options.unsubscribedTagId ?? AI_HERO_UNSUBSCRIBED_TAG_ID
+	const removeUnsubscribeTag =
+		options.resubscribeAfterUnsubscribe ??
+		DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE
 	const request = async (
 		method: 'GET' | 'POST' | 'DELETE',
 		path: string,
@@ -153,8 +167,10 @@ export function createKitFormSubscriber(options: {
 			throw new KitV4Error(toForm.status, 'form add refused')
 		}
 
-		const untag = await request('DELETE', `/tags/${tagId}/subscribers/${id}`)
-		if (untag.status !== 204 && untag.status !== 404) {
+		const untag = removeUnsubscribeTag
+			? await request('DELETE', `/tags/${tagId}/subscribers/${id}`)
+			: undefined
+		if (untag && untag.status !== 204 && untag.status !== 404) {
 			throw new KitV4Error(untag.status, 'unsubscribe tag removal refused')
 		}
 
@@ -166,7 +182,7 @@ export function createKitFormSubscriber(options: {
 		return {
 			kitSubscriberId: id,
 			state,
-			unsubscribeTagRemoved: untag.status === 204,
+			unsubscribeTagRemoved: untag?.status === 204,
 		}
 	}
 }
@@ -174,12 +190,21 @@ export function createKitFormSubscriber(options: {
 const boundedNextActionId = (intentKey: string): string =>
 	`drovr:${createHash('sha256').update(intentKey).digest('hex').slice(0, 40)}`
 
-/** One receipt row per contact and Kit form. */
+/**
+ * One receipt row per drovr intent: drovr's retries of an intent reuse its
+ * key and find the row, while a new intent (say a later confirmation after
+ * an unsubscribe) gets its own row and its own Kit write.
+ */
 export function listSubscribeIdempotencyKey(
 	contactId: string,
 	kitFormId: number,
+	intentKey: string,
 ): string {
-	return `contact:${contactId}:list-subscribe:kit-form:${kitFormId}`
+	const intent = createHash('sha256')
+		.update(intentKey)
+		.digest('hex')
+		.slice(0, 32)
+	return `contact:${contactId}:list-subscribe:kit-form:${kitFormId}:${intent}`
 }
 
 export async function acceptListSubscribe(args: {
@@ -224,7 +249,11 @@ export async function acceptListSubscribe(args: {
 	const contact = await args.repository.findContactById(intent.contactId)
 	if (!contact) return { status: 'contact-missing' }
 
-	const idempotencyKey = listSubscribeIdempotencyKey(contact.id, kitFormId)
+	const idempotencyKey = listSubscribeIdempotencyKey(
+		contact.id,
+		kitFormId,
+		intent.idempotencyKey,
+	)
 	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => ({
 		status: 'completed',
 		intentId: row.id,

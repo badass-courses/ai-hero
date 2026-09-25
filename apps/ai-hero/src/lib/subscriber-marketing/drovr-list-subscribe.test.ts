@@ -8,6 +8,7 @@ import {
 } from './drovr-executor'
 import {
 	createKitFormSubscriber,
+	DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE,
 	KIT_SUBSCRIBE_RETRY_MS,
 	linkKitSubscriberIdentity,
 	type KitFormSubscriber,
@@ -144,7 +145,9 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 		expect(row).toMatchObject({
 			type: 'subscribe-kit-form',
 			status: 'completed',
-			idempotencyKey: 'contact:contact-1:list-subscribe:kit-form:9376133',
+			idempotencyKey: expect.stringMatching(
+				/^contact:contact-1:list-subscribe:kit-form:9376133:[0-9a-f]{32}$/,
+			),
 			metadata: expect.objectContaining({ kitSubscriberId: '4310000001' }),
 		})
 		expect(linkKitSubscriber).toHaveBeenCalledWith('contact-1', '4310000001')
@@ -168,6 +171,35 @@ describe('drovr list.subscribe (double opt-in confirmation Kit mirror)', () => {
 
 		expect(subscribeInKit).toHaveBeenCalledTimes(1)
 		expect(second).toEqual(first)
+	})
+
+	it('writes again for a new drovr intent, e.g. a later confirmation after an unsubscribe', async () => {
+		const repository = setup()
+		const subscribeInKit = kit()
+		await acceptDrovrIntent({
+			repository,
+			intent: confirmation(),
+			now,
+			subscribeInKit,
+		})
+		const later = await acceptDrovrIntent({
+			repository,
+			intent: confirmation({
+				idempotencyKey: 'doi:org-aihero:contact-1:skills-newsletter:kit:2',
+			}),
+			now,
+			subscribeInKit,
+		})
+
+		expect(subscribeInKit).toHaveBeenCalledTimes(2)
+		expect(repository.intents.size).toBe(2)
+		expect(later).toMatchObject({
+			status: 'completed',
+			completion: {
+				idempotencyKey:
+					'completion:doi:org-aihero:contact-1:skills-newsletter:kit:2',
+			},
+		})
 	})
 
 	it('names a block, never a success, when Kit keeps the subscriber inactive', async () => {
@@ -314,7 +346,11 @@ describe('createKitFormSubscriber (Kit v4)', () => {
 			'DELETE /v4/tags/8244351/subscribers/4310000001': { status: 204 },
 			'GET /v4/subscribers/4310000001': { status: 200, body: subscriber() },
 		})
-		const subscribe = createKitFormSubscriber({ apiKey: 'k', fetch: fetcher })!
+		const subscribe = createKitFormSubscriber({
+			apiKey: 'k',
+			fetch: fetcher,
+			resubscribeAfterUnsubscribe: true,
+		})!
 
 		await expect(
 			subscribe({
@@ -340,6 +376,54 @@ describe('createKitFormSubscriber (Kit v4)', () => {
 			first_name: 'Ada',
 			state: 'active',
 		})
+	})
+
+	it.each([true, false])(
+		'resubscribeAfterUnsubscribe=%s decides whether the unsubscribe tag comes off',
+		async (resubscribeAfterUnsubscribe) => {
+			const { calls, fetcher } = fakeKit({
+				'POST /v4/subscribers': { status: 201, body: subscriber() },
+				'POST /v4/forms/9376133/subscribers/4310000001': {
+					status: 201,
+					body: subscriber(),
+				},
+				'DELETE /v4/tags/8244351/subscribers/4310000001': { status: 204 },
+				'GET /v4/subscribers/4310000001': { status: 200, body: subscriber() },
+			})
+			const subscribe = createKitFormSubscriber({
+				apiKey: 'k',
+				fetch: fetcher,
+				resubscribeAfterUnsubscribe,
+			})!
+
+			const outcome = await subscribe({
+				email: 'learner@example.com',
+				kitFormId: 9376133,
+			})
+
+			const untagged = calls.some((call) => call.method === 'DELETE')
+			expect(untagged).toBe(resubscribeAfterUnsubscribe)
+			expect(outcome.unsubscribeTagRemoved).toBe(resubscribeAfterUnsubscribe)
+		},
+	)
+
+	it('defaults to the one switch, DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE', async () => {
+		const { calls, fetcher } = fakeKit({
+			'POST /v4/subscribers': { status: 201, body: subscriber() },
+			'POST /v4/forms/9376133/subscribers/4310000001': {
+				status: 201,
+				body: subscriber(),
+			},
+			'DELETE /v4/tags/8244351/subscribers/4310000001': { status: 204 },
+			'GET /v4/subscribers/4310000001': { status: 200, body: subscriber() },
+		})
+		await createKitFormSubscriber({ apiKey: 'k', fetch: fetcher })!({
+			email: 'learner@example.com',
+			kitFormId: 9376133,
+		})
+		expect(calls.some((call) => call.method === 'DELETE')).toBe(
+			DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE,
+		)
 	})
 
 	it('treats an untagged subscriber (404 on untag) as fine and reports the real state', async () => {

@@ -6,6 +6,7 @@ import {
 	type DrovrPersonalizeRequest,
 } from './drovr-personalize'
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
+import { DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE } from './drovr-list-subscribe'
 
 const dueAt = '2026-09-24T18:00:00.000Z'
 const request: DrovrPersonalizeRequest = {
@@ -245,7 +246,10 @@ describe('drovr read-only personalization', () => {
 })
 
 describe('double opt-in confirmation personalization', () => {
-	const doi = { journeyId: 'double-opt-in', emailKey: 'ai-hero-confirm.email-0' }
+	const doi = {
+		journeyId: 'double-opt-in',
+		emailKey: 'ai-hero-confirm.email-0',
+	}
 
 	it('answers the email and first name for ai-hero-confirm.email-0', async () => {
 		const f = fixture()
@@ -260,28 +264,58 @@ describe('double opt-in confirmation personalization', () => {
 		})
 	})
 
-	it('sends the confirmation to a new signup with no state and to a re-signup after an unsubscribe', async () => {
+	it('sends the confirmation to a new signup with no state or Kit identity yet', async () => {
 		const f = fixture()
 		f.setState(undefined)
 		f.setContact({ ...contact, isProvisional: true, lifecycle: 'new' })
-		f.events.set('contact.unsubscribed', 1)
 		f.setIdentityConflict(true)
 		const result = await f.answer(doi)
 		expect(result).toMatchObject({ sendable: true, reasons: [] })
 		expect(result?.flags).toContain('contact-provisional')
 	})
 
+	it.each([true, false])(
+		'resubscribeAfterUnsubscribe=%s decides whether an earlier unsubscribe holds the confirmation back',
+		async (resubscribeAfterUnsubscribe) => {
+			const f = fixture()
+			f.events.set('contact.unsubscribed', 1)
+			const result = await personalizeDrovrIntent({
+				repository: f.repository,
+				request: { ...request, ...doi },
+				answerPages: [],
+				baseUrl: 'https://www.aihero.dev',
+				resubscribeAfterUnsubscribe,
+			})
+			expect(result).toMatchObject(
+				resubscribeAfterUnsubscribe
+					? { sendable: true, reasons: [] }
+					: { sendable: false, reasons: ['unsubscribed'] },
+			)
+		},
+	)
+
+	it('defaults to the one switch, DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE', async () => {
+		const f = fixture()
+		f.events.set('contact.unsubscribed', 1)
+		expect((await f.answer(doi))?.sendable).toBe(
+			DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE,
+		)
+	})
+
 	it.each([
 		['contact.bounced', 'bounced'],
 		['contact.complained', 'complained'],
-	] as const)('still holds back an address that %s', async (eventType, reason) => {
-		const f = fixture()
-		f.events.set(eventType, 1)
-		expect(await f.answer(doi)).toMatchObject({
-			sendable: false,
-			reasons: [reason],
-		})
-	})
+	] as const)(
+		'still holds back an address that %s',
+		async (eventType, reason) => {
+			const f = fixture()
+			f.events.set(eventType, 1)
+			expect(await f.answer(doi)).toMatchObject({
+				sendable: false,
+				reasons: [reason],
+			})
+		},
+	)
 
 	it('holds back a suppressed contact, a missing address and an unknown email key', async () => {
 		const suppressed = fixture()
@@ -290,7 +324,9 @@ describe('double opt-in confirmation personalization', () => {
 
 		const noEmail = fixture()
 		noEmail.setContact({ ...contact, email: null })
-		expect((await noEmail.answer(doi))?.reasons).toContain('contact-email-missing')
+		expect((await noEmail.answer(doi))?.reasons).toContain(
+			'contact-email-missing',
+		)
 
 		const wrongKey = fixture()
 		expect(
