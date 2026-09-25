@@ -17,6 +17,7 @@ import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { withSkill } from '@/server/with-skill'
+import { isSameOriginPost } from '@/lib/http/same-origin-post'
 
 import {
 	answerLandingPath,
@@ -214,30 +215,6 @@ async function ensureCertificateShare(
 		})
 	}
 	return result.available
-}
-
-const SITE_ORIGINS = ['https://www.aihero.dev', 'https://aihero.dev']
-
-/**
- * Browsers send Origin on every form POST; Sec-Fetch-Site covers one that
- * withholds it. Only the site's origins (and its canonical URL) pass; an
- * opaque `Origin: null` is cross-site.
- */
-function isSameOriginPost(request: NextRequest) {
-	const origin = request.headers.get('origin')
-	if (origin) {
-		const allowed = new Set(SITE_ORIGINS)
-		const canonical = process.env.NEXT_PUBLIC_URL
-		if (canonical) {
-			try {
-				allowed.add(new URL(canonical).origin)
-			} catch {
-				// An unparseable canonical URL adds nothing.
-			}
-		}
-		return allowed.has(origin)
-	}
-	return request.headers.get('sec-fetch-site') === 'same-origin'
 }
 
 /** 303 so the browser follows with a GET, which records nothing. */
