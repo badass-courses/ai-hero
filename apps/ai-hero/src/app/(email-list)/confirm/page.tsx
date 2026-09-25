@@ -4,7 +4,17 @@ import { Metadata } from 'next/types'
 import { Email } from '@/app/(email-list)/_components/email'
 import { Signature } from '@/app/(email-list)/_components/signature'
 import LayoutClient from '@/components/layout-client'
+import { env } from '@/env.mjs'
 import { SKILLS_COURSE_WAYFINDING } from '@/lib/skills-content'
+import {
+	confirmPageView,
+	parseConfirmOutcome,
+	readConfirmState,
+} from '@/lib/subscriber-marketing/drovr-confirm-page'
+import { resolveDrovrApiBaseUrl } from '@/lib/subscriber-marketing/drovr-unsubscribe-page'
+import { log } from '@/server/logger'
+
+import { DoiConfirmView } from './doi-confirm-view'
 
 export const metadata: Metadata = {
 	title: 'Confirm your subscription',
@@ -13,9 +23,28 @@ export const metadata: Metadata = {
 export default async function ConfirmSubscriptionPage({
 	searchParams,
 }: {
-	searchParams: Promise<{ flow?: string }>
+	searchParams: Promise<{ flow?: string; t?: string; result?: string }>
 }) {
-	const { flow } = await searchParams
+	const { flow, t, result } = await searchParams
+	// drovr's double opt-in link carries a token: read its state (no side
+	// effects) and offer the Confirm button. Without one, this is the
+	// "check your inbox" page it has always been.
+	if (t !== undefined) {
+		const lookup = await readConfirmState(t, {
+			baseUrl: resolveDrovrApiBaseUrl(env),
+		})
+		await log.info('confirm-page.view', {
+			lookup: lookup.status,
+			...(lookup.status === 'ok' ? { state: lookup.state.status } : {}),
+			...(lookup.status === 'unavailable' ? { reason: lookup.reason } : {}),
+		})
+		return (
+			<DoiConfirmView
+				view={confirmPageView(lookup, parseConfirmOutcome(result))}
+				token={t}
+			/>
+		)
+	}
 	// The email course flow sends lesson one directly — there is no separate
 	// confirmation-link email, so promising one here strands subscribers
 	// (support thread cnv_1oh8twdh).
