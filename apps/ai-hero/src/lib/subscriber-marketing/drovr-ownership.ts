@@ -95,6 +95,25 @@ export function isHeldSignup(
 	return Boolean(normalized && config.holdEmails?.has(normalized))
 }
 
+/**
+ * What an entry logs about the ownership config it resolved, so a surprise
+ * (a held address that entered anyway) can be traced to the config the
+ * deployment actually read. Counts and booleans only, never an address.
+ */
+export function ownershipDecisionLog(
+	config: DrovrOwnershipConfig,
+	email: string | undefined,
+) {
+	const normalized = email?.trim().toLowerCase()
+	return {
+		holdHit: isHeldSignup(config, email),
+		holdEmails: config.holdEmails?.size ?? 0,
+		ownerEmailHit: Boolean(normalized && config.emails.has(normalized)),
+		ownerEmails: config.emails.size,
+		ownerPercent: config.percent,
+	}
+}
+
 /** Stable 0..99 bucket so a contact lands on the same side of any percent. */
 export function ownershipBucket(contactId: string): number {
 	const digest = createHash('sha256').update(contactId).digest('hex')
