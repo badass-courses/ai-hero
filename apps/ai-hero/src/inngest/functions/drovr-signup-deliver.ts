@@ -3,7 +3,7 @@ import { DROVR_SIGNUP_REQUESTED_EVENT } from '@/inngest/events/drovr'
 import { inngest } from '@/inngest/inngest.server'
 import {
 	DrovrSignupRefusedError,
-	parseDrovrDoiConfig,
+	parseDrovrSignupDeliveryConfig,
 	postDrovrSignup,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { log } from '@/server/logger'
@@ -24,7 +24,9 @@ export const drovrSignupDeliver = inngest.createFunction(
 	},
 	{ event: DROVR_SIGNUP_REQUESTED_EVENT },
 	async ({ event, step }) => {
-		const config = parseDrovrDoiConfig(env)
+		// Not the intake flag: a queued signup is delivered even after
+		// DROVR_DOI_FORMS is turned off.
+		const config = parseDrovrSignupDeliveryConfig(env)
 		if (!config) {
 			// The signup was taken on the drovr path, so drovr must hear it:
 			// retry until the deployment has its drovr config back.

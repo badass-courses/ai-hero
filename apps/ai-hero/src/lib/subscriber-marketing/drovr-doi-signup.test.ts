@@ -10,6 +10,7 @@ import {
 	DrovrSignupRefusedError,
 	DrovrSignupRetryableError,
 	parseDrovrDoiConfig,
+	parseDrovrSignupDeliveryConfig,
 	postDrovrSignup,
 	resolveDoiSignupContact,
 } from './drovr-doi-signup'
@@ -61,6 +62,21 @@ describe('DROVR_DOI_FORMS (the kill switch)', () => {
 		})
 		expect(config?.baseUrl).toBe('https://api.drovr.test')
 		expect(doiAppliesTo(config, 9376133, 'anyone@example.com')).toBe(true)
+	})
+})
+
+describe('delivery config (independent of the intake flag)', () => {
+	it('delivers a queued signup after DROVR_DOI_FORMS is turned off', () => {
+		expect(parseDrovrDoiConfig(reachable)).toBeUndefined()
+		expect(parseDrovrSignupDeliveryConfig(reachable)).toEqual({
+			baseUrl: 'https://drovr.test',
+			apiKey: 'drovr_key',
+		})
+		expect(
+			parseDrovrSignupDeliveryConfig({
+				DROVR_API_BASE_URL: 'https://drovr.test',
+			}),
+		).toBeUndefined()
 	})
 })
 
@@ -219,6 +235,32 @@ describe('postDrovrSignup (POST /signups)', () => {
 				},
 			}),
 		).rejects.toBeInstanceOf(DrovrSignupRetryableError)
+	})
+
+	it('times out a 200 whose body stalls, as retryable', async () => {
+		const stalled = postDrovrSignup(request, {
+			baseUrl: 'https://drovr.test',
+			apiKey: 'k',
+			timeoutMs: 20,
+			fetch: async () =>
+				({
+					status: 200,
+					json: () => new Promise(() => undefined),
+				}) as unknown as Response,
+		})
+		await expect(stalled).rejects.toBeInstanceOf(DrovrSignupRetryableError)
+		await expect(stalled).rejects.toThrow(/timed out/)
+	})
+
+	it('times out a request with no headers at all, as retryable', async () => {
+		await expect(
+			postDrovrSignup(request, {
+				baseUrl: 'https://drovr.test',
+				apiKey: 'k',
+				timeoutMs: 20,
+				fetch: () => new Promise<Response>(() => undefined),
+			}),
+		).rejects.toThrow(/timed out/)
 	})
 
 	it('throws refused, naming drovr problem type, on another 4xx', async () => {

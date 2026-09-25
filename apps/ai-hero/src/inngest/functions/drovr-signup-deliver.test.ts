@@ -107,6 +107,17 @@ describe('drovr-signup-deliver (owns the retry of POST /signups)', () => {
 		)
 	})
 
+	it('still delivers a queued signup after DROVR_DOI_FORMS is turned off', async () => {
+		delete mocks.env.DROVR_DOI_FORMS
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json({ status: 'awaiting-confirmation' })),
+		)
+		await expect(handler({ event, step })).resolves.toEqual({
+			status: 'awaiting-confirmation',
+		})
+	})
+
 	it('keeps retrying while the deployment has no drovr config (never drops a taken signup)', async () => {
 		delete mocks.env.DROVR_API_KEY_ORG_AIHERO
 		await expect(handler({ event, step })).rejects.toThrow(/not configured/)

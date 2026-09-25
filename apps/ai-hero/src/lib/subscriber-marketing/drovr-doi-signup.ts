@@ -93,6 +93,21 @@ function resolveBaseUrl(env: {
 	}
 }
 
+/**
+ * Where to deliver a signup already taken on the drovr path: drovr's base
+ * URL and tenant key, independent of DROVR_DOI_FORMS. Turning the flag off
+ * stops new double opt-in intake; it must not strand signups already queued.
+ */
+export function parseDrovrSignupDeliveryConfig(env: {
+	DROVR_API_BASE_URL?: string
+	DROVR_SHADOW_INGEST_URL?: string
+	DROVR_API_KEY_ORG_AIHERO?: string
+}): { baseUrl: string; apiKey: string } | undefined {
+	const baseUrl = resolveBaseUrl(env)
+	const apiKey = env.DROVR_API_KEY_ORG_AIHERO?.trim()
+	return baseUrl && apiKey ? { baseUrl, apiKey } : undefined
+}
+
 /** Whether this signup takes drovr's double opt-in instead of Kit's form. */
 export function doiAppliesTo(
 	config: DrovrDoiConfig | undefined,
@@ -262,48 +277,66 @@ export async function postDrovrSignup(
 		timeoutMs?: number
 	},
 ): Promise<DrovrSignupStatus> {
+	// One deadline covers the whole exchange, body included: a 200 whose
+	// body stalls must not hold a delivery slot forever.
 	const controller = new AbortController()
-	const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 10_000)
-	let response: Response
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const deadline = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => {
+			controller.abort()
+			reject(new DrovrSignupRetryableError('timed out'))
+		}, config.timeoutMs ?? 10_000)
+	})
+	deadline.catch(() => undefined)
 	try {
-		response = await (config.fetch ?? fetch)(`${config.baseUrl}/signups`, {
-			method: 'POST',
-			headers: {
-				authorization: `Bearer ${config.apiKey}`,
-				'content-type': 'application/json',
-				accept: 'application/json',
-			},
-			body: JSON.stringify(request),
-			signal: controller.signal,
-		})
-	} catch (error) {
-		throw new DrovrSignupRetryableError(
-			error instanceof Error ? error.name : 'unreachable',
-		)
+		let response: Response
+		try {
+			response = await Promise.race([
+				(config.fetch ?? fetch)(`${config.baseUrl}/signups`, {
+					method: 'POST',
+					headers: {
+						authorization: `Bearer ${config.apiKey}`,
+						'content-type': 'application/json',
+						accept: 'application/json',
+					},
+					body: JSON.stringify(request),
+					signal: controller.signal,
+				}),
+				deadline,
+			])
+		} catch (error) {
+			if (error instanceof DrovrSignupRetryableError) throw error
+			throw new DrovrSignupRetryableError(
+				error instanceof Error ? error.name : 'unreachable',
+			)
+		}
+		if (
+			response.status === 408 ||
+			response.status === 429 ||
+			response.status >= 500
+		) {
+			throw new DrovrSignupRetryableError(
+				`HTTP ${response.status}`,
+				response.status,
+			)
+		}
+		const body: unknown = await Promise.race([
+			response.json().catch(() => undefined),
+			deadline,
+		])
+		if (response.status !== 200) {
+			const slug = z.object({ type: z.string() }).safeParse(body)
+			throw new DrovrSignupRefusedError(
+				response.status,
+				slug.success ? slug.data.type : undefined,
+			)
+		}
+		const reply = SignupReply.safeParse(body)
+		if (!reply.success) {
+			throw new DrovrSignupRetryableError('unreadable reply', response.status)
+		}
+		return reply.data.status
 	} finally {
 		clearTimeout(timer)
 	}
-	if (
-		response.status === 408 ||
-		response.status === 429 ||
-		response.status >= 500
-	) {
-		throw new DrovrSignupRetryableError(
-			`HTTP ${response.status}`,
-			response.status,
-		)
-	}
-	const body: unknown = await response.json().catch(() => undefined)
-	if (response.status !== 200) {
-		const slug = z.object({ type: z.string() }).safeParse(body)
-		throw new DrovrSignupRefusedError(
-			response.status,
-			slug.success ? slug.data.type : undefined,
-		)
-	}
-	const reply = SignupReply.safeParse(body)
-	if (!reply.success) {
-		throw new DrovrSignupRetryableError('unreadable reply', response.status)
-	}
-	return reply.data.status
 }
