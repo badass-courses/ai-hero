@@ -112,6 +112,7 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 			// The capture repository reads SideEffectIntent's course-run columns.
 			'20260831_ai_hero_email_course_evergreen_schema.sql',
 			'20260907_evergreen_admission_attempts.sql',
+			'20260511_ai_hero_content_read.sql',
 		])
 			await pool.query(
 				await fs.readFile(
@@ -459,6 +460,55 @@ integration('test principals on disposable MySQL with real Auth.js', () => {
 		)) as unknown as [[{ n: number }]]
 		expect(realCoupons.n).toBe(1)
 		expect(await realRows()).toEqual({ users: 1, contacts: 1, sessions: 1 })
+	})
+
+	it('cleans with index-backed statements only, content reads by their unique key', async () => {
+		const { records } = await mint('run-fast-delete1')
+		if (records.status === 'limit') throw new Error('unexpected limit')
+		const { principalId } = records.identity
+		const read = (id: string, userId: string) =>
+			pool.query(
+				"INSERT INTO AI_ContentRead (id, sessionId, userId, contentId, contentSlug, contentType, readSignal, contentMetadata, pathname, clientEventId, semanticIdempotencyKey, occurredAt) VALUES (?, 's', ?, 'c', 'c', 'post', 'read', '{}', '/c', ?, ?, UTC_TIMESTAMP())",
+				[id, userId, id, `content-read:v1:${userId}:post:c:read:2026-09-25`],
+			)
+		await read('read-synthetic', principalId)
+		await read('read-real', 'user-real')
+
+		// Every cleanup statement can use an index; none is a table scan by design.
+		const explain = async (statement: string, params: unknown[]) => {
+			const [rows] = (await pool.query(`EXPLAIN ${statement}`, params)) as unknown as [
+				Array<{ possible_keys: string | null }>,
+			]
+			return rows[0]?.possible_keys ?? ''
+		}
+		for (const [table, column] of [
+			['AI_Session', 'userId'],
+			['AI_ContactEvent', 'contactId'],
+			['AI_ContactState', 'contactId'],
+			['AI_ProviderIdentity', 'contactId'],
+			['AI_SideEffectIntent', 'contactId'],
+			['AI_NextAction', 'contactId'],
+			['AI_StateTransition', 'contactId'],
+			['AI_ContentRead', 'contactId'],
+		])
+			expect(
+				await explain(`DELETE FROM ${table} WHERE ${column} = ?`, [principalId]),
+			).not.toBe('')
+		expect(
+			await explain(
+				'DELETE FROM AI_ContentRead WHERE semanticIdempotencyKey LIKE ? AND userId = ?',
+				[`content-read:v1:${principalId.replace('_', '\\_')}:%`, principalId],
+			),
+		).toContain('ContentRead_semanticIdempotencyKey_uq')
+
+		const deleted = await deleteTestPrincipalRecords(database, principalId)
+		expect(deleted?.removed).toMatchObject({ AI_ContentRead: 1, AI_User: 1 })
+		const [[reads]] = (await pool.query(
+			'SELECT COUNT(*) AS n FROM AI_ContentRead WHERE id IN (?, ?)',
+			['read-synthetic', 'read-real'],
+		)) as unknown as [[{ n: number }]]
+		expect(reads.n).toBe(1)
+		await pool.query("DELETE FROM AI_ContentRead WHERE id = 'read-real'")
 	})
 
 	it('is idempotent per runId and deletes only the synthetic principal', async () => {
