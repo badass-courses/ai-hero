@@ -327,9 +327,16 @@ export function buildSignupConfirmationReconciliationPlan(args: {
 			'Confirmation reconciliation limit must be a positive integer',
 		)
 	}
-	const replayable = args.preview.candidates.filter(
-		(candidate) => !candidate.excludedSynthetic,
-	)
+	// Newest confirmations first: a learner who just confirmed is waiting on
+	// Email 0, and a backlog that keeps failing to enter must not hold the
+	// hourly slots ahead of them.
+	const replayable = args.preview.candidates
+		.filter((candidate) => !candidate.excludedSynthetic)
+		.sort(
+			(left, right) =>
+				right.addedAt.localeCompare(left.addedAt) ||
+				left.kitSubscriberId.localeCompare(right.kitSubscriberId),
+		)
 	const planned = replayable.slice(0, args.limit)
 	return {
 		mode: 'signup-confirmation-reconciliation-plan',

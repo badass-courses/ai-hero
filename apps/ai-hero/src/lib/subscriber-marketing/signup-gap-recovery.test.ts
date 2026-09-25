@@ -110,7 +110,11 @@ describe('confirmed signup reconciliation', () => {
 			preview,
 			limit: 200,
 		})
-		expect(plan.events[0]?.data.subscribedAt).toBe('2026-07-30T09:00:00.000Z')
+		expect(
+			plan.events.find(
+				(event) => event.data.kitSubscriberId === 'kit-old-account',
+			)?.data.subscribedAt,
+		).toBe('2026-07-30T09:00:00.000Z')
 	})
 
 	it('enqueues only confirmed active subscribers with stable event ids', () => {
@@ -164,6 +168,45 @@ describe('confirmed signup reconciliation', () => {
 				}),
 			},
 		])
+	})
+
+	it('plans the newest confirmations first, so a backlog never starves a new signup', () => {
+		const subscriber = (id: string, addedAt: string) => ({
+			kitSubscriberId: id,
+			email: `${id}@example.com`,
+			createdAt: addedAt,
+			addedAt,
+			state: 'active' as const,
+		})
+		const preview = buildSignupGapPreview({
+			formId: 9376133,
+			from: '2026-07-15T00:00:00.000Z',
+			to: '2026-09-25T00:00:00.000Z',
+			now: '2026-09-25T00:00:00.000Z',
+			identityMatches: {
+				contactEmails: new Set(),
+				kitSubscriberIds: new Set(),
+				courseEntryKitSubscriberIds: new Set(),
+			},
+			// Kit's page order puts the old backlog first.
+			subscribers: [
+				subscriber('kit-backlog-1', '2026-08-09T10:00:00.000Z'),
+				subscriber('kit-backlog-2', '2026-09-17T10:00:00.000Z'),
+				subscriber('kit-new', '2026-09-24T23:00:00.000Z'),
+				subscriber('kit-backlog-3', '2026-09-20T10:00:00.000Z'),
+			],
+		})
+
+		const plan = buildSignupConfirmationReconciliationPlan({
+			preview,
+			limit: 2,
+		})
+
+		expect(plan.events.map((event) => event.data.kitSubscriberId)).toEqual([
+			'kit-new',
+			'kit-backlog-3',
+		])
+		expect(plan.counts).toMatchObject({ planned: 2, deferred: 2 })
 	})
 
 	it('carries stashed opt-in attribution from Kit fields into the enrollment event', () => {

@@ -1,5 +1,7 @@
 import { db } from '@/db'
 import { contact, contactEvent, providerIdentity } from '@/db/schema'
+import { JOURNEY_OWNER_ASSIGNED_EVENT_TYPE } from '@/lib/subscriber-marketing/drovr-ownership'
+import { DROVR_SKILLS_COURSE_JOURNEY_ID } from '@/lib/subscriber-marketing/drovr-shadow-emitter'
 import {
 	buildSignupConfirmationReconciliationPlan,
 	buildSignupGapPreview,
@@ -10,12 +12,16 @@ import {
 	type SignupGapKitSubscriberState,
 } from '@/lib/subscriber-marketing/signup-gap-recovery'
 import { SKILLS_WORKFLOW_VALUE_PATH } from '@/lib/subscriber-marketing/skills-newsletter-path-entry'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 
 export const SKILLS_NEWSLETTER_FORM_ID = 9376133
 export const SKILLS_CONFIRMATION_RECONCILIATION_START =
 	'2026-07-15T00:00:00.000Z'
-export const SKILLS_CONFIRMATION_RECONCILIATION_LIMIT = 200
+/**
+ * Every replayed confirmation of a new signup is a birth in drovr, so the
+ * hourly run stays small and a backlog drains over a few runs.
+ */
+export const SKILLS_CONFIRMATION_RECONCILIATION_LIMIT = 50
 
 const KIT_SUBSCRIBER_STATES = [
 	'active',
@@ -29,9 +35,12 @@ type KitFormSubscriberRecord = SignupGapKitSubscriber & {
 	addedAt: string
 }
 
+type ReconcilerDatabase = Pick<typeof db, 'select'>
+
 export async function buildSignupConfirmationReconciliationBatch(args?: {
 	to?: string
 	limit?: number
+	database?: ReconcilerDatabase
 }): Promise<SignupConfirmationReconciliationPlan> {
 	const to = new Date(args?.to ?? new Date().toISOString()).toISOString()
 	const subscribers = await fetchKitFormSubscribersForStates({
@@ -41,7 +50,10 @@ export async function buildSignupConfirmationReconciliationBatch(args?: {
 	})
 	const preview = buildSignupGapPreview({
 		subscribers,
-		identityMatches: await fetchIdentityMatches(subscribers),
+		identityMatches: await fetchIdentityMatches(
+			subscribers,
+			args?.database ?? db,
+		),
 		formId: SKILLS_NEWSLETTER_FORM_ID,
 		from: SKILLS_CONFIRMATION_RECONCILIATION_START,
 		to,
@@ -53,7 +65,10 @@ export async function buildSignupConfirmationReconciliationBatch(args?: {
 	})
 }
 
-async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
+async function fetchIdentityMatches(
+	subscribers: SignupGapKitSubscriber[],
+	database: ReconcilerDatabase,
+) {
 	const emails = Array.from(
 		new Set(
 			subscribers
@@ -69,7 +84,7 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 	const courseEntryKitSubscriberIds = new Set<string>()
 
 	for (const emailChunk of chunk(emails, 500)) {
-		const rows = await db
+		const rows = await database
 			.select({ email: contact.email })
 			.from(contact)
 			.where(inArray(contact.email, emailChunk))
@@ -79,7 +94,7 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 		}
 	}
 	for (const idChunk of chunk(subscriberIds, 500)) {
-		const identityRows = await db
+		const identityRows = await database
 			.select({ externalId: providerIdentity.externalId })
 			.from(providerIdentity)
 			.where(
@@ -90,7 +105,10 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 			)
 		for (const row of identityRows) matchedSubscriberIds.add(row.externalId)
 
-		const entryRows = await db
+		// Entered means either planner started the course: the legacy entry
+		// event, or the contact's own drovr ownership assignment for the skills
+		// course (drovr-owned contacts never get a legacy entry event).
+		const entryRows = await database
 			.select({ externalId: providerIdentity.externalId })
 			.from(providerIdentity)
 			.innerJoin(
@@ -101,10 +119,21 @@ async function fetchIdentityMatches(subscribers: SignupGapKitSubscriber[]) {
 				and(
 					eq(providerIdentity.provider, 'kit'),
 					inArray(providerIdentity.externalId, idChunk),
-					eq(contactEvent.eventType, 'value-path.entered'),
-					eq(
-						contactEvent.providerReference,
-						`value-path:${SKILLS_WORKFLOW_VALUE_PATH}`,
+					or(
+						and(
+							eq(contactEvent.eventType, 'value-path.entered'),
+							eq(
+								contactEvent.providerReference,
+								`value-path:${SKILLS_WORKFLOW_VALUE_PATH}`,
+							),
+						),
+						and(
+							eq(contactEvent.eventType, JOURNEY_OWNER_ASSIGNED_EVENT_TYPE),
+							eq(
+								contactEvent.providerEventId,
+								sql`concat('drovr-owner:', ${providerIdentity.contactId}, ${`:${DROVR_SKILLS_COURSE_JOURNEY_ID}`})`,
+							),
+						),
 					),
 				),
 			)
