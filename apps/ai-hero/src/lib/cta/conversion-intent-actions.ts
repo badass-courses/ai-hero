@@ -7,6 +7,7 @@ import { resolveEnrolmentIdentity } from '@/lib/enrolment-identity'
 import { SubscriberSchema } from '@/schemas/subscriber'
 import { log } from '@/server/logger'
 
+import { reportVerifiedUnconfirmed } from './verified-unconfirmed'
 import {
 	conversionIntentContract,
 	type GenericKnownConversionIntent,
@@ -79,6 +80,11 @@ export async function completeKnownConversionIntent({
 		})
 
 		if (subscribed.state !== 'active') {
+			await reportVerifiedUnconfirmed({
+				identity,
+				subscriber: subscribed,
+				intentKey: contract.key,
+			})
 			return { success: true as const, confirmationRequired: true as const }
 		}
 

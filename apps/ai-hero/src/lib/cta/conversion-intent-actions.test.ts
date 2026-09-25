@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	resolveEnrolmentIdentity: vi.fn(),
+	isSignedInAs: vi.fn(),
 	setSubscriberCookie: vi.fn(),
 	subscribeToList: vi.fn(),
 	tagSubscriber: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/lib/convertkit', () => ({
 
 vi.mock('@/lib/enrolment-identity', () => ({
 	resolveEnrolmentIdentity: mocks.resolveEnrolmentIdentity,
+	isSignedInAs: mocks.isSignedInAs,
 }))
 
 vi.mock('@/schemas/subscriber', () => ({
@@ -59,6 +61,89 @@ describe('completeKnownConversionIntent', () => {
 			fields: {},
 		})
 		mocks.tagSubscriber.mockResolvedValue(undefined)
+		mocks.isSignedInAs.mockResolvedValue(true)
+	})
+
+	describe('a reader ai-hero verified whom Kit still holds unconfirmed', () => {
+		const inactive = () =>
+			mocks.subscribeToList.mockResolvedValue({
+				id: 4295840642,
+				email_address: 'signed-in@example.com',
+				state: 'inactive',
+				fields: {},
+			})
+		const allLogs = () =>
+			JSON.stringify([
+				...mocks.log.info.mock.calls,
+				...mocks.log.warn.mock.calls,
+				...mocks.log.error.mock.calls,
+			])
+
+		it('is logged with the Kit id and intent key, never the address', async () => {
+			inactive()
+			await completeKnownConversionIntent({
+				intent: { kind: 'cohort-waitlist', productName: 'Cohort Four' },
+				surface: 'cohort-page',
+			})
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				{
+					kitSubscriberId: '4295840642',
+					intentKey: 'waitlist:cohort:cohort_four',
+					via: 'session',
+					state: 'inactive',
+				},
+			)
+			expect(mocks.isSignedInAs).toHaveBeenCalledWith(
+				expect.objectContaining({ via: 'session' }),
+			)
+			expect(allLogs()).not.toContain('signed-in@example.com')
+		})
+
+		it('is logged for a cookie-identified reader who is also signed in as that address', async () => {
+			inactive()
+			mocks.resolveEnrolmentIdentity.mockResolvedValue({
+				identity: { email: 'signed-in@example.com', via: 'cookie' },
+				subscriber: null,
+			})
+			await completeKnownConversionIntent({
+				intent: { kind: 'newsletter' },
+				surface: 'post-closing',
+			})
+			expect(mocks.log.warn).toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				expect.objectContaining({ intentKey: 'newsletter', via: 'cookie' }),
+			)
+		})
+
+		it('is not logged when only a cookie vouches for the address', async () => {
+			inactive()
+			mocks.isSignedInAs.mockResolvedValue(false)
+			mocks.resolveEnrolmentIdentity.mockResolvedValue({
+				identity: { email: 'signed-in@example.com', via: 'cookie' },
+				subscriber: null,
+			})
+			await completeKnownConversionIntent({
+				intent: { kind: 'cohort-waitlist', productName: 'Cohort Four' },
+				surface: 'cohort-page',
+			})
+			expect(mocks.log.warn).not.toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				expect.anything(),
+			)
+		})
+
+		it('is not logged for a confirmed subscriber', async () => {
+			await completeKnownConversionIntent({
+				intent: { kind: 'cohort-waitlist', productName: 'Cohort Four' },
+				surface: 'cohort-page',
+			})
+			expect(mocks.log.warn).not.toHaveBeenCalledWith(
+				'kit.subscriber.verified_unconfirmed',
+				expect.anything(),
+			)
+			expect(mocks.isSignedInAs).not.toHaveBeenCalled()
+		})
 	})
 
 	it('writes the canonical waitlist field and matching tag for a known reader', async () => {

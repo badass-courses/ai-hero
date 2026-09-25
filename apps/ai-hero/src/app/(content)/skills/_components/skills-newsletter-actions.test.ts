@@ -207,6 +207,50 @@ describe('tagSubscriberAsSkills', () => {
 		expect(mocks.inngestSend).not.toHaveBeenCalled()
 	})
 
+	it('logs a reader signed in as that address whom Kit still holds unconfirmed', async () => {
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+		mocks.subscribeToList.mockResolvedValue({
+			id: 4295840642,
+			email_address: 'contact',
+			first_name: null,
+			state: 'inactive',
+			fields: {},
+		})
+		mocks.getServerAuthSession.mockResolvedValue({
+			session: { user: { email: 'contact' } },
+		})
+
+		await tagSubscriberAsSkills('skills-post')
+
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'kit.subscriber.verified_unconfirmed',
+			{
+				kitSubscriberId: '4295840642',
+				intentKey: 'course:skills',
+				via: 'cookie',
+				state: 'inactive',
+			},
+		)
+	})
+
+	it('does not log an unconfirmed reader nobody is signed in as', async () => {
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+		mocks.subscribeToList.mockResolvedValue({
+			id: 7,
+			email_address: 'contact',
+			first_name: null,
+			state: 'inactive',
+			fields: {},
+		})
+
+		await tagSubscriberAsSkills('skills-post')
+
+		expect(mocks.log.warn).not.toHaveBeenCalledWith(
+			'kit.subscriber.verified_unconfirmed',
+			expect.anything(),
+		)
+	})
+
 	it('emits course entry with the placement source when ft_attr is absent', async () => {
 		const result = await tagSubscriberAsSkills('skills-post')
 
