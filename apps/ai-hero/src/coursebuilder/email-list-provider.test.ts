@@ -17,6 +17,14 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./kit-field-contract', () => ({
+	KitFieldsUnconfirmedError: class KitFieldsUnconfirmedError extends Error {
+		missing: string[]
+		constructor(missing: string[]) {
+			super('unconfirmed')
+			this.name = 'KitFieldsUnconfirmedError'
+			this.missing = missing
+		}
+	},
 	createKitCustomFieldCache: () => ({ kind: 'instance-cache' }),
 	subscribeWithKitFields: (options: unknown, deps: Record<string, unknown>) => {
 		mocks.fieldContractDeps.push(deps)
@@ -177,6 +185,23 @@ describe('emailListProvider field-writing contract', () => {
 			JSON.stringify([...mocks.log.info.mock.calls, ...mocks.log.warn.mock.calls]),
 		).not.toContain('reader@example.com')
 		mocks.kitCalls = []
+	})
+
+	it('reports fields Kit would not keep as unresolved, naming the field keys only', async () => {
+		const { KitFieldsUnconfirmedError } = await import('./kit-field-contract')
+		mocks.compoundSubscribeToList.mockRejectedValueOnce(
+			new KitFieldsUnconfirmedError(['dynamic_answer_2026']),
+		)
+		await expect(emailListProvider.subscribeToList(formOptions)).rejects.toEqual(
+			expect.objectContaining({ name: 'KitSubscribeError', code: 'unresolved' }),
+		)
+		expect(mocks.log.warn).toHaveBeenCalledWith(
+			'kit.write.outcome',
+			expect.objectContaining({
+				reason: 'unresolved',
+				unconfirmedFields: ['dynamic_answer_2026'],
+			}),
+		)
 	})
 
 	it('maps a direct 429 to a stable real-handler boundary error', async () => {

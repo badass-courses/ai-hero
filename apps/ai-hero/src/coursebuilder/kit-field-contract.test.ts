@@ -5,6 +5,7 @@ import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
 import {
 	createKitCustomFieldCache,
 	KIT_CUSTOM_FIELD_CACHE_TTL_MS,
+	KitFieldsUnconfirmedError,
 	subscribeWithKitFields,
 } from './kit-field-contract'
 
@@ -19,6 +20,8 @@ function fakeKit(
 		putStatus?: number[]
 		subscribeStatus?: number
 		dropFromReadback?: string[]
+		/** Fields Kit accepts but never stores, however often they are written. */
+		neverKeep?: string[]
 	} = {},
 ) {
 	const fields = new Set(options.fields ?? [])
@@ -28,6 +31,7 @@ function fakeKit(
 	}
 	const putStatus = [...(options.putStatus ?? [])]
 	const dropFromReadback = new Set(options.dropFromReadback ?? [])
+	const neverKeep = new Set(options.neverKeep ?? [])
 	const calls: string[] = []
 	const json = (status: number, body: unknown) =>
 		new Response(JSON.stringify(body), {
@@ -78,7 +82,9 @@ function fakeKit(
 		}
 		if (method === 'GET' && path === '/v3/subscribers/:id') {
 			const readback = Object.fromEntries(
-				Object.entries(stored).filter(([key]) => !dropFromReadback.has(key)),
+				Object.entries(stored).filter(
+					([key]) => !dropFromReadback.has(key) && !neverKeep.has(key),
+				),
 			)
 			dropFromReadback.clear()
 			return json(200, {
@@ -231,6 +237,40 @@ describe('Kit field contract with a custom-field cache', () => {
 		])
 		expect(result).toMatchObject({
 			fields: { aih_known: 'b', aih_deleted: 'y' },
+		})
+	})
+
+	it('fails the contract when the recheck still cannot confirm a field', async () => {
+		const kit = fakeKit({
+			fields: ['aih_known', 'aih_lost'],
+			neverKeep: ['aih_lost'],
+		})
+		const error = await subscribeWithKitFields(
+			options({ aih_known: 'a', aih_lost: 'x' }),
+			deps(kit),
+		).catch((cause: unknown) => cause)
+		expect(error).toBeInstanceOf(KitFieldsUnconfirmedError)
+		expect(error).toMatchObject({ missing: ['aih_lost'] })
+		// One recheck, then it stops: no loop.
+		expect(
+			kit.calls.filter((call) => call === 'PUT /v3/subscribers/:id'),
+		).toHaveLength(2)
+	})
+
+	it('fails the contract when the write was refused and the retry still cannot confirm a field', async () => {
+		const kit = fakeKit({
+			fields: ['aih_known', 'aih_lost'],
+			putStatus: [422],
+			neverKeep: ['aih_lost'],
+		})
+		await expect(
+			subscribeWithKitFields(
+				options({ aih_known: 'a', aih_lost: 'x' }),
+				deps(kit),
+			),
+		).rejects.toMatchObject({
+			name: 'KitFieldsUnconfirmedError',
+			missing: ['aih_lost'],
 		})
 	})
 

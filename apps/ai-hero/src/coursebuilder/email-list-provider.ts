@@ -11,6 +11,7 @@ import ConvertkitProvider, {
 import { withKitCallTiming } from './kit-call-timing'
 import {
 	createKitCustomFieldCache,
+	KitFieldsUnconfirmedError,
 	subscribeWithKitFields,
 } from './kit-field-contract'
 
@@ -142,6 +143,9 @@ async function subscribeWithFieldContract(
 			attempts: 1,
 			status: boundaryError.status,
 			reason: boundaryError.code,
+			...(error instanceof KitFieldsUnconfirmedError
+				? { unconfirmedFields: error.missing }
+				: {}),
 			...timing,
 		})
 		throw boundaryError
@@ -263,6 +267,9 @@ function safeNumericSubscriberId(value: unknown) {
 
 function toKitSubscribeError(error: unknown) {
 	if (error instanceof KitSubscribeError) return error
+	if (error instanceof KitFieldsUnconfirmedError) {
+		return new KitSubscribeError({ code: 'unresolved' })
+	}
 	if (error instanceof ConvertKitApiError) {
 		return new KitSubscribeError({
 			code:

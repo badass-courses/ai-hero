@@ -21,6 +21,21 @@ import { ConvertKitApiError } from '@coursebuilder/core/providers/convertkit'
 
 export const KIT_CUSTOM_FIELD_CACHE_TTL_MS = 10 * 60_000
 
+/**
+ * Kit still lacks requested fields after the one recheck. Callers treat a
+ * returned subscriber's requested fields as confirmed, so the contract fails
+ * instead. Carries field keys only, never values.
+ */
+export class KitFieldsUnconfirmedError extends Error {
+	readonly missing: string[]
+
+	constructor(missing: string[]) {
+		super(`Kit did not keep custom fields: ${missing.join(', ')}`)
+		this.name = 'KitFieldsUnconfirmedError'
+		this.missing = missing
+	}
+}
+
 const KIT_V3 = 'https://api.convertkit.com/v3'
 
 export type KitCustomFieldCache = {
@@ -109,19 +124,31 @@ export async function subscribeWithKitFields(
 		await write()
 	} catch (error) {
 		if (!isFieldRefusal(error)) throw error
-		deps.cache.invalidate()
-		await ensureCustomFields(keys, kit, deps.cache)
-		await write()
-		return await readSubscriber(kit, subscriberId)
+		return await recheckAndWrite(keys, kit, deps.cache, write, subscriberId)
 	}
 
 	const readback = await readSubscriber(kit, subscriberId)
 	if (!readback || missingKeys(readback, keys).length === 0) return readback
 	// The cache said these fields exist; Kit did not keep them. Recheck once.
-	deps.cache.invalidate()
-	await ensureCustomFields(keys, kit, deps.cache)
+	return await recheckAndWrite(keys, kit, deps.cache, write, subscriberId)
+}
+
+/** The one recheck: forget the cache, ensure the fields, write, and confirm. */
+async function recheckAndWrite(
+	keys: readonly string[],
+	kit: KitClient,
+	cache: KitCustomFieldCache,
+	write: () => Promise<unknown>,
+	subscriberId: number | string,
+): Promise<Record<string, unknown> | undefined> {
+	cache.invalidate()
+	await ensureCustomFields(keys, kit, cache)
 	await write()
-	return await readSubscriber(kit, subscriberId)
+	const readback = await readSubscriber(kit, subscriberId)
+	if (!readback) return readback
+	const missing = missingKeys(readback, keys)
+	if (missing.length > 0) throw new KitFieldsUnconfirmedError(missing)
+	return readback
 }
 
 async function ensureCustomFields(
