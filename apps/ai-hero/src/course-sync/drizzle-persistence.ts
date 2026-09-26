@@ -396,21 +396,23 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				manifest: revision.manifest as unknown as Record<string, unknown>,
 				stagedAt: revision.stagedAt,
 			})
-			await trx.insert(courseSyncSourceRevisionAsset).values(
-				revision.assets.map((asset) => ({
-					sourceRevisionId: revision.sourceRevisionId,
-					sourceVideoId: asset.sourceVideoId,
-					relativePath: asset.relativePath,
-					providerRevision: asset.providerRevision,
-					providerContentHash: asset.providerContentHash,
-					producerSha256: asset.producerSha256,
-					bytes: asset.bytes,
-					snapshotUri: asset.snapshotUri,
-					muxAssetId: asset.muxAssetId,
-					muxPlaybackId: asset.muxPlaybackId,
-					duration: asset.duration,
-				})),
-			)
+			if (revision.assets.length > 0) {
+				await trx.insert(courseSyncSourceRevisionAsset).values(
+					revision.assets.map((asset) => ({
+						sourceRevisionId: revision.sourceRevisionId,
+						sourceVideoId: asset.sourceVideoId,
+						relativePath: asset.relativePath,
+						providerRevision: asset.providerRevision,
+						providerContentHash: asset.providerContentHash,
+						producerSha256: asset.producerSha256,
+						bytes: asset.bytes,
+						snapshotUri: asset.snapshotUri,
+						muxAssetId: asset.muxAssetId,
+						muxPlaybackId: asset.muxPlaybackId,
+						duration: asset.duration,
+					})),
+				)
+			}
 			await trx.insert(courseSyncRun).values(run)
 		})
 		return run
