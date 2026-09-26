@@ -85,6 +85,12 @@ export async function runContactSyncReconcile(
 		limit?: number
 		/** Each contact is one step; a run has a step budget. */
 		maxContacts?: number
+		/**
+		 * Contacts sharing one instant are taken whole past maxContacts (a
+		 * cut inside a tie could never advance), up to this ceiling, which
+		 * stays under the run's step limit.
+		 */
+		maxContactsHard?: number
 		overlapMs?: number
 		/** How far behind the watermark to look for late writes. */
 		lateWriteWindowMs?: number
@@ -93,6 +99,7 @@ export async function runContactSyncReconcile(
 ): Promise<ContactSyncReconcileReceipt> {
 	const limit = options.limit ?? 5000
 	const maxContacts = options.maxContacts ?? 400
+	const maxContactsHard = options.maxContactsHard ?? 900
 	const overlapMs = options.overlapMs ?? HOUR_MS
 	// Prod, the 7 days to 2026-09-26: 335 of 2195 signups were written over
 	// an hour after their occurredAt (confirmation reconciler re-entries),
@@ -150,15 +157,10 @@ export async function runContactSyncReconcile(
 			claim,
 			claimBefore(fresh[limit]!.occurredAt, last, `over ${limit} events`),
 		)
+	// The store ends an overflowing answer with a whole tie group, so every
+	// rotation at or before its last instant is here: claim that instant.
 	if (rotations.length > maxContacts)
-		claim = earlier(
-			claim,
-			claimBefore(
-				rotations[maxContacts]!.at,
-				last,
-				`over ${maxContacts} rotations`,
-			),
-		)
+		claim = earlier(claim, rotations[rotations.length - 1]!.at)
 
 	// One timeline of fresh events and rotation steps, capped in time order.
 	const timeline = [
@@ -168,14 +170,25 @@ export async function runContactSyncReconcile(
 		.filter((item) => Date.parse(item.at) <= Date.parse(claim))
 		.sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
 	const claimed = new Set<string>(late)
+	let previousAt: string | undefined
 	for (const item of timeline) {
+		const tie =
+			previousAt !== undefined && Date.parse(item.at) === Date.parse(previousAt)
+		previousAt = item.at
 		if (claimed.has(item.contactId)) continue
-		if (claimed.size === maxContacts) {
-			claim = earlier(
-				claim,
-				claimBefore(item.at, last, `over ${maxContacts} contacts`),
-			)
-			break
+		if (claimed.size >= maxContacts) {
+			if (!tie) {
+				claim = earlier(
+					claim,
+					claimBefore(item.at, last, `over ${maxContacts} contacts`),
+				)
+				break
+			}
+			if (claimed.size >= maxContactsHard) {
+				throw new Error(
+					`contact sync reconcile cannot advance: more than ${maxContactsHard} contacts share one instant (${item.at})`,
+				)
+			}
 		}
 		claimed.add(item.contactId)
 	}

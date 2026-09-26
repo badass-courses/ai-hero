@@ -239,6 +239,24 @@ integration('contact sync reconcile reads on MySQL', () => {
 		])
 	})
 
+	it('returns a rotation tie whole, even past the limit (a batch issued at one instant)', async () => {
+		for (const contactId of ['t1', 't2', 't3'])
+			await pool.query(
+				`INSERT INTO AI_ValuePathLinkAnchor (anchorKey, contactId, valuePathSlug, emailResourceId, fingerprint, issuedAt, expiresAt)
+				 VALUES (?, ?, 'ai-hero-skills-workflow', 'ai-hero-skills-workflow.email-1', 'f', '2026-06-28 17:50:00.123', '2026-06-28 17:50:00.123')`,
+				[`tie:${contactId}`, contactId],
+			)
+		const rows = await store.rotatedContacts({
+			after: '2026-09-26T17:40:00.000Z',
+			through: '2026-09-26T17:58:00.000Z',
+			limit: 1,
+		})
+		expect(rows.map((row) => row.contactId).sort()).toEqual(['t1', 't2', 't3'])
+		expect(new Set(rows.map((row) => row.at))).toEqual(
+			new Set(['2026-09-26T17:50:00.123Z']),
+		)
+	})
+
 	it('reads no watermark at first, then only ever moves it forward', async () => {
 		await expect(store.readWatermark()).resolves.toBeUndefined()
 		await store.writeWatermark(

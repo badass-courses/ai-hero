@@ -28,7 +28,7 @@ type Database = {
 					limit: (n: number) => Promise<unknown[]>
 				}
 				groupBy: (...columns: unknown[]) => {
-					orderBy: (...order: unknown[]) => {
+					orderBy: (...order: unknown[]) => Promise<unknown[]> & {
 						limit: (n: number) => Promise<unknown[]>
 					}
 				}
@@ -120,14 +120,16 @@ export function createDrizzleContactSyncStore(
 					ROTATION_STEP_MS,
 			)
 			if (stepCount < 1) return []
-			// Earliest step per contact, across the ranges, in time order.
+			// Earliest step per contact, across the ranges, in time order. An
+			// overflowing range is re-read through its boundary instant with no
+			// limit, so a tie (a batch issued at one instant) comes back whole:
+			// cutting inside one would keep the reconcile from ever advancing.
 			const steps = new Map<string, number>()
-			for (const [index, range] of linkRotationRanges(
-				{ after, through },
-				stepCount,
-			).entries()) {
-				const stepMs = (index + 1) * ROTATION_STEP_MS
-				const rows = (await db
+			const firstIssues = (
+				range: { after: string; through: string },
+				cap?: number,
+			) => {
+				const query = db
 					.select({
 						contactId: valuePathLinkAnchor.contactId,
 						firstIssue: min(valuePathLinkAnchor.issuedAt),
@@ -141,16 +143,33 @@ export function createDrizzleContactSyncStore(
 					)
 					.groupBy(valuePathLinkAnchor.contactId)
 					.orderBy(min(valuePathLinkAnchor.issuedAt))
-					.limit(limit + 1)) as { contactId: string; firstIssue: string }[]
+				return (cap === undefined ? query : query.limit(cap)) as Promise<
+					{ contactId: string; firstIssue: string }[]
+				>
+			}
+			for (const [index, range] of linkRotationRanges(
+				{ after, through },
+				stepCount,
+			).entries()) {
+				const stepMs = (index + 1) * ROTATION_STEP_MS
+				let rows = await firstIssues(range, limit + 1)
+				if (rows.length > limit) {
+					const boundary = isoOf(rows[limit]!.firstIssue)
+					rows = await firstIssues({ after: range.after, through: boundary })
+				}
 				for (const row of rows) {
 					const at = Date.parse(isoOf(row.firstIssue)) + stepMs
 					const known = steps.get(row.contactId)
 					if (known === undefined || at < known) steps.set(row.contactId, at)
 				}
 			}
-			return [...steps]
-				.sort((left, right) => left[1] - right[1])
-				.slice(0, limit + 1)
+			const ordered = [...steps].sort((left, right) => left[1] - right[1])
+			// At most limit + 1, extended to the end of a tie at the boundary.
+			let end = Math.min(ordered.length, limit + 1)
+			while (end < ordered.length && ordered[end]![1] === ordered[end - 1]![1])
+				end += 1
+			return ordered
+				.slice(0, end)
 				.map(([contactId, at]) => ({
 					contactId,
 					at: new Date(at).toISOString(),

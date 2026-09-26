@@ -63,12 +63,17 @@ function ports(
 				)
 				.slice(0, limit + 1),
 		),
-		rotatedContacts: vi.fn(async ({ after, through, limit }) =>
-			rotations
+		// The store's contract: at most limit + 1, extended to the end of a
+		// tie at the boundary.
+		rotatedContacts: vi.fn(async ({ after, through, limit }) => {
+			const ordered = rotations
 				.filter((row) => within(row.at, after, through))
 				.sort((l, r) => Date.parse(l.at) - Date.parse(r.at))
-				.slice(0, limit + 1),
-		),
+			let end = Math.min(ordered.length, limit + 1)
+			while (end < ordered.length && ordered[end]!.at === ordered[end - 1]!.at)
+				end += 1
+			return ordered.slice(0, end)
+		}),
 		syncContact: vi.fn(async (contactId: string) => {
 			order.push(`sync:${contactId}`)
 			return 'sent' as const
@@ -294,6 +299,59 @@ describe('contact sync reconcile', () => {
 		)
 		expect(p.heartbeat).not.toHaveBeenCalled()
 		expect(p.writeWatermark).not.toHaveBeenCalled()
+	})
+
+	it('takes a whole tie of rotations sharing one instant, past the soft cap, and claims that instant', async () => {
+		const at = '2026-09-26T17:41:00.123Z'
+		const p = ports({
+			events: [],
+			rotations: [
+				{ contactId: 'r1', at },
+				{ contactId: 'r2', at },
+				{ contactId: 'r3', at },
+			],
+		})
+		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
+		// The store returns ties whole; cutting inside one would stall forever.
+		expect(receipt).toMatchObject({
+			syncedThrough: at,
+			contacts: 3,
+			rotated: 3,
+		})
+		for (const contactId of ['r1', 'r2', 'r3'])
+			expect(p.syncContact).toHaveBeenCalledWith(contactId)
+	})
+
+	it('takes a tie at the contact cap, then cuts before the next instant', async () => {
+		const p = ports({
+			events: [
+				event('c1', '2026-09-26T17:41:00.000Z'),
+				event('c2', '2026-09-26T17:41:00.000Z'),
+				event('c3', '2026-09-26T17:42:00.000Z'),
+			],
+			rotations: [],
+		})
+		const receipt = await runContactSyncReconcile(p, { maxContacts: 1 })
+		expect(receipt).toMatchObject({
+			syncedThrough: '2026-09-26T17:41:59.999Z',
+			contacts: 2,
+		})
+		expect(p.syncContact).not.toHaveBeenCalledWith('c3')
+	})
+
+	it('throws, rather than stall silently, when one instant holds more contacts than the hard ceiling', async () => {
+		const at = '2026-09-26T17:41:00.123Z'
+		const p = ports({
+			events: [],
+			rotations: ['r1', 'r2', 'r3', 'r4'].map((contactId) => ({
+				contactId,
+				at,
+			})),
+		})
+		await expect(
+			runContactSyncReconcile(p, { maxContacts: 2, maxContactsHard: 3 }),
+		).rejects.toThrow(/one instant/)
+		expect(p.heartbeat).not.toHaveBeenCalled()
 	})
 
 	it('fails loudly when fresh changes cannot move past the watermark', async () => {
