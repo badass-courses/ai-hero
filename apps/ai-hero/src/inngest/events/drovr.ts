@@ -31,24 +31,6 @@ export type DrovrEventsDeliver = {
 			 * (2026-09-20 21:37Z, 579 waiting).
 			 */
 			| 'kit-directory-ingest'
-			/** A contact's synced profile for drovr (drovr-contact-profile-sync). */
-			| 'contact-profile-sync'
-	}
-}
-
-export const DROVR_CONTACT_PROFILE_SYNC_EVENT =
-	'drovr/contact-profile.sync-requested'
-
-/**
- * Push one contact's profile to drovr's contact directory. `valuePathSlug`
- * asks for that path's links to be issued eagerly (journey entry).
- */
-export type DrovrContactProfileSyncRequested = {
-	name: typeof DROVR_CONTACT_PROFILE_SYNC_EVENT
-	data: {
-		contactId: string
-		reason: 'journey-entered' | 'offer-issued'
-		valuePathSlug?: string
 	}
 }
 

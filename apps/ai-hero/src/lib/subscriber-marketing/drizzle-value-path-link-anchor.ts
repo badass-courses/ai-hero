@@ -1,5 +1,4 @@
 import { valuePathLinkAnchor } from '@/db/contact-sync-schema'
-import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
 import { eq } from 'drizzle-orm'
 
 import {
@@ -58,7 +57,7 @@ export function createDrizzleValuePathLinkAnchorStore(
 				})
 				return 'inserted'
 			} catch (error) {
-				if (isMysqlDuplicateEntryError(error)) return 'exists'
+				if (isDuplicateKey(error)) return 'exists'
 				throw error
 			}
 		},
@@ -83,4 +82,15 @@ function isoOf(value: string | Date): string {
 	return /(Z|[+-]\d{2}:?\d{2})$/.test(value)
 		? new Date(value).toISOString()
 		: new Date(`${value.replace(' ', 'T')}Z`).toISOString()
+}
+
+function isDuplicateKey(error: unknown): boolean {
+	if (!error || typeof error !== 'object') return false
+	const record = error as { errno?: unknown; code?: unknown; message?: unknown }
+	return (
+		record.errno === 1062 ||
+		record.code === 'ER_DUP_ENTRY' ||
+		(typeof record.message === 'string' &&
+			record.message.includes('Duplicate entry'))
+	)
 }

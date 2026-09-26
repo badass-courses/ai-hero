@@ -94,100 +94,7 @@ export async function personalizeDrovrIntent(args: {
 	warn?: (event: string, fields: Record<string, unknown>) => unknown
 }): Promise<DrovrPersonalizeAnswer | undefined> {
 	const { repository, request } = args
-	const standing = await readContactSendStanding({
-		repository,
-		contactId: request.contactId,
-		identityConflict: args.identityConflict,
-	})
-	if (!standing) return undefined
-	const { contact, email, flags } = standing
-	const reasons = [...standing.reasons]
-	let variables: Record<string, string> = {}
-	if (request.journeyId === DROVR_SKILLS_COURSE_JOURNEY_ID) {
-		const step = getSkillsWorkflowEmailStep(request.emailKey)
-		if (!step) reasons.push('email-resource-missing')
-		else {
-			const personalized = await personalizeValuePathEmailWithAnchoredLinks({
-				contactId: contact.id,
-				kitSubscriberId: args.kitSubscriberId,
-				valuePathSlug: step.valuePathSlug,
-				emailResourceId: step.emailResourceId,
-				answerPages: args.answerPages,
-				baseUrl: args.baseUrl,
-				pathTokenSecret: args.pathTokenSecret,
-				now: request.dueAt,
-				// Every blocking reason for this journey is already in `reasons`
-				// (nothing is added after this branch), so a held answer records
-				// no first issue.
-				linkAnchors: reasons.length === 0 ? args.linkAnchors : undefined,
-				warn: args.warn,
-			})
-			if (personalized.passed) variables = personalized.fields
-			else reasons.push(...personalized.reviewReasons)
-		}
-	} else if (request.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID) {
-		const sequence = evergreenSequenceForMessage(request.emailKey)
-		if (!sequence) reasons.push('email-resource-missing')
-		else if (sequence.slot.startsWith('P')) {
-			const offer = await findEvergreenOffer({
-				repository,
-				contactId: contact.id,
-				origin: args.baseUrl,
-			})
-			if (!offer) reasons.push('offer-fields-missing')
-			else variables = offer.variables
-		}
-	} else if (request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID) {
-		if (request.emailKey !== DOUBLE_OPT_IN_CONFIRM_EMAIL_KEY)
-			reasons.push('email-resource-missing')
-	} else reasons.push('email-resource-missing')
-	// The confirmation email answers the reader's own signup request, so
-	// only what makes an address unsendable holds it back. Whether an earlier
-	// unsubscribe does is the one open switch (today's Kit double opt-in
-	// email reaches such a reader).
-	const resubscribe =
-		args.resubscribeAfterUnsubscribe ??
-		DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE
-	const blocking =
-		request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID
-			? reasons.filter(
-					(reason) =>
-						DOUBLE_OPT_IN_BLOCKING_REASONS.has(reason) ||
-						(!resubscribe && reason === 'unsubscribed'),
-				)
-			: reasons
-	return {
-		email,
-		firstName: standing.firstName,
-		variables: blocking.length ? {} : variables,
-		sendable: blocking.length === 0,
-		reasons: [...new Set(blocking)],
-		flags,
-	}
-}
-
-export type ContactSendStanding = {
-	contact: ContactRecord
-	/** Trimmed and lowercased; empty when the contact has none. */
-	email: string
-	firstName: string | null
-	/** Contact-level reasons, before any journey adds its own. */
-	reasons: string[]
-	flags: string[]
-}
-
-/**
- * What decides whether a contact can be sent to at all, whatever the
- * journey: live personalize and the synced profile (drovr-contact-profile-sync)
- * both read it here, so they cannot drift apart.
- */
-export async function readContactSendStanding(args: {
-	repository: DrovrPersonalizeRepository
-	contactId: string
-	identityConflict?: boolean
-}): Promise<ContactSendStanding | undefined> {
-	const { repository } = args
-	const contact = await repository.findContactById(args.contactId)
+	const contact = await repository.findContactById(request.contactId)
 	if (!contact) return undefined
 	const [state, unsubscribed, bounced, complained, priorIntents] =
 		await Promise.all([
@@ -233,45 +140,78 @@ export async function readContactSendStanding(args: {
 		reasons.push('team-sales-intent')
 	const email = contact.email?.trim().toLowerCase() ?? ''
 	if (!email) reasons.push('contact-email-missing')
+	let variables: Record<string, string> = {}
+	if (request.journeyId === DROVR_SKILLS_COURSE_JOURNEY_ID) {
+		const step = getSkillsWorkflowEmailStep(request.emailKey)
+		if (!step) reasons.push('email-resource-missing')
+		else {
+			const personalized = await personalizeValuePathEmailWithAnchoredLinks({
+				contactId: contact.id,
+				kitSubscriberId: args.kitSubscriberId,
+				valuePathSlug: step.valuePathSlug,
+				emailResourceId: step.emailResourceId,
+				answerPages: args.answerPages,
+				baseUrl: args.baseUrl,
+				pathTokenSecret: args.pathTokenSecret,
+				now: request.dueAt,
+				// Every blocking reason for this journey is already in `reasons`
+				// (nothing is added after this branch), so a held answer records
+				// no first issue.
+				linkAnchors: reasons.length === 0 ? args.linkAnchors : undefined,
+				warn: args.warn,
+			})
+			if (personalized.passed) variables = personalized.fields
+			else reasons.push(...personalized.reviewReasons)
+		}
+	} else if (request.journeyId === DROVR_EVERGREEN_OFFER_JOURNEY_ID) {
+		const sequence = evergreenSequenceForMessage(request.emailKey)
+		if (!sequence) reasons.push('email-resource-missing')
+		else if (sequence.slot.startsWith('P')) {
+			const coupon = await repository.findSideEffectIntentByIdempotencyKey(
+				`contact:${contact.id}:evergreen:coupon`,
+			)
+			const offer = CouponIssuePayload.safeParse(coupon?.metadata.offer)
+			const couponId = coupon?.metadata.couponId
+			if (
+				coupon?.status !== 'completed' ||
+				!offer.success ||
+				typeof couponId !== 'string' ||
+				!couponId
+			)
+				reasons.push('offer-fields-missing')
+			else
+				variables = offerFieldsFor({
+					couponId,
+					payload: offer.data,
+					origin: args.baseUrl,
+				})
+		}
+	} else if (request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID) {
+		if (request.emailKey !== DOUBLE_OPT_IN_CONFIRM_EMAIL_KEY)
+			reasons.push('email-resource-missing')
+	} else reasons.push('email-resource-missing')
+	// The confirmation email answers the reader's own signup request, so
+	// only what makes an address unsendable holds it back. Whether an earlier
+	// unsubscribe does is the one open switch (today's Kit double opt-in
+	// email reaches such a reader).
+	const resubscribe =
+		args.resubscribeAfterUnsubscribe ??
+		DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE
+	const blocking =
+		request.journeyId === DOUBLE_OPT_IN_JOURNEY_ID
+			? reasons.filter(
+					(reason) =>
+						DOUBLE_OPT_IN_BLOCKING_REASONS.has(reason) ||
+						(!resubscribe && reason === 'unsubscribed'),
+				)
+			: reasons
 	return {
-		contact,
 		email,
 		firstName: contact.name?.trim().split(/\s+/)[0] || null,
-		reasons,
+		variables: blocking.length ? {} : variables,
+		sendable: blocking.length === 0,
+		reasons: [...new Set(blocking)],
 		flags,
-	}
-}
-
-/** The contact's issued evergreen coupon and its offer fields, if complete. */
-export async function findEvergreenOffer(args: {
-	repository: Pick<
-		DrovrPersonalizeRepository,
-		'findSideEffectIntentByIdempotencyKey'
-	>
-	contactId: string
-	origin: string
-}): Promise<
-	{ couponId: string; variables: Record<string, string> } | undefined
-> {
-	const coupon = await args.repository.findSideEffectIntentByIdempotencyKey(
-		`contact:${args.contactId}:evergreen:coupon`,
-	)
-	const offer = CouponIssuePayload.safeParse(coupon?.metadata.offer)
-	const couponId = coupon?.metadata.couponId
-	if (
-		coupon?.status !== 'completed' ||
-		!offer.success ||
-		typeof couponId !== 'string' ||
-		!couponId
-	)
-		return undefined
-	return {
-		couponId,
-		variables: offerFieldsFor({
-			couponId,
-			payload: offer.data,
-			origin: args.origin,
-		}),
 	}
 }
 

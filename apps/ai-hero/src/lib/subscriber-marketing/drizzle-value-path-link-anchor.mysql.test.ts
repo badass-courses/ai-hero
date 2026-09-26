@@ -8,7 +8,6 @@ import mysql, { type Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateMySqlIntegrationServerUrl } from '../team-purchase-mysql-test-guard'
-import { createDrizzleContactProfileVersionStore } from './contact-profile-version-drizzle'
 import { createDrizzleValuePathLinkAnchorStore } from './drizzle-value-path-link-anchor'
 import {
 	resolveValuePathLinkAnchor,
@@ -29,12 +28,11 @@ const first = {
 	expiresAt: '2027-01-24T16:00:00.123Z',
 }
 
-integration('contact-sync stores on MySQL', () => {
+integration('value-path link anchors on MySQL', () => {
 	let server: Pool | undefined
 	let pool: Pool
 	let name: string | undefined
 	let store: ValuePathLinkAnchorStore
-	let versions: ReturnType<typeof createDrizzleContactProfileVersionStore>
 
 	beforeAll(async () => {
 		if (!serverUrl || process.env.CI !== 'true')
@@ -68,9 +66,9 @@ integration('contact-sync stores on MySQL', () => {
 		await pool.query(migration)
 		// Rerunnable: the second apply skips all three tables.
 		await pool.query(migration)
-		const database = drizzle(pool, { schema: databaseSchema, mode: 'default' })
-		store = createDrizzleValuePathLinkAnchorStore(database)
-		versions = createDrizzleContactProfileVersionStore(database)
+		store = createDrizzleValuePathLinkAnchorStore(
+			drizzle(pool, { schema: databaseSchema, mode: 'default' }),
+		)
 	})
 
 	afterAll(async () => {
@@ -81,7 +79,6 @@ integration('contact-sync stores on MySQL', () => {
 
 	beforeEach(async () => {
 		await pool.query('DELETE FROM AI_ValuePathLinkAnchor')
-		await pool.query('DELETE FROM AI_ContactProfileVersion')
 	})
 
 	it('creates the three contact-sync tables and nothing else', async () => {
@@ -138,19 +135,5 @@ integration('contact-sync stores on MySQL', () => {
 			'SELECT COUNT(*) AS n FROM AI_ValuePathLinkAnchor',
 		)
 		expect((rows as { n: number }[])[0]?.n).toBe(1)
-	})
-
-	it('counts a contact profile version up from 1 and never hands out one twice', async () => {
-		await expect(versions.bump('contact-v')).resolves.toBe(1)
-		await expect(versions.bump('contact-v')).resolves.toBe(2)
-		await expect(versions.bump('contact-w')).resolves.toBe(1)
-		const concurrent = await Promise.all(
-			Array.from({ length: 6 }, () => versions.bump('contact-v')),
-		)
-		expect([...concurrent].sort((a, b) => a - b)).toEqual([3, 4, 5, 6, 7, 8])
-		const [rows] = await pool.query(
-			"SELECT profileVersion AS v FROM AI_ContactProfileVersion WHERE contactId = 'contact-v'",
-		)
-		expect(Number((rows as { v: number }[])[0]?.v)).toBe(8)
 	})
 })
