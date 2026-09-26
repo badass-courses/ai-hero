@@ -28,6 +28,7 @@ import {
 	chunkCourseSyncWrites,
 	courseSyncRollbackPointer,
 	resolveCourseSyncRollbackFields,
+	verifyCourseSyncActivation,
 } from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
 import { assertCourseSyncTargetContract } from './target-contract'
@@ -940,6 +941,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationPromotions: Array<
 				typeof contentResourceResource.$inferInsert
 			> = []
+			const expectedDeletedAtByResource = new Map<string, Date>()
 			const pointerPromotions: Array<typeof contentResource.$inferInsert> = []
 
 			for (const item of plan.resources) {
@@ -1154,12 +1156,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					previousPosition: item.previousPosition,
 					action: item.action,
 				})
+				const deletedAt = item.detached ? new Date() : null
+				if (deletedAt) {
+					expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
+				}
 				relationPromotions.push({
 					resourceOfId: item.parentResourceId,
 					resourceId: item.targetResourceId,
 					position: item.position,
 					metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
-					deletedAt: item.detached ? new Date() : null,
+					deletedAt,
 				})
 			}
 
@@ -1257,47 +1263,18 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					resourceOfId: contentResourceResource.resourceOfId,
 					resourceId: contentResourceResource.resourceId,
 					position: contentResourceResource.position,
+					deletedAt: contentResourceResource.deletedAt,
 				})
 				.from(contentResourceResource)
-				.where(
-					and(
-						inArray(contentResourceResource.resourceId, resourceIds),
-						isNull(contentResourceResource.deletedAt),
-					),
-				)
-			const expectedPlanByResource = new Map(
-				plan.resources.map((item) => [item.targetResourceId, item]),
+				.where(inArray(contentResourceResource.resourceId, resourceIds))
+			const activation = verifyCourseSyncActivation(
+				plan,
+				receipts,
+				activatedResources,
+				activatedRelations,
+				expectedDeletedAtByResource,
 			)
-			const expectedReceiptByResource = new Map(
-				receipts.map((receipt) => [receipt.resourceId, receipt]),
-			)
-			const activeRelationsByResource = new Map<
-				string,
-				Array<(typeof activatedRelations)[number]>
-			>()
-			for (const relation of activatedRelations) {
-				const active = activeRelationsByResource.get(relation.resourceId) ?? []
-				active.push(relation)
-				activeRelationsByResource.set(relation.resourceId, active)
-			}
-			const activationMismatch =
-				activatedResources.length !== plan.resources.length ||
-				activatedRelations.length !== plan.resources.length ||
-				activatedResources.some((resource) => {
-					const item = expectedPlanByResource.get(resource.id)
-					const receipt = expectedReceiptByResource.get(resource.id)
-					const relations = activeRelationsByResource.get(resource.id) ?? []
-					return (
-						!item ||
-						!receipt ||
-						resource.currentVersionId !== receipt.contentResourceVersionId ||
-						stableJson(resource.fields ?? {}) !== stableJson(item.fields) ||
-						relations.length !== 1 ||
-						relations[0]?.resourceOfId !== item.parentResourceId ||
-						relations[0]?.position !== item.position
-					)
-				})
-			if (activationMismatch) {
+			if (!activation.ok) {
 				throw new CourseSyncError(
 					'APPLY_WRITE_VERIFICATION_FAILED',
 					'Applied pointers, fields, relations, or version receipts did not match the content-addressed plan.',

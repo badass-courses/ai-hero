@@ -14,6 +14,7 @@ import {
 	courseSyncRollbackPointer,
 	evaluateCourseSyncBoundedAutoApply,
 	resolveCourseSyncRollbackFields,
+	verifyCourseSyncActivation,
 } from './persistence-invariants'
 
 function launchPlan(): SyncPlan {
@@ -69,6 +70,23 @@ function launchPlan(): SyncPlan {
 	}
 }
 
+function activationFixture(detached = false) {
+	const item: ResourcePlanItem = {
+		...launchPlan().resources[0]!,
+		fields: { title: 'Activation fixture' },
+		detached,
+	}
+	const plan: SyncPlan = { ...launchPlan(), resources: [item], media: [] }
+	const receipt = { resourceId: item.targetResourceId, contentResourceVersionId: 'version-after-apply' }
+	const resource = { id: item.targetResourceId, currentVersionId: receipt.contentResourceVersionId, fields: item.fields }
+	const deletedAt = detached ? new Date('2026-09-26T00:00:00.123Z') : null
+	const relation = { resourceId: item.targetResourceId, resourceOfId: item.parentResourceId,
+		position: item.position, deletedAt }
+	const expectedDeletedAtByResource = new Map<string, Date>()
+	if (deletedAt) expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
+	return { plan, receipts: [receipt], resources: [resource], relations: [relation], expectedDeletedAtByResource }
+}
+
 function currentManifestPlan(): SyncPlan {
 	const plan = launchPlan()
 	for (const resource of plan.resources) resource.action = 'retain'
@@ -99,6 +117,69 @@ function section(position: number) {
 }
 
 describe('course sync persistence invariants', () => {
+	it('verifies activation with a detached item having one current dead relation and no live one', () => {
+		const fixture = activationFixture(true)
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toEqual({ ok: true })
+	})
+
+	it('rejects activation when a detached item has no dead relation', () => {
+		const fixture = activationFixture(true)
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, [], fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
+	})
+
+	it('rejects a stale tombstone from an earlier apply', () => {
+		const fixture = activationFixture(true)
+		fixture.relations[0]!.deletedAt = new Date('2026-09-25T00:00:00.123Z')
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
+	})
+
+	it('rejects multiple dead rows at the planned parent and position', () => {
+		const fixture = activationFixture(true)
+		const rows = [fixture.relations[0]!, { ...fixture.relations[0]! }]
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, rows, fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
+	})
+
+	it('rejects activation when a detached item still has a live relation', () => {
+		const fixture = activationFixture(true)
+		fixture.relations[0]!.deletedAt = null
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
+	})
+
+	it('rejects activation when an attached item has zero or two live relations', () => {
+		const fixture = activationFixture()
+		for (const relations of [[], [fixture.relations[0]!, { ...fixture.relations[0]! }]]) {
+			expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, relations, fixture.expectedDeletedAtByResource)).toMatchObject({
+				ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+			})
+		}
+	})
+
+	it('rejects activation when a pointer or fields drift from the plan', () => {
+		const fixture = activationFixture()
+		for (const resources of [
+			[{ ...fixture.resources[0]!, currentVersionId: 'other-version' }],
+			[{ ...fixture.resources[0]!, fields: { title: 'Other title' } }],
+		]) {
+			expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, resources, fixture.relations, fixture.expectedDeletedAtByResource)).toMatchObject({
+				ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+			})
+		}
+	})
+	it('reads detached relations for apply verification rather than filtering dead rows', () => {
+		const applySource = readFileSync(new URL('./drizzle-persistence.ts', import.meta.url), 'utf8')
+		const readback = applySource.split('const activatedRelations = await trx')[1]?.split('const appliedAt = new Date()')[0]
+		expect(readback).toContain('deletedAt: contentResourceResource.deletedAt')
+		expect(readback).not.toContain('isNull(contentResourceResource.deletedAt)')
+	})
+
 	it('creates the exact prefixed frozen-asset receipt table without masking drift', () => {
 		const migration = readFileSync(
 			new URL(

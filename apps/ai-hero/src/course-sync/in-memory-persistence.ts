@@ -1,6 +1,9 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
-import { resolveCourseSyncRollbackFields } from './persistence-invariants'
+import {
+	resolveCourseSyncRollbackFields,
+	verifyCourseSyncActivation,
+} from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
 import {
 	courseSyncRollbackStageIdempotencyKey,
@@ -62,12 +65,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly receipts: MemoryReceipt[] = []
 	readonly relations = new Map<
 		string,
-		{ parentId: string; childId: string; position: number; detached: boolean }
+		{ parentId: string; childId: string; position: number; detached: boolean; deletedAt?: Date }
 	>()
 	targetValid = true
 	assertTargetCalls = 0
 	failAfterVersionWrites: number | null = null
 	beforeApplyTargetRecheck: (() => void) | null = null
+	beforeApplyActivationReadback: ((relations: typeof this.relations) => void) | null = null
 	currentAwaitingApplyRunId: string | null = null
 	currentAppliedRunId: string | null = null
 
@@ -355,6 +359,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const relations = cloneMap(this.relations)
 		const receipts = structuredClone(this.receipts)
 		const pointers: Array<{ resourceId: string; versionId: string }> = []
+		const expectedDeletedAtByResource = new Map<string, Date>()
 		let writes = 0
 		for (const item of input.plan.resources) {
 			let resource = resources.get(item.targetResourceId)
@@ -372,6 +377,8 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					type: item.sourceKind === 'video' ? 'videoResource' : item.sourceKind,
 				}
 				resources.set(item.targetResourceId, resource)
+				const deletedAt = item.detached ? new Date() : null
+				if (deletedAt) expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
 				relations.set(item.targetResourceId, {
 					parentId: item.parentResourceId,
 					childId: item.targetResourceId,
@@ -381,6 +388,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					// detached: true, and hard-coding false would silently make it
 					// visible again.
 					detached: item.detached,
+					...(deletedAt ? { deletedAt } : {}),
 				})
 			}
 			if (!resource)
@@ -481,6 +489,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				relation.parentId = item.parentResourceId
 				relation.position = item.position
 				relation.detached = item.detached
+				if (item.detached) {
+					const deletedAt = new Date()
+					relation.deletedAt = deletedAt
+					expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
+				} else {
+					delete relation.deletedAt
+				}
 			}
 			if (item.action === 'retain') {
 				if (!resource.currentVersionId)
@@ -576,6 +591,43 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			}
 			resource.currentVersionId = pointer.versionId
 			resource.fields = structuredClone(version.fields)
+		}
+		this.beforeApplyActivationReadback?.(relations)
+		const resourceIds = new Set(
+			input.plan.resources.map((item) => item.targetResourceId),
+		)
+		const activation = verifyCourseSyncActivation(
+			input.plan,
+			receipts
+				.filter((receipt) => receipt.runId === input.runId)
+				.map((receipt) => ({
+					resourceId: receipt.resourceId,
+					contentResourceVersionId: receipt.versionId,
+				})),
+			[...resources.values()]
+				.filter((resource) => resourceIds.has(resource.resourceId))
+				.map((resource) => ({
+					id: resource.resourceId,
+					currentVersionId: resource.currentVersionId,
+					fields: resource.fields,
+				})),
+			[...relations.values()]
+				.filter((relation) => resourceIds.has(relation.childId))
+				.map((relation) => ({
+					resourceId: relation.childId,
+					resourceOfId: relation.parentId,
+					position: relation.position,
+					deletedAt: relation.detached ? (relation.deletedAt ?? null) : null,
+				})),
+			expectedDeletedAtByResource,
+		)
+		if (!activation.ok) {
+			throw new CourseSyncError(
+				'APPLY_WRITE_VERIFICATION_FAILED',
+				'Applied pointers, fields, relations, or version receipts did not match the content-addressed plan.',
+				500,
+				{ category: 'internal', retryable: false },
+			)
 		}
 		this.resources.clear()
 		resources.forEach((value, key) => this.resources.set(key, value))

@@ -1,3 +1,4 @@
+import { stableJson } from './control-plane'
 import { CourseSyncError } from './errors'
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -167,6 +168,67 @@ export function chunkCourseSyncWrites<T>(
 		chunks.push(values.slice(index, index + size))
 	}
 	return chunks
+}
+
+export function verifyCourseSyncActivation(
+	plan: SyncPlan,
+	receipts: ReadonlyArray<{ resourceId: string; contentResourceVersionId: string }>,
+	resources: ReadonlyArray<{
+		id: string
+		currentVersionId: string | null
+		fields: Record<string, unknown> | null
+	}>,
+	relations: ReadonlyArray<{
+		resourceId: string
+		resourceOfId: string
+		position: number
+		deletedAt: Date | null
+	}>,
+	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
+): { ok: true } | { ok: false; resourceId: string; reason: string } {
+	if (resources.length !== plan.resources.length) {
+		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
+	}
+	const receiptById = new Map(receipts.map((receipt) => [receipt.resourceId, receipt]))
+	const resourceById = new Map(resources.map((resource) => [resource.id, resource]))
+	for (const item of plan.resources) {
+		const resourceId = item.targetResourceId
+		const resource = resourceById.get(resourceId)
+		const receipt = receiptById.get(resourceId)
+		if (!resource || !receipt) {
+			return { ok: false, resourceId, reason: 'resource_or_receipt_missing' }
+		}
+		if (resource.currentVersionId !== receipt.contentResourceVersionId) {
+			return { ok: false, resourceId, reason: 'pointer_mismatch' }
+		}
+		if (stableJson(resource.fields ?? {}) !== stableJson(item.fields)) {
+			return { ok: false, resourceId, reason: 'fields_mismatch' }
+		}
+		const rows = relations.filter((relation) => relation.resourceId === resourceId)
+		const live = rows.filter((relation) => relation.deletedAt === null)
+		const matchingDead = rows.filter(
+			(relation) =>
+				relation.deletedAt !== null &&
+				relation.resourceOfId === item.parentResourceId &&
+				relation.position === item.position,
+		)
+		// The relation column is TIMESTAMP(3), matching JS Date millisecond precision.
+		// Compare the value promoted by this apply, not merely any old tombstone.
+		const expectedDeletedAt = expectedDeletedAtByResource.get(resourceId)
+		const relationMatches = item.detached
+			? live.length === 0 &&
+				matchingDead.length === 1 &&
+				expectedDeletedAt !== undefined &&
+				matchingDead[0]?.deletedAt instanceof Date &&
+				matchingDead[0].deletedAt.getTime() === expectedDeletedAt.getTime()
+			: live.length === 1 &&
+					live[0]?.resourceOfId === item.parentResourceId &&
+					live[0]?.position === item.position
+		if (!relationMatches) {
+			return { ok: false, resourceId, reason: 'relation_mismatch' }
+		}
+	}
+	return { ok: true }
 }
 
 export function assertManagedChildRelations(
