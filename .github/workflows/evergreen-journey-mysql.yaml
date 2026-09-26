@@ -31,6 +31,8 @@ on:
       - "apps/ai-hero/src/lib/synthetic-principal*"
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
+      - "apps/ai-hero/src/db/contact-sync-schema.ts"
   push:
     branches: [main]
     paths:
@@ -62,6 +64,8 @@ on:
       - "apps/ai-hero/src/lib/synthetic-principal*"
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
+      - "apps/ai-hero/src/db/contact-sync-schema.ts"
 
 jobs:
   mysql-contract:
@@ -100,7 +104,7 @@ jobs:
         env:
           AIH_EVERGREEN_JOURNEY_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
           AIH_EVERGREEN_COUPON_MYSQL_TEST_SERVER_URL: mysql://root:aih_test_password@127.0.0.1:3307/mysql
-        # Nineteen suites share one MySQL in parallel. The long composition
+        # Twenty suites share one MySQL in parallel. The long composition
         # tests (bridge-runtime, evergreen-pilot) run past vitest's 5s default
         # and timed out on main too (runs 35258220266, 35742641569).
         run: >-
@@ -124,3 +128,4 @@ jobs:
           src/server/evergreen-pilot.mysql.test.ts
           src/lib/test-principals/test-principal.mysql.test.ts
           src/lib/subscriber-marketing/signup-confirmation-reconciler.mysql.test.ts
+          src/lib/subscriber-marketing/drizzle-value-path-link-anchor.mysql.test.ts

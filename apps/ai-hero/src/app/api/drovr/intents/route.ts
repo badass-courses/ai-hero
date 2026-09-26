@@ -4,6 +4,7 @@ import { db } from '@/db'
 import { providerIdentity } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { createDrizzleValuePathLinkAnchorStore } from '@/lib/subscriber-marketing/drizzle-value-path-link-anchor'
 import {
 	acceptDrovrIntent,
 	DrovrIntentSchema,
@@ -160,6 +161,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 					executeValuePathEmailIntent({
 						repository,
 						emailListProvider,
+						linkAnchors: createDrizzleValuePathLinkAnchorStore(db),
 						intent: row,
 						config,
 						shadowObserver,

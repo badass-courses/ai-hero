@@ -10,7 +10,9 @@ import {
 	buildValuePathEmailPersonalization,
 	executePendingValuePathEmailIntents,
 	executeValuePathEmailIntent,
+	personalizeValuePathEmailWithAnchoredLinks,
 } from './value-path-email-executor'
+import { createMemoryValuePathLinkAnchorStore } from './value-path-link-anchor'
 
 describe('value path email executor', () => {
 	it('passes an explicit intent scope to the repository', async () => {
@@ -289,6 +291,45 @@ describe('value path email executor', () => {
 					'https://www.aihero.dev/api/certificates?resource=value-path%3Aai-hero-skills-workflow&user=contact-1',
 			},
 		})
+	})
+
+	it('anchors answer links only for a personalization that passed', async () => {
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		const insert = vi.spyOn(linkAnchors, 'insert')
+		const base = {
+			contactId: 'contact-1',
+			kitSubscriberId: 'kit-1',
+			valuePathSlug: 'ai-hero-skills-workflow',
+			emailResourceId: 'ai-hero-skills-workflow.email-2',
+			baseUrl: 'https://www.aihero.dev',
+			pathTokenSecret: 'test-secret',
+			now: '2026-09-26T16:00:00.000Z',
+			linkAnchors,
+		}
+		const answer = (position?: number) => ({
+			id: 'answer-2-a',
+			type: 'value-path-page' as const,
+			fields: {
+				kind: 'answer' as const,
+				slug: 'email-2-quiz-a',
+				sequenceId: 'ai-hero-skills-workflow',
+				emailId: 'email-2',
+				optionValue: 'option-a',
+				...(position ? { position } : {}),
+			},
+		})
+		const held = await personalizeValuePathEmailWithAnchoredLinks({
+			...base,
+			answerPages: [answer(1), { ...answer(), id: 'answer-2-b' }],
+		})
+		expect(held.passed).toBe(false)
+		expect(insert).not.toHaveBeenCalled()
+		const sent = await personalizeValuePathEmailWithAnchoredLinks({
+			...base,
+			answerPages: [answer(1)],
+		})
+		expect(sent.passed).toBe(true)
+		expect(insert).toHaveBeenCalledTimes(1)
 	})
 
 	it('holds personalization when any of several answer pages lacks a position', () => {

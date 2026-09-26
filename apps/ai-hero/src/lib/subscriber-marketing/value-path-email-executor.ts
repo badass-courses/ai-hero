@@ -1,6 +1,11 @@
 import type { EmailListConfig } from '@coursebuilder/core/providers'
 
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
+import {
+	resolveValuePathLinkAnchor,
+	valuePathLinkFingerprint,
+	type ValuePathLinkAnchorStore,
+} from './value-path-link-anchor'
 import { restoreDeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
 import { evaluateEmail7LaunchGate } from './email-7-launch-gate'
 import {
@@ -143,6 +148,7 @@ export async function executePendingValuePathEmailIntents(args: {
 	config?: ValuePathEmailExecutorConfig
 	now?: string
 	shadowObserver?: ValuePathEmailShadowObserver
+	linkAnchors?: ValuePathLinkAnchorStore
 }): Promise<ValuePathEmailExecutionResult[]> {
 	const intents =
 		await args.repository.findPendingValuePathEmailSideEffectIntents({
@@ -289,6 +295,8 @@ export async function executeValuePathEmailIntent(args: {
 	config?: ValuePathEmailExecutorConfig
 	now?: string
 	shadowObserver?: ValuePathEmailShadowObserver
+	/** Anchors answer links at their first issue; absent keeps now + 30 days. */
+	linkAnchors?: ValuePathLinkAnchorStore
 }): Promise<ValuePathEmailExecutionResult> {
 	const intent = args.intent
 	if (intent.provider !== 'kit' || intent.type !== 'send-value-path-email') {
@@ -393,7 +401,7 @@ export async function executeValuePathEmailIntent(args: {
 	// Once Kit has enrolled the contact, nothing after it is a Kit failure.
 	let kitAccepted = false
 	try {
-		const personalization = buildValuePathEmailPersonalization({
+		const personalization = await personalizeValuePathEmailWithAnchoredLinks({
 			contactId: intent.contactId,
 			kitSubscriberId: metadata.kitSubscriberId,
 			valuePathSlug: metadata.valuePathSlug,
@@ -402,6 +410,9 @@ export async function executeValuePathEmailIntent(args: {
 			baseUrl: args.config?.baseUrl,
 			pathTokenSecret: args.config?.pathTokenSecret,
 			now: args.now,
+			// A no-write run plans and must not record a first issue.
+			linkAnchors:
+				args.config?.allowWrite === false ? undefined : args.linkAnchors,
 		})
 		if (!personalization.passed) {
 			if (args.config?.allowWrite !== false) {
@@ -573,6 +584,90 @@ export async function executeValuePathEmailIntent(args: {
 	}
 }
 
+/** The answer pages one email of a value path links to. */
+export function valuePathAnswerPagesForEmail(args: {
+	valuePathSlug?: string
+	emailResourceId?: string
+	answerPages: readonly ValuePathAnswerPageResource[]
+}): ValuePathAnswerPageResource[] {
+	const emailId = emailIdFromResourceId(args.emailResourceId)
+	return args.answerPages.filter(
+		(page) =>
+			page.fields.sequenceId === args.valuePathSlug &&
+			page.fields.emailId === emailId,
+	)
+}
+
+/**
+ * The anchored expiry for this email's answer-URL token, or undefined to
+ * keep the send-time expiry: no store, no answer pages to link, or a store
+ * that is unavailable.
+ */
+export async function anchoredValuePathLinkExpiry(args: {
+	linkAnchors?: ValuePathLinkAnchorStore
+	contactId: string
+	kitSubscriberId?: string
+	valuePathSlug?: string
+	emailResourceId?: string
+	answerPages: readonly ValuePathAnswerPageResource[]
+	baseUrl?: string
+	pathTokenSecret?: string
+	now: string
+	warn?: (event: string, fields: Record<string, unknown>) => unknown
+}): Promise<string | undefined> {
+	if (!args.linkAnchors || !args.valuePathSlug || !args.emailResourceId) {
+		return undefined
+	}
+	const pages = valuePathAnswerPagesForEmail(args)
+	if (pages.length === 0 || !args.pathTokenSecret) return undefined
+	const anchor = await resolveValuePathLinkAnchor({
+		store: args.linkAnchors,
+		key: {
+			contactId: args.contactId,
+			valuePathSlug: args.valuePathSlug,
+			emailResourceId: args.emailResourceId,
+			fingerprint: valuePathLinkFingerprint({
+				kitSubscriberId: args.kitSubscriberId,
+				baseUrl: args.baseUrl,
+				secret: args.pathTokenSecret,
+				answerPages: pages,
+			}),
+		},
+		now: args.now,
+		warn: args.warn,
+	})
+	return anchor?.expiresAt
+}
+
+/**
+ * The personalization for one send, with its answer links anchored at
+ * their first issue. It validates before anchoring: a personalization that
+ * would be held records no first issue, so the send that finally goes out
+ * gets the full lifetime. Without a store, or with one that is unavailable,
+ * it is exactly buildValuePathEmailPersonalization.
+ */
+export async function personalizeValuePathEmailWithAnchoredLinks(
+	args: Omit<
+		Parameters<typeof buildValuePathEmailPersonalization>[0],
+		'linkExpiresAt'
+	> & {
+		linkAnchors?: ValuePathLinkAnchorStore
+		warn?: (event: string, fields: Record<string, unknown>) => unknown
+	},
+): Promise<ReturnType<typeof buildValuePathEmailPersonalization>> {
+	const { linkAnchors, warn, ...build } = args
+	const unanchored = buildValuePathEmailPersonalization(build)
+	if (!unanchored.passed || !linkAnchors) return unanchored
+	const linkExpiresAt = await anchoredValuePathLinkExpiry({
+		...build,
+		linkAnchors,
+		now: build.now ?? new Date().toISOString(),
+		warn,
+	})
+	if (!linkExpiresAt) return unanchored
+	return buildValuePathEmailPersonalization({ ...build, linkExpiresAt })
+}
+
 export function buildValuePathEmailPersonalization(args: {
 	contactId: string
 	kitSubscriberId?: string
@@ -582,17 +677,15 @@ export function buildValuePathEmailPersonalization(args: {
 	baseUrl?: string
 	pathTokenSecret?: string
 	now?: string
+	/** The anchored token expiry (anchoredValuePathLinkExpiry); else now + 30 days. */
+	linkExpiresAt?: string
 }) {
 	const reviewReasons: string[] = []
 	if (!args.valuePathSlug) reviewReasons.push('value-path-slug-missing')
 	if (!args.emailResourceId) reviewReasons.push('email-resource-missing')
 
 	const emailId = emailIdFromResourceId(args.emailResourceId)
-	const answerPages = args.answerPages.filter(
-		(page) =>
-			page.fields.sequenceId === args.valuePathSlug &&
-			page.fields.emailId === emailId,
-	)
+	const answerPages = valuePathAnswerPagesForEmail(args)
 	if (
 		answerPages.length === 0 &&
 		!isContentCompleteSkillsWorkflowEmailResourceId(args.emailResourceId)
@@ -649,7 +742,7 @@ export function buildValuePathEmailPersonalization(args: {
 			valuePathResourceId: args.valuePathSlug!,
 			emailResourceId: args.emailResourceId!,
 			sequenceId: args.valuePathSlug!,
-			expiresAt: expirationDateIso(now),
+			expiresAt: args.linkExpiresAt ?? expirationDateIso(now),
 		},
 		answerPages,
 	})
