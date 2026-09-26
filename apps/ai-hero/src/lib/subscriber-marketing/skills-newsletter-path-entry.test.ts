@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
 	EMAIL_COURSE_ENTRY_PAYLOAD_FORMAT,
@@ -214,6 +214,35 @@ describe('Skills newsletter path entry: drovr ownership', () => {
 			'skills-newsletter.subscribed',
 		])
 		expect(valuePathEmailIntents(repository)).toHaveLength(0)
+	})
+
+	it('asks for an eager profile sync of the skills path when drovr takes the contact', async () => {
+		const requestProfileSync = vi.fn()
+		const owned = await enterSkillsNewsletterSubscriber({
+			repository: new InMemorySubscriberMarketingRepository(),
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+			drovrOwnership: { percent: 100, emails: new Set() },
+			requestProfileSync,
+		})
+		expect(requestProfileSync).toHaveBeenCalledTimes(1)
+		expect(requestProfileSync).toHaveBeenCalledWith({
+			contactId: owned.contactId,
+			reason: 'journey-entered',
+			valuePathSlug: 'ai-hero-skills-workflow',
+		})
+		requestProfileSync.mockClear()
+		// A legacy entry is not drovr's to profile.
+		await enterSkillsNewsletterSubscriber({
+			repository: new InMemorySubscriberMarketingRepository(),
+			allowlist: rollingAllowlist(),
+			allowWrite: true,
+			input,
+			drovrOwnership: { percent: 0, emails: new Set() },
+			requestProfileSync,
+		})
+		expect(requestProfileSync).not.toHaveBeenCalled()
 	})
 
 	it('records a separate newsletter assignment at the Kit-probe boundary', async () => {

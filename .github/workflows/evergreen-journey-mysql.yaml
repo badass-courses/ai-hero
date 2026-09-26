@@ -32,6 +32,8 @@ on:
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
       - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-profile-version*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-stores*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
   push:
     branches: [main]
@@ -65,6 +67,8 @@ on:
       - "apps/ai-hero/src/server/magic-link-confirmation*"
       - "apps/ai-hero/src/server/auth-js-adapter*"
       - "apps/ai-hero/src/lib/subscriber-marketing/*value-path-link-anchor*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-profile-version*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-stores*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
 
 jobs:
@@ -128,4 +132,4 @@ jobs:
           src/server/evergreen-pilot.mysql.test.ts
           src/lib/test-principals/test-principal.mysql.test.ts
           src/lib/subscriber-marketing/signup-confirmation-reconciler.mysql.test.ts
-          src/lib/subscriber-marketing/drizzle-value-path-link-anchor.mysql.test.ts
+          src/lib/subscriber-marketing/contact-sync-stores.mysql.test.ts

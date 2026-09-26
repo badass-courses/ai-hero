@@ -1,6 +1,10 @@
 import { couponCommerceSchema } from '@/lib/subscriber-marketing/evergreen-offer-journey/coupon-authority-mysql'
 import { createDatabaseHandle, db } from '@/db'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	offerProfileSyncRequests,
+	parseDrovrProfileSyncConfig,
+} from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	addSubscriberToKitSequence,
@@ -180,6 +184,15 @@ export const drovrEvergreenSender = inngest.createFunction(
 				})
 			},
 		)
+		// A coupon is no ContactEvent, so the reconcile cannot repair a lost
+		// request: ask for each offer's profile sync as a durable step.
+		const offerSyncs = offerProfileSyncRequests(
+			coupons,
+			parseDrovrProfileSyncConfig(process.env),
+		)
+		if (offerSyncs.length > 0) {
+			await step.sendEvent('request-offer-profile-syncs', offerSyncs)
+		}
 		const counts = {
 			coupons: tally(coupons),
 			sends: tally(results),

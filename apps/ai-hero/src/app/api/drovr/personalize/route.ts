@@ -1,10 +1,9 @@
 import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, type NextRequest } from 'next/server'
-import { and, eq } from 'drizzle-orm'
 
 import { db } from '@/db'
-import { providerIdentity } from '@/db/schema'
 import { env } from '@/env.mjs'
+import { findContactKitIdentity } from '@/lib/subscriber-marketing/contact-kit-identity-drizzle'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import { createDrizzleValuePathLinkAnchorStore } from '@/lib/subscriber-marketing/drizzle-value-path-link-anchor'
 import {
@@ -65,18 +64,9 @@ export const POST = withSkill(async (request: NextRequest) => {
 			'Personalize under the authority tenant.',
 		)
 	const repository = new DrizzleCaptureMarketingRepository(db)
-	// More than one Kit identity for a contact is ambiguous; never choose a
-	// subscriber id arbitrarily when signing a path answer link.
-	const identities = await db
-		.select({ externalId: providerIdentity.externalId })
-		.from(providerIdentity)
-		.where(
-			and(
-				eq(providerIdentity.contactId, parsed.data.contactId),
-				eq(providerIdentity.provider, 'kit'),
-			),
-		)
-		.limit(2)
+	// Shared with the profile sync (kitIdentityOf): two Kit identities are a
+	// conflict, and no subscriber id is chosen to sign an answer link.
+	const kitIdentity = await findContactKitIdentity(db, parsed.data.contactId)
 	const result = await personalizeDrovrIntent({
 		repository,
 		request: parsed.data,
@@ -89,9 +79,8 @@ export const POST = withSkill(async (request: NextRequest) => {
 			env.NEXT_PUBLIC_URL ??
 			env.NEXT_PUBLIC_SITE_URL ??
 			'https://www.aihero.dev',
-		kitSubscriberId:
-			identities.length === 1 ? identities[0]?.externalId : undefined,
-		identityConflict: identities.length > 1,
+		kitSubscriberId: kitIdentity.kitSubscriberId,
+		identityConflict: kitIdentity.identityConflict,
 		// The first-issue anchor keeps a (contact, email) URL stable across
 		// sends and retries; absent table = the previous dueAt + 30 days.
 		linkAnchors: createDrizzleValuePathLinkAnchorStore(db),
