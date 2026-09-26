@@ -4,6 +4,7 @@ import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { createDrizzleValuePathLinkAnchorStore } from '@/lib/subscriber-marketing/drizzle-value-path-link-anchor'
 import { createEmailCourseShadowRuntime } from '@/lib/subscriber-marketing/email-course-shadow-runtime'
 import {
 	getValuePathAnswerPages,
@@ -53,6 +54,7 @@ export const valuePathEmailExecutor = inngest.createFunction(
 					repository: new DrizzleCaptureMarketingRepository(db),
 					emailListProvider,
 					config,
+					linkAnchors: createDrizzleValuePathLinkAnchorStore(db),
 					shadowObserver: createEmailCourseShadowRuntime({
 						database: db,
 					}).observeDelivery,

@@ -13,7 +13,11 @@ import {
 } from './drovr-shadow-emitter'
 import { getSkillsWorkflowEmailStep } from './skills-workflow-path'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
-import { buildValuePathEmailPersonalization } from './value-path-email-executor'
+import type { ValuePathLinkAnchorStore } from './value-path-link-anchor'
+import {
+	anchoredValuePathLinkExpiry,
+	buildValuePathEmailPersonalization,
+} from './value-path-email-executor'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -74,8 +78,11 @@ const DOUBLE_OPT_IN_BLOCKING_REASONS: ReadonlySet<string> = new Set([
 	'email-resource-missing',
 ])
 
-/** Reads only. Repeated calls for the same intent use dueAt as the token
- * expiry anchor, never the wall clock (PostShiba rejects body drift on retry). */
+/** Reads only, except the idempotent first-issue anchor of an answer link
+ * (value-path-link-anchor): with `linkAnchors`, a (contact, email)'s token
+ * expires 120 days after its first issue, so every send and every retry gets
+ * the same URL until an input changes. Without it the token expires at
+ * dueAt + 30 days. Never the wall clock (PostShiba rejects body drift). */
 export async function personalizeDrovrIntent(args: {
 	repository: DrovrPersonalizeRepository
 	request: DrovrPersonalizeRequest
@@ -86,6 +93,8 @@ export async function personalizeDrovrIntent(args: {
 	identityConflict?: boolean
 	/** See DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE. */
 	resubscribeAfterUnsubscribe?: boolean
+	linkAnchors?: ValuePathLinkAnchorStore
+	warn?: (event: string, fields: Record<string, unknown>) => unknown
 }): Promise<DrovrPersonalizeAnswer | undefined> {
 	const { repository, request } = args
 	const contact = await repository.findContactById(request.contactId)
@@ -139,6 +148,18 @@ export async function personalizeDrovrIntent(args: {
 		const step = getSkillsWorkflowEmailStep(request.emailKey)
 		if (!step) reasons.push('email-resource-missing')
 		else {
+			const linkExpiresAt = await anchoredValuePathLinkExpiry({
+				linkAnchors: args.linkAnchors,
+				contactId: contact.id,
+				kitSubscriberId: args.kitSubscriberId,
+				valuePathSlug: step.valuePathSlug,
+				emailResourceId: step.emailResourceId,
+				answerPages: args.answerPages,
+				baseUrl: args.baseUrl,
+				pathTokenSecret: args.pathTokenSecret,
+				now: request.dueAt,
+				warn: args.warn,
+			})
 			const personalized = buildValuePathEmailPersonalization({
 				contactId: contact.id,
 				kitSubscriberId: args.kitSubscriberId,
@@ -148,6 +169,7 @@ export async function personalizeDrovrIntent(args: {
 				baseUrl: args.baseUrl,
 				pathTokenSecret: args.pathTokenSecret,
 				now: request.dueAt,
+				linkExpiresAt,
 			})
 			if (personalized.passed) variables = personalized.fields
 			else reasons.push(...personalized.reviewReasons)

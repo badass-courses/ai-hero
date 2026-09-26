@@ -7,6 +7,10 @@ import {
 } from './drovr-personalize'
 import type { ContactRecord, ContactState, SideEffectIntent } from './types'
 import { DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE } from './drovr-list-subscribe'
+import {
+	createMemoryValuePathLinkAnchorStore,
+	type ValuePathLinkAnchorStore,
+} from './value-path-link-anchor'
 
 const dueAt = '2026-09-24T18:00:00.000Z'
 const request: DrovrPersonalizeRequest = {
@@ -85,6 +89,10 @@ function fixture() {
 		answer: (
 			overrides: Partial<DrovrPersonalizeRequest> = {},
 			secret = 'local-test-secret',
+			extra: {
+				linkAnchors?: ValuePathLinkAnchorStore
+				kitSubscriberId?: string
+			} = {},
 		) =>
 			personalizeDrovrIntent({
 				repository,
@@ -92,11 +100,80 @@ function fixture() {
 				answerPages: [page],
 				pathTokenSecret: secret,
 				baseUrl: 'https://www.aihero.dev',
-				kitSubscriberId: 'kit-1',
+				kitSubscriberId: extra.kitSubscriberId ?? 'kit-1',
 				identityConflict,
+				...(extra.linkAnchors ? { linkAnchors: extra.linkAnchors } : {}),
 			}),
 	}
 }
+
+const tokenExpiry = (href: string | undefined) =>
+	verifyValuePathToken({
+		token: new URL(href!).searchParams.get('pt'),
+		secret: 'local-test-secret',
+		expirationPolicy: 'allow-expired',
+	})
+
+describe('drovr personalization: answer links anchored at first issue', () => {
+	it('gives the same contact and email the same URL on a later send, valid 120 days from its first issue', async () => {
+		const f = fixture()
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		const first = await f.answer({}, 'local-test-secret', { linkAnchors })
+		const later = await f.answer(
+			{ dueAt: '2026-10-14T18:00:00.000Z', idempotencyKey: 'intent-2' },
+			'local-test-secret',
+			{ linkAnchors },
+		)
+		const href = first?.variables.aih_value_path_answer_1_url
+		expect(href).toContain('/ask/what-next?pt=')
+		expect(later?.variables.aih_value_path_answer_1_url).toBe(href)
+		expect(tokenExpiry(href)).toMatchObject({
+			valid: true,
+			payload: { expiresAt: '2027-01-22T18:00:00.000Z' },
+		})
+	})
+
+	it('re-anchors when the Kit subscriber id changes', async () => {
+		const f = fixture()
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		const before = await f.answer({}, 'local-test-secret', { linkAnchors })
+		const after = await f.answer(
+			{ dueAt: '2026-10-14T18:00:00.000Z' },
+			'local-test-secret',
+			{ linkAnchors, kitSubscriberId: 'kit-2' },
+		)
+		expect(after?.variables.aih_value_path_answer_1_url).not.toBe(
+			before?.variables.aih_value_path_answer_1_url,
+		)
+		expect(
+			tokenExpiry(after?.variables.aih_value_path_answer_1_url),
+		).toMatchObject({
+			payload: {
+				kitSubscriberId: 'kit-2',
+				expiresAt: '2027-02-11T18:00:00.000Z',
+			},
+		})
+	})
+
+	it('keeps answering with the dueAt + 30 day expiry when the anchor store is unavailable', async () => {
+		const f = fixture()
+		const broken: ValuePathLinkAnchorStore = {
+			find: async () => {
+				throw new Error("Table 'AI_ValuePathLinkAnchor' doesn't exist")
+			},
+			insert: async () => 'inserted',
+		}
+		const answer = await f.answer({}, 'local-test-secret', {
+			linkAnchors: broken,
+		})
+		expect(answer).toMatchObject({ sendable: true, reasons: [] })
+		expect(
+			tokenExpiry(answer?.variables.aih_value_path_answer_1_url),
+		).toMatchObject({
+			payload: { expiresAt: '2026-10-24T18:00:00.000Z' },
+		})
+	})
+})
 
 describe('drovr read-only personalization', () => {
 	it('returns identical signed answer URLs on a retry without using wall clock', async () => {

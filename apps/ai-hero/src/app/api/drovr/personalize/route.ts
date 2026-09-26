@@ -6,6 +6,7 @@ import { db } from '@/db'
 import { providerIdentity } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
+import { createDrizzleValuePathLinkAnchorStore } from '@/lib/subscriber-marketing/drizzle-value-path-link-anchor'
 import {
 	DROVR_AUTHORITY_TENANT_ID,
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
@@ -16,6 +17,7 @@ import {
 } from '@/lib/subscriber-marketing/drovr-personalize'
 import { getValuePathAnswerPages } from '@/lib/subscriber-marketing/value-path-answer-page'
 import { problem } from '@/lib/http/problem-details'
+import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 
 
@@ -90,6 +92,10 @@ export const POST = withSkill(async (request: NextRequest) => {
 		kitSubscriberId:
 			identities.length === 1 ? identities[0]?.externalId : undefined,
 		identityConflict: identities.length > 1,
+		// The first-issue anchor keeps a (contact, email) URL stable across
+		// sends and retries; absent table = the previous dueAt + 30 days.
+		linkAnchors: createDrizzleValuePathLinkAnchorStore(db),
+		warn: log.warn,
 	})
 	return result
 		? NextResponse.json(result)
