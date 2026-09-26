@@ -35,6 +35,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-profile-version*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-stores*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-reconcile*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
   push:
     branches: [main]
@@ -71,6 +72,7 @@ on:
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-profile-version*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-stores*"
       - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-reconcile*"
+      - "apps/ai-hero/src/lib/subscriber-marketing/contact-sync-backfill*"
       - "apps/ai-hero/src/db/contact-sync-schema.ts"
 
 jobs:
@@ -136,3 +138,4 @@ jobs:
           src/lib/subscriber-marketing/signup-confirmation-reconciler.mysql.test.ts
           src/lib/subscriber-marketing/contact-sync-stores.mysql.test.ts
           src/lib/subscriber-marketing/contact-sync-reconcile.mysql.test.ts
+          src/lib/subscriber-marketing/contact-sync-backfill.mysql.test.ts
