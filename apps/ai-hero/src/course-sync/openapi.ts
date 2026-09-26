@@ -98,7 +98,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 									additionalProperties: false,
 									required: ['manifest'],
 									properties: {
-										manifest: { $ref: '#/components/schemas/CourseJsonV3' },
+										manifest: { $ref: '#/components/schemas/CourseJson' },
 									},
 								},
 							},
@@ -166,7 +166,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 				),
 			),
 			schemas: {
-				CourseJsonV3: {
+				CourseJson: {
 					type: 'object',
 					additionalProperties: false,
 					required: [
@@ -180,7 +180,7 @@ export function buildCourseSyncOpenApiDocument(baseUrl: string) {
 					],
 					properties: {
 						$schema: { type: 'string' },
-						schemaVersion: { const: 3 },
+						schemaVersion: { enum: [3, 4] },
 						courseId: { type: 'string' },
 						courseVersionId: { type: 'string' },
 						archiveTTL: { const: '90d' },

@@ -5,6 +5,7 @@ import {
 	createDropboxSharedLinkAssetReader,
 	exchangeDropboxAuthorizationCode,
 	getDropboxSyncConfig,
+	readDropboxCourseManifest,
 	readDropboxCourseManifestSummary,
 	redeployAfterDropboxAuthorization,
 	storeDropboxRefreshToken,
@@ -296,6 +297,32 @@ describe('Dropbox course sync OAuth', () => {
 		})
 	})
 
+	it('reads a syllabus-only course.json schemaVersion 4 manifest', async () => {
+		const { config } = getDropboxSyncConfig({
+			DROPBOX_APP_KEY: 'app-key',
+			DROPBOX_APP_SECRET: 'app-secret',
+			DROPBOX_SYNC_SHARED_LINK: 'https://www.dropbox.com/scl/fo/example?rlkey=example',
+		})
+		const fetchImpl = vi.fn()
+			.mockResolvedValueOnce(jsonResponse({ access_token: 'short-lived-token' }))
+			.mockResolvedValueOnce(new Response(JSON.stringify({
+				$schema: './course.schema.json',
+				schemaVersion: 4,
+				courseId: 'course-syllabus',
+				courseVersionId: 'version-syllabus',
+				archiveTTL: '90d',
+				courseName: 'Course',
+				sections: [{ id: 'section-1', title: 'Section 1', lessons: [
+					{ type: 'placeholder', id: 'lesson-1', title: 'Lesson 1' },
+				] }],
+			}), { headers: { 'Dropbox-API-Result': JSON.stringify({ rev: 'rev-v4', size: 200 }) } }))
+		const result = await readDropboxCourseManifest({ config: config!, refreshToken: 'stored-refresh-token', fetchImpl })
+		expect(result.manifest.schemaVersion).toBe(4)
+		expect(result.summary).toMatchObject({ contractSchemaVersion: 4, structure: {
+			sectionCount: 1, lessonCount: 1, videoCount: 0, videosWithByteSha256: 0,
+		} })
+	})
+
 	it('rejects retired v2 manifests with the observed version', async () => {
 		const { config } = getDropboxSyncConfig({
 			DROPBOX_APP_KEY: 'app-key',
@@ -365,7 +392,7 @@ describe('Dropbox course sync OAuth', () => {
 				refreshToken: 'stored-refresh-token',
 				fetchImpl: malformedFetch,
 			}),
-		).rejects.toThrow('v3 validation failed (observedVersion=3)')
+		).rejects.toThrow('validation failed (observedVersion=3)')
 
 		const invalidVideoFetch = vi
 			.fn()
@@ -402,7 +429,7 @@ describe('Dropbox course sync OAuth', () => {
 				refreshToken: 'stored-refresh-token',
 				fetchImpl: invalidVideoFetch,
 			}),
-		).rejects.toThrow('v3 validation failed (observedVersion=3)')
+		).rejects.toThrow('validation failed (observedVersion=3)')
 
 		const oversizedFetch = vi
 			.fn()

@@ -272,6 +272,7 @@ function failureHarness(initialState: CourseSyncPollState) {
 
 describe('course sync detection poller', () => {
 	it('records a no-op when the detected revision is already applied', async () => {
+		expect(manifest.schemaVersion).toBe(3)
 		const test = harness({
 			head: {
 				courseVersionId: 'version-2',
@@ -286,6 +287,7 @@ describe('course sync detection poller', () => {
 			courseVersionId: 'version-2',
 		})
 		expect(test.stage).not.toHaveBeenCalled()
+		expect(test.state()).toMatchObject({ status: 'succeeded', failureClass: null })
 		expect(test.notifications).toHaveLength(0)
 		expect(test.logs).toEqual(
 			expect.arrayContaining([
@@ -482,6 +484,27 @@ describe('course sync detection poller', () => {
 		expect(test.notifications).toEqual([
 			expect.objectContaining({ kind: 'success' }),
 		])
+	})
+
+	it('polls and auto-applies a syllabus-only course.json schemaVersion 4 revision without freezing assets', async () => {
+		const syllabus: CourseJsonDocumentV3 = {
+			...manifest,
+			schemaVersion: 4,
+			courseVersionId: 'version-syllabus',
+			sections: [{ id: 'section-1', title: 'Section 1', lessons: [
+				{ type: 'placeholder', id: 'lesson-1', title: 'Lesson 1' },
+			] }],
+		}
+		const test = harness({
+			manifest: syllabus,
+			evaluateBoundedAutoApply: async () => ({ eligible: true, planSha256: 'plan-sha' }),
+		})
+		await expect(test.poll('poll-syllabus')).resolves.toMatchObject({ outcome: 'applied' })
+		expect(test.freezeAssetBatch).not.toHaveBeenCalled()
+		expect(test.freezeAsset).not.toHaveBeenCalled()
+		expect(test.stage).toHaveBeenCalledWith(expect.objectContaining({ manifest: syllabus }))
+		expect(test.preview).toHaveBeenCalledTimes(1)
+		expect(test.apply).toHaveBeenCalledTimes(1)
 	})
 
 	it('suppresses a yellow notification when its plan receipt already exists', async () => {

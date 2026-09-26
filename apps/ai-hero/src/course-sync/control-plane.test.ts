@@ -6,9 +6,12 @@ import {
 } from '@ai-hero/course-sync-schema'
 import { describe, expect, it } from 'vitest'
 
+import { resolveStoredCourseSyncBinding } from './binding-migration'
 import {
 	courseSyncRollbackStageIdempotencyKey,
 	createCourseSyncControlPlane,
+	sha256,
+	stableJson,
 } from './control-plane'
 import { InMemoryCourseSyncPersistence } from './in-memory-persistence'
 import { courseSyncRunMachine } from './run-machine'
@@ -957,6 +960,47 @@ describe('draft course sync control plane', () => {
 		})
 	})
 
+	it('keeps the existing course.json schemaVersion 3 preview and revision identity byte-identical', async () => {
+		const testHarness = harness()
+		const source = fixture()
+		const { staged, previewed } = await stagedAndPreviewed(testHarness, source)
+		const run = testHarness.persistence.runs.get(staged.runId)!
+		const revision = testHarness.persistence.revisions.get(run.sourceRevisionId)!
+		const { planSha256: claimedHash, ...planInput } = run.plan!
+		// Measured from origin/main 41233020 using this v3 fixture and harness.
+		// The same probe on this branch produced identical plan and revision hashes.
+		expect(previewed.planSha256).toBe(
+			'2baea07656c8b9143a54866d96b93717a4474934e3bf507d9ce988e816096e0c',
+		)
+		expect(claimedHash).toBe(previewed.planSha256)
+		expect(revision.manifestSha256).toBe(
+			'014539ff5f94df91420de0997dcf1520e284c75105f8e7fe14f23cb5512bbea6',
+		)
+		expect(run.stageFingerprint).toBe(
+			'68584941f006453e75d27167d81fac07fffbd5b6044fd6f223e3621199a1c5eb',
+		)
+		expect(claimedHash).toBe(sha256(stableJson(planInput)))
+		expect(revision.manifestSha256).toBe(sha256(stableJson(source)))
+		expect(revision.courseVersionId).toBe(source.courseVersionId)
+		expect(revision.providerRevision).toBe(source.courseVersionId)
+		expect(run.stageFingerprint).toBe(
+			sha256(stableJson({
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+				manifestSha256: revision.manifestSha256,
+			})),
+		)
+		expect(
+			resolveStoredCourseSyncBinding(
+				structuredClone(AI_HERO_COURSE_SYNC_BINDING),
+				AI_HERO_COURSE_SYNC_BINDING,
+			),
+		).toEqual({
+			binding: AI_HERO_COURSE_SYNC_BINDING,
+			migrated: false,
+			fromContractVersion: null,
+		})
+	})
+
 	it('freezes and stream-verifies a baseline v3 revision into one workshop', async () => {
 		const testHarness = harness()
 		const { staged, previewed } = await stagedAndPreviewed(testHarness)
@@ -984,6 +1028,72 @@ describe('draft course sync control plane', () => {
 		expect(JSON.stringify(previewed)).not.toContain(
 			AI_HERO_COURSE_SYNC_BINDING.anchorWorkshopId,
 		)
+	})
+
+	it('stages, previews, and applies a course.json schemaVersion 4 syllabus without media', async () => {
+		const testHarness = harness()
+		const source: CourseJsonDocumentV3 = {
+			...fixture('syllabus-only'),
+			schemaVersion: 4,
+			sections: [{
+				id: 'section-syllabus',
+				title: 'Syllabus',
+				lessons: [
+					{ type: 'placeholder', id: 'lesson-1', title: 'First lesson' },
+					{ type: 'placeholder', id: 'lesson-2', title: 'Second lesson' },
+				],
+			}],
+		}
+		const { staged, previewed } = await stagedAndPreviewed(testHarness, source)
+		expect(staged.state).toBe('staged')
+		expect(testHarness.reads()).toBe(0)
+		expect(testHarness.muxCreates()).toBe(0)
+		expect(previewed).toMatchObject({
+			state: 'previewed',
+			resourceCounts: { create: 3, update: 0, retain: 0 },
+			plan: { media: [] },
+		})
+		const plan = testHarness.persistence.runs.get(staged.runId)?.plan
+		expect(plan?.resources.map((item) => item.sourceKind)).toEqual(['section', 'lesson', 'lesson'])
+		expect(plan?.resources[1]?.fields).toMatchObject({
+			body: '', description: '', state: 'draft', visibility: 'unlisted',
+			courseSync: { lessonType: 'placeholder', videos: [] },
+		})
+		await expect(testHarness.controlPlane.apply({ runId: staged.runId, idempotencyKey: 'apply-syllabus' }))
+			.resolves.toMatchObject({ state: 'applied' })
+		expect(testHarness.persistence.resources.size).toBe(3)
+	})
+
+	it('updates a placeholder lesson under the same target id when filmed', async () => {
+		const testHarness = harness()
+		const original = fixture('syllabus-first')
+		const filmed = original.sections[0]!.lessons[0]!
+		const syllabus: CourseJsonDocumentV3 = {
+			...original,
+			schemaVersion: 4,
+			sections: [{ id: 'section-1', title: 'Section 1', lessons: [
+				{ type: 'placeholder', id: filmed.id, title: filmed.title },
+			] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, syllabus)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-placeholder')
+		const next: CourseJsonDocumentV3 = {
+			...syllabus,
+			courseVersionId: 'filmed-second',
+			sections: [{ id: 'section-1', title: 'Section 1', lessons: [filmed] }],
+		}
+		const second = await stagedAndPreviewed(testHarness, next, 'stage-filmed')
+		const initialLesson = testHarness.persistence.runs.get(first.staged.runId)?.plan?.resources.find((item) => item.sourceKind === 'lesson')
+		const plan = testHarness.persistence.runs.get(second.staged.runId)?.plan
+		const updatedLesson = plan?.resources.find((item) => item.sourceKind === 'lesson')
+		expect(updatedLesson).toMatchObject({ action: 'update', targetResourceId: initialLesson?.targetResourceId })
+		expect(plan?.resources.find((item) => item.sourceKind === 'video')).toMatchObject({ action: 'create' })
+		await expect(testHarness.controlPlane.apply({ runId: second.staged.runId, idempotencyKey: 'apply-filmed' }))
+			.resolves.toMatchObject({ state: 'applied' })
+		expect(testHarness.persistence.resources.get(updatedLesson!.targetResourceId)?.fields).toMatchObject({
+			body: filmed.explainer.body,
+			courseSync: { lessonType: 'explainer' },
+		})
 	})
 
 	it('reuses each successful freeze receipt after a later asset fails', async () => {

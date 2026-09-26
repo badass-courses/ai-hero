@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 
-export const COURSE_JSON_SCHEMA_VERSION = 3 as const
+export const COURSE_JSON_SCHEMA_VERSIONS = [3, 4] as const
 export const COURSE_JSON_ARCHIVE_TTL = "90d" as const
 
 const NonEmptyString = Schema.NonEmptyString
@@ -51,9 +51,16 @@ export const CourseJsonProblemLessonV3 = Schema.Struct({
 	solution: Schema.optionalKey(CourseJsonVideoV3),
 })
 
+export const CourseJsonPlaceholderLesson = Schema.Struct({
+	type: Schema.Literal("placeholder"),
+	id: NonEmptyString,
+	title: NonEmptyString,
+})
+
 export const CourseJsonLessonV3 = Schema.Union([
 	CourseJsonExplainerLessonV3,
 	CourseJsonProblemLessonV3,
+	CourseJsonPlaceholderLesson,
 ])
 
 export const CourseJsonSectionV3 = Schema.Struct({
@@ -63,13 +70,13 @@ export const CourseJsonSectionV3 = Schema.Struct({
 })
 
 /**
- * Consumer copy of the public Course Video Manager v3 package-entry contract.
+ * Consumer copy of the public Course Video Manager course.json contract.
  * Keep this deliberately exact: producer target hints and Dropbox revisions do
  * not belong in the manifest. The consumer freezes provider revisions itself.
  */
-export const CourseJsonDocumentV3 = Schema.Struct({
+export const CourseJsonDocument = Schema.Struct({
 	$schema: NonEmptyString,
-	schemaVersion: Schema.Literal(COURSE_JSON_SCHEMA_VERSION),
+	schemaVersion: Schema.Literals(COURSE_JSON_SCHEMA_VERSIONS),
 	courseId: NonEmptyString,
 	courseVersionId: NonEmptyString,
 	archiveTTL: Schema.Literal(COURSE_JSON_ARCHIVE_TTL),
@@ -81,21 +88,27 @@ export type CourseJsonChapterV3 = typeof CourseJsonChapterV3.Type
 export type CourseJsonVideoV3 = typeof CourseJsonVideoV3.Type
 export type CourseJsonLessonV3 = typeof CourseJsonLessonV3.Type
 export type CourseJsonSectionV3 = typeof CourseJsonSectionV3.Type
-export type CourseJsonDocumentV3 = typeof CourseJsonDocumentV3.Type
+export type CourseJsonDocument = typeof CourseJsonDocument.Type
 
-export const decodeCourseJsonDocumentV3 = Schema.decodeUnknownSync(
-	CourseJsonDocumentV3,
+export const decodeCourseJsonDocument = Schema.decodeUnknownSync(
+	CourseJsonDocument,
 	{ onExcessProperty: "error" },
 )
 
+// Compatibility aliases for existing consumers; these accept course.json schemaVersion 3 and 4.
+export const CourseJsonDocumentV3 = CourseJsonDocument
+export type CourseJsonDocumentV3 = CourseJsonDocument
+export const decodeCourseJsonDocumentV3 = decodeCourseJsonDocument
+
 export function courseJsonVideos(
-	document: CourseJsonDocumentV3,
+	document: CourseJsonDocument,
 ): ReadonlyArray<CourseJsonVideoV3> {
 	return document.sections.flatMap((section) =>
-		section.lessons.flatMap((lesson) =>
-			lesson.type === "explainer"
+		section.lessons.flatMap((lesson) => {
+			if (lesson.type === "placeholder") return []
+			return lesson.type === "explainer"
 				? [lesson.explainer]
-				: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])],
-		),
+				: [lesson.problem, ...(lesson.solution ? [lesson.solution] : [])]
+		}),
 	)
 }
