@@ -3,7 +3,6 @@ import { log } from '@/server/logger'
 import {
 	boundedProblemBody,
 	deliverDrovrShadowEvent,
-	isEventNotLiveProblem,
 	type DrovrDeliveryConfig,
 	type DrovrDeliveryOutcome,
 	type DrovrShadowEvent,
@@ -181,18 +180,11 @@ export async function deliverBatchOrThrow(args: {
 			)
 		}
 		if (response.status >= 400 && response.status < 500) {
-			const problem = await boundedProblemBody(response)
-			if (response.status === 409 && isEventNotLiveProblem(problem)) {
-				throw new DrovrBatchDeliveryFailedError(
-					keys,
-					'drovr does not take this event type yet (409 event-not-live)',
-				)
-			}
 			await warnSafely(warn, 'drovr.shadow.batch_rejected', {
 				status: response.status,
 				count: args.events.length,
 				tenantId: args.events[0]?.tenantId,
-				problem,
+				problem: await boundedProblemBody(response),
 			})
 			return { accepted: 0, rejected: args.events.length }
 		}
@@ -216,14 +208,9 @@ export async function deliverBatchOrThrow(args: {
 			)
 		}
 		const failedKeys: string[] = []
-		let notLive = 0
 		for (const item of body.results) {
 			const event = args.events[item.index]
-			if (
-				item.status === 'failed' ||
-				(item.status === 'rejected' && isEventNotLiveProblem(item.detail))
-			) {
-				if (item.status === 'rejected') notLive += 1
+			if (item.status === 'failed') {
 				if (event) failedKeys.push(event.idempotencyKey)
 			} else if (item.status === 'rejected') {
 				await warnSafely(warn, 'drovr.shadow.rejected', {
@@ -234,10 +221,10 @@ export async function deliverBatchOrThrow(args: {
 				})
 			}
 		}
-		if (body.failed > 0 || notLive > 0) {
+		if (body.failed > 0) {
 			throw new DrovrBatchDeliveryFailedError(
 				failedKeys,
-				`${body.failed + notLive} of ${args.events.length} not taken by drovr (${notLive} event-not-live)`,
+				`${body.failed} of ${args.events.length} failed at drovr`,
 			)
 		}
 		return { accepted: body.accepted, rejected: body.rejected }

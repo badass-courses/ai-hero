@@ -192,12 +192,7 @@ export type CouponIssuerRepository = Pick<
 	>
 
 export type CouponIssueResult =
-	| {
-			status: 'completed'
-			intentId: string
-			contactId: string
-			couponId: string
-	  }
+	| { status: 'completed'; intentId: string; couponId: string }
 	| { status: 'retry'; intentId: string; attempts: number; error: string }
 	| { status: 'failed'; intentId: string; error: string }
 
@@ -352,12 +347,7 @@ async function issueOne(input: {
 		},
 	})
 	dispatch(completed)
-	return {
-		status: 'completed',
-		intentId: row.id,
-		contactId: row.contactId,
-		couponId: coupon.couponId,
-	}
+	return { status: 'completed', intentId: row.id, couponId: coupon.couponId }
 }
 
 async function settleAuthorityFailure(
