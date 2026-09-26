@@ -11,6 +11,7 @@ import {
 	contactProfileContentHash,
 	type ContactProfileSnapshot,
 } from './drovr-contact-profile-sync'
+import { DOI_REQUESTED_EVENT_TYPE } from './drovr-doi-signup'
 import {
 	JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
 	journeyOwnerAssignmentJourneyId,
@@ -39,7 +40,11 @@ export const BACKFILL_STOP_PHASES = [
 ] as const
 
 export type BackfillPhase =
-	'owners' | (typeof BACKFILL_STOP_PHASES)[number] | 'done'
+	| 'owners'
+	/** Double opt-in signups: drovr runs their double-opt-in journey. */
+	| 'double-opt-in'
+	| (typeof BACKFILL_STOP_PHASES)[number]
+	| 'done'
 
 export type BackfillCursor = {
 	phase: BackfillPhase
@@ -89,6 +94,7 @@ export type BackfillPage = {
 
 const PHASES: Exclude<BackfillPhase, 'done'>[] = [
 	'owners',
+	'double-opt-in',
 	...BACKFILL_STOP_PHASES,
 ]
 
@@ -113,7 +119,12 @@ export async function runContactSyncBackfillPage(
 	const phase = cursor.phase
 	const pageSize = options.pageSize ?? 50
 	const rows = await ports.scanEvents({
-		eventType: phase === 'owners' ? JOURNEY_OWNER_ASSIGNED_EVENT_TYPE : phase,
+		eventType:
+			phase === 'owners'
+				? JOURNEY_OWNER_ASSIGNED_EVENT_TYPE
+				: phase === 'double-opt-in'
+					? DOI_REQUESTED_EVENT_TYPE
+					: phase,
 		afterOccurredAt: cursor.afterOccurredAt,
 		afterId: cursor.afterId,
 		limit: pageSize,
@@ -121,15 +132,16 @@ export async function runContactSyncBackfillPage(
 	const events: DrovrShadowEvent[] = []
 	let contacts = 0
 	let nextStampMs = cursor.nextStampMs
-	if (phase === 'owners') {
+	if (phase === 'owners' || phase === 'double-opt-in') {
 		const owned = [
 			...new Set(
 				rows
-					// drovr's scope: only a sending journey's owners (value path,
-					// evergreen offer, newsletter) are in the v2 directory, and
-					// drovr refuses a profile for anyone else.
+					// drovr's scope (contract §1): only a sending journey's owners
+					// (value path, evergreen offer, newsletter) and double opt-in
+					// signups are in the v2 directory; drovr refuses anyone else.
 					.filter(
 						(row) =>
+							phase === 'double-opt-in' ||
 							journeyOwnerAssignmentJourneyId({
 								providerEventId: row.providerEventId ?? '',
 							}) !== undefined,
@@ -147,7 +159,8 @@ export async function runContactSyncBackfillPage(
 		for (const [index, contactId] of owned.entries()) {
 			const now = new Date(stampBase + index).toISOString()
 			const snapshot = await ports.snapshot(contactId, now)
-			if (!snapshot) continue
+			// drovr ignores a profile without an email as malformed (§2).
+			if (!snapshot || !snapshot.profile.email.trim()) continue
 			const { profileVersion, since } = await ports.versionFor(
 				contactId,
 				contactProfileContentHash(snapshot),

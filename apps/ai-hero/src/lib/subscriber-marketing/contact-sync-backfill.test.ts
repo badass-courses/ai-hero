@@ -28,6 +28,10 @@ function world(
 		synthetic?: string[]
 		/** Owner assignments for a journey outside drovr's sending set. */
 		otherJourney?: string[]
+		/** Double opt-in signups (skills-newsletter.doi-requested). */
+		doubleOptIn?: string[]
+		/** Contacts whose snapshot has no email. */
+		noEmail?: string[]
 	} = {},
 ) {
 	const owners: BackfillRow[] = Array.from(
@@ -71,10 +75,21 @@ function world(
 		// A frozen clock: every call answers the same instant.
 		now: () => frozen,
 		scanEvents: async ({ eventType, afterOccurredAt, afterId, limit }) => {
+			const doubleOptIn = (fixture.doubleOptIn ?? []).map(
+				(contactId, index) => ({
+					id: `d${index}`,
+					contactId,
+					eventType: 'skills-newsletter.doi-requested',
+					providerEventId: `doi-request:form:${contactId}`,
+					occurredAt: '2026-09-26T00:00:00.000Z',
+				}),
+			)
 			const rows =
 				eventType === 'journey.owner.assigned'
 					? owners
-					: (fixture.stops?.[eventType as never] ?? [])
+					: eventType === 'skills-newsletter.doi-requested'
+						? doubleOptIn
+						: (fixture.stops?.[eventType as never] ?? [])
 			return rows
 				.filter(
 					(row) =>
@@ -89,7 +104,9 @@ function world(
 			return {
 				occurredAt: now,
 				profile: {
-					email: `${contactId}@example.test`,
+					email: (fixture.noEmail ?? []).includes(contactId)
+						? ''
+						: `${contactId}@example.test`,
 					firstName: null,
 					holds: [],
 				},
@@ -163,6 +180,7 @@ describe('contact sync backfill', () => {
 		const pages = await drain(ports, 10)
 		expect(pages.map((page) => page.phase)).toEqual([
 			'owners',
+			'double-opt-in',
 			'contact.unsubscribed',
 			'contact.bounced',
 			'contact.complained',
@@ -222,10 +240,28 @@ describe('contact sync backfill', () => {
 	it('profiles only contacts on a drovr sending journey (drovr refuses anyone else)', async () => {
 		const { ports, stamps } = world({ owners: 2, otherJourney: ['c-other'] })
 		await drain(ports, 10)
-		expect(stamps.map((stamp) => stamp.contactId)).toEqual([
-			'c00000',
+		expect(stamps.map((stamp) => stamp.contactId)).toEqual(['c00000', 'c00001'])
+	})
+
+	it('profiles double opt-in signups too (drovr runs their double-opt-in journey)', async () => {
+		const { ports, stamps } = world({ owners: 1, doubleOptIn: ['c-doi'] })
+		const pages = await drain(ports, 10)
+		expect(stamps.map((stamp) => stamp.contactId)).toEqual(['c00000', 'c-doi'])
+		expect(
+			pages
+				.find((page) => page.phase === 'double-opt-in')
+				?.events.map((event) => event.type),
+		).toContain('contact.profile.updated')
+	})
+
+	it('pushes no profile for a contact with no email (drovr ignores it as malformed)', async () => {
+		const { ports } = world({ owners: 2, noEmail: ['c00001'] })
+		const pages = await drain(ports, 10)
+		const owners = pages.find((page) => page.phase === 'owners')!
+		expect(owners.events.map((event) => event.contactId)).not.toContain(
 			'c00001',
-		])
+		)
+		expect(owners.contacts).toBe(1)
 	})
 
 	it('is idempotent: a re-run pushes the same versions and keys', async () => {

@@ -13,6 +13,11 @@ import {
 	deliveryStepId,
 	DROVR_BATCH_MAX,
 } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import type {
+	DeferredDrovrEvent,
+	DrovrBatchOutcome,
+} from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	drovrApiKeyForTenant,
 	DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
@@ -31,6 +36,8 @@ import { log } from '@/server/logger'
 import type { GetStepTools } from 'inngest'
 
 export type DrovrEventsDeliverReceipt = {
+	/** Backfill events drovr refused, handed to the straggler retry. */
+	deferred?: number
 	/** Backfill events dropped because contact sync was off. */
 	backfillDropped?: number
 	status: 'delivered' | 'skipped'
@@ -160,6 +167,11 @@ const deliverBatch = async (
 const deliverBulk = async (
 	batch: DrovrEventsDeliver['data']['events'],
 	step: DeliverStep,
+	options: {
+		/** Contact sync: refusals come back in `refused`, never thrown. */
+		deferNotLive?: boolean
+		refused?: DeferredDrovrEvent[]
+	} = {},
 ): Promise<DrovrEventsDeliverReceipt> => {
 	const ingestUrl = env.DROVR_SHADOW_INGEST_URL
 	if (!ingestUrl) return NOT_CONFIGURED
@@ -199,11 +211,16 @@ const deliverBulk = async (
 				chunkIndex * DROVR_BATCH_MAX,
 				(chunkIndex + 1) * DROVR_BATCH_MAX,
 			)
-			const outcome = await step.run(batchStepId(tenantId, chunkIndex), () =>
-				deliverBatchOrThrow({ events: chunk, config }),
-			)
+			const outcome = (await step.run(batchStepId(tenantId, chunkIndex), () =>
+				deliverBatchOrThrow(
+					options.deferNotLive
+						? { events: chunk, config, deferNotLive: true }
+						: { events: chunk, config },
+				),
+			)) as DrovrBatchOutcome
 			accepted += outcome.accepted
 			rejected += outcome.rejected
+			options.refused?.push(...(outcome.deferred ?? []))
 		}
 	}
 	return { status: 'delivered', accepted, rejected, discarded }
@@ -311,12 +328,33 @@ export const drovrEventsDeliverBulk = inngest.createFunction(
 				backfillDropped: backfill.length,
 			}
 		}
+		// Contract §4: refusals go to the straggler retry, unchanged and
+		// under their keys; cold-start at once (the retry births the actor
+		// and pushes again), event-not-live after drovr's daily pass.
+		const backfillStep = withStepPrefix(step, 'contact-sync-backfill:')
+		const refused: DeferredDrovrEvent[] = []
 		receipts.push(
-			await deliverBulk(
-				backfill,
-				withStepPrefix(step, 'contact-sync-backfill:'),
-			),
+			await deliverBulk(backfill, backfillStep, {
+				deferNotLive: true,
+				refused,
+			}),
 		)
-		return combineReceipts(receipts)
+		if (refused.length === 0) return combineReceipts(receipts)
+		const at = (await backfillStep.run('defer-at', async () =>
+			Date.now(),
+		)) as number
+		const notLive = refused.filter(
+			(item) => item.reason !== 'cold-start-unhandled',
+		)
+		const coldStart = refused.filter(
+			(item) => item.reason === 'cold-start-unhandled',
+		)
+		await step.sendEvent('contact-sync-backfill:defer-refused', [
+			...(notLive.length > 0 ? [contactSyncRetryRequest(notLive, 1, at)] : []),
+			...(coldStart.length > 0
+				? [{ ...contactSyncRetryRequest(coldStart, 1, at), ts: at }]
+				: []),
+		])
+		return { ...combineReceipts(receipts), deferred: refused.length }
 	},
 )

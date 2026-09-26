@@ -412,3 +412,96 @@ describe('a rollback between retries of a mixed bulk run', () => {
 		expect(afterOff.some((e) => backfill.includes(e as never))).toBe(false)
 	})
 })
+
+describe('backfill refusals follow the push contract (§4)', () => {
+	const now = Date.parse('2026-10-01T12:00:00.000Z')
+	const profileEvent = (contactId: string) =>
+		event(
+			'org-aihero',
+			`profile:${contactId}:1`,
+			'contact-directory',
+			'contact.profile.updated',
+		)
+	const [notLive, cold, fine] = [
+		{ ...profileEvent('c2'), contactId: 'c2' },
+		{ ...profileEvent('c3'), contactId: 'c3' },
+		{ ...profileEvent('c1'), contactId: 'c1' },
+	]
+
+	it('hands refused backfill events to the straggler retry instead of throwing: event-not-live a day out, cold-start at once', async () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(now)
+		vi.stubEnv('AIH_DROVR_PROFILE_SYNC', 'true')
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		mocks.deliverBatchOrThrow.mockResolvedValue({
+			accepted: 1,
+			rejected: 0,
+			deferred: [
+				{ event: notLive, reason: 'event-not-live' },
+				{ event: cold, reason: 'cold-start-unhandled' },
+			],
+		})
+		const sent: unknown[] = []
+		const receipt = await registeredBulk.handler({
+			events: [
+				{
+					data: {
+						events: [fine, notLive, cold],
+						source: 'contact-sync-backfill',
+					},
+				},
+			],
+			step: {
+				...createStep(),
+				sendEvent: vi.fn(async (_id: string, payload: unknown) => {
+					sent.push(payload)
+				}),
+			},
+		})
+		vi.useRealTimers()
+		vi.unstubAllEnvs()
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith(
+			expect.objectContaining({ deferNotLive: true }),
+		)
+		expect(sent).toEqual([
+			[
+				{
+					name: 'drovr/contact-sync.retry-requested',
+					ts: now + 25 * 60 * 60 * 1000,
+					data: {
+						items: [{ event: notLive, reason: 'event-not-live' }],
+						attempt: 1,
+					},
+				},
+				{
+					name: 'drovr/contact-sync.retry-requested',
+					ts: now,
+					data: {
+						items: [{ event: cold, reason: 'cold-start-unhandled' }],
+						attempt: 1,
+					},
+				},
+			],
+		])
+		expect(receipt).toMatchObject({ accepted: 1, deferred: 2 })
+	})
+
+	it('keeps other bulk sources on the default delivery (no deferral)', async () => {
+		mocks.fanOutOwnedEvents.mockImplementation((events: unknown[]) => events)
+		const ingest = [
+			event('org-aihero', 'directory:seed:contact-z', 'contact-directory'),
+		]
+		await registeredBulk.handler({
+			events: [{ data: { events: ingest, source: 'kit-directory-ingest' } }],
+			step: createStep(),
+		})
+		expect(mocks.deliverBatchOrThrow).toHaveBeenCalledWith({
+			events: ingest,
+			config: {
+				ingestUrl: 'https://drovr.test/events',
+				apiKey: 'authority-key',
+			},
+		})
+	})
+})
+
