@@ -139,6 +139,57 @@ describe('course sync persistence invariants', () => {
 		})
 	})
 
+	it('routes lesson regressions to operator review without marking the plan failed', () => {
+		const plan = { ...launchPlan(), lessonRegressions: ['lesson-1'] }
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
+			eligible: false,
+			planSha256: plan.planSha256,
+			reason: 'Lesson regressions require operator review: lesson-1',
+			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		})
+	})
+
+	it('requires review of a legacy placeholder update without a regression field', () => {
+		const plan = launchPlan()
+		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
+		lesson.fields = { courseSync: { lessonType: 'placeholder' } }
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
+			eligible: false,
+			failureCode: 'LEGACY_PLACEHOLDER_PREVIEW_REVIEW_REQUIRED',
+		})
+	})
+
+	it('allows a tracked placeholder update with an empty regression list', () => {
+		const plan = { ...launchPlan(), lessonRegressions: [] }
+		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
+		lesson.fields = { courseSync: { lessonType: 'placeholder' } }
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
+			eligible: true,
+			planSha256: plan.planSha256,
+		})
+	})
+
+	it('requires review when an untracked plan detaches a video or solution', () => {
+		for (const kind of ['video', 'solution'] as const) {
+			const plan = launchPlan()
+			const child = plan.resources.find((item) => item.sourceKind === kind)!
+			child.detached = true
+			expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
+				eligible: false,
+				failureCode: 'LOST_VIDEO_REVIEW_REQUIRED',
+			})
+		}
+	})
+
+	it('keeps a clean plan without regression tracking eligible', () => {
+		const plan = launchPlan()
+		expect(plan).not.toHaveProperty('lessonRegressions')
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
+			eligible: true,
+			planSha256: plan.planSha256,
+		})
+	})
+
 	it.each([
 		[
 			'reparent',

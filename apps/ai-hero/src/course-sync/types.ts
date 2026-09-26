@@ -205,6 +205,7 @@ export type SyncPlan = {
 	courseVersionId: string
 	resources: ReadonlyArray<ResourcePlanItem>
 	media: ReadonlyArray<MediaPlanItem>
+	lessonRegressions?: ReadonlyArray<string>
 	planSha256: string
 }
 

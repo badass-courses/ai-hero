@@ -935,15 +935,18 @@ export function createCourseSyncControlPlane(
 				}
 			}
 			const desiredIds = new Set(desired.map((item) => item.targetResourceId))
-			const removedQuestions = [...previousByTarget.values()].filter(
+			const removedChildren = [...previousByTarget.values()].filter(
 				(item) =>
-					item.sourceKind === 'question' &&
+					(item.sourceKind === 'lesson' ||
+						item.sourceKind === 'question' ||
+						item.sourceKind === 'video' ||
+						item.sourceKind === 'solution') &&
 					!item.detached &&
 					!desiredIds.has(item.targetResourceId),
 			)
 			const planned = [
 				...desired,
-				...removedQuestions.map((item) => ({ ...item, detached: true })),
+				...removedChildren.map((item) => ({ ...item, detached: true })),
 			]
 			const snapshots = await persistence.getTargetResources(
 				planned.map((item) => item.targetResourceId),
@@ -1014,12 +1017,71 @@ export function createCourseSyncControlPlane(
 					duration: asset.duration,
 				}
 			})
+			const previousVideos = [...previousByTarget.values()].filter(
+				(item) => item.sourceKind === 'video' && !item.detached,
+			)
+			const desiredVideoIds = new Set(
+				desired
+					.filter((item) => item.sourceKind === 'video')
+					.map((item) => item.targetResourceId),
+			)
+			const desiredLessonRegressions = desired.flatMap((item) => {
+				if (item.sourceKind !== 'lesson') return []
+				const previous = previousByTarget.get(item.targetResourceId)
+				if (!previous || previous.detached) return []
+				const previousType = (
+					previous.fields.courseSync as { lessonType?: unknown } | undefined
+				)?.lessonType
+				const currentType = (
+					item.fields.courseSync as { lessonType?: unknown } | undefined
+				)?.lessonType
+				const demoted =
+					(previousType === 'explainer' || previousType === 'problem') &&
+					currentType === 'placeholder'
+				const lostVideo = previousVideos.some(
+					(video) =>
+						(
+							video.fields.courseSync as { sourceLessonId?: unknown } | undefined
+						)?.sourceLessonId === item.sourceId &&
+						!desiredVideoIds.has(video.targetResourceId),
+				)
+				return demoted || lostVideo ? [item.sourceId] : []
+			})
+			const removedLessonRegressions = [...previousByTarget.values()].flatMap(
+				(previous) => {
+					if (
+						previous.sourceKind !== 'lesson' ||
+						previous.detached ||
+						desiredIds.has(previous.targetResourceId)
+					) return []
+					const previousType = (
+						previous.fields.courseSync as { lessonType?: unknown } | undefined
+					)?.lessonType
+					return previousType === 'explainer' || previousType === 'problem'
+						? [previous.sourceId]
+						: []
+				},
+			)
+			const lessonRegressions = [
+				...desiredLessonRegressions,
+				...removedLessonRegressions,
+			]
+			const hasPlaceholderLessonUpdate = resources.some(
+				(item) =>
+					item.sourceKind === 'lesson' &&
+					item.action !== 'create' &&
+					(item.fields.courseSync as { lessonType?: unknown } | undefined)
+						?.lessonType === 'placeholder',
+			)
 			const planInput = {
 				bindingId: binding.bindingId,
 				sourceRevisionId: revision.sourceRevisionId,
 				courseVersionId: revision.courseVersionId,
 				resources,
 				media,
+				...(lessonRegressions.length > 0 || hasPlaceholderLessonUpdate
+					? { lessonRegressions }
+					: {}),
 			}
 			const plan: SyncPlan = {
 				...planInput,
