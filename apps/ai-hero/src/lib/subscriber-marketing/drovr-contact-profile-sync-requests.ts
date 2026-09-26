@@ -55,6 +55,43 @@ export function requestContactProfileSyncSafely(
 	}
 }
 
+/**
+ * The awaited request, for a writer that changes a profile input without a
+ * ContactEvent the reconcile scans: its sync must not be silently lost, so a
+ * failed send is logged at error (the reconcile's watermark would otherwise
+ * over-claim). Still never throws into the host flow.
+ */
+export async function requestContactProfileSync(
+	request: ProfileSyncRequest,
+	options: {
+		env?: Readonly<Record<string, string | number | undefined>>
+		send?: (event: DrovrContactProfileSyncRequested) => unknown
+		error?: (event: string, fields: Record<string, unknown>) => unknown
+	} = {},
+): Promise<'requested' | 'off' | 'failed'> {
+	if (!parseDrovrProfileSyncConfig(options.env ?? process.env).enabled)
+		return 'off'
+	try {
+		await (options.send ?? sendWithInngest)({
+			name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
+			data: request,
+		})
+		return 'requested'
+	} catch (failure) {
+		try {
+			const error = options.error ?? (await import('@/server/logger')).log.error
+			await error('drovr.profile_sync.request_failed', {
+				contactId: request.contactId,
+				reason: request.reason,
+				error: failure instanceof Error ? failure.message : String(failure),
+			})
+		} catch {
+			// Logging cannot make the request land.
+		}
+		return 'failed'
+	}
+}
+
 async function sendWithInngest(event: DrovrContactProfileSyncRequested) {
 	const { inngest } = await import('@/inngest/inngest.server')
 	return inngest.send(event)

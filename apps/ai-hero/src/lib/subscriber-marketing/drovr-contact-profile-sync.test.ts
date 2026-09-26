@@ -5,10 +5,12 @@ import { DROVR_CONTACT_PROFILE_SYNC_EVENT } from '@/inngest/events/drovr'
 import {
 	buildContactProfileEvents,
 	buildValuePathJourneyLinks,
+	contactProfileContentHash,
 	kitIdentityOf,
 	offerProfileSyncRequests,
 	readContactProfileSnapshot,
 	requestContactProfileSyncSafely,
+	type ContactProfileSnapshot,
 	CONTACT_PROFILE_HOLDS,
 	contactProfileHolds,
 	parseDrovrProfileSyncConfig,
@@ -515,5 +517,76 @@ describe('contact profile sync: requests', () => {
 		expect(kitIdentityOf(['kit-1', 'kit-2'])).toEqual({
 			identityConflict: true,
 		})
+	})
+})
+
+describe('contact profile content hash', () => {
+	const snapshot: ContactProfileSnapshot = {
+		occurredAt: '2026-09-26T17:00:00.000Z',
+		profile: { email: 'a@example.test', firstName: 'Ada', holds: [] },
+		links: [
+			{
+				journeyId: 'value-path-skills-course',
+				emailKey: 'ai-hero-skills-workflow.email-1',
+				issuedAt: '2026-09-26T16:00:00.000Z',
+				expiresAt: '2027-01-24T16:00:00.000Z',
+				variables: { a: '1' },
+				sendTimeFields: [],
+			},
+			{
+				journeyId: 'value-path-skills-course',
+				emailKey: 'ai-hero-skills-workflow.email-0',
+				issuedAt: '2026-09-26T16:00:00.000Z',
+				expiresAt: '2027-01-24T16:00:00.000Z',
+				variables: { b: '2' },
+				sendTimeFields: ['aih_course_started_at'],
+			},
+		],
+		offers: [],
+	}
+
+	it('ignores when the snapshot was read and the order links come in', () => {
+		const laterReversed: ContactProfileSnapshot = {
+			...snapshot,
+			occurredAt: '2026-09-26T19:00:00.000Z',
+			links: [...snapshot.links].reverse(),
+		}
+		expect(contactProfileContentHash(laterReversed)).toBe(
+			contactProfileContentHash(snapshot),
+		)
+		expect(contactProfileContentHash(snapshot)).toMatch(/^[0-9a-f]{64}$/)
+	})
+
+	it('changes with any hold, address, name, link window or offer', () => {
+		const base = contactProfileContentHash(snapshot)
+		for (const changed of [
+			{
+				...snapshot,
+				profile: { ...snapshot.profile, holds: ['support-intent'] },
+			},
+			{
+				...snapshot,
+				profile: { ...snapshot.profile, email: 'b@example.test' },
+			},
+			{ ...snapshot, profile: { ...snapshot.profile, firstName: null } },
+			{
+				...snapshot,
+				links: [
+					{ ...snapshot.links[0]!, issuedAt: '2026-12-25T16:00:00.000Z' },
+					snapshot.links[1]!,
+				],
+			},
+			{
+				...snapshot,
+				offers: [
+					{
+						journeyId: 'crash-course-evergreen-offer',
+						couponId: 'k1',
+						variables: { o: '1' },
+					},
+				],
+			},
+		])
+			expect(contactProfileContentHash(changed)).not.toBe(base)
 	})
 })

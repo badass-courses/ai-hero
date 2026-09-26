@@ -10,7 +10,14 @@ import type {
 	DrovrIntent,
 } from './drovr-executor'
 import type { DrovrShadowEvent, DrovrTenantId } from './drovr-shadow-emitter'
-import type { ContactIdentityEvidence, SideEffectIntent } from './types'
+import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
+
+import { normalizeContactEvent } from './normalize-contact-event'
+import type {
+	ContactEventRecord,
+	ContactIdentityEvidence,
+	SideEffectIntent,
+} from './types'
 
 /**
  * drovr owns double opt-in; ai-hero mirrors a confirmation into Kit.
@@ -421,6 +428,96 @@ export async function acceptListSubscribe(args: {
 			.catch(() => undefined)
 	}
 	return completed ? completionFor(completed) : afterLostClaim()
+}
+
+type KitSubscriberLinkRepository = Omit<
+	Parameters<typeof linkKitSubscriberIdentity>[0],
+	'findProviderIdentity'
+> & {
+	findProviderIdentity(
+		provider: 'kit',
+		externalId: string,
+	): Promise<{ id: string; contactId: string } | undefined>
+	createContactEvent(
+		input: Omit<ContactEventRecord, 'id' | 'createdAt'> & {
+			createdAt?: string
+		},
+	): Promise<unknown>
+}
+
+/** Recorded when a contact gets its first Kit subscriber (createKitSubscriberLinker). */
+export const KIT_IDENTITY_LINKED_EVENT_TYPE = 'kit-identity.linked'
+
+/**
+ * The executor's `linkKitSubscriber`: links the contact's first Kit
+ * subscriber and, when it does, records that as a ContactEvent and asks
+ * for a profile sync. The answer links sign the subscriber id, so drovr's
+ * stored links must follow: the event makes it durable (the contact-sync
+ * reconcile scans every ContactEvent), and the request makes it quick. The
+ * event type maps to no drovr fact and no reader counts it. A failed link
+ * is logged and never fails the send.
+ */
+export function createKitSubscriberLinker(deps: {
+	repository: KitSubscriberLinkRepository
+	requestSync: (request: {
+		contactId: string
+		reason: 'kit-identity-linked'
+	}) => Promise<unknown>
+	info: (event: string, fields: Record<string, unknown>) => unknown
+	warn: (event: string, fields: Record<string, unknown>) => unknown
+	now?: () => string
+}): (contactId: string, kitSubscriberId: string) => Promise<void> {
+	return async (contactId, kitSubscriberId) => {
+		const linked = await linkKitSubscriberIdentity(
+			deps.repository,
+			contactId,
+			kitSubscriberId,
+			deps.now?.() ?? new Date().toISOString(),
+		).catch(async (error) => {
+			await deps.warn('drovr.executor.kit_identity_link_failed', {
+				contactId,
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return undefined
+		})
+		if (!linked) return
+		await deps.info('drovr.executor.kit_identity_link', {
+			contactId,
+			outcome: linked,
+		})
+		if (linked !== 'linked') return
+		const now = deps.now?.() ?? new Date().toISOString()
+		try {
+			const identity = await deps.repository.findProviderIdentity(
+				'kit',
+				kitSubscriberId,
+			)
+			if (identity) {
+				await deps.repository.createContactEvent({
+					...normalizeContactEvent({
+						provider: 'kit',
+						providerEventId: `kit-identity-linked:${contactId}:${kitSubscriberId}`,
+						eventType: KIT_IDENTITY_LINKED_EVENT_TYPE,
+						occurredAt: now,
+						externalId: kitSubscriberId,
+						message: 'First Kit subscriber linked to the contact',
+						privacyLevel: 'internal',
+					}),
+					contactId,
+					providerIdentityId: identity.id,
+					createdAt: now,
+				})
+			}
+		} catch (error) {
+			if (!isMysqlDuplicateEntryError(error)) {
+				await deps.warn('drovr.executor.kit_identity_link_event_failed', {
+					contactId,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+		}
+		await deps.requestSync({ contactId, reason: 'kit-identity-linked' })
+	}
 }
 
 /**
