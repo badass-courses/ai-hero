@@ -3,6 +3,8 @@ import {
 	type DrovrContactProfileSyncRequested,
 } from '@/inngest/events/drovr'
 
+import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
+
 import type { CouponIssueResult } from './drovr-evergreen-coupon'
 import {
 	findEvergreenOffer,
@@ -316,6 +318,43 @@ export function requestContactProfileSyncSafely(
 	}
 }
 
+/**
+ * The awaited request, for a writer that changes a profile input without a
+ * ContactEvent the reconcile scans: its sync must not be silently lost, so a
+ * failed send is logged at error (the reconcile's watermark would otherwise
+ * over-claim). Still never throws into the host flow.
+ */
+export async function requestContactProfileSync(
+	request: ProfileSyncRequest,
+	options: {
+		env?: Readonly<Record<string, string | number | undefined>>
+		send?: (event: DrovrContactProfileSyncRequested) => unknown
+		error?: (event: string, fields: Record<string, unknown>) => unknown
+	} = {},
+): Promise<'requested' | 'off' | 'failed'> {
+	if (!parseDrovrProfileSyncConfig(options.env ?? process.env).enabled)
+		return 'off'
+	try {
+		await (options.send ?? sendWithInngest)({
+			name: DROVR_CONTACT_PROFILE_SYNC_EVENT,
+			data: request,
+		})
+		return 'requested'
+	} catch (failure) {
+		try {
+			const error = options.error ?? (await import('@/server/logger')).log.error
+			await error('drovr.profile_sync.request_failed', {
+				contactId: request.contactId,
+				reason: request.reason,
+				error: failure instanceof Error ? failure.message : String(failure),
+			})
+		} catch {
+			// Logging cannot make the request land.
+		}
+		return 'failed'
+	}
+}
+
 async function sendWithInngest(event: DrovrContactProfileSyncRequested) {
 	const { inngest } = await import('@/inngest/inngest.server')
 	return inngest.send(event)
@@ -341,4 +380,80 @@ export function offerProfileSyncRequests(
 				]
 			: [],
 	)
+}
+
+export type ContactProfileSyncReceipt =
+	| { status: 'skipped'; reason: string }
+	| {
+			status: 'sent'
+			profileVersion: number
+			links: number
+			offers: number
+			accepted: number
+			rejected: number
+	  }
+
+type SyncStep = {
+	run: <T>(id: string, callback: () => Promise<T>) => Promise<unknown>
+}
+
+type DeliveryResult = { accepted: number; rejected: number } | 'not-configured'
+
+/**
+ * One contact's profile to drovr's contact directory: read it, bump its
+ * version once, and post the events, answering `sent` only once drovr took
+ * them (the contact-sync reconcile's watermark relies on that). Events
+ * addressed to the authority tenant go straight to it: no owner fan-out.
+ * Read before the bump, so a missing contact spends no version; per-contact
+ * concurrency of one keeps a higher version carrying newer content. A 5xx,
+ * a network failure or drovr's 409 event-not-live throws, and the step
+ * retries.
+ */
+export async function runContactProfileSync(args: {
+	event: Pick<DrovrContactProfileSyncRequested, 'data'>
+	step: SyncStep
+	env: Readonly<Record<string, string | undefined>>
+	readSnapshot: (request: {
+		contactId: string
+		valuePathSlug?: string
+	}) => Promise<ContactProfileSnapshot | undefined>
+	bump: (contactId: string) => Promise<number>
+	deliver: (events: DrovrShadowEvent[]) => Promise<DeliveryResult>
+	/** The value path drovr owns for the contact, when a request names none. */
+	ownedPath: (contactId: string) => Promise<string | undefined>
+}): Promise<ContactProfileSyncReceipt> {
+	const config = parseDrovrProfileSyncConfig(args.env)
+	if (!config.enabled) return { status: 'skipped', reason: config.reason }
+	const { contactId, valuePathSlug } = args.event.data
+	if (isSyntheticPrincipalId(contactId)) {
+		return { status: 'skipped', reason: 'synthetic-principal' }
+	}
+	const snapshot = (await args.step.run('read-profile', async () =>
+		args.readSnapshot({
+			contactId,
+			valuePathSlug: valuePathSlug ?? (await args.ownedPath(contactId)),
+		}),
+	)) as ContactProfileSnapshot | undefined
+	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
+	const profileVersion = (await args.step.run('bump-profile-version', () =>
+		args.bump(contactId),
+	)) as number
+	const events = buildContactProfileEvents({
+		contactId,
+		profileVersion,
+		...snapshot,
+	})
+	const delivered = (await args.step.run('deliver-profile', () =>
+		args.deliver(events),
+	)) as DeliveryResult
+	if (delivered === 'not-configured') {
+		return { status: 'skipped', reason: 'drovr-not-configured' }
+	}
+	return {
+		status: 'sent',
+		profileVersion,
+		links: snapshot.links.length,
+		offers: snapshot.offers.length,
+		...delivered,
+	}
 }

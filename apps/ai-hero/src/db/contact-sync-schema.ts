@@ -52,3 +52,20 @@ export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
 		.defaultNow()
 		.onUpdateNow(),
 })
+
+/**
+ * The contact-sync reconcile's cursor, one row per stream: `watermark` is
+ * the last instant every contact change up to which drovr acknowledged
+ * (the heartbeat's syncedThrough), `heartbeatAt` when it was sent. The
+ * row only moves forward.
+ */
+export const contactSyncCursor = mysqlTable('ContactSyncCursor', {
+	name: varchar('name', { length: 255 }).notNull().primaryKey(),
+	cursor: varchar('cursor', { length: 500 }).notNull(),
+	watermark: timestamp('watermark', { mode: 'string', fsp: 3 }),
+	heartbeatAt: timestamp('heartbeatAt', { mode: 'string', fsp: 3 }),
+	updatedAt: timestamp('updatedAt', { mode: 'string', fsp: 3 })
+		.notNull()
+		.defaultNow()
+		.onUpdateNow(),
+})

@@ -423,6 +423,51 @@ export async function acceptListSubscribe(args: {
 	return completed ? completionFor(completed) : afterLostClaim()
 }
 
+type KitSubscriberLinkRepository = Parameters<
+	typeof linkKitSubscriberIdentity
+>[0]
+
+/**
+ * The executor's `linkKitSubscriber`: links the contact's first Kit
+ * subscriber and, when it does, asks for a profile sync. The answer links
+ * sign the subscriber id, and no ContactEvent the contact-sync reconcile
+ * scans records the link, so without the request drovr's stored links would
+ * silently go stale. A failed link is logged and never fails the send.
+ */
+export function createKitSubscriberLinker(deps: {
+	repository: KitSubscriberLinkRepository
+	requestSync: (request: {
+		contactId: string
+		reason: 'kit-identity-linked'
+	}) => Promise<unknown>
+	info: (event: string, fields: Record<string, unknown>) => unknown
+	warn: (event: string, fields: Record<string, unknown>) => unknown
+	now?: () => string
+}): (contactId: string, kitSubscriberId: string) => Promise<void> {
+	return async (contactId, kitSubscriberId) => {
+		const linked = await linkKitSubscriberIdentity(
+			deps.repository,
+			contactId,
+			kitSubscriberId,
+			deps.now?.() ?? new Date().toISOString(),
+		).catch(async (error) => {
+			await deps.warn('drovr.executor.kit_identity_link_failed', {
+				contactId,
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return undefined
+		})
+		if (!linked) return
+		await deps.info('drovr.executor.kit_identity_link', {
+			contactId,
+			outcome: linked,
+		})
+		if (linked === 'linked') {
+			await deps.requestSync({ contactId, reason: 'kit-identity-linked' })
+		}
+	}
+}
+
 /**
  * Link a Kit subscriber to the contact unless the Kit id already belongs
  * to a contact (this one or another) or the contact already has a Kit
