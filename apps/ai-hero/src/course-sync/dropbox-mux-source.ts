@@ -5,12 +5,33 @@ import {
 } from '@/lib/dropbox-course-sync'
 
 import { CourseSyncError } from './errors'
-import type {
-	CourseSyncMuxSourceResolver,
-	DropboxMuxSource,
+import {
+	getServerCourseSyncBinding,
+	type CourseSyncBinding,
+	type CourseSyncMuxSourceResolver,
+	type DropboxMuxSource,
 } from './types'
 
 type Fetch = typeof fetch
+
+/** One OAuth token cache and Dropbox source per immutable binding. */
+export function createBindingScopedMuxSourceResolver(
+	createResolver: (binding: CourseSyncBinding) => CourseSyncMuxSourceResolver,
+	resolveBinding: (bindingId: string) => CourseSyncBinding =
+		getServerCourseSyncBinding,
+): CourseSyncMuxSourceResolver {
+	const resolvers = new Map<string, CourseSyncMuxSourceResolver>()
+	return {
+		resolve(input) {
+			let resolver = resolvers.get(input.bindingId)
+			if (!resolver) {
+				resolver = createResolver(resolveBinding(input.bindingId))
+				resolvers.set(input.bindingId, resolver)
+			}
+			return resolver.resolve(input)
+		},
+	}
+}
 
 type DropboxMetadata = {
 	id?: string
@@ -55,40 +76,61 @@ function directDownloadUrl(sharedLink: string) {
 	return url.toString()
 }
 
-function signature(secret: string, relativePath: string, expiresAt: number) {
+function signature(
+	secret: string,
+	bindingId: string,
+	relativePath: string,
+	expiresAt: number,
+) {
 	return createHmac('sha256', secret)
-		.update(`${expiresAt}:${relativePath}`)
+		.update(`${bindingId}:${expiresAt}:${relativePath}`)
 		.digest('base64url')
 }
 
 export function createDropboxMuxProxyUrl(input: {
 	baseUrl: string
+	bindingId: string
 	relativePath: string
 	expiresAt: number
 	signingSecret: string
 }) {
 	const url = new URL('/api/course-sync/dropbox-asset', input.baseUrl)
+	url.searchParams.set('binding', input.bindingId)
 	url.searchParams.set('path', input.relativePath)
 	url.searchParams.set('expires', String(input.expiresAt))
 	url.searchParams.set(
 		'signature',
-		signature(input.signingSecret, input.relativePath, input.expiresAt),
+		signature(
+			input.signingSecret,
+			input.bindingId,
+			input.relativePath,
+			input.expiresAt,
+		),
 	)
 	return url.toString()
 }
 
 export function verifyDropboxMuxProxyToken(input: {
+	bindingId: string
 	relativePath: string
 	expiresAt: number
 	suppliedSignature: string
 	signingSecret: string
 	now?: number
 }) {
-	if (!Number.isSafeInteger(input.expiresAt) || input.expiresAt <= (input.now ?? Date.now())) {
+	if (
+		!Number.isSafeInteger(input.expiresAt) ||
+		input.expiresAt <= (input.now ?? Date.now())
+	) {
 		return false
 	}
 	const expected = Buffer.from(
-		signature(input.signingSecret, input.relativePath, input.expiresAt),
+		signature(
+			input.signingSecret,
+			input.bindingId,
+			input.relativePath,
+			input.expiresAt,
+		),
 	)
 	const supplied = Buffer.from(input.suppliedSignature)
 	return expected.length === supplied.length && timingSafeEqual(expected, supplied)
@@ -133,7 +175,7 @@ export function createDropboxMuxSourceResolver(input: {
 	}
 
 	return {
-		async resolve({ relativePath }) {
+		async resolve({ bindingId, relativePath }) {
 			const accessToken = await token()
 			const path = `/${relativePath}`
 			let metadata: DropboxMetadata
@@ -189,6 +231,7 @@ export function createDropboxMuxSourceResolver(input: {
 				...receipt,
 				url: createDropboxMuxProxyUrl({
 					baseUrl: input.baseUrl,
+					bindingId,
 					relativePath,
 					expiresAt: now + 6 * 60 * 60 * 1000,
 					signingSecret: input.signingSecret,

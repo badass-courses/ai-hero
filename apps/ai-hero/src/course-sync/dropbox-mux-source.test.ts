@@ -1,7 +1,10 @@
+import { createHmac } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 
+import { AI_HERO_COURSE_SYNC_BINDING, type CourseSyncBinding } from './types'
 import {
 	createDropboxMuxSourceResolver,
+	createBindingScopedMuxSourceResolver,
 	verifyDropboxMuxProxyToken,
 } from './dropbox-mux-source'
 
@@ -111,11 +114,13 @@ describe('Dropbox Mux source resolver', () => {
 			relativePath: 'course/video.mp4',
 		})
 		const url = new URL(source.url)
+		expect(url.searchParams.get('binding')).toBe('binding')
 		expect(url.origin + url.pathname).toBe(
 			'https://www.aihero.dev/api/course-sync/dropbox-asset',
 		)
 		expect(
 			verifyDropboxMuxProxyToken({
+				bindingId: 'binding',
 				relativePath: url.searchParams.get('path') ?? '',
 				expiresAt: Number(url.searchParams.get('expires')),
 				suppliedSignature: url.searchParams.get('signature') ?? '',
@@ -123,5 +128,42 @@ describe('Dropbox Mux source resolver', () => {
 				now: 1_001,
 			}),
 		).toBe(true)
+		expect(verifyDropboxMuxProxyToken({
+			bindingId: 'another-binding',
+			relativePath: url.searchParams.get('path') ?? '',
+			expiresAt: Number(url.searchParams.get('expires')),
+			suppliedSignature: url.searchParams.get('signature') ?? '',
+			signingSecret: 'signing-secret',
+			now: 1_001,
+		})).toBe(false)
+	})
+
+	it('rejects the pre-binding signature format', () => {
+		const expiresAt = 10_000
+		const relativePath = 'course/video.mp4'
+		const legacySignature = createHmac('sha256', 'signing-secret')
+			.update(`${expiresAt}:${relativePath}`)
+			.digest('base64url')
+		expect(verifyDropboxMuxProxyToken({
+			bindingId: 'binding', relativePath, expiresAt,
+			suppliedSignature: legacySignature, signingSecret: 'signing-secret', now: 1_000,
+		})).toBe(false)
+	})
+
+	it('caches independent resolvers by binding id', async () => {
+		const make = vi.fn((binding: CourseSyncBinding) => ({
+			resolve: async () => ({
+				url: binding.bindingId, providerRevision: 'rev', providerContentHash: null, bytes: 1,
+			}),
+		}))
+		const bindingA = { ...AI_HERO_COURSE_SYNC_BINDING, bindingId: 'a' }
+		const bindingB = { ...AI_HERO_COURSE_SYNC_BINDING, bindingId: 'b' }
+		const scoped = createBindingScopedMuxSourceResolver(make, (id) =>
+			id === 'a' ? bindingA : bindingB)
+		const input = { courseVersionId: 'v', sourceVideoId: 'video', relativePath: 'course/video.mp4' }
+		expect((await scoped.resolve({ ...input, bindingId: 'a' })).url).toBe('a')
+		expect((await scoped.resolve({ ...input, bindingId: 'b' })).url).toBe('b')
+		expect((await scoped.resolve({ ...input, bindingId: 'a' })).url).toBe('a')
+		expect(make).toHaveBeenCalledTimes(2)
 	})
 })

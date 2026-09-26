@@ -24,24 +24,25 @@ import {
 	type CourseSyncStepResult,
 } from '@/course-sync/errors'
 import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
+import { dropboxSyncConfigFor } from '@/course-sync/dropbox-binding-config'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
-import { AI_HERO_COURSE_SYNC_BINDING } from '@/course-sync/types'
+import { getServerCourseSyncBinding } from '@/course-sync/types'
 import { env } from '@/env.mjs'
-import {
-	getDropboxSyncConfig,
-	readDropboxCourseManifest,
-} from '@/lib/dropbox-course-sync'
+import { readDropboxCourseManifest } from '@/lib/dropbox-course-sync'
 
 import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
 import { inngest } from '../inngest.server'
 
-async function notifyCourseSync(notification: CourseSyncNotification) {
+async function notifyCourseSync(
+	notification: CourseSyncNotification,
+	bindingId: string,
+) {
 	// Applied is a state, not an event of this poller. Every caller that moves a
 	// run to applied delivers through the same claimed path, so an operator
 	// apply and a poller apply produce one identical notice.
 	if (notification.kind === 'success') {
 		await deliverCourseSyncAppliedNotice({
-			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			bindingId,
 			controlPlaneRunId: notification.controlPlaneRunId,
 			pollRunId: notification.runId,
 			notification,
@@ -63,17 +64,34 @@ function originalFailureRunId(event: unknown, fallback: string) {
 	return typeof runId === 'string' && runId ? runId : fallback
 }
 
+export function originalFailureBindingId(event: unknown): string | null {
+	if (!event || typeof event !== 'object' || !('data' in event)) return null
+	const failureData = (event as { data?: unknown }).data
+	if (!failureData || typeof failureData !== 'object' || !('event' in failureData))
+		return null
+	const original = (failureData as { event?: unknown }).event
+	if (!original || typeof original !== 'object' || !('data' in original))
+		return null
+	const data = (original as { data?: unknown }).data
+	if (!data || typeof data !== 'object' || !('bindingId' in data)) return null
+	const bindingId = (data as { bindingId?: unknown }).bindingId
+	return typeof bindingId === 'string' && bindingId ? bindingId : null
+}
+
 export const courseSyncDetectionPoller = inngest.createFunction(
 	{
 		id: 'ai-hero-course-sync-detection-poller',
 		name: 'AI Hero Course Sync Detection Poller',
-		concurrency: { limit: 1 },
+		concurrency: { limit: 1, key: 'event.data.bindingId' },
 		retries: 0,
 		onFailure: async ({ event, step, runId }) => {
+			const bindingId = originalFailureBindingId(event)
+			if (!bindingId) return
+			const binding = getServerCourseSyncBinding(bindingId)
 			const failedRunId = originalFailureRunId(event, runId)
 			await recordCourseSyncPollFailure(
 				{
-					binding: AI_HERO_COURSE_SYNC_BINDING,
+					binding,
 					getPollState: async (bindingId) => {
 						const state = await step.run(
 							'load-failed-course-sync-poll-state',
@@ -101,23 +119,21 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					},
 					notify: async (notification) => {
 						await step.run('notify-course-sync-failure', () =>
-							notifyCourseSync(notification),
+							notifyCourseSync(notification, bindingId),
 						)
 					},
 				},
 				{
-					bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+					bindingId,
 					runId: failedRunId,
 					failureClass: 'POLL_RUN_KILLED',
 				},
 			)
 		},
 	},
-	[
-		{ cron: 'TZ=UTC */30 * * * *' },
-		{ event: COURSE_SYNC_POLL_REQUESTED_EVENT },
-	],
-	async ({ step, runId }) => {
+	{ event: COURSE_SYNC_POLL_REQUESTED_EVENT },
+	async ({ event, step, runId }) => {
+		const binding = getServerCourseSyncBinding(event.data.bindingId)
 		async function runTypedStep<T>(
 			id: string,
 			operation: () => Promise<T>,
@@ -131,17 +147,10 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 		}
 
 		const poll = createCourseSyncDetectionPoller({
-			binding: AI_HERO_COURSE_SYNC_BINDING,
+			binding,
 			readManifest: () =>
 				runTypedStep('detect-course-manifest', async () => {
-					const { config, missingConfig } = getDropboxSyncConfig({
-						DROPBOX_APP_KEY: env.DROPBOX_APP_KEY,
-						DROPBOX_APP_SECRET: env.DROPBOX_APP_SECRET,
-						DROPBOX_OAUTH_REDIRECT_URI: env.DROPBOX_OAUTH_REDIRECT_URI,
-						DROPBOX_SYNC_SHARED_FOLDER_ID: env.DROPBOX_SYNC_SHARED_FOLDER_ID,
-						DROPBOX_SYNC_ALLOWED_ROOT: env.DROPBOX_SYNC_ALLOWED_ROOT,
-						DROPBOX_SYNC_SHARED_LINK: env.DROPBOX_SYNC_SHARED_LINK,
-					})
+					const { config, missingConfig } = dropboxSyncConfigFor(binding)
 					if (!config || !env.DROPBOX_REFRESH_TOKEN) {
 						throw new CourseSyncError(
 							'DROPBOX_SYNC_NOT_CONFIGURED',
@@ -237,7 +246,7 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 				),
 			notify: async (notification) => {
 				await runTypedStep('notify-course-sync-completion', () =>
-					notifyCourseSync(notification),
+					notifyCourseSync(notification, binding.bindingId),
 				)
 			},
 		})
