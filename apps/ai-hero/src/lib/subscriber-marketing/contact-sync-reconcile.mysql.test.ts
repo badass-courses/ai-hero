@@ -165,6 +165,25 @@ integration('contact sync reconcile reads on MySQL', () => {
 		expect(rows.map((row) => row.id)).toEqual(['day-late', 'late'])
 	})
 
+	it("finds a late write stored in the watermark's own second (createdAt has no fraction)", async () => {
+		// The watermark carries milliseconds; createdAt is whole seconds.
+		await contactEvent(
+			'same-second',
+			'c4',
+			'2026-09-26 17:20:00',
+			'kit.message',
+			'2026-09-26 17:40:03',
+		)
+		const rows = await store.scanChanges({
+			scope: 'overlap',
+			after: '2026-09-24T17:40:00.000Z',
+			through: '2026-09-26T17:40:03.417Z',
+			writtenAfter: '2026-09-26T17:40:03.417Z',
+			limit: 5000,
+		})
+		expect(rows.map((row) => row.id)).toContain('same-second')
+	})
+
 	it('rides the occurredAt and issuedAt indexes', async () => {
 		const [scanPlan] = await pool.query(
 			"EXPLAIN SELECT id FROM AI_ContactEvent WHERE occurredAt > '2026-09-26 16:40:00' AND occurredAt <= '2026-09-26 17:58:00' ORDER BY occurredAt, id LIMIT 5001",

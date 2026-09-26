@@ -4,7 +4,7 @@ import {
 } from '@/db/contact-sync-schema'
 import { contactEvent } from '@/db/schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
-import { and, asc, eq, gt, isNull, lt, lte, min, or } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, isNull, lt, lte, min, or } from 'drizzle-orm'
 
 import { VALUE_PATH_LINK_REISSUE_EVERY_DAYS } from './value-path-link-anchor'
 import {
@@ -81,8 +81,13 @@ export function createDrizzleContactSyncStore(
 						lte(contactEvent.occurredAt, new Date(through)),
 						// Late writes only: the occurredAt range keeps the index;
 						// createdAt narrows it to rows the last run could not see.
+						// createdAt is whole seconds, so the watermark's own second
+						// counts too (a repeat re-sends the same version and key).
 						writtenAfter
-							? gt(contactEvent.createdAt, new Date(writtenAfter))
+							? gte(
+									contactEvent.createdAt,
+									new Date(Math.floor(Date.parse(writtenAfter) / 1000) * 1000),
+								)
 							: undefined,
 					),
 				)
@@ -93,12 +98,14 @@ export function createDrizzleContactSyncStore(
 				eventType: string
 				occurredAt: Date | string
 			}[]
-			return rows.map((row): ScannedContactEvent => ({
-				id: row.id,
-				contactId: row.contactId,
-				eventType: row.eventType,
-				occurredAt: isoOf(row.occurredAt),
-			}))
+			return rows.map(
+				(row): ScannedContactEvent => ({
+					id: row.id,
+					contactId: row.contactId,
+					eventType: row.eventType,
+					occurredAt: isoOf(row.occurredAt),
+				}),
+			)
 		},
 		async rotatedContacts({ after, through, limit }) {
 			// As many 90-day steps as the oldest anchor needs: no fixed cap.
