@@ -154,6 +154,13 @@ export async function enterEvergreenPitchFromLiveDatabase(args: {
 	})
 }
 
+/**
+ * Which contacts in a batch drovr owns, so their facts (a Kit stop among
+ * them) also reach the authority tenant. A failed read throws: the durable
+ * deliver function runs this in a step, and a thrown step is retried while
+ * a returned [] would be memoized and the authority copy lost for good.
+ * Only a real read that finds no owners answers [].
+ */
 export async function resolveOwnedContactIds(
 	events: readonly DrovrShadowEvent[],
 	options: { journeyId?: DrovrJourneyId } = {},
@@ -184,13 +191,13 @@ export async function resolveOwnedContactIds(
 		return owned
 	} catch (error) {
 		try {
-			await log.warn('drovr.owner.resolve_failed', {
+			await log.error('drovr.owner.resolve_failed', {
 				contacts: candidates.size,
 				error: error instanceof Error ? error.message : String(error),
 			})
 		} catch {
 			// Logging cannot make the read succeed.
 		}
-		return []
+		throw error
 	}
 }

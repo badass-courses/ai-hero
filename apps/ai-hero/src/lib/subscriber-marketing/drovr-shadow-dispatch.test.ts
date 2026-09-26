@@ -201,6 +201,100 @@ describe('drovr shadow dispatch', () => {
 		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(signup))
 	})
 
+	it('hands the fact back to the durable path when the fallback cannot read owners', async () => {
+		const send = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('inngest unreachable'))
+			.mockResolvedValueOnce(undefined)
+		const fallback = vi.fn().mockResolvedValue(undefined)
+		const error = vi.fn()
+		const unsubscribe: DrovrShadowFact = {
+			kind: 'contact-event',
+			event: contactEvent('contact.unsubscribed'),
+		}
+
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
+			send,
+			fallback,
+			warn: vi.fn(),
+			error,
+			resolveOwners: async () => {
+				throw new Error('Vitess: connection reset')
+			},
+		})
+
+		// The durable function retries the owner read in its own step.
+		expect(result).toBe('requeued')
+		expect(send).toHaveBeenCalledTimes(2)
+		expect(send.mock.calls[1]).toEqual(send.mock.calls[0])
+		expect(fallback).not.toHaveBeenCalled()
+		expect(error).toHaveBeenCalledWith(
+			'drovr.shadow.fallback_owner_resolve_failed',
+			expect.objectContaining({
+				source: 'contact-event',
+				requeued: true,
+				error: 'Vitess: connection reset',
+			}),
+		)
+	})
+
+	it('names the undelivered stop at error when the requeue fails too, and still posts what it can', async () => {
+		const send = vi.fn().mockRejectedValue(new Error('inngest unreachable'))
+		const fallback = vi.fn().mockResolvedValue(undefined)
+		const error = vi.fn()
+		const unsubscribe: DrovrShadowFact = {
+			kind: 'contact-event',
+			event: contactEvent('contact.unsubscribed'),
+		}
+
+		const result = await dispatchDrovrShadowFact(unsubscribe, {
+			send,
+			fallback,
+			warn: vi.fn(),
+			error,
+			resolveOwners: async () => {
+				throw new Error('Vitess: connection reset')
+			},
+		})
+
+		expect(result).toBe('fallback')
+		const keys = mapDrovrShadowFact(unsubscribe).map((e) => e.idempotencyKey)
+		expect(error).toHaveBeenCalledWith(
+			'drovr.shadow.fallback_owner_resolve_failed',
+			expect.objectContaining({
+				requeued: false,
+				idempotencyKeys: keys,
+			}),
+		)
+		// No owner copies (unknown), but the rest still goes out.
+		expect(fallback).toHaveBeenCalledWith(mapDrovrShadowFact(unsubscribe))
+	})
+
+	it('surfaces a failed direct post at error instead of swallowing it', async () => {
+		const send = vi.fn().mockRejectedValue(new Error('inngest unreachable'))
+		const fallback = vi.fn().mockRejectedValue(new Error('drovr 503'))
+		const error = vi.fn()
+
+		await dispatchDrovrShadowFact(signup, {
+			send,
+			fallback,
+			warn: vi.fn(),
+			error,
+			resolveOwners: async () => [],
+		})
+
+		expect(error).toHaveBeenCalledWith(
+			'drovr.shadow.fallback_failed',
+			expect.objectContaining({
+				source: 'contact-event',
+				error: 'drovr 503',
+				idempotencyKeys: mapDrovrShadowFact(signup).map(
+					(e) => e.idempotencyKey,
+				),
+			}),
+		)
+	})
+
 	it("fans an owned contact's fact out to the authority tenant on the fallback road too", async () => {
 		const send = vi.fn().mockRejectedValue(new Error('inngest unreachable'))
 		const fallback = vi.fn().mockResolvedValue(undefined)
