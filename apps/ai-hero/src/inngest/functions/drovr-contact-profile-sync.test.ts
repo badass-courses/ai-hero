@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
-import { runContactProfileSync } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+import {
+	contactProfileContentHash,
+	runContactProfileSync,
+} from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
 const snapshot: ContactProfileSnapshot = {
 	occurredAt: '2026-09-26T17:00:00.000Z',
@@ -30,7 +33,10 @@ function harness(
 	const readSnapshot = vi.fn(async () =>
 		'snapshot' in overrides ? overrides.snapshot : snapshot,
 	)
-	const bump = vi.fn(async () => 4)
+	const versionFor = vi.fn(async () => ({
+		profileVersion: 4,
+		since: '2026-09-26T16:00:00.000Z',
+	}))
 	const deliver = vi.fn(async () =>
 		'delivered' in overrides
 			? overrides.delivered!
@@ -53,11 +59,11 @@ function harness(
 			step,
 			env: overrides.env ?? { AIH_DROVR_PROFILE_SYNC: 'true' },
 			readSnapshot,
-			bump,
+			versionFor,
 			deliver,
 			ownedPath,
 		})
-	return { run, step, readSnapshot, bump, deliver, ownedPath, order }
+	return { run, step, readSnapshot, versionFor, deliver, ownedPath, order }
 }
 
 describe('drovr contact profile sync function', () => {
@@ -87,7 +93,7 @@ describe('drovr contact profile sync function', () => {
 			status: 'skipped',
 			reason: 'contact-missing',
 		})
-		expect(h.bump).not.toHaveBeenCalled()
+		expect(h.versionFor).not.toHaveBeenCalled()
 		expect(h.deliver).not.toHaveBeenCalled()
 	})
 
@@ -103,20 +109,35 @@ describe('drovr contact profile sync function', () => {
 		})
 		expect(h.order).toEqual([
 			'read-profile',
-			'bump-profile-version',
+			'profile-version',
 			'deliver-profile',
 		])
 		expect(h.readSnapshot).toHaveBeenCalledWith({
 			contactId: 'contact-1',
 			valuePathSlug: 'ai-hero-skills-workflow',
 		})
-		expect(h.bump).toHaveBeenCalledTimes(1)
+		expect(h.versionFor).toHaveBeenCalledTimes(1)
 		expect(h.deliver).toHaveBeenCalledWith([
 			expect.objectContaining({
 				tenantId: 'org-aihero',
 				journeyId: 'contact-directory',
 				type: 'contact.profile.updated',
 				idempotencyKey: 'profile:contact-1:4',
+			}),
+		])
+	})
+
+	it('versions by content: the hash covers what drovr stores, and every event carries when that version was set', async () => {
+		const h = harness()
+		await h.run()
+		expect(h.versionFor).toHaveBeenCalledWith(
+			'contact-1',
+			contactProfileContentHash(snapshot),
+		)
+		expect(h.deliver).toHaveBeenCalledWith([
+			expect.objectContaining({
+				idempotencyKey: 'profile:contact-1:4',
+				occurredAt: '2026-09-26T16:00:00.000Z',
 			}),
 		])
 	})

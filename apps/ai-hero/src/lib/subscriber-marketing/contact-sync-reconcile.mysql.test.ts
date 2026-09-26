@@ -45,6 +45,7 @@ integration('contact sync reconcile reads on MySQL', () => {
 			'20260504_ai_hero_subscriber_marketing_gate_a.sql',
 			'20260926_ai_hero_contact_sync.sql',
 			'20260926_ai_hero_link_anchor_issued_at_index.sql',
+			'20260926_ai_hero_contact_profile_hash.sql',
 		])
 			await pool.query(
 				await fs.readFile(

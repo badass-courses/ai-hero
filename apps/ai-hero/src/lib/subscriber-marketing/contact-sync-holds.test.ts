@@ -57,7 +57,7 @@ function world() {
 					linkAnchors,
 					now: clock.toISOString(),
 				}),
-			bump: (id) => versions.bump(id),
+			versionFor: (id, hash) => versions.versionFor(id, hash),
 			deliver: async (events) => {
 				delivered.push(...events)
 				return { accepted: events.length, rejected: 0 }
@@ -131,6 +131,7 @@ function world() {
 
 	return {
 		repository,
+		delivered,
 		capture,
 		reconcile,
 		sync,
@@ -272,18 +273,24 @@ describe('contact sync: every hold change reaches drovr on the next reconcile', 
 		})
 	})
 
-	it('re-pushes a change while it sits inside the 1 h overlap, then settles', async () => {
+	it('re-sends an unchanged contact under the same version, key and body, so drovr dedupes it', async () => {
 		const w = world()
-		const { contactId } = await baseline(w) // event 17:30, pushed at 18:00 as v1
+		const { contactId } = await baseline(w) // pushed at 18:00 as v1
+		// The 17:30 event stays inside the trailing 1 h overlap for the next
+		// three runs: each re-sends, and nothing about the contact changed.
 		for (let run = 0; run < 8; run += 1) {
 			w.advance(15)
 			await w.reconcile()
 		}
-		// The overlap trails the latest watermark by an hour, so the 17:30
-		// event is re-pushed by the 18:15, 18:30 and 18:45 runs, then never
-		// again: the price of catching late-written events without a
-		// createdAt index. Link events keep their keys and dedupe at drovr;
-		// only the small profile event repeats.
-		expect(w.profile(contactId)?.profileVersion).toBe(4)
+		const profiles = w.delivered.filter(
+			(event) =>
+				event.contactId === contactId &&
+				event.type === 'contact.profile.updated',
+		)
+		expect(profiles.length).toBeGreaterThanOrEqual(4)
+		expect(new Set(profiles.map((event) => event.idempotencyKey))).toEqual(
+			new Set([`profile:${contactId}:1`]),
+		)
+		expect(new Set(profiles.map((event) => JSON.stringify(event))).size).toBe(1)
 	})
 })

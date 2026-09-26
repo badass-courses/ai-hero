@@ -47,6 +47,8 @@ export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
 	profileVersion: bigint('profileVersion', { mode: 'number', unsigned: true })
 		.notNull()
 		.default(1),
+	/** sha256 of the content last pushed at this version (contactProfileContentHash). */
+	profileHash: varchar('profileHash', { length: 64 }),
 	updatedAt: timestamp('updatedAt', { mode: 'string', fsp: 3 })
 		.notNull()
 		.defaultNow()
