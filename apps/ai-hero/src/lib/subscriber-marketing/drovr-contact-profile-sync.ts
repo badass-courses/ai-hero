@@ -501,6 +501,11 @@ export async function runContactProfileSync(args: {
 	if (delivered === 'not-configured') {
 		return { status: 'skipped', reason: 'drovr-not-configured' }
 	}
+	// A final 4xx (a bad key, a refused event) is logged by the delivery;
+	// it must never read as synced, or the heartbeat would vouch for it.
+	if (delivered.rejected > 0) {
+		return { status: 'skipped', reason: 'drovr-rejected' }
+	}
 	return {
 		status: 'sent',
 		profileVersion,

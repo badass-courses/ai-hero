@@ -58,13 +58,13 @@ export async function reconcileContactSync(args: {
 			(await step.run('read-watermark', () => store.readWatermark())) as
 				string | undefined,
 		scanChanges: async (window) =>
-			(await step.run('scan-changes', () =>
+			(await step.run(`scan-${window.scope}`, () =>
 				store.scanChanges(window),
 			)) as ScannedContactEvent[],
 		rotatedContacts: async (window) =>
 			(await step.run('rotated-contacts', () =>
 				store.rotatedContacts(window),
-			)) as string[],
+			)) as { contactId: string; at: string }[],
 		syncContact: async (contactId) =>
 			reconcileSyncOutcome(
 				contactId,
@@ -84,6 +84,11 @@ export async function reconcileContactSync(args: {
 			})) as DrovrEventsDeliverReceipt
 			if (receipt.status !== 'delivered') {
 				throw new Error(`stop re-send was not delivered: ${receipt.reason}`)
+			}
+			if (receipt.rejected > 0) {
+				throw new Error(
+					`stop re-send was not delivered: drovr rejected ${receipt.rejected}`,
+				)
 			}
 		},
 		heartbeat: async (syncedThrough) => {

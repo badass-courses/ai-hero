@@ -31,14 +31,25 @@ export type ContactSyncReconcilePorts = {
 	/** Read once per run; under Inngest it comes from a memoized step. */
 	now: () => Date
 	readWatermark(): Promise<string | undefined>
-	/** ContactEvents with after < occurredAt <= through, by (occurredAt, id), at most limit + 1. */
+	/**
+	 * ContactEvents with after < occurredAt <= through, by (occurredAt, id),
+	 * at most limit + 1. `scope` names the scan (each is its own step).
+	 */
 	scanChanges(args: {
+		scope: 'fresh' | 'overlap'
 		after: string
 		through: string
 		limit: number
 	}): Promise<ScannedContactEvent[]>
-	/** Contacts whose first link issue sits in one of linkRotationRanges. */
-	rotatedContacts(args: { after: string; through: string }): Promise<string[]>
+	/**
+	 * Contacts whose links reached a 90-day step in (after, through], each
+	 * with the instant the step fell, by that instant, at most limit + 1.
+	 */
+	rotatedContacts(args: {
+		after: string
+		through: string
+		limit: number
+	}): Promise<{ contactId: string; at: string }[]>
 	/** Resolves only once drovr has the contact's profile; 'skipped' when there is none to push. */
 	syncContact(contactId: string): Promise<'sent' | 'skipped'>
 	/** Re-sends the live path's stop facts for these events, under the same keys. */
@@ -83,44 +94,86 @@ export async function runContactSyncReconcile(
 	const settleMs = options.settleMs ?? 2 * MINUTE_MS
 	const planned = iso(ports.now().getTime() - settleMs)
 	const watermark = await ports.readWatermark()
-	// A first run starts one overlap back; the backfill owns history.
+	// A first run starts one overlap back and has nothing to overlap; the
+	// backfill owns history.
 	const last = watermark ?? iso(Date.parse(planned) - overlapMs)
-	const after = watermark ? iso(Date.parse(watermark) - overlapMs) : last
 
-	const scanned = await ports.scanChanges({ after, through: planned, limit })
-	let syncedThrough = planned
-	let events = scanned
-	if (scanned.length > limit) {
-		// Claim only the whole seconds the scan covered (occurredAt is
-		// second-precision); the overlap re-scans the rest next run.
-		syncedThrough = claimBefore(scanned[limit]!, after, `over ${limit} events`)
-		events = scanned.filter(
-			(row) => Date.parse(row.occurredAt) <= Date.parse(syncedThrough),
-		)
-	}
-	const seen = new Set<string>()
-	const firstOverCap = events.find((row) => {
-		seen.add(row.contactId)
-		return seen.size > maxContacts
-	})
-	if (firstOverCap) {
-		syncedThrough = claimBefore(
-			firstOverCap,
-			after,
-			`over ${maxContacts} contacts`,
-		)
-		events = events.filter(
-			(row) => Date.parse(row.occurredAt) <= Date.parse(syncedThrough),
-		)
-	}
-
-	const rotated = await ports.rotatedContacts({
+	// Fresh changes decide the claim. The overlap, rows at or before the
+	// watermark that a previous run already claimed, is scanned apart and
+	// only fills leftover budget, so it can never pull the claim behind the
+	// watermark (the cursor only moves forward).
+	const fresh = await ports.scanChanges({
+		scope: 'fresh',
 		after: last,
-		through: syncedThrough,
+		through: planned,
+		limit,
 	})
-	const contacts = [
-		...new Set([...events.map((row) => row.contactId), ...rotated]),
+	const overlap = watermark
+		? await ports.scanChanges({
+				scope: 'overlap',
+				after: iso(Date.parse(watermark) - overlapMs),
+				through: watermark,
+				limit,
+			})
+		: []
+	const rotations = await ports.rotatedContacts({
+		after: last,
+		through: planned,
+		limit: maxContacts,
+	})
+
+	let claim = planned
+	if (fresh.length > limit)
+		claim = earlier(
+			claim,
+			claimBefore(fresh[limit]!.occurredAt, last, `over ${limit} events`),
+		)
+	if (rotations.length > maxContacts)
+		claim = earlier(
+			claim,
+			claimBefore(
+				rotations[maxContacts]!.at,
+				last,
+				`over ${maxContacts} rotations`,
+			),
+		)
+
+	// One timeline of fresh events and rotation steps, capped in time order.
+	const timeline = [
+		...fresh.map((row) => ({ contactId: row.contactId, at: row.occurredAt })),
+		...rotations.map((row) => ({ contactId: row.contactId, at: row.at })),
 	]
+		.filter((item) => Date.parse(item.at) <= Date.parse(claim))
+		.sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
+	const claimed = new Set<string>()
+	for (const item of timeline) {
+		if (claimed.has(item.contactId)) continue
+		if (claimed.size === maxContacts) {
+			claim = earlier(
+				claim,
+				claimBefore(item.at, last, `over ${maxContacts} contacts`),
+			)
+			break
+		}
+		claimed.add(item.contactId)
+	}
+	const within = (at: string) => Date.parse(at) <= Date.parse(claim)
+	const freshEvents = fresh.filter((row) => within(row.occurredAt))
+	const contacts = [
+		...new Set(
+			timeline.filter((item) => within(item.at)).map((item) => item.contactId),
+		),
+	]
+	const rotated = new Set(
+		rotations.filter((row) => within(row.at)).map((row) => row.contactId),
+	)
+	// Leftover budget: late-written rows under an old occurredAt.
+	for (const row of overlap) {
+		if (contacts.length >= maxContacts) break
+		if (!contacts.includes(row.contactId)) contacts.push(row.contactId)
+	}
+	const synced = new Set(contacts)
+
 	for (let index = 0; index < contacts.length; index += SYNC_CHUNK) {
 		await Promise.all(
 			contacts
@@ -128,19 +181,23 @@ export async function runContactSyncReconcile(
 				.map((contactId) => ports.syncContact(contactId)),
 		)
 	}
-	const stops = events.filter((row) =>
-		CONTACT_SYNC_STOP_EVENT_TYPES.has(row.eventType),
+	const stops = [...freshEvents, ...overlap].filter(
+		(row) =>
+			synced.has(row.contactId) &&
+			CONTACT_SYNC_STOP_EVENT_TYPES.has(row.eventType),
 	)
 	await ports.resendStops(stops)
 
-	await ports.heartbeat(syncedThrough)
-	await ports.writeWatermark(syncedThrough)
+	await ports.heartbeat(claim)
+	await ports.writeWatermark(claim)
 	return {
 		status: 'synced',
-		syncedThrough,
+		syncedThrough: claim,
 		contacts: contacts.length,
-		rotated: rotated.length,
-		events: events.length,
+		rotated: rotated.size,
+		events:
+			freshEvents.length +
+			overlap.filter((row) => synced.has(row.contactId)).length,
 	}
 }
 
@@ -216,18 +273,18 @@ export function linkRotationRanges(
  * second-precision), so every event claimed was covered; the overlap
  * re-scans the rest next run.
  */
-function claimBefore(
-	split: ScannedContactEvent,
-	after: string,
-	cause: string,
-): string {
-	const claim = iso(Date.parse(split.occurredAt) - 1)
+function claimBefore(split: string, after: string, cause: string): string {
+	const claim = iso(Date.parse(split) - 1)
 	if (Date.parse(claim) <= Date.parse(after)) {
 		throw new Error(
 			`contact sync reconcile cannot advance past ${after}: ${cause} share one second`,
 		)
 	}
 	return claim
+}
+
+function earlier(left: string, right: string): string {
+	return Date.parse(left) <= Date.parse(right) ? left : right
 }
 
 function iso(ms: number): string {

@@ -4,13 +4,17 @@ import {
 } from '@/db/contact-sync-schema'
 import { contactEvent } from '@/db/schema'
 import { isMysqlDuplicateEntryError } from '@/lib/mysql-primary-key-retry'
-import { and, asc, eq, gt, isNull, lt, lte, or } from 'drizzle-orm'
+import { and, asc, eq, gt, isNull, lt, lte, min, or } from 'drizzle-orm'
 
+import { VALUE_PATH_LINK_REISSUE_EVERY_DAYS } from './value-path-link-anchor'
 import {
 	linkRotationRanges,
 	type ContactSyncReconcilePorts,
 	type ScannedContactEvent,
 } from './contact-sync-reconcile'
+
+const ROTATION_STEP_MS =
+	VALUE_PATH_LINK_REISSUE_EVERY_DAYS * 24 * 60 * 60 * 1000
 
 /** The one stream this reconcile covers: drovr's contact directory. */
 export const CONTACT_SYNC_CURSOR_NAME = 'contact-directory'
@@ -23,7 +27,11 @@ type Database = {
 				orderBy: (...order: unknown[]) => {
 					limit: (n: number) => Promise<unknown[]>
 				}
-				groupBy: (...columns: unknown[]) => Promise<unknown[]>
+				groupBy: (...columns: unknown[]) => {
+					orderBy: (...order: unknown[]) => {
+						limit: (n: number) => Promise<unknown[]>
+					}
+				}
 			}
 		}
 	}
@@ -87,11 +95,19 @@ export function createDrizzleContactSyncStore(
 				occurredAt: isoOf(row.occurredAt),
 			}))
 		},
-		async rotatedContacts(window) {
-			const contacts = new Set<string>()
-			for (const range of linkRotationRanges(window)) {
+		async rotatedContacts({ after, through, limit }) {
+			// Earliest step per contact, across the ranges, in time order.
+			const steps = new Map<string, number>()
+			for (const [index, range] of linkRotationRanges({
+				after,
+				through,
+			}).entries()) {
+				const stepMs = (index + 1) * ROTATION_STEP_MS
 				const rows = (await db
-					.select({ contactId: valuePathLinkAnchor.contactId })
+					.select({
+						contactId: valuePathLinkAnchor.contactId,
+						firstIssue: min(valuePathLinkAnchor.issuedAt),
+					})
 					.from(valuePathLinkAnchor)
 					.where(
 						and(
@@ -99,10 +115,22 @@ export function createDrizzleContactSyncStore(
 							lte(valuePathLinkAnchor.issuedAt, sqlTimestamp(range.through)),
 						),
 					)
-					.groupBy(valuePathLinkAnchor.contactId)) as { contactId: string }[]
-				for (const row of rows) contacts.add(row.contactId)
+					.groupBy(valuePathLinkAnchor.contactId)
+					.orderBy(min(valuePathLinkAnchor.issuedAt))
+					.limit(limit + 1)) as { contactId: string; firstIssue: string }[]
+				for (const row of rows) {
+					const at = Date.parse(isoOf(row.firstIssue)) + stepMs
+					const known = steps.get(row.contactId)
+					if (known === undefined || at < known) steps.set(row.contactId, at)
+				}
 			}
-			return [...contacts]
+			return [...steps]
+				.sort((left, right) => left[1] - right[1])
+				.slice(0, limit + 1)
+				.map(([contactId, at]) => ({
+					contactId,
+					at: new Date(at).toISOString(),
+				}))
 		},
 		async writeWatermark(watermark, heartbeatAt) {
 			const values = {

@@ -95,6 +95,7 @@ integration('contact sync reconcile reads on MySQL', () => {
 		await contactEvent('e4', 'c4', '2026-09-26 17:58:01') // after through
 		await expect(
 			store.scanChanges({
+				scope: 'fresh',
 				after: '2026-09-26T16:40:00.000Z',
 				through: '2026-09-26T17:58:00.000Z',
 				limit: 5000,
@@ -120,6 +121,7 @@ integration('contact sync reconcile reads on MySQL', () => {
 			},
 		])
 		const limited = await store.scanChanges({
+			scope: 'fresh',
 			after: '2026-09-26T16:40:00.000Z',
 			through: '2026-09-26T17:58:00.000Z',
 			limit: 1,
@@ -160,11 +162,23 @@ integration('contact sync reconcile reads on MySQL', () => {
 		await anchor('rot-180', '2026-03-30 17:45:00.000') // 180 d
 		await anchor('edge-out', '2026-06-28 17:40:00.000') // == after - 90 d: out
 		await anchor('fresh', '2026-09-26 17:50:00.000') // first window
-		const contacts = await store.rotatedContacts({
+		const window = {
 			after: '2026-09-26T17:40:00.000Z',
 			through: '2026-09-26T17:58:00.000Z',
-		})
-		expect(contacts.sort()).toEqual(['rot-180', 'rot-90'])
+		}
+		// Each with the instant its step fell, earliest per contact, in order.
+		await expect(
+			store.rotatedContacts({ ...window, limit: 10 }),
+		).resolves.toEqual([
+			{ contactId: 'rot-180', at: '2026-09-26T17:45:00.000Z' },
+			{ contactId: 'rot-90', at: '2026-09-26T17:50:00.000Z' },
+		])
+		// At most limit + 1, so the reconcile can see it overflowed.
+		await expect(
+			store.rotatedContacts({ ...window, limit: 0 }),
+		).resolves.toEqual([
+			{ contactId: 'rot-180', at: '2026-09-26T17:45:00.000Z' },
+		])
 	})
 
 	it('reads no watermark at first, then only ever moves it forward', async () => {

@@ -25,20 +25,50 @@ function event(
 	return { id, contactId, occurredAt, eventType }
 }
 
+type Rotation = { contactId: string; at: string }
+
 function ports(
+	fixture: {
+		watermark?: string | undefined
+		events?: ScannedContactEvent[]
+		rotations?: Rotation[]
+	} = {},
 	overrides: Partial<ContactSyncReconcilePorts> = {},
 ): ContactSyncReconcilePorts & { order: string[] } {
 	const order: string[] = []
+	const events = fixture.events ?? [
+		event('c1', '2026-09-26T17:41:00.000Z'),
+		event('c2', '2026-09-26T17:50:00.000Z'),
+		event('c1', '2026-09-26T17:55:00.000Z'),
+		event('c9', '2026-09-26T17:20:00.000Z'), // inside the overlap
+	]
+	const rotations = fixture.rotations ?? [
+		{ contactId: 'c3', at: '2026-09-26T17:45:00.000Z' },
+	]
+	const within = (at: string, after: string, through: string) =>
+		Date.parse(at) > Date.parse(after) && Date.parse(at) <= Date.parse(through)
 	return {
 		order,
 		now: () => start,
-		readWatermark: vi.fn(async () => '2026-09-26T17:40:00.000Z'),
-		scanChanges: vi.fn(async () => [
-			event('c1', '2026-09-26T17:41:00.000Z'),
-			event('c2', '2026-09-26T17:50:00.000Z'),
-			event('c1', '2026-09-26T17:55:00.000Z'),
-		]),
-		rotatedContacts: vi.fn(async () => ['c3']),
+		readWatermark: vi.fn(async () =>
+			'watermark' in fixture ? fixture.watermark : '2026-09-26T17:40:00.000Z',
+		),
+		scanChanges: vi.fn(async ({ after, through, limit }) =>
+			events
+				.filter((row) => within(row.occurredAt, after, through))
+				.sort(
+					(l, r) =>
+						Date.parse(l.occurredAt) - Date.parse(r.occurredAt) ||
+						l.id.localeCompare(r.id),
+				)
+				.slice(0, limit + 1),
+		),
+		rotatedContacts: vi.fn(async ({ after, through, limit }) =>
+			rotations
+				.filter((row) => within(row.at, after, through))
+				.sort((l, r) => Date.parse(l.at) - Date.parse(r.at))
+				.slice(0, limit + 1),
+		),
 		syncContact: vi.fn(async (contactId: string) => {
 			order.push(`sync:${contactId}`)
 			return 'sent' as const
@@ -57,35 +87,48 @@ function ports(
 }
 
 describe('contact sync reconcile', () => {
-	it('scans from the watermark less a 1 h overlap up to start − 2 min', async () => {
+	it('scans fresh changes and the 1 h overlap separately', async () => {
 		const p = ports()
 		await runContactSyncReconcile(p)
-		expect(p.scanChanges).toHaveBeenCalledWith({
+		expect(p.scanChanges).toHaveBeenNthCalledWith(1, {
+			scope: 'fresh',
+			after: '2026-09-26T17:40:00.000Z',
+			through,
+			limit: 5000,
+		})
+		expect(p.scanChanges).toHaveBeenNthCalledWith(2, {
+			scope: 'overlap',
 			after: '2026-09-26T16:40:00.000Z',
+			through: '2026-09-26T17:40:00.000Z',
+			limit: 5000,
+		})
+		expect(p.rotatedContacts).toHaveBeenCalledWith({
+			after: '2026-09-26T17:40:00.000Z',
+			through,
+			limit: 400,
+		})
+	})
+
+	it('starts an hour back on its first run, with nothing to overlap', async () => {
+		const p = ports({ watermark: undefined })
+		await runContactSyncReconcile(p)
+		expect(p.scanChanges).toHaveBeenCalledTimes(1)
+		expect(p.scanChanges).toHaveBeenCalledWith({
+			scope: 'fresh',
+			after: '2026-09-26T16:58:00.000Z',
 			through,
 			limit: 5000,
 		})
 	})
 
-	it('starts an hour back on its first run', async () => {
-		const p = ports({ readWatermark: vi.fn(async () => undefined) })
-		await runContactSyncReconcile(p)
-		expect(p.scanChanges).toHaveBeenCalledWith(
-			expect.objectContaining({ after: '2026-09-26T16:58:00.000Z', through }),
-		)
-		expect(p.rotatedContacts).toHaveBeenCalledWith({
-			after: '2026-09-26T16:58:00.000Z',
-			through,
-		})
-	})
-
-	it('syncs each touched contact once, re-sends stops, then heartbeats, then advances', async () => {
+	it('syncs fresh and rotated contacts, then the overlap, then stops, heartbeat, watermark', async () => {
 		const p = ports()
 		const receipt = await runContactSyncReconcile(p)
 		expect(p.order).toEqual([
 			'sync:c1',
-			'sync:c2',
 			'sync:c3',
+			'sync:c2',
+			'sync:c9',
 			'stops',
 			`heartbeat:${through}`,
 			`watermark:${through}`,
@@ -93,20 +136,19 @@ describe('contact sync reconcile', () => {
 		expect(receipt).toEqual({
 			status: 'synced',
 			syncedThrough: through,
-			contacts: 3,
+			contacts: 4,
 			rotated: 1,
-			events: 3,
-		})
-		// Rotation looks from the last watermark, not the overlap.
-		expect(p.rotatedContacts).toHaveBeenCalledWith({
-			after: '2026-09-26T17:40:00.000Z',
-			through,
+			events: 4,
 		})
 	})
 
 	it('neither heartbeats nor advances when any push fails', async () => {
-		for (const failing of ['sync', 'stops'] as const) {
+		for (const failing of ['sync', 'stops', 'heartbeat'] as const) {
+			const boom = async () => {
+				throw new Error('drovr 503')
+			}
 			const p = ports(
+				{},
 				failing === 'sync'
 					? {
 							syncContact: vi.fn(async (contactId: string) => {
@@ -114,81 +156,110 @@ describe('contact sync reconcile', () => {
 								return 'sent' as const
 							}),
 						}
-					: {
-							resendStops: vi.fn(async () => {
-								throw new Error('drovr 503')
-							}),
-						},
+					: failing === 'stops'
+						? { resendStops: vi.fn(boom) }
+						: { heartbeat: vi.fn(boom) },
 			)
 			await expect(runContactSyncReconcile(p)).rejects.toThrow('drovr 503')
-			expect(p.heartbeat).not.toHaveBeenCalled()
 			expect(p.writeWatermark).not.toHaveBeenCalled()
+			if (failing !== 'heartbeat') expect(p.heartbeat).not.toHaveBeenCalled()
 		}
 	})
 
-	it('does not advance when the heartbeat fails', async () => {
-		const p = ports({
-			heartbeat: vi.fn(async () => {
-				throw new Error('heartbeat 502')
-			}),
-		})
-		await expect(runContactSyncReconcile(p)).rejects.toThrow('heartbeat 502')
-		expect(p.writeWatermark).not.toHaveBeenCalled()
-	})
-
-	it('re-sends only the stop events it scanned', async () => {
-		const unsubscribe = event(
+	it('re-sends the stop events of every contact it synced, fresh or overlap', async () => {
+		const fresh = event(
 			'c2',
 			'2026-09-26T17:50:00.000Z',
-			'e-unsub',
+			'u1',
+			'contact.unsubscribed',
+		)
+		const late = event(
+			'c9',
+			'2026-09-26T17:20:00.000Z',
+			'u2',
 			'contact.unsubscribed',
 		)
 		const p = ports({
-			scanChanges: vi.fn(async () => [
-				event('c1', '2026-09-26T17:41:00.000Z'),
-				unsubscribe,
-			]),
+			events: [event('c1', '2026-09-26T17:41:00.000Z'), fresh, late],
+			rotations: [],
 		})
 		await runContactSyncReconcile(p)
-		expect(p.resendStops).toHaveBeenCalledWith([unsubscribe])
+		expect(p.resendStops).toHaveBeenCalledWith([fresh, late])
 	})
 
-	it('claims only what an overflowing scan covered, stopping short of the split second', async () => {
-		const rows = [
-			event('c1', '2026-09-26T17:41:00.000Z'),
-			event('c2', '2026-09-26T17:42:00.000Z'),
-			event('c3', '2026-09-26T17:43:05.000Z'),
-		]
+	it('claims only what an overflowing fresh scan covered, stopping short of the split second', async () => {
 		const p = ports({
-			scanChanges: vi.fn(async () => rows),
-			rotatedContacts: vi.fn(async () => []),
+			events: [
+				event('c1', '2026-09-26T17:41:00.000Z'),
+				event('c2', '2026-09-26T17:42:00.000Z'),
+				event('c3', '2026-09-26T17:43:05.000Z'),
+			],
+			rotations: [],
 		})
 		const receipt = await runContactSyncReconcile(p, { limit: 2 })
-		// The third row is past the limit: everything strictly before its
-		// second is covered, and the overlap re-scans the rest next run.
 		expect(receipt).toMatchObject({
-			status: 'synced',
 			syncedThrough: '2026-09-26T17:43:04.999Z',
 			contacts: 2,
 			events: 2,
 		})
 		expect(p.syncContact).not.toHaveBeenCalledWith('c3')
-		expect(p.heartbeat).toHaveBeenCalledWith('2026-09-26T17:43:04.999Z')
-		// Rotation is claimed only as far as the watermark goes.
-		expect(p.rotatedContacts).toHaveBeenCalledWith({
-			after: '2026-09-26T17:40:00.000Z',
-			through: '2026-09-26T17:43:04.999Z',
-		})
 	})
 
-	it('fails loudly when an overflow cannot move past the start', async () => {
-		const second = '2026-09-26T16:40:00.000Z'
+	it('caps rotation too: an overflowing rotation claims only up to the first one left out', async () => {
 		const p = ports({
-			scanChanges: vi.fn(async () => [
-				event('c1', second),
-				event('c2', second),
-				event('c3', second),
-			]),
+			events: [],
+			rotations: [
+				{ contactId: 'r1', at: '2026-09-26T17:41:00.000Z' },
+				{ contactId: 'r2', at: '2026-09-26T17:42:00.000Z' },
+				{ contactId: 'r3', at: '2026-09-26T17:43:00.500Z' },
+			],
+		})
+		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
+		expect(receipt).toMatchObject({
+			syncedThrough: '2026-09-26T17:43:00.499Z',
+			contacts: 2,
+			rotated: 2,
+		})
+		expect(p.syncContact).not.toHaveBeenCalledWith('r3')
+	})
+
+	it('caps fresh and rotated contacts together, in time order', async () => {
+		const p = ports({
+			events: [
+				event('c1', '2026-09-26T17:41:00.000Z'),
+				event('c2', '2026-09-26T17:44:10.000Z'),
+			],
+			rotations: [{ contactId: 'r1', at: '2026-09-26T17:42:00.000Z' }],
+		})
+		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
+		expect(receipt).toMatchObject({
+			syncedThrough: '2026-09-26T17:44:09.999Z',
+			contacts: 2,
+		})
+		expect(p.syncContact).not.toHaveBeenCalledWith('c2')
+	})
+
+	it('never lets the overlap move the claim behind the watermark: it only fills leftover budget', async () => {
+		const overlap = Array.from({ length: 10 }, (_, index) =>
+			event(
+				`o${index}`,
+				`2026-09-26T17:${String(10 + index).padStart(2, '0')}:00.000Z`,
+			),
+		)
+		const p = ports({ events: overlap, rotations: [] })
+		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
+		expect(receipt).toMatchObject({ syncedThrough: through, contacts: 2 })
+		expect(p.writeWatermark).toHaveBeenCalledWith(through)
+	})
+
+	it('fails loudly when fresh changes cannot move past the watermark', async () => {
+		// Over the limit inside the very first second after the watermark:
+		// the claim would not move, so the run must say so, not spin.
+		const second = '2026-09-26T17:41:00.000Z'
+		const p = ports({
+			watermark: '2026-09-26T17:40:59.999Z',
+			events: [event('c1', second), event('c2', second), event('c3', second)],
+			rotations: [],
 		})
 		await expect(runContactSyncReconcile(p, { limit: 2 })).rejects.toThrow(
 			/cannot advance/,
@@ -196,32 +267,15 @@ describe('contact sync reconcile', () => {
 		expect(p.heartbeat).not.toHaveBeenCalled()
 	})
 
-	it('caps the contacts one run syncs, claiming only up to the second the next one appears', async () => {
-		const p = ports({
-			scanChanges: vi.fn(async () => [
-				event('c1', '2026-09-26T17:41:00.000Z'),
-				event('c1', '2026-09-26T17:42:00.000Z'),
-				event('c2', '2026-09-26T17:43:00.000Z'),
-				event('c3', '2026-09-26T17:44:10.000Z'),
-				event('c1', '2026-09-26T17:45:00.000Z'),
-			]),
-			rotatedContacts: vi.fn(async () => []),
-		})
-		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
-		expect(receipt).toMatchObject({
-			syncedThrough: '2026-09-26T17:44:09.999Z',
-			contacts: 2,
-			events: 3,
-		})
-		expect(p.syncContact).not.toHaveBeenCalledWith('c3')
-	})
-
 	it('treats a skipped contact (missing, synthetic) as done', async () => {
-		const p = ports({
-			syncContact: vi.fn(async (contactId: string) =>
-				contactId === 'c2' ? ('skipped' as const) : ('sent' as const),
-			),
-		})
+		const p = ports(
+			{},
+			{
+				syncContact: vi.fn(async (contactId: string) =>
+					contactId === 'c2' ? ('skipped' as const) : ('sent' as const),
+				),
+			},
+		)
 		await expect(runContactSyncReconcile(p)).resolves.toMatchObject({
 			status: 'synced',
 		})
@@ -264,6 +318,7 @@ describe('what a profile sync receipt means for the watermark', () => {
 			)
 		for (const reason of [
 			'drovr-not-configured',
+			'drovr-rejected',
 			'AIH_DROVR_PROFILE_SYNC is not set',
 		])
 			expect(() =>

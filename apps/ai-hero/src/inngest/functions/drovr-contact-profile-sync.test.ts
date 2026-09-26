@@ -150,6 +150,14 @@ describe('drovr contact profile sync function', () => {
 		})
 	})
 
+	it('reports a rejection, so the reconcile never counts a refused profile as pushed', async () => {
+		const h = harness({ delivered: { accepted: 2, rejected: 1 } })
+		await expect(h.run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'drovr-rejected',
+		})
+	})
+
 	it('issues the path drovr owns for the contact when the request names none', async () => {
 		const h = harness({ valuePathSlug: undefined })
 		await h.run()

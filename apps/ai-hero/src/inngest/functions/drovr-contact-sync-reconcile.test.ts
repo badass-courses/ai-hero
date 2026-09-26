@@ -10,6 +10,7 @@ function harness(
 	overrides: {
 		env?: Record<string, string>
 		configured?: boolean
+		stopsRejected?: number
 	} = {},
 ) {
 	const order: string[] = []
@@ -32,7 +33,7 @@ function harness(
 				: {
 						status: 'delivered',
 						accepted: 2,
-						rejected: 0,
+						rejected: overrides.stopsRejected ?? 0,
 						discarded: 2,
 					}
 		}),
@@ -115,7 +116,8 @@ describe('drovr contact sync reconcile function', () => {
 		})
 		expect(h.order).toEqual([
 			'read-watermark',
-			'scan-changes',
+			'scan-fresh',
+			'scan-overlap',
 			'rotated-contacts',
 			'sync:c1',
 			'sync:c2',
@@ -129,5 +131,12 @@ describe('drovr contact sync reconcile function', () => {
 			'2026-09-26T17:58:00.000Z',
 			expect.any(String),
 		)
+	})
+
+	it('never heartbeats past a stop drovr refused', async () => {
+		const h = harness({ stopsRejected: 1 })
+		await expect(h.run()).rejects.toThrow(/stop re-send was not delivered/)
+		expect(h.heartbeat).not.toHaveBeenCalled()
+		expect(h.writeWatermark).not.toHaveBeenCalled()
 	})
 })

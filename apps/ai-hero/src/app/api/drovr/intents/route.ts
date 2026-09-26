@@ -221,6 +221,7 @@ export const POST = withSkill(async (request: NextRequest) => {
 				findKitSubscriberIdForContact: findKitSubscriberId,
 				createProviderIdentity: (input) =>
 					repository.createProviderIdentity(input),
+				createContactEvent: (input) => repository.createContactEvent(input),
 			},
 			requestSync: (request) => requestContactProfileSync(request),
 			info: log.info,
