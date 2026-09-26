@@ -7,6 +7,7 @@ vi.mock('../inngest.server', () => ({ inngest: { createFunction } }))
 
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
+	AI_HERO_COURSE_SYNC_BINDING_COHORT_005,
 	COURSE_SYNC_BINDINGS,
 } from '@/course-sync/types'
 import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
@@ -22,9 +23,10 @@ const syntheticBinding = {
 }
 
 describe('course-sync poll scheduler', () => {
-	it('keeps the 30-minute cron and emits exactly the one registered active binding', async () => {
+	it('keeps one 30-minute cron and emits one poll for each of the two bindings', async () => {
 		expect(Object.keys(COURSE_SYNC_BINDINGS)).toEqual([
 			AI_HERO_COURSE_SYNC_BINDING.bindingId,
+			AI_HERO_COURSE_SYNC_BINDING_COHORT_005.bindingId,
 		])
 		expect(COURSE_SYNC_POLL_CRON).toBe('TZ=UTC */30 * * * *')
 		expect(courseSyncPollScheduler).toBeDefined()
@@ -32,7 +34,7 @@ describe('course-sync poll scheduler', () => {
 		expect(trigger).toEqual({ cron: COURSE_SYNC_POLL_CRON })
 		const sendEvent = vi.fn(async () => undefined)
 		await expect(handler({ step: { sendEvent } })).resolves.toEqual({
-			scheduled: 1,
+			scheduled: 2,
 		})
 		expect(sendEvent).toHaveBeenCalledTimes(1)
 		expect(sendEvent).toHaveBeenCalledWith('fan-out-course-sync-polls', [
@@ -40,6 +42,14 @@ describe('course-sync poll scheduler', () => {
 				name: COURSE_SYNC_POLL_REQUESTED_EVENT,
 				data: {
 					bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
+					requestedBy: 'cron',
+					reason: 'scheduled-30-minute-poll',
+				},
+			},
+			{
+				name: COURSE_SYNC_POLL_REQUESTED_EVENT,
+				data: {
+					bindingId: AI_HERO_COURSE_SYNC_BINDING_COHORT_005.bindingId,
 					requestedBy: 'cron',
 					reason: 'scheduled-30-minute-poll',
 				},

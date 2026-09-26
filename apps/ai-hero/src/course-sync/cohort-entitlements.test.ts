@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SyncPlan } from './types'
+import { AI_HERO_COURSE_SYNC_BINDING_COHORT_005 } from './types'
 import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 
 const mocks = vi.hoisted(() => {
@@ -216,6 +217,39 @@ describe('cohort course-sync entitlements', () => {
 				resourcesAdded: [{ resourceId: 'new-workshop', position: 2 }],
 				boundedRemovals: [],
 			}),
+			expect.any(String),
+			{ source: 'course-sync', controlPlaneRunId: 'run-1' },
+		)
+	})
+
+	it('delivers a production Cohort 005 create-only plan with no authorized removals', async () => {
+		const cohort = AI_HERO_COURSE_SYNC_BINDING_COHORT_005
+		storedRun.bindingId = cohort.bindingId
+		storedRun.plan = {
+			...plan(
+				Array.from({ length: 15 }, (_, position) => ({
+					...workshop(`new-workshop-${position}`, { position }),
+					parentResourceId: cohort.anchorCohortId,
+				})),
+			),
+			bindingId: cohort.bindingId,
+		}
+		await expect(
+			deliverCourseSyncEntitlementSync({
+				controlPlaneRunId: 'run-1',
+				lifecycle: 'applied',
+			}),
+		).resolves.toEqual({ triggered: true })
+		expect(mocks.trigger).toHaveBeenCalledWith(
+			cohort.anchorCohortId,
+			{
+				resourcesAdded: Array.from({ length: 15 }, (_, position) => ({
+					resourceId: `new-workshop-${position}`,
+					position,
+				})),
+				resourcesRemoved: [],
+				boundedRemovals: [],
+			},
 			expect.any(String),
 			{ source: 'course-sync', controlPlaneRunId: 'run-1' },
 		)
