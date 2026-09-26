@@ -251,6 +251,19 @@ describe('cohort course-sync entitlements', () => {
 		)
 	})
 
+	it('throws explicitly if the persisted run for entitlement delivery is missing', async () => {
+		mocks.select.mockImplementationOnce(() => ({
+			from: () => ({ where: () => ({ limit: async () => [] }) }),
+		}))
+		await expect(
+			deliverCourseSyncEntitlementSync({
+				controlPlaneRunId: 'missing-run',
+				lifecycle: 'applied',
+			}),
+		).rejects.toMatchObject({ code: 'RUN_NOT_FOUND' })
+		expect(mocks.trigger).not.toHaveBeenCalled()
+	})
+
 	it('never triggers for the production v4 binding, even with workshop-looking plan items', async () => {
 		storedRun.bindingId = 'csb_ai_coding_crash_course'
 		await expect(

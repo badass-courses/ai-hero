@@ -2,7 +2,7 @@ import { COURSE_SYNC_APPLIED_NOTICE_EVENT } from '@/inngest/events/course-sync-a
 import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
 
-import { AI_HERO_COURSE_SYNC_BINDING } from './types'
+import { getCourseSyncRunBinding } from './run-binding'
 
 const DISPATCH_ATTEMPTS = 3
 const DISPATCH_RETRY_DELAY_MS = 250
@@ -21,9 +21,8 @@ const DISPATCH_RETRY_DELAY_MS = 250
 export async function requestCourseSyncAppliedNotice(input: {
 	controlPlaneRunId: string
 	requestedBy: 'operator' | 'poller' | 'backfill'
-	bindingId?: string
 }): Promise<void> {
-	const bindingId = input.bindingId ?? AI_HERO_COURSE_SYNC_BINDING.bindingId
+	const { bindingId } = await getCourseSyncRunBinding(input.controlPlaneRunId)
 	let lastError: unknown = null
 
 	for (let attempt = 1; attempt <= DISPATCH_ATTEMPTS; attempt++) {
@@ -55,8 +54,7 @@ export async function requestCourseSyncAppliedNotice(input: {
 			controlPlaneRunId: input.controlPlaneRunId,
 			requestedBy: input.requestedBy,
 			attempts: DISPATCH_ATTEMPTS,
-			error:
-				lastError instanceof Error ? lastError.message : String(lastError),
+			error: lastError instanceof Error ? lastError.message : String(lastError),
 		})
 	} catch {
 		// Nothing left to report to.

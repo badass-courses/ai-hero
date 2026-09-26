@@ -7,10 +7,8 @@ import {
 import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { requestCourseSyncAppliedNotice } from '@/course-sync/applied-notice-dispatch'
 import { deliverCourseSyncEntitlementSync } from '@/course-sync/cohort-entitlements'
-import {
-	COURSE_SYNC_BINDINGS,
-	getServerCourseSyncBinding,
-} from '@/course-sync/types'
+import { getCourseSyncRunBinding } from '@/course-sync/run-binding'
+import { recordPostCommitNoticeFailure } from '@/course-sync/post-commit-notice'
 import { CourseSyncError } from '@/course-sync/errors'
 
 function parseOperation(value: string) {
@@ -69,10 +67,18 @@ export async function POST(
 			// notice is a durable event rather than inline work so a slow
 			// narration or a Slack outage cannot fail the operator's apply.
 			if (applied.state === 'applied') {
-				await requestCourseSyncAppliedNotice({
-					controlPlaneRunId: applied.runId,
-					requestedBy: 'operator',
-				})
+				try {
+					await requestCourseSyncAppliedNotice({
+						controlPlaneRunId: applied.runId,
+						requestedBy: 'operator',
+					})
+				} catch (error) {
+					await recordPostCommitNoticeFailure({
+						run: applied,
+						phase: 'apply',
+						error,
+					})
+				}
 			}
 			return courseSyncJson(applied)
 		}
@@ -82,16 +88,33 @@ export async function POST(
 				runId: parsed.runId,
 				idempotencyKey: idempotencyKey(request),
 			})
-			if (
-				rolledBack.state === 'rolled_back' &&
-				rolledBack.bindingId &&
-				Object.hasOwn(COURSE_SYNC_BINDINGS, rolledBack.bindingId) &&
-				getServerCourseSyncBinding(rolledBack.bindingId).contractVersion === 5
-			) {
-				await deliverCourseSyncEntitlementSync({
-					controlPlaneRunId: rolledBack.runId,
-					lifecycle: 'rolled_back',
-				})
+			if (rolledBack.state === 'rolled_back') {
+				try {
+					if (
+						(await getCourseSyncRunBinding(rolledBack.runId))
+							.contractVersion === 5
+					) {
+						const delivery = await deliverCourseSyncEntitlementSync({
+							controlPlaneRunId: rolledBack.runId,
+							lifecycle: 'rolled_back',
+						})
+						if (delivery.reason === 'failed') {
+							await recordPostCommitNoticeFailure({
+								run: rolledBack,
+								phase: 'rollback',
+								error: new Error(
+									'Cohort entitlement delivery failed after rollback',
+								),
+							})
+						}
+					}
+				} catch (error) {
+					await recordPostCommitNoticeFailure({
+						run: rolledBack,
+						phase: 'rollback',
+						error,
+					})
+				}
 			}
 			return courseSyncJson(rolledBack)
 		}

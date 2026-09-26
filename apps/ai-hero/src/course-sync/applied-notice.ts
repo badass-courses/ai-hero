@@ -7,10 +7,6 @@ import { db } from '@/db'
 import { courseSyncRun, courseSyncSourceRevision } from '@/db/schema'
 import { env } from '@/env.mjs'
 import { log } from '@/server/logger'
-import {
-	COURSE_SYNC_BINDINGS,
-	getServerCourseSyncBinding,
-} from '@/course-sync/types'
 
 import {
 	claimCourseSyncReviewNotification,
@@ -27,6 +23,7 @@ import {
 import { deliverCourseSyncEntitlementSync } from './cohort-entitlements'
 import { CourseSyncError } from './errors'
 import { COURSE_SYNC_AUTHOR_NAME, narrateCourseSyncApply } from './narrate'
+import { getCourseSyncRunBinding } from './run-binding'
 
 export type CourseSyncAppliedNotification = Extract<
 	CourseSyncNotification,
@@ -81,7 +78,9 @@ export async function buildCourseSyncAppliedNotification(
 		.from(courseSyncRun)
 		.where(eq(courseSyncRun.runId, controlPlaneRunId))
 		.limit(1)
-	if (!run?.plan || run.state !== 'applied') return null
+	if (!run)
+		throw new CourseSyncError('RUN_NOT_FOUND', 'Sync run not found.', 404)
+	if (!run.plan || run.state !== 'applied') return null
 
 	const [revision] = await db
 		.select()
@@ -127,7 +126,6 @@ export async function buildCourseSyncAppliedNotification(
 }
 
 export type DeliverCourseSyncAppliedNoticeInput = {
-	bindingId: string
 	controlPlaneRunId: string
 	pollRunId: string
 	notification?: CourseSyncAppliedNotification
@@ -143,6 +141,7 @@ export async function deliverCourseSyncAppliedNotice(
 	input: DeliverCourseSyncAppliedNoticeInput,
 ): Promise<DeliverCourseSyncAppliedNoticeResult> {
 	const clock = input.clock ?? (() => new Date())
+	const binding = await getCourseSyncRunBinding(input.controlPlaneRunId)
 	const notification =
 		input.notification ??
 		(await buildCourseSyncAppliedNotification(
@@ -150,6 +149,13 @@ export async function deliverCourseSyncAppliedNotice(
 			input.pollRunId,
 		))
 	if (!notification) return { delivered: false, reason: 'not-applied' }
+	if (notification.controlPlaneRunId !== input.controlPlaneRunId) {
+		throw new CourseSyncError(
+			'RUN_ID_MISMATCH',
+			'Applied notice references a different sync run.',
+			409,
+		)
+	}
 
 	const planSha256 =
 		input.planSha256 ??
@@ -159,7 +165,7 @@ export async function deliverCourseSyncAppliedNotice(
 
 	const receipt = {
 		kind: 'applied' as const,
-		bindingId: input.bindingId,
+		bindingId: binding.bindingId,
 		courseVersionId: notification.courseVersionId,
 		providerRevision: notification.providerRevision,
 		runId: notification.runId,
@@ -170,10 +176,7 @@ export async function deliverCourseSyncAppliedNotice(
 
 	// Independent lifecycle receipt: a duplicate applied-notice request can retry
 	// a failed entitlement trigger even after Slack's notice was claimed.
-	if (
-		Object.hasOwn(COURSE_SYNC_BINDINGS, input.bindingId) &&
-		getServerCourseSyncBinding(input.bindingId).contractVersion === 5
-	) {
+	if (binding.contractVersion === 5) {
 		await deliverCourseSyncEntitlementSync({
 			controlPlaneRunId: notification.controlPlaneRunId,
 			lifecycle: 'applied',
@@ -206,7 +209,7 @@ export async function deliverCourseSyncAppliedNotice(
 			failureClass: 'APPLIED_NOTICE_DELIVERY_FAILED',
 		})
 		await log.error('course_sync.applied_notice.failed', {
-			bindingId: input.bindingId,
+			bindingId: binding.bindingId,
 			controlPlaneRunId: notification.controlPlaneRunId,
 			error: error instanceof Error ? error.message : String(error),
 		})

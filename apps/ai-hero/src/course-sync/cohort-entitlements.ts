@@ -11,6 +11,7 @@ import {
 	failCourseSyncReviewNotification,
 } from './detection-persistence'
 import { sha256, stableJson } from './control-plane'
+import { CourseSyncError } from './errors'
 import { getServerCourseSyncBinding, type SyncPlan } from './types'
 
 type Lifecycle = 'applied' | 'rolled_back'
@@ -52,8 +53,9 @@ export function cohortWorkshopEntitlementChanges(
  * the operator rollback route. A separate per-lifecycle receipt survives
  * duplicate notice delivery; a failed receipt is retryable. The stable event
  * ID also deduplicates sends if receipt completion fails after enqueueing.
- * Failure is visible in the poll log and structured error log, never as a
- * failed already-committed apply/rollback response.
+ * Trigger failure is visible in the poll log and structured error log, never as
+ * a failed already-committed apply/rollback response. A missing run is an
+ * inconsistent caller and is raised explicitly.
  */
 export async function deliverCourseSyncEntitlementSync(input: {
 	controlPlaneRunId: string
@@ -66,7 +68,10 @@ export async function deliverCourseSyncEntitlementSync(input: {
 			.from(courseSyncRun)
 			.where(eq(courseSyncRun.runId, input.controlPlaneRunId))
 			.limit(1)
-		if (!run || run.state !== input.lifecycle || !run.plan) {
+		if (!run) {
+			throw new CourseSyncError('RUN_NOT_FOUND', 'Sync run not found.', 404)
+		}
+		if (run.state !== input.lifecycle || !run.plan) {
 			return { triggered: false, reason: 'run-not-in-lifecycle' }
 		}
 		bindingId = run.bindingId
@@ -155,6 +160,9 @@ export async function deliverCourseSyncEntitlementSync(input: {
 				error: error instanceof Error ? error.message : String(error),
 			})
 			.catch(() => undefined)
+		if (error instanceof CourseSyncError && error.code === 'RUN_NOT_FOUND') {
+			throw error
+		}
 		return { triggered: false, reason: 'failed' }
 	}
 }

@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
 		}): Promise<{ ok: boolean; error?: string }> => ({ ok: true }),
 	),
 	logError: vi.fn(async () => {}),
+	persisted: { bindingId: 'csb_ai_coding_crash_course' as string | null },
+	select: vi.fn(),
 	entitlementSync: vi.fn(
 		async (): Promise<{ triggered: boolean; reason?: string }> => ({
 			triggered: true,
@@ -29,7 +31,7 @@ const mocks = vi.hoisted(() => ({
 	),
 }))
 
-vi.mock('@/db', () => ({ db: { select: vi.fn() } }))
+vi.mock('@/db', () => ({ db: { select: mocks.select } }))
 vi.mock('@/server/logger', () => ({
 	log: { error: mocks.logError, info: vi.fn() },
 }))
@@ -89,7 +91,6 @@ const notification: CourseSyncAppliedNotification = {
 
 function deliver() {
 	return deliverCourseSyncAppliedNotice({
-		bindingId: 'csb_ai_coding_crash_course',
 		controlPlaneRunId: notification.controlPlaneRunId,
 		pollRunId: notification.runId,
 		notification,
@@ -104,11 +105,22 @@ describe('course sync applied notice', () => {
 		mocks.claim.mockResolvedValue(true)
 		mocks.sendNotification.mockResolvedValue({ ok: true })
 		mocks.narrate.mockResolvedValue('Matt added a lesson.')
+		mocks.persisted.bindingId = 'csb_ai_coding_crash_course'
+		mocks.select.mockImplementation(() => ({
+			from: () => ({
+				where: () => ({
+					limit: async () =>
+						mocks.persisted.bindingId
+							? [{ bindingId: mocks.persisted.bindingId }]
+							: [],
+				}),
+			}),
+		}))
 	})
 
 	it('dispatches cohort entitlement sync beside the applied notice for an operator or poller', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
 		await deliverCourseSyncAppliedNotice({
-			bindingId: syntheticCohortBinding.bindingId,
 			controlPlaneRunId: notification.controlPlaneRunId,
 			pollRunId: notification.runId,
 			notification,
@@ -123,14 +135,32 @@ describe('course sync applied notice', () => {
 		)
 	})
 
+	it('redelivery retries the v5 entitlement trigger even when the applied Slack receipt was already claimed', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
+		mocks.claim.mockResolvedValueOnce(false)
+		await expect(
+			deliverCourseSyncAppliedNotice({
+				controlPlaneRunId: notification.controlPlaneRunId,
+				pollRunId: notification.runId,
+				notification,
+				planSha256: 'plan-sha',
+			}),
+		).resolves.toEqual({ delivered: false, reason: 'already-claimed' })
+		expect(mocks.entitlementSync).toHaveBeenCalledWith({
+			controlPlaneRunId: 'csr_run_1',
+			lifecycle: 'applied',
+		})
+		expect(mocks.sendNotification).not.toHaveBeenCalled()
+	})
+
 	it('still delivers the applied notice when the cohort trigger records a failure', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
 		mocks.entitlementSync.mockResolvedValueOnce({
 			triggered: false,
 			reason: 'failed',
 		})
 		await expect(
 			deliverCourseSyncAppliedNotice({
-				bindingId: syntheticCohortBinding.bindingId,
 				controlPlaneRunId: notification.controlPlaneRunId,
 				pollRunId: notification.runId,
 				notification,
@@ -140,9 +170,50 @@ describe('course sync applied notice', () => {
 		expect(mocks.complete).toHaveBeenCalledOnce()
 	})
 
-	it('never dispatches cohort entitlements for a v4 applied notice', async () => {
+	it('operator v5 applies trigger entitlements from the persisted run without a caller binding', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
 		await deliver()
+		expect(mocks.entitlementSync).toHaveBeenCalledWith({
+			controlPlaneRunId: 'csr_run_1',
+			lifecycle: 'applied',
+		})
+		expect(mocks.claim).toHaveBeenCalledWith(
+			expect.objectContaining({ bindingId: syntheticCohortBinding.bindingId }),
+		)
+	})
+
+	it('a missing persisted run throws instead of attributing the notice to Crash Course', async () => {
+		mocks.persisted.bindingId = null
+		await expect(deliver()).rejects.toMatchObject({ code: 'RUN_NOT_FOUND' })
 		expect(mocks.entitlementSync).not.toHaveBeenCalled()
+		expect(mocks.claim).not.toHaveBeenCalled()
+	})
+
+	it('rejects a supplied notification for a different run before claiming or syncing', async () => {
+		mocks.persisted.bindingId = syntheticCohortBinding.bindingId
+		await expect(
+			deliverCourseSyncAppliedNotice({
+				controlPlaneRunId: notification.controlPlaneRunId,
+				pollRunId: notification.runId,
+				notification: { ...notification, controlPlaneRunId: 'other-run' },
+				planSha256: 'plan-sha',
+			}),
+		).rejects.toMatchObject({ code: 'RUN_ID_MISMATCH' })
+		expect(mocks.claim).not.toHaveBeenCalled()
+		expect(mocks.entitlementSync).not.toHaveBeenCalled()
+	})
+
+	it('never dispatches cohort entitlements for a v4 applied notice', async () => {
+		await deliverCourseSyncAppliedNotice({
+			controlPlaneRunId: notification.controlPlaneRunId,
+			pollRunId: notification.runId,
+			notification,
+			planSha256: 'plan-sha',
+		})
+		expect(mocks.entitlementSync).not.toHaveBeenCalled()
+		expect(mocks.claim).toHaveBeenCalledWith(
+			expect.objectContaining({ bindingId: 'csb_ai_coding_crash_course' }),
+		)
 	})
 
 	it('claims under the applied kind so it cannot collide with a review notice', async () => {
