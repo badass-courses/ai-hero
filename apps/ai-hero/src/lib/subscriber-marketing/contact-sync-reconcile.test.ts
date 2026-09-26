@@ -96,10 +96,13 @@ describe('contact sync reconcile', () => {
 			through,
 			limit: 5000,
 		})
+		// The overlap looks only for rows written after the watermark:
+		// late writes under an old occurredAt, not rows already claimed.
 		expect(p.scanChanges).toHaveBeenNthCalledWith(2, {
 			scope: 'overlap',
 			after: '2026-09-26T16:40:00.000Z',
 			through: '2026-09-26T17:40:00.000Z',
+			writtenAfter: '2026-09-26T17:40:00.000Z',
 			limit: 5000,
 		})
 		expect(p.rotatedContacts).toHaveBeenCalledWith({
@@ -121,14 +124,14 @@ describe('contact sync reconcile', () => {
 		})
 	})
 
-	it('syncs fresh and rotated contacts, then the overlap, then stops, heartbeat, watermark', async () => {
+	it('syncs late writes, then fresh and rotated contacts, then stops, heartbeat, watermark', async () => {
 		const p = ports()
 		const receipt = await runContactSyncReconcile(p)
 		expect(p.order).toEqual([
+			'sync:c9',
 			'sync:c1',
 			'sync:c3',
 			'sync:c2',
-			'sync:c9',
 			'stops',
 			`heartbeat:${through}`,
 			`watermark:${through}`,
@@ -239,17 +242,56 @@ describe('contact sync reconcile', () => {
 		expect(p.syncContact).not.toHaveBeenCalledWith('c2')
 	})
 
-	it('never lets the overlap move the claim behind the watermark: it only fills leftover budget', async () => {
-		const overlap = Array.from({ length: 10 }, (_, index) =>
-			event(
-				`o${index}`,
-				`2026-09-26T17:${String(10 + index).padStart(2, '0')}:00.000Z`,
-			),
+	it('always syncs every late write, reserving its budget before fresh changes', async () => {
+		const late = [
+			event('o1', '2026-09-26T17:10:00.000Z'),
+			event('o2', '2026-09-26T17:20:00.000Z'),
+		]
+		const p = ports(
+			{ rotations: [] },
+			{
+				scanChanges: vi.fn(async ({ scope }) =>
+					scope === 'overlap'
+						? late
+						: [
+								event('c1', '2026-09-26T17:41:00.000Z'),
+								event('c2', '2026-09-26T17:44:10.000Z'),
+							],
+				),
+			},
 		)
-		const p = ports({ events: overlap, rotations: [] })
-		const receipt = await runContactSyncReconcile(p, { maxContacts: 2 })
-		expect(receipt).toMatchObject({ syncedThrough: through, contacts: 2 })
-		expect(p.writeWatermark).toHaveBeenCalledWith(through)
+		const receipt = await runContactSyncReconcile(p, { maxContacts: 3 })
+		// Two late writes take two of three slots; fresh gets the third.
+		expect(p.syncContact).toHaveBeenCalledWith('o1')
+		expect(p.syncContact).toHaveBeenCalledWith('o2')
+		expect(p.syncContact).toHaveBeenCalledWith('c1')
+		expect(p.syncContact).not.toHaveBeenCalledWith('c2')
+		expect(receipt).toMatchObject({
+			syncedThrough: '2026-09-26T17:44:09.999Z',
+			contacts: 3,
+		})
+	})
+
+	it('never advances past late writes it could not cover', async () => {
+		const p = ports(
+			{ rotations: [] },
+			{
+				scanChanges: vi.fn(async ({ scope }) =>
+					scope === 'overlap'
+						? [
+								event('o1', '2026-09-26T17:10:00.000Z'),
+								event('o2', '2026-09-26T17:11:00.000Z'),
+								event('o3', '2026-09-26T17:12:00.000Z'),
+							]
+						: [],
+				),
+			},
+		)
+		await expect(runContactSyncReconcile(p, { limit: 2 })).rejects.toThrow(
+			/late writes/,
+		)
+		expect(p.heartbeat).not.toHaveBeenCalled()
+		expect(p.writeWatermark).not.toHaveBeenCalled()
 	})
 
 	it('fails loudly when fresh changes cannot move past the watermark', async () => {

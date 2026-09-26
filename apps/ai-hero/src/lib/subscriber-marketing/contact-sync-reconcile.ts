@@ -32,11 +32,13 @@ export type ContactSyncReconcilePorts = {
 	now: () => Date
 	readWatermark(): Promise<string | undefined>
 	/**
-	 * ContactEvents with after < occurredAt <= through, by (occurredAt, id),
-	 * at most limit + 1. `scope` names the scan (each is its own step).
+	 * ContactEvents with after < occurredAt <= through (and, when given,
+	 * written after `writtenAfter`), by (occurredAt, id), at most limit + 1.
+	 * `scope` names the scan (each is its own step).
 	 */
 	scanChanges(args: {
 		scope: 'fresh' | 'overlap'
+		writtenAfter?: string
 		after: string
 		through: string
 		limit: number
@@ -98,10 +100,12 @@ export async function runContactSyncReconcile(
 	// backfill owns history.
 	const last = watermark ?? iso(Date.parse(planned) - overlapMs)
 
-	// Fresh changes decide the claim. The overlap, rows at or before the
-	// watermark that a previous run already claimed, is scanned apart and
-	// only fills leftover budget, so it can never pull the claim behind the
-	// watermark (the cursor only moves forward).
+	// Fresh changes decide the claim. The overlap looks behind the watermark
+	// only for late writes: rows under an old occurredAt written after the
+	// watermark was claimed, which the previous scan could not have seen.
+	// Every one of them is synced (their budget comes first), and they never
+	// move the claim, which stays ahead of the watermark (the cursor only
+	// moves forward). Too many to cover means no advance.
 	const fresh = await ports.scanChanges({
 		scope: 'fresh',
 		after: last,
@@ -113,9 +117,21 @@ export async function runContactSyncReconcile(
 				scope: 'overlap',
 				after: iso(Date.parse(watermark) - overlapMs),
 				through: watermark,
+				writtenAfter: watermark,
 				limit,
 			})
 		: []
+	if (overlap.length > limit) {
+		throw new Error(
+			`contact sync reconcile cannot advance: over ${limit} late writes behind ${watermark}`,
+		)
+	}
+	const late = [...new Set(overlap.map((row) => row.contactId))]
+	if (late.length > maxContacts) {
+		throw new Error(
+			`contact sync reconcile cannot advance: ${late.length} contacts with late writes exceed ${maxContacts}`,
+		)
+	}
 	const rotations = await ports.rotatedContacts({
 		after: last,
 		through: planned,
@@ -145,7 +161,7 @@ export async function runContactSyncReconcile(
 	]
 		.filter((item) => Date.parse(item.at) <= Date.parse(claim))
 		.sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
-	const claimed = new Set<string>()
+	const claimed = new Set<string>(late)
 	for (const item of timeline) {
 		if (claimed.has(item.contactId)) continue
 		if (claimed.size === maxContacts) {
@@ -160,18 +176,16 @@ export async function runContactSyncReconcile(
 	const within = (at: string) => Date.parse(at) <= Date.parse(claim)
 	const freshEvents = fresh.filter((row) => within(row.occurredAt))
 	const contacts = [
-		...new Set(
-			timeline.filter((item) => within(item.at)).map((item) => item.contactId),
-		),
+		...new Set([
+			...late,
+			...timeline
+				.filter((item) => within(item.at))
+				.map((item) => item.contactId),
+		]),
 	]
 	const rotated = new Set(
 		rotations.filter((row) => within(row.at)).map((row) => row.contactId),
 	)
-	// Leftover budget: late-written rows under an old occurredAt.
-	for (const row of overlap) {
-		if (contacts.length >= maxContacts) break
-		if (!contacts.includes(row.contactId)) contacts.push(row.contactId)
-	}
 	const synced = new Set(contacts)
 
 	for (let index = 0; index < contacts.length; index += SYNC_CHUNK) {

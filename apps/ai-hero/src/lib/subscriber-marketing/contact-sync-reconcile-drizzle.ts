@@ -66,7 +66,7 @@ export function createDrizzleContactSyncStore(
 			const watermark = rows[0]?.watermark
 			return watermark ? isoOf(watermark) : undefined
 		},
-		async scanChanges({ after, through, limit }) {
+		async scanChanges({ after, through, limit, writtenAfter }) {
 			const rows = (await db
 				.select({
 					id: contactEvent.id,
@@ -79,6 +79,11 @@ export function createDrizzleContactSyncStore(
 					and(
 						gt(contactEvent.occurredAt, new Date(after)),
 						lte(contactEvent.occurredAt, new Date(through)),
+						// Late writes only: the occurredAt range keeps the index;
+						// createdAt narrows it to rows the last run could not see.
+						writtenAfter
+							? gt(contactEvent.createdAt, new Date(writtenAfter))
+							: undefined,
 					),
 				)
 				.orderBy(asc(contactEvent.occurredAt), asc(contactEvent.id))

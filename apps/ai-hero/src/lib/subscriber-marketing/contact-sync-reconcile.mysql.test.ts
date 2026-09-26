@@ -75,11 +75,12 @@ integration('contact sync reconcile reads on MySQL', () => {
 		contactId: string,
 		occurredAt: string,
 		eventType = 'skills-newsletter.subscribed',
+		createdAt = occurredAt,
 	) =>
 		pool.query(
-			`INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt)
-			 VALUES (?, ?, 'pi', 'kit', ?, 'ref', ?, ?, 'internal', '{}', '{}', 1, ?)`,
-			[id, contactId, id, eventType, `key:${id}`, occurredAt],
+			`INSERT INTO AI_ContactEvent (id, contactId, providerIdentityId, provider, providerEventId, providerReference, eventType, semanticIdempotencyKey, privacyLevel, identityEvidence, payloadSummary, schemaVersion, occurredAt, createdAt)
+			 VALUES (?, ?, 'pi', 'kit', ?, 'ref', ?, ?, 'internal', '{}', '{}', 1, ?, ?)`,
+			[id, contactId, id, eventType, `key:${id}`, occurredAt, createdAt],
 		)
 
 	it('scans every event type after the start and through the end, in (occurredAt, id) order, one past the limit', async () => {
@@ -127,6 +128,21 @@ integration('contact sync reconcile reads on MySQL', () => {
 			limit: 1,
 		})
 		expect(limited.map((row) => row.id)).toEqual(['e1', 'e2'])
+	})
+
+	it('finds only late writes behind the watermark: written after it, under an old occurredAt', async () => {
+		// Claimed by the previous run: written before the watermark.
+		await contactEvent('seen', 'c1', '2026-09-26 17:10:00', 'kit.message', '2026-09-26 17:10:00')
+		// Written after the watermark with an old occurredAt: a late write.
+		await contactEvent('late', 'c2', '2026-09-26 17:20:00', 'kit.message', '2026-09-26 17:45:00')
+		const rows = await store.scanChanges({
+			scope: 'overlap',
+			after: '2026-09-26T16:40:00.000Z',
+			through: '2026-09-26T17:40:00.000Z',
+			writtenAfter: '2026-09-26T17:40:00.000Z',
+			limit: 5000,
+		})
+		expect(rows.map((row) => row.id)).toEqual(['late'])
 	})
 
 	it('rides the occurredAt and issuedAt indexes', async () => {
