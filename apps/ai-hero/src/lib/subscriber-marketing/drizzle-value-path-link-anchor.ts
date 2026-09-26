@@ -1,10 +1,11 @@
 import { valuePathLinkAnchor } from '@/db/contact-sync-schema'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
-import type {
-	ValuePathLinkAnchor,
-	ValuePathLinkAnchorKey,
-	ValuePathLinkAnchorStore,
+import {
+	valuePathLinkAnchorRowKey,
+	type ValuePathLinkAnchor,
+	type ValuePathLinkAnchorKey,
+	type ValuePathLinkAnchorStore,
 } from './value-path-link-anchor'
 
 /**
@@ -30,12 +31,7 @@ export function createDrizzleValuePathLinkAnchorStore(
 		}
 	}
 	const keyClause = (key: ValuePathLinkAnchorKey) =>
-		and(
-			eq(valuePathLinkAnchor.contactId, key.contactId),
-			eq(valuePathLinkAnchor.valuePathSlug, key.valuePathSlug),
-			eq(valuePathLinkAnchor.emailResourceId, key.emailResourceId),
-			eq(valuePathLinkAnchor.fingerprint, key.fingerprint),
-		)
+		eq(valuePathLinkAnchor.anchorKey, valuePathLinkAnchorRowKey(key))
 	return {
 		async find(key) {
 			const rows = (await db
@@ -55,9 +51,11 @@ export function createDrizzleValuePathLinkAnchorStore(
 		},
 		async insert(key, anchor) {
 			try {
-				await db
-					.insert(valuePathLinkAnchor)
-					.values({ ...key, ...sqlTimestamps(anchor) })
+				await db.insert(valuePathLinkAnchor).values({
+					anchorKey: valuePathLinkAnchorRowKey(key),
+					...key,
+					...sqlTimestamps(anchor),
+				})
 				return 'inserted'
 			} catch (error) {
 				if (isDuplicateKey(error)) return 'exists'

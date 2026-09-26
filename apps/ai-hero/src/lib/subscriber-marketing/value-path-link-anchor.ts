@@ -31,6 +31,26 @@ export type ValuePathLinkAnchor = {
 	expiresAt: string
 }
 
+/**
+ * The row's unique key: one digest of the four key parts. MySQL caps a
+ * unique index at 3072 bytes and the four varchars together exceed it
+ * (PlanetScale branch, 2026-09-26), so the parts stay as readable columns
+ * and this digest carries the uniqueness. NUL-delimited, so no part can
+ * run into the next.
+ */
+export function valuePathLinkAnchorRowKey(key: ValuePathLinkAnchorKey): string {
+	return createHash('sha256')
+		.update(
+			[
+				key.contactId,
+				key.valuePathSlug,
+				key.emailResourceId,
+				key.fingerprint,
+			].join('\u0000'),
+		)
+		.digest('hex')
+}
+
 export type ValuePathLinkAnchorStore = {
 	find(key: ValuePathLinkAnchorKey): Promise<ValuePathLinkAnchor | undefined>
 	/** Insert-or-nothing: 'exists' when another issue already holds the key. */

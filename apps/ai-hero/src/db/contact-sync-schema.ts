@@ -18,6 +18,13 @@ import { timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core'
 export const valuePathLinkAnchor = mysqlTable(
 	'ValuePathLinkAnchor',
 	{
+		/**
+		 * One digest of (contactId, valuePathSlug, emailResourceId,
+		 * fingerprint). The four columns together exceed MySQL's 3072-byte
+		 * unique-index limit, so they stay readable data and this carries
+		 * the uniqueness (valuePathLinkAnchorRowKey).
+		 */
+		anchorKey: varchar('anchorKey', { length: 64 }).notNull(),
 		contactId: varchar('contactId', { length: 255 }).notNull(),
 		valuePathSlug: varchar('valuePathSlug', { length: 255 }).notNull(),
 		emailResourceId: varchar('emailResourceId', { length: 255 }).notNull(),
@@ -27,11 +34,6 @@ export const valuePathLinkAnchor = mysqlTable(
 		expiresAt: timestamp('expiresAt', { mode: 'string', fsp: 3 }).notNull(),
 	},
 	(table) => ({
-		anchorUq: uniqueIndex('ValuePathLinkAnchor_anchor_uq').on(
-			table.contactId,
-			table.valuePathSlug,
-			table.emailResourceId,
-			table.fingerprint,
-		),
+		anchorUq: uniqueIndex('ValuePathLinkAnchor_anchor_uq').on(table.anchorKey),
 	}),
 )

@@ -29,14 +29,17 @@ SET @ddl_value_path_link_anchor = (
         AND TABLE_NAME = 'AI_ValuePathLinkAnchor'
     ),
     'SELECT ''AI_ValuePathLinkAnchor already exists'' AS skipped',
+    -- anchorKey is one digest of the four key parts: those columns together
+    -- exceed MySQL''s 3072-byte unique-index limit (caught on the branch).
     'CREATE TABLE `AI_ValuePathLinkAnchor` (
+       `anchorKey` varchar(64) NOT NULL,
        `contactId` varchar(255) NOT NULL,
        `valuePathSlug` varchar(255) NOT NULL,
        `emailResourceId` varchar(255) NOT NULL,
        `fingerprint` varchar(64) NOT NULL,
        `issuedAt` timestamp(3) NOT NULL,
        `expiresAt` timestamp(3) NOT NULL,
-       UNIQUE KEY `ValuePathLinkAnchor_anchor_uq` (`contactId`, `valuePathSlug`, `emailResourceId`, `fingerprint`),
+       UNIQUE KEY `ValuePathLinkAnchor_anchor_uq` (`anchorKey`),
        KEY `ValuePathLinkAnchor_contact_idx` (`contactId`)
      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
   )

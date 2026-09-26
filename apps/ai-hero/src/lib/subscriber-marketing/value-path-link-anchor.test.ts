@@ -4,6 +4,7 @@ import {
 	createMemoryValuePathLinkAnchorStore,
 	resolveValuePathLinkAnchor,
 	VALUE_PATH_LINK_LIFETIME_DAYS,
+	valuePathLinkAnchorRowKey,
 	valuePathLinkFingerprint,
 	type ValuePathLinkAnchorStore,
 } from './value-path-link-anchor'
@@ -115,6 +116,30 @@ describe('value-path link anchor', () => {
 				error: expect.stringContaining('AI_ValuePathLinkAnchor'),
 			}),
 		)
+	})
+
+	it('keys the row by one fixed-length digest, because four varchars exceed MySQL index limits', () => {
+		const rowKey = valuePathLinkAnchorRowKey(key)
+		expect(rowKey).toMatch(/^[0-9a-f]{64}$/)
+		expect(valuePathLinkAnchorRowKey({ ...key })).toBe(rowKey)
+		for (const field of [
+			'contactId',
+			'valuePathSlug',
+			'emailResourceId',
+			'fingerprint',
+		] as const) {
+			expect(
+				valuePathLinkAnchorRowKey({ ...key, [field]: `${key[field]}x` }),
+			).not.toBe(rowKey)
+		}
+		// Delimited, so a shifted boundary is a different key.
+		expect(
+			valuePathLinkAnchorRowKey({
+				...key,
+				contactId: 'contact',
+				valuePathSlug: `1${key.valuePathSlug}`,
+			}),
+		).not.toBe(valuePathLinkAnchorRowKey({ ...key, contactId: 'contact1' }))
 	})
 
 	it('fingerprints the inputs that shape the URL, not their order', () => {
