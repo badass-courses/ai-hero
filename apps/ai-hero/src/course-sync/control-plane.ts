@@ -11,7 +11,9 @@ import { CourseSyncError, asCourseSyncError } from './errors'
 import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
 import { extractQuizQuestions } from './quiz-question-extraction'
 import {
+	anchorResourceId,
 	getServerCourseSyncBinding,
+	managedSectionKind,
 	type CourseSyncBinding,
 	type CourseSyncControlPlaneDependencies,
 	type FrozenSourceAsset,
@@ -153,14 +155,7 @@ function assertManifestScope(
 }
 
 function publicBinding(binding: CourseSyncBinding): CourseSyncBindingSummary {
-	if (binding.contractVersion !== 4) {
-		throw new CourseSyncError(
-			'BINDING_VERSION_UNSUPPORTED',
-			'Cohort bindings require the S4b target implementation.',
-			409,
-		)
-	}
-	return {
+	return binding.contractVersion === 4 ? {
 		bindingId: binding.bindingId,
 		contractVersion: binding.contractVersion,
 		status: binding.status,
@@ -169,6 +164,18 @@ function publicBinding(binding: CourseSyncBinding): CourseSyncBindingSummary {
 		target: {
 			product: binding.targetContract.product,
 			workshop: binding.targetContract.workshop,
+			managedChildren: binding.managedChildContract,
+			sectionMappingPolicy: binding.sectionMappingPolicy,
+		},
+	} : {
+		bindingId: binding.bindingId,
+		contractVersion: binding.contractVersion,
+		status: binding.status,
+		sourceCourseId: binding.sourceCourseId,
+		applyPolicy: binding.applyPolicy,
+		target: {
+			product: binding.targetContract.product,
+			cohort: binding.targetContract.cohort,
 			managedChildren: binding.managedChildContract,
 			sectionMappingPolicy: binding.sectionMappingPolicy,
 		},
@@ -228,20 +235,14 @@ function sourceResourceFields(
 	const frozenByVideo = new Map(
 		frozenAssets.map((asset) => [asset.sourceVideoId, asset] as const),
 	)
-	if (binding.contractVersion !== 4) {
-		throw new CourseSyncError(
-			'BINDING_VERSION_UNSUPPORTED',
-			'Cohort bindings require the S4b mapping implementation.',
-			409,
-		)
-	}
 	return manifest.sections.flatMap((section, sectionIndex) => {
-		const sectionId = targetResourceId(binding.bindingId, 'section', section.id)
+		const sectionKind = managedSectionKind(binding)
+		const sectionId = targetResourceId(binding.bindingId, sectionKind, section.id)
 		const sectionItem = {
-			sourceKind: 'section' as const,
+			sourceKind: sectionKind,
 			sourceId: section.id,
 			targetResourceId: sectionId,
-			parentResourceId: binding.anchorWorkshopId,
+			parentResourceId: anchorResourceId(binding),
 			position: sectionIndex,
 			detached: false,
 			previousDetached: false,
@@ -431,20 +432,8 @@ export function createCourseSyncControlPlane(
 		dependencies.makeId ?? ((prefix: string) => `${prefix}_${randomUUID()}`)
 	const persistence = dependencies.persistence
 
-	const serverBinding = (bindingId: string) => {
-		const binding = getServerCourseSyncBinding(
-			bindingId,
-			dependencies.bindingRegistry,
-		)
-		if (binding.contractVersion !== 4) {
-			throw new CourseSyncError(
-				'BINDING_VERSION_UNSUPPORTED',
-				'Cohort bindings require the S4b target implementation.',
-				409,
-			)
-		}
-		return binding
-	}
+	const serverBinding = (bindingId: string) =>
+		getServerCourseSyncBinding(bindingId, dependencies.bindingRegistry)
 
 	const ensureServerBinding = async (bindingId: string) => {
 		return persistence.ensureBinding(serverBinding(bindingId))

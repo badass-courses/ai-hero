@@ -17,35 +17,12 @@ import {
 	COURSE_SYNC_BINDINGS,
 	getServerCourseSyncBinding,
 	activeCourseSyncBindings,
-	type CohortCourseSyncBinding,
 } from './types'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 import {
 	resolveStoredCourseSyncBinding,
 	stableValue,
 } from './binding-migration'
-
-const syntheticCohortBinding = {
-	contractVersion: 5,
-	bindingId: 'csb_test_cohort',
-	status: 'active',
-	sourceCourseId: 'test-course',
-	productId: 'test-product',
-	anchorCohortId: 'test-cohort',
-	targetContract: {
-		product: { type: 'cohort', state: 'draft', visibility: 'unlisted' },
-		cohort: { type: 'cohort', state: 'draft', visibility: 'unlisted' },
-		relation: { position: 0, exclusiveProduct: true },
-	},
-	managedChildContract: {
-		workshop: { state: 'draft', visibility: 'unlisted' },
-		lesson: { state: 'draft', visibility: 'unlisted' },
-	},
-	applyPolicy: 'operator',
-	initialApplyPolicyOverride: 'operator',
-	sectionMappingPolicy: 'sections-as-cohort-workshops',
-	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK_COHORT_005',
-	assetConnector: 'dropbox-shared-link',
-} as const satisfies CohortCourseSyncBinding
 
 describe('server-owned binding registry', () => {
 	it('pins the production Crash Course row serialization (T1)', () => {
@@ -85,7 +62,7 @@ describe('server-owned binding registry', () => {
 		)
 	})
 
-	it('rejects injected v5 before persistence writes and unknown ids with 404', async () => {
+	it('allows injected v5 through binding lookup while unknown ids still return 404', async () => {
 		const persistence = new InMemoryCourseSyncPersistence()
 		const unavailable = async (): Promise<never> => { throw new Error('unexpected side effect') }
 		const plane = createCourseSyncControlPlane({
@@ -95,17 +72,13 @@ describe('server-owned binding registry', () => {
 			muxClient: { getAsset: unavailable, createAsset: unavailable, waitForReady: unavailable },
 			createdById: 'test-writer',
 		})
-		await expect(plane.ensureBinding(syntheticCohortBinding.bindingId)).rejects.toMatchObject({ code: 'BINDING_VERSION_UNSUPPORTED' })
+		await expect(plane.ensureBinding(syntheticCohortBinding.bindingId)).resolves.toMatchObject({
+			contractVersion: 5,
+			target: { cohort: { type: 'cohort' }, sectionMappingPolicy: 'sections-as-cohort-workshops' },
+		})
+		await expect(plane.getBinding(syntheticCohortBinding.bindingId)).resolves.toMatchObject({ contractVersion: 5 })
 		await expect(plane.ensureBinding('unknown')).rejects.toMatchObject({ code: 'BINDING_NOT_FOUND', status: 404 })
-		expect(persistence.bindings.size).toBe(0)
-	})
-
-	it('rejects v5 target checks explicitly until S4b', () => {
-		expect(() =>
-			collectCourseSyncTargetViolations(syntheticCohortBinding, validFacts()),
-		).toThrowError(
-			expect.objectContaining({ code: 'BINDING_VERSION_UNSUPPORTED' }),
-		)
+		expect(persistence.bindings.size).toBe(1)
 	})
 
 	it('rejects synthetic cohort drift and never migrates it through Crash Course v2/v3 (T4)', () => {
@@ -162,6 +135,57 @@ function validFacts(): CourseSyncTargetFacts {
 		],
 	}
 }
+
+function validCohortFacts(): CourseSyncTargetFacts {
+	return {
+		product: { id: 'test-product', type: 'cohort', fields: { state: 'draft', visibility: 'unlisted' } },
+		workshop: { id: 'test-cohort', type: 'cohort', fields: { state: 'draft', visibility: 'unlisted' }, deletedAt: null },
+		relation: { position: 0 },
+		otherProductRelations: [],
+		childRelations: [],
+	}
+}
+
+describe('cohort-anchored target contract v5', () => {
+	it('accepts the synthetic draft/unlisted cohort with zero live children (T5)', () => {
+		expect(collectCourseSyncTargetViolations(syntheticCohortBinding, validCohortFacts())).toEqual([])
+	})
+
+	it('reports product, anchor, relation and workshop child violations with existing codes (T6)', () => {
+		const facts = validCohortFacts()
+		facts.product = { id: 'test-product', type: 'workshop', fields: { state: 'published', visibility: 'public' } }
+		facts.workshop = { id: 'test-cohort', type: 'workshop', fields: { state: 'published', visibility: 'public' }, deletedAt: null }
+		facts.relation = { position: 2 }
+		facts.childRelations = [{ position: 0, resource: { id: 'foreign-child', type: 'section', fields: { state: 'published', visibility: 'public', courseSync: { bindingId: 'other' } } } }]
+		expect(collectCourseSyncTargetViolations(syntheticCohortBinding, facts).map((v) => v.code)).toEqual([
+			'TARGET_PRODUCT_TYPE_MISMATCH', 'TARGET_PRODUCT_STATE_MISMATCH', 'TARGET_PRODUCT_VISIBILITY_MISMATCH',
+			'TARGET_WORKSHOP_TYPE_MISMATCH', 'TARGET_WORKSHOP_STATE_MISMATCH', 'TARGET_WORKSHOP_VISIBILITY_MISMATCH',
+			'TARGET_RELATION_POSITION_MISMATCH', 'TARGET_CHILD_TYPE_MISMATCH', 'TARGET_CHILD_STATE_MISMATCH',
+			'TARGET_CHILD_VISIBILITY_MISMATCH', 'TARGET_CHILD_BINDING_MISMATCH',
+		])
+	})
+
+	it('reports missing cohort target rows and a missing relation with the existing codes', () => {
+		const facts = validCohortFacts()
+		facts.product = null
+		facts.workshop = null
+		facts.relation = null
+		expect(collectCourseSyncTargetViolations(syntheticCohortBinding, facts).map((v) => v.code)).toEqual([
+			'TARGET_PRODUCT_NOT_FOUND', 'TARGET_WORKSHOP_NOT_FOUND', 'TARGET_RELATION_MISSING',
+		])
+	})
+
+	it('accepts contiguous live workshop children after detached relations are excluded by the reader (T7)', () => {
+		const facts = validCohortFacts()
+		facts.childRelations = [0, 1].map((position) => ({
+			position,
+			resource: { id: `test-workshop-${position}`, type: 'workshop', fields: {
+				state: 'draft', visibility: 'unlisted', courseSync: { bindingId: syntheticCohortBinding.bindingId },
+			} },
+		}))
+		expect(collectCourseSyncTargetViolations(syntheticCohortBinding, facts)).toEqual([])
+	})
+})
 
 describe('course sync target contract v4', () => {
 	it('accepts the pinned live target while keeping managed children draft/unlisted', () => {

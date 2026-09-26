@@ -195,6 +195,7 @@ export const courseSyncBinding = mysqlTable(
 		bindingId: varchar('bindingId', { length: 255 }).notNull().primaryKey(),
 		sourceCourseId: varchar('sourceCourseId', { length: 255 }).notNull(),
 		productId: varchar('productId', { length: 255 }).notNull(),
+		// Legacy column name: cohort bindings store anchorCohortId here. No DB migration.
 		anchorWorkshopId: varchar('anchorWorkshopId', { length: 255 }).notNull(),
 		status: varchar('status', { length: 32 }).notNull(),
 		binding: json('binding').$type<CourseSyncBinding>().notNull(),

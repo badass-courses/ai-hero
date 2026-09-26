@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { sha256, stableJson } from './control-plane'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -590,6 +591,23 @@ describe('course sync persistence invariants', () => {
 		const chunks = chunkCourseSyncWrites(rows, 50)
 		expect(chunks.map((chunk) => chunk.length)).toEqual([50, 50, 21])
 		expect(chunks.flat()).toEqual(rows)
+	})
+
+	it('expects workshop children for cohort bindings and section children for v4 (T12)', () => {
+		const workshop = {
+			position: 0,
+			resource: { type: 'workshop', fields: {
+				state: 'draft', visibility: 'unlisted',
+				courseSync: { bindingId: syntheticCohortBinding.bindingId },
+			} },
+		}
+		expect(() => assertManagedChildRelations(syntheticCohortBinding, [workshop])).not.toThrow()
+		expect(() => assertManagedChildRelations(syntheticCohortBinding, [section(0)])).toThrowError(
+			expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }),
+		)
+		expect(() => assertManagedChildRelations(AI_HERO_COURSE_SYNC_BINDING, [workshop])).toThrowError(
+			expect.objectContaining({ code: 'TARGET_CHILD_SCOPE_WIDENED' }),
+		)
 	})
 
 	it('accepts any number of ordered managed sections', () => {

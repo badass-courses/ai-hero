@@ -53,10 +53,12 @@ export async function getCohort(cohortIdOrSlug: string) {
 		),
 		with: {
 			resources: {
+				where: isNull(contentResourceResource.deletedAt),
 				with: {
 					resource: {
 						with: {
 							resources: {
+								where: isNull(contentResourceResource.deletedAt),
 								with: {
 									resource: true,
 								},
@@ -473,6 +475,7 @@ export async function getAllWorkshopsInCohort(cohortId: string) {
 				and(
 					eq(contentResource.type, 'workshop'),
 					eq(contentResourceResource.resourceOfId, cohortId),
+					isNull(contentResourceResource.deletedAt),
 				),
 			)
 			.orderBy(asc(contentResourceResource.position))
