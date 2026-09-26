@@ -132,17 +132,37 @@ integration('contact sync reconcile reads on MySQL', () => {
 
 	it('finds only late writes behind the watermark: written after it, under an old occurredAt', async () => {
 		// Claimed by the previous run: written before the watermark.
-		await contactEvent('seen', 'c1', '2026-09-26 17:10:00', 'kit.message', '2026-09-26 17:10:00')
+		await contactEvent(
+			'seen',
+			'c1',
+			'2026-09-26 17:10:00',
+			'kit.message',
+			'2026-09-26 17:10:00',
+		)
 		// Written after the watermark with an old occurredAt: a late write.
-		await contactEvent('late', 'c2', '2026-09-26 17:20:00', 'kit.message', '2026-09-26 17:45:00')
+		await contactEvent(
+			'late',
+			'c2',
+			'2026-09-26 17:20:00',
+			'kit.message',
+			'2026-09-26 17:45:00',
+		)
+		// A day late: a confirmation reconciler re-entry.
+		await contactEvent(
+			'day-late',
+			'c3',
+			'2026-09-25 18:00:00',
+			'kit.message',
+			'2026-09-26 17:50:00',
+		)
 		const rows = await store.scanChanges({
 			scope: 'overlap',
-			after: '2026-09-26T16:40:00.000Z',
+			after: '2026-09-24T17:40:00.000Z',
 			through: '2026-09-26T17:40:00.000Z',
 			writtenAfter: '2026-09-26T17:40:00.000Z',
 			limit: 5000,
 		})
-		expect(rows.map((row) => row.id)).toEqual(['late'])
+		expect(rows.map((row) => row.id)).toEqual(['day-late', 'late'])
 	})
 
 	it('rides the occurredAt and issuedAt indexes', async () => {

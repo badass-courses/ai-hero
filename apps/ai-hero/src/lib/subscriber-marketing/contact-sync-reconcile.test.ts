@@ -87,7 +87,7 @@ function ports(
 }
 
 describe('contact sync reconcile', () => {
-	it('scans fresh changes and the 1 h overlap separately', async () => {
+	it('scans fresh changes and the late writes behind the watermark separately', async () => {
 		const p = ports()
 		await runContactSyncReconcile(p)
 		expect(p.scanChanges).toHaveBeenNthCalledWith(1, {
@@ -96,11 +96,13 @@ describe('contact sync reconcile', () => {
 			through,
 			limit: 5000,
 		})
-		// The overlap looks only for rows written after the watermark:
-		// late writes under an old occurredAt, not rows already claimed.
+		// The overlap looks only for rows written after the watermark: late
+		// writes under an old occurredAt, not rows already claimed. It reaches
+		// 48 h back (prod, 7 days to 2026-09-26: 335 of 2195 signups written
+		// over an hour late, none over a day).
 		expect(p.scanChanges).toHaveBeenNthCalledWith(2, {
 			scope: 'overlap',
-			after: '2026-09-26T16:40:00.000Z',
+			after: '2026-09-24T17:40:00.000Z',
 			through: '2026-09-26T17:40:00.000Z',
 			writtenAfter: '2026-09-26T17:40:00.000Z',
 			limit: 5000,

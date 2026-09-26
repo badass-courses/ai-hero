@@ -86,12 +86,18 @@ export async function runContactSyncReconcile(
 		/** Each contact is one step; a run has a step budget. */
 		maxContacts?: number
 		overlapMs?: number
+		/** How far behind the watermark to look for late writes. */
+		lateWriteWindowMs?: number
 		settleMs?: number
 	} = {},
 ): Promise<ContactSyncReconcileReceipt> {
 	const limit = options.limit ?? 5000
 	const maxContacts = options.maxContacts ?? 400
 	const overlapMs = options.overlapMs ?? HOUR_MS
+	// Prod, the 7 days to 2026-09-26: 335 of 2195 signups were written over
+	// an hour after their occurredAt (confirmation reconciler re-entries),
+	// none over a day. Twice that, on the occurredAt index.
+	const lateWriteWindowMs = options.lateWriteWindowMs ?? 48 * HOUR_MS
 	// Writes still in flight at the start must not fall behind the claim.
 	const settleMs = options.settleMs ?? 2 * MINUTE_MS
 	const planned = iso(ports.now().getTime() - settleMs)
@@ -115,7 +121,7 @@ export async function runContactSyncReconcile(
 	const overlap = watermark
 		? await ports.scanChanges({
 				scope: 'overlap',
-				after: iso(Date.parse(watermark) - overlapMs),
+				after: iso(Date.parse(watermark) - lateWriteWindowMs),
 				through: watermark,
 				writtenAfter: watermark,
 				limit,
