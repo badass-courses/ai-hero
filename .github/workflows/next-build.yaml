@@ -1,0 +1,124 @@
+name: Next build
+
+# ai-hero's production build, run on every PR. Unit tests and typecheck do
+# not evaluate route modules the way `next build` does: #311 passed every
+# check and still failed the Vercel build ("Cannot access 'f' before
+# initialization" while collecting page data, a module cycle), leaving main
+# undeployable until it was reverted (#313).
+#
+# No secrets: public values are dummies, and page-data collection reads an
+# empty database created from the app's own drizzle schema, so pages that
+# query at build time find nothing instead of failing to connect. (Without a
+# database, /md/[slug]'s static params fail with ECONNREFUSED.)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  next-build:
+    name: next build
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_build_password
+          MYSQL_DATABASE: ai_hero_build
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_build_password --silent"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=30
+
+    env:
+      SKIP_ENV_VALIDATION: '1'
+      DATABASE_URL: mysql://root:ci_build_password@127.0.0.1:3307/ai_hero_build
+      NODE_OPTIONS: --max-old-space-size=8192
+      NEXT_PUBLIC_URL: https://www.aihero.dev
+      NEXT_PUBLIC_SITE_URL: https://www.aihero.dev
+      NEXT_PUBLIC_APP_NAME: ai-hero
+      NEXT_PUBLIC_SITE_TITLE: AI Hero
+      NEXT_PUBLIC_AXIOM_DATASET: ci
+      NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ci
+      NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: ci
+      NEXT_PUBLIC_DISCORD_INVITE_URL: https://discord.test
+      NEXT_PUBLIC_GOOGLE_ADS_ID: ci
+      NEXT_PUBLIC_GOOGLE_ANALYTICS: ci
+      NEXT_PUBLIC_PARTY_KIT_URL: https://partykit.test
+      NEXT_PUBLIC_PARTYKIT_ROOM_NAME: ci
+      NEXT_PUBLIC_SUPPORT_EMAIL: support@example.test
+      # SDK clients built at import throw on an empty key; nothing calls them
+      # during a build, so obviously fake values are enough.
+      OPENAI_API_KEY: sk-ci-not-a-real-key
+      STRIPE_SECRET_TOKEN: sk_test_ci_not_a_real_key
+      # The search page prerenders a Typesense query: unset, the adapter builds
+      # https://test:null and stalls past the 60 s prerender limit, and a
+      # refused connection fails the prerender. A local stub answers empty
+      # results over HTTPS, and the build trusts only its throwaway
+      # certificate (NODE_EXTRA_CA_CERTS, set in the build step).
+      NEXT_PUBLIC_TYPESENSE_HOST: 127.0.0.1
+      NEXT_PUBLIC_TYPESENSE_PORT: '8108'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "pnpm_cache_dir=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.pnpm_cache_dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the workspace package next build imports
+        run: pnpm --filter @ai-hero/course-sync-schema build
+
+      # `drizzle-kit push` stops at the first timestamp(3) column with an
+      # ON UPDATE (drizzle-kit 0.27 emits a bare ON UPDATE CURRENT_TIMESTAMP,
+      # which MySQL rejects for fsp 3) and still exits 0, leaving a near-empty
+      # database. So generate the SQL from the schema, fix that one clause,
+      # load it, and check the table count.
+      - name: Create the schema in an empty database
+        working-directory: apps/ai-hero
+        run: |
+          pnpm exec drizzle-kit generate --name ci_build_schema
+          perl -ne 'next if /^--> statement-breakpoint\s*$/; s/--> statement-breakpoint//; s/(timestamp\(3\).*ON UPDATE CURRENT_TIMESTAMP)(?!\()/$1(3)/; print' \
+            src/db/generated/*_ci_build_schema.sql > "$RUNNER_TEMP/ci-build-schema.sql"
+          mysql --protocol=tcp -h 127.0.0.1 -P 3307 -uroot -pci_build_password ai_hero_build < "$RUNNER_TEMP/ci-build-schema.sql"
+          tables=$(mysql --protocol=tcp -h 127.0.0.1 -P 3307 -uroot -pci_build_password -N -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'ai_hero_build'")
+          echo "tables: $tables"
+          test "$tables" -ge 80
+
+      - name: Start a stand-in Typesense for the search page
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$RUNNER_TEMP/typesense-stub.key" -out "$RUNNER_TEMP/typesense-stub.crt" \
+            -subj "/CN=localhost" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+          node .github/scripts/typesense-build-stub.mjs \
+            "$RUNNER_TEMP/typesense-stub.crt" "$RUNNER_TEMP/typesense-stub.key" 8108 &
+          sleep 1
+
+      - name: next build
+        working-directory: apps/ai-hero
+        run: NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/typesense-stub.crt" pnpm exec next build
