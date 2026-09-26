@@ -4,6 +4,7 @@ import {
 	createMemoryValuePathLinkAnchorStore,
 	resolveValuePathLinkAnchor,
 	VALUE_PATH_LINK_LIFETIME_DAYS,
+	VALUE_PATH_LINK_REISSUE_WITHIN_DAYS,
 	valuePathLinkAnchorRowKey,
 	valuePathLinkFingerprint,
 	type ValuePathLinkAnchorStore,
@@ -29,8 +30,80 @@ const page = (id: string, slug: string, position: number) => ({
 })
 
 describe('value-path link anchor', () => {
-	it('lives 120 days', () => {
+	it('lives 120 days and re-issues inside its last 30', () => {
 		expect(VALUE_PATH_LINK_LIFETIME_DAYS).toBe(120)
+		expect(VALUE_PATH_LINK_REISSUE_WITHIN_DAYS).toBe(30)
+	})
+
+	it('re-issues an anchor within 30 days of its expiry, so a resumed contact never gets a dead link', async () => {
+		const store = createMemoryValuePathLinkAnchorStore()
+		const first = await resolveValuePathLinkAnchor({
+			store,
+			key,
+			now: '2026-09-26T16:00:00.000Z',
+		})
+		// 90 days later: 30 days left, so still the first issue.
+		await expect(
+			resolveValuePathLinkAnchor({
+				store,
+				key,
+				now: '2026-12-25T16:00:00.000Z',
+			}),
+		).resolves.toEqual(first)
+		// One second later: under 30 days left, so a fresh 120-day issue.
+		const renewed = await resolveValuePathLinkAnchor({
+			store,
+			key,
+			now: '2026-12-25T16:00:01.000Z',
+		})
+		expect(renewed).toEqual({
+			issuedAt: '2026-12-25T16:00:01.000Z',
+			expiresAt: '2027-04-24T16:00:01.000Z',
+		})
+		// And the renewal is what every later issue keeps.
+		await expect(
+			resolveValuePathLinkAnchor({
+				store,
+				key,
+				now: '2027-01-10T16:00:00.000Z',
+			}),
+		).resolves.toEqual(renewed)
+		// Long after expiry (a contact resumed after months) also renews.
+		const resumed = await resolveValuePathLinkAnchor({
+			store,
+			key,
+			now: '2027-09-01T00:00:00.000Z',
+		})
+		expect(resumed?.issuedAt).toBe('2027-09-01T00:00:00.000Z')
+	})
+
+	it('takes the winning renewal when a concurrent sender renewed first', async () => {
+		const stale = {
+			issuedAt: '2026-01-01T00:00:00.000Z',
+			expiresAt: '2026-05-01T00:00:00.000Z',
+		}
+		const winner = {
+			issuedAt: '2026-04-20T23:59:59.000Z',
+			expiresAt: '2026-08-18T23:59:59.000Z',
+		}
+		let reads = 0
+		const renew = vi.fn(async () => 'stale' as const)
+		const store: ValuePathLinkAnchorStore = {
+			find: async () => (reads++ === 0 ? stale : winner),
+			insert: async () => 'exists',
+			renew,
+		}
+		await expect(
+			resolveValuePathLinkAnchor({
+				store,
+				key,
+				now: '2026-04-21T00:00:00.000Z',
+			}),
+		).resolves.toEqual(winner)
+		expect(renew).toHaveBeenCalledWith(key, stale, {
+			issuedAt: '2026-04-21T00:00:00.000Z',
+			expiresAt: '2026-08-19T00:00:00.000Z',
+		})
 	})
 
 	it('anchors at the first issue and keeps it for every later issue', async () => {
@@ -79,6 +152,7 @@ describe('value-path link anchor', () => {
 		const store: ValuePathLinkAnchorStore = {
 			find: async () => (reads++ === 0 ? undefined : winner),
 			insert: async () => 'exists',
+			renew: async () => 'stale',
 		}
 		await expect(
 			resolveValuePathLinkAnchor({
@@ -101,6 +175,7 @@ describe('value-path link anchor', () => {
 				)
 			},
 			insert: async () => 'inserted',
+			renew: async () => 'renewed',
 		}
 		await expect(
 			resolveValuePathLinkAnchor({

@@ -401,22 +401,7 @@ export async function executeValuePathEmailIntent(args: {
 	// Once Kit has enrolled the contact, nothing after it is a Kit failure.
 	let kitAccepted = false
 	try {
-		// A no-write run plans and must not record a first issue.
-		const linkExpiresAt =
-			args.config?.allowWrite === false
-				? undefined
-				: await anchoredValuePathLinkExpiry({
-						linkAnchors: args.linkAnchors,
-						contactId: intent.contactId,
-						kitSubscriberId: metadata.kitSubscriberId,
-						valuePathSlug: metadata.valuePathSlug,
-						emailResourceId: metadata.emailResourceId,
-						answerPages: args.config?.answerPages ?? [],
-						baseUrl: args.config?.baseUrl,
-						pathTokenSecret: args.config?.pathTokenSecret,
-						now: args.now ?? new Date().toISOString(),
-					})
-		const personalization = buildValuePathEmailPersonalization({
+		const personalization = await personalizeValuePathEmailWithAnchoredLinks({
 			contactId: intent.contactId,
 			kitSubscriberId: metadata.kitSubscriberId,
 			valuePathSlug: metadata.valuePathSlug,
@@ -425,7 +410,9 @@ export async function executeValuePathEmailIntent(args: {
 			baseUrl: args.config?.baseUrl,
 			pathTokenSecret: args.config?.pathTokenSecret,
 			now: args.now,
-			linkExpiresAt,
+			// A no-write run plans and must not record a first issue.
+			linkAnchors:
+				args.config?.allowWrite === false ? undefined : args.linkAnchors,
 		})
 		if (!personalization.passed) {
 			if (args.config?.allowWrite !== false) {
@@ -650,6 +637,35 @@ export async function anchoredValuePathLinkExpiry(args: {
 		warn: args.warn,
 	})
 	return anchor?.expiresAt
+}
+
+/**
+ * The personalization for one send, with its answer links anchored at
+ * their first issue. It validates before anchoring: a personalization that
+ * would be held records no first issue, so the send that finally goes out
+ * gets the full lifetime. Without a store, or with one that is unavailable,
+ * it is exactly buildValuePathEmailPersonalization.
+ */
+export async function personalizeValuePathEmailWithAnchoredLinks(
+	args: Omit<
+		Parameters<typeof buildValuePathEmailPersonalization>[0],
+		'linkExpiresAt'
+	> & {
+		linkAnchors?: ValuePathLinkAnchorStore
+		warn?: (event: string, fields: Record<string, unknown>) => unknown
+	},
+): Promise<ReturnType<typeof buildValuePathEmailPersonalization>> {
+	const { linkAnchors, warn, ...build } = args
+	const unanchored = buildValuePathEmailPersonalization(build)
+	if (!unanchored.passed || !linkAnchors) return unanchored
+	const linkExpiresAt = await anchoredValuePathLinkExpiry({
+		...build,
+		linkAnchors,
+		now: build.now ?? new Date().toISOString(),
+		warn,
+	})
+	if (!linkExpiresAt) return unanchored
+	return buildValuePathEmailPersonalization({ ...build, linkExpiresAt })
 }
 
 export function buildValuePathEmailPersonalization(args: {

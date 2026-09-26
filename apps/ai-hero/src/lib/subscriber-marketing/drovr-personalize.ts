@@ -14,10 +14,7 @@ import {
 import { getSkillsWorkflowEmailStep } from './skills-workflow-path'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import type { ValuePathLinkAnchorStore } from './value-path-link-anchor'
-import {
-	anchoredValuePathLinkExpiry,
-	buildValuePathEmailPersonalization,
-} from './value-path-email-executor'
+import { personalizeValuePathEmailWithAnchoredLinks } from './value-path-email-executor'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -148,8 +145,7 @@ export async function personalizeDrovrIntent(args: {
 		const step = getSkillsWorkflowEmailStep(request.emailKey)
 		if (!step) reasons.push('email-resource-missing')
 		else {
-			const linkExpiresAt = await anchoredValuePathLinkExpiry({
-				linkAnchors: args.linkAnchors,
+			const personalized = await personalizeValuePathEmailWithAnchoredLinks({
 				contactId: contact.id,
 				kitSubscriberId: args.kitSubscriberId,
 				valuePathSlug: step.valuePathSlug,
@@ -158,18 +154,11 @@ export async function personalizeDrovrIntent(args: {
 				baseUrl: args.baseUrl,
 				pathTokenSecret: args.pathTokenSecret,
 				now: request.dueAt,
+				// Every blocking reason for this journey is already in `reasons`
+				// (nothing is added after this branch), so a held answer records
+				// no first issue.
+				linkAnchors: reasons.length === 0 ? args.linkAnchors : undefined,
 				warn: args.warn,
-			})
-			const personalized = buildValuePathEmailPersonalization({
-				contactId: contact.id,
-				kitSubscriberId: args.kitSubscriberId,
-				valuePathSlug: step.valuePathSlug,
-				emailResourceId: step.emailResourceId,
-				answerPages: args.answerPages,
-				baseUrl: args.baseUrl,
-				pathTokenSecret: args.pathTokenSecret,
-				now: request.dueAt,
-				linkExpiresAt,
 			})
 			if (personalized.passed) variables = personalized.fields
 			else reasons.push(...personalized.reviewReasons)

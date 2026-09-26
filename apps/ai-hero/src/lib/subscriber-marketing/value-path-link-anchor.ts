@@ -15,9 +15,13 @@ import type { ValuePathAnswerPageResource } from './value-path-answer-page'
  * its token was first issued, and the token expires 120 days after that.
  * A changed input (Kit subscriber id, answer pages, base URL, signing
  * secret) is a new fingerprint, so a new first issue and a new URL.
+ *
+ * An issue inside the anchor's last 30 days re-issues it, so a contact who
+ * resumes after a long block never gets a link that dies days later.
  */
 
 export const VALUE_PATH_LINK_LIFETIME_DAYS = 120
+export const VALUE_PATH_LINK_REISSUE_WITHIN_DAYS = 30
 
 export type ValuePathLinkAnchorKey = {
 	contactId: string
@@ -58,6 +62,15 @@ export type ValuePathLinkAnchorStore = {
 		key: ValuePathLinkAnchorKey,
 		anchor: ValuePathLinkAnchor,
 	): Promise<'inserted' | 'exists'>
+	/**
+	 * Compare-and-swap: replaces `previous` with `next` only while the row
+	 * still holds `previous`; 'stale' when another sender renewed first.
+	 */
+	renew(
+		key: ValuePathLinkAnchorKey,
+		previous: ValuePathLinkAnchor,
+		next: ValuePathLinkAnchor,
+	): Promise<'renewed' | 'stale'>
 }
 
 /**
@@ -96,10 +109,11 @@ export function valuePathLinkFingerprint(args: {
 }
 
 /**
- * The anchor for this key: the stored first issue, or a new one at `now`.
- * Concurrent first issues converge on the row that won. Undefined when the
- * store is unavailable, so the caller keeps its previous expiry rather than
- * failing a send over a link's lifetime.
+ * The anchor for this key: the stored first issue, or a new one at `now`
+ * when there is none or it has 30 days or less left. Concurrent issues
+ * converge on the row that won. Undefined when the store is unavailable, so
+ * the caller keeps its previous expiry rather than failing a send over a
+ * link's lifetime.
  */
 export async function resolveValuePathLinkAnchor(args: {
 	store: ValuePathLinkAnchorStore
@@ -109,10 +123,19 @@ export async function resolveValuePathLinkAnchor(args: {
 }): Promise<ValuePathLinkAnchor | undefined> {
 	try {
 		const found = await args.store.find(args.key)
-		if (found) return found
 		const anchor = {
 			issuedAt: new Date(args.now).toISOString(),
 			expiresAt: addDays(args.now, VALUE_PATH_LINK_LIFETIME_DAYS),
+		}
+		if (found) {
+			const reissueFrom = addDays(
+				found.expiresAt,
+				-VALUE_PATH_LINK_REISSUE_WITHIN_DAYS,
+			)
+			if (Date.parse(anchor.issuedAt) <= Date.parse(reissueFrom)) return found
+			const renewed = await args.store.renew(args.key, found, anchor)
+			if (renewed === 'renewed') return anchor
+			return await args.store.find(args.key)
 		}
 		const inserted = await args.store.insert(args.key, anchor)
 		if (inserted === 'inserted') return anchor
@@ -148,6 +171,11 @@ export function createMemoryValuePathLinkAnchorStore(): ValuePathLinkAnchorStore
 			if (rows.has(id(key))) return 'exists'
 			rows.set(id(key), anchor)
 			return 'inserted'
+		},
+		async renew(key, previous, next) {
+			if (rows.get(id(key))?.expiresAt !== previous.expiresAt) return 'stale'
+			rows.set(id(key), next)
+			return 'renewed'
 		},
 	}
 }

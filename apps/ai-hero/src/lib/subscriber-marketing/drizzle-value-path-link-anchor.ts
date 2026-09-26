@@ -1,5 +1,5 @@
 import { valuePathLinkAnchor } from '@/db/contact-sync-schema'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import {
 	valuePathLinkAnchorRowKey,
@@ -11,7 +11,8 @@ import {
 /**
  * The AI_ValuePathLinkAnchor-backed store. Insert-or-read: a duplicate key
  * from a concurrent first issue answers 'exists', and the caller re-reads
- * the row that won. A missing table (1146) throws, and
+ * the row that won. Renewal updates only while the row still holds the
+ * expiry that was read, so concurrent renewals also converge. A missing table (1146) throws, and
  * resolveValuePathLinkAnchor turns that into the previous behaviour.
  */
 export function createDrizzleValuePathLinkAnchorStore(
@@ -26,8 +27,10 @@ export function createDrizzleValuePathLinkAnchorStore(
 			}
 		}
 		insert: (table: unknown) => {
-			ignore: (values: unknown) => Promise<unknown>
 			values: (values: unknown) => Promise<unknown>
+		}
+		update: (table: unknown) => {
+			set: (values: unknown) => { where: (clause: unknown) => Promise<unknown> }
 		}
 	}
 	const keyClause = (key: ValuePathLinkAnchorKey) =>
@@ -62,7 +65,31 @@ export function createDrizzleValuePathLinkAnchorStore(
 				throw error
 			}
 		},
+		async renew(key, previous, next) {
+			const result = await db
+				.update(valuePathLinkAnchor)
+				.set(sqlTimestamps(next))
+				.where(
+					and(
+						keyClause(key),
+						eq(
+							valuePathLinkAnchor.expiresAt,
+							toSqlTimestamp(previous.expiresAt),
+						),
+					),
+				)
+			return affectedRows(result) === 1 ? 'renewed' : 'stale'
+		},
 	}
+}
+
+function affectedRows(result: unknown): number {
+	const header = Array.isArray(result) ? result[0] : result
+	if (!header || typeof header !== 'object') return 0
+	const record = header as Record<string, unknown>
+	if (typeof record.rowsAffected === 'number') return record.rowsAffected
+	if (typeof record.affectedRows === 'number') return record.affectedRows
+	return 0
 }
 
 /** MySQL timestamp(3) columns take 'YYYY-MM-DD HH:MM:SS.mmm' in UTC. */

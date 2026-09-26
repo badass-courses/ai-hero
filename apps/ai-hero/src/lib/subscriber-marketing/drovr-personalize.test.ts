@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { verifyValuePathToken } from './path-token'
 import {
 	personalizeDrovrIntent,
@@ -92,6 +92,7 @@ function fixture() {
 			extra: {
 				linkAnchors?: ValuePathLinkAnchorStore
 				kitSubscriberId?: string
+				baseUrl?: string
 			} = {},
 		) =>
 			personalizeDrovrIntent({
@@ -99,7 +100,7 @@ function fixture() {
 				request: { ...request, ...overrides },
 				answerPages: [page],
 				pathTokenSecret: secret,
-				baseUrl: 'https://www.aihero.dev',
+				baseUrl: extra.baseUrl ?? 'https://www.aihero.dev',
 				kitSubscriberId: extra.kitSubscriberId ?? 'kit-1',
 				identityConflict,
 				...(extra.linkAnchors ? { linkAnchors: extra.linkAnchors } : {}),
@@ -155,6 +156,42 @@ describe('drovr personalization: answer links anchored at first issue', () => {
 		})
 	})
 
+	it('records no first issue for a blocked request, so a later sendable one anchors at its own send', async () => {
+		const f = fixture()
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		const insert = vi.spyOn(linkAnchors, 'insert')
+		f.setState({ ...state, lifecycle: 'suppressed' })
+		const blocked = await f.answer({}, 'local-test-secret', { linkAnchors })
+		expect(blocked).toMatchObject({ sendable: false, variables: {} })
+		expect(insert).not.toHaveBeenCalled()
+		f.setState(state)
+		const later = await f.answer(
+			{ dueAt: '2027-03-01T18:00:00.000Z' },
+			'local-test-secret',
+			{ linkAnchors },
+		)
+		expect(
+			tokenExpiry(later?.variables.aih_value_path_answer_1_url),
+		).toMatchObject({
+			valid: true,
+			payload: { expiresAt: '2027-06-29T18:00:00.000Z' },
+		})
+	})
+
+	it('records no first issue when the personalization itself fails validation', async () => {
+		const f = fixture()
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		const insert = vi.spyOn(linkAnchors, 'insert')
+		const find = vi.spyOn(linkAnchors, 'find')
+		const invalid = await f.answer({}, 'local-test-secret', {
+			linkAnchors,
+			baseUrl: '',
+		})
+		expect(invalid?.sendable).toBe(false)
+		expect(find).not.toHaveBeenCalled()
+		expect(insert).not.toHaveBeenCalled()
+	})
+
 	it('keeps answering with the dueAt + 30 day expiry when the anchor store is unavailable', async () => {
 		const f = fixture()
 		const broken: ValuePathLinkAnchorStore = {
@@ -162,6 +199,7 @@ describe('drovr personalization: answer links anchored at first issue', () => {
 				throw new Error("Table 'AI_ValuePathLinkAnchor' doesn't exist")
 			},
 			insert: async () => 'inserted',
+			renew: async () => 'renewed',
 		}
 		const answer = await f.answer({}, 'local-test-secret', {
 			linkAnchors: broken,
