@@ -316,8 +316,9 @@ export async function syncUserCohortEntitlementsWithIds(
 			allowed === undefined
 				? []
 				: changes.toRemove.filter((id) => !allowed.includes(id))
-		// An unverified read may still grant new workshops. It may never revoke
-		// anything beyond the plan's exact detach set for this one user.
+		// If any removal is unexpected, skip ALL removals for this user rather
+		// than mix planned detaches with a suspect snapshot. Grants still apply;
+		// planned detaches wait for the next CMS save or a manual pass.
 		const safeChanges =
 			unexpected.length > 0 ? { toAdd: changes.toAdd, toRemove: [] } : changes
 		const result = await applyEntitlementChanges(

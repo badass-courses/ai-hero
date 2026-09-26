@@ -122,13 +122,17 @@ export async function deliverCourseSyncEntitlementSync(input: {
 				eventId,
 				{ source: 'course-sync', controlPlaneRunId: run.runId },
 			)
-			// This receipt proves event delivery, not the asynchronous workflow outcome.
-			// Operator refusal lookup in Axiom (dataset = NEXT_PUBLIC_AXIOM_DATASET):
-			// ['<dataset>'] | where controlPlaneRunId == '<run-id>'
-			// | where event in ['cohort_entitlement_sync.empty_target_refused',
-			//   'cohort_entitlement_sync.stale_snapshot_refused',
-			//   'cohort_entitlement_sync.bounded_removal_refused']
-			// If direct Axiom ingest is off, these error logs fall back to console.
+			// This receipt proves delivery, not the asynchronous workflow outcome.
+			// Refusals are console.error JSON in Vercel runtime logs. Filter message
+			// contains '<run-id>' AND message contains one of:
+			// 'cohort_entitlement_sync.empty_target_refused',
+			// 'cohort_entitlement_sync.bounded_removal_refused',
+			// 'cohort_entitlement_sync.stale_snapshot_refused'.
+			// A Vercel-drained Axiom dataset may also hold these lines IF configured
+			// (drain unverified). Production has AXIOM_DIRECT_INGEST unset, so
+			// NEXT_PUBLIC_AXIOM_DATASET is not a direct ingest sink. Setting
+			// AXIOM_DIRECT_INGEST=true with AXIOM_TOKEN and a dataset enables
+			// direct SDK ingest in addition to the console log.
 			await completeCourseSyncReviewNotification({
 				...receipt,
 				occurredAt: new Date(),
