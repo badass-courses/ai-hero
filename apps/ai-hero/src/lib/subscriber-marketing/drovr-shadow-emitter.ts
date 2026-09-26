@@ -163,6 +163,12 @@ type DrovrShadowEmitterOptions = {
 	info?: typeof log.info
 	warn?: typeof log.warn
 	timeoutMs?: number
+	/**
+	 * Rethrow a failed post after the warning. The dispatch fallback sets it
+	 * so it can report the failure at error with the batch's replay keys;
+	 * every other caller keeps the swallow.
+	 */
+	rethrow?: boolean
 }
 
 export function mapDrovrShadowFact(fact: DrovrShadowFact): DrovrShadowEvent[] {
@@ -273,6 +279,7 @@ export async function emitDrovrShadowEvents(
 			eventCount: deliverableEvents.length,
 			error: error instanceof Error ? error.message : String(error),
 		})
+		if (options.rethrow) throw error
 	}
 }
 

@@ -261,7 +261,10 @@ export async function dispatchDrovrShadowFact(
 			})
 			if (requeued) return 'requeued'
 		}
-		const fallback = options.fallback ?? emitDrovrShadowEvents
+		const fallback =
+			options.fallback ??
+			((batch: readonly DrovrShadowEvent[]) =>
+				emitDrovrShadowEvents(batch, { rethrow: true }))
 		await fallback(
 			fanOutOwnedEvents(events, new Set(owned), new Set(newsletterOwned)),
 		).catch(async (fallbackError: unknown) => {
