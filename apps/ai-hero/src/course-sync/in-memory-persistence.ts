@@ -13,6 +13,7 @@ import {
 	stableJson,
 } from './control-plane'
 import type { CourseSyncRelationReadback } from './persistence-invariants'
+import { anchorResourceId } from './types'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -637,7 +638,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			expectedDeletedAtByResource,
 			{
 				bindingId: input.plan.bindingId,
-				anchorTreeParentIds: courseSyncAnchorTreeParentIds(binding.anchorWorkshopId, input.plan),
+				anchorTreeParentIds: courseSyncAnchorTreeParentIds(anchorResourceId(binding), input.plan),
 			},
 		)
 		if (!activation.ok) {
@@ -874,7 +875,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			{
 				bindingId: input.bindingId,
 				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
-					this.bindings.get(input.bindingId)!.anchorWorkshopId,
+					anchorResourceId(this.bindings.get(input.bindingId)!),
 					original.plan!,
 				),
 			},

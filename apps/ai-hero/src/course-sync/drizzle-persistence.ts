@@ -853,7 +853,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationScope = {
 				bindingId: plan.bindingId,
 				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
-					binding.anchorWorkshopId,
+					anchorResourceId(binding),
 					plan,
 				),
 			}
@@ -1433,7 +1433,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationScope = {
 				bindingId,
 				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
-					lockedBinding.binding.anchorWorkshopId,
+					anchorResourceId(lockedBinding.binding),
 					original.plan,
 				),
 			}

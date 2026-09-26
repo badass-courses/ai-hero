@@ -171,7 +171,15 @@ export const AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED = {
 	status: 'active',
 } as const
 
-export const AI_HERO_COURSE_SYNC_BINDING = {
+/** Freeze every nested contract; `as const` alone does not protect runtime imports. */
+function deepFreeze<T extends object>(value: T): T {
+	for (const nested of Object.values(value)) {
+		if (nested !== null && typeof nested === 'object') deepFreeze(nested)
+	}
+	return Object.freeze(value)
+}
+
+export const AI_HERO_COURSE_SYNC_BINDING = deepFreeze({
 	contractVersion: 4,
 	bindingId: AI_HERO_COURSE_SYNC_BINDING_V1.bindingId,
 	sourceCourseId: AI_HERO_COURSE_SYNC_BINDING_V1.sourceCourseId,
@@ -196,12 +204,12 @@ export const AI_HERO_COURSE_SYNC_BINDING = {
 	assetConnector: 'dropbox-shared-link',
 	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK',
 	status: 'active',
-} as const satisfies WorkshopCourseSyncBinding
+} as const satisfies WorkshopCourseSyncBinding)
 
 // S4a intentionally registers only the live Crash Course binding. S5 adds Cohort 005.
-export const COURSE_SYNC_BINDINGS = {
+export const COURSE_SYNC_BINDINGS = deepFreeze({
 	[AI_HERO_COURSE_SYNC_BINDING.bindingId]: AI_HERO_COURSE_SYNC_BINDING,
-} as const satisfies Record<string, CourseSyncBinding>
+} as const satisfies Record<string, CourseSyncBinding>)
 
 export function getServerCourseSyncBinding(
 	bindingId: string,

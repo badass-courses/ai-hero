@@ -55,6 +55,18 @@ describe('server-owned binding registry', () => {
 		)
 	})
 
+	it('deep-freezes the production registry and the entire binding contract (P2)', () => {
+		expect(Object.isFrozen(COURSE_SYNC_BINDINGS)).toBe(true)
+		expect(Object.isFrozen(AI_HERO_COURSE_SYNC_BINDING)).toBe(true)
+		expect(Object.isFrozen(AI_HERO_COURSE_SYNC_BINDING.targetContract)).toBe(true)
+		expect(Object.isFrozen(AI_HERO_COURSE_SYNC_BINDING.targetContract.product)).toBe(true)
+		expect(Object.isFrozen(AI_HERO_COURSE_SYNC_BINDING.targetContract.workshop)).toBe(true)
+		expect(Object.isFrozen(AI_HERO_COURSE_SYNC_BINDING.targetContract.relation)).toBe(true)
+		expect(Object.isFrozen(AI_HERO_COURSE_SYNC_BINDING.managedChildContract)).toBe(true)
+		expect(() => Object.assign(AI_HERO_COURSE_SYNC_BINDING.targetContract.product, { state: 'draft' })).toThrow(TypeError)
+		expect(() => Object.assign(COURSE_SYNC_BINDINGS, { extra: syntheticCohortBinding })).toThrow(TypeError)
+	})
+
 	it('registers only the Crash Course in production; test injection resolves synthetic cohort (T3)', () => {
 		expect(Object.keys(COURSE_SYNC_BINDINGS)).toEqual([
 			AI_HERO_COURSE_SYNC_BINDING.bindingId,
