@@ -1159,6 +1159,38 @@ describe('draft course sync control plane', () => {
 		}
 	})
 
+	it('rejects an in-memory apply when a detached child remains live at activation readback', async () => {
+		const testHarness = harness()
+		const source = fixture('activation-before')
+		const filmed = source.sections[0]!.lessons[0]!
+		const firstManifest: CourseJsonDocumentV3 = {
+			...source, sections: [{ ...source.sections[0]!, lessons: [filmed] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, firstManifest)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-activation-before')
+		const placeholder: CourseJsonDocumentV3 = {
+			...firstManifest,
+			schemaVersion: 4, courseVersionId: 'activation-after',
+			sections: [{ ...firstManifest.sections[0]!, lessons: [
+				{ type: 'placeholder', id: filmed.id, title: filmed.title },
+			] }],
+		}
+		const next = await stagedAndPreviewed(testHarness, placeholder, 'stage-activation-after')
+		const video = testHarness.persistence.runs.get(next.staged.runId)?.plan?.resources.find(
+			(item) => item.sourceKind === 'video' && item.detached,
+		)
+		if (!video) throw new Error('detached video missing')
+		const before = structuredClone(testHarness.persistence.relations.get(video.targetResourceId))
+		testHarness.persistence.beforeApplyActivationReadback = (relations) => {
+			const relation = relations.get(video.targetResourceId)
+			if (relation) relation.detached = false
+		}
+		await expect(applyDirectly(testHarness, next.staged.runId, 'apply-corrupt-activation')).rejects.toMatchObject({
+			code: 'APPLY_WRITE_VERIFICATION_FAILED', retryable: false,
+		})
+		expect(testHarness.persistence.relations.get(video.targetResourceId)).toEqual(before)
+	})
+
 	it('requires review when an explainer becomes a placeholder', async () => {
 		const testHarness = harness()
 		const source = fixture('filmed-explainer')

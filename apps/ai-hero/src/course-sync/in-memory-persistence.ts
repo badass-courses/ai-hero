@@ -1,6 +1,9 @@
 import { resolveStoredCourseSyncBinding } from './binding-migration'
 import { CourseSyncError } from './errors'
-import { resolveCourseSyncRollbackFields } from './persistence-invariants'
+import {
+	resolveCourseSyncRollbackFields,
+	verifyCourseSyncActivation,
+} from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
 import {
 	courseSyncRollbackStageIdempotencyKey,
@@ -68,6 +71,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	assertTargetCalls = 0
 	failAfterVersionWrites: number | null = null
 	beforeApplyTargetRecheck: (() => void) | null = null
+	beforeApplyActivationReadback: ((relations: typeof this.relations) => void) | null = null
 	currentAwaitingApplyRunId: string | null = null
 	currentAppliedRunId: string | null = null
 
@@ -576,6 +580,42 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			}
 			resource.currentVersionId = pointer.versionId
 			resource.fields = structuredClone(version.fields)
+		}
+		this.beforeApplyActivationReadback?.(relations)
+		const resourceIds = new Set(
+			input.plan.resources.map((item) => item.targetResourceId),
+		)
+		const activation = verifyCourseSyncActivation(
+			input.plan,
+			receipts
+				.filter((receipt) => receipt.runId === input.runId)
+				.map((receipt) => ({
+					resourceId: receipt.resourceId,
+					contentResourceVersionId: receipt.versionId,
+				})),
+			[...resources.values()]
+				.filter((resource) => resourceIds.has(resource.resourceId))
+				.map((resource) => ({
+					id: resource.resourceId,
+					currentVersionId: resource.currentVersionId,
+					fields: resource.fields,
+				})),
+			[...relations.values()]
+				.filter((relation) => resourceIds.has(relation.childId))
+				.map((relation) => ({
+					resourceId: relation.childId,
+					resourceOfId: relation.parentId,
+					position: relation.position,
+					deletedAt: relation.detached ? true : null,
+				})),
+		)
+		if (!activation.ok) {
+			throw new CourseSyncError(
+				'APPLY_WRITE_VERIFICATION_FAILED',
+				'Applied pointers, fields, relations, or version receipts did not match the content-addressed plan.',
+				500,
+				{ category: 'internal', retryable: false },
+			)
 		}
 		this.resources.clear()
 		resources.forEach((value, key) => this.resources.set(key, value))
