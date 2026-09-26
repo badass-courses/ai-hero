@@ -61,6 +61,34 @@ beforeEach(() => {
 })
 
 describe('cohort entitlement sync empty-target safety', () => {
+	it('cleanly skips a create-only Cohort 005 sync with zero purchasers and no bounded removals', async () => {
+		mocks.findUsers.mockResolvedValue([])
+		mocks.getCohort.mockResolvedValue({
+			fields: { title: 'AI Hero Cohort 005' },
+			resources: [resource('first-created-workshop')],
+		})
+		const { result, sendEvent } = await run({
+			cohortId: 'cohort-xdy1m',
+			source: 'course-sync',
+			controlPlaneRunId: 'run-first-create',
+			changes: {
+				resourcesAdded: [{ resourceId: 'first-created-workshop', position: 0 }],
+				resourcesRemoved: [],
+				boundedRemovals: [],
+			},
+		})
+		expect(result).toMatchObject({
+			cohortId: 'cohort-xdy1m',
+			usersProcessed: 0,
+		})
+		expect(result.status).not.toBe('refused')
+		expect(sendEvent).not.toHaveBeenCalled()
+		expect(mocks.error).not.toHaveBeenCalled()
+		expect(mocks.info).toHaveBeenCalledWith(
+			'cohort_entitlement_sync.early_exit_no_users',
+			expect.objectContaining({ cohortId: 'cohort-xdy1m' }),
+		)
+	})
 	it('refuses an empty workshop read for entitled users without fan-out or revocation', async () => {
 		const { result, sendEvent } = await run()
 		expect(result).toMatchObject({

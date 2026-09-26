@@ -36,7 +36,7 @@ export type WorkshopCourseSyncBinding = {
 	status: 'active' | 'suspended' | 'revoked'
 }
 
-/** The cohort variant is type-only until the S5 binding is deliberately registered. */
+/** Cohort-anchored syllabus: each section is a managed workshop. */
 export type CohortCourseSyncBinding = {
 	contractVersion: 5
 	bindingId: string
@@ -206,9 +206,34 @@ export const AI_HERO_COURSE_SYNC_BINDING = deepFreeze({
 	status: 'active',
 } as const satisfies WorkshopCourseSyncBinding)
 
-// S4a intentionally registers only the live Crash Course binding. S5 adds Cohort 005.
+/** S5: production Cohort 005, with an operator gate on its first revision. */
+export const AI_HERO_COURSE_SYNC_BINDING_COHORT_005 = deepFreeze({
+	contractVersion: 5,
+	bindingId: 'csb_ai_hero_cohort_005',
+	status: 'active',
+	sourceCourseId: '4cc62b33-db58-455d-83cb-94f680b119e4',
+	productId: 'product-s00zs',
+	anchorCohortId: 'cohort-xdy1m',
+	targetContract: {
+		product: { type: 'cohort', state: 'draft', visibility: 'unlisted' },
+		cohort: { type: 'cohort', state: 'draft', visibility: 'unlisted' },
+		relation: { position: 0, exclusiveProduct: true },
+	},
+	managedChildContract: {
+		workshop: { state: 'draft', visibility: 'unlisted' },
+		lesson: { state: 'draft', visibility: 'unlisted' },
+	},
+	applyPolicy: 'bounded-auto',
+	initialApplyPolicyOverride: 'operator',
+	sectionMappingPolicy: 'sections-as-cohort-workshops',
+	sharedLinkSecretRef: 'DROPBOX_SYNC_SHARED_LINK_COHORT_005',
+	assetConnector: 'dropbox-shared-link',
+} as const satisfies CohortCourseSyncBinding)
+
 export const COURSE_SYNC_BINDINGS = deepFreeze({
 	[AI_HERO_COURSE_SYNC_BINDING.bindingId]: AI_HERO_COURSE_SYNC_BINDING,
+	[AI_HERO_COURSE_SYNC_BINDING_COHORT_005.bindingId]:
+		AI_HERO_COURSE_SYNC_BINDING_COHORT_005,
 } as const satisfies Record<string, CourseSyncBinding>)
 
 export function getServerCourseSyncBinding(

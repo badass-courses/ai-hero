@@ -74,8 +74,10 @@ export const env = createEnv({
 		DROPBOX_REFRESH_TOKEN: z.string().optional(),
 		DROPBOX_SYNC_SHARED_FOLDER_ID: z.string().optional(),
 		DROPBOX_SYNC_ALLOWED_ROOT: z.string().optional(),
-		DROPBOX_SYNC_SHARED_LINK: z.string().url().optional(),
-		DROPBOX_SYNC_SHARED_LINK_COHORT_005: z.string().url().optional(),
+		// URL shape is checked when the individual binding polls, not at app import.
+		// Crash Course still uses the same z.string().url() check there.
+		DROPBOX_SYNC_SHARED_LINK: z.string().optional(),
+		DROPBOX_SYNC_SHARED_LINK_COHORT_005: z.string().optional(),
 		COURSE_SYNC_SNAPSHOT_BUCKET: z.string().optional(),
 		COURSE_SYNC_STAGE_TOKEN: z.string().min(24).optional(),
 		COURSE_SYNC_WORKER_TOKEN: z.string().min(24).optional(),
@@ -226,7 +228,8 @@ export const env = createEnv({
 		DROPBOX_SYNC_SHARED_FOLDER_ID: process.env.DROPBOX_SYNC_SHARED_FOLDER_ID,
 		DROPBOX_SYNC_ALLOWED_ROOT: process.env.DROPBOX_SYNC_ALLOWED_ROOT,
 		DROPBOX_SYNC_SHARED_LINK: process.env.DROPBOX_SYNC_SHARED_LINK,
-		DROPBOX_SYNC_SHARED_LINK_COHORT_005: process.env.DROPBOX_SYNC_SHARED_LINK_COHORT_005,
+		DROPBOX_SYNC_SHARED_LINK_COHORT_005:
+			process.env.DROPBOX_SYNC_SHARED_LINK_COHORT_005,
 		COURSE_SYNC_SNAPSHOT_BUCKET: process.env.COURSE_SYNC_SNAPSHOT_BUCKET,
 		COURSE_SYNC_STAGE_TOKEN: process.env.COURSE_SYNC_STAGE_TOKEN,
 		COURSE_SYNC_WORKER_TOKEN: process.env.COURSE_SYNC_WORKER_TOKEN,
