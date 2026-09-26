@@ -41,6 +41,32 @@ export type DrovrContactDirectoryBirthPayload = {
 	sourceLifecycle?: string
 }
 
+/** Contact sync (drovr-contact-profile-sync): what drovr renders from. */
+export type DrovrContactProfilePayload = {
+	profileVersion: number
+	email: string
+	firstName: string | null
+	holds: string[]
+}
+
+export type DrovrContactLinksPayload = {
+	profileVersion: number
+	journeyId: string
+	emailKey: string
+	issuedAt: string
+	expiresAt: string
+	variables: Record<string, string>
+	/** Keys drovr fills with the send's dueAt at render. */
+	sendTimeFields: string[]
+}
+
+export type DrovrContactOfferPayload = {
+	profileVersion: number
+	journeyId: string
+	emailKey?: string
+	variables: Record<string, string>
+}
+
 export type DrovrShadowEvent = {
 	tenantId: DrovrTenantId
 	contactId: string
@@ -60,6 +86,9 @@ export type DrovrShadowEvent = {
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
 		| 'purchase.recorded'
+		| 'contact.profile.updated'
+		| 'contact.links.issued'
+		| 'contact.offer.issued'
 	occurredAt: string
 	idempotencyKey: string
 	payload?:
@@ -73,6 +102,9 @@ export type DrovrShadowEvent = {
 		| { productId: string }
 		| DrovrPinnedTimezonePayload
 		| DrovrContactDirectoryBirthPayload
+		| DrovrContactProfilePayload
+		| DrovrContactLinksPayload
+		| DrovrContactOfferPayload
 		| {
 				valuePathSlug: string
 				completedAt: string
