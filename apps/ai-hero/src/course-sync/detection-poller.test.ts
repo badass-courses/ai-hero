@@ -474,7 +474,7 @@ describe('course sync detection poller', () => {
 		},
 	)
 
-	it('holds the next tick when a filmed explainer was removed from the manifest', async () => {
+	it('routes a removed filmed explainer to operator review without a strike', async () => {
 		// The source revision retains lesson-1; the prior applied plan also had lesson-0.
 		const removed: SyncPlan['resources'][number] = {
 			sourceKind: 'lesson', sourceId: 'lesson-0',
@@ -508,6 +508,29 @@ describe('course sync detection poller', () => {
 			consecutiveFailures: 0, failureClass: null,
 		})
 		expect(test.apply).not.toHaveBeenCalled()
+	})
+
+	it('auto-applies a removed placeholder-only section on the next tick', async () => {
+		const syllabus: CourseJsonDocumentV3 = {
+			...manifest,
+			schemaVersion: 4,
+			sections: [{ id: 'kept-section', title: 'Kept', lessons: [
+				{ type: 'placeholder', id: 'kept-lesson', title: 'Kept lesson' },
+			] }],
+		}
+		const test = harness({
+			manifest: syllabus,
+			head: { courseVersionId: 'version-1', providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1', runState: 'applied' },
+			evaluateBoundedAutoApply: async () => ({ eligible: true, planSha256: 'plan-sha' }),
+		})
+		await expect(test.poll('poll-placeholder-section-removal')).resolves.toMatchObject({
+			outcome: 'applied',
+		})
+		expect(test.apply).toHaveBeenCalledOnce()
+		expect(test.state()).toMatchObject({
+			status: 'succeeded', consecutiveFailures: 0, applyPolicyOverride: null,
+		})
 	})
 
 	it('auto-applies only a bounded eligible preview and verifies readback', async () => {

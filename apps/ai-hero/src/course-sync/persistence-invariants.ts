@@ -170,6 +170,53 @@ export function chunkCourseSyncWrites<T>(
 	return chunks
 }
 
+export type CourseSyncRelationReadback = {
+	resourceId: string
+	resourceOfId: string
+	position: number
+	deletedAt: Date | null
+}
+
+export type CourseSyncExpectedRelation = {
+	resourceId: string
+	parentResourceId: string
+	position: number
+	detached: boolean
+}
+
+/** A shared relation check for apply and rollback, with rollback scoped to each parent. */
+export function verifyCourseSyncRelations(
+	items: ReadonlyArray<CourseSyncExpectedRelation>,
+	relations: ReadonlyArray<CourseSyncRelationReadback>,
+	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
+	scope: 'resource' | 'parent' = 'resource',
+): { ok: true } | { ok: false; resourceId: string; reason: string } {
+	for (const item of items) {
+		const rows = relations.filter((relation) =>
+			relation.resourceId === item.resourceId &&
+			(scope === 'resource' || relation.resourceOfId === item.parentResourceId),
+		)
+		const live = rows.filter((relation) => relation.deletedAt === null)
+		const matchingDead = rows.filter((relation) =>
+			relation.deletedAt !== null &&
+			relation.resourceOfId === item.parentResourceId &&
+			relation.position === item.position,
+		)
+		// ContentResourceResource.deletedAt is TIMESTAMP(3), matching JS Date ms.
+		const expectedDeletedAt = expectedDeletedAtByResource.get(item.resourceId)
+		const matches = item.detached
+			? live.length === 0 && matchingDead.length === 1 &&
+				expectedDeletedAt !== undefined &&
+				matchingDead[0]?.deletedAt instanceof Date &&
+				matchingDead[0].deletedAt.getTime() === expectedDeletedAt.getTime()
+			: live.length === 1 &&
+				live[0]?.resourceOfId === item.parentResourceId &&
+				live[0]?.position === item.position
+		if (!matches) return { ok: false, resourceId: item.resourceId, reason: 'relation_mismatch' }
+	}
+	return { ok: true }
+}
+
 export function verifyCourseSyncActivation(
 	plan: SyncPlan,
 	receipts: ReadonlyArray<{ resourceId: string; contentResourceVersionId: string }>,
@@ -178,12 +225,7 @@ export function verifyCourseSyncActivation(
 		currentVersionId: string | null
 		fields: Record<string, unknown> | null
 	}>,
-	relations: ReadonlyArray<{
-		resourceId: string
-		resourceOfId: string
-		position: number
-		deletedAt: Date | null
-	}>,
+	relations: ReadonlyArray<CourseSyncRelationReadback>,
 	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
@@ -204,31 +246,17 @@ export function verifyCourseSyncActivation(
 		if (stableJson(resource.fields ?? {}) !== stableJson(item.fields)) {
 			return { ok: false, resourceId, reason: 'fields_mismatch' }
 		}
-		const rows = relations.filter((relation) => relation.resourceId === resourceId)
-		const live = rows.filter((relation) => relation.deletedAt === null)
-		const matchingDead = rows.filter(
-			(relation) =>
-				relation.deletedAt !== null &&
-				relation.resourceOfId === item.parentResourceId &&
-				relation.position === item.position,
-		)
-		// The relation column is TIMESTAMP(3), matching JS Date millisecond precision.
-		// Compare the value promoted by this apply, not merely any old tombstone.
-		const expectedDeletedAt = expectedDeletedAtByResource.get(resourceId)
-		const relationMatches = item.detached
-			? live.length === 0 &&
-				matchingDead.length === 1 &&
-				expectedDeletedAt !== undefined &&
-				matchingDead[0]?.deletedAt instanceof Date &&
-				matchingDead[0].deletedAt.getTime() === expectedDeletedAt.getTime()
-			: live.length === 1 &&
-					live[0]?.resourceOfId === item.parentResourceId &&
-					live[0]?.position === item.position
-		if (!relationMatches) {
-			return { ok: false, resourceId, reason: 'relation_mismatch' }
-		}
 	}
-	return { ok: true }
+	return verifyCourseSyncRelations(
+		plan.resources.map((item) => ({
+			resourceId: item.targetResourceId,
+			parentResourceId: item.parentResourceId,
+			position: item.position,
+			detached: item.detached,
+		})),
+		relations,
+		expectedDeletedAtByResource,
+	)
 }
 
 export function assertManagedChildRelations(

@@ -29,6 +29,7 @@ import {
 	courseSyncRollbackPointer,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
+	verifyCourseSyncRelations,
 } from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
 import { assertCourseSyncTargetContract } from './target-contract'
@@ -1440,14 +1441,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				const activeRelations = relations.filter(
 					(relation) => relation.deletedAt === null,
 				)
+				// This pre-rollback check has no persisted per-apply tombstone marker.
+				// It can prove shape, but not which apply wrote the dead row.
 				const relationMatches = planItem?.detached
 					? activeRelations.length === 0 &&
-						relations.some(
+						relations.filter(
 							(relation) =>
 								relation.resourceOfId === planItem.parentResourceId &&
 								relation.position === planItem.position &&
 								relation.deletedAt !== null,
-						)
+						).length === 1
 					: activeRelations.length === 1 &&
 						activeRelations[0]?.resourceOfId === planItem?.parentResourceId &&
 						activeRelations[0]?.position === planItem?.position
@@ -1499,6 +1502,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationTombstones: Array<{
 				resourceId: string
 				parentResourceId: string
+				position: number
 			}> = []
 			const pointerRestorations: Array<typeof contentResource.$inferInsert> = []
 			for (const receipt of receipts) {
@@ -1564,6 +1568,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					relationTombstones.push({
 						resourceId: receipt.resourceId,
 						parentResourceId: planItem.parentResourceId,
+						position: planItem.position,
 					})
 				}
 				pointerRestorations.push(
@@ -1639,6 +1644,52 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 							),
 						),
 					)
+			}
+			const expectedRollbackRelations = [
+				...relationRestorations.map((relation) => ({
+					resourceId: relation.resourceId,
+					parentResourceId: relation.resourceOfId,
+					position: relation.position!,
+					detached: relation.deletedAt !== null,
+				})),
+				...relationTombstones.map((relation) => ({
+					resourceId: relation.resourceId,
+					parentResourceId: relation.parentResourceId,
+					position: relation.position,
+					detached: true,
+				})),
+			]
+			if (expectedRollbackRelations.length > 0) {
+				const rollbackRelationIds = [
+					...new Set(expectedRollbackRelations.map((relation) => relation.resourceId)),
+				]
+				const restoredRelations = await trx
+					.select({
+						resourceId: contentResourceResource.resourceId,
+						resourceOfId: contentResourceResource.resourceOfId,
+						position: contentResourceResource.position,
+						deletedAt: contentResourceResource.deletedAt,
+					})
+					.from(contentResourceResource)
+					.where(inArray(contentResourceResource.resourceId, rollbackRelationIds))
+				const verification = verifyCourseSyncRelations(
+					expectedRollbackRelations,
+					restoredRelations,
+					new Map(
+						expectedRollbackRelations
+							.filter((item) => item.detached)
+							.map((item) => [item.resourceId, now]),
+						),
+					'parent',
+				)
+				if (!verification.ok) {
+					throw new CourseSyncError(
+						'ROLLBACK_WRITE_VERIFICATION_FAILED',
+						'Rollback relations did not match the compensating writes.',
+						500,
+						{ category: 'internal', retryable: false },
+					)
+				}
 			}
 			for (const batch of chunkCourseSyncWrites(pointerRestorations)) {
 				await trx

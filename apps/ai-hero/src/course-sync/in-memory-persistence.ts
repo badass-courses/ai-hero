@@ -3,6 +3,7 @@ import { CourseSyncError } from './errors'
 import {
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
+	verifyCourseSyncRelations,
 } from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
 import {
@@ -72,6 +73,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	failAfterVersionWrites: number | null = null
 	beforeApplyTargetRecheck: (() => void) | null = null
 	beforeApplyActivationReadback: ((relations: typeof this.relations) => void) | null = null
+	beforeRollbackActivationReadback: ((relations: typeof this.relations) => void) | null = null
 	currentAwaitingApplyRunId: string | null = null
 	currentAppliedRunId: string | null = null
 
@@ -722,6 +724,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		// Resolve every lookup, restored field payload, version, relation, and
 		// receipt against cloned state. Nothing observable changes until every
 		// rollback operation has prepared successfully.
+		const rollbackDeletedAt = new Date()
 		const plannedRollbacks = runReceipts
 			.filter((receipt) => receipt.action !== 'retain')
 			.map((receipt) => {
@@ -788,12 +791,14 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 									childId: receipt.resourceId,
 									position: receipt.previousPosition,
 									detached: planItem.previousDetached,
+									...(planItem.previousDetached ? { deletedAt: rollbackDeletedAt } : {}),
 								}
 							: {
 									parentId: planItem.parentResourceId,
 									childId: receipt.resourceId,
 									position: planItem.position,
 									detached: true,
+									deletedAt: rollbackDeletedAt,
 								},
 					receipt: {
 						runId: input.compensatingRunId,
@@ -821,6 +826,35 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 			resource.fields = rollback.fields
 			nextRelations.set(rollback.resourceId, rollback.relation)
 			nextReceipts.push(rollback.receipt)
+		}
+		this.beforeRollbackActivationReadback?.(nextRelations)
+		const rollbackVerification = verifyCourseSyncRelations(
+			plannedRollbacks.map((rollback) => ({
+				resourceId: rollback.resourceId,
+				parentResourceId: rollback.relation.parentId,
+				position: rollback.relation.position,
+				detached: rollback.relation.detached,
+			})),
+			plannedRollbacks.map((rollback) => {
+				const relation = nextRelations.get(rollback.resourceId)
+				return {
+					resourceId: rollback.resourceId,
+					resourceOfId: relation?.parentId ?? '',
+					position: relation?.position ?? -1,
+					deletedAt: relation?.detached ? (relation.deletedAt ?? null) : null,
+				}
+			}),
+			new Map(plannedRollbacks.filter((rollback) => rollback.relation.detached)
+				.map((rollback) => [rollback.resourceId, rollbackDeletedAt])),
+			'parent',
+		)
+		if (!rollbackVerification.ok) {
+			throw new CourseSyncError(
+				'ROLLBACK_WRITE_VERIFICATION_FAILED',
+				'Rollback relations did not match the compensating writes.',
+				500,
+				{ category: 'internal', retryable: false },
+			)
 		}
 		const compensating: SyncRunRecord = {
 			...structuredClone(original),

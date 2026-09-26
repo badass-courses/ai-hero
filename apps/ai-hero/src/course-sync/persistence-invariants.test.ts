@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { sha256, stableJson } from './control-plane'
 
 import {
 	AI_HERO_COURSE_SYNC_BINDING,
@@ -15,7 +16,14 @@ import {
 	evaluateCourseSyncBoundedAutoApply,
 	resolveCourseSyncRollbackFields,
 	verifyCourseSyncActivation,
+	verifyCourseSyncRelations,
 } from './persistence-invariants'
+
+function sealPlan(plan: SyncPlan): SyncPlan {
+	const { planSha256: _claimed, ...input } = plan
+	plan.planSha256 = sha256(stableJson(input))
+	return plan
+}
 
 function launchPlan(): SyncPlan {
 	let position = 0
@@ -51,7 +59,7 @@ function launchPlan(): SyncPlan {
 			}
 		}
 	}
-	return {
+	return sealPlan({
 		bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 		sourceRevisionId: 'revision-launch',
 		courseVersionId: 'course-version-launch',
@@ -66,8 +74,8 @@ function launchPlan(): SyncPlan {
 			muxPlaybackId: `playback-${index}`,
 			duration: 60,
 		})),
-		planSha256: 'b'.repeat(64),
-	}
+		planSha256: '',
+	})
 }
 
 function activationFixture(detached = false) {
@@ -76,7 +84,7 @@ function activationFixture(detached = false) {
 		fields: { title: 'Activation fixture' },
 		detached,
 	}
-	const plan: SyncPlan = { ...launchPlan(), resources: [item], media: [] }
+	const plan: SyncPlan = sealPlan({ ...launchPlan(), resources: [item], media: [] })
 	const receipt = { resourceId: item.targetResourceId, contentResourceVersionId: 'version-after-apply' }
 	const resource = { id: item.targetResourceId, currentVersionId: receipt.contentResourceVersionId, fields: item.fields }
 	const deletedAt = detached ? new Date('2026-09-26T00:00:00.123Z') : null
@@ -99,7 +107,7 @@ function currentManifestPlan(): SyncPlan {
 		'update'
 	for (const media of plan.media) media.action = 'retain'
 	plan.media[0]!.action = 'update'
-	return plan
+	return sealPlan(plan)
 }
 
 function section(position: number) {
@@ -173,6 +181,25 @@ describe('course sync persistence invariants', () => {
 			})
 		}
 	})
+	it('verifies rollback tombstones and restored live relations together', () => {
+		const now = new Date('2026-09-26T01:00:00.123Z')
+		const expected = [
+			{ resourceId: 'detached', parentResourceId: 'parent-a', position: 1, detached: true },
+			{ resourceId: 'restored', parentResourceId: 'parent-b', position: 2, detached: false },
+		]
+		const rows = [
+			{ resourceId: 'detached', resourceOfId: 'parent-a', position: 1, deletedAt: now },
+			{ resourceId: 'restored', resourceOfId: 'parent-b', position: 2, deletedAt: null },
+		]
+		const marker = new Map([['detached', now]])
+		expect(verifyCourseSyncRelations(expected, rows, marker, 'parent')).toEqual({ ok: true })
+		expect(verifyCourseSyncRelations(expected, [
+			{ ...rows[0]!, deletedAt: new Date('2020-01-01') }, rows[1]!,
+		], marker, 'parent')).toMatchObject({ ok: false, resourceId: 'detached' })
+		expect(verifyCourseSyncRelations(expected, [...rows, { ...rows[1]! }], marker, 'parent'))
+			.toMatchObject({ ok: false, resourceId: 'restored' })
+	})
+
 	it('reads detached relations for apply verification rather than filtering dead rows', () => {
 		const applySource = readFileSync(new URL('./drizzle-persistence.ts', import.meta.url), 'utf8')
 		const readback = applySource.split('const activatedRelations = await trx')[1]?.split('const appliedAt = new Date()')[0]
@@ -210,18 +237,16 @@ describe('course sync persistence invariants', () => {
 	})
 
 	it('treats the source manifest as authoritative for every plan shape', () => {
-		expect(evaluateCourseSyncBoundedAutoApply(launchPlan())).toEqual({
-			eligible: true,
-			planSha256: 'b'.repeat(64),
-		})
-		expect(evaluateCourseSyncBoundedAutoApply(currentManifestPlan())).toEqual({
-			eligible: true,
-			planSha256: 'b'.repeat(64),
-		})
+		for (const plan of [launchPlan(), currentManifestPlan()]) {
+			expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
+				eligible: true,
+				planSha256: plan.planSha256,
+			})
+		}
 	})
 
 	it('routes lesson regressions to operator review without marking the plan failed', () => {
-		const plan = { ...launchPlan(), lessonRegressions: ['lesson-1'] }
+		const plan = sealPlan({ ...launchPlan(), lessonRegressions: ['lesson-1'] })
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
 			eligible: false,
 			planSha256: plan.planSha256,
@@ -234,6 +259,7 @@ describe('course sync persistence invariants', () => {
 		const plan = launchPlan()
 		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
 		lesson.fields = { courseSync: { lessonType: 'placeholder' } }
+		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
 			eligible: false,
 			failureCode: 'LEGACY_PLACEHOLDER_PREVIEW_REVIEW_REQUIRED',
@@ -244,6 +270,7 @@ describe('course sync persistence invariants', () => {
 		const plan = { ...launchPlan(), lessonRegressions: [] }
 		const lesson = plan.resources.find((item) => item.sourceKind === 'lesson')!
 		lesson.fields = { courseSync: { lessonType: 'placeholder' } }
+		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
 			eligible: true,
 			planSha256: plan.planSha256,
@@ -255,6 +282,7 @@ describe('course sync persistence invariants', () => {
 			const plan = launchPlan()
 			const child = plan.resources.find((item) => item.sourceKind === kind)!
 			child.detached = true
+			sealPlan(plan)
 			expect(evaluateCourseSyncBoundedAutoApply(plan)).toMatchObject({
 				eligible: false,
 				failureCode: 'LOST_VIDEO_REVIEW_REQUIRED',
@@ -318,9 +346,10 @@ describe('course sync persistence invariants', () => {
 	] as const)('applies %s without an operator gate', (_label, mutate) => {
 		const plan = launchPlan()
 		mutate(plan)
+		sealPlan(plan)
 		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
 			eligible: true,
-			planSha256: 'b'.repeat(64),
+			planSha256: plan.planSha256,
 		})
 	})
 

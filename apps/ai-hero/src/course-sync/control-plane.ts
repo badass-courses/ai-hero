@@ -936,13 +936,7 @@ export function createCourseSyncControlPlane(
 			}
 			const desiredIds = new Set(desired.map((item) => item.targetResourceId))
 			const removedChildren = [...previousByTarget.values()].filter(
-				(item) =>
-					(item.sourceKind === 'lesson' ||
-						item.sourceKind === 'question' ||
-						item.sourceKind === 'video' ||
-						item.sourceKind === 'solution') &&
-					!item.detached &&
-					!desiredIds.has(item.targetResourceId),
+				(item) => !item.detached && !desiredIds.has(item.targetResourceId),
 			)
 			const planned = [
 				...desired,
