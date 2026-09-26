@@ -4,6 +4,7 @@ import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import {
 	resolveValuePathLinkAnchor,
 	valuePathLinkFingerprint,
+	type ValuePathLinkAnchor,
 	type ValuePathLinkAnchorStore,
 } from './value-path-link-anchor'
 import { restoreDeadlineTimeZoneEvidence } from './course-sequence-exhaustion'
@@ -598,12 +599,7 @@ export function valuePathAnswerPagesForEmail(args: {
 	)
 }
 
-/**
- * The anchored expiry for this email's answer-URL token, or undefined to
- * keep the send-time expiry: no store, no answer pages to link, or a store
- * that is unavailable.
- */
-export async function anchoredValuePathLinkExpiry(args: {
+type ValuePathLinkAnchorInputs = {
 	linkAnchors?: ValuePathLinkAnchorStore
 	contactId: string
 	kitSubscriberId?: string
@@ -614,13 +610,27 @@ export async function anchoredValuePathLinkExpiry(args: {
 	pathTokenSecret?: string
 	now: string
 	warn?: (event: string, fields: Record<string, unknown>) => unknown
-}): Promise<string | undefined> {
-	if (!args.linkAnchors || !args.valuePathSlug || !args.emailResourceId) {
+}
+
+/**
+ * The link window for this email at `now`, anchored at its first issue,
+ * whether or not the email links an answer: the live send and the profile
+ * sync share this key, so they can never compute different URLs. Undefined
+ * without a store, a path, an email or a secret, or when the store is
+ * unavailable.
+ */
+export async function valuePathEmailLinkWindow(
+	args: ValuePathLinkAnchorInputs,
+): Promise<ValuePathLinkAnchor | undefined> {
+	if (
+		!args.linkAnchors ||
+		!args.valuePathSlug ||
+		!args.emailResourceId ||
+		!args.pathTokenSecret
+	) {
 		return undefined
 	}
-	const pages = valuePathAnswerPagesForEmail(args)
-	if (pages.length === 0 || !args.pathTokenSecret) return undefined
-	const anchor = await resolveValuePathLinkAnchor({
+	return resolveValuePathLinkAnchor({
 		store: args.linkAnchors,
 		key: {
 			contactId: args.contactId,
@@ -630,13 +640,25 @@ export async function anchoredValuePathLinkExpiry(args: {
 				kitSubscriberId: args.kitSubscriberId,
 				baseUrl: args.baseUrl,
 				secret: args.pathTokenSecret,
-				answerPages: pages,
+				answerPages: valuePathAnswerPagesForEmail(args),
 			}),
 		},
 		now: args.now,
 		warn: args.warn,
 	})
-	return anchor?.expiresAt
+}
+
+/**
+ * The anchored expiry for this email's answer-URL token, or undefined to
+ * keep the send-time expiry: no store, no answer pages to link, or a store
+ * that is unavailable. A send never records a first issue for an email
+ * that carries no token.
+ */
+export async function anchoredValuePathLinkExpiry(
+	args: ValuePathLinkAnchorInputs,
+): Promise<string | undefined> {
+	if (valuePathAnswerPagesForEmail(args).length === 0) return undefined
+	return (await valuePathEmailLinkWindow(args))?.expiresAt
 }
 
 /**
@@ -667,6 +689,16 @@ export async function personalizeValuePathEmailWithAnchoredLinks(
 	if (!linkExpiresAt) return unanchored
 	return buildValuePathEmailPersonalization({ ...build, linkExpiresAt })
 }
+
+/**
+ * Personalization keys stamped with the send's own time rather than derived
+ * from the contact's inputs. A stored profile names them instead of holding
+ * them, and drovr fills them with the send's dueAt at render.
+ */
+export const VALUE_PATH_SEND_TIME_FIELDS: readonly string[] = [
+	'aih_course_started_at',
+	AIH_COURSE_COMPLETED_AT_FIELD,
+]
 
 export function buildValuePathEmailPersonalization(args: {
 	contactId: string
