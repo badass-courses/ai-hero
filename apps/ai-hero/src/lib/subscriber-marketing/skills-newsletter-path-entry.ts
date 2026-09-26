@@ -7,7 +7,7 @@ import {
 	resolveJourneyOwner,
 	type DrovrOwnershipConfig,
 } from './drovr-ownership'
-import { requestContactProfileSync } from './drovr-contact-profile-sync'
+import { requestContactProfileSync } from './drovr-contact-profile-sync-requests'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import {
 	deadlineTimeZoneEvidenceFromHeader,
