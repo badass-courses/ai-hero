@@ -310,4 +310,65 @@ describe('contact sync backfill run', () => {
 		expect(done.status).toBe('done')
 		expect(h2.sent.map((entry) => entry.id)).not.toContain('continue')
 	})
+
+	it('a canary (maxPages: 1) runs one page, sends it, and stops without re-queueing', async () => {
+		const h = harness({}, 5)
+		const receipt = await runContactSyncBackfill({
+			event: { data: { maxPages: 1 } },
+			step: h.step,
+			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+			ports: h.ports,
+			pageSize: 2,
+		})
+		expect(h.order.filter((id) => id.startsWith('page-'))).toEqual(['page-0'])
+		expect(h.sent.map((entry) => entry.id)).toEqual(['deliver-0'])
+		expect(receipt).toMatchObject({
+			status: 'paused',
+			pages: 1,
+			contacts: 2,
+			cursor: { phase: 'owners', afterId: expect.any(String) },
+		})
+		// The operator resumes by sending the receipt's cursor back.
+		const resumed = harness({}, 5)
+		const next = await runContactSyncBackfill({
+			event: {
+				data: { cursor: (receipt as { cursor: BackfillCursor }).cursor },
+			},
+			step: resumed.step,
+			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+			ports: resumed.ports,
+			pageSize: 2,
+			pagesPerRun: 10,
+		})
+		expect(next).toMatchObject({ status: 'done', contacts: 3 })
+	})
+
+	it('a canary stops after its one page even while phases remain', async () => {
+		const h = harness({}, 1)
+		const receipt = await runContactSyncBackfill({
+			event: { data: { maxPages: 1 } },
+			step: h.step,
+			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+			ports: h.ports,
+			pageSize: 10,
+		})
+		// One page per phase: owners fit, the stop phases still remain.
+		expect(receipt).toMatchObject({ status: 'paused', pages: 1 })
+		expect(h.sent.map((entry) => entry.id)).not.toContain('continue')
+	})
+
+	it('refuses a maxPages that is not a positive whole number', async () => {
+		for (const maxPages of [0, -1, 1.5]) {
+			const h = harness({})
+			await expect(
+				runContactSyncBackfill({
+					event: { data: { maxPages } },
+					step: h.step,
+					env: { AIH_DROVR_PROFILE_SYNC: 'true' },
+					ports: h.ports,
+				}),
+			).rejects.toThrow(/maxPages/)
+			expect(h.step.run).not.toHaveBeenCalled()
+		}
+	})
 })

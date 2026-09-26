@@ -204,7 +204,8 @@ type BackfillStep = {
 export type BackfillReceipt =
 	| { status: 'skipped'; reason: string }
 	| {
-			status: 'continued' | 'done'
+			/** `paused`: a capped run stopped; send its cursor back to resume. */
+			status: 'continued' | 'paused' | 'done'
 			cursor: BackfillCursor
 			pages: number
 			contacts: number
@@ -219,7 +220,7 @@ export type BackfillReceipt =
  * its step limit.
  */
 export async function runContactSyncBackfill(args: {
-	event: { data: { cursor?: BackfillCursor } }
+	event: { data: { cursor?: BackfillCursor; maxPages?: number } }
 	step: BackfillStep
 	env: Readonly<Record<string, string | undefined>>
 	ports: BackfillPorts
@@ -228,11 +229,17 @@ export async function runContactSyncBackfill(args: {
 }): Promise<BackfillReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
+	// A capped run (the first one is a one-page canary) stops after its
+	// pages and never re-queues: an operator checks drovr, then sends the
+	// receipt's cursor back to go on.
+	const { maxPages } = args.event.data
+	if (maxPages !== undefined && !(Number.isInteger(maxPages) && maxPages > 0))
+		throw new Error(`maxPages must be a positive whole number: ${maxPages}`)
 	let cursor: BackfillCursor = args.event.data.cursor ?? { phase: 'owners' }
 	let pages = 0
 	let contacts = 0
 	let events = 0
-	const pagesPerRun = args.pagesPerRun ?? 10
+	const pagesPerRun = Math.min(args.pagesPerRun ?? 10, maxPages ?? Infinity)
 	for (
 		let index = 0;
 		index < pagesPerRun && cursor.phase !== 'done';
@@ -261,14 +268,19 @@ export async function runContactSyncBackfill(args: {
 		events += page.events.length
 		cursor = page.next
 	}
-	if (cursor.phase !== 'done') {
+	if (cursor.phase !== 'done' && maxPages === undefined) {
 		await args.step.sendEvent('continue', {
 			name: DROVR_CONTACT_SYNC_BACKFILL_EVENT,
 			data: { cursor },
 		})
 	}
 	return {
-		status: cursor.phase === 'done' ? 'done' : 'continued',
+		status:
+			cursor.phase === 'done'
+				? 'done'
+				: maxPages === undefined
+					? 'continued'
+					: 'paused',
 		cursor,
 		pages,
 		contacts,

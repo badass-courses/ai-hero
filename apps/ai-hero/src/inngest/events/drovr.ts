@@ -49,6 +49,11 @@ export type DrovrContactSyncBackfillRequested = {
 	name: typeof DROVR_CONTACT_SYNC_BACKFILL_EVENT
 	data: {
 		cursor?: import('@/lib/subscriber-marketing/contact-sync-backfill').BackfillCursor
+		/**
+		 * Stop after this many pages and do not re-queue (the first run is a
+		 * one-page canary); the receipt's cursor resumes it.
+		 */
+		maxPages?: number
 	}
 }
 
