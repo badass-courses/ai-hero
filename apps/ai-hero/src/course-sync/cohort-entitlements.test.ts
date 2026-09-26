@@ -8,7 +8,12 @@ const mocks = vi.hoisted(() => {
 	return {
 		select: vi.fn(),
 		trigger: vi.fn(
-			async (_cohort: string, _changes: unknown, _id?: string) => undefined,
+			async (
+				_cohort: string,
+				_changes: unknown,
+				_id?: string,
+				_context?: unknown,
+			) => undefined,
 		),
 		claim: vi.fn(async (input: { kind: string }) => {
 			if (receipts.has(input.kind) && receipts.get(input.kind) !== 'failed')
@@ -169,8 +174,10 @@ describe('cohort course-sync entitlements', () => {
 			{
 				resourcesAdded: [],
 				resourcesRemoved: [{ resourceId: 'detached' }],
+				boundedRemovals: ['detached'],
 			},
 			expect.stringMatching(/^course-sync-entitlement-/),
+			{ source: 'course-sync', controlPlaneRunId: 'run-1' },
 		)
 		await expect(
 			deliverCourseSyncEntitlementSync({
@@ -190,10 +197,28 @@ describe('cohort course-sync entitlements', () => {
 			{
 				resourcesAdded: [{ resourceId: 'detached', position: 3 }],
 				resourcesRemoved: [],
+				boundedRemovals: [],
 			},
 			expect.stringMatching(/^course-sync-entitlement-/),
+			{ source: 'course-sync', controlPlaneRunId: 'run-1' },
 		)
 		expect(mocks.trigger).toHaveBeenCalledTimes(2)
+	})
+
+	it('bounds a create-only apply to zero removals even when the cohort read is stale', async () => {
+		await deliverCourseSyncEntitlementSync({
+			controlPlaneRunId: 'run-1',
+			lifecycle: 'applied',
+		})
+		expect(mocks.trigger).toHaveBeenCalledWith(
+			'test-cohort',
+			expect.objectContaining({
+				resourcesAdded: [{ resourceId: 'new-workshop', position: 2 }],
+				boundedRemovals: [],
+			}),
+			expect.any(String),
+			{ source: 'course-sync', controlPlaneRunId: 'run-1' },
+		)
 	})
 
 	it('records a failed trigger without failing applied state and can retry the same ID', async () => {

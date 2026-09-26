@@ -20,12 +20,40 @@ describe('cohort update trigger', () => {
 			'course-sync-entitlement-stable',
 		)
 		expect(mocks.send).toHaveBeenCalledWith(
-			expect.objectContaining({ id: 'course-sync-entitlement-stable' }),
+			expect.objectContaining({
+				id: 'course-sync-entitlement-stable',
+				data: expect.objectContaining({ source: 'cms' }),
+			}),
 		)
 		mocks.send.mockClear()
 		await triggerCohortEntitlementSync('test-cohort', {})
 		expect(mocks.send).toHaveBeenCalledWith(
 			expect.not.objectContaining({ id: expect.anything() }),
+		)
+		expect(mocks.send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				data: expect.objectContaining({ source: 'cms' }),
+			}),
+		)
+		mocks.send.mockClear()
+		await triggerCohortEntitlementSync(
+			'test-cohort',
+			{
+				resourcesRemoved: [{ resourceId: 'detached' }],
+				boundedRemovals: ['detached'],
+			},
+			'stable-course-sync',
+			{ source: 'course-sync', controlPlaneRunId: 'run-7' },
+		)
+		expect(mocks.send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: 'stable-course-sync',
+				data: expect.objectContaining({
+					source: 'course-sync',
+					controlPlaneRunId: 'run-7',
+					changes: expect.objectContaining({ boundedRemovals: ['detached'] }),
+				}),
+			}),
 		)
 	})
 })

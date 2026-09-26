@@ -28,7 +28,15 @@ export const cohortEntitlementSyncUser = inngest.createFunction(
 		event: COHORT_ENTITLEMENT_SYNC_USER_EVENT,
 	},
 	async ({ event, step }) => {
-		const { cohortId, userId, userEmail, cohortResourceIds } = event.data
+		const {
+			cohortId,
+			userId,
+			userEmail,
+			cohortResourceIds,
+			allowedRemovals,
+			source,
+			controlPlaneRunId,
+		} = event.data
 
 		const result = await step.run('sync-user-entitlements', async () => {
 			await log.info('cohort_entitlement_sync_user.started', {
@@ -38,19 +46,33 @@ export const cohortEntitlementSyncUser = inngest.createFunction(
 				resourceCount: cohortResourceIds.length,
 			})
 
-			const syncResult = await syncUserCohortEntitlementsWithIds(
-				userId,
-				cohortId,
-				cohortResourceIds,
-			)
+			const syncResult =
+				allowedRemovals === undefined
+					? await syncUserCohortEntitlementsWithIds(
+							userId,
+							cohortId,
+							cohortResourceIds,
+						)
+					: await syncUserCohortEntitlementsWithIds(
+							userId,
+							cohortId,
+							cohortResourceIds,
+							{
+								allowedRemovals,
+								source,
+								controlPlaneRunId,
+							},
+						)
 
-			await log.info('cohort_entitlement_sync_user.completed', {
-				cohortId,
-				userId,
-				userEmail,
-				entitlementsAdded: syncResult.toAdd.length,
-				entitlementsRemoved: syncResult.toRemove.length,
-			})
+			if (!syncResult.refusedRemovals) {
+				await log.info('cohort_entitlement_sync_user.completed', {
+					cohortId,
+					userId,
+					userEmail,
+					entitlementsAdded: syncResult.toAdd.length,
+					entitlementsRemoved: syncResult.toRemove.length,
+				})
+			}
 
 			return syncResult
 		})
@@ -61,6 +83,13 @@ export const cohortEntitlementSyncUser = inngest.createFunction(
 			cohortId,
 			entitlementsAdded: result.toAdd.length,
 			entitlementsRemoved: result.toRemove.length,
+			...(result.refusedRemovals
+				? {
+						status: 'refused' as const,
+						reason: 'bounded_removal' as const,
+						unexpectedIdsCount: result.unexpectedIdsCount,
+					}
+				: {}),
 		}
 	},
 )

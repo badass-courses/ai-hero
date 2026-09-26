@@ -10,7 +10,6 @@ import {
 import { log } from '@/server/logger'
 import { and, eq, isNull, ne, sql } from 'drizzle-orm'
 
-import { getCohort } from './cohorts-query'
 import {
 	createCohortEntitlementInTransaction,
 	EntitlementSourceType,
@@ -154,22 +153,6 @@ export function calculateEntitlementChangesFromIds(
 }
 
 /**
- * @deprecated Use calculateEntitlementChangesFromIds instead for better performance
- */
-export function calculateEntitlementChanges(
-	currentEntitlements: any[],
-	updatedCohort: any,
-) {
-	const targetResourceIds = (
-		updatedCohort.resources?.map((r: any) => r.resource.id) || []
-	).filter((id: any): id is string => Boolean(id))
-	return calculateEntitlementChangesFromIds(
-		currentEntitlements,
-		targetResourceIds,
-	)
-}
-
-/**
  * Apply calculated entitlement changes for a user.
  * This is the core logic extracted for reuse.
  */
@@ -303,7 +286,18 @@ export async function syncUserCohortEntitlementsWithIds(
 	userId: string,
 	cohortId: string,
 	cohortResourceIds: string[],
-) {
+	options?: {
+		allowedRemovals?: ReadonlyArray<string>
+		source?: 'cms' | 'course-sync'
+		controlPlaneRunId?: string
+	},
+): Promise<{
+	toAdd: string[]
+	toRemove: string[]
+	updated: number
+	refusedRemovals?: true
+	unexpectedIdsCount?: number
+}> {
 	const startTime = Date.now()
 
 	try {
@@ -317,96 +311,39 @@ export async function syncUserCohortEntitlementsWithIds(
 			currentEntitlements,
 			cohortResourceIds,
 		)
-
-		return await applyEntitlementChanges(userId, cohortId, changes, startTime)
+		const allowed = options?.allowedRemovals
+		const unexpected =
+			allowed === undefined
+				? []
+				: changes.toRemove.filter((id) => !allowed.includes(id))
+		// An unverified read may still grant new workshops. It may never revoke
+		// anything beyond the plan's exact detach set for this one user.
+		const safeChanges =
+			unexpected.length > 0 ? { toAdd: changes.toAdd, toRemove: [] } : changes
+		const result = await applyEntitlementChanges(
+			userId,
+			cohortId,
+			safeChanges,
+			startTime,
+		)
+		if (unexpected.length === 0) return result
+		await log
+			.error('cohort_entitlement_sync.bounded_removal_refused', {
+				cohortId,
+				affectedUserCount: 1,
+				unexpectedIdsCount: unexpected.length,
+				source: options?.source ?? 'course-sync',
+				controlPlaneRunId: options?.controlPlaneRunId ?? null,
+			})
+			.catch(() => undefined)
+		return {
+			...result,
+			refusedRemovals: true as const,
+			unexpectedIdsCount: unexpected.length,
+		}
 	} catch (error) {
 		await log.error('entitlement_sync.failed', {
 			userId,
-			cohortId,
-			error: error instanceof Error ? error.message : String(error),
-			duration: Date.now() - startTime,
-		})
-		throw error
-	}
-}
-
-/**
- * Sync entitlements for a single user by fetching the cohort.
- * @deprecated Use syncUserCohortEntitlementsWithIds for fan-out pattern
- */
-export async function syncUserCohortEntitlements(
-	userId: string,
-	cohortId: string,
-) {
-	const startTime = Date.now()
-
-	try {
-		const currentEntitlements = await getCurrentCohortEntitlements(
-			userId,
-			cohortId,
-		)
-
-		const updatedCohort = await getCohort(cohortId)
-		if (!updatedCohort) {
-			throw new Error(`Cohort ${cohortId} not found`)
-		}
-
-		// Calculate what needs to be added/removed
-		const changes = calculateEntitlementChanges(
-			currentEntitlements,
-			updatedCohort,
-		)
-
-		return await applyEntitlementChanges(userId, cohortId, changes, startTime)
-	} catch (error) {
-		await log.error('entitlement_sync.failed', {
-			userId,
-			cohortId,
-			error: error instanceof Error ? error.message : String(error),
-			duration: Date.now() - startTime,
-		})
-		throw error
-	}
-}
-
-export async function syncAllCohortEntitlements(cohortId: string) {
-	const startTime = Date.now()
-
-	try {
-		const usersWithEntitlements =
-			await findUsersWithCohortEntitlements(cohortId)
-
-		await log.info('entitlement_sync.started', {
-			cohortId,
-			usersToSync: usersWithEntitlements.length,
-		})
-
-		const results = []
-		const errors = []
-
-		for (const { user } of usersWithEntitlements) {
-			try {
-				const result = await syncUserCohortEntitlements(user.id, cohortId)
-				results.push({ userId: user.id, ...result })
-			} catch (error) {
-				errors.push({
-					userId: user.id,
-					error: error instanceof Error ? error.message : String(error),
-				})
-			}
-		}
-
-		await log.info('entitlement_sync.batch_completed', {
-			cohortId,
-			duration: Date.now() - startTime,
-			successful: results.length,
-			failed: errors.length,
-			errors,
-		})
-
-		return { results, errors }
-	} catch (error) {
-		await log.error('entitlement_sync.batch_failed', {
 			cohortId,
 			error: error instanceof Error ? error.message : String(error),
 			duration: Date.now() - startTime,

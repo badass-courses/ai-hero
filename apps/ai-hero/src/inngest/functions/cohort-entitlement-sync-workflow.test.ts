@@ -22,19 +22,26 @@ vi.mock('@/server/logger', () => ({
 	log: { info: mocks.info, error: mocks.error },
 }))
 
-import { COHORT_ENTITLEMENT_SYNC_USER_EVENT } from '../events/cohort-management'
+import {
+	COHORT_ENTITLEMENT_SYNC_USER_EVENT,
+	type CohortUpdatedPayload,
+} from '../events/cohort-management'
 import { cohortEntitlementSyncWorkflow } from './cohort-entitlement-sync-workflow'
 
 const [, , workflowHandler] = mocks.createFunction.mock.calls[0]!
 const user = (id: string) => ({
 	user: { id, name: null, email: `${id}@example.test` },
 })
-const resource = (id: string, type = 'workshop') => ({ resource: { id, type } })
-const run = async () => {
+const resource = (id: string, type = 'workshop') => ({
+	resource: { id, type },
+})
+const run = async (data: Partial<CohortUpdatedPayload> = {}) => {
 	const sendEvent = vi.fn(async () => undefined)
 	expect(cohortEntitlementSyncWorkflow).toBeDefined()
 	const result = await workflowHandler({
-		event: { data: { cohortId: 'test-cohort', changes: {} } },
+		event: {
+			data: { cohortId: 'test-cohort', source: 'cms', changes: {}, ...data },
+		},
 		step: {
 			run: async (_id: string, operation: () => Promise<unknown>) =>
 				operation(),
@@ -66,6 +73,7 @@ describe('cohort entitlement sync empty-target safety', () => {
 			'cohort_entitlement_sync.empty_target_refused',
 			expect.objectContaining({
 				cohortId: 'test-cohort',
+				source: 'cms',
 				affectedUserCount: 2,
 			}),
 		)
@@ -88,6 +96,113 @@ describe('cohort entitlement sync empty-target safety', () => {
 					}),
 				}),
 			]),
+		)
+	})
+
+	it('carries course-sync bounded removals into the user events without affecting CMS fan-out', async () => {
+		mocks.getCohort.mockResolvedValue({
+			fields: { title: 'Test Cohort' },
+			resources: [resource('kept-workshop'), resource('created-workshop')],
+		})
+		const { result, sendEvent } = await run({
+			source: 'course-sync',
+			controlPlaneRunId: 'run-123',
+			changes: {
+				resourcesAdded: [{ resourceId: 'created-workshop', position: 1 }],
+				resourcesRemoved: [{ resourceId: 'detached-workshop' }],
+				boundedRemovals: ['detached-workshop'],
+			},
+		})
+		expect(result).toMatchObject({ usersProcessed: 2 })
+		expect(sendEvent).toHaveBeenCalledWith(
+			'fan-out-user-sync-events-batch-0',
+			expect.arrayContaining([
+				expect.objectContaining({
+					data: expect.objectContaining({
+						cohortResourceIds: ['kept-workshop', 'created-workshop'],
+						allowedRemovals: ['detached-workshop'],
+						source: 'course-sync',
+						controlPlaneRunId: 'run-123',
+					}),
+				}),
+			]),
+		)
+	})
+
+	it('refuses a stale course-sync cohort snapshot before any user fan-out', async () => {
+		mocks.getCohort.mockResolvedValue({
+			fields: { title: 'Test Cohort' },
+			resources: [resource('still-live')],
+		})
+		const { result, sendEvent } = await run({
+			source: 'course-sync',
+			controlPlaneRunId: 'run-stale',
+			changes: {
+				resourcesRemoved: [{ resourceId: 'still-live' }],
+				boundedRemovals: ['still-live'],
+				resourcesAdded: [{ resourceId: 'not-yet-live', position: 1 }],
+			},
+		})
+		expect(result).toMatchObject({
+			status: 'refused',
+			reason: 'stale_snapshot',
+			affectedUserCount: 2,
+		})
+		expect(sendEvent).not.toHaveBeenCalled()
+		expect(mocks.error).toHaveBeenCalledWith(
+			'cohort_entitlement_sync.stale_snapshot_refused',
+			expect.objectContaining({
+				cohortId: 'test-cohort',
+				source: 'course-sync',
+				controlPlaneRunId: 'run-stale',
+			}),
+		)
+	})
+
+	it('refuses missing created workshops even with no purchasers and no detach', async () => {
+		mocks.findUsers.mockResolvedValue([])
+		mocks.getCohort.mockResolvedValue({
+			fields: { title: 'Test Cohort' },
+			resources: [resource('already-live')],
+		})
+		const { result, sendEvent } = await run({
+			source: 'course-sync',
+			controlPlaneRunId: 'run-create-stale',
+			changes: {
+				boundedRemovals: [],
+				resourcesAdded: [{ resourceId: 'missing-new', position: 2 }],
+				resourcesRemoved: [],
+			},
+		})
+		expect(result).toMatchObject({
+			status: 'refused',
+			reason: 'stale_snapshot',
+			affectedUserCount: 0,
+		})
+		expect(sendEvent).not.toHaveBeenCalled()
+		expect(mocks.error).toHaveBeenCalledWith(
+			'cohort_entitlement_sync.stale_snapshot_refused',
+			expect.objectContaining({
+				addedMissingCount: 1,
+				boundedStillLiveCount: 0,
+				source: 'course-sync',
+				controlPlaneRunId: 'run-create-stale',
+			}),
+		)
+	})
+
+	it('echoes source and run ID when an empty course-sync read is refused', async () => {
+		await run({
+			source: 'course-sync',
+			controlPlaneRunId: 'run-empty',
+			changes: { boundedRemovals: [] },
+		})
+		expect(mocks.error).toHaveBeenCalledWith(
+			'cohort_entitlement_sync.empty_target_refused',
+			expect.objectContaining({
+				source: 'course-sync',
+				controlPlaneRunId: 'run-empty',
+			}),
 		)
 	})
 

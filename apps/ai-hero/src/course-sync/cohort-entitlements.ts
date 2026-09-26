@@ -111,9 +111,24 @@ export async function deliverCourseSyncEntitlementSync(input: {
 			)}`
 			await triggerCohortEntitlementSync(
 				binding.anchorCohortId,
-				changes,
+				{
+					...changes,
+					// Exactly the detach set from this applied/rollback plan; [] forbids
+					// every revoke even if a later cohort read is stale.
+					boundedRemovals: changes.resourcesRemoved.map(
+						(item) => item.resourceId,
+					),
+				},
 				eventId,
+				{ source: 'course-sync', controlPlaneRunId: run.runId },
 			)
+			// This receipt proves event delivery, not the asynchronous workflow outcome.
+			// Operator refusal lookup in Axiom (dataset = NEXT_PUBLIC_AXIOM_DATASET):
+			// ['<dataset>'] | where controlPlaneRunId == '<run-id>'
+			// | where event in ['cohort_entitlement_sync.empty_target_refused',
+			//   'cohort_entitlement_sync.stale_snapshot_refused',
+			//   'cohort_entitlement_sync.bounded_removal_refused']
+			// If direct Axiom ingest is off, these error logs fall back to console.
 			await completeCourseSyncReviewNotification({
 				...receipt,
 				occurredAt: new Date(),

@@ -13,6 +13,8 @@ export const COHORT_ENTITLEMENT_SYNC_USER_EVENT =
 export type CohortUpdatedPayload = {
 	cohortId: string
 	updatedAt: string
+	source: 'cms' | 'course-sync'
+	controlPlaneRunId?: string
 	changes: {
 		resourcesAdded?: Array<{
 			resourceId: string
@@ -21,6 +23,8 @@ export type CohortUpdatedPayload = {
 		resourcesRemoved?: Array<{
 			resourceId: string
 		}>
+		/** Present only for course-sync. [] means no revocation is authorized. */
+		boundedRemovals?: string[]
 	}
 }
 
@@ -30,6 +34,10 @@ export type CohortEntitlementSyncUserPayload = {
 	userEmail: string | null
 	/** Cohort resource IDs to avoid re-fetching in the child function */
 	cohortResourceIds: string[]
+	/** Only course-sync sends this field; CMS sync retains its existing behavior. */
+	allowedRemovals?: string[]
+	source?: 'cms' | 'course-sync'
+	controlPlaneRunId?: string
 }
 
 export type CohortResourceAddedPayload = {
