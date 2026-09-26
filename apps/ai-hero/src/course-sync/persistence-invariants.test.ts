@@ -79,9 +79,12 @@ function activationFixture(detached = false) {
 	const plan: SyncPlan = { ...launchPlan(), resources: [item], media: [] }
 	const receipt = { resourceId: item.targetResourceId, contentResourceVersionId: 'version-after-apply' }
 	const resource = { id: item.targetResourceId, currentVersionId: receipt.contentResourceVersionId, fields: item.fields }
+	const deletedAt = detached ? new Date('2026-09-26T00:00:00.123Z') : null
 	const relation = { resourceId: item.targetResourceId, resourceOfId: item.parentResourceId,
-		position: item.position, deletedAt: detached ? new Date() : null }
-	return { plan, receipts: [receipt], resources: [resource], relations: [relation] }
+		position: item.position, deletedAt }
+	const expectedDeletedAtByResource = new Map<string, Date>()
+	if (deletedAt) expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
+	return { plan, receipts: [receipt], resources: [resource], relations: [relation], expectedDeletedAtByResource }
 }
 
 function currentManifestPlan(): SyncPlan {
@@ -114,15 +117,38 @@ function section(position: number) {
 }
 
 describe('course sync persistence invariants', () => {
-	it('verifies activation with a detached item having one dead relation and no live one', () => {
+	it('verifies activation with a detached item having one current dead relation and no live one', () => {
 		const fixture = activationFixture(true)
-		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations)).toEqual({ ok: true })
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toEqual({ ok: true })
+	})
+
+	it('rejects activation when a detached item has no dead relation', () => {
+		const fixture = activationFixture(true)
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, [], fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
+	})
+
+	it('rejects a stale tombstone from an earlier apply', () => {
+		const fixture = activationFixture(true)
+		fixture.relations[0]!.deletedAt = new Date('2026-09-25T00:00:00.123Z')
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
+	})
+
+	it('rejects multiple dead rows at the planned parent and position', () => {
+		const fixture = activationFixture(true)
+		const rows = [fixture.relations[0]!, { ...fixture.relations[0]! }]
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, rows, fixture.expectedDeletedAtByResource)).toMatchObject({
+			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
+		})
 	})
 
 	it('rejects activation when a detached item still has a live relation', () => {
 		const fixture = activationFixture(true)
 		fixture.relations[0]!.deletedAt = null
-		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations)).toMatchObject({
+		expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, fixture.relations, fixture.expectedDeletedAtByResource)).toMatchObject({
 			ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
 		})
 	})
@@ -130,7 +156,7 @@ describe('course sync persistence invariants', () => {
 	it('rejects activation when an attached item has zero or two live relations', () => {
 		const fixture = activationFixture()
 		for (const relations of [[], [fixture.relations[0]!, { ...fixture.relations[0]! }]]) {
-			expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, relations)).toMatchObject({
+			expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, fixture.resources, relations, fixture.expectedDeletedAtByResource)).toMatchObject({
 				ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
 			})
 		}
@@ -142,7 +168,7 @@ describe('course sync persistence invariants', () => {
 			[{ ...fixture.resources[0]!, currentVersionId: 'other-version' }],
 			[{ ...fixture.resources[0]!, fields: { title: 'Other title' } }],
 		]) {
-			expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, resources, fixture.relations)).toMatchObject({
+			expect(verifyCourseSyncActivation(fixture.plan, fixture.receipts, resources, fixture.relations, fixture.expectedDeletedAtByResource)).toMatchObject({
 				ok: false, resourceId: fixture.plan.resources[0]!.targetResourceId,
 			})
 		}

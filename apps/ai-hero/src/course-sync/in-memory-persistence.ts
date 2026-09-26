@@ -65,7 +65,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 	readonly receipts: MemoryReceipt[] = []
 	readonly relations = new Map<
 		string,
-		{ parentId: string; childId: string; position: number; detached: boolean }
+		{ parentId: string; childId: string; position: number; detached: boolean; deletedAt?: Date }
 	>()
 	targetValid = true
 	assertTargetCalls = 0
@@ -359,6 +359,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 		const relations = cloneMap(this.relations)
 		const receipts = structuredClone(this.receipts)
 		const pointers: Array<{ resourceId: string; versionId: string }> = []
+		const expectedDeletedAtByResource = new Map<string, Date>()
 		let writes = 0
 		for (const item of input.plan.resources) {
 			let resource = resources.get(item.targetResourceId)
@@ -376,6 +377,8 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					type: item.sourceKind === 'video' ? 'videoResource' : item.sourceKind,
 				}
 				resources.set(item.targetResourceId, resource)
+				const deletedAt = item.detached ? new Date() : null
+				if (deletedAt) expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
 				relations.set(item.targetResourceId, {
 					parentId: item.parentResourceId,
 					childId: item.targetResourceId,
@@ -385,6 +388,7 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					// detached: true, and hard-coding false would silently make it
 					// visible again.
 					detached: item.detached,
+					...(deletedAt ? { deletedAt } : {}),
 				})
 			}
 			if (!resource)
@@ -485,6 +489,13 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 				relation.parentId = item.parentResourceId
 				relation.position = item.position
 				relation.detached = item.detached
+				if (item.detached) {
+					const deletedAt = new Date()
+					relation.deletedAt = deletedAt
+					expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
+				} else {
+					delete relation.deletedAt
+				}
 			}
 			if (item.action === 'retain') {
 				if (!resource.currentVersionId)
@@ -606,8 +617,9 @@ export class InMemoryCourseSyncPersistence implements CourseSyncPersistence {
 					resourceId: relation.childId,
 					resourceOfId: relation.parentId,
 					position: relation.position,
-					deletedAt: relation.detached ? true : null,
+					deletedAt: relation.detached ? (relation.deletedAt ?? null) : null,
 				})),
+			expectedDeletedAtByResource,
 		)
 		if (!activation.ok) {
 			throw new CourseSyncError(

@@ -1159,7 +1159,8 @@ describe('draft course sync control plane', () => {
 		}
 	})
 
-	it('rejects an in-memory apply when a detached child remains live at activation readback', async () => {
+	it.each(['live', 'stale'])(
+		'rejects an in-memory apply when a detached child has a %s relation at activation readback', async (relationState) => {
 		const testHarness = harness()
 		const source = fixture('activation-before')
 		const filmed = source.sections[0]!.lessons[0]!
@@ -1183,13 +1184,16 @@ describe('draft course sync control plane', () => {
 		const before = structuredClone(testHarness.persistence.relations.get(video.targetResourceId))
 		testHarness.persistence.beforeApplyActivationReadback = (relations) => {
 			const relation = relations.get(video.targetResourceId)
-			if (relation) relation.detached = false
+			if (!relation) return
+			if (relationState === 'live') relation.detached = false
+			else relation.deletedAt = new Date('2020-01-01T00:00:00.000Z')
 		}
 		await expect(applyDirectly(testHarness, next.staged.runId, 'apply-corrupt-activation')).rejects.toMatchObject({
 			code: 'APPLY_WRITE_VERIFICATION_FAILED', retryable: false,
 		})
 		expect(testHarness.persistence.relations.get(video.targetResourceId)).toEqual(before)
-	})
+		},
+	)
 
 	it('requires review when an explainer becomes a placeholder', async () => {
 		const testHarness = harness()

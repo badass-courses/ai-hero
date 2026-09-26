@@ -182,8 +182,9 @@ export function verifyCourseSyncActivation(
 		resourceId: string
 		resourceOfId: string
 		position: number
-		deletedAt: unknown
+		deletedAt: Date | null
 	}>,
+	expectedDeletedAtByResource: ReadonlyMap<string, Date>,
 ): { ok: true } | { ok: false; resourceId: string; reason: string } {
 	if (resources.length !== plan.resources.length) {
 		return { ok: false, resourceId: '', reason: 'resource_count_mismatch' }
@@ -205,12 +206,21 @@ export function verifyCourseSyncActivation(
 		}
 		const rows = relations.filter((relation) => relation.resourceId === resourceId)
 		const live = rows.filter((relation) => relation.deletedAt === null)
+		const matchingDead = rows.filter(
+			(relation) =>
+				relation.deletedAt !== null &&
+				relation.resourceOfId === item.parentResourceId &&
+				relation.position === item.position,
+		)
+		// The relation column is TIMESTAMP(3), matching JS Date millisecond precision.
+		// Compare the value promoted by this apply, not merely any old tombstone.
+		const expectedDeletedAt = expectedDeletedAtByResource.get(resourceId)
 		const relationMatches = item.detached
-			? live.length === 0 && rows.some(
-				(relation) => relation.deletedAt !== null &&
-					relation.resourceOfId === item.parentResourceId &&
-					relation.position === item.position,
-			)
+			? live.length === 0 &&
+				matchingDead.length === 1 &&
+				expectedDeletedAt !== undefined &&
+				matchingDead[0]?.deletedAt instanceof Date &&
+				matchingDead[0].deletedAt.getTime() === expectedDeletedAt.getTime()
 			: live.length === 1 &&
 					live[0]?.resourceOfId === item.parentResourceId &&
 					live[0]?.position === item.position

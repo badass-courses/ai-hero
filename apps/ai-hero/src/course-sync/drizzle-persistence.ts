@@ -941,6 +941,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationPromotions: Array<
 				typeof contentResourceResource.$inferInsert
 			> = []
+			const expectedDeletedAtByResource = new Map<string, Date>()
 			const pointerPromotions: Array<typeof contentResource.$inferInsert> = []
 
 			for (const item of plan.resources) {
@@ -1155,12 +1156,16 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					previousPosition: item.previousPosition,
 					action: item.action,
 				})
+				const deletedAt = item.detached ? new Date() : null
+				if (deletedAt) {
+					expectedDeletedAtByResource.set(item.targetResourceId, deletedAt)
+				}
 				relationPromotions.push({
 					resourceOfId: item.parentResourceId,
 					resourceId: item.targetResourceId,
 					position: item.position,
 					metadata: { bindingId: plan.bindingId, sourceId: item.sourceId },
-					deletedAt: item.detached ? new Date() : null,
+					deletedAt,
 				})
 			}
 
@@ -1267,6 +1272,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				receipts,
 				activatedResources,
 				activatedRelations,
+				expectedDeletedAtByResource,
 			)
 			if (!activation.ok) {
 				throw new CourseSyncError(
