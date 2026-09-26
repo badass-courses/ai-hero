@@ -111,12 +111,13 @@ type DrovrShadowDispatchOptions = {
 	/** Evergreen route flag. Defaults to AIH_DROVR_EVERGREEN_ENABLED. */
 	evergreenEnabled?: boolean
 	warn?: typeof log.warn
+	error?: typeof log.error
 }
 
 export async function dispatchDrovrShadowFact(
 	fact: DrovrShadowFact,
 	options: DrovrShadowDispatchOptions = {},
-): Promise<'queued' | 'fallback' | 'nothing'> {
+): Promise<'queued' | 'requeued' | 'fallback' | 'nothing'> {
 	// Before the evergreen entry below writes anything for the contact.
 	if (isSyntheticPrincipalId(drovrShadowFactContactId(fact))) return 'nothing'
 	const evergreenEnabled =
@@ -191,11 +192,24 @@ export async function dispatchDrovrShadowFact(
 		fact.kind === 'contact-created' && fact.deliverySource !== undefined
 			? fact.deliverySource
 			: fact.kind
+	const payload = {
+		name: deliverEventNameFor(source),
+		data: { events, source },
+	}
+	const logError = options.error ?? log.error
+	const reportError = async (
+		event: string,
+		fields: Record<string, unknown>,
+	) => {
+		try {
+			await logError(event, fields)
+		} catch {
+			// Logging cannot make delivery authoritative.
+		}
+	}
+	const idempotencyKeys = events.map((event) => event.idempotencyKey)
 	try {
-		await send({
-			name: deliverEventNameFor(source),
-			data: { events, source },
-		})
+		await send(payload)
 		return 'queued'
 	} catch (error) {
 		const warn = options.warn ?? log.warn
@@ -212,7 +226,6 @@ export async function dispatchDrovrShadowFact(
 		// an owned contact's unsubscribe has to reach the authority tenant
 		// whichever road it takes.
 		const resolveOwners = options.resolveOwners ?? resolveOwnedContactIds
-		const owned = await resolveOwners(events).catch(() => [] as string[])
 		const newsletterEvents = events.filter(isShadowNewsletterBirth)
 		const resolveNewsletterOwners =
 			options.resolveNewsletterOwners ??
@@ -220,15 +233,51 @@ export async function dispatchDrovrShadowFact(
 				resolveOwnedContactIds(births, {
 					journeyId: DROVR_SHADOW_NEWSLETTER_JOURNEY_ID,
 				}))
-		const newsletterOwned = newsletterEvents.length
-			? await resolveNewsletterOwners(newsletterEvents).catch(
-					() => [] as string[],
-				)
-			: []
-		const fallback = options.fallback ?? emitDrovrShadowEvents
+		let owned: string[] = []
+		let newsletterOwned: string[] = []
+		try {
+			owned = await resolveOwners(events)
+			newsletterOwned = newsletterEvents.length
+				? await resolveNewsletterOwners(newsletterEvents)
+				: []
+		} catch (resolveError) {
+			// Without owners the authority tenant would miss this fact (a Kit
+			// stop included). Hand it back to the durable path, whose step
+			// retries the owner read; say so at error either way.
+			const reason =
+				resolveError instanceof Error
+					? resolveError.message
+					: String(resolveError)
+			const requeued = await send(payload).then(
+				() => true,
+				() => false,
+			)
+			await reportError('drovr.shadow.fallback_owner_resolve_failed', {
+				source,
+				eventCount: events.length,
+				requeued,
+				error: reason,
+				...(requeued ? {} : { idempotencyKeys }),
+			})
+			if (requeued) return 'requeued'
+		}
+		const fallback =
+			options.fallback ??
+			((batch: readonly DrovrShadowEvent[]) =>
+				emitDrovrShadowEvents(batch, { rethrow: true }))
 		await fallback(
 			fanOutOwnedEvents(events, new Set(owned), new Set(newsletterOwned)),
-		).catch(() => undefined)
+		).catch(async (fallbackError: unknown) => {
+			await reportError('drovr.shadow.fallback_failed', {
+				source,
+				eventCount: events.length,
+				error:
+					fallbackError instanceof Error
+						? fallbackError.message
+						: String(fallbackError),
+				idempotencyKeys,
+			})
+		})
 		return 'fallback'
 	}
 }

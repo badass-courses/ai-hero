@@ -124,6 +124,26 @@ describe('drovr events deliver registration', () => {
 })
 
 describe('retired shadow tenant delivery', () => {
+	it('fails the owner step when the ownership read fails, so Inngest retries it and delivers nothing partial', async () => {
+		mocks.resolveOwnedContactIds.mockRejectedValue(
+			new Error('Vitess: connection reset'),
+		)
+		const stop = event(
+			'org-aihero-shadow',
+			'stop:contact-1',
+			'value-path-skills-course',
+			'contact.unsubscribed',
+		)
+
+		await expect(
+			registered.handler({
+				event: { data: { source: 'contact-event', events: [stop] } },
+				step: createStep(),
+			}),
+		).rejects.toThrow('Vitess: connection reset')
+		expect(mocks.deliverOrThrow).not.toHaveBeenCalled()
+	})
+
 	it('delivers every authority fact unchanged and discards the shadow group', async () => {
 		const shadowBirth = event(
 			'org-aihero-shadow',

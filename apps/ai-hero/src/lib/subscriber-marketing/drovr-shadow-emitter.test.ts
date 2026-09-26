@@ -586,6 +586,27 @@ describe('retired drovr direct sender', () => {
 		})
 	})
 
+	it('rethrows a failed post after the warning when the caller asks, so a fallback can report it', async () => {
+		const warn = vi.fn()
+		const failedFetch = vi.fn().mockRejectedValue(new Error('network down'))
+		await expect(
+			emitDrovrShadowEvents(mapDrovrShadowFact(authorityCompletion()), {
+				config: {
+					ingestUrl: 'https://drovr.test/events',
+					authorityApiKey: 'authority-key',
+				},
+				fetch: failedFetch,
+				info: vi.fn(),
+				warn,
+				rethrow: true,
+			}),
+		).rejects.toThrow('network down')
+		expect(warn).toHaveBeenCalledWith('drovr.shadow.emit_failed', {
+			eventCount: 1,
+			error: 'network down',
+		})
+	})
+
 	it('warns and skips an authority event when its key is absent', async () => {
 		const fetch = vi.fn()
 		const warn = vi.fn()

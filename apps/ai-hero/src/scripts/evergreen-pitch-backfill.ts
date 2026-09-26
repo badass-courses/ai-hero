@@ -83,7 +83,7 @@ export type EvergreenPitchBackfillRepository = {
   }): Promise<EvergreenPitchEntryResult>;
   dispatchFact(
     fact: Extract<DrovrShadowFact, { kind: "course-completed" }>,
-  ): Promise<"queued" | "fallback" | "nothing">;
+  ): Promise<"queued" | "requeued" | "fallback" | "nothing">;
 };
 
 export type EvergreenPitchBackfillArgs = {
