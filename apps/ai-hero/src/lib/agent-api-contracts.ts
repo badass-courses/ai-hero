@@ -106,6 +106,23 @@ export const ProductReadResponseSchema = z.union([
 	productSchema,
 	z.array(productSchema),
 ])
+export const ProductResourceAttachRequestSchema = z.object({
+	resourceId: z.string().trim().min(1),
+}).strict()
+export const ProductResourceAttachmentSchema = z.object({
+	productId: z.string(),
+	resourceId: z.string(),
+	position: z.number().int().nonnegative(),
+})
+export const ProductResourceAttachResponseSchema = z.object({
+	ok: z.literal(true),
+	command: z.literal('POST /api/products/[productId]/resources'),
+	result: ProductResourceAttachmentSchema,
+	next_actions: z.array(NextActionSchema),
+	productId: z.string(),
+	resourceId: z.string(),
+	position: z.number().int().nonnegative(),
+})
 export const ProductAvailabilityResponseSchema = z.object({
 	quantityAvailable: z.number().int(),
 	unlimited: z.boolean(),

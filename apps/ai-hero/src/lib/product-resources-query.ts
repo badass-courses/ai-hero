@@ -3,6 +3,7 @@
 import { db } from '@/db'
 import { contentResourceProduct } from '@/db/schema'
 import { revalidateProducts } from '@/lib/product-cache'
+import { attachProductResource } from '@/lib/product-resource-attachment'
 import { getServerAuthSession } from '@/server/auth'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
@@ -78,47 +79,7 @@ export async function addResourceToProductById(input: {
 	resourceId: string
 }): Promise<{ position: number }> {
 	const user = await assertCanEditProducts()
-	const { productId, resourceId } = input
-
-	const siblings = await db.query.contentResourceProduct.findMany({
-		where: and(
-			eq(contentResourceProduct.productId, productId),
-			isNull(contentResourceProduct.deletedAt),
-		),
-	})
-	const position = siblings.length
-
-	const existing = await db.query.contentResourceProduct.findFirst({
-		where: and(
-			eq(contentResourceProduct.productId, productId),
-			eq(contentResourceProduct.resourceId, resourceId),
-		),
-	})
-
-	if (existing) {
-		if (!existing.deletedAt) return { position: existing.position }
-		await db
-			.update(contentResourceProduct)
-			.set({ deletedAt: null, position })
-			.where(
-				and(
-					eq(contentResourceProduct.productId, productId),
-					eq(contentResourceProduct.resourceId, resourceId),
-				),
-			)
-		revalidateProducts()
-		return { position }
-	}
-
-	await db.insert(contentResourceProduct).values({
-		productId,
-		resourceId,
-		position,
-		metadata: { addedBy: user.id },
-	})
-
-	revalidateProducts()
-	return { position }
+	return attachProductResource({ ...input, addedBy: user.id })
 }
 
 /** Soft-detach a resource from a product (`deletedAt`, join row kept). */
