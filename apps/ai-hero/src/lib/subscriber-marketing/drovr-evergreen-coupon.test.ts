@@ -242,7 +242,12 @@ describe('executePendingEvergreenCoupons', () => {
 	it('issues, writes the offer fields to the Kit subscriber, completes, and dispatches', async () => {
 		const out = await run({ issue: () => Effect.succeed(issued) })
 		expect(out.results).toEqual([
-			{ status: 'completed', intentId: 'row-1', couponId: 'eoj-coupon:abc' },
+			{
+				status: 'completed',
+				intentId: 'row-1',
+				contactId: 'contact-1',
+				couponId: 'eoj-coupon:abc',
+			},
 		])
 		expect(out.written).toEqual([
 			{

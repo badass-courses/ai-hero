@@ -84,11 +84,13 @@ import {
 	TypesensePopularitySyncRequested,
 } from '@/inngest/events/typesense-popularity'
 import {
+	DROVR_CONTACT_PROFILE_SYNC_EVENT,
 	DROVR_EVENTS_DELIVER_BULK_EVENT,
 	DROVR_EVENTS_DELIVER_EVENT,
 	DROVR_SIGNUP_REQUESTED_EVENT,
 } from '@/inngest/events/drovr'
 import type {
+	DrovrContactProfileSyncRequested,
 	DrovrEventsDeliver,
 	DrovrEventsDeliverBulk,
 	DrovrSignupRequested,
@@ -274,6 +276,7 @@ export type Events = {
 	[DROVR_EVENTS_DELIVER_EVENT]: DrovrEventsDeliver
 	[DROVR_EVENTS_DELIVER_BULK_EVENT]: DrovrEventsDeliverBulk
 	[DROVR_SIGNUP_REQUESTED_EVENT]: DrovrSignupRequested
+	[DROVR_CONTACT_PROFILE_SYNC_EVENT]: DrovrContactProfileSyncRequested
 	[KIT_DIRECTORY_INGEST_EVENT]: KitDirectoryIngest
 	[NEWSLETTER_VETERANS_ASSIGN_EVENT]: NewsletterVeteransAssign
 	// Operator lever: fire one learner-flow reconcile outside the hourly cron.

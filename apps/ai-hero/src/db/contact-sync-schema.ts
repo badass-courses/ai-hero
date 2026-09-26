@@ -1,5 +1,5 @@
 import { mysqlTable } from '@/db/mysql-table'
-import { timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core'
+import { bigint, timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core'
 
 /**
  * Contact sync (2026-09-26): drovr keeps a synced contact profile instead of
@@ -37,3 +37,18 @@ export const valuePathLinkAnchor = mysqlTable(
 		anchorUq: uniqueIndex('ValuePathLinkAnchor_anchor_uq').on(table.anchorKey),
 	}),
 )
+
+/**
+ * A per-contact counter, bumped once per profile sync (contact-profile-version).
+ * drovr keeps the highest version it has seen, per contact.
+ */
+export const contactProfileVersion = mysqlTable('ContactProfileVersion', {
+	contactId: varchar('contactId', { length: 255 }).notNull().primaryKey(),
+	profileVersion: bigint('profileVersion', { mode: 'number', unsigned: true })
+		.notNull()
+		.default(1),
+	updatedAt: timestamp('updatedAt', { mode: 'string', fsp: 3 })
+		.notNull()
+		.defaultNow()
+		.onUpdateNow(),
+})

@@ -7,6 +7,7 @@ import {
 	resolveJourneyOwner,
 	type DrovrOwnershipConfig,
 } from './drovr-ownership'
+import { requestContactProfileSyncSafely } from './drovr-contact-profile-sync'
 import { dispatchDrovrShadowFactSafely } from './drovr-shadow-dispatch'
 import {
 	deadlineTimeZoneEvidenceFromHeader,
@@ -121,6 +122,8 @@ export async function enterSkillsNewsletterSubscriber(args: {
 	shadowObserver?: SkillsNewsletterShadowObserver
 	/** Rollout of journey ownership to drovr; absent means nobody. */
 	drovrOwnership?: DrovrOwnershipConfig
+	/** Defaults to the flag-gated request (AIH_DROVR_PROFILE_SYNC). */
+	requestProfileSync?: typeof requestContactProfileSyncSafely
 }): Promise<SkillsNewsletterPathEntryResult> {
 	if (args.allowlist.authorizationMode !== 'rolling-public-enrollment') {
 		return blockedResult(args, 'rolling-public-enrollment-not-active')
@@ -201,6 +204,14 @@ export async function enterSkillsNewsletterSubscriber(args: {
 				occurredAt: args.input.subscribedAt,
 			})
 		}
+		// drovr renders this contact's sends from its synced profile: issue
+		// every email of the path now. A replay asks again; drovr keeps the
+		// highest profileVersion.
+		;(args.requestProfileSync ?? requestContactProfileSyncSafely)({
+			contactId: capture.contact.id,
+			reason: 'journey-entered',
+			valuePathSlug: SKILLS_WORKFLOW_VALUE_PATH,
+		})
 		return {
 			status: 'drovr-owned',
 			contactId: capture.contact.id,

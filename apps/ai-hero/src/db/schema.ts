@@ -860,7 +860,10 @@ export const sideEffectIntent = mysqlTable(
 )
 
 export { automationControl, emailCourseCommit } from './email-course-schema'
-export { valuePathLinkAnchor } from './contact-sync-schema'
+export {
+	contactProfileVersion,
+	valuePathLinkAnchor,
+} from './contact-sync-schema'
 
 export {
 	evergreenOfferJourneyAttempt,
