@@ -43,6 +43,7 @@ import {
 	drovrEventsDeliverBulk,
 } from './functions/drovr-events-deliver'
 import { drovrContactProfileSync } from './functions/drovr-contact-profile-sync'
+import { drovrContactSyncRetry } from './functions/drovr-contact-sync-retry'
 import { drovrContactSyncReconcile } from './functions/drovr-contact-sync-reconcile'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
@@ -166,6 +167,7 @@ const allFunctions = [
 	drovrEvergreenSender,
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
+	drovrContactSyncRetry,
 	drovrSignupDeliver,
 	kitDirectoryIngest,
 	newsletterVeteransAssign,

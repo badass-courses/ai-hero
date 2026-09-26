@@ -53,7 +53,7 @@ export type ContactSyncReconcilePorts = {
 		limit: number
 	}): Promise<{ contactId: string; at: string }[]>
 	/** Resolves only once drovr has the contact's profile; 'skipped' when there is none to push. */
-	syncContact(contactId: string): Promise<'sent' | 'skipped'>
+	syncContact(contactId: string): Promise<'sent' | 'skipped' | 'deferred'>
 	/** Re-sends the live path's stop facts for these events, under the same keys. */
 	resendStops(events: ScannedContactEvent[]): Promise<void>
 	heartbeat(syncedThrough: string): Promise<void>
@@ -62,11 +62,13 @@ export type ContactSyncReconcilePorts = {
 }
 
 export type ContactSyncReconcileReceipt = {
-	status: 'synced'
+	/** `partial`: some contacts failed; the claim stops before the first. */
+	status: 'synced' | 'partial'
 	syncedThrough: string
 	contacts: number
 	rotated: number
 	events: number
+	failed?: string[]
 }
 
 /** ai-hero ContactEvents whose live mapping is a stop fact (drovr-shadow-emitter). */
@@ -205,15 +207,37 @@ export async function runContactSyncReconcile(
 	const rotated = new Set(
 		rotations.filter((row) => within(row.at)).map((row) => row.contactId),
 	)
-	const synced = new Set(contacts)
-
+	// Contract §3: a push that failed (anything but an answer) holds the
+	// heartbeat at the last instant before that contact's first change here.
+	const failures: { contactId: string; reason: unknown }[] = []
 	for (let index = 0; index < contacts.length; index += SYNC_CHUNK) {
-		await Promise.all(
-			contacts
-				.slice(index, index + SYNC_CHUNK)
-				.map((contactId) => ports.syncContact(contactId)),
+		const chunk = contacts.slice(index, index + SYNC_CHUNK)
+		const results = await Promise.allSettled(
+			chunk.map((contactId) => ports.syncContact(contactId)),
 		)
+		results.forEach((result, position) => {
+			if (result.status === 'rejected')
+				failures.push({ contactId: chunk[position]!, reason: result.reason })
+		})
 	}
+	const failed = new Set(failures.map((failure) => failure.contactId))
+	if (failures.length > 0) {
+		// A late write sits behind the watermark; otherwise the contact's
+		// first change in this run's timeline.
+		const firstChange = (contactId: string): string =>
+			late.includes(contactId)
+				? last
+				: timeline.find(
+						(item) => item.contactId === contactId && within(item.at),
+					)!.at
+		const earliest = [...failed]
+			.map(firstChange)
+			.reduce((left, right) => earlier(left, right))
+		const held = iso(Date.parse(earliest) - 1)
+		if (Date.parse(held) <= Date.parse(last)) throw failures[0]!.reason
+		claim = earlier(claim, held)
+	}
+	const synced = new Set(contacts.filter((contactId) => !failed.has(contactId)))
 	const stops = [...freshEvents, ...overlap].filter(
 		(row) =>
 			synced.has(row.contactId) &&
@@ -224,13 +248,14 @@ export async function runContactSyncReconcile(
 	await ports.heartbeat(claim)
 	await ports.writeWatermark(claim)
 	return {
-		status: 'synced',
+		status: failed.size > 0 ? 'partial' : 'synced',
 		syncedThrough: claim,
 		contacts: contacts.length,
 		rotated: rotated.size,
 		events:
 			freshEvents.length +
 			overlap.filter((row) => synced.has(row.contactId)).length,
+		...(failed.size > 0 ? { failed: [...failed].sort() } : {}),
 	}
 }
 
@@ -268,6 +293,10 @@ const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set([
 	'synthetic-principal',
 	// Outside drovr's contact-sync scope (no sending journey).
 	'no-sending-journey',
+	// drovr would ignore a profile without an email as malformed.
+	'contact-email-missing',
+	// Contract §4: final for that event, logged; an answer, not a failure.
+	'drovr-rejected',
 ])
 
 /**
@@ -278,8 +307,11 @@ const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set([
 export function reconcileSyncOutcome(
 	contactId: string,
 	receipt: ContactProfileSyncReceipt,
-): 'sent' | 'skipped' {
+): 'sent' | 'skipped' | 'deferred' {
 	if (receipt.status === 'sent') return 'sent'
+	// Contract §3: refused as event-not-live (or cold-start-unhandled), the
+	// same events are already scheduled for after drovr's straggler pass.
+	if (receipt.status === 'deferred') return 'deferred'
 	if (BENIGN_SYNC_SKIPS.has(receipt.reason)) return 'skipped'
 	throw new Error(
 		`profile sync for ${contactId} was not pushed: ${receipt.reason}`,

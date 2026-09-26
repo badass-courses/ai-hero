@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ContactProfileSnapshot } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
 
+import { contactSyncRetryRequest } from '@/lib/subscriber-marketing/contact-sync-straggler-retry'
 import {
 	contactProfileContentHash,
 	runContactProfileSync,
 } from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+import type { DeferredDrovrEvent } from '@/lib/subscriber-marketing/drovr-shadow-delivery'
+
+const now = Date.parse('2026-09-27T12:00:00.000Z')
 
 const snapshot: ContactProfileSnapshot = {
 	occurredAt: '2026-09-26T17:00:00.000Z',
@@ -20,15 +24,26 @@ function harness(
 		contactId?: string
 		valuePathSlug?: string
 		snapshot?: ContactProfileSnapshot | undefined
-		delivered?: { accepted: number; rejected: number } | 'not-configured'
+		delivered?:
+			| {
+					accepted: number
+					rejected: number
+					deferred?: DeferredDrovrEvent[]
+			  }
+			| 'not-configured'
 		onSendingJourney?: boolean
 	} = {},
 ) {
 	const order: string[] = []
+	const sent: { id: string; payload: unknown }[] = []
 	const step = {
 		run: vi.fn(async (id: string, callback: () => Promise<unknown>) => {
 			order.push(id)
 			return callback()
+		}),
+		sendEvent: vi.fn(async (id: string, payload: unknown) => {
+			order.push(id)
+			sent.push({ id, payload })
 		}),
 	}
 	const readSnapshot = vi.fn(async () =>
@@ -45,6 +60,7 @@ function harness(
 	)
 	const ownedPath = vi.fn(async () => 'ai-hero-skills-workflow')
 	const onSendingJourney = vi.fn(async () => overrides.onSendingJourney ?? true)
+	const birth = vi.fn(async () => {})
 	const run = () =>
 		runContactProfileSync({
 			event: {
@@ -65,8 +81,12 @@ function harness(
 			deliver,
 			ownedPath,
 			onSendingJourney,
+			now: () => now,
+			birth,
 		})
 	return {
+		sent,
+		birth,
 		run,
 		step,
 		readSnapshot,
@@ -110,6 +130,89 @@ describe('drovr contact profile sync function', () => {
 		expect(h.onSendingJourney).toHaveBeenCalledWith('contact-1')
 		expect(h.order).toEqual(['sending-journey'])
 		expect(h.readSnapshot).not.toHaveBeenCalled()
+		expect(h.versionFor).not.toHaveBeenCalled()
+		expect(h.deliver).not.toHaveBeenCalled()
+	})
+
+	it('refused as event-not-live: schedules the same events for after the straggler pass, and answers deferred', async () => {
+		// Contract §4: nothing was recorded and the key is unconsumed, so the
+		// same event is retried unchanged; §3: it does not hold the watermark.
+		const profileEvent = {
+			tenantId: 'org-aihero' as const,
+			contactId: 'contact-1',
+			journeyId: 'contact-directory' as const,
+			type: 'contact.profile.updated' as const,
+			occurredAt: '2026-09-26T16:00:00.000Z',
+			idempotencyKey: 'profile:contact-1:4',
+		}
+		const deferred: DeferredDrovrEvent[] = [
+			{ event: profileEvent, reason: 'event-not-live' },
+		]
+		const h = harness({ delivered: { accepted: 0, rejected: 0, deferred } })
+		await expect(h.run()).resolves.toEqual({
+			status: 'deferred',
+			reason: 'event-not-live',
+			profileVersion: 4,
+			deferred: 1,
+		})
+		expect(h.sent).toEqual([
+			{
+				id: 'defer-refused',
+				payload: contactSyncRetryRequest(deferred, 1, now),
+			},
+		])
+		// That actor exists, it is on v1: never a birth.
+		expect(h.birth).not.toHaveBeenCalled()
+	})
+
+	it('refused as cold-start-unhandled: births the directory actor, then pushes again and answers sent', async () => {
+		const profileEvent = {
+			tenantId: 'org-aihero' as const,
+			contactId: 'contact-1',
+			journeyId: 'contact-directory' as const,
+			type: 'contact.profile.updated' as const,
+			occurredAt: '2026-09-26T16:00:00.000Z',
+			idempotencyKey: 'profile:contact-1:4',
+		}
+		const cold: DeferredDrovrEvent[] = [
+			{ event: profileEvent, reason: 'cold-start-unhandled' },
+		]
+		const h = harness()
+		h.deliver
+			.mockResolvedValueOnce({ accepted: 0, rejected: 0, deferred: cold })
+			.mockResolvedValueOnce({ accepted: 1, rejected: 0 })
+		await expect(h.run()).resolves.toMatchObject({
+			status: 'sent',
+			profileVersion: 4,
+			accepted: 1,
+		})
+		expect(h.birth).toHaveBeenCalledWith(['contact-1'])
+		expect(h.deliver).toHaveBeenNthCalledWith(2, [profileEvent])
+		expect(h.order.slice(-3)).toEqual([
+			'deliver-profile',
+			'birth-directory',
+			'redeliver-after-birth',
+		])
+		expect(h.sent).toEqual([])
+	})
+
+	it('pushes nothing for a contact with no email (drovr would ignore it as malformed)', async () => {
+		// Contract §2 wants a non-empty email; with no profile drovr falls
+		// back to live personalize, which holds the contact.
+		const h = harness({
+			snapshot: {
+				...snapshot,
+				profile: {
+					email: '',
+					firstName: null,
+					holds: ['contact-email-missing'],
+				},
+			},
+		})
+		await expect(h.run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'contact-email-missing',
+		})
 		expect(h.versionFor).not.toHaveBeenCalled()
 		expect(h.deliver).not.toHaveBeenCalled()
 	})

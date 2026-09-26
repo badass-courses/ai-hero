@@ -43,7 +43,10 @@ function world() {
 	const sync = (contactId: string) =>
 		runContactProfileSync({
 			event: { data: { contactId, reason: 'reconcile' } },
-			step: { run: (_id, callback) => callback() },
+			step: {
+				run: (_id, callback) => callback(),
+				sendEvent: async () => undefined,
+			},
 			env: { AIH_DROVR_PROFILE_SYNC: 'true' },
 			readSnapshot: ({ contactId: id, valuePathSlug }) =>
 				readContactProfileSnapshot({
@@ -63,6 +66,7 @@ function world() {
 				return { accepted: events.length, rejected: 0 }
 			},
 			onSendingJourney: async () => true,
+			birth: async () => undefined,
 			ownedPath: async () => undefined,
 		})
 
@@ -259,7 +263,10 @@ describe('contact sync: every hold change reaches drovr on the next reconcile', 
 		expect(w.profile(contactId)?.holds).not.toContain('stale-state')
 	})
 
-	it('contact-email-missing: set when the contact is captured without an address (creation is its only writer)', async () => {
+	it('contact-email-missing: a contact captured without an address gets no profile at all', async () => {
+		// Contract §2: drovr ignores a profile without an email as malformed;
+		// with none stored it falls back to live personalize, which holds it
+		// (the hawk, 2026-09-26). The reconcile still advances past it.
 		const w = world()
 		const captured = await w.capture({
 			id: 'no-email',
@@ -267,11 +274,7 @@ describe('contact sync: every hold change reaches drovr on the next reconcile', 
 			message: 'Signed up for the skills newsletter',
 		})
 		await w.reconcile()
-		expect(w.profile(captured.contact.id)).toMatchObject({
-			profileVersion: 1,
-			email: '',
-			holds: expect.arrayContaining(['contact-email-missing']),
-		})
+		expect(w.profile(captured.contact.id)).toBeUndefined()
 	})
 
 	it('re-sends an unchanged contact under the same version, key and body, so drovr dedupes it', async () => {

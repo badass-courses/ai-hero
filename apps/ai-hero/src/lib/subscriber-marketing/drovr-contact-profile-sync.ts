@@ -5,6 +5,10 @@ import { createHash } from 'node:crypto'
 import { isSyntheticPrincipalId } from '@/lib/synthetic-principal'
 
 import type { ContactProfileVersion } from './contact-profile-version'
+import {
+	birthThenRedeliver,
+	contactSyncRetryRequest,
+} from './contact-sync-straggler-retry'
 import { parseDrovrProfileSyncConfig } from './drovr-contact-profile-sync-requests'
 
 import {
@@ -19,6 +23,7 @@ import {
 	DROVR_SKILLS_COURSE_JOURNEY_ID,
 	type DrovrShadowEvent,
 } from './drovr-shadow-emitter'
+import type { DeferredDrovrEvent } from './drovr-shadow-delivery'
 import { SKILLS_WORKFLOW_EMAIL_STEPS } from './skills-workflow-path'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import {
@@ -340,12 +345,26 @@ export type ContactProfileSyncReceipt =
 			accepted: number
 			rejected: number
 	  }
+	/**
+	 * drovr refused the push as event-not-live (or cold-start-unhandled):
+	 * nothing recorded, and the same events are scheduled for after its
+	 * straggler pass. It does not hold the heartbeat back (contract §3).
+	 */
+	| {
+			status: 'deferred'
+			reason: DeferredDrovrEvent['reason']
+			profileVersion: number
+			deferred: number
+	  }
 
 type SyncStep = {
-	run: <T>(id: string, callback: () => Promise<T>) => Promise<unknown>
+	run<T>(id: string, callback: () => Promise<T>): Promise<unknown>
+	sendEvent(id: string, payload: unknown): Promise<unknown>
 }
 
-type DeliveryResult = { accepted: number; rejected: number } | 'not-configured'
+type DeliveryResult =
+	| { accepted: number; rejected: number; deferred?: DeferredDrovrEvent[] }
+	| 'not-configured'
 
 /**
  * One contact's profile to drovr's contact directory: read it, version it by
@@ -375,6 +394,9 @@ export async function runContactProfileSync(args: {
 	ownedPath: (contactId: string) => Promise<string | undefined>
 	/** drovr's scope: an owner assignment for a sending journey. */
 	onSendingJourney: (contactId: string) => Promise<boolean>
+	now?: () => number
+	/** Births directory actors drovr answered cold-start-unhandled for (§4). */
+	birth: (contactIds: string[]) => Promise<void>
 }): Promise<ContactProfileSyncReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
@@ -395,6 +417,10 @@ export async function runContactProfileSync(args: {
 		}),
 	)) as ContactProfileSnapshot | undefined
 	if (!snapshot) return { status: 'skipped', reason: 'contact-missing' }
+	// drovr ignores a profile without an email as malformed (contract §2);
+	// with none, it falls back to live personalize, which holds the contact.
+	if (!snapshot.profile.email.trim())
+		return { status: 'skipped', reason: 'contact-email-missing' }
 	// Addressed by content: unchanged, this is the last version and when it
 	// was set, so the events below are byte-identical to the last push and
 	// drovr dedupes them for free.
@@ -414,9 +440,38 @@ export async function runContactProfileSync(args: {
 	if (delivered === 'not-configured') {
 		return { status: 'skipped', reason: 'drovr-not-configured' }
 	}
-	// A final 4xx (a bad key, a refused event) is logged by the delivery;
-	// it must never read as synced, or the heartbeat would vouch for it.
-	if (delivered.rejected > 0) {
+	const resolved = await birthThenRedeliver({
+		deferred: delivered.deferred ?? [],
+		step: args.step,
+		birth: args.birth,
+		deliver: async (events) => {
+			const again = await args.deliver(events)
+			if (again === 'not-configured')
+				throw new Error('drovr stopped being configured mid-sync')
+			return again
+		},
+	})
+	const deferred = resolved.deferred
+	const accepted = delivered.accepted + resolved.accepted
+	const rejected = delivered.rejected + resolved.rejected
+	if (deferred.length > 0) {
+		const at = (await args.step.run('defer-at', async () =>
+			(args.now ?? Date.now)(),
+		)) as number
+		await args.step.sendEvent(
+			'defer-refused',
+			contactSyncRetryRequest(deferred, 1, at),
+		)
+		return {
+			status: 'deferred',
+			reason: deferred[0]!.reason,
+			profileVersion,
+			deferred: deferred.length,
+		}
+	}
+	// A final 4xx (a bad key, a refused event) is logged by the delivery
+	// and never retried (contract §4); it never reads as sent.
+	if (rejected > 0) {
 		return { status: 'skipped', reason: 'drovr-rejected' }
 	}
 	return {
@@ -424,6 +479,7 @@ export async function runContactProfileSync(args: {
 		profileVersion,
 		links: snapshot.links.length,
 		offers: snapshot.offers.length,
-		...delivered,
+		accepted,
+		rejected,
 	}
 }

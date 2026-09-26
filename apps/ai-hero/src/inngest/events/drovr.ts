@@ -36,6 +36,21 @@ export type DrovrEventsDeliver = {
 	}
 }
 
+export const CONTACT_SYNC_RETRY_EVENT = 'drovr/contact-sync.retry-requested'
+
+/**
+ * Re-send contact-sync events drovr refused as event-not-live (or
+ * cold-start-unhandled), unchanged, after its daily straggler pass
+ * (contact-sync-straggler-retry). Sent with a future `ts`.
+ */
+export type DrovrContactSyncRetryRequested = {
+	name: typeof CONTACT_SYNC_RETRY_EVENT
+	data: {
+		items: import('@/lib/subscriber-marketing/drovr-shadow-delivery').DeferredDrovrEvent[]
+		attempt: number
+	}
+}
+
 export const DROVR_CONTACT_PROFILE_SYNC_EVENT =
 	'drovr/contact-profile.sync-requested'
 

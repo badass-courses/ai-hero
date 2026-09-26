@@ -363,6 +363,20 @@ describe('the drovr sending-journey scope', () => {
 		).resolves.toBe(true)
 	})
 
+	it('counts a double opt-in signup (drovr runs its double-opt-in journey)', async () => {
+		// A DOI signup has no owner assignment: its capture writes a
+		// skills-newsletter.doi-requested event and starts drovr's journey.
+		const repository = {
+			findContactEventsByType: async (_contactId: string, eventType: string) =>
+				eventType === 'skills-newsletter.doi-requested'
+					? [{ providerEventId: 'doi-request:form:ext-1' } as never]
+					: [],
+		}
+		await expect(
+			isOnDrovrSendingJourney(repository, 'contact-1'),
+		).resolves.toBe(true)
+	})
+
 	it('does not count a contact with no assignment, or one for another journey', async () => {
 		await expect(
 			isOnDrovrSendingJourney(repositoryWith(), 'contact-1'),
