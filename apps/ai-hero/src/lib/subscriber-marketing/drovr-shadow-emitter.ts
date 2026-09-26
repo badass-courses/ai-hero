@@ -990,11 +990,15 @@ export async function deliverDrovrShadowEvent(args: {
 			return { status: 'accepted' }
 		}
 		if (response.status >= 400 && response.status < 500) {
-			return {
-				status: 'rejected',
-				httpStatus: response.status,
-				problem: await boundedProblemBody(response),
+			const problem = await boundedProblemBody(response)
+			if (response.status === 409 && isEventNotLiveProblem(problem)) {
+				return {
+					status: 'failed',
+					httpStatus: 409,
+					reason: 'drovr does not take this event type yet (409 event-not-live)',
+				}
 			}
+			return { status: 'rejected', httpStatus: response.status, problem }
 		}
 		return {
 			status: 'failed',
@@ -1009,6 +1013,21 @@ export async function deliverDrovrShadowEvent(args: {
 	} finally {
 		clearTimeout(timeout)
 	}
+}
+
+/**
+ * drovr (#346): an actor whose release does not take an event type yet
+ * answers 409 `event-not-live`, saves nothing and leaves the key unused. The
+ * only right answer is a retry later: every other 4xx stays final, but
+ * dropping this one would lose the event for good.
+ */
+export function isEventNotLiveProblem(problem: unknown): boolean {
+	if (typeof problem === 'string') return problem.includes('event-not-live')
+	if (!problem || typeof problem !== 'object') return false
+	const { type, code } = problem as { type?: unknown; code?: unknown }
+	return [type, code].some(
+		(value) => typeof value === 'string' && value.includes('event-not-live'),
+	)
 }
 
 const PROBLEM_BODY_LIMIT_BYTES = 4096
