@@ -4,7 +4,7 @@ import { inngest } from '@/inngest/inngest.server'
 import {
 	offerProfileSyncRequests,
 	parseDrovrProfileSyncConfig,
-} from '@/lib/subscriber-marketing/drovr-contact-profile-sync'
+} from '@/lib/subscriber-marketing/drovr-contact-profile-sync-requests'
 import { DrizzleCaptureMarketingRepository } from '@/lib/subscriber-marketing/drizzle-capture-repository'
 import {
 	addSubscriberToKitSequence,
