@@ -26,8 +26,12 @@ import {
 import { freezeCourseSyncAssetBatch } from '@/course-sync/freeze-batches'
 import { dropboxSyncConfigFor } from '@/course-sync/dropbox-binding-config'
 import { courseSyncControlPlane } from '@/course-sync/runtime'
-import { getServerCourseSyncBinding } from '@/course-sync/types'
+import {
+	AI_HERO_COURSE_SYNC_BINDING,
+	getServerCourseSyncBinding,
+} from '@/course-sync/types'
 import { env } from '@/env.mjs'
+import { log } from '@/server/logger'
 import { readDropboxCourseManifest } from '@/lib/dropbox-course-sync'
 
 import { COURSE_SYNC_POLL_REQUESTED_EVENT } from '../events/course-sync-poll'
@@ -64,18 +68,62 @@ function originalFailureRunId(event: unknown, fallback: string) {
 	return typeof runId === 'string' && runId ? runId : fallback
 }
 
-export function originalFailureBindingId(event: unknown): string | null {
-	if (!event || typeof event !== 'object' || !('data' in event)) return null
+function originalFailureEvent(event: unknown): unknown {
+	if (!event || typeof event !== 'object' || !('data' in event))
+		return undefined
 	const failureData = (event as { data?: unknown }).data
-	if (!failureData || typeof failureData !== 'object' || !('event' in failureData))
-		return null
-	const original = (failureData as { event?: unknown }).event
+	if (
+		!failureData ||
+		typeof failureData !== 'object' ||
+		!('event' in failureData)
+	)
+		return undefined
+	return (failureData as { event?: unknown }).event
+}
+
+export function originalFailureBindingId(event: unknown): string | null {
+	const original = originalFailureEvent(event)
 	if (!original || typeof original !== 'object' || !('data' in original))
 		return null
 	const data = (original as { data?: unknown }).data
 	if (!data || typeof data !== 'object' || !('bindingId' in data)) return null
 	const bindingId = (data as { bindingId?: unknown }).bindingId
 	return typeof bindingId === 'string' && bindingId ? bindingId : null
+}
+
+function resolvePollBindingId(event: unknown): {
+	bindingId: string
+	legacy: boolean
+} {
+	if (event && typeof event === 'object' && 'data' in event) {
+		const data = (event as { data?: unknown }).data
+		if (data && typeof data === 'object' && 'bindingId' in data) {
+			const bindingId = (data as { bindingId?: unknown }).bindingId
+			if (typeof bindingId !== 'string') {
+				throw new CourseSyncError(
+					'BINDING_NOT_FOUND',
+					'Sync binding not found.',
+					404,
+				)
+			}
+			return { bindingId, legacy: false }
+		}
+	}
+	// TODO: remove after one full deploy cycle with zero legacy_cron_compat hits.
+	// Before this deploy, Crash Course was the only registered binding.
+	return { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId, legacy: true }
+}
+
+async function logLegacyPoll(
+	runId: string,
+	phase: 'poll' | 'failure',
+	bindingId: string,
+) {
+	await log.info('course_sync.legacy_cron_compat', {
+		runId,
+		phase,
+		bindingId,
+	})
 }
 
 export const courseSyncDetectionPoller = inngest.createFunction(
@@ -85,10 +133,12 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 		concurrency: { limit: 1, key: 'event.data.bindingId' },
 		retries: 0,
 		onFailure: async ({ event, step, runId }) => {
-			const bindingId = originalFailureBindingId(event)
-			if (!bindingId) return
+			const { bindingId, legacy } = resolvePollBindingId(
+				originalFailureEvent(event),
+			)
 			const binding = getServerCourseSyncBinding(bindingId)
 			const failedRunId = originalFailureRunId(event, runId)
+			if (legacy) await logLegacyPoll(failedRunId, 'failure', bindingId)
 			await recordCourseSyncPollFailure(
 				{
 					binding,
@@ -133,7 +183,9 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 	},
 	{ event: COURSE_SYNC_POLL_REQUESTED_EVENT },
 	async ({ event, step, runId }) => {
-		const binding = getServerCourseSyncBinding(event.data.bindingId)
+		const { bindingId, legacy } = resolvePollBindingId(event)
+		const binding = getServerCourseSyncBinding(bindingId)
+		if (legacy) await logLegacyPoll(runId, 'poll', bindingId)
 		async function runTypedStep<T>(
 			id: string,
 			operation: () => Promise<T>,
