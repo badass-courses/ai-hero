@@ -96,6 +96,26 @@ export const cohortEntitlementSyncWorkflow = inngest.createFunction(
 			}
 		}
 
+		// A successful but empty cohort read is indistinguishable from an
+		// accidental missing relation set. Never fan out an empty desired set to
+		// purchasers: the per-user diff would revoke every workshop entitlement.
+		// Refuse the whole run (including grants) rather than retrying an empty
+		// snapshot or sending partially authoritative updates.
+		if (cohortInfo.resourceIds.length === 0) {
+			await log.error('cohort_entitlement_sync.empty_target_refused', {
+				cohortId,
+				affectedUserCount: usersWithEntitlements.length,
+			})
+			return {
+				status: 'refused' as const,
+				reason: 'empty_target_with_entitlements' as const,
+				cohortId,
+				cohortTitle: cohortInfo.cohortTitle,
+				usersProcessed: 0,
+				affectedUserCount: usersWithEntitlements.length,
+			}
+		}
+
 		// Step 3: Fan-out events for each user in batches
 		// Inngest has payload size limits, so we batch to avoid hitting them
 		const BATCH_SIZE = 100
