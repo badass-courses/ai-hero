@@ -373,6 +373,8 @@ export async function runContactProfileSync(args: {
 	deliver: (events: DrovrShadowEvent[]) => Promise<DeliveryResult>
 	/** The value path drovr owns for the contact, when a request names none. */
 	ownedPath: (contactId: string) => Promise<string | undefined>
+	/** drovr's scope: an owner assignment for a sending journey. */
+	onSendingJourney: (contactId: string) => Promise<boolean>
 }): Promise<ContactProfileSyncReceipt> {
 	const config = parseDrovrProfileSyncConfig(args.env)
 	if (!config.enabled) return { status: 'skipped', reason: config.reason }
@@ -380,6 +382,12 @@ export async function runContactProfileSync(args: {
 	if (isSyntheticPrincipalId(contactId)) {
 		return { status: 'skipped', reason: 'synthetic-principal' }
 	}
+	// Only contacts drovr migrated to the v2 directory: anyone else's
+	// profile would be refused (409) until drovr's straggler pass.
+	const inScope = (await args.step.run('sending-journey', () =>
+		args.onSendingJourney(contactId),
+	)) as boolean
+	if (!inScope) return { status: 'skipped', reason: 'no-sending-journey' }
 	const snapshot = (await args.step.run('read-profile', async () =>
 		args.readSnapshot({
 			contactId,

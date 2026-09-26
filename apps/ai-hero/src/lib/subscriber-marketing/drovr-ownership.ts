@@ -172,6 +172,26 @@ export async function findJourneyOwnerAssignment(
 	)
 }
 
+/**
+ * drovr's contact-sync scope: a contact with an owner assignment for one of
+ * the three sending journeys (value path, evergreen offer, newsletter).
+ * drovr migrates only those contacts to the v2 directory and refuses
+ * profile, link and offer events for anyone else.
+ */
+export async function isOnDrovrSendingJourney(
+	repository: OwnershipReadRepository,
+	contactId: string,
+): Promise<boolean> {
+	if (!repository.findContactEventsByType) return false
+	const events = await repository.findContactEventsByType(
+		contactId,
+		JOURNEY_OWNER_ASSIGNED_EVENT_TYPE,
+	)
+	return events.some(
+		(event) => journeyOwnerAssignmentJourneyId(event) !== undefined,
+	)
+}
+
 export type JourneyOwnerResolution =
 	| { owner: 'legacy'; recorded: false }
 	| { owner: 'drovr'; recorded: false }

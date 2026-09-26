@@ -21,6 +21,7 @@ function harness(
 		valuePathSlug?: string
 		snapshot?: ContactProfileSnapshot | undefined
 		delivered?: { accepted: number; rejected: number } | 'not-configured'
+		onSendingJourney?: boolean
 	} = {},
 ) {
 	const order: string[] = []
@@ -43,6 +44,7 @@ function harness(
 			: { accepted: 1, rejected: 0 },
 	)
 	const ownedPath = vi.fn(async () => 'ai-hero-skills-workflow')
+	const onSendingJourney = vi.fn(async () => overrides.onSendingJourney ?? true)
 	const run = () =>
 		runContactProfileSync({
 			event: {
@@ -62,8 +64,18 @@ function harness(
 			versionFor,
 			deliver,
 			ownedPath,
+			onSendingJourney,
 		})
-	return { run, step, readSnapshot, versionFor, deliver, ownedPath, order }
+	return {
+		run,
+		step,
+		readSnapshot,
+		versionFor,
+		deliver,
+		ownedPath,
+		onSendingJourney,
+		order,
+	}
 }
 
 describe('drovr contact profile sync function', () => {
@@ -87,6 +99,21 @@ describe('drovr contact profile sync function', () => {
 		expect(h.readSnapshot).not.toHaveBeenCalled()
 	})
 
+	it('pushes nothing for a contact on no drovr sending journey (drovr would refuse it)', async () => {
+		// The contract: profile, links and offer events only for contacts
+		// with a drovr sending journey; drovr migrates only those to v2.
+		const h = harness({ onSendingJourney: false })
+		await expect(h.run()).resolves.toEqual({
+			status: 'skipped',
+			reason: 'no-sending-journey',
+		})
+		expect(h.onSendingJourney).toHaveBeenCalledWith('contact-1')
+		expect(h.order).toEqual(['sending-journey'])
+		expect(h.readSnapshot).not.toHaveBeenCalled()
+		expect(h.versionFor).not.toHaveBeenCalled()
+		expect(h.deliver).not.toHaveBeenCalled()
+	})
+
 	it('spends no version on a contact ai-hero does not have', async () => {
 		const h = harness({ snapshot: undefined })
 		await expect(h.run()).resolves.toEqual({
@@ -108,6 +135,7 @@ describe('drovr contact profile sync function', () => {
 			rejected: 0,
 		})
 		expect(h.order).toEqual([
+			'sending-journey',
 			'read-profile',
 			'profile-version',
 			'deliver-profile',

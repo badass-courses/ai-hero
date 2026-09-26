@@ -266,6 +266,8 @@ export async function stopFactsFor(
 const BENIGN_SYNC_SKIPS: ReadonlySet<string> = new Set([
 	'contact-missing',
 	'synthetic-principal',
+	// Outside drovr's contact-sync scope (no sending journey).
+	'no-sending-journey',
 ])
 
 /**

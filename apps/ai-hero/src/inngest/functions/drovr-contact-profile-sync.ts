@@ -27,7 +27,7 @@ export const drovrContactProfileSync = inngest.createFunction(
 				DROVR_AUTHORITY_TENANT_ID,
 				DROVR_SKILLS_COURSE_JOURNEY_ID,
 			},
-			{ findJourneyOwnerAssignment },
+			{ findJourneyOwnerAssignment, isOnDrovrSendingJourney },
 			{ SKILLS_WORKFLOW_VALUE_PATH },
 		] = await Promise.all([
 			import('@/db'),
@@ -77,6 +77,8 @@ export const drovrContactProfileSync = inngest.createFunction(
 				// One contact's events, well under drovr's 100 per batch.
 				return deliverBatchOrThrow({ events, config: { ingestUrl, apiKey } })
 			},
+			onSendingJourney: (contactId) =>
+				isOnDrovrSendingJourney(repository, contactId),
 			ownedPath: async (contactId) =>
 				(await findJourneyOwnerAssignment(
 					repository,

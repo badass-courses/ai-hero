@@ -5,6 +5,7 @@ import {
 	decideJourneyOwner,
 	fanOutOwnedEvents,
 	findJourneyOwnerAssignment,
+	isOnDrovrSendingJourney,
 	journeyOwnerAssignmentJourneyId,
 	journeyOwnerProviderEventId,
 	ownershipBucket,
@@ -336,5 +337,38 @@ describe('fan-out of owned facts to the authority tenant', () => {
 		).toEqual([
 			authority,
 		])
+	})
+})
+
+describe('the drovr sending-journey scope', () => {
+	const repositoryWith = (...journeyIds: string[]) => ({
+		findContactEventsByType: async (_contactId: string, eventType: string) =>
+			eventType === 'journey.owner.assigned'
+				? journeyIds.map(
+						(journeyId) =>
+							({
+								providerEventId: `drovr-owner:contact-1:${journeyId}`,
+							}) as never,
+					)
+				: [],
+	})
+
+	it.each([
+		'value-path-skills-course',
+		'crash-course-evergreen-offer',
+		'shadow-newsletter',
+	])('counts an owner assignment for %s', async (journeyId) => {
+		await expect(
+			isOnDrovrSendingJourney(repositoryWith(journeyId), 'contact-1'),
+		).resolves.toBe(true)
+	})
+
+	it('does not count a contact with no assignment, or one for another journey', async () => {
+		await expect(
+			isOnDrovrSendingJourney(repositoryWith(), 'contact-1'),
+		).resolves.toBe(false)
+		await expect(
+			isOnDrovrSendingJourney(repositoryWith('contact-directory'), 'contact-1'),
+		).resolves.toBe(false)
 	})
 })

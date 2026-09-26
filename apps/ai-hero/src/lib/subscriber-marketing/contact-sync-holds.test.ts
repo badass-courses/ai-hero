@@ -62,6 +62,7 @@ function world() {
 				delivered.push(...events)
 				return { accepted: events.length, rejected: 0 }
 			},
+			onSendingJourney: async () => true,
 			ownedPath: async () => undefined,
 		})
 

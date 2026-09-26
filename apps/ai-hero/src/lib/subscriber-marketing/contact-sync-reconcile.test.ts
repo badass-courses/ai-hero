@@ -414,7 +414,12 @@ describe('what a profile sync receipt means for the watermark', () => {
 				rejected: 0,
 			}),
 		).toBe('sent')
-		for (const reason of ['contact-missing', 'synthetic-principal'])
+		for (const reason of [
+			'contact-missing',
+			'synthetic-principal',
+			// Out of drovr's scope: nothing to push, so the watermark moves.
+			'no-sending-journey',
+		])
 			expect(reconcileSyncOutcome('c1', { status: 'skipped', reason })).toBe(
 				'skipped',
 			)
