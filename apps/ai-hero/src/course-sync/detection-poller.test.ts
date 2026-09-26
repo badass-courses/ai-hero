@@ -449,6 +449,24 @@ describe('course sync detection poller', () => {
 		expect(test.state()).toMatchObject({ status: 'succeeded' })
 	})
 
+	it('leaves a lesson regression awaiting operator apply without a strike or hold', async () => {
+		const test = harness({
+			evaluateBoundedAutoApply: async () => ({
+				eligible: false,
+				planSha256: 'plan-sha',
+				reason: 'Lesson regressions require operator review: lesson-1',
+				failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+			}),
+		})
+		await expect(test.poll('poll-regression')).resolves.toMatchObject({ outcome: 'awaiting-apply' })
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply', consecutiveFailures: 0, failureClass: null,
+			applyPolicyOverride: 'operator',
+		})
+		expect(test.apply).not.toHaveBeenCalled()
+		expect(test.notifications).toHaveLength(1)
+	})
+
 	it('auto-applies only a bounded eligible preview and verifies readback', async () => {
 		const test = harness({
 			head: {

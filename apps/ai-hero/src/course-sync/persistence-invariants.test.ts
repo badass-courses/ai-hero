@@ -139,6 +139,16 @@ describe('course sync persistence invariants', () => {
 		})
 	})
 
+	it('routes lesson regressions to operator review without marking the plan failed', () => {
+		const plan = { ...launchPlan(), lessonRegressions: ['lesson-1'] }
+		expect(evaluateCourseSyncBoundedAutoApply(plan)).toEqual({
+			eligible: false,
+			planSha256: plan.planSha256,
+			reason: 'Lesson regressions require operator review: lesson-1',
+			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		})
+	})
+
 	it.each([
 		[
 			'reparent',

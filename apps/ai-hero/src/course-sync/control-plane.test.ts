@@ -967,6 +967,7 @@ describe('draft course sync control plane', () => {
 		const run = testHarness.persistence.runs.get(staged.runId)!
 		const revision = testHarness.persistence.revisions.get(run.sourceRevisionId)!
 		const { planSha256: claimedHash, ...planInput } = run.plan!
+		expect(run.plan).not.toHaveProperty('lessonRegressions')
 		// Measured from origin/main 41233020 using this v3 fixture and harness.
 		// The same probe on this branch produced identical plan and revision hashes.
 		expect(previewed.planSha256).toBe(
@@ -1088,12 +1089,75 @@ describe('draft course sync control plane', () => {
 		const updatedLesson = plan?.resources.find((item) => item.sourceKind === 'lesson')
 		expect(updatedLesson).toMatchObject({ action: 'update', targetResourceId: initialLesson?.targetResourceId })
 		expect(plan?.resources.find((item) => item.sourceKind === 'video')).toMatchObject({ action: 'create' })
+		expect(plan).not.toHaveProperty('lessonRegressions')
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(second.staged.runId)).toMatchObject({ eligible: true })
 		await expect(testHarness.controlPlane.apply({ runId: second.staged.runId, idempotencyKey: 'apply-filmed' }))
 			.resolves.toMatchObject({ state: 'applied' })
 		expect(testHarness.persistence.resources.get(updatedLesson!.targetResourceId)?.fields).toMatchObject({
 			body: filmed.explainer.body,
 			courseSync: { lessonType: 'explainer' },
 		})
+	})
+
+	it('detaches filmed problem children and requires review when it becomes a placeholder', async () => {
+		const testHarness = harness()
+		const initial = exactDeltaFixture('filmed-problem')
+		const problem = initial.sections[0]!.lessons[0]!
+		const filmed: CourseJsonDocumentV3 = {
+			...initial,
+			sections: [{ ...initial.sections[0]!, lessons: [problem] }],
+		}
+		const first = await stagedAndPreviewed(testHarness, filmed)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-problem')
+		const placeholder: CourseJsonDocumentV3 = {
+			...filmed,
+			schemaVersion: 4,
+			courseVersionId: 'placeholder-problem',
+			sections: [{ ...filmed.sections[0]!, lessons: [
+				{ type: 'placeholder', id: problem.id, title: problem.title },
+			] }],
+		}
+		const second = await stagedAndPreviewed(testHarness, placeholder, 'stage-placeholder')
+		const plan = testHarness.persistence.runs.get(second.staged.runId)?.plan
+		const detached = plan?.resources.filter((item) => item.detached && item.action === 'update')
+		expect(detached?.filter((item) => item.sourceKind === 'video')).toHaveLength(2)
+		expect(detached?.filter((item) => item.sourceKind === 'solution')).toHaveLength(1)
+		expect(plan?.lessonRegressions).toEqual([problem.id])
+		expect(plan?.resources.find((item) => item.sourceKind === 'lesson')?.fields).toMatchObject({
+			body: '', description: '', courseSync: { lessonType: 'placeholder', videos: [] },
+		})
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(second.staged.runId)).toMatchObject({
+			eligible: false,
+			planSha256: second.previewed.planSha256,
+			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		})
+		expect(testHarness.persistence.runs.get(second.staged.runId)).toMatchObject({
+			state: 'previewed', failureCode: null,
+		})
+		await applyDirectly(testHarness, second.staged.runId, 'operator-apply-placeholder')
+		for (const item of detached ?? []) {
+			expect(testHarness.persistence.relations.get(item.targetResourceId)?.detached).toBe(true)
+		}
+	})
+
+	it('requires review when a filmed lesson loses one video without becoming a placeholder', async () => {
+		const testHarness = harness()
+		const initial = exactDeltaFixture('two-videos')
+		const problem = initial.sections[0]!.lessons[0]!
+		if (problem.type !== 'problem') throw new Error('expected problem lesson')
+		const filmed: CourseJsonDocumentV3 = { ...initial, sections: [{ ...initial.sections[0]!, lessons: [problem] }] }
+		const first = await stagedAndPreviewed(testHarness, filmed)
+		await applyDirectly(testHarness, first.staged.runId, 'apply-two-videos')
+		const changed: CourseJsonDocumentV3 = {
+			...filmed,
+			courseVersionId: 'one-video',
+			sections: [{ ...filmed.sections[0]!, lessons: [{
+				type: 'problem', id: problem.id, title: problem.title, problem: problem.problem,
+			}] }],
+		}
+		const next = await stagedAndPreviewed(testHarness, changed, 'stage-one-video')
+		expect(testHarness.persistence.runs.get(next.staged.runId)?.plan?.lessonRegressions).toEqual([problem.id])
+		expect(await testHarness.controlPlane.evaluateBoundedAutoApply(next.staged.runId)).toMatchObject({ eligible: false })
 	})
 
 	it('reuses each successful freeze receipt after a later asset fails', async () => {

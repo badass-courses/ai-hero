@@ -30,12 +30,20 @@ export type CourseSyncBoundedAutoApplyDecision =
  * already proved its own integrity: the plan hash is content-addressed, and
  * every media item was rejected at stage and preview time unless its Mux
  * asset, playback id and duration were present. Course shape is the author's
- * decision, so creates, updates, moves and detaches all apply without a human
- * gate. Reversal is an operator rollback, not a pre-approval.
+ * decision, so ordinary creates, updates, moves and detaches apply without a
+ * human gate. A lesson demotion or lost video requires operator review.
  */
 export function evaluateCourseSyncBoundedAutoApply(
 	plan: SyncPlan,
 ): CourseSyncBoundedAutoApplyDecision {
+	if (plan.lessonRegressions?.length) {
+		return {
+			eligible: false,
+			planSha256: plan.planSha256,
+			reason: `Lesson regressions require operator review: ${plan.lessonRegressions.join(', ')}`,
+			failureCode: 'LESSON_REGRESSION_REVIEW_REQUIRED',
+		}
+	}
 	return { eligible: true, planSha256: plan.planSha256 }
 }
 
