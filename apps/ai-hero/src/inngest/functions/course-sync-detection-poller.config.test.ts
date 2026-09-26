@@ -6,7 +6,9 @@ const createFunction = vi.hoisted(() =>
 const poll = vi.hoisted(() => vi.fn(async (runId: string) => ({ runId })))
 const createPoller = vi.hoisted(() => vi.fn(() => poll))
 const recordFailure = vi.hoisted(() => vi.fn(async () => undefined))
-const info = vi.hoisted(() => vi.fn(async () => undefined))
+const info = vi.hoisted(() =>
+	vi.fn(async (_event: string, _data: Record<string, unknown>) => undefined),
+)
 vi.mock('../inngest.server', () => ({ inngest: { createFunction } }))
 vi.mock('@/env.mjs', () => ({ env: {} }))
 vi.mock('@/server/logger', () => ({ log: { info } }))
@@ -59,7 +61,13 @@ describe('course-sync detection poller registration', () => {
 	it('replays a legacy cron with no event as Crash Course, visibly (red proof)', async () => {
 		const [, , handler] = createFunction.mock.calls[0]!
 		await expect(
-			handler({ event: undefined, step: {}, runId: 'legacy-cron' }),
+			handler({
+				event: undefined,
+				step: {
+					run: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+				},
+				runId: 'legacy-cron',
+			}),
 		).resolves.toEqual({ runId: 'legacy-cron' })
 		expect(createPoller).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -78,13 +86,111 @@ describe('course-sync detection poller registration', () => {
 		const [, , handler] = createFunction.mock.calls[0]!
 		createPoller.mockClear()
 		await expect(
-			handler({ event: { data: {} }, step: {}, runId: 'old-shape' }),
+			handler({
+				event: { data: {} },
+				step: {
+					run: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+				},
+				runId: 'old-shape',
+			}),
 		).resolves.toEqual({ runId: 'old-shape' })
 		expect(createPoller).toHaveBeenCalledWith(
 			expect.objectContaining({
 				binding: expect.objectContaining({
 					bindingId: 'csb_ai_coding_crash_course',
 				}),
+			}),
+		)
+	})
+
+	it('logs the actual scheduled-timer shape once per run on handler replay and failure replay', async () => {
+		const [, , handler] = createFunction.mock.calls[0]!
+		const [options] = createFunction.mock.calls[0]!
+		const timer = {
+			name: 'inngest/scheduled.timer',
+			data: { cron: 'TZ=UTC */30 * * * *' },
+		}
+		const completed = new Map<string, unknown>()
+		const step = {
+			run: vi.fn(async (id: string, work: () => Promise<unknown>) => {
+				if (completed.has(id)) return completed.get(id)
+				const value = await work()
+				completed.set(id, value)
+				return value
+			}),
+		}
+		info.mockClear()
+		await handler({ event: timer, step, runId: 'timer-run' })
+		await handler({ event: timer, step, runId: 'timer-run' })
+		expect(
+			info.mock.calls.filter(
+				([event, data]) =>
+					event === 'course_sync.legacy_cron_compat' &&
+					data?.runId === 'timer-run',
+			),
+		).toHaveLength(1)
+		expect(info).toHaveBeenCalledWith(
+			'course_sync.legacy_cron_compat',
+			expect.objectContaining({
+				runId: 'timer-run',
+				eventName: 'inngest/scheduled.timer',
+			}),
+		)
+		expect(step.run.mock.calls.map(([id]) => id)).toContain(
+			'log-legacy-cron-compat',
+		)
+		const failure = { data: { event: timer, run_id: 'timer-run-failed' } }
+		info.mockClear()
+		const failureSteps = {
+			run: vi.fn(async (id: string, work: () => Promise<unknown>) => {
+				if (completed.has(id)) return completed.get(id)
+				const value = await work()
+				completed.set(id, value)
+				return value
+			}),
+		}
+		await options.onFailure({
+			event: failure,
+			step: failureSteps,
+			runId: 'failure-hook-1',
+		})
+		await options.onFailure({
+			event: failure,
+			step: failureSteps,
+			runId: 'failure-hook-1',
+		})
+		expect(
+			info.mock.calls.filter(
+				([event, data]) =>
+					event === 'course_sync.legacy_cron_compat' &&
+					data?.runId === 'timer-run-failed',
+			),
+		).toHaveLength(1)
+		expect(info).toHaveBeenCalledWith(
+			'course_sync.legacy_cron_compat',
+			expect.objectContaining({
+				runId: 'timer-run-failed',
+				eventName: 'inngest/scheduled.timer',
+				phase: 'failure',
+			}),
+		)
+	})
+
+	it('marks malformed new poll events by name instead of mistaking their log for a timer', async () => {
+		const [, , handler] = createFunction.mock.calls[0]!
+		info.mockClear()
+		await handler({
+			event: { name: COURSE_SYNC_POLL_REQUESTED_EVENT, data: {} },
+			step: {
+				run: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+			},
+			runId: 'missing-binding',
+		})
+		expect(info).toHaveBeenCalledWith(
+			'course_sync.legacy_cron_compat',
+			expect.objectContaining({
+				runId: 'missing-binding',
+				eventName: COURSE_SYNC_POLL_REQUESTED_EVENT,
 			}),
 		)
 	})

@@ -109,8 +109,8 @@ function resolvePollBindingId(event: unknown): {
 			return { bindingId, legacy: false }
 		}
 	}
-	// TODO: remove after one full deploy cycle with zero legacy_cron_compat hits.
-	// Before this deploy, Crash Course was the only registered binding.
+	// TODO: remove after one full deploy cycle with zero distinct runIds
+	// carrying legacy_cron_compat. Before this deploy, only Crash Course existed.
 	return { bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId, legacy: true }
 }
 
@@ -118,12 +118,22 @@ async function logLegacyPoll(
 	runId: string,
 	phase: 'poll' | 'failure',
 	bindingId: string,
+	event: unknown,
 ) {
-	await log.info('course_sync.legacy_cron_compat', {
-		runId,
-		phase,
-		bindingId,
-	})
+	const eventName =
+		event && typeof event === 'object' && 'name' in event
+			? (event as { name?: unknown }).name
+			: null
+	try {
+		await log.info('course_sync.legacy_cron_compat', {
+			runId,
+			phase,
+			bindingId,
+			eventName: typeof eventName === 'string' ? eventName : null,
+		})
+	} catch {
+		// A telemetry outage must not turn a completed legacy poll into a failure.
+	}
 }
 
 export const courseSyncDetectionPoller = inngest.createFunction(
@@ -133,12 +143,10 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 		concurrency: { limit: 1, key: 'event.data.bindingId' },
 		retries: 0,
 		onFailure: async ({ event, step, runId }) => {
-			const { bindingId, legacy } = resolvePollBindingId(
-				originalFailureEvent(event),
-			)
+			const originalEvent = originalFailureEvent(event)
+			const { bindingId, legacy } = resolvePollBindingId(originalEvent)
 			const binding = getServerCourseSyncBinding(bindingId)
 			const failedRunId = originalFailureRunId(event, runId)
-			if (legacy) await logLegacyPoll(failedRunId, 'failure', bindingId)
 			await recordCourseSyncPollFailure(
 				{
 					binding,
@@ -179,13 +187,17 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 					failureClass: 'POLL_RUN_KILLED',
 				},
 			)
+			// After all existing failure steps: no in-flight memoized IDs shift.
+			if (legacy)
+				await step.run('log-legacy-cron-compat-failure', () =>
+					logLegacyPoll(failedRunId, 'failure', bindingId, originalEvent),
+				)
 		},
 	},
 	{ event: COURSE_SYNC_POLL_REQUESTED_EVENT },
 	async ({ event, step, runId }) => {
 		const { bindingId, legacy } = resolvePollBindingId(event)
 		const binding = getServerCourseSyncBinding(bindingId)
-		if (legacy) await logLegacyPoll(runId, 'poll', bindingId)
 		async function runTypedStep<T>(
 			id: string,
 			operation: () => Promise<T>,
@@ -303,6 +315,14 @@ export const courseSyncDetectionPoller = inngest.createFunction(
 			},
 		})
 
-		return poll(runId)
+		const result = await poll(runId)
+		// Appended AFTER all 19 pre-existing poll step IDs. In-flight cron runs
+		// replay those memoized steps in their original order; this new step logs
+		// once per completed run instead of once per function re-invocation.
+		if (legacy)
+			await step.run('log-legacy-cron-compat', () =>
+				logLegacyPoll(runId, 'poll', bindingId, event),
+			)
+		return result
 	},
 )
