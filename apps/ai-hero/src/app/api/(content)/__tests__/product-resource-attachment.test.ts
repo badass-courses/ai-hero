@@ -87,6 +87,20 @@ describe("POST /api/products/[productId]/resources", () => {
     expect(mocks.getProduct).not.toHaveBeenCalled();
   });
 
+  it("returns 400 for malformed JSON before database access", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/products/product_1/resources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: '{"resourceId":',
+      }),
+      context,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    expect(mocks.getProduct).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid resource ids without looking up a product", async () => {
     const response = await POST(request(" "), context);
     expect(response.status).toBe(400);
@@ -141,6 +155,30 @@ describe("POST /api/products/[productId]/resources", () => {
     expect((await response.json()).result.position).toBe(3);
     expect(mocks.insert).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("re-reads the relation after a concurrent duplicate-key insert and returns 200", async () => {
+    mocks.findFirst
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ resourceId: "resource_1", position: 0, deletedAt: null });
+    mocks.values.mockRejectedValueOnce(
+      Object.assign(new Error("Duplicate entry"), { code: "ER_DUP_ENTRY", errno: 1062 }),
+    );
+    const response = await POST(request(), context);
+    expect(response.status).toBe(200);
+    expect((await response.json()).result.position).toBe(0);
+    expect(mocks.findFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.insert).toHaveBeenCalledOnce();
+    expect(mocks.revalidateProducts).not.toHaveBeenCalled();
+  });
+
+  it("does not hide a duplicate error when no active matching relation exists", async () => {
+    mocks.values.mockRejectedValueOnce(
+      Object.assign(new Error("Duplicate entry"), { code: "ER_DUP_ENTRY", errno: 1062 }),
+    );
+    const response = await POST(request(), context);
+    expect(response.status).toBe(500);
+    expect(mocks.findFirst).toHaveBeenCalledTimes(2);
   });
 
   it("allows a second distinct resource at the next position, as CMS does", async () => {

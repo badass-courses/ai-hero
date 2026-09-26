@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { courseBuilderAdapter } from "@/db";
 import { ProductResourceAttachRequestSchema } from "@/lib/agent-api-contracts";
-import { attachProductResource } from "@/lib/product-resource-attachment";
+import { attachProductResourceIdempotently } from "@/lib/product-resource-attachment";
 import { getUserAbilityForRequest } from "@/server/ability-for-request";
 import { log } from "@/server/logger";
 import { withSkill } from "@/server/with-skill";
@@ -36,9 +36,16 @@ const postProductResource = async (
     }
 
     const { productId } = await params;
-    const parsed = ProductResourceAttachRequestSchema.safeParse(
-      await request.json(),
-    );
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid input" },
+        { status: 400, headers: corsHeaders },
+      );
+    }
+    const parsed = ProductResourceAttachRequestSchema.safeParse(body);
     if (!productId?.trim() || !parsed.success) {
       return NextResponse.json(
         {
@@ -66,7 +73,7 @@ const postProductResource = async (
     }
 
     // CMS permits multiple resources per product and restores soft-deleted joins.
-    const { position } = await attachProductResource({
+    const { position } = await attachProductResourceIdempotently({
       productId,
       resourceId,
       addedBy: user.id,
