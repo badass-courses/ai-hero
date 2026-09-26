@@ -157,6 +157,24 @@ assert.doesNotThrow(() =>
 		},
 	}),
 )
+assert.doesNotThrow(() =>
+	decodeCourseSyncBindingSummary({
+		bindingId: "csb_test_cohort",
+		contractVersion: 5,
+		status: "active",
+		sourceCourseId: "test-course",
+		applyPolicy: "operator",
+		target: {
+			product: { type: "cohort", state: "draft", visibility: "unlisted" },
+			cohort: { type: "cohort", state: "draft", visibility: "unlisted" },
+			managedChildren: {
+				workshop: { state: "draft", visibility: "unlisted" },
+				lesson: { state: "draft", visibility: "unlisted" },
+			},
+			sectionMappingPolicy: "sections-as-cohort-workshops",
+		},
+	}),
+)
 assert.throws(() =>
 	decodeCourseSyncBindingSummary({
 		bindingId: "csb_ai_coding_crash_course",

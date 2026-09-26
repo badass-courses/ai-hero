@@ -7,7 +7,7 @@ import {
 	courseSyncJson,
 	idempotencyKey,
 } from '@/course-sync/http'
-import { AI_HERO_COURSE_SYNC_BINDING } from '@/course-sync/types'
+import { getServerCourseSyncBinding } from '@/course-sync/types'
 import { env } from '@/env.mjs'
 
 const INNGEST_APP_ID = 'ai-hero'
@@ -18,7 +18,8 @@ const COURSE_SYNC_POLLER_FUNCTION_ID =
 const INNGEST_RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/
 
 function findInngestRunId(value: unknown): string | null {
-	if (typeof value === 'string') return INNGEST_RUN_ID.test(value) ? value : null
+	if (typeof value === 'string')
+		return INNGEST_RUN_ID.test(value) ? value : null
 	if (Array.isArray(value)) {
 		for (const item of value) {
 			const runId = findInngestRunId(item)
@@ -42,13 +43,7 @@ export async function POST(
 	try {
 		authorizeCourseSyncRequest(request, 'operator')
 		const { bindingId } = await context.params
-		if (bindingId !== AI_HERO_COURSE_SYNC_BINDING.bindingId) {
-			throw new CourseSyncError(
-				'COURSE_SYNC_BINDING_NOT_FOUND',
-				'Course sync binding not found.',
-				404,
-			)
-		}
+		getServerCourseSyncBinding(bindingId)
 		const key = idempotencyKey(request)
 		const invocationKey = `course-sync-poll:${createHash('sha256').update(key).digest('hex')}`
 		const response = await fetch(

@@ -5,7 +5,7 @@ import {
 	type CourseSyncBinding,
 } from './types'
 
-function stableValue(value: unknown): unknown {
+export function stableValue(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(stableValue)
 	if (value && typeof value === 'object') {
 		return Object.fromEntries(
@@ -38,10 +38,16 @@ export function resolveStoredCourseSyncBinding(
 	if (sameBinding(stored, expected)) {
 		return { binding: expected, migrated: false, fromContractVersion: null }
 	}
-	if (sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED)) {
+	if (
+		expected.contractVersion === 4 &&
+		sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V3_UNLISTED)
+	) {
 		return { binding: expected, migrated: true, fromContractVersion: 3 }
 	}
-	if (sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR)) {
+	if (
+		expected.contractVersion === 4 &&
+		sameBinding(stored, AI_HERO_COURSE_SYNC_BINDING_V2_OPERATOR)
+	) {
 		return { binding: expected, migrated: true, fromContractVersion: 2 }
 	}
 	throw new CourseSyncError(

@@ -20,7 +20,7 @@ import {
 	type CourseSyncPollLifecycleActor,
 } from './poll-machine'
 import { courseSyncApplyPolicyOverride } from './poll-policy'
-import { AI_HERO_COURSE_SYNC_BINDING } from './types'
+import type { CourseSyncBinding } from './types'
 
 export const COURSE_SYNC_WORKSHOP_EDIT_URL =
 	'https://www.aihero.dev/workshops/ai-coding-crash-course/edit'
@@ -167,6 +167,7 @@ export type CourseSyncSlackNotificationPayload = {
 }
 
 export type CourseSyncDetectionPollerDependencies = {
+	binding: CourseSyncBinding
 	readManifest(): Promise<CourseSyncManifestRead>
 	getRevisionHead(bindingId: string): Promise<CourseSyncRevisionHead | null>
 	getRun(runId: string): Promise<CourseSyncRunSummary>
@@ -275,11 +276,21 @@ function isLegacyAppliedHead(
 	)
 }
 
-function effectiveApplyPolicy(state: CourseSyncPollState | null) {
-	return (
-		courseSyncApplyPolicyOverride(state) ??
-		AI_HERO_COURSE_SYNC_BINDING.applyPolicy
-	)
+function effectiveApplyPolicyOverride(
+	state: CourseSyncPollState | null,
+	binding: CourseSyncBinding,
+): 'operator' | null {
+	return courseSyncApplyPolicyOverride(state) ??
+		(state === null && binding.contractVersion === 5
+			? binding.initialApplyPolicyOverride
+			: null)
+}
+
+function effectiveApplyPolicy(
+	state: CourseSyncPollState | null,
+	binding: CourseSyncBinding,
+) {
+	return effectiveApplyPolicyOverride(state, binding) ?? binding.applyPolicy
 }
 
 export function courseSyncFailureClass(error: unknown) {
@@ -434,7 +445,9 @@ export function buildCourseSyncNotificationPayload(
 	if (notification.kind === 'success') {
 		const durationMinutes = Math.floor(notification.durationSeconds / 60)
 		const facts = `Synced ${versionLabel} into the bound workshop: ${notification.structureCounts.sections} sections, ${notification.structureCounts.lessons} lessons, ${notification.structureCounts.videos} videos, ${durationMinutes} min.`
-		const headline = narration?.trim() ? `${narration.trim()} ${SHITRAT_MARK}` : facts
+		const headline = narration?.trim()
+			? `${narration.trim()} ${SHITRAT_MARK}`
+			: facts
 		const text = `${headline} ${permalink}`
 		return {
 			username: COURSE_SYNC_SLACK_USERNAME,
@@ -624,11 +637,16 @@ export function buildCourseSyncNotificationPayload(
 export async function recordCourseSyncPollFailure(
 	dependencies: Pick<
 		CourseSyncDetectionPollerDependencies,
-		'getPollState' | 'savePollState' | 'appendLog' | 'notify'
+		'binding' | 'getPollState' | 'savePollState' | 'appendLog' | 'notify'
 	>,
-	input: { runId: string; failureClass?: string; occurredAt?: Date },
+	input: {
+		bindingId: string
+		runId: string
+		failureClass?: string
+		occurredAt?: Date
+	},
 ) {
-	const bindingId = AI_HERO_COURSE_SYNC_BINDING.bindingId
+	const bindingId = input.bindingId
 	const state = await dependencies.getPollState(bindingId)
 	const failureKind = input.failureClass ?? 'POLL_RUN_KILLED'
 	if (state?.status === 'released') {
@@ -649,7 +667,7 @@ export async function recordCourseSyncPollFailure(
 	const lifecycle = startCourseSyncPollLifecycle({
 		pollStatus: state?.status ?? null,
 		strikes: state?.consecutiveFailures ?? 0,
-		applyPolicy: effectiveApplyPolicy(state),
+		applyPolicy: effectiveApplyPolicy(state, dependencies.binding),
 	})
 	if (
 		lifecycle.getSnapshot().matches({ active: 'idle' }) ||
@@ -698,7 +716,7 @@ export async function recordCourseSyncPollFailure(
 		consecutiveFailures: strikes,
 		controlPlaneRunId: state?.controlPlaneRunId ?? null,
 		failureClass: failureKind,
-		applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+		applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 		updatedAt: occurredAt,
 	})
 	// Strike one always retries on its own; only page humans when the run
@@ -751,7 +769,7 @@ export function createCourseSyncDetectionPoller(
 	dependencies: CourseSyncDetectionPollerDependencies,
 ) {
 	const clock = dependencies.clock ?? (() => new Date())
-	const bindingId = AI_HERO_COURSE_SYNC_BINDING.bindingId
+	const bindingId = dependencies.binding.bindingId
 
 	const log = (base: Omit<CourseSyncPollLogInput, 'occurredAt'>) =>
 		dependencies.appendLog({ ...base, occurredAt: clock() })
@@ -793,8 +811,7 @@ export function createCourseSyncDetectionPoller(
 				planSha256: syncRun.planSha256,
 				occurredAt: clock(),
 			}
-			const claimed =
-				await dependencies.claimReviewNotification(reviewReceipt)
+			const claimed = await dependencies.claimReviewNotification(reviewReceipt)
 			if (!claimed) {
 				await log({
 					bindingId,
@@ -940,7 +957,7 @@ export function createCourseSyncDetectionPoller(
 					state?.status === 'held' || observedBefore
 						? (state?.consecutiveFailures ?? 0)
 						: 0,
-				applyPolicy: effectiveApplyPolicy(state),
+				applyPolicy: effectiveApplyPolicy(state, dependencies.binding),
 			})
 			const appliedAlready =
 				(observedBefore && state?.status === 'succeeded') ||
@@ -1009,7 +1026,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'awaiting-apply',
-						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 						updatedAt: clock(),
 					})
 					await notifyReview(currentRun, 'awaiting-operator-apply')
@@ -1064,7 +1081,7 @@ export function createCourseSyncDetectionPoller(
 					await dependencies.savePollState({
 						...state,
 						status: 'applying',
-						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 						updatedAt: clock(),
 					})
 					await log({
@@ -1136,7 +1153,7 @@ export function createCourseSyncDetectionPoller(
 						status: held ? 'held' : 'failed',
 						consecutiveFailures: lifecycle.getSnapshot().context.strikes,
 						failureClass,
-						applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+						applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 						updatedAt: clock(),
 					}
 					await log({
@@ -1281,7 +1298,7 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
-				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+				applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 				updatedAt: clock(),
 			})
 			await log({
@@ -1322,7 +1339,7 @@ export function createCourseSyncDetectionPoller(
 					? (state?.controlPlaneRunId ?? null)
 					: null,
 				failureClass: null,
-				applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+				applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 				updatedAt: clock(),
 			})
 			let syncRun = await dependencies.stage({
@@ -1405,13 +1422,10 @@ export function createCourseSyncDetectionPoller(
 				const previewPlanSha256 = syncRun.planSha256
 				const autoDecision =
 					syncRun.state === 'previewed' &&
-					AI_HERO_COURSE_SYNC_BINDING.applyPolicy === 'bounded-auto'
+					dependencies.binding.applyPolicy === 'bounded-auto'
 						? await dependencies.evaluateBoundedAutoApply(syncRun.runId)
 						: null
-				if (
-					autoDecision &&
-					autoDecision.planSha256 !== previewPlanSha256
-				) {
+				if (autoDecision && autoDecision.planSha256 !== previewPlanSha256) {
 					throw new CourseSyncError(
 						'PLAN_HASH_MISMATCH',
 						'The bounded-auto decision does not match the staged preview.',
@@ -1459,7 +1473,7 @@ export function createCourseSyncDetectionPoller(
 					consecutiveFailures: 0,
 					controlPlaneRunId: syncRun.runId,
 					failureClass: null,
-					applyPolicyOverride: courseSyncApplyPolicyOverride(state),
+					applyPolicyOverride: effectiveApplyPolicyOverride(state, dependencies.binding),
 					updatedAt: clock(),
 				})
 				await log({
@@ -1594,7 +1608,7 @@ export function createCourseSyncDetectionPoller(
 			lifecycle ??= startCourseSyncPollLifecycle({
 				pollStatus: previousState?.status ?? null,
 				strikes: previousState?.consecutiveFailures ?? 0,
-				applyPolicy: effectiveApplyPolicy(previousState),
+				applyPolicy: effectiveApplyPolicy(previousState, dependencies.binding),
 			})
 			if (
 				lifecycle.getSnapshot().matches({ active: 'idle' }) ||
@@ -1670,7 +1684,7 @@ export function createCourseSyncDetectionPoller(
 				consecutiveFailures: strikes,
 				controlPlaneRunId,
 				failureClass: kind,
-				applyPolicyOverride: courseSyncApplyPolicyOverride(previousState),
+				applyPolicyOverride: effectiveApplyPolicyOverride(previousState, dependencies.binding),
 				updatedAt: clock(),
 			})
 			if (transitionedToHeld) {

@@ -1,7 +1,10 @@
 import { inngest } from '@/inngest/inngest.server'
 import { log } from '@/server/logger'
 
-import { COHORT_UPDATED_EVENT } from '../inngest/events/cohort-management'
+import {
+	COHORT_UPDATED_EVENT,
+	type CohortUpdatedPayload,
+} from '../inngest/events/cohort-management'
 
 /**
  * Trigger entitlement sync when a cohort is updated
@@ -9,23 +12,27 @@ import { COHORT_UPDATED_EVENT } from '../inngest/events/cohort-management'
  */
 export async function triggerCohortEntitlementSync(
 	cohortId: string,
-	changes: {
-		resourcesAdded?: Array<{
-			resourceId: string
-			position: number
-		}>
-		resourcesRemoved?: Array<{
-			resourceId: string
-		}>
-	},
+	changes: CohortUpdatedPayload['changes'],
+	// A stable ID lets course-sync retry after a receipt failure without
+	// enqueueing duplicate cohort updates. Other callers keep fresh events.
+	eventId?: string,
+	context: {
+		source: CohortUpdatedPayload['source']
+		controlPlaneRunId?: string
+	} = { source: 'cms' },
 ) {
 	try {
 		await inngest.send({
+			...(eventId ? { id: eventId } : {}),
 			name: COHORT_UPDATED_EVENT,
 			data: {
 				cohortId,
 				updatedAt: new Date().toISOString(),
 				changes,
+				source: context.source,
+				...(context.controlPlaneRunId
+					? { controlPlaneRunId: context.controlPlaneRunId }
+					: {}),
 			},
 		})
 

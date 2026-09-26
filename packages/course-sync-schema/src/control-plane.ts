@@ -30,7 +30,7 @@ export const CourseSyncResourceAction = Schema.Literals([
 	"retain",
 ])
 
-export const CourseSyncBindingSummary = Schema.Struct({
+export const CourseSyncBindingSummary = Schema.Union([Schema.Struct({
 	bindingId: NonEmptyString,
 	contractVersion: Schema.Literal(4),
 	status: Schema.Literals(["active", "suspended", "revoked"]),
@@ -53,7 +53,36 @@ export const CourseSyncBindingSummary = Schema.Struct({
 		}),
 		sectionMappingPolicy: Schema.Literal("sections-in-anchor-workshop"),
 	}),
-})
+}), Schema.Struct({
+	bindingId: NonEmptyString,
+	contractVersion: Schema.Literal(5),
+	status: Schema.Literals(["active", "suspended", "revoked"]),
+	sourceCourseId: NonEmptyString,
+	applyPolicy: Schema.Literals(["bounded-auto", "operator"]),
+	target: Schema.Struct({
+		product: Schema.Struct({
+			type: Schema.Literal("cohort"),
+			state: Schema.Literals(["draft", "published"]),
+			visibility: Schema.Literals(["unlisted", "public"]),
+		}),
+		cohort: Schema.Struct({
+			type: Schema.Literal("cohort"),
+			state: Schema.Literals(["draft", "published"]),
+			visibility: Schema.Literals(["unlisted", "public"]),
+		}),
+		managedChildren: Schema.Struct({
+			workshop: Schema.Struct({
+				state: Schema.Literals(["draft", "published"]),
+				visibility: Schema.Literal("unlisted"),
+			}),
+			lesson: Schema.Struct({
+				state: Schema.Literal("draft"),
+				visibility: Schema.Literal("unlisted"),
+			}),
+		}),
+		sectionMappingPolicy: Schema.Literal("sections-as-cohort-workshops"),
+	}),
+})])
 
 export const CourseSyncRunSummary = Schema.Struct({
 	runId: NonEmptyString,
@@ -67,7 +96,7 @@ export const CourseSyncRunSummary = Schema.Struct({
 		Schema.Struct({
 			resources: Schema.Array(
 				Schema.Struct({
-					sourceKind: Schema.Literals(["section", "lesson"]),
+					sourceKind: Schema.Literals(["section", "workshop", "lesson"]),
 					sourceId: NonEmptyString,
 					action: CourseSyncResourceAction,
 					position: Schema.Number,

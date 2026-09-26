@@ -1,7 +1,8 @@
 import { stableJson } from './control-plane'
 import { CourseSyncError } from './errors'
 import {
-	AI_HERO_COURSE_SYNC_BINDING,
+	managedChildContractFor,
+	managedSectionKind,
 	type CourseSyncBinding,
 	type ResourcePlanItem,
 	type SyncPlan,
@@ -331,13 +332,20 @@ export function assertManagedChildRelations(
 			409,
 		)
 	}
+	const expected = managedChildContractFor(binding, managedSectionKind(binding))
+	if (!expected)
+		throw new CourseSyncError(
+			'BINDING_VERSION_UNSUPPORTED',
+			'Managed section contract is missing.',
+			409,
+		)
 	for (const child of childRelations) {
 		const fields = child.resource?.fields as Record<string, unknown> | undefined
 		const sync = fields?.courseSync as Record<string, unknown> | undefined
 		if (
-			child.resource?.type !== 'section' ||
-			fields?.state !== binding.managedChildContract.state ||
-			fields.visibility !== binding.managedChildContract.visibility ||
+			child.resource?.type !== managedSectionKind(binding) ||
+			fields?.state !== expected.state ||
+			fields?.visibility !== expected.visibility ||
 			sync?.bindingId !== binding.bindingId
 		) {
 			throw new CourseSyncError(

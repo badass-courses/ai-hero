@@ -1,14 +1,15 @@
+import { dropboxSyncConfigFor } from '@/course-sync/dropbox-binding-config'
 import { verifyDropboxMuxProxyToken } from '@/course-sync/dropbox-mux-source'
+import { CourseSyncError } from '@/course-sync/errors'
+import { getServerCourseSyncBinding } from '@/course-sync/types'
 import { env } from '@/env.mjs'
-import {
-	createDropboxSharedLinkAssetReader,
-	getDropboxSyncConfig,
-} from '@/lib/dropbox-course-sync'
+import { createDropboxSharedLinkAssetReader } from '@/lib/dropbox-course-sync'
 
 export const maxDuration = 800
 
 export async function GET(request: Request) {
 	const url = new URL(request.url)
+	const bindingId = url.searchParams.get('binding') ?? ''
 	const relativePath = url.searchParams.get('path') ?? ''
 	const expiresAt = Number(url.searchParams.get('expires'))
 	const suppliedSignature = url.searchParams.get('signature') ?? ''
@@ -17,8 +18,21 @@ export async function GET(request: Request) {
 			status: 503,
 		})
 	}
+	if (!bindingId) {
+		return new Response('Missing course-sync binding.', { status: 400 })
+	}
+	let binding
+	try {
+		binding = getServerCourseSyncBinding(bindingId)
+	} catch (error) {
+		if (error instanceof CourseSyncError && error.code === 'BINDING_NOT_FOUND') {
+			return new Response('Course-sync binding not found.', { status: 404 })
+		}
+		throw error
+	}
 	if (
 		!verifyDropboxMuxProxyToken({
+			bindingId,
 			relativePath,
 			expiresAt,
 			suppliedSignature,
@@ -30,14 +44,7 @@ export async function GET(request: Request) {
 		})
 	}
 
-	const { config } = getDropboxSyncConfig({
-		DROPBOX_APP_KEY: env.DROPBOX_APP_KEY,
-		DROPBOX_APP_SECRET: env.DROPBOX_APP_SECRET,
-		DROPBOX_OAUTH_REDIRECT_URI: env.DROPBOX_OAUTH_REDIRECT_URI,
-		DROPBOX_SYNC_SHARED_FOLDER_ID: env.DROPBOX_SYNC_SHARED_FOLDER_ID,
-		DROPBOX_SYNC_ALLOWED_ROOT: env.DROPBOX_SYNC_ALLOWED_ROOT,
-		DROPBOX_SYNC_SHARED_LINK: env.DROPBOX_SYNC_SHARED_LINK,
-	})
+	const { config } = dropboxSyncConfigFor(binding)
 	if (!config || !env.DROPBOX_REFRESH_TOKEN) {
 		return new Response('Dropbox course sync is not configured.', { status: 503 })
 	}

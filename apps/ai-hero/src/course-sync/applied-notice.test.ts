@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 
 const mocks = vi.hoisted(() => ({
 	claim: vi.fn(async () => true),
@@ -21,6 +22,11 @@ const mocks = vi.hoisted(() => ({
 		}): Promise<{ ok: boolean; error?: string }> => ({ ok: true }),
 	),
 	logError: vi.fn(async () => {}),
+	entitlementSync: vi.fn(
+		async (): Promise<{ triggered: boolean; reason?: string }> => ({
+			triggered: true,
+		}),
+	),
 }))
 
 vi.mock('@/db', () => ({ db: { select: vi.fn() } }))
@@ -33,6 +39,23 @@ vi.mock('@/coursebuilder/slack-provider', () => ({
 		defaultChannelId: 'C_DEFAULT',
 	},
 }))
+vi.mock('./cohort-entitlements', () => ({
+	deliverCourseSyncEntitlementSync: mocks.entitlementSync,
+}))
+vi.mock('./types', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('./types')>()
+	return {
+		...actual,
+		COURSE_SYNC_BINDINGS: {
+			...actual.COURSE_SYNC_BINDINGS,
+			[syntheticCohortBinding.bindingId]: syntheticCohortBinding,
+		},
+		getServerCourseSyncBinding: (id: string) =>
+			id === syntheticCohortBinding.bindingId
+				? syntheticCohortBinding
+				: actual.getServerCourseSyncBinding(id),
+	}
+})
 vi.mock('./detection-persistence', () => ({
 	claimCourseSyncReviewNotification: mocks.claim,
 	completeCourseSyncReviewNotification: mocks.complete,
@@ -81,6 +104,45 @@ describe('course sync applied notice', () => {
 		mocks.claim.mockResolvedValue(true)
 		mocks.sendNotification.mockResolvedValue({ ok: true })
 		mocks.narrate.mockResolvedValue('Matt added a lesson.')
+	})
+
+	it('dispatches cohort entitlement sync beside the applied notice for an operator or poller', async () => {
+		await deliverCourseSyncAppliedNotice({
+			bindingId: syntheticCohortBinding.bindingId,
+			controlPlaneRunId: notification.controlPlaneRunId,
+			pollRunId: notification.runId,
+			notification,
+			planSha256: 'plan-sha',
+		})
+		expect(mocks.entitlementSync).toHaveBeenCalledWith({
+			controlPlaneRunId: 'csr_run_1',
+			lifecycle: 'applied',
+		})
+		expect(mocks.claim).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'applied' }),
+		)
+	})
+
+	it('still delivers the applied notice when the cohort trigger records a failure', async () => {
+		mocks.entitlementSync.mockResolvedValueOnce({
+			triggered: false,
+			reason: 'failed',
+		})
+		await expect(
+			deliverCourseSyncAppliedNotice({
+				bindingId: syntheticCohortBinding.bindingId,
+				controlPlaneRunId: notification.controlPlaneRunId,
+				pollRunId: notification.runId,
+				notification,
+				planSha256: 'plan-sha',
+			}),
+		).resolves.toEqual({ delivered: true })
+		expect(mocks.complete).toHaveBeenCalledOnce()
+	})
+
+	it('never dispatches cohort entitlements for a v4 applied notice', async () => {
+		await deliver()
+		expect(mocks.entitlementSync).not.toHaveBeenCalled()
 	})
 
 	it('claims under the applied kind so it cannot collide with a review notice', async () => {

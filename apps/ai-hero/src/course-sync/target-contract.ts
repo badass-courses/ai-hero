@@ -1,5 +1,10 @@
 import { CourseSyncError } from './errors'
-import type { CourseSyncBinding } from './types'
+import {
+	anchorResourceId,
+	managedChildContractFor,
+	managedSectionKind,
+	type CourseSyncBinding,
+} from './types'
 
 export type TargetViolationCode =
 	| 'TARGET_PRODUCT_NOT_FOUND'
@@ -85,11 +90,28 @@ export function collectCourseSyncTargetViolations(
 ): TargetViolation[] {
 	const violations: TargetViolation[] = []
 	const productTarget = { kind: 'product', id: binding.productId }
-	const workshopTarget = { kind: 'workshop', id: binding.anchorWorkshopId }
+	const anchorId = anchorResourceId(binding)
+	const anchorTarget = {
+		kind: binding.contractVersion === 4 ? 'workshop' : 'cohort',
+		id: anchorId,
+	}
+	const anchorContract = binding.contractVersion === 4
+		? binding.targetContract.workshop
+		: binding.targetContract.cohort
+	const childKind = managedSectionKind(binding)
+	const childContract = managedChildContractFor(binding, childKind)
+	if (!childContract) {
+		throw new CourseSyncError(
+			'BINDING_CONTRACT_INVALID',
+			'Managed child contract is missing.',
+			409,
+		)
+	}
+	const anchorKey = binding.contractVersion === 4 ? 'workshopId' : 'cohortId'
 	const relationTarget = {
 		kind: 'relation',
 		productId: binding.productId,
-		workshopId: binding.anchorWorkshopId,
+		[anchorKey]: anchorId,
 	}
 
 	if (!facts.product) {
@@ -128,7 +150,7 @@ export function collectCourseSyncTargetViolations(
 	if (!facts.workshop) {
 		violations.push({
 			code: 'TARGET_WORKSHOP_NOT_FOUND',
-			target: workshopTarget,
+			target: anchorTarget,
 			field: 'exists',
 			expected: true,
 			actual: false,
@@ -138,7 +160,7 @@ export function collectCourseSyncTargetViolations(
 		if (facts.workshop.deletedAt !== null) {
 			violations.push({
 				code: 'TARGET_WORKSHOP_DELETED',
-				target: workshopTarget,
+				target: anchorTarget,
 				field: 'deletedAt',
 				expected: null,
 				actual: 'deleted',
@@ -146,23 +168,23 @@ export function collectCourseSyncTargetViolations(
 		}
 		addMismatch(violations, {
 			code: 'TARGET_WORKSHOP_TYPE_MISMATCH',
-			target: workshopTarget,
+			target: anchorTarget,
 			field: 'type',
-			expected: binding.targetContract.workshop.type,
+			expected: anchorContract.type,
 			actual: facts.workshop.type,
 		})
 		addMismatch(violations, {
 			code: 'TARGET_WORKSHOP_STATE_MISMATCH',
-			target: workshopTarget,
+			target: anchorTarget,
 			field: 'state',
-			expected: binding.targetContract.workshop.state,
+			expected: anchorContract.state,
 			actual: fields.state,
 		})
 		addMismatch(violations, {
 			code: 'TARGET_WORKSHOP_VISIBILITY_MISMATCH',
-			target: workshopTarget,
+			target: anchorTarget,
 			field: 'visibility',
-			expected: binding.targetContract.workshop.visibility,
+			expected: anchorContract.visibility,
 			actual: fields.visibility,
 		})
 	}
@@ -198,7 +220,7 @@ export function collectCourseSyncTargetViolations(
 	for (const child of facts.childRelations) {
 		const target = {
 			kind: 'child',
-			workshopId: binding.anchorWorkshopId,
+			[anchorKey]: anchorId,
 			resourceId: child.resource?.id ?? 'missing',
 			position: child.position,
 		}
@@ -221,21 +243,21 @@ export function collectCourseSyncTargetViolations(
 			code: 'TARGET_CHILD_TYPE_MISMATCH',
 			target,
 			field: 'type',
-			expected: 'section',
+			expected: childKind,
 			actual: child.resource?.type,
 		})
 		addMismatch(violations, {
 			code: 'TARGET_CHILD_STATE_MISMATCH',
 			target,
 			field: 'state',
-			expected: binding.managedChildContract.state,
+			expected: childContract.state,
 			actual: fields.state,
 		})
 		addMismatch(violations, {
 			code: 'TARGET_CHILD_VISIBILITY_MISMATCH',
 			target,
 			field: 'visibility',
-			expected: binding.managedChildContract.visibility,
+			expected: childContract.visibility,
 			actual: fields.visibility,
 		})
 		addMismatch(violations, {
@@ -254,6 +276,7 @@ function violationText(violation: TargetViolation) {
 		violation.target.id ??
 		violation.target.resourceId ??
 		violation.target.workshopId ??
+		violation.target.cohortId ??
 		'unknown'
 	return `${String(violation.target.kind)} ${String(targetId)} ${violation.field} expected ${String(violation.expected)}, actual ${String(violation.actual)}`
 }

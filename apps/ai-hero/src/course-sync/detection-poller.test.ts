@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CourseSyncError } from './errors'
 import { evaluateCourseSyncBoundedAutoApply } from './persistence-invariants'
-import type { SyncPlan } from './types'
+import {
+	AI_HERO_COURSE_SYNC_BINDING,
+	type CourseSyncBinding,
+	type SyncPlan,
+} from './types'
+import { syntheticCohortBinding } from './test-fixtures/cohort-binding'
 import {
 	freezeCourseSyncAssetBatch,
 	type FreezeCourseSyncAsset,
@@ -105,6 +110,7 @@ function run(
 }
 
 function harness(input?: {
+	binding?: CourseSyncBinding
 	manifest?: CourseJsonDocumentV3
 	head?: CourseSyncRevisionHead | null
 	state?: CourseSyncPollState | null
@@ -127,6 +133,7 @@ function harness(input?: {
 	const detectedManifest = input?.manifest ?? manifest
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
+	const savedStates: CourseSyncPollState[] = []
 	const reviewNotificationState = new Map<
 		string,
 		'started' | 'succeeded' | 'failed'
@@ -189,6 +196,7 @@ function harness(input?: {
 		input?.verifyApplied ?? (async () => run('applied')),
 	)
 	const dependencies: CourseSyncDetectionPollerDependencies = {
+		binding: input?.binding ?? AI_HERO_COURSE_SYNC_BINDING,
 		readManifest:
 			input?.readManifest ??
 			(async () => ({
@@ -205,6 +213,7 @@ function harness(input?: {
 		freezeAssetBatch,
 		savePollState: async (next) => {
 			state = next
+			savedStates.push(next)
 		},
 		appendLog: async (entry) => {
 			logs.push(entry)
@@ -239,6 +248,10 @@ function harness(input?: {
 		logs,
 		notifications,
 		state: () => state,
+		savedStates,
+		setState: (next: CourseSyncPollState | null) => {
+			state = next
+		},
 		setHead: (next: CourseSyncRevisionHead | null) => {
 			head = next
 		},
@@ -250,6 +263,7 @@ function failureHarness(initialState: CourseSyncPollState) {
 	const logs: CourseSyncPollLogInput[] = []
 	const notifications: CourseSyncNotification[] = []
 	const dependencies = {
+		binding: AI_HERO_COURSE_SYNC_BINDING,
 		getPollState: async () => state,
 		savePollState: async (next: CourseSyncPollState) => {
 			state = next
@@ -289,7 +303,10 @@ describe('course sync detection poller', () => {
 			courseVersionId: 'version-2',
 		})
 		expect(test.stage).not.toHaveBeenCalled()
-		expect(test.state()).toMatchObject({ status: 'succeeded', failureClass: null })
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			failureClass: null,
+		})
 		expect(test.notifications).toHaveLength(0)
 		expect(test.logs).toEqual(
 			expect.arrayContaining([
@@ -386,6 +403,78 @@ describe('course sync detection poller', () => {
 		expect(test.preview).toHaveBeenCalledOnce()
 	})
 
+	it('first cohort poll persists its operator override; after operator success, the next revision auto-applies (T17/T18)', async () => {
+		let version = 'first-cohort-revision'
+		const firstManifest = {
+			...manifest,
+			courseId: syntheticCohortBinding.sourceCourseId,
+		}
+		const test = harness({
+			binding: { ...syntheticCohortBinding, applyPolicy: 'bounded-auto' },
+			readManifest: async () => ({
+				manifest: { ...firstManifest, courseVersionId: version },
+				summary: {
+					courseVersionId: version,
+					manifest: { rev: version, sha256: 'b'.repeat(64) },
+				},
+			}),
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+				reason: 'bounded-auto',
+			}),
+		})
+		await expect(test.poll('first-cohort-poll')).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+		})
+		expect(test.state()).toMatchObject({
+			status: 'awaiting-apply',
+			applyPolicyOverride: 'operator',
+			consecutiveFailures: 0,
+		})
+		expect(test.apply).not.toHaveBeenCalled()
+		// A killed first poll must not lose the gate between the batching and
+		// awaiting-apply writes; the next process reads these persisted rows.
+		expect(test.savedStates.filter((row) => row.status === 'batching' || row.status === 'staging'))
+			.toEqual(expect.arrayContaining([
+				expect.objectContaining({ status: 'batching', applyPolicyOverride: 'operator' }),
+				expect.objectContaining({ status: 'staging', applyPolicyOverride: 'operator' }),
+			]))
+		const resumed = harness({
+			binding: { ...syntheticCohortBinding, applyPolicy: 'bounded-auto' },
+			state: test.savedStates.find((row) => row.status === 'batching'),
+			readManifest: async () => ({
+				manifest: { ...firstManifest, courseVersionId: version },
+				summary: { courseVersionId: version, manifest: { rev: version, sha256: 'b'.repeat(64) } },
+			}),
+			evaluateBoundedAutoApply: async () => ({ eligible: true, planSha256: 'plan-sha' }),
+		})
+		await expect(resumed.poll('first-cohort-resume')).resolves.toMatchObject({ outcome: 'awaiting-apply' })
+		expect(resumed.apply).not.toHaveBeenCalled()
+		// The successful operator apply writes succeeded + clears the override
+		// atomically in drizzle-persistence before the next poll.
+		test.setState({
+			...test.state()!,
+			status: 'succeeded',
+			applyPolicyOverride: null,
+		})
+		test.setHead({
+			courseVersionId: version,
+			providerRevision: version,
+			runId: 'sync-run-2',
+			runState: 'applied',
+		})
+		version = 'second-cohort-revision'
+		await expect(test.poll('second-cohort-poll')).resolves.toMatchObject({
+			outcome: 'applied',
+		})
+		expect(test.apply).toHaveBeenCalledOnce()
+		expect(test.state()).toMatchObject({
+			status: 'succeeded',
+			applyPolicyOverride: null,
+		})
+	})
+
 	it('stages, previews, and waits for an operator without applying', async () => {
 		const test = harness({
 			head: {
@@ -452,60 +541,91 @@ describe('course sync detection poller', () => {
 	})
 
 	it.each(['explainer-to-placeholder', 'problem-solution-removal'])(
-		'leaves %s awaiting operator apply without a strike or hold', async () => {
-		const plan: SyncPlan = {
-			bindingId: 'csb_ai_coding_crash_course',
-			sourceRevisionId: 'revision-2',
-			courseVersionId: 'version-2',
-			resources: [], media: [],
-			lessonRegressions: ['lesson-1'],
-			planSha256: 'plan-sha',
-		}
-		const test = harness({
-			evaluateBoundedAutoApply: async () => evaluateCourseSyncBoundedAutoApply(plan),
-		})
-		await expect(test.poll('poll-regression')).resolves.toMatchObject({ outcome: 'awaiting-apply' })
-		expect(test.state()).toMatchObject({
-			status: 'awaiting-apply', consecutiveFailures: 0, failureClass: null,
-			applyPolicyOverride: 'operator',
-		})
-		expect(test.apply).not.toHaveBeenCalled()
-		expect(test.notifications).toHaveLength(1)
+		'leaves %s awaiting operator apply without a strike or hold',
+		async () => {
+			const plan: SyncPlan = {
+				bindingId: 'csb_ai_coding_crash_course',
+				sourceRevisionId: 'revision-2',
+				courseVersionId: 'version-2',
+				resources: [],
+				media: [],
+				lessonRegressions: ['lesson-1'],
+				planSha256: 'plan-sha',
+			}
+			const test = harness({
+				evaluateBoundedAutoApply: async () =>
+					evaluateCourseSyncBoundedAutoApply(plan),
+			})
+			await expect(test.poll('poll-regression')).resolves.toMatchObject({
+				outcome: 'awaiting-apply',
+			})
+			expect(test.state()).toMatchObject({
+				status: 'awaiting-apply',
+				consecutiveFailures: 0,
+				failureClass: null,
+				applyPolicyOverride: 'operator',
+			})
+			expect(test.apply).not.toHaveBeenCalled()
+			expect(test.notifications).toHaveLength(1)
 		},
 	)
 
 	it('routes a removed filmed explainer to operator review without a strike', async () => {
 		// The source revision retains lesson-1; the prior applied plan also had lesson-0.
 		const removed: SyncPlan['resources'][number] = {
-			sourceKind: 'lesson', sourceId: 'lesson-0',
-			targetResourceId: 'sync_lesson_0', parentResourceId: 'sync_section_1',
-			position: 0, detached: true, previousDetached: false,
-			previousParentResourceId: 'sync_section_1', previousPosition: 0,
-			action: 'update', fields: { courseSync: { lessonType: 'explainer' } },
-			previousVersionId: 'version-1', previousFieldsSha256: 'a'.repeat(64),
+			sourceKind: 'lesson',
+			sourceId: 'lesson-0',
+			targetResourceId: 'sync_lesson_0',
+			parentResourceId: 'sync_section_1',
+			position: 0,
+			detached: true,
+			previousDetached: false,
+			previousParentResourceId: 'sync_section_1',
+			previousPosition: 0,
+			action: 'update',
+			fields: { courseSync: { lessonType: 'explainer' } },
+			previousVersionId: 'version-1',
+			previousFieldsSha256: 'a'.repeat(64),
 		}
 		const plan: SyncPlan = {
 			bindingId: 'csb_ai_coding_crash_course',
-			sourceRevisionId: 'revision-2', courseVersionId: 'version-2',
-			resources: [removed, {
-				...removed, sourceKind: 'video', sourceId: 'video-0',
-				targetResourceId: 'sync_video_0', parentResourceId: removed.targetResourceId,
-				previousParentResourceId: removed.targetResourceId,
-				fields: { courseSync: { sourceLessonId: 'lesson-0' } },
-			}],
-			media: [], lessonRegressions: ['lesson-0'], planSha256: 'plan-sha',
+			sourceRevisionId: 'revision-2',
+			courseVersionId: 'version-2',
+			resources: [
+				removed,
+				{
+					...removed,
+					sourceKind: 'video',
+					sourceId: 'video-0',
+					targetResourceId: 'sync_video_0',
+					parentResourceId: removed.targetResourceId,
+					previousParentResourceId: removed.targetResourceId,
+					fields: { courseSync: { sourceLessonId: 'lesson-0' } },
+				},
+			],
+			media: [],
+			lessonRegressions: ['lesson-0'],
+			planSha256: 'plan-sha',
 		}
 		const test = harness({
-			head: { courseVersionId: 'version-1', providerRevision: 'dropbox-rev-1',
-				runId: 'sync-run-1', runState: 'applied' },
-			evaluateBoundedAutoApply: async () => evaluateCourseSyncBoundedAutoApply(plan),
+			head: {
+				courseVersionId: 'version-1',
+				providerRevision: 'dropbox-rev-1',
+				runId: 'sync-run-1',
+				runState: 'applied',
+			},
+			evaluateBoundedAutoApply: async () =>
+				evaluateCourseSyncBoundedAutoApply(plan),
 		})
 		await expect(test.poll('poll-removed-explainer')).resolves.toMatchObject({
-			outcome: 'awaiting-apply', controlPlaneRunId: 'sync-run-2',
+			outcome: 'awaiting-apply',
+			controlPlaneRunId: 'sync-run-2',
 		})
 		expect(test.state()).toMatchObject({
-			status: 'awaiting-apply', applyPolicyOverride: 'operator',
-			consecutiveFailures: 0, failureClass: null,
+			status: 'awaiting-apply',
+			applyPolicyOverride: 'operator',
+			consecutiveFailures: 0,
+			failureClass: null,
 		})
 		expect(test.apply).not.toHaveBeenCalled()
 	})
@@ -575,18 +695,29 @@ describe('course sync detection poller', () => {
 			...manifest,
 			schemaVersion: 4,
 			courseVersionId: 'version-syllabus',
-			sections: [{ id: 'section-1', title: 'Section 1', lessons: [
-				{ type: 'placeholder', id: 'lesson-1', title: 'Lesson 1' },
-			] }],
+			sections: [
+				{
+					id: 'section-1',
+					title: 'Section 1',
+					lessons: [{ type: 'placeholder', id: 'lesson-1', title: 'Lesson 1' }],
+				},
+			],
 		}
 		const test = harness({
 			manifest: syllabus,
-			evaluateBoundedAutoApply: async () => ({ eligible: true, planSha256: 'plan-sha' }),
+			evaluateBoundedAutoApply: async () => ({
+				eligible: true,
+				planSha256: 'plan-sha',
+			}),
 		})
-		await expect(test.poll('poll-syllabus')).resolves.toMatchObject({ outcome: 'applied' })
+		await expect(test.poll('poll-syllabus')).resolves.toMatchObject({
+			outcome: 'applied',
+		})
 		expect(test.freezeAssetBatch).not.toHaveBeenCalled()
 		expect(test.freezeAsset).not.toHaveBeenCalled()
-		expect(test.stage).toHaveBeenCalledWith(expect.objectContaining({ manifest: syllabus }))
+		expect(test.stage).toHaveBeenCalledWith(
+			expect.objectContaining({ manifest: syllabus }),
+		)
 		expect(test.preview).toHaveBeenCalledTimes(1)
 		expect(test.apply).toHaveBeenCalledTimes(1)
 	})
@@ -974,7 +1105,9 @@ describe('course sync detection poller', () => {
 			runId: 'sync-run-2',
 			runState: 'applied',
 		})
-		await expect(test.poll('released-applied-by-operator')).resolves.toMatchObject({
+		await expect(
+			test.poll('released-applied-by-operator'),
+		).resolves.toMatchObject({
 			outcome: 'no-op',
 		})
 		expect(test.state()).toMatchObject({
@@ -1048,9 +1181,12 @@ describe('course sync detection poller', () => {
 				planSha256: 'plan-sha',
 			}),
 		})
-		await expect(superseding.poll('superseding-revision')).resolves.toMatchObject(
-			{ outcome: 'awaiting-apply', courseVersionId: 'version-3' },
-		)
+		await expect(
+			superseding.poll('superseding-revision'),
+		).resolves.toMatchObject({
+			outcome: 'awaiting-apply',
+			courseVersionId: 'version-3',
+		})
 		expect(superseding.stage).toHaveBeenCalledOnce()
 		expect(superseding.apply).not.toHaveBeenCalled()
 		expect(superseding.verifyApplied).not.toHaveBeenCalled()
@@ -1204,11 +1340,13 @@ describe('course sync detection poller', () => {
 		const test = failureHarness(initialState)
 
 		await recordCourseSyncPollFailure(test.dependencies, {
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			runId: 'killed-1',
 			occurredAt: new Date('2026-07-24T18:01:00.000Z'),
 		})
 		expect(test.notifications).toHaveLength(0)
 		await recordCourseSyncPollFailure(test.dependencies, {
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			runId: 'killed-2',
 			occurredAt: new Date('2026-07-24T18:02:00.000Z'),
 		})
@@ -1249,6 +1387,7 @@ describe('course sync detection poller', () => {
 
 		await expect(
 			recordCourseSyncPollFailure(test.dependencies, {
+				bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 				runId: 'old-failed-poll',
 			}),
 		).resolves.toEqual({ held: false, consecutiveFailures: 0 })
@@ -1277,6 +1416,7 @@ describe('course sync detection poller', () => {
 		})
 
 		await recordCourseSyncPollFailure(test.dependencies, {
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			runId: 'killed-while-held',
 			occurredAt: new Date('2026-07-24T18:30:00.000Z'),
 		})
@@ -1318,10 +1458,12 @@ describe('course sync detection poller', () => {
 		})
 
 		await recordCourseSyncPollFailure(test.dependencies, {
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			runId: 'fresh-kill-1',
 		})
 		expect(test.notifications).toHaveLength(0)
 		await recordCourseSyncPollFailure(test.dependencies, {
+			bindingId: AI_HERO_COURSE_SYNC_BINDING.bindingId,
 			runId: 'fresh-kill-2',
 		})
 

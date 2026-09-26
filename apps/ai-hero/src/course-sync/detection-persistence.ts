@@ -33,7 +33,7 @@ import {
 	type CourseSyncPollReleaseInput,
 } from './release'
 import { assertCourseSyncTargetContract } from './target-contract'
-import { AI_HERO_COURSE_SYNC_BINDING } from './types'
+import { anchorResourceId, getServerCourseSyncBinding } from './types'
 
 export function courseSyncRevisionHeadWhere(bindingId: string) {
 	// Failed runs (including discarded verification artifacts) never advanced
@@ -177,7 +177,11 @@ export async function saveCourseSyncPollState(state: CourseSyncPollState) {
 // A notice is claimed per lifecycle state, not per caller. Both the poller and
 // an operator apply reach the same applied state, so both deliver through the
 // same claim and the reader sees exactly one message.
-export type CourseSyncNotificationKind = 'review' | 'applied'
+export type CourseSyncNotificationKind =
+	| 'review'
+	| 'applied'
+	| 'entitlement-applied'
+	| 'entitlement-rolled-back'
 
 export type CourseSyncReviewNotificationReceiptInput = {
 	kind?: CourseSyncNotificationKind
@@ -232,10 +236,7 @@ export async function claimCourseSyncReviewNotification(
 			.from(courseSyncPollLog)
 			.where(eq(courseSyncPollLog.id, receiptId))
 			.for('update')
-		if (
-			existing?.outcome === 'succeeded' ||
-			existing?.outcome === 'started'
-		) {
+		if (existing?.outcome === 'succeeded' || existing?.outcome === 'started') {
 			return false
 		}
 		if (existing) {
@@ -384,7 +385,7 @@ export async function releaseCourseSyncPollHoldAtomically(
 		}
 		const binding = resolveStoredCourseSyncBinding(
 			storedBinding.binding,
-			AI_HERO_COURSE_SYNC_BINDING,
+			getServerCourseSyncBinding(input.bindingId),
 		).binding
 
 		const [priorReceipt] = await trx
@@ -447,7 +448,11 @@ export async function releaseCourseSyncPollHoldAtomically(
 			applyPolicyOverride:
 				lockedState.applyPolicyOverride as CourseSyncPollState['applyPolicyOverride'],
 		}
-		const released = releasedCourseSyncPollState(currentState, input.occurredAt)
+		const released = releasedCourseSyncPollState(
+			currentState,
+			input.occurredAt,
+			binding,
+		)
 
 		const [lockedProduct] = await trx
 			.select()
@@ -457,14 +462,14 @@ export async function releaseCourseSyncPollHoldAtomically(
 		const [lockedWorkshop] = await trx
 			.select()
 			.from(contentResource)
-			.where(eq(contentResource.id, binding.anchorWorkshopId))
+			.where(eq(contentResource.id, anchorResourceId(binding)))
 			.for('update')
 		const lockedProductRelations = await trx
 			.select()
 			.from(contentResourceProduct)
 			.where(
 				and(
-					eq(contentResourceProduct.resourceId, binding.anchorWorkshopId),
+					eq(contentResourceProduct.resourceId, anchorResourceId(binding)),
 					isNull(contentResourceProduct.deletedAt),
 				),
 			)
@@ -483,7 +488,7 @@ export async function releaseCourseSyncPollHoldAtomically(
 			)
 			.where(
 				and(
-					eq(contentResourceResource.resourceOfId, binding.anchorWorkshopId),
+					eq(contentResourceResource.resourceOfId, anchorResourceId(binding)),
 					isNull(contentResourceResource.deletedAt),
 				),
 			)

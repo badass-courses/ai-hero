@@ -35,7 +35,7 @@ import {
 } from './persistence-invariants'
 import { assertAdoptableSolutionResource } from './solution-adoption'
 import { assertCourseSyncTargetContract } from './target-contract'
-import { AI_HERO_COURSE_SYNC_BINDING } from './types'
+import { anchorResourceId, getServerCourseSyncBinding } from './types'
 import type {
 	CourseSyncBinding,
 	CourseSyncPersistence,
@@ -130,7 +130,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 						.set({
 							sourceCourseId: binding.sourceCourseId,
 							productId: binding.productId,
-							anchorWorkshopId: binding.anchorWorkshopId,
+							anchorWorkshopId: anchorResourceId(binding),
 							status: binding.status,
 							binding,
 						})
@@ -173,7 +173,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			bindingId: binding.bindingId,
 			sourceCourseId: binding.sourceCourseId,
 			productId: binding.productId,
-			anchorWorkshopId: binding.anchorWorkshopId,
+			anchorWorkshopId: anchorResourceId(binding),
 			status: binding.status,
 			binding,
 		})
@@ -194,25 +194,25 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 					where: eq(products.id, binding.productId),
 				}),
 				db.query.contentResource.findFirst({
-					where: eq(contentResource.id, binding.anchorWorkshopId),
+					where: eq(contentResource.id, anchorResourceId(binding)),
 				}),
 				db.query.contentResourceProduct.findFirst({
 					where: and(
 						eq(contentResourceProduct.productId, binding.productId),
-						eq(contentResourceProduct.resourceId, binding.anchorWorkshopId),
+						eq(contentResourceProduct.resourceId, anchorResourceId(binding)),
 						isNull(contentResourceProduct.deletedAt),
 					),
 				}),
 				db.query.contentResourceProduct.findMany({
 					where: and(
-						eq(contentResourceProduct.resourceId, binding.anchorWorkshopId),
+						eq(contentResourceProduct.resourceId, anchorResourceId(binding)),
 						ne(contentResourceProduct.productId, binding.productId),
 						isNull(contentResourceProduct.deletedAt),
 					),
 				}),
 				db.query.contentResourceResource.findMany({
 					where: and(
-						eq(contentResourceResource.resourceOfId, binding.anchorWorkshopId),
+						eq(contentResourceResource.resourceOfId, anchorResourceId(binding)),
 						isNull(contentResourceResource.deletedAt),
 					),
 					with: { resource: true },
@@ -659,7 +659,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			}
 			const binding = resolveStoredCourseSyncBinding(
 				storedBinding.binding,
-				AI_HERO_COURSE_SYNC_BINDING,
+				getServerCourseSyncBinding(plan.bindingId),
 			).binding
 			const [row] = await trx
 				.select()
@@ -748,14 +748,14 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const [lockedWorkshop] = await trx
 				.select()
 				.from(contentResource)
-				.where(eq(contentResource.id, binding.anchorWorkshopId))
+				.where(eq(contentResource.id, anchorResourceId(binding)))
 				.for('update')
 			const lockedProductRelations = await trx
 				.select()
 				.from(contentResourceProduct)
 				.where(
 					and(
-						eq(contentResourceProduct.resourceId, binding.anchorWorkshopId),
+						eq(contentResourceProduct.resourceId, anchorResourceId(binding)),
 						isNull(contentResourceProduct.deletedAt),
 					),
 				)
@@ -774,7 +774,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 				)
 				.where(
 					and(
-						eq(contentResourceResource.resourceOfId, binding.anchorWorkshopId),
+						eq(contentResourceResource.resourceOfId, anchorResourceId(binding)),
 						isNull(contentResourceResource.deletedAt),
 					),
 				)
@@ -853,7 +853,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationScope = {
 				bindingId: plan.bindingId,
 				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
-					binding.anchorWorkshopId,
+					anchorResourceId(binding),
 					plan,
 				),
 			}
@@ -1433,7 +1433,7 @@ export const drizzleCourseSyncPersistence: CourseSyncPersistence = {
 			const relationScope = {
 				bindingId,
 				anchorTreeParentIds: courseSyncAnchorTreeParentIds(
-					lockedBinding.binding.anchorWorkshopId,
+					anchorResourceId(lockedBinding.binding),
 					original.plan,
 				),
 			}
