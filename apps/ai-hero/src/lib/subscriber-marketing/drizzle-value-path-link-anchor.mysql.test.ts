@@ -106,22 +106,21 @@ integration('value-path link anchors on MySQL', () => {
 		).resolves.toBeUndefined()
 	})
 
-	it('renews only while the row still holds the expiry that was read', async () => {
-		await store.insert(key, first)
-		const next = {
-			issuedAt: '2026-12-26T16:00:00.000Z',
-			expiresAt: '2027-04-25T16:00:00.000Z',
-		}
-		await expect(store.renew(key, first, next)).resolves.toBe('renewed')
-		await expect(store.find(key)).resolves.toEqual(next)
-		// A sender still holding the first issue lost the race.
+	it('answers later windows from the first issue without rewriting the row', async () => {
 		await expect(
-			store.renew(key, first, {
-				issuedAt: '2026-12-26T16:00:05.000Z',
-				expiresAt: '2027-04-25T16:00:05.000Z',
+			resolveValuePathLinkAnchor({ store, key, now: first.issuedAt }),
+		).resolves.toEqual(first)
+		await expect(
+			resolveValuePathLinkAnchor({
+				store,
+				key,
+				now: '2027-01-10T16:00:00.000Z',
 			}),
-		).resolves.toBe('stale')
-		await expect(store.find(key)).resolves.toEqual(next)
+		).resolves.toEqual({
+			issuedAt: '2026-12-25T16:00:00.123Z',
+			expiresAt: '2027-04-24T16:00:00.123Z',
+		})
+		await expect(store.find(key)).resolves.toEqual(first)
 	})
 
 	it('converges concurrent first issues on one row', async () => {

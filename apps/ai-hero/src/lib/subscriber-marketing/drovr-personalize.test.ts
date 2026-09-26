@@ -156,6 +156,25 @@ describe('drovr personalization: answer links anchored at first issue', () => {
 		})
 	})
 
+	it('keeps a retry byte-identical after a later send of the same email moved to the next link window', async () => {
+		const f = fixture()
+		const linkAnchors = createMemoryValuePathLinkAnchorStore()
+		const original = await f.answer({}, 'local-test-secret', { linkAnchors })
+		const later = await f.answer(
+			{ dueAt: '2027-01-01T18:00:00.000Z', idempotencyKey: 'intent-2' },
+			'local-test-secret',
+			{ linkAnchors },
+		)
+		const retry = await f.answer({}, 'local-test-secret', { linkAnchors })
+		expect(retry?.variables).toEqual(original?.variables)
+		expect(
+			tokenExpiry(later?.variables.aih_value_path_answer_1_url),
+		).toMatchObject({ payload: { expiresAt: '2027-04-22T18:00:00.000Z' } })
+		expect(
+			tokenExpiry(retry?.variables.aih_value_path_answer_1_url),
+		).toMatchObject({ payload: { expiresAt: '2027-01-22T18:00:00.000Z' } })
+	})
+
 	it('records no first issue for a blocked request, so a later sendable one anchors at its own send', async () => {
 		const f = fixture()
 		const linkAnchors = createMemoryValuePathLinkAnchorStore()
@@ -199,7 +218,6 @@ describe('drovr personalization: answer links anchored at first issue', () => {
 				throw new Error("Table 'AI_ValuePathLinkAnchor' doesn't exist")
 			},
 			insert: async () => 'inserted',
-			renew: async () => 'renewed',
 		}
 		const answer = await f.answer({}, 'local-test-secret', {
 			linkAnchors: broken,

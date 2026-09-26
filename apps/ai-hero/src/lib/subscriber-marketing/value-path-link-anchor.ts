@@ -16,12 +16,16 @@ import type { ValuePathAnswerPageResource } from './value-path-answer-page'
  * A changed input (Kit subscriber id, answer pages, base URL, signing
  * secret) is a new fingerprint, so a new first issue and a new URL.
  *
- * An issue inside the anchor's last 30 days re-issues it, so a contact who
- * resumes after a long block never gets a link that dies days later.
+ * Links re-issue every 90 days from that first issue, and each lives 120,
+ * so an issued link always has more than 30 days left: a contact who
+ * resumes after a long block never gets a link that dies days later. The
+ * window is a pure function of the first issue and the send's time, so the
+ * stored row never changes and a retry is byte-identical however other
+ * sends of the same email interleave.
  */
 
 export const VALUE_PATH_LINK_LIFETIME_DAYS = 120
-export const VALUE_PATH_LINK_REISSUE_WITHIN_DAYS = 30
+export const VALUE_PATH_LINK_REISSUE_EVERY_DAYS = 90
 
 export type ValuePathLinkAnchorKey = {
 	contactId: string
@@ -62,15 +66,6 @@ export type ValuePathLinkAnchorStore = {
 		key: ValuePathLinkAnchorKey,
 		anchor: ValuePathLinkAnchor,
 	): Promise<'inserted' | 'exists'>
-	/**
-	 * Compare-and-swap: replaces `previous` with `next` only while the row
-	 * still holds `previous`; 'stale' when another sender renewed first.
-	 */
-	renew(
-		key: ValuePathLinkAnchorKey,
-		previous: ValuePathLinkAnchor,
-		next: ValuePathLinkAnchor,
-	): Promise<'renewed' | 'stale'>
 }
 
 /**
@@ -109,11 +104,11 @@ export function valuePathLinkFingerprint(args: {
 }
 
 /**
- * The anchor for this key: the stored first issue, or a new one at `now`
- * when there is none or it has 30 days or less left. Concurrent issues
- * converge on the row that won. Undefined when the store is unavailable, so
- * the caller keeps its previous expiry rather than failing a send over a
- * link's lifetime.
+ * The link window for this key at `now`: counted in 90-day steps from the
+ * stored first issue (recording `now` as the first issue when there is
+ * none), each living 120 days. Concurrent first issues converge on the row
+ * that won. Undefined when the store is unavailable, so the caller keeps
+ * its previous expiry rather than failing a send over a link's lifetime.
  */
 export async function resolveValuePathLinkAnchor(args: {
 	store: ValuePathLinkAnchorStore
@@ -122,24 +117,8 @@ export async function resolveValuePathLinkAnchor(args: {
 	warn?: (event: string, fields: Record<string, unknown>) => unknown
 }): Promise<ValuePathLinkAnchor | undefined> {
 	try {
-		const found = await args.store.find(args.key)
-		const anchor = {
-			issuedAt: new Date(args.now).toISOString(),
-			expiresAt: addDays(args.now, VALUE_PATH_LINK_LIFETIME_DAYS),
-		}
-		if (found) {
-			const reissueFrom = addDays(
-				found.expiresAt,
-				-VALUE_PATH_LINK_REISSUE_WITHIN_DAYS,
-			)
-			if (Date.parse(anchor.issuedAt) <= Date.parse(reissueFrom)) return found
-			const renewed = await args.store.renew(args.key, found, anchor)
-			if (renewed === 'renewed') return anchor
-			return await args.store.find(args.key)
-		}
-		const inserted = await args.store.insert(args.key, anchor)
-		if (inserted === 'inserted') return anchor
-		return await args.store.find(args.key)
+		const firstIssue = await firstValuePathLinkIssue(args)
+		return firstIssue && linkWindowAt(firstIssue.issuedAt, args.now)
 	} catch (error) {
 		try {
 			await args.warn?.('value_path.link_anchor.unavailable', {
@@ -153,6 +132,38 @@ export async function resolveValuePathLinkAnchor(args: {
 		return undefined
 	}
 }
+
+async function firstValuePathLinkIssue(args: {
+	store: ValuePathLinkAnchorStore
+	key: ValuePathLinkAnchorKey
+	now: string
+}): Promise<ValuePathLinkAnchor | undefined> {
+	const found = await args.store.find(args.key)
+	if (found) return found
+	const anchor = linkWindowFrom(args.now)
+	const inserted = await args.store.insert(args.key, anchor)
+	if (inserted === 'inserted') return anchor
+	return await args.store.find(args.key)
+}
+
+/** The window holding `now`; a send before the first issue gets the first. */
+function linkWindowAt(firstIssuedAt: string, now: string): ValuePathLinkAnchor {
+	const step = VALUE_PATH_LINK_REISSUE_EVERY_DAYS * DAY_MS
+	const elapsed = Date.parse(now) - Date.parse(firstIssuedAt)
+	const windows = Math.max(0, Math.floor(elapsed / step))
+	return linkWindowFrom(
+		new Date(Date.parse(firstIssuedAt) + windows * step).toISOString(),
+	)
+}
+
+function linkWindowFrom(issuedAt: string): ValuePathLinkAnchor {
+	return {
+		issuedAt: new Date(issuedAt).toISOString(),
+		expiresAt: addDays(issuedAt, VALUE_PATH_LINK_LIFETIME_DAYS),
+	}
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 export function createMemoryValuePathLinkAnchorStore(): ValuePathLinkAnchorStore {
 	const rows = new Map<string, ValuePathLinkAnchor>()
@@ -171,11 +182,6 @@ export function createMemoryValuePathLinkAnchorStore(): ValuePathLinkAnchorStore
 			if (rows.has(id(key))) return 'exists'
 			rows.set(id(key), anchor)
 			return 'inserted'
-		},
-		async renew(key, previous, next) {
-			if (rows.get(id(key))?.expiresAt !== previous.expiresAt) return 'stale'
-			rows.set(id(key), next)
-			return 'renewed'
 		},
 	}
 }
